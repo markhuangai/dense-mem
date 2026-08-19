@@ -95,15 +95,19 @@ func supersedeOneCardinalityRelationships(
 }
 
 func validateSupportOwnership(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput) error {
+	spaceID, err := loadSemanticInputSpaceID(ctx, tx, input)
+	if err != nil {
+		return err
+	}
 	for _, support := range relationshipEvidenceSupports(input.Support, input.Supports) {
-		if err := validateSingleSupportOwnership(ctx, tx, input, support); err != nil {
+		if err := validateSingleSupportOwnership(ctx, tx, input, support, spaceID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateSingleSupportOwnership(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput, support EvidenceSupportInput) error {
+func validateSingleSupportOwnership(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput, support EvidenceSupportInput, spaceID string) error {
 	if (support.SourceID == "") != (support.SourceRevisionID == "") {
 		return errors.New("support source and source revision must be provided together")
 	}
@@ -115,8 +119,9 @@ func validateSingleSupportOwnership(ctx context.Context, tx *gorm.DB, input Appl
 			  AND fragment.ingest_id = ?::uuid
 			  AND fragment.fragment_id = ?::uuid
 			  AND fragment.owner_profile_id = ?::uuid
+			  AND fragment.space_id = ?::uuid
 	`
-	args := []any{input.TeamID, input.IngestID, support.FragmentID, input.OwnerProfileID}
+	args := []any{input.TeamID, input.IngestID, support.FragmentID, input.OwnerProfileID, spaceID}
 	if support.SourceID != "" {
 		query += `
 			  AND fragment.source_id = ?::uuid
@@ -288,13 +293,10 @@ func insertRelationshipSupport(
 			) VALUES (
 			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
 			    ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?::jsonb,
-			    COALESCE(
-			        (SELECT relationship.space_id
-			         FROM relationship_records AS relationship
-			         WHERE relationship.team_id = ?::uuid
-			           AND relationship.relationship_id = ?::uuid),
-			        dense_mem_team_shared_space(?::uuid)
-			    )
+			(SELECT relationship.space_id
+			 FROM relationship_records AS relationship
+			 WHERE relationship.team_id = ?::uuid
+			   AND relationship.relationship_id = ?::uuid)
 			)
 			ON CONFLICT ON CONSTRAINT relationship_supports_identity_unique DO NOTHING
 			RETURNING support_id::text, true AS created
@@ -314,7 +316,7 @@ func insertRelationshipSupport(
 		input.Support.FragmentID, input.OwnerProfileID, input.Support.SourceGroupKey,
 		input.Support.SourceID, input.Support.SourceRevisionID, input.Support.SpanStart,
 		input.Support.SpanEnd, input.Support.Quote, input.Support.Authority, string(metadata),
-		input.TeamID, relationshipID, input.TeamID,
+		input.TeamID, relationshipID,
 		input.TeamID, relationshipID, input.OwnerProfileID, input.Support.FragmentID, input.Support.SpanStart,
 		input.Support.SpanEnd).Rows()
 	if err != nil {
@@ -425,18 +427,15 @@ func insertSupportDecisionEvent(ctx context.Context, tx *gorm.DB, input supportD
 		    decision, reason, idempotency_key, metadata, space_id
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb,
-		    COALESCE(
-		        (SELECT relationship.space_id
-		         FROM relationship_records AS relationship
-		         WHERE relationship.team_id = ?::uuid
-		           AND relationship.relationship_id = ?::uuid),
-		        dense_mem_team_shared_space(?::uuid)
-		    )
+			(SELECT relationship.space_id
+			 FROM relationship_records AS relationship
+			 WHERE relationship.team_id = ?::uuid
+			   AND relationship.relationship_id = ?::uuid)
 		)
 		RETURNING support_decision_id::text
 	`, input.TeamID, input.SupportID, input.RelationshipID, input.OwnerProfileID, supportDecisionActorProfileID(input),
 		input.Decision, input.Reason, input.IdempotencyKey, string(metadata),
-		input.TeamID, input.RelationshipID, input.TeamID).Rows()
+		input.TeamID, input.RelationshipID).Rows()
 	if err != nil {
 		return "", err
 	}

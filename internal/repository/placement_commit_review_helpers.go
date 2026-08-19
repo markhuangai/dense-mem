@@ -93,11 +93,16 @@ func insertPlacementSemanticReviewTask(
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO review_tasks (
 		    team_id, owner_profile_id, ingest_id, placement_item_id,
-		    relationship_id, observation_id, task_type, status, reason,
+		    relationship_id, observation_id, space_id, task_type, status, reason,
 		    payload, dedupe_key, assessment_id, expires_at, updated_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-		    NULLIF(?, '')::uuid, ?::uuid, ?, 'open', ?,
+		    NULLIF(?, '')::uuid, ?::uuid,
+		    (SELECT observation.space_id
+		     FROM relationship_observations AS observation
+		     WHERE observation.team_id = ?::uuid
+		       AND observation.observation_id = ?::uuid),
+		    ?, 'open', ?,
 		    ?::jsonb, ?, NULLIF(?, '')::uuid,
 		    CASE WHEN NULLIF(?, '') IS NULL THEN NULL ELSE now() + interval '7 days' END,
 		    now()
@@ -111,7 +116,7 @@ func insertPlacementSemanticReviewTask(
 		              updated_at = now()
 		RETURNING review_task_id::text
 	`, commit.TeamID, commit.OwnerProfileID, commit.IngestID, commit.PlacementItemID,
-		relationshipID, applied.ObservationID, taskType, reason, string(payloadJSON), dedupeKey,
+		relationshipID, applied.ObservationID, commit.TeamID, applied.ObservationID, taskType, reason, string(payloadJSON), dedupeKey,
 		input.AssessmentID, input.AssessmentID).Rows()
 	if err != nil {
 		return "", err
@@ -384,11 +389,16 @@ func insertRelationshipReview(
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO review_tasks (
 		    team_id, owner_profile_id, ingest_id, placement_item_id,
-		    observation_id, task_type, status, reason, payload, dedupe_key,
+		    observation_id, space_id, task_type, status, reason, payload, dedupe_key,
 		    assessment_id, expires_at, updated_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-		    ?::uuid, ?, 'open', ?, ?::jsonb, ?, NULLIF(?, '')::uuid,
+		    ?::uuid,
+		    (SELECT observation.space_id
+		     FROM relationship_observations AS observation
+		     WHERE observation.team_id = ?::uuid
+		       AND observation.observation_id = ?::uuid),
+		    ?, 'open', ?, ?::jsonb, ?, NULLIF(?, '')::uuid,
 		    CASE WHEN NULLIF(?, '') IS NULL THEN NULL ELSE now() + interval '7 days' END,
 		    now()
 		)
@@ -401,7 +411,7 @@ func insertRelationshipReview(
 		              updated_at = now()
 		RETURNING review_task_id::text
 	`, commit.TeamID, commit.OwnerProfileID, commit.IngestID, commit.PlacementItemID,
-		observationID, taskType, reason, string(payloadJSON), dedupeKey,
+		observationID, commit.TeamID, observationID, taskType, reason, string(payloadJSON), dedupeKey,
 		input.AssessmentID, input.AssessmentID).Rows()
 	if err != nil {
 		return nil, err
@@ -485,11 +495,16 @@ func insertRelationshipValidToReview(
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO review_tasks (
 		    team_id, owner_profile_id, ingest_id, placement_item_id,
-		    relationship_id, observation_id, task_type, status,
+		    relationship_id, observation_id, space_id, task_type, status,
 		    reason, payload, dedupe_key, updated_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid,
-		    ?::uuid, ?::uuid, 'relationship_needs_review', 'open',
+		    ?::uuid, ?::uuid,
+		    (SELECT observation.space_id
+		     FROM relationship_observations AS observation
+		     WHERE observation.team_id = ?::uuid
+		       AND observation.observation_id = ?::uuid),
+		    'relationship_needs_review', 'open',
 		    'relationship_identity_valid_to_conflict', ?::jsonb, ?, now()
 		)
 		ON CONFLICT (team_id, dedupe_key)
@@ -497,7 +512,7 @@ func insertRelationshipValidToReview(
 		DO UPDATE SET updated_at = now()
 		RETURNING review_task_id::text
 	`, input.TeamID, input.OwnerProfileID, input.IngestID, input.PlacementItemID,
-		canonical.RelationshipID, observationID, string(payload), dedupeKey).Rows()
+		canonical.RelationshipID, observationID, input.TeamID, observationID, string(payload), dedupeKey).Rows()
 	if err != nil {
 		return nil, err
 	}

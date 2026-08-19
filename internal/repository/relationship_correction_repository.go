@@ -197,10 +197,13 @@ func (r *SemanticRepositoryImpl) submitRelationshipCorrection(
 	if source.OwnerProfileID != input.OwnerProfileID {
 		return nil, ErrSemanticOwnerMismatch
 	}
+	if source.SpaceID == "" {
+		return nil, errors.New("relationship correction requires a memory space")
+	}
 
 	rejection := func(code, message string) (*CorrectRelationshipResult, error) {
 		row, _, err := insertRelationshipCorrectionSubmission(ctx, tx, input, requestHash, relationshipCorrectionInsert{
-			State: "rejected", ErrorCode: code, ErrorMessage: message,
+			State: "rejected", SpaceID: source.SpaceID, ErrorCode: code, ErrorMessage: message,
 		})
 		if err != nil {
 			return nil, err
@@ -224,6 +227,11 @@ func (r *SemanticRepositoryImpl) submitRelationshipCorrection(
 	if !relationshipCorrectionSupportsEqual(input.Supports, effectiveSupports) {
 		return rejection("support_set_mismatch", "supports must exactly match the relationship's effective evidence spans")
 	}
+	for _, support := range effectiveSupports {
+		if err := requireSemanticSpaceMatch(source.SpaceID, support.SpaceID); err != nil {
+			return rejection("support_space_mismatch", "relationship supports must remain in the relationship memory space")
+		}
+	}
 
 	resolution, err := resolveRelationshipCorrectionPatch(ctx, tx, input, source)
 	if err != nil {
@@ -237,6 +245,7 @@ func (r *SemanticRepositoryImpl) submitRelationshipCorrection(
 		expiresAt := time.Now().UTC().Add(relationshipCorrectionConfirmationTTL)
 		row, _, err := insertRelationshipCorrectionSubmission(ctx, tx, input, requestHash, relationshipCorrectionInsert{
 			State:      "awaiting_confirmation",
+			SpaceID:    source.SpaceID,
 			Token:      token,
 			ExpiresAt:  &expiresAt,
 			Candidates: resolution.Candidates,
@@ -250,6 +259,7 @@ func (r *SemanticRepositoryImpl) submitRelationshipCorrection(
 
 	row, created, err := insertRelationshipCorrectionSubmission(ctx, tx, input, requestHash, relationshipCorrectionInsert{
 		State:     "processing",
+		SpaceID:   source.SpaceID,
 		Selection: resolution.Selection,
 	})
 	if err != nil {
@@ -335,6 +345,18 @@ func (r *SemanticRepositoryImpl) confirmRelationshipCorrection(
 			return nil, err
 		}
 		return relationshipCorrectionResultFromRow(updated), nil
+	}
+	for _, support := range effectiveSupports {
+		if err := requireSemanticSpaceMatch(source.SpaceID, support.SpaceID); err != nil {
+			if rejectErr := rejectRelationshipCorrectionSubmission(ctx, tx, row, "support_space_mismatch", "relationship supports must remain in the relationship memory space", input.IdempotencyKey, confirmationHash); rejectErr != nil {
+				return nil, rejectErr
+			}
+			updated, loadErr := loadRelationshipCorrectionSubmission(ctx, tx, row.TeamID, row.OwnerProfileID, row.SubmissionID, false)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			return relationshipCorrectionResultFromRow(updated), nil
+		}
 	}
 
 	selection, err := validateRelationshipCorrectionSelection(row, input.Selection)

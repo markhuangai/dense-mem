@@ -559,17 +559,22 @@ func insertPredicateReview(
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO review_tasks (
 		    team_id, owner_profile_id, ingest_id, placement_item_id,
-		    observation_id, task_type, status, reason, payload, dedupe_key, updated_at
+		    observation_id, space_id, task_type, status, reason, payload, dedupe_key, updated_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid,
-		    ?::uuid, 'predicate_needs_review', 'open', 'unknown_predicate', ?::jsonb, ?, now()
+		    ?::uuid,
+		    (SELECT observation.space_id
+		     FROM relationship_observations AS observation
+		     WHERE observation.team_id = ?::uuid
+		       AND observation.observation_id = ?::uuid),
+		    'predicate_needs_review', 'open', 'unknown_predicate', ?::jsonb, ?, now()
 		)
 		ON CONFLICT (team_id, dedupe_key)
 		WHERE dedupe_key <> '' AND status IN ('open', 'acknowledged')
 		DO UPDATE SET updated_at = now()
 		RETURNING review_task_id::text
 	`, input.TeamID, input.OwnerProfileID, input.IngestID, input.PlacementItemID,
-		observationID, string(payload), dedupeKey).Rows()
+		observationID, input.TeamID, observationID, string(payload), dedupeKey).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -600,11 +605,20 @@ func upsertRelationshipRecord(
 	status string,
 	semanticGroupKey string,
 ) (*relationshipRecordState, error) {
+	spaceID, err := loadSemanticInputSpaceID(ctx, tx, input)
+	if err != nil {
+		return nil, err
+	}
 	metadata, err := marshalJSON(input.RelationshipMetadata)
 	if err != nil {
 		return nil, err
 	}
 	existing, err := selectRelationshipByIdentity(ctx, tx, input)
+	if err == nil {
+		if err := requireSemanticSpaceMatch(spaceID, existing.SpaceID); err != nil {
+			return nil, err
+		}
+	}
 	if err == nil && !nullableTimesEqual(existing.ValidTo, input.ValidTo) {
 		return &relationshipRecordState{
 			Record:          existing,
@@ -633,10 +647,10 @@ func upsertRelationshipRecord(
 		    team_id, owner_profile_id, semantic_group_key, subject_entity_id,
 		    predicate_key, predicate_version, object_entity_id, object_value_id,
 		    relationship_kind, current_cardinality, status, polarity,
-		    scope_key, valid_from, valid_to, metadata
+		    scope_key, valid_from, valid_to, metadata, space_id
 		) VALUES (
 		    ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid,
-		    ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?::jsonb
+		    ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?::jsonb, ?::uuid
 		)
 		ON CONFLICT (
 		    team_id, owner_profile_id, subject_entity_id, predicate_key,
@@ -656,7 +670,7 @@ func upsertRelationshipRecord(
 	`, input.TeamID, input.OwnerProfileID, semanticGroupKey, input.SubjectEntityID,
 		input.PredicateKey, input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
 		predicate.RelationshipKind, predicate.CurrentCardinality, status, input.Polarity,
-		input.ScopeKey, timeArg(input.ValidFrom), timeArg(input.ValidTo), string(metadata)).Rows()
+		input.ScopeKey, timeArg(input.ValidFrom), timeArg(input.ValidTo), string(metadata), spaceID).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -673,6 +687,9 @@ func upsertRelationshipRecord(
 	}
 	existing, err = selectRelationshipByIdentity(ctx, tx, input)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireSemanticSpaceMatch(spaceID, existing.SpaceID); err != nil {
 		return nil, err
 	}
 	if !nullableTimesEqual(existing.ValidTo, input.ValidTo) {

@@ -785,9 +785,13 @@ func insertEntityReviewTask(
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO review_tasks (
 		    team_id, owner_profile_id, ingest_id, placement_item_id,
-		    task_type, status, reason, payload, dedupe_key, assessment_id, expires_at, updated_at
+		    space_id, task_type, status, reason, payload, dedupe_key, assessment_id, expires_at, updated_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+		    (SELECT placement.space_id
+		     FROM placement_items AS placement
+		     WHERE placement.team_id = ?::uuid
+		       AND placement.placement_item_id = ?::uuid),
 		    'identity_needs_review', 'open', 'ambiguous_entity', ?::jsonb, ?,
 		    NULLIF(?, '')::uuid,
 		    CASE WHEN NULLIF(?, '') IS NULL THEN NULL ELSE now() + interval '7 days' END,
@@ -802,6 +806,7 @@ func insertEntityReviewTask(
 		              updated_at = now()
 		RETURNING review_task_id::text
 	`, commit.TeamID, commit.OwnerProfileID, commit.IngestID, commit.PlacementItemID,
+		commit.TeamID, commit.PlacementItemID,
 		string(payloadJSON), dedupeKey, input.AssessmentID, input.AssessmentID).Rows()
 	if err != nil {
 		return "", err

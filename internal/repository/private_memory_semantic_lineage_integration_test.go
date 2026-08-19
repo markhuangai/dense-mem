@@ -16,6 +16,7 @@ import (
 func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
+	insertSearchTestContract(t, adminDB, rls, "private-semantic-lineage", 3, "exact", "")
 
 	ctx := context.Background()
 	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-semantic-lineage"))
@@ -26,8 +27,8 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 	sharedSpaceID, err := credentialRepo.GetTeamSharedSpaceID(ctx, teamID)
 	require.NoError(t, err)
 
-	privateSubjectID, privateObjectID := uuid.New(), uuid.New()
-	relationshipID, ingestID, fragmentID := uuid.New(), uuid.New(), uuid.New()
+	privateSubjectID, privateObjectID, correctedObjectID := uuid.New(), uuid.New(), uuid.New()
+	ingestID, fragmentID := uuid.New(), uuid.New()
 	content := "Private semantic lineage evidence."
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := seedTeamPredicateDefinitions(ctx, tx, teamID.String()); err != nil {
@@ -35,19 +36,8 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 		}
 		if err := tx.Exec(`
 			INSERT INTO entity_records (team_id, entity_id, entity_kind, space_id)
-			VALUES (?, ?, 'project', ?), (?, ?, 'product', ?)
-		`, teamID, privateSubjectID, target.MemorySpaceID, teamID, privateObjectID, target.MemorySpaceID).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`
-			INSERT INTO relationship_records (
-				team_id, relationship_id, owner_profile_id, semantic_group_key,
-				subject_entity_id, predicate_key, predicate_version, object_entity_id,
-				relationship_kind, current_cardinality, status, support_count,
-				source_group_count, space_id
-			) VALUES (?, ?, ?, 'private-semantic-lineage', ?, 'uses', 1, ?,
-				'state', 'many', 'active', 0, 0, ?)
-		`, teamID, relationshipID, ownerID, privateSubjectID, privateObjectID, target.MemorySpaceID).Error; err != nil {
+			VALUES (?, ?, 'project', ?), (?, ?, 'product', ?), (?, ?, 'product', ?)
+		`, teamID, privateSubjectID, target.MemorySpaceID, teamID, privateObjectID, target.MemorySpaceID, teamID, correctedObjectID, target.MemorySpaceID).Error; err != nil {
 			return err
 		}
 		if err := tx.Exec(`
@@ -102,8 +92,42 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 	})
 	require.NoError(t, err)
 	require.NotNil(t, decision.Relationship)
-	require.Equal(t, relationshipID.String(), decision.Relationship.RelationshipID)
+	relationshipID := decision.Relationship.RelationshipID
 	require.Equal(t, target.MemorySpaceID.String(), decision.Relationship.SpaceID)
+
+	correction, err := semantic.CorrectRelationship(semanticCtx, CorrectRelationshipInput{
+		TeamID:          teamID.String(),
+		OwnerProfileID:  ownerID.String(),
+		Action:          "submit",
+		RelationshipID:  relationshipID,
+		ExpectedVersion: decision.Relationship.Version,
+		Patch: RelationshipCorrectionPatch{
+			ObjectEntity: &RelationshipCorrectionEntityPatch{EntityID: correctedObjectID.String()},
+		},
+		Supports:       []RelationshipCorrectionSupport{{EvidenceID: fragmentID.String(), Start: 0, End: len(content)}},
+		Reason:         "private correction lineage regression",
+		IdempotencyKey: "private-correction-lineage",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "completed", correction.ProcessingState)
+	require.NotNil(t, correction.Correction)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var submissionSpace, eventSpace, crossReferenceSpace string
+		if err := tx.Raw(`SELECT space_id::text FROM relationship_correction_submissions WHERE submission_id = ?`, correction.SubmissionID).Row().Scan(&submissionSpace); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT space_id::text FROM relationship_correction_events WHERE submission_id = ?`, correction.SubmissionID).Row().Scan(&eventSpace); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT space_id::text FROM relationship_cross_references WHERE source_relationship_id = ?`, correction.Correction.SuccessorRelationshipID).Row().Scan(&crossReferenceSpace); err != nil {
+			return err
+		}
+		require.Equal(t, target.MemorySpaceID.String(), submissionSpace)
+		require.Equal(t, target.MemorySpaceID.String(), eventSpace)
+		require.Equal(t, target.MemorySpaceID.String(), crossReferenceSpace)
+		return nil
+	}))
 
 	var dependentSpaces []string
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
@@ -136,8 +160,55 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 		require.Equal(t, target.MemorySpaceID.String(), spaceID)
 	}
 
+	reviewIngestID, reviewFragmentID := uuid.New(), uuid.New()
+	reviewContent := "Private semantic review evidence."
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id, idempotency_key, request_hash,
+				source_summary, status, proposal, metadata, space_id
+			) VALUES (?, ?, ?, ?, ?, ?, 'queued', '{}'::jsonb, '{}'::jsonb, ?)
+		`, teamID, reviewIngestID, ownerID, "private-review-"+reviewIngestID.String(), "hash-"+reviewIngestID.String(), reviewContent, target.MemorySpaceID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO evidence_fragments (
+				team_id, fragment_id, ingest_id, owner_profile_id, evidence_index,
+				content, content_hash, source_type, authority, labels, metadata, space_id
+			) VALUES (?, ?, ?, ?, 0, ?, ?, 'conversation', 'primary', ARRAY[]::text[], '{}'::jsonb, ?)
+		`, teamID, reviewFragmentID, reviewIngestID, ownerID, reviewContent, "hash-"+reviewFragmentID.String(), target.MemorySpaceID).Error
+	}))
+	review, err := semantic.ApplyRelationshipDecision(semanticCtx, ApplyRelationshipDecisionInput{
+		TeamID:            teamID.String(),
+		OwnerProfileID:    ownerID.String(),
+		IngestID:          reviewIngestID.String(),
+		SubjectEntityID:   privateSubjectID.String(),
+		PredicateKey:      "private_unknown_predicate",
+		PredicateVersion:  1,
+		OriginalPredicate: "private_unknown_predicate",
+		SubjectRef:        "Private subject",
+		ObjectRef:         "Private object",
+		ObjectEntityID:    privateObjectID.String(),
+		EvidenceVerdict:   string(domain.VerificationInsufficient),
+	})
+	require.NoError(t, err)
+	require.Empty(t, review.Relationship)
+	require.NotEmpty(t, review.ReviewTaskID)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var observationSpace, taskSpace string
+		if err := tx.Raw(`SELECT space_id::text FROM relationship_observations WHERE observation_id = ?`, review.ObservationID).Row().Scan(&observationSpace); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT space_id::text FROM review_tasks WHERE review_task_id = ?`, review.ReviewTaskID).Row().Scan(&taskSpace); err != nil {
+			return err
+		}
+		require.Equal(t, target.MemorySpaceID.String(), observationSpace)
+		require.Equal(t, target.MemorySpaceID.String(), taskSpace)
+		return nil
+	}))
+
 	trace, err := semantic.TraceRelationship(semanticCtx, TraceRelationshipInput{
-		TeamID: teamID.String(), RelationshipID: relationshipID.String(), MaxEvents: 20,
+		TeamID: teamID.String(), RelationshipID: relationshipID, MaxEvents: 20,
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, trace.Observations)
@@ -165,7 +236,8 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 		for _, table := range []string{
 			"relationship_records", "relationship_observations", "verification_events",
 			"relationship_evidence_supports", "relationship_support_decision_events",
-			"relationship_transition_events",
+			"relationship_transition_events", "relationship_correction_submissions",
+			"relationship_correction_events", "relationship_cross_references",
 		} {
 			var count int64
 			if err := tx.Raw("SELECT COUNT(*) FROM "+table+" WHERE space_id = ?", target.MemorySpaceID).Scan(&count).Error; err != nil {

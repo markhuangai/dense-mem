@@ -575,6 +575,9 @@ func applyRelationshipDecisionInTx(
 	input ApplyRelationshipDecisionInput,
 ) (*RelationshipDecisionResult, error) {
 	input = normalizeApplyRelationshipDecisionInput(input)
+	if err := validateSupportOwnership(ctx, tx, input); err != nil {
+		return nil, err
+	}
 	predicate, err := loadPredicateDefinition(ctx, tx, input.TeamID, input.PredicateKey, input.PredicateVersion)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return insertPredicateReview(ctx, tx, input)

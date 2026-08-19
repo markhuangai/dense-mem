@@ -7,6 +7,24 @@ import (
 )
 
 func insertRelationshipObservation(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput, relationshipID string) (string, error) {
+	spaceID, err := loadSemanticInputSpaceID(ctx, tx, input)
+	if err != nil {
+		return "", err
+	}
+	if relationshipID != "" {
+		var relationshipSpaceID string
+		if err := tx.WithContext(ctx).Raw(`
+			SELECT space_id::text
+			FROM relationship_records
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+		`, input.TeamID, relationshipID).Row().Scan(&relationshipSpaceID); err != nil {
+			return "", err
+		}
+		if err := requireSemanticSpaceMatch(spaceID, relationshipSpaceID); err != nil {
+			return "", err
+		}
+	}
 	supports := relationshipEvidenceSupports(input.Support, input.Supports)
 	evidence := make([]map[string]any, 0, len(supports))
 	for _, support := range supports {
@@ -35,20 +53,14 @@ func insertRelationshipObservation(ctx context.Context, tx *gorm.DB, input Apply
 		    ?, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, ''), NULLIF(?, 0),
 		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, NULLIF(?, ''),
 		    ?, ?, ?::jsonb, ?::jsonb,
-		    COALESCE(
-		        (SELECT relationship.space_id
-		         FROM relationship_records AS relationship
-		         WHERE relationship.team_id = ?::uuid
-		           AND relationship.relationship_id = NULLIF(?, '')::uuid),
-		        dense_mem_team_shared_space(?::uuid)
-		    )
+		    ?::uuid
 		)
 		RETURNING observation_id::text
 	`, input.TeamID, relationshipID, input.IngestID, input.PlacementItemID, input.OwnerProfileID,
 		input.SubjectRef, input.OriginalPredicate, input.ObjectRef, input.SubjectEntityID,
 		input.PredicateKey, input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
 		input.Polarity, input.ScopeKey, timeArg(input.ValidFrom), timeArg(input.ValidTo), string(evidenceJSON),
-		string(metadata), input.TeamID, relationshipID, input.TeamID).Rows()
+		string(metadata), spaceID).Rows()
 	if err != nil {
 		return "", err
 	}
@@ -76,20 +88,17 @@ func insertVerificationEvent(ctx context.Context, tx *gorm.DB, input ApplyRelati
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?::jsonb,
 		    NULLIF(?, '')::uuid, NULLIF(?, ''), ?, NULLIF(?, ''),
-		    COALESCE(
-		        (SELECT observation.space_id
-		         FROM relationship_observations AS observation
-		         WHERE observation.team_id = ?::uuid
-		           AND observation.observation_id = ?::uuid),
-		        dense_mem_team_shared_space(?::uuid)
-		    )
+		    (SELECT observation.space_id
+		     FROM relationship_observations AS observation
+		     WHERE observation.team_id = ?::uuid
+		       AND observation.observation_id = ?::uuid)
 		)
 		RETURNING verification_event_id::text
 	`, input.TeamID, observationID, input.OwnerProfileID, input.EvidenceVerdict,
 		confidenceArg(input.Confidence), input.Rationale, input.Model, input.ResponseHash,
 		string(metadata), input.AssessmentID, input.AssessmentPolicyVersion,
 		confidenceArg(input.ThresholdUsed), input.GateResult,
-		input.TeamID, observationID, input.TeamID).Rows()
+		input.TeamID, observationID).Rows()
 	if err != nil {
 		return "", err
 	}
