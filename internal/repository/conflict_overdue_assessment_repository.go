@@ -230,14 +230,16 @@ func (r *LedgerRepositoryImpl) ReserveOverdueConflictAssessment(
 		var assessmentAttemptID string
 		err = tx.WithContext(ctx).Raw(`
 			INSERT INTO relationship_conflict_ai_assessment_attempts (
-			    team_id, conflict_id, case_version, local_assessment_date, model, policy_version
+			    team_id, space_id, conflict_id, case_version, local_assessment_date, model, policy_version
 			) VALUES (
-			    ?::uuid, ?::uuid, ?, ?, ?, ?
+			    ?::uuid,
+			    (SELECT space_id FROM relationship_conflict_cases WHERE team_id = ?::uuid AND conflict_id = ?::uuid),
+			    ?::uuid, ?, ?, ?, ?
 			)
 			ON CONFLICT (team_id, conflict_id, case_version, local_assessment_date, model, policy_version)
 			DO NOTHING
 			RETURNING assessment_attempt_id::text
-		`, input.TeamID, input.ConflictID, version, input.LocalAssessmentDate, input.Model, input.PolicyVersion).Row().Scan(&assessmentAttemptID)
+		`, input.TeamID, input.TeamID, input.ConflictID, input.ConflictID, version, input.LocalAssessmentDate, input.Model, input.PolicyVersion).Row().Scan(&assessmentAttemptID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
@@ -495,11 +497,18 @@ func appendConflictAssessmentEvent(
 	}
 	return tx.WithContext(ctx).Exec(`
 		INSERT INTO relationship_conflict_ai_assessment_events (
-		    team_id, assessment_attempt_id, action, outcome, metadata
+		    team_id, space_id, assessment_attempt_id, action, outcome, metadata
 		) VALUES (
-		    ?::uuid, ?::uuid, ?, ?, ?::jsonb
+		    ?::uuid,
+		    (SELECT conflict.space_id
+		     FROM relationship_conflict_ai_assessment_attempts AS attempt
+		     JOIN relationship_conflict_cases AS conflict
+		       ON conflict.team_id = attempt.team_id
+		      AND conflict.conflict_id = attempt.conflict_id
+		     WHERE attempt.team_id = ?::uuid AND attempt.assessment_attempt_id = ?::uuid),
+		    ?::uuid, ?, ?, ?::jsonb
 		)
-	`, teamID, assessmentAttemptID, action, outcome, string(encoded)).Error
+	`, teamID, teamID, assessmentAttemptID, assessmentAttemptID, action, outcome, string(encoded)).Error
 }
 
 func supersedeReservedOverdueConflictAssessments(

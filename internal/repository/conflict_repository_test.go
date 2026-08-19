@@ -141,6 +141,21 @@ func TestConflictNextReviewAtUsesFutureDueInsideDailyInterval(t *testing.T) {
 	assert.Equal(t, now.Add(24*time.Hour), conflictNextReviewAt(now, now.Add(48*time.Hour)))
 }
 
+func TestRelationshipConflictScopeKeySeparatesPrivateSpaces(t *testing.T) {
+	record := &RelationshipRecord{
+		TeamID: "team", SubjectEntityID: "subject", PredicateKey: "predicate",
+		RelationshipKind: "state", CurrentCardinality: "one", Polarity: "+", ScopeKey: "",
+	}
+
+	shared := relationshipConflictScopeKey(record, "shared-space", string(domain.MemorySpaceTeamShared))
+	privateA := relationshipConflictScopeKey(record, "private-a", string(domain.MemorySpaceProfilePrivate))
+	privateB := relationshipConflictScopeKey(record, "private-b", string(domain.MemorySpaceProfilePrivate))
+
+	assert.Equal(t, shared, relationshipConflictScopeKey(record, "another-shared-space", string(domain.MemorySpaceTeamShared)))
+	assert.NotEqual(t, privateA, privateB)
+	assert.NotEqual(t, shared, privateA)
+}
+
 func TestNormalizeConflictReviewRunInputRejectsInvalidTimezone(t *testing.T) {
 	_, err := normalizeConflictReviewRunInput(ConflictReviewRunInput{
 		TeamID:   "00000000-0000-0000-0000-000000000001",

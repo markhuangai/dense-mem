@@ -3,11 +3,83 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestLedgerEvidenceLifecyclePersistsTargetSpaceAndRejectsMixedSpaces(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-lifecycle-space")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-lifecycle-space-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	sharedTarget := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "lifecycle-shared", "Shared lifecycle evidence.")
+	privateIngestID := uuid.New()
+	privateFragmentID := uuid.New()
+	var privateSpaceID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			INSERT INTO memory_spaces (team_id, kind, owner_profile_id)
+			VALUES (?, 'profile_private', ?)
+			RETURNING id::text
+		`, teamID, ownerID).Row().Scan(&privateSpaceID); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		if err := tx.Exec(`
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id, request_hash, source_summary,
+				status, proposal, metadata, space_id, created_at, updated_at
+			) VALUES (?, ?, ?, ?, 'Private lifecycle evidence.', 'queued', '{}'::jsonb, '{}'::jsonb, ?, ?, ?)
+		`, teamID, privateIngestID, ownerID, "hash-"+privateIngestID.String(), privateSpaceID, now, now).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO evidence_fragments (
+				team_id, fragment_id, ingest_id, owner_profile_id, evidence_index,
+				content, content_hash, source_type, authority, labels, metadata, space_id
+			) VALUES (?, ?, ?, ?, 0, 'Private lifecycle evidence.', ?, 'conversation', 'primary', ARRAY[]::text[], '{}'::jsonb, ?)
+		`, teamID, privateFragmentID, privateIngestID, ownerID, "hash-"+privateFragmentID.String(), privateSpaceID).Error
+	}))
+
+	_, err := ledger.RetractEvidence(ctx, RetractEvidenceInput{
+		TeamID: teamID, OwnerProfileID: ownerID,
+		EvidenceIDs: []string{privateFragmentID.String(), sharedTarget.Evidence[0].FragmentID},
+		Reason:      "mixed-space lifecycle test", IdempotencyKey: "mixed-space-lifecycle", RequestHash: "mixed-space-lifecycle-hash",
+	})
+	require.ErrorIs(t, err, ErrEvidenceLifecycleConflict)
+
+	result, err := ledger.RetractEvidence(ctx, RetractEvidenceInput{
+		TeamID: teamID, OwnerProfileID: ownerID,
+		EvidenceIDs: []string{privateFragmentID.String()},
+		Reason:      "private lifecycle test", IdempotencyKey: "private-space-lifecycle", RequestHash: "private-space-lifecycle-hash",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, result.DecisionID)
+
+	var operationSpaceID, eventSpaceID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT space_id::text
+			FROM evidence_lifecycle_operations
+			WHERE team_id = ? AND lifecycle_operation_id = ?::uuid
+		`, teamID, result.DecisionID).Row().Scan(&operationSpaceID); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT space_id::text
+			FROM evidence_lifecycle_events
+			WHERE team_id = ? AND lifecycle_operation_id = ?::uuid
+		`, teamID, result.DecisionID).Row().Scan(&eventSpaceID)
+	}))
+	require.Equal(t, privateSpaceID, operationSpaceID)
+	require.Equal(t, privateSpaceID, eventSpaceID)
+}
 
 func TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)

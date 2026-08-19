@@ -516,7 +516,15 @@ func (r *PrivateMemoryRepositoryImpl) DisableSSOCredential(ctx context.Context, 
 			UPDATE team_memberships
 			SET status = 'revoked', updated_at = $1
 			WHERE team_id = $2 AND actor_identity_id = $3
-		`, now, input.TeamID, actorIdentityID).Error; err != nil {
+			  AND NOT EXISTS (
+				SELECT 1
+				FROM credentials AS other
+				WHERE other.team_id = team_memberships.team_id
+				  AND other.actor_identity_id = team_memberships.actor_identity_id
+				  AND other.id <> $4
+				  AND other.status = 'active'
+			  )
+		`, now, input.TeamID, actorIdentityID, input.CredentialID).Error; err != nil {
 			return err
 		}
 		if err := tx.WithContext(ctx).Exec(`

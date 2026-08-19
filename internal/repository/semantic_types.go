@@ -256,6 +256,7 @@ type ApplyRelationshipDecisionInput struct {
 type RelationshipRecord struct {
 	TeamID             string
 	RelationshipID     string
+	SpaceID            string `json:"-"`
 	OwnerProfileID     string
 	SemanticGroupKey   string
 	SubjectEntityID    string

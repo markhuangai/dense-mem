@@ -311,6 +311,7 @@ func refreshRelationshipConflictCaseSnapshotForReview(
 ) (*RelationshipConflictCaseRecord, bool, error) {
 	source := &RelationshipRecord{
 		TeamID:             record.TeamID,
+		SpaceID:            record.SpaceID,
 		SubjectEntityID:    record.SubjectEntityID,
 		PredicateKey:       record.PredicateKey,
 		RelationshipKind:   record.RelationshipKind,

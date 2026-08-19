@@ -631,14 +631,16 @@ func ensureConflictResolutionPlan(
 	method := input.Method
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO relationship_conflict_resolution_plans (
-		    team_id, conflict_id, expected_case_version, preferred_position_id,
+		    team_id, space_id, conflict_id, expected_case_version, preferred_position_id,
 		    assessment_attempt_id, method, effective_at, effective_time_basis
 		) VALUES (
-		    ?::uuid, ?::uuid, ?, ?::uuid,
+		    ?::uuid,
+		    (SELECT space_id FROM relationship_conflict_cases WHERE team_id = ?::uuid AND conflict_id = ?::uuid),
+		    ?::uuid, ?, ?::uuid,
 		    NULLIF(?, '')::uuid, ?, ?, ?
 		)
 		RETURNING resolution_plan_id::text, status
-	`, input.TeamID, input.ConflictID, input.ExpectedCaseVersion, input.PreferredPositionID,
+	`, input.TeamID, input.TeamID, input.ConflictID, input.ConflictID, input.ExpectedCaseVersion, input.PreferredPositionID,
 		input.AssessmentAttemptID, method, effectiveAt, effectiveTimeBasis).Rows()
 	if err != nil {
 		return "", "", err
@@ -831,7 +833,7 @@ func retractConflictLosingEvidence(
 			if err != nil {
 				return nil, err
 			}
-			if err := insertEvidenceLifecycleEvents(ctx, tx, operation, operationID); err != nil {
+			if err := insertEvidenceLifecycleEvents(ctx, tx, operation, operationID, plan.SpaceID); err != nil {
 				return nil, err
 			}
 			if err := applyEvidenceLifecycleEffectsInSystem(ctx, tx, operation, operationID, plan); err != nil {
@@ -899,17 +901,19 @@ func enqueueConflictDerivedEvidenceTasks(
 		var taskID string
 		err := tx.WithContext(ctx).Raw(`
 			INSERT INTO relationship_conflict_derived_evidence_tasks (
-			    team_id, resolution_plan_id, conflict_id,
+			    team_id, space_id, resolution_plan_id, conflict_id,
 			    target_fragment_id, target_owner_profile_id, selected_position_id,
 			    system_profile_id, source_group_key, origin_evidence_index
 		) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid,
+			    ?::uuid,
+			    (SELECT space_id FROM relationship_conflict_cases WHERE team_id = ?::uuid AND conflict_id = ?::uuid),
+			    ?::uuid, ?::uuid,
 			    ?::uuid, ?::uuid, ?::uuid,
 			    ?::uuid, ?, ?
 		)
 			ON CONFLICT (team_id, conflict_id, target_fragment_id) DO NOTHING
 			RETURNING derived_evidence_task_id::text
-		`, target.TeamID, resolutionPlanID, target.ConflictID,
+		`, target.TeamID, target.TeamID, target.ConflictID, resolutionPlanID, target.ConflictID,
 			target.TargetFragmentID, target.TargetOwnerProfileID, target.SelectedPositionID,
 			target.SystemProfileID, target.SourceGroupKey, target.EvidenceIndex).Row().Scan(&taskID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {

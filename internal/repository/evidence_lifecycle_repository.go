@@ -51,6 +51,7 @@ type evidenceLifecycleOperationInput struct {
 }
 
 type evidenceLifecyclePlan struct {
+	SpaceID                         string
 	EvidenceIDs                     []string
 	Supports                        []evidenceLifecycleSupport
 	AffectedRelationshipCount       int
@@ -111,7 +112,7 @@ func (r *LedgerRepositoryImpl) RetractEvidence(ctx context.Context, input Retrac
 		if err != nil {
 			return err
 		}
-		if err := insertEvidenceLifecycleEvents(ctx, tx, operation, decisionID); err != nil {
+		if err := insertEvidenceLifecycleEvents(ctx, tx, operation, decisionID, planned.SpaceID); err != nil {
 			return err
 		}
 		if err := applyEvidenceLifecycleEffects(ctx, tx, operation, decisionID, planned); err != nil {
@@ -322,7 +323,7 @@ func applyDirectEvidenceSupersessions(
 		if err != nil {
 			return err
 		}
-		if err := insertEvidenceLifecycleEvents(ctx, tx, operation, decisionID); err != nil {
+		if err := insertEvidenceLifecycleEvents(ctx, tx, operation, decisionID, planned.SpaceID); err != nil {
 			return err
 		}
 		if err := applyEvidenceLifecycleEffects(ctx, tx, operation, decisionID, planned); err != nil {
@@ -372,14 +373,15 @@ func planEvidenceLifecycleInSystem(
 	input evidenceLifecycleOperationInput,
 ) (*evidenceLifecyclePlan, error) {
 	evidenceIDs := sortedEvidenceIDs(input.EvidenceIDs)
-	if err := validateEvidenceLifecycleTargets(ctx, tx, input.TeamID, input.OwnerProfileID, evidenceIDs); err != nil {
+	targetSpaceID, err := validateEvidenceLifecycleTargets(ctx, tx, input.TeamID, input.OwnerProfileID, evidenceIDs)
+	if err != nil {
 		return nil, err
 	}
 	supports, err := loadEffectiveEvidenceLifecycleSupports(ctx, tx, input.TeamID, evidenceIDs)
 	if err != nil {
 		return nil, err
 	}
-	plan := &evidenceLifecyclePlan{EvidenceIDs: evidenceIDs, Supports: supports}
+	plan := &evidenceLifecyclePlan{SpaceID: targetSpaceID, EvidenceIDs: evidenceIDs, Supports: supports}
 	supportsByRelationship := make(map[string][]evidenceLifecycleSupport)
 	for _, support := range supports {
 		supportsByRelationship[support.RelationshipID] = append(supportsByRelationship[support.RelationshipID], support)
@@ -422,10 +424,11 @@ func validateEvidenceLifecycleTargets(
 	teamID string,
 	ownerProfileID string,
 	evidenceIDs []string,
-) error {
+) (string, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT fragment.fragment_id::text,
 		       fragment.owner_profile_id::text,
+		       fragment.space_id::text,
 		       COALESCE(fragment.source_revision_id::text, ''),
 		       COALESCE(source.current_revision_id::text, ''),
 		       EXISTS (
@@ -443,11 +446,12 @@ func validateEvidenceLifecycleTargets(
 		ORDER BY fragment.fragment_id ASC
 	`, teamID, pq.Array(evidenceIDs)).Rows()
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer rows.Close()
 	type targetState struct {
 		ownerProfileID    string
+		spaceID           string
 		sourceRevisionID  string
 		currentRevisionID string
 		terminal          bool
@@ -456,27 +460,36 @@ func validateEvidenceLifecycleTargets(
 	for rows.Next() {
 		var evidenceID string
 		var state targetState
-		if err := rows.Scan(&evidenceID, &state.ownerProfileID, &state.sourceRevisionID, &state.currentRevisionID, &state.terminal); err != nil {
-			return err
+		if err := rows.Scan(&evidenceID, &state.ownerProfileID, &state.spaceID, &state.sourceRevisionID, &state.currentRevisionID, &state.terminal); err != nil {
+			return "", err
 		}
 		states[evidenceID] = state
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return "", err
 	}
+	targetSpaceID := ""
 	for _, evidenceID := range evidenceIDs {
 		state, exists := states[evidenceID]
 		if !exists || state.ownerProfileID != ownerProfileID {
-			return ErrEvidenceLifecycleNotFound
+			return "", ErrEvidenceLifecycleNotFound
+		}
+		if state.spaceID == "" {
+			return "", ErrEvidenceLifecycleNotFound
+		}
+		if targetSpaceID == "" {
+			targetSpaceID = state.spaceID
+		} else if targetSpaceID != state.spaceID {
+			return "", ErrEvidenceLifecycleConflict
 		}
 		if state.terminal {
-			return ErrEvidenceLifecycleConflict
+			return "", ErrEvidenceLifecycleConflict
 		}
 		if state.sourceRevisionID != "" && state.sourceRevisionID != state.currentRevisionID {
-			return ErrEvidenceLifecycleConflict
+			return "", ErrEvidenceLifecycleConflict
 		}
 	}
-	return nil
+	return targetSpaceID, nil
 }
 
 func loadEffectiveEvidenceLifecycleSupports(
@@ -542,13 +555,13 @@ func insertEvidenceLifecycleOperation(
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_lifecycle_operations (
-		    team_id, owner_profile_id, actor_profile_id, action, idempotency_key, request_hash,
+		    team_id, space_id, owner_profile_id, actor_profile_id, action, idempotency_key, request_hash,
 		    reason, replacement_ingest_id, result
 		) VALUES (
-		    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, NULLIF(?, '')::uuid, ?::jsonb
+		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, NULLIF(?, '')::uuid, ?::jsonb
 		)
 		RETURNING lifecycle_operation_id::text
-	`, input.TeamID, input.OwnerProfileID, input.ActorProfileID, input.Action, input.IdempotencyKey, input.RequestHash,
+	`, input.TeamID, plan.SpaceID, input.OwnerProfileID, input.ActorProfileID, input.Action, input.IdempotencyKey, input.RequestHash,
 		input.Reason, input.ReplacementIngestID, string(encoded)).Rows()
 	if err != nil {
 		if isPostgresUniqueConstraint(err, "evidence_lifecycle_operations_idempotency_unique") {
@@ -599,16 +612,17 @@ func insertEvidenceLifecycleEvents(
 	tx *gorm.DB,
 	input evidenceLifecycleOperationInput,
 	operationID string,
+	spaceID string,
 ) error {
 	for _, evidenceID := range sortedEvidenceIDs(input.EvidenceIDs) {
 		result := tx.WithContext(ctx).Exec(`
 			INSERT INTO evidence_lifecycle_events (
 			    team_id, lifecycle_operation_id, target_fragment_id,
-			    replacement_fragment_id, owner_profile_id, action
+			    replacement_fragment_id, owner_profile_id, action, space_id
 			) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?::uuid, ?
+			    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?::uuid, ?, ?::uuid
 			)
-		`, input.TeamID, operationID, evidenceID, input.ReplacementID, input.OwnerProfileID, input.Action)
+		`, input.TeamID, operationID, evidenceID, input.ReplacementID, input.OwnerProfileID, input.Action, spaceID)
 		if result.Error != nil {
 			if isPostgresUniqueConstraint(result.Error, "evidence_lifecycle_events_terminal_target_unique") {
 				return fmt.Errorf("%w: evidence target is already terminal", ErrEvidenceLifecycleConflict)

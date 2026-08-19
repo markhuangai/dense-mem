@@ -82,15 +82,17 @@ func (r *LedgerRepositoryImpl) StageConflictDerivedEvidence(
 		var existingReplacement string
 		err := tx.WithContext(ctx).Raw(`
 			INSERT INTO relationship_conflict_evidence_derivations (
-			    team_id, conflict_id, target_fragment_id, target_owner_profile_id,
+			    team_id, space_id, conflict_id, target_fragment_id, target_owner_profile_id,
 			    selected_position_id, replacement_fragment_id, system_profile_id
 		) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+			    ?::uuid,
+			    (SELECT space_id FROM relationship_conflict_cases WHERE team_id = ?::uuid AND conflict_id = ?::uuid),
+			    ?::uuid, ?::uuid, ?::uuid,
 			    ?::uuid, ?::uuid, ?::uuid
 		)
 			ON CONFLICT (team_id, conflict_id, target_fragment_id) DO NOTHING
 			RETURNING replacement_fragment_id::text
-		`, target.TeamID, target.ConflictID, target.TargetFragmentID, target.TargetOwnerProfileID,
+		`, target.TeamID, target.TeamID, target.ConflictID, target.ConflictID, target.TargetFragmentID, target.TargetOwnerProfileID,
 			target.SelectedPositionID, result.ReplacementFragment, target.SystemProfileID).Row().Scan(&existingReplacement)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err

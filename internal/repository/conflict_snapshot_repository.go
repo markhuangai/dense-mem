@@ -48,19 +48,20 @@ func upsertRelationshipConflictPosition(
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH inserted AS (
 			INSERT INTO relationship_conflict_positions (
-			    team_id, conflict_id, position_key, object_entity_id, object_value_id
+			    team_id, space_id, conflict_id, position_key, object_entity_id, object_value_id
 			) VALUES (
-			    ?::uuid, ?::uuid, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid
+			    ?::uuid, ?::uuid, ?::uuid, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid
 			)
 			ON CONFLICT (team_id, conflict_id, position_key)
 				DO UPDATE SET active = true,
+				              space_id = EXCLUDED.space_id,
 				              retired_at = NULL,
 				              last_seen_at = now(),
 				              updated_at = now()
 			RETURNING position_id::text, (xmax = 0) AS created
 		)
 		SELECT position_id, created FROM inserted
-	`, teamID, conflictID, first.PositionKey, first.ObjectEntityID, first.ObjectValueID).Rows()
+		`, teamID, first.SpaceID, conflictID, first.PositionKey, first.ObjectEntityID, first.ObjectValueID).Rows()
 	if err != nil {
 		return false, err
 	}
@@ -117,11 +118,11 @@ func upsertRelationshipConflictMember(
 	}
 	result := tx.WithContext(ctx).Exec(`
 		INSERT INTO relationship_conflict_position_members (
-			    team_id, conflict_id, position_id, relationship_id, owner_profile_id,
+			    team_id, space_id, conflict_id, position_id, relationship_id, owner_profile_id,
 			    support_id, verification_event_id, fragment_id, source_group_key, authority,
 			    accepted_at, effective_at, effective_time_basis, recorded_fallback, active, retired_at, metadata
 		) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
 			    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?,
 			    ?, ?, ?, ?, true, NULL, ?::jsonb
 		)
@@ -135,10 +136,11 @@ func upsertRelationshipConflictMember(
 			              effective_time_basis = EXCLUDED.effective_time_basis,
 			              recorded_fallback = EXCLUDED.recorded_fallback,
 			              active = true,
+			              space_id = EXCLUDED.space_id,
 			              retired_at = NULL,
 			              last_seen_at = now(),
 			              metadata = EXCLUDED.metadata
-	`, teamID, conflictID, positionID, row.RelationshipID, row.OwnerProfileID,
+		`, teamID, row.SpaceID, conflictID, positionID, row.RelationshipID, row.OwnerProfileID,
 		row.SupportID, row.VerificationEventID, row.FragmentID, row.SourceGroupKey, row.Authority,
 		row.AcceptedAt, row.EffectiveAt, row.EffectiveTimeBasis, row.RecordedFallback, string(metadata))
 	if result.Error != nil {
@@ -184,16 +186,18 @@ func relationshipConflictPositionWouldChange(
 	row conflictPlacementRow,
 ) (bool, error) {
 	var positionID string
+	var spaceID string
 	var active bool
 	var retiredAt sql.NullTime
 	scan := tx.WithContext(ctx).Raw(`
-		SELECT position_id::text, active, retired_at
+		SELECT position_id::text, space_id::text, active, retired_at
 		FROM relationship_conflict_positions
 		WHERE team_id = ?::uuid
 		  AND conflict_id = ?::uuid
 		  AND position_key = ?
 	`, teamID, conflictID, row.PositionKey).Row().Scan(
 		&positionID,
+		&spaceID,
 		&active,
 		&retiredAt,
 	)
@@ -203,7 +207,8 @@ func relationshipConflictPositionWouldChange(
 	if scan != nil {
 		return false, scan
 	}
-	return !active ||
+	return spaceID != row.SpaceID ||
+		!active ||
 		retiredAt.Valid, nil
 }
 
@@ -215,6 +220,7 @@ func relationshipConflictMemberWouldChange(
 	row conflictPlacementRow,
 ) (bool, error) {
 	var supportID string
+	var spaceID string
 	var verificationEventID string
 	var fragmentID string
 	var authority string
@@ -225,7 +231,8 @@ func relationshipConflictMemberWouldChange(
 	var active bool
 	var retiredAt sql.NullTime
 	scan := tx.WithContext(ctx).Raw(`
-		SELECT COALESCE(support_id::text, ''),
+		SELECT space_id::text,
+		       COALESCE(support_id::text, ''),
 		       COALESCE(verification_event_id::text, ''),
 		       COALESCE(fragment_id::text, ''),
 		       authority,
@@ -241,6 +248,7 @@ func relationshipConflictMemberWouldChange(
 		  AND relationship_id = ?::uuid
 		  AND source_group_key = ?
 	`, teamID, positionID, row.RelationshipID, row.SourceGroupKey).Row().Scan(
+		&spaceID,
 		&supportID,
 		&verificationEventID,
 		&fragmentID,
@@ -258,7 +266,8 @@ func relationshipConflictMemberWouldChange(
 	if scan != nil {
 		return false, scan
 	}
-	return supportID != row.SupportID ||
+	return spaceID != row.SpaceID ||
+		supportID != row.SupportID ||
 		verificationEventID != row.VerificationEventID ||
 		fragmentID != row.FragmentID ||
 		authority != row.Authority ||

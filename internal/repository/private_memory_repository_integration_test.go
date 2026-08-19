@@ -694,6 +694,15 @@ func TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace(t *te
 	completed, err := repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
 	require.NoError(t, err)
 	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
+	var membershipStatus string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status
+			FROM team_memberships
+			WHERE actor_identity_id = ? AND team_id = ?
+		`, target.ID, teamID).Row().Scan(&membershipStatus)
+	}))
+	require.Equal(t, "active", membershipStatus)
 
 	for _, credentialID := range []uuid.UUID{profile.ID, shared.ID} {
 		preserveRequest := PrivateMemoryErasureRequest{
@@ -742,8 +751,77 @@ func TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace(t *te
 		for _, status := range statuses {
 			require.Equal(t, "disabled", status)
 		}
+		if err := tx.Raw(`
+			SELECT status
+			FROM team_memberships
+			WHERE actor_identity_id = ? AND team_id = ?
+		`, target.ID, teamID).Row().Scan(&membershipStatus); err != nil {
+			return err
+		}
+		require.Equal(t, "revoked", membershipStatus)
 		return nil
 	}))
+}
+
+func TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "sso-delete-shared-actor"))
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "shared-actor-target", domain.CredentialBindingSharedOnly)
+	siblingID := uuid.New()
+	siblingPrefix := "dm_" + siblingID.String()[:20]
+	now := time.Now().UTC()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO credentials (
+				id, actor_identity_id, owner_identity_id, team_id, kind, key_hash, key_prefix,
+				key_suffix, name, scopes, rate_limit, status, memory_binding, memory_space_id,
+				created_at, updated_at
+			) VALUES (?, ?, ?, ?, 'api_key', ?, ?, 'suffix', 'shared-actor-sibling',
+				ARRAY['read','write']::text[], 60, 'active', 'shared_only',
+				(SELECT id FROM memory_spaces WHERE team_id = ? AND kind = 'team_shared'), ?, ?)
+		`, siblingID, target.ActorIdentityID, ownerID, teamID, "hash-"+siblingID.String(), siblingPrefix, teamID, now, now).Error
+	}))
+
+	repo := NewPrivateMemoryRepository(appDB, rls)
+	_, created, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: ownerID, CredentialID: target.ID,
+		IdempotencyScopeHash: privateMemoryHash("shared-actor-target", target.ID.String()),
+		RequestHash:          privateMemoryHash("shared-actor-target-request", target.ID.String()),
+		ReasonCode:           "credential_deleted",
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+	var membershipStatus string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status
+			FROM team_memberships
+			WHERE actor_identity_id = ? AND team_id = ?
+		`, target.ActorIdentityID, teamID).Row().Scan(&membershipStatus)
+	}))
+	require.Equal(t, "active", membershipStatus)
+
+	_, created, err = repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: ownerID, CredentialID: siblingID,
+		IdempotencyScopeHash: privateMemoryHash("shared-actor-sibling", siblingID.String()),
+		RequestHash:          privateMemoryHash("shared-actor-sibling-request", siblingID.String()),
+		ReasonCode:           "credential_deleted",
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status
+			FROM team_memberships
+			WHERE actor_identity_id = ? AND team_id = ?
+		`, target.ActorIdentityID, teamID).Row().Scan(&membershipStatus)
+	}))
+	require.Equal(t, "revoked", membershipStatus)
 }
 
 func seedPrivateMemoryIngest(t *testing.T, db *gorm.DB, rls interface {

@@ -194,6 +194,47 @@ func TestCredentialPrivateMemoryHTTPRequiresWriteScope(t *testing.T) {
 	require.Equal(t, uuid.Nil, stub.credentialID)
 }
 
+func TestSSOPrivateMemoryDeleteRoutesRequireWriteScope(t *testing.T) {
+	teamID := uuid.New()
+	identityID := uuid.New()
+	credentialID := uuid.New()
+	stub := &privateMemoryHTTPServiceStub{operation: privateMemoryHTTPTestOperation(teamID, credentialID)}
+	e := echo.New()
+	e.HTTPErrorHandler = httperr.ErrorHandler
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := httpmw.SetPrincipalForTest(c.Request().Context(), &httpmw.Principal{
+				TeamID: teamID, IdentityID: identityID, OwnerID: identityID,
+				AuthMethod: "oauth", Grants: []string{"read"},
+			})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+	handler := &userPortalHandler{privateMemory: stub}
+	e.DELETE("/ui/api/sso/private-memory", handler.eraseSSOPrivateMemory,
+		httpmw.RequireScopes("write"),
+		httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
+	e.DELETE("/ui/api/sso/credentials/:credentialId", handler.deleteSSOCredential,
+		httpmw.RequireScopes("write"),
+		httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
+
+	for _, path := range []string{
+		"/ui/api/sso/private-memory",
+		"/ui/api/sso/credentials/" + credentialID.String(),
+	} {
+		req := httptest.NewRequest(http.MethodDelete, path, strings.NewReader(`{"acknowledge_irreversible":true}`))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		req.Header.Set("Idempotency-Key", "read-only-erasure")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusForbidden, rec.Code, path)
+	}
+	require.Equal(t, uuid.Nil, stub.profileIdentityID)
+	require.Equal(t, uuid.Nil, stub.credentialID)
+}
+
 func TestOwnerErasureStatusOmitsControlIdentifiers(t *testing.T) {
 	teamID := uuid.New()
 	credentialID := uuid.New()
