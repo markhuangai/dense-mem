@@ -184,6 +184,7 @@ func (h *userPortalHandler) deleteSSOCredential(c echo.Context) error {
 		credentialID,
 		privateMemoryCommand(c),
 		service.PrivateMemoryAuditContext{
+			ActorProfileID:    userPortalPrincipalProfileID(principal),
 			ActorCredentialID: userPortalPrincipalCredentialID(principal),
 			ActorRole:         principal.Role,
 			ClientIP:          c.RealIP(),

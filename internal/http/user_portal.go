@@ -929,6 +929,14 @@ func userPortalPrincipalCredentialID(principal *httpmw.Principal) *string {
 	return &credentialID
 }
 
+func userPortalPrincipalProfileID(principal *httpmw.Principal) *string {
+	if principal == nil || principal.GetOwnerID() == uuid.Nil {
+		return nil
+	}
+	profileID := principal.GetOwnerID().String()
+	return &profileID
+}
+
 func (h *userPortalHandler) ssoCallbackURL(ctx context.Context) (string, error) {
 	if h.sso == nil {
 		return "", httperr.New(httperr.SERVICE_UNAVAILABLE, "sso is not configured")

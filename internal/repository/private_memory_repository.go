@@ -98,6 +98,7 @@ type PrivateMemoryErasureRequest struct {
 }
 
 type PrivateMemoryCredentialRevocationAudit struct {
+	ActorProfileID    *string
 	ActorCredentialID *string
 	ActorRole         string
 	ClientIP          string
@@ -606,9 +607,17 @@ func appendPrivateMemoryCredentialRevocationAuditTx(ctx context.Context, tx *gor
 		return fmt.Errorf("marshal credential revocation audit: %w", err)
 	}
 
-	var actorCredentialID any
+	var actorProfileID any
+	if value := strings.TrimSpace(stringValue(input.CredentialRevocationAudit.ActorProfileID)); value != "" {
+		actorProfileID = value
+	}
+	metadata := map[string]any{}
 	if value := strings.TrimSpace(stringValue(input.CredentialRevocationAudit.ActorCredentialID)); value != "" {
-		actorCredentialID = value
+		metadata["actor_credential_id"] = value
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("marshal credential revocation audit metadata: %w", err)
 	}
 	var clientIP any
 	if value := strings.TrimSpace(input.CredentialRevocationAudit.ClientIP); value != "" {
@@ -624,10 +633,10 @@ func appendPrivateMemoryCredentialRevocationAuditTx(ctx context.Context, tx *gor
 			id, team_id, timestamp, operation, entity_type, entity_id,
 			before_payload, actor_profile_id, actor_role, client_ip,
 			correlation_id, metadata, memory_space_id
-		) VALUES (?, ?, ?, 'REVOKE', 'api_key', ?, ?, ?, ?, ?, ?, '{}'::jsonb, ?)
+		) VALUES (?, ?, ?, 'REVOKE', 'api_key', ?, ?, ?, ?, ?, ?, ?, ?)
 	`, uuid.New(), input.TeamID, now, input.CredentialID.String(), beforePayload,
-		actorCredentialID, input.CredentialRevocationAudit.ActorRole,
-		clientIP, input.CredentialRevocationAudit.CorrelationID, auditMemorySpaceID).Error; err != nil {
+		actorProfileID, input.CredentialRevocationAudit.ActorRole, clientIP,
+		input.CredentialRevocationAudit.CorrelationID, metadataJSON, auditMemorySpaceID).Error; err != nil {
 		return fmt.Errorf("append credential revocation audit: %w", err)
 	}
 	return nil

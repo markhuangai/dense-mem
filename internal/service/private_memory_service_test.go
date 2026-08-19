@@ -21,14 +21,15 @@ type privateMemoryRepositoryStub struct {
 	operation  *domain.PrivateMemoryErasureOperation
 	requestErr error
 
-	profileRequest     repository.PrivateMemoryErasureRequest
-	credentialRequest  repository.PrivateMemoryErasureRequest
-	disableRequest     repository.PrivateMemoryErasureRequest
-	disableAudit       *repository.PrivateMemoryCredentialRevocationAudit
-	controlSpaceID     uuid.UUID
-	controlScopeHash   string
-	controlRequestHash string
-	controlReason      string
+	profileRequest       repository.PrivateMemoryErasureRequest
+	credentialRequest    repository.PrivateMemoryErasureRequest
+	disableRequest       repository.PrivateMemoryErasureRequest
+	disableAudit         *repository.PrivateMemoryCredentialRevocationAudit
+	disableRequestHashes map[string]string
+	controlSpaceID       uuid.UUID
+	controlScopeHash     string
+	controlRequestHash   string
+	controlReason        string
 
 	ownerTeamID       uuid.UUID
 	ownerOperationID  uuid.UUID
@@ -82,6 +83,15 @@ func (r *privateMemoryRepositoryStub) RequestControlErasure(_ context.Context, s
 func (r *privateMemoryRepositoryStub) DisableSSOCredential(_ context.Context, input repository.PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error) {
 	r.disableRequest = input
 	r.disableAudit = input.CredentialRevocationAudit
+	if r.disableRequestHashes != nil {
+		if previous, exists := r.disableRequestHashes[input.IdempotencyScopeHash]; exists {
+			if previous != input.RequestHash {
+				return nil, false, repository.ErrPrivateMemoryIdempotency
+			}
+			return r.operation, false, r.requestErr
+		}
+		r.disableRequestHashes[input.IdempotencyScopeHash] = input.RequestHash
+	}
 	return r.operation, true, r.requestErr
 }
 
@@ -249,7 +259,10 @@ func TestPrivateMemoryServiceValidatesAndScopesOwnerCommands(t *testing.T) {
 	_, err = svc.RequestCredentialErasure(ctx, teamID, credentialID, PrivateMemoryCommand{})
 	require.ErrorIs(t, err, ErrPrivateMemoryAcknowledgementRequired)
 
+	actorProfileID := identityID.String()
+	actorCredentialID := credentialID.String()
 	result, err = svc.DeleteSSOCredential(ctx, teamID, identityID, credentialID, command, PrivateMemoryAuditContext{
+		ActorProfileID: &actorProfileID, ActorCredentialID: &actorCredentialID,
 		ActorRole: "member", ClientIP: "198.51.100.10", CorrelationID: "corr-delete",
 	})
 	require.NoError(t, err)
@@ -258,6 +271,8 @@ func TestPrivateMemoryServiceValidatesAndScopesOwnerCommands(t *testing.T) {
 	require.Equal(t, credentialID, repo.disableRequest.CredentialID)
 	require.Equal(t, "credential_deleted", repo.disableRequest.ReasonCode)
 	require.NotNil(t, repo.disableAudit)
+	require.Equal(t, actorProfileID, *repo.disableAudit.ActorProfileID)
+	require.Equal(t, actorCredentialID, *repo.disableAudit.ActorCredentialID)
 	require.Equal(t, "member", repo.disableAudit.ActorRole)
 	require.Equal(t, "198.51.100.10", repo.disableAudit.ClientIP)
 	require.Equal(t, "corr-delete", repo.disableAudit.CorrelationID)
@@ -279,6 +294,35 @@ func TestPrivateMemoryServiceValidatesAndScopesOwnerCommands(t *testing.T) {
 	require.Len(t, repo.controlRequestHash, sha256HexLength)
 	_, err = svc.RequestControlErasure(ctx, spaceID, PrivateMemoryCommand{})
 	require.ErrorIs(t, err, ErrPrivateMemoryAcknowledgementRequired)
+}
+
+func TestPrivateMemoryServiceCredentialDeletionReasonBindsRequestHash(t *testing.T) {
+	ctx := context.Background()
+	teamID := uuid.New()
+	identityID := uuid.New()
+	credentialID := uuid.New()
+	repo := &privateMemoryRepositoryStub{
+		operation:            &domain.PrivateMemoryErasureOperation{ID: uuid.New()},
+		disableRequestHashes: make(map[string]string),
+	}
+	svc := NewPrivateMemoryService(PrivateMemoryServiceConfig{
+		Repository:   repo,
+		AuditService: &privateMemoryAuditStub{},
+	})
+	command := PrivateMemoryCommand{
+		AcknowledgeIrreversible: true,
+		IdempotencyKey:          "same-delete-key",
+		ReasonCode:              "credential_deleted",
+	}
+	_, err := svc.DeleteSSOCredential(ctx, teamID, identityID, credentialID, command, PrivateMemoryAuditContext{})
+	require.NoError(t, err)
+	firstHash := repo.disableRequest.RequestHash
+
+	command.ReasonCode = "privacy_request"
+	_, err = svc.DeleteSSOCredential(ctx, teamID, identityID, credentialID, command, PrivateMemoryAuditContext{})
+	require.ErrorIs(t, err, repository.ErrPrivateMemoryIdempotency)
+	require.Equal(t, repo.disableRequest.IdempotencyScopeHash, privateMemoryServiceHash("owner_sso_credential_delete", teamID.String(), identityID.String(), command.IdempotencyKey))
+	require.NotEqual(t, firstHash, repo.disableRequest.RequestHash)
 }
 
 func TestPrivateMemoryServiceDelegatesAuthorizedReadsHoldsAndRetention(t *testing.T) {

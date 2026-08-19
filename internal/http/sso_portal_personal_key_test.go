@@ -97,6 +97,8 @@ func TestUserPortalSSOPersonalKeyLifecycle(t *testing.T) {
 	require.NoError(t, callDeleteSSOCredential(fixture.handler, c))
 	require.Equal(t, nethttp.StatusAccepted, rec.Code)
 	require.Equal(t, fixture.keySvc.keys[0].ID, fixture.privateMemory.deletedCredentialID)
+	require.NotNil(t, fixture.privateMemory.auditContext.ActorProfileID)
+	require.Equal(t, fixture.profileID.String(), *fixture.privateMemory.auditContext.ActorProfileID)
 	require.Equal(t, service.CredentialRoleMember, fixture.privateMemory.auditContext.ActorRole)
 	require.Contains(t, rec.Body.String(), `"action":"retire_credential"`)
 	firstOperationID := privateMemoryOperationID(t, rec.Body.Bytes())
