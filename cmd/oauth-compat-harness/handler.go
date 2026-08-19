@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -112,6 +113,15 @@ func validatePublicBaseURL(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
 		return "", fmt.Errorf("trusted HTTPS public base URL is required")
+	}
+	if parsed.Hostname() == "" {
+		return "", fmt.Errorf("trusted HTTPS public base URL is required")
+	}
+	if port := parsed.Port(); port != "" {
+		parsedPort, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || parsedPort == 0 {
+			return "", fmt.Errorf("trusted HTTPS public base URL is required")
+		}
 	}
 	basePath := strings.TrimSuffix(parsed.Path, "/")
 	if parsed.RawPath != "" ||

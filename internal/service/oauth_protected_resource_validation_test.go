@@ -118,6 +118,29 @@ func TestOAuthProtectedResourceValidatorRejectsEveryBoundedConfigDimension(t *te
 	require.Error(t, err)
 }
 
+func TestValidateOAuthHTTPSURLRequiresUsableAuthority(t *testing.T) {
+	for _, raw := range []string{
+		"https://:443",
+		"https://issuer.example:0",
+		"https://issuer.example:65536",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			require.Error(t, validateOAuthHTTPSURL(raw, true))
+		})
+	}
+
+	for _, raw := range []string{
+		"https://issuer.example",
+		"https://issuer.example:443/jwks",
+		"https://[2001:db8::1]/jwks",
+		"https://[2001:db8::1]:65535/jwks",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			require.NoError(t, validateOAuthHTTPSURL(raw, true))
+		})
+	}
+}
+
 func TestBoundedOAuthHTTPClientConstrainsTimeoutsAndRedirects(t *testing.T) {
 	previousCalled := false
 	client := boundedOAuthHTTPClient(&http.Client{

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -401,6 +402,15 @@ func validateOAuthHTTPSURL(raw string, allowQuery bool) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || parsed.Opaque != "" {
 		return fmt.Errorf("trusted HTTPS URL is required")
+	}
+	if parsed.Hostname() == "" {
+		return fmt.Errorf("trusted HTTPS URL is required")
+	}
+	if port := parsed.Port(); port != "" {
+		parsedPort, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || parsedPort == 0 {
+			return fmt.Errorf("trusted HTTPS URL is required")
+		}
 	}
 	if !allowQuery && parsed.RawQuery != "" {
 		return fmt.Errorf("query is not allowed")

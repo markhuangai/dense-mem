@@ -152,6 +152,9 @@ func TestValidatePublicBaseURLRequiresTrustedHTTPSIdentifier(t *testing.T) {
 	for _, raw := range []string{
 		"",
 		"http://harness.example",
+		"https://:443",
+		"https://harness.example:0",
+		"https://harness.example:65536",
 		"https://user@harness.example",
 		"https://harness.example?query=1",
 		"https://harness.example/#fragment",
@@ -166,12 +169,23 @@ func TestValidatePublicBaseURLRequiresTrustedHTTPSIdentifier(t *testing.T) {
 		"https://harness.example/base//",
 		"https://harness.example/base/../tenant",
 	} {
-		_, err := validatePublicBaseURL(raw)
-		require.Error(t, err, raw)
+		t.Run(raw, func(t *testing.T) {
+			_, err := validatePublicBaseURL(raw)
+			require.Error(t, err)
+		})
 	}
-	parsed, err := validatePublicBaseURL("https://harness.example/base/")
-	require.NoError(t, err)
-	require.Equal(t, "https://harness.example/base", parsed)
+	for raw, want := range map[string]string{
+		"https://harness.example/base/":     "https://harness.example/base",
+		"https://harness.example:443":       "https://harness.example:443",
+		"https://[2001:db8::1]/base":        "https://[2001:db8::1]/base",
+		"https://[2001:db8::1]:65535/base/": "https://[2001:db8::1]:65535/base",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			parsed, err := validatePublicBaseURL(raw)
+			require.NoError(t, err)
+			require.Equal(t, want, parsed)
+		})
+	}
 }
 
 type harnessValidatorStub struct {
