@@ -411,6 +411,8 @@ func privateMemoryHTTPError(err error) error {
 		return httperr.New(httperr.CONFLICT, "private-memory legal hold conflicts with the active hold")
 	case errors.Is(err, repository.ErrPrivateMemoryManifest):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory erasure is unavailable")
+	case errors.Is(err, repository.ErrPrivateMemoryInternal):
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory service unavailable")
 	default:
 		return err
 	}

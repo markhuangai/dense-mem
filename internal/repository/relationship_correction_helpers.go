@@ -711,6 +711,10 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 	if err != nil {
 		return nil, err
 	}
+	sourceSpaceID, err := loadRelationshipSpaceID(ctx, tx, row.TeamID, successor.RelationshipID, successor.Version)
+	if err != nil {
+		return nil, err
+	}
 	metadataJSON, err := json.Marshal(map[string]any{"submission_id": row.SubmissionID})
 	if err != nil {
 		return nil, err
@@ -719,12 +723,12 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 		INSERT INTO relationship_cross_references (
 		    team_id, author_profile_id, source_relationship_id,
 		    source_relationship_version, target_relationship_id,
-		    target_relationship_version, kind, verification_event_id, metadata
+		    target_relationship_version, kind, verification_event_id, metadata, space_id
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, 'corrects', ?::uuid, ?::jsonb
+		    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, 'corrects', ?::uuid, ?::jsonb, ?::uuid
 		)
 	`, row.TeamID, row.OwnerProfileID, successor.RelationshipID, successor.Version,
-		original.RelationshipID, original.Version, verificationEventID, string(metadataJSON)).Error; err != nil {
+		original.RelationshipID, original.Version, verificationEventID, string(metadataJSON), sourceSpaceID).Error; err != nil {
 		return nil, err
 	}
 	patchJSON, err := json.Marshal(row.Patch)

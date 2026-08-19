@@ -35,12 +35,16 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 	foreignRelationshipID := uuid.New()
 	rootObservationID := uuid.New()
 	foreignObservationID := uuid.New()
+	verificationEventID := uuid.New()
+	sharedTargetRelationshipID := uuid.New()
 	rootIngestID := uuid.New()
 	foreignIngestID := uuid.New()
 	rootSubjectID := uuid.New()
 	rootObjectID := uuid.New()
 	foreignSubjectID := uuid.New()
 	foreignObjectID := uuid.New()
+	sharedTargetSubjectID := uuid.New()
+	sharedTargetObjectID := uuid.New()
 
 	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Exec(`
@@ -72,12 +76,16 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 			  (?::uuid, ?::uuid, 'project', ?::uuid),
 			  (?::uuid, ?::uuid, 'product', ?::uuid),
 			  (?::uuid, ?::uuid, 'project', ?::uuid),
+			  (?::uuid, ?::uuid, 'product', ?::uuid),
+			  (?::uuid, ?::uuid, 'project', ?::uuid),
 			  (?::uuid, ?::uuid, 'product', ?::uuid)
 		`,
 			teamA, rootSubjectID, spaceA,
 			teamA, rootObjectID, spaceA,
 			teamA, foreignSubjectID, spaceB,
 			teamA, foreignObjectID, spaceB,
+			teamA, sharedTargetSubjectID, sharedA.ID,
+			teamA, sharedTargetObjectID, sharedA.ID,
 		).Error; err != nil {
 			return err
 		}
@@ -110,10 +118,13 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 			  (?::uuid, ?::uuid, ?::uuid, 'trace-private-a', ?::uuid, 'uses', 1,
 			   ?::uuid, 'state', 'many', 'active', '+', 1, 1, ?::uuid),
 			  (?::uuid, ?::uuid, ?::uuid, 'trace-private-b', ?::uuid, 'uses', 1,
-			   ?::uuid, 'state', 'many', 'active', '+', 1, 1, ?::uuid)
+			   ?::uuid, 'state', 'many', 'active', '+', 1, 1, ?::uuid),
+			  (?::uuid, ?::uuid, ?::uuid, 'trace-shared-target', ?::uuid, 'uses', 1,
+			   ?::uuid, 'state', 'many', 'rejected', '+', 0, 0, ?::uuid)
 		`,
 			teamA, rootRelationshipID, ownerA, rootSubjectID, rootObjectID, spaceA,
 			teamA, foreignRelationshipID, ownerB, foreignSubjectID, foreignObjectID, spaceB,
+			teamA, sharedTargetRelationshipID, ownerA, sharedTargetSubjectID, sharedTargetObjectID, sharedA.ID,
 		).Error; err != nil {
 			return err
 		}
@@ -127,11 +138,11 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 			  (?::uuid, ?::uuid, ?::uuid, ?, ?, 'completed', '{}'::jsonb, '{}'::jsonb, now(), ?::uuid)
 		`,
 			teamA, rootIngestID, ownerA, "trace-private-a-"+rootIngestID.String(), "hash-a", spaceA,
-			teamA, foreignIngestID, ownerA, "trace-private-b-"+foreignIngestID.String(), "hash-b", spaceB,
+			teamA, foreignIngestID, ownerB, "trace-private-b-"+foreignIngestID.String(), "hash-b", spaceB,
 		).Error; err != nil {
 			return err
 		}
-		return tx.Exec(`
+		if err := tx.Exec(`
 			INSERT INTO relationship_observations (
 			    team_id, observation_id, relationship_id, ingest_id, owner_profile_id,
 			    subject_ref, original_predicate, object_ref, subject_entity_id,
@@ -145,9 +156,20 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 		`,
 			teamA, rootObservationID, rootRelationshipID, rootIngestID, ownerA,
 			rootSubjectID, rootObjectID, spaceA,
-			teamA, foreignObservationID, rootRelationshipID, foreignIngestID, ownerA,
-			rootSubjectID, rootObjectID, spaceB,
-		).Error
+			teamA, foreignObservationID, foreignRelationshipID, foreignIngestID, ownerB,
+			foreignSubjectID, foreignObjectID, spaceB,
+		).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO verification_events (
+			    team_id, verification_event_id, observation_id, owner_profile_id,
+			    evidence_verdict, rationale
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, 'entailed', 'cross-space trace regression')
+		`, teamA, verificationEventID, foreignObservationID, ownerB).Error; err != nil {
+			return err
+		}
+		return nil
 	})
 	require.NoError(t, err)
 
@@ -167,7 +189,37 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 	ctxC := actorContext(teamC, ownerC, sharedC.ID, uuid.Nil)
 	semanticRepo := NewSemanticRepository(appDB, rls)
 
-	trace, err := semanticRepo.TraceRelationship(ctxA, TraceRelationshipInput{
+	crossReferenceID, err := semanticRepo.AppendCrossReference(ctxB, AppendCrossReferenceInput{
+		TeamID:                    teamA,
+		AuthorProfileID:           ownerB,
+		SourceRelationshipID:      foreignRelationshipID.String(),
+		SourceRelationshipVersion: 1,
+		TargetRelationshipID:      sharedTargetRelationshipID.String(),
+		TargetRelationshipVersion: 1,
+		Kind:                      "challenges",
+		VerificationEventID:       verificationEventID.String(),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, crossReferenceID)
+
+	var crossReferenceSpaceID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT space_id::text
+			FROM relationship_cross_references
+			WHERE team_id = ?::uuid AND cross_reference_id = ?::uuid
+		`, teamA, crossReferenceID).Row().Scan(&crossReferenceSpaceID)
+	}))
+	assert.Equal(t, spaceB.String(), crossReferenceSpaceID)
+
+	trace, err := semanticRepo.TraceRelationship(ctxB, TraceRelationshipInput{
+		TeamID: teamA, RelationshipID: foreignRelationshipID.String(), MaxEvents: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, trace.CrossProfileReferences, 1)
+	assert.Equal(t, crossReferenceID, trace.CrossProfileReferences[0].CrossReferenceID)
+
+	trace, err = semanticRepo.TraceRelationship(ctxA, TraceRelationshipInput{
 		TeamID: teamA, RelationshipID: rootRelationshipID.String(), MaxDepth: 1, MaxEdges: 10,
 	})
 	require.NoError(t, err)

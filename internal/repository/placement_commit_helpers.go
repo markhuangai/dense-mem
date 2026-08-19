@@ -188,6 +188,10 @@ func appendPlacementCorrectionTarget(
 	if err := requireVerificationForRelationship(ctx, tx, commit.TeamID, applied.VerificationEventID, commit.OwnerProfileID, source.RelationshipID); err != nil {
 		return err
 	}
+	sourceSpaceID, err := loadRelationshipSpaceID(ctx, tx, commit.TeamID, source.RelationshipID, source.Version)
+	if err != nil {
+		return err
+	}
 	targetRecord, err := loadPlacementCorrectionTarget(ctx, tx, commit.TeamID, target)
 	if err != nil {
 		return err
@@ -206,14 +210,14 @@ func appendPlacementCorrectionTarget(
 		INSERT INTO relationship_cross_references (
 		    team_id, author_profile_id, source_relationship_id,
 		    source_relationship_version, target_relationship_id,
-		    target_relationship_version, kind, verification_event_id, metadata
+		    target_relationship_version, kind, verification_event_id, metadata, space_id
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?::uuid, ?::jsonb
+		    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?::uuid, ?::jsonb, ?::uuid
 		)
 		RETURNING cross_reference_id::text
 	`, commit.TeamID, commit.OwnerProfileID, source.RelationshipID, source.Version,
 		target.RelationshipID, target.ExpectedVersion, string(domain.CrossReferenceCorrects),
-		applied.VerificationEventID, string(metadata)).Rows()
+		applied.VerificationEventID, string(metadata), sourceSpaceID).Rows()
 	if err != nil {
 		return err
 	}

@@ -874,5 +874,28 @@ func wrapPrivateMemoryError(operation string, err error) error {
 	if err == nil {
 		return nil
 	}
+	if !isPrivateMemoryBoundedError(err) {
+		err = ErrPrivateMemoryInternal
+	}
 	return fmt.Errorf("private memory %s: %w", operation, err)
+}
+
+func isPrivateMemoryBoundedError(err error) bool {
+	for _, known := range []error{
+		ErrPrivateMemoryNotFound,
+		ErrPrivateMemoryLegalHold,
+		ErrPrivateMemoryIdempotency,
+		ErrPrivateMemoryOperationConflict,
+		ErrPrivateMemoryManifest,
+		ErrPrivateMemoryClaimLost,
+		ErrPrivateMemoryRetentionDisabled,
+		ErrPrivateMemoryHoldConflict,
+		context.Canceled,
+		context.DeadlineExceeded,
+	} {
+		if errors.Is(err, known) {
+			return true
+		}
+	}
+	return false
 }

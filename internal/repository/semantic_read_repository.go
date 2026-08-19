@@ -666,9 +666,12 @@ func loadTraceCrossReferences(
 		JOIN relationship_records AS target_relationship
 		  ON target_relationship.team_id = cross_reference.team_id
 		 AND target_relationship.relationship_id = cross_reference.target_relationship_id
-		 AND target_relationship.space_id = cross_reference.space_id
 		WHERE cross_reference.team_id = ?::uuid
 		  AND cross_reference.space_id = ?::uuid
+		  AND (
+		    target_relationship.space_id = dense_mem_team_shared_space(cross_reference.team_id)
+		    OR dense_mem_space_allowed(target_relationship.space_id)
+		  )
 		  AND (
 		    cross_reference.source_relationship_id = ?::uuid
 		    OR cross_reference.target_relationship_id = ?::uuid

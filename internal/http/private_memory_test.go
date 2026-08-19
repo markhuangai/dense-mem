@@ -404,6 +404,9 @@ func TestPrivateMemoryResponseHelpersAndBoundedErrors(t *testing.T) {
 	require.Same(t, apiErr, privateMemoryHTTPError(apiErr))
 	unknown := errors.New("backend failed")
 	require.ErrorIs(t, privateMemoryHTTPError(unknown), unknown)
+	internal, ok := privateMemoryHTTPError(repository.ErrPrivateMemoryInternal).(*httperr.APIError)
+	require.True(t, ok)
+	require.Equal(t, httperr.SERVICE_UNAVAILABLE, internal.Code)
 	for err, code := range map[error]httperr.ErrorCode{
 		service.ErrPrivateMemoryAcknowledgementRequired: httperr.VALIDATION_ERROR,
 		service.ErrPrivateMemoryIdempotencyKeyRequired:  httperr.VALIDATION_ERROR,

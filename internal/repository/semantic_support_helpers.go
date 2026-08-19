@@ -189,6 +189,27 @@ func requireRelationshipVersion(
 	return nil
 }
 
+func loadRelationshipSpaceID(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	relationshipID string,
+	version int,
+) (string, error) {
+	var spaceID string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT space_id::text
+		FROM relationship_records
+		WHERE team_id = ?::uuid
+		  AND relationship_id = ?::uuid
+		  AND version = ?
+	`, teamID, relationshipID, version).Row().Scan(&spaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errors.New("relationship version does not have a memory space")
+	}
+	return spaceID, err
+}
+
 func requireVerificationForRelationship(ctx context.Context, tx *gorm.DB, teamID, verificationEventID, ownerProfileID, relationshipID string) error {
 	exists, err := existsOwnerReference(ctx, tx, `
 		SELECT EXISTS (

@@ -28,6 +28,7 @@ var (
 	ErrPrivateMemoryClaimLost         = errors.New("private memory erasure claim lost")
 	ErrPrivateMemoryRetentionDisabled = errors.New("private memory retention is disabled")
 	ErrPrivateMemoryHoldConflict      = errors.New("private memory legal hold conflict")
+	ErrPrivateMemoryInternal          = errors.New("private memory storage operation failed")
 )
 
 const (
