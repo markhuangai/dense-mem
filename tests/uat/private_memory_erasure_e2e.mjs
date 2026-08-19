@@ -657,6 +657,11 @@ function assertWriteRejected(spaceID, teamID, ownerID, generation, message) {
     COMMIT
   `);
   assert(result.status !== 0, message);
+  const errorSummary = postgresErrorSummary(result);
+  assert(
+    errorSummary.includes("memory space is not writable") || errorSummary.includes("memory space generation is stale"),
+    `write rejection did not report the expected private-memory fence error: ${errorSummary}`,
+  );
 }
 
 function seedSingleIngest(teamID, ownerID, spaceID, sentinel) {

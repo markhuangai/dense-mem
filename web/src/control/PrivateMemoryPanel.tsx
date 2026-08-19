@@ -102,6 +102,7 @@ export function PrivateMemoryPanel({ api }: { api: ControlApi }) {
     } catch (err) {
       setError(readError(err));
       setMessage("");
+    } finally {
       setBusy(false);
     }
   }

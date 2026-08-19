@@ -243,14 +243,15 @@ func (s *AuditServiceImpl) Append(ctx context.Context, entry AuditLogEntry) erro
 
 	insertFn := func(tx *gorm.DB) error {
 		memorySpaceID := entry.MemorySpaceID
-		if memorySpaceID == nil && entry.EntityType == "api_key" {
-			if credentialID, parseErr := uuid.Parse(strings.TrimSpace(entry.EntityID)); parseErr == nil {
+		if memorySpaceID == nil && entry.EntityType == "api_key" && entry.ProfileID != nil {
+			teamID, teamParseErr := uuid.Parse(strings.TrimSpace(*entry.ProfileID))
+			if credentialID, credentialParseErr := uuid.Parse(strings.TrimSpace(entry.EntityID)); teamParseErr == nil && credentialParseErr == nil {
 				var candidate sql.NullString
 				lookupErr := tx.WithContext(ctx).Raw(`
 					SELECT memory_space_id::text
 					FROM credentials
-					WHERE id = $1
-				`, credentialID).Row().Scan(&candidate)
+					WHERE id = $1 AND team_id = $2
+				`, credentialID, teamID).Row().Scan(&candidate)
 				if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
 					return lookupErr
 				}

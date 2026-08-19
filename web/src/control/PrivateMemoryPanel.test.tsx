@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ControlApi, PrivateMemoryOperation, PrivateMemorySpace } from "../api";
+import { ControlApi, PrivateMemoryLegalHold, PrivateMemoryOperation, PrivateMemorySpace } from "../api";
 import { PrivateMemoryPanel } from "./PrivateMemoryPanel";
 
 const space: PrivateMemorySpace = {
@@ -113,6 +113,29 @@ describe("PrivateMemoryPanel", () => {
     await userEvent.click(await screen.findByRole("button", { name: `Place legal hold for ${space.id}` }));
     expect(await screen.findByRole("alert")).toHaveTextContent("reload failed");
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("re-enables controls after a successful mutation", async () => {
+    const api = privateMemoryApi();
+    let resolveHold!: (value: PrivateMemoryLegalHold) => void;
+    vi.mocked(api.placePrivateMemoryLegalHold).mockImplementation(() => new Promise((resolve) => {
+      resolveHold = resolve;
+    }));
+    render(<PrivateMemoryPanel api={api} />);
+
+    const placeHold = await screen.findByRole("button", { name: `Place legal hold for ${space.id}` });
+    await userEvent.click(placeHold);
+    await waitFor(() => expect(placeHold).toBeDisabled());
+
+    resolveHold({
+      id: "55555555-5555-4555-8555-555555555555",
+      team_id: space.team_id,
+      space_id: space.id,
+      reason_code: "case_hold",
+      actor_class: "control",
+      placed_at: "2026-08-18T12:00:00Z",
+    });
+    await waitFor(() => expect(placeHold).not.toBeDisabled());
   });
 });
 

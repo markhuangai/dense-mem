@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -205,6 +206,51 @@ func TestAuditAppendRedactsPayloadsAndWritesInsert(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAuditAppendInfersCredentialMemorySpaceWithinTeam(t *testing.T) {
+	teamID := uuid.New()
+	credentialID := uuid.New()
+	spaceID := uuid.New()
+
+	for _, test := range []struct {
+		name           string
+		memorySpaceArg any
+		rows           *sqlmock.Rows
+	}{
+		{
+			name:           "matching credential",
+			memorySpaceArg: spaceID.String(),
+			rows:           sqlmock.NewRows([]string{"memory_space_id"}).AddRow(spaceID.String()),
+		},
+		{
+			name:           "deleted credential",
+			memorySpaceArg: nil,
+			rows:           sqlmock.NewRows([]string{"memory_space_id"}),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			svc, mock, cleanup := newMockAuditService(t)
+			defer cleanup()
+
+			mock.ExpectQuery("SELECT memory_space_id::text\\s+FROM credentials\\s+WHERE id = \\$1 AND team_id = \\$2").
+				WithArgs(credentialID, teamID).
+				WillReturnRows(test.rows)
+			args := make([]driver.Value, 13)
+			for index := range args {
+				args[index] = sqlmock.AnyArg()
+			}
+			args = append(args, test.memorySpaceArg)
+			mock.ExpectExec("INSERT INTO audit_log").WithArgs(args...).WillReturnResult(sqlmock.NewResult(0, 1))
+
+			profileID := teamID.String()
+			err := svc.Append(context.Background(), AuditLogEntry{
+				ProfileID: &profileID, EntityType: "api_key", EntityID: credentialID.String(), Operation: "DELETE",
+			})
+			require.NoError(t, err)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestAuditAppendMarshalAndDatabaseErrors(t *testing.T) {
