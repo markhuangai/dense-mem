@@ -98,4 +98,21 @@ func TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows(t *testing.T
 		SELECT to_regprocedure('dense_mem_backfill_private_memory_audit_2026081802()') IS NOT NULL
 	`).Scan(&procedureExists))
 	require.False(t, procedureExists)
+
+	var protectedResourceColumn bool
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND table_name = 'sso_providers'
+			  AND column_name = 'protected_resource_config'
+		)
+	`).Scan(&protectedResourceColumn))
+	require.True(t, protectedResourceColumn)
+
+	var publicBaseURL sql.NullString
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT value FROM app_config WHERE key = 'MCP_PUBLIC_BASE_URL'`).Scan(&publicBaseURL))
+	require.True(t, publicBaseURL.Valid)
+	require.Empty(t, publicBaseURL.String)
 }

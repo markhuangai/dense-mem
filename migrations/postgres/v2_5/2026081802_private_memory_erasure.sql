@@ -476,6 +476,45 @@ DROP POLICY audit_log_memory_space_backfill_update ON audit_log;
 DROP POLICY audit_log_memory_space_backfill_select ON audit_log;
 -- +goose StatementEnd
 
+-- Main already uses migration version 2026081801 for submission diagnostics,
+-- so the dormant OAuth protected-resource schema is included in this
+-- not-yet-deployed 2026081802 migration.
+-- +goose StatementBegin
+SELECT set_config('app.tx_mode', 'migration', true);
+SELECT set_config('app.current_team_id', '', true);
+SELECT set_config('app.current_profile_id', '', true);
+SELECT set_config('app.allowed_space_ids', '', true);
+
+ALTER TABLE sso_providers
+    ADD COLUMN IF NOT EXISTS protected_resource_config JSONB NOT NULL DEFAULT '{
+        "enabled": false,
+        "audiences": [],
+        "jwks_source": "discovery",
+        "jwks_uri": "",
+        "algorithms": ["RS256"],
+        "scope_claim": "scope",
+        "scope_mappings": [],
+        "team_claim": ""
+    }'::jsonb;
+
+ALTER TABLE sso_providers
+    DROP CONSTRAINT IF EXISTS sso_providers_protected_resource_object;
+ALTER TABLE sso_providers
+    ADD CONSTRAINT sso_providers_protected_resource_object
+    CHECK (jsonb_typeof(protected_resource_config) = 'object');
+
+CREATE INDEX IF NOT EXISTS idx_sso_providers_protected_resource_enabled
+    ON sso_providers (id)
+    WHERE enabled = true
+      AND retired_at IS NULL
+      AND protected_resource_config @> '{"enabled": true}'::jsonb;
+
+SELECT set_config('app.tx_mode', 'system', true);
+INSERT INTO app_config (key, value)
+VALUES ('MCP_PUBLIC_BASE_URL', '')
+ON CONFLICT (key) DO NOTHING;
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
 
