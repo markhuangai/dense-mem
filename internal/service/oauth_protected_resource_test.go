@@ -146,6 +146,21 @@ func TestOAuthProtectedResourceValidatorRotatesKeysAndBoundsOutageRefreshes(t *t
 	require.Equal(t, hitsAfterFailure, fixture.jwksRequests("generic"), "refresh failures must be throttled")
 }
 
+func TestOAuthProtectedResourceValidatorRefreshesCachedKeyMaterialWithSameID(t *testing.T) {
+	fixture := newOAuthCompatibilityFixture(t)
+	validator := fixture.validator(t)
+
+	_, err := validator.Validate(t.Context(), fixture.token(t, "generic", "primary", fixture.claims("generic")))
+	require.NoError(t, err)
+	require.Equal(t, 1, fixture.jwksRequests("generic"))
+
+	fixture.replaceKeyMaterial("generic", "primary", "future")
+	rotated := fixture.token(t, "generic", "primary", fixture.claims("generic"))
+	_, err = validator.Validate(t.Context(), rotated)
+	require.NoError(t, err)
+	require.Equal(t, 2, fixture.jwksRequests("generic"))
+}
+
 func TestOAuthProtectedResourceValidatorSharedRefreshSurvivesCallerCancellation(t *testing.T) {
 	fixture := newOAuthCompatibilityFixture(t)
 	profile := fixture.profiles()[1]
@@ -469,6 +484,12 @@ func (fixture *oauthCompatibilityFixture) setActiveKey(profile, keyID string) {
 	fixture.mu.Lock()
 	defer fixture.mu.Unlock()
 	fixture.providerStates[profile].activeKey = keyID
+}
+
+func (fixture *oauthCompatibilityFixture) replaceKeyMaterial(profile, keyID, replacementKeyID string) {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	fixture.providerStates[profile].keys[keyID] = fixture.providerStates[profile].keys[replacementKeyID]
 }
 
 func (fixture *oauthCompatibilityFixture) setOutage(profile string, outage bool) {

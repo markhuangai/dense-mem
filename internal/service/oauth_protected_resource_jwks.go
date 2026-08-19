@@ -37,24 +37,20 @@ type oauthDiscoveryDocument struct {
 	JWKSURI string `json:"jwks_uri"`
 }
 
-func (validator *OAuthProtectedResourceValidator) verificationKey(ctx context.Context, profile domain.OAuthProtectedResourceProfile, keyID, algorithm string) (any, error) {
+func (validator *OAuthProtectedResourceValidator) verificationKey(ctx context.Context, profile domain.OAuthProtectedResourceProfile, keyID, algorithm string, force bool) (any, bool, error) {
 	cache := validator.cacheForProfile(profile.Name)
-	set, fromCache, err := validator.loadOAuthJWKS(ctx, profile, cache, false)
+	set, fromCache, err := validator.loadOAuthJWKS(ctx, profile, cache, force)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	keys := oauthCandidateKeys(set, keyID, algorithm)
-	if len(keys) == 0 && fromCache {
-		set, _, err = validator.loadOAuthJWKS(ctx, profile, cache, true)
-		if err != nil {
-			return nil, err
-		}
-		keys = oauthCandidateKeys(set, keyID, algorithm)
+	if len(keys) == 0 && fromCache && !force {
+		return validator.verificationKey(ctx, profile, keyID, algorithm, true)
 	}
 	if len(keys) != 1 {
-		return nil, ErrOAuthTokenInvalid
+		return nil, false, ErrOAuthTokenInvalid
 	}
-	return keys[0].Key, nil
+	return keys[0].Key, fromCache, nil
 }
 
 func (validator *OAuthProtectedResourceValidator) cacheForProfile(name string) *oauthJWKSCache {

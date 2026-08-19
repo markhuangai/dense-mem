@@ -83,7 +83,11 @@ func newHarnessHandler(publicBaseURL string, profiles []domain.OAuthProtectedRes
 			response.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		raw, ok := parseHarnessBearer(request.Header.Get("Authorization"))
+		authorization := request.Header.Values("Authorization")
+		raw, ok := "", false
+		if len(authorization) == 1 {
+			raw, ok = parseHarnessBearer(authorization[0])
+		}
 		if !ok {
 			response.Header().Set("WWW-Authenticate", challenge)
 			writeHarnessJSON(response, http.StatusUnauthorized, harnessError{Error: "invalid_token"})

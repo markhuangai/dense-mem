@@ -139,14 +139,25 @@ func (validator *OAuthProtectedResourceValidator) Validate(ctx context.Context, 
 		return nil, ErrOAuthTokenInvalid
 	}
 	header := parsed.Headers[0]
-	key, err := validator.verificationKey(ctx, profile, header.KeyID, header.Algorithm)
+	key, fromCache, err := validator.verificationKey(ctx, profile, header.KeyID, header.Algorithm, false)
 	if err != nil {
 		return nil, err
 	}
 
-	var registered jwt.Claims
 	var verified map[string]json.RawMessage
-	if err := parsed.Claims(key, &registered, &verified); err != nil || verified == nil {
+	if err = parsed.Claims(key, &verified); err != nil && fromCache {
+		key, _, err = validator.verificationKey(ctx, profile, header.KeyID, header.Algorithm, true)
+		if err != nil {
+			return nil, err
+		}
+		verified = nil
+		err = parsed.Claims(key, &verified)
+	}
+	if err != nil || verified == nil {
+		return nil, ErrOAuthTokenInvalid
+	}
+	var registered jwt.Claims
+	if err := json.Unmarshal(claimsJSON, &registered); err != nil {
 		return nil, ErrOAuthTokenInvalid
 	}
 	verifiedIssuer, err := requiredExactOAuthString(verified, "iss")

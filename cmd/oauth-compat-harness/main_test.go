@@ -98,6 +98,16 @@ func TestHarnessMetadataAndChallengeUseConfiguredHTTPSURL(t *testing.T) {
 	require.Equal(t, http.StatusOK, successResponse.Code)
 	require.JSONEq(t, `{"valid":true,"profile":"entra","scope_count":1,"team_claim_present":false}`, successResponse.Body.String())
 	require.NotContains(t, successResponse.Body.String(), "secret-token")
+
+	ambiguousRequest := httptest.NewRequest(http.MethodPost, "https://harness.example/base/mcp", nil)
+	ambiguousRequest.Header.Add("Authorization", "Bearer secret-token")
+	ambiguousRequest.Header.Add("Authorization", "Bearer second-token")
+	ambiguousResponse := httptest.NewRecorder()
+	handler.ServeHTTP(ambiguousResponse, ambiguousRequest)
+	require.Equal(t, http.StatusUnauthorized, ambiguousResponse.Code)
+	require.JSONEq(t, `{"error":"invalid_token"}`, ambiguousResponse.Body.String())
+	require.NotContains(t, ambiguousResponse.Body.String(), "secret-token")
+	require.NotContains(t, ambiguousResponse.Body.String(), "second-token")
 }
 
 func TestNewHarnessHandlerRejectsInvalidBasePaths(t *testing.T) {
