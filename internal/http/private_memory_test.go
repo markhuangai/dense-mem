@@ -201,7 +201,7 @@ func TestCredentialPrivateMemoryHTTPRequiresWriteScope(t *testing.T) {
 	require.Equal(t, uuid.Nil, stub.credentialID)
 }
 
-func TestSSOPrivateMemoryDeleteRoutesUseSeparateScopes(t *testing.T) {
+func TestSSOPrivateMemoryDeleteRoutesRequireWriteScope(t *testing.T) {
 	teamID := uuid.New()
 	identityID := uuid.New()
 	credentialID := uuid.New()
@@ -223,7 +223,7 @@ func TestSSOPrivateMemoryDeleteRoutesUseSeparateScopes(t *testing.T) {
 		httpmw.RequireScopes("write"),
 		httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
 	e.DELETE("/ui/api/sso/credentials/:credentialId", handler.deleteSSOCredential,
-		httpmw.RequireScopes("read"),
+		httpmw.RequireScopes("write"),
 		httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
 
 	for _, test := range []struct {
@@ -231,7 +231,7 @@ func TestSSOPrivateMemoryDeleteRoutesUseSeparateScopes(t *testing.T) {
 		wantStatus int
 	}{
 		{path: "/ui/api/sso/private-memory", wantStatus: http.StatusForbidden},
-		{path: "/ui/api/sso/credentials/" + credentialID.String(), wantStatus: http.StatusNotFound},
+		{path: "/ui/api/sso/credentials/" + credentialID.String(), wantStatus: http.StatusForbidden},
 	} {
 		req := httptest.NewRequest(http.MethodDelete, test.path, strings.NewReader(`{"acknowledge_irreversible":true}`))
 		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)

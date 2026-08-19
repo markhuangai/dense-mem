@@ -16,6 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
@@ -790,7 +791,15 @@ func TestControlPortalConfigGetErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.ErrorContains(t, tt.call(newControlConfigContext(http.MethodGet, "")), "repo failed")
+			err := tt.call(newControlConfigContext(http.MethodGet, ""))
+			if tt.name == "private memory" {
+				var apiErr *httperr.APIError
+				require.ErrorAs(t, err, &apiErr)
+				require.Equal(t, httperr.SERVICE_UNAVAILABLE, apiErr.Code)
+				require.NotContains(t, err.Error(), "repo failed")
+				return
+			}
+			require.ErrorContains(t, err, "repo failed")
 		})
 	}
 }
@@ -844,7 +853,15 @@ func TestControlPortalConfigUpdateBackendErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := &controlPortalHandler{appConfig: &controlAppConfigSvc{updateErr: backendErr}}
-			require.ErrorIs(t, tt.call(h, newControlConfigContext(http.MethodPatch, tt.body)), backendErr)
+			err := tt.call(h, newControlConfigContext(http.MethodPatch, tt.body))
+			if tt.name == "private memory" {
+				var apiErr *httperr.APIError
+				require.ErrorAs(t, err, &apiErr)
+				require.Equal(t, httperr.SERVICE_UNAVAILABLE, apiErr.Code)
+				require.NotContains(t, err.Error(), backendErr.Error())
+				return
+			}
+			require.ErrorIs(t, err, backendErr)
 		})
 	}
 }

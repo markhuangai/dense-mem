@@ -240,7 +240,7 @@ func (h *controlPortalHandler) getPrivateMemoryConfig(c echo.Context) error {
 	}
 	settings, err := h.appConfig.GetPrivateMemorySettings(c.Request().Context())
 	if err != nil {
-		return err
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory config unavailable")
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlPrivateMemoryConfig(settings)})
 }
@@ -262,7 +262,7 @@ func (h *controlPortalHandler) updatePrivateMemoryConfig(c echo.Context) error {
 		if errors.Is(err, service.ErrInvalidAppConfig) {
 			return httperr.New(httperr.VALIDATION_ERROR, err.Error())
 		}
-		return err
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory config unavailable")
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlPrivateMemoryConfig(settings)})
 }
