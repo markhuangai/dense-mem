@@ -98,6 +98,37 @@ func TestPlacementConflictDoesNotCombinePrivateSpacesAndPersistsPlacementSpace(t
 	require.Equal(t, spaceB, positionSpace)
 	require.Equal(t, spaceB, memberSpace)
 	require.Equal(t, spaceB, eventSpace)
+
+	sharedPostgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL shared")
+	sharedGraphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB shared")
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerA, "worker-shared-conflict-a",
+		"shared-conflict-a", "Dense-Mem shared uses PostgreSQL.", subject.EntityID, sharedPostgres.EntityID, "shared-source-group-a",
+	)
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerB, "worker-shared-conflict-b",
+		"shared-conflict-b", "Dense-Mem shared uses GraphDB.", subject.EntityID, sharedGraphdb.EntityID, "shared-source-group-b",
+	)
+	var sharedSpaceID, sharedCaseSpace, sharedPositionSpace, sharedMemberSpace, sharedEventSpace string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT id::text FROM memory_spaces WHERE team_id = ? AND kind = 'team_shared'`, teamID).Row().Scan(&sharedSpaceID); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT space_id::text FROM relationship_conflict_cases WHERE team_id = ? AND space_id = ?::uuid`, teamID, sharedSpaceID).Row().Scan(&sharedCaseSpace); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT space_id::text FROM relationship_conflict_positions WHERE team_id = ? AND space_id = ?::uuid LIMIT 1`, teamID, sharedSpaceID).Row().Scan(&sharedPositionSpace); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT space_id::text FROM relationship_conflict_position_members WHERE team_id = ? AND space_id = ?::uuid LIMIT 1`, teamID, sharedSpaceID).Row().Scan(&sharedMemberSpace); err != nil {
+			return err
+		}
+		return tx.Raw(`SELECT space_id::text FROM relationship_conflict_events WHERE team_id = ? AND space_id = ?::uuid LIMIT 1`, teamID, sharedSpaceID).Row().Scan(&sharedEventSpace)
+	}))
+	require.Equal(t, sharedSpaceID, sharedCaseSpace)
+	require.Equal(t, sharedSpaceID, sharedPositionSpace)
+	require.Equal(t, sharedSpaceID, sharedMemberSpace)
+	require.Equal(t, sharedSpaceID, sharedEventSpace)
 }
 
 func applyPrivateSpaceConflictPlacementForTest(t *testing.T, ctx context.Context, adminDB *gorm.DB, rls interface {

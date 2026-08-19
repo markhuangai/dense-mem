@@ -541,6 +541,138 @@ func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 	}))
 }
 
+func TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-erasure-inbound-cross-reference"))
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "inbound-target", domain.CredentialBindingCredentialPrivate)
+	sharedSpaceID, err := credentialRepo.GetTeamSharedSpaceID(ctx, teamID)
+	require.NoError(t, err)
+	privateIngestID := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "private relationship target")
+	sharedIngestID := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, sharedSpaceID, "shared relationship source")
+	privateSubjectID, privateObjectID := uuid.New(), uuid.New()
+	sharedSubjectID, sharedObjectID := uuid.New(), uuid.New()
+	targetRelationshipID, sourceRelationshipID := uuid.New(), uuid.New()
+	sourceObservationID := uuid.New()
+	verificationEventID, crossReferenceID := uuid.New(), uuid.New()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := seedTeamPredicateDefinitions(ctx, tx, teamID.String()); err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO entity_records (team_id, entity_id, entity_kind, space_id)
+			VALUES
+				(?, ?, 'project', ?), (?, ?, 'product', ?),
+				(?, ?, 'project', ?), (?, ?, 'product', ?)
+		`, teamID, privateSubjectID, target.MemorySpaceID, teamID, privateObjectID, target.MemorySpaceID,
+			teamID, sharedSubjectID, sharedSpaceID, teamID, sharedObjectID, sharedSpaceID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO relationship_records (
+				team_id, relationship_id, owner_profile_id, semantic_group_key,
+				subject_entity_id, predicate_key, predicate_version, object_entity_id,
+				relationship_kind, current_cardinality, status, support_count,
+				source_group_count, space_id
+			) VALUES
+				(?, ?, ?, 'private-target', ?, 'uses', 1, ?, 'state', 'many', 'active', 0, 0, ?),
+				(?, ?, ?, 'shared-source', ?, 'uses', 1, ?, 'state', 'many', 'active', 0, 0, ?)
+		`, teamID, targetRelationshipID, target.ID, privateSubjectID, privateObjectID, target.MemorySpaceID,
+			teamID, sourceRelationshipID, target.ID, sharedSubjectID, sharedObjectID, sharedSpaceID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO relationship_observations (
+				team_id, observation_id, relationship_id, ingest_id, owner_profile_id,
+				subject_ref, original_predicate, object_ref, subject_entity_id,
+				predicate_key, predicate_version, object_entity_id, evidence, space_id
+			) VALUES (?, ?, ?, ?, ?, 'Shared source', 'uses', 'Private target', ?, 'uses', 1, ?, '[]'::jsonb, ?)
+		`, teamID, sourceObservationID, sourceRelationshipID, sharedIngestID, target.ID,
+			sharedSubjectID, sharedObjectID, sharedSpaceID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO verification_events (
+				team_id, verification_event_id, observation_id, owner_profile_id, evidence_verdict, rationale
+			) VALUES (?, ?, ?, ?, 'entailed', 'private erasure inbound cross-reference regression')
+		`, teamID, verificationEventID, sourceObservationID, target.ID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO relationship_cross_references (
+				team_id, cross_reference_id, author_profile_id, source_relationship_id,
+				source_relationship_version, target_relationship_id, target_relationship_version,
+				kind, verification_event_id, metadata, space_id
+			) VALUES (?, ?, ?, ?, 1, ?, 1, 'challenges', ?, '{}'::jsonb, ?)
+		`, teamID, crossReferenceID, target.ID, sourceRelationshipID, targetRelationshipID,
+			verificationEventID, sharedSpaceID).Error
+	}))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var inboundCount int64
+		if err := tx.Raw(`
+			SELECT COUNT(*)
+			FROM relationship_cross_references AS cross_reference
+			JOIN relationship_records AS target_relationship
+			  ON target_relationship.team_id = cross_reference.team_id
+			 AND target_relationship.relationship_id = cross_reference.target_relationship_id
+			WHERE target_relationship.space_id = ?
+			  AND cross_reference.space_id IS DISTINCT FROM ?
+		`, target.MemorySpaceID, target.MemorySpaceID).Scan(&inboundCount).Error; err != nil {
+			return err
+		}
+		require.Equal(t, int64(1), inboundCount)
+		return nil
+	}))
+
+	repo := NewPrivateMemoryRepository(appDB, rls)
+	require.NoError(t, repo.Prepare(ctx))
+	operation, created, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: target.ID, CredentialID: target.ID,
+		IdempotencyScopeHash: privateMemoryHash("inbound-cross-reference", target.ID.String()),
+		RequestHash:          privateMemoryHash("erase-inbound-cross-reference", target.ID.String()),
+		ReasonCode:           "owner_request",
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+	claim, err := repo.ClaimNext(ctx, "inbound-cross-reference-worker", time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, operation.ID, claim.ID)
+	completed, err := repo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	require.NoError(t, err)
+	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
+	require.Equal(t, int64(1), completed.DeletedCounts["relationship_cross_references_inbound"])
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var privateRelationshipCount, inboundReferenceCount, sourceRelationshipCount, sharedIngestCount int64
+		if err := tx.Raw(`SELECT COUNT(*) FROM relationship_records WHERE relationship_id = ?`, targetRelationshipID).Scan(&privateRelationshipCount).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT COUNT(*) FROM relationship_cross_references WHERE cross_reference_id = ?`, crossReferenceID).Scan(&inboundReferenceCount).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT COUNT(*) FROM relationship_records WHERE relationship_id = ?`, sourceRelationshipID).Scan(&sourceRelationshipCount).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT COUNT(*) FROM knowledge_ingests WHERE ingest_id = ?`, sharedIngestID).Scan(&sharedIngestCount).Error; err != nil {
+			return err
+		}
+		require.Equal(t, int64(0), privateRelationshipCount)
+		require.Equal(t, int64(0), inboundReferenceCount)
+		require.Equal(t, int64(1), sourceRelationshipCount)
+		require.Equal(t, int64(1), sharedIngestCount)
+		var privateIngestCount int64
+		if err := tx.Raw(`SELECT COUNT(*) FROM knowledge_ingests WHERE ingest_id = ?`, privateIngestID).Scan(&privateIngestCount).Error; err != nil {
+			return err
+		}
+		require.Equal(t, int64(0), privateIngestCount)
+		return nil
+	}))
+}
+
 func TestPrivateMemoryIdempotencyConcurrentReplay(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

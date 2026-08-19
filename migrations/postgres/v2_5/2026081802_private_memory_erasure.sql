@@ -181,8 +181,19 @@ RETURNS TRIGGER AS $$
 BEGIN
     IF TG_OP = 'DELETE'
        AND current_setting('app.tx_mode', true) = 'system'
-       AND NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid
-           = NULLIF(to_jsonb(OLD)->>'space_id', '')::uuid THEN
+       AND (
+           NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid
+               = NULLIF(to_jsonb(OLD)->>'space_id', '')::uuid
+           OR (
+               TG_TABLE_NAME = 'relationship_cross_references'
+               AND NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid = (
+                   SELECT target.space_id
+                   FROM relationship_records AS target
+                   WHERE target.team_id = NULLIF(to_jsonb(OLD)->>'team_id', '')::uuid
+                     AND target.relationship_id = NULLIF(to_jsonb(OLD)->>'target_relationship_id', '')::uuid
+               )
+           )
+       ) THEN
         RETURN OLD;
     END IF;
     RAISE EXCEPTION '% is append-only: % operations are not allowed', TG_TABLE_NAME, TG_OP;
@@ -292,11 +303,34 @@ BEGIN
         );
         delete_policy_name := left(target_table, 42) || '_pe_' || left(md5(target_table), 8);
         EXECUTE format('DROP POLICY IF EXISTS %I ON %I', delete_policy_name, target_table);
-        EXECUTE format(
-            'CREATE POLICY %I ON %I FOR DELETE USING (current_setting(''app.tx_mode'', true) = ''system'' AND space_id = NULLIF(current_setting(''app.private_erasure_space_id'', true), '''')::uuid)',
-            delete_policy_name,
-            target_table
-        );
+        IF target_table = 'relationship_cross_references' THEN
+            EXECUTE format(
+                'CREATE POLICY %I ON %I FOR DELETE USING (
+                    current_setting(''app.tx_mode'', true) = ''system''
+                    AND (
+                        %I.space_id = NULLIF(current_setting(''app.private_erasure_space_id'', true), '''')::uuid
+                        OR EXISTS (
+                            SELECT 1
+                            FROM relationship_records AS target_relationship
+                            WHERE target_relationship.team_id = %I.team_id
+                              AND target_relationship.relationship_id = %I.target_relationship_id
+                              AND target_relationship.space_id = NULLIF(current_setting(''app.private_erasure_space_id'', true), '''')::uuid
+                        )
+                    )
+                )',
+                delete_policy_name,
+                target_table,
+                target_table,
+                target_table,
+                target_table
+            );
+        ELSE
+            EXECUTE format(
+                'CREATE POLICY %I ON %I FOR DELETE USING (current_setting(''app.tx_mode'', true) = ''system'' AND space_id = NULLIF(current_setting(''app.private_erasure_space_id'', true), '''')::uuid)',
+                delete_policy_name,
+                target_table
+            );
+        END IF;
     END LOOP;
 END;
 $dense_mem_space_generation$;

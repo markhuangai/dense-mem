@@ -591,6 +591,11 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 			return err
 		}
 		counts["v2_migration_corpus_items"] = externalDeleted
+		inboundCrossReferencesDeleted, err := deletePrivateMemoryInboundCrossReferencesTx(ctx, tx, space.ID)
+		if err != nil {
+			return err
+		}
+		counts["relationship_cross_references_inbound"] = inboundCrossReferencesDeleted
 		for _, table := range ordered {
 			query := fmt.Sprintf("DELETE FROM %s WHERE space_id = $1", pq.QuoteIdentifier(table))
 			result := tx.WithContext(ctx).Exec(query, space.ID)
@@ -729,6 +734,37 @@ func deletePrivateMemoryExternalDependenciesTx(ctx context.Context, tx *gorm.DB,
 		return 0, fmt.Errorf("%w: v2_migration_corpus_items retained %d rows", ErrPrivateMemoryManifest, remaining)
 	}
 	return deleted, nil
+}
+
+func deletePrivateMemoryInboundCrossReferencesTx(ctx context.Context, tx *gorm.DB, spaceID uuid.UUID) (int64, error) {
+	result := tx.WithContext(ctx).Exec(`
+		DELETE FROM relationship_cross_references AS cross_reference
+		USING relationship_records AS target_relationship
+		WHERE target_relationship.team_id = cross_reference.team_id
+		  AND target_relationship.relationship_id = cross_reference.target_relationship_id
+		  AND target_relationship.space_id = $1::uuid
+		  AND cross_reference.space_id IS DISTINCT FROM $1::uuid
+	`, spaceID)
+	if result.Error != nil {
+		return 0, fmt.Errorf("delete inbound private-memory cross references: %w", result.Error)
+	}
+
+	var remaining int64
+	if err := tx.WithContext(ctx).Raw(`
+		SELECT COUNT(*)
+		FROM relationship_cross_references AS cross_reference
+		JOIN relationship_records AS target_relationship
+		  ON target_relationship.team_id = cross_reference.team_id
+		 AND target_relationship.relationship_id = cross_reference.target_relationship_id
+		WHERE target_relationship.space_id = $1::uuid
+		  AND cross_reference.space_id IS DISTINCT FROM $1::uuid
+	`, spaceID).Row().Scan(&remaining); err != nil {
+		return 0, fmt.Errorf("verify inbound private-memory cross references: %w", err)
+	}
+	if remaining != 0 {
+		return 0, fmt.Errorf("%w: inbound relationship_cross_references retained %d rows", ErrPrivateMemoryManifest, remaining)
+	}
+	return result.RowsAffected, nil
 }
 
 func (r *PrivateMemoryRepositoryImpl) ReleaseClaim(ctx context.Context, operationID uuid.UUID, workerID string, fence int64, errorCode string) error {

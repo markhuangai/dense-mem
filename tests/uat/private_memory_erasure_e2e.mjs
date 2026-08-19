@@ -585,7 +585,7 @@ async function mcpRaw(apiKey, method, params) {
 
 function assertErasedSpace(spaceID, operation, fixture, lifecycle) {
   const catalog = privateMemoryManifestTables();
-  const counted = Object.keys(operation.deleted_counts ?? {}).filter((table) => table !== "audit_log" && table !== "v2_migration_corpus_items").sort();
+  const counted = Object.keys(operation.deleted_counts ?? {}).filter((table) => table !== "audit_log" && table !== "v2_migration_corpus_items" && table !== "relationship_cross_references_inbound").sort();
   assert(JSON.stringify(counted) === JSON.stringify(catalog), "erasure deleted-count manifest did not match the live space catalog");
   postgresExec(`
     DO $private_erasure_zero$
