@@ -131,10 +131,13 @@ func submissionStatusErrorArraySchema() map[string]any {
 
 func submissionStatusErrorSchema() map[string]any {
 	return closedObject(
-		[]string{"code", "message"},
+		[]string{"code", "message", "retryable", "next_action", "remediation"},
 		map[string]any{
-			"code":    schemaEnum(memoryservice.SubmissionErrorCodes()),
-			"message": schemaString("Bounded safe submission error.", 512),
+			"code":        schemaEnum(memoryservice.SubmissionErrorCodes()),
+			"message":     schemaString("Bounded safe submission error.", 512),
+			"retryable":   map[string]any{"type": "boolean"},
+			"next_action": schemaEnum(memoryservice.SubmissionNextActions()),
+			"remediation": schemaString("Bounded action the caller can take next.", 512),
 		},
 	)
 }

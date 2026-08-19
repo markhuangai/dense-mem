@@ -2,8 +2,28 @@ import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types
 import type { CommunityStatus } from "./community-api-types";
 import type { SearchConvergence } from "./search-convergence-types";
 import { requestJson } from "./http";
+import {
+  buildOperationLogsPath,
+  buildSubmissionDiagnosticPath,
+  buildSubmissionDiagnosticsPath,
+  type OperationLog,
+  type OperationLogQuery,
+  type SubmissionDiagnosticDetail,
+  type SubmissionDiagnosticQuery,
+  type SubmissionDiagnosticSummary,
+} from "./control-observability-api";
 export { ApiError } from "./http";
 export { listControlIdentityProviders, type ControlIdentityProvider } from "./control-auth-api";
+export type {
+  OperationLog,
+  OperationLogQuery,
+  SubmissionDiagnosticDetail,
+  SubmissionDiagnosticQuery,
+  SubmissionDiagnosticSummary,
+  SubmissionEvidenceStatus,
+  SubmissionSemanticHold,
+  SubmissionStatusError,
+} from "./control-observability-api";
 export type {
   ConflictQueueItem,
   ConflictQueueLeaseState,
@@ -448,28 +468,6 @@ export type TelemetryPricingConfigInput = {
   }>;
 };
 
-export type OperationLog = {
-  id: string;
-  timestamp: string;
-  severity: "DEBUG" | "INFO" | "WARN" | "ERROR" | string;
-  severity_rank: number;
-  message: string;
-  source: string;
-  team_id: string | null;
-  profile_id: string | null;
-  correlation_id: string;
-  error: string;
-  attrs: Record<string, unknown> | null;
-};
-
-export type OperationLogQuery = {
-  limit?: number;
-  offset?: number;
-  severity?: OperationLog["severity"] | "";
-  sort?: "timestamp" | "severity";
-  direction?: "asc" | "desc";
-};
-
 export type RecallFeedbackResultRef = {
   type: string;
   id: string;
@@ -886,24 +884,15 @@ export class ControlApi {
   }
 
   listOperationLogs(query: OperationLogQuery = {}): Promise<Page<OperationLog>> {
-    const params = new URLSearchParams();
-    if (query.limit !== undefined) {
-      params.set("limit", String(query.limit));
-    }
-    if (query.offset !== undefined) {
-      params.set("offset", String(query.offset));
-    }
-    if (query.severity) {
-      params.set("severity", query.severity);
-    }
-    if (query.sort) {
-      params.set("sort", query.sort);
-    }
-    if (query.direction) {
-      params.set("direction", query.direction);
-    }
-    const suffix = params.toString() ? `?${params.toString()}` : "";
-    return this.request<Page<OperationLog>>(`/logs${suffix}`);
+    return this.request<Page<OperationLog>>(buildOperationLogsPath(query));
+  }
+
+  listSubmissionDiagnostics(query: SubmissionDiagnosticQuery = {}): Promise<Page<SubmissionDiagnosticSummary>> {
+    return this.request<Page<SubmissionDiagnosticSummary>>(buildSubmissionDiagnosticsPath(query));
+  }
+
+  getSubmissionDiagnostic(teamId: string, submissionId: string): Promise<SubmissionDiagnosticDetail> {
+    return this.requestEnvelope<SubmissionDiagnosticDetail>(buildSubmissionDiagnosticPath(teamId, submissionId));
   }
 
   listRecallFeedbackEvents(query: RecallFeedbackEventQuery = {}): Promise<Page<RecallFeedbackEvent>> {

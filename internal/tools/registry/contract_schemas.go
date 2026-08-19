@@ -115,16 +115,6 @@ func relationshipPredicateSchema() map[string]any {
 func relationshipObjectSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
-		"oneOf": []any{
-			map[string]any{
-				"required": []string{"entity"},
-				"not":      map[string]any{"required": []string{"value"}},
-			},
-			map[string]any{
-				"required": []string{"value"},
-				"not":      map[string]any{"required": []string{"entity"}},
-			},
-		},
 		"properties": map[string]any{
 			"entity": inlineRelationshipEntitySchema("Proposed object Entity."),
 			"value":  relationshipValueSchema(),
@@ -228,10 +218,6 @@ func relationshipCorrectionPatchSchema() map[string]any {
 func relationshipCorrectionEntitySchema() map[string]any {
 	return map[string]any{
 		"type": "object",
-		"oneOf": []any{
-			map[string]any{"required": []string{"entity_id"}, "not": map[string]any{"required": []string{"name"}}},
-			map[string]any{"required": []string{"name", "entity_kind"}, "not": map[string]any{"required": []string{"entity_id"}}},
-		},
 		"properties": map[string]any{
 			"entity_id":   schemaString("Existing same-team Entity ID.", 128),
 			"name":        nonEmptyStringSchema("Canonical name for deterministic resolution or creation.", 256),
@@ -395,6 +381,14 @@ func submissionStatusOutputSchema() map[string]any {
 			"processing_state":    schemaEnum([]string{"queued", "processing", "awaiting_review", "awaiting_confirmation", "completed", "rejected", "quarantined", "failed"}),
 			"search_state":        schemaEnum(domain.SearchProjectionStates()),
 			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
+			"correlation_id":      schemaString("Request correlation ID for operator diagnostics.", 128),
+			"attempts":            map[string]any{"type": "integer", "minimum": 0},
+			"max_attempts":        map[string]any{"type": "integer", "minimum": 1},
+			"submitted_at":        schemaString("Submission time in RFC3339 format.", 64),
+			"next_attempt_at":     schemaString("Scheduled retry time in RFC3339 format.", 64),
+			"started_at":          schemaString("First processing start time in RFC3339 format.", 64),
+			"updated_at":          schemaString("Last placement state update in RFC3339 format.", 64),
+			"completed_at":        schemaString("Terminal completion time in RFC3339 format.", 64),
 			"evidence": array(closedObject(
 				[]string{"evidence_id", "evidence_index", "superseded_evidence_ids", "search_state"},
 				map[string]any{

@@ -148,6 +148,30 @@ func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T)
 	require.Equal(t, "corr-canonical", actor["correlation_id"])
 }
 
+func TestRememberUsesPersistedCorrelationForIdempotentReplay(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	ledger := &rememberLedgerStub{result: &repository.CreateIngestResult{
+		TeamID:         teamID.String(),
+		IngestID:       uuid.NewString(),
+		PlacementRunID: uuid.NewString(),
+		Status:         string(domain.PlacementRunQueued),
+		CorrelationID:  "corr-original-submission",
+		Existing:       true,
+	}}
+	svc := NewRememberService(RememberDependencies{Ledger: ledger})
+
+	result, err := svc.Remember(authenticatedRememberContext(teamID, profileID, keyID), RememberRequest{
+		IdempotencyKey:    "remember-replay",
+		Evidence:          []RememberEvidenceInput{{Content: "Replay the original durable submission."}},
+		RelationshipHints: completeRememberRelationshipHints(1),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "corr-original-submission", result.CorrelationID)
+}
+
 func TestCanonicalRequestHashRetainsLegacyContractMarker(t *testing.T) {
 	hash, err := canonicalRequestHash(RememberRequest{
 		Evidence:       []RememberEvidenceInput{{Content: "compat"}},
@@ -190,9 +214,17 @@ func TestGetSubmissionStatusReturnsBoundedOwnerProjection(t *testing.T) {
 	keyID := uuid.New()
 	submissionID := uuid.NewString()
 	expires := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	submittedAt := time.Date(2026, time.August, 18, 1, 0, 0, 0, time.UTC)
+	nextAttemptAt := submittedAt.Add(2 * time.Minute)
+	startedAt := submittedAt.Add(time.Second)
+	updatedAt := submittedAt.Add(90 * time.Second)
+	completedAt := submittedAt.Add(3 * time.Minute)
 	ledger := &rememberLedgerStub{status: &repository.CreateIngestResult{
 		TeamID: teamID.String(), OwnerProfileID: profileID.String(), IngestID: submissionID,
 		PlacementRunID: uuid.NewString(), Status: string(domain.PlacementRunCompleted),
+		CorrelationID: "corr-status", Attempts: 2, MaxAttempts: 5,
+		SubmittedAt: &submittedAt, NextAttemptAt: &nextAttemptAt, StartedAt: &startedAt,
+		UpdatedAt: &updatedAt, CompletedAt: &completedAt,
 		QuarantineExpiresAt: &expires,
 		Evidence:            []repository.EvidenceFragment{{FragmentID: "evidence-1", EvidenceIndex: 0, SupersededEvidenceIDs: []string{"old-evidence"}}},
 		Items: []repository.PlacementItem{{
@@ -207,6 +239,14 @@ func TestGetSubmissionStatusReturnsBoundedOwnerProjection(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, submissionID, result.SubmissionID)
+	require.Equal(t, "corr-status", result.CorrelationID)
+	require.Equal(t, 2, *result.Attempts)
+	require.Equal(t, 5, *result.MaxAttempts)
+	require.Equal(t, submittedAt, *result.SubmittedAt)
+	require.Equal(t, nextAttemptAt, *result.NextAttemptAt)
+	require.Equal(t, startedAt, *result.StartedAt)
+	require.Equal(t, updatedAt, *result.UpdatedAt)
+	require.Equal(t, completedAt, *result.CompletedAt)
 	require.Equal(t, "completed", result.ProcessingState)
 	require.Equal(t, string(domain.SearchProjectionCurrent), result.SearchState)
 	require.Len(t, result.Evidence, 1)
@@ -255,7 +295,7 @@ func TestSubmissionStatusProjectionMapsProcessingStatesAndErrors(t *testing.T) {
 		if result.ProcessingState != want || result.SearchState != string(domain.SearchProjectionCurrent) {
 			t.Fatalf("status %q projection = %#v, want processing %q/current", status, result, want)
 		}
-		if status == string(domain.PlacementRunFailed) || status == "unexpected" {
+		if status == string(domain.PlacementRunFailed) || status == string(domain.PlacementRunQuarantined) || status == "unexpected" {
 			require.Len(t, result.Errors, 1)
 		} else {
 			require.Empty(t, result.Errors)
@@ -401,6 +441,9 @@ func TestTerminalSubmissionErrorsAreClosedAndDeduplicated(t *testing.T) {
 	require.Equal(t, string(SubmissionErrorAssessorUnavailable), failed.Evidence[0].Error.Code)
 	require.Equal(t, string(SubmissionErrorAssessorUnavailable), failed.Evidence[1].Error.Code)
 	require.NotEmpty(t, failed.Errors[0].Message)
+	require.True(t, failed.Errors[0].Retryable)
+	require.Equal(t, string(SubmissionNextActionResubmitSubmission), failed.Errors[0].NextAction)
+	require.NotEmpty(t, failed.Errors[0].Remediation)
 
 	rejected := relationshipCorrectionSubmissionStatus(&repository.RelationshipCorrectionStatus{
 		SubmissionID: "submission-2", ProcessingState: "rejected",
@@ -414,7 +457,43 @@ func TestTerminalSubmissionErrorsAreClosedAndDeduplicated(t *testing.T) {
 	})
 	require.Len(t, unknown.Errors, 1)
 	require.Equal(t, string(SubmissionErrorProcessingFailed), unknown.Errors[0].Code)
+	require.False(t, unknown.Errors[0].Retryable)
+	require.Equal(t, string(SubmissionNextActionContactOperator), unknown.Errors[0].NextAction)
 	require.NotContains(t, unknown.Errors[0].Message, "provider-secret-details")
+}
+
+func TestSubmissionErrorGuidanceAndQuarantineAreActionable(t *testing.T) {
+	tests := []struct {
+		code       SubmissionErrorCode
+		retryable  bool
+		nextAction SubmissionNextAction
+	}{
+		{SubmissionErrorSearchIndexingDelayed, true, SubmissionNextActionPollStatus},
+		{SubmissionErrorSemanticHold, true, SubmissionNextActionSubmitReplacement},
+		{SubmissionErrorPolicyRejected, true, SubmissionNextActionResubmitSubmission},
+		{SubmissionErrorAssessorUnavailable, true, SubmissionNextActionResubmitSubmission},
+		{SubmissionErrorContractSuperseded, true, SubmissionNextActionResubmitSubmission},
+		{SubmissionErrorReplacementConflict, true, SubmissionNextActionResubmitSubmission},
+		{SubmissionErrorRelationshipVersionStale, true, SubmissionNextActionRetryCorrection},
+		{SubmissionErrorNoChange, false, SubmissionNextActionNone},
+		{SubmissionErrorAssessorInvalid, false, SubmissionNextActionContactOperator},
+		{SubmissionErrorProcessingFailed, false, SubmissionNextActionContactOperator},
+		{SubmissionErrorQuarantined, false, SubmissionNextActionContactOperator},
+	}
+	for _, test := range tests {
+		t.Run(string(test.code), func(t *testing.T) {
+			value := submissionStatusError(test.code)
+			require.Equal(t, test.retryable, value.Retryable)
+			require.Equal(t, string(test.nextAction), value.NextAction)
+			require.NotEmpty(t, value.Remediation)
+		})
+	}
+
+	quarantined := submissionStatusResultFromLedger(&repository.CreateIngestResult{
+		IngestID: "submission-quarantined", Status: string(domain.PlacementRunQuarantined),
+	})
+	require.Len(t, quarantined.Errors, 1)
+	require.Equal(t, string(SubmissionErrorQuarantined), quarantined.Errors[0].Code)
 }
 
 func TestGetSubmissionStatusRejectsInvalidRequestsAndBoundsErrors(t *testing.T) {

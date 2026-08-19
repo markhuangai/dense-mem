@@ -20,11 +20,10 @@ prepare_conflict_provider_files() {
     return
   fi
   E2E_COMPOSE_OVERLAY_FILE="${ROOT_DIR}/docker-compose.conflict-e2e-${E2E_FILE_ID}.yml"
-  node - "$E2E_COMPOSE_OVERLAY_FILE" "$ROOT_DIR" "$E2E_CONFLICT_PROVIDER_PORT" "$E2E_MARKER" <<'NODE'
+  node - "$E2E_COMPOSE_OVERLAY_FILE" "$E2E_CONFLICT_PROVIDER_PORT" "$E2E_MARKER" <<'NODE'
 const fs = require("node:fs");
 
-const [destination, rootDir, providerPort, marker] = process.argv.slice(2);
-const mount = JSON.stringify(`${rootDir}/tests/uat/conflict_openai_stub.mjs:/e2e/conflict_openai_stub.mjs:ro`);
+const [destination, providerPort, marker] = process.argv.slice(2);
 const contents = `${marker}
 services:
   server:
@@ -36,7 +35,7 @@ services:
     working_dir: /e2e
     command: ["node", "/e2e/conflict_openai_stub.mjs"]
     volumes:
-      - ${mount}
+      - e2e-conflict-provider:/e2e
     ports:
       - "127.0.0.1:${providerPort}:8081"
     healthcheck:
@@ -44,9 +43,25 @@ services:
       interval: 1s
       timeout: 2s
       retries: 30
+volumes:
+  e2e-conflict-provider:
 `;
 fs.writeFileSync(destination, contents);
 NODE
+}
+
+prepare_conflict_provider_volume() {
+  local container_id
+  if [[ "$E2E_SCENARIO" != "conflict" ]]; then
+    return
+  fi
+  compose create conflict-provider >/dev/null
+  container_id="$(compose ps -aq conflict-provider)"
+  if [[ -z "$container_id" ]]; then
+    echo "Failed to create the E2E conflict provider volume." >&2
+    return 1
+  fi
+  docker cp "${ROOT_DIR}/tests/uat/conflict_openai_stub.mjs" "${container_id}:/e2e/conflict_openai_stub.mjs"
 }
 
 prepare_conflict_review_driver() {

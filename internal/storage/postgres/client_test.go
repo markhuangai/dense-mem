@@ -73,6 +73,9 @@ func getTestDSN(ctx context.Context) (string, func(), error) {
 func skipIfNoPostgres(t *testing.T, ctx context.Context) (string, func()) {
 	dsn, cleanup, err := getTestDSN(ctx)
 	if err != nil {
+		if os.Getenv("DENSE_MEM_REQUIRE_POSTGRES_TESTS") == "1" {
+			t.Fatalf("Postgres is required for this test run: %v", err)
+		}
 		t.Skipf("Postgres not available: %v", err)
 	}
 	return dsn, cleanup

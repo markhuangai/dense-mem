@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -13,112 +14,120 @@ const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 
 let rpcID = 0;
 const runID = `semantic-holds-e2e-${Date.now()}`;
+const groundedRelationshipEvidence = "The Project Nova project uses the Store product.";
 
-const sameTeamOtherProfile = await createCredential(teamID, `Semantic Holds Other ${runID}`);
-const otherTeam = await createTeam(`Semantic Holds Other Team ${runID}`);
-const otherTeamProfile = await createCredential(otherTeam.id, `Semantic Holds Cross Team ${runID}`);
+const originalTeamConfig = await getTeamConfig(teamID);
+try {
+  await setAutoWriteThreshold(teamID, originalTeamConfig, 0);
+  const sameTeamOtherProfile = await createCredential(teamID, `Semantic Holds Other ${runID}`);
+  const otherTeam = await createTeam(`Semantic Holds Other Team ${runID}`);
+  const otherTeamProfile = await createCredential(otherTeam.id, `Semantic Holds Cross Team ${runID}`);
 
-const verifierBeforeTarget = await prometheusValue("densemem_verifier_requests_total", teamID);
-const target = await mcpSuccess(apiKey, "remember", rememberInput(
-  "proposal",
-  `${runID}:target`,
-  "Project Nova uses Store.",
-));
-const targetID = requiredString(target.submission_id, "target submission_id");
-const targetStatus = await waitForState(apiKey, targetID, "awaiting_review");
-assertSemanticHoldStatus(targetStatus, targetID);
-const targetBeforeReplacement = holdSummary(targetID);
-if (targetBeforeReplacement.holdState !== "active") {
-  throw new Error("target did not become an active semantic hold");
-}
-if (targetBeforeReplacement.holdCount !== 1 || targetBeforeReplacement.semanticWrites !== 0) {
-  throw new Error("target hold did not preserve zero semantic writes and one hold fact");
-}
+  const verifierBeforeTarget = await prometheusValue("densemem_verifier_requests_total", teamID);
+  const target = await mcpSuccess(apiKey, "remember", rememberInput(
+    "proposal",
+    `${runID}:target`,
+    groundedRelationshipEvidence,
+  ));
+  const targetID = requiredString(target.submission_id, "target submission_id");
+  const targetStatus = await waitForState(apiKey, targetID, "awaiting_review");
+  assertSemanticHoldStatus(targetStatus, targetID);
+  const targetBeforeReplacement = holdSummary(targetID);
+  if (targetBeforeReplacement.holdState !== "active") {
+    throw new Error("target did not become an active semantic hold");
+  }
+  if (targetBeforeReplacement.holdCount !== 1 || targetBeforeReplacement.semanticWrites !== 0) {
+    throw new Error("target hold did not preserve zero semantic writes and one hold fact");
+  }
 
-await waitForVerifierRequest(teamID, verifierBeforeTarget);
-const verifierBeforeUnauthorized = await prometheusValue("densemem_verifier_requests_total", teamID);
-const sameTeamUnauthorized = await mcpRaw(
-  sameTeamOtherProfile.apiKey,
-  "remember",
-  rememberInput("statement", `${runID}:cross-profile`, "Project Nova uses Store.", targetID),
-  `${runID}:cross-profile`,
-);
-assertMCPError(sameTeamUnauthorized, "cross-profile replacement");
-const crossTeamUnauthorized = await mcpRaw(
-  otherTeamProfile.apiKey,
-  "remember",
-  rememberInput("statement", `${runID}:cross-team`, "Project Nova uses Store.", targetID),
-  `${runID}:cross-team`,
-);
-assertMCPError(crossTeamUnauthorized, "cross-team replacement");
-if (await prometheusValue("densemem_verifier_requests_total", teamID) !== verifierBeforeUnauthorized) {
-  throw new Error("unauthorized replacements reached the live verifier");
-}
-if (postgresCountByCorrelation(`${runID}:cross-profile`) !== 0 || postgresCountByCorrelation(`${runID}:cross-team`) !== 0) {
-  throw new Error("unauthorized replacement created a staged ingest");
-}
+  await waitForVerifierRequest(teamID, verifierBeforeTarget);
+  const verifierBeforeUnauthorized = await prometheusValue("densemem_verifier_requests_total", teamID);
+  const sameTeamUnauthorized = await mcpRaw(
+    sameTeamOtherProfile.apiKey,
+    "remember",
+    rememberInput("statement", `${runID}:cross-profile`, groundedRelationshipEvidence, targetID),
+    `${runID}:cross-profile`,
+  );
+  assertMCPError(sameTeamUnauthorized, "cross-profile replacement");
+  const crossTeamUnauthorized = await mcpRaw(
+    otherTeamProfile.apiKey,
+    "remember",
+    rememberInput("statement", `${runID}:cross-team`, groundedRelationshipEvidence, targetID),
+    `${runID}:cross-team`,
+  );
+  assertMCPError(crossTeamUnauthorized, "cross-team replacement");
+  if (await prometheusValue("densemem_verifier_requests_total", teamID) !== verifierBeforeUnauthorized) {
+    throw new Error("unauthorized replacements reached the live verifier");
+  }
+  if (postgresCountByCorrelation(`${runID}:cross-profile`) !== 0 || postgresCountByCorrelation(`${runID}:cross-team`) !== 0) {
+    throw new Error("unauthorized replacement created a staged ingest");
+  }
 
-const heldSuccessor = await mcpSuccess(apiKey, "remember", rememberInput(
-  "proposal",
-  `${runID}:held-successor`,
-  "Project Nova uses Store.",
-  targetID,
-));
-const heldSuccessorID = requiredString(heldSuccessor.submission_id, "held successor submission_id");
-const heldSuccessorStatus = await waitForState(apiKey, heldSuccessorID, "awaiting_review");
-assertSemanticHoldStatus(heldSuccessorStatus, heldSuccessorID);
-const afterHeldSuccessor = holdSummary(targetID, heldSuccessorID);
-if (afterHeldSuccessor.holdState !== targetBeforeReplacement.holdState || afterHeldSuccessor.supersededBy) {
-  throw new Error("held successor changed the target hold");
-}
-if (afterHeldSuccessor.successorStatus !== "awaiting_review" || afterHeldSuccessor.successorHoldState !== "active") {
-  throw new Error("held successor did not create its own hold and release the target slot");
-}
-if (afterHeldSuccessor.releaseEvents !== 1) {
-  throw new Error("held successor did not append one release outcome");
-}
+  const heldSuccessor = await mcpSuccess(apiKey, "remember", rememberInput(
+    "proposal",
+    `${runID}:held-successor`,
+    groundedRelationshipEvidence,
+    targetID,
+  ));
+  const heldSuccessorID = requiredString(heldSuccessor.submission_id, "held successor submission_id");
+  const heldSuccessorStatus = await waitForState(apiKey, heldSuccessorID, "awaiting_review");
+  assertSemanticHoldStatus(heldSuccessorStatus, heldSuccessorID);
+  const afterHeldSuccessor = holdSummary(targetID, heldSuccessorID);
+  if (afterHeldSuccessor.holdState !== targetBeforeReplacement.holdState || afterHeldSuccessor.supersededBy) {
+    throw new Error("held successor changed the target hold");
+  }
+  if (afterHeldSuccessor.successorStatus !== "awaiting_review" || afterHeldSuccessor.successorHoldState !== "active") {
+    throw new Error("held successor did not create its own hold and release the target slot");
+  }
+  if (afterHeldSuccessor.releaseEvents !== 1) {
+    throw new Error("held successor did not append one release outcome");
+  }
 
-const successfulSuccessor = await mcpSuccess(apiKey, "remember", rememberInput(
-  "statement",
-  `${runID}:successful-successor`,
-  "Project Nova uses Store.",
-  targetID,
-));
-const successfulSuccessorID = requiredString(successfulSuccessor.submission_id, "successful successor submission_id");
-await waitForState(apiKey, successfulSuccessorID, "completed");
-const afterPromotion = holdSummary(targetID, heldSuccessorID, successfulSuccessorID);
-if (afterPromotion.holdState !== "superseded" || afterPromotion.supersededBy !== afterPromotion.successorRunID) {
-  throw new Error("successful successor did not atomically supersede the target");
-}
-if (afterPromotion.successorStatus !== "awaiting_review" || afterPromotion.promotedStatus !== "completed") {
-  throw new Error("successor status projection is inconsistent after promotion");
-}
-if (afterPromotion.promotionEvents !== 1 || afterPromotion.supersededEvents !== 1) {
-  throw new Error("replacement promotion audit events were not idempotent");
-}
+  const successfulSuccessor = await mcpSuccess(apiKey, "remember", rememberInput(
+    "statement",
+    `${runID}:successful-successor`,
+    groundedRelationshipEvidence,
+    targetID,
+  ));
+  const successfulSuccessorID = requiredString(successfulSuccessor.submission_id, "successful successor submission_id");
+  await waitForState(apiKey, successfulSuccessorID, "completed");
+  const afterPromotion = holdSummary(targetID, heldSuccessorID, successfulSuccessorID);
+  if (afterPromotion.holdState !== "superseded" || afterPromotion.supersededBy !== afterPromotion.successorRunID) {
+    throw new Error("successful successor did not atomically supersede the target");
+  }
+  if (afterPromotion.successorStatus !== "awaiting_review" || afterPromotion.promotedStatus !== "completed") {
+    throw new Error("successor status projection is inconsistent after promotion");
+  }
+  if (afterPromotion.promotionEvents !== 1 || afterPromotion.supersededEvents !== 1) {
+    throw new Error("replacement promotion audit events were not idempotent");
+  }
 
-const verifierBeforeSupersededRetry = await prometheusValue("densemem_verifier_requests_total", teamID);
-const supersededRetry = await mcpRaw(
-  apiKey,
-  "remember",
-  rememberInput("statement", `${runID}:superseded-retry`, "Project Nova uses Store.", targetID),
-  `${runID}:superseded-retry`,
-);
-assertMCPError(supersededRetry, "superseded replacement");
-if (await prometheusValue("densemem_verifier_requests_total", teamID) !== verifierBeforeSupersededRetry) {
-  throw new Error("superseded replacement reached the live verifier");
-}
+  const verifierBeforeSupersededRetry = await prometheusValue("densemem_verifier_requests_total", teamID);
+  const supersededRetry = await mcpRaw(
+    apiKey,
+    "remember",
+    rememberInput("statement", `${runID}:superseded-retry`, groundedRelationshipEvidence, targetID),
+    `${runID}:superseded-retry`,
+  );
+  assertMCPError(supersededRetry, "superseded replacement");
+  if (await prometheusValue("densemem_verifier_requests_total", teamID) !== verifierBeforeSupersededRetry) {
+    throw new Error("superseded replacement reached the live verifier");
+  }
 
-console.log(JSON.stringify({
-  status: "ok",
-  run_id: runID,
-  target_submission_id: targetID,
-  held_successor_submission_id: heldSuccessorID,
-  successful_successor_submission_id: successfulSuccessorID,
-  target_hold_state: afterPromotion.holdState,
-  successful_successor_state: afterPromotion.promotedStatus,
-  negative_cases: ["cross-profile", "cross-team", "superseded-target"],
-}, null, 2));
+  console.log(JSON.stringify({
+    status: "ok",
+    run_id: runID,
+    target_submission_id: targetID,
+    held_successor_submission_id: heldSuccessorID,
+    successful_successor_submission_id: successfulSuccessorID,
+    target_hold_state: afterPromotion.holdState,
+    successful_successor_state: afterPromotion.promotedStatus,
+    negative_cases: ["cross-profile", "cross-team", "superseded-target"],
+  }, null, 2));
+} finally {
+  const restoredTeamConfig = await setTeamConfig(teamID, originalTeamConfig);
+  assert.deepEqual(restoredTeamConfig, originalTeamConfig, "control API did not restore the semantic-hold team config");
+}
 
 function rememberInput(modality, idempotencyKey, content, replacementID = "") {
   const subject = "Project Nova";
@@ -168,7 +177,8 @@ async function waitForState(key, submissionID, expected) {
       return status;
     }
     if (terminalStates.has(state)) {
-      throw new Error(`submission ${submissionID} reached ${state} while waiting for ${expected}`);
+      const holdIssues = Array.isArray(status.semantic_hold?.issues) ? status.semantic_hold.issues : [];
+      throw new Error(`submission ${submissionID} reached ${state} while waiting for ${expected}: ${JSON.stringify({ hold_issues: holdIssues })}`);
     }
     await delay(2_000);
   }
@@ -300,6 +310,51 @@ async function createCredential(targetTeamID, name) {
     throw new Error("control API did not return a credential key");
   }
   return { apiKey: newCredential };
+}
+
+async function getTeamConfig(targetTeamID) {
+  let offset = 0;
+  for (;;) {
+    const response = await controlJSON(`/control/api/teams?limit=100&offset=${offset}`, { method: "GET" });
+    const teams = Array.isArray(response.data) ? response.data : [];
+    const team = teams.find((item) => item?.id === targetTeamID);
+    if (team) {
+      if (!team.config || typeof team.config !== "object" || Array.isArray(team.config)) {
+        throw new Error("control API returned an invalid semantic-hold team config");
+      }
+      return team.config;
+    }
+    const total = Number(response.pagination?.total ?? 0);
+    if (teams.length === 0 || offset + teams.length >= total) {
+      throw new Error("control API did not return the semantic-hold team");
+    }
+    offset += teams.length;
+  }
+}
+
+async function setAutoWriteThreshold(targetTeamID, teamConfig, threshold) {
+  const memoryWrite = teamConfig.memory_write && typeof teamConfig.memory_write === "object" && !Array.isArray(teamConfig.memory_write)
+    ? teamConfig.memory_write
+    : {};
+  const configured = await setTeamConfig(targetTeamID, {
+    ...teamConfig,
+    memory_write: { ...memoryWrite, auto_write_confidence_threshold: threshold },
+  });
+  if (configured.memory_write?.auto_write_confidence_threshold !== threshold) {
+    throw new Error("control API did not apply the semantic-hold test threshold");
+  }
+}
+
+async function setTeamConfig(targetTeamID, teamConfig) {
+  const response = await controlJSON(`/control/api/teams/${targetTeamID}`, {
+    method: "PATCH",
+    body: JSON.stringify({ config: teamConfig }),
+  });
+  const configured = response.data?.config;
+  if (!configured || typeof configured !== "object" || Array.isArray(configured)) {
+    throw new Error("control API returned an invalid updated team config");
+  }
+  return configured;
 }
 
 async function controlJSON(path, options) {

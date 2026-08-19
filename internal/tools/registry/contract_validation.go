@@ -104,6 +104,17 @@ func validateCorrectRelationship(args map[string]any) error {
 		if len(patch) == 0 {
 			return fmt.Errorf("patch must change at least one relationship field")
 		}
+		for _, field := range []string{"subject_entity", "object_entity"} {
+			if raw, exists := patch[field]; exists {
+				entity, ok := objectFields(raw)
+				if !ok {
+					return fmt.Errorf("patch.%s must be an object", field)
+				}
+				if err := validateRelationshipCorrectionEntity(entity, "patch."+field); err != nil {
+					return err
+				}
+			}
+		}
 		supports, _ := args["supports"].([]any)
 		seen := make(map[string]struct{}, len(supports))
 		for index, raw := range supports {
@@ -131,6 +142,22 @@ func validateCorrectRelationship(args map[string]any) error {
 		}
 	default:
 		return errors.New("action must be submit or confirm")
+	}
+	return nil
+}
+
+func validateRelationshipCorrectionEntity(entity map[string]any, path string) error {
+	hasID := !contractValueEmpty(entity["entity_id"])
+	hasName := !contractValueEmpty(entity["name"])
+	hasKind := !contractValueEmpty(entity["entity_kind"])
+	if hasID {
+		if hasName || hasKind {
+			return fmt.Errorf("%s requires entity_id alone or name with entity_kind", path)
+		}
+		return nil
+	}
+	if !hasName || !hasKind {
+		return fmt.Errorf("%s requires entity_id alone or name with entity_kind", path)
 	}
 	return nil
 }

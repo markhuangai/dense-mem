@@ -107,6 +107,9 @@ type CreateIngestResult struct {
 	IngestID         string
 	PlacementRunID   string
 	Status           string
+	CorrelationID    string
+	Attempts         int
+	MaxAttempts      int
 	Existing         bool
 	Proposal         map[string]any
 	ContractVersion  string
@@ -115,6 +118,11 @@ type CreateIngestResult struct {
 	FirstDisposition *PlacementFirstDisposition
 	// Status projection metadata is loaded for the owner-scoped public status
 	// endpoint; it is not placement data and is never exposed directly.
+	SubmittedAt                *time.Time
+	NextAttemptAt              *time.Time
+	StartedAt                  *time.Time
+	UpdatedAt                  *time.Time
+	CompletedAt                *time.Time
 	QuarantineExpiresAt        *time.Time
 	ReplacementWindowExpiresAt *time.Time
 	SemanticHoldState          string
@@ -136,6 +144,7 @@ type PlacementRun struct {
 	PlacementRunID             string
 	IngestID                   string
 	OwnerProfileID             string
+	CorrelationID              string
 	Status                     string
 	Attempts                   int
 	MaxAttempts                int
@@ -421,20 +430,30 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 				) AS candidates
 				ORDER BY priority ASC, available_at ASC, created_at ASC, placement_run_id ASC
 				LIMIT 1
+			),
+			updated AS (
+				UPDATE placement_runs AS run
+				SET status = 'processing',
+				    attempts = attempts + 1,
+				    started_at = COALESCE(started_at, now()),
+				    lease_until = now() + (? * interval '1 second'),
+				    worker_id = ?,
+				    updated_at = now()
+				FROM next
+				WHERE run.team_id = ?::uuid
+				  AND run.placement_run_id = next.placement_run_id
+				RETURNING run.team_id, run.placement_run_id, run.ingest_id,
+				          run.owner_profile_id, run.status, run.attempts, run.max_attempts,
+				          run.lease_until
 			)
-			UPDATE placement_runs AS run
-			SET status = 'processing',
-			    attempts = attempts + 1,
-			    started_at = COALESCE(started_at, now()),
-			    lease_until = now() + (? * interval '1 second'),
-			    worker_id = ?,
-			    updated_at = now()
-			FROM next
-			WHERE run.team_id = ?::uuid
-			  AND run.placement_run_id = next.placement_run_id
-			RETURNING run.team_id::text, run.placement_run_id::text, run.ingest_id::text,
-			          run.owner_profile_id::text, run.status, run.attempts, run.max_attempts,
-			          run.lease_until
+			SELECT updated.team_id::text, updated.placement_run_id::text, updated.ingest_id::text,
+			       updated.owner_profile_id::text,
+			       COALESCE(ingest.metadata #>> '{actor,correlation_id}', ''),
+			       updated.status, updated.attempts, updated.max_attempts, updated.lease_until
+			FROM updated
+			JOIN knowledge_ingests AS ingest
+			  ON ingest.team_id = updated.team_id
+			 AND ingest.ingest_id = updated.ingest_id
 		`, teamID, teamID, int(lease.Seconds()), workerID, teamID).Rows()
 		if err != nil {
 			return err
@@ -445,7 +464,7 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 		}
 		loaded := PlacementRun{}
 		var leaseUntil sql.NullTime
-		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &leaseUntil); err != nil {
+		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.CorrelationID, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &leaseUntil); err != nil {
 			return err
 		}
 		if leaseUntil.Valid {
@@ -869,7 +888,8 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 	result := CreateIngestResult{TeamID: teamID, IngestID: ingestID, Existing: existing}
 	row := tx.WithContext(ctx).Raw(`
 		SELECT run.placement_run_id::text, run.owner_profile_id::text, run.status,
-		       COALESCE(ingest.proposal, '{}'::jsonb)
+		       run.attempts, run.max_attempts, COALESCE(ingest.proposal, '{}'::jsonb),
+		       COALESCE(ingest.metadata #>> '{actor,correlation_id}', '')
 		FROM placement_runs AS run
 		JOIN knowledge_ingests AS ingest
 		  ON ingest.team_id = run.team_id
@@ -878,7 +898,15 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 		  AND run.ingest_id = ?::uuid
 	`, teamID, ingestID).Row()
 	var proposalRaw []byte
-	if err := row.Scan(&result.PlacementRunID, &result.OwnerProfileID, &result.Status, &proposalRaw); err != nil {
+	if err := row.Scan(
+		&result.PlacementRunID,
+		&result.OwnerProfileID,
+		&result.Status,
+		&result.Attempts,
+		&result.MaxAttempts,
+		&proposalRaw,
+		&result.CorrelationID,
+	); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal(proposalRaw, &result.Proposal); err != nil {

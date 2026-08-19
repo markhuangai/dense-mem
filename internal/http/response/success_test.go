@@ -35,6 +35,17 @@ func TestSuccessHelpers(t *testing.T) {
 		require.JSONEq(t, `{"data":"created"}`, rec.Body.String())
 	})
 
+	t.Run("PaginatedOK", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), rec)
+
+		err := response.PaginatedOK(ctx, []string{"first"}, response.Pagination{Limit: 25, Offset: 50, Total: 76})
+
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.JSONEq(t, `{"data":["first"],"pagination":{"limit":25,"offset":50,"total":76}}`, rec.Body.String())
+	})
+
 	t.Run("SuccessNoContent", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		ctx := e.NewContext(httptest.NewRequest(http.MethodDelete, "/", nil), rec)

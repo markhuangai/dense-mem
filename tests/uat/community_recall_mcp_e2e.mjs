@@ -317,7 +317,16 @@ async function httpJSON(url, options) {
   return text ? JSON.parse(text) : {};
 }
 function postgresQuery(sql) {
-  const result = spawnSync("docker", ["compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "postgres", "sh", "-ec", 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"', "community-recall-e2e", sql], { cwd: fileURLToPath(new URL("../..", import.meta.url)), encoding: "utf8" });
+  const scopedSQL = [
+    "BEGIN",
+    "SET LOCAL app.tx_mode = 'system'",
+    "SET LOCAL app.current_team_id = ''",
+    "SET LOCAL app.current_profile_id = ''",
+    "SET LOCAL app.allowed_space_ids = ''",
+    sql,
+    "COMMIT",
+  ].join(";\n");
+  const result = spawnSync("docker", ["compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "postgres", "sh", "-ec", 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"', "community-recall-e2e", scopedSQL], { cwd: fileURLToPath(new URL("../..", import.meta.url)), encoding: "utf8" });
   if (result.status !== 0) throw new Error(`postgres query failed (${result.status}): ${result.stderr || result.stdout}`);
   return result.stdout.trim();
 }

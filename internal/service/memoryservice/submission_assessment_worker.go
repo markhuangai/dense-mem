@@ -43,6 +43,7 @@ type SubmissionAssessmentPlacementWorkerDependencies struct {
 	Lease                     time.Duration
 	Now                       func() time.Time
 	Metrics                   observability.DiscoverabilityMetrics
+	Logger                    observability.LogProvider
 }
 
 type submissionAssessmentPlacementWorkerService struct {
@@ -59,6 +60,7 @@ type submissionAssessmentPlacementWorkerService struct {
 	lease                     time.Duration
 	now                       func() time.Time
 	metrics                   observability.DiscoverabilityMetrics
+	logger                    observability.LogProvider
 }
 
 func NewSubmissionAssessmentPlacementWorkerService(
@@ -102,6 +104,7 @@ func NewSubmissionAssessmentPlacementWorkerService(
 		lease:                     lease,
 		now:                       now,
 		metrics:                   metrics,
+		logger:                    deps.Logger,
 	}
 }
 
@@ -142,6 +145,10 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	})
 	if err != nil {
 		return true, errors.Join(err, s.retryOrFail(ctx, *run, scope, "placement_load", false, false))
+	}
+	if run.CorrelationID == "" {
+		run.CorrelationID = placement.CorrelationID
+		scope.CorrelationID = placement.CorrelationID
 	}
 	if strings.TrimSpace(placement.ContractVersion) != domain.ContractVersion {
 		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "contract_superseded")
@@ -217,9 +224,14 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	}
 	recordSubmissionAssessmentGateBands(s.metrics, commitInput)
 	committed, err := s.assessments.CommitSubmissionAssessment(ctx, commitInput)
-	if errors.Is(err, repository.ErrSubmissionAssessmentNonPromotable) || errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld) {
+	if errors.Is(err, repository.ErrSubmissionAssessmentNonPromotable) {
 		return true, s.completeReview(ctx, scope, "commit_review", []SubmissionHoldIssue{{
-			Code: "commit_review_required", Component: "relationship", Message: "submission could not be promoted safely",
+			Code: "semantic_commit_non_promotable", Component: "relationship", Message: "submission could not be promoted safely",
+		}}, false)
+	}
+	if errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld) {
+		return true, s.completeReview(ctx, scope, "commit_review", []SubmissionHoldIssue{{
+			Code: "predicate_registration_conflict", Component: "predicate", Message: "predicate registration conflicted with current state",
 		}}, false)
 	}
 	if errors.Is(err, repository.ErrSubmissionReplacementConflict) {
@@ -246,6 +258,7 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	if committed == nil {
 		return true, errors.Join(errors.New("submission assessment worker: nil semantic commit result"), s.retryOrFail(ctx, *run, scope, "semantic_commit", false, false))
 	}
+	s.logLifecycle(scope, "submission_completed", "completed", "semantic_commit", "semantic_commit_succeeded", nil)
 	s.recordFirstDisposition(ctx, *run, committed.FirstDisposition)
 	return true, nil
 }
@@ -273,17 +286,6 @@ func (s *submissionAssessmentPlacementWorkerService) validateDependencies() erro
 		return errors.New("submission assessment worker: global confidence threshold must be between 0 and 1")
 	}
 	return nil
-}
-
-func submissionAssessmentRunScope(run repository.PlacementRun, workerID string) repository.SubmissionAssessmentRunScope {
-	return repository.SubmissionAssessmentRunScope{
-		TeamID:           run.TeamID,
-		OwnerProfileID:   run.OwnerProfileID,
-		IngestID:         run.IngestID,
-		PlacementRunID:   run.PlacementRunID,
-		WorkerID:         workerID,
-		ExpectedAttempts: run.Attempts,
-	}
 }
 
 func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
@@ -461,6 +463,9 @@ func (s *submissionAssessmentPlacementWorkerService) retryProviderFailure(
 	if err == nil && requeued == nil {
 		return errors.New("submission assessment worker: nil retry result")
 	}
+	if err == nil {
+		s.logLifecycle(scope, "submission_retry_scheduled", "queued", stage, string(submissionFailureCode(stage, failure.Class)), requeued.NextAttemptAt)
+	}
 	return err
 }
 
@@ -483,6 +488,9 @@ func (s *submissionAssessmentPlacementWorkerService) retryOrFail(
 	})
 	if err == nil && requeued == nil {
 		return errors.New("submission assessment worker: nil retry result")
+	}
+	if err == nil {
+		s.logLifecycle(scope, "submission_retry_scheduled", "queued", stage, "retryable_failure", requeued.NextAttemptAt)
 	}
 	return err
 }
@@ -520,6 +528,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithFailure
 	}
 	if err == nil && completed != nil {
 		observability.RecordAssessorTerminalFailure(s.metrics, stage)
+		s.logLifecycle(scope, "submission_failed", "failed", stage, string(submissionFailureCode(stage, failureClass)), nil)
 	}
 	return err
 }
@@ -546,19 +555,10 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 	if err == nil && completed != nil && status == string(domain.SemanticReviewTerminalFailure) {
 		observability.RecordAssessorTerminalFailure(s.metrics, stage)
 	}
-	return err
-}
-
-func (s *submissionAssessmentPlacementWorkerService) recordFirstDisposition(
-	ctx context.Context,
-	run repository.PlacementRun,
-	disposition *repository.PlacementFirstDisposition,
-) {
-	if disposition == nil || !disposition.IsRemember {
-		return
+	if err == nil && completed != nil {
+		s.logLifecycle(scope, "submission_failed", "failed", stage, string(submissionFailureCode(stage, "")), nil)
 	}
-	metricCtx := observability.WithMetricIdentity(ctx, run.TeamID, run.OwnerProfileID)
-	observability.RecordRememberFirstDisposition(metricCtx, s.metrics, disposition.CompletedAt.Sub(disposition.CreatedAt), disposition.Status)
+	return err
 }
 
 func (s *submissionAssessmentPlacementWorkerService) completeDeterministicSecurityQuarantine(
@@ -585,6 +585,9 @@ func (s *submissionAssessmentPlacementWorkerService) completeDeterministicSecuri
 	})
 	if err == nil && completed == nil {
 		return errors.New("submission assessment worker: nil security terminal result")
+	}
+	if err == nil {
+		s.logLifecycle(scope, "submission_quarantined", "quarantined", stage, string(SubmissionErrorQuarantined), nil)
 	}
 	return err
 }
@@ -738,6 +741,9 @@ func (s *submissionAssessmentPlacementWorkerService) completeProviderSecurityQua
 	})
 	if err == nil && completed == nil {
 		return errors.New("submission assessment worker: nil provider security terminal result")
+	}
+	if err == nil {
+		s.logLifecycle(scope, "submission_quarantined", "quarantined", stage, string(SubmissionErrorQuarantined), nil)
 	}
 	return err
 }

@@ -50,7 +50,7 @@ func ContractTools() []Tool {
 	return []Tool{
 		contractTool(
 			ToolRemember,
-			"Submit exact evidence and relationship proposals for server-owned placement; supports must cover every submitted evidence item by evidence_index.",
+			"Submit exact evidence and relationship proposals for server-owned placement; supports must cover every submitted evidence item by evidence_index. Use exactly one object shape: {\"object\":{\"entity\":{\"name\":\"PostgreSQL\",\"entity_kind\":\"product\"}}} or {\"object\":{\"value\":{\"type\":\"string\",\"value\":\"PostgreSQL\"}}}.",
 			[]string{"write"},
 			rememberInputSchema(),
 			rememberOutputSchema(),

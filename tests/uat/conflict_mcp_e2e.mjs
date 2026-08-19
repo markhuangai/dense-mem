@@ -195,7 +195,7 @@ async function provenanceAndIsolationScenario() {
   const copiedPosition = positionForRelationship(beforeIndependent, fixture.relationshipA);
   assert(copiedPosition.supporter_count === 21, `copied supporter count = ${copiedPosition.supporter_count}`);
   const observedVersion = Number(beforeIndependent.version);
-  // Reusing this observed version must succeed once and be rejected after that commit advances the case.
+  // Reusing this observed version must succeed once and be held after that commit advances the case.
   await submitPositionSupport(fixture, profileC, {
     label: "provenance-independent-c",
     sourceGroup: `${runID}:provenance:independent:c`,
@@ -214,9 +214,11 @@ async function provenanceAndIsolationScenario() {
     sourceGroup: `${runID}:provenance:stale:c`,
     authority: "primary",
     conflictContext: { conflict_id: fixture.conflictID, expected_version: observedVersion },
-    expectedState: "rejected",
+    expectedState: "awaiting_review",
   });
-  assert(stale.status.processing_state === "rejected", `stale conflict submission was not rejected: ${JSON.stringify(stale.status)}`);
+  const staleIssues = Array.isArray(stale.status.semantic_hold?.issues) ? stale.status.semantic_hold.issues : [];
+  assert(staleIssues.some((issue) => issue?.code === "conflict_context_stale"), `stale conflict submission omitted its hold reason: ${JSON.stringify(stale.status)}`);
+  assert(stale.status.semantic_hold?.replacement?.tool === "remember" && stale.status.semantic_hold?.replacement?.replaces_submission_id === stale.submissionID, `stale conflict submission omitted replacement guidance: ${JSON.stringify(stale.status)}`);
   const semanticAfterStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
   assert(stableJSON(semanticAfterStale) === stableJSON(semanticBeforeStale), `stale conflict submission changed semantic state: before=${JSON.stringify(semanticBeforeStale)} after=${JSON.stringify(semanticAfterStale)}`);
 
@@ -270,7 +272,7 @@ async function provenanceAndIsolationScenario() {
     recall_trace_parity: true,
     current_profile_name_hydrated: true,
     fresh_conflict_context_applied: true,
-    stale_version_rejected_without_semantic_change: true,
+    stale_version_held_without_semantic_change: true,
     same_team_read_visibility: true,
     owner_only_mutation: true,
     separate_team_isolation: true,
@@ -431,7 +433,7 @@ async function waitForSubmission(apiKey, submissionID) {
   const attempts = Math.ceil((submissionTimeoutSeconds * 1_000) / 250);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const status = await mcpSuccess(apiKey, "get_submission_status", { submission_id: submissionID });
-    if (["completed", "rejected", "failed", "quarantined"].includes(status.processing_state)) return status;
+    if (["completed", "awaiting_review", "rejected", "failed", "quarantined"].includes(status.processing_state)) return status;
     await delay(250);
   }
   throw new Error(`timed out waiting for submission ${submissionID} after ${submissionTimeoutSeconds}s`);

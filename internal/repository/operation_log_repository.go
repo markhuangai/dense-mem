@@ -77,6 +77,8 @@ func (r *OperationLogRepositoryImpl) List(ctx context.Context, filter domain.Ope
 	normalized := normalizeOperationLogFilter(filter)
 	var page domain.OperationLogPage
 	severity := strings.ToUpper(strings.TrimSpace(normalized.Severity))
+	teamID := uuidPtrValue(normalized.TeamID)
+	from, to := timePtrValue(normalized.From), timePtrValue(normalized.To)
 
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		var total int64
@@ -84,7 +86,13 @@ func (r *OperationLogRepositoryImpl) List(ctx context.Context, filter domain.Ope
 			SELECT count(*)
 			FROM operation_logs
 			WHERE ($1 = '' OR severity = $1)
-		`, severity).Scan(&total).Error; err != nil {
+			  AND ($2 = '' OR message = $2)
+			  AND ($3::uuid IS NULL OR team_id = $3::uuid)
+			  AND ($4 = '' OR attrs ->> 'reference_type' = $4)
+			  AND ($5 = '' OR attrs ->> 'reference_id' = $5)
+			  AND ($6::timestamptz IS NULL OR timestamp >= $6::timestamptz)
+			  AND ($7::timestamptz IS NULL OR timestamp <= $7::timestamptz)
+		`, severity, normalized.Event, teamID, normalized.ReferenceType, normalized.ReferenceID, from, to).Scan(&total).Error; err != nil {
 			return err
 		}
 		page.Total = total
@@ -95,9 +103,16 @@ func (r *OperationLogRepositoryImpl) List(ctx context.Context, filter domain.Ope
 				team_id::text, profile_id::text, correlation_id, error, attrs
 			FROM operation_logs
 			WHERE ($1 = '' OR severity = $1)
+			  AND ($2 = '' OR message = $2)
+			  AND ($3::uuid IS NULL OR team_id = $3::uuid)
+			  AND ($4 = '' OR attrs ->> 'reference_type' = $4)
+			  AND ($5 = '' OR attrs ->> 'reference_id' = $5)
+			  AND ($6::timestamptz IS NULL OR timestamp >= $6::timestamptz)
+			  AND ($7::timestamptz IS NULL OR timestamp <= $7::timestamptz)
 			`+operationLogOrderClause(normalized)+`
-			LIMIT $2 OFFSET $3
-		`, severity, normalized.Limit, normalized.Offset).Rows()
+			LIMIT $8 OFFSET $9
+		`, severity, normalized.Event, teamID, normalized.ReferenceType, normalized.ReferenceID,
+			from, to, normalized.Limit, normalized.Offset).Rows()
 		if err != nil {
 			return err
 		}
@@ -159,6 +174,17 @@ func normalizeOperationLogFilter(filter domain.OperationLogFilter) domain.Operat
 		filter.Direction = "desc"
 	}
 	filter.Severity = strings.ToUpper(strings.TrimSpace(filter.Severity))
+	filter.Event = strings.TrimSpace(filter.Event)
+	filter.ReferenceType = strings.TrimSpace(filter.ReferenceType)
+	filter.ReferenceID = strings.TrimSpace(filter.ReferenceID)
+	if filter.From != nil {
+		value := filter.From.UTC()
+		filter.From = &value
+	}
+	if filter.To != nil {
+		value := filter.To.UTC()
+		filter.To = &value
+	}
 	return filter
 }
 

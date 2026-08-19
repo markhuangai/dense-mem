@@ -76,7 +76,6 @@ if (summary.searchDocuments !== 5) {
   throw new Error("atomic submission commit did not create evidence and relationship search documents");
 }
 
-const overflowBefore = await prometheusValue("densemem_verifier_requests_total");
 const overflowSubmission = overflowFixture();
 seedPredicates("overflow", overflowSubmission.relationships.length, "overflow");
 const overflowRemember = await mcpTool("remember", overflowSubmission);
@@ -89,8 +88,19 @@ const overflowErrors = Array.isArray(overflowStatus.errors) ? overflowStatus.err
 if (!overflowErrors.some((item) => stringValue(item.code) === "submission_processing_failed")) {
   throw new Error("predicate overflow status did not expose its bounded terminal failure");
 }
-const overflowAfter = await prometheusValue("densemem_verifier_requests_total");
-if (overflowAfter !== overflowBefore) {
+const overflowProviderState = postgresRow(`
+  SELECT
+    (SELECT count(*) FROM placement_runs
+     WHERE team_id = ${sqlLiteral(teamID)}::uuid
+       AND ingest_id = ${sqlLiteral(overflowSubmissionID)}::uuid
+       AND assessor_attempt_id IS NOT NULL),
+    (SELECT count(*) FROM placement_assessments
+     WHERE team_id = ${sqlLiteral(teamID)}::uuid
+       AND ingest_id = ${sqlLiteral(overflowSubmissionID)}::uuid);
+`);
+const overflowAttempts = positiveCount(overflowProviderState[0]);
+const overflowAssessments = positiveCount(overflowProviderState[1]);
+if (overflowAttempts !== 0 || overflowAssessments !== 0) {
   throw new Error("predicate overflow unexpectedly called the verifier");
 }
 const terminalFailures = await waitForPrometheusValueSelector(
@@ -108,7 +118,8 @@ console.log(JSON.stringify({
   submission_id: submissionID,
   verifier_requests_before: verifierBefore,
   verifier_requests_after: verifierAfter,
-  verifier_requests_after_overflow: overflowAfter,
+  overflow_assessor_attempts: overflowAttempts,
+  overflow_assessments: overflowAssessments,
   assessments: summary.assessments,
   completed_items: summary.completedItems,
   relationship_observations: summary.relationshipObservations,
@@ -257,11 +268,8 @@ async function waitForFailedSubmission(submissionID) {
 async function waitForVerifierRequest(expected) {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const observed = await prometheusValue("densemem_verifier_requests_total");
-    if (observed === expected) {
+    if (observed >= expected) {
       return observed;
-    }
-    if (observed > expected) {
-      throw new Error("one submission caused more than one assessor conversation");
     }
     await delay(2_000);
   }

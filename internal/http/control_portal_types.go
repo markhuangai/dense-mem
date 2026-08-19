@@ -26,6 +26,7 @@ type ControlPortalTelemetry struct {
 	Communities     communityservice.Service
 	ConflictQueue   conflictqueue.Reader
 	Convergence     service.SearchConvergenceReader
+	Submissions     service.SubmissionDiagnosticsReader
 }
 
 type controlPortalHandler struct {
@@ -40,6 +41,7 @@ type controlPortalHandler struct {
 	communities     communityservice.Service
 	conflictQueue   conflictqueue.Reader
 	convergence     service.SearchConvergenceReader
+	submissions     service.SubmissionDiagnosticsReader
 	health          HealthConfig
 	sso             *service.SSOService
 	directory       *service.DirectoryIdentityService

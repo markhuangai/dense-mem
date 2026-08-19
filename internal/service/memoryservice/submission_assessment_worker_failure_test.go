@@ -22,18 +22,21 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 		wantRequeue bool
 		wantPayload bool
 		wantError   bool
+		wantIssue   string
 	}{
 		{
 			name:       "non-promotable assessment requires review",
 			commitErr:  repository.ErrSubmissionAssessmentNonPromotable,
 			wantStatus: string(domain.SemanticReviewReviewRequired),
 			wantStage:  "commit_review",
+			wantIssue:  "semantic_commit_non_promotable",
 		},
 		{
 			name:       "predicate registration hold requires review",
 			commitErr:  repository.ErrSubmissionPredicateRegistrationHeld,
 			wantStatus: string(domain.SemanticReviewReviewRequired),
 			wantStage:  "commit_review",
+			wantIssue:  "predicate_registration_conflict",
 		},
 		{
 			name:       "stale conflict context requires review",
@@ -89,6 +92,12 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 			require.Len(t, assessments.completions, 1)
 			assert.Equal(t, test.wantStatus, assessments.completions[0].Status)
 			assert.Equal(t, test.wantStage, assessments.completions[0].Payload["failure_stage"])
+			if test.wantIssue != "" {
+				issues, ok := assessments.completions[0].Payload["hold_issues"].([]map[string]any)
+				require.True(t, ok)
+				require.Len(t, issues, 1)
+				assert.Equal(t, test.wantIssue, issues[0]["code"])
+			}
 		})
 	}
 }

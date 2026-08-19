@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
@@ -100,6 +101,33 @@ func TestContractSchemaHasNoPublicVersionMarker(t *testing.T) {
 		}
 		if _, ok := tool.InputSchema["x-contract-version"]; ok {
 			t.Fatalf("%s exposes x-contract-version metadata", tool.Name)
+		}
+	}
+}
+
+func TestPublicInputSchemasAvoidConverterHostileComposition(t *testing.T) {
+	forbidden := map[string]struct{}{
+		"oneOf": {}, "anyOf": {}, "allOf": {}, "not": {},
+		"if": {}, "then": {}, "else": {},
+	}
+	for _, tool := range ContractTools() {
+		t.Run(tool.Name, func(t *testing.T) {
+			assertSchemaKeysAbsent(t, tool.InputSchema, tool.Name+" input", forbidden)
+		})
+	}
+}
+
+func TestRememberDescriptionShowsEntityAndValueObjectShapes(t *testing.T) {
+	tool, err := requireTool(toolMap(t), ToolRemember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, example := range []string{
+		`{"object":{"entity":{"name":"PostgreSQL","entity_kind":"product"}}}`,
+		`{"object":{"value":{"type":"string","value":"PostgreSQL"}}}`,
+	} {
+		if !strings.Contains(tool.Description, example) {
+			t.Fatalf("remember description is missing %s", example)
 		}
 	}
 }
@@ -489,6 +517,38 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 		wantError string
 	}{
 		{
+			name: "submit with entity id",
+			input: mergeMap(submit, map[string]any{
+				"patch":           map[string]any{"object_entity": map[string]any{"entity_id": "entity-existing"}},
+				"idempotency_key": "correction-submit-entity-id",
+			}),
+		},
+		{
+			name: "submit with entity name and kind",
+			input: mergeMap(submit, map[string]any{
+				"patch":           map[string]any{"object_entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}},
+				"idempotency_key": "correction-submit-entity-name",
+			}),
+		},
+		{
+			name: "submit entity missing kind",
+			input: mergeMap(submit, map[string]any{
+				"patch":           map[string]any{"object_entity": map[string]any{"name": "PostgreSQL"}},
+				"idempotency_key": "correction-submit-entity-missing-kind",
+			}),
+			wantError: "requires entity_id alone or name with entity_kind",
+		},
+		{
+			name: "submit entity mixes alternatives",
+			input: mergeMap(submit, map[string]any{
+				"patch": map[string]any{"subject_entity": map[string]any{
+					"entity_id": "entity-existing", "name": "PostgreSQL", "entity_kind": "product",
+				}},
+				"idempotency_key": "correction-submit-entity-mixed",
+			}),
+			wantError: "requires entity_id alone or name with entity_kind",
+		},
+		{
 			name: "submit missing supports",
 			input: map[string]any{
 				"action": "submit", "relationship_id": "relationship-source", "expected_version": 2,
@@ -527,7 +587,14 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if err := ValidateContractInput(tool, test.input, []string{"write"}); err == nil || !strings.Contains(err.Error(), test.wantError) {
+			err := ValidateContractInput(tool, test.input, []string{"write"})
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("ValidateContractInput: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("error = %v; want %q", err, test.wantError)
 			}
 		})
@@ -566,6 +633,20 @@ func TestSubmissionStatusEvidenceErrorsUseTheClosedCodeEnum(t *testing.T) {
 	assertExactCodeEnum("evidence", schemaProperties(errorObject)["code"])
 	topLevelErrors := schemaProperties(schema)["errors"]["items"].(map[string]any)
 	assertExactCodeEnum("top-level", schemaProperties(topLevelErrors)["code"])
+	require.Equal(t,
+		[]string{"code", "message", "next_action", "remediation", "retryable"},
+		sortedStrings(topLevelErrors["required"]),
+	)
+	nextActions, ok := schemaProperties(topLevelErrors)["next_action"]["enum"].([]string)
+	require.True(t, ok)
+	require.ElementsMatch(t, memoryservice.SubmissionNextActions(), nextActions)
+}
+
+func sortedStrings(raw any) []string {
+	values, _ := raw.([]string)
+	values = append([]string(nil), values...)
+	slices.Sort(values)
+	return values
 }
 
 func TestProviderAndEmbeddingContracts(t *testing.T) {
@@ -712,6 +793,27 @@ func assertClosedObjectSchemas(t *testing.T, schema map[string]any, path string)
 			if alternative, ok := raw.(map[string]any); ok {
 				assertClosedObjectSchemas(t, alternative, path+fmt.Sprintf(".oneOf[%d]", i))
 			}
+		}
+	}
+}
+
+func assertSchemaKeysAbsent(t *testing.T, value any, path string, forbidden map[string]struct{}) {
+	t.Helper()
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if _, blocked := forbidden[key]; blocked {
+				t.Errorf("%s uses unsupported schema keyword %s", path, key)
+			}
+			assertSchemaKeysAbsent(t, child, path+"."+key, forbidden)
+		}
+	case []any:
+		for index, child := range typed {
+			assertSchemaKeysAbsent(t, child, fmt.Sprintf("%s[%d]", path, index), forbidden)
+		}
+	case []map[string]any:
+		for index, child := range typed {
+			assertSchemaKeysAbsent(t, child, fmt.Sprintf("%s[%d]", path, index), forbidden)
 		}
 	}
 }
