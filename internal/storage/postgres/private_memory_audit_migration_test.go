@@ -16,7 +16,7 @@ func TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows(t *testing.T
 	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 
-	runGooseUpTo(t, ctx, sqlDB, 2026081802)
+	runGooseUpTo(t, ctx, sqlDB, 2026081801)
 	teamID := uuid.New()
 	otherTeamID := uuid.New()
 	credentialID := uuid.New()
@@ -72,7 +72,7 @@ func TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows(t *testing.T
 		return err
 	}))
 
-	runGooseUpTo(t, ctx, sqlDB, 2026081803)
+	runGooseUpTo(t, ctx, sqlDB, 2026081802)
 
 	var associatedSpaceID, mismatchedSpaceID, invalidSpaceID sql.NullString
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT memory_space_id::text FROM audit_log WHERE id = $1`, matchingAuditID).Scan(&associatedSpaceID))
@@ -95,7 +95,7 @@ func TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows(t *testing.T
 
 	var procedureExists bool
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
-		SELECT to_regprocedure('dense_mem_backfill_private_memory_audit_2026081803()') IS NOT NULL
+		SELECT to_regprocedure('dense_mem_backfill_private_memory_audit_2026081802()') IS NOT NULL
 	`).Scan(&procedureExists))
 	require.False(t, procedureExists)
 }
