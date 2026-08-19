@@ -88,12 +88,20 @@ var privateMemoryExternalDependencies = map[string]struct {
 }
 
 type PrivateMemoryErasureRequest struct {
-	TeamID               uuid.UUID
-	OwnerID              uuid.UUID
-	CredentialID         uuid.UUID
-	IdempotencyScopeHash string
-	RequestHash          string
-	ReasonCode           string
+	TeamID                    uuid.UUID
+	OwnerID                   uuid.UUID
+	CredentialID              uuid.UUID
+	IdempotencyScopeHash      string
+	RequestHash               string
+	ReasonCode                string
+	CredentialRevocationAudit *PrivateMemoryCredentialRevocationAudit
+}
+
+type PrivateMemoryCredentialRevocationAudit struct {
+	ActorCredentialID *string
+	ActorRole         string
+	ClientIP          string
+	CorrelationID     string
 }
 
 type PrivateMemoryRetentionRequest struct {
@@ -538,6 +546,9 @@ func (r *PrivateMemoryRepositoryImpl) DisableSSOCredential(ctx context.Context, 
 		`, now, actorIdentityID).Error; err != nil {
 			return err
 		}
+		if err := appendPrivateMemoryCredentialRevocationAuditTx(ctx, tx, input, memorySpaceID, now); err != nil {
+			return err
+		}
 
 		credentialID := input.CredentialID
 		if space != nil {
@@ -577,6 +588,56 @@ func (r *PrivateMemoryRepositoryImpl) DisableSSOCredential(ctx context.Context, 
 		return nil
 	})
 	return operation, created, wrapPrivateMemoryError("disable sso credential", err)
+}
+
+func appendPrivateMemoryCredentialRevocationAuditTx(ctx context.Context, tx *gorm.DB, input PrivateMemoryErasureRequest, memorySpaceID sql.NullString, now time.Time) error {
+	if input.CredentialRevocationAudit == nil {
+		return nil
+	}
+	// Keep the revocation event in DisableSSOCredential's transaction so a failed audit insert rolls back the irreversible credential change.
+	beforePayload, err := json.Marshal(map[string]any{
+		"id":                input.CredentialID.String(),
+		"team_id":           input.TeamID.String(),
+		"owner_identity_id": input.OwnerID.String(),
+		"status":            "active",
+		"revoked_at":        nil,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal credential revocation audit: %w", err)
+	}
+
+	var actorCredentialID any
+	if value := strings.TrimSpace(stringValue(input.CredentialRevocationAudit.ActorCredentialID)); value != "" {
+		actorCredentialID = value
+	}
+	var clientIP any
+	if value := strings.TrimSpace(input.CredentialRevocationAudit.ClientIP); value != "" {
+		clientIP = value
+	}
+	var auditMemorySpaceID any
+	if memorySpaceID.Valid && strings.TrimSpace(memorySpaceID.String) != "" {
+		auditMemorySpaceID = memorySpaceID.String
+	}
+
+	if err := tx.WithContext(ctx).Exec(`
+		INSERT INTO audit_log (
+			id, team_id, timestamp, operation, entity_type, entity_id,
+			before_payload, actor_profile_id, actor_role, client_ip,
+			correlation_id, metadata, memory_space_id
+		) VALUES (?, ?, ?, 'REVOKE', 'api_key', ?, ?, ?, ?, ?, ?, '{}'::jsonb, ?)
+	`, uuid.New(), input.TeamID, now, input.CredentialID.String(), beforePayload,
+		actorCredentialID, input.CredentialRevocationAudit.ActorRole,
+		clientIP, input.CredentialRevocationAudit.CorrelationID, auditMemorySpaceID).Error; err != nil {
+		return fmt.Errorf("append credential revocation audit: %w", err)
+	}
+	return nil
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 type queuePrivateMemoryInput struct {

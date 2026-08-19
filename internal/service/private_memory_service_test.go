@@ -24,6 +24,7 @@ type privateMemoryRepositoryStub struct {
 	profileRequest     repository.PrivateMemoryErasureRequest
 	credentialRequest  repository.PrivateMemoryErasureRequest
 	disableRequest     repository.PrivateMemoryErasureRequest
+	disableAudit       *repository.PrivateMemoryCredentialRevocationAudit
 	controlSpaceID     uuid.UUID
 	controlScopeHash   string
 	controlRequestHash string
@@ -80,6 +81,7 @@ func (r *privateMemoryRepositoryStub) RequestControlErasure(_ context.Context, s
 
 func (r *privateMemoryRepositoryStub) DisableSSOCredential(_ context.Context, input repository.PrivateMemoryErasureRequest) (*domain.PrivateMemoryErasureOperation, bool, error) {
 	r.disableRequest = input
+	r.disableAudit = input.CredentialRevocationAudit
 	return r.operation, true, r.requestErr
 }
 
@@ -255,18 +257,14 @@ func TestPrivateMemoryServiceValidatesAndScopesOwnerCommands(t *testing.T) {
 	require.Equal(t, identityID, repo.disableRequest.OwnerID)
 	require.Equal(t, credentialID, repo.disableRequest.CredentialID)
 	require.Equal(t, "credential_deleted", repo.disableRequest.ReasonCode)
+	require.NotNil(t, repo.disableAudit)
+	require.Equal(t, "member", repo.disableAudit.ActorRole)
+	require.Equal(t, "198.51.100.10", repo.disableAudit.ClientIP)
+	require.Equal(t, "corr-delete", repo.disableAudit.CorrelationID)
 	require.Equal(t, teamID.String(), invalidator.teamID)
 	require.Equal(t, credentialID.String(), invalidator.credentialID)
 	require.NotEmpty(t, logger.warnings)
-	require.Equal(t, 1, audit.calls)
-	require.Equal(t, teamID.String(), audit.teamID)
-	require.Equal(t, credentialID.String(), audit.credentialID)
-	require.Equal(t, identityID.String(), audit.beforePayload["owner_identity_id"])
-	require.Equal(t, "active", audit.beforePayload["status"])
-	require.Nil(t, audit.beforePayload["revoked_at"])
-	require.Equal(t, "member", audit.actorRole)
-	require.Equal(t, "198.51.100.10", audit.clientIP)
-	require.Equal(t, "corr-delete", audit.correlationID)
+	require.Zero(t, audit.calls)
 	_, err = svc.DeleteSSOCredential(ctx, teamID, identityID, credentialID, PrivateMemoryCommand{}, PrivateMemoryAuditContext{})
 	require.ErrorIs(t, err, ErrPrivateMemoryAcknowledgementRequired)
 

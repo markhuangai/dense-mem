@@ -746,7 +746,14 @@ describe("UserPortalApp", () => {
 
   it("queues and polls profile-private erasure without changing the active team", async () => {
     const { initial, switched } = ssoSessions();
-    const fetchMock = mockSSOUserFetch(initial, switched);
+    const writableInitial = {
+      ...initial,
+      membership: { ...initial.membership, grants: ["read", "write"] },
+      teams: initial.teams.map((item, index) => index === 0
+        ? { ...item, membership: { ...item.membership, grants: ["read", "write"] } }
+        : item),
+    };
+    const fetchMock = mockSSOUserFetch(writableInitial, switched);
     vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<UserPortalApp />);
@@ -791,6 +798,8 @@ describe("UserPortalApp", () => {
 
     expect(await screen.findByDisplayValue("dm_sso_personal_plaintext")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /regenerate key/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /permanently delete key/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /erase private memory/i })).toBeDisabled();
   });
 });
 async function expectCurrentWorkspace(teamName: string) {

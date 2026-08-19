@@ -12,7 +12,7 @@ beforeEach(() => {
 
 describe("UserPortalApp private-memory polling", () => {
   it("reuses an idempotency key until submission is accepted", async () => {
-    const { initial, switched } = ssoSessions();
+    const { initial, switched } = writableSSOSessions();
     const fetchMock = mockSSOUserFetch(initial, switched, { profileErasureFailures: 1 });
     prepareErasureInteraction();
 
@@ -32,7 +32,7 @@ describe("UserPortalApp private-memory polling", () => {
   });
 
   it("stops polling and reports a terminal failure", async () => {
-    const { initial, switched } = ssoSessions();
+    const { initial, switched } = writableSSOSessions();
     const fetchMock = mockSSOUserFetch(initial, switched, { profileErasurePollStatus: "failed" });
     prepareErasureInteraction();
 
@@ -46,7 +46,7 @@ describe("UserPortalApp private-memory polling", () => {
   });
 
   it("bounds polling at 40 attempts", async () => {
-    const { initial, switched } = ssoSessions();
+    const { initial, switched } = writableSSOSessions();
     const fetchMock = mockSSOUserFetch(initial, switched, { profileErasurePollStatus: "processing" });
     prepareErasureInteraction();
 
@@ -60,7 +60,7 @@ describe("UserPortalApp private-memory polling", () => {
   });
 
   it("aborts polling when the credential panel unmounts", async () => {
-    const { initial, switched } = ssoSessions();
+    const { initial, switched } = writableSSOSessions();
     const fetchMock = mockSSOUserFetch(initial, switched);
     const defaultFetch = fetchMock.getMockImplementation();
     let pollSignal: AbortSignal | undefined;
@@ -102,4 +102,17 @@ function prepareErasureInteraction() {
     }
     return originalSetTimeout(handler, timeout, ...args);
   }) as typeof window.setTimeout);
+}
+
+function writableSSOSessions() {
+  const { initial, switched } = ssoSessions();
+  const membership = { ...initial.membership, grants: ["read", "write"] };
+  return {
+    initial: {
+      ...initial,
+      membership,
+      teams: initial.teams.map((item, index) => index === 0 ? { ...item, membership } : item),
+    },
+    switched,
+  };
 }

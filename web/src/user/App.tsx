@@ -631,7 +631,7 @@ function CredentialPanel({
   const maxScopes = session.membership.grants;
   const canCreateWrite = maxScopes.includes("write");
   const canRotate = Boolean(personalCredential?.scopes.includes("write") && maxScopes.includes("write"));
-  const canRevoke = Boolean(personalCredential);
+  const canRevoke = Boolean(personalCredential && maxScopes.includes("write"));
 
   useEffect(() => {
     if (!isSSO) {
@@ -860,7 +860,7 @@ function CredentialPanel({
             <strong>{isSSO ? "Profile-private memory" : "Credential-private memory"}</strong>
             <span>{isSSO ? "Erases private memory shared by your SSO identity in this team. Keys and team-shared memory remain." : "Erases private memory isolated to this credential. The credential remains active."}</span>
           </div>
-          <button className="danger-button" type="button" disabled={busy} onClick={() => void erasePrivateMemory()}>
+          <button className="danger-button" type="button" disabled={busy || !maxScopes.includes("write")} onClick={() => void erasePrivateMemory()}>
             <Trash2 size={16} aria-hidden="true" />
             Erase private memory
           </button>
