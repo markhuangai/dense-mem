@@ -188,6 +188,7 @@ function requestRaw(rawURL, options = {}) {
   const target = new URL(rawURL);
   return new Promise((resolve, reject) => {
     const transport = target.protocol === "https:" ? httpsRequest : httpRequest;
+    let deadline;
     const request = transport({
       protocol: target.protocol,
       hostname: target.hostname,
@@ -206,10 +207,20 @@ function requestRaw(rawURL, options = {}) {
           request.destroy(new Error("response exceeded compatibility E2E limit"));
         }
       });
-      response.on("end", () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body }));
+      response.on("end", () => {
+        clearTimeout(deadline);
+        resolve({ status: response.statusCode ?? 0, headers: response.headers, body });
+      });
     });
-    request.on("error", reject);
+    request.on("error", (error) => {
+      clearTimeout(deadline);
+      reject(error);
+    });
     request.on("timeout", () => request.destroy(new Error("OAuth compatibility request timed out")));
+    deadline = setTimeout(
+      () => request.destroy(new Error("OAuth compatibility request deadline exceeded")),
+      requestTimeoutMs,
+    );
     if (options.body !== undefined) request.write(options.body);
     request.end();
   });

@@ -100,11 +100,15 @@ func TestHarnessMetadataAndChallengeUseConfiguredHTTPSURL(t *testing.T) {
 	require.NotContains(t, successResponse.Body.String(), "secret-token")
 }
 
-func TestNewHarnessHandlerRejectsInvalidServeMuxBasePaths(t *testing.T) {
+func TestNewHarnessHandlerRejectsInvalidBasePaths(t *testing.T) {
 	for _, raw := range []string{
 		"https://harness.example/%7Btenant%7D",
 		"https://harness.example/base%20path",
 		"https://harness.example/base%09path",
+		"https://harness.example/base%3Ftenant",
+		"https://harness.example/base%23tenant",
+		"https://harness.example/base%2Ftenant",
+		"https://harness.example/base//",
 	} {
 		var handler http.Handler
 		var err error
@@ -156,6 +160,11 @@ func TestValidatePublicBaseURLRequiresTrustedHTTPSIdentifier(t *testing.T) {
 		"https://harness.example/%7Btenant%7D",
 		"https://harness.example/base%20path",
 		"https://harness.example/base%09path",
+		"https://harness.example/base%3Ftenant",
+		"https://harness.example/base%23tenant",
+		"https://harness.example/base%2Ftenant",
+		"https://harness.example/base//",
+		"https://harness.example/base/../tenant",
 	} {
 		_, err := validatePublicBaseURL(raw)
 		require.Error(t, err, raw)

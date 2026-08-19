@@ -28,6 +28,7 @@ type oauthJWKSCache struct {
 	expiresAt              time.Time
 	lastAttemptAt          time.Time
 	lastAttemptFingerprint string
+	lastAttemptForced      bool
 	lastAttemptError       error
 }
 
@@ -77,7 +78,10 @@ func (validator *OAuthProtectedResourceValidator) loadOAuthJWKS(ctx context.Cont
 	if !force && sourceMatches && len(cache.set.Keys) > 0 && now.Before(cache.expiresAt) {
 		return cache.set, true, nil
 	}
-	if cache.lastAttemptFingerprint == fingerprint && !cache.lastAttemptAt.IsZero() && now.Sub(cache.lastAttemptAt) < oauthJWKSRefreshFloor {
+	if cache.lastAttemptFingerprint == fingerprint &&
+		!cache.lastAttemptAt.IsZero() &&
+		now.Sub(cache.lastAttemptAt) < oauthJWKSRefreshFloor &&
+		(!force || cache.lastAttemptForced) {
 		if cache.lastAttemptError != nil {
 			return jose.JSONWebKeySet{}, sourceMatches, cache.lastAttemptError
 		}
@@ -86,6 +90,7 @@ func (validator *OAuthProtectedResourceValidator) loadOAuthJWKS(ctx context.Cont
 
 	cache.lastAttemptAt = now
 	cache.lastAttemptFingerprint = fingerprint
+	cache.lastAttemptForced = force
 	cache.lastAttemptError = nil
 	providerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), oauthProviderTimeout)
 	defer cancel()

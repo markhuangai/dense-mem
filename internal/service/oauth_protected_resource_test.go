@@ -121,18 +121,21 @@ func TestOAuthProtectedResourceValidatorRotatesKeysAndBoundsOutageRefreshes(t *t
 	require.Equal(t, 1, fixture.jwksRequests("generic"))
 
 	fixture.setActiveKey("generic", "secondary")
-	fixture.advance(2 * time.Second)
 	rotated := fixture.token(t, "generic", "secondary", fixture.claims("generic"))
 	_, err = validator.Validate(t.Context(), rotated)
 	require.NoError(t, err)
 	require.Equal(t, 2, fixture.jwksRequests("generic"))
+
+	unknown := fixture.token(t, "generic", "future", fixture.claims("generic"))
+	_, err = validator.Validate(t.Context(), unknown)
+	require.ErrorIs(t, err, ErrOAuthTokenInvalid)
+	require.Equal(t, 2, fixture.jwksRequests("generic"), "repeated forced refreshes must be throttled")
 
 	fixture.setOutage("generic", true)
 	_, err = validator.Validate(t.Context(), rotated)
 	require.NoError(t, err, "a cached known key must remain usable during an outage")
 
 	fixture.advance(2 * time.Second)
-	unknown := fixture.token(t, "generic", "future", fixture.claims("generic"))
 	_, err = validator.Validate(t.Context(), unknown)
 	require.ErrorIs(t, err, ErrOAuthProviderUnavailable)
 	var typed OAuthProviderUnavailableError

@@ -77,7 +77,20 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
     readFile(ciCheckURL, "utf8"),
   ]);
 
-  assert.match(workflow, /expected-head-sha: \$\{\{ needs\.resolve\.outputs\.head_sha \}\}/);
+  assert.ok(
+    workflow.includes(
+      "pull-request-url: ${{ format('{0}/{1}/pull/{2}', github.server_url, github.repository, needs.resolve.outputs.pr_number) }}",
+    ),
+  );
+  assert.doesNotMatch(
+    workflow,
+    /pull-request-number: \$\{\{ needs\.resolve\.outputs\.pr_number \}\}/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /expected-head-sha: \$\{\{ needs\.resolve\.outputs\.head_sha \}\}/,
+  );
+  assert.match(workflow, /EXPECTED_HEAD_SHA: \$\{\{ needs\.resolve\.outputs\.head_sha \}\}/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /parallel-count: "5"/);
   assert.match(workflow, /max-turns: "100"/);

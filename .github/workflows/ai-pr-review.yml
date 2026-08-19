@@ -251,8 +251,7 @@ jobs:
         continue-on-error: true
         uses: markhuangai/ai-pr-reviewer@v1-prerelease
         with:
-          pull-request-number: ${{ needs.resolve.outputs.pr_number }}
-          expected-head-sha: ${{ needs.resolve.outputs.head_sha }}
+          pull-request-url: ${{ format('{0}/{1}/pull/{2}', github.server_url, github.repository, needs.resolve.outputs.pr_number) }}
           github-pat: ${{ secrets.PR_REVIEW_PAT }}
           ai-base-url: ${{ secrets.LOCAL_AI_ENDPOINT }}
           ai-secret: ${{ secrets.LOCAL_AI_SECRET }}

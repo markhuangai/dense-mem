@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 
@@ -112,8 +113,12 @@ func validatePublicBaseURL(raw string) (string, error) {
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
 		return "", fmt.Errorf("trusted HTTPS public base URL is required")
 	}
-	if strings.ContainsAny(parsed.Path, "{} \t") {
-		return "", fmt.Errorf("public base URL path must be a literal ServeMux path")
+	basePath := strings.TrimSuffix(parsed.Path, "/")
+	if parsed.RawPath != "" ||
+		strings.ContainsAny(parsed.Path, "{} \t?#") ||
+		strings.Contains(parsed.Path, "//") ||
+		(parsed.Path != "" && parsed.Path != "/" && path.Clean(parsed.Path) != basePath) {
+		return "", fmt.Errorf("public base URL path must be canonical and literal")
 	}
 	return strings.TrimSuffix(raw, "/"), nil
 }
