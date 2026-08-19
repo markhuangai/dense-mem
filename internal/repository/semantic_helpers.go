@@ -38,6 +38,7 @@ type transitionInput struct {
 	TeamID              string
 	OwnerProfileID      string
 	RelationshipID      string
+	SpaceID             string
 	IdempotencyKey      string
 	FromStatus          string
 	ToStatus            string
@@ -644,6 +645,7 @@ func upsertRelationshipRecord(
 		WHERE identity_alias_of_relationship_id IS NULL
 		DO NOTHING
 		RETURNING team_id::text, relationship_id::text, owner_profile_id::text,
+		          space_id::text,
 		          semantic_group_key, subject_entity_id::text, predicate_key,
 		       predicate_version, COALESCE(object_entity_id::text, ''),
 		       COALESCE(object_value_id::text, ''), relationship_kind,
@@ -720,6 +722,7 @@ func upsertRelationshipRecord(
 func selectRelationshipByIdentity(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput) (*RelationshipRecord, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT team_id::text, relationship_id::text, owner_profile_id::text,
+		       space_id::text,
 		       semantic_group_key, subject_entity_id::text, predicate_key,
 		       predicate_version, COALESCE(object_entity_id::text, ''),
 		       COALESCE(object_value_id::text, ''), relationship_kind,
@@ -771,6 +774,7 @@ func loadRelationshipRecordWithLock(ctx context.Context, tx *gorm.DB, teamID, re
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT team_id::text, relationship_id::text, owner_profile_id::text,
+		       space_id::text,
 		       semantic_group_key, subject_entity_id::text, predicate_key,
 		       predicate_version, COALESCE(object_entity_id::text, ''),
 		       COALESCE(object_value_id::text, ''), relationship_kind,
@@ -802,7 +806,7 @@ func scanRelationshipRows(rows *sql.Rows) (*RelationshipRecord, error) {
 		return nil, rows.Err()
 	}
 	loaded := RelationshipRecord{}
-	if err := rows.Scan(&loaded.TeamID, &loaded.RelationshipID, &loaded.OwnerProfileID,
+	if err := rows.Scan(&loaded.TeamID, &loaded.RelationshipID, &loaded.OwnerProfileID, &loaded.SpaceID,
 		&loaded.SemanticGroupKey, &loaded.SubjectEntityID, &loaded.PredicateKey,
 		&loaded.PredicateVersion, &loaded.ObjectEntityID, &loaded.ObjectValueID,
 		&loaded.RelationshipKind, &loaded.CurrentCardinality, &loaded.Status,
@@ -818,18 +822,28 @@ func insertRelationshipTransition(ctx context.Context, tx *gorm.DB, input transi
 	var transitionID string
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO relationship_transition_events (
-		    team_id, relationship_id, owner_profile_id, from_status,
+		    team_id, relationship_id, owner_profile_id, space_id, from_status,
 		    to_status, reason, verification_event_id, support_decision_id,
 		    idempotency_key
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, ''),
+		    ?::uuid, ?::uuid, ?::uuid,
+		    COALESCE(
+		        NULLIF(?, '')::uuid,
+		        (SELECT relationship.space_id
+		         FROM relationship_records AS relationship
+		         WHERE relationship.team_id = ?::uuid
+		           AND relationship.relationship_id = ?::uuid),
+		        dense_mem_team_shared_space(?::uuid)
+		    ),
+		    NULLIF(?, ''),
 		    ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?
 		)
 		ON CONFLICT (team_id, owner_profile_id, idempotency_key)
 		WHERE idempotency_key <> ''
 		DO NOTHING
 		RETURNING transition_id::text
-	`, input.TeamID, input.RelationshipID, input.OwnerProfileID,
+	`, input.TeamID, input.RelationshipID, input.OwnerProfileID, input.SpaceID,
+		input.TeamID, input.RelationshipID, input.TeamID,
 		input.FromStatus, input.ToStatus, input.Reason,
 		input.VerificationEventID, input.SupportDecisionID, input.IdempotencyKey).Rows()
 	if err != nil {

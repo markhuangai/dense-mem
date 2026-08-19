@@ -406,6 +406,8 @@ func privateMemoryHTTPError(err error) error {
 		return httperr.New(httperr.VALIDATION_ERROR, "reason_code must be a lowercase code of at most 64 characters")
 	case errors.Is(err, service.ErrPrivateMemoryAuditUnavailable):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory audit service unavailable")
+	case errors.Is(err, service.ErrPrivateMemoryRuntimeConfigUnavailable):
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory runtime configuration unavailable")
 	case errors.Is(err, repository.ErrPrivateMemoryNotFound):
 		return httperr.New(httperr.NOT_FOUND, "private-memory target not found")
 	case errors.Is(err, repository.ErrPrivateMemoryLegalHold):

@@ -392,11 +392,12 @@ func TestPrivateMemoryServiceDelegatesAuthorizedReadsHoldsAndRetention(t *testin
 
 	svc.runtimeConfig = nil
 	_, err = svc.RunRetention(ctx, command, domain.PrivateMemoryActorControl)
-	require.EqualError(t, err, "private memory runtime config is unavailable")
+	require.ErrorIs(t, err, ErrPrivateMemoryRuntimeConfigUnavailable)
 	runtime.err = errors.New("config unavailable")
 	svc.runtimeConfig = runtime
 	_, err = svc.RunRetention(ctx, command, domain.PrivateMemoryActorControl)
-	require.ErrorIs(t, err, runtime.err)
+	require.ErrorIs(t, err, ErrPrivateMemoryRuntimeConfigUnavailable)
+	require.NotContains(t, err.Error(), runtime.err.Error())
 }
 
 func TestPrivateMemoryServiceWorkerAndAutomaticRetentionPolicy(t *testing.T) {

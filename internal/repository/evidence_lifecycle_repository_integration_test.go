@@ -149,6 +149,31 @@ func TestLedgerDirectEvidenceSupersessionRejectsCrossSpaceReplacement(t *testing
 	assert.Zero(t, eventCount)
 }
 
+func TestLedgerDirectEvidenceSupersessionRejectsSameTeamCrossOwnerReplacement(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-supersession-cross-owner")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "evidence-supersession-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "evidence-supersession-owner-b")
+	ledger := NewLedgerRepository(appDB, rls)
+	target := createSemanticIngest(t, ctx, ledger, teamID, ownerA, "cross-owner-target", "Owner A target evidence.")
+	replacement := createSemanticIngest(t, ctx, ledger, teamID, ownerB, "cross-owner-replacement", "Owner B replacement evidence.")
+
+	err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return applyDirectEvidenceSupersessions(ctx, tx, CreateIngestInput{
+			TeamID:         teamID,
+			OwnerProfileID: ownerA,
+			RequestHash:    "cross-owner-request",
+			Evidence: []EvidenceInput{{
+				SupersedesEvidenceIDs: []string{target.Evidence[0].FragmentID},
+				IdempotencyKey:        "cross-owner-supersession",
+			}},
+		}, uuid.NewString(), []EvidenceFragment{{FragmentID: replacement.Evidence[0].FragmentID}})
+	})
+	require.ErrorIs(t, err, ErrEvidenceLifecycleNotFound)
+}
+
 func TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

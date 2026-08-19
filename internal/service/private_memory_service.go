@@ -19,10 +19,11 @@ import (
 )
 
 var (
-	ErrPrivateMemoryAcknowledgementRequired = errors.New("irreversible private-memory erasure must be acknowledged")
-	ErrPrivateMemoryIdempotencyKeyRequired  = errors.New("idempotency key is required")
-	ErrPrivateMemoryInvalidReason           = errors.New("invalid private-memory reason code")
-	ErrPrivateMemoryAuditUnavailable        = errors.New("private-memory audit service is unavailable")
+	ErrPrivateMemoryAcknowledgementRequired  = errors.New("irreversible private-memory erasure must be acknowledged")
+	ErrPrivateMemoryIdempotencyKeyRequired   = errors.New("idempotency key is required")
+	ErrPrivateMemoryInvalidReason            = errors.New("invalid private-memory reason code")
+	ErrPrivateMemoryAuditUnavailable         = errors.New("private-memory audit service is unavailable")
+	ErrPrivateMemoryRuntimeConfigUnavailable = errors.New("private-memory runtime configuration is unavailable")
 )
 
 const (
@@ -223,11 +224,11 @@ func (s *PrivateMemoryService) RunRetention(ctx context.Context, command Private
 		return nil, err
 	}
 	if s.runtimeConfig == nil {
-		return nil, fmt.Errorf("private memory runtime config is unavailable")
+		return nil, ErrPrivateMemoryRuntimeConfigUnavailable
 	}
 	runtime, err := s.runtimeConfig.PrivateMemoryRuntimeConfig(ctx)
 	if err != nil {
-		return nil, err
+		return nil, ErrPrivateMemoryRuntimeConfigUnavailable
 	}
 	run, _, err := s.repository.RunRetention(ctx, repository.PrivateMemoryRetentionRequest{
 		ActorClass: actorClass, RetentionDays: runtime.RetentionDays,

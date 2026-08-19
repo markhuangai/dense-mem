@@ -29,19 +29,26 @@ func insertRelationshipObservation(ctx context.Context, tx *gorm.DB, input Apply
 		    team_id, relationship_id, ingest_id, placement_item_id, owner_profile_id,
 		    subject_ref, original_predicate, object_ref, subject_entity_id,
 		    predicate_key, predicate_version, object_entity_id, object_value_id,
-		    polarity, scope_key, valid_from, valid_to, evidence, metadata
+		    polarity, scope_key, valid_from, valid_to, evidence, metadata, space_id
 		) VALUES (
 		    ?::uuid, NULLIF(?, '')::uuid, ?::uuid, NULLIF(?, '')::uuid, ?::uuid,
 		    ?, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, ''), NULLIF(?, 0),
 		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, NULLIF(?, ''),
-		    ?, ?, ?::jsonb, ?::jsonb
+		    ?, ?, ?::jsonb, ?::jsonb,
+		    COALESCE(
+		        (SELECT relationship.space_id
+		         FROM relationship_records AS relationship
+		         WHERE relationship.team_id = ?::uuid
+		           AND relationship.relationship_id = NULLIF(?, '')::uuid),
+		        dense_mem_team_shared_space(?::uuid)
+		    )
 		)
 		RETURNING observation_id::text
 	`, input.TeamID, relationshipID, input.IngestID, input.PlacementItemID, input.OwnerProfileID,
 		input.SubjectRef, input.OriginalPredicate, input.ObjectRef, input.SubjectEntityID,
 		input.PredicateKey, input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
 		input.Polarity, input.ScopeKey, timeArg(input.ValidFrom), timeArg(input.ValidTo), string(evidenceJSON),
-		string(metadata)).Rows()
+		string(metadata), input.TeamID, relationshipID, input.TeamID).Rows()
 	if err != nil {
 		return "", err
 	}
@@ -65,16 +72,24 @@ func insertVerificationEvent(ctx context.Context, tx *gorm.DB, input ApplyRelati
 		INSERT INTO verification_events (
 		    team_id, observation_id, owner_profile_id, evidence_verdict,
 		    confidence, rationale, model, response_hash, metadata,
-		    assessment_id, assessment_policy_version, threshold_used, gate_result
+		    assessment_id, assessment_policy_version, threshold_used, gate_result, space_id
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?::jsonb,
-		    NULLIF(?, '')::uuid, NULLIF(?, ''), ?, NULLIF(?, '')
+		    NULLIF(?, '')::uuid, NULLIF(?, ''), ?, NULLIF(?, ''),
+		    COALESCE(
+		        (SELECT observation.space_id
+		         FROM relationship_observations AS observation
+		         WHERE observation.team_id = ?::uuid
+		           AND observation.observation_id = ?::uuid),
+		        dense_mem_team_shared_space(?::uuid)
+		    )
 		)
 		RETURNING verification_event_id::text
 	`, input.TeamID, observationID, input.OwnerProfileID, input.EvidenceVerdict,
 		confidenceArg(input.Confidence), input.Rationale, input.Model, input.ResponseHash,
 		string(metadata), input.AssessmentID, input.AssessmentPolicyVersion,
-		confidenceArg(input.ThresholdUsed), input.GateResult).Rows()
+		confidenceArg(input.ThresholdUsed), input.GateResult,
+		input.TeamID, observationID, input.TeamID).Rows()
 	if err != nil {
 		return "", err
 	}

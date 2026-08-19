@@ -284,10 +284,17 @@ func insertRelationshipSupport(
 			INSERT INTO relationship_evidence_supports (
 			    team_id, relationship_id, observation_id, verification_event_id,
 			    fragment_id, owner_profile_id, source_group_key, source_id,
-			    source_revision_id, span_start, span_end, quote, authority, metadata
+			    source_revision_id, span_start, span_end, quote, authority, metadata, space_id
 			) VALUES (
 			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-			    ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?::jsonb
+			    ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?::jsonb,
+			    COALESCE(
+			        (SELECT relationship.space_id
+			         FROM relationship_records AS relationship
+			         WHERE relationship.team_id = ?::uuid
+			           AND relationship.relationship_id = ?::uuid),
+			        dense_mem_team_shared_space(?::uuid)
+			    )
 			)
 			ON CONFLICT ON CONSTRAINT relationship_supports_identity_unique DO NOTHING
 			RETURNING support_id::text, true AS created
@@ -307,6 +314,7 @@ func insertRelationshipSupport(
 		input.Support.FragmentID, input.OwnerProfileID, input.Support.SourceGroupKey,
 		input.Support.SourceID, input.Support.SourceRevisionID, input.Support.SpanStart,
 		input.Support.SpanEnd, input.Support.Quote, input.Support.Authority, string(metadata),
+		input.TeamID, relationshipID, input.TeamID,
 		input.TeamID, relationshipID, input.OwnerProfileID, input.Support.FragmentID, input.Support.SpanStart,
 		input.Support.SpanEnd).Rows()
 	if err != nil {
@@ -414,13 +422,21 @@ func insertSupportDecisionEvent(ctx context.Context, tx *gorm.DB, input supportD
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO relationship_support_decision_events (
 		    team_id, support_id, relationship_id, owner_profile_id, actor_profile_id,
-		    decision, reason, idempotency_key, metadata
+		    decision, reason, idempotency_key, metadata, space_id
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb,
+		    COALESCE(
+		        (SELECT relationship.space_id
+		         FROM relationship_records AS relationship
+		         WHERE relationship.team_id = ?::uuid
+		           AND relationship.relationship_id = ?::uuid),
+		        dense_mem_team_shared_space(?::uuid)
+		    )
 		)
 		RETURNING support_decision_id::text
 	`, input.TeamID, input.SupportID, input.RelationshipID, input.OwnerProfileID, supportDecisionActorProfileID(input),
-		input.Decision, input.Reason, input.IdempotencyKey, string(metadata)).Rows()
+		input.Decision, input.Reason, input.IdempotencyKey, string(metadata),
+		input.TeamID, input.RelationshipID, input.TeamID).Rows()
 	if err != nil {
 		return "", err
 	}
