@@ -309,10 +309,25 @@ jobs:
         uses: actions/github-script@v9
         env:
           HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
           REVIEW_OUTCOME: ${{ steps.reviewer.outcome }}
         with:
           github-token: ${{ secrets.PR_REVIEW_PAT }}
           script: |
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: Number(process.env.PR_NUMBER),
+            });
+            if (pull.head.sha !== process.env.HEAD_SHA) {
+              core.setFailed(
+                `Pull request #${process.env.PR_NUMBER} moved from ` +
+                  `${process.env.HEAD_SHA} to ${pull.head.sha}; ` +
+                  "refusing to publish a stale review status.",
+              );
+              return;
+            }
+
             const succeeded = process.env.REVIEW_OUTCOME === "success";
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,

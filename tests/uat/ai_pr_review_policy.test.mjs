@@ -103,3 +103,38 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   );
   assert.match(ciCheck, /node --test tests\/uat\/ai_pr_review_policy\.test\.mjs/);
 });
+
+test("final review status is fenced by the live pull request head", async () => {
+  const workflow = await readFile(reviewWorkflowURL, "utf8");
+  const finalStatusStep = workflow.slice(
+    workflow.indexOf("      - name: Publish final review status"),
+  );
+
+  assert.match(
+    finalStatusStep,
+    /PR_NUMBER: \$\{\{ needs\.resolve\.outputs\.pr_number \}\}/,
+  );
+  assert.match(finalStatusStep, /await github\.rest\.pulls\.get\(\{/);
+  assert.match(
+    finalStatusStep,
+    /pull_number: Number\(process\.env\.PR_NUMBER\)/,
+  );
+  assert.match(
+    finalStatusStep,
+    /pull\.head\.sha !== process\.env\.HEAD_SHA/,
+  );
+
+  const liveHeadRead = finalStatusStep.indexOf("github.rest.pulls.get");
+  const headComparison = finalStatusStep.indexOf(
+    "pull.head.sha !== process.env.HEAD_SHA",
+  );
+  const staleRunFailure = finalStatusStep.indexOf("core.setFailed", headComparison);
+  const staleRunReturn = finalStatusStep.indexOf("return;", headComparison);
+  const statusPublication = finalStatusStep.indexOf(
+    "github.rest.repos.createCommitStatus",
+  );
+  assert.ok(liveHeadRead < headComparison);
+  assert.ok(headComparison < staleRunFailure);
+  assert.ok(staleRunFailure < staleRunReturn);
+  assert.ok(staleRunReturn < statusPublication);
+});
