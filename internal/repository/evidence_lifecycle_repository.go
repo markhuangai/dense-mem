@@ -377,6 +377,11 @@ func planEvidenceLifecycleInSystem(
 	if err != nil {
 		return nil, err
 	}
+	if input.ReplacementID != "" {
+		if err := validateEvidenceLifecycleReplacement(ctx, tx, input.TeamID, input.OwnerProfileID, input.ReplacementID, targetSpaceID); err != nil {
+			return nil, err
+		}
+	}
 	supports, err := loadEffectiveEvidenceLifecycleSupports(ctx, tx, input.TeamID, evidenceIDs)
 	if err != nil {
 		return nil, err
@@ -490,6 +495,40 @@ func validateEvidenceLifecycleTargets(
 		}
 	}
 	return targetSpaceID, nil
+}
+
+func validateEvidenceLifecycleReplacement(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	ownerProfileID string,
+	replacementID string,
+	targetSpaceID string,
+) error {
+	if _, err := uuid.Parse(replacementID); err != nil {
+		return ErrEvidenceLifecycleNotFound
+	}
+	var replacementOwnerID, replacementSpaceID string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT owner_profile_id::text, COALESCE(space_id::text, '')
+		FROM evidence_fragments
+		WHERE team_id = ?::uuid
+		  AND fragment_id = ?::uuid
+		LIMIT 1
+	`, teamID, replacementID).Row().Scan(&replacementOwnerID, &replacementSpaceID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrEvidenceLifecycleNotFound
+		}
+		return err
+	}
+	if replacementOwnerID != ownerProfileID || replacementSpaceID == "" {
+		return ErrEvidenceLifecycleNotFound
+	}
+	if replacementSpaceID != targetSpaceID {
+		return ErrEvidenceLifecycleConflict
+	}
+	return nil
 }
 
 func loadEffectiveEvidenceLifecycleSupports(

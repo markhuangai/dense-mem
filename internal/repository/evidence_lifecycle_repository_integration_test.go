@@ -81,6 +81,74 @@ func TestLedgerEvidenceLifecyclePersistsTargetSpaceAndRejectsMixedSpaces(t *test
 	require.Equal(t, privateSpaceID, eventSpaceID)
 }
 
+func TestLedgerDirectEvidenceSupersessionRejectsCrossSpaceReplacement(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-supersession-cross-space")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-supersession-cross-space-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	sharedTarget := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "cross-space-target", "Shared target evidence.")
+	privateIngestID := uuid.New()
+	privateFragmentID := uuid.New()
+	var privateSpaceID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			INSERT INTO memory_spaces (team_id, kind, owner_profile_id)
+			VALUES (?, 'profile_private', ?)
+			RETURNING id::text
+		`, teamID, ownerID).Row().Scan(&privateSpaceID); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		if err := tx.Exec(`
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id, request_hash, source_summary,
+				status, proposal, metadata, space_id, created_at, updated_at
+			) VALUES (?, ?, ?, ?, 'Private replacement evidence.', 'queued', '{}'::jsonb, '{}'::jsonb, ?, ?, ?)
+		`, teamID, privateIngestID, ownerID, "hash-"+privateIngestID.String(), privateSpaceID, now, now).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO evidence_fragments (
+				team_id, fragment_id, ingest_id, owner_profile_id, evidence_index,
+				content, content_hash, source_type, authority, labels, metadata, space_id
+			) VALUES (?, ?, ?, ?, 0, 'Private replacement evidence.', ?, 'conversation', 'primary', ARRAY[]::text[], '{}'::jsonb, ?)
+		`, teamID, privateFragmentID, privateIngestID, ownerID, "hash-"+privateFragmentID.String(), privateSpaceID).Error
+	}))
+
+	err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return applyDirectEvidenceSupersessions(ctx, tx, CreateIngestInput{
+			TeamID:         teamID,
+			OwnerProfileID: ownerID,
+			RequestHash:    "cross-space-request",
+			Evidence: []EvidenceInput{{
+				SupersedesEvidenceIDs: []string{sharedTarget.Evidence[0].FragmentID},
+				IdempotencyKey:        "cross-space-supersession",
+			}},
+		}, privateIngestID.String(), []EvidenceFragment{{FragmentID: privateFragmentID.String()}})
+	})
+	require.ErrorIs(t, err, ErrEvidenceLifecycleConflict)
+
+	var operationCount, eventCount int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT COUNT(*)
+			FROM evidence_lifecycle_operations
+			WHERE team_id = ?::uuid AND idempotency_key = 'cross-space-supersession'
+		`, teamID).Row().Scan(&operationCount); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM evidence_lifecycle_events
+			WHERE team_id = ?::uuid AND target_fragment_id = ?::uuid
+		`, teamID, sharedTarget.Evidence[0].FragmentID).Row().Scan(&eventCount)
+	}))
+	assert.Zero(t, operationCount)
+	assert.Zero(t, eventCount)
+}
+
 func TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
