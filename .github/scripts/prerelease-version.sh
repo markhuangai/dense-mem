@@ -133,36 +133,11 @@ resolve_start() {
 	printf '%s\n' "${seed}"
 }
 
-resolve_previous() {
-	local target="${1:-}"
-	local previous
-
-	[[ "${target}" =~ ${RC_REGEX} ]] ||
-		fail "target must be a canonical RC tag like v2.5.1-rc.0"
-	git rev-parse --verify "refs/tags/${target}^{commit}" >/dev/null 2>&1 ||
-		fail "target tag does not exist: ${target}"
-
-	previous="$(
-		git describe \
-			--first-parent \
-			--tags \
-			--abbrev=0 \
-			--match 'v[0-9]*' \
-			"refs/tags/${target}^" 2>/dev/null
-	)" || fail "target ${target} has no prior release tag on first-parent history"
-	if [[ ! "${previous}" =~ ${SEMVER_REGEX} && ! "${previous}" =~ ${RC_REGEX} ]]; then
-		fail "prior release tag is not canonical: ${previous}"
-	fi
-
-	printf '%s\n' "${previous}"
-}
-
 usage() {
 	printf '%s\n' \
 		"usage:" \
 		"  $0 next" \
-		"  $0 start RELEASE_BASE TARGET_SHA" \
-		"  $0 previous TARGET_TAG" >&2
+		"  $0 start RELEASE_BASE TARGET_SHA" >&2
 	exit 2
 }
 
@@ -174,10 +149,6 @@ next)
 start)
 	[[ "$#" -eq 3 ]] || usage
 	resolve_start "$2" "$3"
-	;;
-previous)
-	[[ "$#" -eq 2 ]] || usage
-	resolve_previous "$2"
 	;;
 *)
 	usage

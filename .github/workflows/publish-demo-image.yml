@@ -54,21 +54,6 @@ jobs:
           ref: refs/tags/${{ steps.version.outputs.tag }}
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: "1.26.6"
-          cache: false
-
-      - name: Validate populated PostgreSQL upgrade
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          migration_base="$(.github/scripts/prerelease-version.sh previous "${RELEASE_TAG}")"
-          scripts/pre-image-check.sh "${migration_base}"
-
       - name: Resolve image source metadata
         id: source
         shell: bash

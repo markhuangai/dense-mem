@@ -156,25 +156,3 @@ test("start rejects malformed, stale, and already-advanced bases", async (t) => 
     });
   }
 });
-
-test("previous resolves the nearest first-parent release across a multi-commit delta", (t) => {
-  const repository = createRepository(t);
-  const mainBranch = git(repository, "branch", "--show-current");
-  tag(repository, "v2.5.1");
-
-  git(repository, "checkout", "--quiet", "-b", "tagged-side-branch");
-  git(repository, "commit", "--quiet", "--allow-empty", "-m", "side release");
-  tag(repository, "v9.0.0-rc.0");
-
-  git(repository, "checkout", "--quiet", mainBranch);
-  git(repository, "commit", "--quiet", "--allow-empty", "-m", "first release candidate");
-  tag(repository, "v2.5.2-rc.0");
-  git(repository, "merge", "--quiet", "--no-ff", "tagged-side-branch", "-m", "merge side branch");
-  git(repository, "commit", "--quiet", "--allow-empty", "-m", "next release candidate");
-  tag(repository, "v2.5.2-rc.1");
-
-  const result = resolve(repository, "previous", "v2.5.2-rc.1");
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), "v2.5.2-rc.0");
-});

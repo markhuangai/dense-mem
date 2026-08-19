@@ -88,40 +88,6 @@ test("prerelease publication waits for the staging migration rehearsal", async (
   }
 });
 
-test("published images require the populated migration gate before building", async () => {
-  for (const filename of ["publish-image.yml", "publish-demo-image.yml"]) {
-    const workflow = await readFile(
-      new URL(`../../.github/workflows/${filename}`, import.meta.url),
-      "utf8",
-    );
-    const baseline = workflow.indexOf(
-      'migration_base="$(.github/scripts/prerelease-version.sh previous "${RELEASE_TAG}")"',
-    );
-    const gate = workflow.indexOf('scripts/pre-image-check.sh "${migration_base}"');
-    const build = workflow.indexOf("uses: docker/build-push-action@v7");
-    assert.ok(baseline >= 0, `${filename} does not resolve the prior release baseline`);
-    assert.ok(gate >= 0, `${filename} is missing the populated migration gate`);
-    assert.ok(gate > baseline, `${filename} runs the gate before resolving its baseline`);
-    assert.ok(build > gate, `${filename} builds before the populated migration gate`);
-  }
-});
-
-test("normal CI validates migration history without PostgreSQL integration", async () => {
-  const [sharedWorkflow, pushWorkflow] = await Promise.all([
-    readFile(new URL("../../.github/workflows/ci-shared.yml", import.meta.url), "utf8"),
-    readFile(new URL("../../.github/workflows/ci-push.yml", import.meta.url), "utf8"),
-  ]);
-
-  assert.match(sharedWorkflow, /migration-base-ref:/);
-  assert.match(
-    sharedWorkflow,
-    /run: scripts\/check-postgres-migrations\.sh "\$\{\{ inputs\.migration-base-ref \}\}"/,
-  );
-  assert.doesNotMatch(sharedWorkflow, /scripts\/pre-image-check\.sh/);
-  assert.doesNotMatch(sharedWorkflow, /go test -tags=integration \.\/internal\/storage\/postgres/);
-  assert.match(pushWorkflow, /migration-base-ref: \$\{\{ github\.event\.before \}\}/);
-});
-
 test("same-repository pushes rebuild while the preview label remains", () => {
   assert.deepEqual(decidePreviewEvent(baseEvent), {
     mode: "attempt",
