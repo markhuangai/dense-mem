@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,13 +30,36 @@ func TestLoadHarnessConfigIsBoundedAndStrict(t *testing.T) {
 	for name, contents := range map[string]string{
 		"unknown":   strings.TrimSuffix(valid, "}") + `,"unknown":true}`,
 		"duplicate": `{"profiles":[],"profiles":[]}`,
-		"oversized": strings.Repeat("x", harnessConfigLimit+1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			invalidPath := filepath.Join(directory, name+".json")
 			require.NoError(t, os.WriteFile(invalidPath, []byte(contents), 0o600))
 			_, err := loadHarnessConfig(invalidPath)
 			require.Error(t, err)
+		})
+	}
+
+	oversizedPath := filepath.Join(directory, "oversized.json")
+	oversized := `{"profiles":[{"name":"` + strings.Repeat("x", harnessConfigLimit) + `"}]}`
+	require.NoError(t, os.WriteFile(oversizedPath, []byte(oversized), 0o600))
+	_, err = loadHarnessConfig(oversizedPath)
+	require.ErrorContains(t, err, "JSON input exceeds")
+}
+
+func TestParseHarnessOptionsReportsMissingFlagsDeterministically(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "default listen", want: "--public-base-url is required"},
+		{name: "empty listen", args: []string{"--listen="}, want: "--listen is required"},
+		{name: "base URL only", args: []string{"--public-base-url=https://harness.example"}, want: "--config is required"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parseHarnessOptions(test.args, io.Discard)
+			require.EqualError(t, err, test.want)
 		})
 	}
 }
@@ -76,6 +100,22 @@ func TestHarnessMetadataAndChallengeUseConfiguredHTTPSURL(t *testing.T) {
 	require.NotContains(t, successResponse.Body.String(), "secret-token")
 }
 
+func TestNewHarnessHandlerRejectsInvalidServeMuxBasePaths(t *testing.T) {
+	for _, raw := range []string{
+		"https://harness.example/%7Btenant%7D",
+		"https://harness.example/base%20path",
+		"https://harness.example/base%09path",
+	} {
+		var handler http.Handler
+		var err error
+		require.NotPanics(t, func() {
+			handler, err = newHarnessHandler(raw, nil, harnessValidatorStub{})
+		}, raw)
+		require.Error(t, err, raw)
+		require.Nil(t, handler)
+	}
+}
+
 func TestHarnessMapsTypedValidationErrorsWithoutReflectingTokens(t *testing.T) {
 	profiles := []domain.OAuthProtectedResourceProfile{{Name: "entra", Issuer: "https://issuer.example/entra", ProtectedResource: domain.OAuthProtectedResourceConfig{
 		Audiences: []string{"audience"}, JWKSSource: "discovery", Algorithms: []string{"RS256"}, ScopeClaim: "scp",
@@ -105,7 +145,18 @@ func TestHarnessMapsTypedValidationErrorsWithoutReflectingTokens(t *testing.T) {
 }
 
 func TestValidatePublicBaseURLRequiresTrustedHTTPSIdentifier(t *testing.T) {
-	for _, raw := range []string{"", "http://harness.example", "https://user@harness.example", "https://harness.example?query=1", "https://harness.example/#fragment", " https://harness.example"} {
+	for _, raw := range []string{
+		"",
+		"http://harness.example",
+		"https://user@harness.example",
+		"https://harness.example?query=1",
+		"https://harness.example/#fragment",
+		" https://harness.example",
+		"https://harness.example/{tenant}",
+		"https://harness.example/%7Btenant%7D",
+		"https://harness.example/base%20path",
+		"https://harness.example/base%09path",
+	} {
 		_, err := validatePublicBaseURL(raw)
 		require.Error(t, err, raw)
 	}

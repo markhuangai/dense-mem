@@ -7,6 +7,8 @@ import (
 	"io"
 )
 
+const maximumJSONNestingDepth = 100
+
 func Decode(reader io.Reader, destination any, maximumBytes int64) error {
 	if reader == nil {
 		return fmt.Errorf("JSON reader is required")
@@ -46,7 +48,7 @@ func Decode(reader io.Reader, destination any, maximumBytes int64) error {
 
 func RejectDuplicateFields(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := walkJSONValue(decoder); err != nil {
+	if err := walkJSONValue(decoder, 0); err != nil {
 		return err
 	}
 	if token, err := decoder.Token(); err != io.EOF {
@@ -58,7 +60,7 @@ func RejectDuplicateFields(data []byte) error {
 	return nil
 }
 
-func walkJSONValue(decoder *json.Decoder) error {
+func walkJSONValue(decoder *json.Decoder, depth int) error {
 	token, err := decoder.Token()
 	if err != nil {
 		return err
@@ -66,6 +68,9 @@ func walkJSONValue(decoder *json.Decoder) error {
 	delimiter, ok := token.(json.Delim)
 	if !ok {
 		return nil
+	}
+	if depth >= maximumJSONNestingDepth {
+		return fmt.Errorf("JSON nesting depth exceeds %d", maximumJSONNestingDepth)
 	}
 
 	switch delimiter {
@@ -84,7 +89,7 @@ func walkJSONValue(decoder *json.Decoder) error {
 				return fmt.Errorf("duplicate JSON field %q", key)
 			}
 			seen[key] = struct{}{}
-			if err := walkJSONValue(decoder); err != nil {
+			if err := walkJSONValue(decoder, depth+1); err != nil {
 				return err
 			}
 		}
@@ -97,7 +102,7 @@ func walkJSONValue(decoder *json.Decoder) error {
 		}
 	case '[':
 		for decoder.More() {
-			if err := walkJSONValue(decoder); err != nil {
+			if err := walkJSONValue(decoder, depth+1); err != nil {
 				return err
 			}
 		}

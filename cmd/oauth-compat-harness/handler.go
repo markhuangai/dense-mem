@@ -49,9 +49,6 @@ func newHarnessHandler(publicBaseURL string, profiles []domain.OAuthProtectedRes
 		return nil, err
 	}
 	resourcePath := strings.TrimSuffix(parsed.Path, "/") + "/mcp"
-	if resourcePath == "" {
-		resourcePath = "/mcp"
-	}
 	resourceURL := trustedBaseURL + "/mcp"
 	metadataPath := "/.well-known/oauth-protected-resource" + resourcePath
 	metadataURL := parsed.Scheme + "://" + parsed.Host + metadataPath
@@ -114,6 +111,9 @@ func validatePublicBaseURL(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
 		return "", fmt.Errorf("trusted HTTPS public base URL is required")
+	}
+	if strings.ContainsAny(parsed.Path, "{} \t") {
+		return "", fmt.Errorf("public base URL path must be a literal ServeMux path")
 	}
 	return strings.TrimSuffix(raw, "/"), nil
 }

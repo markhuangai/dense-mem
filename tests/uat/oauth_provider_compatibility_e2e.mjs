@@ -17,6 +17,7 @@ const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const oauthComposeFile = requiredEnv("DENSE_MEM_E2E_OAUTH_COMPOSE_FILE");
 const logSentinel = `oauth-compat-claim-${randomUUID()}`;
 const issuedTokens = [];
+const requestTimeoutMs = 30_000;
 let rpcID = 0;
 
 const metadataPath = "/.well-known/oauth-protected-resource/mcp";
@@ -194,6 +195,7 @@ function requestRaw(rawURL, options = {}) {
       path: `${target.pathname}${target.search}`,
       method: options.method ?? "GET",
       headers: options.headers ?? {},
+      timeout: requestTimeoutMs,
       ...(target.protocol === "https:" ? { servername: target.hostname } : {}),
     }, (response) => {
       let body = "";
@@ -207,6 +209,7 @@ function requestRaw(rawURL, options = {}) {
       response.on("end", () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body }));
     });
     request.on("error", reject);
+    request.on("timeout", () => request.destroy(new Error("OAuth compatibility request timed out")));
     if (options.body !== undefined) request.write(options.body);
     request.end();
   });

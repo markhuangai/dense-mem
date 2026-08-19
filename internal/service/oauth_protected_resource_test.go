@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -140,6 +141,24 @@ func TestOAuthProtectedResourceValidatorRotatesKeysAndBoundsOutageRefreshes(t *t
 	_, err = validator.Validate(t.Context(), unknown)
 	require.ErrorIs(t, err, ErrOAuthProviderUnavailable)
 	require.Equal(t, hitsAfterFailure, fixture.jwksRequests("generic"), "refresh failures must be throttled")
+}
+
+func TestOAuthProtectedResourceValidatorSharedRefreshSurvivesCallerCancellation(t *testing.T) {
+	fixture := newOAuthCompatibilityFixture(t)
+	profile := fixture.profiles()[1]
+	validator := fixture.validatorForProfiles(t, []domain.OAuthProtectedResourceProfile{profile})
+	cache := validator.cacheForProfile(profile.Name)
+
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, err := validator.loadOAuthJWKS(canceled, profile, cache, false)
+	require.NoError(t, err)
+
+	set, fromCache, err := validator.loadOAuthJWKS(t.Context(), profile, cache, false)
+	require.NoError(t, err)
+	require.True(t, fromCache)
+	require.NotEmpty(t, set.Keys)
+	require.Equal(t, 1, fixture.jwksRequests(profile.Name))
 }
 
 func TestOAuthProtectedResourceValidatorInvalidatesCacheWhenSourceChanges(t *testing.T) {

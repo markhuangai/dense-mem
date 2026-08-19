@@ -87,7 +87,7 @@ func (validator *OAuthProtectedResourceValidator) loadOAuthJWKS(ctx context.Cont
 	cache.lastAttemptAt = now
 	cache.lastAttemptFingerprint = fingerprint
 	cache.lastAttemptError = nil
-	providerCtx, cancel := context.WithTimeout(ctx, oauthProviderTimeout)
+	providerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), oauthProviderTimeout)
 	defer cancel()
 
 	uri := profile.ProtectedResource.JWKSURI

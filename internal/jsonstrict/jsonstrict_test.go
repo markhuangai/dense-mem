@@ -47,6 +47,14 @@ func TestRejectDuplicateFieldsCoversNestedObjectsAndMalformedJSON(t *testing.T) 
 	require.NoError(t, RejectDuplicateFields([]byte(`{"items":[{"value":1},{"value":2}]}`)))
 }
 
+func TestRejectDuplicateFieldsBoundsNestingDepth(t *testing.T) {
+	atLimit := strings.Repeat("[", maximumJSONNestingDepth) + "null" + strings.Repeat("]", maximumJSONNestingDepth)
+	require.NoError(t, RejectDuplicateFields([]byte(atLimit)))
+
+	tooDeep := strings.Repeat("[", maximumJSONNestingDepth+1) + "null" + strings.Repeat("]", maximumJSONNestingDepth+1)
+	require.ErrorContains(t, RejectDuplicateFields([]byte(tooDeep)), "JSON nesting depth exceeds")
+}
+
 type strictErrorReader struct{}
 
 func (strictErrorReader) Read([]byte) (int, error) {

@@ -111,15 +111,19 @@ func parseHarnessOptions(args []string, errorOutput io.Writer) (harnessOptions, 
 	if flags.NArg() != 0 {
 		return harnessOptions{}, fmt.Errorf("unexpected positional arguments")
 	}
-	for name, value := range map[string]string{
-		"--listen":          options.listen,
-		"--public-base-url": options.publicBaseURL,
-		"--config":          options.configPath,
-		"--tls-cert":        options.tlsCertPath,
-		"--tls-key":         options.tlsKeyPath,
-	} {
-		if value == "" {
-			return harnessOptions{}, fmt.Errorf("%s is required", name)
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "--listen", value: options.listen},
+		{name: "--public-base-url", value: options.publicBaseURL},
+		{name: "--config", value: options.configPath},
+		{name: "--tls-cert", value: options.tlsCertPath},
+		{name: "--tls-key", value: options.tlsKeyPath},
+	}
+	for _, entry := range required {
+		if entry.value == "" {
+			return harnessOptions{}, fmt.Errorf("%s is required", entry.name)
 		}
 	}
 	return options, nil
