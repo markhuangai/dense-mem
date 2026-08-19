@@ -51,7 +51,7 @@ updates:
       - "*"
     multi-ecosystem-group: "all-dependencies"
     ignore:
-      - dependency-name: "markhuangai/git-vibe"
+      - dependency-name: "markhuangai/ai-pr-reviewer"
     groups:
       actions-security:
         applies-to: "security-updates"
