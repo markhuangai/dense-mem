@@ -277,6 +277,7 @@ func TestAuthMiddlewareOAuthBearerMapsBoundedErrors(t *testing.T) {
 			assert.Contains(t, rec.Body.String(), `"code":"`+test.wantCode+`"`)
 			assert.NotContains(t, rec.Body.String(), "backend details")
 			assert.True(t, audit.authFailureCalled)
+			assert.Equal(t, "oauth", audit.authFailureParams.entityType)
 			assert.Equal(t, test.wantSecurityFailure, security.recordAuthFailureCalled)
 		})
 	}

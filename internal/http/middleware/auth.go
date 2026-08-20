@@ -168,7 +168,7 @@ func AuthMiddlewareWithOptions(repo repository.CredentialRepository, auditSvc se
 			}
 			if service.IsJWTBearer(rawKey) {
 				if opts.OAuthBearerAuthenticator == nil {
-					logAuthFailure(c, auditSvc, securitySvc, nil, "OAUTH_INVALID", "oauth bearer authentication is unavailable")
+					logOAuthAuthFailure(c, auditSvc, securitySvc, nil, "OAUTH_INVALID", "oauth bearer authentication is unavailable")
 					return httperr.New(httperr.AUTH_INVALID, "invalid bearer token")
 				}
 				actor, err := opts.OAuthBearerAuthenticator.AuthenticateOAuthBearer(c.Request().Context(), rawKey, pathTeamID)
@@ -179,7 +179,7 @@ func AuthMiddlewareWithOptions(repo repository.CredentialRepository, auditSvc se
 						errors.Is(err, service.ErrOAuthAccessDenied) {
 						failureSecurity = securitySvc
 					}
-					logAuthFailure(c, auditSvc, failureSecurity, nil, "OAUTH_DENIED", "oauth bearer authentication failed")
+					logOAuthAuthFailure(c, auditSvc, failureSecurity, nil, "OAUTH_DENIED", "oauth bearer authentication failed")
 					return oauthAuthError(err)
 				}
 				principal, actorContext, err := principalAndActorContext(actor, "oauth", "")
@@ -575,6 +575,14 @@ func LastUsedMiddleware(recorder LastUsedRecorder) echo.MiddlewareFunc {
 
 // logAuthFailure logs an authentication failure event to the audit service.
 func logAuthFailure(c echo.Context, auditSvc service.AuditService, securitySvc SecurityBanService, profileID *string, reason, message string) {
+	logAuthFailureForEntity(c, auditSvc, securitySvc, profileID, "api_key", reason, message)
+}
+
+func logOAuthAuthFailure(c echo.Context, auditSvc service.AuditService, securitySvc SecurityBanService, profileID *string, reason, message string) {
+	logAuthFailureForEntity(c, auditSvc, securitySvc, profileID, "oauth", reason, message)
+}
+
+func logAuthFailureForEntity(c echo.Context, auditSvc service.AuditService, securitySvc SecurityBanService, profileID *string, entityType, reason, message string) {
 	if securitySvc != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if _, err := securitySvc.RecordAuthFailure(ctx, c.RealIP(), authFailureSurface(c), reason); err != nil {
@@ -599,7 +607,7 @@ func logAuthFailure(c echo.Context, auditSvc service.AuditService, securitySvc S
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_ = auditSvc.AuthFailure(ctx, profileID, "api_key", "", metadata, clientIP, correlationID)
+	_ = auditSvc.AuthFailure(ctx, profileID, entityType, "", metadata, clientIP, correlationID)
 }
 
 func authFailureSurface(c echo.Context) string {
