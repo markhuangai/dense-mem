@@ -245,23 +245,26 @@ func TestAuthMiddlewareOAuthBearerSetsImmutablePrincipal(t *testing.T) {
 
 func TestAuthMiddlewareOAuthBearerMapsBoundedErrors(t *testing.T) {
 	tests := []struct {
-		name       string
-		err        error
-		wantStatus int
-		wantCode   string
+		name                string
+		err                 error
+		wantStatus          int
+		wantCode            string
+		wantSecurityFailure bool
 	}{
-		{name: "expired", err: service.ErrOAuthTokenExpired, wantStatus: http.StatusUnauthorized, wantCode: "AUTH_EXPIRED"},
-		{name: "invalid", err: service.ErrOAuthTokenInvalid, wantStatus: http.StatusUnauthorized, wantCode: "AUTH_INVALID"},
-		{name: "ambiguous team", err: service.ErrOAuthTeamRequired, wantStatus: http.StatusBadRequest, wantCode: "team_required"},
-		{name: "membership denied", err: service.ErrOAuthAccessDenied, wantStatus: http.StatusForbidden, wantCode: "FORBIDDEN"},
+		{name: "expired", err: service.ErrOAuthTokenExpired, wantStatus: http.StatusUnauthorized, wantCode: "AUTH_EXPIRED", wantSecurityFailure: true},
+		{name: "invalid", err: service.ErrOAuthTokenInvalid, wantStatus: http.StatusUnauthorized, wantCode: "AUTH_INVALID", wantSecurityFailure: true},
+		{name: "ambiguous team", err: service.ErrOAuthTeamRequired, wantStatus: http.StatusBadRequest, wantCode: "team_required", wantSecurityFailure: true},
+		{name: "membership denied", err: service.ErrOAuthAccessDenied, wantStatus: http.StatusForbidden, wantCode: "FORBIDDEN", wantSecurityFailure: true},
 		{name: "provider unavailable", err: service.ErrOAuthProviderUnavailable, wantStatus: http.StatusServiceUnavailable, wantCode: "SERVICE_UNAVAILABLE"},
-		{name: "unknown", err: errors.New("backend details"), wantStatus: http.StatusInternalServerError, wantCode: "INTERNAL_ERROR"},
+		{name: "unknown", err: errors.New("backend details"), wantStatus: http.StatusInternalServerError, wantCode: "INTERNAL_ERROR", wantSecurityFailure: true},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			audit := &mockAuditService{}
+			security := &mockSecurityService{}
 			e := newTestEcho()
-			e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{
+			e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, audit, security, AuthOptions{
 				OAuthBearerAuthenticator: &stubOAuthBearerAuthenticator{err: test.err},
 			}))
 			e.GET("/mcp", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
@@ -272,6 +275,8 @@ func TestAuthMiddlewareOAuthBearerMapsBoundedErrors(t *testing.T) {
 			assert.Equal(t, test.wantStatus, rec.Code)
 			assert.Contains(t, rec.Body.String(), `"code":"`+test.wantCode+`"`)
 			assert.NotContains(t, rec.Body.String(), "backend details")
+			assert.True(t, audit.authFailureCalled)
+			assert.Equal(t, test.wantSecurityFailure, security.recordAuthFailureCalled)
 		})
 	}
 }

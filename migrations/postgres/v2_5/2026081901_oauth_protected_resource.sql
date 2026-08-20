@@ -5,12 +5,15 @@
 
 -- Lock/rewrite impact: the constant JSONB default is metadata-only on supported
 -- PostgreSQL versions. The CHECK is installed NOT VALID, and the partial index
--- is built concurrently so neither operation holds a table-wide scan lock.
+-- unique index is built concurrently so neither operation holds a table-wide
+-- scan lock.
 -- RLS impact: no policy changes; sso_providers and app_config retain their
 -- system-only control-plane policies.
 -- Backfill: existing providers receive a disabled config, so OAuth remains
 -- dormant until a provider is explicitly enabled. Metadata additionally
 -- requires MCP_PUBLIC_BASE_URL.
+-- Backward compatibility: old binaries ignore the additive config and base URL;
+-- new binaries remain dormant until both are configured.
 -- Rollback: down refuses customized state so operator configuration is never
 -- silently discarded.
 
@@ -39,8 +42,8 @@ ALTER TABLE sso_providers
 
 -- +goose StatementEnd
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sso_providers_protected_resource_enabled
-    ON sso_providers (id)
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_sso_providers_active_oauth_issuer_unique
+    ON sso_providers (issuer_url)
     WHERE enabled = true
       AND retired_at IS NULL
       AND protected_resource_config @> '{"enabled": true}'::jsonb;
@@ -92,7 +95,7 @@ END $$;
 
 -- +goose StatementEnd
 
-DROP INDEX CONCURRENTLY IF EXISTS idx_sso_providers_protected_resource_enabled;
+DROP INDEX CONCURRENTLY IF EXISTS idx_sso_providers_active_oauth_issuer_unique;
 
 -- +goose StatementBegin
 SELECT set_config('app.tx_mode', 'system', true);

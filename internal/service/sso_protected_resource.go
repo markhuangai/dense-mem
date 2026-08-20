@@ -20,6 +20,8 @@ var (
 	ErrOAuthTeamRequired error = oauthTeamRequiredError{}
 )
 
+const oauthValidatorReconfigurationLimit = 4
+
 type oauthAccessDeniedError struct{}
 
 func (oauthAccessDeniedError) Error() string { return "oauth membership access denied" }
@@ -226,7 +228,10 @@ func (s *SSOService) oauthProviderSnapshot(ctx context.Context) (oauthProviderSn
 }
 
 func (s *SSOService) validateOAuthBearer(ctx context.Context, raw string, snapshot oauthProviderSnapshot) (*domain.OAuthValidatedToken, *domain.SSOProvider, error) {
-	for {
+	for attempt := 0; attempt < oauthValidatorReconfigurationLimit; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		s.oauth.mu.RLock()
 		if s.oauth.configured && s.oauth.validator != nil && s.oauth.fingerprint == snapshot.fingerprint {
 			validated, err := s.oauth.validator.Validate(ctx, raw)
@@ -244,6 +249,10 @@ func (s *SSOService) validateOAuthBearer(ctx context.Context, raw string, snapsh
 		s.oauth.mu.RUnlock()
 
 		s.oauth.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			s.oauth.mu.Unlock()
+			return nil, nil, err
+		}
 		if !s.oauth.configured || s.oauth.validator == nil || s.oauth.fingerprint != snapshot.fingerprint {
 			if s.oauth.validator == nil {
 				validator, err := NewOAuthProtectedResourceValidator(snapshot.profiles, OAuthProtectedResourceValidatorOptions{
@@ -264,6 +273,7 @@ func (s *SSOService) validateOAuthBearer(ctx context.Context, raw string, snapsh
 		}
 		s.oauth.mu.Unlock()
 	}
+	return nil, nil, ErrOAuthProviderUnavailable
 }
 
 func validatedOAuthIdentityClaim(raw, claimName string) (string, error) {

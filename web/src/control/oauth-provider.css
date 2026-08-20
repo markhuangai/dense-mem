@@ -36,3 +36,10 @@
 	border-radius: 6px;
 	background: var(--panel);
 }
+
+@media (max-width: 640px) {
+	.oauth-provider-config,
+	.oauth-scope-mapping {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -94,4 +95,70 @@ func TestSSOProviderProtectedResourceDefaultIsDormant(t *testing.T) {
 	require.Equal(t, "discovery", loaded.ProtectedResource.JWKSSource)
 	require.Equal(t, []string{"RS256"}, loaded.ProtectedResource.Algorithms)
 	require.Equal(t, "scope", loaded.ProtectedResource.ScopeClaim)
+}
+
+func TestSSOProviderProtectedResourceIssuerUniquenessIsAtomic(t *testing.T) {
+	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewSSORepository(appDB, rls)
+	issuer := "https://" + uuid.NewString() + ".issuer.example.test"
+	providers := []*domain.SSOProvider{
+		activeOAuthRepositoryProvider(uuid.New(), issuer, "first"),
+		activeOAuthRepositoryProvider(uuid.New(), issuer, "second"),
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, len(providers))
+	var workers sync.WaitGroup
+	for _, provider := range providers {
+		provider := provider
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			results <- repo.CreateProvider(ctx, provider)
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+
+	succeeded := 0
+	failed := 0
+	for err := range results {
+		if err == nil {
+			succeeded++
+		} else {
+			failed++
+		}
+	}
+	require.Equal(t, 1, succeeded)
+	require.Equal(t, 1, failed)
+
+	listed, err := repo.ListEnabledProviders(ctx)
+	require.NoError(t, err)
+	matching := 0
+	for _, provider := range listed {
+		if provider.IssuerURL == issuer && provider.ProtectedResource.Enabled {
+			matching++
+		}
+	}
+	require.Equal(t, 1, matching)
+}
+
+func activeOAuthRepositoryProvider(id uuid.UUID, issuer, suffix string) *domain.SSOProvider {
+	return &domain.SSOProvider{
+		ID:            id,
+		Name:          "atomic oauth provider " + suffix,
+		Kind:          domain.SSOProviderKindGenericOIDC,
+		IssuerURL:     issuer,
+		IdentityClaim: "sub",
+		ClientID:      "client-" + suffix,
+		GroupsScopes:  []string{},
+		ProtectedResource: domain.SSOProtectedResourceConfig{
+			Enabled: true,
+		},
+		Enabled: true,
+	}
 }

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -209,6 +210,18 @@ func TestOAuthProtectedResourcePublicURLAndErrors(t *testing.T) {
 	require.ErrorIs(t, err, runtimeErr)
 	require.Equal(t, "oauth membership access denied", ErrOAuthAccessDenied.Error())
 	require.Equal(t, "oauth team selection required", ErrOAuthTeamRequired.Error())
+}
+
+func TestValidateOAuthBearerHonorsCanceledContextBeforeReconfiguration(t *testing.T) {
+	fixture := newSSOOAuthFixture(t)
+	snapshot, err := fixture.service.oauthProviderSnapshot(t.Context())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, err = fixture.service.validateOAuthBearer(ctx, fixture.token(t, true), snapshot)
+	require.ErrorIs(t, err, context.Canceled)
+	require.False(t, fixture.service.oauth.configured)
 }
 
 func TestOAuthProtectedResourceFailsClosedBeforeIdentityResolution(t *testing.T) {

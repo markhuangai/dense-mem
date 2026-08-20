@@ -539,16 +539,16 @@ function assertNoOAuthSecretsPersisted() {
         UNION ALL SELECT COALESCE(before_payload::text, '') FROM audit_log
         UNION ALL SELECT COALESCE(after_payload::text, '') FROM audit_log
       ) persisted
-      WHERE value LIKE '%' || ${sqlLiteral(token)} || '%';
+      WHERE strpos(value, ${sqlLiteral(token)}) > 0;
     `);
     if (result.status !== 0 || Number(result.stdout.trim()) !== 0) throw new Error("OAuth bearer material crossed a persistence boundary");
   }
   const sentinel = postgresCommand(`
     SELECT count(*)
     FROM audit_log
-    WHERE metadata::text LIKE '%' || ${sqlLiteral(logSentinel)} || '%'
-       OR COALESCE(before_payload::text, '') LIKE '%' || ${sqlLiteral(logSentinel)} || '%'
-       OR COALESCE(after_payload::text, '') LIKE '%' || ${sqlLiteral(logSentinel)} || '%';
+    WHERE strpos(metadata::text, ${sqlLiteral(logSentinel)}) > 0
+       OR strpos(COALESCE(before_payload::text, ''), ${sqlLiteral(logSentinel)}) > 0
+       OR strpos(COALESCE(after_payload::text, ''), ${sqlLiteral(logSentinel)}) > 0;
   `);
   if (sentinel.status !== 0 || Number(sentinel.stdout.trim()) !== 0) throw new Error("OAuth claim content crossed an audit persistence boundary");
 }

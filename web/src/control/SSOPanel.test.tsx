@@ -67,6 +67,30 @@ describe("SSOPanel", () => {
 		})));
 	});
 
+	it("keeps OAuth scope mapping inputs mounted while editing and removing rows", async () => {
+		const api = {
+			listSSOProviders: vi.fn(async () => [providerA]),
+			listSSOGroupMappings: vi.fn(async () => []),
+			getDirectoryConnector: vi.fn(async () => { throw new ApiError(404, "not found"); }),
+			listControlAdminGroups: vi.fn(async () => []),
+		} as unknown as ControlApi;
+
+		render(<SSOPanel api={api} teams={[team]} />);
+		await screen.findByText("Provider A");
+
+		await userEvent.click(screen.getByRole("button", { name: "Add mapping" }));
+		await userEvent.click(screen.getByRole("button", { name: "Add mapping" }));
+		const inputs = screen.getAllByLabelText("External scope");
+		await userEvent.type(inputs[0], "memory.read");
+		await userEvent.type(inputs[1], "memory.write");
+		expect(inputs[0]).toHaveValue("memory.read");
+		expect(inputs[1]).toHaveValue("memory.write");
+
+		await userEvent.click(screen.getByRole("button", { name: "Remove OAuth scope mapping 1" }));
+		expect(screen.getByLabelText("External scope")).toBe(inputs[1]);
+		expect(inputs[1]).toHaveValue("memory.write");
+	});
+
 	it("ignores stale mapping responses after switching providers", async () => {
     const providerAMappings = deferred<SSOGroupMapping[]>();
     const api = {

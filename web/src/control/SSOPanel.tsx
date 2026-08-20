@@ -218,7 +218,7 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
             </tbody>
           </table>
         </div>
-        <SSOProviderForm draft={providerDraft} busy={loading} onChange={setProviderDraft} onSubmit={saveProvider} />
+        <SSOProviderForm key={selectedProviderId || "new"} draft={providerDraft} busy={loading} onChange={setProviderDraft} onSubmit={saveProvider} />
       </section>
 
       <section className="surface">
@@ -250,6 +250,15 @@ function SSOProviderForm({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
 	const protectedResource = draft.protected_resource;
+	const scopeMappingIDs = useRef<string[]>([]);
+	const nextScopeMappingID = useRef(0);
+	while (scopeMappingIDs.current.length < protectedResource.scope_mappings.length) {
+		scopeMappingIDs.current.push(`oauth-scope-mapping-${nextScopeMappingID.current}`);
+		nextScopeMappingID.current += 1;
+	}
+	if (scopeMappingIDs.current.length > protectedResource.scope_mappings.length) {
+		scopeMappingIDs.current.length = protectedResource.scope_mappings.length;
+	}
 	const updateProtectedResource = (patch: Partial<SSOProviderInput["protected_resource"]>) => {
 		onChange({ ...draft, protected_resource: { ...protectedResource, ...patch } });
 	};
@@ -257,6 +266,15 @@ function SSOProviderForm({
 		updateProtectedResource({
 			scope_mappings: protectedResource.scope_mappings.map((mapping, current) => current === index ? { ...mapping, ...patch } : mapping),
 		});
+	};
+	const addScopeMapping = () => {
+		scopeMappingIDs.current.push(`oauth-scope-mapping-${nextScopeMappingID.current}`);
+		nextScopeMappingID.current += 1;
+		updateProtectedResource({ scope_mappings: [...protectedResource.scope_mappings, { external_scope: "", internal_scopes: ["read"] }] });
+	};
+	const removeScopeMapping = (index: number) => {
+		scopeMappingIDs.current = scopeMappingIDs.current.filter((_, current) => current !== index);
+		updateProtectedResource({ scope_mappings: protectedResource.scope_mappings.filter((_, current) => current !== index) });
 	};
 
 	return (
@@ -320,32 +338,35 @@ function SSOProviderForm({
 			<input id="sso-oauth-team-claim" value={protectedResource.team_claim} onChange={(event) => updateProtectedResource({ team_claim: event.target.value })} placeholder="Optional UUID claim" />
 			<div className="oauth-mapping-heading span">
 				<strong>Scope mappings</strong>
-				<button className="ghost-button compact" type="button" onClick={() => updateProtectedResource({ scope_mappings: [...protectedResource.scope_mappings, { external_scope: "", internal_scopes: ["read"] }] })}>
+				<button className="ghost-button compact" type="button" onClick={addScopeMapping}>
 					<Plus size={15} aria-hidden="true" />
 					Add mapping
 				</button>
 			</div>
-			{protectedResource.scope_mappings.map((mapping, index) => (
-				<div className="oauth-scope-mapping span" key={`${mapping.external_scope}-${index}`}>
-					<label htmlFor={`sso-oauth-external-scope-${index}`}>External scope</label>
-					<input id={`sso-oauth-external-scope-${index}`} value={mapping.external_scope} onChange={(event) => updateScopeMapping(index, { external_scope: event.target.value })} />
-					<div className="permission-checkbox-group" aria-label={`Internal scopes for ${mapping.external_scope || `mapping ${index + 1}`}`}>
-						{(["read", "write", "feedback:read"] as const).map((scope) => (
-							<label className="permission-checkbox" key={scope}>
-								<input
-									type="checkbox"
-									checked={mapping.internal_scopes.includes(scope)}
-									onChange={(event) => updateScopeMapping(index, { internal_scopes: event.target.checked ? [...mapping.internal_scopes, scope] : mapping.internal_scopes.filter((value) => value !== scope) })}
-								/>
-								{scope}
-							</label>
-						))}
+			{protectedResource.scope_mappings.map((mapping, index) => {
+				const mappingID = scopeMappingIDs.current[index];
+				return (
+					<div className="oauth-scope-mapping span" key={mappingID}>
+						<label htmlFor={`${mappingID}-external-scope`}>External scope</label>
+						<input id={`${mappingID}-external-scope`} value={mapping.external_scope} onChange={(event) => updateScopeMapping(index, { external_scope: event.target.value })} />
+						<div className="permission-checkbox-group" aria-label={`Internal scopes for ${mapping.external_scope || `mapping ${index + 1}`}`}>
+							{(["read", "write", "feedback:read"] as const).map((scope) => (
+								<label className="permission-checkbox" key={scope}>
+									<input
+										type="checkbox"
+										checked={mapping.internal_scopes.includes(scope)}
+										onChange={(event) => updateScopeMapping(index, { internal_scopes: event.target.checked ? [...mapping.internal_scopes, scope] : mapping.internal_scopes.filter((value) => value !== scope) })}
+									/>
+									{scope}
+								</label>
+							))}
+						</div>
+						<button className="icon-button danger-icon" type="button" aria-label={`Remove OAuth scope mapping ${index + 1}`} onClick={() => removeScopeMapping(index)}>
+							<Trash2 size={15} aria-hidden="true" />
+						</button>
 					</div>
-					<button className="icon-button danger-icon" type="button" aria-label={`Remove OAuth scope mapping ${index + 1}`} onClick={() => updateProtectedResource({ scope_mappings: protectedResource.scope_mappings.filter((_, current) => current !== index) })}>
-						<Trash2 size={15} aria-hidden="true" />
-					</button>
-				</div>
-			))}
+				);
+			})}
 		</fieldset>
 		<label htmlFor="sso-enabled">Enabled</label>
       <label className="checkbox-row" htmlFor="sso-enabled">

@@ -59,12 +59,25 @@ func TestOAuthProtectedResourceMetadataRoutes(t *testing.T) {
 
 	t.Run("configured base path", func(t *testing.T) {
 		provider.baseURL = "https://memory.example.test/base/"
+		teamID := uuid.New()
+		for _, test := range []struct {
+			path     string
+			resource string
+		}{
+			{path: "/.well-known/oauth-protected-resource/base/mcp", resource: "https://memory.example.test/base/mcp"},
+			{path: "/.well-known/oauth-protected-resource/base/teams/" + teamID.String() + "/mcp", resource: "https://memory.example.test/base/teams/" + teamID.String() + "/mcp"},
+		} {
+			recorder := httptest.NewRecorder()
+			e.ServeHTTP(recorder, httptest.NewRequest(nethttp.MethodGet, test.path, nil))
+			require.Equal(t, nethttp.StatusOK, recorder.Code)
+			var body oauthProtectedResourceDocument
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+			require.Equal(t, test.resource, body.Resource)
+		}
+
 		recorder := httptest.NewRecorder()
-		e.ServeHTTP(recorder, httptest.NewRequest(nethttp.MethodGet, "/.well-known/oauth-protected-resource/mcp", nil))
-		require.Equal(t, nethttp.StatusOK, recorder.Code)
-		var body oauthProtectedResourceDocument
-		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
-		require.Equal(t, "https://memory.example.test/base/mcp", body.Resource)
+		e.ServeHTTP(recorder, httptest.NewRequest(nethttp.MethodGet, "/.well-known/oauth-protected-resource/wrong/mcp", nil))
+		require.Equal(t, nethttp.StatusNotFound, recorder.Code)
 	})
 }
 
@@ -139,8 +152,18 @@ func TestOAuthProtectedResourceMetadataRequiresConfiguredOrigin(t *testing.T) {
 
 	request := httptest.NewRequest(nethttp.MethodGet, "https://fallback.example.test/.well-known/oauth-protected-resource/mcp", nil)
 	request.Host = "attacker.example.test"
+	provider.baseErr = nil
+	provider.baseURL = "https://memory.example.test/base"
 	recorder = httptest.NewRecorder()
 	e.ServeHTTP(recorder, request)
+	require.Equal(t, nethttp.StatusOK, recorder.Code)
+	var body oauthProtectedResourceDocument
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, "https://memory.example.test/base/mcp", body.Resource)
+
+	provider.baseURL = "ftp://memory.example.test"
+	recorder = httptest.NewRecorder()
+	e.ServeHTTP(recorder, httptest.NewRequest(nethttp.MethodGet, "/.well-known/oauth-protected-resource/mcp", nil))
 	require.Equal(t, nethttp.StatusServiceUnavailable, recorder.Code)
 }
 

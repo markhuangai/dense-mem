@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	nethttp "net/http"
 	"net/url"
 	"strings"
@@ -28,21 +29,23 @@ type oauthProtectedResourceDocument struct {
 	BearerMethods        []string `json:"bearer_methods_supported"`
 }
 
+const (
+	oauthProtectedResourceMetadataPrefix        = "/.well-known/oauth-protected-resource"
+	oauthProtectedResourceMetadataWildcardRoute = oauthProtectedResourceMetadataPrefix + "/*"
+)
+
 func RegisterOAuthProtectedResourceRoutes(e *echo.Echo, provider OAuthProtectedResourceProvider) {
 	if e == nil || provider == nil {
 		return
 	}
 	handler := oauthProtectedResourceMetadataHandler(provider)
-	e.GET("/.well-known/oauth-protected-resource/mcp", handler)
-	e.GET("/.well-known/oauth-protected-resource/teams/:teamId/mcp", handler)
+	e.GET(oauthProtectedResourceMetadataPrefix+"/mcp", handler)
+	e.GET(oauthProtectedResourceMetadataPrefix+"/teams/:teamId/mcp", handler)
+	e.GET(oauthProtectedResourceMetadataWildcardRoute, handler)
 }
 
 func oauthProtectedResourceMetadataHandler(provider OAuthProtectedResourceProvider) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		teamID, err := oauthMetadataTeamID(c)
-		if err != nil {
-			return err
-		}
 		metadata, err := provider.OAuthProtectedResourceMetadata(c.Request().Context())
 		if err != nil {
 			return httperr.New(httperr.SERVICE_UNAVAILABLE, "oauth resource metadata unavailable")
@@ -50,13 +53,21 @@ func oauthProtectedResourceMetadataHandler(provider OAuthProtectedResourceProvid
 		if len(metadata.AuthorizationServers) == 0 {
 			return httperr.New(httperr.NOT_FOUND, "oauth protected resource is not configured")
 		}
-		resourceURL := oauthResourceURL(c, provider, teamID)
-		if resourceURL == "" {
+		base := oauthPublicBaseURL(c, provider)
+		if base == nil {
 			return httperr.New(httperr.SERVICE_UNAVAILABLE, "oauth resource metadata unavailable")
+		}
+		teamID, err := oauthMetadataTeamID(c, base.Path)
+		if err != nil {
+			return err
+		}
+		resourceURL, metadataURL := oauthResourceURLs(base, teamID)
+		if c.Path() == oauthProtectedResourceMetadataWildcardRoute && c.Request().URL.Path != metadataURL.Path {
+			return httperr.New(httperr.NOT_FOUND, "oauth protected resource metadata not found")
 		}
 		c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
 		return c.JSON(nethttp.StatusOK, oauthProtectedResourceDocument{
-			Resource:             resourceURL,
+			Resource:             resourceURL.String(),
 			ResourceName:         "Dense-Mem MCP",
 			AuthorizationServers: metadata.AuthorizationServers,
 			ScopesSupported:      metadata.ScopesSupported,
@@ -80,9 +91,10 @@ func oauthProtectedResourceChallenge(provider OAuthProtectedResourceProvider) ec
 			if teamErr != nil {
 				return err
 			}
-			metadataURL := oauthResourceMetadataURL(c, provider, teamID)
-			if metadataURL != "" {
-				c.Response().Header().Set(echo.HeaderWWWAuthenticate, fmt.Sprintf("Bearer resource_metadata=%q", metadataURL))
+			base := oauthPublicBaseURL(c, provider)
+			if base != nil {
+				_, metadataURL := oauthResourceURLs(base, teamID)
+				c.Response().Header().Set(echo.HeaderWWWAuthenticate, fmt.Sprintf("Bearer resource_metadata=%q", metadataURL.String()))
 			}
 			return err
 		}
@@ -101,7 +113,31 @@ func oauthErrorStatus(err error) int {
 	return nethttp.StatusInternalServerError
 }
 
-func oauthMetadataTeamID(c echo.Context) (*uuid.UUID, error) {
+func oauthMetadataTeamID(c echo.Context, basePath string) (*uuid.UUID, error) {
+	if c.Path() != oauthProtectedResourceMetadataWildcardRoute {
+		return oauthTeamIDParam(c)
+	}
+	requestPath := c.Request().URL.Path
+	configuredPrefix := oauthProtectedResourceMetadataPrefix + strings.TrimSuffix(basePath, "/")
+	relative, ok := strings.CutPrefix(requestPath, configuredPrefix)
+	if !ok {
+		return nil, httperr.New(httperr.NOT_FOUND, "oauth protected resource metadata not found")
+	}
+	if relative == "/mcp" {
+		return nil, nil
+	}
+	parts := strings.Split(strings.TrimPrefix(relative, "/"), "/")
+	if len(parts) != 3 || parts[0] != "teams" || parts[2] != "mcp" {
+		return nil, httperr.New(httperr.NOT_FOUND, "oauth protected resource metadata not found")
+	}
+	teamID, err := uuid.Parse(parts[1])
+	if err != nil || teamID == uuid.Nil {
+		return nil, httperr.New(httperr.INVALID_UUID, "invalid team ID format")
+	}
+	return &teamID, nil
+}
+
+func oauthTeamIDParam(c echo.Context) (*uuid.UUID, error) {
 	raw := strings.TrimSpace(c.Param("teamId"))
 	if raw == "" {
 		return nil, nil
@@ -117,44 +153,53 @@ func oauthRequestTeamID(c echo.Context) (*uuid.UUID, error) {
 	if c.Path() != "/teams/:teamId/mcp" {
 		return nil, nil
 	}
-	return oauthMetadataTeamID(c)
+	return oauthTeamIDParam(c)
 }
 
-func oauthResourceURL(c echo.Context, provider OAuthProtectedResourceProvider, teamID *uuid.UUID) string {
-	base := oauthPublicBaseURL(c, provider)
-	if base == "" {
-		return ""
-	}
-	if teamID != nil {
-		return base + "/teams/" + teamID.String() + "/mcp"
-	}
-	return base + "/mcp"
-}
-
-func oauthResourceMetadataURL(c echo.Context, provider OAuthProtectedResourceProvider, teamID *uuid.UUID) string {
-	base := oauthPublicBaseURL(c, provider)
-	if base == "" {
-		return ""
-	}
-	parsed, err := url.Parse(base)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
-		return ""
-	}
-	resourcePath := strings.TrimSuffix(parsed.Path, "/")
+func oauthResourceURLs(base *url.URL, teamID *uuid.UUID) (*url.URL, *url.URL) {
+	resourcePath := strings.TrimSuffix(base.Path, "/")
 	if teamID != nil {
 		resourcePath += "/teams/" + teamID.String() + "/mcp"
 	} else {
 		resourcePath += "/mcp"
 	}
-	parsed.Path = "/.well-known/oauth-protected-resource" + resourcePath
-	parsed.RawPath = ""
-	return parsed.String()
+
+	resourceURL := *base
+	resourceURL.Path = resourcePath
+	resourceURL.RawPath = ""
+	metadataURL := *base
+	metadataURL.Path = oauthProtectedResourceMetadataPrefix + resourcePath
+	metadataURL.RawPath = ""
+	return &resourceURL, &metadataURL
 }
 
-func oauthPublicBaseURL(c echo.Context, provider OAuthProtectedResourceProvider) string {
+func oauthPublicBaseURL(c echo.Context, provider OAuthProtectedResourceProvider) *url.URL {
 	configured, err := provider.MCPPublicBaseURL(c.Request().Context())
 	if err != nil || strings.TrimSpace(configured) == "" {
-		return ""
+		return nil
 	}
-	return strings.TrimRight(strings.TrimSpace(configured), "/")
+	parsed, err := url.Parse(strings.TrimSpace(configured))
+	if err != nil || !oauthPublicBaseSchemeAllowed(parsed) || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" || parsed.RawPath != "" {
+		return nil
+	}
+	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
+	return parsed
+}
+
+func oauthPublicBaseSchemeAllowed(parsed *url.URL) bool {
+	if parsed == nil {
+		return false
+	}
+	if parsed.Scheme == "https" {
+		return true
+	}
+	if parsed.Scheme != "http" {
+		return false
+	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

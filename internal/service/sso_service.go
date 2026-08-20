@@ -201,6 +201,7 @@ func (s *SSOService) CreateProvider(ctx context.Context, provider domain.SSOProv
 		return nil, err
 	}
 	if err := s.repo.CreateProvider(ctx, &provider); err != nil {
+		err = ssoProviderWriteError(err, provider.IssuerURL)
 		s.debugSSOProviderFailure("sso create provider query failed", err, &provider)
 		return nil, err
 	}
@@ -222,6 +223,7 @@ func (s *SSOService) UpdateProvider(ctx context.Context, provider domain.SSOProv
 		return nil, err
 	}
 	if err := s.repo.UpdateProvider(ctx, &provider); err != nil {
+		err = ssoProviderWriteError(err, provider.IssuerURL)
 		s.debugSSOProviderFailure("sso update provider query failed", err, &provider)
 		return nil, err
 	}
@@ -231,6 +233,13 @@ func (s *SSOService) UpdateProvider(ctx context.Context, provider domain.SSOProv
 		return nil, err
 	}
 	return updated, nil
+}
+
+func ssoProviderWriteError(err error, issuer string) error {
+	if uniqueViolationName(err) == "idx_sso_providers_active_oauth_issuer_unique" {
+		return fmt.Errorf("OAuth profile issuer %q is duplicated", issuer)
+	}
+	return err
 }
 
 func (s *SSOService) DeleteProvider(ctx context.Context, providerID uuid.UUID) error {

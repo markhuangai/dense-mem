@@ -51,13 +51,15 @@ func TestOAuthProtectedResourceMigrationDefaultsDormantAndRetainsSystemRLS(t *te
 		}
 		require.Empty(t, baseURL)
 
-		var indexExists bool
+		var indexIsUnique bool
 		if err := tx.QueryRowContext(ctx, `
-			SELECT to_regclass('public.idx_sso_providers_protected_resource_enabled') IS NOT NULL
-		`).Scan(&indexExists); err != nil {
+			SELECT indisunique
+			FROM pg_index
+			WHERE indexrelid = 'idx_sso_providers_active_oauth_issuer_unique'::regclass
+		`).Scan(&indexIsUnique); err != nil {
 			return err
 		}
-		require.True(t, indexExists)
+		require.True(t, indexIsUnique)
 
 		var constraintValidated bool
 		if err := tx.QueryRowContext(ctx, `
