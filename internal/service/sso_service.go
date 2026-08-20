@@ -208,33 +208,6 @@ func (s *SSOService) CreateProvider(ctx context.Context, provider domain.SSOProv
 	return &provider, nil
 }
 
-func (s *SSOService) UpdateProvider(ctx context.Context, provider domain.SSOProvider) (*domain.SSOProvider, error) {
-	if provider.ID == uuid.Nil {
-		err := fmt.Errorf("sso provider ID is required")
-		s.debugSSOProviderFailure("sso update provider validation failed", err, &provider)
-		return nil, err
-	}
-	if err := normalizeSSOProviderForWrite(&provider); err != nil {
-		s.debugSSOProviderFailure("sso update provider validation failed", err, &provider)
-		return nil, err
-	}
-	if err := s.validateProtectedResourceProviderSet(ctx, &provider); err != nil {
-		s.debugSSOProviderFailure("sso update protected-resource set validation failed", err, &provider)
-		return nil, err
-	}
-	if err := s.repo.UpdateProvider(ctx, &provider); err != nil {
-		err = ssoProviderWriteError(err, provider.IssuerURL)
-		s.debugSSOProviderFailure("sso update provider query failed", err, &provider)
-		return nil, err
-	}
-	updated, err := s.repo.GetProvider(ctx, provider.ID)
-	if err != nil {
-		s.debugSSOProviderFailure("sso update provider reload failed", err, &provider)
-		return nil, err
-	}
-	return updated, nil
-}
-
 func (s *SSOService) DeleteProvider(ctx context.Context, providerID uuid.UUID) error {
 	if providerID == uuid.Nil {
 		err := fmt.Errorf("sso provider ID is required")

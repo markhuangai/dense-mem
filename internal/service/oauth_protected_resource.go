@@ -25,7 +25,7 @@ const (
 	oauthJWTHeaderLimit       = 16 * 1024
 	oauthJWTClaimsLimit       = 256 * 1024
 	oauthEncodedTokenLimit    = 512 * 1024
-	oauthMaximumProfiles      = 16
+	oauthMaximumProfiles      = domain.OAuthProtectedResourceMaximumProfiles
 	oauthMaximumAudiences     = 16
 	oauthMaximumScopeMappings = 32
 	oauthMaximumMappedScopes  = 16

@@ -2,6 +2,8 @@ package domain
 
 import "time"
 
+const OAuthProtectedResourceMaximumProfiles = 16
+
 type OAuthProtectedResourceProfile struct {
 	Name              string                       `json:"name"`
 	Issuer            string                       `json:"issuer"`

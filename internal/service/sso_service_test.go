@@ -422,6 +422,13 @@ func (r *ssoRepositoryStub) UpdateProvider(ctx context.Context, provider *domain
 	return nil
 }
 
+func (r *ssoRepositoryStub) UpdateProviderPreservingProtectedResource(ctx context.Context, provider *domain.SSOProvider) error {
+	if stored := r.providers[provider.ID]; stored != nil {
+		provider.ProtectedResource = stored.ProtectedResource
+	}
+	return r.UpdateProvider(ctx, provider)
+}
+
 func (r *ssoRepositoryStub) DeleteProvider(ctx context.Context, id uuid.UUID) error {
 	if r.deleteProviderErr != nil {
 		return r.deleteProviderErr

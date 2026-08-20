@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func TestSSOTokenAndRedirectHelpers(t *testing.T) {
@@ -398,6 +400,14 @@ func TestSSOSetupErrorMessage(t *testing.T) {
 	message, ok := SSOSetupErrorMessage(errors.New("plain error"))
 	assert.False(t, ok)
 	assert.Empty(t, message)
+}
+
+func TestSSOProviderWriteErrorMapsProtectedResourceProfileLimit(t *testing.T) {
+	err := ssoProviderWriteError(fmt.Errorf("wrapped: %w", repository.ErrSSOProtectedResourceProfileLimit), "")
+	require.EqualError(t, err, fmt.Sprintf(
+		"OAuth protected-resource config requires between 1 and %d profiles",
+		domain.OAuthProtectedResourceMaximumProfiles,
+	))
 }
 
 func TestSSOEntitlementCacheHelpers(t *testing.T) {

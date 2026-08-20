@@ -17,9 +17,10 @@ import (
 )
 
 var (
-	ErrDirectoryIdentityNotProvisioned = errors.New("directory identity is not provisioned and active")
-	ErrDirectoryManagedMapping         = errors.New("directory-managed sso mappings are read-only")
-	ErrSSOIdentityConflict             = errors.New("sso identity conflicts with a different external identity")
+	ErrDirectoryIdentityNotProvisioned  = errors.New("directory identity is not provisioned and active")
+	ErrDirectoryManagedMapping          = errors.New("directory-managed sso mappings are read-only")
+	ErrSSOIdentityConflict              = errors.New("sso identity conflicts with a different external identity")
+	ErrSSOProtectedResourceProfileLimit = errors.New("sso protected-resource profile limit exceeded")
 )
 
 type SSORepository interface {
@@ -28,6 +29,7 @@ type SSORepository interface {
 	GetProvider(ctx context.Context, id uuid.UUID) (*domain.SSOProvider, error)
 	CreateProvider(ctx context.Context, provider *domain.SSOProvider) error
 	UpdateProvider(ctx context.Context, provider *domain.SSOProvider) error
+	UpdateProviderPreservingProtectedResource(ctx context.Context, provider *domain.SSOProvider) error
 	DeleteProvider(ctx context.Context, id uuid.UUID) error
 
 	ListMappings(ctx context.Context, providerID uuid.UUID) ([]*domain.SSOGroupMapping, error)
@@ -156,10 +158,16 @@ func (r *SSORepositoryImpl) CreateProvider(ctx context.Context, provider *domain
 		return fmt.Errorf("failed to encode protected-resource config: %w", err)
 	}
 	err = r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		return tx.Exec(`
+		if err := lockSSOProtectedResourceProviderSetTx(tx); err != nil {
+			return err
+		}
+		if err := tx.Exec(`
 			INSERT INTO sso_providers (id, name, kind, issuer_url, tenant_id, identity_claim, client_id, client_secret_env, scopes, group_claims, groups_endpoint, groups_scopes, protected_resource_config, enabled, retired_at, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, NULL, $15, $15)
-		`, provider.ID, provider.Name, string(provider.Kind), provider.IssuerURL, provider.TenantID, provider.IdentityClaim, provider.ClientID, provider.ClientSecretEnv, pq.Array(provider.Scopes), pq.Array(provider.GroupClaims), provider.GroupsEndpoint, pq.Array(provider.GroupsScopes), string(protectedResource), provider.Enabled, now).Error
+		`, provider.ID, provider.Name, string(provider.Kind), provider.IssuerURL, provider.TenantID, provider.IdentityClaim, provider.ClientID, provider.ClientSecretEnv, pq.Array(provider.Scopes), pq.Array(provider.GroupClaims), provider.GroupsEndpoint, pq.Array(provider.GroupsScopes), string(protectedResource), provider.Enabled, now).Error; err != nil {
+			return err
+		}
+		return enforceSSOProtectedResourceProfileLimitTx(tx)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create sso provider: %w", err)
@@ -168,6 +176,14 @@ func (r *SSORepositoryImpl) CreateProvider(ctx context.Context, provider *domain
 }
 
 func (r *SSORepositoryImpl) UpdateProvider(ctx context.Context, provider *domain.SSOProvider) error {
+	return r.updateProvider(ctx, provider, false)
+}
+
+func (r *SSORepositoryImpl) UpdateProviderPreservingProtectedResource(ctx context.Context, provider *domain.SSOProvider) error {
+	return r.updateProvider(ctx, provider, true)
+}
+
+func (r *SSORepositoryImpl) updateProvider(ctx context.Context, provider *domain.SSOProvider, preserveProtectedResource bool) error {
 	now := time.Now().UTC()
 	provider.UpdatedAt = now
 	protectedResource, err := json.Marshal(provider.ProtectedResource)
@@ -175,6 +191,9 @@ func (r *SSORepositoryImpl) UpdateProvider(ctx context.Context, provider *domain
 		return fmt.Errorf("failed to encode protected-resource config: %w", err)
 	}
 	err = r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := lockSSOProtectedResourceProviderSetTx(tx); err != nil {
+			return err
+		}
 		res := tx.Exec(`
 			UPDATE sso_providers
 			SET name = $1,
@@ -188,12 +207,12 @@ func (r *SSORepositoryImpl) UpdateProvider(ctx context.Context, provider *domain
 			    group_claims = $9,
 			    groups_endpoint = $10,
 			    groups_scopes = $11,
-			    protected_resource_config = $12::jsonb,
-			    enabled = $13,
-			    retired_at = CASE WHEN $13 THEN NULL ELSE retired_at END,
-			    updated_at = $14
-			WHERE id = $15
-		`, provider.Name, string(provider.Kind), provider.IssuerURL, provider.TenantID, provider.IdentityClaim, provider.ClientID, provider.ClientSecretEnv, pq.Array(provider.Scopes), pq.Array(provider.GroupClaims), provider.GroupsEndpoint, pq.Array(provider.GroupsScopes), string(protectedResource), provider.Enabled, now, provider.ID)
+			    protected_resource_config = CASE WHEN $13 THEN protected_resource_config ELSE $12::jsonb END,
+			    enabled = $14,
+			    retired_at = CASE WHEN $14 THEN NULL ELSE retired_at END,
+			    updated_at = $15
+			WHERE id = $16
+		`, provider.Name, string(provider.Kind), provider.IssuerURL, provider.TenantID, provider.IdentityClaim, provider.ClientID, provider.ClientSecretEnv, pq.Array(provider.Scopes), pq.Array(provider.GroupClaims), provider.GroupsEndpoint, pq.Array(provider.GroupsScopes), string(protectedResource), preserveProtectedResource, provider.Enabled, now, provider.ID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -201,9 +220,11 @@ func (r *SSORepositoryImpl) UpdateProvider(ctx context.Context, provider *domain
 			return gorm.ErrRecordNotFound
 		}
 		if !provider.Enabled {
-			return disableDirectoryProvisioningForProviderTx(tx, provider.ID, now)
+			if err := disableDirectoryProvisioningForProviderTx(tx, provider.ID, now); err != nil {
+				return err
+			}
 		}
-		return nil
+		return enforceSSOProtectedResourceProfileLimitTx(tx)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update sso provider: %w", err)
@@ -214,6 +235,9 @@ func (r *SSORepositoryImpl) UpdateProvider(ctx context.Context, provider *domain
 func (r *SSORepositoryImpl) DeleteProvider(ctx context.Context, id uuid.UUID) error {
 	now := time.Now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
+		if err := lockSSOProtectedResourceProviderSetTx(tx); err != nil {
+			return err
+		}
 		res := tx.Exec(`
 			UPDATE sso_providers
 			SET enabled = false, retired_at = COALESCE(retired_at, $1), updated_at = $1

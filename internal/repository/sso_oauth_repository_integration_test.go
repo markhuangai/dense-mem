@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 
@@ -145,6 +147,127 @@ func TestSSOProviderProtectedResourceIssuerUniquenessIsAtomic(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, matching)
+}
+
+func TestSSOProviderProtectedResourceOmittedUpdatePreservesConcurrentConfig(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewSSORepository(appDB, rls)
+	provider := activeOAuthRepositoryProvider(
+		uuid.New(),
+		"https://"+uuid.NewString()+".issuer.example.test",
+		"preserve",
+	)
+	require.NoError(t, repo.CreateProvider(ctx, provider))
+	staleUpdate := *provider
+	staleUpdate.Name = "legacy provider rename"
+
+	concurrentConfig := domain.SSOProtectedResourceConfig{
+		Enabled: false,
+		OAuthProtectedResourceConfig: domain.OAuthProtectedResourceConfig{
+			Audiences:  []string{"concurrent-audience"},
+			JWKSSource: "static",
+			JWKSURI:    "https://rotated.example.test/jwks",
+			Algorithms: []string{"RS256"},
+			ScopeClaim: "scope",
+		},
+	}
+	encodedConfig, err := json.Marshal(concurrentConfig)
+	require.NoError(t, err)
+	configLocked := make(chan struct{})
+	releaseConfig := make(chan struct{})
+	configResult := make(chan error, 1)
+	go func() {
+		configResult <- rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			if err := tx.Exec(`
+				UPDATE sso_providers
+				SET protected_resource_config = $1::jsonb
+				WHERE id = $2
+			`, string(encodedConfig), provider.ID).Error; err != nil {
+				return err
+			}
+			close(configLocked)
+			<-releaseConfig
+			return nil
+		})
+	}()
+	<-configLocked
+
+	updateStarted := make(chan struct{})
+	updateResult := make(chan error, 1)
+	go func() {
+		close(updateStarted)
+		updateResult <- repo.UpdateProviderPreservingProtectedResource(ctx, &staleUpdate)
+	}()
+	<-updateStarted
+	close(releaseConfig)
+	require.NoError(t, <-configResult)
+	require.NoError(t, <-updateResult)
+
+	loaded, err := repo.GetProvider(ctx, provider.ID)
+	require.NoError(t, err)
+	require.Equal(t, "legacy provider rename", loaded.Name)
+	require.Equal(t, concurrentConfig, loaded.ProtectedResource)
+}
+
+func TestSSOProviderProtectedResourceProfileLimitIsAtomic(t *testing.T) {
+	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewSSORepository(appDB, rls)
+
+	for index := 0; index < domain.OAuthProtectedResourceMaximumProfiles-1; index++ {
+		provider := activeOAuthRepositoryProvider(
+			uuid.New(),
+			"https://"+uuid.NewString()+".issuer.example.test",
+			uuid.NewString(),
+		)
+		require.NoError(t, repo.CreateProvider(ctx, provider))
+	}
+
+	providers := []*domain.SSOProvider{
+		activeOAuthRepositoryProvider(uuid.New(), "https://"+uuid.NewString()+".issuer.example.test", "first contender"),
+		activeOAuthRepositoryProvider(uuid.New(), "https://"+uuid.NewString()+".issuer.example.test", "second contender"),
+	}
+	start := make(chan struct{})
+	results := make(chan error, len(providers))
+	var workers sync.WaitGroup
+	for _, provider := range providers {
+		provider := provider
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			results <- repo.CreateProvider(ctx, provider)
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+
+	succeeded := 0
+	failed := 0
+	for err := range results {
+		if err == nil {
+			succeeded++
+		} else {
+			require.True(t, errors.Is(err, ErrSSOProtectedResourceProfileLimit), "unexpected create error: %v", err)
+			failed++
+		}
+	}
+	require.Equal(t, 1, succeeded)
+	require.Equal(t, 1, failed)
+
+	listed, err := repo.ListEnabledProviders(ctx)
+	require.NoError(t, err)
+	activeProfiles := 0
+	for _, provider := range listed {
+		if provider.ProtectedResource.Enabled {
+			activeProfiles++
+		}
+	}
+	require.Equal(t, domain.OAuthProtectedResourceMaximumProfiles, activeProfiles)
 }
 
 func activeOAuthRepositoryProvider(id uuid.UUID, issuer, suffix string) *domain.SSOProvider {

@@ -57,19 +57,12 @@ func (h *controlPortalHandler) updateSSOProvider(c echo.Context) error {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
 	providerUpdate := body.toDomain(providerID)
+	var provider *domain.SSOProvider
 	if body.ProtectedResource == nil {
-		providers, err := h.sso.ListProviders(c.Request().Context())
-		if err != nil {
-			return err
-		}
-		for _, provider := range providers {
-			if provider != nil && provider.ID == providerID {
-				providerUpdate.ProtectedResource = provider.ProtectedResource
-				break
-			}
-		}
+		provider, err = h.sso.UpdateProviderPreservingProtectedResource(c.Request().Context(), providerUpdate)
+	} else {
+		provider, err = h.sso.UpdateProvider(c.Request().Context(), providerUpdate)
 	}
-	provider, err := h.sso.UpdateProvider(c.Request().Context(), providerUpdate)
 	if err != nil {
 		return controlSSOServiceError(err)
 	}
