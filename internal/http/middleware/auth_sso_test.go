@@ -257,7 +257,7 @@ func TestAuthMiddlewareOAuthBearerMapsBoundedErrors(t *testing.T) {
 		{name: "ambiguous team", err: service.ErrOAuthTeamRequired, wantStatus: http.StatusBadRequest, wantCode: "team_required"},
 		{name: "membership denied", err: service.ErrOAuthAccessDenied, wantStatus: http.StatusForbidden, wantCode: "FORBIDDEN", wantSecurityFailure: true},
 		{name: "provider unavailable", err: service.ErrOAuthProviderUnavailable, wantStatus: http.StatusServiceUnavailable, wantCode: "SERVICE_UNAVAILABLE"},
-		{name: "unknown", err: errors.New("backend details"), wantStatus: http.StatusInternalServerError, wantCode: "INTERNAL_ERROR", wantSecurityFailure: true},
+		{name: "unknown", err: errors.New("backend details"), wantStatus: http.StatusInternalServerError, wantCode: "INTERNAL_ERROR"},
 	}
 
 	for _, test := range tests {
@@ -306,6 +306,17 @@ func TestAuthMiddlewareOAuthTeamRequiredDoesNotCountTowardAutomaticBan(t *testin
 		rec := request()
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 		assert.Contains(t, rec.Body.String(), `"code":"team_required"`)
+		assert.True(t, audit.authFailureCalled)
+		audit.authFailureCalled = false
+	}
+	assert.Empty(t, securityRepo.failures)
+	assert.Empty(t, securityRepo.bans)
+
+	authenticator.err = errors.New("repository unavailable")
+	for range 2 {
+		rec := request()
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"code":"INTERNAL_ERROR"`)
 		assert.True(t, audit.authFailureCalled)
 		audit.authFailureCalled = false
 	}

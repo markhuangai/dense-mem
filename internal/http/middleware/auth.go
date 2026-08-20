@@ -173,9 +173,11 @@ func AuthMiddlewareWithOptions(repo repository.CredentialRepository, auditSvc se
 				}
 				actor, err := opts.OAuthBearerAuthenticator.AuthenticateOAuthBearer(c.Request().Context(), rawKey, pathTeamID)
 				if err != nil {
-					failureSecurity := securitySvc
-					if errors.Is(err, service.ErrOAuthProviderUnavailable) || errors.Is(err, service.ErrOAuthTeamRequired) {
-						failureSecurity = nil
+					var failureSecurity SecurityBanService
+					if errors.Is(err, service.ErrOAuthTokenExpired) ||
+						errors.Is(err, service.ErrOAuthTokenInvalid) ||
+						errors.Is(err, service.ErrOAuthAccessDenied) {
+						failureSecurity = securitySvc
 					}
 					logAuthFailure(c, auditSvc, failureSecurity, nil, "OAUTH_DENIED", "oauth bearer authentication failed")
 					return oauthAuthError(err)
