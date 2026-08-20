@@ -747,6 +747,13 @@ func (s *SSOService) validateProtectedResourceProviderSet(ctx context.Context, c
 	return err
 }
 
+func ssoProviderWriteError(err error, issuer string) error {
+	if uniqueViolationName(err) == "idx_sso_providers_active_oauth_issuer_unique" {
+		return fmt.Errorf("OAuth profile issuer %q is duplicated", issuer)
+	}
+	return err
+}
+
 func oauthProfileFromSSOProvider(provider *domain.SSOProvider) domain.OAuthProtectedResourceProfile {
 	return domain.OAuthProtectedResourceProfile{
 		Name:              provider.ID.String(),

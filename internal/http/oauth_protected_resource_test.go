@@ -7,6 +7,7 @@ import (
 	nethttp "net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -79,6 +80,14 @@ func TestOAuthProtectedResourceMetadataRoutes(t *testing.T) {
 		e.ServeHTTP(recorder, httptest.NewRequest(nethttp.MethodGet, "/.well-known/oauth-protected-resource/wrong/mcp", nil))
 		require.Equal(t, nethttp.StatusNotFound, recorder.Code)
 	})
+}
+
+func TestControlPortalRejectsInvalidOAuthProviderAlgorithm(t *testing.T) {
+	server := controlPortalSSOServer(t, &httpSSORepoStub{}, time.Now().UTC())
+	body := `{"name":"OAuth","kind":"generic_oidc","issuer_url":"https://issuer.example.test","client_id":"client","protected_resource":{"enabled":true,"audiences":["dense-mem"],"jwks_source":"static","jwks_uri":"https://issuer.example.test/jwks","algorithms":["none"],"scope_claim":"scope","scope_mappings":[],"team_claim":""},"enabled":true}`
+	recorder := serveControlSSO(server, nethttp.MethodPost, "/control/api/sso/providers", body)
+	require.Equal(t, nethttp.StatusUnprocessableEntity, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "is not allowed")
 }
 
 func TestOAuthProtectedResourceMetadataIsDormantWithoutEnabledProvider(t *testing.T) {

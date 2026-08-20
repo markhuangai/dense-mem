@@ -235,13 +235,6 @@ func (s *SSOService) UpdateProvider(ctx context.Context, provider domain.SSOProv
 	return updated, nil
 }
 
-func ssoProviderWriteError(err error, issuer string) error {
-	if uniqueViolationName(err) == "idx_sso_providers_active_oauth_issuer_unique" {
-		return fmt.Errorf("OAuth profile issuer %q is duplicated", issuer)
-	}
-	return err
-}
-
 func (s *SSOService) DeleteProvider(ctx context.Context, providerID uuid.UUID) error {
 	if providerID == uuid.Nil {
 		err := fmt.Errorf("sso provider ID is required")

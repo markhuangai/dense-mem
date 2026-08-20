@@ -103,10 +103,6 @@ func TestControlPortalSSOProviderAndMappingFlows(t *testing.T) {
 	rec = serveControlSSO(server, nethttp.MethodPost, "/control/api/sso/providers", `{"name":"`+strings.Repeat("a", maximumControlSSOProviderRequestBytes)+`"}`)
 	require.Equal(t, nethttp.StatusUnprocessableEntity, rec.Code)
 
-	invalidAlgorithm := strings.Replace(createBody, `"algorithms":["RS256"]`, `"algorithms":["none"]`, 1)
-	rec = serveControlSSO(server, nethttp.MethodPost, "/control/api/sso/providers", invalidAlgorithm)
-	require.Equal(t, nethttp.StatusUnprocessableEntity, rec.Code)
-	require.Contains(t, rec.Body.String(), "is not allowed")
 }
 
 func TestUserPortalSSOHandlers(t *testing.T) {
