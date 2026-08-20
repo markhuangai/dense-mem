@@ -39,11 +39,15 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 					       WHEN EXISTS (
 						       SELECT 1
 						       FROM community_sources source
-						       JOIN relationship_evidence_supports support
+							 JOIN relationship_evidence_supports support
 						         ON support.team_id = source.team_id
 						        AND support.relationship_id = source.relationship_id
+						        AND support.space_id = source.space_id
+						        AND support.space_generation = source.space_generation
 						       CROSS JOIN params
 						       WHERE source.team_id = record.team_id
+				         AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				         AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
 						         AND source.community_id = record.community_id
 						         AND support.fragment_id = ANY(params.returned_evidence_ids)
 					       ) THEN 0
@@ -52,16 +56,22 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 						       FROM community_sources source
 						       CROSS JOIN params
 						       WHERE source.team_id = record.team_id
+				         AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				         AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
 						         AND source.community_id = record.community_id
 						         AND source.relationship_id = ANY(params.known_relationship_ids)
 					       ) OR EXISTS (
 						       SELECT 1
 						       FROM community_sources source
-						       JOIN relationship_evidence_supports support
+							 JOIN relationship_evidence_supports support
 						         ON support.team_id = source.team_id
 						        AND support.relationship_id = source.relationship_id
+						        AND support.space_id = source.space_id
+						        AND support.space_generation = source.space_generation
 						       CROSS JOIN params
 						       WHERE source.team_id = record.team_id
+				         AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				         AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
 						         AND source.community_id = record.community_id
 						         AND support.fragment_id = ANY(params.known_evidence_ids)
 						       ) THEN 1
@@ -77,6 +87,8 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 						       FROM community_memberships membership
 						       CROSS JOIN params
 						       WHERE membership.team_id = record.team_id
+				         AND membership.space_id = dense_mem_team_shared_space(membership.team_id)
+				         AND membership.space_generation = dense_mem_team_shared_generation(membership.team_id)
 						         AND membership.community_id = record.community_id
 						         AND membership.entity_id = ANY(params.expand_entity_ids)
 						       ) THEN 2
@@ -85,6 +97,8 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 				FROM community_records record
 				CROSS JOIN params
 				WHERE record.team_id = params.team_id
+				  AND record.space_id = dense_mem_team_shared_space(record.team_id)
+				  AND record.space_generation = dense_mem_team_shared_generation(record.team_id)
 				  AND record.status = 'current'
 				  AND (
 					  params.query = ''
@@ -92,12 +106,16 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 					  OR EXISTS (
 						  SELECT 1 FROM community_memberships membership
 						  WHERE membership.team_id = record.team_id
+				    AND membership.space_id = dense_mem_team_shared_space(membership.team_id)
+				    AND membership.space_generation = dense_mem_team_shared_generation(membership.team_id)
 						    AND membership.community_id = record.community_id
 						    AND membership.entity_id = ANY(params.expand_entity_ids)
 					  )
 					  OR EXISTS (
 						  SELECT 1 FROM community_sources source
 						  WHERE source.team_id = record.team_id
+				    AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				    AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
 						    AND source.community_id = record.community_id
 						    AND source.relationship_id = ANY(params.known_relationship_ids || params.seed_relationship_ids)
 					  )
@@ -107,7 +125,11 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 						  JOIN relationship_evidence_supports support
 						    ON support.team_id = source.team_id
 						   AND support.relationship_id = source.relationship_id
+						   AND support.space_id = source.space_id
+						   AND support.space_generation = source.space_generation
 						  WHERE source.team_id = record.team_id
+				    AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				    AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
 						    AND source.community_id = record.community_id
 						    AND support.fragment_id = ANY(params.returned_evidence_ids || params.known_evidence_ids)
 					  )
@@ -117,6 +139,8 @@ func (r *SemanticRepositoryImpl) RecallCommunities(ctx context.Context, input Co
 					  OR EXISTS (
 						  SELECT 1 FROM community_sources source
 						  WHERE source.team_id = record.team_id
+				    AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				    AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
 						    AND source.community_id = record.community_id
 						    AND source.semantic_group_key <> ALL(params.covered_groups)
 					  )
@@ -191,9 +215,13 @@ func loadCommunityTopEntitiesBatch(ctx context.Context, tx *gorm.DB, teamID stri
 			LEFT JOIN entity_names name
 			  ON name.team_id = membership.team_id
 			 AND name.entity_id = membership.entity_id
+			 AND name.space_id = membership.space_id
+			 AND name.space_generation = membership.space_generation
 			 AND name.name_kind = 'canonical'
 			 AND name.valid_to IS NULL
 			WHERE membership.team_id = ?::uuid
+			  AND membership.space_id = dense_mem_team_shared_space(membership.team_id)
+			  AND membership.space_generation = dense_mem_team_shared_generation(membership.team_id)
 			  AND membership.community_id = ANY(?::uuid[])
 		)
 		SELECT community_id, entity_id, entity_name
@@ -230,6 +258,8 @@ func loadCommunityRecallRelationshipsBatch(ctx context.Context, tx *gorm.DB, inp
 			SELECT DISTINCT ON (team_id, support_id) team_id, support_id, decision
 			FROM relationship_support_decision_events
 			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND (?::timestamptz IS NULL OR created_at <= ?::timestamptz)
 			ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
 		), effective_support AS (
@@ -241,6 +271,8 @@ func loadCommunityRecallRelationshipsBatch(ctx context.Context, tx *gorm.DB, inp
 			LEFT JOIN evidence_sources source ON source.team_id = support.team_id AND source.source_id = support.source_id
 			LEFT JOIN evidence_lifecycle_events lifecycle ON lifecycle.team_id = support.team_id AND lifecycle.target_fragment_id = support.fragment_id
 			WHERE support.team_id = ?::uuid
+			  AND support.space_id = dense_mem_team_shared_space(support.team_id)
+			  AND support.space_generation = dense_mem_team_shared_generation(support.team_id)
 			  AND quarantine.quarantine_id IS NULL
 			  AND lifecycle.lifecycle_event_id IS NULL
 			  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
@@ -270,14 +302,25 @@ func loadCommunityRecallRelationshipsBatch(ctx context.Context, tx *gorm.DB, inp
 		  ON relationship.team_id = community_source.team_id
 		 AND relationship.relationship_id = community_source.relationship_id
 		 AND relationship.version = community_source.relationship_version
+		 AND relationship.space_id = community_source.space_id
+		 AND relationship.space_generation = community_source.space_generation
 		JOIN effective_support ON effective_support.relationship_id = relationship.relationship_id
 		LEFT JOIN entity_names subject_name
-		  ON subject_name.team_id = relationship.team_id AND subject_name.entity_id = relationship.subject_entity_id AND subject_name.name_kind = 'canonical' AND subject_name.valid_to IS NULL
+		  ON subject_name.team_id = relationship.team_id AND subject_name.entity_id = relationship.subject_entity_id
+		 AND subject_name.space_id = relationship.space_id AND subject_name.space_generation = relationship.space_generation
+		 AND subject_name.name_kind = 'canonical' AND subject_name.valid_to IS NULL
 		LEFT JOIN entity_names object_name
-		  ON object_name.team_id = relationship.team_id AND object_name.entity_id = relationship.object_entity_id AND object_name.name_kind = 'canonical' AND object_name.valid_to IS NULL
+		  ON object_name.team_id = relationship.team_id AND object_name.entity_id = relationship.object_entity_id
+		 AND object_name.space_id = relationship.space_id AND object_name.space_generation = relationship.space_generation
+		 AND object_name.name_kind = 'canonical' AND object_name.valid_to IS NULL
 		LEFT JOIN value_records value_record
 		  ON value_record.team_id = relationship.team_id AND value_record.value_id = relationship.object_value_id
+		 AND value_record.space_id = relationship.space_id AND value_record.space_generation = relationship.space_generation
 		WHERE community_source.team_id = ?::uuid
+		  AND community_source.space_id = dense_mem_team_shared_space(community_source.team_id)
+		  AND community_source.space_generation = dense_mem_team_shared_generation(community_source.team_id)
+		  AND relationship.space_id = dense_mem_team_shared_space(relationship.team_id)
+		  AND relationship.space_generation = dense_mem_team_shared_generation(relationship.team_id)
 		  AND community_source.community_id = ANY(?::uuid[])
 		  AND relationship.identity_alias_of_relationship_id IS NULL
 		  AND relationship.status = 'active'

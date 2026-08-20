@@ -307,6 +307,7 @@ export type GraphQuery = {
 type RequestOptions = {
   method?: string;
   body?: unknown;
+  headers?: Record<string, string>;
   signal?: AbortSignal;
   cache?: RequestCache;
 };
@@ -383,8 +384,12 @@ export class UserApi {
     return payload.data;
   }
 
-  async revokeSSOCredential(credentialId: string): Promise<{ status: string }> {
-    const payload = await this.request<Envelope<{ status: string }>>(`/ui/api/sso/credentials/${credentialId}`, { method: "DELETE" });
+  async revokeSSOCredential(credentialId: string, idempotencyKey = newIdempotencyKey("sso-credential-delete")): Promise<unknown> {
+    const payload = await this.request<Envelope<unknown>>(`/ui/api/sso/credentials/${credentialId}`, {
+      method: "DELETE",
+      body: { acknowledge_irreversible: true },
+      headers: { "Idempotency-Key": idempotencyKey },
+    });
     return payload.data;
   }
 
@@ -539,6 +544,7 @@ export class UserApi {
       token: this.token || undefined,
       credentials: this.token ? "same-origin" : "include",
       body: options.body,
+      headers: options.headers,
       cache: options.cache,
       signal: options.signal,
       csrf: this.token ? undefined : {
@@ -547,6 +553,11 @@ export class UserApi {
       },
     });
   }
+}
+
+function newIdempotencyKey(prefix: string): string {
+  const randomUUID = globalThis.crypto?.randomUUID?.();
+  return `${prefix}-${randomUUID ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
 }
 
 function isRecallPayload(value: RecallPayload | unknown): value is RecallPayload {

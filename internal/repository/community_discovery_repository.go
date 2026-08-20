@@ -24,6 +24,8 @@ func (r *SemanticRepositoryImpl) RecallCommunityDiscovery(ctx context.Context, i
 				       row_number() OVER (ORDER BY record.member_count DESC, record.community_id ASC)::int AS community_rank
 				FROM community_records AS record
 				WHERE record.team_id = ?::uuid
+				  AND record.space_id = dense_mem_team_shared_space(record.team_id)
+				  AND record.space_generation = dense_mem_team_shared_generation(record.team_id)
 				  AND record.status = 'current'
 				  AND (
 				      (
@@ -35,7 +37,9 @@ func (r *SemanticRepositoryImpl) RecallCommunityDiscovery(ctx context.Context, i
 				          AND EXISTS (
 				              SELECT 1
 				              FROM community_memberships AS membership
-				              WHERE membership.team_id = record.team_id
+			              WHERE membership.team_id = record.team_id
+			                AND membership.space_id = dense_mem_team_shared_space(membership.team_id)
+			                AND membership.space_generation = dense_mem_team_shared_generation(membership.team_id)
 				                AND membership.community_id = record.community_id
 				                AND membership.entity_id = ANY(?::uuid[])
 				          )
@@ -49,13 +53,17 @@ func (r *SemanticRepositoryImpl) RecallCommunityDiscovery(ctx context.Context, i
 				       team_id, support_id, decision
 				FROM relationship_support_decision_events
 				WHERE team_id = ?::uuid
+				  AND space_id = dense_mem_team_shared_space(team_id)
+				  AND space_generation = dense_mem_team_shared_generation(team_id)
 				ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
 			),
 			canonical_names AS (
 				SELECT DISTINCT ON (team_id, entity_id)
-				       team_id, entity_id, display_name
+				       team_id, entity_id, space_id, space_generation, display_name
 				FROM entity_names
 				WHERE team_id = ?::uuid
+				  AND space_id = dense_mem_team_shared_space(team_id)
+				  AND space_generation = dense_mem_team_shared_generation(team_id)
 				  AND name_kind = 'canonical'
 				  AND valid_to IS NULL
 				ORDER BY team_id, entity_id, created_at DESC, entity_name_id DESC
@@ -73,24 +81,34 @@ func (r *SemanticRepositoryImpl) RecallCommunityDiscovery(ctx context.Context, i
 			       array_agg(DISTINCT support.fragment_id::text ORDER BY support.fragment_id::text) AS evidence_ids
 			FROM matched_communities AS community
 			JOIN community_sources AS community_source
-			  ON community_source.team_id = community.team_id
+			 ON community_source.team_id = community.team_id
 			 AND community_source.community_id = community.community_id
+			 AND community_source.space_id = dense_mem_team_shared_space(community_source.team_id)
+			 AND community_source.space_generation = dense_mem_team_shared_generation(community_source.team_id)
 			JOIN relationship_records AS relationship
 			  ON relationship.team_id = community_source.team_id
 			 AND relationship.relationship_id = community_source.relationship_id
 			 AND relationship.version = community_source.relationship_version
+			 AND relationship.space_id = community_source.space_id
+			 AND relationship.space_generation = community_source.space_generation
 			 AND relationship.status = 'active'
 			 AND relationship.support_count > 0
 			 AND relationship.object_entity_id IS NOT NULL
 			LEFT JOIN canonical_names AS subject_name
 			  ON subject_name.team_id = relationship.team_id
 			 AND subject_name.entity_id = relationship.subject_entity_id
+			 AND subject_name.space_id = relationship.space_id
+			 AND subject_name.space_generation = relationship.space_generation
 			LEFT JOIN canonical_names AS object_name
 			  ON object_name.team_id = relationship.team_id
 			 AND object_name.entity_id = relationship.object_entity_id
+			 AND object_name.space_id = relationship.space_id
+			 AND object_name.space_generation = relationship.space_generation
 			JOIN relationship_evidence_supports AS support
 			  ON support.team_id = relationship.team_id
 			 AND support.relationship_id = relationship.relationship_id
+			 AND support.space_id = relationship.space_id
+			 AND support.space_generation = relationship.space_generation
 			JOIN latest_support_decision AS latest
 			  ON latest.team_id = support.team_id
 			 AND latest.support_id = support.support_id
@@ -106,6 +124,10 @@ func (r *SemanticRepositoryImpl) RecallCommunityDiscovery(ctx context.Context, i
 			  ON lifecycle.team_id = support.team_id
 			 AND lifecycle.target_fragment_id = support.fragment_id
 			WHERE community.team_id = ?::uuid
+			  AND community_source.space_id = dense_mem_team_shared_space(community_source.team_id)
+			  AND community_source.space_generation = dense_mem_team_shared_generation(community_source.team_id)
+			  AND relationship.space_id = dense_mem_team_shared_space(relationship.team_id)
+			  AND relationship.space_generation = dense_mem_team_shared_generation(relationship.team_id)
 			  AND quarantine.quarantine_id IS NULL
 			  AND lifecycle.lifecycle_event_id IS NULL
 			  AND (

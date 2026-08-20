@@ -54,14 +54,28 @@ func (r *SemanticRepositoryImpl) ListUnassessedDreamPaths(ctx context.Context, t
 			FROM candidate_paths candidate
 			LEFT JOIN dream_path_evaluations evaluation
 			  ON evaluation.team_id = ?::uuid
+			 AND evaluation.space_id = dense_mem_team_shared_space(evaluation.team_id)
+			 AND evaluation.space_generation = dense_mem_team_shared_generation(evaluation.team_id)
 			 AND evaluation.first_relationship_id = candidate.first_relationship_id
 			 AND evaluation.first_relationship_version = candidate.first_relationship_version
 			 AND evaluation.second_relationship_id = candidate.second_relationship_id
 			 AND evaluation.second_relationship_version = candidate.second_relationship_version
 			 AND evaluation.allowed_predicate_fingerprint = candidate.allowed_predicate_fingerprint
+			JOIN relationship_records first_relationship
+			  ON first_relationship.team_id = ?::uuid
+			 AND first_relationship.relationship_id = candidate.first_relationship_id
+			 AND first_relationship.space_id = dense_mem_team_shared_space(first_relationship.team_id)
+			 AND first_relationship.space_generation = dense_mem_team_shared_generation(first_relationship.team_id)
+			 AND first_relationship.version = candidate.first_relationship_version
+			JOIN relationship_records second_relationship
+			  ON second_relationship.team_id = ?::uuid
+			 AND second_relationship.relationship_id = candidate.second_relationship_id
+			 AND second_relationship.space_id = dense_mem_team_shared_space(second_relationship.team_id)
+			 AND second_relationship.space_generation = dense_mem_team_shared_generation(second_relationship.team_id)
+			 AND second_relationship.version = candidate.second_relationship_version
 			WHERE evaluation.path_evaluation_id IS NULL
 			ORDER BY candidate.ordinal
-		`, string(payload), teamID).Rows()
+		`, string(payload), teamID, teamID, teamID).Rows()
 		if err != nil {
 			return err
 		}
@@ -154,11 +168,11 @@ func insertDreamPathEvaluationsTx(
 			)
 		)
 		INSERT INTO dream_path_evaluations (
-		    team_id, first_relationship_id, first_relationship_version,
+		    team_id, space_id, space_generation, first_relationship_id, first_relationship_version,
 		    second_relationship_id, second_relationship_version,
 		    allowed_predicate_fingerprint, provider_model
 		)
-		SELECT ?::uuid,
+		SELECT ?::uuid, dense_mem_team_shared_space(?::uuid), dense_mem_team_shared_generation(?::uuid),
 		       first_relationship_id,
 		       first_relationship_version,
 		       second_relationship_id,
@@ -166,11 +180,29 @@ func insertDreamPathEvaluationsTx(
 		       allowed_predicate_fingerprint,
 		       ?
 		FROM candidate_paths
+		WHERE EXISTS (
+		    SELECT 1
+		    FROM relationship_records relationship
+		    WHERE relationship.team_id = ?::uuid
+		      AND relationship.relationship_id = candidate_paths.first_relationship_id
+		      AND relationship.version = candidate_paths.first_relationship_version
+		      AND relationship.space_id = dense_mem_team_shared_space(relationship.team_id)
+		      AND relationship.space_generation = dense_mem_team_shared_generation(relationship.team_id)
+		)
+		  AND EXISTS (
+		    SELECT 1
+		    FROM relationship_records relationship
+		    WHERE relationship.team_id = ?::uuid
+		      AND relationship.relationship_id = candidate_paths.second_relationship_id
+		      AND relationship.version = candidate_paths.second_relationship_version
+		      AND relationship.space_id = dense_mem_team_shared_space(relationship.team_id)
+		      AND relationship.space_generation = dense_mem_team_shared_generation(relationship.team_id)
+		)
 		ON CONFLICT (team_id, first_relationship_id, first_relationship_version,
 		             second_relationship_id, second_relationship_version,
 		             allowed_predicate_fingerprint)
 		DO NOTHING
-	`, string(payload), teamID, providerModel).Error
+	`, string(payload), teamID, teamID, teamID, providerModel, teamID, teamID).Error
 }
 
 func normalizeDreamPathEvaluationInputs(paths []DreamPathEvaluationInput) []DreamPathEvaluationInput {

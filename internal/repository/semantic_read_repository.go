@@ -44,6 +44,7 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 			return err
 		}
 		result.Relationship = relationship
+		input.spaceID = relationship.SpaceID
 
 		observations, err := loadTraceObservations(ctx, tx, input)
 		if err != nil {
@@ -70,7 +71,7 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 			return err
 		}
 		result.EvidenceFragments = evidence
-		lifecycleEvents, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, fragmentIDs, input.MaxEvents)
+		lifecycleEvents, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, input.spaceID, fragmentIDs, input.MaxEvents)
 		if err != nil {
 			return err
 		}
@@ -90,7 +91,7 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 			}
 			result.Transitions = transitions
 		}
-		conflicts, err := loadRelationshipConflictRecords(ctx, tx, input.TeamID, []string{relationship.RelationshipID}, nil)
+		conflicts, err := loadRelationshipConflictRecordsInSpace(ctx, tx, input.TeamID, []string{relationship.RelationshipID}, nil, input.spaceID)
 		if err != nil {
 			return err
 		}
@@ -101,7 +102,7 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 		}
 		result.CrossProfileReferences = crossRefs
 
-		corrections, err := loadTraceIdentityCorrections(ctx, tx, input.TeamID, observationIDs, input.MaxEvents)
+		corrections, err := loadTraceIdentityCorrections(ctx, tx, input.TeamID, input.spaceID, observationIDs, input.MaxEvents)
 		if err != nil {
 			return err
 		}
@@ -113,13 +114,13 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 		}
 		result.SupersessionLineage = lineage
 
-		searchDocs, err := loadTraceSearchDocuments(ctx, tx, input.TeamID, input.RelationshipID, fragmentIDs, input.MaxEvents)
+		searchDocs, err := loadTraceSearchDocuments(ctx, tx, input.TeamID, input.spaceID, input.RelationshipID, fragmentIDs, input.MaxEvents)
 		if err != nil {
 			return err
 		}
 		result.SearchDocuments = searchDocs
 
-		jobs, err := loadTraceEmbeddingJobs(ctx, tx, input.TeamID, traceSearchDocumentIDs(searchDocs), input.MaxEvents)
+		jobs, err := loadTraceEmbeddingJobs(ctx, tx, input.TeamID, input.spaceID, traceSearchDocumentIDs(searchDocs), input.MaxEvents)
 		if err != nil {
 			return err
 		}
@@ -234,6 +235,7 @@ func validateTraceRelationshipInput(input TraceRelationshipInput) error {
 
 func normalizeSemanticGraphQuery(input SemanticGraphQuery) SemanticGraphQuery {
 	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.spaceID = strings.TrimSpace(input.spaceID)
 	input.Scope = strings.ToLower(strings.TrimSpace(input.Scope))
 	if input.Scope == "" || input.Scope != "local" {
 		input.Scope = "overview"
@@ -291,6 +293,7 @@ func loadTraceRelationship(
 ) (*RelationshipTraceRecord, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT r.team_id::text, r.relationship_id::text, r.owner_profile_id::text,
+		       r.space_id::text,
 		       r.semantic_group_key, r.subject_entity_id::text,
 		       COALESCE(subject_name.display_name, r.subject_entity_id::text),
 		       subject.entity_kind,
@@ -308,33 +311,45 @@ func loadTraceRelationship(
 		       r.created_at, r.updated_at, r.recorded_to
 		FROM relationship_records r
 		JOIN entity_records subject
-		  ON subject.team_id = r.team_id AND subject.entity_id = r.subject_entity_id
+		  ON subject.team_id = r.team_id
+		 AND subject.entity_id = r.subject_entity_id
+		 AND subject.space_id = r.space_id
 		LEFT JOIN LATERAL (
 		  SELECT display_name
 		  FROM entity_names
 		  WHERE team_id = r.team_id
 		    AND entity_id = r.subject_entity_id
+		    AND space_id = r.space_id
 		    AND name_kind = 'canonical'
 		    AND valid_to IS NULL
 		  ORDER BY created_at DESC, entity_name_id DESC
 		  LIMIT 1
 		) subject_name ON true
 		LEFT JOIN entity_records object
-		  ON object.team_id = r.team_id AND object.entity_id = r.object_entity_id
+		  ON object.team_id = r.team_id
+		 AND object.entity_id = r.object_entity_id
+		 AND object.space_id = r.space_id
 		LEFT JOIN LATERAL (
 		  SELECT display_name
 		  FROM entity_names
 		  WHERE team_id = r.team_id
 		    AND entity_id = r.object_entity_id
+		    AND space_id = r.space_id
 		    AND name_kind = 'canonical'
 		    AND valid_to IS NULL
 		  ORDER BY created_at DESC, entity_name_id DESC
 		  LIMIT 1
 		) object_name ON true
 		LEFT JOIN value_records value
-		  ON value.team_id = r.team_id AND value.value_id = r.object_value_id
+		  ON value.team_id = r.team_id
+		 AND value.value_id = r.object_value_id
+		 AND value.space_id = r.space_id
 		WHERE r.team_id = ?::uuid
 		  AND r.relationship_id = ?::uuid
+		  AND (
+		    r.space_id = dense_mem_team_shared_space(r.team_id)
+		    OR dense_mem_space_allowed(r.space_id)
+		  )
 		LIMIT 1
 	`, teamID, relationshipID).Rows()
 	if err != nil {
@@ -347,7 +362,7 @@ func loadTraceRelationship(
 	var record RelationshipTraceRecord
 	var validFrom, validTo, recordedTo sql.NullTime
 	if err := rows.Scan(
-		&record.TeamID, &record.RelationshipID, &record.OwnerProfileID,
+		&record.TeamID, &record.RelationshipID, &record.OwnerProfileID, &record.SpaceID,
 		&record.SemanticGroupKey, &record.SubjectEntityID, &record.SubjectName,
 		&record.SubjectKind, &record.PredicateKey, &record.PredicateVersion,
 		&record.ObjectEntityID, &record.ObjectEntityName, &record.ObjectEntityKind,
@@ -382,9 +397,10 @@ func loadTraceObservations(
 		FROM relationship_observations
 		WHERE team_id = ?::uuid
 		  AND relationship_id = ?::uuid
+		  AND space_id = ?::uuid
 		ORDER BY created_at ASC, observation_id ASC
 		LIMIT ?
-	`, input.TeamID, input.RelationshipID, input.MaxEvents).Rows()
+	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -427,9 +443,10 @@ func loadTraceSupports(
 		FROM relationship_evidence_supports
 		WHERE team_id = ?::uuid
 		  AND relationship_id = ?::uuid
+		  AND space_id = ?::uuid
 		ORDER BY created_at ASC, support_id ASC
 		LIMIT ?
-	`, input.TeamID, input.RelationshipID, input.MaxEvents).Rows()
+	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -465,9 +482,10 @@ func loadTraceSupportDecisions(
 		FROM relationship_support_decision_events
 		WHERE team_id = ?::uuid
 		  AND relationship_id = ?::uuid
+		  AND space_id = ?::uuid
 		ORDER BY created_at ASC, support_decision_id ASC
 		LIMIT ?
-	`, input.TeamID, input.RelationshipID, input.MaxEvents).Rows()
+	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -510,14 +528,19 @@ func loadTraceEvidenceFragments(
 		       f.metadata::text, f.created_at
 		FROM evidence_fragments f
 		LEFT JOIN evidence_sources src
-		  ON src.team_id = f.team_id AND src.source_id = f.source_id
+		  ON src.team_id = f.team_id
+		 AND src.source_id = f.source_id
+		 AND src.space_id = f.space_id
 		LEFT JOIN evidence_source_revisions rev
-		  ON rev.team_id = f.team_id AND rev.source_revision_id = f.source_revision_id
+		  ON rev.team_id = f.team_id
+		 AND rev.source_revision_id = f.source_revision_id
+		 AND rev.space_id = f.space_id
 		WHERE f.team_id = ?::uuid
 		  AND f.fragment_id = ANY(?::uuid[])
+		  AND f.space_id = ?::uuid
 		ORDER BY f.evidence_index ASC, f.fragment_id ASC
 	`, includeContent, input.MaxFragmentContentRunes, includeContent, input.MaxFragmentContentRunes,
-		input.TeamID, pq.Array(fragmentIDs)).Rows()
+		input.TeamID, pq.Array(fragmentIDs), input.spaceID).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -553,12 +576,15 @@ func loadTraceVerificationEvents(
 		       v.rationale, v.model, v.response_hash, v.metadata::text, v.created_at
 		FROM verification_events v
 		JOIN relationship_observations o
-		  ON o.team_id = v.team_id AND o.observation_id = v.observation_id
+		  ON o.team_id = v.team_id
+		 AND o.observation_id = v.observation_id
+		 AND o.space_id = v.space_id
 		WHERE v.team_id = ?::uuid
 		  AND o.relationship_id = ?::uuid
+		  AND v.space_id = ?::uuid
 		ORDER BY v.created_at ASC, v.verification_event_id ASC
 		LIMIT ?
-	`, input.TeamID, input.RelationshipID, input.MaxEvents).Rows()
+	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -596,9 +622,10 @@ func loadTraceTransitions(
 		FROM relationship_transition_events
 		WHERE team_id = ?::uuid
 		  AND relationship_id = ?::uuid
+		  AND space_id = ?::uuid
 		ORDER BY created_at ASC, transition_id ASC
 		LIMIT ?
-	`, input.TeamID, input.RelationshipID, input.MaxEvents).Rows()
+	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -626,17 +653,33 @@ func loadTraceCrossReferences(
 	input TraceRelationshipInput,
 ) ([]RelationshipCrossReferenceRecord, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT cross_reference_id::text, author_profile_id::text,
-		       source_relationship_id::text, source_relationship_version,
-		       target_relationship_id::text, target_relationship_version,
-		       kind, verification_event_id::text, metadata::text, created_at
-		FROM relationship_cross_references
-		WHERE team_id = ?::uuid
+		SELECT cross_reference.cross_reference_id::text, cross_reference.author_profile_id::text,
+		       cross_reference.source_relationship_id::text, cross_reference.source_relationship_version,
+		       cross_reference.target_relationship_id::text, cross_reference.target_relationship_version,
+		       cross_reference.kind, cross_reference.verification_event_id::text,
+		       cross_reference.metadata::text, cross_reference.created_at
+		FROM relationship_cross_references AS cross_reference
+		JOIN relationship_records AS source_relationship
+		  ON source_relationship.team_id = cross_reference.team_id
+		 AND source_relationship.relationship_id = cross_reference.source_relationship_id
+		 AND source_relationship.space_id = cross_reference.space_id
+		JOIN relationship_records AS target_relationship
+		  ON target_relationship.team_id = cross_reference.team_id
+		 AND target_relationship.relationship_id = cross_reference.target_relationship_id
+		WHERE cross_reference.team_id = ?::uuid
 		  AND (
-		    source_relationship_id = ?::uuid
-		    OR target_relationship_id = ?::uuid
+		    source_relationship.space_id = dense_mem_team_shared_space(cross_reference.team_id)
+		    OR dense_mem_space_allowed(source_relationship.space_id)
 		  )
-		ORDER BY created_at ASC, cross_reference_id ASC
+		  AND (
+		    target_relationship.space_id = dense_mem_team_shared_space(cross_reference.team_id)
+		    OR dense_mem_space_allowed(target_relationship.space_id)
+		  )
+		  AND (
+		    cross_reference.source_relationship_id = ?::uuid
+		    OR cross_reference.target_relationship_id = ?::uuid
+		  )
+		ORDER BY cross_reference.created_at ASC, cross_reference.cross_reference_id ASC
 		LIMIT ?
 	`, input.TeamID, input.RelationshipID, input.RelationshipID, input.MaxEvents).Rows()
 	if err != nil {
@@ -665,6 +708,7 @@ func loadTraceIdentityCorrections(
 	ctx context.Context,
 	tx *gorm.DB,
 	teamID string,
+	spaceID string,
 	observationIDs []string,
 	limit int,
 ) ([]EntityCorrectionEventRecord, error) {
@@ -677,10 +721,11 @@ func loadTraceIdentityCorrections(
 		       selected_observation_ids::text[], reason, metadata::text, created_at
 		FROM entity_correction_events
 		WHERE team_id = ?::uuid
+		  AND space_id = ?::uuid
 		  AND selected_observation_ids && ?::uuid[]
 		ORDER BY created_at ASC, correction_event_id ASC
 		LIMIT ?
-	`, teamID, pq.Array(observationIDs), limit).Rows()
+	`, teamID, spaceID, pq.Array(observationIDs), limit).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -717,12 +762,13 @@ func loadTraceSupersessionLineage(
 		SELECT relationship_id::text
 		FROM relationship_records
 		WHERE team_id = ?::uuid
+		  AND space_id = ?::uuid
 		  AND semantic_group_key = ?
 		  AND relationship_id <> ?::uuid
 		  AND status IN ('superseded', 'retracted', 'disputed')
 		ORDER BY updated_at DESC, relationship_id ASC
 		LIMIT ?
-	`, teamID, relationship.SemanticGroupKey, relationship.RelationshipID, limit).Rows()
+	`, teamID, relationship.SpaceID, relationship.SemanticGroupKey, relationship.RelationshipID, limit).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -747,108 +793,6 @@ func loadTraceSupersessionLineage(
 		out = append(out, *record)
 	}
 	return out, nil
-}
-
-func loadTraceSearchDocuments(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	relationshipID string,
-	fragmentIDs []string,
-	limit int,
-) ([]TraceSearchDocument, error) {
-	query := `
-		SELECT search_document_id::text, owner_profile_id::text, source_kind,
-		       source_id::text, source_version, document_version,
-		       embedding_contract_id::text, embedding_dimensions, search_state,
-		       document_hash, created_at, updated_at
-		FROM search_documents
-		WHERE team_id = ?::uuid
-		  AND source_kind = 'relationship'
-		  AND source_id = ?::uuid
-		ORDER BY source_kind ASC, updated_at DESC, search_document_id ASC
-		LIMIT ?
-	`
-	args := []any{teamID, relationshipID, limit}
-	if len(fragmentIDs) > 0 {
-		query = `
-			SELECT search_document_id::text, owner_profile_id::text, source_kind,
-			       source_id::text, source_version, document_version,
-			       embedding_contract_id::text, embedding_dimensions, search_state,
-			       document_hash, created_at, updated_at
-			FROM search_documents
-			WHERE team_id = ?::uuid
-			  AND (
-			    (source_kind = 'relationship' AND source_id = ?::uuid)
-			    OR (source_kind = 'evidence' AND source_id = ANY(?::uuid[]))
-			  )
-			ORDER BY source_kind ASC, updated_at DESC, search_document_id ASC
-			LIMIT ?
-		`
-		args = []any{teamID, relationshipID, pq.Array(fragmentIDs), limit}
-	}
-	rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []TraceSearchDocument
-	for rows.Next() {
-		var row TraceSearchDocument
-		if err := rows.Scan(
-			&row.SearchDocumentID, &row.OwnerProfileID, &row.SourceKind,
-			&row.SourceID, &row.SourceVersion, &row.DocumentVersion,
-			&row.EmbeddingContractID, &row.EmbeddingDimensions, &row.SearchState,
-			&row.DocumentHash, &row.CreatedAt, &row.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-func loadTraceEmbeddingJobs(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	searchDocumentIDs []string,
-	limit int,
-) ([]TraceEmbeddingJob, error) {
-	if len(searchDocumentIDs) == 0 {
-		return nil, nil
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT embedding_job_id::text, search_document_id::text, owner_profile_id::text,
-		       source_kind, source_id::text, source_version, document_version,
-		       embedding_contract_id::text, embedding_dimensions, status, attempts,
-		       error, created_at, updated_at, completed_at
-		FROM embedding_jobs
-		WHERE team_id = ?::uuid
-		  AND search_document_id = ANY(?::uuid[])
-		ORDER BY created_at ASC, embedding_job_id ASC
-		LIMIT ?
-	`, teamID, pq.Array(searchDocumentIDs), limit).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []TraceEmbeddingJob
-	for rows.Next() {
-		var row TraceEmbeddingJob
-		var completedAt sql.NullTime
-		if err := rows.Scan(
-			&row.EmbeddingJobID, &row.SearchDocumentID, &row.OwnerProfileID,
-			&row.SourceKind, &row.SourceID, &row.SourceVersion, &row.DocumentVersion,
-			&row.EmbeddingContractID, &row.EmbeddingDimensions, &row.Status,
-			&row.Attempts, &row.Error, &row.CreatedAt, &row.UpdatedAt, &completedAt,
-		); err != nil {
-			return nil, err
-		}
-		row.CompletedAt = timePtr(completedAt)
-		out = append(out, row)
-	}
-	return out, rows.Err()
 }
 
 func traceObservationIDs(observations []RelationshipObservationRecord) []string {

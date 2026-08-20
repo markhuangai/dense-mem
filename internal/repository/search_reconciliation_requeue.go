@@ -82,8 +82,10 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 			 AND document.projection_format_version = job.projection_format_version
 			 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
 			 AND document.document_version = job.document_version
-			 AND document.embedding_contract_id = job.embedding_contract_id
-			 AND document.embedding_dimensions = job.embedding_dimensions
+				 AND document.embedding_contract_id = job.embedding_contract_id
+				 AND document.embedding_dimensions = job.embedding_dimensions
+				 AND document.space_id = job.space_id
+				 AND document.space_generation = job.space_generation
 			JOIN teams AS team
 			  ON team.id = job.team_id AND team.status = 'active' AND team.deleted_at IS NULL
 			JOIN embedding_reconciliation_runs AS run
@@ -161,8 +163,10 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 			 AND document.projection_format_version = job.projection_format_version
 			 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
 			 AND document.document_version = job.document_version
-			 AND document.embedding_contract_id = job.embedding_contract_id
-			 AND document.embedding_dimensions = job.embedding_dimensions
+				 AND document.embedding_contract_id = job.embedding_contract_id
+				 AND document.embedding_dimensions = job.embedding_dimensions
+				 AND document.space_id = job.space_id
+				 AND document.space_generation = job.space_generation
 			JOIN teams AS team
 			  ON team.id = job.team_id
 			 AND team.status = 'active'
@@ -239,7 +243,8 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 					RETURNING job.team_id, job.embedding_job_id, job.search_document_id,
 					          job.source_version, job.projection_format_version,
 				          job.projection_generation_id, job.document_version,
-				          job.embedding_contract_id, job.embedding_dimensions
+				          job.embedding_contract_id, job.embedding_dimensions,
+				          job.space_id, job.space_generation
 			), documents AS (
 				UPDATE search_documents AS document
 				SET search_state = 'pending', embedding_error = '', updated_at = now()
@@ -252,6 +257,8 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 				  AND document.document_version = requeued.document_version
 				  AND document.embedding_contract_id = requeued.embedding_contract_id
 				  AND document.embedding_dimensions = requeued.embedding_dimensions
+				  AND document.space_id = requeued.space_id
+				  AND document.space_generation = requeued.space_generation
 					RETURNING 1
 				)
 				SELECT (SELECT count(*) FROM requeued),
@@ -302,8 +309,10 @@ func embeddingReconciliationCandidatesRemain(
 			 AND document.projection_format_version = job.projection_format_version
 			 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
 			 AND document.document_version = job.document_version
-			 AND document.embedding_contract_id = job.embedding_contract_id
-			 AND document.embedding_dimensions = job.embedding_dimensions
+				 AND document.embedding_contract_id = job.embedding_contract_id
+				 AND document.embedding_dimensions = job.embedding_dimensions
+				 AND document.space_id = job.space_id
+				 AND document.space_generation = job.space_generation
 			JOIN teams AS team
 			  ON team.id = job.team_id AND team.status = 'active' AND team.deleted_at IS NULL
 			JOIN embedding_reconciliation_runs AS run

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -25,6 +24,7 @@ queued_candidates AS MATERIALIZED (
 	  AND job.available_at <= now()
 	  AND job.attempts < job.max_attempts
 	  AND job.space_id = COALESCE(NULLIF(?, '')::uuid, job.space_id)
+	  AND job.space_generation = (SELECT generation FROM memory_spaces WHERE id = job.space_id AND lifecycle_state = 'active')
 	ORDER BY job.available_at ASC, job.created_at ASC, job.embedding_job_id ASC
 	LIMIT ?
 	FOR UPDATE SKIP LOCKED
@@ -37,6 +37,7 @@ expired_candidates AS MATERIALIZED (
 	  AND job.lease_until <= clock_timestamp()
 	  AND job.attempts < job.max_attempts
 	  AND job.space_id = COALESCE(NULLIF(?, '')::uuid, job.space_id)
+	  AND job.space_generation = (SELECT generation FROM memory_spaces WHERE id = job.space_id AND lifecycle_state = 'active')
 	ORDER BY job.lease_until ASC, job.created_at ASC, job.embedding_job_id ASC
 	LIMIT GREATEST(? - (SELECT count(*) FROM queued_candidates), 0)
 	FOR UPDATE SKIP LOCKED
@@ -64,6 +65,8 @@ claimed AS (
 	 AND document.document_version = job.document_version
 	 AND document.embedding_contract_id = job.embedding_contract_id
 	 AND document.embedding_dimensions = job.embedding_dimensions
+	 AND document.space_id = job.space_id
+	 AND document.space_generation = job.space_generation
 	ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.embedding_job_id ASC
 	LIMIT ?
 ),
@@ -80,9 +83,10 @@ updated AS (
 	WHERE job.team_id = claimed.team_id
 	  AND job.embedding_job_id = claimed.embedding_job_id
 	RETURNING job.team_id::text, job.embedding_job_id::text,
-		          job.search_document_id::text, job.owner_profile_id::text,
-		          job.space_id::text,
-		          job.source_kind, job.source_id::text, job.source_version,
+			          job.search_document_id::text, job.owner_profile_id::text,
+			          job.space_id::text,
+			          job.space_generation,
+			          job.source_kind, job.source_id::text, job.source_version,
 	          job.projection_format_version, COALESCE(job.projection_generation_id::text, ''),
 	          job.document_version, job.embedding_contract_id::text,
 	          job.embedding_dimensions, job.status, job.attempts,
@@ -95,6 +99,18 @@ FROM updated
 JOIN search_documents AS document
   ON document.team_id = updated.team_id::uuid
  AND document.search_document_id = updated.search_document_id::uuid
+ AND document.space_id = (
+     SELECT job.space_id
+     FROM embedding_jobs AS job
+     WHERE job.team_id = updated.team_id::uuid
+       AND job.embedding_job_id = updated.embedding_job_id::uuid
+ )
+ AND document.space_generation = (
+     SELECT job.space_generation
+     FROM embedding_jobs AS job
+     WHERE job.team_id = updated.team_id::uuid
+       AND job.embedding_job_id = updated.embedding_job_id::uuid
+ )
 ORDER BY updated.lease_until ASC, updated.embedding_job_id ASC`
 
 func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
@@ -141,6 +157,7 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 				&job.SearchDocumentID,
 				&job.OwnerProfileID,
 				&job.SpaceID,
+				&job.SpaceGeneration,
 				&job.SourceKind,
 				&job.SourceID,
 				&job.SourceVersion,
@@ -291,11 +308,12 @@ func (r *SearchRepositoryImpl) CompleteEmbeddingJob(ctx context.Context, input C
 				  AND document.search_document_id = job.search_document_id
 				  AND document.source_version = job.source_version
 				  AND document.projection_format_version = job.projection_format_version
-				  AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
-				  AND document.document_version = job.document_version
-			  AND document.embedding_contract_id = job.embedding_contract_id
-			  AND document.embedding_dimensions = job.embedding_dimensions
+				      AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+				      AND document.document_version = job.document_version
+				      AND document.embedding_contract_id = job.embedding_contract_id
+				      AND document.embedding_dimensions = job.embedding_dimensions
 			  AND document.space_id = job.space_id
+			  AND document.space_generation = job.space_generation
 		`, vectorLiteral, input.TeamID, input.EmbeddingJobID, input.WorkerID, input.ExpectedAttempts)
 		if result.Error != nil {
 			return result.Error
@@ -631,6 +649,8 @@ func lockEmbeddingJobDocumentForFinalization(
 		JOIN search_documents AS document
 		  ON document.team_id = job.team_id
 		 AND document.search_document_id = job.search_document_id
+		 AND document.space_id = job.space_id
+		 AND document.space_generation = job.space_generation
 		WHERE job.team_id = ?::uuid
 		  AND job.embedding_job_id = ?::uuid
 		  AND job.worker_id = ?
@@ -745,9 +765,10 @@ func markStaleClaimableEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID, s
 			SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
 			FROM embedding_jobs AS job
 				WHERE job.team_id = ?::uuid
-				  AND job.status = 'queued'
-				  AND job.available_at <= now()
-				  AND job.space_id = COALESCE(NULLIF(?, '')::uuid, job.space_id)
+					  AND job.status = 'queued'
+					  AND job.available_at <= now()
+					  AND job.space_id = COALESCE(NULLIF(?, '')::uuid, job.space_id)
+					  AND job.space_generation = (SELECT generation FROM memory_spaces WHERE id = job.space_id AND lifecycle_state = 'active')
 			ORDER BY job.available_at ASC, job.created_at ASC, job.embedding_job_id ASC
 			LIMIT ?
 		),
@@ -755,9 +776,10 @@ func markStaleClaimableEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID, s
 			SELECT job.team_id, job.embedding_job_id, job.available_at, job.created_at
 			FROM embedding_jobs AS job
 				WHERE job.team_id = ?::uuid
-				  AND job.status = 'processing'
-				  AND job.lease_until <= clock_timestamp()
-				  AND job.space_id = COALESCE(NULLIF(?, '')::uuid, job.space_id)
+					  AND job.status = 'processing'
+					  AND job.lease_until <= clock_timestamp()
+					  AND job.space_id = COALESCE(NULLIF(?, '')::uuid, job.space_id)
+					  AND job.space_generation = (SELECT generation FROM memory_spaces WHERE id = job.space_id AND lifecycle_state = 'active')
 			ORDER BY job.lease_until ASC, job.created_at ASC, job.embedding_job_id ASC
 			LIMIT ?
 		),
@@ -781,8 +803,10 @@ func markStaleClaimableEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID, s
 			      AND document.projection_format_version = job.projection_format_version
 			      AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
 			      AND document.document_version = job.document_version
-			      AND document.embedding_contract_id = job.embedding_contract_id
-			      AND document.embedding_dimensions = job.embedding_dimensions
+				      AND document.embedding_contract_id = job.embedding_contract_id
+				      AND document.embedding_dimensions = job.embedding_dimensions
+				      AND document.space_id = job.space_id
+				      AND document.space_generation = job.space_generation
 			)
 			ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.embedding_job_id ASC
 			LIMIT ?
@@ -822,8 +846,10 @@ func markStaleEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string) err
 		        AND document.projection_format_version = job.projection_format_version
 		        AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
 		        AND document.document_version = job.document_version
-		        AND document.embedding_contract_id = job.embedding_contract_id
-		        AND document.embedding_dimensions = job.embedding_dimensions
+			        AND document.embedding_contract_id = job.embedding_contract_id
+			        AND document.embedding_dimensions = job.embedding_dimensions
+			        AND document.space_id = job.space_id
+			        AND document.space_generation = job.space_generation
 		  )
 	`, teamID).Error
 }
@@ -860,8 +886,9 @@ func embeddingJobDocumentCurrent(ctx context.Context, tx *gorm.DB, teamID, embed
 			     AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
 			     AND document.document_version = job.document_version
 			     AND document.embedding_contract_id = job.embedding_contract_id
-			     AND document.embedding_dimensions = job.embedding_dimensions
-			     AND document.space_id = job.space_id
+				 AND document.embedding_dimensions = job.embedding_dimensions
+				 AND document.space_id = job.space_id
+				 AND document.space_generation = job.space_generation
 		    WHERE job.team_id = ?::uuid
 		      AND job.embedding_job_id = ?::uuid
 		      AND job.space_id = COALESCE(NULLIF(?, '')::uuid, job.space_id)
@@ -890,91 +917,8 @@ func updateSearchDocumentAfterEmbeddingFailure(ctx context.Context, tx *gorm.DB,
 		  AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
 		  AND document.document_version = job.document_version
 		  AND document.embedding_contract_id = job.embedding_contract_id
-		  AND document.embedding_dimensions = job.embedding_dimensions
-		  AND document.space_id = job.space_id
+				  AND document.embedding_dimensions = job.embedding_dimensions
+				  AND document.space_id = job.space_id
+				  AND document.space_generation = job.space_generation
 	`, searchState, input.Error, input.TeamID, input.EmbeddingJobID).Error
-}
-
-func embeddingRetryBackoff(attempts int) time.Duration {
-	if attempts < 1 {
-		attempts = 1
-	}
-	seconds := 5
-	for i := 1; i < attempts; i++ {
-		seconds *= 2
-		if seconds >= 300 {
-			return 5 * time.Minute
-		}
-	}
-	return time.Duration(seconds) * time.Second
-}
-
-func normalizeFailEmbeddingJobInput(input FailEmbeddingJobInput) FailEmbeddingJobInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.EmbeddingJobID = strings.TrimSpace(input.EmbeddingJobID)
-	input.WorkerID = strings.TrimSpace(input.WorkerID)
-	input.SpaceID = strings.TrimSpace(input.SpaceID)
-	if input.RetryAfter < 0 {
-		input.RetryAfter = 0
-	}
-	if input.RetryAfter > 24*time.Hour {
-		input.RetryAfter = 24 * time.Hour
-	}
-	input.FailureClass, input.FailureCode = normalizeEmbeddingFailureContract(input.FailureClass, input.FailureCode)
-	input.Error = domain.EmbeddingFailureMessage(input.FailureCode)
-	return input
-}
-
-func normalizeEmbeddingFailureContract(failureClass, failureCode string) (string, string) {
-	failureClass = strings.TrimSpace(failureClass)
-	failureCode = strings.TrimSpace(failureCode)
-	if !domain.EmbeddingFailureContractValid(failureClass, failureCode) {
-		return string(domain.EmbeddingFailurePermanent), string(domain.EmbeddingFailureUnknown)
-	}
-	return failureClass, failureCode
-}
-
-func validateFailEmbeddingJobInput(input FailEmbeddingJobInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if err := validateOptionalSpaceID(input.SpaceID); err != nil {
-		return err
-	}
-	if _, err := uuid.Parse(input.EmbeddingJobID); err != nil {
-		return fmt.Errorf("embedding_job_id is required: %w", err)
-	}
-	if input.WorkerID == "" {
-		return errors.New("worker_id is required")
-	}
-	if input.ExpectedAttempts < 1 {
-		return errors.New("expected_attempts must be greater than zero")
-	}
-	if input.Error == "" {
-		return errors.New("error is required")
-	}
-	return nil
-}
-
-func normalizeEmbeddingQueueStatsInput(input EmbeddingQueueStatsInput) EmbeddingQueueStatsInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
-	return input
-}
-
-func validateEmbeddingQueueStatsInput(input EmbeddingQueueStatsInput) error {
-	if input.TeamID != "" {
-		if _, err := uuid.Parse(input.TeamID); err != nil {
-			return fmt.Errorf("team_id is invalid: %w", err)
-		}
-	}
-	if input.EmbeddingContractID != "" {
-		if _, err := uuid.Parse(input.EmbeddingContractID); err != nil {
-			return fmt.Errorf("embedding_contract_id is invalid: %w", err)
-		}
-	}
-	if input.EmbeddingDimensions < 0 {
-		return errors.New("embedding_dimensions must not be negative")
-	}
-	return nil
 }

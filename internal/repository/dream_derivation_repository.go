@@ -15,20 +15,24 @@ func insertHypothesisDerivations(ctx context.Context, tx *gorm.DB, teamID, hypot
 	for _, derivation := range derivations {
 		if err := tx.WithContext(ctx).Exec(`
 			INSERT INTO hypothesis_derivation_sources (
-			    team_id, hypothesis_id, premise_position, relationship_id,
+			    team_id, space_id, space_generation, hypothesis_id, premise_position, relationship_id,
 			    relationship_version, support_id, observation_id, fragment_id,
 			    source_id, source_revision_id, source_group_key, span_start,
 			    span_end, quote, authority
-			) VALUES (
-			    ?::uuid, ?::uuid, ?, ?::uuid, ?, NULLIF(?, '')::uuid,
+			)
+			SELECT ?::uuid, hypothesis.space_id, hypothesis.space_generation, ?::uuid, ?, ?::uuid, ?, NULLIF(?, '')::uuid,
 			    NULLIF(?, '')::uuid, ?::uuid, NULLIF(?, '')::uuid,
 			    NULLIF(?, '')::uuid, ?, ?, ?, ?, ?
-			)
+			FROM hypotheses AS hypothesis
+			WHERE hypothesis.team_id = ?::uuid
+			  AND hypothesis.space_id = dense_mem_team_shared_space(hypothesis.team_id)
+			  AND hypothesis.space_generation = dense_mem_team_shared_generation(hypothesis.team_id)
+			  AND hypothesis.hypothesis_id = ?::uuid
 		`, teamID, hypothesisID, derivation.PremisePosition, derivation.RelationshipID,
 			derivation.RelationshipVersion, derivation.SupportID, derivation.ObservationID,
 			derivation.FragmentID, derivation.SourceID, derivation.SourceRevisionID,
 			derivation.SourceGroupKey, derivation.SpanStart, derivation.SpanEnd,
-			derivation.Quote, derivation.Authority).Error; err != nil {
+			derivation.Quote, derivation.Authority, teamID, hypothesisID).Error; err != nil {
 			return err
 		}
 	}
@@ -53,6 +57,8 @@ func validateHypothesisSources(ctx context.Context, tx *gorm.DB, input UpsertHyp
 			FROM relationship_records
 			WHERE team_id = ?::uuid
 			  AND relationship_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND identity_alias_of_relationship_id IS NULL
 		`, input.TeamID, relationshipID).Row().Scan(&source.RelationshipID, &source.Version, &source.Status)
 		if err != nil {
@@ -94,6 +100,55 @@ func validateHypothesisSources(ctx context.Context, tx *gorm.DB, input UpsertHyp
 	return nil
 }
 
+func validateHypothesisEndpointKinds(ctx context.Context, tx *gorm.DB, input UpsertHypothesisInput, predicate *predicateDefinition) error {
+	subjectKind, err := loadDreamEntityKind(ctx, tx, input.TeamID, input.SubjectEntityID)
+	if err != nil {
+		return err
+	}
+	if len(predicate.AllowedSubjectKinds) > 0 && !contains(predicate.AllowedSubjectKinds, subjectKind) {
+		return fmt.Errorf("predicate %q does not allow subject kind %q", predicate.Key, subjectKind)
+	}
+	objectKind := ""
+	if input.ObjectEntityID != "" {
+		objectKind, err = loadDreamEntityKind(ctx, tx, input.TeamID, input.ObjectEntityID)
+	} else {
+		objectKind, err = loadDreamValueType(ctx, tx, input.TeamID, input.ObjectValueID)
+	}
+	if err != nil {
+		return err
+	}
+	if len(predicate.AllowedObjectKinds) > 0 && !contains(predicate.AllowedObjectKinds, objectKind) {
+		return fmt.Errorf("predicate %q does not allow object kind %q", predicate.Key, objectKind)
+	}
+	return nil
+}
+
+func loadDreamEntityKind(ctx context.Context, tx *gorm.DB, teamID, entityID string) (string, error) {
+	var kind string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT entity_kind
+		FROM entity_records
+		WHERE team_id = ?::uuid
+		  AND entity_id = ?::uuid
+		  AND space_id = dense_mem_team_shared_space(team_id)
+		  AND space_generation = dense_mem_team_shared_generation(team_id)
+	`, teamID, entityID).Row().Scan(&kind)
+	return kind, err
+}
+
+func loadDreamValueType(ctx context.Context, tx *gorm.DB, teamID, valueID string) (string, error) {
+	var valueType string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT value_type
+		FROM value_records
+		WHERE team_id = ?::uuid
+		  AND value_id = ?::uuid
+		  AND space_id = dense_mem_team_shared_space(team_id)
+		  AND space_generation = dense_mem_team_shared_generation(team_id)
+	`, teamID, valueID).Row().Scan(&valueType)
+	return valueType, err
+}
+
 func dreamSourceRelationshipEligible(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -109,30 +164,40 @@ func dreamSourceRelationshipEligible(
 		SELECT EXISTS (
 			SELECT 1
 			FROM relationship_records relationship
-			JOIN entity_records subject_entity
-			  ON subject_entity.team_id = relationship.team_id
-			 AND subject_entity.entity_id = relationship.subject_entity_id
-			 AND subject_entity.status = 'active'
-			LEFT JOIN entity_records object_entity
-			  ON object_entity.team_id = relationship.team_id
-			 AND object_entity.entity_id = relationship.object_entity_id
+		JOIN entity_records subject_entity
+		  ON subject_entity.team_id = relationship.team_id
+		 AND subject_entity.entity_id = relationship.subject_entity_id
+		 AND subject_entity.space_id = relationship.space_id
+		 AND subject_entity.space_generation = relationship.space_generation
+		 AND subject_entity.status = 'active'
+		LEFT JOIN entity_records object_entity
+		  ON object_entity.team_id = relationship.team_id
+		 AND object_entity.entity_id = relationship.object_entity_id
+		 AND object_entity.space_id = relationship.space_id
+		 AND object_entity.space_generation = relationship.space_generation
 			 AND object_entity.status = 'active'
 			WHERE relationship.team_id = ?::uuid
 			  AND relationship.relationship_id = ?::uuid
+			  AND relationship.space_id = dense_mem_team_shared_space(relationship.team_id)
+			  AND relationship.space_generation = dense_mem_team_shared_generation(relationship.team_id)
 			  AND relationship.identity_alias_of_relationship_id IS NULL
 			  AND relationship.status = ?
 			  AND (relationship.object_entity_id IS NULL OR object_entity.entity_id IS NOT NULL)
 			  AND NOT EXISTS (
 			      SELECT 1
 			      FROM relationship_cross_references cross_reference
-			      WHERE cross_reference.team_id = relationship.team_id
+				WHERE cross_reference.team_id = relationship.team_id
+				  AND cross_reference.space_id = relationship.space_id
+				  AND cross_reference.space_generation = relationship.space_generation
 			        AND cross_reference.target_relationship_id = relationship.relationship_id
 			        AND cross_reference.kind = 'challenges'
 			  )
 			  AND NOT EXISTS (
 			      SELECT 1
 			      FROM review_tasks review
-			      WHERE review.team_id = relationship.team_id
+				WHERE review.team_id = relationship.team_id
+				  AND review.space_id = relationship.space_id
+				  AND review.space_generation = relationship.space_generation
 			        AND review.relationship_id = relationship.relationship_id
 			        AND review.status IN ('open', 'acknowledged')
 			  )

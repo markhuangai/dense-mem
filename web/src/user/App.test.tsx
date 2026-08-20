@@ -755,7 +755,9 @@ describe("UserPortalApp", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/ui/api/sso/credentials/88888888-8888-4888-8888-888888888888",
-        expect.objectContaining({ method: "DELETE", credentials: "include" }),
+        expect.objectContaining({ method: "DELETE", credentials: "include", body: JSON.stringify({ acknowledge_irreversible: true }),
+          headers: expect.objectContaining({ "Idempotency-Key": expect.stringMatching(/^sso-credential-delete-/) }),
+        }),
       );
     });
     expect(screen.queryByText("Second key")).not.toBeInTheDocument();

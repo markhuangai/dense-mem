@@ -209,6 +209,8 @@ func (r *SearchRepositoryImpl) ReserveEmbeddingReconciliationRun(ctx context.Con
 				 AND document.document_version = job.document_version
 				 AND document.embedding_contract_id = job.embedding_contract_id
 				 AND document.embedding_dimensions = job.embedding_dimensions
+				 AND document.space_id = job.space_id
+				 AND document.space_generation = job.space_generation
 				JOIN teams AS team ON team.id = job.team_id
 				 AND team.status = 'active' AND team.deleted_at IS NULL
 				WHERE job.status = 'failed'
@@ -327,6 +329,7 @@ func (r *SearchRepositoryImpl) SelectEmbeddingReconciliationCanary(ctx context.C
 		err := tx.WithContext(ctx).Raw(`
 			SELECT job.team_id::text, job.embedding_job_id::text,
 			       job.search_document_id::text, job.owner_profile_id::text,
+			       job.space_id::text, job.space_generation,
 			       job.source_kind, job.source_id::text, job.source_version,
 			       job.projection_format_version, COALESCE(job.projection_generation_id::text, ''),
 			       job.document_version, job.embedding_contract_id::text,
@@ -342,8 +345,10 @@ func (r *SearchRepositoryImpl) SelectEmbeddingReconciliationCanary(ctx context.C
 			 AND document.projection_format_version = job.projection_format_version
 			 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
 			 AND document.document_version = job.document_version
-			 AND document.embedding_contract_id = job.embedding_contract_id
-			 AND document.embedding_dimensions = job.embedding_dimensions
+				 AND document.embedding_contract_id = job.embedding_contract_id
+				 AND document.embedding_dimensions = job.embedding_dimensions
+				 AND document.space_id = job.space_id
+				 AND document.space_generation = job.space_generation
 		JOIN teams AS team ON team.id = job.team_id AND team.status = 'active' AND team.deleted_at IS NULL
 		JOIN embedding_reconciliation_runs AS run
 		  ON run.reconciliation_run_id = ?::uuid
@@ -361,7 +366,7 @@ func (r *SearchRepositoryImpl) SelectEmbeddingReconciliationCanary(ctx context.C
 		LIMIT 1
 		`, input.RunID, input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff).Row().Scan(
 			&value.TeamID, &value.EmbeddingJobID, &value.SearchDocumentID,
-			&value.OwnerProfileID, &value.SourceKind, &value.SourceID,
+			&value.OwnerProfileID, &value.SpaceID, &value.SpaceGeneration, &value.SourceKind, &value.SourceID,
 			&value.SourceVersion, &value.ProjectionFormat,
 			&value.ProjectionGenerationID, &value.DocumentVersion,
 			&value.EmbeddingContractID, &value.EmbeddingDimensions, &value.Status,

@@ -15,12 +15,14 @@ func TestActorAllowedSpacesUsesSSOMembershipPrivateSpace(t *testing.T) {
 	privateID := uuid.New()
 	actor := testSSOActor(teamID, uuid.New(), uuid.New(), uuid.New(), nil, []string{"read"})
 	actor.Membership.MemorySpaceID = privateID
+	actor.Membership.MemorySpaceGeneration = 7
 
 	spaces := actorAllowedSpaces(actor)
 	require.Len(t, spaces, 2)
 	assert.Equal(t, domain.MemorySpaceTeamShared, spaces[0].Kind)
 	assert.Equal(t, domain.MemorySpaceProfilePrivate, spaces[1].Kind)
 	assert.Equal(t, privateID, spaces[1].ID)
+	assert.EqualValues(t, 7, spaces[1].Generation)
 }
 
 func TestActorAllowedSpacesSkipsNilCredentialPrivateSpace(t *testing.T) {

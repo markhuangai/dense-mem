@@ -26,13 +26,15 @@ var (
 const hypothesisSourceIneligiblePredicateSQL = `EXISTS (
 	SELECT 1
 	FROM jsonb_each_text(hypotheses.source_versions) AS source(source_id, source_version)
-	LEFT JOIN relationship_records r
-	  ON r.team_id = hypotheses.team_id
-	 AND r.relationship_id = CASE
+		LEFT JOIN relationship_records r
+		  ON r.team_id = hypotheses.team_id
+		 AND r.relationship_id = CASE
 	     WHEN source.source_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 	     THEN source.source_id::uuid
-	     ELSE NULL
-	 END
+		     ELSE NULL
+		 END
+		 AND r.space_id = hypotheses.space_id
+		 AND r.space_generation = hypotheses.space_generation
 	WHERE r.relationship_id IS NULL
 	   OR r.version::text <> source.source_version
 	   OR NOT (
@@ -41,11 +43,15 @@ const hypothesisSourceIneligiblePredicateSQL = `EXISTS (
 	       r.status = 'pending_evidence'
 	       AND EXISTS (
 	         SELECT 1
-	         FROM relationship_observations o
-	         JOIN verification_events v
-	           ON v.team_id = o.team_id
-	          AND v.observation_id = o.observation_id
-	         WHERE o.team_id = r.team_id
+			FROM relationship_observations o
+			JOIN verification_events v
+			  ON v.team_id = o.team_id
+			 AND v.observation_id = o.observation_id
+			 AND v.space_id = o.space_id
+			 AND v.space_generation = o.space_generation
+			WHERE o.team_id = r.team_id
+			  AND o.space_id = r.space_id
+			  AND o.space_generation = r.space_generation
 	           AND o.relationship_id = r.relationship_id
 	           AND v.evidence_verdict = 'insufficient'
 	       )
@@ -54,8 +60,10 @@ const hypothesisSourceIneligiblePredicateSQL = `EXISTS (
 	   OR EXISTS (
 	     SELECT 1
 	     FROM relationship_cross_references cr
-	     WHERE cr.team_id = r.team_id
-	       AND cr.target_relationship_id = r.relationship_id
+			WHERE cr.team_id = r.team_id
+		       AND cr.space_id = r.space_id
+		       AND cr.space_generation = r.space_generation
+		       AND cr.target_relationship_id = r.relationship_id
 	       AND cr.kind = 'challenges'
 	   )
 ) OR ` + hypothesisExactDerivationIneligiblePredicateSQL
@@ -65,6 +73,8 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 		SELECT 1
 		FROM hypothesis_derivation_sources derivation
 		WHERE derivation.team_id = hypotheses.team_id
+		  AND derivation.space_id = hypotheses.space_id
+		  AND derivation.space_generation = hypotheses.space_generation
 		  AND derivation.hypothesis_id = hypotheses.hypothesis_id
 		  AND derivation.premise_position = 1
 	)
@@ -72,6 +82,8 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 		SELECT 1
 		FROM hypothesis_derivation_sources derivation
 		WHERE derivation.team_id = hypotheses.team_id
+		  AND derivation.space_id = hypotheses.space_id
+		  AND derivation.space_generation = hypotheses.space_generation
 		  AND derivation.hypothesis_id = hypotheses.hypothesis_id
 		  AND derivation.premise_position = 2
 	)
@@ -81,7 +93,11 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 		LEFT JOIN relationship_records relationship
 		  ON relationship.team_id = derivation.team_id
 		 AND relationship.relationship_id = derivation.relationship_id
+		 AND relationship.space_id = derivation.space_id
+		 AND relationship.space_generation = derivation.space_generation
 		WHERE derivation.team_id = hypotheses.team_id
+		  AND derivation.space_id = hypotheses.space_id
+		  AND derivation.space_generation = hypotheses.space_generation
 		  AND derivation.hypothesis_id = hypotheses.hypothesis_id
 		  AND NOT COALESCE(
 			relationship.relationship_id IS NOT NULL
@@ -89,9 +105,11 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 			AND relationship.version = derivation.relationship_version
 			AND EXISTS (
 				SELECT 1
-				FROM entity_records subject_entity
-				WHERE subject_entity.team_id = relationship.team_id
-				  AND subject_entity.entity_id = relationship.subject_entity_id
+					FROM entity_records subject_entity
+					WHERE subject_entity.team_id = relationship.team_id
+					  AND subject_entity.entity_id = relationship.subject_entity_id
+					  AND subject_entity.space_id = relationship.space_id
+					  AND subject_entity.space_generation = relationship.space_generation
 				  AND subject_entity.status = 'active'
 			)
 			AND (
@@ -101,20 +119,26 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 					FROM entity_records object_entity
 					WHERE object_entity.team_id = relationship.team_id
 					  AND object_entity.entity_id = relationship.object_entity_id
+					  AND object_entity.space_id = relationship.space_id
+					  AND object_entity.space_generation = relationship.space_generation
 					  AND object_entity.status = 'active'
 				)
 			)
 			AND NOT EXISTS (
 				SELECT 1
 				FROM relationship_cross_references cross_reference
-				WHERE cross_reference.team_id = relationship.team_id
+					WHERE cross_reference.team_id = relationship.team_id
+					  AND cross_reference.space_id = relationship.space_id
+					  AND cross_reference.space_generation = relationship.space_generation
 				  AND cross_reference.target_relationship_id = relationship.relationship_id
 				  AND cross_reference.kind = 'challenges'
 			)
 			AND NOT EXISTS (
 				SELECT 1
 				FROM review_tasks review
-				WHERE review.team_id = relationship.team_id
+					WHERE review.team_id = relationship.team_id
+					  AND review.space_id = relationship.space_id
+					  AND review.space_generation = relationship.space_generation
 				  AND review.relationship_id = relationship.relationship_id
 				  AND review.status IN ('open', 'acknowledged')
 			)
@@ -128,10 +152,16 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 						JOIN evidence_fragments fragment
 						  ON fragment.team_id = support.team_id
 						 AND fragment.fragment_id = support.fragment_id
-						LEFT JOIN evidence_sources source
-						  ON source.team_id = support.team_id
-						 AND source.source_id = support.source_id
+						 AND fragment.space_id = support.space_id
+						 AND fragment.space_generation = support.space_generation
+			LEFT JOIN evidence_sources source
+			  ON source.team_id = support.team_id
+			 AND source.source_id = support.source_id
+			 AND source.space_id = support.space_id
+			 AND source.space_generation = support.space_generation
 						WHERE support.team_id = derivation.team_id
+						  AND support.space_id = derivation.space_id
+						  AND support.space_generation = derivation.space_generation
 						  AND support.support_id = derivation.support_id
 						  AND support.relationship_id = derivation.relationship_id
 						  AND support.fragment_id = derivation.fragment_id
@@ -144,23 +174,29 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 						  AND substring(fragment.content FROM support.span_start + 1 FOR support.span_end - support.span_start) = derivation.quote
 						  AND COALESCE((
 							SELECT decision.decision
-							FROM relationship_support_decision_events decision
-							WHERE decision.team_id = support.team_id
+								FROM relationship_support_decision_events decision
+								WHERE decision.team_id = support.team_id
+								  AND decision.space_id = support.space_id
+								  AND decision.space_generation = support.space_generation
 							  AND decision.support_id = support.support_id
 							ORDER BY decision.created_at DESC, decision.support_decision_id DESC
 							LIMIT 1
 						), '') IN ('grant', 'reinstate')
 						  AND NOT EXISTS (
 							SELECT 1
-							FROM evidence_quarantines quarantine
-							WHERE quarantine.team_id = support.team_id
+								FROM evidence_quarantines quarantine
+								WHERE quarantine.team_id = support.team_id
+								  AND quarantine.space_id = support.space_id
+								  AND quarantine.space_generation = support.space_generation
 							  AND quarantine.fragment_id = support.fragment_id
 							  AND quarantine.status = 'active'
 						)
 						  AND NOT EXISTS (
 							SELECT 1
-							FROM evidence_lifecycle_events lifecycle
-							WHERE lifecycle.team_id = support.team_id
+								FROM evidence_lifecycle_events lifecycle
+								WHERE lifecycle.team_id = support.team_id
+								  AND lifecycle.space_id = support.space_id
+								  AND lifecycle.space_generation = support.space_generation
 							  AND lifecycle.target_fragment_id = support.fragment_id
 						)
 						  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
@@ -175,20 +211,32 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 						JOIN verification_events verification
 						  ON verification.team_id = observation.team_id
 						 AND verification.observation_id = observation.observation_id
+						 AND verification.space_id = observation.space_id
+						 AND verification.space_generation = observation.space_generation
 						JOIN placement_assessments assessment
 						  ON assessment.team_id = verification.team_id
 						 AND assessment.assessment_id = verification.assessment_id
+						 AND assessment.space_id = verification.space_id
+						 AND assessment.space_generation = verification.space_generation
 						JOIN review_tasks review
 						  ON review.team_id = verification.team_id
 						 AND review.assessment_id = verification.assessment_id
+						 AND review.space_id = verification.space_id
+						 AND review.space_generation = verification.space_generation
 						JOIN LATERAL jsonb_array_elements(observation.evidence) evidence(value) ON true
 						JOIN evidence_fragments fragment
 						  ON fragment.team_id = observation.team_id
 						 AND evidence.value->>'fragment_id' = fragment.fragment_id::text
-						LEFT JOIN evidence_sources source
-						  ON source.team_id = fragment.team_id
-						 AND source.source_id = fragment.source_id
+						 AND fragment.space_id = observation.space_id
+						 AND fragment.space_generation = observation.space_generation
+			LEFT JOIN evidence_sources source
+			  ON source.team_id = fragment.team_id
+			 AND source.source_id = fragment.source_id
+			 AND source.space_id = fragment.space_id
+			 AND source.space_generation = fragment.space_generation
 						WHERE observation.team_id = derivation.team_id
+						  AND observation.space_id = derivation.space_id
+						  AND observation.space_generation = derivation.space_generation
 						  AND observation.observation_id = derivation.observation_id
 						  AND observation.relationship_id = derivation.relationship_id
 						  AND verification.evidence_verdict IN ('insufficient', 'entailed')
@@ -204,15 +252,19 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 						  AND substring(fragment.content FROM derivation.span_start + 1 FOR derivation.span_end - derivation.span_start) = derivation.quote
 						  AND NOT EXISTS (
 							SELECT 1
-							FROM evidence_quarantines quarantine
-							WHERE quarantine.team_id = fragment.team_id
+								FROM evidence_quarantines quarantine
+								WHERE quarantine.team_id = fragment.team_id
+								  AND quarantine.space_id = fragment.space_id
+								  AND quarantine.space_generation = fragment.space_generation
 							  AND quarantine.fragment_id = fragment.fragment_id
 							  AND quarantine.status = 'active'
 						)
 						  AND NOT EXISTS (
 							SELECT 1
-							FROM evidence_lifecycle_events lifecycle
-							WHERE lifecycle.team_id = fragment.team_id
+								FROM evidence_lifecycle_events lifecycle
+								WHERE lifecycle.team_id = fragment.team_id
+								  AND lifecycle.space_id = fragment.space_id
+								  AND lifecycle.space_generation = fragment.space_generation
 							  AND lifecycle.target_fragment_id = fragment.fragment_id
 						)
 						  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
@@ -234,13 +286,17 @@ func insertHypothesisFeedbackEvent(
 ) error {
 	return tx.WithContext(ctx).Exec(`
 		INSERT INTO hypothesis_feedback_events (
-		    team_id, hypothesis_id, actor_profile_id, decision, feedback,
+		    team_id, space_id, space_generation, hypothesis_id, actor_profile_id, decision, feedback,
 		    submitted_ingest_id
-		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, COALESCE(NULLIF(?, ''), ''),
-		    NULLIF(?, '')::uuid
 		)
-	`, teamID, hypothesisID, actorProfileID, decision, feedback, submittedIngestID).Error
+		SELECT ?::uuid, hypothesis.space_id, hypothesis.space_generation, ?::uuid, ?::uuid, ?, COALESCE(NULLIF(?, ''), ''),
+		       NULLIF(?, '')::uuid
+		FROM hypotheses AS hypothesis
+		WHERE hypothesis.team_id = ?::uuid
+		  AND hypothesis.space_id = dense_mem_team_shared_space(hypothesis.team_id)
+		  AND hypothesis.space_generation = dense_mem_team_shared_generation(hypothesis.team_id)
+		  AND hypothesis.hypothesis_id = ?::uuid
+	`, teamID, hypothesisID, actorProfileID, decision, feedback, submittedIngestID, teamID, hypothesisID).Error
 }
 
 func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input DreamInputListInput) ([]DreamInput, error) {
@@ -256,6 +312,8 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 				       support_id, decision
 				FROM relationship_support_decision_events
 				WHERE team_id = ?::uuid
+				  AND space_id = dense_mem_team_shared_space(team_id)
+				  AND space_generation = dense_mem_team_shared_generation(team_id)
 				ORDER BY support_id, created_at DESC, support_decision_id DESC
 			), effective_support AS (
 				SELECT support.relationship_id, count(*)::int AS support_count
@@ -273,6 +331,8 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 				  ON source.team_id = support.team_id
 				 AND source.source_id = support.source_id
 				WHERE support.team_id = ?::uuid
+				  AND support.space_id = dense_mem_team_shared_space(support.team_id)
+				  AND support.space_generation = dense_mem_team_shared_generation(support.team_id)
 				  AND decision.decision IN ('grant', 'reinstate')
 				  AND quarantine.quarantine_id IS NULL
 				  AND lifecycle.lifecycle_event_id IS NULL
@@ -292,6 +352,8 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 				  ON review.team_id = verification.team_id
 				 AND review.assessment_id = verification.assessment_id
 				WHERE observation.team_id = ?::uuid
+				  AND observation.space_id = dense_mem_team_shared_space(observation.team_id)
+				  AND observation.space_generation = dense_mem_team_shared_generation(observation.team_id)
 				  AND observation.relationship_id IS NOT NULL
 				  AND verification.evidence_verdict IN ('insufficient', 'entailed')
 				  AND verification.gate_result = 'below_write_threshold'
@@ -317,29 +379,41 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 			JOIN entity_records subject_entity
 			  ON subject_entity.team_id = r.team_id
 			 AND subject_entity.entity_id = r.subject_entity_id
+			 AND subject_entity.space_id = r.space_id
+			 AND subject_entity.space_generation = r.space_generation
 			 AND subject_entity.status = 'active'
 			LEFT JOIN entity_records object_entity
 			  ON object_entity.team_id = r.team_id
 			 AND object_entity.entity_id = r.object_entity_id
+			 AND object_entity.space_id = r.space_id
+			 AND object_entity.space_generation = r.space_generation
 			 AND object_entity.status = 'active'
 			LEFT JOIN entity_names subject_name
 			  ON subject_name.team_id = r.team_id
 			 AND subject_name.entity_id = r.subject_entity_id
+			 AND subject_name.space_id = r.space_id
+			 AND subject_name.space_generation = r.space_generation
 			 AND subject_name.name_kind = 'canonical'
 			 AND subject_name.valid_to IS NULL
 			LEFT JOIN entity_names object_name
 			  ON object_name.team_id = r.team_id
 			 AND object_name.entity_id = r.object_entity_id
+			 AND object_name.space_id = r.space_id
+			 AND object_name.space_generation = r.space_generation
 			 AND object_name.name_kind = 'canonical'
 			 AND object_name.valid_to IS NULL
 			LEFT JOIN value_records value
 			  ON value.team_id = r.team_id
 			 AND value.value_id = r.object_value_id
+			 AND value.space_id = r.space_id
+			 AND value.space_generation = r.space_generation
 			LEFT JOIN effective_support support
 			  ON support.relationship_id = r.relationship_id
 			LEFT JOIN eligible_pending pending
 			  ON pending.relationship_id = r.relationship_id
 			WHERE r.team_id = ?::uuid
+			  AND r.space_id = dense_mem_team_shared_space(r.team_id)
+			  AND r.space_generation = dense_mem_team_shared_generation(r.team_id)
 			  AND r.identity_alias_of_relationship_id IS NULL
 			  AND (
 			    (r.status = 'active' AND COALESCE(support.support_count, 0) > 0)
@@ -349,6 +423,8 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 			    SELECT 1
 			    FROM relationship_cross_references cross_reference
 			    WHERE cross_reference.team_id = r.team_id
+			      AND cross_reference.space_id = r.space_id
+			      AND cross_reference.space_generation = r.space_generation
 			      AND cross_reference.target_relationship_id = r.relationship_id
 			      AND cross_reference.kind = 'challenges'
 			  )
@@ -356,6 +432,8 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 			    SELECT 1
 			    FROM review_tasks review
 			    WHERE review.team_id = r.team_id
+			      AND review.space_id = r.space_id
+			      AND review.space_generation = r.space_generation
 			      AND review.relationship_id = r.relationship_id
 			      AND review.status IN ('open', 'acknowledged')
 			  )
@@ -430,6 +508,8 @@ func (r *SemanticRepositoryImpl) ListDreamTargetPredicates(ctx context.Context, 
 			       relationship_kind, current_cardinality
 			FROM team_predicate_definitions
 			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND lifecycle_state = 'active'
 			ORDER BY predicate_key, version DESC
 		`, teamID).Rows()
@@ -477,6 +557,8 @@ func (r *SemanticRepositoryImpl) ListHypotheses(
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		query := hypothesisSelectSQL(`
 			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND canonical_hypothesis_id IS NULL
 			  AND (? = '' OR status = ?)
 			ORDER BY ` + hypothesisListOrder(input.Sort, input.Direction) + `, hypothesis_id
@@ -527,11 +609,15 @@ func (r *SemanticRepositoryImpl) GetHypothesis(ctx context.Context, input GetHyp
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(hypothesisSelectSQL(`
 			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND canonical_hypothesis_id IS NULL
 			  AND hypothesis_id = COALESCE((
 			      SELECT canonical_hypothesis_id
 			      FROM hypotheses
-			      WHERE team_id = ?::uuid
+				WHERE team_id = ?::uuid
+				        AND space_id = dense_mem_team_shared_space(team_id)
+				        AND space_generation = dense_mem_team_shared_generation(team_id)
 			        AND hypothesis_id = ?::uuid
 			  ), ?::uuid)
 			LIMIT 1
@@ -581,6 +667,8 @@ func (r *SemanticRepositoryImpl) RecallHypotheses(ctx context.Context, input Rec
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		query := hypothesisSelectSQL(`
 			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND canonical_hypothesis_id IS NULL
 			  AND status IN ('proposed', 'reinforced')
 			  AND NOT (` + hypothesisSourceIneligiblePredicateSQL + `)
@@ -629,11 +717,15 @@ func (r *SemanticRepositoryImpl) UpdateHypothesisStatus(
 			    invalidated_reason = CASE WHEN ? <> '' THEN ? ELSE invalidated_reason END,
 			    updated_at = now()
 			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND canonical_hypothesis_id IS NULL
 			  AND hypothesis_id = COALESCE((
 			      SELECT canonical_hypothesis_id
 			      FROM hypotheses
-			      WHERE team_id = ?::uuid
+				WHERE team_id = ?::uuid
+				        AND space_id = dense_mem_team_shared_space(team_id)
+				        AND space_generation = dense_mem_team_shared_generation(team_id)
 			        AND hypothesis_id = ?::uuid
 			  ), ?::uuid)
 		`), input.Status, input.InvalidatedReason, input.InvalidatedReason,
@@ -687,11 +779,15 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 			    invalidated_reason = CASE WHEN ? <> '' THEN ? ELSE invalidated_reason END,
 			    updated_at = now()
 			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND canonical_hypothesis_id IS NULL
 			  AND hypothesis_id = COALESCE((
 			      SELECT canonical_hypothesis_id
 			      FROM hypotheses
-			      WHERE team_id = ?::uuid
+				WHERE team_id = ?::uuid
+				        AND space_id = dense_mem_team_shared_space(team_id)
+				        AND space_generation = dense_mem_team_shared_generation(team_id)
 			        AND hypothesis_id = ?::uuid
 			  ), ?::uuid)
 		`), input.SubmittedIngestID, input.InvalidatedReason, input.InvalidatedReason,
@@ -729,17 +825,7 @@ func validateHypothesisEndpoints(ctx context.Context, tx *gorm.DB, input UpsertH
 	if err != nil {
 		return err
 	}
-	relationshipInput := ApplyRelationshipDecisionInput{
-		TeamID:           input.TeamID,
-		IngestID:         uuid.NewString(),
-		SubjectEntityID:  input.SubjectEntityID,
-		PredicateKey:     input.PredicateKey,
-		PredicateVersion: input.PredicateVersion,
-		ObjectEntityID:   input.ObjectEntityID,
-		ObjectValueID:    input.ObjectValueID,
-		EvidenceVerdict:  "insufficient",
-	}
-	if err := validateRelationshipEndpointKinds(ctx, tx, relationshipInput, predicate); err != nil {
+	if err := validateHypothesisEndpointKinds(ctx, tx, input, predicate); err != nil {
 		return err
 	}
 	var existing int64
@@ -747,6 +833,8 @@ func validateHypothesisEndpoints(ctx context.Context, tx *gorm.DB, input UpsertH
 		SELECT COUNT(*)
 		FROM relationship_records
 		WHERE team_id = ?::uuid
+		  AND space_id = dense_mem_team_shared_space(team_id)
+		  AND space_generation = dense_mem_team_shared_generation(team_id)
 		  AND identity_alias_of_relationship_id IS NULL
 		  AND subject_entity_id = ?::uuid
 		  AND lower(btrim(predicate_key)) = lower(btrim(?))
@@ -767,8 +855,10 @@ func validateHypothesisTargetAbsent(ctx context.Context, tx *gorm.DB, input Upse
 	if err := tx.WithContext(ctx).Raw(`
 		SELECT COUNT(*)
 		FROM hypotheses
-		WHERE team_id = ?::uuid
-		  AND canonical_hypothesis_id IS NULL
+			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
+			  AND canonical_hypothesis_id IS NULL
 		  AND (
 		    target_identity = ?
 		    OR (
@@ -827,8 +917,10 @@ func reinforceHypothesisByHash(
 		        ELSE status
 		    END,
 		    updated_at = now()
-		WHERE team_id = ?::uuid
-		  AND canonical_hypothesis_id IS NULL
+			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
+			  AND canonical_hypothesis_id IS NULL
 		  AND content_hash = ?
 	`), input.TeamID, input.ContentHash).Rows()
 	if err != nil {
@@ -846,6 +938,8 @@ func loadDreamCycleByWindow(ctx context.Context, tx *gorm.DB, teamID, windowKey 
 		SELECT `+dreamCycleRunSelectColumns+`
 		FROM dream_cycle_runs
 		WHERE team_id = ?::uuid
+		  AND space_id = dense_mem_team_shared_space(team_id)
+		  AND space_generation = dense_mem_team_shared_generation(team_id)
 		  AND canonical_run_id IS NULL
 		  AND window_key = ?
 		LIMIT 1

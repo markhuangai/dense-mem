@@ -311,16 +311,22 @@ func (r *SemanticRepositoryImpl) ClaimCommunityRun(ctx context.Context, input Co
 	runID := uuid.NewString()
 	var run *CommunityRun
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		fence, err := loadTeamSharedSpaceFence(ctx, tx, input.TeamID)
+		if err != nil {
+			return err
+		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH attempted AS (
 				INSERT INTO community_snapshot_runs (
-					team_id, run_id, window_key, status, algorithm_kind, algorithm_version,
+					team_id, space_id, space_generation, run_id, window_key, status, algorithm_kind, algorithm_version,
 					profile_version, configuration_hash, source_fingerprint, max_nodes, max_edges, lease_until
 				) VALUES (
-					?::uuid, ?::uuid, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?::timestamptz
+					?::uuid, ?::uuid, ?, ?::uuid, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?::timestamptz
 				)
 				ON CONFLICT ON CONSTRAINT community_snapshot_runs_window_unique DO UPDATE
 				SET status = 'running',
+				    space_id = EXCLUDED.space_id,
+				    space_generation = EXCLUDED.space_generation,
 				    algorithm_kind = EXCLUDED.algorithm_kind,
 				    algorithm_version = EXCLUDED.algorithm_version,
 				    profile_version = EXCLUDED.profile_version,
@@ -337,11 +343,15 @@ func (r *SemanticRepositoryImpl) ClaimCommunityRun(ctx context.Context, input Co
 				    started_at = now(),
 				    completed_at = NULL,
 				    updated_at = now()
-				WHERE (community_snapshot_runs.status = 'completed'
+				WHERE (
+				      (community_snapshot_runs.status = 'completed'
 				       AND community_snapshot_runs.source_fingerprint <> EXCLUDED.source_fingerprint)
 				   OR community_snapshot_runs.status IN ('failed', 'skipped', 'too_large', 'cancelled')
-				   OR community_snapshot_runs.lease_until IS NULL
-				   OR community_snapshot_runs.lease_until <= now()
+				    OR community_snapshot_runs.lease_until IS NULL
+				       OR community_snapshot_runs.lease_until <= now()
+				  )
+				  AND community_snapshot_runs.space_id = EXCLUDED.space_id
+				  AND community_snapshot_runs.space_generation = EXCLUDED.space_generation
 				RETURNING team_id::text, run_id::text, window_key, status, algorithm_kind,
 				          algorithm_version, profile_version, configuration_hash,
 				          source_fingerprint, node_count, edge_count, community_count,
@@ -357,11 +367,14 @@ func (r *SemanticRepositoryImpl) ClaimCommunityRun(ctx context.Context, input Co
 			       false AS claimed
 			FROM community_snapshot_runs
 			WHERE team_id = ?::uuid
+			  AND space_id = ?::uuid
+			  AND space_generation = ?
 			  AND window_key = ?
 			  AND NOT EXISTS (SELECT 1 FROM attempted)
-		`, input.TeamID, runID, input.WindowKey, input.AlgorithmKind,
+		`, input.TeamID, fence.ID, fence.Generation, runID, input.WindowKey, input.AlgorithmKind,
 			input.AlgorithmVersion, input.ProfileVersion, input.ConfigurationHash,
-			input.SourceFingerprint, input.MaxNodes, input.MaxEdges, input.LeaseUntil, input.TeamID, input.WindowKey).Rows()
+			input.SourceFingerprint, input.MaxNodes, input.MaxEdges, input.LeaseUntil,
+			input.TeamID, fence.ID, fence.Generation, input.WindowKey).Rows()
 		if err != nil {
 			return err
 		}
@@ -382,9 +395,11 @@ func (r *SemanticRepositoryImpl) ClaimCommunityRun(ctx context.Context, input Co
 				UPDATE community_records
 				SET status = 'stale', stale_reason = 'source_changed', updated_at = now()
 				WHERE team_id = ?::uuid
+				  AND space_id = ?::uuid
+				  AND space_generation = ?
 				  AND status = 'current'
 				  AND source_fingerprint <> ?
-			`, input.TeamID, input.SourceFingerprint).Error; err != nil {
+			`, input.TeamID, fence.ID, fence.Generation, input.SourceFingerprint).Error; err != nil {
 				return err
 			}
 		}
@@ -402,6 +417,10 @@ func (r *SemanticRepositoryImpl) CompleteCommunityRun(ctx context.Context, input
 		return err
 	}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		fence, err := loadTeamSharedSpaceFence(ctx, tx, input.TeamID)
+		if err != nil {
+			return err
+		}
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE community_snapshot_runs
 			SET status = ?,
@@ -412,10 +431,12 @@ func (r *SemanticRepositoryImpl) CompleteCommunityRun(ctx context.Context, input
 			    completed_at = now(),
 			    updated_at = now()
 			WHERE team_id = ?::uuid
+			  AND space_id = ?::uuid
+			  AND space_generation = ?
 			  AND run_id = ?::uuid
 			  AND status = 'running'
 		`, input.Status, input.NodeCount, input.EdgeCount, input.CommunityCount,
-			truncateCommunityError(input.Error), input.TeamID, input.RunID)
+			truncateCommunityError(input.Error), input.TeamID, fence.ID, fence.Generation, input.RunID)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -443,13 +464,19 @@ func (r *SemanticRepositoryImpl) RenewCommunityRunLease(ctx context.Context, inp
 		return errors.New("lease_until is required")
 	}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		fence, err := loadTeamSharedSpaceFence(ctx, tx, input.TeamID)
+		if err != nil {
+			return err
+		}
 		result := tx.WithContext(ctx).Exec(`
 			UPDATE community_snapshot_runs
 			SET lease_until = ?, updated_at = now()
 			WHERE team_id = ?::uuid
+			  AND space_id = ?::uuid
+			  AND space_generation = ?
 			  AND run_id = ?::uuid
 			  AND status = 'running'
-		`, input.LeaseUntil, input.TeamID, input.RunID)
+		`, input.LeaseUntil, input.TeamID, fence.ID, fence.Generation, input.RunID)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -471,12 +498,18 @@ func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input 
 	}
 	var out []CommunityInput
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		fence, err := loadTeamSharedSpaceFence(ctx, tx, input.TeamID)
+		if err != nil {
+			return err
+		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH canonical_names AS (
 				SELECT DISTINCT ON (team_id, entity_id)
-				       team_id, entity_id, display_name
+				       team_id, entity_id, space_id, space_generation, display_name
 				FROM entity_names
 				WHERE team_id = ?::uuid
+				  AND space_id = ?::uuid
+				  AND space_generation = ?
 				  AND name_kind = 'canonical'
 				  AND valid_to IS NULL
 				ORDER BY team_id, entity_id, created_at DESC, entity_name_id DESC
@@ -485,6 +518,8 @@ func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input 
 				       team_id, support_id, decision
 				FROM relationship_support_decision_events
 				WHERE team_id = ?::uuid
+				  AND space_id = ?::uuid
+				  AND space_generation = ?
 				ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
 			), effective_support AS (
 				SELECT support.team_id, support.relationship_id,
@@ -507,6 +542,8 @@ func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input 
 				  ON lifecycle.team_id = support.team_id
 				 AND lifecycle.target_fragment_id = support.fragment_id
 				WHERE support.team_id = ?::uuid
+				  AND support.space_id = ?::uuid
+				  AND support.space_generation = ?
 				  AND quarantine.quarantine_id IS NULL
 				  AND lifecycle.lifecycle_event_id IS NULL
 				  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
@@ -531,31 +568,48 @@ func (r *SemanticRepositoryImpl) ListCommunityInputs(ctx context.Context, input 
 			JOIN entity_records AS subject
 			  ON subject.team_id = relationship.team_id
 			 AND subject.entity_id = relationship.subject_entity_id
+			 AND subject.space_id = relationship.space_id
+			 AND subject.space_generation = relationship.space_generation
 			 AND subject.status = 'active'
 			LEFT JOIN entity_records AS object
 			  ON object.team_id = relationship.team_id
 			 AND object.entity_id = relationship.object_entity_id
+			 AND object.space_id = relationship.space_id
+			 AND object.space_generation = relationship.space_generation
 			 AND object.status = 'active'
 			LEFT JOIN value_records AS value_record
 			  ON value_record.team_id = relationship.team_id
 			 AND value_record.value_id = relationship.object_value_id
+			 AND value_record.space_id = relationship.space_id
+			 AND value_record.space_generation = relationship.space_generation
 			LEFT JOIN canonical_names AS subject_name
 			  ON subject_name.team_id = relationship.team_id
 			 AND subject_name.entity_id = relationship.subject_entity_id
+			 AND subject_name.space_id = relationship.space_id
+			 AND subject_name.space_generation = relationship.space_generation
 			LEFT JOIN canonical_names AS object_name
 				  ON object_name.team_id = relationship.team_id
 				 AND object_name.entity_id = relationship.object_entity_id
+				 AND object_name.space_id = relationship.space_id
+				 AND object_name.space_generation = relationship.space_generation
 			JOIN effective_support
 			  ON effective_support.team_id = relationship.team_id
 			 AND effective_support.relationship_id = relationship.relationship_id
+			 AND relationship.space_id = ?::uuid
+			 AND relationship.space_generation = ?
 			WHERE relationship.team_id = ?::uuid
+			  AND relationship.space_id = ?::uuid
+			  AND relationship.space_generation = ?
 			  AND relationship.identity_alias_of_relationship_id IS NULL
 			  AND relationship.status = 'active'
 			  AND (relationship.object_entity_id IS NULL OR object.entity_id IS NOT NULL)
 			  AND (relationship.object_entity_id IS NOT NULL OR relationship.object_value_id IS NOT NULL)
 			ORDER BY relationship.updated_at ASC, relationship.relationship_id ASC
 			LIMIT ?
-		`, input.TeamID, input.TeamID, input.TeamID, input.TeamID, input.Limit).Rows()
+		`, input.TeamID, fence.ID, fence.Generation,
+			input.TeamID, fence.ID, fence.Generation,
+			input.TeamID, fence.ID, fence.Generation,
+			fence.ID, fence.Generation, input.TeamID, fence.ID, fence.Generation, input.Limit).Rows()
 		if err != nil {
 			return err
 		}
@@ -597,7 +651,11 @@ func (r *SemanticRepositoryImpl) PublishCommunitySnapshot(ctx context.Context, i
 		return err
 	}
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		if err := ensureCommunitySourcesCurrent(ctx, tx, input.TeamID, flattenCommunitySources(input.Communities)); err != nil {
+		fence, err := loadTeamSharedSpaceFence(ctx, tx, input.TeamID)
+		if err != nil {
+			return err
+		}
+		if err := ensureCommunitySourcesCurrent(ctx, tx, input.TeamID, fence, flattenCommunitySources(input.Communities)); err != nil {
 			return err
 		}
 		if err := tx.WithContext(ctx).Exec(`
@@ -606,12 +664,14 @@ func (r *SemanticRepositoryImpl) PublishCommunitySnapshot(ctx context.Context, i
 			    superseded_at = now(),
 			    updated_at = now()
 			WHERE team_id = ?::uuid
+			  AND space_id = ?::uuid
+			  AND space_generation = ?
 			  AND status = 'current'
-		`, input.TeamID).Error; err != nil {
+		`, input.TeamID, fence.ID, fence.Generation).Error; err != nil {
 			return err
 		}
 		for _, community := range input.Communities {
-			if err := insertCommunityRecord(ctx, tx, input, community); err != nil {
+			if err := insertCommunityRecord(ctx, tx, input, fence, community); err != nil {
 				return err
 			}
 		}
@@ -631,11 +691,13 @@ func (r *SemanticRepositoryImpl) PublishCommunitySnapshot(ctx context.Context, i
 			    completed_at = now(),
 			    updated_at = now()
 			WHERE team_id = ?::uuid
+			  AND space_id = ?::uuid
+			  AND space_generation = ?
 			  AND run_id = ?::uuid
 			  AND status = 'running'
 		`, input.AlgorithmKind, input.AlgorithmVersion, input.ProfileVersion,
 			input.ConfigurationHash, input.SourceFingerprint, string(sourceSnapshot),
-			input.NodeCount, input.EdgeCount, len(input.Communities), input.TeamID, input.RunID)
+			input.NodeCount, input.EdgeCount, len(input.Communities), input.TeamID, fence.ID, fence.Generation, input.RunID)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -657,26 +719,38 @@ func (r *SemanticRepositoryImpl) RefreshCommunityStaleness(ctx context.Context, 
 	}
 	updated := 0
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		fence, err := loadTeamSharedSpaceFence(ctx, tx, input.TeamID)
+		if err != nil {
+			return err
+		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH stale AS (
 				SELECT record.community_id
 				FROM community_records AS record
 				WHERE record.team_id = ?::uuid
+				  AND record.space_id = ?::uuid
+				  AND record.space_generation = ?
 				  AND record.status = 'current'
 				  AND (
 				      NOT EXISTS (
 				          SELECT 1
-				          FROM community_sources AS source
-				          WHERE source.team_id = record.team_id
+						  FROM community_sources AS source
+						  WHERE source.team_id = record.team_id
+						    AND source.space_id = record.space_id
+						    AND source.space_generation = record.space_generation
 				            AND source.community_id = record.community_id
 				      )
 				      OR EXISTS (
 				          SELECT 1
 				          FROM community_sources AS source
-				          LEFT JOIN relationship_records AS relationship
-				            ON relationship.team_id = source.team_id
-				           AND relationship.relationship_id = source.relationship_id
-				          WHERE source.team_id = record.team_id
+						  LEFT JOIN relationship_records AS relationship
+						    ON relationship.team_id = source.team_id
+						   AND relationship.relationship_id = source.relationship_id
+						   AND relationship.space_id = source.space_id
+						   AND relationship.space_generation = source.space_generation
+						  WHERE source.team_id = record.team_id
+						    AND source.space_id = record.space_id
+						    AND source.space_generation = record.space_generation
 				            AND source.community_id = record.community_id
 				            AND (
 					                relationship.relationship_id IS NULL
@@ -707,7 +781,9 @@ func (r *SemanticRepositoryImpl) RefreshCommunityStaleness(ctx context.Context, 
 															LEFT JOIN evidence_lifecycle_events AS lifecycle
 															  ON lifecycle.team_id = support.team_id
 															 AND lifecycle.target_fragment_id = support.fragment_id
-															WHERE support.team_id = relationship.team_id
+									WHERE support.team_id = relationship.team_id
+									  AND support.space_id = relationship.space_id
+									  AND support.space_generation = relationship.space_generation
 															  AND support.relationship_id = relationship.relationship_id
 															  AND quarantine.quarantine_id IS NULL
 															  AND lifecycle.lifecycle_event_id IS NULL
@@ -726,11 +802,13 @@ func (r *SemanticRepositoryImpl) RefreshCommunityStaleness(ctx context.Context, 
 				    updated_at = now()
 				FROM stale
 				WHERE record.team_id = ?::uuid
+				  AND record.space_id = ?::uuid
+				  AND record.space_generation = ?
 				  AND record.community_id = stale.community_id
 				RETURNING 1
 			)
 			SELECT count(*)::int FROM updated
-		`, input.TeamID, input.Limit, input.TeamID).Rows()
+		`, input.TeamID, fence.ID, fence.Generation, input.Limit, input.TeamID, fence.ID, fence.Generation).Rows()
 		if err != nil {
 			return err
 		}
@@ -746,223 +824,4 @@ func (r *SemanticRepositoryImpl) RefreshCommunityStaleness(ctx context.Context, 
 		return 0, fmt.Errorf("community: refresh staleness: %w", err)
 	}
 	return updated, nil
-}
-
-func (r *SemanticRepositoryImpl) ListCommunities(ctx context.Context, input CommunityListInput) ([]CommunityRecord, error) {
-	input = normalizeCommunityListInput(input)
-	if err := validateCommunityListInput(input); err != nil {
-		return nil, err
-	}
-	var records []CommunityRecord
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT team_id::text, community_id::text, COALESCE(logical_community_id, community_id)::text, run_id::text, ordinal, status,
-			       summary, summary_version, member_count, source_count,
-			       top_entities, top_predicates, source_fingerprint, stale_reason,
-			       created_at, updated_at, superseded_at
-			FROM community_records
-			WHERE team_id = ?::uuid
-			  AND status = ?
-			ORDER BY member_count DESC, community_id ASC
-			LIMIT ?
-		`, input.TeamID, input.Status, input.Limit).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		var errScan error
-		records, errScan = scanCommunityRecords(rows)
-		return errScan
-	})
-	if err != nil {
-		return nil, fmt.Errorf("community: list communities: %w", err)
-	}
-	return records, nil
-}
-
-func (r *SemanticRepositoryImpl) CountCurrentCommunities(ctx context.Context, teamID string) (int, error) {
-	teamID = strings.TrimSpace(teamID)
-	if _, err := uuid.Parse(teamID); err != nil {
-		return 0, fmt.Errorf("team_id is required: %w", err)
-	}
-	var count int
-	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
-		return tx.WithContext(ctx).Raw(`
-			SELECT count(*)::int
-			FROM community_records
-			WHERE team_id = ?::uuid
-			  AND status = 'current'
-		`, teamID).Scan(&count).Error
-	})
-	if err != nil {
-		return 0, fmt.Errorf("community: count current communities: %w", err)
-	}
-	return count, nil
-}
-
-func (r *SemanticRepositoryImpl) GetCommunity(ctx context.Context, input CommunityGetInput) (*CommunityRecord, error) {
-	input = normalizeCommunityGetInput(input)
-	if err := validateCommunityGetInput(input); err != nil {
-		return nil, err
-	}
-	var record *CommunityRecord
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT team_id::text, community_id::text, COALESCE(logical_community_id, community_id)::text, run_id::text, ordinal, status,
-			       summary, summary_version, member_count, source_count,
-			       top_entities, top_predicates, source_fingerprint, stale_reason,
-			       created_at, updated_at, superseded_at
-			FROM community_records
-			WHERE team_id = ?::uuid
-			  AND community_id = ?::uuid
-		`, input.TeamID, input.CommunityID).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		records, err := scanCommunityRecords(rows)
-		if err != nil {
-			return err
-		}
-		if len(records) == 0 {
-			return ErrCommunityNotFound
-		}
-		record = &records[0]
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("community: get community: %w", err)
-	}
-	return record, nil
-}
-
-func (r *SemanticRepositoryImpl) LatestCommunityRun(ctx context.Context, teamID string) (*CommunityRun, error) {
-	teamID = strings.TrimSpace(teamID)
-	if _, err := uuid.Parse(teamID); err != nil {
-		return nil, fmt.Errorf("team_id is required: %w", err)
-	}
-	var run *CommunityRun
-	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT team_id::text, run_id::text, window_key, status, algorithm_kind,
-			       algorithm_version, profile_version, configuration_hash,
-			       source_fingerprint, node_count, edge_count, community_count,
-			       max_nodes, max_edges, error, started_at, completed_at,
-			       false AS claimed
-			FROM community_snapshot_runs
-			WHERE team_id = ?::uuid
-			ORDER BY started_at DESC, run_id DESC
-			LIMIT 1
-		`, teamID).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		if !rows.Next() {
-			return nil
-		}
-		scanned, err := scanCommunityRun(rows)
-		if err != nil {
-			return err
-		}
-		run = scanned
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, fmt.Errorf("community: latest run: %w", err)
-	}
-	return run, nil
-}
-
-func (r *SemanticRepositoryImpl) ListCurrentCommunityLineage(ctx context.Context, teamID string) ([]CommunityLineageRecord, error) {
-	teamID = strings.TrimSpace(teamID)
-	if _, err := uuid.Parse(teamID); err != nil {
-		return nil, fmt.Errorf("team_id is required: %w", err)
-	}
-	lineage := []CommunityLineageRecord{}
-	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT record.community_id::text,
-			       COALESCE(record.logical_community_id, record.community_id)::text,
-			       COALESCE(array_agg(DISTINCT source.semantic_group_key ORDER BY source.semantic_group_key)
-			                FILTER (WHERE source.semantic_group_key <> ''), ARRAY[]::text[]),
-			       record.summary_input_hash, record.summary, record.summary_version,
-			       record.summary_provider_model, record.summary_prompt_hash, record.summary_response_hash
-			FROM community_records AS record
-			LEFT JOIN community_sources AS source
-			  ON source.team_id = record.team_id
-			 AND source.community_id = record.community_id
-			WHERE record.team_id = ?::uuid
-			  AND record.status = 'current'
-			GROUP BY record.community_id, record.logical_community_id, record.updated_at,
-			         record.summary_input_hash, record.summary, record.summary_version,
-			         record.summary_provider_model, record.summary_prompt_hash, record.summary_response_hash
-			ORDER BY record.updated_at DESC, record.community_id ASC
-		`, teamID).Rows()
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var record CommunityLineageRecord
-			var groups pq.StringArray
-			if err := rows.Scan(&record.CommunityID, &record.LogicalCommunityID, &groups,
-				&record.SummaryInputHash, &record.Summary, &record.SummaryVersion,
-				&record.SummaryProviderModel, &record.SummaryPromptHash, &record.SummaryResponseHash); err != nil {
-				return err
-			}
-			record.GroupKeys = []string(groups)
-			lineage = append(lineage, record)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, fmt.Errorf("community: list lineage: %w", err)
-	}
-	return lineage, nil
-}
-
-func insertCommunityRecord(ctx context.Context, tx *gorm.DB, input CommunitySnapshotPublishInput, community CommunityPublishRecord) error {
-	if err := tx.WithContext(ctx).Exec(`
-		INSERT INTO community_records (
-			team_id, community_id, run_id, ordinal, status, summary, summary_version,
-			logical_community_id, member_count, source_count, top_entities, top_predicates, source_fingerprint,
-			summary_input_hash, summary_provider_model, summary_prompt_hash, summary_response_hash, summary_generated_at
-		) VALUES (
-			?::uuid, ?::uuid, ?::uuid, ?, 'current', ?, ?, ?::uuid, ?, ?, ?::text[], ?::text[], ?, ?, ?, ?, ?, now()
-		)
-	`, input.TeamID, community.CommunityID, input.RunID, community.Ordinal,
-		community.Summary, community.SummaryVersion, normalizeCommunityLogicalID(community), community.MemberCount,
-		community.SourceCount, pq.Array(community.TopEntities),
-		pq.Array(community.TopPredicates), community.SourceFingerprint, community.SummaryInputHash,
-		community.SummaryProviderModel, community.SummaryPromptHash, community.SummaryResponseHash).Error; err != nil {
-		return err
-	}
-	for _, membership := range community.Memberships {
-		if err := tx.WithContext(ctx).Exec(`
-			INSERT INTO community_memberships (
-				team_id, community_id, entity_id, rank, membership_score, source_count
-			) VALUES (
-				?::uuid, ?::uuid, ?::uuid, ?, ?, ?
-			)
-		`, input.TeamID, community.CommunityID, membership.EntityID,
-			membership.Rank, membership.MembershipScore, membership.SourceCount).Error; err != nil {
-			return err
-		}
-	}
-	for _, source := range community.Sources {
-		if err := tx.WithContext(ctx).Exec(`
-			INSERT INTO community_sources (
-				team_id, community_id, relationship_id, owner_profile_id,
-				relationship_version, source_rank, semantic_group_key, source_state_hash
-			) VALUES (
-				?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?
-			)
-		`, input.TeamID, community.CommunityID, source.RelationshipID,
-			source.OwnerProfileID, source.RelationshipVersion, source.SourceRank,
-			source.SemanticGroupKey, source.SourceStateHash).Error; err != nil {
-			return err
-		}
-	}
-	return nil
 }

@@ -23,6 +23,8 @@ func (r *LedgerRepositoryImpl) StageConflictDerivedEvidence(
 	content := "Overdue conflict review retracted prior evidence. This deletion-only derivation cannot establish a semantic relationship."
 	requestHash := sha256Hex(strings.Join([]string{
 		target.ConflictID,
+		target.SpaceID,
+		fmt.Sprint(target.SpaceGeneration),
 		target.TargetFragmentID,
 		target.SelectedPositionID,
 		target.SourceGroupKey,
@@ -30,11 +32,13 @@ func (r *LedgerRepositoryImpl) StageConflictDerivedEvidence(
 		content,
 	}, "\x00"))
 	ingest, err := r.CreateIngest(ctx, CreateIngestInput{
-		TeamID:         target.TeamID,
-		OwnerProfileID: target.SystemProfileID,
-		IdempotencyKey: "conflict-derived:" + target.ConflictID + ":" + target.TargetFragmentID,
-		RequestHash:    requestHash,
-		SourceSummary:  conflictResolutionDeletionOnlySourceSummary,
+		TeamID:          target.TeamID,
+		OwnerProfileID:  target.SystemProfileID,
+		SpaceID:         target.SpaceID,
+		SpaceGeneration: target.SpaceGeneration,
+		IdempotencyKey:  "conflict-derived:" + target.ConflictID + ":" + target.TargetFragmentID,
+		RequestHash:     requestHash,
+		SourceSummary:   conflictResolutionDeletionOnlySourceSummary,
 		Metadata: map[string]any{
 			"contract_version":                   domain.ContractVersion,
 			"conflict_id":                        target.ConflictID,
@@ -82,15 +86,16 @@ func (r *LedgerRepositoryImpl) StageConflictDerivedEvidence(
 		var existingReplacement string
 		err := tx.WithContext(ctx).Raw(`
 			INSERT INTO relationship_conflict_evidence_derivations (
-			    team_id, conflict_id, target_fragment_id, target_owner_profile_id,
+			    team_id, space_id, space_generation, conflict_id, target_fragment_id, target_owner_profile_id,
 			    selected_position_id, replacement_fragment_id, system_profile_id
-		) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+			) VALUES (
+			    ?::uuid, ?::uuid, ?,
+			    ?::uuid, ?::uuid, ?::uuid,
 			    ?::uuid, ?::uuid, ?::uuid
 		)
 			ON CONFLICT (team_id, conflict_id, target_fragment_id) DO NOTHING
 			RETURNING replacement_fragment_id::text
-		`, target.TeamID, target.ConflictID, target.TargetFragmentID, target.TargetOwnerProfileID,
+		`, target.TeamID, target.SpaceID, target.SpaceGeneration, target.ConflictID, target.TargetFragmentID, target.TargetOwnerProfileID,
 			target.SelectedPositionID, result.ReplacementFragment, target.SystemProfileID).Row().Scan(&existingReplacement)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -127,9 +132,11 @@ func (r *LedgerRepositoryImpl) StageConflictDerivedEvidence(
 			  AND system_profile_id = ?::uuid
 			  AND source_group_key = ?
 			  AND origin_evidence_index = ?
+			  AND space_id = ?::uuid
+			  AND space_generation = ?
 		`, target.TeamID, target.TaskID, target.ConflictID, target.TargetFragmentID,
 			target.TargetOwnerProfileID, target.SelectedPositionID, target.SystemProfileID,
-			target.SourceGroupKey, target.EvidenceIndex)
+			target.SourceGroupKey, target.EvidenceIndex, target.SpaceID, target.SpaceGeneration)
 		if updateTask.Error != nil {
 			return updateTask.Error
 		}
@@ -181,8 +188,10 @@ func (r *LedgerRepositoryImpl) RecordConflictDerivedEvidenceFailure(
 			    updated_at = now()
 			WHERE team_id = ?::uuid
 			  AND derived_evidence_task_id = ?::uuid
+			  AND space_id = ?::uuid
+			  AND space_generation = ?
 			  AND status <> 'completed'
-		`, failureClass, target.TeamID, target.TaskID)
+		`, failureClass, target.TeamID, target.TaskID, target.SpaceID, target.SpaceGeneration)
 		if updateTask.Error != nil {
 			return updateTask.Error
 		}
@@ -219,12 +228,17 @@ func (r *LedgerRepositoryImpl) ClaimConflictDerivedEvidenceTasks(
 		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH selected AS (
-				SELECT derived_evidence_task_id
-				FROM relationship_conflict_derived_evidence_tasks
-				WHERE team_id = ?::uuid
-				  AND status IN ('pending', 'processing')
-				  AND (status = 'pending' OR lease_until IS NULL OR lease_until < clock_timestamp())
-				ORDER BY created_at, derived_evidence_task_id
+				SELECT task.derived_evidence_task_id
+				FROM relationship_conflict_derived_evidence_tasks AS task
+				JOIN memory_spaces AS space
+				  ON space.team_id = task.team_id
+				 AND space.id = task.space_id
+				 AND space.generation = task.space_generation
+				 AND space.lifecycle_state = 'active'
+				WHERE task.team_id = ?::uuid
+				  AND task.status IN ('pending', 'processing')
+				  AND (task.status = 'pending' OR task.lease_until IS NULL OR task.lease_until < clock_timestamp())
+				ORDER BY task.created_at, task.derived_evidence_task_id
 				FOR UPDATE SKIP LOCKED
 				LIMIT ?
 			), claimed AS (
@@ -239,6 +253,8 @@ func (r *LedgerRepositoryImpl) ClaimConflictDerivedEvidenceTasks(
 				WHERE task.team_id = ?::uuid
 				  AND task.derived_evidence_task_id = selected.derived_evidence_task_id
 				RETURNING task.derived_evidence_task_id::text,
+				          task.space_id::text,
+				          task.space_generation,
 				          task.conflict_id::text,
 				          task.system_profile_id::text,
 				          task.target_fragment_id::text,
@@ -258,6 +274,8 @@ func (r *LedgerRepositoryImpl) ClaimConflictDerivedEvidenceTasks(
 			target := ConflictDerivedEvidenceTarget{TeamID: input.TeamID}
 			if err := rows.Scan(
 				&target.TaskID,
+				&target.SpaceID,
+				&target.SpaceGeneration,
 				&target.ConflictID,
 				&target.SystemProfileID,
 				&target.TargetFragmentID,

@@ -252,6 +252,56 @@ func TestAppConfigServiceOperationLogSettingsDefaultsAndUpdate(t *testing.T) {
 	assert.Equal(t, 45, runtime.RetentionDays)
 }
 
+func TestAppConfigServicePrivateMemorySettingsDefaultsAndUpdate(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	repo := newAppConfigRepoStub(now, map[string]string{
+		domain.AppConfigUpdateTimeKey: now.Format(time.RFC3339Nano),
+	})
+	svc := NewAppConfigService(repo, nil)
+	svc.now = func() time.Time { return now }
+
+	settings, err := svc.GetPrivateMemorySettings(ctx)
+	require.NoError(t, err)
+	require.Len(t, settings.Items, 1)
+	assert.Equal(t, "0", settings.Items[0].EffectiveValue)
+	assert.Equal(t, "", settings.Items[0].Value)
+
+	runtime, err := svc.PrivateMemoryRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, runtime.RetentionDays)
+
+	now = now.Add(time.Minute)
+	updated, err := svc.UpdatePrivateMemorySettings(ctx, map[string]string{
+		domain.AppConfigPrivateMemoryRetentionDays: "90",
+	}, "control", "127.0.0.1", "corr")
+	require.NoError(t, err)
+	assert.Equal(t, "90", updated.Items[0].Value)
+	assert.Equal(t, "90", updated.Items[0].EffectiveValue)
+	assert.Equal(t, now.Format(time.RFC3339Nano), updated.UpdateTime)
+
+	runtime, err = svc.PrivateMemoryRuntimeConfig(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 90, runtime.RetentionDays)
+
+	for _, values := range []map[string]string{
+		{domain.AppConfigUpdateTimeKey: "read-only"},
+		{"UNKNOWN_PRIVATE_MEMORY_KEY": "1"},
+		{domain.AppConfigPrivateMemoryRetentionDays: "not-a-number"},
+		{domain.AppConfigPrivateMemoryRetentionDays: "-1"},
+		{domain.AppConfigPrivateMemoryRetentionDays: "36501"},
+	} {
+		_, err := svc.UpdatePrivateMemorySettings(ctx, values, "control", "127.0.0.1", "corr")
+		require.ErrorIs(t, err, ErrInvalidAppConfig)
+	}
+
+	repo.updateErr = errors.New("private-memory update failed")
+	_, err = svc.UpdatePrivateMemorySettings(ctx, map[string]string{
+		domain.AppConfigPrivateMemoryRetentionDays: "91",
+	}, "control", "127.0.0.1", "corr")
+	require.ErrorContains(t, err, "private-memory update failed")
+}
+
 func TestAppConfigServiceRecallFeedbackSettingsDefaultsAndUpdate(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
@@ -771,6 +821,9 @@ func newAppConfigRepoStub(now time.Time, values map[string]string) *appConfigRep
 	for _, key := range editableOperationLogConfigKeys() {
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
+	for _, key := range editablePrivateMemoryConfigKeys() {
+		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
+	}
 	for _, key := range editableRecallFeedbackConfigKeys() {
 		entries[key] = domain.AppConfigEntry{Key: key, Value: "", UpdatedAt: now}
 	}
@@ -890,61 +943,4 @@ func telemetryPricingConfigItemForTest(settings *domain.TelemetryPricingConfigSe
 		}
 	}
 	return domain.TelemetryPricingConfigItem{}
-}
-
-type appConfigAuditStub struct {
-	entries []AuditLogEntry
-}
-
-func (a *appConfigAuditStub) Append(_ context.Context, entry AuditLogEntry) error {
-	a.entries = append(a.entries, entry)
-	return nil
-}
-
-func (a *appConfigAuditStub) List(context.Context, string, int, int) ([]AuditLogEntry, int, error) {
-	return nil, 0, nil
-}
-
-func (a *appConfigAuditStub) TeamCreated(context.Context, string, map[string]interface{}, *string, string, string, string) error {
-	return nil
-}
-
-func (a *appConfigAuditStub) TeamUpdated(context.Context, string, map[string]interface{}, map[string]interface{}, *string, string, string, string) error {
-	return nil
-}
-
-func (a *appConfigAuditStub) TeamDeleteBlocked(context.Context, string, map[string]interface{}, *string, string, string, string, string) error {
-	return nil
-}
-
-func (a *appConfigAuditStub) TeamDeleted(context.Context, string, map[string]interface{}, *string, string, string, string) error {
-	return nil
-}
-
-func (a *appConfigAuditStub) CredentialCreated(context.Context, *string, string, map[string]interface{}, *string, string, string, string) error {
-	return nil
-}
-
-func (a *appConfigAuditStub) CredentialRevoked(context.Context, *string, string, map[string]interface{}, *string, string, string, string) error {
-	return nil
-}
-
-func (a *appConfigAuditStub) AuthFailure(context.Context, *string, string, string, map[string]interface{}, string, string) error {
-	return nil
-}
-
-func (a *appConfigAuditStub) CrossTeamDenied(context.Context, string, string, string, map[string]interface{}, string, string) error {
-	return nil
-}
-
-func (a *appConfigAuditStub) RateLimited(context.Context, *string, string, map[string]interface{}, string, string) error {
-	return nil
-}
-
-func (a *appConfigAuditStub) SystemQuery(context.Context, string, map[string]interface{}, *string, string, string, string) error {
-	return nil
-}
-
-func (a *appConfigAuditStub) InvariantViolation(context.Context, string, string, string, map[string]interface{}, string, string) error {
-	return nil
 }

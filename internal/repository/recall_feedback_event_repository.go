@@ -43,25 +43,29 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordSnapshot(ctx context.Context, 
 		return err
 	}
 	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO recall_feedback_events (
-				recall_id, created_at, updated_at, team_id, profile_id, key_id,
-				auth_method, tool_name, query, tool_args, result_refs,
+		result := tx.Exec(`
+				INSERT INTO recall_feedback_events (
+					recall_id, created_at, updated_at, team_id, profile_id, key_id,
+					space_id, space_generation,
+					auth_method, tool_name, query, tool_args, result_refs,
 				result_count, snapshot_state, contract_version, ranking_profile_version,
 				embedding_contract_version, search_index_profile_version, search_state,
 				degradation, snapshot_metadata
 			) VALUES (
 				$1, $2, $3, $4, $5, $6,
-				$7, $8, $9, $10::jsonb, $11::jsonb,
-				$12, $13, $14, $15,
-				$16, $17, $18,
-				$19::jsonb, $20::jsonb
+					$7, $8,
+					$9, $10, $11, $12::jsonb, $13::jsonb,
+					$14, $15, $16, $17,
+					$18, $19, $20,
+					$21::jsonb, $22::jsonb
 			)
 			ON CONFLICT (recall_id) DO UPDATE SET
 				updated_at = EXCLUDED.updated_at,
 				team_id = COALESCE(recall_feedback_events.team_id, EXCLUDED.team_id),
-				profile_id = COALESCE(recall_feedback_events.profile_id, EXCLUDED.profile_id),
-				key_id = COALESCE(recall_feedback_events.key_id, EXCLUDED.key_id),
+					profile_id = COALESCE(recall_feedback_events.profile_id, EXCLUDED.profile_id),
+					key_id = COALESCE(recall_feedback_events.key_id, EXCLUDED.key_id),
+					space_id = COALESCE(recall_feedback_events.space_id, EXCLUDED.space_id),
+					space_generation = COALESCE(recall_feedback_events.space_generation, EXCLUDED.space_generation),
 				auth_method = CASE
 					WHEN recall_feedback_events.auth_method = '' THEN EXCLUDED.auth_method
 					ELSE recall_feedback_events.auth_method
@@ -78,14 +82,19 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordSnapshot(ctx context.Context, 
 				search_index_profile_version = EXCLUDED.search_index_profile_version,
 				search_state = EXCLUDED.search_state,
 				degradation = EXCLUDED.degradation,
-				snapshot_metadata = EXCLUDED.snapshot_metadata
-		`,
+					snapshot_metadata = EXCLUDED.snapshot_metadata
+				WHERE (recall_feedback_events.team_id IS NULL OR recall_feedback_events.team_id = EXCLUDED.team_id)
+				  AND (recall_feedback_events.space_id IS NULL OR recall_feedback_events.space_id = EXCLUDED.space_id)
+				  AND (recall_feedback_events.space_generation IS NULL OR recall_feedback_events.space_generation = EXCLUDED.space_generation)
+			`,
 			event.RecallID,
 			event.CreatedAt.UTC(),
 			event.UpdatedAt.UTC(),
 			uuidPtrValue(event.TeamID),
 			uuidPtrValue(event.ProfileID),
 			uuidPtrValue(event.KeyID),
+			uuidPtrValue(event.SpaceID),
+			event.SpaceGeneration,
 			event.AuthMethod,
 			event.ToolName,
 			event.Query,
@@ -100,7 +109,14 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordSnapshot(ctx context.Context, 
 			event.SearchState,
 			string(degradation),
 			string(snapshotMetadata),
-		).Error
+		)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrRecallFeedbackEventNotFound
+		}
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("failed to record recall feedback snapshot: %w", err)
@@ -138,9 +154,12 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordFeedback(ctx context.Context, 
 				missing_context = $9,
 				irrelevant = $10,
 				feedback_comment = $11,
-				irrelevant_result_refs = $12::jsonb,
-				dream_feedback = $13::jsonb
-			WHERE recall_id = $1
+					irrelevant_result_refs = $12::jsonb,
+					dream_feedback = $13::jsonb
+				WHERE recall_id = $1
+				  AND team_id = $14
+				  AND space_id = $15
+				  AND space_generation = $16
 		`,
 			event.RecallID,
 			event.UpdatedAt.UTC(),
@@ -155,6 +174,9 @@ func (r *RecallFeedbackEventRepositoryImpl) RecordFeedback(ctx context.Context, 
 			event.FeedbackComment,
 			string(irrelevantRefs),
 			string(dreamFeedback),
+			uuidPtrValue(event.TeamID),
+			uuidPtrValue(event.SpaceID),
+			event.SpaceGeneration,
 		)
 		if result.Error != nil {
 			return result.Error
@@ -359,8 +381,8 @@ func recallFeedbackEventWhere(filter domain.RecallFeedbackEventFilter) (string, 
 
 func recallFeedbackEventColumns() string {
 	return `
-		recall_id, created_at, updated_at, feedback_at,
-		team_id::text, profile_id::text, key_id::text,
+			recall_id, created_at, updated_at, feedback_at,
+			team_id::text, profile_id::text, key_id::text, space_id::text, space_generation,
 		auth_method, tool_name, query, tool_args, result_refs,
 		result_count, snapshot_state, contract_version, ranking_profile_version,
 		embedding_contract_version, search_index_profile_version, search_state,
@@ -377,6 +399,8 @@ func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error)
 		teamIDRaw           sql.NullString
 		profileIDRaw        sql.NullString
 		keyIDRaw            sql.NullString
+		spaceIDRaw          sql.NullString
+		spaceGenerationRaw  sql.NullInt64
 		toolArgsRaw         []byte
 		resultRefsRaw       []byte
 		degradationRaw      []byte
@@ -396,6 +420,8 @@ func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error)
 		&teamIDRaw,
 		&profileIDRaw,
 		&keyIDRaw,
+		&spaceIDRaw,
+		&spaceGenerationRaw,
 		&event.AuthMethod,
 		&event.ToolName,
 		&event.Query,
@@ -427,6 +453,10 @@ func scanRecallFeedbackEvent(rows *sql.Rows) (domain.RecallFeedbackEvent, error)
 	event.TeamID = parseNullableUUID(teamIDRaw)
 	event.ProfileID = parseNullableUUID(profileIDRaw)
 	event.KeyID = parseNullableUUID(keyIDRaw)
+	event.SpaceID = parseNullableUUID(spaceIDRaw)
+	if spaceGenerationRaw.Valid {
+		event.SpaceGeneration = spaceGenerationRaw.Int64
+	}
 	event.Used = nullableBoolPtr(usedRaw)
 	event.AnswerSupported = nullableBoolPtr(answerSupportedRaw)
 	event.MissingContext = nullableBoolPtr(missingContextRaw)

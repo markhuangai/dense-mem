@@ -37,6 +37,34 @@ func TestLedgerCreateIngestValidationRequiresRequestHashWithIdempotencyKey(t *te
 	assert.Contains(t, err.Error(), "request_hash is required")
 }
 
+func TestLedgerCreateIngestValidationRequiresCompleteSpaceFence(t *testing.T) {
+	t.Run("generation without space", func(t *testing.T) {
+		input := validCreateIngestInput()
+		input.SpaceGeneration = 1
+
+		err := validateCreateIngestInput(normalizeCreateIngestInput(input))
+
+		require.ErrorContains(t, err, "space_id is required")
+	})
+
+	t.Run("space without generation", func(t *testing.T) {
+		input := validCreateIngestInput()
+		input.SpaceID = uuid.NewString()
+
+		err := validateCreateIngestInput(normalizeCreateIngestInput(input))
+
+		require.ErrorContains(t, err, "space_generation is required")
+	})
+
+	t.Run("complete fence", func(t *testing.T) {
+		input := validCreateIngestInput()
+		input.SpaceID = uuid.NewString()
+		input.SpaceGeneration = 4
+
+		require.NoError(t, validateCreateIngestInput(normalizeCreateIngestInput(input)))
+	})
+}
+
 func TestLedgerCreateIngestValidationRejectsTooManyEvidenceItems(t *testing.T) {
 	input := validCreateIngestInput()
 	input.Evidence = make([]EvidenceInput, maxEvidenceItems+1)

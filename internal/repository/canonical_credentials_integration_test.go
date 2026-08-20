@@ -374,7 +374,7 @@ func TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams(t *testing
 
 	rows, err = repo.RotateForTeam(ctx, teamA, keyA, "shared-actor-hash-a-restored", "dm_"+keyA.String()[:20], "restor", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), rows)
+	require.Equal(t, int64(0), rows)
 	rows, err = repo.DeleteForTeam(ctx, teamA, keyA)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)

@@ -16,19 +16,37 @@ import (
 	"gorm.io/gorm"
 )
 
-func insertSecuritySignals(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, eventID string, signals []SecuritySignalInput) error {
+func insertEvidenceQuarantine(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string, fragmentID string, reason string) error {
+	return tx.WithContext(ctx).Exec(`
+		INSERT INTO evidence_quarantines (
+		    team_id, fragment_id, ingest_id, owner_profile_id, reason,
+		    space_id, space_generation
+		)
+		SELECT ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?,
+		       fragment.space_id, fragment.space_generation
+		FROM evidence_fragments AS fragment
+		WHERE fragment.team_id = ?::uuid
+		  AND fragment.fragment_id = ?::uuid
+		  AND fragment.ingest_id = ?::uuid
+		  AND fragment.owner_profile_id = ?::uuid
+		ON CONFLICT (team_id, fragment_id) DO NOTHING
+	`, input.TeamID, fragmentID, ingestID, input.OwnerProfileID, strings.TrimSpace(reason),
+		input.TeamID, fragmentID, ingestID, input.OwnerProfileID).Error
+}
+
+func insertSecuritySignals(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, eventID, spaceID string, spaceGeneration int64, signals []SecuritySignalInput) error {
 	if len(signals) == 0 {
 		return nil
 	}
 
 	values := make([]string, 0, len(signals))
-	args := make([]any, 0, len(signals)*10)
+	args := make([]any, 0, len(signals)*12)
 	for i, signal := range signals {
 		metadata, err := marshalJSON(signal.Metadata)
 		if err != nil {
 			return err
 		}
-		values = append(values, "(?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?, ?, ?, ?::jsonb)")
+		values = append(values, "(?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?, ?, ?, ?::jsonb, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0))")
 		args = append(args,
 			teamID,
 			eventID,
@@ -40,13 +58,16 @@ func insertSecuritySignals(ctx context.Context, tx *gorm.DB, teamID, ownerProfil
 			signal.SpanEnd,
 			signal.Quote,
 			string(metadata),
+			spaceID,
+			spaceGeneration,
 		)
 	}
 
 	return tx.WithContext(ctx).Exec(`
 		INSERT INTO evidence_security_signals (
 		    team_id, security_event_id, signal_index, owner_profile_id,
-		    kind, severity, span_start, span_end, quote, metadata
+		    kind, severity, span_start, span_end, quote, metadata,
+		    space_id, space_generation
 		) VALUES `+strings.Join(values, ", "), args...).Error
 }
 
@@ -248,13 +269,19 @@ func insertSecurityEvent(ctx context.Context, tx *gorm.DB, input SecurityEventIn
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_security_events (
 		    team_id, fragment_id, ingest_id, owner_profile_id, event_kind, decision,
-		    reason, metadata
-		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb
+		    reason, metadata, space_id, space_generation
 		)
-		RETURNING security_event_id::text
+		SELECT ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb,
+		       fragment.space_id, fragment.space_generation
+		FROM evidence_fragments AS fragment
+		WHERE fragment.team_id = ?::uuid
+		  AND fragment.fragment_id = ?::uuid
+		  AND fragment.ingest_id = ?::uuid
+		  AND fragment.owner_profile_id = ?::uuid
+		RETURNING security_event_id::text, COALESCE(space_id::text, ''), COALESCE(space_generation, 0)
 	`, input.TeamID, input.FragmentID, input.IngestID, input.OwnerProfileID,
-		input.EventKind, input.Decision, input.Reason, string(metadata)).Rows()
+		input.EventKind, input.Decision, input.Reason, string(metadata),
+		input.TeamID, input.FragmentID, input.IngestID, input.OwnerProfileID).Rows()
 	if err != nil {
 		return "", err
 	}
@@ -264,7 +291,9 @@ func insertSecurityEvent(ctx context.Context, tx *gorm.DB, input SecurityEventIn
 		return "", sql.ErrNoRows
 	}
 	var eventID string
-	if err := rows.Scan(&eventID); err != nil {
+	var spaceID string
+	var spaceGeneration int64
+	if err := rows.Scan(&eventID, &spaceID, &spaceGeneration); err != nil {
 		_ = rows.Close()
 		return "", err
 	}
@@ -275,7 +304,7 @@ func insertSecurityEvent(ctx context.Context, tx *gorm.DB, input SecurityEventIn
 	if err := rows.Close(); err != nil {
 		return "", err
 	}
-	if err := insertSecuritySignals(ctx, tx, input.TeamID, input.OwnerProfileID, eventID, input.Signals); err != nil {
+	if err := insertSecuritySignals(ctx, tx, input.TeamID, input.OwnerProfileID, eventID, spaceID, spaceGeneration, input.Signals); err != nil {
 		return "", err
 	}
 	return eventID, nil

@@ -95,15 +95,19 @@ func supersedeOneCardinalityRelationships(
 }
 
 func validateSupportOwnership(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput) error {
+	spaceID, err := loadSemanticInputSpaceID(ctx, tx, input)
+	if err != nil {
+		return err
+	}
 	for _, support := range relationshipEvidenceSupports(input.Support, input.Supports) {
-		if err := validateSingleSupportOwnership(ctx, tx, input, support); err != nil {
+		if err := validateSingleSupportOwnership(ctx, tx, input, support, spaceID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateSingleSupportOwnership(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput, support EvidenceSupportInput) error {
+func validateSingleSupportOwnership(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput, support EvidenceSupportInput, spaceID string) error {
 	if (support.SourceID == "") != (support.SourceRevisionID == "") {
 		return errors.New("support source and source revision must be provided together")
 	}
@@ -115,8 +119,9 @@ func validateSingleSupportOwnership(ctx context.Context, tx *gorm.DB, input Appl
 			  AND fragment.ingest_id = ?::uuid
 			  AND fragment.fragment_id = ?::uuid
 			  AND fragment.owner_profile_id = ?::uuid
+			  AND fragment.space_id = ?::uuid
 	`
-	args := []any{input.TeamID, input.IngestID, support.FragmentID, input.OwnerProfileID}
+	args := []any{input.TeamID, input.IngestID, support.FragmentID, input.OwnerProfileID, spaceID}
 	if support.SourceID != "" {
 		query += `
 			  AND fragment.source_id = ?::uuid
@@ -187,6 +192,27 @@ func requireRelationshipVersion(
 		return errors.New("relationship version does not match current relationship")
 	}
 	return nil
+}
+
+func loadRelationshipSpaceID(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	relationshipID string,
+	version int,
+) (string, error) {
+	var spaceID string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT space_id::text
+		FROM relationship_records
+		WHERE team_id = ?::uuid
+		  AND relationship_id = ?::uuid
+		  AND version = ?
+	`, teamID, relationshipID, version).Row().Scan(&spaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errors.New("relationship version does not have a memory space")
+	}
+	return spaceID, err
 }
 
 func requireVerificationForRelationship(ctx context.Context, tx *gorm.DB, teamID, verificationEventID, ownerProfileID, relationshipID string) error {
@@ -263,10 +289,14 @@ func insertRelationshipSupport(
 			INSERT INTO relationship_evidence_supports (
 			    team_id, relationship_id, observation_id, verification_event_id,
 			    fragment_id, owner_profile_id, source_group_key, source_id,
-			    source_revision_id, span_start, span_end, quote, authority, metadata
+			    source_revision_id, span_start, span_end, quote, authority, metadata, space_id
 			) VALUES (
 			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-			    ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?::jsonb
+			    ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?::jsonb,
+			(SELECT relationship.space_id
+			 FROM relationship_records AS relationship
+			 WHERE relationship.team_id = ?::uuid
+			   AND relationship.relationship_id = ?::uuid)
 			)
 			ON CONFLICT ON CONSTRAINT relationship_supports_identity_unique DO NOTHING
 			RETURNING support_id::text, true AS created
@@ -286,6 +316,7 @@ func insertRelationshipSupport(
 		input.Support.FragmentID, input.OwnerProfileID, input.Support.SourceGroupKey,
 		input.Support.SourceID, input.Support.SourceRevisionID, input.Support.SpanStart,
 		input.Support.SpanEnd, input.Support.Quote, input.Support.Authority, string(metadata),
+		input.TeamID, relationshipID,
 		input.TeamID, relationshipID, input.OwnerProfileID, input.Support.FragmentID, input.Support.SpanStart,
 		input.Support.SpanEnd).Rows()
 	if err != nil {
@@ -393,13 +424,18 @@ func insertSupportDecisionEvent(ctx context.Context, tx *gorm.DB, input supportD
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO relationship_support_decision_events (
 		    team_id, support_id, relationship_id, owner_profile_id, actor_profile_id,
-		    decision, reason, idempotency_key, metadata
+		    decision, reason, idempotency_key, metadata, space_id
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb,
+			(SELECT relationship.space_id
+			 FROM relationship_records AS relationship
+			 WHERE relationship.team_id = ?::uuid
+			   AND relationship.relationship_id = ?::uuid)
 		)
 		RETURNING support_decision_id::text
 	`, input.TeamID, input.SupportID, input.RelationshipID, input.OwnerProfileID, supportDecisionActorProfileID(input),
-		input.Decision, input.Reason, input.IdempotencyKey, string(metadata)).Rows()
+		input.Decision, input.Reason, input.IdempotencyKey, string(metadata),
+		input.TeamID, input.RelationshipID).Rows()
 	if err != nil {
 		return "", err
 	}

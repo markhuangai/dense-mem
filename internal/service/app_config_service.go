@@ -41,6 +41,7 @@ type AppConfigService interface {
 	GetOperationLogSettings(ctx context.Context) (*domain.OperationLogConfigSettings, error)
 	UpdateOperationLogSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.OperationLogConfigSettings, error)
 	OperationLogRuntimeConfig(ctx context.Context) (domain.OperationLogRuntimeConfig, error)
+	PrivateMemoryConfigService
 	GetRecallFeedbackSettings(ctx context.Context) (*domain.RecallFeedbackConfigSettings, error)
 	UpdateRecallFeedbackSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.RecallFeedbackConfigSettings, error)
 	RecallFeedbackRuntimeConfig(ctx context.Context) (domain.RecallFeedbackRuntimeConfig, error)
@@ -68,6 +69,7 @@ type appConfigCache struct {
 	dreaming   domain.DreamingConfigSettings
 	community  domain.CommunityDetectionConfigSettings
 	opLogs     domain.OperationLogConfigSettings
+	private    domain.PrivateMemoryConfigSettings
 	recall     domain.RecallFeedbackConfigSettings
 	telemetry  domain.TelemetryPricingConfigSettings
 	checkedAt  time.Time
@@ -374,6 +376,10 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 	if err != nil {
 		return nil, err
 	}
+	privateMemory, err := privateMemoryRuntimeConfigFromEntries(entries)
+	if err != nil {
+		return nil, err
+	}
 	recall, err := recallFeedbackRuntimeConfigFromEntries(entries)
 	if err != nil {
 		return nil, err
@@ -391,6 +397,7 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 		dreaming:   dreaming,
 		community:  community,
 		opLogs:     opLogs,
+		private:    privateMemory,
 		recall:     recall,
 		telemetry:  telemetry,
 		checkedAt:  checkedAt,
@@ -953,6 +960,7 @@ func cloneAppConfigCache(cache *appConfigCache) *appConfigCache {
 	copy.dreaming.Items = append([]domain.DreamingConfigItem(nil), cache.dreaming.Items...)
 	copy.community.Items = append([]domain.CommunityDetectionConfigItem(nil), cache.community.Items...)
 	copy.opLogs.Items = append([]domain.OperationLogConfigItem(nil), cache.opLogs.Items...)
+	copy.private.Items = append([]domain.PrivateMemoryConfigItem(nil), cache.private.Items...)
 	copy.recall.Items = append([]domain.RecallFeedbackConfigItem(nil), cache.recall.Items...)
 	copy.telemetry.Items = append([]domain.TelemetryPricingConfigItem(nil), cache.telemetry.Items...)
 	copy.telemetry.Effective = cloneTelemetryPricingRuntimeConfig(cache.telemetry.Effective)

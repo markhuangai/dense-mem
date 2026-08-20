@@ -68,6 +68,8 @@ func (r *SemanticRepositoryImpl) ListAvailableDreamTargets(ctx context.Context, 
 				SELECT 1
 				FROM relationship_records relationship
 				WHERE relationship.team_id = ?::uuid
+				  AND relationship.space_id = dense_mem_team_shared_space(relationship.team_id)
+				  AND relationship.space_generation = dense_mem_team_shared_generation(relationship.team_id)
 				  AND relationship.identity_alias_of_relationship_id IS NULL
 				  AND relationship.subject_entity_id = target.subject_entity_id
 				  AND lower(btrim(relationship.predicate_key)) = target.predicate_key
@@ -78,6 +80,8 @@ func (r *SemanticRepositoryImpl) ListAvailableDreamTargets(ctx context.Context, 
 				SELECT 1
 				FROM hypotheses hypothesis
 				WHERE hypothesis.team_id = ?::uuid
+				  AND hypothesis.space_id = dense_mem_team_shared_space(hypothesis.team_id)
+				  AND hypothesis.space_generation = dense_mem_team_shared_generation(hypothesis.team_id)
 				  AND hypothesis.canonical_hypothesis_id IS NULL
 				  AND (
 				    hypothesis.target_identity = target.target_identity

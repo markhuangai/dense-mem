@@ -45,8 +45,8 @@ if (scenario === "credential_memory_binding") {
   assert(denied.status >= 401 && denied.status < 500, "revoked credential remained usable");
 } else if (scenario === "space_aware_recall") {
   const sharedNeedle = "memory space e2e mentions team shared evidence sentinel";
-  const submission = await mcpSuccess("remember", rememberInput(sharedNeedle, "memory space e2e", "mentions", "sentinel"), apiKey);
-  await waitForCompletedSubmission(submission);
+  const sharedSubmission = await mcpSuccess("remember", rememberInput(sharedNeedle, "memory space e2e", "mentions", "sentinel"), apiKey);
+  await waitForCompletedPlacement(sharedSubmission.submission_id, apiKey);
   const recall = await waitForRecall(sharedNeedle, sharedNeedle, apiKey);
   assert((recall.results ?? []).some((item) => item.context?.includes(sharedNeedle)), "team-shared recall positive control did not return the seeded evidence");
   for (const item of recall.results ?? []) assert(item.space_kind === "team_shared", `team-shared result lacked its space label: ${JSON.stringify(item)}`);
@@ -60,8 +60,8 @@ if (scenario === "credential_memory_binding") {
   const other = await createCredential(otherTeam.id, "isolated key", { scopes: ["read", "write"], memory_binding: "credential_private" });
   created.push(other);
   const isolatedNeedle = "isolated team mentions sentinel";
-  const submission = await mcpSuccess("remember", rememberInput(isolatedNeedle, "isolated team", "mentions", "sentinel"), other.apiKey);
-  await waitForCompletedSubmission(submission, other.apiKey);
+  const isolatedSubmission = await mcpSuccess("remember", rememberInput(isolatedNeedle, "isolated team", "mentions", "sentinel"), other.apiKey);
+  await waitForCompletedPlacement(isolatedSubmission.submission_id, other.apiKey);
   await waitForRecall("isolated team sentinel", isolatedNeedle, other.apiKey);
   const recall = await mcpSuccess("recall_memory", { query: "isolated team sentinel", limit: 20 }, apiKey);
   assert(!(recall.results ?? []).some((item) => item.context?.includes(isolatedNeedle)), "cross-team evidence leaked into recall");
@@ -142,11 +142,9 @@ async function waitForRecall(query, needle, key, attempts = 30, delayMs = 1000) 
   throw new Error(`recall never returned seeded evidence: ${needle}`);
 }
 
-async function waitForCompletedSubmission(receipt, key = apiKey) {
-  const submissionID = receipt?.submission_id;
-  assert(typeof submissionID === "string" && submissionID, `remember omitted submission_id: ${JSON.stringify(receipt)}`);
-  const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2000);
-  let lastState = receipt.processing_state ?? "unknown";
+async function waitForCompletedPlacement(submissionID, key = apiKey, attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2000), delayMs = 2000) {
+  assert(typeof submissionID === "string" && submissionID, `remember omitted submission_id: ${JSON.stringify(submissionID)}`);
+  let lastState = "unknown";
   let lastSearchState = "unknown";
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const status = await mcpSuccess("get_submission_status", { submission_id: submissionID }, key);
@@ -156,9 +154,13 @@ async function waitForCompletedSubmission(receipt, key = apiKey) {
     if (["awaiting_review", "rejected", "failed", "quarantined"].includes(lastState) || lastSearchState === "failed") {
       throw new Error(`memory-space submission reached ${lastState}/${lastSearchState}: ${JSON.stringify(status.errors ?? [])}`);
     }
-    if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 2000));
+    if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
   throw new Error(`timed out waiting for memory-space submission ${submissionID} (last ${lastState}/${lastSearchState})`);
+}
+
+async function waitForCompletedSubmission(receipt, key = apiKey) {
+  return waitForCompletedPlacement(receipt?.submission_id, key);
 }
 
 function requiredEnv(name) { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }

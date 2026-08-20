@@ -11,6 +11,7 @@ export class ApiError extends Error {
 export type JsonRequestOptions = {
   method?: string;
   body?: unknown;
+  headers?: Record<string, string>;
   signal?: AbortSignal;
   token?: string;
   credentials?: RequestCredentials;
@@ -24,6 +25,7 @@ export type JsonRequestOptions = {
 export async function requestJson<T>(url: string, options: JsonRequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
   const headers: Record<string, string> = {
+    ...options.headers,
     "Content-Type": "application/json",
   };
 

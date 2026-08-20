@@ -39,15 +39,19 @@ func (r *SemanticRepositoryImpl) RecordCommunitySummaryAttempt(ctx context.Conte
 		return fmt.Errorf("community: marshal summary support quotes: %w", err)
 	}
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		fence, err := loadTeamSharedSpaceFence(ctx, tx, input.TeamID)
+		if err != nil {
+			return err
+		}
 		return tx.WithContext(ctx).Exec(`
 			INSERT INTO community_summary_attempts (
-				team_id, run_id, community_id, attempt, provider_model, prompt_hash,
+				team_id, space_id, space_generation, run_id, community_id, attempt, provider_model, prompt_hash,
 				response_hash, input_hash, admitted_relationship_ids, admitted_evidence_ids,
 				admitted_support_quotes, response_summary, valid, error_code
 			) VALUES (
-				?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?, ?::uuid[], ?::uuid[], ?::jsonb, ?, ?, ?
+				?::uuid, ?::uuid, ?, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?::uuid[], ?::uuid[], ?::jsonb, ?, ?, ?
 			)
-		`, input.TeamID, input.RunID, input.CommunityID, input.Attempt, input.ProviderModel,
+		`, input.TeamID, fence.ID, fence.Generation, input.RunID, input.CommunityID, input.Attempt, input.ProviderModel,
 			input.PromptHash, input.ResponseHash, input.InputHash, pq.Array(input.AdmittedRelationshipIDs),
 			pq.Array(input.AdmittedEvidenceIDs), string(quotes), truncateCommunityError(input.ResponseSummary), input.Valid,
 			truncateCommunityError(input.ErrorCode)).Error

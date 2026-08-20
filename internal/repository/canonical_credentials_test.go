@@ -32,12 +32,12 @@ func TestLookupCanonicalCredentialScansRateLimitBeforeRole(t *testing.T) {
 		"last_used_at", "expires_at", "created_at", "revoked_at", "owner_identity_id",
 		"sso_provider_id", "sso_subject", "sso_email", "sso_group_id", "sso_entitlement_status",
 		"sso_last_entitlement_checked_at", "sso_last_login_at", "memory_binding", "memory_space_id",
-		"team_shared_space_id",
+		"memory_space_generation", "team_shared_space_id", "team_shared_space_generation",
 	}).AddRow(
 		id.String(), actorID.String(), membershipID.String(), ownerID.String(), teamID.String(), "Project",
 		"hash", "dm_test_key", "suffix", "key", "{read,write}", 23, "manager",
 		nil, nil, time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC), nil, "",
-		"", "", "", "", "", nil, nil, "shared_only", sharedSpaceID.String(), sharedSpaceID.String(),
+		"", "", "", "", "", nil, nil, "shared_only", sharedSpaceID.String(), int64(1), sharedSpaceID.String(), int64(1),
 	)
 	mock.ExpectQuery("SELECT").WithArgs("dm_test_key").WillReturnRows(rows)
 
@@ -54,5 +54,7 @@ func TestLookupCanonicalCredentialScansRateLimitBeforeRole(t *testing.T) {
 	require.Equal(t, domain.CredentialBindingSharedOnly, key.MemoryBinding)
 	require.Equal(t, sharedSpaceID, key.MemorySpaceID)
 	require.Equal(t, sharedSpaceID, key.TeamSharedSpaceID)
+	require.EqualValues(t, 1, key.MemorySpaceGeneration)
+	require.EqualValues(t, 1, key.TeamSharedSpaceGeneration)
 	require.NoError(t, mock.ExpectationsWereMet())
 }

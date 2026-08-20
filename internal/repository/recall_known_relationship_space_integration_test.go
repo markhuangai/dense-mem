@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace(t *testing.T) {
@@ -104,8 +105,14 @@ func TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace(t *testin
 			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
 		`, privateSpace.ID, teamID, secondDoc.SearchDocumentID).Error
 	}))
+	actorCtx := requestctx.WithActor(ctx, requestctx.Actor{
+		TeamID: teamID,
+		AllowedSpaces: []domain.MemorySpaceAccess{
+			{ID: privateSpace.ID, Kind: domain.MemorySpaceCredentialPrivate},
+		},
+	})
 
-	recalled, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+	recalled, err := searchRepo.RecallRelationships(actorCtx, RecallRelationshipsInput{
 		TeamID:               teamID.String(),
 		Query:                "unmatchedtoken",
 		QueryEmbedding:       []float32{1, 0, 0},
@@ -119,7 +126,7 @@ func TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace(t *testin
 	assert.Equal(t, second.Relationship.RelationshipID, recalled.Results[0].RelationshipID)
 	assert.Equal(t, string(domain.MemorySpaceCredentialPrivate), recalled.Results[0].SpaceKind)
 
-	sharedRecalled, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+	sharedRecalled, err := searchRepo.RecallRelationships(actorCtx, RecallRelationshipsInput{
 		TeamID:               teamID.String(),
 		Query:                "unmatchedtoken",
 		QueryEmbedding:       []float32{1, 0, 0},

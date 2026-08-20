@@ -44,6 +44,7 @@ type UserPortalDeps struct {
 	SSOService         *service.SSOService
 	PortalSession      service.UserPortalSessionManager
 	AppConfig          service.AppConfigService
+	PrivateMemory      PrivateMemoryServiceInterface
 	Config             config.ConfigProvider
 	CredentialVerifier crypto.CredentialVerifier
 	LastUsedRecorder   httpmw.LastUsedRecorder
@@ -52,23 +53,23 @@ type UserPortalDeps struct {
 }
 
 type userPortalHandler struct {
-	teams       handler.TeamServiceInterface
-	credentials handler.CredentialServiceInterface
-	telemetry   service.TelemetryReader
-	graph       graphview.Service
-	recall      *handler.RecallHandler
-	dreams      *handler.DreamHandler
-	audit       *handler.AuditHandler
-	sso         *service.SSOService
-	portal      service.UserPortalSessionManager
-	appConfig   service.AppConfigService
+	teams         handler.TeamServiceInterface
+	credentials   handler.CredentialServiceInterface
+	telemetry     service.TelemetryReader
+	graph         graphview.Service
+	recall        *handler.RecallHandler
+	dreams        *handler.DreamHandler
+	audit         *handler.AuditHandler
+	sso           *service.SSOService
+	portal        service.UserPortalSessionManager
+	appConfig     service.AppConfigService
+	privateMemory PrivateMemoryServiceInterface
 }
 
 type userPortalSSOCredentialService interface {
 	ListSSOOwnedCredentials(ctx context.Context, teamID, identityID uuid.UUID) ([]*domain.Credential, error)
 	GetSSOOwnedCredentialByID(ctx context.Context, teamID, identityID, credentialID uuid.UUID) (*domain.Credential, error)
 	RotateSSOOwnedCredential(ctx context.Context, teamID, identityID, credentialID uuid.UUID, req service.CreateCredentialRequest, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, string, error)
-	RevokeSSOOwnedCredential(ctx context.Context, teamID, identityID, credentialID uuid.UUID, actorCredentialID *string, actorRole, clientIP, correlationID string) error
 }
 
 type userPortalSessionResponse struct {
@@ -682,25 +683,6 @@ func (h *userPortalHandler) rotateSSOCredential(c echo.Context) error {
 	}})
 }
 
-func (h *userPortalHandler) revokeSSOCredential(c echo.Context) error {
-	info, principal, credential, err := h.ssoOwnedCredentialByID(c)
-	if err != nil {
-		return err
-	}
-	credentialService, ok := h.credentials.(userPortalSSOCredentialService)
-	if !ok {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "credential service unavailable")
-	}
-	revokeErr := credentialService.RevokeSSOOwnedCredential(
-		c.Request().Context(), info.Selected.Team.ID, info.Identity.ID, credential.ID,
-		userPortalPrincipalCredentialID(principal), principal.Role, c.RealIP(), httpmw.GetCorrelationID(c.Request().Context()),
-	)
-	if revokeErr != nil {
-		return revokeErr
-	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "revoked"}})
-}
-
 func (h *userPortalHandler) ssoRequestSession(c echo.Context) (*service.SSOSessionInfo, *httpmw.Principal, error) {
 	if h.sso == nil {
 		return nil, nil, httperr.New(httperr.NOT_FOUND, "sso is not configured")
@@ -945,6 +927,14 @@ func userPortalPrincipalCredentialID(principal *httpmw.Principal) *string {
 	}
 	credentialID := principal.CredentialID.String()
 	return &credentialID
+}
+
+func userPortalPrincipalProfileID(principal *httpmw.Principal) *string {
+	if principal == nil || principal.GetOwnerID() == uuid.Nil {
+		return nil
+	}
+	profileID := principal.GetOwnerID().String()
+	return &profileID
 }
 
 func (h *userPortalHandler) ssoCallbackURL(ctx context.Context) (string, error) {

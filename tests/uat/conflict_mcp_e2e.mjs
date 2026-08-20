@@ -219,6 +219,8 @@ async function provenanceAndIsolationScenario() {
   const staleIssues = Array.isArray(stale.status.semantic_hold?.issues) ? stale.status.semantic_hold.issues : [];
   assert(staleIssues.some((issue) => issue?.code === "conflict_context_stale"), `stale conflict submission omitted its hold reason: ${JSON.stringify(stale.status)}`);
   assert(stale.status.semantic_hold?.replacement?.tool === "remember" && stale.status.semantic_hold?.replacement?.replaces_submission_id === stale.submissionID, `stale conflict submission omitted replacement guidance: ${JSON.stringify(stale.status)}`);
+  assert(stale.status.processing_state === "awaiting_review", `stale conflict submission was not held for review: ${JSON.stringify(stale.status)}`);
+  assert(stale.status.semantic_hold?.issues?.some((issue) => issue?.code === "conflict_context_stale"), `stale conflict submission omitted conflict_context_stale: ${JSON.stringify(stale.status)}`);
   const semanticAfterStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
   assert(stableJSON(semanticAfterStale) === stableJSON(semanticBeforeStale), `stale conflict submission changed semantic state: before=${JSON.stringify(semanticBeforeStale)} after=${JSON.stringify(semanticAfterStale)}`);
 

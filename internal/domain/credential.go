@@ -48,9 +48,11 @@ type Credential struct {
 
 	// MemoryBinding and MemorySpaceID are immutable once the credential is
 	// created. Legacy credentials default to shared-only during migration.
-	MemoryBinding     CredentialMemoryBinding
-	MemorySpaceID     uuid.UUID
-	TeamSharedSpaceID uuid.UUID
+	MemoryBinding             CredentialMemoryBinding
+	MemorySpaceID             uuid.UUID
+	MemorySpaceGeneration     int64
+	TeamSharedSpaceID         uuid.UUID
+	TeamSharedSpaceGeneration int64
 
 	OwnerIdentityID             *uuid.UUID
 	SSOProviderID               *uuid.UUID

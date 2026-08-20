@@ -124,14 +124,16 @@ func insertHypothesisTx(
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO hypotheses (
-		    team_id, created_by_profile_id, status, statement, rationale,
+		    team_id, space_id, space_generation, created_by_profile_id, status, statement, rationale,
 		    likelihood, confidence, subject_entity_id, predicate_key,
 		    predicate_version, object_entity_id, object_value_id,
 		    source_refs, source_versions, source_owner_profile_ids,
 		    content_hash, target_identity, cycle_run_id, generator_kind, generator_version,
 		    payload
 		) VALUES (
-		    ?::uuid, NULLIF(?, '')::uuid, 'proposed', ?, ?, ?, ?, ?::uuid, ?, ?,
+			?::uuid, dense_mem_team_shared_space(?::uuid),
+			(SELECT generation FROM memory_spaces WHERE id = dense_mem_team_shared_space(?::uuid)),
+			NULLIF(?, '')::uuid, 'proposed', ?, ?, ?, ?, ?::uuid, ?, ?,
 		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?::jsonb, ?::jsonb,
 		    ?::uuid[], ?, ?, ?::uuid, ?, ?, ?::jsonb
 		)
@@ -146,7 +148,7 @@ func insertHypothesisTx(
 		          generator_kind, generator_version, invalidated_reason,
 		          COALESCE(submitted_ingest_id::text, ''), submitted_at,
 		          payload, created_at, updated_at
-	`, input.TeamID, input.CreatedByProfileID, input.Statement, input.Rationale,
+	`, input.TeamID, input.TeamID, input.TeamID, input.CreatedByProfileID, input.Statement, input.Rationale,
 		input.Likelihood, input.Confidence, input.SubjectEntityID, input.PredicateKey,
 		input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
 		string(sourceRefs), string(sourceVersions), pq.Array(input.SourceOwnerProfileIDs),

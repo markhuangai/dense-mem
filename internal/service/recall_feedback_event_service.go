@@ -73,10 +73,15 @@ func (s *RecallFeedbackEventServiceImpl) RecordRecallSnapshot(ctx context.Contex
 		return nil
 	}
 	event = s.enrich(ctx, event)
-	event.SnapshotState = domain.RecallFeedbackSnapshotCaptured
 	if strings.TrimSpace(event.RecallID) == "" {
 		return fmt.Errorf("recall feedback event recall_id is required")
 	}
+	var err error
+	event, err = bindRecallFeedbackEventSpace(ctx, event)
+	if err != nil {
+		return err
+	}
+	event.SnapshotState = domain.RecallFeedbackSnapshotCaptured
 	return s.repo.RecordSnapshot(ctx, event)
 }
 
@@ -248,20 +253,95 @@ func (s *RecallFeedbackEventServiceImpl) enrich(ctx context.Context, event domai
 }
 
 func recallFeedbackEventAuthorizedForSubmission(ctx context.Context, event *domain.RecallFeedbackEvent) bool {
-	if event == nil {
+	if event == nil || event.TeamID == nil || event.SpaceID == nil || event.SpaceGeneration <= 0 {
 		return false
 	}
 	actor, ok := requestctx.ActorFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil {
-		return true
+		return false
 	}
-	if event.TeamID != nil {
-		return *event.TeamID == actor.TeamID
+	if *event.TeamID != actor.TeamID {
+		return false
 	}
-	if event.ProfileID != nil && actor.OwnerID != uuid.Nil {
-		return *event.ProfileID == actor.OwnerID
+	for _, space := range actor.AllowedSpaces {
+		if space.ID == *event.SpaceID && space.Generation == event.SpaceGeneration {
+			return true
+		}
 	}
 	return false
+}
+
+func bindRecallFeedbackEventSpace(ctx context.Context, event domain.RecallFeedbackEvent) (domain.RecallFeedbackEvent, error) {
+	actor, ok := requestctx.ActorFromContext(ctx)
+	if !ok || actor.TeamID == uuid.Nil {
+		if event.TeamID == nil || event.SpaceID == nil || event.SpaceGeneration <= 0 {
+			return event, fmt.Errorf("recall feedback event memory-space context is required")
+		}
+		return event, nil
+	}
+	if event.TeamID == nil {
+		teamID := actor.TeamID
+		event.TeamID = &teamID
+	} else if *event.TeamID != actor.TeamID {
+		return event, fmt.Errorf("recall feedback event memory-space context is outside the authenticated team")
+	}
+
+	if event.SpaceID != nil {
+		var matched *domain.MemorySpaceAccess
+		for index := range actor.AllowedSpaces {
+			candidate := &actor.AllowedSpaces[index]
+			if candidate.ID != *event.SpaceID || candidate.Generation <= 0 {
+				continue
+			}
+			if matched != nil && matched.Generation != candidate.Generation {
+				return event, fmt.Errorf("recall feedback event memory-space context is ambiguous")
+			}
+			matched = candidate
+		}
+		if matched == nil || (event.SpaceGeneration > 0 && event.SpaceGeneration != matched.Generation) {
+			return event, fmt.Errorf("recall feedback event memory-space context is not authorized")
+		}
+		event.SpaceGeneration = matched.Generation
+		return event, nil
+	}
+
+	privateSpaces, valid := uniqueRecallFeedbackSpaces(actor.AllowedSpaces, true)
+	if !valid {
+		return event, fmt.Errorf("recall feedback event memory-space context is ambiguous")
+	}
+	selected := privateSpaces
+	if len(selected) == 0 {
+		selected, valid = uniqueRecallFeedbackSpaces(actor.AllowedSpaces, false)
+		if !valid {
+			return event, fmt.Errorf("recall feedback event memory-space context is ambiguous")
+		}
+	}
+	if len(selected) != 1 {
+		return event, fmt.Errorf("recall feedback event memory-space context is missing or ambiguous")
+	}
+	spaceID := selected[0].ID
+	event.SpaceID = &spaceID
+	event.SpaceGeneration = selected[0].Generation
+	return event, nil
+}
+
+func uniqueRecallFeedbackSpaces(spaces []domain.MemorySpaceAccess, private bool) ([]domain.MemorySpaceAccess, bool) {
+	unique := make(map[uuid.UUID]domain.MemorySpaceAccess)
+	for _, space := range spaces {
+		isPrivate := space.Kind == domain.MemorySpaceProfilePrivate || space.Kind == domain.MemorySpaceCredentialPrivate
+		if isPrivate != private || space.ID == uuid.Nil || space.Generation <= 0 {
+			continue
+		}
+		if existing, ok := unique[space.ID]; ok && existing.Generation != space.Generation {
+			return nil, false
+		}
+		unique[space.ID] = space
+	}
+	result := make([]domain.MemorySpaceAccess, 0, len(unique))
+	for _, space := range unique {
+		result = append(result, space)
+	}
+	return result, true
 }
 
 func validateRecallFeedbackSubmissionRefs(feedback domain.RecallFeedbackSubmission, returned []domain.RecallFeedbackResultRef) error {
