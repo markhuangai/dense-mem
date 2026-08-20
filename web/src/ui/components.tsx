@@ -321,7 +321,7 @@ export function InfoTooltip({ label, children }: InfoTooltipProps) {
   );
 }
 
-async function writeClipboardText(text: string, fallbackInput: HTMLInputElement | null): Promise<boolean> {
+export async function writeClipboardText(text: string, fallbackInput: HTMLInputElement | null): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);

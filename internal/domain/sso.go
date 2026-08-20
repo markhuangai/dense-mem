@@ -15,22 +15,30 @@ const (
 )
 
 type SSOProvider struct {
-	ID              uuid.UUID
-	Name            string
-	Kind            SSOProviderKind
-	IssuerURL       string
-	TenantID        string
-	IdentityClaim   string
-	ClientID        string
-	ClientSecretEnv string
-	Scopes          []string
-	GroupClaims     []string
-	GroupsEndpoint  string
-	GroupsScopes    []string
-	Enabled         bool
-	RetiredAt       *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                uuid.UUID
+	Name              string
+	Kind              SSOProviderKind
+	IssuerURL         string
+	TenantID          string
+	IdentityClaim     string
+	ClientID          string
+	ClientSecretEnv   string
+	Scopes            []string
+	GroupClaims       []string
+	GroupsEndpoint    string
+	GroupsScopes      []string
+	ProtectedResource SSOProtectedResourceConfig
+	Enabled           bool
+	RetiredAt         *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+// SSOProtectedResourceConfig enables the existing OAuth validator profile for
+// an SSO provider without duplicating its validation contract.
+type SSOProtectedResourceConfig struct {
+	Enabled bool `json:"enabled"`
+	OAuthProtectedResourceConfig
 }
 
 type SSOGroupMapping struct {

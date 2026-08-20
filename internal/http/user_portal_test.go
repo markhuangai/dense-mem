@@ -556,6 +556,32 @@ func TestUserPortalRotateRejectsEditableFields(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "does not accept editable fields")
 }
 
+func TestUserPortalCurrentSessionIncludesTrustedMCPBaseURL(t *testing.T) {
+	teamID := uuid.New()
+	keyID := uuid.New()
+	authKey, _ := userPortalTestKey(t, teamID, keyID, "Current profile", []string{"read"})
+	h := &userPortalHandler{
+		teams: &controlProfileSvc{profiles: []*domain.Team{{
+			ID:        teamID,
+			Name:      "Team",
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		}}},
+		credentials: &userPortalKeySvc{keys: []*domain.Credential{authKey}},
+		appConfig: &controlAppConfigSvc{ssoRuntime: service.SSORuntimeConfig{
+			MCPPublicBaseURL: "https://memory.example.test/base",
+		}},
+	}
+
+	session, err := h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, service.CredentialRoleMember, []string{"read"}, "api_key")))
+	require.NoError(t, err)
+	require.Equal(t, "https://memory.example.test/base", session.MCPPublicBaseURL)
+
+	h.appConfig = &controlAppConfigSvc{ssoRuntimeErr: errors.New("load sso runtime config")}
+	_, err = h.currentSession(userPortalEchoContext(t, http.MethodGet, "/ui/api/session", "", userPortalPrincipal(teamID, keyID, service.CredentialRoleMember, []string{"read"}, "api_key")))
+	require.ErrorContains(t, err, "load sso runtime config")
+}
+
 func TestUserPortalCurrentSessionErrors(t *testing.T) {
 	teamID := uuid.New()
 	keyID := uuid.New()

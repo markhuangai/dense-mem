@@ -2,9 +2,11 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -22,6 +24,24 @@ type stubCredentialVerifier struct {
 
 func (s stubCredentialVerifier) Verify(context.Context, string, string) (bool, error) {
 	return s.valid, s.err
+}
+
+type stubOAuthBearerAuthenticator struct {
+	actor      *domain.AuthenticatedActor
+	err        error
+	rawToken   string
+	pathTeamID *uuid.UUID
+	calls      int
+}
+
+func (s *stubOAuthBearerAuthenticator) AuthenticateOAuthBearer(_ context.Context, rawToken string, pathTeamID *uuid.UUID) (*domain.AuthenticatedActor, error) {
+	s.calls++
+	s.rawToken = rawToken
+	if pathTeamID != nil {
+		teamID := *pathTeamID
+		s.pathTeamID = &teamID
+	}
+	return s.actor, s.err
 }
 
 func TestAuthMiddlewareRejectsCredentialVerificationAndEntitlementFailures(t *testing.T) {
@@ -156,4 +176,280 @@ func TestAuthMiddleware_OptionalMissingCredentialsHasNoFailureSideEffects(t *tes
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	assert.False(t, mockAudit.authFailureCalled)
 	assert.False(t, mockSecurity.recordAuthFailureCalled)
+}
+
+func TestAuthMiddleware_MalformedScopedTeamRecordsAuthFailure(t *testing.T) {
+	e := newTestEcho()
+	mockAudit := &mockAuditService{}
+	mockSecurity := &mockSecurityService{}
+	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, mockAudit, mockSecurity, AuthOptions{}))
+	e.GET("/teams/:teamId/mcp", func(c echo.Context) error {
+		return c.NoContent(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/teams/not-a-uuid/mcp", nil)
+	req.Header.Set("Authorization", "Bearer header.payload.signature")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "INVALID_UUID")
+	assert.True(t, mockAudit.authFailureCalled)
+	assert.True(t, mockSecurity.recordAuthFailureCalled)
+	assert.Equal(t, "TEAM_PATH_INVALID", mockSecurity.recordAuthFailureReason)
+}
+
+func TestAuthMiddlewareOAuthBearerSetsImmutablePrincipal(t *testing.T) {
+	teamID := uuid.New()
+	identityID := uuid.New()
+	membershipID := uuid.New()
+	ownerID := uuid.New()
+	providerID := uuid.New()
+	actor := testSSOActor(teamID, identityID, membershipID, ownerID, &providerID, []string{"read"})
+	actor.Membership.MemorySpaceID = uuid.New()
+	authenticator := &stubOAuthBearerAuthenticator{actor: actor}
+	e := newTestEcho()
+	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{
+		OAuthBearerAuthenticator: authenticator,
+	}))
+	e.GET("/teams/:teamId/mcp", func(c echo.Context) error {
+		principal := GetPrincipal(c.Request().Context())
+		assert.NotNil(t, principal)
+		assert.Equal(t, teamID, principal.TeamID)
+		assert.Equal(t, identityID, principal.IdentityID)
+		assert.Equal(t, membershipID, principal.MembershipID)
+		assert.Equal(t, ownerID, principal.OwnerID)
+		assert.Equal(t, "oauth", principal.AuthMethod)
+		assert.Nil(t, principal.CredentialID)
+		assert.Equal(t, []string{"read"}, principal.Grants)
+		assert.Equal(t, []domain.MemorySpaceAccess{
+			{ID: uuid.Nil, Kind: domain.MemorySpaceTeamShared},
+			{ID: actor.Membership.MemorySpaceID, Kind: domain.MemorySpaceProfilePrivate},
+		}, principal.AllowedSpaces)
+		assert.Empty(t, c.Request().Header.Get("Authorization"))
+		return c.NoContent(http.StatusOK)
+	})
+
+	rawToken := "header.payload.signature"
+	req := httptest.NewRequest(http.MethodGet, "/teams/"+teamID.String()+"/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, 1, authenticator.calls)
+	assert.Equal(t, rawToken, authenticator.rawToken)
+	if assert.NotNil(t, authenticator.pathTeamID) {
+		assert.Equal(t, teamID, *authenticator.pathTeamID)
+	}
+}
+
+func TestAuthMiddlewareOAuthBearerMapsBoundedErrors(t *testing.T) {
+	tests := []struct {
+		name                string
+		err                 error
+		wantStatus          int
+		wantCode            string
+		wantSecurityFailure bool
+	}{
+		{name: "expired", err: service.ErrOAuthTokenExpired, wantStatus: http.StatusUnauthorized, wantCode: "AUTH_EXPIRED", wantSecurityFailure: true},
+		{name: "invalid", err: service.ErrOAuthTokenInvalid, wantStatus: http.StatusUnauthorized, wantCode: "AUTH_INVALID", wantSecurityFailure: true},
+		{name: "ambiguous team", err: service.ErrOAuthTeamRequired, wantStatus: http.StatusBadRequest, wantCode: "team_required"},
+		{name: "membership denied", err: service.ErrOAuthAccessDenied, wantStatus: http.StatusForbidden, wantCode: "FORBIDDEN", wantSecurityFailure: true},
+		{name: "provider unavailable", err: service.ErrOAuthProviderUnavailable, wantStatus: http.StatusServiceUnavailable, wantCode: "SERVICE_UNAVAILABLE"},
+		{name: "unknown", err: errors.New("backend details"), wantStatus: http.StatusInternalServerError, wantCode: "INTERNAL_ERROR"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			audit := &mockAuditService{}
+			security := &mockSecurityService{}
+			e := newTestEcho()
+			e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, audit, security, AuthOptions{
+				OAuthBearerAuthenticator: &stubOAuthBearerAuthenticator{err: test.err},
+			}))
+			e.GET("/mcp", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+			req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+			req.Header.Set("Authorization", "Bearer header.payload.signature")
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			assert.Equal(t, test.wantStatus, rec.Code)
+			assert.Contains(t, rec.Body.String(), `"code":"`+test.wantCode+`"`)
+			assert.NotContains(t, rec.Body.String(), "backend details")
+			assert.True(t, audit.authFailureCalled)
+			assert.Equal(t, "oauth", audit.authFailureParams.entityType)
+			assert.Equal(t, test.wantSecurityFailure, security.recordAuthFailureCalled)
+		})
+	}
+}
+
+func TestAuthMiddlewareOAuthTeamRequiredDoesNotCountTowardAutomaticBan(t *testing.T) {
+	securityRepo := newOAuthAuthSecurityRepository(2)
+	security := service.NewSecurityService(securityRepo, nil)
+	audit := &mockAuditService{}
+	authenticator := &stubOAuthBearerAuthenticator{err: service.ErrOAuthTeamRequired}
+	e := newTestEcho()
+	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, audit, security, AuthOptions{
+		OAuthBearerAuthenticator: authenticator,
+	}))
+	e.GET("/mcp", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+		req.RemoteAddr = "192.0.2.10:12345"
+		req.Header.Set("Authorization", "Bearer header.payload.signature")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	for range 2 {
+		rec := request()
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"code":"team_required"`)
+		assert.True(t, audit.authFailureCalled)
+		audit.authFailureCalled = false
+	}
+	assert.Empty(t, securityRepo.failures)
+	assert.Empty(t, securityRepo.bans)
+
+	authenticator.err = errors.New("repository unavailable")
+	for range 2 {
+		rec := request()
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"code":"INTERNAL_ERROR"`)
+		assert.True(t, audit.authFailureCalled)
+		audit.authFailureCalled = false
+	}
+	assert.Empty(t, securityRepo.failures)
+	assert.Empty(t, securityRepo.bans)
+
+	authenticator.err = service.ErrOAuthTokenInvalid
+	for range 2 {
+		rec := request()
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"code":"AUTH_INVALID"`)
+		assert.True(t, audit.authFailureCalled)
+		audit.authFailureCalled = false
+	}
+	assert.Equal(t, 2, securityRepo.failures["192.0.2.10"])
+	assert.Contains(t, securityRepo.bans, "192.0.2.10")
+}
+
+func TestAuthMiddlewareStaticCredentialMustMatchScopedTeam(t *testing.T) {
+	credentialTeamID := uuid.New()
+	credentialID := uuid.New()
+	rawKey := "testprefix12345678901234567890"
+	credential := testCredential(credentialID, credentialTeamID)
+	credential.Name = "Static MCP credential"
+	credential.KeyHash = "encoded-hash"
+	credential.KeyPrefix = crypto.GetKeyPrefix(rawKey)
+	credential.Scopes = []string{"read"}
+	credential.Role = service.CredentialRoleMember
+
+	for _, test := range []struct {
+		name       string
+		pathTeamID uuid.UUID
+		wantStatus int
+	}{
+		{name: "match", pathTeamID: credentialTeamID, wantStatus: http.StatusOK},
+		{name: "mismatch", pathTeamID: uuid.New(), wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			e := newTestEcho()
+			e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{getActiveByPrefixFunc: func(context.Context, string) (*domain.Credential, error) {
+				copy := *credential
+				return &copy, nil
+			}}, nil, nil, AuthOptions{CredentialVerifier: stubCredentialVerifier{valid: true}}))
+			e.GET("/teams/:teamId/mcp", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+			req := httptest.NewRequest(http.MethodGet, "/teams/"+test.pathTeamID.String()+"/mcp", nil)
+			req.Header.Set("Authorization", "Bearer "+rawKey)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			assert.Equal(t, test.wantStatus, rec.Code)
+		})
+	}
+}
+
+func TestAuthMiddlewareOAuthOnlyRejectsBrowserCookies(t *testing.T) {
+	authenticator := &stubOAuthBearerAuthenticator{}
+	e := newTestEcho()
+	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, nil, nil, AuthOptions{
+		OAuthBearerAuthenticator: authenticator,
+	}))
+	e.GET("/mcp", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	req.AddCookie(&http.Cookie{Name: service.SSOSessionCookieName, Value: "sso-session"})
+	req.AddCookie(&http.Cookie{Name: service.UserPortalSessionCookieName, Value: "portal-session"})
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Zero(t, authenticator.calls)
+}
+
+type oauthAuthSecurityRepository struct {
+	settings domain.SecuritySettings
+	failures map[string]int
+	bans     map[string]*domain.SecurityIPBan
+}
+
+func newOAuthAuthSecurityRepository(failureThreshold int) *oauthAuthSecurityRepository {
+	return &oauthAuthSecurityRepository{
+		settings: domain.SecuritySettings{
+			Enabled:              true,
+			FailureThreshold:     failureThreshold,
+			FailureWindowSeconds: 600,
+		},
+		failures: map[string]int{},
+		bans:     map[string]*domain.SecurityIPBan{},
+	}
+}
+
+func (r *oauthAuthSecurityRepository) GetSettings(context.Context) (*domain.SecuritySettings, error) {
+	settings := r.settings
+	return &settings, nil
+}
+
+func (r *oauthAuthSecurityRepository) UpdateSettings(_ context.Context, settings domain.SecuritySettings) (*domain.SecuritySettings, error) {
+	r.settings = settings
+	return &settings, nil
+}
+
+func (r *oauthAuthSecurityRepository) GetActiveBan(_ context.Context, ip string, now time.Time) (*domain.SecurityIPBan, error) {
+	ban := r.bans[ip]
+	if ban == nil || !ban.ActiveAt(now) {
+		return nil, nil
+	}
+	copy := *ban
+	return &copy, nil
+}
+
+func (r *oauthAuthSecurityRepository) RecordFailure(_ context.Context, ip, surface, reason string, _ int, now time.Time) (*domain.SecurityIPFailure, error) {
+	r.failures[ip]++
+	return &domain.SecurityIPFailure{
+		IP:            ip,
+		FailureCount:  r.failures[ip],
+		FirstFailedAt: now,
+		LastFailedAt:  now,
+		LastReason:    reason,
+		LastSurface:   surface,
+		UpdatedAt:     now,
+	}, nil
+}
+
+func (r *oauthAuthSecurityRepository) UpsertBan(_ context.Context, ban *domain.SecurityIPBan) error {
+	copy := *ban
+	r.bans[ban.IP] = &copy
+	return nil
+}
+
+func (r *oauthAuthSecurityRepository) ListBans(context.Context, bool, int, int) ([]domain.SecurityIPBan, int64, error) {
+	return nil, int64(len(r.bans)), nil
+}
+
+func (r *oauthAuthSecurityRepository) DeleteBan(_ context.Context, ip string, _ time.Time) error {
+	delete(r.bans, ip)
+	delete(r.failures, ip)
+	return nil
 }

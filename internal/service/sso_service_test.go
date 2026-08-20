@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -15,6 +16,39 @@ import (
 func TestSSOServiceDeleteMappingRequiresProviderID(t *testing.T) {
 	svc := NewSSOService(&ssoRepositoryStub{}, SSOConfig{})
 	require.ErrorContains(t, svc.DeleteMapping(context.Background(), uuid.Nil, uuid.New()), "sso provider ID is required")
+}
+
+func TestSSOServiceMapsAtomicOAuthIssuerConflict(t *testing.T) {
+	issuer := "https://issuer.example.test"
+	repo := &ssoRepositoryStub{
+		createProviderErr: &pgconn.PgError{
+			Code:           "23505",
+			ConstraintName: "idx_sso_providers_active_oauth_issuer_unique",
+		},
+	}
+	svc := NewSSOService(repo, SSOConfig{})
+	_, err := svc.CreateProvider(t.Context(), domain.SSOProvider{
+		Name:          "OAuth provider",
+		Kind:          domain.SSOProviderKindGenericOIDC,
+		IssuerURL:     issuer,
+		IdentityClaim: "sub",
+		ClientID:      "oauth-client",
+		ProtectedResource: domain.SSOProtectedResourceConfig{
+			Enabled: true,
+			OAuthProtectedResourceConfig: domain.OAuthProtectedResourceConfig{
+				Audiences:  []string{"dense-mem"},
+				JWKSSource: "static",
+				JWKSURI:    issuer + "/jwks",
+				Algorithms: []string{"RS256"},
+				ScopeClaim: "scope",
+				ScopeMappings: []domain.OAuthScopeMapping{
+					{ExternalScope: "memory.read", InternalScopes: []string{CredentialScopeRead}},
+				},
+			},
+		},
+		Enabled: true,
+	})
+	require.ErrorContains(t, err, `OAuth profile issuer "https://issuer.example.test" is duplicated`)
 }
 
 func TestSSOValidateCredentialUsesFreshCacheMappings(t *testing.T) {
@@ -273,6 +307,7 @@ type ssoRepositoryStub struct {
 	deletedMappingID              uuid.UUID
 	identities                    map[uuid.UUID]*domain.SSOIdentity
 	getIdentityErr                error
+	identityLookupCalls           int
 	upsertIdentityErr             error
 	upsertIdentityID              uuid.UUID
 	upsertProfileErrors           map[uuid.UUID]error
@@ -385,6 +420,13 @@ func (r *ssoRepositoryStub) UpdateProvider(ctx context.Context, provider *domain
 		r.providerList = append(r.providerList, &copy)
 	}
 	return nil
+}
+
+func (r *ssoRepositoryStub) UpdateProviderPreservingProtectedResource(ctx context.Context, provider *domain.SSOProvider) error {
+	if stored := r.providers[provider.ID]; stored != nil {
+		provider.ProtectedResource = stored.ProtectedResource
+	}
+	return r.UpdateProvider(ctx, provider)
 }
 
 func (r *ssoRepositoryStub) DeleteProvider(ctx context.Context, id uuid.UUID) error {
@@ -504,7 +546,17 @@ func (r *ssoRepositoryStub) GetIdentity(ctx context.Context, id uuid.UUID) (*dom
 }
 
 func (r *ssoRepositoryStub) GetIdentityByProviderSubject(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOIdentity, error) {
-	r.unexpected("GetIdentityByProviderSubject")
+	r.identityLookupCalls++
+	if r.getIdentityErr != nil {
+		return nil, r.getIdentityErr
+	}
+	for _, identity := range r.identities {
+		if identity.ProviderID != providerID || identity.Subject != subject {
+			continue
+		}
+		copy := *identity
+		return &copy, nil
+	}
 	return nil, nil
 }
 

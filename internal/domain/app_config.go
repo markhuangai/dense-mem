@@ -16,6 +16,7 @@ const (
 	AppConfigSSOStateTTLSeconds            = "SSO_STATE_TTL_SECONDS"
 	AppConfigSSOHTTPTimeoutSeconds         = "SSO_HTTP_TIMEOUT_SECONDS"
 	AppConfigSSOCookieSecure               = "SSO_COOKIE_SECURE"
+	AppConfigMCPPublicBaseURL              = "MCP_PUBLIC_BASE_URL"
 
 	AppConfigDreamingEnabled        = "DREAMING_ENABLED"
 	AppConfigDreamingForceEnabled   = "DREAMING_FORCE_ENABLED"

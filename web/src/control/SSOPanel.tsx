@@ -218,7 +218,7 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
             </tbody>
           </table>
         </div>
-        <SSOProviderForm draft={providerDraft} busy={loading} onChange={setProviderDraft} onSubmit={saveProvider} />
+        <SSOProviderForm key={selectedProviderId || "new"} draft={providerDraft} busy={loading} onChange={setProviderDraft} onSubmit={saveProvider} />
       </section>
 
       <section className="surface">
@@ -249,7 +249,35 @@ function SSOProviderForm({
   onChange: (draft: SSOProviderInput) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  return (
+	const protectedResource = draft.protected_resource;
+	const scopeMappingIDs = useRef<string[]>([]);
+	const nextScopeMappingID = useRef(0);
+	while (scopeMappingIDs.current.length < protectedResource.scope_mappings.length) {
+		scopeMappingIDs.current.push(`oauth-scope-mapping-${nextScopeMappingID.current}`);
+		nextScopeMappingID.current += 1;
+	}
+	if (scopeMappingIDs.current.length > protectedResource.scope_mappings.length) {
+		scopeMappingIDs.current.length = protectedResource.scope_mappings.length;
+	}
+	const updateProtectedResource = (patch: Partial<SSOProviderInput["protected_resource"]>) => {
+		onChange({ ...draft, protected_resource: { ...protectedResource, ...patch } });
+	};
+	const updateScopeMapping = (index: number, patch: Partial<SSOProviderInput["protected_resource"]["scope_mappings"][number]>) => {
+		updateProtectedResource({
+			scope_mappings: protectedResource.scope_mappings.map((mapping, current) => current === index ? { ...mapping, ...patch } : mapping),
+		});
+	};
+	const addScopeMapping = () => {
+		scopeMappingIDs.current.push(`oauth-scope-mapping-${nextScopeMappingID.current}`);
+		nextScopeMappingID.current += 1;
+		updateProtectedResource({ scope_mappings: [...protectedResource.scope_mappings, { external_scope: "", internal_scopes: ["read"] }] });
+	};
+	const removeScopeMapping = (index: number) => {
+		scopeMappingIDs.current = scopeMappingIDs.current.filter((_, current) => current !== index);
+		updateProtectedResource({ scope_mappings: protectedResource.scope_mappings.filter((_, current) => current !== index) });
+	};
+
+	return (
     <form className="edit-grid" onSubmit={onSubmit}>
       <label htmlFor="sso-provider-name">Name</label>
       <input id="sso-provider-name" value={draft.name} onChange={(event) => onChange({ ...draft, name: event.target.value })} />
@@ -284,9 +312,63 @@ function SSOProviderForm({
       <input id="sso-group-claims" value={draft.group_claims.join(", ")} onChange={(event) => onChange({ ...draft, group_claims: splitList(event.target.value) })} />
       <label htmlFor="sso-groups-endpoint">Groups endpoint</label>
       <input id="sso-groups-endpoint" value={draft.groups_endpoint} onChange={(event) => onChange({ ...draft, groups_endpoint: event.target.value })} />
-      <label htmlFor="sso-groups-scopes">Groups scopes</label>
-      <input id="sso-groups-scopes" value={draft.groups_scopes.join(", ")} onChange={(event) => onChange({ ...draft, groups_scopes: splitList(event.target.value) })} />
-      <label htmlFor="sso-enabled">Enabled</label>
+		<label htmlFor="sso-groups-scopes">Groups scopes</label>
+		<input id="sso-groups-scopes" value={draft.groups_scopes.join(", ")} onChange={(event) => onChange({ ...draft, groups_scopes: splitList(event.target.value) })} />
+		<label>OAuth protected resource</label>
+		<fieldset className="oauth-provider-config">
+			<legend>MCP access tokens</legend>
+			<label className="toggle-row span" htmlFor="sso-oauth-enabled">
+				<span>Accept OAuth JWTs on MCP</span>
+				<input id="sso-oauth-enabled" type="checkbox" checked={protectedResource.enabled} onChange={(event) => updateProtectedResource({ enabled: event.target.checked })} />
+			</label>
+			<label htmlFor="sso-oauth-audiences">Allowed audiences</label>
+			<input id="sso-oauth-audiences" value={protectedResource.audiences.join(", ")} onChange={(event) => updateProtectedResource({ audiences: splitList(event.target.value) })} placeholder="api://dense-mem" />
+			<label htmlFor="sso-oauth-jwks-source">JWKS source</label>
+			<select id="sso-oauth-jwks-source" value={protectedResource.jwks_source} onChange={(event) => updateProtectedResource({ jwks_source: event.target.value as "discovery" | "static", jwks_uri: event.target.value === "discovery" ? "" : protectedResource.jwks_uri })}>
+				<option value="discovery">OIDC discovery</option>
+				<option value="static">Static JWKS URL</option>
+			</select>
+			<label htmlFor="sso-oauth-jwks-uri">JWKS URL</label>
+			<input id="sso-oauth-jwks-uri" value={protectedResource.jwks_uri} disabled={protectedResource.jwks_source === "discovery"} onChange={(event) => updateProtectedResource({ jwks_uri: event.target.value })} placeholder="https://idp.example.com/.well-known/jwks.json" />
+			<label htmlFor="sso-oauth-algorithms">Signature algorithms</label>
+			<input id="sso-oauth-algorithms" value={protectedResource.algorithms.join(", ")} onChange={(event) => updateProtectedResource({ algorithms: splitList(event.target.value) })} />
+			<label htmlFor="sso-oauth-scope-claim">Scope claim</label>
+			<input id="sso-oauth-scope-claim" value={protectedResource.scope_claim} onChange={(event) => updateProtectedResource({ scope_claim: event.target.value })} placeholder="scope or scp" />
+			<label htmlFor="sso-oauth-team-claim">Team claim</label>
+			<input id="sso-oauth-team-claim" value={protectedResource.team_claim} onChange={(event) => updateProtectedResource({ team_claim: event.target.value })} placeholder="Optional UUID claim" />
+			<div className="oauth-mapping-heading span">
+				<strong>Scope mappings</strong>
+				<button className="ghost-button compact" type="button" onClick={addScopeMapping}>
+					<Plus size={15} aria-hidden="true" />
+					Add mapping
+				</button>
+			</div>
+			{protectedResource.scope_mappings.map((mapping, index) => {
+				const mappingID = scopeMappingIDs.current[index];
+				return (
+					<div className="oauth-scope-mapping span" key={mappingID}>
+						<label htmlFor={`${mappingID}-external-scope`}>External scope</label>
+						<input id={`${mappingID}-external-scope`} value={mapping.external_scope} onChange={(event) => updateScopeMapping(index, { external_scope: event.target.value })} />
+						<div className="permission-checkbox-group" aria-label={`Internal scopes for ${mapping.external_scope || `mapping ${index + 1}`}`}>
+							{(["read", "write", "feedback:read"] as const).map((scope) => (
+								<label className="permission-checkbox" key={scope}>
+									<input
+										type="checkbox"
+										checked={mapping.internal_scopes.includes(scope)}
+										onChange={(event) => updateScopeMapping(index, { internal_scopes: event.target.checked ? [...mapping.internal_scopes, scope] : mapping.internal_scopes.filter((value) => value !== scope) })}
+									/>
+									{scope}
+								</label>
+							))}
+						</div>
+						<button className="icon-button danger-icon" type="button" aria-label={`Remove OAuth scope mapping ${index + 1}`} onClick={() => removeScopeMapping(index)}>
+							<Trash2 size={15} aria-hidden="true" />
+						</button>
+					</div>
+				);
+			})}
+		</fieldset>
+		<label htmlFor="sso-enabled">Enabled</label>
       <label className="checkbox-row" htmlFor="sso-enabled">
         <input id="sso-enabled" type="checkbox" checked={draft.enabled} onChange={(event) => onChange({ ...draft, enabled: event.target.checked })} />
         <span>{draft.enabled ? "enabled" : "disabled"}</span>
@@ -410,9 +492,19 @@ function emptyProviderInput(): SSOProviderInput {
     client_secret_env: "",
     scopes: ["openid", "profile", "email"],
     group_claims: ["groups"],
-    groups_endpoint: "",
-    groups_scopes: [],
-    enabled: true,
+		groups_endpoint: "",
+		groups_scopes: [],
+		protected_resource: {
+			enabled: false,
+			audiences: [],
+			jwks_source: "discovery",
+			jwks_uri: "",
+			algorithms: ["RS256"],
+			scope_claim: "scope",
+			scope_mappings: [],
+			team_claim: "",
+		},
+		enabled: true,
   };
 }
 
@@ -427,9 +519,10 @@ function providerToInput(provider: SSOProvider): SSOProviderInput {
     client_secret_env: provider.client_secret_env,
     scopes: provider.scopes,
     group_claims: provider.group_claims,
-    groups_endpoint: provider.groups_endpoint,
-    groups_scopes: provider.groups_scopes,
-    enabled: provider.enabled,
+		groups_endpoint: provider.groups_endpoint,
+		groups_scopes: provider.groups_scopes,
+		protected_resource: provider.protected_resource,
+		enabled: provider.enabled,
   };
 }
 

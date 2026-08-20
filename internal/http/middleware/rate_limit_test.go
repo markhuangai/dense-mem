@@ -117,6 +117,29 @@ func TestRateLimitMiddleware_Contract_InMemory(t *testing.T) {
 	runRateLimitMiddlewareContract(t, "InMemory", svc)
 }
 
+func TestRateLimitMiddlewareSharesMCPRouteAliasBucket(t *testing.T) {
+	e := echo.New()
+	e.HTTPErrorHandler = httperr.ErrorHandler
+	e.Use(RateLimitMiddleware(service.NewRateLimitService(inmem.NewInMemoryRateLimitStore()), &testRateLimitConfig{rateLimitPerMinute: 1}, nil))
+	handler := func(c echo.Context) error { return c.NoContent(http.StatusOK) }
+	e.GET("/mcp", handler)
+	e.GET("/teams/:teamId/mcp", handler)
+	e.GET("/ui/api/other", handler)
+
+	principal := &Principal{CredentialID: testUUIDPtr(uuid.New()), OwnerID: uuid.New()}
+	request := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req = req.WithContext(SetPrincipalForTest(req.Context(), principal))
+		recorder := httptest.NewRecorder()
+		e.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	assert.Equal(t, http.StatusOK, request("/mcp").Code)
+	assert.Equal(t, http.StatusTooManyRequests, request("/teams/"+uuid.NewString()+"/mcp").Code)
+	assert.Equal(t, http.StatusOK, request("/ui/api/other").Code)
+}
+
 // redisRateLimitConfig implements config.ConfigProvider for Redis-backed rate limit tests.
 type redisRateLimitConfig struct {
 	addr               string

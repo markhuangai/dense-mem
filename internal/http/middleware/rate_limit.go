@@ -31,7 +31,7 @@ func RateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.Confi
 			ownerID := principal.OwnerID.String()
 
 			// Get route path for stable bucket
-			routePath := c.Path()
+			routePath := rateLimitRoutePath(c.Path())
 
 			limit := selectRateLimit(cfg)
 			if principal.RateLimit > 0 && principal.RateLimit < limit {
@@ -72,6 +72,15 @@ func RateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.Confi
 
 			return next(c)
 		}
+	}
+}
+
+func rateLimitRoutePath(routePath string) string {
+	switch routePath {
+	case "/mcp", "/teams/:teamId/mcp":
+		return "/mcp"
+	default:
+		return routePath
 	}
 }
 

@@ -593,6 +593,7 @@ run_compose_playwright_tests() {
     set_submission_status_playwright_args
   elif [[ "${1:-}" == "community" ]]; then test_args=("tests-compose/community-recall.spec.ts");
   elif [[ "${1:-}" == "conflict_queue" ]]; then test_args=("tests-compose/compose-conflict-queue.spec.ts");
+  elif [[ "${1:-}" == "oauth" ]]; then test_args=("tests-compose/oauth-team-resource.spec.ts");
   fi
   image="${DENSE_MEM_E2E_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.62.1-noble}"
   E2E_PLAYWRIGHT_CONTAINER="densemem-e2e-${E2E_FILE_ID}-playwright"
@@ -626,6 +627,9 @@ run_compose_playwright_tests() {
     -e "DENSE_MEM_E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID=$E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID" \
     -e "DENSE_MEM_E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID=$E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID" \
     -e "DENSE_MEM_E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID=$E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID" \
+    -e "DENSE_MEM_E2E_OAUTH_SECOND_TEAM_ID=${E2E_OAUTH_SECOND_TEAM_ID:-}" \
+    -e "DENSE_MEM_E2E_SSO_SESSION_TOKEN=${E2E_OAUTH_SESSION_TOKEN:-}" \
+    -e "DENSE_MEM_E2E_SSO_CSRF_TOKEN=${E2E_OAUTH_CSRF_TOKEN:-}" \
     "$E2E_PLAYWRIGHT_CONTAINER" \
     sh -ec 'cd /tmp/web && npm ci && ./node_modules/.bin/playwright test --config playwright.compose.config.ts "$@"' \
     sh "${test_args[@]}"
@@ -676,8 +680,8 @@ if [[ "$E2E_MODE" != "standard" && "$E2E_MODE" != "entra_scim" ]]; then
   echo "DENSE_MEM_E2E_MODE must be standard or entra_scim." >&2
   exit 1
 fi
-if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "mcp_sdk_parity" && "$E2E_SCENARIO" != "mcp_sdk_transport" && "$E2E_SCENARIO" != "oauth_provider_compatibility" && "$E2E_SCENARIO" != "security_runtime" && "$E2E_SCENARIO" != "infrastructure_credentials" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "submission_terminal_errors" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "identity_cleanup" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" && "$E2E_SCENARIO" != "memory_space_backfill" && "$E2E_SCENARIO" != "memory_space_isolation" && "$E2E_SCENARIO" != "space_aware_recall" && "$E2E_SCENARIO" != "credential_memory_binding" && "$E2E_SCENARIO" != "all" ]]; then
-  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, mcp_sdk_parity, mcp_sdk_transport, oauth_provider_compatibility, security_runtime, infrastructure_credentials, submission_status, submission_terminal_errors, security_intake, submission_assessment, semantic_holds, identity_cleanup, community, conflict, conflict_queue, embedding_reconciliation, embedding_resilience, memory_space_backfill, memory_space_isolation, space_aware_recall, credential_memory_binding, or all." >&2
+if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "mcp_sdk_parity" && "$E2E_SCENARIO" != "mcp_sdk_transport" && "$E2E_SCENARIO" != "oauth_provider_compatibility" && "$E2E_SCENARIO" != "mcp_oauth" && "$E2E_SCENARIO" != "security_runtime" && "$E2E_SCENARIO" != "infrastructure_credentials" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "submission_terminal_errors" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "identity_cleanup" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" && "$E2E_SCENARIO" != "memory_space_backfill" && "$E2E_SCENARIO" != "memory_space_isolation" && "$E2E_SCENARIO" != "space_aware_recall" && "$E2E_SCENARIO" != "credential_memory_binding" && "$E2E_SCENARIO" != "all" ]]; then
+  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, mcp_sdk_parity, mcp_sdk_transport, oauth_provider_compatibility, mcp_oauth, security_runtime, infrastructure_credentials, submission_status, submission_terminal_errors, security_intake, submission_assessment, semantic_holds, identity_cleanup, community, conflict, conflict_queue, embedding_reconciliation, embedding_resilience, memory_space_backfill, memory_space_isolation, space_aware_recall, credential_memory_binding, or all." >&2
   exit 1
 fi
 
@@ -691,7 +695,7 @@ if [[ "$E2E_SCENARIO" == "all" ]]; then
     echo "DENSE_MEM_E2E_SCENARIO=all requires DENSE_MEM_E2E_MODE=standard." >&2
     exit 1
   fi
-  for scenario in mcp_boundaries mcp_sdk_parity mcp_sdk_transport oauth_provider_compatibility security_runtime infrastructure_credentials submission_status submission_terminal_errors security_intake submission_assessment semantic_holds identity_cleanup community conflict conflict_queue embedding_reconciliation embedding_resilience memory_space_backfill memory_space_isolation space_aware_recall credential_memory_binding full; do
+  for scenario in mcp_boundaries mcp_sdk_parity mcp_sdk_transport oauth_provider_compatibility mcp_oauth security_runtime infrastructure_credentials submission_status submission_terminal_errors security_intake submission_assessment semantic_holds identity_cleanup community conflict conflict_queue embedding_reconciliation embedding_resilience memory_space_backfill memory_space_isolation space_aware_recall credential_memory_binding full; do
     echo "Running compose e2e scenario ${scenario} as part of all."
     DENSE_MEM_E2E_SCENARIO="$scenario" \
     DENSE_MEM_E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-all}-$(printf '%s' "$scenario" | tr '[:upper:]' '[:lower:]')" \
@@ -812,6 +816,7 @@ prepare_postgres_e2e_overlay
 prepare_e2e_prometheus_files
 prepare_entra_mock_files
 prepare_oauth_compatibility_files
+prepare_mcp_oauth_files
 prepare_conflict_provider_files
 
 if ! compose config -q; then
@@ -899,6 +904,7 @@ if [[ "$E2E_SCENARIO" == "oauth_provider_compatibility" ]]; then
   run_oauth_compatibility_e2e "$api_key"
   exit 0
 fi
+if [[ "$E2E_SCENARIO" == "mcp_oauth" ]]; then run_mcp_oauth_e2e "$team_id" "$api_key"; exit 0; fi
 if [[ "$E2E_SCENARIO" == "mcp_sdk_parity" ]]; then echo "Running the official Go MCP SDK differential harness and live public boundary."; DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_E2E_API_KEY="$api_key" node "$ROOT_DIR/tests/uat/mcp_sdk_parity_e2e.mjs"; exit 0; fi
 if [[ "$E2E_SCENARIO" == "mcp_sdk_transport" ]]; then echo "Running the production MCP SDK transport matrix with live credentials."; DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_E2E_API_KEY="$api_key" node "$ROOT_DIR/tests/uat/mcp_sdk_transport_e2e.mjs"; exit 0; fi
 

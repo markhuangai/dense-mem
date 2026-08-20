@@ -25,6 +25,7 @@ func TestAppConfigServiceSSOSettingsDefaultsAndUpdate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, now.Format(time.RFC3339Nano), settings.UpdateTime)
 	assert.Equal(t, "", appConfigItem(t, settings, domain.AppConfigSSOPublicBaseURL).Value)
+	assert.Equal(t, "", appConfigItem(t, settings, domain.AppConfigMCPPublicBaseURL).Value)
 	assert.Equal(t, "300", appConfigItem(t, settings, domain.AppConfigSSOEntitlementCacheTTLSeconds).EffectiveValue)
 	assert.Equal(t, "28800", appConfigItem(t, settings, domain.AppConfigSSOSessionTTLSeconds).EffectiveValue)
 	assert.Equal(t, "600", appConfigItem(t, settings, domain.AppConfigSSOStateTTLSeconds).EffectiveValue)
@@ -42,11 +43,13 @@ func TestAppConfigServiceSSOSettingsDefaultsAndUpdate(t *testing.T) {
 	now = now.Add(time.Minute)
 	updated, err := svc.UpdateSSOSettings(ctx, map[string]string{
 		domain.AppConfigSSOPublicBaseURL:     "https://portal.example.com/",
+		domain.AppConfigMCPPublicBaseURL:     "https://memory.example.com/base/",
 		domain.AppConfigSSOSessionTTLSeconds: "3600",
 		domain.AppConfigSSOCookieSecure:      "true",
 	}, "control", "127.0.0.1", "corr")
 	require.NoError(t, err)
 	assert.Equal(t, "https://portal.example.com", appConfigItem(t, updated, domain.AppConfigSSOPublicBaseURL).Value)
+	assert.Equal(t, "https://memory.example.com/base", appConfigItem(t, updated, domain.AppConfigMCPPublicBaseURL).Value)
 	assert.Equal(t, "3600", appConfigItem(t, updated, domain.AppConfigSSOSessionTTLSeconds).EffectiveValue)
 	assert.Equal(t, "true", appConfigItem(t, updated, domain.AppConfigSSOCookieSecure).EffectiveValue)
 	assert.Equal(t, now.Format(time.RFC3339Nano), updated.UpdateTime)
@@ -54,6 +57,7 @@ func TestAppConfigServiceSSOSettingsDefaultsAndUpdate(t *testing.T) {
 	runtime, err = svc.SSORuntimeConfig(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "https://portal.example.com", runtime.PublicBaseURL)
+	assert.Equal(t, "https://memory.example.com/base", runtime.MCPPublicBaseURL)
 	assert.Equal(t, time.Hour, runtime.SessionTTL)
 	assert.True(t, runtime.CookieSecure)
 }
@@ -532,6 +536,24 @@ func TestAppConfigServiceValidation(t *testing.T) {
 
 	_, err = svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigSSOPublicBaseURL: "://bad"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
+
+	for _, value := range []string{
+		"http://memory.example.com",
+		"https://user:pass@memory.example.com",
+		"https://memory.example.com/path?query=1",
+		"https://memory.example.com/path#fragment",
+		"https://memory.example.com:0",
+		"https://memory.example.com:65536",
+		"https://memory.example.com/a/../b",
+		"https://memory.example.com/{team}",
+	} {
+		_, err = svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigMCPPublicBaseURL: value}, "control", "", "")
+		require.ErrorIs(t, err, ErrInvalidAppConfig, value)
+	}
+
+	localMCP, err := svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigMCPPublicBaseURL: "http://127.0.0.1:8080/"}, "control", "", "")
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:8080", appConfigItem(t, localMCP, domain.AppConfigMCPPublicBaseURL).EffectiveValue)
 
 	_, err = svc.UpdateDreamingSettings(ctx, map[string]string{"unknown": "value"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)

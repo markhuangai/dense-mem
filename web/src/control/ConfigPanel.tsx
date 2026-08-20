@@ -9,7 +9,8 @@ type ConfigTab = "general" | "sso" | "dreaming" | "community" | "operation-logs"
 const CONFIG_LABELS: Record<string, string> = {
   APP_TIMEZONE: "Timezone",
   EMBEDDING_RECONCILIATION_START_TIME_LOCAL: "Embedding recovery start time",
-  SSO_PUBLIC_BASE_URL: "Public base URL",
+	SSO_PUBLIC_BASE_URL: "Public base URL",
+	MCP_PUBLIC_BASE_URL: "MCP public base URL",
   SCIM_PUBLIC_BASE_URL: "SCIM ingress URL",
   CONTROL_PUBLIC_BASE_URL: "Control portal ingress URL",
   SSO_ENTITLEMENT_CACHE_TTL_SECONDS: "Entitlement cache TTL",
@@ -35,7 +36,8 @@ const CONFIG_LABELS: Record<string, string> = {
 
 const CONFIG_PLACEHOLDERS: Record<string, string> = {
   APP_TIMEZONE: "Local",
-  EMBEDDING_RECONCILIATION_START_TIME_LOCAL: "04:30",
+	EMBEDDING_RECONCILIATION_START_TIME_LOCAL: "04:30",
+	MCP_PUBLIC_BASE_URL: "https://memory.example.com",
   SCIM_PUBLIC_BASE_URL: "https://memory.example.com",
   CONTROL_PUBLIC_BASE_URL: "https://control.example.com",
   SSO_ENTITLEMENT_CACHE_TTL_SECONDS: "300",
