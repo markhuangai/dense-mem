@@ -9,7 +9,10 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 )
+
+const maximumControlSSOProviderRequestBytes = 128 * 1024
 
 func (h *controlPortalHandler) listSSOProviders(c echo.Context) error {
 	if h.sso == nil {
@@ -31,7 +34,7 @@ func (h *controlPortalHandler) createSSOProvider(c echo.Context) error {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "sso service unavailable")
 	}
 	var body controlSSOProviderRequest
-	if err := c.Bind(&body); err != nil {
+	if err := jsonstrict.Decode(c.Request().Body, &body, maximumControlSSOProviderRequestBytes); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
 	provider, err := h.sso.CreateProvider(c.Request().Context(), body.toDomain(uuid.Nil))
@@ -50,7 +53,7 @@ func (h *controlPortalHandler) updateSSOProvider(c echo.Context) error {
 		return err
 	}
 	var body controlSSOProviderRequest
-	if err := c.Bind(&body); err != nil {
+	if err := jsonstrict.Decode(c.Request().Body, &body, maximumControlSSOProviderRequestBytes); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
 	provider, err := h.sso.UpdateProvider(c.Request().Context(), body.toDomain(providerID))
@@ -154,18 +157,19 @@ func (h *controlPortalHandler) deleteSSOMapping(c echo.Context) error {
 }
 
 type controlSSOProviderRequest struct {
-	Name            string   `json:"name"`
-	Kind            string   `json:"kind"`
-	IssuerURL       string   `json:"issuer_url"`
-	TenantID        string   `json:"tenant_id"`
-	IdentityClaim   string   `json:"identity_claim"`
-	ClientID        string   `json:"client_id"`
-	ClientSecretEnv string   `json:"client_secret_env"`
-	Scopes          []string `json:"scopes"`
-	GroupClaims     []string `json:"group_claims"`
-	GroupsEndpoint  string   `json:"groups_endpoint"`
-	GroupsScopes    []string `json:"groups_scopes"`
-	Enabled         *bool    `json:"enabled"`
+	Name              string                            `json:"name"`
+	Kind              string                            `json:"kind"`
+	IssuerURL         string                            `json:"issuer_url"`
+	TenantID          string                            `json:"tenant_id"`
+	IdentityClaim     string                            `json:"identity_claim"`
+	ClientID          string                            `json:"client_id"`
+	ClientSecretEnv   string                            `json:"client_secret_env"`
+	Scopes            []string                          `json:"scopes"`
+	GroupClaims       []string                          `json:"group_claims"`
+	GroupsEndpoint    string                            `json:"groups_endpoint"`
+	GroupsScopes      []string                          `json:"groups_scopes"`
+	ProtectedResource domain.SSOProtectedResourceConfig `json:"protected_resource"`
+	Enabled           *bool                             `json:"enabled"`
 }
 
 func (r controlSSOProviderRequest) toDomain(id uuid.UUID) domain.SSOProvider {
@@ -174,19 +178,20 @@ func (r controlSSOProviderRequest) toDomain(id uuid.UUID) domain.SSOProvider {
 		enabled = *r.Enabled
 	}
 	return domain.SSOProvider{
-		ID:              id,
-		Name:            r.Name,
-		Kind:            domain.SSOProviderKind(r.Kind),
-		IssuerURL:       r.IssuerURL,
-		TenantID:        r.TenantID,
-		IdentityClaim:   r.IdentityClaim,
-		ClientID:        r.ClientID,
-		ClientSecretEnv: r.ClientSecretEnv,
-		Scopes:          append([]string(nil), r.Scopes...),
-		GroupClaims:     append([]string(nil), r.GroupClaims...),
-		GroupsEndpoint:  r.GroupsEndpoint,
-		GroupsScopes:    append([]string(nil), r.GroupsScopes...),
-		Enabled:         enabled,
+		ID:                id,
+		Name:              r.Name,
+		Kind:              domain.SSOProviderKind(r.Kind),
+		IssuerURL:         r.IssuerURL,
+		TenantID:          r.TenantID,
+		IdentityClaim:     r.IdentityClaim,
+		ClientID:          r.ClientID,
+		ClientSecretEnv:   r.ClientSecretEnv,
+		Scopes:            append([]string(nil), r.Scopes...),
+		GroupClaims:       append([]string(nil), r.GroupClaims...),
+		GroupsEndpoint:    r.GroupsEndpoint,
+		GroupsScopes:      append([]string(nil), r.GroupsScopes...),
+		ProtectedResource: r.ProtectedResource,
+		Enabled:           enabled,
 	}
 }
 
@@ -217,21 +222,22 @@ func (r controlSSOGroupMappingRequest) toDomain(providerID, mappingID uuid.UUID)
 }
 
 type controlSSOProviderResponse struct {
-	ID              uuid.UUID `json:"id"`
-	Name            string    `json:"name"`
-	Kind            string    `json:"kind"`
-	IssuerURL       string    `json:"issuer_url"`
-	TenantID        string    `json:"tenant_id"`
-	IdentityClaim   string    `json:"identity_claim"`
-	ClientID        string    `json:"client_id"`
-	ClientSecretEnv string    `json:"client_secret_env"`
-	Scopes          []string  `json:"scopes"`
-	GroupClaims     []string  `json:"group_claims"`
-	GroupsEndpoint  string    `json:"groups_endpoint"`
-	GroupsScopes    []string  `json:"groups_scopes"`
-	Enabled         bool      `json:"enabled"`
-	CreatedAt       string    `json:"created_at"`
-	UpdatedAt       string    `json:"updated_at"`
+	ID                uuid.UUID                         `json:"id"`
+	Name              string                            `json:"name"`
+	Kind              string                            `json:"kind"`
+	IssuerURL         string                            `json:"issuer_url"`
+	TenantID          string                            `json:"tenant_id"`
+	IdentityClaim     string                            `json:"identity_claim"`
+	ClientID          string                            `json:"client_id"`
+	ClientSecretEnv   string                            `json:"client_secret_env"`
+	Scopes            []string                          `json:"scopes"`
+	GroupClaims       []string                          `json:"group_claims"`
+	GroupsEndpoint    string                            `json:"groups_endpoint"`
+	GroupsScopes      []string                          `json:"groups_scopes"`
+	ProtectedResource domain.SSOProtectedResourceConfig `json:"protected_resource"`
+	Enabled           bool                              `json:"enabled"`
+	CreatedAt         string                            `json:"created_at"`
+	UpdatedAt         string                            `json:"updated_at"`
 }
 
 func toControlSSOProvider(provider *domain.SSOProvider) controlSSOProviderResponse {
@@ -239,22 +245,34 @@ func toControlSSOProvider(provider *domain.SSOProvider) controlSSOProviderRespon
 		return controlSSOProviderResponse{}
 	}
 	return controlSSOProviderResponse{
-		ID:              provider.ID,
-		Name:            provider.Name,
-		Kind:            string(provider.Kind),
-		IssuerURL:       provider.IssuerURL,
-		TenantID:        provider.TenantID,
-		IdentityClaim:   provider.IdentityClaim,
-		ClientID:        provider.ClientID,
-		ClientSecretEnv: provider.ClientSecretEnv,
-		Scopes:          append([]string{}, provider.Scopes...),
-		GroupClaims:     append([]string{}, provider.GroupClaims...),
-		GroupsEndpoint:  provider.GroupsEndpoint,
-		GroupsScopes:    append([]string{}, provider.GroupsScopes...),
-		Enabled:         provider.Enabled,
-		CreatedAt:       provider.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:       provider.UpdatedAt.Format(time.RFC3339),
+		ID:                provider.ID,
+		Name:              provider.Name,
+		Kind:              string(provider.Kind),
+		IssuerURL:         provider.IssuerURL,
+		TenantID:          provider.TenantID,
+		IdentityClaim:     provider.IdentityClaim,
+		ClientID:          provider.ClientID,
+		ClientSecretEnv:   provider.ClientSecretEnv,
+		Scopes:            append([]string{}, provider.Scopes...),
+		GroupClaims:       append([]string{}, provider.GroupClaims...),
+		GroupsEndpoint:    provider.GroupsEndpoint,
+		GroupsScopes:      append([]string{}, provider.GroupsScopes...),
+		ProtectedResource: controlSSOProtectedResourceConfig(provider.ProtectedResource),
+		Enabled:           provider.Enabled,
+		CreatedAt:         provider.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:         provider.UpdatedAt.Format(time.RFC3339),
 	}
+}
+
+func controlSSOProtectedResourceConfig(config domain.SSOProtectedResourceConfig) domain.SSOProtectedResourceConfig {
+	copyConfig := config
+	copyConfig.Audiences = append([]string{}, config.Audiences...)
+	copyConfig.Algorithms = append([]string{}, config.Algorithms...)
+	copyConfig.ScopeMappings = append([]domain.OAuthScopeMapping{}, config.ScopeMappings...)
+	for index := range copyConfig.ScopeMappings {
+		copyConfig.ScopeMappings[index].InternalScopes = append([]string{}, config.ScopeMappings[index].InternalScopes...)
+	}
+	return copyConfig
 }
 
 type controlSSOGroupMappingResponse struct {
@@ -304,7 +322,7 @@ func controlSSOServiceError(err error) error {
 		return nil
 	}
 	message := err.Error()
-	if strings.HasPrefix(message, "sso ") || strings.Contains(message, "api key scopes") || strings.Contains(message, "api key role") {
+	if strings.HasPrefix(message, "sso ") || strings.HasPrefix(message, "OAuth ") || strings.Contains(message, "api key scopes") || strings.Contains(message, "api key role") {
 		return httperr.New(httperr.VALIDATION_ERROR, message)
 	}
 	return err

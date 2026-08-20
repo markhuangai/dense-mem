@@ -33,6 +33,7 @@ export type UserSession = {
   credential: UserCredential | null;
   teams: UserTeamOption[];
   personal_credentials: UserCredential[];
+  mcp_public_base_url: string;
 };
 
 export type UserTeamOption = {

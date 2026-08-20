@@ -107,7 +107,7 @@ func TestNormalizeSSOProviderAndMapping(t *testing.T) {
 	require.NoError(t, normalizeSSOProvider(&provider))
 	require.NoError(t, normalizeSSOProviderForWrite(&provider))
 	assert.Equal(t, "Enterprise", provider.Name)
-	assert.Equal(t, "https://login.example.com", provider.IssuerURL)
+	assert.Equal(t, "https://login.example.com/", provider.IssuerURL)
 	assert.Equal(t, "client-id", provider.ClientID)
 	assert.Equal(t, []string{"email", "openid"}, provider.Scopes)
 	assert.Equal(t, []string{"groups"}, provider.GroupClaims)
@@ -141,6 +141,50 @@ func TestNormalizeSSOProviderAndMapping(t *testing.T) {
 	provider = domain.SSOProvider{Name: "Ping", Kind: domain.SSOProviderKindPingOne, IssuerURL: "https://ping.example.com", ClientID: "client", Scopes: []string{"email"}}
 	require.NoError(t, normalizeSSOProvider(&provider))
 	assert.Equal(t, []string{"openid", "email"}, provider.Scopes)
+
+	protectedProvider := domain.SSOProvider{
+		ID:            uuid.New(),
+		Name:          "Protected",
+		Kind:          domain.SSOProviderKindGenericOIDC,
+		IssuerURL:     "https://issuer.example.com/",
+		IdentityClaim: "sub",
+		ClientID:      "browser-client",
+		Enabled:       true,
+		ProtectedResource: domain.SSOProtectedResourceConfig{
+			Enabled: true,
+			OAuthProtectedResourceConfig: domain.OAuthProtectedResourceConfig{
+				Audiences:  []string{"api://dense-mem"},
+				JWKSSource: "discovery",
+				Algorithms: []string{"RS256"},
+				ScopeClaim: "scope",
+				ScopeMappings: []domain.OAuthScopeMapping{{
+					ExternalScope:  "memory.read",
+					InternalScopes: []string{CredentialScopeRead},
+				}},
+			},
+		},
+	}
+	require.NoError(t, normalizeSSOProviderForWrite(&protectedProvider))
+	assert.Equal(t, "https://issuer.example.com/", protectedProvider.IssuerURL)
+
+	invalidProtected := protectedProvider
+	invalidProtected.ProtectedResource.ScopeMappings = []domain.OAuthScopeMapping{{
+		ExternalScope:  "memory.admin",
+		InternalScopes: []string{"admin"},
+	}}
+	require.ErrorContains(t, normalizeSSOProviderForWrite(&invalidProtected), "read, write, or feedback:read")
+
+	disabledProtected := domain.SSOProvider{
+		ID:        uuid.New(),
+		Name:      "Dormant",
+		Kind:      domain.SSOProviderKindGenericOIDC,
+		IssuerURL: "https://dormant.example.com",
+		ClientID:  "browser-client",
+	}
+	require.NoError(t, normalizeSSOProviderForWrite(&disabledProtected))
+	assert.Equal(t, "discovery", disabledProtected.ProtectedResource.JWKSSource)
+	assert.Equal(t, []string{"RS256"}, disabledProtected.ProtectedResource.Algorithms)
+	assert.Equal(t, "scope", disabledProtected.ProtectedResource.ScopeClaim)
 
 	mapping := domain.SSOGroupMapping{
 		ProviderID: uuid.New(),

@@ -441,6 +441,7 @@ func ssoRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (SSOR
 
 	runtime := SSORuntimeConfig{
 		PublicBaseURL:        normalized[domain.AppConfigSSOPublicBaseURL],
+		MCPPublicBaseURL:     normalized[domain.AppConfigMCPPublicBaseURL],
 		SCIMPublicBaseURL:    normalized[domain.AppConfigSCIMPublicBaseURL],
 		ControlPublicBaseURL: normalized[domain.AppConfigControlPublicBaseURL],
 		EntitlementCacheTTL:  entitlementTTL,
@@ -453,6 +454,7 @@ func ssoRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (SSOR
 	updateTime := entries[domain.AppConfigUpdateTimeKey].Value
 	items := []domain.SSOConfigItem{
 		ssoConfigItem(entries, domain.AppConfigSSOPublicBaseURL, normalized[domain.AppConfigSSOPublicBaseURL]),
+		ssoConfigItem(entries, domain.AppConfigMCPPublicBaseURL, normalized[domain.AppConfigMCPPublicBaseURL]),
 		ssoConfigItem(entries, domain.AppConfigSCIMPublicBaseURL, normalized[domain.AppConfigSCIMPublicBaseURL]),
 		ssoConfigItem(entries, domain.AppConfigControlPublicBaseURL, normalized[domain.AppConfigControlPublicBaseURL]),
 		ssoConfigItem(entries, domain.AppConfigSSOEntitlementCacheTTLSeconds, entitlementEffective),
@@ -742,6 +744,12 @@ func normalizeSSOConfigValues(values map[string]string) (map[string]string, erro
 		}
 		trimmed := strings.TrimSpace(value)
 		switch key {
+		case domain.AppConfigMCPPublicBaseURL:
+			normalizedValue, err := normalizeMCPPublicBaseURL(trimmed)
+			if err != nil {
+				return nil, fmt.Errorf("%w: %s", ErrInvalidAppConfig, err)
+			}
+			normalized[key] = normalizedValue
 		case domain.AppConfigSSOPublicBaseURL, domain.AppConfigSCIMPublicBaseURL, domain.AppConfigControlPublicBaseURL:
 			normalized[key] = strings.TrimRight(trimmed, "/")
 			if normalized[key] != "" {
@@ -786,19 +794,6 @@ func editableGeneralConfigKeys() []string {
 	return []string{
 		domain.AppConfigTimezone,
 		domain.AppConfigEmbeddingReconciliationStartTimeLocal,
-	}
-}
-
-func editableSSOConfigKeys() []string {
-	return []string{
-		domain.AppConfigSSOPublicBaseURL,
-		domain.AppConfigSCIMPublicBaseURL,
-		domain.AppConfigControlPublicBaseURL,
-		domain.AppConfigSSOEntitlementCacheTTLSeconds,
-		domain.AppConfigSSOSessionTTLSeconds,
-		domain.AppConfigSSOStateTTLSeconds,
-		domain.AppConfigSSOHTTPTimeoutSeconds,
-		domain.AppConfigSSOCookieSecure,
 	}
 }
 

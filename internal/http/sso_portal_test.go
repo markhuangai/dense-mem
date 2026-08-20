@@ -49,11 +49,14 @@ func TestControlPortalSSOProviderAndMappingFlows(t *testing.T) {
 	rec := serveControlSSO(server, nethttp.MethodGet, "/control/api/sso/providers", "")
 	require.Equal(t, nethttp.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"name":"Enterprise IdP"`)
+	require.Contains(t, rec.Body.String(), `"protected_resource":{"enabled":false,"audiences":[]`)
 
-	createBody := `{"name":"Azure","kind":"azure_ad","issuer_url":"https://login.microsoftonline.com/tenant/v2.0","tenant_id":"tenant","client_id":"azure-client","client_secret_env":"AZURE_SECRET","scopes":["profile","openid"],"group_claims":["groups"],"enabled":true}`
+	createBody := `{"name":"Azure","kind":"azure_ad","issuer_url":"https://login.microsoftonline.com/tenant/v2.0","tenant_id":"tenant","client_id":"azure-client","client_secret_env":"AZURE_SECRET","scopes":["profile","openid"],"group_claims":["groups"],"protected_resource":{"enabled":true,"audiences":["api://dense-mem"],"jwks_source":"discovery","jwks_uri":"","algorithms":["RS256"],"scope_claim":"scp","scope_mappings":[{"external_scope":"memory.read","internal_scopes":["read"]}],"team_claim":"dense_mem_team_id"},"enabled":true}`
 	rec = serveControlSSO(server, nethttp.MethodPost, "/control/api/sso/providers", createBody)
 	require.Equal(t, nethttp.StatusCreated, rec.Code)
 	require.Contains(t, rec.Body.String(), `"kind":"azure_ad"`)
+	require.Contains(t, rec.Body.String(), `"protected_resource":{"enabled":true`)
+	require.Contains(t, rec.Body.String(), `"external_scope":"memory.read"`)
 
 	updateBody := `{"name":"PingOne","kind":"pingone","issuer_url":"https://auth.pingone.com/example/as","client_id":"ping-client","scopes":["openid","email"],"group_claims":["memberOf"],"enabled":false}`
 	rec = serveControlSSO(server, nethttp.MethodPatch, "/control/api/sso/providers/"+providerID.String(), updateBody)
@@ -86,6 +89,19 @@ func TestControlPortalSSOProviderAndMappingFlows(t *testing.T) {
 	rec = serveControlSSO(server, nethttp.MethodPost, "/control/api/sso/providers", `{"kind":"bad"}`)
 	require.Equal(t, nethttp.StatusUnprocessableEntity, rec.Code)
 	require.Contains(t, rec.Body.String(), "sso provider name is required")
+
+	unknownBody := strings.Replace(createBody, `"enabled":true,"audiences"`, `"enabled":true,"unknown_contract_field":true,"audiences"`, 1)
+	rec = serveControlSSO(server, nethttp.MethodPost, "/control/api/sso/providers", unknownBody)
+	require.Equal(t, nethttp.StatusUnprocessableEntity, rec.Code)
+	require.Contains(t, rec.Body.String(), "malformed JSON body")
+
+	duplicateBody := strings.Replace(createBody, `"scope_claim":"scp"`, `"scope_claim":"scp","scope_claim":"scope"`, 1)
+	rec = serveControlSSO(server, nethttp.MethodPost, "/control/api/sso/providers", duplicateBody)
+	require.Equal(t, nethttp.StatusUnprocessableEntity, rec.Code)
+	require.Contains(t, rec.Body.String(), "malformed JSON body")
+
+	rec = serveControlSSO(server, nethttp.MethodPost, "/control/api/sso/providers", `{"name":"`+strings.Repeat("a", maximumControlSSOProviderRequestBytes)+`"}`)
+	require.Equal(t, nethttp.StatusUnprocessableEntity, rec.Code)
 }
 
 func TestUserPortalSSOHandlers(t *testing.T) {
@@ -148,6 +164,9 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 			PublicBaseURL: "https://portal.example.com",
 			Now:           func() time.Time { return now },
 		}),
+		appConfig: &controlAppConfigSvc{ssoRuntime: service.SSORuntimeConfig{
+			MCPPublicBaseURL: "https://memory.example.test",
+		}},
 	}
 
 	c, rec := userSSOContext(nethttp.MethodGet, "/ui/api/sso/providers", "", "")
@@ -164,6 +183,7 @@ func TestUserPortalSSOHandlers(t *testing.T) {
 	require.Equal(t, ownerOneID, repo.teamProfiles[0].Membership.OwnerID)
 	require.Equal(t, "Team One", session.Team.Name)
 	require.Equal(t, "SSO Team One", session.Membership.Name)
+	require.Equal(t, "https://memory.example.test", session.MCPPublicBaseURL)
 
 	c, rec = userSSOContext(nethttp.MethodPost, "/ui/api/sso/team", `{"team_id":"`+teamTwoID.String()+`"}`, sessionToken)
 	setUserSSOPrincipal(c, ownerOneID, teamOneID)

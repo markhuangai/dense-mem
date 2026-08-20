@@ -5,6 +5,7 @@ import { UserPortalApp } from "./App";
 import type { UserSession } from "./api";
 
 const baseSession: UserSession = {
+  mcp_public_base_url: "https://memory.example.test",
   team: {
     id: "11111111-1111-4111-8111-111111111111",
     name: "Research Team",

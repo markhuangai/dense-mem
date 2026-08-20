@@ -19,6 +19,8 @@ func HTTPStatusCode(code ErrorCode) int {
 		return http.StatusUnprocessableEntity
 	case PROFILE_ID_REQUIRED, INVALID_UUID:
 		return http.StatusBadRequest
+	case TEAM_REQUIRED:
+		return http.StatusBadRequest
 	case CONFLICT:
 		return http.StatusConflict
 	case RATE_LIMITED:

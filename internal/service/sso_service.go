@@ -50,6 +50,7 @@ type SSORuntimeConfigProvider interface {
 
 type SSORuntimeConfig struct {
 	PublicBaseURL        string
+	MCPPublicBaseURL     string
 	SCIMPublicBaseURL    string
 	ControlPublicBaseURL string
 	EntitlementCacheTTL  time.Duration
@@ -81,6 +82,7 @@ type SSOService struct {
 	groupResolver       SSOGroupResolver
 	logger              observability.LogProvider
 	now                 func() time.Time
+	oauth               oauthProtectedResourceState
 }
 
 type SSOLoginStart struct {
@@ -187,8 +189,15 @@ func (s *SSOService) ListProviders(ctx context.Context) ([]*domain.SSOProvider, 
 }
 
 func (s *SSOService) CreateProvider(ctx context.Context, provider domain.SSOProvider) (*domain.SSOProvider, error) {
+	if provider.ID == uuid.Nil {
+		provider.ID = uuid.New()
+	}
 	if err := normalizeSSOProviderForWrite(&provider); err != nil {
 		s.debugSSOProviderFailure("sso create provider validation failed", err, &provider)
+		return nil, err
+	}
+	if err := s.validateProtectedResourceProviderSet(ctx, &provider); err != nil {
+		s.debugSSOProviderFailure("sso create protected-resource set validation failed", err, &provider)
 		return nil, err
 	}
 	if err := s.repo.CreateProvider(ctx, &provider); err != nil {
@@ -206,6 +215,10 @@ func (s *SSOService) UpdateProvider(ctx context.Context, provider domain.SSOProv
 	}
 	if err := normalizeSSOProviderForWrite(&provider); err != nil {
 		s.debugSSOProviderFailure("sso update provider validation failed", err, &provider)
+		return nil, err
+	}
+	if err := s.validateProtectedResourceProviderSet(ctx, &provider); err != nil {
+		s.debugSSOProviderFailure("sso update protected-resource set validation failed", err, &provider)
 		return nil, err
 	}
 	if err := s.repo.UpdateProvider(ctx, &provider); err != nil {
@@ -957,6 +970,7 @@ func (s *SSOService) runtimeConfig(ctx context.Context) (SSORuntimeConfig, error
 
 func normalizeSSORuntimeConfig(cfg SSORuntimeConfig) SSORuntimeConfig {
 	cfg.PublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
+	cfg.MCPPublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.MCPPublicBaseURL), "/")
 	cfg.SCIMPublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.SCIMPublicBaseURL), "/")
 	cfg.ControlPublicBaseURL = strings.TrimRight(strings.TrimSpace(cfg.ControlPublicBaseURL), "/")
 	if cfg.EntitlementCacheTTL <= 0 {

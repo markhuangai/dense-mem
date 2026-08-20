@@ -2,6 +2,8 @@ import { Component, FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useSt
 import type { ReactNode } from "react";
 import {
   BarChart3,
+  Check,
+  Copy,
   KeyRound,
   LogOut,
   Moon,
@@ -22,7 +24,7 @@ import {
   UserCredential,
   UserSession,
 } from "./api";
-import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading } from "../ui/components";
+import { AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading, writeClipboardText } from "../ui/components";
 import { SearchPanel } from "./SearchPanel";
 
 const TelemetryDashboard = lazy(() => import("../telemetry/TelemetryDashboard").then((module) => ({ default: module.TelemetryDashboard })));
@@ -462,22 +464,61 @@ function UserContextBar({
   ssoTeamOptions: UserSession["teams"];
   onSwitchTeam: (teamId: string) => Promise<void>;
 }) {
+  const [copied, setCopied] = useState(false);
+  const copyFallbackRef = useRef<HTMLInputElement>(null);
+  const configuredBase = session.mcp_public_base_url.trim().replace(/\/+$/, "");
+  const browserBase = window.location.origin.replace(/\/+$/, "");
+  const mcpURL = `${configuredBase || browserBase}/teams/${session.team.id}/mcp`;
+
+  useEffect(() => {
+    setCopied(false);
+  }, [mcpURL]);
+
+  useEffect(() => {
+    if (!copied) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setCopied(false), 2000);
+    return () => window.clearTimeout(timeout);
+  }, [copied]);
+
+  async function copyMCPURL() {
+    setCopied(await writeClipboardText(mcpURL, copyFallbackRef.current));
+  }
+
   return (
-    <div className="session-context compact" aria-label="Current workspace">
-      <span className="context-label">Team</span>
-      {authMode === "sso" ? (
-        <select
-          aria-label="Active team"
-          value={session.team.id}
-          disabled={switchingTeam || (ssoTeamOptions?.length ?? 0) <= 1}
-          onChange={(event) => void onSwitchTeam(event.target.value)}
-        >
-          {(ssoTeamOptions ?? []).map((item) => (
-            <option value={item.team.id} key={item.team.id}>{item.team.name}</option>
-          ))}
-        </select>
-      ) : (
-        <strong className="team-select-chip">{session.team.name}</strong>
+    <div className="session-context compact mcp-context" aria-label="Current workspace">
+      <div className="mcp-context-team">
+        <span className="context-label">Team</span>
+        {authMode === "sso" ? (
+          <select
+            aria-label="Active team"
+            value={session.team.id}
+            disabled={switchingTeam || (ssoTeamOptions?.length ?? 0) <= 1}
+            onChange={(event) => void onSwitchTeam(event.target.value)}
+          >
+            {(ssoTeamOptions ?? []).map((item) => (
+              <option value={item.team.id} key={item.team.id}>{item.team.name}</option>
+            ))}
+          </select>
+        ) : (
+          <strong className="team-select-chip">{session.team.name}</strong>
+        )}
+      </div>
+      <div className="mcp-context-value">
+        <span className="context-label">Team ID</span>
+        <code>{session.team.id}</code>
+      </div>
+      <div className="mcp-context-value mcp-context-endpoint">
+        <span className="context-label">MCP URL</span>
+        <code>{mcpURL}</code>
+        <input ref={copyFallbackRef} className="sr-only" value={mcpURL} readOnly tabIndex={-1} aria-hidden="true" />
+        <button className="icon-button compact" type="button" aria-label={copied ? "MCP URL copied" : "Copy MCP URL"} onClick={() => void copyMCPURL()}>
+          {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+        </button>
+      </div>
+      {!configuredBase && (
+        <small className="mcp-origin-fallback">Using this browser origin because MCP_PUBLIC_BASE_URL is not configured.</small>
       )}
     </div>
   );

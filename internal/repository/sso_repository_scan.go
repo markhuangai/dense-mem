@@ -1,16 +1,21 @@
 package repository
 
 import (
+	"bytes"
 	"database/sql"
 
 	"github.com/lib/pq"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 )
+
+const maximumSSOProtectedResourceConfigBytes = 64 * 1024
 
 func scanSSOProvider(rows *sql.Rows) (*domain.SSOProvider, error) {
 	var provider domain.SSOProvider
 	var kind string
+	var protectedResource []byte
 	if err := rows.Scan(
 		&provider.ID,
 		&provider.Name,
@@ -24,6 +29,7 @@ func scanSSOProvider(rows *sql.Rows) (*domain.SSOProvider, error) {
 		pq.Array(&provider.GroupClaims),
 		&provider.GroupsEndpoint,
 		pq.Array(&provider.GroupsScopes),
+		&protectedResource,
 		&provider.Enabled,
 		&provider.RetiredAt,
 		&provider.CreatedAt,
@@ -32,6 +38,9 @@ func scanSSOProvider(rows *sql.Rows) (*domain.SSOProvider, error) {
 		return nil, err
 	}
 	provider.Kind = domain.SSOProviderKind(kind)
+	if err := jsonstrict.Decode(bytes.NewReader(protectedResource), &provider.ProtectedResource, maximumSSOProtectedResourceConfigBytes); err != nil {
+		return nil, err
+	}
 	return &provider, nil
 }
 

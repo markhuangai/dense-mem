@@ -1,3 +1,5 @@
+import { screen } from "@testing-library/react";
+import { expect } from "vitest";
 import { RecallHit, RecallPayload } from "./api";
 
 export function optionValue<T>(value: T | T[], index: number): T {
@@ -27,6 +29,11 @@ export function jsonResponse(payload: unknown, status = 200) {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+export async function expectCurrentWorkspace(teamName: string) {
+  const workspace = await screen.findByLabelText("Current workspace");
+  expect(workspace).toHaveTextContent(teamName);
 }
 
 export function recallPayloadForHits(hits: RecallHit[]): RecallPayload {

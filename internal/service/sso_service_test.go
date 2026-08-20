@@ -273,6 +273,7 @@ type ssoRepositoryStub struct {
 	deletedMappingID              uuid.UUID
 	identities                    map[uuid.UUID]*domain.SSOIdentity
 	getIdentityErr                error
+	identityLookupCalls           int
 	upsertIdentityErr             error
 	upsertIdentityID              uuid.UUID
 	upsertProfileErrors           map[uuid.UUID]error
@@ -504,7 +505,17 @@ func (r *ssoRepositoryStub) GetIdentity(ctx context.Context, id uuid.UUID) (*dom
 }
 
 func (r *ssoRepositoryStub) GetIdentityByProviderSubject(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOIdentity, error) {
-	r.unexpected("GetIdentityByProviderSubject")
+	r.identityLookupCalls++
+	if r.getIdentityErr != nil {
+		return nil, r.getIdentityErr
+	}
+	for _, identity := range r.identities {
+		if identity.ProviderID != providerID || identity.Subject != subject {
+			continue
+		}
+		copy := *identity
+		return &copy, nil
+	}
 	return nil, nil
 }
 

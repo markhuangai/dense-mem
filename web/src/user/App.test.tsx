@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserPortalApp } from "./App";
-import { authorizationHeader, isRecallSequence, jsonResponse, optionValue, recallPayloadForHits } from "./App.test-helpers";
+import { authorizationHeader, expectCurrentWorkspace, isRecallSequence, jsonResponse, optionValue, recallPayloadForHits } from "./App.test-helpers";
 import { GraphNode, GraphSnapshot, RecallHit, UserCredential, UserSession } from "./api";
 
 vi.mock("react-force-graph-2d", async () => {
@@ -32,6 +32,7 @@ vi.mock("react-force-graph-2d", async () => {
 });
 
 const baseSession: UserSession = {
+  mcp_public_base_url: "https://memory.example.test",
   team: {
     id: "11111111-1111-4111-8111-111111111111",
     name: "Research Team",
@@ -633,10 +634,12 @@ describe("UserPortalApp", () => {
     expect(screen.queryByRole("button", { name: /^team$/i })).not.toBeInTheDocument();
     const teamSelect = await screen.findByLabelText("Active team");
     expect(teamSelect).toHaveValue(initial.team.id);
+    expect(screen.getByText(`https://memory.example.test/teams/${initial.team.id}/mcp`)).toBeInTheDocument();
 
     await userEvent.selectOptions(teamSelect, secondTeam.id);
 
     await expectCurrentWorkspace("Analytics Team");
+    expect(screen.getByText(`https://memory.example.test/teams/${secondTeam.id}/mcp`)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /my credential/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^team$/i })).toBeInTheDocument();
     await waitFor(() => {
@@ -772,11 +775,6 @@ describe("UserPortalApp", () => {
     expect(screen.getByRole("button", { name: /regenerate key/i })).toBeDisabled();
   });
 });
-async function expectCurrentWorkspace(teamName: string) {
-  const workspace = await screen.findByLabelText("Current workspace");
-  expect(workspace).toHaveTextContent(teamName);
-}
-
 function mockUserFetch(session: UserSession, credentials: UserCredential[] = [], options: { recallHits?: RecallHit[] | RecallHit[][]; graphSnapshot?: GraphSnapshot | GraphSnapshot[]; graphNodeDetails?: Record<string, GraphNode> | Record<string, GraphNode>[] } = {}) {
   let currentTeam = session.team;
   let currentCredentials = credentials;

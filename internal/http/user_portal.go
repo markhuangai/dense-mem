@@ -77,6 +77,7 @@ type userPortalSessionResponse struct {
 	Credential          *userPortalCredentialResponse  `json:"credential"`
 	Teams               []userPortalTeamOptionResponse `json:"teams"`
 	PersonalCredentials []userPortalCredentialResponse `json:"personal_credentials"`
+	MCPPublicBaseURL    string                         `json:"mcp_public_base_url"`
 }
 
 type userPortalTeamOptionResponse struct {
@@ -374,12 +375,17 @@ func (h *userPortalHandler) currentSession(c echo.Context) (userPortalSessionRes
 		return userPortalSessionResponse{}, err
 	}
 	credentialResponse := toUserPortalCredential(credential)
+	mcpPublicBaseURL, err := h.mcpPublicBaseURL(ctx)
+	if err != nil {
+		return userPortalSessionResponse{}, err
+	}
 	return userPortalSessionResponse{
 		Team:                teamResponse,
 		Membership:          userPortalMembershipFromPrincipal(principal),
 		Credential:          &credentialResponse,
 		Teams:               []userPortalTeamOptionResponse{},
 		PersonalCredentials: []userPortalCredentialResponse{},
+		MCPPublicBaseURL:    mcpPublicBaseURL,
 	}, nil
 }
 
@@ -408,12 +414,17 @@ func (h *userPortalHandler) currentSSOSession(c echo.Context) (userPortalSession
 	if err != nil {
 		return userPortalSessionResponse{}, err
 	}
+	mcpPublicBaseURL, err := h.mcpPublicBaseURL(ctx)
+	if err != nil {
+		return userPortalSessionResponse{}, err
+	}
 	response := userPortalSessionResponse{
 		Team:                selected.Team,
 		Membership:          selected.Membership,
 		Credential:          nil,
 		Teams:               teams,
 		PersonalCredentials: []userPortalCredentialResponse{},
+		MCPPublicBaseURL:    mcpPublicBaseURL,
 	}
 	if selected.Membership.Role != service.CredentialRoleManager && h.credentials != nil {
 		personalCredentials, err := h.ssoOwnedCredentials(ctx, info.Selected.Team.ID, info.Identity.ID)
@@ -425,6 +436,17 @@ func (h *userPortalHandler) currentSSOSession(c echo.Context) (userPortalSession
 		}
 	}
 	return response, nil
+}
+
+func (h *userPortalHandler) mcpPublicBaseURL(ctx context.Context) (string, error) {
+	if h.appConfig == nil {
+		return "", nil
+	}
+	runtime, err := h.appConfig.SSORuntimeConfig(ctx)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(strings.TrimSpace(runtime.MCPPublicBaseURL), "/"), nil
 }
 
 func (h *userPortalHandler) ssoProviders(c echo.Context) error {

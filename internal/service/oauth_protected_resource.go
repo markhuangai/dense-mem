@@ -333,7 +333,15 @@ func validateOAuthProfiles(profiles []domain.OAuthProtectedResourceProfile) (map
 }
 
 func validateOAuthProtectedResourceConfig(name string, config domain.OAuthProtectedResourceConfig) error {
-	if len(config.Audiences) == 0 || len(config.Audiences) > oauthMaximumAudiences {
+	return validateOAuthProtectedResourceConfigWithAudienceRequirement(name, config, true)
+}
+
+func validateOptionalOAuthProtectedResourceConfig(name string, config domain.OAuthProtectedResourceConfig) error {
+	return validateOAuthProtectedResourceConfigWithAudienceRequirement(name, config, false)
+}
+
+func validateOAuthProtectedResourceConfigWithAudienceRequirement(name string, config domain.OAuthProtectedResourceConfig, requireAudience bool) error {
+	if len(config.Audiences) > oauthMaximumAudiences || (requireAudience && len(config.Audiences) == 0) {
 		return fmt.Errorf("OAuth profile %q must configure between 1 and %d audiences", name, oauthMaximumAudiences)
 	}
 	if err := validateUniqueOAuthValues(config.Audiences, 512, validNonControlValue); err != nil {

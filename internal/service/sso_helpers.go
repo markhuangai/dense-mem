@@ -620,7 +620,7 @@ func normalizeSSOProvider(provider *domain.SSOProvider) error {
 	default:
 		return fmt.Errorf("sso provider kind must be azure_ad, pingone, or generic_oidc")
 	}
-	provider.IssuerURL = strings.TrimRight(strings.TrimSpace(provider.IssuerURL), "/")
+	provider.IssuerURL = strings.TrimSpace(provider.IssuerURL)
 	if provider.IssuerURL == "" {
 		return fmt.Errorf("sso issuer_url is required")
 	}
@@ -679,7 +679,80 @@ func normalizeSSOProviderForWrite(provider *domain.SSOProvider) error {
 	if provider.Kind == domain.SSOProviderKindAzureAD && provider.TenantID == "" {
 		return fmt.Errorf("sso tenant_id is required for azure_ad providers")
 	}
-	return nil
+	return normalizeSSOProtectedResourceConfig(provider)
+}
+
+func normalizeSSOProtectedResourceConfig(provider *domain.SSOProvider) error {
+	config := &provider.ProtectedResource.OAuthProtectedResourceConfig
+	if config.JWKSSource == "" {
+		config.JWKSSource = "discovery"
+	}
+	if len(config.Algorithms) == 0 {
+		config.Algorithms = []string{"RS256"}
+	}
+	if config.ScopeClaim == "" {
+		config.ScopeClaim = "scope"
+	}
+	for _, mapping := range config.ScopeMappings {
+		for _, internalScope := range mapping.InternalScopes {
+			switch internalScope {
+			case CredentialScopeRead, CredentialScopeWrite, CredentialScopeFeedbackRead:
+			default:
+				return fmt.Errorf("sso protected_resource internal scopes may contain only read, write, or feedback:read")
+			}
+		}
+	}
+	name := provider.ID.String()
+	if provider.ProtectedResource.Enabled {
+		_, err := validateOAuthProfiles([]domain.OAuthProtectedResourceProfile{{
+			Name:              name,
+			Issuer:            provider.IssuerURL,
+			ProtectedResource: *config,
+		}})
+		return err
+	}
+	return validateOptionalOAuthProtectedResourceConfig(name, *config)
+}
+
+func (s *SSOService) validateProtectedResourceProviderSet(ctx context.Context, candidate *domain.SSOProvider) error {
+	if s == nil || s.repo == nil || candidate == nil {
+		return fmt.Errorf("sso provider repository is unavailable")
+	}
+	providers, err := s.repo.ListProviders(ctx)
+	if err != nil {
+		return err
+	}
+	profiles := make([]domain.OAuthProtectedResourceProfile, 0, len(providers)+1)
+	seenCandidate := false
+	for _, provider := range providers {
+		if provider == nil {
+			continue
+		}
+		if provider.ID == candidate.ID {
+			provider = candidate
+			seenCandidate = true
+		}
+		if !provider.Enabled || provider.RetiredAt != nil || !provider.ProtectedResource.Enabled {
+			continue
+		}
+		profiles = append(profiles, oauthProfileFromSSOProvider(provider))
+	}
+	if !seenCandidate && candidate.Enabled && candidate.RetiredAt == nil && candidate.ProtectedResource.Enabled {
+		profiles = append(profiles, oauthProfileFromSSOProvider(candidate))
+	}
+	if len(profiles) == 0 {
+		return nil
+	}
+	_, err = validateOAuthProfiles(profiles)
+	return err
+}
+
+func oauthProfileFromSSOProvider(provider *domain.SSOProvider) domain.OAuthProtectedResourceProfile {
+	return domain.OAuthProtectedResourceProfile{
+		Name:              provider.ID.String(),
+		Issuer:            provider.IssuerURL,
+		ProtectedResource: provider.ProtectedResource.OAuthProtectedResourceConfig,
+	}
 }
 
 func normalizeSSOGroupMapping(mapping *domain.SSOGroupMapping) error {

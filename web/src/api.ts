@@ -1,5 +1,6 @@
 import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types";
 import type { CommunityStatus } from "./community-api-types";
+import type { OAuthProtectedResourceConfig } from "./oauth-protected-resource-types";
 import type { SearchConvergence } from "./search-convergence-types";
 import { requestJson } from "./http";
 import {
@@ -35,6 +36,7 @@ export type {
   ConflictQueueSupporter,
 } from "./conflict-queue-api-types";
 import type { ConflictQueuePage, ConflictQueueQuery } from "./conflict-queue-api-types";
+export type { OAuthProtectedResourceConfig, OAuthScopeMapping } from "./oauth-protected-resource-types";
 export type { SearchConvergence } from "./search-convergence-types";
 export type Team = {
   id: string;
@@ -193,6 +195,7 @@ export type SSOProvider = {
   group_claims: string[];
   groups_endpoint: string;
   groups_scopes: string[];
+  protected_resource: OAuthProtectedResourceConfig;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -226,6 +229,7 @@ export type SSOProviderInput = {
   group_claims: string[];
   groups_endpoint: string;
   groups_scopes: string[];
+  protected_resource: OAuthProtectedResourceConfig;
   enabled: boolean;
 };
 

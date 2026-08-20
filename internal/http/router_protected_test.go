@@ -173,6 +173,8 @@ func TestRegisterProtectedRoutesWithHandlersRegistersConfiguredSurface(t *testin
 	required := []string{
 		"POST /mcp",
 		"GET /mcp",
+		"POST /teams/:teamId/mcp",
+		"GET /teams/:teamId/mcp",
 	}
 
 	for _, route := range required {

@@ -33,6 +33,10 @@ type ProtectedDeps struct {
 		middleware.SSOEntitlementValidator
 		middleware.SSOSessionAuthenticator
 	}
+	// OAuthAuthenticator validates customer-IdP JWT bearer tokens for MCP.
+	OAuthAuthenticator middleware.OAuthBearerAuthenticator
+	// OAuthMetadata publishes and links the protected-resource contract.
+	OAuthMetadata OAuthProtectedResourceProvider
 	// Config is the application configuration.
 	Config config.ConfigProvider
 	// Logger is the structured logger.
@@ -105,14 +109,17 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 	// Create team authorization service from audit service.
 	teamAuthzSvc := middleware.NewTeamAuthorizationService(deps.AuditService)
 	credentialAuthMW := middleware.AuthMiddlewareWithOptions(deps.CredentialRepo, deps.AuditService, deps.SecurityService, middleware.AuthOptions{
-		CredentialVerifier:      deps.CredentialVerifier,
-		SSOEntitlementValidator: deps.SSOAuthenticator,
+		CredentialVerifier:       deps.CredentialVerifier,
+		SSOEntitlementValidator:  deps.SSOAuthenticator,
+		OAuthBearerAuthenticator: deps.OAuthAuthenticator,
 	})
+	challengeMW := oauthProtectedResourceChallenge(deps.OAuthMetadata)
 	usageMW := middleware.UsageMetricsMiddleware(deps.UsageMetrics)
 	rateLimitMW := middleware.RateLimitMiddleware(deps.RateLimitService, deps.Config, deps.AuditService)
 	lastUsedMW := middleware.LastUsedMiddleware(deps.LastUsedRecorder)
 	protectedGroup := func(prefix string) *echo.Group {
 		group := e.Group(prefix)
+		group.Use(challengeMW)
 		group.Use(credentialAuthMW)
 		group.Use(middleware.TeamResolutionMiddleware(deps.TeamSvc))
 		group.Use(middleware.AuthorizeTeam(teamAuthzSvc))
@@ -123,13 +130,21 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 		return group
 	}
 
-	// MCP Streamable HTTP endpoint. External memory integrations use bearer API keys only.
+	// MCP Streamable HTTP endpoints share one registry and immutable auth context.
 	mcpGroup := protectedGroup("/mcp")
 	if handlers.MCPPost != nil {
 		mcpGroup.POST("", handlers.MCPPost)
 	}
 	if handlers.MCPGet != nil {
 		mcpGroup.GET("", handlers.MCPGet)
+	}
+
+	scopedMCPGroup := protectedGroup("/teams/:teamId/mcp")
+	if handlers.MCPPost != nil {
+		scopedMCPGroup.POST("", handlers.MCPPost)
+	}
+	if handlers.MCPGet != nil {
+		scopedMCPGroup.GET("", handlers.MCPGet)
 	}
 }
 

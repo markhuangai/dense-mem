@@ -28,6 +28,7 @@ const (
 	PROFILE_ID_REQUIRED                 ErrorCode = "PROFILE_ID_REQUIRED"
 	INVALID_UUID                        ErrorCode = "INVALID_UUID"
 	CONFLICT                            ErrorCode = "CONFLICT"
+	TEAM_REQUIRED                       ErrorCode = "team_required"
 	RATE_LIMITED                        ErrorCode = "RATE_LIMITED"
 	SERVICE_UNAVAILABLE                 ErrorCode = "SERVICE_UNAVAILABLE"
 	INTERNAL_ERROR                      ErrorCode = "INTERNAL_ERROR"

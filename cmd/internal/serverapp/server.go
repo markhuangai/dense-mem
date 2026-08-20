@@ -353,11 +353,10 @@ func RunActiveServer(
 		Degraded: backend.degraded,
 		Reason:   backend.reason,
 	}).WithSharedDependencyChecks()
-
 	e := http.NewServer(cfg, logger, healthConfig)
-	e.Use(middleware.CorrelationIDMiddleware())
-	e.Use(middleware.ClientIPMiddleware())
+	e.Use(middleware.CorrelationIDMiddleware(), middleware.ClientIPMiddleware())
 	e.Use(middleware.SecurityBanMiddleware(securityService))
+	http.RegisterOAuthProtectedResourceRoutes(e, ssoService)
 	if err := http.RegisterDirectorySCIM(e, directoryIdentityService, http.DirectorySCIMConfig{
 		RuntimeConfig: appConfigService,
 		Security:      securityService,
@@ -380,6 +379,8 @@ func RunActiveServer(
 		AuditService:       auditService,
 		SecurityService:    securityService,
 		SSOAuthenticator:   ssoService,
+		OAuthAuthenticator: ssoService,
+		OAuthMetadata:      ssoService,
 		Config:             &cfg,
 		Logger:             logger,
 		CredentialVerifier: credentialVerifier,

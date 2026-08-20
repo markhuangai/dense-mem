@@ -35,6 +35,8 @@ type controlAppConfigSvc struct {
 	telemetryValues      map[string]string
 	getErr               error
 	updateErr            error
+	ssoRuntime           service.SSORuntimeConfig
+	ssoRuntimeErr        error
 	dreamingRuntime      domain.DreamingRuntimeConfig
 	dreamingRuntimeErr   error
 	recallRuntime        domain.RecallFeedbackRuntimeConfig
@@ -88,7 +90,10 @@ func (s *controlAppConfigSvc) UpdateSSOSettings(_ context.Context, values map[st
 }
 
 func (s *controlAppConfigSvc) SSORuntimeConfig(context.Context) (service.SSORuntimeConfig, error) {
-	return service.SSORuntimeConfig{}, nil
+	if s.ssoRuntimeErr != nil {
+		return service.SSORuntimeConfig{}, s.ssoRuntimeErr
+	}
+	return s.ssoRuntime, nil
 }
 
 func (s *controlAppConfigSvc) GetDreamingSettings(context.Context) (*domain.DreamingConfigSettings, error) {
