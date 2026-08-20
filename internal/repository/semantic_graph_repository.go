@@ -170,6 +170,7 @@ func semanticGraphEdgesSQL(extraWhere string) string {
 		  WHERE team_id = e.team_id
 		    AND entity_id = e.subject_entity_id
 		    AND space_id = edge_record.space_id
+		    AND ` + activeSemanticSpaceGenerationSQL("entity_names") + `
 		    AND name_kind = 'canonical'
 		    AND valid_to IS NULL
 		  ORDER BY created_at DESC, entity_name_id DESC
@@ -185,6 +186,7 @@ func semanticGraphEdgesSQL(extraWhere string) string {
 		  WHERE team_id = e.team_id
 		    AND entity_id = e.object_entity_id
 		    AND space_id = edge_record.space_id
+		    AND ` + activeSemanticSpaceGenerationSQL("entity_names") + `
 		    AND name_kind = 'canonical'
 		    AND valid_to IS NULL
 		  ORDER BY created_at DESC, entity_name_id DESC
@@ -198,6 +200,16 @@ func semanticGraphEdgesSQL(extraWhere string) string {
 		  AND (
 		    edge_record.space_id = dense_mem_team_shared_space(edge_record.team_id)
 		    OR dense_mem_space_allowed(edge_record.space_id)
+		  )
+		  AND ` + activeSemanticSpaceGenerationSQL("edge_record") + `
+		  AND ` + activeSemanticSpaceGenerationSQL("subject") + `
+		  AND (
+		    e.object_entity_id IS NULL
+		    OR ` + activeSemanticSpaceGenerationSQL("object") + `
+		  )
+		  AND (
+		    e.object_entity_id IS NOT NULL
+		    OR ` + activeSemanticSpaceGenerationSQL("value") + `
 		  )
 		  AND subject.status = 'active'
 		  AND (
@@ -330,6 +342,7 @@ func loadSemanticEntityGraphNode(ctx context.Context, tx *gorm.DB, teamID, entit
 		  WHERE team_id = e.team_id
 		    AND entity_id = e.entity_id
 		    AND space_id = e.space_id
+		    AND `+activeSemanticSpaceGenerationSQL("entity_names")+`
 		    AND name_kind = 'canonical'
 		    AND valid_to IS NULL
 		  ORDER BY created_at DESC, entity_name_id DESC
@@ -342,6 +355,7 @@ func loadSemanticEntityGraphNode(ctx context.Context, tx *gorm.DB, teamID, entit
 		    e.space_id = dense_mem_team_shared_space(e.team_id)
 		    OR dense_mem_space_allowed(e.space_id)
 		  )
+		  AND `+activeSemanticSpaceGenerationSQL("e")+`
 		LIMIT 1
 	`, teamID, entityID).Rows()
 	if err != nil {
@@ -374,6 +388,7 @@ func loadSemanticValueGraphNode(ctx context.Context, tx *gorm.DB, teamID, valueI
 		    value.space_id = dense_mem_team_shared_space(value.team_id)
 		    OR dense_mem_space_allowed(value.space_id)
 		  )
+		  AND `+activeSemanticSpaceGenerationSQL("value")+`
 		LIMIT 1
 	`, teamID, valueID).Rows()
 	if err != nil {

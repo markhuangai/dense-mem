@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 
@@ -259,6 +260,50 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 	graphC, err := semanticRepo.SemanticGraph(ctxC, SemanticGraphQuery{TeamID: teamC, Limit: 10})
 	require.NoError(t, err)
 	assert.Empty(t, graphC.Edges)
+
+	node, err := semanticRepo.SemanticGraphNodeDetail(ctxA, SemanticGraphNodeDetailInput{
+		TeamID: teamA, NodeType: "entity", NodeID: rootSubjectID.String(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Private A", node.Title)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			UPDATE memory_spaces
+			SET generation = generation + 1, lifecycle_state = 'sealed', sealed_at = now()
+			WHERE id = ?::uuid AND team_id = ?::uuid AND lifecycle_state = 'active'
+		`, spaceA, teamA)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("seal private test space: updated %d rows", result.RowsAffected)
+		}
+		var retained int64
+		if err := tx.Raw(`
+			SELECT COUNT(*)
+			FROM relationship_records
+			WHERE team_id = ?::uuid AND space_id = ?::uuid
+		`, teamA, spaceA).Row().Scan(&retained); err != nil {
+			return err
+		}
+		if retained != 1 {
+			return fmt.Errorf("expected retained private relationship row, got %d", retained)
+		}
+		return nil
+	}))
+
+	_, err = semanticRepo.TraceRelationship(ctxA, TraceRelationshipInput{
+		TeamID: teamA, RelationshipID: rootRelationshipID.String(),
+	})
+	require.ErrorIs(t, err, sql.ErrNoRows)
+	sealedGraph, err := semanticRepo.SemanticGraph(ctxA, SemanticGraphQuery{TeamID: teamA, Limit: 10})
+	require.NoError(t, err)
+	assert.Empty(t, sealedGraph.Edges)
+	_, err = semanticRepo.SemanticGraphNodeDetail(ctxA, SemanticGraphNodeDetailInput{
+		TeamID: teamA, NodeType: "entity", NodeID: rootSubjectID.String(),
+	})
+	require.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph(t *testing.T) {

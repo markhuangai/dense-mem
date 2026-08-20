@@ -22,12 +22,13 @@ func loadTraceSearchDocuments(
 		       source_id::text, source_version, document_version,
 		       embedding_contract_id::text, embedding_dimensions, search_state,
 		       document_hash, created_at, updated_at
-		FROM search_documents
-		WHERE team_id = ?::uuid
-		  AND space_id = ?::uuid
-		  AND source_kind = 'relationship'
-		  AND source_id = ?::uuid
-		ORDER BY source_kind ASC, updated_at DESC, search_document_id ASC
+		FROM search_documents AS document
+		WHERE document.team_id = ?::uuid
+		  AND document.space_id = ?::uuid
+		  AND document.source_kind = 'relationship'
+		  AND document.source_id = ?::uuid
+		  AND ` + activeSemanticSpaceGenerationSQL("document") + `
+		ORDER BY document.source_kind ASC, document.updated_at DESC, document.search_document_id ASC
 		LIMIT ?
 	`
 	args := []any{teamID, spaceID, relationshipID, limit}
@@ -37,14 +38,15 @@ func loadTraceSearchDocuments(
 			       source_id::text, source_version, document_version,
 			       embedding_contract_id::text, embedding_dimensions, search_state,
 			       document_hash, created_at, updated_at
-			FROM search_documents
-			WHERE team_id = ?::uuid
-			  AND space_id = ?::uuid
+			FROM search_documents AS document
+			WHERE document.team_id = ?::uuid
+			  AND document.space_id = ?::uuid
+			  AND ` + activeSemanticSpaceGenerationSQL("document") + `
 			  AND (
-			    (source_kind = 'relationship' AND source_id = ?::uuid)
-			    OR (source_kind = 'evidence' AND source_id = ANY(?::uuid[]))
+			    (document.source_kind = 'relationship' AND document.source_id = ?::uuid)
+			    OR (document.source_kind = 'evidence' AND document.source_id = ANY(?::uuid[]))
 			  )
-			ORDER BY source_kind ASC, updated_at DESC, search_document_id ASC
+			ORDER BY document.source_kind ASC, document.updated_at DESC, document.search_document_id ASC
 			LIMIT ?
 		`
 		args = []any{teamID, spaceID, relationshipID, pq.Array(fragmentIDs), limit}
@@ -86,11 +88,12 @@ func loadTraceEmbeddingJobs(
 		       source_kind, source_id::text, source_version, document_version,
 		       embedding_contract_id::text, embedding_dimensions, status, attempts,
 		       error, created_at, updated_at, completed_at
-		FROM embedding_jobs
-		WHERE team_id = ?::uuid
-		  AND space_id = ?::uuid
-		  AND search_document_id = ANY(?::uuid[])
-		ORDER BY created_at ASC, embedding_job_id ASC
+		FROM embedding_jobs AS job
+		WHERE job.team_id = ?::uuid
+		  AND job.space_id = ?::uuid
+		  AND job.search_document_id = ANY(?::uuid[])
+		  AND `+activeSemanticSpaceGenerationSQL("job")+`
+		ORDER BY job.created_at ASC, job.embedding_job_id ASC
 		LIMIT ?
 	`, teamID, spaceID, pq.Array(searchDocumentIDs), limit).Rows()
 	if err != nil {

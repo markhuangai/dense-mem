@@ -32,8 +32,10 @@ func loadTraceEvidenceLifecycleEvents(
 		  ON operation.team_id = lifecycle.team_id
 		 AND operation.lifecycle_operation_id = lifecycle.lifecycle_operation_id
 		 AND operation.space_id = lifecycle.space_id
+		 AND `+activeSemanticSpaceGenerationSQL("operation")+`
 		WHERE lifecycle.team_id = ?::uuid
 		  AND lifecycle.space_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("lifecycle")+`
 		  AND (
 		      lifecycle.target_fragment_id = ANY(?::uuid[])
 		      OR lifecycle.replacement_fragment_id = ANY(?::uuid[])

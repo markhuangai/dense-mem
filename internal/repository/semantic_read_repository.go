@@ -314,12 +314,14 @@ func loadTraceRelationship(
 		  ON subject.team_id = r.team_id
 		 AND subject.entity_id = r.subject_entity_id
 		 AND subject.space_id = r.space_id
+		 AND `+activeSemanticSpaceGenerationSQL("subject")+`
 		LEFT JOIN LATERAL (
 		  SELECT display_name
 		  FROM entity_names
 		  WHERE team_id = r.team_id
 		    AND entity_id = r.subject_entity_id
 		    AND space_id = r.space_id
+		    AND `+activeSemanticSpaceGenerationSQL("entity_names")+`
 		    AND name_kind = 'canonical'
 		    AND valid_to IS NULL
 		  ORDER BY created_at DESC, entity_name_id DESC
@@ -329,12 +331,14 @@ func loadTraceRelationship(
 		  ON object.team_id = r.team_id
 		 AND object.entity_id = r.object_entity_id
 		 AND object.space_id = r.space_id
+		 AND `+activeSemanticSpaceGenerationSQL("object")+`
 		LEFT JOIN LATERAL (
 		  SELECT display_name
 		  FROM entity_names
 		  WHERE team_id = r.team_id
 		    AND entity_id = r.object_entity_id
 		    AND space_id = r.space_id
+		    AND `+activeSemanticSpaceGenerationSQL("entity_names")+`
 		    AND name_kind = 'canonical'
 		    AND valid_to IS NULL
 		  ORDER BY created_at DESC, entity_name_id DESC
@@ -344,12 +348,14 @@ func loadTraceRelationship(
 		  ON value.team_id = r.team_id
 		 AND value.value_id = r.object_value_id
 		 AND value.space_id = r.space_id
+		 AND `+activeSemanticSpaceGenerationSQL("value")+`
 		WHERE r.team_id = ?::uuid
 		  AND r.relationship_id = ?::uuid
 		  AND (
 		    r.space_id = dense_mem_team_shared_space(r.team_id)
 		    OR dense_mem_space_allowed(r.space_id)
 		  )
+		  AND `+activeSemanticSpaceGenerationSQL("r")+`
 		LIMIT 1
 	`, teamID, relationshipID).Rows()
 	if err != nil {
@@ -398,6 +404,7 @@ func loadTraceObservations(
 		WHERE team_id = ?::uuid
 		  AND relationship_id = ?::uuid
 		  AND space_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("relationship_observations")+`
 		ORDER BY created_at ASC, observation_id ASC
 		LIMIT ?
 	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
@@ -440,11 +447,12 @@ func loadTraceSupports(
 		       source_group_key, COALESCE(source_id::text, ''),
 		       COALESCE(source_revision_id::text, ''), span_start, span_end,
 		       quote, authority, metadata::text, created_at
-		FROM relationship_evidence_supports
-		WHERE team_id = ?::uuid
-		  AND relationship_id = ?::uuid
-		  AND space_id = ?::uuid
-		ORDER BY created_at ASC, support_id ASC
+		FROM relationship_evidence_supports AS support
+		WHERE support.team_id = ?::uuid
+		  AND support.relationship_id = ?::uuid
+		  AND support.space_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("support")+`
+		ORDER BY support.created_at ASC, support.support_id ASC
 		LIMIT ?
 	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
 	if err != nil {
@@ -479,11 +487,12 @@ func loadTraceSupportDecisions(
 		SELECT support_decision_id::text, support_id::text, relationship_id::text,
 		       owner_profile_id::text, COALESCE(actor_profile_id::text, ''),
 		       decision, reason, metadata::text, created_at
-		FROM relationship_support_decision_events
-		WHERE team_id = ?::uuid
-		  AND relationship_id = ?::uuid
-		  AND space_id = ?::uuid
-		ORDER BY created_at ASC, support_decision_id ASC
+		FROM relationship_support_decision_events AS decision
+		WHERE decision.team_id = ?::uuid
+		  AND decision.relationship_id = ?::uuid
+		  AND decision.space_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("decision")+`
+		ORDER BY decision.created_at ASC, decision.support_decision_id ASC
 		LIMIT ?
 	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
 	if err != nil {
@@ -538,6 +547,15 @@ func loadTraceEvidenceFragments(
 		WHERE f.team_id = ?::uuid
 		  AND f.fragment_id = ANY(?::uuid[])
 		  AND f.space_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("f")+`
+		  AND (
+		    src.source_id IS NULL
+		    OR `+activeSemanticSpaceGenerationSQL("src")+`
+		  )
+		  AND (
+		    rev.source_revision_id IS NULL
+		    OR `+activeSemanticSpaceGenerationSQL("rev")+`
+		  )
 		ORDER BY f.evidence_index ASC, f.fragment_id ASC
 	`, includeContent, input.MaxFragmentContentRunes, includeContent, input.MaxFragmentContentRunes,
 		input.TeamID, pq.Array(fragmentIDs), input.spaceID).Rows()
@@ -582,6 +600,8 @@ func loadTraceVerificationEvents(
 		WHERE v.team_id = ?::uuid
 		  AND o.relationship_id = ?::uuid
 		  AND v.space_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("v")+`
+		  AND `+activeSemanticSpaceGenerationSQL("o")+`
 		ORDER BY v.created_at ASC, v.verification_event_id ASC
 		LIMIT ?
 	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
@@ -619,11 +639,12 @@ func loadTraceTransitions(
 		       COALESCE(from_status, ''), to_status,
 		       reason, COALESCE(verification_event_id::text, ''),
 		       COALESCE(support_decision_id::text, ''), metadata::text, created_at
-		FROM relationship_transition_events
-		WHERE team_id = ?::uuid
-		  AND relationship_id = ?::uuid
-		  AND space_id = ?::uuid
-		ORDER BY created_at ASC, transition_id ASC
+		FROM relationship_transition_events AS transition
+		WHERE transition.team_id = ?::uuid
+		  AND transition.relationship_id = ?::uuid
+		  AND transition.space_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("transition")+`
+		ORDER BY transition.created_at ASC, transition.transition_id ASC
 		LIMIT ?
 	`, input.TeamID, input.RelationshipID, input.spaceID, input.MaxEvents).Rows()
 	if err != nil {
@@ -667,14 +688,17 @@ func loadTraceCrossReferences(
 		  ON target_relationship.team_id = cross_reference.team_id
 		 AND target_relationship.relationship_id = cross_reference.target_relationship_id
 		WHERE cross_reference.team_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("cross_reference")+`
 		  AND (
 		    source_relationship.space_id = dense_mem_team_shared_space(cross_reference.team_id)
 		    OR dense_mem_space_allowed(source_relationship.space_id)
 		  )
+		  AND `+activeSemanticSpaceGenerationSQL("source_relationship")+`
 		  AND (
 		    target_relationship.space_id = dense_mem_team_shared_space(cross_reference.team_id)
 		    OR dense_mem_space_allowed(target_relationship.space_id)
 		  )
+		  AND `+activeSemanticSpaceGenerationSQL("target_relationship")+`
 		  AND (
 		    cross_reference.source_relationship_id = ?::uuid
 		    OR cross_reference.target_relationship_id = ?::uuid
@@ -723,6 +747,7 @@ func loadTraceIdentityCorrections(
 		WHERE team_id = ?::uuid
 		  AND space_id = ?::uuid
 		  AND selected_observation_ids && ?::uuid[]
+		  AND `+activeSemanticSpaceGenerationSQL("entity_correction_events")+`
 		ORDER BY created_at ASC, correction_event_id ASC
 		LIMIT ?
 	`, teamID, spaceID, pq.Array(observationIDs), limit).Rows()
@@ -766,6 +791,7 @@ func loadTraceSupersessionLineage(
 		  AND semantic_group_key = ?
 		  AND relationship_id <> ?::uuid
 		  AND status IN ('superseded', 'retracted', 'disputed')
+		  AND `+activeSemanticSpaceGenerationSQL("relationship_records")+`
 		ORDER BY updated_at DESC, relationship_id ASC
 		LIMIT ?
 	`, teamID, relationship.SpaceID, relationship.SemanticGroupKey, relationship.RelationshipID, limit).Rows()
