@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -253,7 +254,7 @@ func TestAuthMiddlewareOAuthBearerMapsBoundedErrors(t *testing.T) {
 	}{
 		{name: "expired", err: service.ErrOAuthTokenExpired, wantStatus: http.StatusUnauthorized, wantCode: "AUTH_EXPIRED", wantSecurityFailure: true},
 		{name: "invalid", err: service.ErrOAuthTokenInvalid, wantStatus: http.StatusUnauthorized, wantCode: "AUTH_INVALID", wantSecurityFailure: true},
-		{name: "ambiguous team", err: service.ErrOAuthTeamRequired, wantStatus: http.StatusBadRequest, wantCode: "team_required", wantSecurityFailure: true},
+		{name: "ambiguous team", err: service.ErrOAuthTeamRequired, wantStatus: http.StatusBadRequest, wantCode: "team_required"},
 		{name: "membership denied", err: service.ErrOAuthAccessDenied, wantStatus: http.StatusForbidden, wantCode: "FORBIDDEN", wantSecurityFailure: true},
 		{name: "provider unavailable", err: service.ErrOAuthProviderUnavailable, wantStatus: http.StatusServiceUnavailable, wantCode: "SERVICE_UNAVAILABLE"},
 		{name: "unknown", err: errors.New("backend details"), wantStatus: http.StatusInternalServerError, wantCode: "INTERNAL_ERROR", wantSecurityFailure: true},
@@ -279,6 +280,48 @@ func TestAuthMiddlewareOAuthBearerMapsBoundedErrors(t *testing.T) {
 			assert.Equal(t, test.wantSecurityFailure, security.recordAuthFailureCalled)
 		})
 	}
+}
+
+func TestAuthMiddlewareOAuthTeamRequiredDoesNotCountTowardAutomaticBan(t *testing.T) {
+	securityRepo := newOAuthAuthSecurityRepository(2)
+	security := service.NewSecurityService(securityRepo, nil)
+	audit := &mockAuditService{}
+	authenticator := &stubOAuthBearerAuthenticator{err: service.ErrOAuthTeamRequired}
+	e := newTestEcho()
+	e.Use(AuthMiddlewareWithOptions(&mockCredentialRepository{}, audit, security, AuthOptions{
+		OAuthBearerAuthenticator: authenticator,
+	}))
+	e.GET("/mcp", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+		req.RemoteAddr = "192.0.2.10:12345"
+		req.Header.Set("Authorization", "Bearer header.payload.signature")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	for range 2 {
+		rec := request()
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"code":"team_required"`)
+		assert.True(t, audit.authFailureCalled)
+		audit.authFailureCalled = false
+	}
+	assert.Empty(t, securityRepo.failures)
+	assert.Empty(t, securityRepo.bans)
+
+	authenticator.err = service.ErrOAuthTokenInvalid
+	for range 2 {
+		rec := request()
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"code":"AUTH_INVALID"`)
+		assert.True(t, audit.authFailureCalled)
+		audit.authFailureCalled = false
+	}
+	assert.Equal(t, 2, securityRepo.failures["192.0.2.10"])
+	assert.Contains(t, securityRepo.bans, "192.0.2.10")
 }
 
 func TestAuthMiddlewareStaticCredentialMustMatchScopedTeam(t *testing.T) {
@@ -331,4 +374,70 @@ func TestAuthMiddlewareOAuthOnlyRejectsBrowserCookies(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	assert.Zero(t, authenticator.calls)
+}
+
+type oauthAuthSecurityRepository struct {
+	settings domain.SecuritySettings
+	failures map[string]int
+	bans     map[string]*domain.SecurityIPBan
+}
+
+func newOAuthAuthSecurityRepository(failureThreshold int) *oauthAuthSecurityRepository {
+	return &oauthAuthSecurityRepository{
+		settings: domain.SecuritySettings{
+			Enabled:              true,
+			FailureThreshold:     failureThreshold,
+			FailureWindowSeconds: 600,
+		},
+		failures: map[string]int{},
+		bans:     map[string]*domain.SecurityIPBan{},
+	}
+}
+
+func (r *oauthAuthSecurityRepository) GetSettings(context.Context) (*domain.SecuritySettings, error) {
+	settings := r.settings
+	return &settings, nil
+}
+
+func (r *oauthAuthSecurityRepository) UpdateSettings(_ context.Context, settings domain.SecuritySettings) (*domain.SecuritySettings, error) {
+	r.settings = settings
+	return &settings, nil
+}
+
+func (r *oauthAuthSecurityRepository) GetActiveBan(_ context.Context, ip string, now time.Time) (*domain.SecurityIPBan, error) {
+	ban := r.bans[ip]
+	if ban == nil || !ban.ActiveAt(now) {
+		return nil, nil
+	}
+	copy := *ban
+	return &copy, nil
+}
+
+func (r *oauthAuthSecurityRepository) RecordFailure(_ context.Context, ip, surface, reason string, _ int, now time.Time) (*domain.SecurityIPFailure, error) {
+	r.failures[ip]++
+	return &domain.SecurityIPFailure{
+		IP:            ip,
+		FailureCount:  r.failures[ip],
+		FirstFailedAt: now,
+		LastFailedAt:  now,
+		LastReason:    reason,
+		LastSurface:   surface,
+		UpdatedAt:     now,
+	}, nil
+}
+
+func (r *oauthAuthSecurityRepository) UpsertBan(_ context.Context, ban *domain.SecurityIPBan) error {
+	copy := *ban
+	r.bans[ban.IP] = &copy
+	return nil
+}
+
+func (r *oauthAuthSecurityRepository) ListBans(context.Context, bool, int, int) ([]domain.SecurityIPBan, int64, error) {
+	return nil, int64(len(r.bans)), nil
+}
+
+func (r *oauthAuthSecurityRepository) DeleteBan(_ context.Context, ip string, _ time.Time) error {
+	delete(r.bans, ip)
+	delete(r.failures, ip)
+	return nil
 }
