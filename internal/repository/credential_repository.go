@@ -404,7 +404,22 @@ func (r *CredentialRepositoryImpl) DeleteForTeam(ctx context.Context, teamID, id
 		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
 			return err
 		}
-		res := tx.Exec(`
+		var memoryBinding string
+		var actorIdentityID uuid.UUID
+		if err := tx.WithContext(ctx).Raw(`
+			SELECT COALESCE(credential.memory_binding, 'shared_only'), credential.actor_identity_id
+			FROM credentials AS credential
+			WHERE credential.id = $1 AND credential.team_id = $2 AND credential.kind = 'api_key'
+			  AND credential.status <> 'disabled'
+			FOR UPDATE
+		`, id, teamID).Row().Scan(&memoryBinding, &actorIdentityID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+
+		res := tx.WithContext(ctx).Exec(`
 			UPDATE credentials
 			SET status = 'disabled', revoked_at = COALESCE(revoked_at, $1), updated_at = $1
 			WHERE id = $2 AND team_id = $3 AND kind = 'api_key' AND status <> 'disabled'
@@ -416,13 +431,17 @@ func (r *CredentialRepositoryImpl) DeleteForTeam(ctx context.Context, teamID, id
 		if rowsAffected == 0 {
 			return nil
 		}
-		if err := tx.Exec(`
+		if err := tx.WithContext(ctx).Exec(`
 			UPDATE team_memberships
 			SET status = 'revoked', updated_at = $1
 			WHERE team_id = $2
-			  AND actor_identity_id = (SELECT actor_identity_id FROM credentials WHERE id = $3)
-		`, now, teamID, id).Error; err != nil {
+			  AND actor_identity_id = $3
+		`, now, teamID, actorIdentityID).Error; err != nil {
 			return err
+		}
+
+		if memoryBinding == string(domain.CredentialBindingCredentialPrivate) {
+			return queueCredentialPrivateErasureTx(ctx, tx, teamID, id)
 		}
 		return nil
 	})

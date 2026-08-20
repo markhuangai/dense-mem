@@ -90,6 +90,61 @@ func TestCanonicalSSOOwnedCredentialCollectionAndSpaces(t *testing.T) {
 	require.Zero(t, singletonIndexCount)
 }
 
+func TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "canonical-promoted-sso-delete"))
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "promoted", domain.CredentialBindingCredentialPrivate)
+	ingestID := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "promoted private content")
+
+	rows, err := credentialRepo.UpdateRoleForTeam(ctx, teamID, target.ID, "manager", []string{"read", "write"})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+
+	rows, err = credentialRepo.DeleteForTeam(ctx, teamID, target.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+
+	privateMemoryRepo := NewPrivateMemoryRepository(appDB, rls)
+	require.NoError(t, privateMemoryRepo.Prepare(ctx))
+	operations, err := privateMemoryRepo.ListOperations(ctx, 100, 0)
+	require.NoError(t, err)
+	require.Len(t, operations, 1)
+	require.Equal(t, domain.PrivateMemoryRetireCredential, operations[0].Action)
+	require.Equal(t, domain.PrivateMemoryActorControl, operations[0].ActorClass)
+	require.Equal(t, target.ID, *operations[0].TargetCredentialID)
+
+	claim, err := privateMemoryRepo.ClaimNext(ctx, "promoted-sso-delete-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	completed, err := privateMemoryRepo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	require.NoError(t, err)
+	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var exists bool
+		if err := tx.Raw(`SELECT EXISTS (SELECT 1 FROM knowledge_ingests WHERE ingest_id = ?)`, ingestID).Row().Scan(&exists); err != nil {
+			return err
+		}
+		require.False(t, exists)
+
+		var lifecycle, status string
+		if err := tx.Raw(`SELECT lifecycle_state FROM memory_spaces WHERE id = ?`, target.MemorySpaceID).Row().Scan(&lifecycle); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT status FROM credentials WHERE id = ?`, target.ID).Row().Scan(&status); err != nil {
+			return err
+		}
+		require.Equal(t, "retired", lifecycle)
+		require.Equal(t, "disabled", status)
+		return nil
+	}))
+}
+
 func createLedgerSSOIdentity(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, teamID uuid.UUID) uuid.UUID {
 	t.Helper()
 	providerID := uuid.New()
