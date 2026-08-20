@@ -45,9 +45,16 @@ const relationshipCorrectionSubmissionSelectSQL = `
 	       submission.reused_successor, submission.error_code, submission.error_message,
 	       COALESCE(successor.version, 0), COALESCE(successor_search.search_state, 'not_required')
 	FROM relationship_correction_submissions AS submission
+	JOIN memory_spaces AS submission_space
+	  ON submission_space.team_id = submission.team_id
+	 AND submission_space.id = submission.space_id
+	 AND submission_space.generation = submission.space_generation
+	 AND submission_space.lifecycle_state = 'active'
 	LEFT JOIN relationship_records AS successor
 	  ON successor.team_id = submission.team_id
 	 AND successor.relationship_id = submission.successor_relationship_id
+	 AND successor.space_id = submission.space_id
+	 AND successor.space_generation = submission.space_generation
 	LEFT JOIN LATERAL (
 	    SELECT document.search_state
 	    FROM search_documents AS document
@@ -62,6 +69,8 @@ const relationshipCorrectionSubmissionSelectSQL = `
 	    WHERE document.team_id = submission.team_id
 	      AND document.source_kind = 'relationship'
 	      AND document.source_id = submission.successor_relationship_id
+	      AND document.space_id = submission.space_id
+	      AND document.space_generation = submission.space_generation
 	    ORDER BY contract.version DESC, generation.generation DESC, document.updated_at DESC
 	    LIMIT 1
 	) AS successor_search ON true

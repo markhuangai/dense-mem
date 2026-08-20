@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *testing.T) {
@@ -325,6 +329,157 @@ func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, "rejected", unavailableResult.ProcessingState)
 	require.Equal(t, "persistent_ambiguity", unavailableResult.ErrorCode)
+}
+
+func TestPrivateMemoryCorrectionStatusHidesSealedGeneration(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "private-correction-status-generation"))
+	identityID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	target := createOwnedCredential(t, credentialRepo, teamID, identityID, "private-correction-status", domain.CredentialBindingCredentialPrivate)
+	semantic := NewSemanticRepository(appDB, rls)
+	semanticCtx := requestctx.WithActor(ctx, requestctx.Actor{
+		TeamID:  teamID,
+		OwnerID: target.ID,
+		AllowedSpaces: []domain.MemorySpaceAccess{
+			{ID: target.TeamSharedSpaceID, Kind: domain.MemorySpaceTeamShared},
+			{ID: target.MemorySpaceID, Kind: domain.MemorySpaceCredentialPrivate},
+		},
+	})
+
+	subjectID, wrongObjectID := uuid.New(), uuid.New()
+	firstCandidateID, secondCandidateID := uuid.New(), uuid.New()
+	ingestID, fragmentID := uuid.New(), uuid.New()
+	content := "Private correction status evidence."
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := seedTeamPredicateDefinitions(ctx, tx, teamID.String()); err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO entity_records (team_id, entity_id, entity_kind, space_id)
+			VALUES
+			  (?, ?, 'person', ?),
+			  (?, ?, 'project', ?),
+			  (?, ?, 'project', ?),
+			  (?, ?, 'project', ?)
+		`, teamID, subjectID, target.MemorySpaceID,
+			teamID, wrongObjectID, target.MemorySpaceID,
+			teamID, firstCandidateID, target.MemorySpaceID,
+			teamID, secondCandidateID, target.MemorySpaceID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO entity_names (
+			    team_id, entity_id, owner_profile_id, display_name,
+			    normalized_name, name_kind, space_id
+			) VALUES
+			  (?, ?, ?, 'Atlas', 'atlas', 'canonical', ?),
+			  (?, ?, ?, 'Atlas', 'atlas', 'canonical', ?)
+		`, teamID, firstCandidateID, target.ID, target.MemorySpaceID,
+			teamID, secondCandidateID, target.ID, target.MemorySpaceID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO knowledge_ingests (
+			    team_id, ingest_id, owner_profile_id, idempotency_key, request_hash,
+			    source_summary, status, proposal, metadata, space_id, space_generation
+			) VALUES (?, ?, ?, ?, ?, ?, 'queued', '{}'::jsonb, '{}'::jsonb, ?, ?)
+		`, teamID, ingestID, target.ID, "private-correction-status-"+ingestID.String(),
+			"hash-"+ingestID.String(), content, target.MemorySpaceID, target.MemorySpaceGeneration).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO evidence_fragments (
+			    team_id, fragment_id, ingest_id, owner_profile_id, evidence_index,
+			    content, content_hash, source_type, authority, labels, metadata,
+			    space_id, space_generation
+			) VALUES (?, ?, ?, ?, 0, ?, ?, 'conversation', 'primary', ARRAY[]::text[], '{}'::jsonb, ?, ?)
+		`, teamID, fragmentID, ingestID, target.ID, content, "hash-"+fragmentID.String(),
+			target.MemorySpaceID, target.MemorySpaceGeneration).Error
+	}))
+
+	decision, err := semantic.ApplyRelationshipDecision(semanticCtx, ApplyRelationshipDecisionInput{
+		TeamID:            teamID.String(),
+		OwnerProfileID:    target.ID.String(),
+		IngestID:          ingestID.String(),
+		SubjectEntityID:   subjectID.String(),
+		PredicateKey:      "works_on",
+		PredicateVersion:  1,
+		OriginalPredicate: "works_on",
+		SubjectRef:        "Private subject",
+		ObjectRef:         "Wrong project",
+		ObjectEntityID:    wrongObjectID.String(),
+		Polarity:          "+",
+		EvidenceVerdict:   string(domain.VerificationEntailed),
+		Rationale:         "private correction status generation regression",
+		Model:             "test",
+		ResponseHash:      "hash-private-correction-status",
+		Support: &EvidenceSupportInput{
+			FragmentID:     fragmentID.String(),
+			SourceGroupKey: "private-correction-status-generation",
+			SpanStart:      0,
+			SpanEnd:        len(content),
+			Quote:          content,
+			Authority:      "primary",
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, decision.Relationship)
+
+	submitted, err := semantic.CorrectRelationship(semanticCtx, CorrectRelationshipInput{
+		TeamID: teamID.String(), OwnerProfileID: target.ID.String(), Action: "submit",
+		RelationshipID: decision.Relationship.RelationshipID, ExpectedVersion: decision.Relationship.Version,
+		Patch: RelationshipCorrectionPatch{
+			ObjectEntity: &RelationshipCorrectionEntityPatch{Name: "Atlas", EntityKind: "project"},
+		},
+		Supports:       []RelationshipCorrectionSupport{{EvidenceID: fragmentID.String(), Start: 0, End: len(content)}},
+		Reason:         "the object Entity was resolved incorrectly",
+		IdempotencyKey: "private-correction-status-submit",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "awaiting_confirmation", submitted.ProcessingState)
+	require.NotNil(t, submitted.Confirmation)
+	require.Len(t, submitted.Confirmation.Candidates, 2)
+
+	status, err := semantic.GetRelationshipCorrection(semanticCtx, GetRelationshipCorrectionInput{
+		TeamID: teamID.String(), OwnerProfileID: target.ID.String(), SubmissionID: submitted.SubmissionID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, submitted.Confirmation.Token, status.Confirmation.Token)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			UPDATE memory_spaces
+			SET generation = generation + 1, lifecycle_state = 'sealed', sealed_at = now()
+			WHERE id = ? AND team_id = ? AND lifecycle_state = 'active'
+		`, target.MemorySpaceID, teamID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("seal private correction status space: updated %d rows", result.RowsAffected)
+		}
+		var retained int64
+		if err := tx.Raw(`
+			SELECT COUNT(*)
+			FROM relationship_correction_submissions
+			WHERE team_id = ? AND submission_id = ? AND space_id = ?
+		`, teamID, submitted.SubmissionID, target.MemorySpaceID).Row().Scan(&retained); err != nil {
+			return err
+		}
+		if retained != 1 {
+			return fmt.Errorf("expected retained private correction submission, got %d", retained)
+		}
+		return nil
+	}))
+
+	_, err = semantic.GetRelationshipCorrection(semanticCtx, GetRelationshipCorrectionInput{
+		TeamID: teamID.String(), OwnerProfileID: target.ID.String(), SubmissionID: submitted.SubmissionID,
+	})
+	require.ErrorIs(t, err, ErrRelationshipCorrectionNotFound)
 }
 
 func TestRelationshipCorrectionReusesActiveCollisionAndRejectsNoOp(t *testing.T) {
