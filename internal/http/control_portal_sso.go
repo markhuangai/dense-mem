@@ -56,7 +56,20 @@ func (h *controlPortalHandler) updateSSOProvider(c echo.Context) error {
 	if err := jsonstrict.Decode(c.Request().Body, &body, maximumControlSSOProviderRequestBytes); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
-	provider, err := h.sso.UpdateProvider(c.Request().Context(), body.toDomain(providerID))
+	providerUpdate := body.toDomain(providerID)
+	if body.ProtectedResource == nil {
+		providers, err := h.sso.ListProviders(c.Request().Context())
+		if err != nil {
+			return err
+		}
+		for _, provider := range providers {
+			if provider != nil && provider.ID == providerID {
+				providerUpdate.ProtectedResource = provider.ProtectedResource
+				break
+			}
+		}
+	}
+	provider, err := h.sso.UpdateProvider(c.Request().Context(), providerUpdate)
 	if err != nil {
 		return controlSSOServiceError(err)
 	}
@@ -157,25 +170,29 @@ func (h *controlPortalHandler) deleteSSOMapping(c echo.Context) error {
 }
 
 type controlSSOProviderRequest struct {
-	Name              string                            `json:"name"`
-	Kind              string                            `json:"kind"`
-	IssuerURL         string                            `json:"issuer_url"`
-	TenantID          string                            `json:"tenant_id"`
-	IdentityClaim     string                            `json:"identity_claim"`
-	ClientID          string                            `json:"client_id"`
-	ClientSecretEnv   string                            `json:"client_secret_env"`
-	Scopes            []string                          `json:"scopes"`
-	GroupClaims       []string                          `json:"group_claims"`
-	GroupsEndpoint    string                            `json:"groups_endpoint"`
-	GroupsScopes      []string                          `json:"groups_scopes"`
-	ProtectedResource domain.SSOProtectedResourceConfig `json:"protected_resource"`
-	Enabled           *bool                             `json:"enabled"`
+	Name              string                             `json:"name"`
+	Kind              string                             `json:"kind"`
+	IssuerURL         string                             `json:"issuer_url"`
+	TenantID          string                             `json:"tenant_id"`
+	IdentityClaim     string                             `json:"identity_claim"`
+	ClientID          string                             `json:"client_id"`
+	ClientSecretEnv   string                             `json:"client_secret_env"`
+	Scopes            []string                           `json:"scopes"`
+	GroupClaims       []string                           `json:"group_claims"`
+	GroupsEndpoint    string                             `json:"groups_endpoint"`
+	GroupsScopes      []string                           `json:"groups_scopes"`
+	ProtectedResource *domain.SSOProtectedResourceConfig `json:"protected_resource"`
+	Enabled           *bool                              `json:"enabled"`
 }
 
 func (r controlSSOProviderRequest) toDomain(id uuid.UUID) domain.SSOProvider {
 	enabled := true
 	if r.Enabled != nil {
 		enabled = *r.Enabled
+	}
+	protectedResource := domain.SSOProtectedResourceConfig{}
+	if r.ProtectedResource != nil {
+		protectedResource = *r.ProtectedResource
 	}
 	return domain.SSOProvider{
 		ID:                id,
@@ -190,7 +207,7 @@ func (r controlSSOProviderRequest) toDomain(id uuid.UUID) domain.SSOProvider {
 		GroupClaims:       append([]string(nil), r.GroupClaims...),
 		GroupsEndpoint:    r.GroupsEndpoint,
 		GroupsScopes:      append([]string(nil), r.GroupsScopes...),
-		ProtectedResource: r.ProtectedResource,
+		ProtectedResource: protectedResource,
 		Enabled:           enabled,
 	}
 }

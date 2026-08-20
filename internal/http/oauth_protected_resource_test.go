@@ -13,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
@@ -88,6 +89,35 @@ func TestControlPortalRejectsInvalidOAuthProviderAlgorithm(t *testing.T) {
 	recorder := serveControlSSO(server, nethttp.MethodPost, "/control/api/sso/providers", body)
 	require.Equal(t, nethttp.StatusUnprocessableEntity, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "is not allowed")
+}
+
+func TestControlPortalLegacyProviderUpdatePreservesOAuthConfigWhenOmitted(t *testing.T) {
+	now := time.Now().UTC()
+	providerID := uuid.New()
+	provider := httpSSOProvider(providerID, "OAuth", now)
+	provider.ProtectedResource = domain.SSOProtectedResourceConfig{
+		Enabled: true,
+		OAuthProtectedResourceConfig: domain.OAuthProtectedResourceConfig{
+			Audiences:  []string{"dense-mem"},
+			JWKSSource: "static",
+			JWKSURI:    "https://idp.example.com/jwks",
+			Algorithms: []string{"RS256"},
+			ScopeClaim: "scope",
+		},
+	}
+	repo := &httpSSORepoStub{providers: map[uuid.UUID]*domain.SSOProvider{providerID: provider}, now: now}
+	server := controlPortalSSOServer(t, repo, now)
+	legacyBody := `{"name":"Renamed OAuth","kind":"generic_oidc","issuer_url":"https://idp.example.com","client_id":"client-id","enabled":true}`
+
+	recorder := serveControlSSO(server, nethttp.MethodPatch, "/control/api/sso/providers/"+providerID.String(), legacyBody)
+	require.Equal(t, nethttp.StatusOK, recorder.Code)
+	require.True(t, repo.providers[providerID].ProtectedResource.Enabled)
+	require.Equal(t, []string{"dense-mem"}, repo.providers[providerID].ProtectedResource.Audiences)
+
+	disableBody := `{"name":"Renamed OAuth","kind":"generic_oidc","issuer_url":"https://idp.example.com","client_id":"client-id","protected_resource":{"enabled":false},"enabled":true}`
+	recorder = serveControlSSO(server, nethttp.MethodPatch, "/control/api/sso/providers/"+providerID.String(), disableBody)
+	require.Equal(t, nethttp.StatusOK, recorder.Code)
+	require.False(t, repo.providers[providerID].ProtectedResource.Enabled)
 }
 
 func TestOAuthProtectedResourceMetadataIsDormantWithoutEnabledProvider(t *testing.T) {
