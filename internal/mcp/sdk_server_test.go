@@ -382,7 +382,7 @@ func TestSDKToolHandlerRejectsInvalidAndUnserializableResults(t *testing.T) {
 	requireSDKError(t, err, errCodeInvalidParams, "invalid params")
 
 	_, err = server.sdkToolHandler("failed")(context.Background(), nil)
-	requireSDKError(t, err, errCodeToolFailure, "provider unavailable")
+	requireSDKError(t, err, errCodeToolFailure, "tool execution failed; contact an operator")
 }
 
 func requireSDKError(t *testing.T, err error, code int, message string) {

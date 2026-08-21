@@ -2,11 +2,14 @@ package memoryservice
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
+
+var errSubmissionLifecycleFailure = errors.New("submission terminal failure")
 
 type submissionLifecycleEvent struct {
 	Event         string
@@ -55,6 +58,8 @@ func logSubmissionLifecycle(logger observability.LogProvider, event submissionLi
 	switch event.Event {
 	case "submission_accepted", "submission_completed":
 		logger.Info(event.Event, attrs...)
+	case "submission_failed":
+		logger.Error(event.Event, errSubmissionLifecycleFailure, attrs...)
 	default:
 		logger.Warn(event.Event, attrs...)
 	}

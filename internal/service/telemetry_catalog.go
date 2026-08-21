@@ -195,9 +195,6 @@ func runTelemetryInstantQueries(ctx context.Context, service *PrometheusTelemetr
 			}
 			defer func() { <-semaphore }()
 			scalar, err := service.queryInstant(ctx, spec.Query)
-			if err != nil {
-				service.logQueryFailure("instant", spec, window, scope, err)
-			}
 			mu.Lock()
 			results[spec.ID] = telemetryInstantResult{Scalar: scalar, Err: err}
 			mu.Unlock()
@@ -227,9 +224,6 @@ func runTelemetryRangeQueries(ctx context.Context, service *PrometheusTelemetryS
 			}
 			defer func() { <-semaphore }()
 			points, err := service.queryRange(ctx, spec.Query, from, to, step)
-			if err != nil {
-				service.logQueryFailure("range", spec, window, scope, err)
-			}
 			mu.Lock()
 			results[spec.ID] = telemetryRangeResult{Points: points, Err: err}
 			mu.Unlock()
@@ -237,6 +231,26 @@ func runTelemetryRangeQueries(ctx context.Context, service *PrometheusTelemetryS
 	}
 	group.Wait()
 	return results
+}
+
+func collectTelemetryInstantFailures(specs []telemetryQuerySpec, results map[string]telemetryInstantResult) []telemetryQueryFailure {
+	failures := make([]telemetryQueryFailure, 0)
+	for _, spec := range specs {
+		if result, ok := results[spec.ID]; ok && result.Err != nil {
+			failures = append(failures, telemetryQueryFailure{kind: "instant", id: spec.ID, err: result.Err})
+		}
+	}
+	return failures
+}
+
+func collectTelemetryRangeFailures(specs []telemetryQuerySpec, results map[string]telemetryRangeResult) []telemetryQueryFailure {
+	failures := make([]telemetryQueryFailure, 0)
+	for _, spec := range specs {
+		if result, ok := results[spec.ID]; ok && result.Err != nil {
+			failures = append(failures, telemetryQueryFailure{kind: "range", id: spec.ID, err: result.Err})
+		}
+	}
+	return failures
 }
 
 func (s *PrometheusTelemetryService) telemetryFeatureStates(ctx context.Context, scope TelemetryScope) map[string]telemetryFeatureState {

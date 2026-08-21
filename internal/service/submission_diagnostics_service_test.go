@@ -18,14 +18,29 @@ func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
 	teamID, ownerID, submissionID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	repo := &submissionDiagnosticsRepoStub{page: &repository.SubmissionDiagnosticRecordPage{
 		Records: []repository.SubmissionDiagnosticRecord{{
-			TeamName:      "Staging",
+			TeamName: "Staging",
+			SourceTypes: []string{
+				"document",
+				`{"password":"supersecret"}`,
+				"https://operator:secret@example.test/notes?token=opaque",
+			},
+			OperatorDiagnostic: map[string]any{
+				"failure_reason_code": "assessor_provider_failed",
+				"failure_stage":       "assessment",
+				"failure_class":       "timeout",
+				"failure_measurement": map[string]any{"unit": "tokens", "observed": 99, "limit": 10},
+			},
 			EvidenceCount: 1,
 			Placement: repository.CreateIngestResult{
 				TeamID: teamID, OwnerProfileID: ownerID, IngestID: submissionID,
 				Status: string(domain.PlacementRunFailed), CorrelationID: "corr-diagnostics",
 				Attempts: 5, MaxAttempts: 5, SubmittedAt: &now, UpdatedAt: &now, CompletedAt: &now,
 				Items: []repository.PlacementItem{{Status: "failed", Result: map[string]any{
-					"failure_stage": "assessment", "failure_class": "timeout",
+					"failure_reason_code": "assessor_provider_failed",
+					"failure_stage":       "assessment",
+					"failure_class":       "timeout",
+					"failure_measurement": map[string]any{"unit": "tokens", "observed": 99, "limit": 10},
+					"provider_response":   "must not cross diagnostics boundary",
 				}}},
 			},
 		}},
@@ -45,9 +60,19 @@ func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
 	require.Equal(t, 5, item.Attempts)
 	require.NotNil(t, item.Error)
 	require.Equal(t, "assessor_unavailable", item.Error.Code)
-	require.True(t, item.Error.Retryable)
-	require.Equal(t, "resubmit_submission", item.Error.NextAction)
+	require.False(t, item.Error.Retryable)
+	require.Equal(t, "contact_operator", item.Error.NextAction)
 	require.NotContains(t, item.Error.Message, "timeout")
+	require.NotContains(t, item.Error.Message, "must not cross")
+	require.Equal(t, "document evidence", item.SourceSummary)
+	require.False(t, item.SourceSummaryTruncated)
+	require.NotContains(t, item.SourceSummary, "supersecret")
+	require.NotContains(t, item.SourceSummary, "opaque")
+	require.NotNil(t, item.OperatorDiagnostic)
+	require.Equal(t, "assessor_provider_failed", item.OperatorDiagnostic.FailureReasonCode)
+	require.Equal(t, "tokens", item.OperatorDiagnostic.FailureMeasurement.Unit)
+	require.NotEmpty(t, item.OperatorDiagnostic.Message, "the list projection should synthesize a bounded message")
+	require.NotContains(t, item.OperatorDiagnostic.Message, "must not cross")
 	require.Equal(t, repository.SubmissionDiagnosticFilter{
 		TeamID: teamID, ProcessingState: "failed", Limit: 25,
 	}, repo.listFilter)
@@ -58,6 +83,7 @@ func TestSubmissionDiagnosticsDetailNeverReturnsEvidenceContentOrRawFailure(t *t
 	evidenceID := uuid.NewString()
 	repo := &submissionDiagnosticsRepoStub{detail: &repository.SubmissionDiagnosticRecord{
 		TeamName:      "Staging",
+		SourceTypes:   []string{"observation", `{"access_token":"opaque-secret"}`},
 		EvidenceCount: 1,
 		Placement: repository.CreateIngestResult{
 			TeamID: teamID, OwnerProfileID: ownerID, IngestID: submissionID,
@@ -74,12 +100,49 @@ func TestSubmissionDiagnosticsDetailNeverReturnsEvidenceContentOrRawFailure(t *t
 	require.NoError(t, err)
 	require.Equal(t, teamID, detail.TeamID)
 	require.Equal(t, ownerID, detail.OwnerProfileID)
+	require.Equal(t, "observation evidence", detail.SourceSummary)
+	require.NotContains(t, detail.SourceSummary, "opaque-secret")
 	require.Len(t, detail.Evidence, 1)
 	require.Equal(t, repo.detail.Placement.Evidence[0].FragmentID, detail.Evidence[0].EvidenceID)
 	require.Len(t, detail.Errors, 1)
 	require.Equal(t, "submission_processing_failed", detail.Errors[0].Code)
 	require.NotContains(t, detail.Errors[0].Message, "secret-provider-response")
 	require.NotContains(t, detail.Errors[0].Message, "unknown-provider-detail")
+	require.Nil(t, detail.OperatorDiagnostic, "unknown diagnostic tokens must not cross the control boundary")
+}
+
+func TestSubmissionDiagnosticsDetailOrdersAndFiltersOperatorHistory(t *testing.T) {
+	teamID, ownerID, submissionID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	first := time.Date(2026, time.August, 18, 1, 0, 0, 0, time.UTC)
+	second := first.Add(time.Minute)
+	repo := &submissionDiagnosticsRepoStub{detail: &repository.SubmissionDiagnosticRecord{
+		TeamName: "Staging",
+		Placement: repository.CreateIngestResult{
+			TeamID: teamID, OwnerProfileID: ownerID, IngestID: submissionID,
+			Status: string(domain.PlacementRunFailed),
+		},
+		OperatorDiagnostics: []repository.SubmissionDiagnosticOperatorDiagnostic{
+			{ID: "first", OutcomeKind: "semantic_assessment_attempt", Status: "queued", CreatedAt: first, Payload: map[string]any{
+				"failure_reason_code": "assessor_provider_failed", "failure_stage": "assessment", "failure_class": "timeout",
+			}},
+			{ID: "second", OutcomeKind: "submission_assessment_terminal", Status: "failed", CreatedAt: second, Payload: map[string]any{
+				"failure_reason_code": "assessor_response_invalid", "failure_stage": "assessment", "failure_class": "validation_failed",
+			}},
+			{ID: "secret", OutcomeKind: "internal", Status: "failed", CreatedAt: second.Add(time.Minute), Payload: map[string]any{
+				"failure_stage": "provider-secret-detail", "failure_class": "provider-secret-detail",
+			}},
+		},
+	}}
+	detail, err := NewSubmissionDiagnosticsService(repo).GetSubmissionDiagnostic(context.Background(), teamID, submissionID)
+	require.NoError(t, err)
+	require.Len(t, detail.OperatorDiagnostics, 2)
+	require.Equal(t, "first", detail.OperatorDiagnostics[0].ID)
+	require.Equal(t, first, detail.OperatorDiagnostics[0].OccurredAt.UTC())
+	require.Equal(t, "second", detail.OperatorDiagnostics[1].ID)
+	require.Equal(t, second, detail.OperatorDiagnostics[1].OccurredAt.UTC())
+	for _, diagnostic := range detail.OperatorDiagnostics {
+		require.NotContains(t, diagnostic.Message, "provider-secret-detail")
+	}
 }
 
 func TestSubmissionDiagnosticsValidatesScopeAndBoundsRepositoryErrors(t *testing.T) {

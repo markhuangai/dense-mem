@@ -18,6 +18,10 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 	plan submissionAssessmentPlan,
 	proposal map[string]any,
 ) (verifier.SemanticAssessmentRequest, error) {
+	candidateLimit := s.limits.MaxCandidatesPerSurface
+	if candidateLimit <= 0 {
+		candidateLimit = verifier.DefaultSemanticAssessmentLimits().MaxCandidatesPerSurface
+	}
 	entityInputs := make([]repository.SubmissionAssessmentEntityCatalogTarget, 0, len(plan.EntityTargets))
 	for _, entity := range plan.EntityTargets {
 		entityInputs = append(entityInputs, repository.SubmissionAssessmentEntityCatalogTarget{
@@ -31,13 +35,17 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 		TeamID:         run.TeamID,
 		OwnerProfileID: run.OwnerProfileID,
 		Entities:       entityInputs,
-		CandidateLimit: s.limits.MaxCandidatesPerSurface,
+		CandidateLimit: candidateLimit,
 	})
 	if err != nil {
 		return verifier.SemanticAssessmentRequest{}, fmt.Errorf("load submission entity catalog: %w", err)
 	}
 	if !entityCatalog.Complete {
-		return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("catalog_context_overflow", "submission entity catalog exceeds its configured complete bound")
+		return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+			"entity_catalog",
+			"submission entity catalog exceeds its configured complete bound",
+			verifier.FailureMeasurement{Unit: "candidates", Observed: candidateLimit + 1, ObservedAtLeast: true, Limit: candidateLimit},
+		)
 	}
 	evidence := make([]verifier.SemanticReviewEvidence, 0, len(plan.Items))
 	for _, item := range plan.Items {
@@ -77,9 +85,25 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 	for _, validationError := range validationErrors {
 		switch validationError.Field {
 		case "candidate_context_tokens":
-			return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("catalog_context_overflow", "submission assessment catalog exceeds its configured token budget")
+			limit := s.limits.MaxCandidateContextTokens
+			if limit <= 0 {
+				limit = verifier.DefaultSemanticAssessmentLimits().MaxCandidateContextTokens
+			}
+			return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+				"catalog_context",
+				"submission assessment catalog exceeds its configured token budget",
+				verifier.FailureMeasurement{Unit: "tokens", Observed: prepared.CandidateContextTokens, Limit: limit},
+			)
 		case "input_tokens":
-			return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("assessment_input_overflow", "submission assessment input exceeds its configured token budget")
+			limit := s.limits.MaxInputTokens
+			if limit <= 0 {
+				limit = verifier.DefaultSemanticAssessmentLimits().MaxInputTokens
+			}
+			return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+				"assessment_input",
+				"submission assessment input exceeds its configured token budget",
+				verifier.FailureMeasurement{Unit: "tokens", Observed: prepared.InputTokens, Limit: limit},
+			)
 		}
 	}
 	return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("trusted_context_validation", "submission assessment contract is invalid")
@@ -144,7 +168,11 @@ func (s *submissionAssessmentPlacementWorkerService) submissionAssessmentPredica
 		appendCandidate(resolution.Candidate)
 	}
 	if len(candidates) > limit {
-		return nil, deterministicSemanticAssessmentPreflightError("predicate_options_overflow", "submission predicate candidates exceed the configured request bound")
+		return nil, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+			"predicate_options_overflow",
+			"submission predicate candidates exceed the configured request bound",
+			verifier.FailureMeasurement{Unit: "candidates", Observed: len(candidates), Limit: limit},
+		)
 	}
 
 	ranked, err := s.catalog.ListSemanticAssessmentPredicateOptions(ctx, repository.SemanticAssessmentPredicateOptionsInput{

@@ -83,6 +83,32 @@ func TestSubmissionWorkerLogsCompletedRetryAndHeldTransitionsAfterPersistence(t 
 	require.Contains(t, failureLog, `"msg":"submission_failed"`)
 	require.Contains(t, failureLog, `"reason_code":"assessor_unavailable"`)
 	require.NotContains(t, failureLog, "timeout")
+
+	logs.Reset()
+	preflight := deterministicSemanticAssessmentPreflightError("assessment_input", "input exceeds the configured token limit")
+	require.NoError(t, service.completeTerminal(
+		context.Background(), scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_input", preflight,
+	))
+	classifiedFailureLog := logs.String()
+	require.Contains(t, classifiedFailureLog, `"msg":"submission_failed"`)
+	require.Contains(t, classifiedFailureLog, `"reason_code":"assessor_response_invalid"`)
+}
+
+func TestSubmissionWorkerLogsStaleSourceAsSuperseded(t *testing.T) {
+	logger, logs := submissionLifecycleTestLogger()
+	_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	service.logger = logger
+	assessments.commitErr = repository.ErrPlacementStaleSource
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Contains(t, logs.String(), `"msg":"submission_superseded"`)
+	require.Contains(t, logs.String(), `"to":"superseded"`)
+	require.Contains(t, logs.String(), `"reason_code":"stale_source"`)
+	require.NotContains(t, logs.String(), `"msg":"submission_failed"`)
+	require.NotContains(t, logs.String(), `"level":"ERROR"`)
 }
 
 func TestSubmissionWorkerDoesNotLogTransitionWhenPersistenceFails(t *testing.T) {

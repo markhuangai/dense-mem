@@ -41,6 +41,8 @@ export type SubmissionDiagnosticSummary = {
   submission_id: string;
   processing_state: string;
   correlation_id?: string;
+  source_summary: string;
+  source_summary_truncated: boolean;
   attempts: number;
   max_attempts: number;
   evidence_count: number;
@@ -50,6 +52,30 @@ export type SubmissionDiagnosticSummary = {
   updated_at?: string | null;
   completed_at?: string | null;
   error?: SubmissionStatusError | null;
+  operator_diagnostic?: SubmissionOperatorDiagnostic | null;
+};
+
+export type SubmissionOperatorDiagnostic = {
+  id?: string;
+  placement_item_id?: string;
+  outcome_kind?: string;
+  status?: string;
+  occurred_at?: string | null;
+  failure_reason_code?: string;
+  failure_stage?: string;
+  failure_class?: string;
+  validation_stage?: string;
+  validation_field_families?: string[];
+  failure_measurement?: {
+    unit: string;
+    observed?: number;
+    observed_at_least?: number;
+    limit: number;
+  } | null;
+  provider_status?: number;
+  assessor_turns?: number;
+  assessor_provider_attempted?: boolean;
+  message?: string;
 };
 
 export type SubmissionEvidenceStatus = {
@@ -83,6 +109,8 @@ export type SubmissionDiagnosticDetail = {
   search_state: string;
   check_after_seconds: number;
   correlation_id?: string;
+  source_summary: string;
+  source_summary_truncated: boolean;
   attempts?: number;
   max_attempts?: number;
   submitted_at?: string;
@@ -95,6 +123,8 @@ export type SubmissionDiagnosticDetail = {
   quarantine_expires_at?: string | null;
   replacement_window_expires_at?: string | null;
   semantic_hold?: SubmissionSemanticHold | null;
+  operator_diagnostic?: SubmissionOperatorDiagnostic | null;
+  operator_diagnostics: SubmissionOperatorDiagnostic[];
 };
 
 export type SubmissionDiagnosticQuery = {

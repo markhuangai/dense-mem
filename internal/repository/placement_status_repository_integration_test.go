@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -111,20 +112,35 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "owner-c")
 	repo := NewLedgerRepository(appDB, rls)
 
-	create := func(teamID, ownerID, key, content string) *CreateIngestResult {
+	create := func(teamID, ownerID, key, content string, sourceTypes ...string) *CreateIngestResult {
+		if len(sourceTypes) == 0 {
+			sourceTypes = []string{"conversation"}
+		}
+		evidence := make([]EvidenceInput, 0, len(sourceTypes))
+		for _, sourceType := range sourceTypes {
+			evidence = append(evidence, EvidenceInput{Content: content, SourceType: sourceType})
+		}
 		result, err := repo.CreateIngest(ctx, CreateIngestInput{
 			TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: key,
 			RequestHash: sha256Hex(content),
 			Metadata:    map[string]any{"actor": map[string]any{"correlation_id": "corr-" + key}},
-			Evidence:    []EvidenceInput{{Content: content}},
+			Evidence:    evidence,
 		})
 		require.NoError(t, err)
 		return result
 	}
-	failed := create(teamA, ownerA, "failed", "private failed evidence")
-	queued := create(teamA, ownerB, "queued", "private queued evidence")
-	foreign := create(teamC, ownerC, "foreign", "private foreign evidence")
+	failed := create(teamA, ownerA, "failed", "private failed evidence", "document")
+	queued := create(teamA, ownerB, "queued", "private queued evidence", "manual", "conversation", "manual")
+	foreign := create(teamC, ownerC, "foreign", "private foreign evidence", "observation")
+	hostileSourceSummary := `{"password":"supersecret","access_token":"opaque-secret"}`
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE knowledge_ingests
+			SET source_summary = ?
+			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
+		`, hostileSourceSummary, teamA, failed.IngestID).Error; err != nil {
+			return err
+		}
 		if err := tx.Exec(`
 			UPDATE placement_items
 			SET status = 'failed', category = 'failed',
@@ -143,6 +159,43 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 			    completed_at = now(), updated_at = now(), lease_until = NULL
 			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
 		`, teamA, failed.IngestID).Error
+	}))
+	duplicateAt := time.Date(2026, time.August, 18, 1, 0, 0, 0, time.UTC)
+	terminalAt := duplicateAt.Add(10 * time.Minute)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO placement_outcomes (
+			    team_id, placement_run_id, owner_profile_id,
+			    outcome_kind, status, idempotency_key, payload, created_at
+			)
+			SELECT
+			    ?::uuid, ?::uuid, ?::uuid,
+			    'submission_assessment_terminal', 'failed', '',
+			    jsonb_build_object(
+			        'failure_reason_code', 'assessor_response_invalid',
+			        'failure_stage', 'assessment',
+			        'failure_class', 'validation_failed'
+			    ), ?
+			FROM generate_series(1, 20)
+		`, teamA, failed.PlacementRunID, ownerA, terminalAt).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO placement_outcomes (
+			    team_id, placement_run_id, owner_profile_id,
+			    outcome_kind, status, idempotency_key, payload, created_at
+			)
+			SELECT ?::uuid, ?::uuid, ?::uuid,
+			       'submission_assessment_attempt', 'retryable', '',
+			       jsonb_build_object(
+			           'failure_reason_code', 'assessor_provider_failed',
+			           'failure_stage', 'assessment',
+			           'failure_class', 'timeout',
+			           'assessor_turns', series.assessor_turns,
+			           'provider_response', 'must-not-cross-diagnostics-boundary'
+			       ), ?::timestamptz + (series.assessor_turns * interval '1 second')
+			FROM generate_series(1, 201) AS series(assessor_turns)
+		`, teamA, failed.PlacementRunID, ownerA, duplicateAt).Error
 	}))
 
 	all, err := repo.ListSubmissionDiagnostics(ctx, SubmissionDiagnosticFilter{Limit: 10})
@@ -165,19 +218,37 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 	require.Len(t, failedOnly.Records, 1)
 	assert.Equal(t, failed.IngestID, failedOnly.Records[0].Placement.IngestID)
 	assert.Equal(t, "corr-failed", failedOnly.Records[0].Placement.CorrelationID)
+	assert.Equal(t, []string{"document"}, failedOnly.Records[0].SourceTypes)
+	listJSON, err := json.Marshal(failedOnly.Records[0])
+	require.NoError(t, err)
+	assert.NotContains(t, string(listJSON), "supersecret")
+	assert.NotContains(t, string(listJSON), "opaque-secret")
 
 	detail, err := repo.GetSubmissionDiagnostic(ctx, teamA, failed.IngestID)
 	require.NoError(t, err)
+	assert.Equal(t, []string{"document"}, detail.SourceTypes)
+	detailJSON, err := json.Marshal(detail)
+	require.NoError(t, err)
+	assert.NotContains(t, string(detailJSON), "supersecret")
+	assert.NotContains(t, string(detailJSON), "opaque-secret")
 	require.Len(t, detail.Placement.Evidence, 1)
 	assert.Empty(t, detail.Placement.Evidence[0].Content)
 	require.Len(t, detail.Placement.Items, 1)
 	assert.NotContains(t, detail.Placement.Items[0].Result, "provider_response")
 	assert.Equal(t, "assessment", detail.Placement.Items[0].Result["failure_stage"])
+	assert.Len(t, detail.OperatorDiagnostics, 200)
+	assert.Equal(t, "assessor_provider_failed", detail.OperatorDiagnostics[0].Payload["failure_reason_code"])
+	assert.Equal(t, float64(3), detail.OperatorDiagnostics[0].Payload["assessor_turns"])
+	assert.Equal(t, float64(201), detail.OperatorDiagnostics[198].Payload["assessor_turns"])
+	assert.Equal(t, "assessor_response_invalid", detail.OperatorDiagnostics[199].Payload["failure_reason_code"])
+	assert.NotContains(t, detail.OperatorDiagnostics[0].Payload, "provider_response")
 
 	_, err = repo.GetSubmissionDiagnostic(ctx, teamC, failed.IngestID)
 	require.ErrorIs(t, err, ErrSubmissionDiagnosticNotFound)
 	_, err = repo.GetSubmissionDiagnostic(ctx, teamA, foreign.IngestID)
 	require.ErrorIs(t, err, ErrSubmissionDiagnosticNotFound)
-	_, err = repo.GetSubmissionDiagnostic(ctx, teamA, queued.IngestID)
+	queuedDetail, err := repo.GetSubmissionDiagnostic(ctx, teamA, queued.IngestID)
 	require.NoError(t, err)
+	assert.Equal(t, []string{"conversation", "manual"}, queuedDetail.SourceTypes)
+	assert.Equal(t, 3, queuedDetail.EvidenceCount)
 }

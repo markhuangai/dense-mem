@@ -38,4 +38,37 @@ describe("LogsPanel", () => {
 
     expect(await screen.findByText("next_attempt_at=2026-08-18T01:06:00Z")).toBeInTheDocument();
   });
+
+  it("renders bounded worker failure context in the visible summary", async () => {
+    const api = {
+      listOperationLogs: vi.fn().mockResolvedValue({
+        data: [{
+          id: "log-2",
+          timestamp: "2026-08-18T01:05:00Z",
+          severity: "ERROR",
+          severity_rank: 50,
+          message: "active team worker failed",
+          source: "worker",
+          team_id: "team-1",
+          profile_id: null,
+          correlation_id: "",
+          error: "semantic placement worker failed; submission_id=submission-1; stage=assessment; reason=assessor_provider_failed; class=timeout",
+          attrs: {
+            worker_kind: "semantic-placement",
+            submission_id: "submission-1",
+            failure_stage: "assessment",
+            failure_reason_code: "assessor_provider_failed",
+            failure_class: "timeout",
+          },
+        }],
+        pagination: { limit: 100, offset: 0, total: 1 },
+      }),
+    } as unknown as ControlApi;
+
+    render(<LogsPanel api={api} teams={[]} />);
+
+    expect(await screen.findByText("submission_id=submission-1", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("failure_reason_code=assessor_provider_failed")).toBeInTheDocument();
+    expect(screen.getByText("failure_class=timeout")).toBeInTheDocument();
+  });
 });

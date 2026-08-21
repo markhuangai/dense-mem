@@ -79,6 +79,12 @@ func TestSubmissionItemFailureErrorDoesNotInventReviewFailures(t *testing.T) {
 	}, "failed")
 	require.NotNil(t, contractError)
 	require.Equal(t, string(SubmissionErrorContractSuperseded), contractError.Code)
+	requestInvalidError := submissionItemFailureError(repository.PlacementItem{
+		Status: "failed",
+		Result: map[string]any{"failure_class": "request_invalid"},
+	}, "failed")
+	require.NotNil(t, requestInvalidError)
+	require.Equal(t, string(SubmissionErrorAssessorInvalid), requestInvalidError.Code)
 }
 
 func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T) {
@@ -441,8 +447,8 @@ func TestTerminalSubmissionErrorsAreClosedAndDeduplicated(t *testing.T) {
 	require.Equal(t, string(SubmissionErrorAssessorUnavailable), failed.Evidence[0].Error.Code)
 	require.Equal(t, string(SubmissionErrorAssessorUnavailable), failed.Evidence[1].Error.Code)
 	require.NotEmpty(t, failed.Errors[0].Message)
-	require.True(t, failed.Errors[0].Retryable)
-	require.Equal(t, string(SubmissionNextActionResubmitSubmission), failed.Errors[0].NextAction)
+	require.False(t, failed.Errors[0].Retryable)
+	require.Equal(t, string(SubmissionNextActionContactOperator), failed.Errors[0].NextAction)
 	require.NotEmpty(t, failed.Errors[0].Remediation)
 
 	rejected := relationshipCorrectionSubmissionStatus(&repository.RelationshipCorrectionStatus{
@@ -470,8 +476,8 @@ func TestSubmissionErrorGuidanceAndQuarantineAreActionable(t *testing.T) {
 	}{
 		{SubmissionErrorSearchIndexingDelayed, true, SubmissionNextActionPollStatus},
 		{SubmissionErrorSemanticHold, true, SubmissionNextActionSubmitReplacement},
-		{SubmissionErrorPolicyRejected, true, SubmissionNextActionResubmitSubmission},
-		{SubmissionErrorAssessorUnavailable, true, SubmissionNextActionResubmitSubmission},
+		{SubmissionErrorPolicyRejected, false, SubmissionNextActionContactOperator},
+		{SubmissionErrorAssessorUnavailable, false, SubmissionNextActionContactOperator},
 		{SubmissionErrorContractSuperseded, true, SubmissionNextActionResubmitSubmission},
 		{SubmissionErrorReplacementConflict, true, SubmissionNextActionResubmitSubmission},
 		{SubmissionErrorRelationshipVersionStale, true, SubmissionNextActionRetryCorrection},

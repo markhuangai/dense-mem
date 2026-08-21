@@ -112,7 +112,6 @@ const fs = require("node:fs");
 
 const [destination, rootDir, oauthDir, providerPort, harnessPort, fixtureToken, harnessImage, marker, hostUID, hostGID] = process.argv.slice(2);
 const quote = (value) => JSON.stringify(value);
-const mount = (source, target) => quote(`${source}:${target}:ro`);
 const mockScript = `${oauthDir}/oauth-provider-mock.mjs`;
 fs.copyFileSync(`${rootDir}/tests/uat/oauth_provider_mock.mjs`, mockScript);
 const contents = `${marker}
@@ -122,13 +121,12 @@ services:
     working_dir: /e2e
     command: ["node", "/e2e/oauth-provider-mock.mjs"]
     environment:
-      DENSE_MEM_OAUTH_CERT: /e2e/tls/ca.pem
-      DENSE_MEM_OAUTH_KEY: /e2e/tls/server.key
+      DENSE_MEM_OAUTH_CERT: /e2e/ca.pem
+      DENSE_MEM_OAUTH_KEY: /e2e/server.key
       DENSE_MEM_OAUTH_ISSUER_BASE: https://oauth-provider-mock:9444
       DENSE_MEM_OAUTH_FIXTURE_TOKEN: ${quote(fixtureToken)}
     volumes:
-      - ${mount(mockScript, "/e2e/oauth-provider-mock.mjs")}
-      - ${mount(oauthDir, "/e2e/tls")}
+      - e2e-oauth-files:/e2e
     ports:
       - "127.0.0.1:${providerPort}:9444"
     healthcheck:
@@ -151,9 +149,7 @@ services:
     environment:
       SSL_CERT_FILE: /e2e/ca.pem
     volumes:
-      - ${mount(`${oauthDir}/config.json`, "/e2e/config.json")}
-      - ${mount(`${oauthDir}/ca.pem`, "/e2e/ca.pem")}
-      - ${mount(`${oauthDir}/server.key`, "/e2e/server.key")}
+      - e2e-oauth-files:/e2e
     depends_on:
       oauth-provider-mock:
         condition: service_healthy
@@ -164,6 +160,8 @@ services:
       interval: 1s
       timeout: 2s
       retries: 60
+volumes:
+  e2e-oauth-files:
 `;
 fs.writeFileSync(destination, contents);
 NODE
@@ -226,16 +224,15 @@ const fs = require("node:fs");
 
 const [destination, rootDir, oauthDir, providerPort, fixtureToken, marker] = process.argv.slice(2);
 const quote = (value) => JSON.stringify(value);
-const mount = (source, target) => quote(`${source}:${target}:ro`);
 const mockScript = `${oauthDir}/oauth-provider-mock.mjs`;
 fs.copyFileSync(`${rootDir}/tests/uat/oauth_provider_mock.mjs`, mockScript);
 const contents = `${marker}
 services:
   server:
     environment:
-      SSL_CERT_FILE: /e2e/oauth-ca.pem
+      SSL_CERT_FILE: /e2e/oauth-files/ca.pem
     volumes:
-      - ${mount(`${oauthDir}/ca.pem`, "/e2e/oauth-ca.pem")}
+      - e2e-oauth-files:/e2e/oauth-files:ro
     depends_on:
       oauth-provider-mock:
         condition: service_healthy
@@ -244,13 +241,12 @@ services:
     working_dir: /e2e
     command: ["node", "/e2e/oauth-provider-mock.mjs"]
     environment:
-      DENSE_MEM_OAUTH_CERT: /e2e/tls/ca.pem
-      DENSE_MEM_OAUTH_KEY: /e2e/tls/server.key
+      DENSE_MEM_OAUTH_CERT: /e2e/ca.pem
+      DENSE_MEM_OAUTH_KEY: /e2e/server.key
       DENSE_MEM_OAUTH_ISSUER_BASE: https://oauth-provider-mock:9444
       DENSE_MEM_OAUTH_FIXTURE_TOKEN: ${quote(fixtureToken)}
     volumes:
-      - ${mount(mockScript, "/e2e/oauth-provider-mock.mjs")}
-      - ${mount(oauthDir, "/e2e/tls")}
+      - e2e-oauth-files:/e2e
     ports:
       - "127.0.0.1:${providerPort}:9444"
     healthcheck:
@@ -258,9 +254,36 @@ services:
       interval: 1s
       timeout: 2s
       retries: 60
+volumes:
+  e2e-oauth-files:
 `;
 fs.writeFileSync(destination, contents);
 NODE
+}
+
+prepare_oauth_fixture_volume() {
+  if ! oauth_compatibility_e2e_enabled && ! mcp_oauth_e2e_enabled; then
+    return
+  fi
+
+  local container_id
+  local volume_name
+  compose create oauth-provider-mock >/dev/null
+  container_id="$(compose ps -aq oauth-provider-mock)"
+  if [[ -z "$container_id" ]]; then
+    echo "Failed to create the E2E OAuth provider fixture volume." >&2
+    return 1
+  fi
+  volume_name="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/e2e"}}{{.Name}}{{end}}{{end}}' "$container_id")"
+  if [[ -z "$volume_name" ]]; then
+    echo "Failed to resolve the E2E OAuth provider fixture volume." >&2
+    return 1
+  fi
+  docker cp "${E2E_OAUTH_DIR}/." "${container_id}:/e2e"
+  docker run --rm -v "${volume_name}:/e2e" alpine:3.24 sh -ec \
+    'for path in /e2e/oauth-provider-mock.mjs /e2e/ca.pem /e2e/server.key /e2e/config.json; do
+       if [ -e "$path" ]; then chmod 644 "$path"; fi
+     done'
 }
 
 wait_for_mcp_oauth_provider() {

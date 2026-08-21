@@ -12,6 +12,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
 func TestActiveWorkerCountUsesConfiguredConcurrency(t *testing.T) {
@@ -31,6 +32,23 @@ func TestActiveWorkerCountUsesConfiguredConcurrency(t *testing.T) {
 				t.Fatalf("worker count = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestActiveWorkerFailureLogErrorUsesBoundedDiagnosticContext(t *testing.T) {
+	base := errors.New("semantic placement worker failed")
+	failure := memoryservice.PlacementWorkerFailure{
+		SubmissionID: "submission-1",
+		Stage:        "assessment",
+		ReasonCode:   "assessor_provider_failed",
+		Class:        "timeout",
+	}
+
+	if got := activeWorkerFailureLogError(base, failure, true).Error(); got != "semantic placement worker failed; submission_id=submission-1; stage=assessment; reason=assessor_provider_failed; class=timeout" {
+		t.Fatalf("diagnostic error = %q", got)
+	}
+	if got := activeWorkerFailureLogError(base, failure, false); got != base {
+		t.Fatalf("unclassified error = %v, want original error", got)
 	}
 }
 

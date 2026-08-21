@@ -17,6 +17,7 @@ import (
 	httperr "github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
+	"github.com/markhuangai/dense-mem/internal/tools"
 )
 
 // HealthCheck is a named function interface for dependency health checks.
@@ -132,7 +133,7 @@ func NewServer(cfg config.Config, logger observability.LogProvider, health Healt
 				return nil
 			}
 			if v.Error != nil {
-				logger.Error("http_request", v.Error, attrs...)
+				logger.Error("http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
 				return nil
 			}
 			if v.Status >= http.StatusBadRequest {
@@ -212,7 +213,9 @@ func NewServerWithGracefulShutdown(cfg config.Config, logger observability.LogPr
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := e.Shutdown(ctx); err != nil {
-			logger.Error("server shutdown error", err)
+			if logger != nil {
+				logger.Error("server shutdown error", errors.New(tools.SanitizeError(err)))
+			}
 		}
 	}
 
@@ -225,7 +228,9 @@ func RunServer(e *echo.Echo, addr string, logger observability.LogProvider) erro
 	// Start server in a goroutine
 	go func() {
 		if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
-			logger.Error("server start error", err)
+			if logger != nil {
+				logger.Error("server start error", errors.New(tools.SanitizeError(err)))
+			}
 		}
 	}()
 
@@ -234,7 +239,9 @@ func RunServer(e *echo.Echo, addr string, logger observability.LogProvider) erro
 	signal.Notify(quit, os.Interrupt)
 	<-quit
 
-	logger.Info("shutting down server")
+	if logger != nil {
+		logger.Info("shutting down server")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

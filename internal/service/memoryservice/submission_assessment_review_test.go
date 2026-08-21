@@ -45,7 +45,10 @@ func TestSubmissionAssessmentWorkerHoldsWholeRunWhenOneSupportRangeIsLowConfiden
 	assert.Empty(t, assessments.commits)
 	require.Len(t, assessments.completions, 1)
 	assert.Equal(t, string(domain.SemanticReviewReviewRequired), assessments.completions[0].Status)
-	assert.Equal(t, "policy_review", assessments.completions[0].Payload["failure_stage"])
+	assert.NotContains(t, assessments.completions[0].Payload, "failure_reason_code")
+	assert.NotContains(t, assessments.completions[0].Payload, "failure_stage")
+	assert.NotContains(t, assessments.completions[0].Payload, "failure_class")
+	assert.Equal(t, "policy_review", assessments.completions[0].Payload["review_stage"])
 	issues, ok := assessments.completions[0].Payload["hold_issues"].([]map[string]any)
 	require.True(t, ok)
 	require.Len(t, issues, 1)
@@ -178,7 +181,10 @@ func TestSubmissionAssessmentReviewIssuesAndCompletionAreBounded(t *testing.T) {
 		issues,
 		false,
 	)
-	require.ErrorContains(t, err, "nil review result")
+	require.ErrorContains(t, err, "placement worker persistence failed")
+	failure, ok := placementWorkerFailureFromError(err)
+	require.True(t, ok)
+	require.Equal(t, "policy_review", failure.Stage)
 	require.Equal(t, errSubmissionAssessmentRequiresReview.Error(), (&submissionAssessmentReviewRequiredError{}).Error())
 
 	_, found := submissionAssessmentItemForFragment(submissionAssessmentPlan{}, "missing")

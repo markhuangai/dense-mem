@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -146,17 +147,60 @@ func runActiveTeamWorkerPool(ctx context.Context, cfg activeTeamWorkerPoolConfig
 		case result := <-results:
 			availableWorkers++
 			dispatcher.complete(result.teamID, result.worked, time.Now())
-			if result.err != nil && ctx.Err() == nil {
-				cfg.logger.Error(
-					"active team worker failed",
-					cfg.workerError,
+			if result.err != nil && ctx.Err() == nil && cfg.logger != nil {
+				attrs := []observability.LogAttr{
 					observability.String("worker_kind", cfg.name),
-				)
+					observability.String("team_id", result.teamID),
+				}
+				failure, classified := memoryservice.PlacementWorkerFailureFromError(result.err)
+				if classified {
+					if failure.SubmissionID != "" {
+						attrs = append(attrs, observability.String("submission_id", failure.SubmissionID))
+					}
+					if failure.Stage != "" {
+						attrs = append(attrs, observability.String("failure_stage", failure.Stage))
+					}
+					if failure.ReasonCode != "" {
+						attrs = append(attrs, observability.String("failure_reason_code", failure.ReasonCode))
+					}
+					if failure.Class != "" {
+						attrs = append(attrs, observability.String("failure_class", failure.Class))
+					}
+				} else {
+					attrs = append(attrs,
+						observability.String("failure_reason_code", "unclassified_worker_failure"),
+						observability.String("failure_class", "internal"),
+					)
+				}
+				cfg.logger.Error("active team worker failed", activeWorkerFailureLogError(cfg.workerError, failure, classified), attrs...)
 			}
 		case now := <-ticker.C:
 			refresh(now)
 		}
 	}
+}
+
+func activeWorkerFailureLogError(base error, failure memoryservice.PlacementWorkerFailure, classified bool) error {
+	if base == nil {
+		base = errors.New("active team worker failed")
+	}
+	if !classified {
+		return base
+	}
+	parts := []string{base.Error()}
+	if failure.SubmissionID != "" {
+		parts = append(parts, "submission_id="+failure.SubmissionID)
+	}
+	if failure.Stage != "" {
+		parts = append(parts, "stage="+failure.Stage)
+	}
+	if failure.ReasonCode != "" {
+		parts = append(parts, "reason="+failure.ReasonCode)
+	}
+	if failure.Class != "" {
+		parts = append(parts, "class="+failure.Class)
+	}
+	return errors.New(strings.Join(parts, "; "))
 }
 
 func listActiveWorkerTeamIDs(ctx context.Context, teams activeWorkerTeamLister, pageSize int) ([]string, error) {

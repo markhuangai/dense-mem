@@ -4,6 +4,7 @@ import {
   ControlApi,
   OperationLog,
   SubmissionDiagnosticDetail,
+  SubmissionOperatorDiagnostic,
   SubmissionDiagnosticSummary,
   Team,
 } from "../api";
@@ -176,6 +177,7 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
               <thead>
                 <tr>
                   <th>Submitted</th>
+                  <th>About</th>
                   <th>State</th>
                   <th>Attempts</th>
                   <th>Evidence</th>
@@ -189,6 +191,10 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
                     <td>
                       <strong>{formatDate(item.submitted_at)}</strong>
                       <small className="table-subline">{shortId(item.submission_id)}</small>
+                    </td>
+                    <td>
+                      <span className="submission-source-summary">{item.source_summary || "Unlabelled submission"}</span>
+                      {item.source_summary_truncated && <small className="table-subline">Summary truncated</small>}
                     </td>
                     <td>
                       <span className={submissionStateClass(item.processing_state)}>{stateLabel(item.processing_state)}</span>
@@ -253,6 +259,7 @@ function SubmissionDetail({
   timeline: OperationLog[];
   timelineUnavailable: boolean;
 }) {
+  const operatorDiagnostics = detail.operator_diagnostics ?? [];
   return (
     <section className="overview-panel submission-detail" aria-label="Submission details">
       <SectionHeading
@@ -262,6 +269,7 @@ function SubmissionDetail({
       <div className="submission-facts">
         <Fact label="Submission" value={detail.submission_id} code />
         <Fact label="Correlation" value={detail.correlation_id || "Not recorded"} code={Boolean(detail.correlation_id)} />
+        <Fact label="About" value={detail.source_summary || "Unlabelled submission"} />
         <Fact label="Attempts" value={`${detail.attempts ?? 0} / ${detail.max_attempts ?? "—"}`} />
         <Fact label="Search" value={stateLabel(detail.search_state)} />
         <Fact label="Submitted" value={detail.submitted_at ? formatDate(detail.submitted_at) : "Not recorded"} />
@@ -281,6 +289,23 @@ function SubmissionDetail({
           </span>
         </article>
       ))}
+
+      {detail.operator_diagnostic && operatorDiagnostics.length === 0 && (
+        <OperatorDiagnosticBlock diagnostic={detail.operator_diagnostic} />
+      )}
+
+      {operatorDiagnostics.length > 0 && (
+        <section className="submission-operator-diagnostics" aria-label="Operator diagnostics">
+          <h3>Placement diagnostics</h3>
+          <ol className="operator-diagnostic-list">
+            {operatorDiagnostics.map((diagnostic, index) => (
+              <li key={diagnostic.id ?? `${diagnostic.occurred_at ?? "diagnostic"}-${index}`}>
+                <OperatorDiagnosticBlock diagnostic={diagnostic} compact />
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
 
       {detail.semantic_hold && (
         <div className="submission-hold">
@@ -349,12 +374,46 @@ function SubmissionDetail({
   );
 }
 
+function OperatorDiagnosticBlock({ diagnostic, compact = false }: { diagnostic: SubmissionOperatorDiagnostic; compact?: boolean }) {
+  const labels = [diagnostic.failure_stage, diagnostic.failure_class].filter(Boolean).join(" · ");
+  const measurement = diagnostic.failure_measurement;
+  return (
+    <article className={compact ? "operator-diagnostic compact" : "operator-diagnostic"}>
+      <div>
+        <strong>{diagnostic.failure_reason_code || "placement_failure"}</strong>
+        {labels && <small>{labels}</small>}
+        {diagnostic.message && <p>{diagnostic.message}</p>}
+        {diagnostic.validation_stage && <small>Validation: {diagnostic.validation_stage}</small>}
+        {diagnostic.validation_field_families && diagnostic.validation_field_families.length > 0 && (
+          <small>Fields: {diagnostic.validation_field_families.join(", ")}</small>
+        )}
+        {measurement && (
+          <small>
+            Measured {measurement.observed_at_least !== undefined
+              ? `at least ${measurement.observed_at_least}`
+              : measurement.observed ?? 0} {measurement.unit}; limit {measurement.limit}
+          </small>
+        )}
+      </div>
+      {diagnostic.occurred_at && (
+        <time dateTime={diagnostic.occurred_at}>{formatDate(diagnostic.occurred_at)}</time>
+      )}
+    </article>
+  );
+}
+
 function TimelineDetails({ event }: { event: OperationLog }) {
   const attrs = event.attrs ?? {};
   const values = [
     transitionValue(attrs.from, attrs.to),
     typeof attrs.stage === "string" ? `stage ${attrs.stage}` : "",
     typeof attrs.reason_code === "string" ? attrs.reason_code : "",
+    typeof attrs.failure_stage === "string" ? `failure stage ${attrs.failure_stage}` : "",
+    typeof attrs.failure_reason_code === "string" ? attrs.failure_reason_code : "",
+    typeof attrs.failure_class === "string" ? `failure class ${attrs.failure_class}` : "",
+    typeof attrs.validation_stage === "string" ? `validation ${attrs.validation_stage}` : "",
+    typeof attrs.provider_status === "number" ? `provider status ${attrs.provider_status}` : "",
+    typeof attrs.assessor_turns === "number" ? `assessor turns ${attrs.assessor_turns}` : "",
     typeof attrs.next_attempt_at === "string" ? `next ${formatDate(attrs.next_attempt_at)}` : "",
   ].filter(Boolean);
   return values.length > 0 ? <p>{values.join(" · ")}</p> : null;

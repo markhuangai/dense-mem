@@ -53,20 +53,24 @@ func (s *submissionAssessmentPlacementWorkerService) completeReview(
 			"message":          issue.Message,
 		})
 	}
+	payload := map[string]any{
+		"assessor_contract": domain.ContractVersion,
+		"review_stage":      boundedPlacementFailureStage(stage),
+	}
+	payload["hold_issues"] = holdIssues
+	payload["hold_issues_truncated"] = truncated
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,
 		OutcomeKind:                  "submission_assessment_terminal",
 		Status:                       string(domain.SemanticReviewReviewRequired),
 		Category:                     "candidate",
-		Payload: map[string]any{
-			"assessor_contract":     domain.ContractVersion,
-			"failure_stage":         strings.TrimSpace(stage),
-			"hold_issues":           holdIssues,
-			"hold_issues_truncated": truncated,
-		},
+		Payload:                      payload,
 	})
 	if err == nil && completed == nil {
-		return errors.New("submission assessment worker: nil review result")
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil review result"))
+	}
+	if err != nil {
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, err)
 	}
 	if err == nil {
 		s.logLifecycle(scope, "submission_held", "awaiting_review", stage, strings.TrimSpace(stage), nil)

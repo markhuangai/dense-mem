@@ -156,16 +156,21 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 		if errors.Is(err, registry.ErrToolDisabled) {
 			return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", name)}
 		}
-		s.logger.Error("mcp: tool invocation failed", err,
-			observability.String("tool", name),
-			observability.String("team_id", s.teamID),
-		)
-		return nil, &rpcError{Code: errCodeToolFailure, Message: boundedRPCText(tools.SanitizeError(err))}
+		safeMessage := tools.SanitizeError(err)
+		if s.logger != nil {
+			s.logger.Error("mcp: tool invocation failed", errors.New(safeMessage),
+				observability.String("tool", name),
+				observability.String("team_id", s.teamID),
+			)
+		}
+		return nil, &rpcError{Code: errCodeToolFailure, Message: boundedRPCText(safeMessage)}
 	}
 
 	payload, err := json.Marshal(result)
 	if err != nil {
-		s.logger.Error("mcp: tool result marshal failed", err, observability.String("tool", name))
+		if s.logger != nil {
+			s.logger.Error("mcp: tool result marshal failed", errors.New("tool result serialization failed"), observability.String("tool", name))
+		}
 		return nil, &rpcError{Code: errCodeToolFailure, Message: "tool result serialization failed"}
 	}
 	return map[string]any{
@@ -323,7 +328,7 @@ func promptCatalogOrEmpty(logger observability.LogProvider, load func() (promptc
 	catalog, err := load()
 	if err != nil {
 		if logger != nil {
-			logger.Warn("mcp: prompt catalog unavailable", observability.String("error", err.Error()))
+			logger.Warn("mcp: prompt catalog unavailable", observability.String("error", tools.SanitizeError(err)))
 		}
 		return promptcatalog.Catalog{}
 	}

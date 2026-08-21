@@ -587,7 +587,9 @@ func (r *LedgerRepositoryImpl) CompleteSubmissionAssessment(
 		}
 		if input.Status == string(domain.SemanticReviewReviewRequired) {
 			reasonCode := "policy_review"
-			if value, ok := input.Payload["failure_stage"].(string); ok && strings.TrimSpace(value) != "" {
+			if value, ok := input.Payload["review_stage"].(string); ok && strings.TrimSpace(value) != "" {
+				reasonCode = strings.TrimSpace(value)
+			} else if value, ok := input.Payload["failure_stage"].(string); ok && strings.TrimSpace(value) != "" {
 				reasonCode = strings.TrimSpace(value)
 			}
 			if err := createSubmissionHoldProjection(ctx, tx, input.SubmissionAssessmentRunScope, reasonCode); err != nil {

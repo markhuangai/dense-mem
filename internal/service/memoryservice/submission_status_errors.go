@@ -168,8 +168,7 @@ func submissionErrorGuidance(code SubmissionErrorCode) (bool, SubmissionNextActi
 		return true, SubmissionNextActionPollStatus
 	case SubmissionErrorSemanticHold:
 		return true, SubmissionNextActionSubmitReplacement
-	case SubmissionErrorPolicyRejected, SubmissionErrorAssessorUnavailable,
-		SubmissionErrorContractSuperseded, SubmissionErrorReplacementConflict:
+	case SubmissionErrorContractSuperseded, SubmissionErrorReplacementConflict:
 		return true, SubmissionNextActionResubmitSubmission
 	case SubmissionErrorNoChange:
 		return false, SubmissionNextActionNone
@@ -224,7 +223,7 @@ func submissionFailureCode(stage, class string) SubmissionErrorCode {
 		return SubmissionErrorContractSuperseded
 	case stage == "replacement_conflict":
 		return SubmissionErrorReplacementConflict
-	case class == "malformed_response", class == "validation_failed", class == "provider_protocol":
+	case class == "malformed_response", class == "malformed_exhausted", class == "input_budget", class == "validation_failed", class == "provider_protocol", class == "request_invalid":
 		return SubmissionErrorAssessorInvalid
 	case class == "timeout", class == "rate_limited", class == "http_4xx", class == "http_5xx",
 		class == "http_unexpected", class == "transport", class == "provider_unavailable":

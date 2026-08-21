@@ -12,6 +12,7 @@ import {
   type SubmissionDiagnosticDetail,
   type SubmissionDiagnosticQuery,
   type SubmissionDiagnosticSummary,
+  type SubmissionOperatorDiagnostic,
 } from "./control-observability-api";
 export { ApiError } from "./http";
 export { listControlIdentityProviders, type ControlIdentityProvider } from "./control-auth-api";
@@ -21,6 +22,7 @@ export type {
   SubmissionDiagnosticDetail,
   SubmissionDiagnosticQuery,
   SubmissionDiagnosticSummary,
+  SubmissionOperatorDiagnostic,
   SubmissionEvidenceStatus,
   SubmissionSemanticHold,
   SubmissionStatusError,
