@@ -50,6 +50,22 @@ func TestSubmissionAssessmentWorkerAssessesWholeRunAndCommitsAtomically(t *testi
 	assert.Len(t, catalog.predicateOptionInputs, 1)
 }
 
+func TestSubmissionAssessmentWorkerPersistsNormalizerModelProvenance(t *testing.T) {
+	_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	service.normalizer = submissionAssessmentWorkerNormalizerStub{
+		response: func(req verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error) {
+			return submissionAssessmentValidNormalizerResponse(req), nil
+		},
+	}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.NotNil(t, assessments.assessment)
+	assert.Equal(t, "remember-normalizer-model", assessments.assessment.Model)
+}
+
 func TestSubmissionAssessmentWorkerTerminalizesPredicateOptionOverflowBeforeProvider(t *testing.T) {
 	_, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
 	worker.(*submissionAssessmentPlacementWorkerService).normalizer = submissionAssessmentWorkerNormalizerStub{}
@@ -814,6 +830,62 @@ func submissionAssessmentValidResponse(req verifier.SemanticAssessmentRequest, r
 	}
 }
 
+func submissionAssessmentValidNormalizerResponse(req verifier.RememberNormalizerRequest) verifier.RememberNormalizerResponse {
+	semantic := submissionAssessmentValidResponse(req, false)
+	response := verifier.RememberNormalizerResponse{
+		RequestID:           semantic.RequestID,
+		SecuritySignals:     make([]verifier.RememberNormalizerSecuritySignal, 0, len(semantic.SecuritySignals)),
+		EntityResults:       make([]verifier.RememberNormalizerEntityResult, 0, len(semantic.EntityResults)),
+		RelationshipResults: make([]verifier.RememberNormalizerRelationshipResult, 0, len(semantic.RelationshipResults)),
+	}
+	for _, signal := range semantic.SecuritySignals {
+		response.SecuritySignals = append(response.SecuritySignals, verifier.RememberNormalizerSecuritySignal(signal))
+	}
+	for _, entity := range semantic.EntityResults {
+		response.EntityResults = append(response.EntityResults, verifier.RememberNormalizerEntityResult{
+			Ref:               entity.Ref,
+			GroundingRef:      entity.GroundingRef,
+			Action:            entity.Action,
+			CandidateEntityID: entity.CandidateEntityID,
+		})
+	}
+	for _, relationship := range semantic.RelationshipResults {
+		predicateStatus := relationship.PredicateStatus
+		if predicateStatus == "needs_review" {
+			predicateStatus = "registration_required"
+		}
+		converted := verifier.RememberNormalizerRelationshipResult{
+			Ref:              relationship.Ref,
+			SubjectRef:       relationship.SubjectRef,
+			PredicateRange:   submissionAssessmentNormalizerRange(relationship.PredicateRange),
+			PredicateStatus:  predicateStatus,
+			PredicateKey:     relationship.PredicateKey,
+			PredicateVersion: relationship.PredicateVersion,
+			ObjectRef:        relationship.ObjectRef,
+			ObjectValue:      relationship.ObjectValue,
+			Polarity:         relationship.Polarity,
+			Modality:         relationship.Modality,
+			ScopeStatus:      relationship.ScopeStatus,
+			ScopeKey:         relationship.ScopeKey,
+			ValidFrom:        relationship.ValidFrom,
+			ValidTo:          relationship.ValidTo,
+		}
+		for _, support := range relationship.SupportRanges {
+			converted.SupportRanges = append(converted.SupportRanges, submissionAssessmentNormalizerRange(support))
+		}
+		if relationship.ValueRange != nil {
+			valueRange := submissionAssessmentNormalizerRange(*relationship.ValueRange)
+			converted.ValueRange = &valueRange
+		}
+		response.RelationshipResults = append(response.RelationshipResults, converted)
+	}
+	return response
+}
+
+func submissionAssessmentNormalizerRange(value verifier.SemanticAssessmentGroundedRange) verifier.RememberNormalizerRange {
+	return verifier.RememberNormalizerRange{EvidenceID: value.EvidenceID, StartRef: value.StartRef, EndRef: value.EndRef, Start: value.Start, End: value.End}
+}
+
 func submissionAssessmentTestEvidence(req verifier.SemanticAssessmentRequest, evidenceID string) verifier.SemanticReviewEvidence {
 	for _, evidence := range req.Evidence {
 		if evidence.EvidenceID == evidenceID {
@@ -834,5 +906,7 @@ func submissionAssessmentTestRange(evidence verifier.SemanticReviewEvidence, sta
 		StartRef:   startRef,
 		EndRef:     endRef,
 		Confidence: 0.99,
+		Start:      start,
+		End:        end,
 	}
 }

@@ -387,9 +387,7 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 			Error:                 itemError,
 		})
 	}
-	if processing == "rejected" {
-		appendStatusError(submissionStatusError(SubmissionErrorPolicyRejected))
-	} else if processing == "failed" && len(statusErrors) == 0 {
+	if processing == "failed" && len(statusErrors) == 0 {
 		appendStatusError(submissionStatusError(SubmissionErrorProcessingFailed))
 	} else if processing == "quarantined" && len(statusErrors) == 0 {
 		appendStatusError(submissionStatusError(SubmissionErrorQuarantined))

@@ -541,6 +541,15 @@ func isBase64URLPart(value string) bool {
 
 func encodedCandidateRejected(encoded string) bool {
 	if opaqueIdentifierCandidate(encoded) {
+		decoded, ok := decodeBase64(encoded)
+		if ok && len(decoded) > 0 && len(decoded) <= submissionSecurityMaxDecodedBytes {
+			// Opaque provider identifiers can share the Base64URL alphabet with
+			// encoded instructions. Inspect the bounded decoded content before
+			// allowing the identifier exemption.
+			if len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true)) > 0 {
+				return true
+			}
+		}
 		return false
 	}
 	if !isBase64EncodedShape(encoded) || base64DecodedByteLength(encoded) > submissionSecurityMaxDecodedBytes {

@@ -204,6 +204,32 @@ func TestNormalizeRememberRetriesTransportFailuresWithinOneClaim(t *testing.T) {
 	require.Equal(t, request.RequestID, response.RequestID)
 }
 
+func TestNormalizeRememberRegeneratesAfterProviderOutputTokenOverrun(t *testing.T) {
+	request, limits := validRememberNormalizerRequest(t)
+	valid, err := json.Marshal(validRememberNormalizerResponse(t, request))
+	require.NoError(t, err)
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		usage := map[string]any{"prompt_tokens": 20, "completion_tokens": 30, "total_tokens": 50}
+		if call == 1 {
+			usage["completion_tokens"] = limits.MaxOutputTokens + 1
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": string(valid)}}},
+			"usage":   usage,
+		}))
+	}))
+	defer server.Close()
+
+	verifier := NewOpenAIVerifier(newTestVerifierConfig(server.URL, "key", "normalizer-model"), server.Client())
+	response, err := verifier.NormalizeRemember(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), calls.Load())
+	require.Equal(t, 2, response.ProviderTurns)
+}
+
 func TestNormalizeRememberRegeneratesCompleteResponseAfterValidationError(t *testing.T) {
 	request, _ := validRememberNormalizerRequest(t)
 	valid, err := json.Marshal(validRememberNormalizerResponse(t, request))
@@ -365,6 +391,18 @@ func TestPrepareRememberNormalizerResponseCollectsPolicyErrors(t *testing.T) {
 	}
 }
 
+func TestPrepareRememberNormalizerResponseNamesMissingRefsDeterministically(t *testing.T) {
+	request, limits := validRememberNormalizerRequest(t)
+	response := validRememberNormalizerResponse(t, request)
+	response.EntityResults = response.EntityResults[:1]
+	response.RelationshipResults = nil
+
+	_, errs := PrepareRememberNormalizerResponse(request, response, limits)
+	joined := semanticAssessmentJoinedErrors(errs)
+	require.Contains(t, joined, `product-1`)
+	require.Contains(t, joined, `relationship-1`)
+}
+
 func TestPrepareRememberNormalizerResponseEnforcesBoundsAndValueContainment(t *testing.T) {
 	request, limits := validRememberNormalizerRequest(t)
 	limits.MaxEntityResults = 1
@@ -492,11 +530,17 @@ func TestNormalizeRememberRejectsInvalidRequestAndInputBudget(t *testing.T) {
 
 	request, _ := validRememberNormalizerRequest(t)
 	limits := DefaultSemanticAssessmentLimits()
-	limits.MaxInputTokens = request.InputTokens + 1
-	provider = NewOpenAIVerifierWithAssessmentLimits(newTestVerifierConfig("", "", "normalizer-model"), nil, limits)
+	limits.MaxInputTokens = request.InputTokens
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{}"}}]}`))
+	}))
+	defer server.Close()
+	provider = NewOpenAIVerifierWithAssessmentLimits(newTestVerifierConfig(server.URL, "key", "normalizer-model"), server.Client(), limits)
 	_, err = provider.NormalizeRemember(context.Background(), request)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "HTTP request failed")
+	var malformed *MalformedResponseError
+	require.ErrorAs(t, err, &malformed)
+	require.Equal(t, "input_budget", malformed.FailureClass)
 }
 
 func TestNormalizeRememberTerminalizesOverBudgetMalformedProviderOutput(t *testing.T) {

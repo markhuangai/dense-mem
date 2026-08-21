@@ -116,14 +116,31 @@ func TestValidateContractInputIssuesRememberValidAndMalformedShapes(t *testing.T
 func TestContractIssueCollectorDeduplicatesAndTruncates(t *testing.T) {
 	collector := contractIssueCollector{}
 	collector.add("", "", "   ")
-	collector.add("/field", "invalid", "  bad  ")
-	collector.add("/field", "invalid", "bad")
-	require.Len(t, collector.issues, 1)
-	for index := 0; index < maxContractValidationIssues+3; index++ {
+	for index := 0; index < maxContractValidationIssues; index++ {
 		collector.add(strings.Join([]string{"/field", string(rune('a' + index))}, "/"), "invalid", "different")
 	}
 	require.Len(t, collector.issues, maxContractValidationIssues)
+	require.False(t, collector.truncated)
+	collector.add("/field/a", "invalid", "different")
+	require.False(t, collector.truncated)
+	collector.add("/field/new", "invalid", "different")
 	require.True(t, collector.truncated)
+}
+
+func TestValidateContractInputIssuesEscapesJSONPointerTokens(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	require.NoError(t, err)
+	args := validFlatRelationshipSubmission()
+	args["source/name"] = true
+	args["tilde~field"] = true
+
+	result := ValidateContractInputIssues(remember, args, []string{"write"})
+	require.Contains(t, result.Issues, ContractValidationIssue{
+		Path: "/source~1name", Code: "unknown_field", Message: "unknown field: source/name",
+	})
+	require.Contains(t, result.Issues, ContractValidationIssue{
+		Path: "/tilde~0field", Code: "unknown_field", Message: "unknown field: tilde~field",
+	})
 }
 
 func TestValidateContractInputIssuesCoversRememberShapeBranches(t *testing.T) {

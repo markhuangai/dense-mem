@@ -55,7 +55,7 @@ func ValidateContractInputIssues(tool Tool, args map[string]any, scopes []string
 					field = "relationship_ids"
 				}
 				if err := validateUniqueStringArray(args, field); err != nil {
-					collector.add("/"+field, classifyContractIssue(err.Error()), err.Error())
+					collector.add("/"+jsonPointerToken(field), classifyContractIssue(err.Error()), err.Error())
 				}
 			case ToolCorrectRelationship:
 				if err := validateCorrectRelationship(args); err != nil {
@@ -111,16 +111,20 @@ func (c *contractIssueCollector) add(path, code, message string) {
 	if message == "" {
 		return
 	}
-	if len(c.issues) >= maxContractValidationIssues {
-		c.truncated = true
-		return
-	}
 	for _, issue := range c.issues {
 		if issue.Path == path && issue.Code == code && issue.Message == message {
 			return
 		}
 	}
+	if len(c.issues) >= maxContractValidationIssues {
+		c.truncated = true
+		return
+	}
 	c.issues = append(c.issues, ContractValidationIssue{Path: path, Code: code, Message: message})
+}
+
+func jsonPointerToken(value string) string {
+	return strings.NewReplacer("~", "~0", "/", "~1").Replace(value)
 }
 
 func collectRememberContractIssues(tool Tool, args map[string]any, collector *contractIssueCollector) {
@@ -132,7 +136,7 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 	sort.Strings(keys)
 	for _, key := range keys {
 		if _, ok := properties[key]; !ok {
-			collector.add("/"+key, "unknown_field", "unknown field: "+key)
+			collector.add("/"+jsonPointerToken(key), "unknown_field", "unknown field: "+key)
 		}
 	}
 	if _, ok := args["relationships"]; !ok {
@@ -173,7 +177,7 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 		sort.Strings(itemKeys)
 		for _, key := range itemKeys {
 			if _, ok := itemProperties[key]; !ok {
-				collector.add(path+"/"+key, "unknown_field", "unknown field: "+key)
+				collector.add(path+"/"+jsonPointerToken(key), "unknown_field", "unknown field: "+key)
 			}
 		}
 		if err := validateSourceRevisionFields(index, fields); err != nil {
@@ -215,7 +219,7 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 		sort.Strings(keys)
 		for _, key := range keys {
 			if _, ok := relationshipProperties[key]; !ok {
-				collector.add(path+"/"+key, "unknown_field", "unknown field: "+key)
+				collector.add(path+"/"+jsonPointerToken(key), "unknown_field", "unknown field: "+key)
 			}
 		}
 		ref := strings.TrimSpace(stringField(relationship, "ref"))

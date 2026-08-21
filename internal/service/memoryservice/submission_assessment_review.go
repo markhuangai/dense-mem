@@ -44,7 +44,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeReview(
 		issues = []submissionAssessmentIssue{{
 			Code:      "commit_review_required",
 			Component: "relationship",
-			Message:   "submission requires a corrected complete replacement before semantic commit",
+			Message:   "submission requires a corrected complete resubmission before semantic commit",
 		}}
 	}
 	if len(issues) > submissionAssessmentMaxReviewIssues {

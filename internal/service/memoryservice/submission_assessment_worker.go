@@ -328,7 +328,9 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	providerCtx := observability.WithMetricIdentity(ctx, run.TeamID, run.OwnerProfileID)
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationPlacementAssessment, 1)
 	var response verifier.SemanticAssessmentResponse
+	modelName := s.provider.ModelName()
 	if s.normalizer != nil {
+		modelName = s.normalizer.ModelName()
 		var normalized verifier.RememberNormalizerResponse
 		normalized, err = s.normalizer.NormalizeRemember(providerCtx, request)
 		if err == nil {
@@ -382,7 +384,7 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 		PlacementRunID:            run.PlacementRunID,
 		RequestID:                 request.RequestID,
 		AssessorContractVersion:   domain.ContractVersion,
-		Model:                     s.provider.ModelName(),
+		Model:                     modelName,
 		Tokenizer:                 assessmentTokenizer(s.limits),
 		InputTokens:               inputTokens,
 		OutputTokens:              normalized.OutputTokens,

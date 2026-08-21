@@ -151,6 +151,8 @@ func TestSubmissionDiagnosticsValidatesScopeAndBoundsRepositoryErrors(t *testing
 	require.ErrorContains(t, err, "team_id")
 	_, err = svc.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{ProcessingState: "unknown"})
 	require.ErrorContains(t, err, "processing_state")
+	_, err = svc.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{ProcessingState: "rejected"})
+	require.ErrorContains(t, err, "processing_state")
 	_, err = svc.GetSubmissionDiagnostic(context.Background(), "bad", uuid.NewString())
 	require.ErrorContains(t, err, "team_id")
 

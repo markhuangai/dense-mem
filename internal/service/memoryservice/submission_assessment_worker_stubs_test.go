@@ -162,9 +162,14 @@ type submissionAssessmentWorkerProviderStub struct {
 	response func(verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error)
 }
 
-type submissionAssessmentWorkerNormalizerStub struct{}
+type submissionAssessmentWorkerNormalizerStub struct {
+	response func(verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error)
+}
 
-func (submissionAssessmentWorkerNormalizerStub) NormalizeRemember(context.Context, verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error) {
+func (s submissionAssessmentWorkerNormalizerStub) NormalizeRemember(_ context.Context, req verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error) {
+	if s.response != nil {
+		return s.response(req)
+	}
 	return verifier.RememberNormalizerResponse{}, nil
 }
 

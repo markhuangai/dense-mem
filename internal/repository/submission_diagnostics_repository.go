@@ -83,6 +83,7 @@ const submissionDiagnosticProcessingStateSQL = `
 const submissionDiagnosticSafePayloadSQL = `
 	jsonb_strip_nulls(jsonb_build_object(
 		'failure_reason_code', {{payload}} -> 'failure_reason_code',
+		'failure_code', {{payload}} -> 'failure_code',
 		'failure_stage', {{payload}} -> 'failure_stage',
 		'failure_class', {{payload}} -> 'failure_class',
 		'validation_stage', {{payload}} -> 'validation_stage',
@@ -108,6 +109,7 @@ const submissionDiagnosticSafePayloadSQL = `
 const submissionDiagnosticOperatorPayloadSQL = `
 	jsonb_strip_nulls(jsonb_build_object(
 		'failure_reason_code', {{payload}} -> 'failure_reason_code',
+		'failure_code', {{payload}} -> 'failure_code',
 		'failure_stage', {{payload}} -> 'failure_stage',
 		'failure_class', {{payload}} -> 'failure_class',
 		'validation_stage', {{payload}} -> 'validation_stage',
@@ -181,6 +183,7 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
 				  CASE WHEN COALESCE(item.result ->> 'failure_reason_code', '') <> ''
 				         OR COALESCE(item.result ->> 'failure_stage', '') <> ''
 				         OR COALESCE(item.result ->> 'failure_class', '') <> ''
+				         OR COALESCE(item.result ->> 'failure_code', '') <> ''
 				         OR COALESCE(item.result ->> 'validation_stage', '') <> ''
 				         OR jsonb_typeof(item.result -> 'failure_measurement') = 'object'
 				         OR COALESCE(item.result ->> 'provider_status', '') <> ''
@@ -548,7 +551,7 @@ func validateSubmissionDiagnosticFilter(filter SubmissionDiagnosticFilter) error
 		}
 	}
 	switch filter.ProcessingState {
-	case "", "queued", "processing", "completed", "rejected", "quarantined", "failed":
+	case "", "queued", "processing", "completed", "quarantined", "failed":
 	default:
 		return fmt.Errorf("unsupported processing_state %q", filter.ProcessingState)
 	}

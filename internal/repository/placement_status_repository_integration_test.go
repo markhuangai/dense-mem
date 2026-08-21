@@ -200,6 +200,7 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 			    result = jsonb_build_object(
 			        'failure_stage', 'assessment',
 			        'failure_class', 'timeout',
+			        'failure_code', 'normalizer_unavailable',
 			        'provider_response', 'must-not-cross-diagnostics-boundary'
 			    )
 			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
@@ -276,6 +277,7 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 	require.NoError(t, err)
 	assert.NotContains(t, string(listJSON), "supersecret")
 	assert.NotContains(t, string(listJSON), "opaque-secret")
+	assert.Equal(t, "normalizer_unavailable", failedOnly.Records[0].Placement.Items[0].Result["failure_code"])
 
 	detail, err := repo.GetSubmissionDiagnostic(ctx, teamA, failed.IngestID)
 	require.NoError(t, err)
@@ -289,6 +291,7 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 	require.Len(t, detail.Placement.Items, 1)
 	assert.NotContains(t, detail.Placement.Items[0].Result, "provider_response")
 	assert.Equal(t, "assessment", detail.Placement.Items[0].Result["failure_stage"])
+	assert.Equal(t, "normalizer_unavailable", detail.Placement.Items[0].Result["failure_code"])
 	assert.Len(t, detail.OperatorDiagnostics, 200)
 	assert.Equal(t, "assessor_provider_failed", detail.OperatorDiagnostics[0].Payload["failure_reason_code"])
 	assert.Equal(t, float64(3), detail.OperatorDiagnostics[0].Payload["assessor_turns"])
