@@ -171,6 +171,75 @@ func TestRememberNormalizerEntityGroundingPreservesProviderChoiceOnTie(t *testin
 	assert.Equal(t, second.GroundingRef, selected.GroundingRef)
 }
 
+func TestRememberNormalizerResponsePreservesGroundingsWhenNearestRemapCollides(t *testing.T) {
+	content := "Jordan mentors Jordan"
+	evidence := verifier.PrepareSemanticAssessmentEvidence(verifier.SemanticReviewEvidence{
+		EvidenceID: "evidence:collision",
+		Content:    content,
+	})
+	grounding := func(ref string, start, end int) verifier.SemanticAssessmentEntityGrounding {
+		startRef, startOK := verifier.SemanticAssessmentBoundaryRef(evidence, start)
+		endRef, endOK := verifier.SemanticAssessmentBoundaryRef(evidence, end)
+		require.True(t, startOK && endOK)
+		return verifier.SemanticAssessmentEntityGrounding{
+			GroundingRef: ref,
+			EvidenceID:   evidence.EvidenceID,
+			Surface:      string([]rune(content)[start:end]),
+			StartRef:     startRef,
+			EndRef:       endRef,
+			Start:        start,
+			End:          end,
+		}
+	}
+	first := grounding("grounding:first", 0, 6)
+	second := grounding("grounding:second", 15, 21)
+	firstRef, secondRef := first.GroundingRef, second.GroundingRef
+	personID, organizationID := "entity:jordan-person", "entity:jordan-organization"
+	request := verifier.SemanticAssessmentRequest{
+		RequestID: "request:grounding-collision",
+		Evidence:  []verifier.SemanticReviewEvidence{evidence},
+		EntityCandidateGroups: []verifier.SemanticAssessmentEntityCandidateGroup{
+			{GroundingRef: first.GroundingRef, EvidenceID: evidence.EvidenceID, Start: first.Start, End: first.End, Candidates: []verifier.SemanticAssessmentEntityCandidate{
+				{EntityID: personID, Kind: "person"}, {EntityID: organizationID, Kind: "organization"},
+			}},
+			{GroundingRef: second.GroundingRef, EvidenceID: evidence.EvidenceID, Start: second.Start, End: second.End, Candidates: []verifier.SemanticAssessmentEntityCandidate{
+				{EntityID: personID, Kind: "person"}, {EntityID: organizationID, Kind: "organization"},
+			}},
+		},
+		SubmissionContract: &verifier.SemanticAssessmentSubmissionContract{
+			Entities: []verifier.SemanticAssessmentRequiredEntityRef{
+				{Ref: "person", Name: "Jordan", Kind: "person", Groundings: []verifier.SemanticAssessmentEntityGrounding{first, second}},
+				{Ref: "organization", Name: "Jordan", Kind: "organization", Groundings: []verifier.SemanticAssessmentEntityGrounding{first, second}},
+			},
+			Relationships: []verifier.SemanticAssessmentRequiredRelationshipRef{
+				{ProposalID: "r-person", SubjectRef: "person", EvidenceIDs: []string{evidence.EvidenceID}, Polarity: "+", Modality: "statement"},
+				{ProposalID: "r-organization", SubjectRef: "organization", EvidenceIDs: []string{evidence.EvidenceID}, Polarity: "+", Modality: "statement"},
+			},
+		},
+	}
+	predicateStartRef, predicateStartOK := verifier.SemanticAssessmentBoundaryRef(evidence, 12)
+	predicateEndRef, predicateEndOK := verifier.SemanticAssessmentBoundaryRef(evidence, 15)
+	require.True(t, predicateStartOK && predicateEndOK)
+	firstPredicate := verifier.RememberNormalizerRange{EvidenceID: evidence.EvidenceID, StartRef: predicateStartRef, EndRef: predicateEndRef, Start: 12, End: 15}
+	normalized := verifier.RememberNormalizerResponse{
+		RequestID: request.RequestID,
+		EntityResults: []verifier.RememberNormalizerEntityResult{
+			{Ref: "person", GroundingRef: &firstRef, Action: "reuse", CandidateEntityID: &personID},
+			{Ref: "organization", GroundingRef: &secondRef, Action: "reuse", CandidateEntityID: &organizationID},
+		},
+		RelationshipResults: []verifier.RememberNormalizerRelationshipResult{
+			{Ref: "r-person", SubjectRef: "person", PredicateRange: firstPredicate},
+			{Ref: "r-organization", SubjectRef: "organization", PredicateRange: firstPredicate},
+		},
+	}
+
+	converted, err := rememberNormalizerResponseToSemanticAssessment(request, normalized)
+	require.NoError(t, err)
+	require.Len(t, converted.EntityResults, 2)
+	assert.Equal(t, first.GroundingRef, *converted.EntityResults[0].GroundingRef)
+	assert.Equal(t, second.GroundingRef, *converted.EntityResults[1].GroundingRef)
+}
+
 func adapterTestSubmissionContract() *verifier.SemanticAssessmentSubmissionContract {
 	return &verifier.SemanticAssessmentSubmissionContract{
 		Entities: []verifier.SemanticAssessmentRequiredEntityRef{

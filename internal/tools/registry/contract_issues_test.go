@@ -178,7 +178,7 @@ func TestContractValidationErrorsDoNotEchoSubmittedIdentifiers(t *testing.T) {
 
 	sourceRevisions := map[string]contractSourceRevision{}
 	_ = validateSourceRevisionBatch(0, map[string]any{
-		"source_key":      "source-key",
+		"source_key":      secret,
 		"source_revision": "one",
 	}, sourceRevisions)
 
@@ -192,7 +192,7 @@ func TestContractValidationErrorsDoNotEchoSubmittedIdentifiers(t *testing.T) {
 			map[string]any{"recall_event_id": secret},
 		}})},
 		{name: "source revision", err: validateSourceRevisionBatch(1, map[string]any{
-			"source_key":      "source-key",
+			"source_key":      secret,
 			"source_revision": "two",
 		}, sourceRevisions)},
 		{name: "submitted relationship", err: validateSubmittedRelationships(rememberInput["relationships"].([]any), rememberInput["evidence"].([]any), "relationships")},

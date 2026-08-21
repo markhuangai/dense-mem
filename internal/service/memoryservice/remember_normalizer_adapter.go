@@ -40,6 +40,7 @@ func rememberNormalizerResponseToSemanticAssessment(
 		}
 	}
 	predicateRangesByEntityRef := rememberNormalizerPredicateRangesByEntityRef(normalized.RelationshipResults)
+	reservedGroundings := rememberNormalizerInitialGroundingReservations(entityTargets, normalized.EntityResults)
 	for _, entity := range normalized.EntityResults {
 		result := verifier.SemanticAssessmentEntityResult{
 			Ref:               entity.Ref,
@@ -52,11 +53,16 @@ func rememberNormalizerResponseToSemanticAssessment(
 		if target, ok := entityTargets[entity.Ref]; ok {
 			result.Kind = target.Kind
 			result.Surface = target.Name
-			if grounding, ok := rememberNormalizerEntityGrounding(req, target, entity, predicateRangesByEntityRef[entity.Ref]); ok {
+			logicalKey := rememberNormalizerLogicalEntityKey(target)
+			if grounding, ok := rememberNormalizerEntityGroundingWithReservations(req, target, entity, predicateRangesByEntityRef[entity.Ref], reservedGroundings, logicalKey); ok {
 				result.GroundingRef = stringPointer(grounding.GroundingRef)
 				result.Surface = grounding.Surface
 				result.EvidenceID = grounding.EvidenceID
 				result.Start, result.End = grounding.Start, grounding.End
+				spanKey := rememberNormalizerGroundingSpanKey(grounding)
+				if owner, exists := reservedGroundings[spanKey]; !exists || owner == logicalKey {
+					reservedGroundings[spanKey] = logicalKey
+				}
 			}
 		}
 		response.EntityResults = append(response.EntityResults, result)
@@ -143,6 +149,56 @@ func rememberNormalizerEntityGrounding(
 	entity verifier.RememberNormalizerEntityResult,
 	predicateRanges []verifier.RememberNormalizerRange,
 ) (verifier.SemanticAssessmentEntityGrounding, bool) {
+	return rememberNormalizerEntityGroundingWithReservations(req, target, entity, predicateRanges, nil, "")
+}
+
+type rememberNormalizerGroundingSpan struct {
+	evidenceID string
+	start      int
+	end        int
+}
+
+func rememberNormalizerGroundingSpanKey(grounding verifier.SemanticAssessmentEntityGrounding) rememberNormalizerGroundingSpan {
+	return rememberNormalizerGroundingSpan{evidenceID: grounding.EvidenceID, start: grounding.Start, end: grounding.End}
+}
+
+func rememberNormalizerLogicalEntityKey(target verifier.SemanticAssessmentRequiredEntityRef) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(target.Name)), " ")) + "\x00" + strings.TrimSpace(target.Kind)
+}
+
+func rememberNormalizerInitialGroundingReservations(
+	targets map[string]verifier.SemanticAssessmentRequiredEntityRef,
+	entities []verifier.RememberNormalizerEntityResult,
+) map[rememberNormalizerGroundingSpan]string {
+	reserved := make(map[rememberNormalizerGroundingSpan]string, len(entities))
+	for _, entity := range entities {
+		if entity.GroundingRef == nil {
+			continue
+		}
+		target, ok := targets[entity.Ref]
+		if !ok {
+			continue
+		}
+		grounding, ok := rememberNormalizerGroundingByRef(target.Groundings, entity.GroundingRef)
+		if !ok {
+			continue
+		}
+		spanKey := rememberNormalizerGroundingSpanKey(grounding)
+		if _, exists := reserved[spanKey]; !exists {
+			reserved[spanKey] = rememberNormalizerLogicalEntityKey(target)
+		}
+	}
+	return reserved
+}
+
+func rememberNormalizerEntityGroundingWithReservations(
+	req verifier.RememberNormalizerRequest,
+	target verifier.SemanticAssessmentRequiredEntityRef,
+	entity verifier.RememberNormalizerEntityResult,
+	predicateRanges []verifier.RememberNormalizerRange,
+	reserved map[rememberNormalizerGroundingSpan]string,
+	logicalKey string,
+) (verifier.SemanticAssessmentEntityGrounding, bool) {
 	providerGrounding, providerOK := rememberNormalizerGroundingByRef(target.Groundings, entity.GroundingRef)
 	if !providerOK {
 		return verifier.SemanticAssessmentEntityGrounding{}, false
@@ -173,6 +229,9 @@ func rememberNormalizerEntityGrounding(
 		}
 		for _, predicateRange := range predicateRanges {
 			if grounding.EvidenceID != predicateRange.EvidenceID {
+				continue
+			}
+			if owner, exists := reserved[rememberNormalizerGroundingSpanKey(grounding)]; exists && owner != logicalKey {
 				continue
 			}
 			distance := rememberNormalizerSpanDistance(grounding.Start, grounding.End, predicateRange.Start, predicateRange.End)
