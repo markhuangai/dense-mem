@@ -249,6 +249,7 @@ func (r *RecallFeedbackEventRepositoryImpl) Get(ctx context.Context, recallID st
 			SELECT `+recallFeedbackEventColumns()+`
 			FROM recall_feedback_events
 			WHERE recall_id = ?
+			  AND (space_id IS NULL OR `+activeSemanticSpaceGenerationSQL("recall_feedback_events")+`)
 			LIMIT 1
 		`, recallID).Rows()
 		if err != nil {
@@ -346,7 +347,7 @@ func normalizeRecallFeedbackEventFilter(filter domain.RecallFeedbackEventFilter)
 }
 
 func recallFeedbackEventWhere(filter domain.RecallFeedbackEventFilter) (string, []any) {
-	clauses := []string{"WHERE true"}
+	clauses := []string{"WHERE (space_id IS NULL OR " + activeSemanticSpaceGenerationSQL("recall_feedback_events") + ")"}
 	args := []any{}
 	if filter.TeamID != nil {
 		clauses = append(clauses, "team_id = ?")

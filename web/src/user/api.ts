@@ -321,6 +321,7 @@ type Envelope<T> = {
 export class UserApi {
   private readonly token: string;
   private readonly authMode: UserAuthMode;
+  private readonly pendingCredentialRevocations = new Map<string, string>();
 
   constructor(token: string, authMode: UserAuthMode = token ? "api_key" : "anonymous") {
     this.token = token;
@@ -384,12 +385,15 @@ export class UserApi {
     return payload.data;
   }
 
-  async revokeSSOCredential(credentialId: string, idempotencyKey = newIdempotencyKey("sso-credential-delete")): Promise<unknown> {
+  async revokeSSOCredential(credentialId: string, idempotencyKey?: string): Promise<unknown> {
+    const key = idempotencyKey ?? this.pendingCredentialRevocations.get(credentialId) ?? newIdempotencyKey("sso-credential-delete");
+    this.pendingCredentialRevocations.set(credentialId, key);
     const payload = await this.request<Envelope<unknown>>(`/ui/api/sso/credentials/${credentialId}`, {
       method: "DELETE",
       body: { acknowledge_irreversible: true },
-      headers: { "Idempotency-Key": idempotencyKey },
+      headers: { "Idempotency-Key": key },
     });
+    this.pendingCredentialRevocations.delete(credentialId);
     return payload.data;
   }
 

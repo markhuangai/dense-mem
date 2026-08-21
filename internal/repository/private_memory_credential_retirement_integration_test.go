@@ -50,6 +50,24 @@ func TestPrivateMemoryCredentialRetirementUpgradesActiveErasure(t *testing.T) {
 	require.Equal(t, queuedErase.WorkerID, queuedRetirement.WorkerID)
 	require.Equal(t, queuedErase.LeaseUntil, queuedRetirement.LeaseUntil)
 	require.True(t, queuedRetirement.RetireSpace)
+	queuedRetirementReplay, replayCreated, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: ownerID, CredentialID: queuedTarget.ID,
+		IdempotencyScopeHash: privateMemoryHash("active-queued-retirement", queuedTarget.ID.String()),
+		RequestHash:          privateMemoryHash("active-queued-retirement-request", queuedTarget.ID.String()),
+		ReasonCode:           "credential_deleted",
+	})
+	require.NoError(t, err)
+	require.False(t, replayCreated)
+	require.Equal(t, queuedRetirement.ID, queuedRetirementReplay.ID)
+	originalEraseReplay, replayCreated, err := repo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: queuedTarget.ID, CredentialID: queuedTarget.ID,
+		IdempotencyScopeHash: privateMemoryHash("active-queued-erase", queuedTarget.ID.String()),
+		RequestHash:          privateMemoryHash("active-queued-erase-request", queuedTarget.ID.String()),
+		ReasonCode:           "owner_request",
+	})
+	require.NoError(t, err)
+	require.False(t, replayCreated)
+	require.Equal(t, queuedErase.ID, originalEraseReplay.ID)
 
 	queuedClaim, err := repo.ClaimNext(ctx, "active-queued-retirement-worker", time.Minute)
 	require.NoError(t, err)
@@ -96,6 +114,15 @@ func TestPrivateMemoryCredentialRetirementUpgradesActiveErasure(t *testing.T) {
 	require.Equal(t, processingClaim.LeaseUntil, processingRetirement.LeaseUntil)
 	require.Equal(t, processingClaim.AttemptCount, processingRetirement.AttemptCount)
 	require.True(t, processingRetirement.RetireSpace)
+	processingRetirementReplay, replayCreated, err := repo.DisableSSOCredential(ctx, PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: ownerID, CredentialID: processingTarget.ID,
+		IdempotencyScopeHash: privateMemoryHash("active-processing-retirement", processingTarget.ID.String()),
+		RequestHash:          privateMemoryHash("active-processing-retirement-request", processingTarget.ID.String()),
+		ReasonCode:           "credential_deleted",
+	})
+	require.NoError(t, err)
+	require.False(t, replayCreated)
+	require.Equal(t, processingRetirement.ID, processingRetirementReplay.ID)
 
 	processingCompleted, err := repo.ExecuteClaim(ctx, processingClaim.ID, processingClaim.WorkerID, processingClaim.Fence)
 	require.NoError(t, err)
