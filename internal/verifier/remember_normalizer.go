@@ -307,6 +307,7 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 		}
 	}
 	seenEntities := map[string]struct{}{}
+	seenEntitySpans := map[string]string{}
 	for index := range response.EntityResults {
 		result := &response.EntityResults[index]
 		result.Ref, result.Action = strings.TrimSpace(result.Ref), strings.TrimSpace(result.Action)
@@ -319,6 +320,17 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 		if !ok {
 			errs = append(errs, semanticErr(field+".ref", "is outside the submitted entity contract"))
 			continue
+		}
+		if result.GroundingRef != nil {
+			if grounding, groundingOK := entityGroundingByRef(target.Groundings, *result.GroundingRef); groundingOK {
+				spanKey := assessmentSpanKey(grounding.EvidenceID, grounding.Start, grounding.End)
+				logicalKey := semanticAssessmentEntityLogicalKey(target.Name, target.Kind)
+				if previous, exists := seenEntitySpans[spanKey]; exists && previous != logicalKey {
+					errs = append(errs, semanticErr(field, "duplicates an entity evidence span"))
+				} else {
+					seenEntitySpans[spanKey] = logicalKey
+				}
+			}
 		}
 		if !semanticOneOf(result.Action, domain.EntityResolutionActions()...) {
 			errs = append(errs, semanticErr(field+".action", "is unsupported"))
