@@ -39,6 +39,8 @@ type LedgerRepository interface {
 type CreateIngestInput struct {
 	TeamID            string
 	OwnerProfileID    string
+	SpaceID           string
+	SpaceGeneration   int64
 	IdempotencyKey    string
 	RequestHash       string
 	SourceSummary     string
@@ -135,15 +137,17 @@ type EvidenceFragment struct {
 }
 
 type PlacementRun struct {
-	TeamID         string
-	PlacementRunID string
-	IngestID       string
-	OwnerProfileID string
-	CorrelationID  string
-	Status         string
-	Attempts       int
-	MaxAttempts    int
-	LeaseUntil     *time.Time
+	TeamID          string
+	PlacementRunID  string
+	IngestID        string
+	OwnerProfileID  string
+	SpaceID         string
+	SpaceGeneration int64
+	CorrelationID   string
+	Status          string
+	Attempts        int
+	MaxAttempts     int
+	LeaseUntil      *time.Time
 }
 
 type PlacementItem struct {
@@ -427,11 +431,12 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 				WHERE run.team_id = ?::uuid
 				  AND run.placement_run_id = next.placement_run_id
 				RETURNING run.team_id, run.placement_run_id, run.ingest_id,
-				          run.owner_profile_id, run.status, run.attempts, run.max_attempts,
+				          run.owner_profile_id, run.space_id, run.space_generation,
+				          run.status, run.attempts, run.max_attempts,
 				          run.lease_until
 			)
 			SELECT updated.team_id::text, updated.placement_run_id::text, updated.ingest_id::text,
-			       updated.owner_profile_id::text,
+			       updated.owner_profile_id::text, updated.space_id::text, updated.space_generation,
 			       COALESCE(ingest.metadata #>> '{actor,correlation_id}', ''),
 			       updated.status, updated.attempts, updated.max_attempts, updated.lease_until
 			FROM updated
@@ -448,7 +453,7 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 		}
 		loaded := PlacementRun{}
 		var leaseUntil sql.NullTime
-		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.CorrelationID, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &leaseUntil); err != nil {
+		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.SpaceID, &loaded.SpaceGeneration, &loaded.CorrelationID, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &leaseUntil); err != nil {
 			return err
 		}
 		if leaseUntil.Valid {
@@ -624,10 +629,12 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH inserted AS (
 				INSERT INTO knowledge_ingests (
-				    team_id, owner_profile_id, idempotency_key, request_hash,
+				    team_id, owner_profile_id, space_id, space_generation,
+				    idempotency_key, request_hash,
 				    source_summary, status, proposal, metadata
 				) VALUES (
-				    ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb, ?::jsonb
+				    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
+				    ?, ?, ?, ?, ?::jsonb, ?::jsonb
 				)
 				ON CONFLICT (team_id, owner_profile_id, idempotency_key)
 				WHERE idempotency_key <> ''
@@ -642,7 +649,8 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 			  AND owner_profile_id = ?::uuid
 			  AND idempotency_key = ?
 			LIMIT 1
-		`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash,
+		`, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
+			input.IdempotencyKey, input.RequestHash,
 			input.SourceSummary, input.Status, string(proposal), string(metadata),
 			input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Rows()
 		if err != nil {
@@ -682,12 +690,15 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO knowledge_ingests (
-		    team_id, owner_profile_id, request_hash, source_summary, status, proposal, metadata
+		    team_id, owner_profile_id, space_id, space_generation,
+		    request_hash, source_summary, status, proposal, metadata
 		) VALUES (
-		    ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb, ?::jsonb
+		    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
+		    ?, ?, ?, ?::jsonb, ?::jsonb
 		)
 		RETURNING ingest_id::text
-	`, input.TeamID, input.OwnerProfileID, input.RequestHash, input.SourceSummary,
+	`, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
+		input.RequestHash, input.SourceSummary,
 		input.Status, string(proposal), string(metadata)).Rows()
 	if err != nil {
 		return "", false, err
@@ -746,13 +757,16 @@ func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInpu
 	}
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
 		INSERT INTO placement_runs (
-		    team_id, ingest_id, owner_profile_id, status, completed_at, quarantine_expires_at
+		    team_id, ingest_id, owner_profile_id, space_id, space_generation,
+		    status, completed_at, quarantine_expires_at
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, %s,
+		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
+		    ?, %s,
 		    CASE WHEN ? = 'quarantined' THEN now() + interval '24 hours' ELSE NULL END
 		)
 		RETURNING placement_run_id::text, created_at, completed_at
-	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.Status, input.Status).Rows()
+	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
+		input.Status, input.Status).Rows()
 	if err != nil {
 		return "", time.Time{}, nil, err
 	}
@@ -789,15 +803,18 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_fragments (
-		    team_id, ingest_id, owner_profile_id, evidence_index, content,
+		    team_id, ingest_id, owner_profile_id, space_id, space_generation,
+		    evidence_index, content,
 		    content_hash, source_type, authority, source_ref, source_id,
 		    source_revision_id, labels, metadata
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?,
+		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
+		    ?, ?, ?, ?, ?, ?,
 		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?::jsonb
 		)
 	RETURNING fragment_id::text, authority
-	`, input.TeamID, ingestID, input.OwnerProfileID, index, item.Content, item.ContentHash,
+	`, input.TeamID, ingestID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
+		index, item.Content, item.ContentHash,
 		item.SourceType, item.Authority, item.SourceRef, sourceID, sourceRevisionID,
 		pqStringArray(item.Labels), string(metadata)).Rows()
 	if err != nil {
@@ -830,12 +847,15 @@ func insertPlacementItem(ctx context.Context, tx *gorm.DB, input CreateIngestInp
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO placement_items (
 		    team_id, placement_run_id, ingest_id, owner_profile_id, fragment_id,
+		    space_id, space_generation,
 		    evidence_index, status, category
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+		    NULLIF(?, '')::uuid, NULLIF(?::bigint, 0), ?, ?, ?
 		)
 		RETURNING placement_item_id::text, claim_key::text, version
-	`, input.TeamID, placementRunID, ingestID, input.OwnerProfileID, fragment.FragmentID, fragment.EvidenceIndex, status, category).Rows()
+	`, input.TeamID, placementRunID, ingestID, input.OwnerProfileID, fragment.FragmentID,
+		input.SpaceID, input.SpaceGeneration, fragment.EvidenceIndex, status, category).Rows()
 	if err != nil {
 		return PlacementItem{}, err
 	}
@@ -853,17 +873,6 @@ func insertPlacementItem(ctx context.Context, tx *gorm.DB, input CreateIngestInp
 		return PlacementItem{}, err
 	}
 	return placementItem, rows.Err()
-}
-
-func insertEvidenceQuarantine(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string, fragmentID string, reason string) error {
-	return tx.WithContext(ctx).Exec(`
-		INSERT INTO evidence_quarantines (
-		    team_id, fragment_id, ingest_id, owner_profile_id, reason
-		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?
-		)
-		ON CONFLICT (team_id, fragment_id) DO NOTHING
-	`, input.TeamID, fragmentID, ingestID, input.OwnerProfileID, strings.TrimSpace(reason)).Error
 }
 
 func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ingestID string, existing bool) (*CreateIngestResult, error) {

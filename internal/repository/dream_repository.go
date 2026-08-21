@@ -508,8 +508,6 @@ func (r *SemanticRepositoryImpl) ListDreamTargetPredicates(ctx context.Context, 
 			       relationship_kind, current_cardinality
 			FROM team_predicate_definitions
 			WHERE team_id = ?::uuid
-			  AND space_id = dense_mem_team_shared_space(team_id)
-			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND lifecycle_state = 'active'
 			ORDER BY predicate_key, version DESC
 		`, teamID).Rows()

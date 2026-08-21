@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
@@ -110,6 +112,7 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	if run == nil {
 		return false, nil
 	}
+	ctx = withPlacementRunSpace(ctx, *run)
 	scope := submissionAssessmentRunScope(*run, s.workerID)
 	placement, err := s.ledger.GetPlacementRun(ctx, repository.GetPlacementRunInput{
 		TeamID:         run.TeamID,
@@ -244,6 +247,14 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	s.logLifecycle(scope, "submission_completed", "completed", "semantic_commit", "semantic_commit_succeeded", nil)
 	s.recordFirstDisposition(ctx, *run, committed.FirstDisposition)
 	return true, nil
+}
+
+func withPlacementRunSpace(ctx context.Context, run repository.PlacementRun) context.Context {
+	spaceID, err := uuid.Parse(strings.TrimSpace(run.SpaceID))
+	if err != nil {
+		return ctx
+	}
+	return requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: spaceID}})
 }
 
 func (s *submissionAssessmentPlacementWorkerService) validateDependencies() error {

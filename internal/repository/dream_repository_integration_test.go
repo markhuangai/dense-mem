@@ -365,6 +365,17 @@ func TestDreamRepositoryPersistsTeamScopedPredicateHypothesis(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "depends_transitively_on", predicate.PredicateKey)
 
+	targetPredicates, err := semanticRepo.ListDreamTargetPredicates(ctx, teamID)
+	require.NoError(t, err)
+	require.Contains(t, targetPredicates, DreamTargetPredicate{
+		PredicateKey:        predicate.PredicateKey,
+		Version:             predicate.Version,
+		AllowedSubjectKinds: []string{"project"},
+		AllowedObjectKinds:  []string{"product"},
+		RelationshipKind:    "state",
+		CurrentCardinality:  "many",
+	})
+
 	var globalPredicateCount int
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Raw(`

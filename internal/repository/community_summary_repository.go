@@ -49,7 +49,7 @@ func (r *SemanticRepositoryImpl) RecordCommunitySummaryAttempt(ctx context.Conte
 				response_hash, input_hash, admitted_relationship_ids, admitted_evidence_ids,
 				admitted_support_quotes, response_summary, valid, error_code
 			) VALUES (
-				?::uuid, ?::uuid, ?, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?::uuid[], ?::uuid[], ?::jsonb, ?, ?, ?
+				?::uuid, ?::uuid, ?, ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?, ?::uuid[], ?::uuid[], ?::jsonb, ?, ?, ?
 			)
 		`, input.TeamID, fence.ID, fence.Generation, input.RunID, input.CommunityID, input.Attempt, input.ProviderModel,
 			input.PromptHash, input.ResponseHash, input.InputHash, pq.Array(input.AdmittedRelationshipIDs),

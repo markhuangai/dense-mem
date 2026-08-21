@@ -281,7 +281,7 @@ func TestRememberNormalizerResponseToSemanticAssessmentConvertsValueObject(t *te
 	require.Equal(t, 1.0, converted.RelationshipResults[0].ValueRange.Confidence)
 }
 
-func TestRememberNormalizerResponseMapsRegistrationRequiredToPolicyReview(t *testing.T) {
+func TestRememberNormalizerResponsePreservesRegistrationRequired(t *testing.T) {
 	_, _, _, request, semantic, _ := semanticAssessmentConfidenceFixture(t)
 	request.SubmissionContract = adapterTestSubmissionContract()
 	relationship := semantic.RelationshipResults[0]
@@ -313,7 +313,7 @@ func TestRememberNormalizerResponseMapsRegistrationRequiredToPolicyReview(t *tes
 
 	converted, err := rememberNormalizerResponseToSemanticAssessment(request, normalized)
 	require.NoError(t, err)
-	require.Equal(t, "needs_review", converted.RelationshipResults[0].PredicateStatus)
+	require.Equal(t, "registration_required", converted.RelationshipResults[0].PredicateStatus)
 }
 
 func TestRememberNormalizerResponseToSemanticAssessmentRejectsInvalidPredicateSpan(t *testing.T) {

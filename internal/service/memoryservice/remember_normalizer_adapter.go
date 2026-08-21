@@ -68,18 +68,11 @@ func rememberNormalizerResponseToSemanticAssessment(
 		response.EntityResults = append(response.EntityResults, result)
 	}
 	for _, relationship := range normalized.RelationshipResults {
-		predicateStatus := relationship.PredicateStatus
-		if predicateStatus == "registration_required" {
-			// The structure-only contract names the absence of a supplied
-			// predicate explicitly; the existing policy/commit contract uses
-			// needs_review for the same non-promotable state.
-			predicateStatus = "needs_review"
-		}
 		result := verifier.SemanticAssessmentRelationshipResult{
 			Ref:              relationship.Ref,
 			SubjectRef:       relationship.SubjectRef,
 			PredicateRange:   normalizerRangeToAssessmentRange(relationship.PredicateRange),
-			PredicateStatus:  predicateStatus,
+			PredicateStatus:  relationship.PredicateStatus,
 			PredicateKey:     relationship.PredicateKey,
 			PredicateVersion: relationship.PredicateVersion,
 			ObjectRef:        relationship.ObjectRef,
