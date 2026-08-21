@@ -92,7 +92,8 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   );
   assert.match(workflow, /EXPECTED_HEAD_SHA: \$\{\{ needs\.resolve\.outputs\.head_sha \}\}/);
   assert.match(workflow, /persist-credentials: false/);
-  assert.match(workflow, /parallel-count: "5"/);
+  assert.match(workflow, /effort: high/);
+  assert.match(workflow, /parallel-count: "7"/);
   assert.match(workflow, /max-turns: "100"/);
   assert.match(workflow, /auto-approve: "false"/);
   assert.match(workflow, /permission_policy: always_allow/);
@@ -102,6 +103,27 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
     /node --test tests\/uat\/ai_pr_review_policy\.test\.mjs/,
   );
   assert.match(ciCheck, /node --test tests\/uat\/ai_pr_review_policy\.test\.mjs/);
+});
+
+test("automatic AI review waits for successful current-head PR CI", async () => {
+  const workflow = await readFile(reviewWorkflowURL, "utf8");
+  const normalizedWorkflow = workflow.replace(/\s+/g, " ");
+
+  assert.doesNotMatch(workflow, /^\s+pull_request_target:/m);
+  assert.match(workflow, /^\s+workflow_run:/m);
+  assert.match(workflow, /^\s+workflow_dispatch:/m);
+  assert.match(normalizedWorkflow, /workflows: - CI Pull Request types: \[completed\]/);
+  assert.match(
+    normalizedWorkflow,
+    /github\.event_name == 'workflow_dispatch' \|\| \(github\.event\.workflow_run\.event == 'pull_request' && github\.event\.workflow_run\.conclusion == 'success'\)/,
+  );
+  assert.match(workflow, /workflowRun\.event !== "pull_request"/);
+  assert.match(workflow, /workflowRun\.conclusion !== "success"/);
+  assert.match(workflow, /pull\.head\.sha === triggerHeadSha/);
+  assert.match(
+    workflow,
+    /pull\.head\.sha !== triggerHeadSha/,
+  );
 });
 
 test("final review status is fenced by the live pull request head", async () => {

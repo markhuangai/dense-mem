@@ -1,10 +1,6 @@
 name: AI Pull Request Review
 
 on:
-  pull_request_target:
-    branches:
-      - main
-    types: [opened, synchronize, reopened, ready_for_review]
   workflow_run:
     workflows:
       - CI Pull Request
@@ -62,6 +58,10 @@ jobs:
   resolve:
     name: Resolve pull request
     runs-on: docker-runner
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success')
 
     outputs:
       head_sha: ${{ steps.resolve.outputs.head_sha }}
@@ -84,25 +84,16 @@ jobs:
             let pullNumber;
             let triggerHeadSha;
 
-            if (eventName === "pull_request_target") {
-              const pull = context.payload.pull_request;
-              if (!pull) {
-                throw new Error("The pull_request_target payload has no pull request.");
-              }
-              if (pull.draft) {
-                skip(`Pull request #${pull.number} is a draft.`);
-                return;
-              }
-              if (pull.user?.login?.toLowerCase() === "dependabot[bot]") {
-                skip(`Pull request #${pull.number} will use the trusted CI completion path.`);
-                return;
-              }
-              pullNumber = pull.number;
-              triggerHeadSha = pull.head?.sha;
-            } else if (eventName === "workflow_run") {
+            if (eventName === "workflow_run") {
               const workflowRun = context.payload.workflow_run;
               if (!workflowRun || workflowRun.event !== "pull_request") {
                 skip("The completed CI run was not triggered by a pull request.");
+                return;
+              }
+              if (workflowRun.conclusion !== "success") {
+                skip(
+                  `The completed CI run concluded ${workflowRun.conclusion || "without a result"}.`,
+                );
                 return;
               }
               triggerHeadSha = workflowRun.head_sha;
@@ -257,7 +248,8 @@ jobs:
           ai-secret: ${{ secrets.LOCAL_AI_SECRET }}
           ai-auth-mode: auth-token
           model: auto
-          parallel-count: "5"
+          effort: high
+          parallel-count: "7"
           max-turns: "100"
           auto-approve: "false"
           review-prompts: |
