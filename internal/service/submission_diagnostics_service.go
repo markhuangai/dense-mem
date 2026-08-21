@@ -208,7 +208,7 @@ func submissionDiagnosticSummary(record repository.SubmissionDiagnosticRecord) S
 
 const submissionSourceSummaryMaxRunes = 256
 
-var submissionSourceCredentialPattern = regexp.MustCompile(`(?i)(?:bearer\s+|cookie\s*:\s*)[^\s]+|((?:access[_-]?token|api[_-]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token)=)[^&\s]+`)
+var submissionSourceCredentialPattern = regexp.MustCompile(`(?i)authorization\s*:\s*(?:[^\s]+\s+)?[^\s]+|bearer\s+[^\s]+|cookie\s*:\s*[^\s]+|((?:access[_-]?token|api[_-]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token)=)[^&\s]+`)
 
 type boundedSubmissionText struct {
 	Value     string
@@ -246,7 +246,13 @@ func sanitizeSubmissionSourceSummary(value string) string {
 		}
 	}
 	return submissionSourceCredentialPattern.ReplaceAllStringFunc(value, func(match string) string {
-		if strings.HasPrefix(strings.ToLower(match), "bearer") {
+		lowerMatch := strings.ToLower(strings.TrimSpace(match))
+		if strings.HasPrefix(lowerMatch, "authorization") {
+			if separator := strings.IndexByte(match, ':'); separator >= 0 {
+				return match[:separator+1] + " [REDACTED]"
+			}
+		}
+		if strings.HasPrefix(lowerMatch, "bearer") {
 			return "Bearer [REDACTED]"
 		}
 		separator := strings.IndexByte(match, '=')

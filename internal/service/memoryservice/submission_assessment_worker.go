@@ -564,8 +564,13 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 	status, category, stage string,
 	failureCause ...error,
 ) error {
-	payload := semanticAssessmentFailurePayload(stage, false, firstError(failureCause))
-	payload["assessor_contract"] = domain.ContractVersion
+	var payload map[string]any
+	if status == string(domain.SemanticReviewSuperseded) {
+		payload = map[string]any{"assessor_contract": domain.ContractVersion}
+	} else {
+		payload = semanticAssessmentFailurePayload(stage, false, firstError(failureCause))
+		payload["assessor_contract"] = domain.ContractVersion
+	}
 	failureClass, _ := payload["failure_class"].(string)
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,

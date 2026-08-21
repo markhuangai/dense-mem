@@ -152,7 +152,7 @@ func TestSubmissionAssessmentWorkerMarksStaleSourceSuperseded(t *testing.T) {
 	assert.True(t, processed)
 	require.Len(t, assessments.completions, 1)
 	assert.Equal(t, string(domain.SemanticReviewSuperseded), assessments.completions[0].Status)
-	assert.Equal(t, "stale_source", assessments.completions[0].Payload["failure_stage"])
+	assert.Equal(t, map[string]any{"assessor_contract": domain.ContractVersion}, assessments.completions[0].Payload)
 }
 
 func TestSubmissionAssessmentWorkerReusesPersistedAssessmentWithoutAnotherProviderCall(t *testing.T) {
