@@ -572,7 +572,7 @@ func encodedCandidateRejected(encoded string) bool {
 }
 
 func opaqueIdentifierCandidate(value string) bool {
-	if len(value) < submissionSecurityMinBase64TokenLength || strings.ContainsAny(value, "=+/") {
+	if len(value) < submissionSecurityMinBase64TokenLength || strings.ContainsAny(value, "=+/") || strings.Contains(value, "--") || strings.Contains(value, "__") || strings.Contains(value, "-_") || strings.Contains(value, "_-") {
 		return false
 	}
 	parts := strings.FieldsFunc(value, func(r rune) bool { return r == '-' || r == '_' })

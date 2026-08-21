@@ -23,7 +23,13 @@ type ContractValidationResult struct {
 	IssuesTruncated bool                      `json:"issues_truncated"`
 }
 
-const maxContractValidationIssues = 20
+const (
+	maxContractValidationIssues       = 20
+	maxContractValidationPathRunes    = 128
+	maxContractValidationMessageRunes = 512
+	maxRememberEvidenceItems          = 20
+	maxRememberRelationshipItems      = 200
+)
 
 // ValidateContractInputIssues validates a contract without stopping at the
 // first deterministic error. Remember gets field-level aggregation; other
@@ -107,7 +113,9 @@ type contractIssueCollector struct {
 }
 
 func (c *contractIssueCollector) add(path, code, message string) {
+	path = boundedContractText(path, maxContractValidationPathRunes)
 	message = strings.TrimSpace(message)
+	message = boundedContractText(message, maxContractValidationMessageRunes)
 	if message == "" {
 		return
 	}
@@ -121,6 +129,14 @@ func (c *contractIssueCollector) add(path, code, message string) {
 		return
 	}
 	c.issues = append(c.issues, ContractValidationIssue{Path: path, Code: code, Message: message})
+}
+
+func boundedContractText(value string, maxRunes int) string {
+	value = strings.TrimSpace(value)
+	if len([]rune(value)) <= maxRunes {
+		return value
+	}
+	return string([]rune(value)[:maxRunes])
 }
 
 func jsonPointerToken(value string) string {
@@ -147,8 +163,9 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 	if _, exists := args["evidence"]; exists && evidence == nil {
 		collector.add("/evidence", "type", "evidence must be an array")
 	}
-	if len(evidence) > 20 {
-		collector.add("/evidence", "too_many_items", "evidence exceeds maximum item count of 20")
+	if len(evidence) > maxRememberEvidenceItems {
+		collector.add("/evidence", "too_many_items", fmt.Sprintf("evidence exceeds maximum item count of %d", maxRememberEvidenceItems))
+		evidence = evidence[:maxRememberEvidenceItems]
 	}
 	sourceRevisions := map[string]contractSourceRevision{}
 	for index, item := range evidence {
@@ -199,8 +216,9 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 	if len(relationships) == 0 && args["relationships"] != nil {
 		collector.add("/relationships", "required", "relationships must contain at least one item")
 	}
-	if len(relationships) > 200 {
-		collector.add("/relationships", "too_many_items", "relationships exceeds maximum item count of 200")
+	if len(relationships) > maxRememberRelationshipItems {
+		collector.add("/relationships", "too_many_items", fmt.Sprintf("relationships exceeds maximum item count of %d", maxRememberRelationshipItems))
+		relationships = relationships[:maxRememberRelationshipItems]
 	}
 	seenRefs := map[string]struct{}{}
 	covered := make([]bool, len(evidence))

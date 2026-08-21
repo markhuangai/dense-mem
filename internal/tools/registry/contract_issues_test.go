@@ -143,6 +143,33 @@ func TestValidateContractInputIssuesEscapesJSONPointerTokens(t *testing.T) {
 	})
 }
 
+func TestValidateContractInputIssuesBoundsUnknownFieldOutput(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	require.NoError(t, err)
+	longKey := strings.Repeat("x", maxContractValidationPathRunes*4)
+	result := ValidateContractInputIssues(remember, map[string]any{longKey: true}, []string{"write"})
+	require.NotEmpty(t, result.Issues)
+	require.LessOrEqual(t, len([]rune(result.Issues[0].Path)), maxContractValidationPathRunes)
+	require.LessOrEqual(t, len([]rune(result.Issues[0].Message)), maxContractValidationMessageRunes)
+	require.NotContains(t, result.Issues[0].Message, longKey)
+}
+
+func TestValidateContractInputIssuesBoundsOversizedTraversal(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	require.NoError(t, err)
+	evidence := make([]any, maxRememberEvidenceItems+1000)
+	for index := range evidence {
+		evidence[index] = map[string]any{"content": "evidence"}
+	}
+	relationships := make([]any, maxRememberRelationshipItems+1000)
+	for index := range relationships {
+		relationships[index] = map[string]any{"ref": "r", "evidence_indices": []any{0}}
+	}
+	result := ValidateContractInputIssues(remember, map[string]any{"evidence": evidence, "relationships": relationships}, []string{"write"})
+	require.Contains(t, issueMessages(result), "evidence exceeds maximum item count of 20")
+	require.Contains(t, issueMessages(result), "relationships exceeds maximum item count of 200")
+}
+
 func TestValidateContractInputIssuesCoversRememberShapeBranches(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)

@@ -206,13 +206,13 @@ func TestRememberUsesPersistedCorrelationForIdempotentReplay(t *testing.T) {
 	require.Equal(t, "corr-original-submission", result.CorrelationID)
 }
 
-func TestCanonicalRequestHashUsesLegacyContractMarkerWithoutReplacementRouting(t *testing.T) {
+func TestCanonicalRequestHashPreservesLegacyEmptyReplacementField(t *testing.T) {
 	hash, err := canonicalRequestHash(RememberRequest{
 		Evidence:       []RememberEvidenceInput{{Content: "compat"}},
 		IdempotencyKey: "compat-key",
 	})
 	require.NoError(t, err)
-	require.Equal(t, "sha256:2af9ed5764aa87834e245aa5e76aad7ddf9205d34f912bbdd7cc621a25588467", hash)
+	require.Equal(t, "sha256:b4829467152fc5627c23b1236ff33cd558ba66a1d02ad315adb77f440a633ce0", hash)
 }
 
 func TestRememberReplayMapsInternalStatesToPublicProcessingStates(t *testing.T) {

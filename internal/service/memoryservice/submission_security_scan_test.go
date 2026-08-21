@@ -129,6 +129,17 @@ func TestScanSubmissionEvidenceAllowsBenignProseAndIdentifiers(t *testing.T) {
 	require.Empty(t, batch.Signals)
 }
 
+func TestOpaqueIdentifierCandidateRejectsAdjacentSeparators(t *testing.T) {
+	for _, value := range []string{
+		"abc--def123456789",
+		"abc__def123456789",
+		"abc-_def123456789",
+		"abc_-def123456789",
+	} {
+		require.False(t, opaqueIdentifierCandidate(value), value)
+	}
+}
+
 func TestScanSubmissionWithProviderProposalScansTypedStringValues(t *testing.T) {
 	safeProposal := map[string]any{
 		"relationship_hints": []map[string]any{{

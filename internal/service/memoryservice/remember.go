@@ -484,11 +484,12 @@ func sourceRevisionBatchHash(contents []string) string {
 
 func canonicalRequestHash(req RememberRequest) (string, error) {
 	payload := map[string]any{
-		"contract_version":   legacyRequestHashContractVersion,
-		"evidence":           req.Evidence,
-		"entity_hints":       req.EntityHints,
-		"relationship_hints": req.RelationshipHints,
-		"idempotency_key":    strings.TrimSpace(req.IdempotencyKey),
+		"contract_version":       legacyRequestHashContractVersion,
+		"replaces_submission_id": "",
+		"evidence":               req.Evidence,
+		"entity_hints":           req.EntityHints,
+		"relationship_hints":     req.RelationshipHints,
+		"idempotency_key":        strings.TrimSpace(req.IdempotencyKey),
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
