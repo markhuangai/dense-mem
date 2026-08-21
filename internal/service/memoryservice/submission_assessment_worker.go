@@ -437,22 +437,22 @@ func decodeStoredSubmissionAssessment(
 	limits verifier.SemanticAssessmentLimits,
 ) (verifier.SemanticAssessmentResponse, error) {
 	if assessment == nil {
-		return verifier.SemanticAssessmentResponse{}, errors.New("stored submission assessment is nil")
+		return verifier.SemanticAssessmentResponse{}, newStoredSubmissionAssessmentValidationError(errors.New("stored submission assessment is nil"))
 	}
 	canonicalJSON, err := verifier.CanonicalJSON(assessment.NormalizedResponse)
 	if err != nil {
-		return verifier.SemanticAssessmentResponse{}, fmt.Errorf("stored submission assessment response is invalid JSON: %w", err)
+		return verifier.SemanticAssessmentResponse{}, newStoredSubmissionAssessmentValidationError(fmt.Errorf("stored submission assessment response is invalid JSON: %w", err))
 	}
 	if semanticAssessmentHash(canonicalJSON) != assessment.ResponseHash {
-		return verifier.SemanticAssessmentResponse{}, errors.New("stored submission assessment hash mismatch")
+		return verifier.SemanticAssessmentResponse{}, newStoredSubmissionAssessmentValidationError(errors.New("stored submission assessment hash mismatch"))
 	}
 	response, err := verifier.DecodeSemanticAssessmentResponseJSON(assessment.NormalizedResponse, limits)
 	if err != nil {
-		return verifier.SemanticAssessmentResponse{}, err
+		return verifier.SemanticAssessmentResponse{}, newStoredSubmissionAssessmentValidationError(err)
 	}
 	prepared, validationErrors := verifier.PrepareSemanticAssessmentResponse(request, response, limits)
 	if len(validationErrors) > 0 {
-		return verifier.SemanticAssessmentResponse{}, errors.New("stored submission assessment does not match its current contract")
+		return verifier.SemanticAssessmentResponse{}, newStoredSubmissionAssessmentValidationError(errors.New("stored submission assessment does not match its current contract"))
 	}
 	return prepared, nil
 }

@@ -35,6 +35,25 @@ type placementWorkerError struct {
 	cause   error
 }
 
+type storedSubmissionAssessmentValidationError struct {
+	cause error
+}
+
+func (err *storedSubmissionAssessmentValidationError) Error() string {
+	return "stored submission assessment validation failed"
+}
+
+func (err *storedSubmissionAssessmentValidationError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.cause
+}
+
+func newStoredSubmissionAssessmentValidationError(cause error) error {
+	return &storedSubmissionAssessmentValidationError{cause: cause}
+}
+
 func (err *placementWorkerError) Error() string {
 	return "placement worker persistence failed"
 }
@@ -104,6 +123,11 @@ func placementFailureDiagnosticFor(stage string, cause error) placementFailureDi
 		diagnostic.ValidationFieldFamilies = boundedValidationFieldFamilies(malformed.ValidationFieldFamilies)
 		diagnostic.Measurement = cloneFailureMeasurement(malformed.Measurement)
 		diagnostic.AssessorTurns = boundedPositive(malformed.Attempts)
+	}
+	var stored *storedSubmissionAssessmentValidationError
+	if errors.As(cause, &stored) {
+		diagnostic.Class = "validation_failed"
+		diagnostic.ValidationStage = "stored_response"
 	}
 	if isVerifierProviderFailure(cause) {
 		failure := verifier.ProviderFailureDetails(cause)

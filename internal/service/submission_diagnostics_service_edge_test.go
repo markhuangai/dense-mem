@@ -150,6 +150,8 @@ func TestSubmissionDiagnosticSummaryNormalizesSourceText(t *testing.T) {
 	require.Equal(t, "source AWS_SECRET_ACCESS_KEY=[REDACTED]", quotedCompositeCredentialKey.Value)
 	singleQuotedCompositeCredentialKey := boundedSubmissionSourceSummary("source AWS_SECRET_ACCESS_KEY='opaque credential'")
 	require.Equal(t, "source AWS_SECRET_ACCESS_KEY=[REDACTED]", singleQuotedCompositeCredentialKey.Value)
+	colonCompositeCredentialKey := boundedSubmissionSourceSummary("source AWS_SECRET_ACCESS_KEY: opaque-credential")
+	require.Equal(t, "source AWS_SECRET_ACCESS_KEY: [REDACTED]", colonCompositeCredentialKey.Value)
 	passwordLabel := boundedSubmissionSourceSummary("source Password: supersecret")
 	require.Equal(t, "source Password: [REDACTED]", passwordLabel.Value)
 	accessTokenLabel := boundedSubmissionSourceSummary("source access_token: opaque-secret")

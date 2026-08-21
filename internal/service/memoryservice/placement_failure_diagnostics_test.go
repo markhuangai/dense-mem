@@ -93,6 +93,17 @@ func TestPlacementFailureDiagnosticCapturesMalformedValidationAndMeasurement(t *
 	require.Equal(t, map[string]any{"unit": "tokens", "observed_at_least": 120, "limit": 100}, payload["failure_measurement"])
 }
 
+func TestPlacementFailureDiagnosticCapturesStoredAssessmentValidation(t *testing.T) {
+	diagnostic := placementFailureDiagnosticFor("assessment", newStoredSubmissionAssessmentValidationError(errors.New("contract drift")))
+
+	require.Equal(t, "validation_failed", diagnostic.Class)
+	require.Equal(t, "stored_response", diagnostic.ValidationStage)
+	require.Equal(t, "assessor_response_invalid", diagnostic.ReasonCode)
+
+	payload := diagnostic.payload(false)
+	require.Equal(t, "stored_response", payload["validation_stage"])
+}
+
 func TestPlacementFailureDiagnosticBoundsBranchesAndRetryErrors(t *testing.T) {
 	fields := make([]string, 0, 34)
 	for i := 0; i < 34; i++ {
