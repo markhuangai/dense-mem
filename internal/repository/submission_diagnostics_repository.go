@@ -56,6 +56,8 @@ type SubmissionDiagnosticRecordPage struct {
 
 var _ SubmissionDiagnosticsRepository = (*LedgerRepositoryImpl)(nil)
 
+const submissionDiagnosticOutcomeLimit = 200
+
 const submissionDiagnosticProcessingStateSQL = `
 	CASE
 		WHEN run.semantic_hold_state IN ('active', 'expired') THEN 'awaiting_review'
@@ -72,64 +74,56 @@ const submissionDiagnosticProcessingStateSQL = `
 // cross the operator diagnostics boundary by being selected wholesale.
 const submissionDiagnosticSafePayloadSQL = `
 	jsonb_strip_nulls(jsonb_build_object(
-		'failure_reason_code', %s -> 'failure_reason_code',
-		'failure_stage', %s -> 'failure_stage',
-		'failure_class', %s -> 'failure_class',
-		'validation_stage', %s -> 'validation_stage',
-		'validation_field_families', %s -> 'validation_field_families',
+		'failure_reason_code', {{payload}} -> 'failure_reason_code',
+		'failure_stage', {{payload}} -> 'failure_stage',
+		'failure_class', {{payload}} -> 'failure_class',
+		'validation_stage', {{payload}} -> 'validation_stage',
+		'validation_field_families', {{payload}} -> 'validation_field_families',
 		'failure_measurement', CASE
-			WHEN jsonb_typeof(%s -> 'failure_measurement') = 'object' THEN
+			WHEN jsonb_typeof({{payload}} -> 'failure_measurement') = 'object' THEN
 				jsonb_strip_nulls(jsonb_build_object(
-					'unit', (%s -> 'failure_measurement') -> 'unit',
-					'observed', (%s -> 'failure_measurement') -> 'observed',
-					'observed_at_least', (%s -> 'failure_measurement') -> 'observed_at_least',
-					'limit', (%s -> 'failure_measurement') -> 'limit'
+					'unit', ({{payload}} -> 'failure_measurement') -> 'unit',
+					'observed', ({{payload}} -> 'failure_measurement') -> 'observed',
+					'observed_at_least', ({{payload}} -> 'failure_measurement') -> 'observed_at_least',
+					'limit', ({{payload}} -> 'failure_measurement') -> 'limit'
 				))
 		END,
-		'provider_status', %s -> 'provider_status',
-		'assessor_turns', %s -> 'assessor_turns',
-		'assessor_provider_attempted', %s -> 'assessor_provider_attempted',
-		'hold_issues', %s -> 'hold_issues',
-		'hold_issues_truncated', %s -> 'hold_issues_truncated',
-		'search_document_ids', %s -> 'search_document_ids',
-		'embedding_job_ids', %s -> 'embedding_job_ids'
+		'provider_status', {{payload}} -> 'provider_status',
+		'assessor_turns', {{payload}} -> 'assessor_turns',
+		'assessor_provider_attempted', {{payload}} -> 'assessor_provider_attempted',
+		'hold_issues', {{payload}} -> 'hold_issues',
+		'hold_issues_truncated', {{payload}} -> 'hold_issues_truncated',
+		'search_document_ids', {{payload}} -> 'search_document_ids',
+		'embedding_job_ids', {{payload}} -> 'embedding_job_ids'
 	))`
 
 const submissionDiagnosticOperatorPayloadSQL = `
 	jsonb_strip_nulls(jsonb_build_object(
-		'failure_reason_code', %s -> 'failure_reason_code',
-		'failure_stage', %s -> 'failure_stage',
-		'failure_class', %s -> 'failure_class',
-		'validation_stage', %s -> 'validation_stage',
-		'validation_field_families', %s -> 'validation_field_families',
+		'failure_reason_code', {{payload}} -> 'failure_reason_code',
+		'failure_stage', {{payload}} -> 'failure_stage',
+		'failure_class', {{payload}} -> 'failure_class',
+		'validation_stage', {{payload}} -> 'validation_stage',
+		'validation_field_families', {{payload}} -> 'validation_field_families',
 		'failure_measurement', CASE
-			WHEN jsonb_typeof(%s -> 'failure_measurement') = 'object' THEN
+			WHEN jsonb_typeof({{payload}} -> 'failure_measurement') = 'object' THEN
 				jsonb_strip_nulls(jsonb_build_object(
-					'unit', (%s -> 'failure_measurement') -> 'unit',
-					'observed', (%s -> 'failure_measurement') -> 'observed',
-					'observed_at_least', (%s -> 'failure_measurement') -> 'observed_at_least',
-					'limit', (%s -> 'failure_measurement') -> 'limit'
+					'unit', ({{payload}} -> 'failure_measurement') -> 'unit',
+					'observed', ({{payload}} -> 'failure_measurement') -> 'observed',
+					'observed_at_least', ({{payload}} -> 'failure_measurement') -> 'observed_at_least',
+					'limit', ({{payload}} -> 'failure_measurement') -> 'limit'
 				))
 		END,
-		'provider_status', %s -> 'provider_status',
-		'assessor_turns', %s -> 'assessor_turns',
-		'assessor_provider_attempted', %s -> 'assessor_provider_attempted'
+		'provider_status', {{payload}} -> 'provider_status',
+		'assessor_turns', {{payload}} -> 'assessor_turns',
+		'assessor_provider_attempted', {{payload}} -> 'assessor_provider_attempted'
 	))`
 
 func submissionDiagnosticSafePayload(alias string) string {
-	args := make([]any, 0, 17)
-	for index := 0; index < 17; index++ {
-		args = append(args, alias)
-	}
-	return fmt.Sprintf(submissionDiagnosticSafePayloadSQL, args...)
+	return strings.ReplaceAll(submissionDiagnosticSafePayloadSQL, "{{payload}}", alias)
 }
 
 func submissionDiagnosticOperatorPayload(alias string) string {
-	args := make([]any, 0, 13)
-	for index := 0; index < 13; index++ {
-		args = append(args, alias)
-	}
-	return fmt.Sprintf(submissionDiagnosticOperatorPayloadSQL, args...)
+	return strings.ReplaceAll(submissionDiagnosticOperatorPayloadSQL, "{{payload}}", alias)
 }
 
 func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
@@ -392,8 +386,13 @@ func loadSubmissionDiagnosticOutcomes(
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT outcome_id::text, COALESCE(placement_item_id::text, ''), outcome_kind, status,
 		       created_at, `+submissionDiagnosticOperatorPayload("payload")+`
-		FROM placement_outcomes
-		WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+		FROM (
+			SELECT outcome_id, placement_item_id, outcome_kind, status, created_at, payload
+			FROM placement_outcomes
+			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+			ORDER BY created_at DESC, outcome_id DESC
+			LIMIT `+fmt.Sprint(submissionDiagnosticOutcomeLimit)+`
+		) AS bounded_outcomes
 		ORDER BY created_at ASC, outcome_id ASC
 	`, teamID, placementRunID).Rows()
 	if err != nil {

@@ -2,11 +2,14 @@ package tools
 
 import (
 	"errors"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 // TestSanitizeError covers AC-29: SanitizeError scrubs sensitive data from
@@ -77,6 +80,25 @@ func TestSanitizeError(t *testing.T) {
 		got := SanitizeError(err)
 		require.NotContains(t, got, "supersecret9999")
 		require.Contains(t, got, "[REDACTED]")
+	})
+
+	t.Run("typed verifier failures use the bounded operator message", func(t *testing.T) {
+		errorsToSanitize := []error{
+			&verifier.TimeoutError{Provider: "provider", Message: "provider-secret"},
+			&verifier.RateLimitError{Provider: "provider", Message: "provider-secret"},
+			&verifier.MalformedResponseError{Provider: "provider", Message: "provider-secret"},
+		}
+		for _, err := range errorsToSanitize {
+			got := SanitizeError(err)
+			require.Equal(t, "tool execution failed; contact an operator", got)
+			require.NotContains(t, got, "provider-secret")
+		}
+	})
+
+	t.Run("long multibyte errors remain valid and bounded", func(t *testing.T) {
+		got := SanitizeError(errors.New(strings.Repeat("界", maxPublicToolErrorRunes+20)))
+		require.True(t, utf8.ValidString(got))
+		require.LessOrEqual(t, utf8.RuneCountInString(got), maxPublicToolErrorRunes)
 	})
 }
 

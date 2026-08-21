@@ -48,8 +48,10 @@ func (err *placementWorkerError) Unwrap() error {
 
 func newPlacementWorkerError(teamID, submissionID, stage string, cause error) error {
 	diagnostic := placementFailureDiagnosticFor(stage, cause)
-	diagnostic.Class = "repository"
-	diagnostic.ReasonCode = "repository_persistence_failed"
+	if diagnostic.Class == "internal" {
+		diagnostic.Class = "repository"
+		diagnostic.ReasonCode = "repository_persistence_failed"
+	}
 	return newPlacementWorkerDiagnosticError(teamID, submissionID, diagnostic, cause)
 }
 

@@ -8,12 +8,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSubmissionAssessmentWorkerAssessesWholeRunAndCommitsAtomically(t *testing.T) {
@@ -979,6 +978,7 @@ func (s *submissionAssessmentWorkerAssessmentStub) ExpirePlacementAssessmentRevi
 	s.reviewExpiryCalls++
 	return 0, s.reviewExpiryErr
 }
+
 type submissionAssessmentWorkerProviderStub struct {
 	calls    int
 	request  *verifier.SemanticAssessmentRequest

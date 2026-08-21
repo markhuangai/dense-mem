@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,6 +132,15 @@ func TestTelemetryQueryErrorClassificationAndLogBounds(t *testing.T) {
 	svc.logQueryFailures("1h", TelemetryScope{Type: "team", TeamID: &teamID, ProfileID: &profileID}, failures)
 	require.Equal(t, "telemetry backend query failed", logger.message)
 	require.Contains(t, logger.attrs, "query_ids_truncated=true")
+	var queryIDs string
+	for _, attr := range logger.attrs {
+		if strings.HasPrefix(attr, "query_ids=") {
+			queryIDs = strings.TrimPrefix(attr, "query_ids=")
+			break
+		}
+	}
+	require.Len(t, strings.Split(queryIDs, ","), 64)
+	require.NotContains(t, queryIDs, "query-64")
 	require.Contains(t, logger.attrs, "team_id="+teamID.String())
 	require.Contains(t, logger.attrs, "profile_id="+profileID.String())
 	require.Contains(t, logger.attrs, "prometheus_job=dense-mem")

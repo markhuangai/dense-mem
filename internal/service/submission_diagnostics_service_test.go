@@ -61,6 +61,7 @@ func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
 	require.False(t, item.Error.Retryable)
 	require.Equal(t, "contact_operator", item.Error.NextAction)
 	require.NotContains(t, item.Error.Message, "timeout")
+	require.NotContains(t, item.Error.Message, "must not cross")
 	require.Len(t, item.SourceSummary, submissionSourceSummaryMaxRunes)
 	require.True(t, item.SourceSummaryTruncated)
 	require.NotNil(t, item.OperatorDiagnostic)
@@ -117,17 +118,24 @@ func TestSubmissionDiagnosticsDetailOrdersAndFiltersOperatorHistory(t *testing.T
 			{ID: "first", OutcomeKind: "semantic_assessment_attempt", Status: "queued", CreatedAt: first, Payload: map[string]any{
 				"failure_reason_code": "assessor_provider_failed", "failure_stage": "assessment", "failure_class": "timeout",
 			}},
-			{ID: "secret", OutcomeKind: "internal", Status: "failed", CreatedAt: second, Payload: map[string]any{
+			{ID: "second", OutcomeKind: "submission_assessment_terminal", Status: "failed", CreatedAt: second, Payload: map[string]any{
+				"failure_reason_code": "assessor_response_invalid", "failure_stage": "assessment", "failure_class": "validation_failed",
+			}},
+			{ID: "secret", OutcomeKind: "internal", Status: "failed", CreatedAt: second.Add(time.Minute), Payload: map[string]any{
 				"failure_stage": "provider-secret-detail", "failure_class": "provider-secret-detail",
 			}},
 		},
 	}}
 	detail, err := NewSubmissionDiagnosticsService(repo).GetSubmissionDiagnostic(context.Background(), teamID, submissionID)
 	require.NoError(t, err)
-	require.Len(t, detail.OperatorDiagnostics, 1)
+	require.Len(t, detail.OperatorDiagnostics, 2)
 	require.Equal(t, "first", detail.OperatorDiagnostics[0].ID)
 	require.Equal(t, first, detail.OperatorDiagnostics[0].OccurredAt.UTC())
-	require.NotContains(t, detail.OperatorDiagnostics[0].Message, "provider-secret-detail")
+	require.Equal(t, "second", detail.OperatorDiagnostics[1].ID)
+	require.Equal(t, second, detail.OperatorDiagnostics[1].OccurredAt.UTC())
+	for _, diagnostic := range detail.OperatorDiagnostics {
+		require.NotContains(t, diagnostic.Message, "provider-secret-detail")
+	}
 }
 
 func TestSubmissionDiagnosticsValidatesScopeAndBoundsRepositoryErrors(t *testing.T) {

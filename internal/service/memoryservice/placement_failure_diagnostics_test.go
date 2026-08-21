@@ -46,6 +46,27 @@ func TestPlacementWorkerFailureExposesOnlyBoundedContext(t *testing.T) {
 	require.NotContains(t, err.Error(), "database secret")
 }
 
+func TestPlacementWorkerFailurePreservesSpecificRepositoryCauseClassification(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		cause  error
+		class  string
+		reason string
+	}{
+		{name: "lease lost", cause: repository.ErrPlacementLeaseLost, class: "lease_lost", reason: "lease_lost"},
+		{name: "canceled", cause: context.Canceled, class: "canceled", reason: "unknown_internal_failure"},
+		{name: "deadline", cause: context.DeadlineExceeded, class: "deadline", reason: "unknown_internal_failure"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := newPlacementWorkerError("team", "submission", "assessment", test.cause)
+			failure, ok := PlacementWorkerFailureFromError(err)
+			require.True(t, ok)
+			require.Equal(t, test.class, failure.Class)
+			require.Equal(t, test.reason, failure.ReasonCode)
+		})
+	}
+}
+
 func TestPlacementFailureDiagnosticCapturesMalformedValidationAndMeasurement(t *testing.T) {
 	malformed := &verifier.MalformedResponseError{
 		FailureClass:            "malformed_exhausted",

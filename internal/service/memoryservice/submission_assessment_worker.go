@@ -175,7 +175,7 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		stage, terminal := semanticAssessmentPreflightFailure(err)
 		if terminal {
 			return true, terminalizeAfterError(err, func() error {
-				return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage)
+				return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage, err)
 			})
 		}
 		return true, retryAfterError(err, func() error {
@@ -497,7 +497,7 @@ func (s *submissionAssessmentPlacementWorkerService) retryOrFail(
 	failureCause ...error,
 ) error {
 	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
-		return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage)
+		return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage, firstError(failureCause))
 	}
 	requeued, err := s.assessments.RequeueSubmissionAssessment(ctx, repository.RequeueSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,
@@ -562,8 +562,9 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 	ctx context.Context,
 	scope repository.SubmissionAssessmentRunScope,
 	status, category, stage string,
+	failureCause ...error,
 ) error {
-	payload := semanticAssessmentFailurePayload(stage, false, nil)
+	payload := semanticAssessmentFailurePayload(stage, false, firstError(failureCause))
 	payload["assessor_contract"] = domain.ContractVersion
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,

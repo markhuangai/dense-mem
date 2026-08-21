@@ -79,6 +79,12 @@ func TestSubmissionItemFailureErrorDoesNotInventReviewFailures(t *testing.T) {
 	}, "failed")
 	require.NotNil(t, contractError)
 	require.Equal(t, string(SubmissionErrorContractSuperseded), contractError.Code)
+	requestInvalidError := submissionItemFailureError(repository.PlacementItem{
+		Status: "failed",
+		Result: map[string]any{"failure_class": "request_invalid"},
+	}, "failed")
+	require.NotNil(t, requestInvalidError)
+	require.Equal(t, string(SubmissionErrorAssessorInvalid), requestInvalidError.Code)
 }
 
 func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T) {

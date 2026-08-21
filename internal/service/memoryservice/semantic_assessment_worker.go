@@ -47,7 +47,7 @@ func (err *semanticAssessmentPreflightError) Unwrap() error {
 func deterministicSemanticAssessmentPreflightError(stage, message string) error {
 	return &semanticAssessmentPreflightError{
 		stage:        strings.TrimSpace(stage),
-		reasonCode:   placementFailureReasonCode(strings.TrimSpace(stage), ""),
+		reasonCode:   placementFailureReasonCode(strings.TrimSpace(stage), "validation_failed"),
 		failureClass: "validation_failed",
 		err:          errors.New(message),
 	}
@@ -218,7 +218,7 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 		stage, terminal := semanticAssessmentPreflightFailure(err)
 		if terminal {
 			return true, terminalizeAfterError(err, func() error {
-				return s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewTerminalFailure), "failed", stage)
+				return s.completeTerminalWithFailure(ctx, *run, item, stage, "", 0, 0, err)
 			})
 		}
 		return true, retryAfterError(err, func() error {
@@ -610,7 +610,7 @@ func (s *semanticAssessmentPlacementWorkerService) retryOrFail(
 		return err
 	}
 	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
-		return s.completeTerminal(ctx, run, item, string(domain.SemanticReviewTerminalFailure), "failed", stage)
+		return s.completeTerminalWithFailure(ctx, run, item, stage, "", 0, 0, firstError(failureCause))
 	}
 	requeued, err := s.commit.RequeuePlacementReviewResult(ctx, repository.RequeuePlacementReviewInput{
 		TeamID:                 run.TeamID,

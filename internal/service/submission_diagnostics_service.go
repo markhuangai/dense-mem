@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -206,6 +208,8 @@ func submissionDiagnosticSummary(record repository.SubmissionDiagnosticRecord) S
 
 const submissionSourceSummaryMaxRunes = 256
 
+var submissionSourceCredentialPattern = regexp.MustCompile(`(?i)(bearer\s+)[^\s]+|((?:access[_-]?token|api[_-]?key|apikey|authorization|password|passwd|secret|signature|sig|token)=)[^&\s]+`)
+
 type boundedSubmissionText struct {
 	Value     string
 	Truncated bool
@@ -213,6 +217,7 @@ type boundedSubmissionText struct {
 
 func boundedSubmissionSourceSummary(value string) boundedSubmissionText {
 	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	value = sanitizeSubmissionSourceSummary(value)
 	if value == "" {
 		return boundedSubmissionText{}
 	}
@@ -224,6 +229,32 @@ func boundedSubmissionSourceSummary(value string) boundedSubmissionText {
 		Value:     string(runes[:submissionSourceSummaryMaxRunes]),
 		Truncated: true,
 	}
+}
+
+func sanitizeSubmissionSourceSummary(value string) string {
+	if value == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(value); err == nil && parsed.Scheme != "" && strings.Contains(value, "://") {
+		parsed.User = nil
+		parsed.RawQuery = ""
+		parsed.ForceQuery = false
+		parsed.Fragment = ""
+		parsed.RawFragment = ""
+		if safe := parsed.String(); safe != "" {
+			return safe
+		}
+	}
+	return submissionSourceCredentialPattern.ReplaceAllStringFunc(value, func(match string) string {
+		if strings.HasPrefix(strings.ToLower(match), "bearer") {
+			return "Bearer [REDACTED]"
+		}
+		separator := strings.IndexByte(match, '=')
+		if separator < 0 {
+			return "[REDACTED]"
+		}
+		return match[:separator+1] + "[REDACTED]"
+	})
 }
 
 func projectSubmissionOperatorDiagnostics(values []repository.SubmissionDiagnosticOperatorDiagnostic) []SubmissionOperatorDiagnostic {
@@ -388,7 +419,7 @@ func boundedDiagnosticTokens(value any, limit, maxRunes int, allowed map[string]
 	default:
 		return nil
 	}
-	result := make([]string, 0, minInt(len(values), limit))
+	result := make([]string, 0, min(len(values), limit))
 	seen := make(map[string]struct{}, limit)
 	for _, raw := range values {
 		text := boundedDiagnosticToken(stringValue(raw), maxRunes)
@@ -461,13 +492,6 @@ func boundedDiagnosticInt(value any, max int) int {
 func stringValue(value any) string {
 	text, _ := value.(string)
 	return text
-}
-
-func minInt(left, right int) int {
-	if left < right {
-		return left
-	}
-	return right
 }
 
 func normalizeSubmissionDiagnosticServiceFilter(filter SubmissionDiagnosticFilter) (SubmissionDiagnosticFilter, error) {

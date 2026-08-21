@@ -79,9 +79,6 @@ func TestSubmissionDiagnosticProjectionRejectsUnsafeShapesAndCoversBounds(t *tes
 	require.Equal(t, 0, boundedDiagnosticInt(json.Number("bad"), 100))
 	require.Equal(t, 0, boundedDiagnosticInt(-1, 100))
 	require.Equal(t, 10, boundedDiagnosticInt(20, 10))
-	require.Equal(t, 1, minInt(1, 2))
-	require.Equal(t, 2, minInt(3, 2))
-
 	valid, ok := projectSubmissionOperatorDiagnosticPayload(map[string]any{
 		"failure_stage": "assessment",
 		"failure_class": "timeout",
@@ -133,6 +130,10 @@ func TestSubmissionDiagnosticSummaryNormalizesSourceText(t *testing.T) {
 	trimmed := boundedSubmissionSourceSummary("  about\n\tthis   memory  ")
 	require.Equal(t, "about this memory", trimmed.Value)
 	require.False(t, trimmed.Truncated)
+	signedURL := boundedSubmissionSourceSummary("https://memory.example.test/notes?X-Amz-Credential=operator&X-Amz-Signature=secret")
+	require.Equal(t, "https://memory.example.test/notes", signedURL.Value)
+	credentialLabel := boundedSubmissionSourceSummary("source token=opaque-secret")
+	require.Equal(t, "source token=[REDACTED]", credentialLabel.Value)
 	require.Equal(t, boundedSubmissionText{}, boundedSubmissionSourceSummary(" \n\t "))
 	long := boundedSubmissionSourceSummary(strings.Repeat("界", submissionSourceSummaryMaxRunes+1))
 	require.Len(t, []rune(long.Value), submissionSourceSummaryMaxRunes)

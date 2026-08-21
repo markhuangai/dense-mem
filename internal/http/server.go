@@ -213,7 +213,9 @@ func NewServerWithGracefulShutdown(cfg config.Config, logger observability.LogPr
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := e.Shutdown(ctx); err != nil {
-			logger.Error("server shutdown error", errors.New(tools.SanitizeError(err)))
+			if logger != nil {
+				logger.Error("server shutdown error", errors.New(tools.SanitizeError(err)))
+			}
 		}
 	}
 
@@ -226,7 +228,9 @@ func RunServer(e *echo.Echo, addr string, logger observability.LogProvider) erro
 	// Start server in a goroutine
 	go func() {
 		if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
-			logger.Error("server start error", errors.New(tools.SanitizeError(err)))
+			if logger != nil {
+				logger.Error("server start error", errors.New(tools.SanitizeError(err)))
+			}
 		}
 	}()
 
@@ -235,7 +239,9 @@ func RunServer(e *echo.Echo, addr string, logger observability.LogProvider) erro
 	signal.Notify(quit, os.Interrupt)
 	<-quit
 
-	logger.Info("shutting down server")
+	if logger != nil {
+		logger.Info("shutting down server")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

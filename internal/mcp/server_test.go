@@ -762,6 +762,8 @@ func TestMCP_ToolErrorSurfacesWithoutLeak(t *testing.T) {
 	if logBuf.Len() == 0 {
 		t.Errorf("expected tool failure to be logged to the provided logger")
 	}
+	require.NotContains(t, logBuf.String(), "embedding provider unavailable")
+	require.Contains(t, logBuf.String(), "tool execution failed; contact an operator")
 }
 
 func TestSDKMalformedPayloadReturnsBoundedHTTPError(t *testing.T) {

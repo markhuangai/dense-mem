@@ -57,7 +57,7 @@ func (s *PrometheusTelemetryService) logQueryFailures(window string, scope Telem
 		return failures[i].kind < failures[j].kind
 	})
 	const maxLoggedFailures = 64
-	queryIDs := make([]string, 0, minInt(len(failures), maxLoggedFailures))
+	queryIDs := make([]string, 0, min(len(failures), maxLoggedFailures))
 	kindCounts := map[string]int{}
 	reasonCounts := map[string]int{}
 	allCancellation := true

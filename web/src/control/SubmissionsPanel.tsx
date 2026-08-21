@@ -290,7 +290,9 @@ function SubmissionDetail({
         </article>
       ))}
 
-      {detail.operator_diagnostic && <OperatorDiagnosticBlock diagnostic={detail.operator_diagnostic} />}
+      {detail.operator_diagnostic && operatorDiagnostics.length === 0 && (
+        <OperatorDiagnosticBlock diagnostic={detail.operator_diagnostic} />
+      )}
 
       {operatorDiagnostics.length > 0 && (
         <section className="submission-operator-diagnostics" aria-label="Operator diagnostics">
@@ -387,11 +389,15 @@ function OperatorDiagnosticBlock({ diagnostic, compact = false }: { diagnostic: 
         )}
         {measurement && (
           <small>
-            Measured {measurement.observed_at_least ?? measurement.observed ?? 0} {measurement.unit}; limit {measurement.limit}
+            Measured {measurement.observed_at_least !== undefined
+              ? `at least ${measurement.observed_at_least}`
+              : measurement.observed ?? 0} {measurement.unit}; limit {measurement.limit}
           </small>
         )}
       </div>
-      {diagnostic.occurred_at && <time>{formatDate(diagnostic.occurred_at)}</time>}
+      {diagnostic.occurred_at && (
+        <time dateTime={diagnostic.occurred_at}>{formatDate(diagnostic.occurred_at)}</time>
+      )}
     </article>
   );
 }

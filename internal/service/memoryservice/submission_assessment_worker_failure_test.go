@@ -10,6 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
@@ -183,6 +184,26 @@ func TestSubmissionAssessmentWorkerRejectsNilCompletionAndRetryResults(t *testin
 	failure, ok = placementWorkerFailureFromError(err)
 	require.True(t, ok)
 	require.Equal(t, "unknown", failure.Stage)
+}
+
+func TestSubmissionAssessmentWorkerPreservesFailureCauseWhenAttemptsAreExhausted(t *testing.T) {
+	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	scope := submissionAssessmentRunScope(*ledger.run, "submission-assessment-worker")
+	terminalRun := *ledger.run
+	terminalRun.MaxAttempts = terminalRun.Attempts
+	cause := deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+		"assessment_input",
+		"input exceeds bound",
+		verifier.FailureMeasurement{Unit: "tokens", Observed: 101, Limit: 100},
+	)
+
+	require.NoError(t, service.retryOrFail(context.Background(), terminalRun, scope, "assessment_input", false, false, cause))
+	require.Len(t, assessments.completions, 1)
+	payload := assessments.completions[0].Payload
+	require.Equal(t, "validation_failed", payload["failure_class"])
+	require.Equal(t, "assessment_input_token_limit_exceeded", payload["failure_reason_code"])
+	require.Equal(t, map[string]any{"unit": "tokens", "observed": 101, "limit": 100}, payload["failure_measurement"])
 }
 
 func TestSubmissionAssessmentWorkerPreservesOriginalErrorWhenTerminalCompletionFails(t *testing.T) {
