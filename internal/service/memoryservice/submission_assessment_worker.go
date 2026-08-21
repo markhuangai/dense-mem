@@ -589,7 +589,11 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 		observability.RecordAssessorTerminalFailure(s.metrics, stage)
 	}
 	if err == nil && completed != nil {
-		s.logLifecycle(scope, "submission_failed", "failed", stage, string(submissionFailureCode(stage, failureClass)), nil)
+		event, destination, reasonCode := "submission_failed", "failed", string(submissionFailureCode(stage, failureClass))
+		if status == string(domain.SemanticReviewSuperseded) {
+			event, destination, reasonCode = "submission_superseded", "superseded", strings.TrimSpace(stage)
+		}
+		s.logLifecycle(scope, event, destination, stage, reasonCode, nil)
 	}
 	return err
 }
