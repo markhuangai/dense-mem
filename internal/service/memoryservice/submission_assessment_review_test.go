@@ -29,7 +29,7 @@ func TestSubmissionAssessmentWorkerSupersedesQueuedOlderContractBeforeAssessment
 	assert.Equal(t, "contract_superseded", assessments.completions[0].Payload["failure_stage"])
 }
 
-func TestSubmissionAssessmentWorkerHoldsWholeRunWhenOneSupportRangeIsLowConfidence(t *testing.T) {
+func TestSubmissionAssessmentWorkerFailsWholeRunWhenOneSupportRangeIsLowConfidence(t *testing.T) {
 	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
 	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
 		response := submissionAssessmentValidResponse(req, false)
@@ -44,12 +44,10 @@ func TestSubmissionAssessmentWorkerHoldsWholeRunWhenOneSupportRangeIsLowConfiden
 	assert.Equal(t, 1, assessments.persistCalls)
 	assert.Empty(t, assessments.commits)
 	require.Len(t, assessments.completions, 1)
-	assert.Equal(t, string(domain.SemanticReviewReviewRequired), assessments.completions[0].Status)
-	assert.NotContains(t, assessments.completions[0].Payload, "failure_reason_code")
-	assert.NotContains(t, assessments.completions[0].Payload, "failure_stage")
-	assert.NotContains(t, assessments.completions[0].Payload, "failure_class")
-	assert.Equal(t, "policy_review", assessments.completions[0].Payload["review_stage"])
-	issues, ok := assessments.completions[0].Payload["hold_issues"].([]map[string]any)
+	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), assessments.completions[0].Status)
+	assert.Equal(t, "policy_review", assessments.completions[0].Payload["failure_stage"])
+	assert.Equal(t, string(SubmissionErrorRequiresResubmission), assessments.completions[0].Payload["failure_code"])
+	issues, ok := assessments.completions[0].Payload["resubmission_issues"].([]map[string]any)
 	require.True(t, ok)
 	require.Len(t, issues, 1)
 	assert.Equal(t, "grounding_low_confidence", issues[0]["code"])
@@ -137,8 +135,8 @@ func TestSubmissionAssessmentReviewIssuesHoldsLowConfidenceEntityGrounding(t *te
 }
 
 func TestSubmissionAssessmentReviewIssuesAndCompletionAreBounded(t *testing.T) {
-	results := make([]verifier.SemanticAssessmentRelationshipResult, 0, submissionAssessmentMaxHoldIssues+1)
-	for index := 0; index <= submissionAssessmentMaxHoldIssues; index++ {
+	results := make([]verifier.SemanticAssessmentRelationshipResult, 0, submissionAssessmentMaxReviewIssues+1)
+	for index := 0; index <= submissionAssessmentMaxReviewIssues; index++ {
 		results = append(results, verifier.SemanticAssessmentRelationshipResult{
 			Ref:             fmt.Sprintf("relationship-%d", index),
 			Modality:        "statement",
@@ -157,21 +155,21 @@ func TestSubmissionAssessmentReviewIssuesAndCompletionAreBounded(t *testing.T) {
 		0.8,
 	)
 	require.True(t, truncated)
-	require.Len(t, issues, submissionAssessmentMaxHoldIssues)
+	require.Len(t, issues, submissionAssessmentMaxReviewIssues)
 
 	assessments := &submissionAssessmentWorkerAssessmentStub{}
 	worker := &submissionAssessmentPlacementWorkerService{assessments: assessments}
 	require.NoError(t, worker.completeReview(context.Background(), repository.SubmissionAssessmentRunScope{}, " policy_review ", nil, false))
 	require.NoError(t, worker.completeReview(context.Background(), repository.SubmissionAssessmentRunScope{}, "policy_review", append(issues, issues[0]), false))
 	require.Len(t, assessments.completions, 2)
-	defaultIssues, ok := assessments.completions[0].Payload["hold_issues"].([]map[string]any)
+	defaultIssues, ok := assessments.completions[0].Payload["resubmission_issues"].([]map[string]any)
 	require.True(t, ok)
 	require.Len(t, defaultIssues, 1)
 	assert.Equal(t, "commit_review_required", defaultIssues[0]["code"])
-	boundedIssues, ok := assessments.completions[1].Payload["hold_issues"].([]map[string]any)
+	boundedIssues, ok := assessments.completions[1].Payload["resubmission_issues"].([]map[string]any)
 	require.True(t, ok)
-	require.Len(t, boundedIssues, submissionAssessmentMaxHoldIssues)
-	assert.Equal(t, true, assessments.completions[1].Payload["hold_issues_truncated"])
+	require.Len(t, boundedIssues, submissionAssessmentMaxReviewIssues)
+	assert.Equal(t, true, assessments.completions[1].Payload["resubmission_issues_truncated"])
 
 	nilCompletion := &submissionAssessmentWorkerAssessmentStub{completeNil: true}
 	err := (&submissionAssessmentPlacementWorkerService{assessments: nilCompletion}).completeReview(

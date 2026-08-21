@@ -42,7 +42,7 @@ func TestRememberLogsAcceptedSubmissionWithoutEvidence(t *testing.T) {
 	require.NotContains(t, logged, "private evidence")
 }
 
-func TestSubmissionWorkerLogsCompletedRetryAndHeldTransitionsAfterPersistence(t *testing.T) {
+func TestSubmissionWorkerLogsCompletedRetryAndResubmissionFailureAfterPersistence(t *testing.T) {
 	logger, logs := submissionLifecycleTestLogger()
 	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
 	service := worker.(*submissionAssessmentPlacementWorkerService)
@@ -72,10 +72,10 @@ func TestSubmissionWorkerLogsCompletedRetryAndHeldTransitionsAfterPersistence(t 
 
 	logs.Reset()
 	require.NoError(t, service.completeReview(context.Background(), scope, "policy_review", nil, false))
-	holdLog := logs.String()
-	require.Contains(t, holdLog, `"msg":"submission_held"`)
-	require.Contains(t, holdLog, `"reason_code":"policy_review"`)
-	require.NotContains(t, holdLog, "complete corrected replacement")
+	failureLog := logs.String()
+	require.Contains(t, failureLog, `"msg":"submission_failed"`)
+	require.Contains(t, failureLog, `"reason_code":"submission_requires_resubmission"`)
+	require.NotContains(t, failureLog, "complete corrected replacement")
 
 	logs.Reset()
 	require.NoError(t, service.completeTerminalWithFailure(context.Background(), scope, "assessment", "timeout", 0, 0))

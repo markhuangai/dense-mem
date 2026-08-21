@@ -24,7 +24,6 @@ export type {
   SubmissionDiagnosticSummary,
   SubmissionOperatorDiagnostic,
   SubmissionEvidenceStatus,
-  SubmissionSemanticHold,
   SubmissionStatusError,
 } from "./control-observability-api";
 export type {

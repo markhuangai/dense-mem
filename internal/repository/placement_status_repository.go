@@ -63,9 +63,8 @@ func loadPlacementRunStatus(
 ) (*CreateIngestResult, error) {
 	result := &CreateIngestResult{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID}
 	var proposalRaw []byte
-	var semanticHoldState sql.NullString
 	var submittedAt, nextAttemptAt, startedAt, updatedAt, completedAt sql.NullTime
-	var quarantineExpiresAt, replacementWindowExpiresAt sql.NullTime
+	var quarantineExpiresAt sql.NullTime
 	err := tx.WithContext(ctx).Raw(`
 		SELECT run.placement_run_id::text, run.status, COALESCE(ingest.proposal, '{}'::jsonb),
 		       COALESCE(ingest.metadata ->> 'contract_version', ''),
@@ -78,22 +77,14 @@ func loadPlacementRunStatus(
 		           THEN run.available_at
 		       END,
 		       run.started_at, run.updated_at, run.completed_at,
-		       run.semantic_hold_state, run.quarantine_expires_at, hold.expires_at
+		       run.quarantine_expires_at
 		FROM placement_runs AS run
 		JOIN knowledge_ingests AS ingest
 		  ON ingest.team_id = run.team_id
 		 AND ingest.ingest_id = run.ingest_id
-		 AND ingest.space_id = run.space_id
-		 AND ingest.space_generation = run.space_generation
-		LEFT JOIN submission_holds AS hold
-		  ON hold.team_id = run.team_id
-		 AND hold.placement_run_id = run.placement_run_id
-		 AND hold.space_id = run.space_id
-		 AND hold.space_generation = run.space_generation
 		WHERE run.team_id = ?::uuid
 		  AND run.owner_profile_id = ?::uuid
 		  AND run.ingest_id = ?::uuid
-		  AND `+activeSemanticSpaceGenerationSQL("run")+`
 	`, input.TeamID, input.OwnerProfileID, input.IngestID).Row().Scan(
 		&result.PlacementRunID,
 		&result.Status,
@@ -107,9 +98,7 @@ func loadPlacementRunStatus(
 		&startedAt,
 		&updatedAt,
 		&completedAt,
-		&semanticHoldState,
 		&quarantineExpiresAt,
-		&replacementWindowExpiresAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -120,9 +109,6 @@ func loadPlacementRunStatus(
 	if err := json.Unmarshal(proposalRaw, &result.Proposal); err != nil {
 		return nil, err
 	}
-	if semanticHoldState.Valid {
-		result.SemanticHoldState = strings.TrimSpace(semanticHoldState.String)
-	}
 	result.SubmittedAt = nullableStatusTime(submittedAt)
 	result.NextAttemptAt = nullableStatusTime(nextAttemptAt)
 	result.StartedAt = nullableStatusTime(startedAt)
@@ -132,18 +118,13 @@ func loadPlacementRunStatus(
 		value := quarantineExpiresAt.Time.UTC()
 		result.QuarantineExpiresAt = &value
 	}
-	if replacementWindowExpiresAt.Valid {
-		value := replacementWindowExpiresAt.Time.UTC()
-		result.ReplacementWindowExpiresAt = &value
-	}
 	evidenceRows, err := tx.WithContext(ctx).Raw(`
 		SELECT fragment_id::text, evidence_index, content, content_hash, authority,
 		       COALESCE(source_id::text, ''), COALESCE(source_revision_id::text, '')
-		FROM evidence_fragments AS fragment
-		WHERE fragment.team_id = ?::uuid
-		  AND fragment.owner_profile_id = ?::uuid
-		  AND fragment.ingest_id = ?::uuid
-		  AND `+activeSemanticSpaceGenerationSQL("fragment")+`
+		FROM evidence_fragments
+		WHERE team_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		  AND ingest_id = ?::uuid
 		ORDER BY evidence_index ASC
 	`, input.TeamID, input.OwnerProfileID, input.IngestID).Rows()
 	if err != nil {
@@ -171,11 +152,10 @@ func loadPlacementRunStatus(
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT placement_item_id::text, fragment_id::text, claim_key::text, evidence_index,
 		       status, category, version, COALESCE(result, '{}'::jsonb)
-		FROM placement_items AS item
-		WHERE item.team_id = ?::uuid
-		  AND item.owner_profile_id = ?::uuid
-		  AND item.ingest_id = ?::uuid
-		  AND `+activeSemanticSpaceGenerationSQL("item")+`
+		FROM placement_items
+		WHERE team_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		  AND ingest_id = ?::uuid
 		ORDER BY evidence_index ASC
 	`, input.TeamID, input.OwnerProfileID, input.IngestID).Rows()
 	if err != nil {

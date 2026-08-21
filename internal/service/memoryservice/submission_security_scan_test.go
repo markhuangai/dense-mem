@@ -81,6 +81,9 @@ func TestScanSubmissionEvidenceRejectsDirectAndObfuscatedInjection(t *testing.T)
 
 func TestScanSubmissionEvidenceAllowsBenignProseAndIdentifiers(t *testing.T) {
 	for _, content := range []string{
+		"OrderRefA7b9C2d4E6f8G0h2",
+		"provider-run-2026-08-21-abcdef1234567890",
+		"trace_id_7f4e2a9c1d8b6e5f4a3c2b1d",
 		"Researchers ignore baseline noise when estimating the effect.",
 		"The experiment overrides a prior calibration value.",
 		"user: summarize the design meeting notes.",

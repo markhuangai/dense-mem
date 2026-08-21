@@ -213,11 +213,10 @@ Relationship 改为列出支持它的从零开始的 `evidence_indices`，且这
 替换证据被接收入库时，目标会在同一原子动作中退役；即使后续 placement 被拒绝或
 隔离，这个更正决定仍会保留。这样不会让过期证据继续保持有效。
 
-如果 assessor 无法以足够置信度定位提议，或其他语义策略要求审核，整个提交会进入
-`awaiting_review`，不会发生任何部分语义提交。`get_submission_status` 会返回有界的
-`semantic_hold.issues` 和 `semantic_hold.replacement` 指引。请把 held
-`submission_id` 设为 `replaces_submission_id`，重新提交一份完整、更正后的证据与
-Relationships batch；不支持部分替换。
+Remember 使用只负责结构的 normalizer。无效或无法提升的完整响应不会产生部分语义状态，
+提交会以终态 `failed` 返回有界的 `errors[]` 指引。请使用新的 `idempotency_key` 重新
+提交完整的 evidence 与 Relationships batch；Remember 流程不再提供部分替换或
+`awaiting_review` hold。
 
 若无需替代证据，请使用 `retract_evidence`，提供自己拥有的当前 ID、有界原因和
 幂等键：

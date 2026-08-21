@@ -17,15 +17,13 @@ import (
 )
 
 var (
-	ErrIdempotencyConflict           = errors.New("idempotency conflict")
-	ErrPlacementLeaseConflict        = errors.New("placement lease conflict")
-	ErrPlacementNotFound             = errors.New("placement not found")
-	ErrSourceRevisionConflict        = errors.New("source revision conflict")
-	ErrEvidenceLifecycleNotFound     = errors.New("evidence lifecycle target not found")
-	ErrEvidenceLifecycleConflict     = errors.New("evidence lifecycle conflict")
-	ErrTeamInactive                  = errors.New("team is not active")
-	ErrSubmissionReplacementNotFound = errors.New("submission replacement target not found")
-	ErrSubmissionReplacementConflict = errors.New("submission replacement target conflict")
+	ErrIdempotencyConflict       = errors.New("idempotency conflict")
+	ErrPlacementLeaseConflict    = errors.New("placement lease conflict")
+	ErrPlacementNotFound         = errors.New("placement not found")
+	ErrSourceRevisionConflict    = errors.New("source revision conflict")
+	ErrEvidenceLifecycleNotFound = errors.New("evidence lifecycle target not found")
+	ErrEvidenceLifecycleConflict = errors.New("evidence lifecycle conflict")
+	ErrTeamInactive              = errors.New("team is not active")
 )
 
 type LedgerRepository interface {
@@ -39,19 +37,16 @@ type LedgerRepository interface {
 }
 
 type CreateIngestInput struct {
-	TeamID               string
-	OwnerProfileID       string
-	SpaceID              string
-	SpaceGeneration      int64
-	IdempotencyKey       string
-	RequestHash          string
-	ReplacesSubmissionID string
-	SourceSummary        string
-	Status               string
-	TelemetryRemember    bool
-	Proposal             map[string]any
-	Metadata             map[string]any
-	Evidence             []EvidenceInput
+	TeamID            string
+	OwnerProfileID    string
+	IdempotencyKey    string
+	RequestHash       string
+	SourceSummary     string
+	Status            string
+	TelemetryRemember bool
+	Proposal          map[string]any
+	Metadata          map[string]any
+	Evidence          []EvidenceInput
 }
 
 type GetPlacementRunInput struct {
@@ -120,14 +115,12 @@ type CreateIngestResult struct {
 	FirstDisposition *PlacementFirstDisposition
 	// Status projection metadata is loaded for the owner-scoped public status
 	// endpoint; it is not placement data and is never exposed directly.
-	SubmittedAt                *time.Time
-	NextAttemptAt              *time.Time
-	StartedAt                  *time.Time
-	UpdatedAt                  *time.Time
-	CompletedAt                *time.Time
-	QuarantineExpiresAt        *time.Time
-	ReplacementWindowExpiresAt *time.Time
-	SemanticHoldState          string
+	SubmittedAt         *time.Time
+	NextAttemptAt       *time.Time
+	StartedAt           *time.Time
+	UpdatedAt           *time.Time
+	CompletedAt         *time.Time
+	QuarantineExpiresAt *time.Time
 }
 
 type EvidenceFragment struct {
@@ -142,18 +135,15 @@ type EvidenceFragment struct {
 }
 
 type PlacementRun struct {
-	TeamID                     string
-	PlacementRunID             string
-	IngestID                   string
-	OwnerProfileID             string
-	CorrelationID              string
-	Status                     string
-	Attempts                   int
-	MaxAttempts                int
-	LeaseUntil                 *time.Time
-	SemanticHoldState          string
-	ReplacesPlacementRunID     string
-	SupersededByPlacementRunID string
+	TeamID         string
+	PlacementRunID string
+	IngestID       string
+	OwnerProfileID string
+	CorrelationID  string
+	Status         string
+	Attempts       int
+	MaxAttempts    int
+	LeaseUntil     *time.Time
 }
 
 type PlacementItem struct {
@@ -202,6 +192,7 @@ func NewLedgerRepositoryWithEmbeddingJobMaxAttempts(
 ) *LedgerRepositoryImpl {
 	return NewLedgerRepositoryWithRuntimeConfig(db, rls, maxAttempts, ConflictRuntimeConfig{})
 }
+
 func NewLedgerRepositoryWithRuntimeConfig(
 	db *gorm.DB,
 	rls *postgres.RLS,
@@ -217,6 +208,7 @@ func NewLedgerRepositoryWithRuntimeConfig(
 		conflictReviewTimezone:  conflictConfig.Timezone,
 	}
 }
+
 func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIngestInput) (*CreateIngestResult, error) {
 	input = normalizeCreateIngestInput(input)
 	if err := validateCreateIngestInput(input); err != nil {
@@ -248,15 +240,7 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 			result = loaded
 			return nil
 		}
-		replacementTargetID := ""
-		if input.ReplacesSubmissionID != "" {
-			target, err := lockSubmissionReplacementTarget(ctx, tx, input.TeamID, input.OwnerProfileID, input.ReplacesSubmissionID)
-			if err != nil {
-				return err
-			}
-			replacementTargetID = target.PlacementRunID
-		}
-		placementRunID, createdAt, completedAt, err := insertPlacementRun(ctx, tx, input, ingestID, replacementTargetID)
+		placementRunID, createdAt, completedAt, err := insertPlacementRun(ctx, tx, input, ingestID)
 		if err != nil {
 			return err
 		}
@@ -269,7 +253,6 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 				advanced, err := advanceSourceRevisionInTx(ctx, tx, AdvanceSourceRevisionInput{
 					TeamID:                        input.TeamID,
 					OwnerProfileID:                input.OwnerProfileID,
-					IngestID:                      ingestID,
 					SourceKey:                     item.SourceKey,
 					SourceKind:                    sourceKindForEvidence(item.SourceType),
 					Authority:                     item.Authority,
@@ -395,14 +378,11 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 	}
 	var run *PlacementRun
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
-			return fmt.Errorf("ledger: enable worker system mode: %w", err)
-		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH ready AS MATERIALIZED (
-				SELECT placement_run_id, available_at, created_at FROM placement_runs AS run
+				SELECT placement_run_id, available_at, created_at
+				FROM placement_runs AS run
 				WHERE run.team_id = ?::uuid
-				  AND `+activeSemanticSpaceGenerationSQL("run")+`
 				  AND run.attempts < run.max_attempts
 				  AND run.status IN ('queued', 'guarded')
 				  AND run.available_at <= now()
@@ -414,7 +394,6 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 				SELECT placement_run_id, available_at, created_at
 				FROM placement_runs AS run
 				WHERE run.team_id = ?::uuid
-				  AND `+activeSemanticSpaceGenerationSQL("run")+`
 				  AND run.attempts < run.max_attempts
 				  AND run.status = 'processing'
 				  AND run.lease_until IS NOT NULL
@@ -447,7 +426,6 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 				FROM next
 				WHERE run.team_id = ?::uuid
 				  AND run.placement_run_id = next.placement_run_id
-				  AND `+activeSemanticSpaceGenerationSQL("run")+`
 				RETURNING run.team_id, run.placement_run_id, run.ingest_id,
 				          run.owner_profile_id, run.status, run.attempts, run.max_attempts,
 				          run.lease_until
@@ -646,12 +624,10 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH inserted AS (
 				INSERT INTO knowledge_ingests (
-				    team_id, owner_profile_id, space_id, space_generation,
-				    idempotency_key, request_hash,
+				    team_id, owner_profile_id, idempotency_key, request_hash,
 				    source_summary, status, proposal, metadata
 				) VALUES (
-				    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
-				    ?, ?, ?, ?, ?::jsonb, ?::jsonb
+				    ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb, ?::jsonb
 				)
 				ON CONFLICT (team_id, owner_profile_id, idempotency_key)
 				WHERE idempotency_key <> ''
@@ -666,8 +642,7 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 			  AND owner_profile_id = ?::uuid
 			  AND idempotency_key = ?
 			LIMIT 1
-		`, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
-			input.IdempotencyKey, input.RequestHash,
+		`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash,
 			input.SourceSummary, input.Status, string(proposal), string(metadata),
 			input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Rows()
 		if err != nil {
@@ -707,15 +682,12 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO knowledge_ingests (
-		    team_id, owner_profile_id, space_id, space_generation,
-		    request_hash, source_summary, status, proposal, metadata
+		    team_id, owner_profile_id, request_hash, source_summary, status, proposal, metadata
 		) VALUES (
-		    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
-		    ?, ?, ?, ?::jsonb, ?::jsonb
+		    ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb, ?::jsonb
 		)
 		RETURNING ingest_id::text
-	`, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
-		input.RequestHash, input.SourceSummary,
+	`, input.TeamID, input.OwnerProfileID, input.RequestHash, input.SourceSummary,
 		input.Status, string(proposal), string(metadata)).Rows()
 	if err != nil {
 		return "", false, err
@@ -767,25 +739,20 @@ func selectKnowledgeIngestByIdempotency(ctx context.Context, tx *gorm.DB, input 
 	return ingestID, requestHash, nil
 }
 
-func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string, replacementTargetID string) (string, time.Time, *time.Time, error) {
+func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string) (string, time.Time, *time.Time, error) {
 	completedExpr := "NULL"
 	if input.Status == string(domain.PlacementRunQuarantined) {
 		completedExpr = "now()"
 	}
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
 		INSERT INTO placement_runs (
-		    team_id, ingest_id, owner_profile_id, space_id, space_generation,
-		    status, completed_at, quarantine_expires_at,
-		    replaces_placement_run_id
+		    team_id, ingest_id, owner_profile_id, status, completed_at, quarantine_expires_at
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
-		    ?, %s,
-		    CASE WHEN ? = 'quarantined' THEN now() + interval '24 hours' ELSE NULL END,
-		    NULLIF(?, '')::uuid
+		    ?::uuid, ?::uuid, ?::uuid, ?, %s,
+		    CASE WHEN ? = 'quarantined' THEN now() + interval '24 hours' ELSE NULL END
 		)
 		RETURNING placement_run_id::text, created_at, completed_at
-	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
-		input.Status, input.Status, replacementTargetID).Rows()
+	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.Status, input.Status).Rows()
 	if err != nil {
 		return "", time.Time{}, nil, err
 	}
@@ -822,18 +789,15 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_fragments (
-		    team_id, ingest_id, owner_profile_id, space_id, space_generation,
-		    evidence_index, content,
+		    team_id, ingest_id, owner_profile_id, evidence_index, content,
 		    content_hash, source_type, authority, source_ref, source_id,
 		    source_revision_id, labels, metadata
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
-		    ?, ?, ?, ?, ?, ?,
+		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?,
 		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?::jsonb
 		)
 	RETURNING fragment_id::text, authority
-	`, input.TeamID, ingestID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
-		index, item.Content, item.ContentHash,
+	`, input.TeamID, ingestID, input.OwnerProfileID, index, item.Content, item.ContentHash,
 		item.SourceType, item.Authority, item.SourceRef, sourceID, sourceRevisionID,
 		pqStringArray(item.Labels), string(metadata)).Rows()
 	if err != nil {
@@ -866,15 +830,12 @@ func insertPlacementItem(ctx context.Context, tx *gorm.DB, input CreateIngestInp
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO placement_items (
 		    team_id, placement_run_id, ingest_id, owner_profile_id, fragment_id,
-		    space_id, space_generation,
 		    evidence_index, status, category
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-		    NULLIF(?, '')::uuid, NULLIF(?::bigint, 0), ?, ?, ?
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?
 		)
 		RETURNING placement_item_id::text, claim_key::text, version
-	`, input.TeamID, placementRunID, ingestID, input.OwnerProfileID, fragment.FragmentID,
-		input.SpaceID, input.SpaceGeneration, fragment.EvidenceIndex, status, category).Rows()
+	`, input.TeamID, placementRunID, ingestID, input.OwnerProfileID, fragment.FragmentID, fragment.EvidenceIndex, status, category).Rows()
 	if err != nil {
 		return PlacementItem{}, err
 	}
@@ -892,6 +853,17 @@ func insertPlacementItem(ctx context.Context, tx *gorm.DB, input CreateIngestInp
 		return PlacementItem{}, err
 	}
 	return placementItem, rows.Err()
+}
+
+func insertEvidenceQuarantine(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string, fragmentID string, reason string) error {
+	return tx.WithContext(ctx).Exec(`
+		INSERT INTO evidence_quarantines (
+		    team_id, fragment_id, ingest_id, owner_profile_id, reason
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?
+		)
+		ON CONFLICT (team_id, fragment_id) DO NOTHING
+	`, input.TeamID, fragmentID, ingestID, input.OwnerProfileID, strings.TrimSpace(reason)).Error
 }
 
 func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ingestID string, existing bool) (*CreateIngestResult, error) {

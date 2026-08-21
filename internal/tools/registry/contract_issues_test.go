@@ -1,0 +1,187 @@
+package registry
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestValidateContractInputIssuesAggregatesRememberProblems(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	require.NoError(t, err)
+
+	args := map[string]any{
+		"unknown": true,
+		"evidence": []any{
+			map[string]any{
+				"content":                 "",
+				"source_key":              "source-1",
+				"supersedes_evidence_ids": []any{"evidence-old"},
+				"unknown":                 true,
+			},
+			"not-an-object",
+		},
+		"relationships": []any{
+			map[string]any{
+				"ref":              "duplicate",
+				"evidence_indices": []any{"bad"},
+				"unknown":          true,
+			},
+			map[string]any{
+				"ref":              "duplicate",
+				"evidence_indices": []any{0},
+			},
+		},
+	}
+
+	result := ValidateContractInputIssues(remember, args, []string{"write"})
+	require.NotEmpty(t, result.Issues)
+	require.True(t, result.IssuesTruncated)
+	for index := 1; index < len(result.Issues); index++ {
+		previous := result.Issues[index-1]
+		current := result.Issues[index]
+		require.LessOrEqual(t, previous.Path, current.Path)
+	}
+	require.Contains(t, result.Issues, ContractValidationIssue{Path: "/unknown", Code: "unknown_field", Message: "unknown field: unknown"})
+
+	data := ContractValidationErrorData(result)
+	require.Equal(t, "validation_failed", data["reason"])
+	require.Equal(t, result.IssuesTruncated, data["issues_truncated"])
+	require.Len(t, data["issues"], len(result.Issues))
+}
+
+func TestValidateContractInputIssuesHonorsEarlyScopeAndTenantGuards(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	require.NoError(t, err)
+
+	missingScope := ValidateContractInputIssues(remember, validFlatRelationshipSubmission(), nil)
+	require.Len(t, missingScope.Issues, 1)
+	require.Equal(t, "missing_scope", missingScope.Issues[0].Code)
+
+	withTenant := validFlatRelationshipSubmission()
+	withTenant["team_id"] = "caller-selected-team"
+	tenant := ValidateContractInputIssues(remember, withTenant, []string{"write"})
+	require.Len(t, tenant.Issues, 1)
+	require.Equal(t, "tenant_override", tenant.Issues[0].Code)
+}
+
+func TestValidateContractInputIssuesDispatchesToolSpecificValidation(t *testing.T) {
+	cases := []struct {
+		name  string
+		tool  string
+		args  map[string]any
+		scope string
+		want  string
+	}{
+		{name: "recall", tool: ToolRecallMemory, args: map[string]any{"known_evidence_ids": []any{"same", "same"}}, scope: "read", want: "duplicate"},
+		{name: "retract", tool: ToolRetractEvidence, args: map[string]any{"evidence_ids": []any{"same", "same"}}, scope: "write", want: "duplicate"},
+		{name: "trace", tool: ToolTraceMemory, args: map[string]any{"predicate_keys": []any{"same", "same"}}, scope: "read", want: "duplicate"},
+		{name: "export", tool: ToolExportMemoryPack, args: map[string]any{"relationship_ids": []any{"same", "same"}}, scope: "read", want: "duplicate"},
+		{name: "correction", tool: ToolCorrectRelationship, args: map[string]any{"action": "unknown"}, scope: "write", want: "submit or confirm"},
+		{name: "recall feedback", tool: ToolSubmitRecallSessionFeedback, args: map[string]any{"recalls": []any{map[string]any{"quality": "low"}}}, scope: "write", want: "feedback_comment"},
+		{name: "dream feedback", tool: ToolResolveDreamFeedback, args: map[string]any{"decision": "unknown"}, scope: "write", want: "reason"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := Tool{Name: tc.tool, RequiredScopes: []string{tc.scope}}
+			result := ValidateContractInputIssues(tool, tc.args, []string{tc.scope})
+			require.Len(t, result.Issues, 1)
+			require.Contains(t, result.Issues[0].Message, tc.want)
+		})
+	}
+}
+
+func TestValidateContractInputIssuesRememberValidAndMalformedShapes(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	require.NoError(t, err)
+	valid := ValidateContractInputIssues(remember, validFlatRelationshipSubmission(), []string{"write"})
+	require.Empty(t, valid.Issues)
+
+	wrongEvidenceType := map[string]any{
+		"evidence":      "not-an-array",
+		"relationships": []any{},
+	}
+	result := ValidateContractInputIssues(remember, wrongEvidenceType, []string{"write"})
+	require.Contains(t, issueMessages(result), "evidence must be an array")
+
+	wrongRelationshipsType := map[string]any{
+		"evidence":      []any{map[string]any{"content": "evidence"}},
+		"relationships": "not-an-array",
+	}
+	result = ValidateContractInputIssues(remember, wrongRelationshipsType, []string{"write"})
+	require.Contains(t, issueMessages(result), "relationships must be an array")
+}
+
+func TestContractIssueCollectorDeduplicatesAndTruncates(t *testing.T) {
+	collector := contractIssueCollector{}
+	collector.add("", "", "   ")
+	collector.add("/field", "invalid", "  bad  ")
+	collector.add("/field", "invalid", "bad")
+	require.Len(t, collector.issues, 1)
+	for index := 0; index < maxContractValidationIssues+3; index++ {
+		collector.add(strings.Join([]string{"/field", string(rune('a' + index))}, "/"), "invalid", "different")
+	}
+	require.Len(t, collector.issues, maxContractValidationIssues)
+	require.True(t, collector.truncated)
+}
+
+func TestValidateContractInputIssuesCoversRememberShapeBranches(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	require.NoError(t, err)
+
+	missingRelationships := ValidateContractInputIssues(remember, map[string]any{
+		"evidence": []any{map[string]any{}},
+	}, []string{"write"})
+	require.Contains(t, issueMessages(missingRelationships), "relationships is required")
+	require.Contains(t, issueMessages(missingRelationships), "evidence.content is required")
+
+	nonStringContent := ValidateContractInputIssues(remember, map[string]any{
+		"evidence":      []any{map[string]any{"content": 42}},
+		"relationships": []any{map[string]any{"ref": ""}},
+	}, []string{"write"})
+	require.Contains(t, issueMessages(nonStringContent), "evidence.content must be a string")
+	require.Contains(t, issueMessages(nonStringContent), "relationship.ref must not be blank")
+
+	sourceBatch := ValidateContractInputIssues(remember, map[string]any{
+		"evidence": []any{
+			map[string]any{"content": "first", "source_key": "source", "source_revision": "one"},
+			map[string]any{"content": "second", "source_key": "source", "source_revision": "two", "previous_source_revision": "one", "supersedes_evidence_ids": []any{"old"}},
+		},
+		"relationships": []any{map[string]any{"ref": "r", "evidence_indices": []any{0, "bad"}}},
+	}, []string{"write"})
+	require.Contains(t, strings.Join(issueMessages(sourceBatch), "; "), "revision fields must match")
+	require.Contains(t, strings.Join(issueMessages(sourceBatch), "; "), "idempotency_key is required")
+
+	wrongRelationship := ValidateContractInputIssues(remember, map[string]any{
+		"evidence":      []any{map[string]any{"content": "evidence"}},
+		"relationships": []any{"not-an-object"},
+	}, []string{"write"})
+	require.Contains(t, issueMessages(wrongRelationship), "relationship must be an object")
+
+	tooManyEvidence := make([]any, 21)
+	for index := range tooManyEvidence {
+		tooManyEvidence[index] = map[string]any{"content": "evidence"}
+	}
+	result := ValidateContractInputIssues(remember, map[string]any{
+		"evidence": tooManyEvidence, "relationships": []any{map[string]any{"ref": "r", "evidence_indices": []any{0}}},
+	}, []string{"write"})
+	require.Contains(t, strings.Join(issueMessages(result), "; "), "evidence exceeds maximum item count")
+
+	unknownTool := Tool{Name: "custom", InputSchema: map[string]any{"type": "object", "required": []any{"required"}}}
+	unknownResult := ValidateContractInputIssues(unknownTool, map[string]any{}, nil)
+	require.Len(t, unknownResult.Issues, 1)
+	require.Equal(t, "required", unknownResult.Issues[0].Code)
+
+	for _, message := range []string{"unknown field", "required", "duplicate", "outside", "coverage", "rfc3339", "other"} {
+		classifyContractIssue(message)
+	}
+}
+
+func issueMessages(result ContractValidationResult) []string {
+	messages := make([]string, 0, len(result.Issues))
+	for _, issue := range result.Issues {
+		messages = append(messages, issue.Message)
+	}
+	return messages
+}

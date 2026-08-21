@@ -39,7 +39,7 @@ const catalog = postgresRow(`
       WHERE version_id = 2026081602 AND is_applied
     ), '|',
     (
-      SELECT count(*) = 37
+      SELECT count(*) = 36
       FROM pg_constraint AS constraint_state
       WHERE constraint_state.contype = 'f'
         AND constraint_state.conrelid::regclass::text = ANY(ARRAY[
@@ -52,7 +52,7 @@ const catalog = postgresRow(`
           'relationship_conflict_evidence_derivations', 'relationship_correction_submissions',
           'relationship_cross_references', 'relationship_evidence_supports', 'relationship_observations',
           'relationship_records', 'relationship_support_decision_events', 'relationship_transition_events',
-          'review_tasks', 'search_documents', 'submission_holds', 'verification_events'
+          'review_tasks', 'search_documents', 'verification_events'
         ]::text[])
         AND constraint_state.confrelid = 'ownership_aliases'::regclass
         AND constraint_state.convalidated

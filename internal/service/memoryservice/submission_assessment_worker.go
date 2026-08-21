@@ -32,10 +32,9 @@ type SubmissionAssessmentPlacementWorkerService interface {
 type SubmissionAssessmentPlacementWorkerDependencies struct {
 	Ledger                    repository.LedgerRepository
 	Assessments               repository.SubmissionAssessmentRepository
-	ReviewExpiry              SemanticAssessmentReviewExpiry
-	HoldExpiry                repository.SemanticSubmissionHoldExpiry
 	Catalog                   SubmissionAssessmentCatalog
 	Provider                  SemanticAssessorProvider
+	Normalizer                RememberNormalizerProvider
 	Limits                    verifier.SemanticAssessmentLimits
 	GlobalConfidenceThreshold float64
 	TeamID                    string
@@ -49,10 +48,9 @@ type SubmissionAssessmentPlacementWorkerDependencies struct {
 type submissionAssessmentPlacementWorkerService struct {
 	ledger                    repository.LedgerRepository
 	assessments               repository.SubmissionAssessmentRepository
-	reviewExpiry              SemanticAssessmentReviewExpiry
-	holdExpiry                repository.SemanticSubmissionHoldExpiry
 	catalog                   SubmissionAssessmentCatalog
 	provider                  SemanticAssessorProvider
+	normalizer                RememberNormalizerProvider
 	limits                    verifier.SemanticAssessmentLimits
 	globalConfidenceThreshold float64
 	teamID                    string
@@ -74,29 +72,22 @@ func NewSubmissionAssessmentPlacementWorkerService(
 	if now == nil {
 		now = time.Now
 	}
-	reviewExpiry := deps.ReviewExpiry
-	if reviewExpiry == nil {
-		if configured, ok := deps.Assessments.(SemanticAssessmentReviewExpiry); ok {
-			reviewExpiry = configured
-		}
-	}
-	holdExpiry := deps.HoldExpiry
-	if holdExpiry == nil {
-		if configured, ok := deps.Assessments.(repository.SemanticSubmissionHoldExpiry); ok {
-			holdExpiry = configured
-		}
-	}
 	metrics := deps.Metrics
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
+	normalizer := deps.Normalizer
+	if normalizer == nil {
+		if configured, ok := deps.Provider.(RememberNormalizerProvider); ok {
+			normalizer = configured
+		}
+	}
 	return &submissionAssessmentPlacementWorkerService{
 		ledger:                    deps.Ledger,
 		assessments:               deps.Assessments,
-		reviewExpiry:              reviewExpiry,
-		holdExpiry:                holdExpiry,
 		catalog:                   deps.Catalog,
 		provider:                  deps.Provider,
+		normalizer:                normalizer,
 		limits:                    deps.Limits,
 		globalConfidenceThreshold: deps.GlobalConfidenceThreshold,
 		teamID:                    strings.TrimSpace(deps.TeamID),
@@ -111,24 +102,6 @@ func NewSubmissionAssessmentPlacementWorkerService(
 func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssessmentPlacement(ctx context.Context) (bool, error) {
 	if err := s.validateDependencies(); err != nil {
 		return false, err
-	}
-	if s.reviewExpiry != nil {
-		expired, err := s.reviewExpiry.ExpirePlacementAssessmentReviews(ctx, repository.ExpirePlacementAssessmentReviewsInput{
-			TeamID: s.teamID,
-			Now:    s.now().UTC(),
-		})
-		if err != nil {
-			return false, fmt.Errorf("submission assessment worker: expire reviews: %w", err)
-		}
-		observability.RecordAssessorReviewExpiry(s.metrics, expired)
-	}
-	if s.holdExpiry != nil {
-		if _, err := s.holdExpiry.ExpireSubmissionHolds(ctx, repository.ExpireSubmissionHoldsInput{
-			TeamID: s.teamID,
-			Now:    s.now().UTC(),
-		}); err != nil {
-			return false, fmt.Errorf("submission assessment worker: expire semantic holds: %w", err)
-		}
 	}
 	run, err := s.ledger.ClaimNextPlacementRun(ctx, s.teamID, s.workerID, s.lease)
 	if err != nil {
@@ -235,22 +208,17 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	recordSubmissionAssessmentGateBands(s.metrics, commitInput)
 	committed, err := s.assessments.CommitSubmissionAssessment(ctx, commitInput)
 	if errors.Is(err, repository.ErrSubmissionAssessmentNonPromotable) {
-		return true, s.completeReview(ctx, scope, "commit_review", []SubmissionHoldIssue{{
+		return true, s.completeReview(ctx, scope, "commit_review", []submissionAssessmentIssue{{
 			Code: "semantic_commit_non_promotable", Component: "relationship", Message: "submission could not be promoted safely",
 		}}, false)
 	}
 	if errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld) {
-		return true, s.completeReview(ctx, scope, "commit_review", []SubmissionHoldIssue{{
+		return true, s.completeReview(ctx, scope, "commit_review", []submissionAssessmentIssue{{
 			Code: "predicate_registration_conflict", Component: "predicate", Message: "predicate registration conflicted with current state",
 		}}, false)
 	}
-	if errors.Is(err, repository.ErrSubmissionReplacementConflict) {
-		return true, terminalizeAfterError(err, func() error {
-			return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "replacement_conflict")
-		})
-	}
 	if errors.Is(err, repository.ErrConflictContextStale) {
-		return true, s.completeReview(ctx, scope, "conflict_context_stale", []SubmissionHoldIssue{{
+		return true, s.completeReview(ctx, scope, "conflict_context_stale", []submissionAssessmentIssue{{
 			Code: "conflict_context_stale", Component: "conflict", Message: "relationship conflict context changed before commit",
 		}}, false)
 	}
@@ -359,7 +327,16 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	started := time.Now()
 	providerCtx := observability.WithMetricIdentity(ctx, run.TeamID, run.OwnerProfileID)
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationPlacementAssessment, 1)
-	response, err := s.provider.AssessSemantic(providerCtx, request)
+	var response verifier.SemanticAssessmentResponse
+	if s.normalizer != nil {
+		var normalized verifier.RememberNormalizerResponse
+		normalized, err = s.normalizer.NormalizeRemember(providerCtx, request)
+		if err == nil {
+			response, err = rememberNormalizerResponseToSemanticAssessment(request, normalized)
+		}
+	} else {
+		response, err = s.provider.AssessSemantic(providerCtx, request)
+	}
 	if err != nil {
 		outcome := "provider_error"
 		releaseProviderAttempt := true
@@ -526,7 +503,24 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithFailure
 	providerTurns int,
 	failureCause ...error,
 ) error {
+	failureCode := submissionFailureCode(stage, failureClass)
+	if s.normalizer != nil {
+		switch failureClass {
+		case "malformed_exhausted", "malformed_response", "validation_failed":
+			failureCode = SubmissionErrorNormalizationFailed
+		case verifier.ProviderFailureClassTimeout, verifier.ProviderFailureClassRateLimited,
+			verifier.ProviderFailureClassHTTPClient, verifier.ProviderFailureClassHTTPServer,
+			verifier.ProviderFailureClassHTTPUnexpected, verifier.ProviderFailureClassTransport,
+			verifier.ProviderFailureClassProtocol, verifier.ProviderFailureClassRequestInvalid,
+			verifier.ProviderFailureClassProviderUnavailable:
+			failureCode = SubmissionErrorNormalizerUnavailable
+		}
+		if failureCode == SubmissionErrorProcessingFailed {
+			failureCode = SubmissionErrorRequiresResubmission
+		}
+	}
 	payload := semanticAssessmentFailurePayload(stage, true, firstError(failureCause))
+	payload["failure_code"] = string(failureCode)
 	if failureClass = strings.TrimSpace(failureClass); failureClass != "" {
 		failureClass = boundedPlacementFailureClass(failureClass)
 		payload["failure_class"] = failureClass
@@ -553,7 +547,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithFailure
 	}
 	if err == nil && completed != nil {
 		observability.RecordAssessorTerminalFailure(s.metrics, stage)
-		s.logLifecycle(scope, "submission_failed", "failed", stage, string(submissionFailureCode(stage, failureClass)), nil)
+		s.logLifecycle(scope, "submission_failed", "failed", stage, string(failureCode), nil)
 	}
 	return err
 }
@@ -564,12 +558,17 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 	status, category, stage string,
 	failureCause ...error,
 ) error {
+	failureCode := submissionFailureCode(stage, "")
+	if s.normalizer != nil && failureCode == SubmissionErrorProcessingFailed {
+		failureCode = SubmissionErrorRequiresResubmission
+	}
 	var payload map[string]any
 	if status == string(domain.SemanticReviewSuperseded) {
 		payload = map[string]any{"assessor_contract": domain.ContractVersion}
 	} else {
 		payload = semanticAssessmentFailurePayload(stage, false, firstError(failureCause))
 		payload["assessor_contract"] = domain.ContractVersion
+		payload["failure_code"] = string(failureCode)
 	}
 	failureClass, _ := payload["failure_class"].(string)
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{

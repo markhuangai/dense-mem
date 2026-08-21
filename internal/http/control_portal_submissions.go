@@ -77,7 +77,7 @@ func controlSubmissionDiagnosticFilter(c echo.Context) (service.SubmissionDiagno
 	}
 	state := strings.TrimSpace(c.QueryParam("processing_state"))
 	switch state {
-	case "", "queued", "processing", "awaiting_review", "completed", "rejected", "quarantined", "failed":
+	case "", "queued", "processing", "completed", "rejected", "quarantined", "failed":
 	default:
 		return service.SubmissionDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "processing_state is unsupported")
 	}

@@ -93,6 +93,14 @@ type SemanticAssessorProvider interface {
 	ModelName() string
 }
 
+// RememberNormalizerProvider is the structure-only Remember boundary. It is
+// optional during the transition so correction/conflict workers can retain
+// their separate assessor contracts.
+type RememberNormalizerProvider interface {
+	NormalizeRemember(ctx context.Context, req verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error)
+	ModelName() string
+}
+
 type SemanticAssessmentPlacementWorkerService interface {
 	ProcessNextSemanticAssessmentPlacement(ctx context.Context) (bool, error)
 }

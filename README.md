@@ -237,13 +237,11 @@ The target is retired atomically when the replacement is accepted for intake,
 even if later placement is rejected or quarantined. This preserves the exact
 correction decision instead of silently leaving stale evidence effective.
 
-If the assessor cannot ground a proposal with enough confidence, or another
-semantic policy requires review, the whole submission moves to
-`awaiting_review` with zero partial semantic commit. `get_submission_status`
-returns bounded `semantic_hold.issues` and a `semantic_hold.replacement`
-instruction. Resubmit one complete corrected evidence-and-Relationships batch
-with `replaces_submission_id` set to the held `submission_id`; partial
-replacement is not supported.
+Remember uses a structure-only normalizer. Invalid or non-promotable complete
+responses never create partial semantic state: the submission becomes terminal
+`failed` with bounded `errors[]` guidance. Resubmit the entire evidence and
+Relationships batch with a new `idempotency_key`; partial replacement and
+`awaiting_review` holds are not part of the Remember workflow.
 
 To retract evidence without a replacement, call `retract_evidence` with owned
 current IDs, a bounded reason, and an idempotency key:

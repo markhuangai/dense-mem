@@ -590,20 +590,6 @@ func (r *LedgerRepositoryImpl) CompleteSubmissionAssessment(
 		if err != nil {
 			return err
 		}
-		if input.Status == string(domain.SemanticReviewReviewRequired) {
-			reasonCode := "policy_review"
-			if value, ok := input.Payload["review_stage"].(string); ok && strings.TrimSpace(value) != "" {
-				reasonCode = strings.TrimSpace(value)
-			} else if value, ok := input.Payload["failure_stage"].(string); ok && strings.TrimSpace(value) != "" {
-				reasonCode = strings.TrimSpace(value)
-			}
-			if err := createSubmissionHoldProjection(ctx, tx, input.SubmissionAssessmentRunScope, reasonCode); err != nil {
-				return err
-			}
-		}
-		if err := releaseSubmissionReplacement(ctx, tx, input.SubmissionAssessmentRunScope, input.Status, input.Category); err != nil {
-			return err
-		}
 		result.FirstDisposition = firstDisposition
 		return nil
 	})
@@ -878,7 +864,7 @@ func submissionTerminalStatuses(status, category string) (string, string, string
 	case string(domain.SemanticReviewRejected):
 		return "failed", "failed", string(domain.PlacementRunFailed)
 	case string(domain.SemanticReviewReviewRequired):
-		return string(domain.PlacementRunAwaitingReview), "candidate", string(domain.PlacementRunAwaitingReview)
+		return "failed", "failed", string(domain.PlacementRunFailed)
 	default:
 		if category == "" {
 			category = "candidate"

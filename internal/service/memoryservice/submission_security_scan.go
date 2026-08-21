@@ -540,6 +540,9 @@ func isBase64URLPart(value string) bool {
 }
 
 func encodedCandidateRejected(encoded string) bool {
+	if opaqueIdentifierCandidate(encoded) {
+		return false
+	}
 	if !isBase64EncodedShape(encoded) || base64DecodedByteLength(encoded) > submissionSecurityMaxDecodedBytes {
 		return isBase64EncodedShape(encoded)
 	}
@@ -547,13 +550,42 @@ func encodedCandidateRejected(encoded string) bool {
 	if !ok || len(decoded) == 0 || len(decoded) > submissionSecurityMaxDecodedBytes {
 		return false
 	}
-	if strings.ContainsAny(encoded, "=+/_-") || hasBinaryMagic(decoded) || base64CharacterClassCount(encoded) >= 3 {
+	if strings.ContainsAny(encoded, "=+/_-") || hasBinaryMagic(decoded) {
 		return true
 	}
 	if printablePercentage(decoded) >= 85 {
 		return true
 	}
-	return len(encoded) >= 24 && shannonEntropy(encoded) >= 3.8
+	// High entropy by itself is not evidence of an encoded payload: opaque
+	// order references and provider IDs often have the same alphabet. Require
+	// a meaningful printable decode before applying the entropy signal.
+	return len(encoded) >= 24 && shannonEntropy(encoded) >= 3.8 && printablePercentage(decoded) >= 60
+}
+
+func opaqueIdentifierCandidate(value string) bool {
+	if len(value) < submissionSecurityMinBase64TokenLength || strings.ContainsAny(value, "=+/") {
+		return false
+	}
+	parts := strings.FieldsFunc(value, func(r rune) bool { return r == '-' || r == '_' })
+	if len(parts) < 2 || strings.HasPrefix(value, "-") || strings.HasPrefix(value, "_") || strings.HasSuffix(value, "-") || strings.HasSuffix(value, "_") {
+		return false
+	}
+	hasDigit := false
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			switch {
+			case r >= '0' && r <= '9':
+				hasDigit = true
+			case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
+			default:
+				return false
+			}
+		}
+	}
+	return hasDigit
 }
 
 func decodeBase64(encoded string) ([]byte, bool) {

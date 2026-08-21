@@ -261,6 +261,178 @@ func TestSubmissionAssessmentMigrationReconcilesLegacyRuns(t *testing.T) {
 	require.ErrorContains(t, err, "legacy reconciliation outcomes")
 }
 
+func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026081901)
+	teamID, profileID, identityID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO teams (id, name, description, metadata, config)
+			VALUES ($1::uuid, $2, '', '{}'::jsonb, '{}'::jsonb)
+		`, teamID, "remember-normalizer-migration-"+teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO actor_identities (id, kind, team_id, display_name)
+			VALUES ($1::uuid, 'human', $2::uuid, 'remember normalizer migration owner')
+		`, identityID, teamID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id)
+			VALUES ($1::uuid, $2::uuid, $3::uuid)
+		`, teamID, profileID, identityID)
+		return err
+	}))
+	now := time.Now().UTC()
+	fixtures := []submissionAssessmentMigrationRun{
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "queued",
+			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "guarded", attempts: 2,
+			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "processing", workerID: "old-worker", leaseUntil: timePointer(now.Add(time.Hour)),
+			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "awaiting_review", completedAt: timePointer(now.Add(-time.Hour)),
+			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+		},
+	}
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		for _, fixture := range fixtures {
+			if err := insertSubmissionAssessmentMigrationRun(ctx, tx, teamID, profileID, fixture); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE placement_runs
+			SET assessor_attempt_id = gen_random_uuid(), assessor_attempted_at = now()
+			WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+		`, teamID, fixtures[2].runID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE placement_items
+			SET assessor_attempt_id = gen_random_uuid(), assessor_attempted_at = now()
+			WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
+		`, teamID, fixtures[2].items[0].itemID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO review_tasks (
+			    team_id, review_task_id, owner_profile_id, ingest_id,
+			    placement_item_id, task_type, status, reason, payload, dedupe_key
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          $5::uuid, 'identity_needs_review', 'open', 'legacy review',
+			          '{"semantic_kind":"identity"}'::jsonb, $6)
+		`, teamID, uuid.NewString(), profileID, fixtures[0].ingestID,
+			fixtures[0].items[0].itemID, "remember-normalizer-review:"+fixtures[0].items[0].itemID)
+		return err
+	}))
+
+	runGooseUpTo(t, ctx, sqlDB, 20260821140001)
+	require.False(t, tableExists(t, ctx, sqlDB, "submission_holds"))
+	require.False(t, tableExists(t, ctx, sqlDB, "remember_normalizer_cutover"))
+	require.True(t, tableExists(t, ctx, sqlDB, "review_tasks"))
+	for _, column := range []string{"semantic_hold_state", "semantic_hold_version", "semantic_hold_updated_at", "replaces_placement_run_id", "superseded_by_placement_run_id"} {
+		var exists bool
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = 'public' AND table_name = 'placement_runs' AND column_name = $1
+			)
+		`, column).Scan(&exists))
+		assert.False(t, exists, column)
+	}
+
+	for _, fixture := range fixtures {
+		var runStatus, runError, workerID string
+		var leaseUntil, completedAt sql.NullTime
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT status, error, worker_id, lease_until, completed_at
+			FROM placement_runs
+			WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+		`, teamID, fixture.runID).Scan(&runStatus, &runError, &workerID, &leaseUntil, &completedAt))
+		assert.Equal(t, "failed", runStatus)
+		assert.Equal(t, "remember normalizer restarted; resubmit the complete batch", runError)
+		assert.Empty(t, workerID)
+		assert.False(t, leaseUntil.Valid)
+		assert.True(t, completedAt.Valid)
+		var runAssessorAttempt, itemAssessorAttempt sql.NullString
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT assessor_attempt_id::text
+			FROM placement_runs
+			WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+		`, teamID, fixture.runID).Scan(&runAssessorAttempt))
+		assert.False(t, runAssessorAttempt.Valid)
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT assessor_attempt_id::text
+			FROM placement_items
+			WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
+		`, teamID, fixture.items[0].itemID).Scan(&itemAssessorAttempt))
+		assert.False(t, itemAssessorAttempt.Valid)
+
+		var failureCode, nextAction string
+		var retryable bool
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT result->>'failure_code', result->>'next_action', (result->>'retryable')::boolean
+			FROM placement_items
+			WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
+		`, teamID, fixture.items[0].itemID).Scan(&failureCode, &nextAction, &retryable))
+		assert.Equal(t, "submission_requires_resubmission", failureCode)
+		assert.Equal(t, "resubmit_submission", nextAction)
+		assert.True(t, retryable)
+		assertPlacementItemState(t, ctx, sqlDB, teamID, fixture.items[0].itemID, "failed", "failed")
+	}
+	var remainingItemClaims int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM placement_items
+		WHERE team_id = $1::uuid
+		  AND assessor_attempt_id IS NOT NULL
+	`, teamID).Scan(&remainingItemClaims))
+	assert.Zero(t, remainingItemClaims)
+	var ingestStatus, ingestError string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status, error
+		FROM knowledge_ingests
+		WHERE team_id = $1::uuid AND ingest_id = $2::uuid
+	`, teamID, fixtures[0].ingestID).Scan(&ingestStatus, &ingestError))
+	assert.Equal(t, "failed", ingestStatus)
+	assert.Equal(t, "remember normalizer restarted; resubmit the complete batch", ingestError)
+
+	var reviewStatus, reviewReason string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status, resolution->>'reason'
+		FROM review_tasks
+		WHERE team_id = $1::uuid AND ingest_id = $2::uuid
+	`, teamID, fixtures[0].ingestID).Scan(&reviewStatus, &reviewReason))
+	assert.Equal(t, "canceled", reviewStatus)
+	assert.Equal(t, "remember_normalizer_restart", reviewReason)
+
+	var statusConstraint, completionConstraint string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT pg_get_constraintdef(oid)
+		FROM pg_constraint
+		WHERE conrelid = 'placement_runs'::regclass AND conname = 'placement_runs_status_check'
+	`).Scan(&statusConstraint))
+	assert.NotContains(t, statusConstraint, "awaiting_review")
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT pg_get_constraintdef(oid)
+		FROM pg_constraint
+		WHERE conrelid = 'placement_runs'::regclass AND conname = 'placement_runs_completion_check'
+	`).Scan(&completionConstraint))
+	assert.NotContains(t, completionConstraint, "awaiting_review")
+}
+
 type submissionAssessmentMigrationRun struct {
 	ingestID    string
 	runID       string

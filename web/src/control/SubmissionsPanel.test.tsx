@@ -209,10 +209,10 @@ describe("SubmissionsPanel", () => {
     expect(screen.getByText("0-0 of 0")).toBeInTheDocument();
   });
 
-  it("shows bounded hold truncation and evidence-specific remediation", async () => {
+  it("shows complete resubmission guidance and evidence-specific remediation", async () => {
     const summary = {
       team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1",
-      submission_id: "submission-held", processing_state: "awaiting_review", correlation_id: "corr-held",
+      submission_id: "submission-failed", processing_state: "failed", correlation_id: "corr-failed",
       attempts: 1, max_attempts: 5, evidence_count: 1, submitted_at: "2026-08-18T02:00:00Z",
     };
     const api = {
@@ -229,16 +229,13 @@ describe("SubmissionsPanel", () => {
             next_action: "contact_operator", remediation: "Inspect the embedding worker and retry the submission.",
           },
         }],
-        errors: [],
-        semantic_hold: {
-          state: "active",
-          issues: [{ code: "grounding_low_confidence", component: "subject", message: "Subject grounding needs review." }],
-          issues_truncated: true,
-          replacement: {
-            tool: "remember", replaces_submission_id: "submission-held",
-            instruction: "Submit a complete corrected replacement batch.",
-          },
-        },
+        errors: [{
+          code: "submission_requires_resubmission",
+          message: "the complete submission must be sent again",
+          retryable: true,
+          next_action: "resubmit_submission",
+          remediation: "Submit the complete batch again with remember and a new idempotency_key after correcting the input.",
+        }],
       }),
       listOperationLogs: vi.fn().mockResolvedValue({
         data: [], pagination: { limit: 100, offset: 0, total: 0 },
@@ -249,7 +246,7 @@ describe("SubmissionsPanel", () => {
 
     expect(await screen.findByText("search_projection_failed")).toBeInTheDocument();
     expect(screen.getByText("Inspect the embedding worker and retry the submission.")).toBeInTheDocument();
-    expect(screen.getByText("Additional hold issues were omitted from this bounded diagnostic response.")).toBeInTheDocument();
+    expect(screen.getByText("Submit the complete batch again with remember and a new idempotency_key after correcting the input.")).toBeInTheDocument();
   });
 
   it("does not leave a previous submission detail visible after a new detail request fails", async () => {

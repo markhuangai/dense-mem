@@ -86,7 +86,7 @@ if (!overflowSubmissionID) {
 }
 const overflowStatus = await waitForFailedSubmission(overflowSubmissionID);
 const overflowErrors = Array.isArray(overflowStatus.errors) ? overflowStatus.errors : [];
-if (!overflowErrors.some((item) => stringValue(item.code) === "submission_processing_failed")) {
+if (!overflowErrors.some((item) => stringValue(item.code) === "submission_requires_resubmission")) {
   throw new Error("predicate overflow status did not expose its bounded terminal failure");
 }
 const overflowProviderState = postgresRow(`
@@ -241,11 +241,6 @@ async function waitForCompletedPlacement(submissionID) {
     if (state === "completed") {
       return;
     }
-    if (state === "awaiting_review") {
-      const issues = Array.isArray(placement.semantic_hold?.issues) ? placement.semantic_hold.issues : [];
-      const issueCodes = issues.map((issue) => stringValue(issue?.code)).filter(Boolean);
-      throw new Error(`submission reached unexpected terminal state awaiting_review (${issueCodes.join(", ") || "no issue codes"})`);
-    }
     if (["rejected", "failed", "quarantined"].includes(state)) {
       throw new Error(`submission reached unexpected terminal state ${state}`);
     }
@@ -262,7 +257,7 @@ async function waitForFailedSubmission(submissionID) {
     if (state === "failed") {
       return placement;
     }
-    if (["completed", "awaiting_review", "rejected", "quarantined"].includes(state)) {
+    if (["completed", "rejected", "quarantined"].includes(state)) {
       throw new Error(`predicate overflow reached unexpected terminal state ${state}`);
     }
     await delay(2_000);

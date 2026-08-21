@@ -65,11 +65,10 @@ func NewRememberService(deps RememberDependencies) *rememberService {
 }
 
 type RememberRequest struct {
-	Evidence             []RememberEvidenceInput `json:"evidence"`
-	EntityHints          []map[string]any        `json:"entity_hints,omitempty"`
-	RelationshipHints    []map[string]any        `json:"relationship_hints,omitempty"`
-	IdempotencyKey       string                  `json:"idempotency_key,omitempty"`
-	ReplacesSubmissionID string                  `json:"replaces_submission_id,omitempty"`
+	Evidence          []RememberEvidenceInput `json:"evidence"`
+	EntityHints       []map[string]any        `json:"entity_hints,omitempty"`
+	RelationshipHints []map[string]any        `json:"relationship_hints,omitempty"`
+	IdempotencyKey    string                  `json:"idempotency_key,omitempty"`
 }
 
 type GetSubmissionStatusRequest struct {
@@ -106,81 +105,24 @@ type RememberResult struct {
 }
 
 type SubmissionStatusResult struct {
-	SubmissionID               string                                   `json:"submission_id"`
-	SubmissionKind             string                                   `json:"submission_kind"`
-	ProcessingState            string                                   `json:"processing_state"`
-	SearchState                string                                   `json:"search_state"`
-	CheckAfterSeconds          int                                      `json:"check_after_seconds"`
-	CorrelationID              string                                   `json:"correlation_id,omitempty"`
-	Attempts                   *int                                     `json:"attempts,omitempty"`
-	MaxAttempts                *int                                     `json:"max_attempts,omitempty"`
-	SubmittedAt                *time.Time                               `json:"submitted_at,omitempty"`
-	NextAttemptAt              *time.Time                               `json:"next_attempt_at,omitempty"`
-	StartedAt                  *time.Time                               `json:"started_at,omitempty"`
-	UpdatedAt                  *time.Time                               `json:"updated_at,omitempty"`
-	CompletedAt                *time.Time                               `json:"completed_at,omitempty"`
-	Evidence                   []SubmissionEvidenceStatus               `json:"evidence"`
-	Errors                     []SubmissionStatusError                  `json:"errors"`
-	QuarantineExpiresAt        *time.Time                               `json:"quarantine_expires_at,omitempty"`
-	ReplacementWindowExpiresAt *time.Time                               `json:"replacement_window_expires_at,omitempty"`
-	AwaitingConfirmation       *SubmissionAwaitingConfirmation          `json:"awaiting_confirmation,omitempty"`
-	CorrectionResult           *repository.RelationshipCorrectionResult `json:"correction_result,omitempty"`
-	SemanticHold               *SubmissionSemanticHold                  `json:"semantic_hold,omitempty"`
-}
-
-type SubmissionSemanticHold struct {
-	State           string                        `json:"state"`
-	Issues          []SubmissionHoldIssue         `json:"issues"`
-	IssuesTruncated bool                          `json:"issues_truncated"`
-	Replacement     SubmissionReplacementGuidance `json:"replacement"`
-}
-
-type SubmissionHoldIssue struct {
-	Code            string `json:"code"`
-	RelationshipRef string `json:"relationship_ref,omitempty"`
-	Component       string `json:"component"`
-	Message         string `json:"message"`
-}
-
-const submissionHoldIssueMessageMaxLength = 512
-
-type SubmissionReplacementGuidance struct {
-	Tool                 string     `json:"tool"`
-	ReplacesSubmissionID string     `json:"replaces_submission_id"`
-	ExpiresAt            *time.Time `json:"expires_at"`
-	Instruction          string     `json:"instruction"`
-}
-
-var submissionHoldIssueCodes = []string{
-	"entity_grounding_missing",
-	"entity_resolution_ambiguous",
-	"grounding_low_confidence",
-	"predicate_needs_review",
-	"scope_needs_review",
-	"temporal_uncertain",
-	"evidence_not_entailed",
-	"unsupported_modality",
-	"semantic_commit_non_promotable",
-	"predicate_registration_conflict",
-	"commit_review_required",
-	"conflict_context_stale",
-}
-
-var submissionHoldIssueComponents = []string{
-	"subject",
-	"predicate",
-	"object",
-	"support",
-	"relationship",
-	"conflict",
-}
-
-func SubmissionHoldIssueCodes() []string {
-	return append([]string(nil), submissionHoldIssueCodes...)
-}
-
-func SubmissionHoldIssueComponents() []string {
-	return append([]string(nil), submissionHoldIssueComponents...)
+	SubmissionID         string                                   `json:"submission_id"`
+	SubmissionKind       string                                   `json:"submission_kind"`
+	ProcessingState      string                                   `json:"processing_state"`
+	SearchState          string                                   `json:"search_state"`
+	CheckAfterSeconds    int                                      `json:"check_after_seconds"`
+	CorrelationID        string                                   `json:"correlation_id,omitempty"`
+	Attempts             *int                                     `json:"attempts,omitempty"`
+	MaxAttempts          *int                                     `json:"max_attempts,omitempty"`
+	SubmittedAt          *time.Time                               `json:"submitted_at,omitempty"`
+	NextAttemptAt        *time.Time                               `json:"next_attempt_at,omitempty"`
+	StartedAt            *time.Time                               `json:"started_at,omitempty"`
+	UpdatedAt            *time.Time                               `json:"updated_at,omitempty"`
+	CompletedAt          *time.Time                               `json:"completed_at,omitempty"`
+	Evidence             []SubmissionEvidenceStatus               `json:"evidence"`
+	Errors               []SubmissionStatusError                  `json:"errors"`
+	QuarantineExpiresAt  *time.Time                               `json:"quarantine_expires_at,omitempty"`
+	AwaitingConfirmation *SubmissionAwaitingConfirmation          `json:"awaiting_confirmation,omitempty"`
+	CorrectionResult     *repository.RelationshipCorrectionResult `json:"correction_result,omitempty"`
 }
 
 type SubmissionAwaitingConfirmation struct {
@@ -205,22 +147,11 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrRememberAuthContext
 	}
-	space := rememberSpace(actor)
-	if space.Kind != domain.MemorySpaceTeamShared && space.Kind != "" &&
-		(space.ID == uuid.Nil || space.Generation < 1) {
-		return nil, ErrRememberAuthContext
-	}
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("remember: evidence is required")
 	}
 	if err := validateRememberRelationshipCoverage(len(req.Evidence), req.RelationshipHints); err != nil {
 		return nil, err
-	}
-	replacementID := strings.TrimSpace(req.ReplacesSubmissionID)
-	if replacementID != "" {
-		if _, err := uuid.Parse(replacementID); err != nil {
-			return nil, translateRememberLedgerError(fmt.Errorf("%w: invalid submission id: %v", repository.ErrSubmissionReplacementNotFound, err))
-		}
 	}
 	started := time.Now()
 	contents := make([]string, 0, len(req.Evidence))
@@ -262,19 +193,16 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 		"actor":            actorMetadata,
 	}
 	created, err := s.ledger.CreateIngest(ctx, repository.CreateIngestInput{
-		TeamID:               actor.TeamID.String(),
-		OwnerProfileID:       actor.OwnerID.String(),
-		SpaceID:              rememberSpaceID(space),
-		SpaceGeneration:      space.Generation,
-		IdempotencyKey:       strings.TrimSpace(req.IdempotencyKey),
-		RequestHash:          requestHash,
-		SourceSummary:        sourceSummary(req.Evidence),
-		Status:               string(domain.PlacementRunQueued),
-		TelemetryRemember:    true,
-		Proposal:             proposal,
-		Metadata:             metadata,
-		Evidence:             normalized,
-		ReplacesSubmissionID: replacementID,
+		TeamID:            actor.TeamID.String(),
+		OwnerProfileID:    actor.OwnerID.String(),
+		IdempotencyKey:    strings.TrimSpace(req.IdempotencyKey),
+		RequestHash:       requestHash,
+		SourceSummary:     sourceSummary(req.Evidence),
+		Status:            string(domain.PlacementRunQueued),
+		TelemetryRemember: true,
+		Proposal:          proposal,
+		Metadata:          metadata,
+		Evidence:          normalized,
 	})
 	if err != nil {
 		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
@@ -289,7 +217,7 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 			CorrelationID: correlationID,
 			SubmissionID:  created.IngestID,
 			From:          "none",
-			To:            publicSubmissionProcessingState(created.Status, created.SemanticHoldState),
+			To:            publicSubmissionProcessingState(created.Status),
 			Stage:         "intake",
 			ReasonCode:    "durably_staged",
 			Attempts:      created.Attempts,
@@ -300,25 +228,6 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 		observability.RecordRememberFirstDisposition(ctx, s.metrics, disposition.CompletedAt.Sub(disposition.CreatedAt), disposition.Status)
 	}
 	return rememberResultFromLedger(created, correlationID), nil
-}
-
-func rememberSpaceID(space domain.MemorySpaceAccess) string {
-	if space.ID == uuid.Nil {
-		return ""
-	}
-	return space.ID.String()
-}
-
-func rememberSpace(actor requestctx.Actor) domain.MemorySpaceAccess {
-	var shared domain.MemorySpaceAccess
-	for _, space := range actor.AllowedSpaces {
-		if space.Kind == domain.MemorySpaceTeamShared || space.Kind == "" {
-			shared = space
-			continue
-		}
-		return space
-	}
-	return shared
 }
 
 func validateRememberRelationshipCoverage(evidenceCount int, relationships []map[string]any) error {
@@ -443,7 +352,7 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 	}
 	searchState := string(domain.SearchProjectionNotRequired)
 	searchErrorAdded := false
-	processing := publicSubmissionProcessingState(placement.Status, placement.SemanticHoldState)
+	processing := publicSubmissionProcessingState(placement.Status)
 	statusErrors := make([]SubmissionStatusError, 0, 2)
 	seenStatusErrors := make(map[string]struct{})
 	appendStatusError := func(value SubmissionStatusError) {
@@ -478,9 +387,7 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 			Error:                 itemError,
 		})
 	}
-	if processing == "rejected" && strings.TrimSpace(placement.SemanticHoldState) != "" {
-		appendStatusError(submissionStatusError(SubmissionErrorSemanticHold))
-	} else if processing == "rejected" {
+	if processing == "rejected" {
 		appendStatusError(submissionStatusError(SubmissionErrorPolicyRejected))
 	} else if processing == "failed" && len(statusErrors) == 0 {
 		appendStatusError(submissionStatusError(SubmissionErrorProcessingFailed))
@@ -491,22 +398,23 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 		appendStatusError(submissionStatusErrorWithMessage(SubmissionErrorSearchIndexingDelayed, "Semantic search indexing is delayed; check the control portal for recovery guidance."))
 	}
 	result := &SubmissionStatusResult{
-		SubmissionID:               placement.IngestID,
-		SubmissionKind:             "remember",
-		ProcessingState:            processing,
-		SearchState:                searchState,
-		CheckAfterSeconds:          rememberCheckAfterSeconds,
-		CorrelationID:              placement.CorrelationID,
-		SubmittedAt:                placement.SubmittedAt,
-		NextAttemptAt:              placement.NextAttemptAt,
-		StartedAt:                  placement.StartedAt,
-		UpdatedAt:                  placement.UpdatedAt,
-		CompletedAt:                placement.CompletedAt,
-		Evidence:                   items,
-		Errors:                     statusErrors,
-		QuarantineExpiresAt:        placement.QuarantineExpiresAt,
-		ReplacementWindowExpiresAt: placement.ReplacementWindowExpiresAt,
-		SemanticHold:               submissionSemanticHoldFromLedger(placement),
+		SubmissionID:        placement.IngestID,
+		SubmissionKind:      "remember",
+		ProcessingState:     processing,
+		SearchState:         searchState,
+		CheckAfterSeconds:   rememberCheckAfterSeconds,
+		CorrelationID:       placement.CorrelationID,
+		SubmittedAt:         placement.SubmittedAt,
+		NextAttemptAt:       placement.NextAttemptAt,
+		StartedAt:           placement.StartedAt,
+		UpdatedAt:           placement.UpdatedAt,
+		CompletedAt:         placement.CompletedAt,
+		Evidence:            items,
+		Errors:              statusErrors,
+		QuarantineExpiresAt: placement.QuarantineExpiresAt,
+		// Remember semantic holds and replacement windows were removed at the
+		// normalizer restart boundary. Failed submissions always carry bounded
+		// resubmission guidance in Errors instead.
 	}
 	if placement.MaxAttempts > 0 {
 		attempts, maxAttempts := placement.Attempts, placement.MaxAttempts
@@ -522,13 +430,7 @@ func ProjectSubmissionStatus(placement *repository.CreateIngestResult) *Submissi
 	return submissionStatusResultFromLedger(placement)
 }
 
-func publicSubmissionProcessingState(status, holdState string) string {
-	switch strings.TrimSpace(holdState) {
-	case "active", "expired":
-		return "awaiting_review"
-	case "superseded":
-		return "rejected"
-	}
+func publicSubmissionProcessingState(status string) string {
 	switch strings.TrimSpace(status) {
 	case string(domain.PlacementRunQueued), string(domain.PlacementRunGuarded):
 		return "queued"
@@ -537,7 +439,7 @@ func publicSubmissionProcessingState(status, holdState string) string {
 	case string(domain.PlacementRunCompleted):
 		return "completed"
 	case string(domain.PlacementRunAwaitingReview):
-		return "awaiting_review"
+		return "failed"
 	case string(domain.PlacementRunQuarantined):
 		return "quarantined"
 	case string(domain.PlacementRunFailed):
@@ -545,86 +447,6 @@ func publicSubmissionProcessingState(status, holdState string) string {
 	default:
 		return "failed"
 	}
-}
-
-func submissionSemanticHoldFromLedger(placement *repository.CreateIngestResult) *SubmissionSemanticHold {
-	if placement == nil {
-		return nil
-	}
-	state := strings.TrimSpace(placement.SemanticHoldState)
-	if state != "active" && state != "expired" {
-		return nil
-	}
-	issues := []SubmissionHoldIssue{}
-	truncated := false
-	for _, item := range placement.Items {
-		if value, ok := item.Result["hold_issues_truncated"].(bool); ok && value {
-			truncated = true
-		}
-		for _, raw := range rememberArrayValues(item.Result["hold_issues"]) {
-			fields, ok := raw.(map[string]any)
-			if !ok {
-				continue
-			}
-			issue := SubmissionHoldIssue{
-				Code:            submissionHoldIssueString(fields, "code"),
-				RelationshipRef: submissionHoldIssueString(fields, "relationship_ref"),
-				Component:       submissionHoldIssueString(fields, "component"),
-				Message:         submissionHoldIssueString(fields, "message"),
-			}
-			if issue.Code == "" || issue.Component == "" || issue.Message == "" {
-				continue
-			}
-			if !submissionHoldIssueAllowed(issue.Code, submissionHoldIssueCodes) ||
-				!submissionHoldIssueAllowed(issue.Component, submissionHoldIssueComponents) {
-				truncated = true
-				continue
-			}
-			if len([]rune(issue.Message)) > submissionHoldIssueMessageMaxLength {
-				issue.Message = string([]rune(issue.Message)[:submissionHoldIssueMessageMaxLength])
-			}
-			if len(issues) >= submissionAssessmentMaxHoldIssues {
-				truncated = true
-				break
-			}
-			issues = append(issues, issue)
-		}
-		if len(issues) > 0 || truncated {
-			break
-		}
-	}
-	if len(issues) == 0 {
-		issues = append(issues, SubmissionHoldIssue{
-			Code:      "commit_review_required",
-			Component: "relationship",
-			Message:   "submission requires a corrected complete replacement before semantic commit",
-		})
-	}
-	return &SubmissionSemanticHold{
-		State:           state,
-		Issues:          issues,
-		IssuesTruncated: truncated,
-		Replacement: SubmissionReplacementGuidance{
-			Tool:                 "remember",
-			ReplacesSubmissionID: placement.IngestID,
-			ExpiresAt:            placement.ReplacementWindowExpiresAt,
-			Instruction:          "Submit one complete corrected replacement batch; partial replacement is not supported.",
-		},
-	}
-}
-
-func submissionHoldIssueString(fields map[string]any, key string) string {
-	value, _ := fields[key].(string)
-	return strings.TrimSpace(value)
-}
-
-func submissionHoldIssueAllowed(value string, allowed []string) bool {
-	for _, candidate := range allowed {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
 }
 
 func sourceRevisionContentHashes(evidence []RememberEvidenceInput) map[string]string {
@@ -664,12 +486,11 @@ func sourceRevisionBatchHash(contents []string) string {
 
 func canonicalRequestHash(req RememberRequest) (string, error) {
 	payload := map[string]any{
-		"contract_version":       legacyRequestHashContractVersion,
-		"evidence":               req.Evidence,
-		"entity_hints":           req.EntityHints,
-		"relationship_hints":     req.RelationshipHints,
-		"idempotency_key":        strings.TrimSpace(req.IdempotencyKey),
-		"replaces_submission_id": strings.TrimSpace(req.ReplacesSubmissionID),
+		"contract_version":   legacyRequestHashContractVersion,
+		"evidence":           req.Evidence,
+		"entity_hints":       req.EntityHints,
+		"relationship_hints": req.RelationshipHints,
+		"idempotency_key":    strings.TrimSpace(req.IdempotencyKey),
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -687,7 +508,7 @@ func rememberResultFromLedger(created *repository.CreateIngestResult, correlatio
 		IngestID:          created.IngestID,
 		SubmissionID:      created.IngestID,
 		SubmissionKind:    "remember",
-		ProcessingState:   publicSubmissionProcessingState(created.Status, created.SemanticHoldState),
+		ProcessingState:   publicSubmissionProcessingState(created.Status),
 		CheckAfterSeconds: rememberCheckAfterSeconds,
 		StatusTool:        rememberStatusTool,
 		CorrelationID:     correlationID,
@@ -768,12 +589,8 @@ func resultArray(result map[string]any, key string) []any {
 
 func translateRememberLedgerError(err error) error {
 	switch {
-	case errors.Is(err, repository.ErrSubmissionReplacementConflict):
-		return httperr.New(httperr.CONFLICT, "submission replacement conflict")
 	case errors.Is(err, repository.ErrIdempotencyConflict), errors.Is(err, repository.ErrSourceRevisionConflict):
 		return fmt.Errorf("%w: duplicate or stale intake request", ErrRememberConflict)
-	case errors.Is(err, repository.ErrSubmissionReplacementNotFound):
-		return httperr.New(httperr.NOT_FOUND, "submission not found")
 	case errors.Is(err, repository.ErrTeamInactive):
 		return httperr.New(httperr.NOT_FOUND, "team not found")
 	default:
