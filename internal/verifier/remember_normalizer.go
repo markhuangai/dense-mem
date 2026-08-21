@@ -335,7 +335,9 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 			if result.CandidateEntityID == nil || candidateContextTruncated || len(candidates) != 1 || candidates[0].EntityID != *result.CandidateEntityID {
 				errs = append(errs, semanticErr(field+".candidate_entity_id", "reuse requires one compatible submitted candidate"))
 			}
-		} else if result.Action == string(domain.EntityResolutionCreate) && !candidateContextTruncated && len(candidates) > 0 {
+		} else if result.Action == string(domain.EntityResolutionCreate) && candidateContextTruncated {
+			errs = append(errs, semanticErr(field+".action", "create is not allowed when candidate context is truncated"))
+		} else if result.Action == string(domain.EntityResolutionCreate) && len(candidates) > 0 {
 			errs = append(errs, semanticErr(field+".action", "create is not allowed when a compatible submitted candidate exists"))
 		} else if result.CandidateEntityID != nil {
 			errs = append(errs, semanticErr(field+".candidate_entity_id", "must be null unless action is reuse"))

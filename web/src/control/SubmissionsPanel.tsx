@@ -283,6 +283,22 @@ function SubmissionDetail({
             <strong>{statusError.code}</strong>
             <p>{statusError.message}</p>
             <p className="submission-remediation">{statusError.remediation}</p>
+            {statusError.resubmission_issues?.map((issue, index) => (
+              <div className="submission-resubmission-issue" key={`${issue.code}:${issue.relationship_ref ?? ""}:${index}`}>
+                <strong>{issue.code}</strong>
+                {(issue.relationship_ref || issue.component) && (
+                  <small>
+                    {issue.relationship_ref ? `Relationship ${issue.relationship_ref}` : ""}
+                    {issue.relationship_ref && issue.component ? " · " : ""}
+                    {issue.component ? `Component ${issue.component}` : ""}
+                  </small>
+                )}
+                <p>{issue.message}</p>
+              </div>
+            ))}
+            {statusError.resubmission_issues_truncated && (
+              <p className="submission-remediation">Additional resubmission issues are not shown.</p>
+            )}
           </div>
           <span className={statusError.retryable ? "status-pill warning" : "status-pill error"}>
             {actionLabel(statusError.next_action)}

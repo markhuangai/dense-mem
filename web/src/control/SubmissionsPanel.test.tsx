@@ -235,6 +235,13 @@ describe("SubmissionsPanel", () => {
           retryable: true,
           next_action: "resubmit_submission",
           remediation: "Submit the complete batch again with remember and a new idempotency_key after correcting the input.",
+          resubmission_issues: [{
+            code: "relationship_component_invalid",
+            relationship_ref: "relationship-1",
+            component: "predicate",
+            message: "Choose a registered predicate for relationship-1.",
+          }],
+          resubmission_issues_truncated: true,
         }],
       }),
       listOperationLogs: vi.fn().mockResolvedValue({
@@ -247,6 +254,10 @@ describe("SubmissionsPanel", () => {
     expect(await screen.findByText("search_projection_failed")).toBeInTheDocument();
     expect(screen.getByText("Inspect the embedding worker and retry the submission.")).toBeInTheDocument();
     expect(screen.getByText("Submit the complete batch again with remember and a new idempotency_key after correcting the input.")).toBeInTheDocument();
+    expect(screen.getByText("relationship_component_invalid")).toBeInTheDocument();
+    expect(screen.getByText("Relationship relationship-1 · Component predicate")).toBeInTheDocument();
+    expect(screen.getByText("Choose a registered predicate for relationship-1.")).toBeInTheDocument();
+    expect(screen.getByText("Additional resubmission issues are not shown.")).toBeInTheDocument();
   });
 
   it("does not leave a previous submission detail visible after a new detail request fails", async () => {

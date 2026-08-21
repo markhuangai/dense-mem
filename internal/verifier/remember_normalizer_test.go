@@ -128,6 +128,14 @@ func TestPrepareRememberNormalizerResponseEnforcesCandidateAndPredicateAllowlist
 		request.EntityCandidateGroups[0].CandidateContextTruncated = true
 		_, errs = PrepareRememberNormalizerResponse(request, response, limits)
 		require.Contains(t, semanticAssessmentJoinedErrors(errs), "reuse requires one compatible submitted candidate")
+
+		request, limits = validRememberNormalizerRequest(t)
+		response = validRememberNormalizerResponse(t, request)
+		response.EntityResults[0].Action = "create"
+		response.EntityResults[0].CandidateEntityID = nil
+		request.EntityCandidateGroups[0].CandidateContextTruncated = true
+		_, errs = PrepareRememberNormalizerResponse(request, response, limits)
+		require.Contains(t, semanticAssessmentJoinedErrors(errs), "create is not allowed when candidate context is truncated")
 	})
 
 	t.Run("resolved predicate must match endpoint kinds", func(t *testing.T) {
