@@ -139,7 +139,7 @@ $dense_mem_private_tables_rls$;
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS memory_space_id UUID NULL;
 ALTER TABLE audit_log DROP CONSTRAINT IF EXISTS audit_log_memory_space_id_fkey;
 ALTER TABLE audit_log ADD CONSTRAINT audit_log_memory_space_id_fkey
-    FOREIGN KEY (memory_space_id) REFERENCES memory_spaces(id) ON DELETE RESTRICT NOT VALID;
+    FOREIGN KEY (memory_space_id) REFERENCES memory_spaces(id) ON DELETE SET NULL NOT VALID;
 DROP POLICY IF EXISTS audit_log_private_erasure_update ON audit_log;
 CREATE POLICY audit_log_private_erasure_update ON audit_log
     FOR UPDATE
@@ -155,14 +155,22 @@ CREATE POLICY audit_log_private_erasure_update ON audit_log
 CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
-	IF TG_OP = 'UPDATE'
-	   AND current_setting('app.tx_mode', true) = 'migration'
+    IF TG_OP = 'UPDATE'
+       AND current_setting('app.tx_mode', true) = 'migration'
 	   AND OLD.memory_space_id IS NULL
 	   AND NEW.memory_space_id IS NOT NULL
 	   AND (to_jsonb(NEW) - ARRAY['memory_space_id'])
 	       = (to_jsonb(OLD) - ARRAY['memory_space_id']) THEN
 		RETURN NEW;
 	END IF;
+    IF TG_OP = 'UPDATE'
+       AND current_setting('app.tx_mode', true) = 'system'
+       AND OLD.memory_space_id IS NOT NULL
+       AND NEW.memory_space_id IS NULL
+       AND (to_jsonb(NEW) - ARRAY['memory_space_id', 'updated_at'])
+           = (to_jsonb(OLD) - ARRAY['memory_space_id', 'updated_at']) THEN
+        RETURN NEW;
+    END IF;
     IF TG_OP = 'UPDATE'
        AND current_setting('app.tx_mode', true) = 'system'
        AND NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid = OLD.memory_space_id

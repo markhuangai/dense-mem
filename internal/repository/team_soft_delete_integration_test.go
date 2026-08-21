@@ -188,6 +188,86 @@ func TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog(t *testing.T) {
 	}))
 }
 
+func TestTeamSoftDeleteLeavesSealedGenerationEmbeddingJobUntouched(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "team-delete-sealed-embedding")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner-delete-sealed-embedding")
+	insertSearchTestContract(t, adminDB, rls, "team-delete-sealed-embedding", 3, "exact", "")
+	searchRepo := NewSearchRepository(appDB, rls)
+	privateSpace, err := NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	require.NoError(t, err)
+
+	var privateGeneration int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT generation FROM memory_spaces WHERE id = ?::uuid`, privateSpace.ID).Row().Scan(&privateGeneration)
+	}))
+	searchDocument, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: uuid.NewString(),
+		SourceVersion: 1, DocumentText: "sealed private embedding job", SpaceID: privateSpace.ID.String(), SpaceGeneration: privateGeneration,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE memory_spaces
+			SET lifecycle_state = 'sealed', generation = generation + 1, sealed_at = now(), updated_at = now()
+			WHERE id = ?::uuid
+		`, privateSpace.ID).Error
+	}))
+
+	require.NoError(t, NewTeamRepository(appDB, rls).SoftDelete(ctx, uuid.MustParse(teamID)))
+
+	var status, jobError, workerID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status, error, worker_id
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, searchDocument.SearchDocumentID).Row().Scan(&status, &jobError, &workerID)
+	}))
+	assert.Equal(t, "queued", status)
+	assert.Empty(t, jobError)
+	assert.Empty(t, workerID)
+}
+
+func TestTeamHardDeletePreservesAuditRowWhenMemorySpaceIsRemoved(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "team-hard-delete-audit-space"))
+	spaceID := uuid.New()
+	auditID := uuid.New()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT id FROM memory_spaces WHERE team_id = ?::uuid AND kind = 'team_shared'`, teamID).Row().Scan(&spaceID); err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO audit_log (
+				id, team_id, operation, entity_type, entity_id, before_payload, metadata, memory_space_id
+			) VALUES (?, ?, 'DELETE', 'memory', 'hard-delete-audit', '{"before":"retained"}'::jsonb, '{"source":"test"}'::jsonb, ?)
+		`, auditID, teamID, spaceID).Error
+	}))
+
+	require.NoError(t, NewTeamRepository(appDB, rls).HardDelete(ctx, teamID))
+
+	var retainedTeamID string
+	var retainedSpaceID *string
+	var beforePayload, metadata []byte
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT team_id::text, memory_space_id::text, before_payload, metadata
+			FROM audit_log
+			WHERE id = ?
+		`, auditID).Row().Scan(&retainedTeamID, &retainedSpaceID, &beforePayload, &metadata)
+	}))
+	assert.Equal(t, teamID.String(), retainedTeamID)
+	assert.Nil(t, retainedSpaceID)
+	assert.JSONEq(t, `{"before":"retained"}`, string(beforePayload))
+	assert.JSONEq(t, `{"source":"test"}`, string(metadata))
+}
+
 func TestSSORuntimeEntitlementsExcludeArchivedTeams(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

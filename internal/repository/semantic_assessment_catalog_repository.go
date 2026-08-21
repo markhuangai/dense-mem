@@ -40,12 +40,15 @@ func (r *SemanticRepositoryImpl) ListSemanticAssessmentEntityMatches(
 			JOIN entity_records AS rec
 			  ON rec.team_id = name.team_id
 			 AND rec.entity_id = name.entity_id
+			 AND `+activeSemanticSpaceGenerationSQL("rec")+`
 			LEFT JOIN entity_names AS canonical
 			  ON canonical.team_id = rec.team_id
 			 AND canonical.entity_id = rec.entity_id
+			 AND `+activeSemanticSpaceGenerationSQL("canonical")+`
 			 AND canonical.name_kind = 'canonical'
 			 AND canonical.valid_to IS NULL
 			WHERE name.team_id = ?::uuid
+			  AND `+activeSemanticSpaceGenerationSQL("name")+`
 			  AND name.valid_to IS NULL
 			  AND name.name_kind IN ('canonical', 'alias')
 			  AND rec.status = 'active'
@@ -114,9 +117,11 @@ func (r *SemanticRepositoryImpl) ListSemanticAssessmentKnownEntities(
 			LEFT JOIN entity_names AS canonical
 			  ON canonical.team_id = rec.team_id
 			 AND canonical.entity_id = rec.entity_id
+			 AND `+activeSemanticSpaceGenerationSQL("canonical")+`
 			 AND canonical.name_kind = 'canonical'
 			 AND canonical.valid_to IS NULL
 			WHERE rec.team_id = ?::uuid
+			  AND `+activeSemanticSpaceGenerationSQL("rec")+`
 			  AND rec.entity_id = ANY(?::uuid[])
 			  AND rec.status = 'active'
 			ORDER BY rec.entity_id

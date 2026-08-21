@@ -37,9 +37,9 @@ func (r *LedgerRepositoryImpl) ReadTelemetryLifecycle(ctx context.Context, filte
 	}
 
 	read := func(tx *gorm.DB) error {
-		where, args := telemetryLifecycleScopeClause(filter)
-		transitionQuery := "SELECT to_status, count(*) FROM relationship_transition_events WHERE created_at >= ? AND created_at < ?" + where + " GROUP BY to_status"
-		rows, queryErr := tx.WithContext(ctx).Raw(transitionQuery, append([]any{from, to}, args...)...).Rows()
+		transitionWhere, transitionArgs := telemetryLifecycleScopeClause(filter, "event")
+		transitionQuery := "SELECT event.to_status, count(*) FROM relationship_transition_events AS event WHERE event.created_at >= ? AND event.created_at < ?" + transitionWhere + " AND " + activeSemanticSpaceGenerationSQL("event") + " GROUP BY event.to_status"
+		rows, queryErr := tx.WithContext(ctx).Raw(transitionQuery, append([]any{from, to}, transitionArgs...)...).Rows()
 		if queryErr != nil {
 			return queryErr
 		}
@@ -56,13 +56,15 @@ func (r *LedgerRepositoryImpl) ReadTelemetryLifecycle(ctx context.Context, filte
 			return rowsErr
 		}
 
-		correctionQuery := "SELECT count(*) FROM relationship_correction_events WHERE created_at >= ? AND created_at < ?" + where
-		if queryErr := tx.WithContext(ctx).Raw(correctionQuery, append([]any{from, to}, args...)...).Scan(&snapshot.Corrections).Error; queryErr != nil {
+		correctionWhere, correctionArgs := telemetryLifecycleScopeClause(filter, "event")
+		correctionQuery := "SELECT count(*) FROM relationship_correction_events AS event WHERE event.created_at >= ? AND event.created_at < ?" + correctionWhere + " AND " + activeSemanticSpaceGenerationSQL("event")
+		if queryErr := tx.WithContext(ctx).Raw(correctionQuery, append([]any{from, to}, correctionArgs...)...).Scan(&snapshot.Corrections).Error; queryErr != nil {
 			return queryErr
 		}
 
-		currentQuery := "SELECT status, count(*) FROM relationship_records WHERE 1=1" + where + " GROUP BY status"
-		rows, queryErr = tx.WithContext(ctx).Raw(currentQuery, args...).Rows()
+		currentWhere, currentArgs := telemetryLifecycleScopeClause(filter, "relationship")
+		currentQuery := "SELECT relationship.status, count(*) FROM relationship_records AS relationship WHERE 1=1" + currentWhere + " AND " + activeSemanticSpaceGenerationSQL("relationship") + " GROUP BY relationship.status"
+		rows, queryErr = tx.WithContext(ctx).Raw(currentQuery, currentArgs...).Rows()
 		if queryErr != nil {
 			return queryErr
 		}
@@ -89,12 +91,12 @@ func (r *LedgerRepositoryImpl) ReadTelemetryLifecycle(ctx context.Context, filte
 	return snapshot, err
 }
 
-func telemetryLifecycleScopeClause(filter TelemetryLifecycleFilter) (string, []any) {
+func telemetryLifecycleScopeClause(filter TelemetryLifecycleFilter, alias string) (string, []any) {
 	if filter.TeamID == nil {
 		return "", nil
 	}
 	if filter.ProfileID == nil {
-		return " AND team_id = ?", []any{filter.TeamID.String()}
+		return " AND " + alias + ".team_id = ?", []any{filter.TeamID.String()}
 	}
-	return " AND team_id = ? AND owner_profile_id = ?", []any{filter.TeamID.String(), filter.ProfileID.String()}
+	return " AND " + alias + ".team_id = ? AND " + alias + ".owner_profile_id = ?", []any{filter.TeamID.String(), filter.ProfileID.String()}
 }

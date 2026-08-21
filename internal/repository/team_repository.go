@@ -311,15 +311,16 @@ func (r *TeamRepositoryImpl) SoftDelete(ctx context.Context, id uuid.UUID) error
 			return err
 		}
 		if err := tx.Exec(`
-			UPDATE embedding_jobs
+			UPDATE embedding_jobs AS job
 			SET status = 'stale',
 			    error = 'team deleted before embedding processing',
 			    completed_at = $1,
 			    lease_until = NULL,
 			    worker_id = '',
 			    updated_at = $1
-			WHERE team_id = $2
-			  AND status IN ('queued', 'processing')
+			WHERE job.team_id = $2
+			  AND job.status IN ('queued', 'processing')
+			  AND `+activeSemanticSpaceGenerationSQL("job")+`
 		`, now, id).Error; err != nil {
 			return err
 		}

@@ -869,9 +869,11 @@ func loadSemanticReviewEntityCandidateByID(
 		LEFT JOIN entity_names AS canonical
 		  ON canonical.team_id = rec.team_id
 		 AND canonical.entity_id = rec.entity_id
+		 AND `+activeSemanticSpaceGenerationSQL("canonical")+`
 		 AND canonical.name_kind = 'canonical'
 		 AND canonical.valid_to IS NULL
 		WHERE rec.team_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("rec")+`
 		  AND rec.entity_id = ?::uuid
 		  AND (? = '' OR rec.entity_kind = ?)
 		LIMIT 1
@@ -904,12 +906,15 @@ func loadSemanticReviewEntityCandidatesByName(
 		JOIN entity_records AS rec
 		  ON rec.team_id = name.team_id
 		 AND rec.entity_id = name.entity_id
+		 AND `+activeSemanticSpaceGenerationSQL("rec")+`
 		LEFT JOIN entity_names AS canonical
 		  ON canonical.team_id = rec.team_id
 		 AND canonical.entity_id = rec.entity_id
+		 AND `+activeSemanticSpaceGenerationSQL("canonical")+`
 		 AND canonical.name_kind = 'canonical'
 		 AND canonical.valid_to IS NULL
 		WHERE name.team_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("name")+`
 		  AND name.normalized_name = ?
 		  AND name.valid_to IS NULL
 		  AND (? = '' OR rec.entity_kind = ?)
