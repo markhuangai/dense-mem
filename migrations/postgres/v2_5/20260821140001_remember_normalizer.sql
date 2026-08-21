@@ -1,3 +1,20 @@
+-- Lock/rewrite impact: placement_runs and placement_items take ACCESS EXCLUSIVE
+-- locks while their status/legacy-column constraints are replaced; the row
+-- terminalization and hold-table drop are metadata/targeted updates and do not
+-- rewrite completed semantic history. Schedule this exclusive restart while
+-- Remember traffic is stopped.
+-- RLS impact: the migration explicitly enters migration mode and clears the
+-- team/profile context. Existing placement/review policies remain authoritative;
+-- dropped hold policies and indexes are removed with the obsolete table.
+-- Backfill: unfinished Remember runs/items and matching ingests are terminalized
+-- as failed, assessor claims are cleared, and linked review tasks are canceled;
+-- completed canonical state and unrelated review work are retained.
+-- Backward compatibility: this is a one-way V2.5 restart boundary. Historical
+-- awaiting_review work is not resumed, and callers must resubmit the complete
+-- evidence batch with a new idempotency key after the service restarts.
+-- Rollback: irreversible. Restoring the removed hold/replacement schema or
+-- reopening unfinished runs would change durable workflow history.
+
 -- +goose Up
 -- +goose StatementBegin
 
