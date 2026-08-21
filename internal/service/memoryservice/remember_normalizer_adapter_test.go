@@ -148,6 +148,29 @@ func TestRememberNormalizerResponseToSemanticAssessmentSelectsGroundingNearEndpo
 	assert.Equal(t, 30, converted.EntityResults[1].Start)
 }
 
+func TestRememberNormalizerEntityGroundingPreservesProviderChoiceOnTie(t *testing.T) {
+	grounding := func(ref string, start, end int) verifier.SemanticAssessmentEntityGrounding {
+		return verifier.SemanticAssessmentEntityGrounding{GroundingRef: ref, EvidenceID: "evidence:0", Start: start, End: end}
+	}
+	first, second := grounding("g-first", 0, 14), grounding("g-second", 30, 44)
+	entityID := "entity:aurora"
+	request := verifier.RememberNormalizerRequest{EntityCandidateGroups: []verifier.SemanticAssessmentEntityCandidateGroup{
+		{GroundingRef: first.GroundingRef, Candidates: []verifier.SemanticAssessmentEntityCandidate{{EntityID: entityID, Kind: "project"}}},
+		{GroundingRef: second.GroundingRef, Candidates: []verifier.SemanticAssessmentEntityCandidate{{EntityID: entityID, Kind: "project"}}},
+	}}
+	groundingRef := second.GroundingRef
+	selected, ok := rememberNormalizerEntityGrounding(
+		request,
+		verifier.SemanticAssessmentRequiredEntityRef{
+			Name: "Project Aurora", Kind: "project", Groundings: []verifier.SemanticAssessmentEntityGrounding{first, second},
+		},
+		verifier.RememberNormalizerEntityResult{GroundingRef: &groundingRef, Action: "reuse", CandidateEntityID: &entityID},
+		[]verifier.RememberNormalizerRange{{EvidenceID: "evidence:0", Start: 20, End: 24}},
+	)
+	require.True(t, ok)
+	assert.Equal(t, second.GroundingRef, selected.GroundingRef)
+}
+
 func adapterTestSubmissionContract() *verifier.SemanticAssessmentSubmissionContract {
 	return &verifier.SemanticAssessmentSubmissionContract{
 		Entities: []verifier.SemanticAssessmentRequiredEntityRef{

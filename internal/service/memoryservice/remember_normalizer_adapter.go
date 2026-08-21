@@ -1,6 +1,7 @@
 package memoryservice
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -153,6 +154,19 @@ func rememberNormalizerEntityGrounding(
 	best := providerGrounding
 	bestDistance := 0
 	bestFound := false
+	for _, predicateRange := range predicateRanges {
+		if providerGrounding.EvidenceID != predicateRange.EvidenceID {
+			continue
+		}
+		distance := rememberNormalizerSpanDistance(providerGrounding.Start, providerGrounding.End, predicateRange.Start, predicateRange.End)
+		if !bestFound || distance < bestDistance {
+			bestDistance = distance
+			bestFound = true
+		}
+	}
+	if !bestFound {
+		return providerGrounding, true
+	}
 	for _, grounding := range target.Groundings {
 		if !rememberNormalizerGroundingCompatible(req, target, entity, grounding) {
 			continue
@@ -162,18 +176,13 @@ func rememberNormalizerEntityGrounding(
 				continue
 			}
 			distance := rememberNormalizerSpanDistance(grounding.Start, grounding.End, predicateRange.Start, predicateRange.End)
-			if !bestFound || distance < bestDistance ||
-				(distance == bestDistance && rememberNormalizerGroundingLess(grounding, best)) {
+			if distance < bestDistance {
 				best = grounding
 				bestDistance = distance
-				bestFound = true
 			}
 		}
 	}
-	if bestFound {
-		return best, true
-	}
-	return providerGrounding, true
+	return best, true
 }
 
 func rememberNormalizerGroundingByRef(
@@ -233,17 +242,26 @@ func rememberNormalizerSpanDistance(leftStart, leftEnd, rightStart, rightEnd int
 	return 0
 }
 
-func rememberNormalizerGroundingLess(left, right verifier.SemanticAssessmentEntityGrounding) bool {
-	if left.EvidenceID != right.EvidenceID {
-		return left.EvidenceID < right.EvidenceID
+// rememberNormalizerFinalResponseLimits keeps the model-facing output budget
+// independent from deterministic compatibility fields added after the model
+// response has been accepted. The final response remains bounded by its
+// measured serialized size and is revalidated with that same bound when read.
+func rememberNormalizerFinalResponseLimits(
+	limits verifier.SemanticAssessmentLimits,
+	response verifier.SemanticAssessmentResponse,
+) (verifier.SemanticAssessmentLimits, error) {
+	raw, err := json.Marshal(response)
+	if err != nil {
+		return limits, fmt.Errorf("marshal normalized assessment response: %w", err)
 	}
-	if left.Start != right.Start {
-		return left.Start < right.Start
+	outputTokens, err := verifier.CountTokens(string(raw), limits.Tokenizer)
+	if err != nil {
+		return limits, fmt.Errorf("count normalized assessment response tokens: %w", err)
 	}
-	if left.End != right.End {
-		return left.End < right.End
+	if outputTokens > limits.MaxOutputTokens {
+		limits.MaxOutputTokens = outputTokens
 	}
-	return left.GroundingRef < right.GroundingRef
+	return limits, nil
 }
 
 func normalizerRangeToAssessmentRange(value verifier.RememberNormalizerRange) verifier.SemanticAssessmentGroundedRange {

@@ -148,10 +148,23 @@ func TestValidateContractInputIssuesBoundsUnknownFieldOutput(t *testing.T) {
 	require.NoError(t, err)
 	longKey := strings.Repeat("x", maxContractValidationPathRunes*4)
 	result := ValidateContractInputIssues(remember, map[string]any{longKey: true}, []string{"write"})
-	require.NotEmpty(t, result.Issues)
-	require.LessOrEqual(t, len([]rune(result.Issues[0].Path)), maxContractValidationPathRunes)
-	require.LessOrEqual(t, len([]rune(result.Issues[0].Message)), maxContractValidationMessageRunes)
-	require.NotContains(t, result.Issues[0].Message, longKey)
+	var unknownField *ContractValidationIssue
+	for index := range result.Issues {
+		if result.Issues[index].Code == "unknown_field" {
+			unknownField = &result.Issues[index]
+			break
+		}
+	}
+	require.NotNil(t, unknownField)
+	require.LessOrEqual(t, len([]rune(unknownField.Path)), maxContractValidationPathRunes)
+	require.LessOrEqual(t, len([]rune(unknownField.Message)), maxContractValidationMessageRunes)
+	require.NotContains(t, unknownField.Message, longKey)
+}
+
+func TestContractIssueCollectorPreservesJSONPointerWhitespace(t *testing.T) {
+	collector := contractIssueCollector{}
+	collector.add("/field ", "invalid", "bad value")
+	require.Contains(t, collector.issues, ContractValidationIssue{Path: "/field ", Code: "invalid", Message: "bad value"})
 }
 
 func TestValidateContractInputIssuesBoundsOversizedTraversal(t *testing.T) {

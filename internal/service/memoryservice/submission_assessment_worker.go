@@ -349,7 +349,14 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 		observability.RecordAssessorCall(s.metrics, request.InputTokens, 0, time.Since(started).Seconds(), outcome)
 		return nil, verifier.SemanticAssessmentResponse{}, false, true, releaseProviderAttempt, err
 	}
-	normalized, validationErrors := verifier.PrepareSemanticAssessmentResponse(request, response, s.limits)
+	validationLimits := s.limits
+	if s.normalizer != nil {
+		validationLimits, err = rememberNormalizerFinalResponseLimits(validationLimits, response)
+		if err != nil {
+			return nil, verifier.SemanticAssessmentResponse{}, false, true, false, err
+		}
+	}
+	normalized, validationErrors := verifier.PrepareSemanticAssessmentResponse(request, response, validationLimits)
 	if len(validationErrors) > 0 {
 		observability.RecordAssessorCall(s.metrics, request.InputTokens, response.OutputTokens, time.Since(started).Seconds(), "malformed_exhausted")
 		observability.RecordAssessorValidationFailure(s.metrics, "response_contract")
@@ -408,32 +415,6 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	}
 	observability.RecordAssessorAssessmentPersistence(s.metrics, "persisted")
 	return persisted, normalized, false, true, false, nil
-}
-
-func decodeStoredSubmissionAssessment(
-	assessment *repository.SubmissionAssessment,
-	request verifier.SemanticAssessmentRequest,
-	limits verifier.SemanticAssessmentLimits,
-) (verifier.SemanticAssessmentResponse, error) {
-	if assessment == nil {
-		return verifier.SemanticAssessmentResponse{}, newStoredSubmissionAssessmentValidationError(errors.New("stored submission assessment is nil"))
-	}
-	canonicalJSON, err := verifier.CanonicalJSON(assessment.NormalizedResponse)
-	if err != nil {
-		return verifier.SemanticAssessmentResponse{}, newStoredSubmissionAssessmentValidationError(fmt.Errorf("stored submission assessment response is invalid JSON: %w", err))
-	}
-	if semanticAssessmentHash(canonicalJSON) != assessment.ResponseHash {
-		return verifier.SemanticAssessmentResponse{}, newStoredSubmissionAssessmentValidationError(errors.New("stored submission assessment hash mismatch"))
-	}
-	response, err := verifier.DecodeSemanticAssessmentResponseJSON(assessment.NormalizedResponse, limits)
-	if err != nil {
-		return verifier.SemanticAssessmentResponse{}, newStoredSubmissionAssessmentValidationError(err)
-	}
-	prepared, validationErrors := verifier.PrepareSemanticAssessmentResponse(request, response, limits)
-	if len(validationErrors) > 0 {
-		return verifier.SemanticAssessmentResponse{}, newStoredSubmissionAssessmentValidationError(errors.New("stored submission assessment does not match its current contract"))
-	}
-	return prepared, nil
 }
 
 func (s *submissionAssessmentPlacementWorkerService) retryProviderFailure(

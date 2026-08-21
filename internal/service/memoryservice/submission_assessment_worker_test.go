@@ -66,6 +66,33 @@ func TestSubmissionAssessmentWorkerPersistsNormalizerModelProvenance(t *testing.
 	assert.Equal(t, "remember-normalizer-model", assessments.assessment.Model)
 }
 
+func TestSubmissionAssessmentWorkerExcludesAdapterFieldsFromNormalizerBudget(t *testing.T) {
+	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	service.normalizer = submissionAssessmentWorkerNormalizerStub{
+		response: func(req verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error) {
+			return submissionAssessmentValidNormalizerResponse(req), nil
+		},
+	}
+
+	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
+	require.NoError(t, err)
+	probeRequest, err := service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
+	require.NoError(t, err)
+	normalizerResponse := submissionAssessmentValidNormalizerResponse(probeRequest)
+	raw, err := json.Marshal(normalizerResponse)
+	require.NoError(t, err)
+	normalizerTokens, err := verifier.CountTokens(string(raw), service.limits.Tokenizer)
+	require.NoError(t, err)
+	service.limits.MaxOutputTokens = normalizerTokens
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.NotNil(t, assessments.assessment)
+	assert.Greater(t, assessments.assessment.OutputTokens, normalizerTokens)
+}
+
 func TestSubmissionAssessmentWorkerTerminalizesPredicateOptionOverflowBeforeProvider(t *testing.T) {
 	_, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
 	worker.(*submissionAssessmentPlacementWorkerService).normalizer = submissionAssessmentWorkerNormalizerStub{}

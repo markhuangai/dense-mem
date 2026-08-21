@@ -132,7 +132,6 @@ func (c *contractIssueCollector) add(path, code, message string) {
 }
 
 func boundedContractText(value string, maxRunes int) string {
-	value = strings.TrimSpace(value)
 	if len([]rune(value)) <= maxRunes {
 		return value
 	}

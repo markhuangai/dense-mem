@@ -114,7 +114,7 @@ func rememberNormalizerSecuritySignalSchema() map[string]any {
 			[]string{"evidence_id", "kind", "start_ref", "end_ref"},
 			map[string]any{
 				"evidence_id": stringSchema(1, 128),
-				"kind":        enumSchema(semanticSecurityKinds()),
+				"kind":        enumSchema(rememberNormalizerSecurityKinds()),
 				"start_ref":   stringSchema(1, 128),
 				"end_ref":     stringSchema(1, 128),
 			},
@@ -275,7 +275,7 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 		signal := &response.SecuritySignals[index]
 		signal.EvidenceID, signal.Kind = strings.TrimSpace(signal.EvidenceID), strings.TrimSpace(signal.Kind)
 		signal.StartRef, signal.EndRef = strings.TrimSpace(signal.StartRef), strings.TrimSpace(signal.EndRef)
-		if !semanticOneOf(signal.Kind, semanticSecurityKinds()...) {
+		if !semanticOneOf(signal.Kind, rememberNormalizerSecurityKinds()...) {
 			errs = append(errs, semanticErr(fmt.Sprintf("security_signals[%d].kind", index), "is unsupported"))
 		}
 		if evidence, ok := evidenceByID[signal.EvidenceID]; ok {
@@ -514,9 +514,20 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 
 func rememberNormalizerSecuritySignalSpanMatchesKind(kind, quote string) bool {
 	quote = strings.TrimSpace(quote)
-	if quote == "" || rememberNormalizerQuotedExample(quote) {
+	if quote == "" {
 		return false
 	}
+	if rememberNormalizerQuotedExample(quote) {
+		inner := rememberNormalizerQuotedExampleContent(quote)
+		if inner == "" || !rememberNormalizerSecuritySignalSpanMatchesKindUnquoted(kind, inner) {
+			return false
+		}
+		quote = inner
+	}
+	return rememberNormalizerSecuritySignalSpanMatchesKindUnquoted(kind, quote)
+}
+
+func rememberNormalizerSecuritySignalSpanMatchesKindUnquoted(kind, quote string) bool {
 	switch strings.TrimSpace(kind) {
 	case "role_control_spoofing":
 		return rememberNormalizerRoleControlPattern.MatchString(quote)
@@ -528,10 +539,18 @@ func rememberNormalizerSecuritySignalSpanMatchesKind(kind, quote string) bool {
 		return rememberNormalizerToolExfiltrationPattern.MatchString(quote) && rememberNormalizerToolDirectiveStartPattern.MatchString(quote)
 	case "hidden_control_markup":
 		return semanticSecuritySignalSpanMatchesKind(kind, quote)
-	case "obfuscated_instruction":
-		return false
 	default:
 		return false
+	}
+}
+
+func rememberNormalizerSecurityKinds() []string {
+	return []string{
+		"role_control_spoofing",
+		"instruction_override",
+		"prompt_secret_extraction",
+		"tool_exfiltration",
+		"hidden_control_markup",
 	}
 }
 
@@ -542,6 +561,14 @@ func rememberNormalizerQuotedExample(quote string) bool {
 	closing := map[rune]rune{'"': '"', '\'': '\'', '`': '`', '[': ']', '(': ')', '{': '}'}
 	runes := []rune(quote)
 	return closing[runes[0]] == runes[len(runes)-1]
+}
+
+func rememberNormalizerQuotedExampleContent(quote string) string {
+	runes := []rune(strings.TrimSpace(quote))
+	if len(runes) < 2 || !rememberNormalizerQuotedExample(quote) {
+		return ""
+	}
+	return strings.TrimSpace(string(runes[1 : len(runes)-1]))
 }
 
 func normalizerRangeValid(value *RememberNormalizerRange, evidenceByID map[string]SemanticReviewEvidence, allowedEvidence map[string]struct{}, field string) bool {
