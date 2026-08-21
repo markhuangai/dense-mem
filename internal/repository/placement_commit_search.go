@@ -92,12 +92,12 @@ func upsertSearchDocumentInTx(
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH upserted AS (
 			INSERT INTO search_documents (
-			    team_id, owner_profile_id, source_kind, source_id, source_version,
+			    team_id, owner_profile_id, space_id, space_generation, source_kind, source_id, source_version,
 			    projection_format_version, projection_generation_id,
 			    document_version, embedding_contract_id, embedding_dimensions,
 			    search_state, document_text, document_hash, metadata
 			) VALUES (
-			    ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, 1, ?::uuid, ?,
+			    ?::uuid, ?::uuid, COALESCE(NULLIF(?, '')::uuid, dense_mem_team_shared_space(?::uuid)), NULLIF(?, 0)::bigint, ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, 1, ?::uuid, ?,
 			    'pending', ?, ?, ?::jsonb
 			)
 			ON CONFLICT (team_id, source_kind, source_id, embedding_contract_id)
@@ -146,14 +146,18 @@ func upsertSearchDocumentInTx(
 			    END,
 			    metadata = EXCLUDED.metadata,
 			    updated_at = now()
+			WHERE EXCLUDED.source_version >= search_documents.source_version
+			  AND search_documents.space_id = EXCLUDED.space_id
+			  AND search_documents.space_generation = EXCLUDED.space_generation
 			RETURNING team_id::text, search_document_id::text, owner_profile_id::text,
+			          space_id::text, space_generation,
 			          source_kind, source_id::text, source_version,
 			          projection_format_version, COALESCE(projection_generation_id::text, ''),
 			          document_version,
 			          embedding_contract_id::text, embedding_dimensions, search_state
 		)
 		SELECT * FROM upserted
-	`, input.TeamID, input.OwnerProfileID, input.SourceKind, input.SourceID, input.SourceVersion,
+	`, input.TeamID, input.OwnerProfileID, input.SpaceID, input.TeamID, input.SpaceGeneration, input.SourceKind, input.SourceID, input.SourceVersion,
 		input.ProjectionFormat, input.ProjectionGenerationID,
 		contract.EmbeddingContractID, contract.EmbeddingDimensions, input.DocumentText,
 		input.DocumentHash, string(metadata)).Rows()
@@ -169,6 +173,8 @@ func upsertSearchDocumentInTx(
 		&loaded.TeamID,
 		&loaded.SearchDocumentID,
 		&loaded.OwnerProfileID,
+		&loaded.SpaceID,
+		&loaded.SpaceGeneration,
 		&loaded.SourceKind,
 		&loaded.SourceID,
 		&loaded.SourceVersion,
@@ -500,24 +506,28 @@ func upsertPlacementEvidenceSearchDocumentWithContract(
 		return nil, errors.New("active search contract is required")
 	}
 	var content string
+	var spaceID string
+	var spaceGeneration int64
 	if err := tx.WithContext(ctx).Raw(`
-		SELECT content
+		SELECT content, space_id::text, COALESCE(space_generation, 0)
 		FROM evidence_fragments
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
 		  AND fragment_id = ?::uuid
 		LIMIT 1
-	`, commit.TeamID, commit.OwnerProfileID, fragmentID).Row().Scan(&content); err != nil {
+	`, commit.TeamID, commit.OwnerProfileID, fragmentID).Row().Scan(&content, &spaceID, &spaceGeneration); err != nil {
 		return nil, err
 	}
 	input := normalizeUpsertSearchDocumentInput(UpsertSearchDocumentInput{
-		TeamID:         commit.TeamID,
-		OwnerProfileID: commit.OwnerProfileID,
-		SourceKind:     "evidence",
-		SourceID:       fragmentID,
-		SourceVersion:  1,
-		DocumentText:   content,
-		Metadata:       metadata,
+		TeamID:          commit.TeamID,
+		OwnerProfileID:  commit.OwnerProfileID,
+		SourceKind:      "evidence",
+		SourceID:        fragmentID,
+		SourceVersion:   1,
+		DocumentText:    content,
+		Metadata:        metadata,
+		SpaceID:         spaceID,
+		SpaceGeneration: spaceGeneration,
 	})
 	if err := validateUpsertSearchDocumentInput(input); err != nil {
 		return nil, err

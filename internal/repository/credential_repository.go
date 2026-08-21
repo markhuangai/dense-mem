@@ -170,6 +170,20 @@ func (r *CredentialRepositoryImpl) CreateCredential(ctx context.Context, credent
 		}
 		credential.MemoryBinding = binding
 		credential.MemorySpaceID = memorySpaceID
+		if err := withSystemModeInTx(ctx, tx, teamID.String(), credential.ID.String(), func(systemTx *gorm.DB) error {
+			return systemTx.Raw(`
+				SELECT
+					(SELECT generation FROM memory_spaces WHERE id = ?::uuid),
+					(SELECT id FROM memory_spaces WHERE team_id = ?::uuid AND kind = 'team_shared' LIMIT 1),
+					(SELECT generation FROM memory_spaces WHERE team_id = ?::uuid AND kind = 'team_shared' LIMIT 1)
+			`, memorySpaceID, teamID, teamID).Row().Scan(
+				&credential.MemorySpaceGeneration,
+				&credential.TeamSharedSpaceID,
+				&credential.TeamSharedSpaceGeneration,
+			)
+		}); err != nil {
+			return err
+		}
 		return tx.Exec(`
 			INSERT INTO ownership_aliases (
 				team_id, legacy_owner_id, canonical_identity_id, credential_id, reason
@@ -215,30 +229,10 @@ func (r *CredentialRepositoryImpl) ListByTeam(ctx context.Context, teamID uuid.U
 	credentials := make([]*domain.Credential, 0)
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		rows, rerr := tx.Raw(`
-				SELECT
-					c.id, c.actor_identity_id, membership.id, alias.legacy_owner_id,
-					c.team_id, COALESCE(t.name, ''), COALESCE(c.key_suffix, ''), c.name, c.scopes,
-					CASE WHEN m.team_admin THEN 'manager' ELSE 'member' END, c.rate_limit,
-					c.last_used_at, c.expires_at, c.created_at, c.revoked_at,
-					COALESCE(c.owner_identity_id::text, ''),
-					COALESCE(owner_membership.sso_provider_id::text, ''),
-					COALESCE(owner_actor.subject, ''), COALESCE(owner_sso.email, ''),
-					COALESCE(owner_membership.sso_group_id, ''),
-					COALESCE(owner_membership.sso_entitlement_status, ''),
-					owner_membership.sso_last_entitlement_checked_at,
-					owner_membership.sso_last_login_at,
-					COALESCE(c.memory_binding, 'shared_only'), COALESCE(c.memory_space_id::text, ''),
-					COALESCE((
-						SELECT shared_space.id::text
-						FROM memory_spaces AS shared_space
-						WHERE shared_space.team_id = c.team_id
-						  AND shared_space.kind = 'team_shared'
-						LIMIT 1
-					), '')
+				SELECT `+credentialHydrationSelect+`
 				FROM credentials c
 				JOIN team_memberships membership
 				  ON membership.actor_identity_id = c.actor_identity_id AND membership.team_id = c.team_id
-				JOIN team_memberships m ON m.id = membership.id
 				JOIN ownership_aliases alias
 				  ON alias.team_id = c.team_id
 				 AND alias.canonical_identity_id = c.actor_identity_id
@@ -396,49 +390,6 @@ func (r *CredentialRepositoryImpl) RevokeForTeam(ctx context.Context, teamID, id
 	if rowsAffected > 0 {
 		if err := r.deactivateActorIfUnused(ctx, now, id); err != nil {
 			return 0, fmt.Errorf("failed to reconcile revoked api credential actor: %w", err)
-		}
-	}
-
-	return rowsAffected, nil
-}
-
-// DeleteForTeam removes an API credential from supported reads while retaining its stable audit identity.
-func (r *CredentialRepositoryImpl) DeleteForTeam(ctx context.Context, teamID, id uuid.UUID) (int64, error) {
-	now := time.Now().UTC()
-	var rowsAffected int64
-	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, teamID.String()); err != nil {
-			return err
-		}
-		res := tx.Exec(`
-			UPDATE credentials
-			SET status = 'disabled', revoked_at = COALESCE(revoked_at, $1), updated_at = $1
-			WHERE id = $2 AND team_id = $3 AND kind = 'api_key' AND status <> 'disabled'
-		`, now, id, teamID)
-		if res.Error != nil {
-			return res.Error
-		}
-		rowsAffected = res.RowsAffected
-		if rowsAffected == 0 {
-			return nil
-		}
-		if err := tx.Exec(`
-			UPDATE team_memberships
-			SET status = 'revoked', updated_at = $1
-			WHERE team_id = $2
-			  AND actor_identity_id = (SELECT actor_identity_id FROM credentials WHERE id = $3)
-		`, now, teamID, id).Error; err != nil {
-			return err
-		}
-		return nil
-	})
-
-	if err != nil {
-		return 0, fmt.Errorf("failed to delete api credential for team: %w", err)
-	}
-	if rowsAffected > 0 {
-		if err := r.deactivateActorIfUnused(ctx, now, id); err != nil {
-			return 0, fmt.Errorf("failed to reconcile deleted api credential actor: %w", err)
 		}
 	}
 
@@ -633,21 +584,36 @@ const credentialHydrationSelect = `
 		COALESCE(owner_membership.sso_entitlement_status, ''),
 		owner_membership.sso_last_entitlement_checked_at,
 		owner_membership.sso_last_login_at,
-		COALESCE(c.memory_binding, 'shared_only'),
-		COALESCE(c.memory_space_id::text, ''),
-		COALESCE((
+			COALESCE(c.memory_binding, 'shared_only'),
+			COALESCE(c.memory_space_id::text, ''),
+			COALESCE((
+				SELECT memory_space.generation
+				FROM memory_spaces AS memory_space
+				WHERE memory_space.id = c.memory_space_id
+				  AND memory_space.team_id = c.team_id
+				LIMIT 1
+			), 0),
+			COALESCE((
 			SELECT shared_space.id::text
 			FROM memory_spaces AS shared_space
 			WHERE shared_space.team_id = c.team_id
 			  AND shared_space.kind = 'team_shared'
 			LIMIT 1
-		), '')
+			), ''),
+			COALESCE((
+				SELECT shared_space.generation
+				FROM memory_spaces AS shared_space
+				WHERE shared_space.team_id = c.team_id
+				  AND shared_space.kind = 'team_shared'
+				LIMIT 1
+			), 0)
 `
 
 type credentialHydrationState struct {
-	credential                                      domain.Credential
-	ownerIdentityID, ssoProviderID                  string
-	memoryBinding, memorySpaceID, teamSharedSpaceID string
+	credential                                       domain.Credential
+	ownerIdentityID, ssoProviderID                   string
+	memoryBinding, memorySpaceID, teamSharedSpaceID  string
+	memorySpaceGeneration, teamSharedSpaceGeneration int64
 }
 
 func (s *credentialHydrationState) scan(rows *sql.Rows) error {
@@ -677,14 +643,16 @@ func (s *credentialHydrationState) scan(rows *sql.Rows) error {
 		&s.credential.SSOLastLoginAt,
 		&s.memoryBinding,
 		&s.memorySpaceID,
+		&s.memorySpaceGeneration,
 		&s.teamSharedSpaceID,
+		&s.teamSharedSpaceGeneration,
 	)
 }
 
 func (s *credentialHydrationState) result() (*domain.Credential, error) {
 	s.credential.OwnerIdentityID = parseOptionalUUID(s.ownerIdentityID)
 	s.credential.SSOProviderID = parseOptionalUUID(s.ssoProviderID)
-	if err := applyCredentialMemoryFields(&s.credential, s.memoryBinding, s.memorySpaceID, s.teamSharedSpaceID); err != nil {
+	if err := applyCredentialMemoryFields(&s.credential, s.memoryBinding, s.memorySpaceID, s.memorySpaceGeneration, s.teamSharedSpaceID, s.teamSharedSpaceGeneration); err != nil {
 		return nil, err
 	}
 	return &s.credential, nil
@@ -830,7 +798,7 @@ func (r *CredentialRepositoryImpl) GetSSOOwnedCredential(ctx context.Context, te
 	return credentials[0], nil
 }
 
-func applyCredentialMemoryFields(credential *domain.Credential, bindingRaw, memorySpaceRaw, teamSharedSpaceRaw string) error {
+func applyCredentialMemoryFields(credential *domain.Credential, bindingRaw, memorySpaceRaw string, memorySpaceGeneration int64, teamSharedSpaceRaw string, teamSharedSpaceGeneration int64) error {
 	binding, err := domain.NormalizeCredentialMemoryBinding(bindingRaw)
 	if err != nil {
 		return err
@@ -845,7 +813,9 @@ func applyCredentialMemoryFields(credential *domain.Credential, bindingRaw, memo
 	}
 	credential.MemoryBinding = binding
 	credential.MemorySpaceID = memorySpaceID
+	credential.MemorySpaceGeneration = memorySpaceGeneration
 	credential.TeamSharedSpaceID = teamSharedSpaceID
+	credential.TeamSharedSpaceGeneration = teamSharedSpaceGeneration
 	return nil
 }
 

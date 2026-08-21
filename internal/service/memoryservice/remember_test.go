@@ -154,6 +154,34 @@ func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T)
 	require.Equal(t, "corr-canonical", actor["correlation_id"])
 }
 
+func TestRememberUsesAuthenticatedPrivateMemorySpace(t *testing.T) {
+	teamID := uuid.New()
+	profileID := uuid.New()
+	keyID := uuid.New()
+	privateSpaceID := uuid.New()
+	ledger := &rememberLedgerStub{result: &repository.CreateIngestResult{
+		TeamID: teamID.String(), IngestID: uuid.NewString(), PlacementRunID: uuid.NewString(),
+		Status: string(domain.PlacementRunQueued),
+	}}
+	svc := NewRememberService(RememberDependencies{Ledger: ledger})
+	ctx := authenticatedRememberContext(teamID, profileID, keyID)
+	actor, ok := requestctx.ActorFromContext(ctx)
+	require.True(t, ok)
+	actor.AllowedSpaces = []domain.MemorySpaceAccess{
+		{ID: uuid.New(), Kind: domain.MemorySpaceTeamShared, Generation: 1},
+		{ID: privateSpaceID, Kind: domain.MemorySpaceCredentialPrivate, Generation: 7},
+	}
+	ctx = requestctx.WithActor(ctx, actor)
+
+	_, err := svc.Remember(ctx, RememberRequest{
+		Evidence:          []RememberEvidenceInput{{Content: "Private memory must retain its authenticated space."}},
+		RelationshipHints: completeRememberRelationshipHints(1),
+	})
+	require.NoError(t, err)
+	require.Equal(t, privateSpaceID.String(), ledger.input.SpaceID)
+	require.EqualValues(t, 7, ledger.input.SpaceGeneration)
+}
+
 func TestRememberUsesPersistedCorrelationForIdempotentReplay(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()

@@ -127,6 +127,8 @@ type ResumePendingOverdueConflictResolutionInput struct {
 type ConflictDerivedEvidenceTarget struct {
 	TaskID               string
 	TeamID               string
+	SpaceID              string
+	SpaceGeneration      int64
 	ConflictID           string
 	SystemProfileID      string
 	TargetFragmentID     string
@@ -230,14 +232,17 @@ func (r *LedgerRepositoryImpl) ReserveOverdueConflictAssessment(
 		var assessmentAttemptID string
 		err = tx.WithContext(ctx).Raw(`
 			INSERT INTO relationship_conflict_ai_assessment_attempts (
-			    team_id, conflict_id, case_version, local_assessment_date, model, policy_version
-			) VALUES (
-			    ?::uuid, ?::uuid, ?, ?, ?, ?
+			    team_id, space_id, space_generation, conflict_id, case_version,
+			    local_assessment_date, model, policy_version
 			)
+			SELECT ?::uuid, conflict.space_id, conflict.space_generation, ?::uuid, ?, ?, ?, ?
+			FROM relationship_conflict_cases AS conflict
+			WHERE conflict.team_id = ?::uuid AND conflict.conflict_id = ?::uuid
 			ON CONFLICT (team_id, conflict_id, case_version, local_assessment_date, model, policy_version)
 			DO NOTHING
 			RETURNING assessment_attempt_id::text
-		`, input.TeamID, input.ConflictID, version, input.LocalAssessmentDate, input.Model, input.PolicyVersion).Row().Scan(&assessmentAttemptID)
+		`, input.TeamID, input.ConflictID, version, input.LocalAssessmentDate, input.Model, input.PolicyVersion,
+			input.TeamID, input.ConflictID).Row().Scan(&assessmentAttemptID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
@@ -495,11 +500,12 @@ func appendConflictAssessmentEvent(
 	}
 	return tx.WithContext(ctx).Exec(`
 		INSERT INTO relationship_conflict_ai_assessment_events (
-		    team_id, assessment_attempt_id, action, outcome, metadata
-		) VALUES (
-		    ?::uuid, ?::uuid, ?, ?, ?::jsonb
+		    team_id, space_id, space_generation, assessment_attempt_id, action, outcome, metadata
 		)
-	`, teamID, assessmentAttemptID, action, outcome, string(encoded)).Error
+		SELECT ?::uuid, attempt.space_id, attempt.space_generation, ?::uuid, ?, ?, ?::jsonb
+		FROM relationship_conflict_ai_assessment_attempts AS attempt
+		WHERE attempt.team_id = ?::uuid AND attempt.assessment_attempt_id = ?::uuid
+	`, teamID, assessmentAttemptID, action, outcome, string(encoded), teamID, assessmentAttemptID).Error
 }
 
 func supersedeReservedOverdueConflictAssessments(

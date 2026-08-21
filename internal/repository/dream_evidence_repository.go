@@ -72,6 +72,8 @@ func listActiveDreamEvidence(ctx context.Context, tx *gorm.DB, teamID, relations
 			       support_id, decision
 			FROM relationship_support_decision_events
 			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND relationship_id = ?::uuid
 			ORDER BY support_id, created_at DESC, support_decision_id DESC
 		)
@@ -91,17 +93,27 @@ func listActiveDreamEvidence(ctx context.Context, tx *gorm.DB, teamID, relations
 		JOIN evidence_fragments fragment
 		  ON fragment.team_id = support.team_id
 		 AND fragment.fragment_id = support.fragment_id
+		 AND fragment.space_id = support.space_id
+		 AND fragment.space_generation = support.space_generation
 		LEFT JOIN evidence_sources source
 		  ON source.team_id = support.team_id
 		 AND source.source_id = support.source_id
+		 AND source.space_id = support.space_id
+		 AND source.space_generation = support.space_generation
 		LEFT JOIN evidence_quarantines quarantine
 		  ON quarantine.team_id = support.team_id
 		 AND quarantine.fragment_id = support.fragment_id
+		 AND quarantine.space_id = support.space_id
+		 AND quarantine.space_generation = support.space_generation
 		 AND quarantine.status = 'active'
 		LEFT JOIN evidence_lifecycle_events lifecycle
 		  ON lifecycle.team_id = support.team_id
 		 AND lifecycle.target_fragment_id = support.fragment_id
+		 AND lifecycle.space_id = support.space_id
+		 AND lifecycle.space_generation = support.space_generation
 		WHERE support.team_id = ?::uuid
+		  AND support.space_id = dense_mem_team_shared_space(support.team_id)
+		  AND support.space_generation = dense_mem_team_shared_generation(support.team_id)
 		  AND support.relationship_id = ?::uuid
 		  AND decision.decision IN ('grant', 'reinstate')
 		  AND btrim(support.source_group_key) <> ''
@@ -140,6 +152,8 @@ func listActiveDreamEvidenceBatch(
 			       support_id, decision
 			FROM relationship_support_decision_events
 			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND relationship_id = ANY(?::uuid[])
 			ORDER BY support_id, created_at DESC, support_decision_id DESC
 		), ranked AS (
@@ -171,17 +185,27 @@ func listActiveDreamEvidenceBatch(
 			JOIN evidence_fragments fragment
 			  ON fragment.team_id = support.team_id
 			 AND fragment.fragment_id = support.fragment_id
+			 AND fragment.space_id = support.space_id
+			 AND fragment.space_generation = support.space_generation
 			LEFT JOIN evidence_sources source
 			  ON source.team_id = support.team_id
 			 AND source.source_id = support.source_id
+			 AND source.space_id = support.space_id
+			 AND source.space_generation = support.space_generation
 			LEFT JOIN evidence_quarantines quarantine
 			  ON quarantine.team_id = support.team_id
 			 AND quarantine.fragment_id = support.fragment_id
+			 AND quarantine.space_id = support.space_id
+			 AND quarantine.space_generation = support.space_generation
 			 AND quarantine.status = 'active'
 			LEFT JOIN evidence_lifecycle_events lifecycle
 			  ON lifecycle.team_id = support.team_id
 			 AND lifecycle.target_fragment_id = support.fragment_id
+			 AND lifecycle.space_id = support.space_id
+			 AND lifecycle.space_generation = support.space_generation
 			WHERE support.team_id = ?::uuid
+			  AND support.space_id = dense_mem_team_shared_space(support.team_id)
+			  AND support.space_generation = dense_mem_team_shared_generation(support.team_id)
 			  AND support.relationship_id = ANY(?::uuid[])
 			  AND decision.decision IN ('grant', 'reinstate')
 			  AND btrim(support.source_group_key) <> ''
@@ -212,21 +236,31 @@ func listPendingDreamEvidence(ctx context.Context, tx *gorm.DB, teamID, relation
 			JOIN verification_events verification
 			  ON verification.team_id = observation.team_id
 			 AND verification.observation_id = observation.observation_id
+			 AND verification.space_id = observation.space_id
+			 AND verification.space_generation = observation.space_generation
 			JOIN placement_assessments assessment
 			  ON assessment.team_id = verification.team_id
 			 AND assessment.assessment_id = verification.assessment_id
+			 AND assessment.space_id = verification.space_id
+			 AND assessment.space_generation = verification.space_generation
 			JOIN review_tasks review
 			  ON review.team_id = verification.team_id
 			 AND review.assessment_id = verification.assessment_id
+			 AND review.space_id = verification.space_id
+			 AND review.space_generation = verification.space_generation
 			WHERE observation.team_id = ?::uuid
+			  AND observation.space_id = dense_mem_team_shared_space(observation.team_id)
+			  AND observation.space_generation = dense_mem_team_shared_generation(observation.team_id)
 			  AND observation.relationship_id = ?::uuid
 			  AND verification.evidence_verdict IN ('insufficient', 'entailed')
 			  AND verification.gate_result = 'below_write_threshold'
 			  AND review.status = 'expired'
 			  AND NOT EXISTS (
 			      SELECT 1
-			      FROM review_tasks open_review
-			      WHERE open_review.team_id = observation.team_id
+				FROM review_tasks open_review
+				WHERE open_review.team_id = observation.team_id
+				  AND open_review.space_id = observation.space_id
+				  AND open_review.space_generation = observation.space_generation
 			        AND open_review.relationship_id = observation.relationship_id
 			        AND open_review.status IN ('open', 'acknowledged')
 			  )
@@ -258,16 +292,24 @@ func listPendingDreamEvidence(ctx context.Context, tx *gorm.DB, teamID, relation
 		       THEN (observation_evidence.evidence->>'fragment_id')::uuid
 		       ELSE NULL
 		     END
+		 AND fragment.space_id = dense_mem_team_shared_space(fragment.team_id)
+		 AND fragment.space_generation = dense_mem_team_shared_generation(fragment.team_id)
 		LEFT JOIN evidence_sources source
 		  ON source.team_id = fragment.team_id
 		 AND source.source_id = fragment.source_id
+		 AND source.space_id = fragment.space_id
+		 AND source.space_generation = fragment.space_generation
 		LEFT JOIN evidence_quarantines quarantine
 		  ON quarantine.team_id = fragment.team_id
 		 AND quarantine.fragment_id = fragment.fragment_id
+		 AND quarantine.space_id = fragment.space_id
+		 AND quarantine.space_generation = fragment.space_generation
 		 AND quarantine.status = 'active'
 		LEFT JOIN evidence_lifecycle_events lifecycle
 		  ON lifecycle.team_id = fragment.team_id
 		 AND lifecycle.target_fragment_id = fragment.fragment_id
+		 AND lifecycle.space_id = fragment.space_id
+		 AND lifecycle.space_generation = fragment.space_generation
 		WHERE quarantine.quarantine_id IS NULL
 		  AND lifecycle.lifecycle_event_id IS NULL
 		  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
@@ -300,21 +342,31 @@ func listPendingDreamEvidenceBatch(
 			JOIN verification_events verification
 			  ON verification.team_id = observation.team_id
 			 AND verification.observation_id = observation.observation_id
+			 AND verification.space_id = observation.space_id
+			 AND verification.space_generation = observation.space_generation
 			JOIN placement_assessments assessment
 			  ON assessment.team_id = verification.team_id
 			 AND assessment.assessment_id = verification.assessment_id
+			 AND assessment.space_id = verification.space_id
+			 AND assessment.space_generation = verification.space_generation
 			JOIN review_tasks review
 			  ON review.team_id = verification.team_id
 			 AND review.assessment_id = verification.assessment_id
+			 AND review.space_id = verification.space_id
+			 AND review.space_generation = verification.space_generation
 			WHERE observation.team_id = ?::uuid
+			  AND observation.space_id = dense_mem_team_shared_space(observation.team_id)
+			  AND observation.space_generation = dense_mem_team_shared_generation(observation.team_id)
 			  AND observation.relationship_id = ANY(?::uuid[])
 			  AND verification.evidence_verdict IN ('insufficient', 'entailed')
 			  AND verification.gate_result = 'below_write_threshold'
 			  AND review.status = 'expired'
 			  AND NOT EXISTS (
 			      SELECT 1
-			      FROM review_tasks open_review
-			      WHERE open_review.team_id = observation.team_id
+				FROM review_tasks open_review
+				WHERE open_review.team_id = observation.team_id
+				  AND open_review.space_id = observation.space_id
+				  AND open_review.space_generation = observation.space_generation
 			        AND open_review.relationship_id = observation.relationship_id
 			        AND open_review.status IN ('open', 'acknowledged')
 			  )
@@ -353,16 +405,24 @@ func listPendingDreamEvidenceBatch(
 			       THEN (observation_evidence.evidence->>'fragment_id')::uuid
 			       ELSE NULL
 			     END
+			 AND fragment.space_id = dense_mem_team_shared_space(fragment.team_id)
+			 AND fragment.space_generation = dense_mem_team_shared_generation(fragment.team_id)
 			LEFT JOIN evidence_sources source
 			  ON source.team_id = fragment.team_id
 			 AND source.source_id = fragment.source_id
+			 AND source.space_id = fragment.space_id
+			 AND source.space_generation = fragment.space_generation
 			LEFT JOIN evidence_quarantines quarantine
 			  ON quarantine.team_id = fragment.team_id
 			 AND quarantine.fragment_id = fragment.fragment_id
+			 AND quarantine.space_id = fragment.space_id
+			 AND quarantine.space_generation = fragment.space_generation
 			 AND quarantine.status = 'active'
 			LEFT JOIN evidence_lifecycle_events lifecycle
 			  ON lifecycle.team_id = fragment.team_id
 			 AND lifecycle.target_fragment_id = fragment.fragment_id
+			 AND lifecycle.space_id = fragment.space_id
+			 AND lifecycle.space_generation = fragment.space_generation
 			WHERE quarantine.quarantine_id IS NULL
 			  AND lifecycle.lifecycle_event_id IS NULL
 			  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)

@@ -2,13 +2,309 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
+
+func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamA := createLedgerTeam(t, adminDB, rls, "trace-private-team-a")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamA, "trace-private-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamA, "trace-private-owner-b")
+	teamC := createLedgerTeam(t, adminDB, rls, "trace-private-team-c")
+	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "trace-private-owner-c")
+
+	sharedA, err := NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamA))
+	require.NoError(t, err)
+	sharedC, err := NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamC))
+	require.NoError(t, err)
+
+	spaceA := uuid.New()
+	spaceB := uuid.New()
+	rootRelationshipID := uuid.New()
+	foreignRelationshipID := uuid.New()
+	rootObservationID := uuid.New()
+	foreignObservationID := uuid.New()
+	verificationEventID := uuid.New()
+	sharedTargetRelationshipID := uuid.New()
+	rootIngestID := uuid.New()
+	foreignIngestID := uuid.New()
+	rootSubjectID := uuid.New()
+	rootObjectID := uuid.New()
+	foreignSubjectID := uuid.New()
+	foreignObjectID := uuid.New()
+	sharedTargetSubjectID := uuid.New()
+	sharedTargetObjectID := uuid.New()
+
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO memory_spaces (id, team_id, kind, owner_profile_id)
+			VALUES
+			  (?::uuid, ?::uuid, 'profile_private', ?::uuid),
+			  (?::uuid, ?::uuid, 'profile_private', ?::uuid)
+		`, spaceA, teamA, ownerA, spaceB, teamA, ownerB).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO team_predicate_definitions (
+			    team_id, predicate_key, version, aliases, allowed_subject_kinds,
+			    allowed_object_kinds, relationship_kind, current_cardinality,
+			    lifecycle_state, origin, metadata, created_at
+			)
+			SELECT ?::uuid, predicate_key, version, aliases, allowed_subject_kinds,
+			       allowed_object_kinds, relationship_kind, current_cardinality,
+			       lifecycle_state, 'built_in', metadata, created_at
+			FROM predicate_definitions
+			WHERE predicate_key = 'uses' AND version = 1
+			ON CONFLICT (team_id, predicate_key, version) DO NOTHING
+		`, teamA).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO entity_records (team_id, entity_id, entity_kind, space_id)
+			VALUES
+			  (?::uuid, ?::uuid, 'project', ?::uuid),
+			  (?::uuid, ?::uuid, 'product', ?::uuid),
+			  (?::uuid, ?::uuid, 'project', ?::uuid),
+			  (?::uuid, ?::uuid, 'product', ?::uuid),
+			  (?::uuid, ?::uuid, 'project', ?::uuid),
+			  (?::uuid, ?::uuid, 'product', ?::uuid)
+		`,
+			teamA, rootSubjectID, spaceA,
+			teamA, rootObjectID, spaceA,
+			teamA, foreignSubjectID, spaceB,
+			teamA, foreignObjectID, spaceB,
+			teamA, sharedTargetSubjectID, sharedA.ID,
+			teamA, sharedTargetObjectID, sharedA.ID,
+		).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO entity_names (
+			    team_id, entity_id, owner_profile_id, display_name,
+			    normalized_name, name_kind, space_id
+			)
+			VALUES
+			  (?::uuid, ?::uuid, ?::uuid, 'Private A', 'private a', 'canonical', ?::uuid),
+			  (?::uuid, ?::uuid, ?::uuid, 'Object A', 'object a', 'canonical', ?::uuid),
+			  (?::uuid, ?::uuid, ?::uuid, 'Private B', 'private b', 'canonical', ?::uuid),
+			  (?::uuid, ?::uuid, ?::uuid, 'Object B', 'object b', 'canonical', ?::uuid)
+		`,
+			teamA, rootSubjectID, ownerA, spaceA,
+			teamA, rootObjectID, ownerA, spaceA,
+			teamA, foreignSubjectID, ownerB, spaceB,
+			teamA, foreignObjectID, ownerB, spaceB,
+		).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO relationship_records (
+			    team_id, relationship_id, owner_profile_id, semantic_group_key,
+			    subject_entity_id, predicate_key, predicate_version, object_entity_id,
+			    relationship_kind, current_cardinality, status, polarity,
+			    support_count, source_group_count, space_id
+			)
+			VALUES
+			  (?::uuid, ?::uuid, ?::uuid, 'trace-private-a', ?::uuid, 'uses', 1,
+			   ?::uuid, 'state', 'many', 'active', '+', 1, 1, ?::uuid),
+			  (?::uuid, ?::uuid, ?::uuid, 'trace-private-b', ?::uuid, 'uses', 1,
+			   ?::uuid, 'state', 'many', 'active', '+', 1, 1, ?::uuid),
+			  (?::uuid, ?::uuid, ?::uuid, 'trace-shared-target', ?::uuid, 'uses', 1,
+			   ?::uuid, 'state', 'many', 'rejected', '+', 0, 0, ?::uuid)
+		`,
+			teamA, rootRelationshipID, ownerA, rootSubjectID, rootObjectID, spaceA,
+			teamA, foreignRelationshipID, ownerB, foreignSubjectID, foreignObjectID, spaceB,
+			teamA, sharedTargetRelationshipID, ownerA, sharedTargetSubjectID, sharedTargetObjectID, sharedA.ID,
+		).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO knowledge_ingests (
+			    team_id, ingest_id, owner_profile_id, idempotency_key, request_hash,
+			    status, proposal, metadata, completed_at, space_id
+			)
+			VALUES
+			  (?::uuid, ?::uuid, ?::uuid, ?, ?, 'completed', '{}'::jsonb, '{}'::jsonb, now(), ?::uuid),
+			  (?::uuid, ?::uuid, ?::uuid, ?, ?, 'completed', '{}'::jsonb, '{}'::jsonb, now(), ?::uuid)
+		`,
+			teamA, rootIngestID, ownerA, "trace-private-a-"+rootIngestID.String(), "hash-a", spaceA,
+			teamA, foreignIngestID, ownerB, "trace-private-b-"+foreignIngestID.String(), "hash-b", spaceB,
+		).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO relationship_observations (
+			    team_id, observation_id, relationship_id, ingest_id, owner_profile_id,
+			    subject_ref, original_predicate, object_ref, subject_entity_id,
+			    predicate_key, predicate_version, object_entity_id, evidence, metadata, space_id
+			)
+			VALUES
+			  (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, 'Private A', 'uses', 'Object A',
+			   ?::uuid, 'uses', 1, ?::uuid, '[]'::jsonb, '{}'::jsonb, ?::uuid),
+			  (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, 'Private B leak', 'uses', 'Object B',
+			   ?::uuid, 'uses', 1, ?::uuid, '[]'::jsonb, '{}'::jsonb, ?::uuid)
+		`,
+			teamA, rootObservationID, rootRelationshipID, rootIngestID, ownerA,
+			rootSubjectID, rootObjectID, spaceA,
+			teamA, foreignObservationID, foreignRelationshipID, foreignIngestID, ownerB,
+			foreignSubjectID, foreignObjectID, spaceB,
+		).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO verification_events (
+			    team_id, verification_event_id, observation_id, owner_profile_id,
+			    evidence_verdict, rationale
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, 'entailed', 'cross-space trace regression')
+		`, teamA, verificationEventID, foreignObservationID, ownerB).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	require.NoError(t, err)
+
+	actorContext := func(teamID, ownerID string, sharedID, privateID uuid.UUID) context.Context {
+		spaces := []domain.MemorySpaceAccess{{ID: sharedID, Kind: domain.MemorySpaceTeamShared}}
+		if privateID != uuid.Nil {
+			spaces = append(spaces, domain.MemorySpaceAccess{ID: privateID, Kind: domain.MemorySpaceProfilePrivate})
+		}
+		return requestctx.WithActor(ctx, requestctx.Actor{
+			TeamID:        uuid.MustParse(teamID),
+			OwnerID:       uuid.MustParse(ownerID),
+			AllowedSpaces: spaces,
+		})
+	}
+	ctxA := actorContext(teamA, ownerA, sharedA.ID, spaceA)
+	ctxB := actorContext(teamA, ownerB, sharedA.ID, spaceB)
+	ctxC := actorContext(teamC, ownerC, sharedC.ID, uuid.Nil)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	crossReferenceID, err := semanticRepo.AppendCrossReference(ctxB, AppendCrossReferenceInput{
+		TeamID:                    teamA,
+		AuthorProfileID:           ownerB,
+		SourceRelationshipID:      foreignRelationshipID.String(),
+		SourceRelationshipVersion: 1,
+		TargetRelationshipID:      sharedTargetRelationshipID.String(),
+		TargetRelationshipVersion: 1,
+		Kind:                      "challenges",
+		VerificationEventID:       verificationEventID.String(),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, crossReferenceID)
+
+	var crossReferenceSpaceID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT space_id::text
+			FROM relationship_cross_references
+			WHERE team_id = ?::uuid AND cross_reference_id = ?::uuid
+		`, teamA, crossReferenceID).Row().Scan(&crossReferenceSpaceID)
+	}))
+	assert.Equal(t, spaceB.String(), crossReferenceSpaceID)
+
+	trace, err := semanticRepo.TraceRelationship(ctxB, TraceRelationshipInput{
+		TeamID: teamA, RelationshipID: foreignRelationshipID.String(), MaxEvents: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, trace.CrossProfileReferences, 1)
+	assert.Equal(t, crossReferenceID, trace.CrossProfileReferences[0].CrossReferenceID)
+
+	trace, err = semanticRepo.TraceRelationship(ctxB, TraceRelationshipInput{
+		TeamID: teamA, RelationshipID: sharedTargetRelationshipID.String(), MaxEvents: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, trace.CrossProfileReferences, 1)
+	assert.Equal(t, crossReferenceID, trace.CrossProfileReferences[0].CrossReferenceID)
+
+	trace, err = semanticRepo.TraceRelationship(ctxA, TraceRelationshipInput{
+		TeamID: teamA, RelationshipID: sharedTargetRelationshipID.String(), MaxEvents: 10,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, trace.CrossProfileReferences, "target visibility must not bypass source-space isolation")
+
+	trace, err = semanticRepo.TraceRelationship(ctxA, TraceRelationshipInput{
+		TeamID: teamA, RelationshipID: rootRelationshipID.String(), MaxDepth: 1, MaxEdges: 10,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, trace.Relationship)
+	assert.Equal(t, rootRelationshipID.String(), trace.Relationship.RelationshipID)
+	require.Len(t, trace.Observations, 1)
+	assert.Equal(t, rootObservationID.String(), trace.Observations[0].ObservationID)
+
+	_, err = semanticRepo.TraceRelationship(ctxB, TraceRelationshipInput{
+		TeamID: teamA, RelationshipID: rootRelationshipID.String(),
+	})
+	require.Error(t, err)
+	_, err = semanticRepo.TraceRelationship(ctxC, TraceRelationshipInput{
+		TeamID: teamC, RelationshipID: rootRelationshipID.String(),
+	})
+	require.Error(t, err)
+
+	graphA, err := semanticRepo.SemanticGraph(ctxA, SemanticGraphQuery{TeamID: teamA, Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, []string{rootRelationshipID.String()}, semanticGraphEdgeIDs(graphA.Edges))
+	graphB, err := semanticRepo.SemanticGraph(ctxB, SemanticGraphQuery{TeamID: teamA, Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, []string{foreignRelationshipID.String()}, semanticGraphEdgeIDs(graphB.Edges))
+	graphC, err := semanticRepo.SemanticGraph(ctxC, SemanticGraphQuery{TeamID: teamC, Limit: 10})
+	require.NoError(t, err)
+	assert.Empty(t, graphC.Edges)
+
+	node, err := semanticRepo.SemanticGraphNodeDetail(ctxA, SemanticGraphNodeDetailInput{
+		TeamID: teamA, NodeType: "entity", NodeID: rootSubjectID.String(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Private A", node.Title)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			UPDATE memory_spaces
+			SET generation = generation + 1, lifecycle_state = 'sealed', sealed_at = now()
+			WHERE id = ?::uuid AND team_id = ?::uuid AND lifecycle_state = 'active'
+		`, spaceA, teamA)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("seal private test space: updated %d rows", result.RowsAffected)
+		}
+		var retained int64
+		if err := tx.Raw(`
+			SELECT COUNT(*)
+			FROM relationship_records
+			WHERE team_id = ?::uuid AND space_id = ?::uuid
+		`, teamA, spaceA).Row().Scan(&retained); err != nil {
+			return err
+		}
+		if retained != 1 {
+			return fmt.Errorf("expected retained private relationship row, got %d", retained)
+		}
+		return nil
+	}))
+
+	_, err = semanticRepo.TraceRelationship(ctxA, TraceRelationshipInput{
+		TeamID: teamA, RelationshipID: rootRelationshipID.String(),
+	})
+	require.ErrorIs(t, err, sql.ErrNoRows)
+	sealedGraph, err := semanticRepo.SemanticGraph(ctxA, SemanticGraphQuery{TeamID: teamA, Limit: 10})
+	require.NoError(t, err)
+	assert.Empty(t, sealedGraph.Edges)
+	_, err = semanticRepo.SemanticGraphNodeDetail(ctxA, SemanticGraphNodeDetailInput{
+		TeamID: teamA, NodeType: "entity", NodeID: rootSubjectID.String(),
+	})
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
 
 func TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
@@ -19,6 +315,7 @@ func TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph(t *testing.T) {
 	ownerB := createLedgerProfile(t, adminDB, rls, teamA, "trace-owner-b")
 	teamB := createLedgerTeam(t, adminDB, rls, "trace-team-b")
 	createLedgerProfile(t, adminDB, rls, teamB, "trace-owner-other")
+	insertSearchTestContract(t, adminDB, rls, "semantic-trace-hydration", 3, "exact", "")
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	semanticRepo := NewSemanticRepository(appDB, rls)
 	searchRepo := NewSearchRepository(appDB, rls)

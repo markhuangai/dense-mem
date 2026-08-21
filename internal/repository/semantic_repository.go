@@ -633,6 +633,10 @@ func (r *SemanticRepositoryImpl) AppendCrossReference(ctx context.Context, input
 		if err := requireVerificationForRelationship(ctx, tx, input.TeamID, input.VerificationEventID, input.AuthorProfileID, input.SourceRelationshipID); err != nil {
 			return err
 		}
+		sourceSpaceID, err := loadRelationshipSpaceID(ctx, tx, input.TeamID, input.SourceRelationshipID, input.SourceRelationshipVersion)
+		if err != nil {
+			return err
+		}
 		metadata, err := marshalJSON(input.Metadata)
 		if err != nil {
 			return err
@@ -641,15 +645,15 @@ func (r *SemanticRepositoryImpl) AppendCrossReference(ctx context.Context, input
 			INSERT INTO relationship_cross_references (
 			    team_id, author_profile_id, source_relationship_id,
 			    source_relationship_version, target_relationship_id,
-			    target_relationship_version, kind, verification_event_id, metadata
+			    target_relationship_version, kind, verification_event_id, metadata, space_id
 			) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?::uuid, ?::jsonb
+			    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?::uuid, ?::jsonb, ?::uuid
 			)
 			RETURNING cross_reference_id::text
 		`, input.TeamID, input.AuthorProfileID, input.SourceRelationshipID,
 			input.SourceRelationshipVersion, input.TargetRelationshipID,
 			input.TargetRelationshipVersion, input.Kind, input.VerificationEventID,
-			string(metadata)).Rows()
+			string(metadata), sourceSpaceID).Rows()
 		if err != nil {
 			return err
 		}

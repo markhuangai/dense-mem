@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -22,6 +23,7 @@ import (
 type AuditLogEntry struct {
 	ID            string
 	ProfileID     *string
+	MemorySpaceID *string
 	Timestamp     time.Time
 	Operation     string
 	EntityType    string
@@ -240,14 +242,32 @@ func (s *AuditServiceImpl) Append(ctx context.Context, entry AuditLogEntry) erro
 	clientIP := auditClientIPValue(ctx, entry)
 
 	insertFn := func(tx *gorm.DB) error {
+		memorySpaceID := entry.MemorySpaceID
+		if memorySpaceID == nil && entry.EntityType == "api_key" && entry.ProfileID != nil {
+			teamID, teamParseErr := uuid.Parse(strings.TrimSpace(*entry.ProfileID))
+			if credentialID, credentialParseErr := uuid.Parse(strings.TrimSpace(entry.EntityID)); teamParseErr == nil && credentialParseErr == nil {
+				var candidate sql.NullString
+				lookupErr := tx.WithContext(ctx).Raw(`
+					SELECT memory_space_id::text
+					FROM credentials
+					WHERE id = $1 AND team_id = $2
+				`, credentialID, teamID).Row().Scan(&candidate)
+				if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+					return lookupErr
+				}
+				if candidate.Valid && strings.TrimSpace(candidate.String) != "" {
+					memorySpaceID = &candidate.String
+				}
+			}
+		}
 		return tx.Exec(`
 			INSERT INTO audit_log (
 				id, team_id, timestamp, operation, entity_type, entity_id,
 				before_payload, after_payload, actor_profile_id, actor_role,
-				client_ip, correlation_id, metadata
+				client_ip, correlation_id, metadata, memory_space_id
 			) VALUES (
 				$1, $2, $3, $4, $5, $6,
-				$7, $8, $9, $10, $11, $12, $13
+				$7, $8, $9, $10, $11, $12, $13, $14
 			)
 		`,
 			id,
@@ -263,6 +283,7 @@ func (s *AuditServiceImpl) Append(ctx context.Context, entry AuditLogEntry) erro
 			clientIP,
 			entry.CorrelationID,
 			metadataJSON,
+			memorySpaceID,
 		).Error
 	}
 
@@ -287,9 +308,19 @@ func (s *AuditServiceImpl) List(ctx context.Context, teamID string, limit, offse
 		rows, err := tx.Raw(`
 			SELECT id, team_id, timestamp, operation, entity_type, entity_id,
 			       before_payload, after_payload, actor_profile_id, actor_role,
-			       client_ip, correlation_id, metadata
-			FROM audit_log
-			WHERE team_id = $1
+			       client_ip, correlation_id, metadata, memory_space_id::text
+			FROM audit_log AS audit
+			WHERE audit.team_id = $1
+			  AND (
+				  audit.memory_space_id IS NULL
+				  OR EXISTS (
+					  SELECT 1
+					  FROM memory_spaces AS space
+					  WHERE space.id = audit.memory_space_id
+					    AND space.team_id = audit.team_id
+					    AND space.lifecycle_state = 'active'
+				  )
+			  )
 			ORDER BY timestamp DESC
 			LIMIT $2 OFFSET $3
 		`, teamID, limit, offset).Rows()
@@ -304,6 +335,7 @@ func (s *AuditServiceImpl) List(ctx context.Context, teamID string, limit, offse
 			var profileIDNullable sql.NullString
 			var actorKeyIDNullable sql.NullString
 			var clientIPNullable sql.NullString
+			var memorySpaceIDNullable sql.NullString
 
 			err := rows.Scan(
 				&entry.ID,
@@ -319,6 +351,7 @@ func (s *AuditServiceImpl) List(ctx context.Context, teamID string, limit, offse
 				&clientIPNullable,
 				&entry.CorrelationID,
 				&metadataJSON,
+				&memorySpaceIDNullable,
 			)
 			if err != nil {
 				return err
@@ -333,6 +366,9 @@ func (s *AuditServiceImpl) List(ctx context.Context, teamID string, limit, offse
 			}
 			if clientIPNullable.Valid {
 				entry.ClientIP = clientIPNullable.String
+			}
+			if memorySpaceIDNullable.Valid {
+				entry.MemorySpaceID = &memorySpaceIDNullable.String
 			}
 
 			// Parse JSON payloads
@@ -365,7 +401,19 @@ func (s *AuditServiceImpl) List(ctx context.Context, teamID string, limit, offse
 		}
 		if err := s.rls.WithTeamTx(ctx, s.db, teamID, func(tx *gorm.DB) error {
 			return tx.Raw(`
-				SELECT COUNT(*) FROM audit_log WHERE team_id = $1
+				SELECT COUNT(*)
+				FROM audit_log AS audit
+				WHERE audit.team_id = $1
+				  AND (
+					  audit.memory_space_id IS NULL
+					  OR EXISTS (
+						  SELECT 1
+						  FROM memory_spaces AS space
+						  WHERE space.id = audit.memory_space_id
+						    AND space.team_id = audit.team_id
+						    AND space.lifecycle_state = 'active'
+					  )
+				  )
 			`, teamID).Scan(&total).Error
 		}); err != nil {
 			return nil, 0, fmt.Errorf("failed to count audit log entries: %w", err)
@@ -375,7 +423,19 @@ func (s *AuditServiceImpl) List(ctx context.Context, teamID string, limit, offse
 			return nil, 0, fmt.Errorf("failed to query audit log: %w", err)
 		}
 		if err := s.db.WithContext(ctx).Raw(`
-			SELECT COUNT(*) FROM audit_log WHERE team_id = $1
+			SELECT COUNT(*)
+			FROM audit_log AS audit
+			WHERE audit.team_id = $1
+			  AND (
+				  audit.memory_space_id IS NULL
+				  OR EXISTS (
+					  SELECT 1
+					  FROM memory_spaces AS space
+					  WHERE space.id = audit.memory_space_id
+					    AND space.team_id = audit.team_id
+					    AND space.lifecycle_state = 'active'
+				  )
+			  )
 		`, teamID).Scan(&total).Error; err != nil {
 			return nil, 0, fmt.Errorf("failed to count audit log entries: %w", err)
 		}

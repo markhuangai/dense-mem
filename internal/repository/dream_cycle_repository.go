@@ -30,17 +30,18 @@ func (r *SemanticRepositoryImpl) claimDreamCycle(ctx context.Context, input Drea
 	err = r.withDreamWriteTx(ctx, input.TeamID, input.InitiatedByProfileID, system, func(tx *gorm.DB) error {
 		query := `
 			INSERT INTO dream_cycle_runs (
-			    team_id, initiated_by_profile_id, run_date, window_key, scheduled_for,
+			    team_id, space_id, space_generation, initiated_by_profile_id, run_date, window_key, scheduled_for,
 			    status, lease_token, lease_until, attempt_count, source_snapshot
 			) VALUES (
-			    ?::uuid, NULLIF(?, '')::uuid, ?, ?, ?, 'running', ?::uuid, ?, 1,
+			    ?::uuid, dense_mem_team_shared_space(?::uuid), dense_mem_team_shared_generation(?::uuid),
+			    NULLIF(?, '')::uuid, ?, ?, ?, 'running', ?::uuid, ?, 1,
 			    ?::jsonb
 			)
 			ON CONFLICT (team_id, window_key)
 			WHERE canonical_run_id IS NULL
 			DO NOTHING
 			RETURNING ` + dreamCycleRunSelectColumns
-		rows, err := tx.WithContext(ctx).Raw(query, input.TeamID, input.InitiatedByProfileID,
+		rows, err := tx.WithContext(ctx).Raw(query, input.TeamID, input.TeamID, input.TeamID, input.InitiatedByProfileID,
 			input.RunDate, input.WindowKey, input.ScheduledFor, input.LeaseToken,
 			input.LeaseUntil, string(snapshot)).Rows()
 		if err != nil {
@@ -98,6 +99,8 @@ func (r *SemanticRepositoryImpl) ClaimRecoverableScheduledDreamCycle(
 				SELECT run_id
 				FROM dream_cycle_runs
 				WHERE team_id = ?::uuid
+				  AND space_id = dense_mem_team_shared_space(team_id)
+				  AND space_generation = dense_mem_team_shared_generation(team_id)
 				  AND canonical_run_id IS NULL
 				  AND status = 'running'
 				  AND scheduled_for IS NOT NULL
@@ -117,8 +120,10 @@ func (r *SemanticRepositoryImpl) ClaimRecoverableScheduledDreamCycle(
 			    error = '',
 			    updated_at = now()
 			FROM candidate
-			WHERE run.team_id = ?::uuid
-			  AND run.run_id = candidate.run_id
+				WHERE run.team_id = ?::uuid
+				  AND run.space_id = dense_mem_team_shared_space(run.team_id)
+				  AND run.space_generation = dense_mem_team_shared_generation(run.team_id)
+				  AND run.run_id = candidate.run_id
 			RETURNING ` + dreamCycleRunColumns("run")
 		rows, err := tx.WithContext(ctx).Raw(query, input.TeamID, input.MaxAttempts,
 			input.LeaseToken, input.LeaseUntil, input.TeamID).Rows()
@@ -186,8 +191,10 @@ func (r *SemanticRepositoryImpl) completeDreamCycle(ctx context.Context, input D
 			    lease_until = NULL,
 			    completed_at = now(),
 			    updated_at = now()
-			WHERE team_id = ?::uuid
-			  AND run_id = ?::uuid
+				WHERE team_id = ?::uuid
+				  AND space_id = dense_mem_team_shared_space(team_id)
+				  AND space_generation = dense_mem_team_shared_generation(team_id)
+				  AND run_id = ?::uuid
 			  AND status = 'running'
 			  AND lease_token = ?::uuid
 			  AND lease_until > now()
@@ -225,6 +232,8 @@ func requireCurrentDreamCycleLease(
 		SELECT run_id::text
 		FROM dream_cycle_runs
 		WHERE team_id = ?::uuid
+		  AND space_id = dense_mem_team_shared_space(team_id)
+		  AND space_generation = dense_mem_team_shared_generation(team_id)
 		  AND run_id = ?::uuid
 		  AND status = 'running'
 		  AND lease_token = ?::uuid
@@ -250,17 +259,17 @@ func (r *SemanticRepositoryImpl) RecordMissedScheduledDreamCycle(ctx context.Con
 	err = r.withDreamWriteTx(ctx, input.TeamID, "", true, func(tx *gorm.DB) error {
 		query := `
 			INSERT INTO dream_cycle_runs (
-			    team_id, run_date, window_key, scheduled_for, status, source_snapshot,
+			    team_id, space_id, space_generation, run_date, window_key, scheduled_for, status, source_snapshot,
 			    completed_at, error
 			) VALUES (
-			    ?::uuid, ?, ?, ?, 'missed', ?::jsonb, now(),
+			    ?::uuid, dense_mem_team_shared_space(?::uuid), dense_mem_team_shared_generation(?::uuid), ?, ?, ?, 'missed', ?::jsonb, now(),
 			    'scheduler was not running during the configured window'
 			)
 			ON CONFLICT (team_id, window_key)
 			WHERE canonical_run_id IS NULL
 			DO NOTHING
 			RETURNING ` + dreamCycleRunSelectColumns
-		rows, err := tx.WithContext(ctx).Raw(query, input.TeamID, input.RunDate,
+		rows, err := tx.WithContext(ctx).Raw(query, input.TeamID, input.TeamID, input.TeamID, input.RunDate,
 			input.WindowKey, input.ScheduledFor, string(snapshot)).Rows()
 		if err != nil {
 			return err
@@ -314,6 +323,8 @@ func failExhaustedScheduledDreamRecoveries(ctx context.Context, tx *gorm.DB, tea
 		    updated_at = now(),
 		    outcome_summary = outcome_summary || jsonb_build_object('recovery_exhausted', 1)
 		WHERE team_id = ?::uuid
+		  AND space_id = dense_mem_team_shared_space(team_id)
+		  AND space_generation = dense_mem_team_shared_generation(team_id)
 		  AND canonical_run_id IS NULL
 		  AND status = 'running'
 		  AND scheduled_for IS NOT NULL

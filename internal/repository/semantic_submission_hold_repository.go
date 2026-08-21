@@ -135,6 +135,8 @@ func (r *LedgerRepositoryImpl) ExpireSubmissionHolds(
 			  AND hold.placement_run_id = run.placement_run_id
 			  AND run.semantic_hold_state = 'active'
 			  AND hold.expires_at <= ?
+			  AND `+activeSemanticSpaceGenerationSQL("hold")+`
+			  AND `+activeSemanticSpaceGenerationSQL("run")+`
 			RETURNING run.owner_profile_id::text, run.placement_run_id::text,
 			          hold.held_at, hold.expires_at, hold.reason_code
 		`, input.Now, input.Now, input.TeamID, input.Now).Rows()

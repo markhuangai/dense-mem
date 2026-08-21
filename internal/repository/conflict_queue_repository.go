@@ -27,7 +27,8 @@ func (r *LedgerRepositoryImpl) ListConflictQueue(ctx context.Context, query doma
 		return nil, err
 	}
 	var page *domain.ConflictQueuePage
-	err := r.withTeamReadOnlyRepeatableTx(ctx, query.TeamID, func(tx *gorm.DB) error {
+	// The control portal is a system boundary; every projection query still binds the requested team explicitly.
+	err := r.withSystemReadOnlyRepeatableTx(ctx, func(tx *gorm.DB) error {
 		collectedAt, err := transactionTimestamp(ctx, tx)
 		if err != nil {
 			return err
@@ -124,16 +125,6 @@ func validateConflictQueueQuery(query domain.ConflictQueueQuery) error {
 	return nil
 }
 
-func (r *LedgerRepositoryImpl) withTeamReadOnlyRepeatableTx(ctx context.Context, teamID string, fn func(tx *gorm.DB) error) error {
-	if r == nil || r.db == nil {
-		return errors.New("conflict queue: database is required")
-	}
-	if r.rls == nil {
-		return errors.New("conflict queue: rls helper is required")
-	}
-	return r.rls.WithTeamReadOnlyRepeatableTx(ctx, r.db, teamID, fn)
-}
-
 func (r *LedgerRepositoryImpl) withSystemReadOnlyRepeatableTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
 	if r == nil || r.db == nil {
 		return errors.New("conflict queue: database is required")
@@ -166,6 +157,7 @@ func loadConflictQueueSummary(ctx context.Context, tx *gorm.DB, teamID string, c
 		FROM relationship_conflict_cases
 		WHERE team_id = ?::uuid
 		  AND status IN ('open', 'overdue')
+		  AND `+activeSemanticSpaceGenerationSQL("relationship_conflict_cases")+`
 	`, collectedAt, collectedAt, collectedAt, collectedAt, teamID).Row().Scan(
 		&summary.OpenCount,
 		&summary.OverdueCount,
@@ -208,6 +200,7 @@ func countFailedConflictAssessments24h(ctx context.Context, tx *gorm.DB, teamID 
 		  AND action = 'failed'
 		  AND created_at > (?::timestamptz - interval '24 hours')
 		  AND created_at <= ?::timestamptz
+		  AND `+activeSemanticSpaceGenerationSQL("relationship_conflict_ai_assessment_events")+`
 	`, teamID, collectedAt, collectedAt).Row().Scan(&count)
 	return count, err
 }
@@ -222,6 +215,7 @@ func countLWWResolutions24h(ctx context.Context, tx *gorm.DB, teamID string, col
 		  AND status = 'applied'
 		  AND applied_at > (?::timestamptz - interval '24 hours')
 		  AND applied_at <= ?::timestamptz
+		  AND `+activeSemanticSpaceGenerationSQL("relationship_conflict_resolution_plans")+`
 	`, teamID, collectedAt, collectedAt).Row().Scan(&count)
 	return count, err
 }
@@ -235,6 +229,7 @@ func countConflictDerivedTasks(ctx context.Context, tx *gorm.DB, teamID string) 
 		FROM relationship_conflict_derived_evidence_tasks
 		WHERE team_id = ?::uuid
 		  AND status <> 'completed'
+		  AND `+activeSemanticSpaceGenerationSQL("relationship_conflict_derived_evidence_tasks")+`
 	`, teamID).Row().Scan(&pending, &failed)
 	return pending, failed, err
 }
@@ -249,6 +244,7 @@ func loadConflictQueuePageRecords(ctx context.Context, tx *gorm.DB, query domain
 	where := `
 		WHERE team_id = ?::uuid
 		  AND status IN ('open', 'overdue')
+		  AND ` + activeSemanticSpaceGenerationSQL("relationship_conflict_cases") + `
 	`
 	args := []any{query.TeamID}
 	if query.Status != "" {
@@ -326,7 +322,7 @@ func loadConflictQueuePageRecords(ctx context.Context, tx *gorm.DB, query domain
 	if len(ids) == 0 {
 		return raw, nil
 	}
-	loaded, err := loadRelationshipConflictRecordsByIDBounded(ctx, tx, query.TeamID, ids, nil, domain.ConflictQueueMaxPositions, domain.ConflictQueueMaxSupporters)
+	loaded, err := loadActiveRelationshipConflictRecordsByIDBounded(ctx, tx, query.TeamID, ids, nil, domain.ConflictQueueMaxPositions, domain.ConflictQueueMaxSupporters)
 	if err != nil {
 		return nil, err
 	}
@@ -409,10 +405,12 @@ func activeConflictQueueTeams(ctx context.Context, tx *gorm.DB) ([]string, error
 			SELECT team_id
 			FROM relationship_conflict_cases
 			WHERE status IN ('open', 'overdue')
+			  AND ` + activeSemanticSpaceGenerationSQL("relationship_conflict_cases") + `
 			UNION
 			SELECT team_id
 			FROM relationship_conflict_derived_evidence_tasks
 			WHERE status <> 'completed'
+			  AND ` + activeSemanticSpaceGenerationSQL("relationship_conflict_derived_evidence_tasks") + `
 		)
 		SELECT relevant.team_id::text
 		FROM relevant_teams AS relevant
@@ -442,6 +440,7 @@ func loadConflictQueueCaseMetrics(ctx context.Context, tx *gorm.DB, teamIDs []st
 		SELECT team_id::text, status, COUNT(*)::double precision
 		FROM relationship_conflict_cases
 		WHERE status IN ('open', 'overdue')
+		  AND ` + activeSemanticSpaceGenerationSQL("relationship_conflict_cases") + `
 		GROUP BY team_id, status
 	`).Rows()
 	if err != nil {
@@ -478,6 +477,7 @@ func loadConflictQueueOldestMetrics(ctx context.Context, tx *gorm.DB, teamIDs []
 		       COALESCE(EXTRACT(EPOCH FROM (? - MIN(created_at))), 0)::double precision
 		FROM relationship_conflict_cases
 		WHERE status IN ('open', 'overdue')
+		  AND `+activeSemanticSpaceGenerationSQL("relationship_conflict_cases")+`
 		GROUP BY team_id, status
 	`, collectedAt).Rows()
 	if err != nil {
@@ -519,6 +519,7 @@ func loadConflictQueueLeaseMetrics(ctx context.Context, tx *gorm.DB, teamIDs []s
 		       COUNT(*)::double precision
 		FROM relationship_conflict_cases
 		WHERE status IN ('open', 'overdue')
+		  AND `+activeSemanticSpaceGenerationSQL("relationship_conflict_cases")+`
 		GROUP BY team_id, lease_state
 	`, collectedAt).Rows()
 	if err != nil {
@@ -556,6 +557,7 @@ func loadConflictQueueDerivedTaskMetrics(ctx context.Context, tx *gorm.DB, teamI
 		       COUNT(*)::double precision
 		FROM relationship_conflict_derived_evidence_tasks
 		WHERE status <> 'completed'
+		  AND ` + activeSemanticSpaceGenerationSQL("relationship_conflict_derived_evidence_tasks") + `
 		GROUP BY team_id, 2
 	`).Rows()
 	if err != nil {

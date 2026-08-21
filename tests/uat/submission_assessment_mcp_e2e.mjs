@@ -60,7 +60,7 @@ if (!submissionID) {
 }
 
 await waitForCompletedPlacement(submissionID);
-const verifierAfter = await waitForVerifierRequest(verifierBefore + 1);
+const verifierAfter = await waitForStableVerifierRequests(verifierBefore + 1);
 const summary = submissionSummary(submissionID);
 
 if (summary.assessments !== 1 || summary.completedItems !== 2 || summary.commitOutcomes !== 2) {
@@ -76,6 +76,7 @@ if (summary.searchDocuments !== 5) {
   throw new Error("atomic submission commit did not create evidence and relationship search documents");
 }
 
+const overflowBefore = verifierAfter;
 const overflowSubmission = overflowFixture();
 seedPredicates("overflow", overflowSubmission.relationships.length, "overflow");
 const overflowRemember = await mcpTool("remember", overflowSubmission);
@@ -101,6 +102,10 @@ const overflowProviderState = postgresRow(`
 const overflowAttempts = positiveCount(overflowProviderState[0]);
 const overflowAssessments = positiveCount(overflowProviderState[1]);
 if (overflowAttempts !== 0 || overflowAssessments !== 0) {
+  throw new Error("predicate overflow unexpectedly called the verifier");
+}
+const overflowAfter = await waitForStableVerifierRequests(overflowBefore);
+if (overflowAfter !== overflowBefore) {
   throw new Error("predicate overflow unexpectedly called the verifier");
 }
 const terminalFailures = await waitForPrometheusValueSelector(
@@ -265,15 +270,24 @@ async function waitForFailedSubmission(submissionID) {
   throw new Error("timed out waiting for predicate overflow failure");
 }
 
-async function waitForVerifierRequest(expected) {
+async function waitForStableVerifierRequests(minimum) {
+  let previous = -1;
+  let stableIntervals = 0;
+  let observed = -1;
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    const observed = await prometheusValue("densemem_verifier_requests_total");
-    if (observed >= expected) {
+    observed = await prometheusValue("densemem_verifier_requests_total");
+    if (observed >= minimum && observed === previous) {
+      stableIntervals += 1;
+    } else {
+      stableIntervals = 0;
+    }
+    if (stableIntervals >= 3) {
       return observed;
     }
+    previous = observed;
     await delay(2_000);
   }
-  throw new Error("submission did not record one assessor conversation");
+  throw new Error(`verifier request metric did not become stable (minimum ${minimum}, last observed ${observed})`);
 }
 
 function submissionSummary(submissionID) {

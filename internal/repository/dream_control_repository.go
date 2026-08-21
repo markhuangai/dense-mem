@@ -34,6 +34,8 @@ func (r *SemanticRepositoryImpl) CountHypotheses(ctx context.Context, teamID, st
 			SELECT count(*)
 			FROM hypotheses
 			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND canonical_hypothesis_id IS NULL
 			  AND (? = '' OR status = ?)
 		`, teamID, status, status).Scan(&count).Error
@@ -61,6 +63,8 @@ func (r *SemanticRepositoryImpl) ListDreamCyclesForTeam(ctx context.Context, tea
 			SELECT `+dreamCycleRunSelectColumns+`
 			FROM dream_cycle_runs
 			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND canonical_run_id IS NULL
 			ORDER BY started_at DESC, run_id
 			LIMIT ?

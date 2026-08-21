@@ -256,6 +256,8 @@ type ApplyRelationshipDecisionInput struct {
 type RelationshipRecord struct {
 	TeamID             string
 	RelationshipID     string
+	SpaceID            string `json:"-"`
+	SpaceGeneration    int64  `json:"-"`
 	OwnerProfileID     string
 	SemanticGroupKey   string
 	SubjectEntityID    string
@@ -442,6 +444,7 @@ type TraceRelationshipInput struct {
 	PredicateKeys           []string
 	Topic                   string
 	MinRelevance            *float64
+	spaceID                 string
 }
 
 type RelationshipTraceResult struct {
@@ -470,6 +473,7 @@ type RelationshipTraceRecord struct {
 	TeamID             string     `json:"team_id,omitempty"`
 	RelationshipID     string     `json:"relationship_id,omitempty"`
 	OwnerProfileID     string     `json:"owner_profile_id,omitempty"`
+	SpaceID            string     `json:"-"`
 	SemanticGroupKey   string     `json:"semantic_group_key,omitempty"`
 	SubjectEntityID    string     `json:"subject_entity_id,omitempty"`
 	SubjectName        string     `json:"subject_name,omitempty"`
@@ -702,6 +706,7 @@ type SemanticGraphQuery struct {
 	Depth        int
 	Limit        int
 	MinRelevance float64
+	spaceID      string
 }
 
 type SemanticGraphNodeDetailInput struct {

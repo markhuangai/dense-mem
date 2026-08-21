@@ -432,9 +432,16 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 			    updated_at = ?,
 			    version = task.version + 1
 			FROM placement_items AS item
+			JOIN placement_runs AS run
+			  ON run.team_id = item.team_id
+			 AND run.placement_run_id = item.placement_run_id
+			 AND run.owner_profile_id = item.owner_profile_id
 			WHERE task.team_id = ?::uuid
 			  AND task.placement_item_id = item.placement_item_id
 			  AND item.team_id = task.team_id
+			  AND `+activeSemanticSpaceGenerationSQL("task")+`
+			  AND `+activeSemanticSpaceGenerationSQL("item")+`
+			  AND `+activeSemanticSpaceGenerationSQL("run")+`
 			  AND task.status IN ('open', 'acknowledged')
 			  AND task.expires_at IS NOT NULL
 			  AND task.expires_at <= ?
@@ -478,16 +485,21 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 			result := tx.WithContext(ctx).Exec(`
 				INSERT INTO placement_outcomes (
 				    team_id, placement_run_id, placement_item_id, owner_profile_id,
-				    outcome_kind, status, idempotency_key, payload
-				) VALUES (
-				    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-				    'semantic_review_expired', 'expired', ?, ?::jsonb
+				    space_id, space_generation, outcome_kind, status, idempotency_key, payload
 				)
+				SELECT run.team_id, run.placement_run_id, ?::uuid, run.owner_profile_id,
+				       run.space_id, run.space_generation,
+				       'semantic_review_expired', 'expired', ?, ?::jsonb
+				FROM placement_runs AS run
+				WHERE run.team_id = ?::uuid
+				  AND run.placement_run_id = ?::uuid
+				  AND run.owner_profile_id = ?::uuid
+				  AND `+activeSemanticSpaceGenerationSQL("run")+`
 				ON CONFLICT (team_id, owner_profile_id, idempotency_key)
 				WHERE idempotency_key <> ''
 				DO NOTHING
-			`, input.TeamID, task.placementRunID, task.placementItemID, task.ownerProfileID,
-				"system:semantic_review_expiry:"+task.reviewTaskID, string(payload))
+			`, task.placementItemID, "system:semantic_review_expiry:"+task.reviewTaskID, string(payload),
+				input.TeamID, task.placementRunID, task.ownerProfileID)
 			if result.Error != nil {
 				return result.Error
 			}
@@ -499,8 +511,18 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 			WITH eligible_items AS (
 			    SELECT DISTINCT task.placement_item_id
 			    FROM review_tasks AS task
+			    JOIN placement_items AS item
+			      ON item.team_id = task.team_id
+			     AND item.placement_item_id = task.placement_item_id
+			    JOIN placement_runs AS run
+			      ON run.team_id = item.team_id
+			     AND run.placement_run_id = item.placement_run_id
+			     AND run.owner_profile_id = item.owner_profile_id
 			    WHERE task.team_id = ?::uuid
 			      AND task.placement_item_id IS NOT NULL
+			      AND `+activeSemanticSpaceGenerationSQL("task")+`
+			      AND `+activeSemanticSpaceGenerationSQL("item")+`
+			      AND `+activeSemanticSpaceGenerationSQL("run")+`
 			      AND task.status = 'expired'
 			      AND task.expires_at IS NOT NULL
 			      AND task.expires_at <= ?
@@ -524,6 +546,7 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 			        updated_at = now()
 			WHERE item.team_id = ?::uuid
 			  AND item.status = 'awaiting_review'
+			  AND `+activeSemanticSpaceGenerationSQL("item")+`
 			  AND item.placement_item_id IN (SELECT placement_item_id FROM eligible_items)
 		    RETURNING item.placement_run_id, item.placement_item_id
 		), affected_runs AS (
@@ -537,6 +560,7 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 			    updated_at = now()
 			WHERE run.team_id = ?::uuid
 			  AND run.status = 'awaiting_review'
+			  AND `+activeSemanticSpaceGenerationSQL("run")+`
 			  AND run.placement_run_id IN (SELECT placement_run_id FROM affected_runs)
 			  AND NOT EXISTS (
 			      SELECT 1
@@ -726,9 +750,14 @@ func insertPlacementAssessment(
 		    team_id, placement_item_id, claim_key, owner_profile_id, request_id,
 		    assessor_contract_version, model, tokenizer,
 		    input_tokens, output_tokens, candidate_context_tokens,
-		    candidate_context_truncated, normalized_response, response_hash, validated_at
+		    candidate_context_truncated, normalized_response, response_hash, validated_at,
+		    space_id, space_generation
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?
+		    ,(SELECT item.space_id FROM placement_items AS item
+		      WHERE item.team_id = ?::uuid AND item.placement_item_id = ?::uuid),
+		     (SELECT item.space_generation FROM placement_items AS item
+		      WHERE item.team_id = ?::uuid AND item.placement_item_id = ?::uuid)
 		)
 		ON CONFLICT DO NOTHING
 		RETURNING team_id::text, assessment_id::text, owner_profile_id::text,
@@ -741,7 +770,7 @@ func insertPlacementAssessment(
 		input.AssessorContractVersion, input.Model, input.Tokenizer,
 		input.InputTokens, input.OutputTokens, input.CandidateContextTokens,
 		input.CandidateContextTruncated, string(input.NormalizedResponse), input.ResponseHash,
-		input.ValidatedAt).Rows()
+		input.ValidatedAt, input.TeamID, input.PlacementItemID, input.TeamID, input.PlacementItemID).Rows()
 	if err != nil {
 		return nil, err
 	}

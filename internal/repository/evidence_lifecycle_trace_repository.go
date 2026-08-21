@@ -11,6 +11,7 @@ func loadTraceEvidenceLifecycleEvents(
 	ctx context.Context,
 	tx *gorm.DB,
 	teamID string,
+	spaceID string,
 	fragmentIDs []string,
 	limit int,
 ) ([]TraceEvidenceLifecycleEvent, error) {
@@ -30,14 +31,18 @@ func loadTraceEvidenceLifecycleEvents(
 		JOIN evidence_lifecycle_operations AS operation
 		  ON operation.team_id = lifecycle.team_id
 		 AND operation.lifecycle_operation_id = lifecycle.lifecycle_operation_id
+		 AND operation.space_id = lifecycle.space_id
+		 AND `+activeSemanticSpaceGenerationSQL("operation")+`
 		WHERE lifecycle.team_id = ?::uuid
+		  AND lifecycle.space_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("lifecycle")+`
 		  AND (
 		      lifecycle.target_fragment_id = ANY(?::uuid[])
 		      OR lifecycle.replacement_fragment_id = ANY(?::uuid[])
 		  )
 		ORDER BY lifecycle.created_at ASC, lifecycle.lifecycle_event_id ASC
 		LIMIT ?
-	`, teamID, pq.Array(fragmentIDs), pq.Array(fragmentIDs), limit).Rows()
+	`, teamID, spaceID, pq.Array(fragmentIDs), pq.Array(fragmentIDs), limit).Rows()
 	if err != nil {
 		return nil, err
 	}

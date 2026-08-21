@@ -4,10 +4,71 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+func TestSemanticCatalogsOmitSealedGenerationEntities(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "semantic-catalog-sealed-generation")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "semantic-catalog-sealed-owner")
+	repo := NewSemanticRepository(appDB, rls)
+	activeEntity := createSemanticEntity(t, ctx, repo, teamID, ownerID, "project", "Active Catalog Entity")
+	privateSpace, err := NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	require.NoError(t, err)
+	var privateGeneration int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT generation FROM memory_spaces WHERE id = ?::uuid`, privateSpace.ID).Row().Scan(&privateGeneration)
+	}))
+	privateEntityID := uuid.New()
+	privateNameID := uuid.New()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO entity_records (
+				team_id, entity_id, entity_kind, identity_context, metadata, space_id, space_generation
+			) VALUES (?, ?, 'project', '{}'::jsonb, '{}'::jsonb, ?, ?)
+		`, teamID, privateEntityID, privateSpace.ID, privateGeneration).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO entity_names (
+				team_id, entity_name_id, entity_id, owner_profile_id, display_name, normalized_name,
+				name_kind, metadata, space_id, space_generation
+			) VALUES (?, ?, ?, ?, 'Sealed Catalog Entity', 'sealed catalog entity', 'canonical', '{}'::jsonb, ?, ?)
+		`, teamID, privateNameID, privateEntityID, ownerID, privateSpace.ID, privateGeneration).Error
+	}))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE memory_spaces
+			SET lifecycle_state = 'sealed', generation = generation + 1, sealed_at = now(), updated_at = now()
+			WHERE id = ?::uuid
+		`, privateSpace.ID).Error
+	}))
+
+	reviewCandidates, err := repo.ListSemanticReviewEntityCandidates(ctx, SemanticReviewEntityCandidateInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Name: "Sealed Catalog Entity", EntityKind: "project", Limit: 5,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, reviewCandidates)
+
+	knownEntities, err := repo.ListSemanticAssessmentKnownEntities(ctx, SemanticAssessmentKnownEntityInput{
+		TeamID: teamID, OwnerProfileID: ownerID, EntityIDs: []string{activeEntity.EntityID, privateEntityID.String()},
+	})
+	require.NoError(t, err)
+	require.Len(t, knownEntities, 1)
+	assert.Equal(t, activeEntity.EntityID, knownEntities[0].EntityID)
+
+	matches, err := repo.ListSemanticAssessmentEntityMatches(ctx, SemanticAssessmentEntityMatchInput{
+		TeamID: teamID, OwnerProfileID: ownerID, EvidenceText: "Active Catalog Entity and Sealed Catalog Entity", Limit: 5,
+	})
+	require.NoError(t, err)
+	require.Len(t, matches.Matches, 1)
+	assert.Equal(t, activeEntity.EntityID, matches.Matches[0].Candidate.EntityID)
+}
 
 func TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)

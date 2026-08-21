@@ -55,15 +55,29 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 			COALESCE(owner_membership.sso_entitlement_status, ''),
 			owner_membership.sso_last_entitlement_checked_at,
 			owner_membership.sso_last_login_at,
-			COALESCE(c.memory_binding, 'shared_only'),
-			COALESCE(c.memory_space_id::text, ''),
-			COALESCE((
+				COALESCE(c.memory_binding, 'shared_only'),
+				COALESCE(c.memory_space_id::text, ''),
+				COALESCE((
+					SELECT memory_space.generation
+					FROM memory_spaces AS memory_space
+					WHERE memory_space.id = c.memory_space_id
+					  AND memory_space.team_id = c.team_id
+					LIMIT 1
+				), 0),
+				COALESCE((
 				SELECT shared_space.id::text
 				FROM memory_spaces AS shared_space
 				WHERE shared_space.team_id = c.team_id
 				  AND shared_space.kind = 'team_shared'
 				LIMIT 1
-			), '')
+				), ''),
+				COALESCE((
+					SELECT shared_space.generation
+					FROM memory_spaces AS shared_space
+					WHERE shared_space.team_id = c.team_id
+					  AND shared_space.kind = 'team_shared'
+					LIMIT 1
+				), 0)
 		FROM credentials c
 		JOIN actor_identities a
 		  ON a.id = c.actor_identity_id
@@ -102,6 +116,7 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 	var key domain.Credential
 	var ownerIdentityID, ssoProviderID string
 	var memoryBinding, memorySpaceID, teamSharedSpaceID string
+	var memorySpaceGeneration, teamSharedSpaceGeneration int64
 	if err := rows.Scan(
 		&key.ID,
 		&key.ActorIdentityID,
@@ -130,13 +145,15 @@ func lookupCanonicalCredentialWhere(tx *gorm.DB, predicate string, value any) (*
 		&key.SSOLastLoginAt,
 		&memoryBinding,
 		&memorySpaceID,
+		&memorySpaceGeneration,
 		&teamSharedSpaceID,
+		&teamSharedSpaceGeneration,
 	); err != nil {
 		return nil, err
 	}
 	key.OwnerIdentityID = parseOptionalUUID(ownerIdentityID)
 	key.SSOProviderID = parseOptionalUUID(ssoProviderID)
-	if err := applyCredentialMemoryFields(&key, memoryBinding, memorySpaceID, teamSharedSpaceID); err != nil {
+	if err := applyCredentialMemoryFields(&key, memoryBinding, memorySpaceID, memorySpaceGeneration, teamSharedSpaceID, teamSharedSpaceGeneration); err != nil {
 		return nil, err
 	}
 	return &key, nil

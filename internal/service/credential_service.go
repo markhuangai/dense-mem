@@ -805,7 +805,18 @@ func (s *CredentialServiceImpl) DeleteForTeam(ctx context.Context, teamID, id uu
 		"revoked_at":   credential.RevokedAt,
 	}
 
-	rows, err := s.repo.DeleteForTeam(ctx, teamID, id)
+	atomicAuditRepo, hasAtomicAudit := s.repo.(repository.CredentialDeletionAuditRepository)
+	var rows int64
+	if hasAtomicAudit {
+		rows, err = atomicAuditRepo.DeleteForTeamWithAudit(ctx, teamID, id, repository.CredentialDeletionAuditInput{
+			ActorCredentialID: actorCredentialID,
+			ActorRole:         actorRole,
+			ClientIP:          clientIP,
+			CorrelationID:     correlationID,
+		})
+	} else {
+		rows, err = s.repo.DeleteForTeam(ctx, teamID, id)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to delete api credential for team: %w", err)
 	}
@@ -819,19 +830,27 @@ func (s *CredentialServiceImpl) DeleteForTeam(ctx context.Context, teamID, id uu
 		}
 	}
 
-	teamIDStr := teamID.String()
-	if err := s.auditService.Append(ctx, AuditLogEntry{
-		ProfileID:     &teamIDStr,
-		Operation:     "DELETE",
-		EntityType:    "api_key",
-		EntityID:      credential.ID.String(),
-		BeforePayload: beforePayload,
-		ActorKeyID:    actorCredentialID,
-		ActorRole:     actorRole,
-		ClientIP:      clientIP,
-		CorrelationID: correlationID,
-	}); err != nil {
-		s.logAuditError(err, "DELETE", credential.ID.String(), correlationID)
+	if !hasAtomicAudit {
+		teamIDStr := teamID.String()
+		var memorySpaceID *string
+		if credential.MemorySpaceID != uuid.Nil {
+			value := credential.MemorySpaceID.String()
+			memorySpaceID = &value
+		}
+		if err := s.auditService.Append(ctx, AuditLogEntry{
+			ProfileID:     &teamIDStr,
+			MemorySpaceID: memorySpaceID,
+			Operation:     "DELETE",
+			EntityType:    "api_key",
+			EntityID:      credential.ID.String(),
+			BeforePayload: beforePayload,
+			ActorKeyID:    actorCredentialID,
+			ActorRole:     actorRole,
+			ClientIP:      clientIP,
+			CorrelationID: correlationID,
+		}); err != nil {
+			s.logAuditError(err, "DELETE", credential.ID.String(), correlationID)
+		}
 	}
 
 	return nil

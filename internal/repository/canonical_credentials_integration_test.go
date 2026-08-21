@@ -90,6 +90,131 @@ func TestCanonicalSSOOwnedCredentialCollectionAndSpaces(t *testing.T) {
 	require.Zero(t, singletonIndexCount)
 }
 
+func TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "canonical-promoted-sso-delete"))
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "promoted", domain.CredentialBindingCredentialPrivate)
+	ingestID := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "promoted private content")
+
+	rows, err := credentialRepo.UpdateRoleForTeam(ctx, teamID, target.ID, "manager", []string{"read", "write"})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+
+	rows, err = credentialRepo.DeleteForTeam(ctx, teamID, target.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+
+	privateMemoryRepo := NewPrivateMemoryRepository(appDB, rls)
+	require.NoError(t, privateMemoryRepo.Prepare(ctx))
+	operations, err := privateMemoryRepo.ListOperations(ctx, 100, 0)
+	require.NoError(t, err)
+	require.Len(t, operations, 1)
+	require.Equal(t, domain.PrivateMemoryRetireCredential, operations[0].Action)
+	require.Equal(t, domain.PrivateMemoryActorControl, operations[0].ActorClass)
+	require.Equal(t, target.ID, *operations[0].TargetCredentialID)
+
+	claim, err := privateMemoryRepo.ClaimNext(ctx, "promoted-sso-delete-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	completed, err := privateMemoryRepo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	require.NoError(t, err)
+	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var exists bool
+		if err := tx.Raw(`SELECT EXISTS (SELECT 1 FROM knowledge_ingests WHERE ingest_id = ?)`, ingestID).Row().Scan(&exists); err != nil {
+			return err
+		}
+		require.False(t, exists)
+
+		var lifecycle, status string
+		if err := tx.Raw(`SELECT lifecycle_state FROM memory_spaces WHERE id = ?`, target.MemorySpaceID).Row().Scan(&lifecycle); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT status FROM credentials WHERE id = ?`, target.ID).Row().Scan(&status); err != nil {
+			return err
+		}
+		require.Equal(t, "retired", lifecycle)
+		require.Equal(t, "disabled", status)
+		return nil
+	}))
+}
+
+func TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "canonical-delete-audit-order"))
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-order", domain.CredentialBindingCredentialPrivate)
+	rollbackTarget := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-rollback", domain.CredentialBindingSharedOnly)
+	seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "audit-order private content")
+
+	rows, err := credentialRepo.DeleteForTeamWithAudit(ctx, teamID, target.ID, CredentialDeletionAuditInput{
+		ActorRole:     "manager",
+		ClientIP:      "127.0.0.1",
+		CorrelationID: "corr-delete-audit-order",
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+
+	var queuedCount, auditCount int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT COUNT(*)
+			FROM private_memory_erasure_operations
+			WHERE team_id = ? AND target_credential_id = ?
+		`, teamID, target.ID).Row().Scan(&queuedCount); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM audit_log
+			WHERE team_id = ? AND entity_type = 'api_key' AND entity_id = ? AND operation = 'DELETE'
+		`, teamID, target.ID.String()).Row().Scan(&auditCount)
+	}))
+	require.Equal(t, int64(1), queuedCount)
+	require.Equal(t, int64(1), auditCount)
+
+	privateMemoryRepo := NewPrivateMemoryRepository(appDB, rls)
+	require.NoError(t, privateMemoryRepo.Prepare(ctx))
+	claim, err := privateMemoryRepo.ClaimNext(ctx, "delete-audit-order-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	_, err = privateMemoryRepo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	require.NoError(t, err)
+
+	var beforePayload, afterPayload, metadata []byte
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT before_payload, after_payload, metadata
+			FROM audit_log
+			WHERE team_id = ? AND entity_type = 'api_key' AND entity_id = ? AND operation = 'DELETE'
+		`, teamID, target.ID.String()).Row().Scan(&beforePayload, &afterPayload, &metadata)
+	}))
+	require.Nil(t, beforePayload)
+	require.Nil(t, afterPayload)
+	require.JSONEq(t, privateMemoryAuditMetadataJSON, string(metadata))
+
+	_, err = credentialRepo.DeleteForTeamWithAudit(ctx, teamID, rollbackTarget.ID, CredentialDeletionAuditInput{
+		ActorRole: "manager",
+		ClientIP:  "not-an-ip",
+	})
+	require.Error(t, err)
+	var status string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT status FROM credentials WHERE id = ?`, rollbackTarget.ID).Row().Scan(&status)
+	}))
+	require.Equal(t, "active", status)
+}
+
 func createLedgerSSOIdentity(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, teamID uuid.UUID) uuid.UUID {
 	t.Helper()
 	providerID := uuid.New()
@@ -374,7 +499,7 @@ func TestCanonicalCredentialRevocationPreservesSharedActorAcrossTeams(t *testing
 
 	rows, err = repo.RotateForTeam(ctx, teamA, keyA, "shared-actor-hash-a-restored", "dm_"+keyA.String()[:20], "restor", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), rows)
+	require.Equal(t, int64(0), rows)
 	rows, err = repo.DeleteForTeam(ctx, teamA, keyA)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), rows)

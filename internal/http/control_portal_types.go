@@ -27,6 +27,7 @@ type ControlPortalTelemetry struct {
 	ConflictQueue   conflictqueue.Reader
 	Convergence     service.SearchConvergenceReader
 	Submissions     service.SubmissionDiagnosticsReader
+	PrivateMemory   PrivateMemoryServiceInterface
 }
 
 type controlPortalHandler struct {
@@ -42,6 +43,7 @@ type controlPortalHandler struct {
 	conflictQueue   conflictqueue.Reader
 	convergence     service.SearchConvergenceReader
 	submissions     service.SubmissionDiagnosticsReader
+	privateMemory   PrivateMemoryServiceInterface
 	health          HealthConfig
 	sso             *service.SSOService
 	directory       *service.DirectoryIdentityService

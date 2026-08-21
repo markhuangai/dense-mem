@@ -97,13 +97,17 @@ func insertPlacementOutcome(ctx context.Context, tx *gorm.DB, input PlacementOut
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO placement_outcomes (
 		    team_id, placement_run_id, placement_item_id, owner_profile_id,
-		    outcome_kind, status, idempotency_key, payload
-		) VALUES (
-		    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?::uuid, ?, ?, ?, ?::jsonb
+		    space_id, space_generation, outcome_kind, status, idempotency_key, payload
 		)
+		SELECT run.team_id, run.placement_run_id, NULLIF(?, '')::uuid, run.owner_profile_id,
+		       run.space_id, run.space_generation, ?, ?, ?, ?::jsonb
+		FROM placement_runs AS run
+		WHERE run.team_id = ?::uuid
+		  AND run.placement_run_id = ?::uuid
+		  AND run.owner_profile_id = ?::uuid
 		RETURNING outcome_id::text
-	`, input.TeamID, input.PlacementRunID, input.PlacementItemID, input.OwnerProfileID,
-		input.OutcomeKind, input.Status, input.IdempotencyKey, string(payload)).Rows()
+	`, input.PlacementItemID, input.OutcomeKind, input.Status, input.IdempotencyKey, string(payload),
+		input.TeamID, input.PlacementRunID, input.OwnerProfileID).Rows()
 	if err != nil {
 		return "", err
 	}

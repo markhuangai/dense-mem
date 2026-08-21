@@ -16,15 +16,19 @@ func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID
 			 AND document.search_document_id = job.search_document_id
 			 AND document.source_version = job.source_version
 			 AND document.projection_format_version = job.projection_format_version
-			 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
-			 AND document.document_version = job.document_version
-			 AND document.embedding_contract_id = job.embedding_contract_id
-			 AND document.embedding_dimensions = job.embedding_dimensions
+				 AND document.projection_generation_id IS NOT DISTINCT FROM job.projection_generation_id
+				 AND document.document_version = job.document_version
+				 AND document.embedding_contract_id = job.embedding_contract_id
+				 AND document.embedding_dimensions = job.embedding_dimensions
+				 AND document.space_id = job.space_id
+				 AND document.space_generation = job.space_generation
 			WHERE job.team_id = ?::uuid
 			  AND job.status = 'processing'
 			  AND job.lease_until <= clock_timestamp()
-			  AND job.attempts >= job.max_attempts
-			  AND job.space_id = COALESCE(NULLIF(?, '')::uuid, job.space_id)
+				  AND job.attempts >= job.max_attempts
+				  AND job.space_id = COALESCE(NULLIF(?, '')::uuid, job.space_id)
+				  AND `+activeSemanticSpaceGenerationSQL("job")+`
+				  AND `+activeSemanticSpaceGenerationSQL("document")+`
 			ORDER BY job.lease_until ASC, job.embedding_job_id ASC
 			LIMIT ?
 			FOR UPDATE OF document SKIP LOCKED
@@ -51,8 +55,8 @@ func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID
 			  AND job.embedding_job_id = exhausted.embedding_job_id
 			RETURNING job.team_id, job.search_document_id, job.source_version,
 			          job.projection_format_version, job.projection_generation_id,
-			          job.document_version, job.embedding_contract_id,
-			          job.embedding_dimensions
+				          job.document_version, job.embedding_contract_id,
+				          job.embedding_dimensions, job.space_id, job.space_generation
 		)
 		UPDATE search_documents AS document
 		SET search_state = 'failed', embedding_error = ?, updated_at = now()
@@ -63,7 +67,9 @@ func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID
 		  AND document.projection_format_version = failed.projection_format_version
 		  AND document.projection_generation_id IS NOT DISTINCT FROM failed.projection_generation_id
 		  AND document.document_version = failed.document_version
-		  AND document.embedding_contract_id = failed.embedding_contract_id
-		  AND document.embedding_dimensions = failed.embedding_dimensions
+			  AND document.embedding_contract_id = failed.embedding_contract_id
+			  AND document.embedding_dimensions = failed.embedding_dimensions
+			  AND document.space_id = failed.space_id
+			  AND document.space_generation = failed.space_generation
 	`, teamID, spaceID, limit, embeddingJobAttemptsExhaustedMessage, embeddingJobAttemptsExhaustedMessage).Error
 }

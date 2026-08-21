@@ -31,6 +31,8 @@ func (r *SemanticRepositoryImpl) ListCommunitySemanticGroups(ctx context.Context
 				       team_id, support_id, decision
 				FROM relationship_support_decision_events
 				WHERE team_id = ?::uuid
+				  AND space_id = dense_mem_team_shared_space(team_id)
+				  AND space_generation = dense_mem_team_shared_generation(team_id)
 				ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
 			), eligible_support AS (
 				SELECT DISTINCT support.relationship_id
@@ -50,6 +52,8 @@ func (r *SemanticRepositoryImpl) ListCommunitySemanticGroups(ctx context.Context
 				  ON lifecycle.team_id = support.team_id
 				 AND lifecycle.target_fragment_id = support.fragment_id
 				WHERE support.team_id = ?::uuid
+				  AND support.space_id = dense_mem_team_shared_space(support.team_id)
+				  AND support.space_generation = dense_mem_team_shared_generation(support.team_id)
 				  AND lifecycle.lifecycle_event_id IS NULL
 				  AND quarantine.quarantine_id IS NULL
 				  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
@@ -61,15 +65,23 @@ func (r *SemanticRepositoryImpl) ListCommunitySemanticGroups(ctx context.Context
 			SELECT DISTINCT source.semantic_group_key
 			FROM community_records AS record
 			JOIN community_sources AS source
-			  ON source.team_id = record.team_id
+			 ON source.team_id = record.team_id
 			 AND source.community_id = record.community_id
+			 AND source.space_id = dense_mem_team_shared_space(source.team_id)
+			 AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
 			JOIN relationship_records AS relationship
 			  ON relationship.team_id = source.team_id
 			 AND relationship.relationship_id = source.relationship_id
 			 AND relationship.version = source.relationship_version
+			 AND relationship.space_id = source.space_id
+			 AND relationship.space_generation = source.space_generation
 			JOIN eligible_support AS support
 			  ON support.relationship_id = relationship.relationship_id
 			WHERE record.team_id = ?::uuid
+			  AND record.space_id = dense_mem_team_shared_space(record.team_id)
+			  AND record.space_generation = dense_mem_team_shared_generation(record.team_id)
+			  AND relationship.space_id = dense_mem_team_shared_space(relationship.team_id)
+			  AND relationship.space_generation = dense_mem_team_shared_generation(relationship.team_id)
 			  AND record.status = 'current'
 			  AND relationship.status = 'active'
 			  AND relationship.identity_alias_of_relationship_id IS NULL

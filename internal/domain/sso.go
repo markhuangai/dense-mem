@@ -107,6 +107,7 @@ type SSOSession struct {
 type Membership struct {
 	ID                          uuid.UUID
 	MemorySpaceID               uuid.UUID
+	MemorySpaceGeneration       int64
 	ActorIdentityID             uuid.UUID
 	TeamID                      uuid.UUID
 	OwnerID                     uuid.UUID

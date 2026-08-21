@@ -218,6 +218,100 @@ func TestConflictQueueRepositoryIsTeamScopedAndKeysetOrdered(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestConflictQueueHidesSealedPrivateGeneration(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "conflict-queue-private-generation"))
+	identityID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	credential := createOwnedCredential(t, credentialRepo, teamID, identityID, "conflict-queue-private-generation", domain.CredentialBindingCredentialPrivate)
+	ledger := NewLedgerRepository(appDB, rls)
+	privateRepo := NewPrivateMemoryRepository(appDB, rls)
+	require.NoError(t, privateRepo.Prepare(ctx))
+
+	subjectID := uuid.New()
+	conflictID := uuid.New()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := seedTeamPredicateDefinitions(ctx, tx, teamID.String()); err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO entity_records (team_id, entity_id, entity_kind, space_id, space_generation)
+			VALUES (?, ?, 'project', ?, ?)
+		`, teamID, subjectID, credential.MemorySpaceID, credential.MemorySpaceGeneration).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO relationship_conflict_cases (
+				team_id, conflict_id, semantic_scope_key, status, subject_entity_id,
+				predicate_key, predicate_version, relationship_kind, current_cardinality,
+				polarity, question, policy_version, review_due_at, next_review_at,
+				review_ttl_days, timezone, space_id, space_generation
+			) VALUES (?, ?, ?, 'open', ?, 'uses', 1, 'state', 'one', '+', ?, ?, now(), now(), 2, 'UTC', ?, ?)
+		`, teamID, conflictID, "private-queue-generation:"+conflictID.String(), subjectID,
+			"Which private value is current?", string(domain.ConflictPolicyVersion),
+			credential.MemorySpaceID, credential.MemorySpaceGeneration).Error; err != nil {
+			return err
+		}
+		return nil
+	}))
+
+	page, err := ledger.ListConflictQueue(ctx, domainConflictQueueQuery(teamID.String(), "", 25))
+	require.NoError(t, err)
+	require.Equal(t, 1, page.Summary.OpenCount)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, conflictID.String(), page.Items[0].ConflictID)
+	require.Equal(t, "Which private value is current?", page.Items[0].Question)
+
+	operation, created, err := privateRepo.RequestControlErasure(
+		ctx,
+		credential.MemorySpaceID,
+		privateMemoryHash("conflict-queue-private-generation", credential.MemorySpaceID.String()),
+		privateMemoryHash("erase-conflict-queue-private-generation", credential.MemorySpaceID.String()),
+		"owner_request",
+	)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NotNil(t, operation)
+
+	sealed, err := ledger.ListConflictQueue(ctx, domainConflictQueueQuery(teamID.String(), "", 25))
+	require.NoError(t, err)
+	require.Zero(t, sealed.Summary.OpenCount)
+	require.Zero(t, sealed.Summary.OverdueCount)
+	require.Zero(t, sealed.Summary.ActiveLeaseCount)
+	require.Zero(t, sealed.Summary.ExpiredLeaseCount)
+	require.Empty(t, sealed.Items)
+
+	snapshot, err := ledger.CollectConflictQueueMetrics(ctx)
+	require.NoError(t, err)
+	for _, metric := range snapshot.Cases {
+		require.NotEqual(t, teamID.String(), metric.TeamID)
+	}
+
+	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, ConflictReviewRunInput{
+		TeamID:       teamID.String(),
+		WorkerID:     "sealed-private-conflict-worker",
+		LocalRunDate: time.Now().UTC(),
+		Timezone:     "UTC",
+		Lease:        time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NotNil(t, run)
+	claimedCases, err := ledger.ClaimRelationshipConflictCases(ctx, ClaimRelationshipConflictCasesInput{
+		TeamID:      teamID.String(),
+		WorkerID:    "sealed-private-conflict-worker",
+		ReviewRunID: run.ReviewRunID,
+		Limit:       10,
+		Lease:       time.Minute,
+		MaxAttempts: 5,
+		Now:         time.Now().UTC().Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.Empty(t, claimedCases, "sealed private conflict must not abort or enter worker claims")
+}
+
 func domainConflictQueueQuery(teamID, status string, limit int) domain.ConflictQueueQuery {
 	return domain.ConflictQueueQuery{TeamID: teamID, Status: status, Limit: limit}
 }

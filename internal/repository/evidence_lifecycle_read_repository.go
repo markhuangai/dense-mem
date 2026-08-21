@@ -17,10 +17,11 @@ func hydrateEvidenceLifecycleLineage(ctx context.Context, tx *gorm.DB, teamID st
 		byID[evidence[i].FragmentID] = &evidence[i]
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT replacement_fragment_id::text, target_fragment_id::text
-		FROM evidence_lifecycle_events
-		WHERE team_id = ?::uuid
-		  AND replacement_fragment_id = ANY(?::uuid[])
+		SELECT event.replacement_fragment_id::text, event.target_fragment_id::text
+		FROM evidence_lifecycle_events AS event
+		WHERE event.team_id = ?::uuid
+		  AND event.replacement_fragment_id = ANY(?::uuid[])
+		  AND `+activeSemanticSpaceGenerationSQL("event")+`
 		ORDER BY replacement_fragment_id ASC, target_fragment_id ASC
 	`, teamID, pqStringArray(ids)).Rows()
 	if err != nil {

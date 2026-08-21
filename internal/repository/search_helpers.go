@@ -46,6 +46,9 @@ func validateUpsertSearchDocumentInput(input UpsertSearchDocumentInput) error {
 			return fmt.Errorf("space_id is invalid: %w", err)
 		}
 	}
+	if input.SpaceGeneration < 0 {
+		return errors.New("space_generation must not be negative")
+	}
 	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
 		return fmt.Errorf("owner_profile_id is required: %w", err)
 	}

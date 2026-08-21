@@ -16,6 +16,9 @@ import (
 type AdvanceSourceRevisionInput struct {
 	TeamID                        string
 	OwnerProfileID                string
+	IngestID                      string
+	SpaceID                       string
+	SpaceGeneration               int64
 	SourceKey                     string
 	SourceKind                    string
 	Authority                     string
@@ -57,6 +60,8 @@ func (r *LedgerRepositoryImpl) AdvanceSourceRevision(ctx context.Context, input 
 func normalizeAdvanceSourceRevisionInput(input AdvanceSourceRevisionInput) AdvanceSourceRevisionInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.IngestID = strings.TrimSpace(input.IngestID)
+	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	input.SourceKey = strings.TrimSpace(input.SourceKey)
 	input.SourceKind = strings.TrimSpace(input.SourceKind)
 	if input.SourceKind == "" {
@@ -79,6 +84,21 @@ func validateAdvanceSourceRevisionInput(input AdvanceSourceRevisionInput) error 
 	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
 		return fmt.Errorf("owner_profile_id is required: %w", err)
 	}
+	if input.IngestID != "" {
+		if _, err := uuid.Parse(input.IngestID); err != nil {
+			return fmt.Errorf("ingest_id is invalid: %w", err)
+		}
+	}
+	if input.SpaceID != "" {
+		if _, err := uuid.Parse(input.SpaceID); err != nil {
+			return fmt.Errorf("space_id is invalid: %w", err)
+		}
+		if input.SpaceGeneration <= 0 {
+			return errors.New("space_generation must be positive when space_id is provided")
+		}
+	} else if input.SpaceGeneration != 0 {
+		return errors.New("space_generation requires space_id")
+	}
 	if input.SourceKey == "" {
 		return errors.New("source_key is required")
 	}
@@ -98,8 +118,11 @@ func getOrCreateEvidenceSource(ctx context.Context, tx *gorm.DB, input AdvanceSo
 	var sourceID string
 	var currentRevisionID sql.NullString
 	var currentToken string
+	var currentSpaceID string
+	var currentSpaceGeneration int64
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT source_id::text, current_revision_id::text, current_revision_token
+		SELECT source_id::text, current_revision_id::text, current_revision_token,
+		       space_id::text, space_generation
 		FROM evidence_sources
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
@@ -111,12 +134,15 @@ func getOrCreateEvidenceSource(ctx context.Context, tx *gorm.DB, input AdvanceSo
 		return "", "", "", err
 	}
 	if rows.Next() {
-		if err := rows.Scan(&sourceID, &currentRevisionID, &currentToken); err != nil {
+		if err := rows.Scan(&sourceID, &currentRevisionID, &currentToken, &currentSpaceID, &currentSpaceGeneration); err != nil {
 			_ = rows.Close()
 			return "", "", "", err
 		}
 		if err := rows.Close(); err != nil {
 			return "", "", "", err
+		}
+		if currentSpaceID != input.SpaceID || currentSpaceGeneration != input.SpaceGeneration {
+			return "", "", "", errors.New("evidence source memory space does not match ingest")
 		}
 		return sourceID, currentRevisionID.String, currentToken, nil
 	}
@@ -136,12 +162,13 @@ func getOrCreateEvidenceSource(ctx context.Context, tx *gorm.DB, input AdvanceSo
 	}
 	insertRows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_sources (
-		    team_id, owner_profile_id, source_key, source_kind, authority, metadata
+		    team_id, owner_profile_id, source_key, source_kind, authority, metadata,
+		    space_id, space_generation
 		) VALUES (
-		    ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb
+		    ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb, ?::uuid, ?::bigint
 		)
 		RETURNING source_id::text
-	`, input.TeamID, input.OwnerProfileID, input.SourceKey, input.SourceKind, input.Authority, string(metadata)).Rows()
+	`, input.TeamID, input.OwnerProfileID, input.SourceKey, input.SourceKind, input.Authority, string(metadata), input.SpaceID, input.SpaceGeneration).Rows()
 	if err != nil {
 		return "", "", "", translateSourceCreateError(err)
 	}
@@ -158,6 +185,30 @@ func getOrCreateEvidenceSource(ctx context.Context, tx *gorm.DB, input AdvanceSo
 	return sourceID, "", "", translateSourceCreateError(insertRows.Err())
 }
 
+func resolveAdvanceSourceRevisionSpace(ctx context.Context, tx *gorm.DB, input AdvanceSourceRevisionInput) (AdvanceSourceRevisionInput, error) {
+	if input.SpaceID != "" {
+		return input, nil
+	}
+	if input.IngestID != "" {
+		if err := tx.WithContext(ctx).Raw(`
+			SELECT space_id::text, space_generation
+			FROM knowledge_ingests
+			WHERE team_id = ?::uuid
+			  AND ingest_id = ?::uuid
+			  AND owner_profile_id = ?::uuid
+		`, input.TeamID, input.IngestID, input.OwnerProfileID).Row().Scan(&input.SpaceID, &input.SpaceGeneration); err != nil {
+			return input, err
+		}
+		return input, nil
+	}
+	fence, err := loadTeamSharedSpaceFence(ctx, tx, input.TeamID)
+	if err != nil {
+		return input, err
+	}
+	input.SpaceID, input.SpaceGeneration = fence.ID, fence.Generation
+	return input, nil
+}
+
 func advanceSourceRevisionInTx(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -166,6 +217,11 @@ func advanceSourceRevisionInTx(
 ) (*SourceRevisionResult, error) {
 	input = normalizeAdvanceSourceRevisionInput(input)
 	if err := validateAdvanceSourceRevisionInput(input); err != nil {
+		return nil, err
+	}
+	var err error
+	input, err = resolveAdvanceSourceRevisionSpace(ctx, tx, input)
+	if err != nil {
 		return nil, err
 	}
 	cacheKey := input.SourceKey + "\x00" + input.RevisionToken
@@ -441,13 +497,16 @@ func insertSourceRevision(ctx context.Context, tx *gorm.DB, input AdvanceSourceR
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_source_revisions (
 		    team_id, source_id, owner_profile_id, revision_token,
-		    expected_previous_revision_token, supersedes_revision_id, content_hash, envelope
+		    expected_previous_revision_token, supersedes_revision_id, content_hash, envelope,
+		    space_id, space_generation
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?, NULLIF(?, '')::uuid, ?, ?::jsonb
+		    ?::uuid, ?::uuid, ?::uuid, ?, ?, NULLIF(?, '')::uuid, ?, ?::jsonb,
+		    ?::uuid, ?::bigint
 		)
 		RETURNING source_revision_id::text
 	`, input.TeamID, sourceID, input.OwnerProfileID, input.RevisionToken,
-		input.ExpectedPreviousRevisionToken, supersedesRevisionID, input.ContentHash, string(envelope)).Rows()
+		input.ExpectedPreviousRevisionToken, supersedesRevisionID, input.ContentHash, string(envelope),
+		input.SpaceID, input.SpaceGeneration).Rows()
 	if err != nil {
 		return "", err
 	}

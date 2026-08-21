@@ -201,7 +201,7 @@ func searchRecallFullText(
 	limit int,
 ) ([]SearchHit, error) {
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
-	spaceClause := recallSpacePredicate("space_id", input.TeamID, input.SpaceID, input.SpaceKind)
+	spaceClause := recallSpacePredicate("search_documents.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
 		       source_version, document_version, embedding_contract_id::text,
@@ -256,7 +256,7 @@ func searchRecallExactVector(
 	if err != nil {
 		return nil, err
 	}
-	spaceClause := recallSpacePredicate("space_id", input.TeamID, input.SpaceID, input.SpaceKind)
+	spaceClause := recallSpacePredicate("search_documents.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
 		       source_version, document_version, embedding_contract_id::text,
@@ -308,7 +308,7 @@ func searchRecallANNVector(
 	if err := setRecallANNQueryEFSearch(ctx, tx, contract, candidateLimit); err != nil {
 		return nil, err
 	}
-	spaceClause := recallSpacePredicate("space_id", input.TeamID, input.SpaceID, input.SpaceKind)
+	spaceClause := recallSpacePredicate("search_documents.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	query := fmt.Sprintf(`
 		WITH ann_candidates AS MATERIALIZED (
 			SELECT team_id, search_document_id
@@ -803,17 +803,31 @@ func normalizeRecallEvidenceInput(input RecallEvidenceInput) RecallEvidenceInput
 // fixed enum values. It deliberately does not accept request text so branch
 // scope cannot become SQL input or an authorization override.
 func recallSpacePredicate(column, teamID, spaceID, spaceKind string) string {
+	generationColumn := column
+	if separator := strings.LastIndexByte(column, '.'); separator >= 0 {
+		generationColumn = column[:separator] + ".space_generation"
+	} else {
+		generationColumn = "space_generation"
+	}
 	if strings.TrimSpace(spaceID) != "" {
 		parsed, err := uuid.Parse(strings.TrimSpace(spaceID))
 		if err == nil {
-			return fmt.Sprintf(" AND %s = %s::uuid", column, pq.QuoteLiteral(parsed.String()))
+			literal := pq.QuoteLiteral(parsed.String())
+			return fmt.Sprintf(
+				" AND %s = %s::uuid AND %s = (SELECT generation FROM memory_spaces WHERE id = %s AND lifecycle_state = 'active')",
+				column, literal, generationColumn, column,
+			)
 		}
 		return " AND FALSE"
 	}
 	if strings.TrimSpace(spaceKind) == "" || strings.TrimSpace(spaceKind) == string(domain.MemorySpaceTeamShared) {
 		parsed, err := uuid.Parse(strings.TrimSpace(teamID))
 		if err == nil {
-			return fmt.Sprintf(" AND %s = dense_mem_team_shared_space(%s::uuid)", column, pq.QuoteLiteral(parsed.String()))
+			literal := pq.QuoteLiteral(parsed.String())
+			return fmt.Sprintf(
+				" AND %s = dense_mem_team_shared_space(%s::uuid) AND %s = dense_mem_team_shared_generation(%s::uuid)",
+				column, literal, generationColumn, literal,
+			)
 		}
 		return " AND FALSE"
 	}

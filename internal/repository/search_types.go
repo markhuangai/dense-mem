@@ -109,6 +109,7 @@ type UpsertSearchDocumentInput struct {
 	EmbeddingContractID    string
 	Metadata               map[string]any
 	SpaceID                string
+	SpaceGeneration        int64
 	SpaceKind              string
 }
 
@@ -127,6 +128,7 @@ type SearchDocumentResult struct {
 	SearchState            string
 	QueuedJobID            string
 	SpaceID                string
+	SpaceGeneration        int64
 }
 
 type ClaimEmbeddingJobsInput struct {
@@ -143,6 +145,7 @@ type EmbeddingJob struct {
 	SearchDocumentID       string
 	OwnerProfileID         string
 	SpaceID                string
+	SpaceGeneration        int64
 	SourceKind             string
 	SourceID               string
 	SourceVersion          int64

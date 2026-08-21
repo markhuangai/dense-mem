@@ -17,6 +17,7 @@ import (
 
 type relationshipCorrectionInsert struct {
 	State        string
+	SpaceID      string
 	Token        string
 	ExpiresAt    *time.Time
 	Candidates   []RelationshipCorrectionCandidate
@@ -36,6 +37,7 @@ type effectiveRelationshipCorrectionSupport struct {
 	Metadata         map[string]any
 	IngestID         string
 	PlacementItemID  string
+	SpaceID          string
 }
 
 type relationshipCorrectionResolution struct {
@@ -93,12 +95,12 @@ func insertRelationshipCorrectionSubmission(
 		    expected_version, request_hash, patch, supports, reason,
 		    idempotency_key, processing_state, confirmation_token,
 		    confirmation_expires_at, candidates, selection,
-		    error_code, error_message, completed_at
+		    error_code, error_message, space_id, completed_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
 		    ?, ?, ?::jsonb, ?::jsonb, ?,
 		    ?, ?, ?, ?, ?::jsonb, ?::jsonb,
-		    ?, ?, CASE WHEN ? IN ('completed', 'rejected', 'failed') THEN now() ELSE NULL END
+		    ?, ?, ?::uuid, CASE WHEN ? IN ('completed', 'rejected', 'failed') THEN now() ELSE NULL END
 		)
 		ON CONFLICT (team_id, owner_profile_id, idempotency_key) DO NOTHING
 		RETURNING submission_id::text
@@ -106,7 +108,7 @@ func insertRelationshipCorrectionSubmission(
 		input.ExpectedVersion, requestHash, string(patchJSON), string(supportsJSON), input.Reason,
 		input.IdempotencyKey, insert.State, insert.Token, timeArg(insert.ExpiresAt),
 		string(candidatesJSON), string(selectionJSON), insert.ErrorCode, insert.ErrorMessage,
-		insert.State).Row().Scan(&insertedID)
+		insert.SpaceID, insert.State).Row().Scan(&insertedID)
 	created := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, false, err
@@ -140,7 +142,8 @@ func loadEffectiveRelationshipCorrectionSupports(
 		       COALESCE(support.source_revision_id::text, ''),
 		       support.quote, support.authority, support.metadata,
 		       fragment.ingest_id::text,
-		       COALESCE(observation.placement_item_id::text, '')
+		       COALESCE(observation.placement_item_id::text, ''),
+		       support.space_id::text
 		FROM relationship_evidence_supports AS support
 		JOIN latest ON latest.support_id = support.support_id
 		JOIN evidence_fragments AS fragment
@@ -179,7 +182,7 @@ func loadEffectiveRelationshipCorrectionSupports(
 			&support.SupportID, &support.EvidenceID, &support.Start, &support.End,
 			&support.SourceGroupKey, &support.SourceID, &support.SourceRevisionID,
 			&support.Quote, &support.Authority, &metadataJSON,
-			&support.IngestID, &support.PlacementItemID,
+			&support.IngestID, &support.PlacementItemID, &support.SpaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -558,6 +561,11 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 	resolution *relationshipCorrectionResolution,
 	supports []effectiveRelationshipCorrectionSupport,
 ) (*CorrectRelationshipResult, error) {
+	for _, support := range supports {
+		if err := requireSemanticSpaceMatch(source.SpaceID, support.SpaceID); err != nil {
+			return nil, err
+		}
+	}
 	subjectEntityID := resolution.SubjectEntityID
 	objectEntityID := resolution.ObjectEntityID
 	objectValueID := resolution.ObjectValueID
@@ -711,6 +719,13 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 	if err != nil {
 		return nil, err
 	}
+	sourceSpaceID, err := loadRelationshipSpaceID(ctx, tx, row.TeamID, successor.RelationshipID, successor.Version)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireSemanticSpaceMatch(source.SpaceID, sourceSpaceID); err != nil {
+		return nil, err
+	}
 	metadataJSON, err := json.Marshal(map[string]any{"submission_id": row.SubmissionID})
 	if err != nil {
 		return nil, err
@@ -719,12 +734,12 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 		INSERT INTO relationship_cross_references (
 		    team_id, author_profile_id, source_relationship_id,
 		    source_relationship_version, target_relationship_id,
-		    target_relationship_version, kind, verification_event_id, metadata
+		    target_relationship_version, kind, verification_event_id, metadata, space_id
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, 'corrects', ?::uuid, ?::jsonb
+		    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, 'corrects', ?::uuid, ?::jsonb, ?::uuid
 		)
 	`, row.TeamID, row.OwnerProfileID, successor.RelationshipID, successor.Version,
-		original.RelationshipID, original.Version, verificationEventID, string(metadataJSON)).Error; err != nil {
+		original.RelationshipID, original.Version, verificationEventID, string(metadataJSON), sourceSpaceID).Error; err != nil {
 		return nil, err
 	}
 	patchJSON, err := json.Marshal(row.Patch)
@@ -740,13 +755,13 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 		    team_id, submission_id, owner_profile_id,
 		    original_relationship_id, original_relationship_version,
 		    successor_relationship_id, successor_relationship_version,
-		    reused_successor, patch, supports, reason
+		    reused_successor, patch, supports, reason, space_id
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?::jsonb, ?::jsonb, ?
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?::jsonb, ?::jsonb, ?, ?::uuid
 		)
 	`, row.TeamID, row.SubmissionID, row.OwnerProfileID,
 		original.RelationshipID, original.Version, successor.RelationshipID, successor.Version,
-		reused, string(patchJSON), string(supportsJSON), row.Reason).Error; err != nil {
+		reused, string(patchJSON), string(supportsJSON), row.Reason, sourceSpaceID).Error; err != nil {
 		return nil, err
 	}
 	commit := CommitPlacementSemanticInput{TeamID: row.TeamID, OwnerProfileID: row.OwnerProfileID}
@@ -815,10 +830,12 @@ func createRelationshipCorrectionEntity(
 	}
 	var entityID string
 	if err := tx.WithContext(ctx).Raw(`
-		INSERT INTO entity_records (team_id, entity_kind, identity_context, metadata)
-		VALUES (?::uuid, ?, ?::jsonb, ?::jsonb)
+		INSERT INTO entity_records (team_id, entity_kind, identity_context, metadata, space_id, space_generation)
+		VALUES (?::uuid, ?, ?::jsonb, ?::jsonb,
+		        ?::uuid,
+		        (SELECT generation FROM memory_spaces WHERE id = ?::uuid AND team_id = ?::uuid))
 		RETURNING entity_id::text
-	`, row.TeamID, patch.EntityKind, string(identityContext), string(metadata)).Row().Scan(&entityID); err != nil {
+	`, row.TeamID, patch.EntityKind, string(identityContext), string(metadata), row.SpaceID, row.SpaceID, row.TeamID).Row().Scan(&entityID); err != nil {
 		return "", err
 	}
 	if _, err := insertEntityName(ctx, tx, AddEntityNameInput{

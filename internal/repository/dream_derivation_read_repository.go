@@ -37,6 +37,8 @@ func hydrateDreamHypothesisDerivations(
 		       source_group_key, span_start, span_end, quote, authority
 		FROM hypothesis_derivation_sources
 		WHERE team_id = ?::uuid
+		  AND space_id = dense_mem_team_shared_space(team_id)
+		  AND space_generation = dense_mem_team_shared_generation(team_id)
 		  AND hypothesis_id = ANY(?::uuid[])
 		ORDER BY hypothesis_id, premise_position, derivation_source_id
 	`, teamID, pq.Array(ids)).Rows()

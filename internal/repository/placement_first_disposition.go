@@ -74,18 +74,22 @@ func insertPlacementFirstDisposition(
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO placement_outcomes (
-		    team_id, placement_run_id, owner_profile_id,
+		    team_id, placement_run_id, owner_profile_id, space_id, space_generation,
 		    outcome_kind, status, idempotency_key, payload
-		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid,
-		    'telemetry_first_disposition', ?, ?, ?::jsonb
 		)
+		SELECT run.team_id, run.placement_run_id, run.owner_profile_id,
+		       run.space_id, run.space_generation,
+		       'telemetry_first_disposition', ?, ?, ?::jsonb
+		FROM placement_runs AS run
+		WHERE run.team_id = ?::uuid
+		  AND run.placement_run_id = ?::uuid
+		  AND run.owner_profile_id = ?::uuid
 		ON CONFLICT (team_id, placement_run_id)
 		WHERE outcome_kind = 'telemetry_first_disposition'
 		DO NOTHING
 		RETURNING outcome_id::text
-	`, teamID, placementRunID, ownerProfileID, status,
-		placementFirstDispositionIdempotencyKey(placementRunID), string(payload)).Rows()
+	`, status, placementFirstDispositionIdempotencyKey(placementRunID), string(payload),
+		teamID, placementRunID, ownerProfileID).Rows()
 	if err != nil {
 		return false, err
 	}

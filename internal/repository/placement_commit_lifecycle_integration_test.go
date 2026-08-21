@@ -58,7 +58,7 @@ func TestPlacementSemanticCommitWaitsForEvidenceLifecycleRetraction(t *testing.T
 			if err != nil {
 				return err
 			}
-			if err := insertEvidenceLifecycleEvents(ctx, tx, operation, operationID); err != nil {
+			if err := insertEvidenceLifecycleEvents(ctx, tx, operation, operationID, planned.SpaceID); err != nil {
 				return err
 			}
 			return applyEvidenceLifecycleEffects(ctx, tx, operation, operationID, planned)

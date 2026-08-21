@@ -205,6 +205,11 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
 		return nil, ErrRememberAuthContext
 	}
+	space := rememberSpace(actor)
+	if space.Kind != domain.MemorySpaceTeamShared && space.Kind != "" &&
+		(space.ID == uuid.Nil || space.Generation < 1) {
+		return nil, ErrRememberAuthContext
+	}
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("remember: evidence is required")
 	}
@@ -259,6 +264,8 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 	created, err := s.ledger.CreateIngest(ctx, repository.CreateIngestInput{
 		TeamID:               actor.TeamID.String(),
 		OwnerProfileID:       actor.OwnerID.String(),
+		SpaceID:              rememberSpaceID(space),
+		SpaceGeneration:      space.Generation,
 		IdempotencyKey:       strings.TrimSpace(req.IdempotencyKey),
 		RequestHash:          requestHash,
 		SourceSummary:        sourceSummary(req.Evidence),
@@ -293,6 +300,25 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 		observability.RecordRememberFirstDisposition(ctx, s.metrics, disposition.CompletedAt.Sub(disposition.CreatedAt), disposition.Status)
 	}
 	return rememberResultFromLedger(created, correlationID), nil
+}
+
+func rememberSpaceID(space domain.MemorySpaceAccess) string {
+	if space.ID == uuid.Nil {
+		return ""
+	}
+	return space.ID.String()
+}
+
+func rememberSpace(actor requestctx.Actor) domain.MemorySpaceAccess {
+	var shared domain.MemorySpaceAccess
+	for _, space := range actor.AllowedSpaces {
+		if space.Kind == domain.MemorySpaceTeamShared || space.Kind == "" {
+			shared = space
+			continue
+		}
+		return space
+	}
+	return shared
 }
 
 func validateRememberRelationshipCoverage(evidenceCount int, relationships []map[string]any) error {

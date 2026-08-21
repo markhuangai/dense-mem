@@ -87,6 +87,7 @@ type ReviewRelationshipConflictCaseResult struct {
 type RelationshipConflictCaseRecord struct {
 	TeamID              string
 	ConflictID          string
+	SpaceID             string `json:"-"`
 	SemanticScopeKey    string
 	Kind                string
 	Status              string
@@ -124,14 +125,18 @@ type ValidateRelationshipConflictContextInput struct {
 }
 
 type conflictPlacement struct {
-	scopeKey string
-	question string
-	rows     []conflictPlacementRow
+	scopeKey  string
+	question  string
+	spaceID   string
+	spaceKind string
+	rows      []conflictPlacementRow
 }
 
 type conflictPlacementRow struct {
 	RelationshipID      string
 	OwnerProfileID      string
+	SpaceID             string
+	SpaceGeneration     int64
 	SubjectEntityID     string
 	PredicateKey        string
 	PredicateVersion    int
@@ -204,11 +209,17 @@ func loadRelationshipConflictPlacement(
 	teamID string,
 	source *RelationshipRecord,
 ) (*conflictPlacement, error) {
-	scopeKey := relationshipConflictScopeKey(source)
+	spaceID, spaceKind, err := loadRelationshipConflictSpace(ctx, tx, teamID, source)
+	if err != nil {
+		return nil, err
+	}
+	scopeKey := relationshipConflictScopeKey(source, spaceID, spaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH active_relationships AS (
 			SELECT relationship.relationship_id,
 			       relationship.owner_profile_id,
+			       relationship.space_id::text,
+			       relationship.space_generation,
 			       relationship.subject_entity_id,
 			       relationship.predicate_key,
 			       relationship.predicate_version,
@@ -229,6 +240,7 @@ func loadRelationshipConflictPlacement(
 			  AND relationship.scope_key IS NOT DISTINCT FROM NULLIF(?, '')
 			  AND relationship.status = 'active'
 			  AND relationship.support_count > 0
+			  AND relationship.space_id = ?::uuid
 			  AND (relationship.valid_from IS NULL OR relationship.valid_from <= now())
 			  AND (relationship.valid_to IS NULL OR relationship.valid_to > now())
 		),
@@ -315,6 +327,8 @@ func loadRelationshipConflictPlacement(
 		)
 		SELECT active.relationship_id::text,
 		       active.owner_profile_id::text,
+		       active.space_id,
+		       active.space_generation,
 		       active.subject_entity_id::text,
 		       active.predicate_key,
 		       active.predicate_version,
@@ -341,9 +355,9 @@ func loadRelationshipConflictPlacement(
 		JOIN support_groups AS support
 		  ON support.relationship_id = active.relationship_id
 		ORDER BY position_key, active.owner_profile_id, active.relationship_id
-	`, teamID, source.SubjectEntityID, source.PredicateKey, source.RelationshipKind,
+		`, teamID, source.SubjectEntityID, source.PredicateKey, source.RelationshipKind,
 		source.CurrentCardinality, source.Polarity, source.ScopeKey,
-		teamID, teamID).Rows()
+		spaceID, teamID, teamID).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -355,12 +369,16 @@ func loadRelationshipConflictPlacement(
 			source.PredicateKey,
 			source.SubjectEntityID,
 		),
+		spaceID:   spaceID,
+		spaceKind: spaceKind,
 	}
 	for rows.Next() {
 		var row conflictPlacementRow
 		if err := rows.Scan(
 			&row.RelationshipID,
 			&row.OwnerProfileID,
+			&row.SpaceID,
+			&row.SpaceGeneration,
 			&row.SubjectEntityID,
 			&row.PredicateKey,
 			&row.PredicateVersion,
@@ -388,34 +406,6 @@ func loadRelationshipConflictPlacement(
 	return out, rows.Err()
 }
 
-func conflictPlacementHasConflict(rows []conflictPlacementRow) bool {
-	positions := map[string]struct{}{}
-	owners := map[string]struct{}{}
-	for _, row := range rows {
-		if row.PositionKey != "" {
-			positions[row.PositionKey] = struct{}{}
-		}
-		if row.OwnerProfileID != "" {
-			owners[row.OwnerProfileID] = struct{}{}
-		}
-	}
-	return len(positions) >= 2 && len(owners) >= 2
-}
-
-func relationshipConflictScopeKey(record *RelationshipRecord) string {
-	parts := []string{
-		"cross_profile_current_state",
-		record.TeamID,
-		record.SubjectEntityID,
-		record.PredicateKey,
-		record.RelationshipKind,
-		record.CurrentCardinality,
-		record.Polarity,
-		record.ScopeKey,
-	}
-	return "rc:" + strings.TrimPrefix(sha256Hex(strings.Join(parts, "\x00")), "sha256:")
-}
-
 func upsertRelationshipConflictCase(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -437,13 +427,13 @@ func upsertRelationshipConflictCase(
 	var created bool
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH inserted AS (
-			INSERT INTO relationship_conflict_cases (
-			    team_id, semantic_scope_key, kind, status, subject_entity_id,
+		INSERT INTO relationship_conflict_cases (
+		    team_id, space_id, space_generation, semantic_scope_key, kind, status, subject_entity_id,
 			    predicate_key, predicate_version, relationship_kind, current_cardinality,
 			    polarity, scope_key, question, policy_version, review_due_at,
 			    next_review_at, review_ttl_days, timezone, metadata
 			) VALUES (
-			    ?::uuid, ?, 'cross_profile_current_state', 'open', ?::uuid,
+		    ?::uuid, ?::uuid, ?, ?, 'cross_profile_current_state', 'open', ?::uuid,
 			    ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, '{}'::jsonb
 			)
 			ON CONFLICT (team_id, semantic_scope_key)
@@ -459,7 +449,7 @@ func upsertRelationshipConflictCase(
 		  AND semantic_scope_key = ?
 		  AND status IN ('open', 'overdue')
 		LIMIT 1
-	`, teamID, placement.scopeKey, first.SubjectEntityID, first.PredicateKey,
+	`, teamID, placement.spaceID, first.SpaceGeneration, placement.scopeKey, first.SubjectEntityID, first.PredicateKey,
 		first.PredicateVersion, first.RelationshipKind, first.CurrentCardinality,
 		first.Polarity, first.ScopeKey, placement.question, string(domain.ConflictPolicyVersion),
 		reviewDueAt, now, ttlDays, config.Timezone,
@@ -579,17 +569,22 @@ func appendRelationshipConflictEvent(
 	return tx.WithContext(ctx).Exec(`
 		INSERT INTO relationship_conflict_events (
 		    team_id, conflict_id, position_id, relationship_id, owner_profile_id,
-		    action, outcome, actor_kind, policy_version, idempotency_key, metadata
+		    action, outcome, actor_kind, policy_version, idempotency_key, metadata,
+		    space_id, space_generation
 		) VALUES (
 		    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid,
-		    ?, ?, 'system', ?, ?, ?::jsonb
+		    ?, ?, 'system', ?, ?, ?::jsonb,
+		    (SELECT space_id FROM relationship_conflict_cases
+		     WHERE team_id = ?::uuid AND conflict_id = ?::uuid),
+		    (SELECT space_generation FROM relationship_conflict_cases
+		     WHERE team_id = ?::uuid AND conflict_id = ?::uuid)
 		)
 		ON CONFLICT (team_id, idempotency_key)
 		WHERE idempotency_key <> ''
 		DO NOTHING
 	`, teamID, conflictID, positionID, relationshipID, ownerProfileID,
 		action, outcome, string(domain.ConflictPolicyVersion), idempotencyKey,
-		string(metadataJSON)).Error
+		string(metadataJSON), teamID, conflictID, teamID, conflictID).Error
 }
 
 func loadRelationshipConflictRecords(
@@ -598,6 +593,17 @@ func loadRelationshipConflictRecords(
 	teamID string,
 	relationshipIDs []string,
 	knownAt *time.Time,
+) ([]RelationshipConflictCaseRecord, error) {
+	return loadRelationshipConflictRecordsInSpace(ctx, tx, teamID, relationshipIDs, knownAt, "")
+}
+
+func loadRelationshipConflictRecordsInSpace(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	relationshipIDs []string,
+	knownAt *time.Time,
+	spaceID string,
 ) ([]RelationshipConflictCaseRecord, error) {
 	relationshipIDs = normalizeRecallUUIDList(relationshipIDs)
 	if len(relationshipIDs) == 0 {
@@ -611,6 +617,13 @@ func loadRelationshipConflictRecords(
 		 AND member.conflict_id = conflict.conflict_id
 		WHERE conflict.team_id = ?::uuid
 		  AND member.relationship_id = ANY(?::uuid[])
+		  AND (
+		      ? = ''
+		      OR (
+		          conflict.space_id = NULLIF(?, '')::uuid
+		          AND member.space_id = NULLIF(?, '')::uuid
+		      )
+		  )
 		  AND (?::timestamptz IS NULL OR conflict.created_at <= ?::timestamptz)
 		  AND (
 		      (?::timestamptz IS NULL AND member.active)
@@ -625,7 +638,7 @@ func loadRelationshipConflictRecords(
 		      OR (?::timestamptz IS NOT NULL AND conflict.status IN ('open', 'overdue', 'resolved', 'dismissed'))
 		  )
 		ORDER BY conflict.conflict_id::text
-	`, teamID, pq.Array(relationshipIDs),
+	`, teamID, pq.Array(relationshipIDs), spaceID, spaceID, spaceID,
 		knownAt, knownAt, knownAt, knownAt, knownAt, knownAt, knownAt, knownAt).Rows()
 	if err != nil {
 		return nil, err
@@ -668,99 +681,7 @@ func loadRelationshipConflictRecordsByIDBounded(
 	positionLimit int,
 	supporterLimit int,
 ) ([]RelationshipConflictCaseRecord, error) {
-	conflictIDs = normalizeRecallUUIDList(conflictIDs)
-	if len(conflictIDs) == 0 {
-		return []RelationshipConflictCaseRecord{}, nil
-	}
-	cases, err := loadRelationshipConflictCaseRows(ctx, tx, teamID, conflictIDs, knownAt)
-	if err != nil {
-		return nil, err
-	}
-	positions, err := loadRelationshipConflictPositionRowsWithLimit(ctx, tx, teamID, conflictIDs, knownAt, positionLimit)
-	if err != nil {
-		return nil, err
-	}
-	if err := loadRelationshipConflictSupporters(ctx, tx, teamID, conflictIDs, knownAt, positions, supporterLimit); err != nil {
-		return nil, err
-	}
-	for i := range cases {
-		cases[i].Positions = positionsForConflict(cases[i].ConflictID, positions)
-		applyConflictPositionKnownAtDispositions(&cases[i], knownAt)
-	}
-	return cases, nil
-}
-
-func loadRelationshipConflictCaseRows(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	conflictIDs []string,
-	knownAt *time.Time,
-) ([]RelationshipConflictCaseRecord, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT team_id::text, conflict_id::text, semantic_scope_key, kind, status,
-		       subject_entity_id::text, predicate_key, predicate_version,
-		       relationship_kind, current_cardinality, polarity, COALESCE(scope_key, ''),
-		       question, policy_version, review_due_at, next_review_at, review_ttl_days,
-		       timezone, COALESCE(preferred_position_id::text, ''),
-		       resolved_at, effective_at, effective_time_basis, resolution_reason,
-		       version, attempts, created_at, updated_at,
-		       (
-		           SELECT max(event.created_at)
-		           FROM relationship_conflict_events AS event
-		           WHERE event.team_id = relationship_conflict_cases.team_id
-		             AND event.conflict_id = relationship_conflict_cases.conflict_id
-		             AND event.action = 'dismissed'
-		       ) AS dismissed_at
-		FROM relationship_conflict_cases
-		WHERE team_id = ?::uuid
-		  AND conflict_id = ANY(?::uuid[])
-		  AND (?::timestamptz IS NULL OR created_at <= ?::timestamptz)
-		ORDER BY created_at, conflict_id
-	`, teamID, pq.Array(conflictIDs), knownAt, knownAt).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []RelationshipConflictCaseRecord{}
-	for rows.Next() {
-		var record RelationshipConflictCaseRecord
-		if err := rows.Scan(
-			&record.TeamID,
-			&record.ConflictID,
-			&record.SemanticScopeKey,
-			&record.Kind,
-			&record.Status,
-			&record.SubjectEntityID,
-			&record.PredicateKey,
-			&record.PredicateVersion,
-			&record.RelationshipKind,
-			&record.CurrentCardinality,
-			&record.Polarity,
-			&record.ScopeKey,
-			&record.Question,
-			&record.PolicyVersion,
-			&record.ReviewDueAt,
-			&record.NextReviewAt,
-			&record.ReviewTTLDays,
-			&record.Timezone,
-			&record.PreferredPositionID,
-			&record.ResolvedAt,
-			&record.EffectiveAt,
-			&record.EffectiveTimeBasis,
-			&record.ResolutionReason,
-			&record.Version,
-			&record.Attempts,
-			&record.CreatedAt,
-			&record.UpdatedAt,
-			&record.DismissedAt,
-		); err != nil {
-			return nil, err
-		}
-		applyConflictKnownAt(&record, knownAt)
-		out = append(out, record)
-	}
-	return out, rows.Err()
+	return loadRelationshipConflictRecordsByIDBoundedWithFence(ctx, tx, teamID, conflictIDs, knownAt, positionLimit, supporterLimit, false)
 }
 
 func loadRelationshipConflictPositionRows(
@@ -781,11 +702,29 @@ func loadRelationshipConflictPositionRowsWithLimit(
 	knownAt *time.Time,
 	positionLimit int,
 ) ([]RelationshipConflictPositionRecord, error) {
+	return loadRelationshipConflictPositionRowsWithLimitAndFence(ctx, tx, teamID, conflictIDs, knownAt, positionLimit, false)
+}
+
+func loadRelationshipConflictPositionRowsWithLimitAndFence(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	conflictIDs []string,
+	knownAt *time.Time,
+	positionLimit int,
+	activeOnly bool,
+) ([]RelationshipConflictPositionRecord, error) {
 	dispositionSelect := "position.disposition"
 	dispositionGroup := ", position.disposition"
 	if knownAt != nil {
 		dispositionSelect = "'candidate'"
 		dispositionGroup = ""
+	}
+	activeMemberFence := ""
+	activePositionFence := ""
+	if activeOnly {
+		activeMemberFence = "\n\t\t\t AND " + activeSemanticSpaceGenerationSQL("member")
+		activePositionFence = "\n\t\t\t  AND " + activeSemanticSpaceGenerationSQL("position")
 	}
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
 		WITH grouped AS (
@@ -805,14 +744,15 @@ func loadRelationshipConflictPositionRowsWithLimit(
 			LEFT JOIN relationship_conflict_position_members AS member
 			 ON member.team_id = position.team_id
 			 AND member.position_id = position.position_id
-			 AND (
-			     (?::timestamptz IS NULL AND member.active)
-			     OR (
+				 AND (
+				     (?::timestamptz IS NULL AND member.active)
+				     OR (
 			         ?::timestamptz IS NOT NULL
 			         AND member.first_seen_at <= ?::timestamptz
-			         AND (member.retired_at IS NULL OR member.retired_at > ?::timestamptz)
-			     )
-			 )
+				         AND (member.retired_at IS NULL OR member.retired_at > ?::timestamptz)
+				     )
+				 )
+				 %s
 			WHERE position.team_id = ?::uuid
 			  AND position.conflict_id = ANY(?::uuid[])
 			  AND (
@@ -823,6 +763,7 @@ func loadRelationshipConflictPositionRowsWithLimit(
 			          AND (position.retired_at IS NULL OR position.retired_at > ?::timestamptz)
 			      )
 			  )
+			  %s
 			GROUP BY position.conflict_id, position.position_id, position.position_key,
 			         position.object_entity_id, position.object_value_id%s
 		), ranked AS (
@@ -838,7 +779,7 @@ func loadRelationshipConflictPositionRowsWithLimit(
 		FROM ranked
 		WHERE ?::int <= 0 OR position_rank <= ?::int
 		ORDER BY conflict_id, position_key, position_id
-		`, dispositionSelect, dispositionGroup),
+		`, dispositionSelect, activeMemberFence, activePositionFence, dispositionGroup),
 		knownAt, knownAt, knownAt, knownAt,
 		teamID, pq.Array(conflictIDs),
 		knownAt, knownAt, knownAt, knownAt,

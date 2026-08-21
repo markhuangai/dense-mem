@@ -95,6 +95,21 @@ func TestSearchConvergenceHealthCheckDoesNotLogExpectedDegradation(t *testing.T)
 	}
 }
 
+func TestPrivateMemoryPrepareBootErrorBoundsRawFailure(t *testing.T) {
+	raw := errors.New("pq: password secret relation does not exist")
+	err := privateMemoryPrepareBootError(raw)
+
+	if !errors.Is(err, errPrivateMemoryPrepareFailed) {
+		t.Fatalf("prepare error = %v", err)
+	}
+	if errors.Is(err, raw) || err.Error() != "private-memory erasure preparation failed" {
+		t.Fatalf("prepare error exposed raw failure: %v", err)
+	}
+	if err := privateMemoryPrepareBootError(nil); err != nil {
+		t.Fatalf("nil prepare error = %v", err)
+	}
+}
+
 func TestConflictReviewDueForTeamHonorsLocalStartAndJitter(t *testing.T) {
 	cfg := testConflictReviewConfig(t, "UTC", "04:00", "0")
 	before := time.Date(2026, 7, 25, 3, 59, 59, 0, time.UTC)

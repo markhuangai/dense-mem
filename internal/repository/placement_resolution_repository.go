@@ -420,6 +420,7 @@ func appendPlacementResolutionEvidence(
 			advanced, err := advanceSourceRevisionInTx(ctx, tx, AdvanceSourceRevisionInput{
 				TeamID:                        input.TeamID,
 				OwnerProfileID:                input.OwnerProfileID,
+				IngestID:                      input.IngestID,
 				SourceKey:                     item.SourceKey,
 				SourceKind:                    sourceKindForEvidence(item.SourceType),
 				Authority:                     item.Authority,

@@ -294,6 +294,7 @@ func normalizeResumePendingOverdueConflictResolutionInput(input ResumePendingOve
 func normalizeConflictDerivedEvidenceTarget(target ConflictDerivedEvidenceTarget) ConflictDerivedEvidenceTarget {
 	target.TaskID = strings.TrimSpace(target.TaskID)
 	target.TeamID = strings.TrimSpace(target.TeamID)
+	target.SpaceID = strings.TrimSpace(target.SpaceID)
 	target.ConflictID = strings.TrimSpace(target.ConflictID)
 	target.SystemProfileID = strings.TrimSpace(target.SystemProfileID)
 	target.TargetFragmentID = strings.TrimSpace(target.TargetFragmentID)
@@ -367,6 +368,7 @@ func validateConflictDerivedEvidenceTarget(target ConflictDerivedEvidenceTarget)
 	}{
 		{name: "derived_evidence_task_id", id: target.TaskID},
 		{name: "team_id", id: target.TeamID},
+		{name: "space_id", id: target.SpaceID},
 		{name: "conflict_id", id: target.ConflictID},
 		{name: "system_profile_id", id: target.SystemProfileID},
 		{name: "target_fragment_id", id: target.TargetFragmentID},
@@ -376,6 +378,9 @@ func validateConflictDerivedEvidenceTarget(target ConflictDerivedEvidenceTarget)
 		if _, err := uuid.Parse(value.id); err != nil {
 			return fmt.Errorf("%s is required: %w", value.name, err)
 		}
+	}
+	if target.SpaceGeneration < 1 {
+		return errors.New("space_generation is required")
 	}
 	if target.SourceGroupKey == "" {
 		return errors.New("source_group_key is required")
@@ -631,15 +636,17 @@ func ensureConflictResolutionPlan(
 	method := input.Method
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO relationship_conflict_resolution_plans (
-		    team_id, conflict_id, expected_case_version, preferred_position_id,
+		    team_id, space_id, space_generation, conflict_id, expected_case_version, preferred_position_id,
 		    assessment_attempt_id, method, effective_at, effective_time_basis
-		) VALUES (
-		    ?::uuid, ?::uuid, ?, ?::uuid,
-		    NULLIF(?, '')::uuid, ?, ?, ?
 		)
+		SELECT ?::uuid, conflict.space_id, conflict.space_generation, ?::uuid, ?, ?::uuid,
+		       NULLIF(?, '')::uuid, ?, ?, ?
+		FROM relationship_conflict_cases AS conflict
+		WHERE conflict.team_id = ?::uuid AND conflict.conflict_id = ?::uuid
 		RETURNING resolution_plan_id::text, status
 	`, input.TeamID, input.ConflictID, input.ExpectedCaseVersion, input.PreferredPositionID,
-		input.AssessmentAttemptID, method, effectiveAt, effectiveTimeBasis).Rows()
+		input.AssessmentAttemptID, method, effectiveAt, effectiveTimeBasis,
+		input.TeamID, input.ConflictID).Rows()
 	if err != nil {
 		return "", "", err
 	}
@@ -831,7 +838,7 @@ func retractConflictLosingEvidence(
 			if err != nil {
 				return nil, err
 			}
-			if err := insertEvidenceLifecycleEvents(ctx, tx, operation, operationID); err != nil {
+			if err := insertEvidenceLifecycleEvents(ctx, tx, operation, operationID, plan.SpaceID); err != nil {
 				return nil, err
 			}
 			if err := applyEvidenceLifecycleEffectsInSystem(ctx, tx, operation, operationID, plan); err != nil {
@@ -896,37 +903,43 @@ func enqueueConflictDerivedEvidenceTasks(
 ) ([]ConflictDerivedEvidenceTarget, error) {
 	result := make([]ConflictDerivedEvidenceTarget, 0, len(targets))
 	for _, target := range targets {
-		var taskID string
+		var taskID, spaceID string
+		var spaceGeneration int64
 		err := tx.WithContext(ctx).Raw(`
 			INSERT INTO relationship_conflict_derived_evidence_tasks (
-			    team_id, resolution_plan_id, conflict_id,
+			    team_id, space_id, space_generation, resolution_plan_id, conflict_id,
 			    target_fragment_id, target_owner_profile_id, selected_position_id,
 			    system_profile_id, source_group_key, origin_evidence_index
-		) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid,
-			    ?::uuid, ?::uuid, ?::uuid,
-			    ?::uuid, ?, ?
-		)
+			)
+			SELECT ?::uuid, conflict.space_id, conflict.space_generation, ?::uuid, ?::uuid,
+			       ?::uuid, ?::uuid, ?::uuid,
+			       ?::uuid, ?, ?
+			FROM relationship_conflict_cases AS conflict
+			WHERE conflict.team_id = ?::uuid
+			  AND conflict.conflict_id = ?::uuid
 			ON CONFLICT (team_id, conflict_id, target_fragment_id) DO NOTHING
-			RETURNING derived_evidence_task_id::text
+			RETURNING derived_evidence_task_id::text, space_id::text, space_generation
 		`, target.TeamID, resolutionPlanID, target.ConflictID,
 			target.TargetFragmentID, target.TargetOwnerProfileID, target.SelectedPositionID,
-			target.SystemProfileID, target.SourceGroupKey, target.EvidenceIndex).Row().Scan(&taskID)
+			target.SystemProfileID, target.SourceGroupKey, target.EvidenceIndex,
+			target.TeamID, target.ConflictID).Row().Scan(&taskID, &spaceID, &spaceGeneration)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
 		if taskID == "" {
 			if err := tx.WithContext(ctx).Raw(`
-				SELECT derived_evidence_task_id::text
+				SELECT derived_evidence_task_id::text, space_id::text, space_generation
 				FROM relationship_conflict_derived_evidence_tasks
 				WHERE team_id = ?::uuid
 				  AND conflict_id = ?::uuid
 				  AND target_fragment_id = ?::uuid
-			`, target.TeamID, target.ConflictID, target.TargetFragmentID).Row().Scan(&taskID); err != nil {
+			`, target.TeamID, target.ConflictID, target.TargetFragmentID).Row().Scan(&taskID, &spaceID, &spaceGeneration); err != nil {
 				return nil, err
 			}
 		}
 		target.TaskID = taskID
+		target.SpaceID = spaceID
+		target.SpaceGeneration = spaceGeneration
 		result = append(result, target)
 	}
 	return result, nil

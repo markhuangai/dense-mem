@@ -7,9 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestPlacementStatusReadsCurrentOwnerScopedItemVersions(t *testing.T) {
@@ -99,6 +102,56 @@ func TestPlacementStatusReadsCurrentOwnerScopedItemVersions(t *testing.T) {
 	assert.Equal(t, 2, status.Items[0].Version)
 	assert.Equal(t, "completed", status.Items[0].Status)
 	assert.Equal(t, "candidate", status.Items[0].Category)
+}
+
+func TestPlacementStatusHidesSealedPrivateGeneration(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "placement-status-private-generation"))
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "private-status", domain.CredentialBindingCredentialPrivate)
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+
+	created, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+		TeamID:          teamID.String(),
+		OwnerProfileID:  target.ID.String(),
+		SpaceID:         target.MemorySpaceID.String(),
+		SpaceGeneration: target.MemorySpaceGeneration,
+		IdempotencyKey:  "placement-status-private-generation",
+		RequestHash:     sha256Hex("private status generation"),
+		Evidence:        []EvidenceInput{{Content: "sealed private placement status must be hidden"}},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			UPDATE memory_spaces
+			SET generation = generation + 1, lifecycle_state = 'sealed', sealed_at = now()
+			WHERE id = ? AND team_id = ? AND lifecycle_state = 'active'
+		`, target.MemorySpaceID, teamID)
+		require.Equal(t, int64(1), result.RowsAffected)
+		return result.Error
+	}))
+
+	_, err = ledgerRepo.GetPlacementRun(ctx, GetPlacementRunInput{
+		TeamID:         teamID.String(),
+		OwnerProfileID: target.ID.String(),
+		IngestID:       created.IngestID,
+	})
+	require.ErrorIs(t, err, ErrPlacementNotFound)
+
+	var retained int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM placement_runs
+			WHERE team_id = ? AND ingest_id = ?
+		`, teamID, created.IngestID).Row().Scan(&retained)
+	}))
+	require.Equal(t, int64(1), retained)
 }
 
 func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T) {

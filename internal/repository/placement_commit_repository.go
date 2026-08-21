@@ -737,16 +737,24 @@ func insertPlacementEntityResolution(
 		INSERT INTO entity_resolution_events (
 		    team_id, ingest_id, placement_item_id, owner_profile_id, mention_ref,
 		    action, entity_id, fragment_id, span_start, span_end, verifier_result, metadata,
-		    assessment_id
+		    assessment_id, space_id, space_generation
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, NULLIF(?, '')::uuid,
-		    NULLIF(?, '')::uuid, ?, ?, ?::jsonb, ?::jsonb, NULLIF(?, '')::uuid
+		    NULLIF(?, '')::uuid, ?, ?, ?::jsonb, ?::jsonb, NULLIF(?, '')::uuid,
+		    (SELECT item.space_id FROM placement_items AS item
+		     WHERE item.team_id = ?::uuid AND item.placement_item_id = ?::uuid
+		       AND item.ingest_id = ?::uuid AND item.owner_profile_id = ?::uuid),
+		    (SELECT item.space_generation FROM placement_items AS item
+		     WHERE item.team_id = ?::uuid AND item.placement_item_id = ?::uuid
+		       AND item.ingest_id = ?::uuid AND item.owner_profile_id = ?::uuid)
 		)
 		RETURNING resolution_event_id::text
 	`, commit.TeamID, commit.IngestID, commit.PlacementItemID, commit.OwnerProfileID,
 		input.MentionRef, input.Action, entityID, input.FragmentID,
 		intPointerArg(input.SpanStart), intPointerArg(input.SpanEnd),
-		string(verifierResult), string(metadata), input.AssessmentID).Rows()
+		string(verifierResult), string(metadata), input.AssessmentID,
+		commit.TeamID, commit.PlacementItemID, commit.IngestID, commit.OwnerProfileID,
+		commit.TeamID, commit.PlacementItemID, commit.IngestID, commit.OwnerProfileID).Rows()
 	if err != nil {
 		return "", "", err
 	}
@@ -785,9 +793,13 @@ func insertEntityReviewTask(
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO review_tasks (
 		    team_id, owner_profile_id, ingest_id, placement_item_id,
-		    task_type, status, reason, payload, dedupe_key, assessment_id, expires_at, updated_at
+		    space_id, task_type, status, reason, payload, dedupe_key, assessment_id, expires_at, updated_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+		    (SELECT placement.space_id
+		     FROM placement_items AS placement
+		     WHERE placement.team_id = ?::uuid
+		       AND placement.placement_item_id = ?::uuid),
 		    'identity_needs_review', 'open', 'ambiguous_entity', ?::jsonb, ?,
 		    NULLIF(?, '')::uuid,
 		    CASE WHEN NULLIF(?, '') IS NULL THEN NULL ELSE now() + interval '7 days' END,
@@ -802,6 +814,7 @@ func insertEntityReviewTask(
 		              updated_at = now()
 		RETURNING review_task_id::text
 	`, commit.TeamID, commit.OwnerProfileID, commit.IngestID, commit.PlacementItemID,
+		commit.TeamID, commit.PlacementItemID,
 		string(payloadJSON), dedupeKey, input.AssessmentID, input.AssessmentID).Rows()
 	if err != nil {
 		return "", err
@@ -909,9 +922,15 @@ func upsertPlacementValue(
 		WITH inserted AS (
 			INSERT INTO value_records (
 			    team_id, value_type, canonical_value, unit, display,
-			    normalization_version, metadata
+			    normalization_version, metadata, space_id, space_generation
 			) VALUES (
-			    ?::uuid, ?, ?, NULLIF(?, ''), ?, ?, ?::jsonb
+			    ?::uuid, ?, ?, NULLIF(?, ''), ?, ?, ?::jsonb,
+			    (SELECT ingest.space_id FROM knowledge_ingests AS ingest
+			     WHERE ingest.team_id = ?::uuid AND ingest.ingest_id = ?::uuid
+			       AND ingest.owner_profile_id = ?::uuid),
+			    (SELECT ingest.space_generation FROM knowledge_ingests AS ingest
+			     WHERE ingest.team_id = ?::uuid AND ingest.ingest_id = ?::uuid
+			       AND ingest.owner_profile_id = ?::uuid)
 			)
 			ON CONFLICT ON CONSTRAINT value_records_canonical_unique
 			DO NOTHING
@@ -931,6 +950,8 @@ func upsertPlacementValue(
 		LIMIT 1
 	`, commit.TeamID, input.ValueType, input.CanonicalValue, input.Unit, input.Display,
 		input.NormalizationVersion, string(metadata),
+		commit.TeamID, commit.IngestID, commit.OwnerProfileID,
+		commit.TeamID, commit.IngestID, commit.OwnerProfileID,
 		commit.TeamID, input.ValueType, input.CanonicalValue, input.Unit,
 		input.NormalizationVersion).Rows()
 	if err != nil {

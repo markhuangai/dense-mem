@@ -188,6 +188,10 @@ func appendPlacementCorrectionTarget(
 	if err := requireVerificationForRelationship(ctx, tx, commit.TeamID, applied.VerificationEventID, commit.OwnerProfileID, source.RelationshipID); err != nil {
 		return err
 	}
+	sourceSpaceID, err := loadRelationshipSpaceID(ctx, tx, commit.TeamID, source.RelationshipID, source.Version)
+	if err != nil {
+		return err
+	}
 	targetRecord, err := loadPlacementCorrectionTarget(ctx, tx, commit.TeamID, target)
 	if err != nil {
 		return err
@@ -206,14 +210,14 @@ func appendPlacementCorrectionTarget(
 		INSERT INTO relationship_cross_references (
 		    team_id, author_profile_id, source_relationship_id,
 		    source_relationship_version, target_relationship_id,
-		    target_relationship_version, kind, verification_event_id, metadata
+		    target_relationship_version, kind, verification_event_id, metadata, space_id
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?::uuid, ?::jsonb
+		    ?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?::uuid, ?::jsonb, ?::uuid
 		)
 		RETURNING cross_reference_id::text
 	`, commit.TeamID, commit.OwnerProfileID, source.RelationshipID, source.Version,
 		target.RelationshipID, target.ExpectedVersion, string(domain.CrossReferenceCorrects),
-		applied.VerificationEventID, string(metadata)).Rows()
+		applied.VerificationEventID, string(metadata), sourceSpaceID).Rows()
 	if err != nil {
 		return err
 	}
@@ -301,10 +305,14 @@ func insertPlacementEntity(
 		return "", err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		INSERT INTO entity_records (team_id, entity_kind, identity_context, metadata)
-		VALUES (?::uuid, ?, ?::jsonb, '{}'::jsonb)
+		INSERT INTO entity_records (team_id, entity_kind, identity_context, metadata, space_id, space_generation)
+		SELECT ?::uuid, ?, ?::jsonb, '{}'::jsonb, ingest.space_id, ingest.space_generation
+		FROM knowledge_ingests AS ingest
+		WHERE ingest.team_id = ?::uuid
+		  AND ingest.ingest_id = ?::uuid
+		  AND ingest.owner_profile_id = ?::uuid
 		RETURNING entity_id::text
-	`, commit.TeamID, input.EntityKind, string(identityContext)).Rows()
+	`, commit.TeamID, input.EntityKind, string(identityContext), commit.TeamID, commit.IngestID, commit.OwnerProfileID).Rows()
 	if err != nil {
 		return "", err
 	}
@@ -571,6 +579,9 @@ func applyRelationshipDecisionInTx(
 	input ApplyRelationshipDecisionInput,
 ) (*RelationshipDecisionResult, error) {
 	input = normalizeApplyRelationshipDecisionInput(input)
+	if err := validateSupportOwnership(ctx, tx, input); err != nil {
+		return nil, err
+	}
 	predicate, err := loadPredicateDefinition(ctx, tx, input.TeamID, input.PredicateKey, input.PredicateVersion)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return insertPredicateReview(ctx, tx, input)
@@ -695,6 +706,8 @@ func upsertPlacementRelationshipSearchDocument(
 		ProjectionFormat: 2,
 		DocumentText:     text,
 		Metadata:         metadata,
+		SpaceID:          relationship.SpaceID,
+		SpaceGeneration:  relationship.SpaceGeneration,
 	})
 	if err := validateUpsertSearchDocumentInput(input); err != nil {
 		return nil, err

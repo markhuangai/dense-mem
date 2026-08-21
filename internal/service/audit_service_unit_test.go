@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -96,7 +97,7 @@ func newMockAuditService(t *testing.T) (*AuditServiceImpl, sqlmock.Sqlmock, func
 }
 
 func expectAnyAuditInsert(mock sqlmock.Sqlmock) {
-	args := make([]driver.Value, 13)
+	args := make([]driver.Value, 14)
 	for i := range args {
 		args[i] = sqlmock.AnyArg()
 	}
@@ -167,6 +168,7 @@ func TestAuditAppendRedactsPayloadsAndWritesInsert(t *testing.T) {
 			present: map[string]interface{}{"source": "unit"},
 			absent:  []string{"password", "apiKey", "refresh_token", "clientSecret", "refreshToken"},
 		},
+		sqlmock.AnyArg(),
 	).WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := svc.Append(context.Background(), AuditLogEntry{
@@ -206,6 +208,51 @@ func TestAuditAppendRedactsPayloadsAndWritesInsert(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestAuditAppendInfersCredentialMemorySpaceWithinTeam(t *testing.T) {
+	teamID := uuid.New()
+	credentialID := uuid.New()
+	spaceID := uuid.New()
+
+	for _, test := range []struct {
+		name           string
+		memorySpaceArg any
+		rows           *sqlmock.Rows
+	}{
+		{
+			name:           "matching credential",
+			memorySpaceArg: spaceID.String(),
+			rows:           sqlmock.NewRows([]string{"memory_space_id"}).AddRow(spaceID.String()),
+		},
+		{
+			name:           "deleted credential",
+			memorySpaceArg: nil,
+			rows:           sqlmock.NewRows([]string{"memory_space_id"}),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			svc, mock, cleanup := newMockAuditService(t)
+			defer cleanup()
+
+			mock.ExpectQuery("SELECT memory_space_id::text\\s+FROM credentials\\s+WHERE id = \\$1 AND team_id = \\$2").
+				WithArgs(credentialID, teamID).
+				WillReturnRows(test.rows)
+			args := make([]driver.Value, 0, 14)
+			for range 13 {
+				args = append(args, sqlmock.AnyArg())
+			}
+			args = append(args, test.memorySpaceArg)
+			mock.ExpectExec("INSERT INTO audit_log").WithArgs(args...).WillReturnResult(sqlmock.NewResult(0, 1))
+
+			profileID := teamID.String()
+			err := svc.Append(context.Background(), AuditLogEntry{
+				ProfileID: &profileID, EntityType: "api_key", EntityID: credentialID.String(), Operation: "DELETE",
+			})
+			require.NoError(t, err)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestAuditAppendMarshalAndDatabaseErrors(t *testing.T) {
 	svc := &AuditServiceImpl{}
 	err := svc.Append(context.Background(), AuditLogEntry{
@@ -242,6 +289,7 @@ func TestAuditListScansRowsAndCountsTotal(t *testing.T) {
 		"id", "team_id", "timestamp", "operation", "entity_type", "entity_id",
 		"before_payload", "after_payload", "actor_profile_id", "actor_role",
 		"client_ip", "correlation_id", "metadata",
+		"memory_space_id",
 	}).AddRow(
 		"audit-1",
 		profileID,
@@ -256,11 +304,12 @@ func TestAuditListScansRowsAndCountsTotal(t *testing.T) {
 		"203.0.113.10",
 		"corr-1",
 		[]byte(`{"source":"unit"}`),
+		"space-1",
 	)
 	mock.ExpectQuery("SELECT id, team_id, timestamp, operation, entity_type, entity_id").
 		WithArgs(profileID, 2, 1).
 		WillReturnRows(rows)
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM audit_log WHERE team_id = \\$1").
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\)\\s+FROM audit_log AS audit\\s+WHERE audit.team_id = \\$1").
 		WithArgs(profileID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
@@ -275,6 +324,7 @@ func TestAuditListScansRowsAndCountsTotal(t *testing.T) {
 	require.Equal(t, "before", entries[0].BeforePayload["name"])
 	require.Equal(t, "after", entries[0].AfterPayload["name"])
 	require.Equal(t, "unit", entries[0].Metadata["source"])
+	require.Equal(t, "space-1", *entries[0].MemorySpaceID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -297,8 +347,9 @@ func TestAuditListHandlesQueryAndCountErrors(t *testing.T) {
 			"id", "team_id", "timestamp", "operation", "entity_type", "entity_id",
 			"before_payload", "after_payload", "actor_profile_id", "actor_role",
 			"client_ip", "correlation_id", "metadata",
+			"memory_space_id",
 		}))
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM audit_log WHERE team_id = \\$1").
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\)\\s+FROM audit_log AS audit\\s+WHERE audit.team_id = \\$1").
 		WithArgs("profile-1").
 		WillReturnError(errors.New("count failed"))
 	_, _, err = svc.List(context.Background(), "profile-1", 20, 0)

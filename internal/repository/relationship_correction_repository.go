@@ -34,7 +34,7 @@ const (
 
 const relationshipCorrectionSubmissionSelectSQL = `
 	SELECT submission.team_id::text, submission.submission_id::text,
-	       submission.owner_profile_id::text, submission.relationship_id::text,
+	       submission.owner_profile_id::text, submission.space_id::text, submission.relationship_id::text,
 	       submission.expected_version, submission.request_hash,
 	       submission.patch, submission.supports, submission.reason,
 	       submission.idempotency_key, submission.confirmation_idempotency_key,
@@ -45,9 +45,16 @@ const relationshipCorrectionSubmissionSelectSQL = `
 	       submission.reused_successor, submission.error_code, submission.error_message,
 	       COALESCE(successor.version, 0), COALESCE(successor_search.search_state, 'not_required')
 	FROM relationship_correction_submissions AS submission
+	JOIN memory_spaces AS submission_space
+	  ON submission_space.team_id = submission.team_id
+	 AND submission_space.id = submission.space_id
+	 AND submission_space.generation = submission.space_generation
+	 AND submission_space.lifecycle_state = 'active'
 	LEFT JOIN relationship_records AS successor
 	  ON successor.team_id = submission.team_id
 	 AND successor.relationship_id = submission.successor_relationship_id
+	 AND successor.space_id = submission.space_id
+	 AND successor.space_generation = submission.space_generation
 	LEFT JOIN LATERAL (
 	    SELECT document.search_state
 	    FROM search_documents AS document
@@ -62,6 +69,8 @@ const relationshipCorrectionSubmissionSelectSQL = `
 	    WHERE document.team_id = submission.team_id
 	      AND document.source_kind = 'relationship'
 	      AND document.source_id = submission.successor_relationship_id
+	      AND document.space_id = submission.space_id
+	      AND document.space_generation = submission.space_generation
 	    ORDER BY contract.version DESC, generation.generation DESC, document.updated_at DESC
 	    LIMIT 1
 	) AS successor_search ON true
@@ -71,6 +80,7 @@ type relationshipCorrectionSubmissionRow struct {
 	TeamID                  string
 	SubmissionID            string
 	OwnerProfileID          string
+	SpaceID                 string
 	RelationshipID          string
 	ExpectedVersion         int
 	RequestHash             string
@@ -197,10 +207,13 @@ func (r *SemanticRepositoryImpl) submitRelationshipCorrection(
 	if source.OwnerProfileID != input.OwnerProfileID {
 		return nil, ErrSemanticOwnerMismatch
 	}
+	if source.SpaceID == "" {
+		return nil, errors.New("relationship correction requires a memory space")
+	}
 
 	rejection := func(code, message string) (*CorrectRelationshipResult, error) {
 		row, _, err := insertRelationshipCorrectionSubmission(ctx, tx, input, requestHash, relationshipCorrectionInsert{
-			State: "rejected", ErrorCode: code, ErrorMessage: message,
+			State: "rejected", SpaceID: source.SpaceID, ErrorCode: code, ErrorMessage: message,
 		})
 		if err != nil {
 			return nil, err
@@ -224,6 +237,11 @@ func (r *SemanticRepositoryImpl) submitRelationshipCorrection(
 	if !relationshipCorrectionSupportsEqual(input.Supports, effectiveSupports) {
 		return rejection("support_set_mismatch", "supports must exactly match the relationship's effective evidence spans")
 	}
+	for _, support := range effectiveSupports {
+		if err := requireSemanticSpaceMatch(source.SpaceID, support.SpaceID); err != nil {
+			return rejection("support_space_mismatch", "relationship supports must remain in the relationship memory space")
+		}
+	}
 
 	resolution, err := resolveRelationshipCorrectionPatch(ctx, tx, input, source)
 	if err != nil {
@@ -237,6 +255,7 @@ func (r *SemanticRepositoryImpl) submitRelationshipCorrection(
 		expiresAt := time.Now().UTC().Add(relationshipCorrectionConfirmationTTL)
 		row, _, err := insertRelationshipCorrectionSubmission(ctx, tx, input, requestHash, relationshipCorrectionInsert{
 			State:      "awaiting_confirmation",
+			SpaceID:    source.SpaceID,
 			Token:      token,
 			ExpiresAt:  &expiresAt,
 			Candidates: resolution.Candidates,
@@ -250,6 +269,7 @@ func (r *SemanticRepositoryImpl) submitRelationshipCorrection(
 
 	row, created, err := insertRelationshipCorrectionSubmission(ctx, tx, input, requestHash, relationshipCorrectionInsert{
 		State:     "processing",
+		SpaceID:   source.SpaceID,
 		Selection: resolution.Selection,
 	})
 	if err != nil {
@@ -335,6 +355,18 @@ func (r *SemanticRepositoryImpl) confirmRelationshipCorrection(
 			return nil, err
 		}
 		return relationshipCorrectionResultFromRow(updated), nil
+	}
+	for _, support := range effectiveSupports {
+		if err := requireSemanticSpaceMatch(source.SpaceID, support.SpaceID); err != nil {
+			if rejectErr := rejectRelationshipCorrectionSubmission(ctx, tx, row, "support_space_mismatch", "relationship supports must remain in the relationship memory space", input.IdempotencyKey, confirmationHash); rejectErr != nil {
+				return nil, rejectErr
+			}
+			updated, loadErr := loadRelationshipCorrectionSubmission(ctx, tx, row.TeamID, row.OwnerProfileID, row.SubmissionID, false)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			return relationshipCorrectionResultFromRow(updated), nil
+		}
 	}
 
 	selection, err := validateRelationshipCorrectionSelection(row, input.Selection)
@@ -664,7 +696,7 @@ func scanRelationshipCorrectionSubmission(row *sql.Row) (*relationshipCorrection
 	var patchJSON, supportsJSON, candidatesJSON, selectionJSON []byte
 	var expiresAt sql.NullTime
 	if err := row.Scan(
-		&loaded.TeamID, &loaded.SubmissionID, &loaded.OwnerProfileID, &loaded.RelationshipID,
+		&loaded.TeamID, &loaded.SubmissionID, &loaded.OwnerProfileID, &loaded.SpaceID, &loaded.RelationshipID,
 		&loaded.ExpectedVersion, &loaded.RequestHash, &patchJSON, &supportsJSON, &loaded.Reason,
 		&loaded.IdempotencyKey, &loaded.ConfirmationIdempotency, &loaded.ConfirmationRequestHash,
 		&loaded.ProcessingState, &loaded.ConfirmationRound, &loaded.ConfirmationToken, &expiresAt,

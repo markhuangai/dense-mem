@@ -263,10 +263,10 @@ func projectSubmissionOperatorDiagnosticPayload(value map[string]any) (Submissio
 		return SubmissionOperatorDiagnostic{}, false
 	}
 	result := SubmissionOperatorDiagnostic{}
-	result.FailureReasonCode = allowlistedDiagnosticToken(stringValue(value["failure_reason_code"]), submissionDiagnosticReasonCodes, 96)
-	result.FailureStage = allowlistedDiagnosticToken(stringValue(value["failure_stage"]), submissionDiagnosticStages, 64)
-	result.FailureClass = allowlistedDiagnosticToken(stringValue(value["failure_class"]), submissionDiagnosticClasses, 64)
-	result.ValidationStage = allowlistedDiagnosticToken(stringValue(value["validation_stage"]), submissionDiagnosticValidationStages, 96)
+	result.FailureReasonCode = allowlistedDiagnosticToken(diagnosticStringValue(value["failure_reason_code"]), submissionDiagnosticReasonCodes, 96)
+	result.FailureStage = allowlistedDiagnosticToken(diagnosticStringValue(value["failure_stage"]), submissionDiagnosticStages, 64)
+	result.FailureClass = allowlistedDiagnosticToken(diagnosticStringValue(value["failure_class"]), submissionDiagnosticClasses, 64)
+	result.ValidationStage = allowlistedDiagnosticToken(diagnosticStringValue(value["validation_stage"]), submissionDiagnosticValidationStages, 96)
 	result.ValidationFieldFamilies = boundedDiagnosticTokens(value["validation_field_families"], 32, 64, submissionDiagnosticFieldFamilies)
 	result.ProviderStatus = boundedDiagnosticStatus(value["provider_status"])
 	result.AssessorTurns = boundedDiagnosticInt(value["assessor_turns"], 1000)
@@ -284,7 +284,7 @@ func projectSubmissionFailureMeasurement(value any) *SubmissionFailureMeasuremen
 	if !ok {
 		return nil
 	}
-	unit := boundedDiagnosticToken(stringValue(fields["unit"]), 16)
+	unit := boundedDiagnosticToken(diagnosticStringValue(fields["unit"]), 16)
 	if unit != "tokens" && unit != "candidates" {
 		return nil
 	}
@@ -390,7 +390,7 @@ func boundedDiagnosticTokens(value any, limit, maxRunes int, allowed map[string]
 	result := make([]string, 0, min(len(values), limit))
 	seen := make(map[string]struct{}, limit)
 	for _, raw := range values {
-		text := boundedDiagnosticToken(stringValue(raw), maxRunes)
+		text := boundedDiagnosticToken(diagnosticStringValue(raw), maxRunes)
 		if text == "" {
 			continue
 		}
@@ -457,7 +457,7 @@ func boundedDiagnosticInt(value any, max int) int {
 	return number
 }
 
-func stringValue(value any) string {
+func diagnosticStringValue(value any) string {
 	text, _ := value.(string)
 	return text
 }

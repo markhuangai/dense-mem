@@ -42,6 +42,22 @@ describe("UserApi", () => {
     }));
   });
 
+  it("reuses a credential revoke key after a failed response", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: "temporary failure" }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { status: "revoked" } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new UserApi("dm_key", "sso");
+
+    await expect(api.revokeSSOCredential("credential-1")).rejects.toMatchObject(new ApiError(503, "temporary failure"));
+    await api.revokeSSOCredential("credential-1");
+
+    const firstHeaders = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    const secondHeaders = fetchMock.mock.calls[1][1]?.headers as Record<string, string>;
+    expect(firstHeaders["Idempotency-Key"]).toMatch(/^sso-credential-delete-/);
+    expect(secondHeaders["Idempotency-Key"]).toBe(firstHeaders["Idempotency-Key"]);
+  });
+
   it("exchanges a bearer key for a remembered portal session", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: { status: "signed_in" },

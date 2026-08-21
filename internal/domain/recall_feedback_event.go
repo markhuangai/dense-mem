@@ -32,6 +32,8 @@ type RecallFeedbackEvent struct {
 	TeamID                    *uuid.UUID                      `json:"team_id,omitempty"`
 	ProfileID                 *uuid.UUID                      `json:"profile_id,omitempty"`
 	KeyID                     *uuid.UUID                      `json:"key_id,omitempty"`
+	SpaceID                   *uuid.UUID                      `json:"space_id,omitempty"`
+	SpaceGeneration           int64                           `json:"space_generation,omitempty"`
 	AuthMethod                string                          `json:"auth_method"`
 	ToolName                  string                          `json:"tool_name"`
 	Query                     string                          `json:"query"`

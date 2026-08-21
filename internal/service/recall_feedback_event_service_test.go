@@ -21,9 +21,15 @@ func TestRecallFeedbackEventServiceRecordsSnapshotWithActorContext(t *testing.T)
 	teamID := uuid.New()
 	profileID := uuid.New()
 	keyID := uuid.New()
+	sharedSpaceID := uuid.New()
+	spaceID := uuid.New()
 	ctx = requestctx.WithActor(ctx, requestctx.Actor{
 		TeamID: teamID, OwnerID: profileID, CredentialID: &keyID,
 		AuthMethod: "api_key", Role: "manager",
+		AllowedSpaces: []domain.MemorySpaceAccess{
+			{ID: sharedSpaceID, Kind: domain.MemorySpaceTeamShared, Generation: 1},
+			{ID: spaceID, Kind: domain.MemorySpaceCredentialPrivate, Generation: 3},
+		},
 	})
 
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
@@ -51,16 +57,23 @@ func TestRecallFeedbackEventServiceRecordsSnapshotWithActorContext(t *testing.T)
 	assert.Equal(t, &teamID, got.TeamID)
 	assert.Equal(t, &profileID, got.ProfileID)
 	assert.Equal(t, &keyID, got.KeyID)
+	assert.Equal(t, &spaceID, got.SpaceID)
+	assert.EqualValues(t, 3, got.SpaceGeneration)
 	assert.Equal(t, "api_key", got.AuthMethod)
 }
 
 func TestRecallFeedbackEventServiceRecordsFeedbackForCapturedSnapshotAndPrunesRetention(t *testing.T) {
-	ctx := context.Background()
+	teamID, profileID, spaceID := uuid.New(), uuid.New(), uuid.New()
+	ctx := recallFeedbackActorContext(teamID, profileID, spaceID, 2)
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	repo := &recallFeedbackEventRepoStub{
 		event: &domain.RecallFeedbackEvent{
-			RecallID:      "rec_1",
-			SnapshotState: domain.RecallFeedbackSnapshotCaptured,
+			RecallID:        "rec_1",
+			TeamID:          &teamID,
+			ProfileID:       &profileID,
+			SpaceID:         &spaceID,
+			SpaceGeneration: 2,
+			SnapshotState:   domain.RecallFeedbackSnapshotCaptured,
 			ResultRefs: []domain.RecallFeedbackResultRef{{
 				Type: domain.RecallFeedbackResultTypeFragment,
 				ID:   "fragment-1",
@@ -121,7 +134,8 @@ func TestRecallFeedbackEventServiceRecordsFeedbackForCapturedSnapshotAndPrunesRe
 }
 
 func TestRecallFeedbackEventServiceRejectsUnsnapshottedOrUnreturnedFeedbackRefs(t *testing.T) {
-	ctx := context.Background()
+	teamID, profileID, spaceID := uuid.New(), uuid.New(), uuid.New()
+	ctx := recallFeedbackActorContext(teamID, profileID, spaceID, 1)
 	repo := &recallFeedbackEventRepoStub{}
 	svc := NewRecallFeedbackEventService(repo, nil, nil)
 
@@ -136,8 +150,11 @@ func TestRecallFeedbackEventServiceRejectsUnsnapshottedOrUnreturnedFeedbackRefs(
 	require.ErrorIs(t, err, repository.ErrRecallFeedbackEventNotFound)
 
 	repo.event = &domain.RecallFeedbackEvent{
-		RecallID:      "rec_1",
-		SnapshotState: domain.RecallFeedbackSnapshotCaptured,
+		RecallID:        "rec_1",
+		TeamID:          &teamID,
+		SpaceID:         &spaceID,
+		SpaceGeneration: 1,
+		SnapshotState:   domain.RecallFeedbackSnapshotCaptured,
 		ResultRefs: []domain.RecallFeedbackResultRef{{
 			Type: domain.RecallFeedbackResultTypeEvidence,
 			ID:   "evidence-1",
@@ -161,8 +178,11 @@ func TestRecallFeedbackEventServiceRejectsUnsnapshottedOrUnreturnedFeedbackRefs(
 	require.Empty(t, repo.feedbacks)
 
 	repo.event = &domain.RecallFeedbackEvent{
-		RecallID:      "rec_stale",
-		SnapshotState: domain.RecallFeedbackSnapshotFeedbackOnly,
+		RecallID:        "rec_stale",
+		TeamID:          &teamID,
+		SpaceID:         &spaceID,
+		SpaceGeneration: 1,
+		SnapshotState:   domain.RecallFeedbackSnapshotFeedbackOnly,
 		ResultRefs: []domain.RecallFeedbackResultRef{{
 			Type: domain.RecallFeedbackResultTypeEvidence,
 			ID:   "evidence-1",
@@ -178,7 +198,6 @@ func TestRecallFeedbackEventServiceRejectsUnsnapshottedOrUnreturnedFeedbackRefs(
 	})
 	require.ErrorContains(t, err, "snapshot is required")
 
-	teamID := uuid.New()
 	otherTeamID := uuid.New()
 	repo.event = &domain.RecallFeedbackEvent{
 		RecallID:      "rec_cross_team",
@@ -190,7 +209,7 @@ func TestRecallFeedbackEventServiceRejectsUnsnapshottedOrUnreturnedFeedbackRefs(
 			Rank: 1,
 		}},
 	}
-	teamCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: teamID})
+	teamCtx := recallFeedbackActorContext(teamID, profileID, spaceID, 1)
 	err = svc.RecordRecallFeedback(teamCtx, domain.RecallFeedbackSubmission{
 		RecallID:        "rec_cross_team",
 		Used:            true,
@@ -198,6 +217,34 @@ func TestRecallFeedbackEventServiceRejectsUnsnapshottedOrUnreturnedFeedbackRefs(
 		Quality:         "low",
 		FeedbackComment: "cross-team feedback must fail closed",
 	})
+	require.ErrorIs(t, err, repository.ErrRecallFeedbackEventNotFound)
+	require.Empty(t, repo.feedbacks)
+}
+
+func TestRecallFeedbackEventServiceRejectsSameTeamPeerAndReopenedGeneration(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	peerID := uuid.New()
+	privateSpaceID := uuid.New()
+	peerSpaceID := uuid.New()
+	event := &domain.RecallFeedbackEvent{
+		RecallID:        "rec_private",
+		TeamID:          &teamID,
+		ProfileID:       &ownerID,
+		SpaceID:         &privateSpaceID,
+		SpaceGeneration: 4,
+		SnapshotState:   domain.RecallFeedbackSnapshotCaptured,
+		ResultRefs:      []domain.RecallFeedbackResultRef{},
+	}
+	repo := &recallFeedbackEventRepoStub{event: event}
+	svc := NewRecallFeedbackEventService(repo, nil, nil)
+
+	peerCtx := recallFeedbackActorContext(teamID, peerID, peerSpaceID, 4)
+	err := svc.RecordRecallFeedback(peerCtx, domain.RecallFeedbackSubmission{RecallID: event.RecallID, Quality: "low"})
+	require.ErrorIs(t, err, repository.ErrRecallFeedbackEventNotFound)
+
+	reopenedCtx := recallFeedbackActorContext(teamID, ownerID, privateSpaceID, 5)
+	err = svc.RecordRecallFeedback(reopenedCtx, domain.RecallFeedbackSubmission{RecallID: event.RecallID, Quality: "low"})
 	require.ErrorIs(t, err, repository.ErrRecallFeedbackEventNotFound)
 	require.Empty(t, repo.feedbacks)
 }
@@ -295,13 +342,24 @@ func TestRecallFeedbackEventServiceUnavailableAndErrors(t *testing.T) {
 
 	repo := &recallFeedbackEventRepoStub{recordErr: errors.New("record failed")}
 	svc := NewRecallFeedbackEventService(repo, nil, nil)
-	err = svc.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{RecallID: "rec_1"})
+	teamID, spaceID := uuid.New(), uuid.New()
+	err = svc.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{RecallID: "rec_1", TeamID: &teamID, SpaceID: &spaceID, SpaceGeneration: 1})
 	require.ErrorContains(t, err, "record failed")
 
 	err = svc.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{})
 	require.ErrorContains(t, err, "recall_id is required")
 	err = svc.RecordRecallFeedback(ctx, domain.RecallFeedbackSubmission{})
 	require.ErrorContains(t, err, "recall_id is required")
+}
+
+func recallFeedbackActorContext(teamID, ownerID, spaceID uuid.UUID, generation int64) context.Context {
+	return requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID:  teamID,
+		OwnerID: ownerID,
+		AllowedSpaces: []domain.MemorySpaceAccess{{
+			ID: spaceID, Kind: domain.MemorySpaceCredentialPrivate, Generation: generation,
+		}},
+	})
 }
 
 type recallFeedbackEventRepoStub struct {

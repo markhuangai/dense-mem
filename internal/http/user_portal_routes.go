@@ -15,16 +15,17 @@ import (
 // RegisterUserPortal registers the API-key user portal under /ui on the main API server.
 func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	portal := &userPortalHandler{
-		teams:       deps.TeamSvc,
-		credentials: deps.CredentialSvc,
-		telemetry:   deps.Telemetry,
-		graph:       deps.GraphView,
-		recall:      handler.NewRecallHandler(deps.RecallSvc, deps.DreamSvc),
-		dreams:      handler.NewDreamHandler(deps.DreamSvc),
-		audit:       handler.NewAuditHandler(deps.AuditSvc),
-		sso:         deps.SSOService,
-		portal:      deps.PortalSession,
-		appConfig:   deps.AppConfig,
+		teams:         deps.TeamSvc,
+		credentials:   deps.CredentialSvc,
+		telemetry:     deps.Telemetry,
+		graph:         deps.GraphView,
+		recall:        handler.NewRecallHandler(deps.RecallSvc, deps.DreamSvc),
+		dreams:        handler.NewDreamHandler(deps.DreamSvc),
+		audit:         handler.NewAuditHandler(deps.AuditSvc),
+		sso:           deps.SSOService,
+		portal:        deps.PortalSession,
+		appConfig:     deps.AppConfig,
+		privateMemory: deps.PrivateMemory,
 	}
 
 	if deps.SSOService != nil {
@@ -72,6 +73,10 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	api.GET("/node-detail", portal.graphNodeDetail, httpmw.RequireScopes("read"))
 	api.GET("/team/audit-log", portal.audit.Get, httpmw.RequireScopes("read"))
 	api.POST("/credential/rotate", portal.rotateCurrentCredential, httpmw.RequireScopes("write"), credentialSvcMW)
+	if deps.PrivateMemory != nil {
+		api.DELETE("/credential/private-memory", portal.eraseCredentialPrivateMemory, httpmw.RequireScopes("write"), httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
+		api.GET("/private-memory/erasures/:operationId", portal.getOwnerPrivateMemoryErasure, httpmw.RequireScopes("read"))
+	}
 	api.GET("/team", teamHandler.Get, httpmw.RequireRole(service.CredentialRoleManager), teamSvcMW)
 	api.PATCH("/team", teamHandler.Patch, httpmw.RequireRole(service.CredentialRoleManager), teamSvcMW, httpmw.BindAndValidate[dto.UpdateTeamRequest](httpmw.UpdateTeamBodyKey))
 	api.DELETE("/team", teamHandler.Delete, httpmw.RequireRole(service.CredentialRoleManager), teamSvcMW)
@@ -92,8 +97,10 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 		api.POST("/sso/credentials", portal.createSSOCredential, httpmw.RequireScopes("read"))
 		api.GET("/sso/credentials/:credentialId", portal.getSSOCredential, httpmw.RequireScopes("read"))
 		api.POST("/sso/credentials/:credentialId/rotate", portal.rotateSSOCredential, httpmw.RequireScopes("read"))
-		// Self-service revocation invalidates one owned bearer credential and does not grant memory access.
-		api.DELETE("/sso/credentials/:credentialId", portal.revokeSSOCredential, httpmw.RequireScopes("read"))
+		if deps.PrivateMemory != nil {
+			api.DELETE("/sso/private-memory", portal.eraseSSOPrivateMemory, httpmw.RequireScopes("write"), httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
+			api.DELETE("/sso/credentials/:credentialId", portal.deleteSSOCredential, httpmw.RequireScopes("write"), httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
+		}
 	}
 
 	staticDir := strings.TrimSpace(deps.UserStaticDir)
