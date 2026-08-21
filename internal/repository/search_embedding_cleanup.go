@@ -25,8 +25,10 @@ func failExpiredMaxAttemptEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID
 			WHERE job.team_id = ?::uuid
 			  AND job.status = 'processing'
 			  AND job.lease_until <= clock_timestamp()
-			  AND job.attempts >= job.max_attempts
-			  AND job.space_id = COALESCE(NULLIF(?, '')::uuid, job.space_id)
+				  AND job.attempts >= job.max_attempts
+				  AND job.space_id = COALESCE(NULLIF(?, '')::uuid, job.space_id)
+				  AND `+activeSemanticSpaceGenerationSQL("job")+`
+				  AND `+activeSemanticSpaceGenerationSQL("document")+`
 			ORDER BY job.lease_until ASC, job.embedding_job_id ASC
 			LIMIT ?
 			FOR UPDATE OF document SKIP LOCKED

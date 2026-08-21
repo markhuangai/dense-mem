@@ -154,3 +154,57 @@ func TestSubmissionDiagnosticsHideSealedGenerationAndKeepActiveHydration(t *test
 	_, err = repo.GetSubmissionDiagnostic(ctx, teamID, private.IngestID)
 	assert.ErrorIs(t, err, ErrSubmissionDiagnosticNotFound)
 }
+
+func TestEmbeddingClaimCleanupIgnoresSealedGeneration(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "embedding-cleanup-space-generation")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "owner")
+	insertSearchTestContract(t, adminDB, rls, "embedding-cleanup-space-generation", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	privateSpace, err := NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamID), uuid.New())
+	require.NoError(t, err)
+	var privateGeneration int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT generation FROM memory_spaces WHERE id = ?::uuid`, privateSpace.ID).Row().Scan(&privateGeneration)
+	}))
+	privateDoc, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: uuid.NewString(), SourceVersion: 1,
+		DocumentText: "sealed exhausted embedding cleanup", SpaceID: privateSpace.ID.String(), SpaceGeneration: privateGeneration,
+	})
+	require.NoError(t, err)
+	activeDoc := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "active exhausted embedding cleanup", 1)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE embedding_jobs
+			SET status = 'processing', worker_id = 'cleanup-initial', attempts = 1, total_attempts = 1,
+			    max_attempts = 1,
+			    lease_until = CASE WHEN search_document_id = ?::uuid THEN now() - interval '2 seconds' ELSE now() - interval '1 second' END
+			WHERE team_id = ?::uuid
+			  AND search_document_id IN (?::uuid, ?::uuid)
+		`, activeDoc.SearchDocumentID, teamID, privateDoc.SearchDocumentID, activeDoc.SearchDocumentID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE memory_spaces
+			SET lifecycle_state = 'sealed', generation = generation + 1, sealed_at = now(), updated_at = now()
+			WHERE id = ?::uuid
+		`, privateSpace.ID).Error
+	}))
+
+	claimed, err := repo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{TeamID: teamID, WorkerID: "cleanup-after-seal", Limit: 1, Lease: time.Minute})
+	require.NoError(t, err)
+	assert.Empty(t, claimed)
+
+	var privateStatus, activeStatus string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT
+				(SELECT status FROM embedding_jobs WHERE team_id = ?::uuid AND search_document_id = ?::uuid),
+				(SELECT status FROM embedding_jobs WHERE team_id = ?::uuid AND search_document_id = ?::uuid)
+		`, teamID, privateDoc.SearchDocumentID, teamID, activeDoc.SearchDocumentID).Row().Scan(&privateStatus, &activeStatus)
+	}))
+	assert.Equal(t, "processing", privateStatus)
+	assert.Equal(t, "failed", activeStatus)
+}
