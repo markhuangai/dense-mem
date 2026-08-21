@@ -142,6 +142,8 @@ func TestSubmissionDiagnosticSummaryNormalizesSourceText(t *testing.T) {
 	require.Equal(t, "source Authorization: [REDACTED]", authorizationHeader.Value)
 	authorizationToken := boundedSubmissionSourceSummary("source Authorization: opaque-secret")
 	require.Equal(t, "source Authorization: [REDACTED]", authorizationToken.Value)
+	authorizationEquals := boundedSubmissionSourceSummary("source Authorization=Basic dXNlcjpwYXNz")
+	require.Equal(t, "source Authorization=[REDACTED]", authorizationEquals.Value)
 	require.Equal(t, boundedSubmissionText{}, boundedSubmissionSourceSummary(" \n\t "))
 	long := boundedSubmissionSourceSummary(strings.Repeat("界", submissionSourceSummaryMaxRunes+1))
 	require.Len(t, []rune(long.Value), submissionSourceSummaryMaxRunes)

@@ -99,7 +99,6 @@ func TestSubmissionAssessmentWorkerRejectsInvalidKnownEntityIDBeforeProvider(t *
 	subject["known_entity_id"] = "not-a-uuid"
 
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
-
 	require.NoError(t, err)
 	assert.True(t, processed)
 	assert.Zero(t, provider.calls)
@@ -121,6 +120,7 @@ func TestSubmissionAssessmentWorkerQuarantinesProposalSignalsAcrossEveryFragment
 	require.Len(t, assessments.completions, 1)
 	completion := assessments.completions[0]
 	assert.Equal(t, string(domain.SemanticReviewQuarantined), completion.Status)
+	assert.Equal(t, map[string]any{"assessor_contract": domain.ContractVersion}, completion.Payload)
 	require.Len(t, completion.SecurityQuarantines, len(ledger.placement.Evidence))
 	for _, quarantine := range completion.SecurityQuarantines {
 		require.NotEmpty(t, quarantine.Signals)
@@ -237,7 +237,6 @@ func TestSubmissionAssessmentWorkerCompletesProviderSecurityQuarantine(t *testin
 	service := worker.(*submissionAssessmentPlacementWorkerService)
 	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
 	require.NoError(t, err)
-
 	err = service.completeProviderSecurityQuarantine(
 		context.Background(),
 		submissionAssessmentRunScope(*ledger.run, "submission-assessment-worker"),
@@ -252,6 +251,7 @@ func TestSubmissionAssessmentWorkerCompletesProviderSecurityQuarantine(t *testin
 	require.Len(t, assessments.completions, 1)
 	completion := assessments.completions[0]
 	assert.Equal(t, string(domain.SemanticReviewQuarantined), completion.Status)
+	assert.Equal(t, map[string]any{"assessor_contract": domain.ContractVersion}, completion.Payload)
 	require.Len(t, completion.SecurityQuarantines, 1)
 	assert.Equal(t, ledger.placement.Evidence[1].FragmentID, completion.SecurityQuarantines[0].FragmentID)
 	require.Len(t, completion.SecurityQuarantines[0].Signals, 1)

@@ -605,8 +605,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeDeterministicSecuri
 	if err != nil {
 		return newPlacementWorkerDiagnosticError(scope.TeamID, scope.IngestID, placementFailureDiagnosticFor(stage, err), err)
 	}
-	payload := semanticAssessmentFailurePayload(stage, false, nil)
-	payload["assessor_contract"] = domain.ContractVersion
+	payload := map[string]any{"assessor_contract": domain.ContractVersion}
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,
 		OutcomeKind:                  "submission_assessment_security",
@@ -680,8 +679,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeProviderSecurityQua
 		err := errors.New("submission assessor security quarantine has no target")
 		return newPlacementWorkerDiagnosticError(scope.TeamID, scope.IngestID, placementFailureDiagnosticFor(stage, err), err)
 	}
-	payload := semanticAssessmentFailurePayload(stage, true, nil)
-	payload["assessor_contract"] = domain.ContractVersion
+	payload := map[string]any{"assessor_contract": domain.ContractVersion}
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,
 		OutcomeKind:                  "submission_assessment_security",
