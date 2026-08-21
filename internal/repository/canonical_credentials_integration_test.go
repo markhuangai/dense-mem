@@ -145,6 +145,76 @@ func TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace(t *testing.T) {
 	}))
 }
 
+func TestDeleteForTeamWithAuditCommitsBeforePrivateErasureQueue(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "canonical-delete-audit-order"))
+	ownerID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	target := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-order", domain.CredentialBindingCredentialPrivate)
+	rollbackTarget := createOwnedCredential(t, credentialRepo, teamID, ownerID, "audit-rollback", domain.CredentialBindingSharedOnly)
+	seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "audit-order private content")
+
+	rows, err := credentialRepo.DeleteForTeamWithAudit(ctx, teamID, target.ID, CredentialDeletionAuditInput{
+		ActorRole:     "manager",
+		ClientIP:      "127.0.0.1",
+		CorrelationID: "corr-delete-audit-order",
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rows)
+
+	var queuedCount, auditCount int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT COUNT(*)
+			FROM private_memory_erasure_operations
+			WHERE team_id = ? AND target_credential_id = ?
+		`, teamID, target.ID).Row().Scan(&queuedCount); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM audit_log
+			WHERE team_id = ? AND entity_type = 'api_key' AND entity_id = ? AND operation = 'DELETE'
+		`, teamID, target.ID.String()).Row().Scan(&auditCount)
+	}))
+	require.Equal(t, int64(1), queuedCount)
+	require.Equal(t, int64(1), auditCount)
+
+	privateMemoryRepo := NewPrivateMemoryRepository(appDB, rls)
+	require.NoError(t, privateMemoryRepo.Prepare(ctx))
+	claim, err := privateMemoryRepo.ClaimNext(ctx, "delete-audit-order-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	_, err = privateMemoryRepo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	require.NoError(t, err)
+
+	var beforePayload, afterPayload, metadata []byte
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT before_payload, after_payload, metadata
+			FROM audit_log
+			WHERE team_id = ? AND entity_type = 'api_key' AND entity_id = ? AND operation = 'DELETE'
+		`, teamID, target.ID.String()).Row().Scan(&beforePayload, &afterPayload, &metadata)
+	}))
+	require.Nil(t, beforePayload)
+	require.Nil(t, afterPayload)
+	require.JSONEq(t, privateMemoryAuditMetadataJSON, string(metadata))
+
+	_, err = credentialRepo.DeleteForTeamWithAudit(ctx, teamID, rollbackTarget.ID, CredentialDeletionAuditInput{
+		ActorRole: "manager",
+		ClientIP:  "not-an-ip",
+	})
+	require.Error(t, err)
+	var status string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT status FROM credentials WHERE id = ?`, rollbackTarget.ID).Row().Scan(&status)
+	}))
+	require.Equal(t, "active", status)
+}
+
 func createLedgerSSOIdentity(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS, teamID uuid.UUID) uuid.UUID {
 	t.Helper()
 	providerID := uuid.New()

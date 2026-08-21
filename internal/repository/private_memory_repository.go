@@ -711,12 +711,19 @@ func queuePrivateMemorySpaceTx(ctx context.Context, tx *gorm.DB, space *domain.M
 			return nil, err
 		}
 		if input.RetireSpace && !failed.RetireSpace {
-			return nil, ErrPrivateMemoryOperationConflict
+			// A credential-retirement request is stronger than the failed
+			// non-retiring erase it supersedes. Keep the failed generation as
+			// the deletion target, but adopt the new retirement action and
+			// credential target so revocation cannot be rolled back.
+			action = input.Action
+			targetCredentialID = cloneUUIDPtr(input.TargetCredentialID)
+			retireSpace = true
+		} else {
+			action = failed.Action
+			targetCredentialID = cloneUUIDPtr(failed.TargetCredentialID)
+			retireSpace = failed.RetireSpace
 		}
-		action = failed.Action
-		targetCredentialID = cloneUUIDPtr(failed.TargetCredentialID)
 		targetGeneration = *failed.TargetGeneration
-		retireSpace = failed.RetireSpace
 	default:
 		return nil, ErrPrivateMemoryOperationConflict
 	}

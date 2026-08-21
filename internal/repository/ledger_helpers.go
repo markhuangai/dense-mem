@@ -131,11 +131,12 @@ func hydratePlacementItemSearchStates(ctx context.Context, tx *gorm.DB, teamID s
 		return nil
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT search_document_id::text, search_state
-		FROM search_documents
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND search_document_id = ANY(?::uuid[])
+		SELECT document.search_document_id::text, document.search_state
+		FROM search_documents AS document
+		WHERE document.team_id = ?::uuid
+		  AND document.owner_profile_id = ?::uuid
+		  AND document.search_document_id = ANY(?::uuid[])
+		  AND `+activeSemanticSpaceGenerationSQL("document")+`
 	`, teamID, ownerProfileID, pq.Array(ids)).Rows()
 	if err != nil {
 		return err

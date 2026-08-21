@@ -83,12 +83,17 @@ func loadPlacementRunStatus(
 		JOIN knowledge_ingests AS ingest
 		  ON ingest.team_id = run.team_id
 		 AND ingest.ingest_id = run.ingest_id
+		 AND ingest.space_id = run.space_id
+		 AND ingest.space_generation = run.space_generation
 		LEFT JOIN submission_holds AS hold
 		  ON hold.team_id = run.team_id
 		 AND hold.placement_run_id = run.placement_run_id
+		 AND hold.space_id = run.space_id
+		 AND hold.space_generation = run.space_generation
 		WHERE run.team_id = ?::uuid
 		  AND run.owner_profile_id = ?::uuid
 		  AND run.ingest_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("run")+`
 	`, input.TeamID, input.OwnerProfileID, input.IngestID).Row().Scan(
 		&result.PlacementRunID,
 		&result.Status,
@@ -134,10 +139,11 @@ func loadPlacementRunStatus(
 	evidenceRows, err := tx.WithContext(ctx).Raw(`
 		SELECT fragment_id::text, evidence_index, content, content_hash, authority,
 		       COALESCE(source_id::text, ''), COALESCE(source_revision_id::text, '')
-		FROM evidence_fragments
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND ingest_id = ?::uuid
+		FROM evidence_fragments AS fragment
+		WHERE fragment.team_id = ?::uuid
+		  AND fragment.owner_profile_id = ?::uuid
+		  AND fragment.ingest_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("fragment")+`
 		ORDER BY evidence_index ASC
 	`, input.TeamID, input.OwnerProfileID, input.IngestID).Rows()
 	if err != nil {
@@ -165,10 +171,11 @@ func loadPlacementRunStatus(
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT placement_item_id::text, fragment_id::text, claim_key::text, evidence_index,
 		       status, category, version, COALESCE(result, '{}'::jsonb)
-		FROM placement_items
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND ingest_id = ?::uuid
+		FROM placement_items AS item
+		WHERE item.team_id = ?::uuid
+		  AND item.owner_profile_id = ?::uuid
+		  AND item.ingest_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("item")+`
 		ORDER BY evidence_index ASC
 	`, input.TeamID, input.OwnerProfileID, input.IngestID).Rows()
 	if err != nil {

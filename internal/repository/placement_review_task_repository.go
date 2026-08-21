@@ -42,6 +42,7 @@ func hydratePlacementItemReviewTasks(
 		  AND task.owner_profile_id = ?::uuid
 		  AND task.ingest_id = ?::uuid
 		  AND task.placement_item_id IS NOT NULL
+		  AND `+activeSemanticSpaceGenerationSQL("task")+`
 		  AND (
 		      jsonb_exists(task.payload, 'semantic_kind')
 		      OR (task.task_type = 'identity_needs_review' AND task.reason = 'ambiguous_entity')
