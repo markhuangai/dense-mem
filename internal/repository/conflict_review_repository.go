@@ -111,6 +111,7 @@ func (r *LedgerRepositoryImpl) ClaimRelationshipConflictCases(
 				FROM relationship_conflict_cases
 					WHERE team_id = ?::uuid
 					  AND status IN ('open', 'overdue')
+					  AND `+activeSemanticSpaceGenerationSQL("relationship_conflict_cases")+`
 					  AND next_review_at <= ?
 					  AND attempts < ?
 					  AND (lease_until IS NULL OR lease_until < clock_timestamp() OR lease_worker_id = ?)
@@ -132,6 +133,7 @@ func (r *LedgerRepositoryImpl) ClaimRelationshipConflictCases(
 				FROM selected
 				WHERE conflict.team_id = ?::uuid
 				  AND conflict.conflict_id = selected.conflict_id
+				  AND `+activeSemanticSpaceGenerationSQL("conflict")+`
 				RETURNING conflict.conflict_id::text
 				)
 				SELECT conflict_id FROM updated

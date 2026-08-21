@@ -309,7 +309,7 @@ func TestAuditListScansRowsAndCountsTotal(t *testing.T) {
 	mock.ExpectQuery("SELECT id, team_id, timestamp, operation, entity_type, entity_id").
 		WithArgs(profileID, 2, 1).
 		WillReturnRows(rows)
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM audit_log WHERE team_id = \\$1").
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\)\\s+FROM audit_log AS audit\\s+WHERE audit.team_id = \\$1").
 		WithArgs(profileID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
@@ -349,7 +349,7 @@ func TestAuditListHandlesQueryAndCountErrors(t *testing.T) {
 			"client_ip", "correlation_id", "metadata",
 			"memory_space_id",
 		}))
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM audit_log WHERE team_id = \\$1").
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\)\\s+FROM audit_log AS audit\\s+WHERE audit.team_id = \\$1").
 		WithArgs("profile-1").
 		WillReturnError(errors.New("count failed"))
 	_, _, err = svc.List(context.Background(), "profile-1", 20, 0)

@@ -309,8 +309,18 @@ func (s *AuditServiceImpl) List(ctx context.Context, teamID string, limit, offse
 			SELECT id, team_id, timestamp, operation, entity_type, entity_id,
 			       before_payload, after_payload, actor_profile_id, actor_role,
 			       client_ip, correlation_id, metadata, memory_space_id::text
-			FROM audit_log
-			WHERE team_id = $1
+			FROM audit_log AS audit
+			WHERE audit.team_id = $1
+			  AND (
+				  audit.memory_space_id IS NULL
+				  OR EXISTS (
+					  SELECT 1
+					  FROM memory_spaces AS space
+					  WHERE space.id = audit.memory_space_id
+					    AND space.team_id = audit.team_id
+					    AND space.lifecycle_state = 'active'
+				  )
+			  )
 			ORDER BY timestamp DESC
 			LIMIT $2 OFFSET $3
 		`, teamID, limit, offset).Rows()
@@ -391,7 +401,19 @@ func (s *AuditServiceImpl) List(ctx context.Context, teamID string, limit, offse
 		}
 		if err := s.rls.WithTeamTx(ctx, s.db, teamID, func(tx *gorm.DB) error {
 			return tx.Raw(`
-				SELECT COUNT(*) FROM audit_log WHERE team_id = $1
+				SELECT COUNT(*)
+				FROM audit_log AS audit
+				WHERE audit.team_id = $1
+				  AND (
+					  audit.memory_space_id IS NULL
+					  OR EXISTS (
+						  SELECT 1
+						  FROM memory_spaces AS space
+						  WHERE space.id = audit.memory_space_id
+						    AND space.team_id = audit.team_id
+						    AND space.lifecycle_state = 'active'
+					  )
+				  )
 			`, teamID).Scan(&total).Error
 		}); err != nil {
 			return nil, 0, fmt.Errorf("failed to count audit log entries: %w", err)
@@ -401,7 +423,19 @@ func (s *AuditServiceImpl) List(ctx context.Context, teamID string, limit, offse
 			return nil, 0, fmt.Errorf("failed to query audit log: %w", err)
 		}
 		if err := s.db.WithContext(ctx).Raw(`
-			SELECT COUNT(*) FROM audit_log WHERE team_id = $1
+			SELECT COUNT(*)
+			FROM audit_log AS audit
+			WHERE audit.team_id = $1
+			  AND (
+				  audit.memory_space_id IS NULL
+				  OR EXISTS (
+					  SELECT 1
+					  FROM memory_spaces AS space
+					  WHERE space.id = audit.memory_space_id
+					    AND space.team_id = audit.team_id
+					    AND space.lifecycle_state = 'active'
+				  )
+			  )
 		`, teamID).Scan(&total).Error; err != nil {
 			return nil, 0, fmt.Errorf("failed to count audit log entries: %w", err)
 		}

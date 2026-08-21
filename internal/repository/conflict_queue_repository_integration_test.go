@@ -288,6 +288,28 @@ func TestConflictQueueHidesSealedPrivateGeneration(t *testing.T) {
 	for _, metric := range snapshot.Cases {
 		require.NotEqual(t, teamID.String(), metric.TeamID)
 	}
+
+	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, ConflictReviewRunInput{
+		TeamID:       teamID.String(),
+		WorkerID:     "sealed-private-conflict-worker",
+		LocalRunDate: time.Now().UTC(),
+		Timezone:     "UTC",
+		Lease:        time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NotNil(t, run)
+	claimedCases, err := ledger.ClaimRelationshipConflictCases(ctx, ClaimRelationshipConflictCasesInput{
+		TeamID:      teamID.String(),
+		WorkerID:    "sealed-private-conflict-worker",
+		ReviewRunID: run.ReviewRunID,
+		Limit:       10,
+		Lease:       time.Minute,
+		MaxAttempts: 5,
+		Now:         time.Now().UTC().Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.Empty(t, claimedCases, "sealed private conflict must not abort or enter worker claims")
 }
 
 func domainConflictQueueQuery(teamID, status string, limit int) domain.ConflictQueueQuery {

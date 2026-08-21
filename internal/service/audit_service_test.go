@@ -7,9 +7,12 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -248,6 +251,89 @@ func TestAuditServiceAppend(t *testing.T) {
 	assert.Equal(t, "standard", retrievedActorRole, "actor_role should match")
 	assert.Equal(t, "192.168.1.1", retrievedClientIP, "client_ip should match")
 	assert.Equal(t, "corr-123-456", retrievedCorrelationID, "correlation_id should match")
+}
+
+func TestAuditServiceListHidesSealedPrivateSpaceRows(t *testing.T) {
+	ctx := context.Background()
+	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	defer cleanup()
+
+	db, err := postgres.Open(ctx, &testConfig{dsn: dsn})
+	require.NoError(t, err)
+	defer func() {
+		sqlDB, _ := db.DB()
+		if sqlDB != nil {
+			sqlDB.Close()
+		}
+	}()
+
+	m, err := postgres.NewMigrator(db)
+	require.NoError(t, err)
+	require.NoError(t, m.RunUp(ctx))
+	rlss := postgres.NewRLS()
+	teamID := uuid.New()
+	privateSpaceID := uuid.New()
+	ownerCredentialID := uuid.New()
+	require.NoError(t, rlss.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO teams (id, name)
+			VALUES (?, ?)
+		`, teamID, "audit-private-"+teamID.String()).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO memory_spaces (id, team_id, kind, owner_credential_id)
+			VALUES (?, ?, 'credential_private', ?)
+		`, privateSpaceID, teamID, ownerCredentialID).Error
+	}))
+
+	auditService := NewAuditService(db)
+	teamIDString := teamID.String()
+	privateSpaceIDString := privateSpaceID.String()
+	require.NoError(t, auditService.Append(ctx, AuditLogEntry{
+		ID:            uuid.NewString(),
+		ProfileID:     &teamIDString,
+		MemorySpaceID: &privateSpaceIDString,
+		Operation:     "PRIVATE_CREATE",
+		EntityType:    "private_fixture",
+		EntityID:      "test-private-audit-row",
+		AfterPayload:  map[string]interface{}{"sentinel": "private"},
+	}))
+	require.NoError(t, auditService.Append(ctx, AuditLogEntry{
+		ID:           uuid.NewString(),
+		ProfileID:    &teamIDString,
+		Operation:    "SHARED_CREATE",
+		EntityType:   "shared_fixture",
+		EntityID:     "test-shared-audit-row",
+		AfterPayload: map[string]interface{}{"sentinel": "shared"},
+	}))
+
+	listContext := requestctx.WithActor(ctx, requestctx.Actor{
+		TeamID: teamID,
+		AllowedSpaces: []domain.MemorySpaceAccess{{
+			ID:         privateSpaceID,
+			Kind:       domain.MemorySpaceCredentialPrivate,
+			Generation: 1,
+		}},
+	})
+	entries, total, err := auditService.List(listContext, teamIDString, 20, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, total)
+	assert.Len(t, entries, 2)
+
+	require.NoError(t, rlss.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE memory_spaces
+			SET generation = 2, lifecycle_state = 'sealed'
+			WHERE id = ? AND team_id = ?
+		`, privateSpaceID, teamID).Error
+	}))
+
+	entries, total, err = auditService.List(listContext, teamIDString, 20, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "test-shared-audit-row", entries[0].EntityID)
 }
 
 func TestAuditServiceAppendUsesContextClientIPWhenEntryBlank(t *testing.T) {
