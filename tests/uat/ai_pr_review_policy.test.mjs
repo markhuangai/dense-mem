@@ -119,7 +119,17 @@ test("automatic AI review waits for successful current-head PR CI", async () => 
   );
   assert.match(workflow, /workflowRun\.event !== "pull_request"/);
   assert.match(workflow, /workflowRun\.conclusion !== "success"/);
-  assert.match(workflow, /pull\.head\.sha === triggerHeadSha/);
+  assert.match(workflow, /const triggerHeadRef = workflowRun\.head_branch/);
+  assert.match(
+    workflow,
+    /const triggerHeadRepositoryId = workflowRun\.head_repository\?\.id/,
+  );
+  assert.match(workflow, /typeof triggerHeadRef !== "string"/);
+  assert.match(workflow, /!Number\.isSafeInteger\(triggerHeadRepositoryId\)/);
+  assert.match(
+    normalizedWorkflow,
+    /pull\.head\.sha === triggerHeadSha && pull\.head\.ref === triggerHeadRef && pull\.head\.repo\?\.id === triggerHeadRepositoryId/,
+  );
   assert.match(
     workflow,
     /pull\.head\.sha !== triggerHeadSha/,

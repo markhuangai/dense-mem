@@ -97,8 +97,19 @@ jobs:
                 return;
               }
               triggerHeadSha = workflowRun.head_sha;
+              const triggerHeadRef = workflowRun.head_branch;
+              const triggerHeadRepositoryId = workflowRun.head_repository?.id;
               if (typeof triggerHeadSha !== "string") {
                 throw new Error("The workflow_run payload has no head SHA.");
+              }
+              if (typeof triggerHeadRef !== "string" || triggerHeadRef.length === 0) {
+                throw new Error("The workflow_run payload has no head branch.");
+              }
+              if (
+                !Number.isSafeInteger(triggerHeadRepositoryId) ||
+                triggerHeadRepositoryId < 1
+              ) {
+                throw new Error("The workflow_run payload has no head repository ID.");
               }
 
               const pulls = await github.paginate(github.rest.pulls.list, {
@@ -108,7 +119,12 @@ jobs:
                 base: "main",
                 per_page: 100,
               });
-              const matches = pulls.filter((pull) => pull.head.sha === triggerHeadSha);
+              const matches = pulls.filter(
+                (pull) =>
+                  pull.head.sha === triggerHeadSha &&
+                  pull.head.ref === triggerHeadRef &&
+                  pull.head.repo?.id === triggerHeadRepositoryId,
+              );
               if (matches.length === 0) {
                 skip(`No current open pull request targets main at ${triggerHeadSha}.`);
                 return;
