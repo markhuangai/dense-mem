@@ -681,100 +681,7 @@ func loadRelationshipConflictRecordsByIDBounded(
 	positionLimit int,
 	supporterLimit int,
 ) ([]RelationshipConflictCaseRecord, error) {
-	conflictIDs = normalizeRecallUUIDList(conflictIDs)
-	if len(conflictIDs) == 0 {
-		return []RelationshipConflictCaseRecord{}, nil
-	}
-	cases, err := loadRelationshipConflictCaseRows(ctx, tx, teamID, conflictIDs, knownAt)
-	if err != nil {
-		return nil, err
-	}
-	positions, err := loadRelationshipConflictPositionRowsWithLimit(ctx, tx, teamID, conflictIDs, knownAt, positionLimit)
-	if err != nil {
-		return nil, err
-	}
-	if err := loadRelationshipConflictSupporters(ctx, tx, teamID, conflictIDs, knownAt, positions, supporterLimit); err != nil {
-		return nil, err
-	}
-	for i := range cases {
-		cases[i].Positions = positionsForConflict(cases[i].ConflictID, positions)
-		applyConflictPositionKnownAtDispositions(&cases[i], knownAt)
-	}
-	return cases, nil
-}
-
-func loadRelationshipConflictCaseRows(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	conflictIDs []string,
-	knownAt *time.Time,
-) ([]RelationshipConflictCaseRecord, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT team_id::text, conflict_id::text, COALESCE(space_id::text, ''), semantic_scope_key, kind, status,
-		       subject_entity_id::text, predicate_key, predicate_version,
-		       relationship_kind, current_cardinality, polarity, COALESCE(scope_key, ''),
-		       question, policy_version, review_due_at, next_review_at, review_ttl_days,
-		       timezone, COALESCE(preferred_position_id::text, ''),
-		       resolved_at, effective_at, effective_time_basis, resolution_reason,
-		       version, attempts, created_at, updated_at,
-		       (
-		           SELECT max(event.created_at)
-		           FROM relationship_conflict_events AS event
-		           WHERE event.team_id = relationship_conflict_cases.team_id
-		             AND event.conflict_id = relationship_conflict_cases.conflict_id
-		             AND event.action = 'dismissed'
-		       ) AS dismissed_at
-		FROM relationship_conflict_cases
-		WHERE team_id = ?::uuid
-		  AND conflict_id = ANY(?::uuid[])
-		  AND (?::timestamptz IS NULL OR created_at <= ?::timestamptz)
-		ORDER BY created_at, conflict_id
-	`, teamID, pq.Array(conflictIDs), knownAt, knownAt).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []RelationshipConflictCaseRecord{}
-	for rows.Next() {
-		var record RelationshipConflictCaseRecord
-		if err := rows.Scan(
-			&record.TeamID,
-			&record.ConflictID,
-			&record.SpaceID,
-			&record.SemanticScopeKey,
-			&record.Kind,
-			&record.Status,
-			&record.SubjectEntityID,
-			&record.PredicateKey,
-			&record.PredicateVersion,
-			&record.RelationshipKind,
-			&record.CurrentCardinality,
-			&record.Polarity,
-			&record.ScopeKey,
-			&record.Question,
-			&record.PolicyVersion,
-			&record.ReviewDueAt,
-			&record.NextReviewAt,
-			&record.ReviewTTLDays,
-			&record.Timezone,
-			&record.PreferredPositionID,
-			&record.ResolvedAt,
-			&record.EffectiveAt,
-			&record.EffectiveTimeBasis,
-			&record.ResolutionReason,
-			&record.Version,
-			&record.Attempts,
-			&record.CreatedAt,
-			&record.UpdatedAt,
-			&record.DismissedAt,
-		); err != nil {
-			return nil, err
-		}
-		applyConflictKnownAt(&record, knownAt)
-		out = append(out, record)
-	}
-	return out, rows.Err()
+	return loadRelationshipConflictRecordsByIDBoundedWithFence(ctx, tx, teamID, conflictIDs, knownAt, positionLimit, supporterLimit, false)
 }
 
 func loadRelationshipConflictPositionRows(
@@ -795,11 +702,29 @@ func loadRelationshipConflictPositionRowsWithLimit(
 	knownAt *time.Time,
 	positionLimit int,
 ) ([]RelationshipConflictPositionRecord, error) {
+	return loadRelationshipConflictPositionRowsWithLimitAndFence(ctx, tx, teamID, conflictIDs, knownAt, positionLimit, false)
+}
+
+func loadRelationshipConflictPositionRowsWithLimitAndFence(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	conflictIDs []string,
+	knownAt *time.Time,
+	positionLimit int,
+	activeOnly bool,
+) ([]RelationshipConflictPositionRecord, error) {
 	dispositionSelect := "position.disposition"
 	dispositionGroup := ", position.disposition"
 	if knownAt != nil {
 		dispositionSelect = "'candidate'"
 		dispositionGroup = ""
+	}
+	activeMemberFence := ""
+	activePositionFence := ""
+	if activeOnly {
+		activeMemberFence = "\n\t\t\t AND " + activeSemanticSpaceGenerationSQL("member")
+		activePositionFence = "\n\t\t\t  AND " + activeSemanticSpaceGenerationSQL("position")
 	}
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
 		WITH grouped AS (
@@ -819,14 +744,15 @@ func loadRelationshipConflictPositionRowsWithLimit(
 			LEFT JOIN relationship_conflict_position_members AS member
 			 ON member.team_id = position.team_id
 			 AND member.position_id = position.position_id
-			 AND (
-			     (?::timestamptz IS NULL AND member.active)
-			     OR (
+				 AND (
+				     (?::timestamptz IS NULL AND member.active)
+				     OR (
 			         ?::timestamptz IS NOT NULL
 			         AND member.first_seen_at <= ?::timestamptz
-			         AND (member.retired_at IS NULL OR member.retired_at > ?::timestamptz)
-			     )
-			 )
+				         AND (member.retired_at IS NULL OR member.retired_at > ?::timestamptz)
+				     )
+				 )
+				 %s
 			WHERE position.team_id = ?::uuid
 			  AND position.conflict_id = ANY(?::uuid[])
 			  AND (
@@ -837,6 +763,7 @@ func loadRelationshipConflictPositionRowsWithLimit(
 			          AND (position.retired_at IS NULL OR position.retired_at > ?::timestamptz)
 			      )
 			  )
+			  %s
 			GROUP BY position.conflict_id, position.position_id, position.position_key,
 			         position.object_entity_id, position.object_value_id%s
 		), ranked AS (
@@ -852,7 +779,7 @@ func loadRelationshipConflictPositionRowsWithLimit(
 		FROM ranked
 		WHERE ?::int <= 0 OR position_rank <= ?::int
 		ORDER BY conflict_id, position_key, position_id
-		`, dispositionSelect, dispositionGroup),
+		`, dispositionSelect, activeMemberFence, activePositionFence, dispositionGroup),
 		knownAt, knownAt, knownAt, knownAt,
 		teamID, pq.Array(conflictIDs),
 		knownAt, knownAt, knownAt, knownAt,

@@ -32,6 +32,7 @@ const relationshipConflictSupporterRowsSQL = `
 		 AND position.position_id = member.position_id
 		WHERE member.team_id = ?::uuid
 		  AND member.conflict_id = ANY(?::uuid[])
+		  %s
 		  AND (
 		      (?::timestamptz IS NULL AND member.active)
 		      OR (
@@ -46,8 +47,9 @@ const relationshipConflictSupporterRowsSQL = `
 		          ?::timestamptz IS NOT NULL
 		          AND position.first_seen_at <= ?::timestamptz
 		          AND (position.retired_at IS NULL OR position.retired_at > ?::timestamptz)
-		      )
+			  )
 		  )
+		  %s
 	),
 	latest_support_decision AS (
 		SELECT DISTINCT ON (support.team_id, support.support_id)
@@ -301,11 +303,42 @@ func loadRelationshipConflictSupporters(
 	positions []RelationshipConflictPositionRecord,
 	supporterLimit int,
 ) error {
+	return loadRelationshipConflictSupportersWithFence(ctx, tx, teamID, conflictIDs, knownAt, positions, supporterLimit, false)
+}
+
+func loadActiveRelationshipConflictSupporters(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	conflictIDs []string,
+	knownAt *time.Time,
+	positions []RelationshipConflictPositionRecord,
+	supporterLimit int,
+) error {
+	return loadRelationshipConflictSupportersWithFence(ctx, tx, teamID, conflictIDs, knownAt, positions, supporterLimit, true)
+}
+
+func loadRelationshipConflictSupportersWithFence(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	conflictIDs []string,
+	knownAt *time.Time,
+	positions []RelationshipConflictPositionRecord,
+	supporterLimit int,
+	activeOnly bool,
+) error {
 	if len(positions) == 0 {
 		return nil
 	}
+	memberFence := ""
+	positionFence := ""
+	if activeOnly {
+		memberFence = "AND " + activeSemanticSpaceGenerationSQL("member")
+		positionFence = "AND " + activeSemanticSpaceGenerationSQL("position")
+	}
 	rows, err := tx.WithContext(ctx).Raw(
-		relationshipConflictSupporterRowsSQL,
+		fmt.Sprintf(relationshipConflictSupporterRowsSQL, memberFence, positionFence),
 		relationshipConflictSupporterRowsArgsWithLimit(teamID, conflictIDs, positionIDs(positions), knownAt, supporterLimit)...,
 	).Rows()
 	if err != nil {
