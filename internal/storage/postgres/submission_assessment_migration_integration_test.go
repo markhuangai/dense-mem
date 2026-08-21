@@ -306,6 +306,7 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
 		},
 	}
+	unrelatedTaskID := uuid.NewString()
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		for _, fixture := range fixtures {
 			if err := insertSubmissionAssessmentMigrationRun(ctx, tx, teamID, profileID, fixture); err != nil {
@@ -335,6 +336,16 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 			          '{"semantic_kind":"identity"}'::jsonb, $6)
 		`, teamID, uuid.NewString(), profileID, fixtures[0].ingestID,
 			fixtures[0].items[0].itemID, "remember-normalizer-review:"+fixtures[0].items[0].itemID)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO review_tasks (
+			    team_id, review_task_id, owner_profile_id,
+			    task_type, status, reason, payload, dedupe_key
+			) VALUES ($1::uuid, $2::uuid, $3::uuid,
+			          'policy_needs_review', 'open', 'unrelated_policy', '{}'::jsonb, $4)
+		`, teamID, unrelatedTaskID, profileID, "unrelated-review:"+unrelatedTaskID)
 		return err
 	}))
 
@@ -417,6 +428,13 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 	`, teamID, fixtures[0].ingestID).Scan(&reviewStatus, &reviewReason))
 	assert.Equal(t, "canceled", reviewStatus)
 	assert.Equal(t, "remember_normalizer_restart", reviewReason)
+	var unrelatedReviewStatus string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status
+		FROM review_tasks
+		WHERE team_id = $1::uuid AND review_task_id = $2::uuid
+	`, teamID, unrelatedTaskID).Scan(&unrelatedReviewStatus))
+	assert.Equal(t, "open", unrelatedReviewStatus)
 
 	var statusConstraint, completionConstraint string
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
