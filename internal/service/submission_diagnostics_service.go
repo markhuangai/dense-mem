@@ -208,7 +208,7 @@ func submissionDiagnosticSummary(record repository.SubmissionDiagnosticRecord) S
 
 const submissionSourceSummaryMaxRunes = 256
 
-var submissionSourceCredentialPattern = regexp.MustCompile(`(?i)authorization\s*:\s*(?:[^\s]+\s+)?[^\s]+|authorization\s*=\s*(?:[^\s]+\s+)?[^\s]+|bearer\s+[^\s]+|cookie\s*:\s*[^\s]+|((?:access[_-]?token|api[_-]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token)=)[^&\s]+`)
+var submissionSourceCredentialPattern = regexp.MustCompile(`(?i)authorization\s*:\s*(?:[^\s]+\s+)?[^\s]+|authorization\s*=\s*(?:[^\s]+\s+)?[^\s]+|bearer\s+[^\s]+|cookie\s*:\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|((?:access[_-]?token|api[_-]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token)=)[^&\s]+`)
 
 type boundedSubmissionText struct {
 	Value     string
