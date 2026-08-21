@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -24,8 +23,11 @@ const SemanticPlacementMaxAssessorTurns = verifier.SemanticAssessmentMaxProvider
 var errSemanticAssessmentProviderAttemptConsumed = errors.New("semantic assessment provider attempt already consumed")
 
 type semanticAssessmentPreflightError struct {
-	stage string
-	err   error
+	stage        string
+	reasonCode   string
+	failureClass string
+	measurement  *verifier.FailureMeasurement
+	err          error
 }
 
 func (err *semanticAssessmentPreflightError) Error() string {
@@ -44,9 +46,21 @@ func (err *semanticAssessmentPreflightError) Unwrap() error {
 
 func deterministicSemanticAssessmentPreflightError(stage, message string) error {
 	return &semanticAssessmentPreflightError{
-		stage: strings.TrimSpace(stage),
-		err:   errors.New(message),
+		stage:        strings.TrimSpace(stage),
+		reasonCode:   placementFailureReasonCode(strings.TrimSpace(stage), ""),
+		failureClass: "validation_failed",
+		err:          errors.New(message),
 	}
+}
+
+func deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+	stage string,
+	message string,
+	measurement verifier.FailureMeasurement,
+) error {
+	result := deterministicSemanticAssessmentPreflightError(stage, message).(*semanticAssessmentPreflightError)
+	result.measurement = &measurement
+	return result
 }
 
 func semanticAssessmentPreflightFailure(err error) (string, bool) {
@@ -176,11 +190,16 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 		IngestID:       run.IngestID,
 	})
 	if err != nil {
-		return true, errors.Join(err, s.retryOrFail(ctx, *run, repository.PlacementItem{}, "placement_load", false, false))
+		return true, retryAfterError(err, func() error {
+			return s.retryOrFail(ctx, *run, repository.PlacementItem{}, "placement_load", false, false, err)
+		})
 	}
 	item, fragment, ok := nextSemanticReviewPlacementItem(placement)
 	if !ok {
-		return true, errors.Join(errors.New("semantic assessment worker: no claimable placement item"), s.retryOrFail(ctx, *run, repository.PlacementItem{}, "placement_item", false, false))
+		cause := errors.New("semantic assessment worker: no claimable placement item")
+		return true, retryAfterError(cause, func() error {
+			return s.retryOrFail(ctx, *run, repository.PlacementItem{}, "placement_item", false, false, cause)
+		})
 	}
 	clientProposal := assessmentClientProposalWithoutTrustedContext(placement.Proposal)
 	if scan, err := scanSubmissionWithProviderProposal([]string{fragment.Content}, clientProposal); err != nil {
@@ -202,7 +221,9 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 				return s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewTerminalFailure), "failed", stage)
 			})
 		}
-		return true, errors.Join(err, s.retryOrFail(ctx, *run, item, stage, false, false))
+		return true, retryAfterError(err, func() error {
+			return s.retryOrFail(ctx, *run, item, stage, false, false, err)
+		})
 	}
 
 	assessment, response, reused, providerAttempted, releaseProviderAttempt, err := s.loadOrAssess(ctx, *run, item, request)
@@ -223,20 +244,25 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 					failureClass,
 					0,
 					providerTurns,
+					err,
 				)
 			})
 		}
 		if providerAttempted {
-			return true, errors.Join(err, s.retryProviderFailure(
-				ctx,
-				*run,
-				item,
-				"assessment",
-				releaseProviderAttempt,
-				verifier.ProviderFailureDetails(err),
-			))
+			return true, retryAfterError(err, func() error {
+				return s.retryProviderFailure(
+					ctx,
+					*run,
+					item,
+					"assessment",
+					releaseProviderAttempt,
+					verifier.ProviderFailureDetails(err),
+				)
+			})
 		}
-		return true, errors.Join(err, s.retryOrFail(ctx, *run, item, "assessment", providerAttempted, releaseProviderAttempt))
+		return true, retryAfterError(err, func() error {
+			return s.retryOrFail(ctx, *run, item, "assessment", providerAttempted, releaseProviderAttempt, err)
+		})
 	}
 	overrides, err := s.assessments.LoadPlacementAssessmentReviewOverrides(ctx, repository.LoadPlacementAssessmentReviewOverridesInput{
 		TeamID:          run.TeamID,
@@ -245,12 +271,16 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 		AssessmentID:    assessment.AssessmentID,
 	})
 	if err != nil {
-		return true, errors.Join(err, s.retryOrFail(ctx, *run, item, "review_override", false, false))
+		return true, retryAfterError(err, func() error {
+			return s.retryOrFail(ctx, *run, item, "review_override", false, false, err)
+		})
 	}
 	response = applySemanticAssessmentReviewOverrides(response, overrides)
 	if len(response.SecuritySignals) > 0 {
 		if err := s.recordSecuritySignals(ctx, *run, fragment, response); err != nil {
-			return true, errors.Join(err, s.retryOrFail(ctx, *run, item, "security_signal", false, false))
+			return true, retryAfterError(err, func() error {
+				return s.retryOrFail(ctx, *run, item, "security_signal", false, false, err)
+			})
 		}
 		return true, s.completeTerminal(ctx, *run, item, string(domain.SemanticReviewQuarantined), "quarantined", "security_signal")
 	}
@@ -261,7 +291,9 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 		GlobalThreshold: s.globalConfidenceThreshold,
 	})
 	if err != nil {
-		return true, errors.Join(err, s.retryOrFail(ctx, *run, item, "confidence_policy", false, false))
+		return true, retryAfterError(err, func() error {
+			return s.retryOrFail(ctx, *run, item, "confidence_policy", false, false, err)
+		})
 	}
 	commitInput, err := semanticAssessmentCommitInput(
 		*run,
@@ -284,10 +316,15 @@ func (s *semanticAssessmentPlacementWorkerService) ProcessNextSemanticAssessment
 	recordSemanticAssessmentGateBands(s.metrics, commitInput)
 	committed, err := s.commit.CommitPlacementSemanticResult(ctx, commitInput)
 	if err != nil {
-		return true, errors.Join(err, s.retryOrFail(ctx, *run, item, "semantic_commit", false, false))
+		return true, retryAfterError(err, func() error {
+			return s.retryOrFail(ctx, *run, item, "semantic_commit", false, false, err)
+		})
 	}
 	if committed == nil {
-		return true, errors.Join(errors.New("semantic assessment worker: nil semantic commit result"), s.retryOrFail(ctx, *run, item, "semantic_commit", false, false))
+		cause := errors.New("semantic assessment worker: nil semantic commit result")
+		return true, retryAfterError(cause, func() error {
+			return s.retryOrFail(ctx, *run, item, "semantic_commit", false, false, cause)
+		})
 	}
 	s.recordFirstDisposition(ctx, *run, committed.FirstDisposition)
 	return true, nil
@@ -559,12 +596,16 @@ func (s *semanticAssessmentPlacementWorkerService) retryOrFail(
 	stage string,
 	providerAttempted bool,
 	releaseProviderAttempt bool,
+	failureCause ...error,
 ) error {
 	if item.PlacementItemID == "" {
 		firstDisposition, err := s.ledger.FinishPlacementRun(ctx, run.TeamID, run.PlacementRunID, s.workerID, string(domain.PlacementRunFailed), "semantic assessment failed before item selection")
 		if err == nil {
 			s.recordFirstDisposition(ctx, run, firstDisposition)
 			observability.RecordAssessorTerminalFailure(s.metrics, stage)
+		}
+		if err != nil {
+			return newPlacementWorkerError(run.TeamID, run.IngestID, stage, err)
 		}
 		return err
 	}
@@ -580,11 +621,17 @@ func (s *semanticAssessmentPlacementWorkerService) retryOrFail(
 		WorkerID:               s.workerID,
 		ExpectedAttempts:       run.Attempts,
 		OutcomeKind:            "semantic_assessment_attempt",
-		Payload:                semanticAssessmentRetryPayload(stage, providerAttempted),
+		Payload:                semanticAssessmentFailurePayload(stage, providerAttempted, firstError(failureCause)),
 		ReleaseAssessorAttempt: releaseProviderAttempt,
 	})
 	if err == nil && requeued != nil {
 		s.recordFirstDisposition(ctx, run, requeued.FirstDisposition)
+	}
+	if err == nil && requeued == nil {
+		return newPlacementWorkerError(run.TeamID, run.IngestID, stage, errors.New("semantic assessment worker: nil retry result"))
+	}
+	if err != nil {
+		return newPlacementWorkerError(run.TeamID, run.IngestID, stage, err)
 	}
 	return err
 }
@@ -922,67 +969,4 @@ func semanticAssessmentCommitInput(
 			"request_id":        assessment.RequestID,
 		},
 	}, nil
-}
-
-func attachSemanticAssessmentTrustedRelationshipContext(
-	observation *repository.PlacementRelationshipDecisionInput,
-	context semanticAssessmentTrustedRelationshipContext,
-) {
-	if observation == nil {
-		return
-	}
-	if context.correctionTarget != nil {
-		target := *context.correctionTarget
-		observation.CorrectionTarget = &target
-	}
-	if context.conflictContext != nil {
-		conflict := *context.conflictContext
-		observation.ConflictContext = &conflict
-	}
-}
-
-func attachSemanticAssessmentTrustedRelationshipContextToReview(
-	review *repository.PlacementRelationshipReviewInput,
-	context semanticAssessmentTrustedRelationshipContext,
-) {
-	if review == nil {
-		return
-	}
-	if context.correctionTarget != nil {
-		target := *context.correctionTarget
-		review.CorrectionTarget = &target
-	}
-	if context.conflictContext != nil {
-		conflict := *context.conflictContext
-		review.ConflictContext = &conflict
-	}
-}
-
-func assessmentGroupsBySpan(groups []verifier.SemanticAssessmentEntityCandidateGroup) map[string]*verifier.SemanticAssessmentEntityCandidateGroup {
-	result := make(map[string]*verifier.SemanticAssessmentEntityCandidateGroup, len(groups))
-	for index := range groups {
-		group := &groups[index]
-		result[assessmentCandidateGroupKey(group.EvidenceID, group.Start, group.End)] = group
-	}
-	return result
-}
-
-func assessmentPredicatesByKeyVersion(options []verifier.SemanticAssessmentPredicateOption) map[string]verifier.SemanticAssessmentPredicateOption {
-	result := make(map[string]verifier.SemanticAssessmentPredicateOption, len(options))
-	for _, option := range options {
-		result[assessmentPredicateKey(option.PredicateKey, option.Version)] = option
-	}
-	return result
-}
-
-func assessmentPredicateKey(key string, version int) string {
-	return strings.TrimSpace(key) + ":" + strconv.Itoa(version)
-}
-
-func assessmentPolicyVersion(policy repository.AutoWriteConfidencePolicy) string {
-	version := strings.TrimSpace(policy.Version)
-	if version == "" {
-		version = repository.AssessmentPolicyVersion
-	}
-	return version + ":config-" + strconv.FormatInt(policy.ConfigVersion, 10)
 }

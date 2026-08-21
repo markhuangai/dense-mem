@@ -2,7 +2,7 @@ package memoryservice
 
 import (
 	"context"
-	"strings"
+	"errors"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -49,10 +49,12 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminalWithSecurityE
 		ExpectedAttempts: run.Attempts,
 		Status:           status,
 		Category:         category,
-		Payload: map[string]any{
-			"assessor_contract": domain.ContractVersion,
-			"failure_stage":     strings.TrimSpace(stage),
-		},
+		Payload: func() map[string]any {
+			payload := placementFailureDiagnosticFor(stage, nil).payload(false)
+			payload["assessor_contract"] = domain.ContractVersion
+			payload["failure_reason_code"] = "security_quarantine"
+			return payload
+		}(),
 		SecurityQuarantine: securityQuarantine,
 	})
 	if err == nil && completed != nil {
@@ -60,6 +62,12 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminalWithSecurityE
 		if status == string(domain.SemanticReviewTerminalFailure) {
 			observability.RecordAssessorTerminalFailure(s.metrics, stage)
 		}
+	}
+	if err != nil {
+		return newPlacementWorkerError(run.TeamID, run.IngestID, stage, err)
+	}
+	if completed == nil {
+		return newPlacementWorkerError(run.TeamID, run.IngestID, stage, errors.New("semantic assessment worker: nil terminal result"))
 	}
 	return err
 }

@@ -267,10 +267,20 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 	activitySpecs := initialActivitySpecs
 	stateSpecs := initialStateSpecs
 	featureStates := s.telemetryFeatureStates(queryCtx, scope)
-	windowedResults := runTelemetryInstantQueries(queryCtx, s, telemetryExecutableSpecs(windowedCardSpecs, scope, featureStates), windowKey, scope)
-	currentResults := runTelemetryInstantQueries(queryCtx, s, telemetryExecutableSpecs(currentCardSpecs, scope, featureStates), windowKey, scope)
-	activityResults := runTelemetryRangeQueries(queryCtx, s, telemetryExecutableSpecs(activitySpecs, scope, featureStates), from, to, windowDef.Step, windowKey, scope)
-	stateResults := runTelemetryRangeQueries(queryCtx, s, telemetryExecutableSpecs(stateSpecs, scope, featureStates), from, to, windowDef.Step, windowKey, scope)
+	windowedExecutableSpecs := telemetryExecutableSpecs(windowedCardSpecs, scope, featureStates)
+	currentExecutableSpecs := telemetryExecutableSpecs(currentCardSpecs, scope, featureStates)
+	activityExecutableSpecs := telemetryExecutableSpecs(activitySpecs, scope, featureStates)
+	stateExecutableSpecs := telemetryExecutableSpecs(stateSpecs, scope, featureStates)
+	windowedResults := runTelemetryInstantQueries(queryCtx, s, windowedExecutableSpecs, windowKey, scope)
+	currentResults := runTelemetryInstantQueries(queryCtx, s, currentExecutableSpecs, windowKey, scope)
+	activityResults := runTelemetryRangeQueries(queryCtx, s, activityExecutableSpecs, from, to, windowDef.Step, windowKey, scope)
+	stateResults := runTelemetryRangeQueries(queryCtx, s, stateExecutableSpecs, from, to, windowDef.Step, windowKey, scope)
+	s.logQueryFailures(windowKey, scope,
+		collectTelemetryInstantFailures(windowedExecutableSpecs, windowedResults),
+		collectTelemetryInstantFailures(currentExecutableSpecs, currentResults),
+		collectTelemetryRangeFailures(activityExecutableSpecs, activityResults),
+		collectTelemetryRangeFailures(stateExecutableSpecs, stateResults),
+	)
 
 	var lifecycle repository.TelemetryLifecycleSnapshot
 	var lifecycleErr error
@@ -297,29 +307,6 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 	snapshot.Series = appendTelemetrySeries(activitySeries, stateSeries)
 	snapshot.Status, snapshot.Available, snapshot.Message = telemetrySnapshotDisposition(snapshot.Cards, snapshot.Series)
 	return snapshot, nil
-}
-
-func (s *PrometheusTelemetryService) logQueryFailure(kind string, spec telemetryQuerySpec, window string, scope TelemetryScope, err error) {
-	if s == nil || s.logger == nil {
-		return
-	}
-	attrs := []observability.LogAttr{
-		observability.String("query_kind", kind),
-		observability.String("query_id", spec.ID),
-		observability.String("window", window),
-		observability.String("scope", scope.Type),
-		observability.String("prometheus_query", spec.Query),
-	}
-	if scope.TeamID != nil {
-		attrs = append(attrs, observability.String("team_id", scope.TeamID.String()))
-	}
-	if scope.ProfileID != nil {
-		attrs = append(attrs, observability.String("profile_id", scope.ProfileID.String()))
-	}
-	if s.prometheusJob != "" {
-		attrs = append(attrs, observability.String("prometheus_job", s.prometheusJob))
-	}
-	s.logger.Error("telemetry backend query failed", err, attrs...)
 }
 
 type telemetryQuerySpec struct {
@@ -735,7 +722,7 @@ func normalizeTelemetryScope(filter TelemetryFilter) (TelemetryScope, error) {
 func (s *PrometheusTelemetryService) queryRange(ctx context.Context, query string, from, to time.Time, step time.Duration) ([]TelemetryPoint, error) {
 	endpoint, err := url.Parse(s.baseURL + "/api/v1/query_range")
 	if err != nil {
-		return nil, err
+		return nil, wrapTelemetryQueryError("request_url_invalid", err)
 	}
 	params := endpoint.Query()
 	params.Set("query", query)
@@ -746,15 +733,19 @@ func (s *PrometheusTelemetryService) queryRange(ctx context.Context, query strin
 
 	var resp prometheusRangeResponse
 	if err := s.get(ctx, endpoint.String(), &resp); err != nil {
-		return nil, err
+		return nil, wrapTelemetryQueryError(telemetryQueryFailureReason(err), err)
 	}
 	if resp.Status != "success" {
-		return nil, fmt.Errorf("prometheus query_range failed: %s", resp.Error)
+		return nil, wrapTelemetryQueryError("prometheus_api_error", nil)
 	}
 	if len(resp.Data.Result) == 0 {
 		return []TelemetryPoint{}, nil
 	}
-	return decodePrometheusPoints(resp.Data.Result[0].Values)
+	points, err := decodePrometheusPoints(resp.Data.Result[0].Values)
+	if err != nil {
+		return nil, wrapTelemetryQueryError("response_decode_failed", err)
+	}
+	return points, nil
 }
 
 type telemetryScalar struct {
@@ -766,7 +757,7 @@ type telemetryScalar struct {
 func (s *PrometheusTelemetryService) queryInstant(ctx context.Context, query string) (telemetryScalar, error) {
 	endpoint, err := url.Parse(s.baseURL + "/api/v1/query")
 	if err != nil {
-		return telemetryScalar{}, err
+		return telemetryScalar{}, wrapTelemetryQueryError("request_url_invalid", err)
 	}
 	params := endpoint.Query()
 	params.Set("query", query)
@@ -774,17 +765,17 @@ func (s *PrometheusTelemetryService) queryInstant(ctx context.Context, query str
 
 	var resp prometheusInstantResponse
 	if err := s.get(ctx, endpoint.String(), &resp); err != nil {
-		return telemetryScalar{}, err
+		return telemetryScalar{}, wrapTelemetryQueryError(telemetryQueryFailureReason(err), err)
 	}
 	if resp.Status != "success" {
-		return telemetryScalar{}, fmt.Errorf("prometheus query failed: %s", resp.Error)
+		return telemetryScalar{}, wrapTelemetryQueryError("prometheus_api_error", nil)
 	}
 	if len(resp.Data.Result) == 0 {
 		return telemetryScalar{}, nil
 	}
 	scalar, err := decodePrometheusValue(resp.Data.Result[0].Value)
 	if err != nil {
-		return telemetryScalar{}, err
+		return telemetryScalar{}, wrapTelemetryQueryError("response_decode_failed", err)
 	}
 	scalar.Labels = resp.Data.Result[0].Metric
 	return scalar, nil

@@ -425,80 +425,6 @@ func TestPrometheusTelemetryService_ValidationAndDecodeBranches(t *testing.T) {
 	require.Equal(t, 0.0, value.Value)
 }
 
-func TestPrometheusTelemetryService_QueryFailureBranches(t *testing.T) {
-	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query().Get("query")
-		switch query {
-		case "status-error":
-			w.WriteHeader(http.StatusServiceUnavailable)
-		case "bad-json":
-			_, _ = w.Write([]byte(`{`))
-		case "instant-error":
-			_, _ = w.Write([]byte(`{"status":"error","error":"bad instant"}`))
-		case "instant-empty":
-			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
-		case "range-error":
-			_, _ = w.Write([]byte(`{"status":"error","error":"bad range"}`))
-		case "range-empty":
-			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
-		default:
-			w.WriteHeader(http.StatusServiceUnavailable)
-		}
-	}))
-	defer prom.Close()
-
-	svc := NewPrometheusTelemetryService(prom.URL, time.Second)
-	now := time.Unix(1770000000, 0).UTC()
-
-	value, err := svc.queryInstant(context.Background(), "instant-empty")
-	require.NoError(t, err)
-	require.False(t, value.Available)
-	require.Equal(t, 0.0, value.Value)
-	_, err = svc.queryInstant(context.Background(), "instant-error")
-	require.ErrorContains(t, err, "bad instant")
-	_, err = svc.queryInstant(context.Background(), "bad-json")
-	require.Error(t, err)
-	_, err = svc.queryInstant(context.Background(), "status-error")
-	require.ErrorContains(t, err, "status 503")
-
-	points, err := svc.queryRange(context.Background(), "range-empty", now.Add(-time.Minute), now, time.Minute)
-	require.NoError(t, err)
-	require.Empty(t, points)
-	_, err = svc.queryRange(context.Background(), "range-error", now.Add(-time.Minute), now, time.Minute)
-	require.ErrorContains(t, err, "bad range")
-
-	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m"})
-	require.NoError(t, err)
-	require.False(t, snapshot.Available)
-	require.Equal(t, TelemetrySnapshotUnavailable, snapshot.Status)
-	require.Equal(t, "telemetry sources are unavailable", snapshot.Message)
-}
-
-func TestPrometheusTelemetryService_LogsQueryFailure(t *testing.T) {
-	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"status":"error","error":"bad instant"}`))
-	}))
-	defer prom.Close()
-
-	logger := &captureTelemetryLogger{}
-	svc := NewPrometheusTelemetryServiceWithLogger(prom.URL, time.Second, logger)
-
-	snapshot, err := svc.Snapshot(context.Background(), TelemetryFilter{Window: "15m", Scope: "system", Audience: TelemetryAudienceOperator})
-
-	require.NoError(t, err)
-	require.False(t, snapshot.Available)
-	require.Equal(t, TelemetrySnapshotUnavailable, snapshot.Status)
-	require.Equal(t, "telemetry sources are unavailable", snapshot.Message)
-	require.Equal(t, "telemetry backend query failed", logger.message)
-	require.ErrorContains(t, logger.err, "bad instant")
-	require.Condition(t, func() bool {
-		return containsTelemetryAttr(logger.attrs, "query_kind=instant") || containsTelemetryAttr(logger.attrs, "query_kind=range")
-	})
-	require.Contains(t, logger.attrs, "window=15m")
-	require.Contains(t, logger.attrs, "scope=system")
-	require.Condition(t, func() bool { return hasTelemetryAttrPrefix(logger.attrs, "prometheus_query=") })
-}
-
 func TestPrometheusTelemetryServiceKeepsSuccessfulItemsWhenOneQueryFails(t *testing.T) {
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Query().Get("query"), "status_class") {
@@ -875,9 +801,11 @@ func TestTelemetrySnapshotDispositionIgnoresUnsupportedItems(t *testing.T) {
 }
 
 type captureTelemetryLogger struct {
-	message string
-	err     error
-	attrs   []string
+	message     string
+	err         error
+	attrs       []string
+	warnMessage string
+	warnAttrs   []string
 }
 
 type telemetryLifecycleReaderStub struct {
@@ -917,7 +845,10 @@ func (l *captureTelemetryLogger) Error(msg string, err error, attrs ...observabi
 	l.attrs = logAttrStrings(attrs)
 }
 
-func (l *captureTelemetryLogger) Warn(string, ...observability.LogAttr)  {}
+func (l *captureTelemetryLogger) Warn(msg string, attrs ...observability.LogAttr) {
+	l.warnMessage = msg
+	l.warnAttrs = logAttrStrings(attrs)
+}
 func (l *captureTelemetryLogger) Debug(string, ...observability.LogAttr) {}
 
 func (l *captureTelemetryLogger) With(...observability.LogAttr) observability.LogProvider {

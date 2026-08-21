@@ -730,8 +730,8 @@ func TestMCP_ToolsCallProviderErrorReturnsError(t *testing.T) {
 	if resp.Error == nil || resp.Error.Code != errCodeToolFailure {
 		t.Errorf("expected tool failure code; got %+v", resp.Error)
 	}
-	if !strings.Contains(resp.Error.Message, "embedding provider unavailable") {
-		t.Errorf("error message should surface sanitized reason; got %q", resp.Error.Message)
+	if resp.Error.Message != "tool execution failed; contact an operator" {
+		t.Errorf("error message should use the bounded operator-contact reason; got %q", resp.Error.Message)
 	}
 }
 
@@ -756,8 +756,8 @@ func TestMCP_ToolErrorSurfacesWithoutLeak(t *testing.T) {
 	if resp.Error == nil || resp.Error.Code != errCodeToolFailure {
 		t.Fatalf("expected tool failure; got %+v", resp.Error)
 	}
-	if !strings.Contains(resp.Error.Message, "embedding provider unavailable") {
-		t.Errorf("error message should surface sanitized reason; got %q", resp.Error.Message)
+	if resp.Error.Message != "tool execution failed; contact an operator" {
+		t.Errorf("error message should use the bounded operator-contact reason; got %q", resp.Error.Message)
 	}
 	if logBuf.Len() == 0 {
 		t.Errorf("expected tool failure to be logged to the provided logger")

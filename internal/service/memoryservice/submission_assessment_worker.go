@@ -144,7 +144,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		IngestID:       run.IngestID,
 	})
 	if err != nil {
-		return true, errors.Join(err, s.retryOrFail(ctx, *run, scope, "placement_load", false, false))
+		return true, retryAfterError(err, func() error {
+			return s.retryOrFail(ctx, *run, scope, "placement_load", false, false, err)
+		})
 	}
 	if run.CorrelationID == "" {
 		run.CorrelationID = placement.CorrelationID
@@ -176,7 +178,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 				return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage)
 			})
 		}
-		return true, errors.Join(err, s.retryOrFail(ctx, *run, scope, stage, false, false))
+		return true, retryAfterError(err, func() error {
+			return s.retryOrFail(ctx, *run, scope, stage, false, false, err)
+		})
 	}
 
 	assessment, response, reused, providerAttempted, releaseProviderAttempt, err := s.loadOrAssess(ctx, *run, scope, request)
@@ -189,13 +193,17 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		if providerAttempted && errors.Is(err, verifier.ErrVerifierMalformedResponse) {
 			failureClass, providerTurns := semanticAssessmentMalformedFailure(err)
 			return true, terminalizeAfterError(err, func() error {
-				return s.completeTerminalWithFailure(ctx, scope, "assessment", failureClass, 0, providerTurns)
+				return s.completeTerminalWithFailure(ctx, scope, "assessment", failureClass, 0, providerTurns, err)
 			})
 		}
 		if providerAttempted {
-			return true, errors.Join(err, s.retryProviderFailure(ctx, *run, scope, "assessment", releaseProviderAttempt, verifier.ProviderFailureDetails(err)))
+			return true, retryAfterError(err, func() error {
+				return s.retryProviderFailure(ctx, *run, scope, "assessment", releaseProviderAttempt, verifier.ProviderFailureDetails(err))
+			})
 		}
-		return true, errors.Join(err, s.retryOrFail(ctx, *run, scope, "assessment", providerAttempted, releaseProviderAttempt))
+		return true, retryAfterError(err, func() error {
+			return s.retryOrFail(ctx, *run, scope, "assessment", providerAttempted, releaseProviderAttempt, err)
+		})
 	}
 	if len(response.SecuritySignals) > 0 {
 		return true, s.completeProviderSecurityQuarantine(ctx, scope, plan, response, "security_signal")
@@ -207,7 +215,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		GlobalThreshold: s.globalConfidenceThreshold,
 	})
 	if err != nil {
-		return true, errors.Join(err, s.retryOrFail(ctx, *run, scope, "confidence_policy", false, false))
+		return true, retryAfterError(err, func() error {
+			return s.retryOrFail(ctx, *run, scope, "confidence_policy", false, false, err)
+		})
 	}
 	commitInput, err := submissionAssessmentCommitInput(*run, scope, plan, request, response, assessment, policy, reused)
 	var reviewRequired *submissionAssessmentReviewRequiredError
@@ -253,10 +263,15 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		return true, s.completeTerminal(ctx, scope, string(domain.SemanticReviewSuperseded), "failed", "stale_source")
 	}
 	if err != nil {
-		return true, errors.Join(err, s.retryOrFail(ctx, *run, scope, "semantic_commit", false, false))
+		return true, retryAfterError(err, func() error {
+			return s.retryOrFail(ctx, *run, scope, "semantic_commit", false, false, err)
+		})
 	}
 	if committed == nil {
-		return true, errors.Join(errors.New("submission assessment worker: nil semantic commit result"), s.retryOrFail(ctx, *run, scope, "semantic_commit", false, false))
+		cause := errors.New("submission assessment worker: nil semantic commit result")
+		return true, retryAfterError(cause, func() error {
+			return s.retryOrFail(ctx, *run, scope, "semantic_commit", false, false, cause)
+		})
 	}
 	s.logLifecycle(scope, "submission_completed", "completed", "semantic_commit", "semantic_commit_succeeded", nil)
 	s.recordFirstDisposition(ctx, *run, committed.FirstDisposition)
@@ -461,7 +476,10 @@ func (s *submissionAssessmentPlacementWorkerService) retryProviderFailure(
 		ReleaseAssessorAttempt:       releaseProviderAttempt,
 	})
 	if err == nil && requeued == nil {
-		return errors.New("submission assessment worker: nil retry result")
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil retry result"))
+	}
+	if err != nil {
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, err)
 	}
 	if err == nil {
 		s.logLifecycle(scope, "submission_retry_scheduled", "queued", stage, string(submissionFailureCode(stage, failure.Class)), requeued.NextAttemptAt)
@@ -476,6 +494,7 @@ func (s *submissionAssessmentPlacementWorkerService) retryOrFail(
 	stage string,
 	providerAttempted bool,
 	releaseProviderAttempt bool,
+	failureCause ...error,
 ) error {
 	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
 		return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage)
@@ -483,11 +502,14 @@ func (s *submissionAssessmentPlacementWorkerService) retryOrFail(
 	requeued, err := s.assessments.RequeueSubmissionAssessment(ctx, repository.RequeueSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,
 		OutcomeKind:                  "submission_assessment_attempt",
-		Payload:                      semanticAssessmentRetryPayload(stage, providerAttempted),
+		Payload:                      semanticAssessmentFailurePayload(stage, providerAttempted, firstError(failureCause)),
 		ReleaseAssessorAttempt:       releaseProviderAttempt,
 	})
 	if err == nil && requeued == nil {
-		return errors.New("submission assessment worker: nil retry result")
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil retry result"))
+	}
+	if err != nil {
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, err)
 	}
 	if err == nil {
 		s.logLifecycle(scope, "submission_retry_scheduled", "queued", stage, "retryable_failure", requeued.NextAttemptAt)
@@ -502,13 +524,13 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithFailure
 	failureClass string,
 	providerStatus int,
 	providerTurns int,
+	failureCause ...error,
 ) error {
-	payload := map[string]any{
-		"assessor_contract": domain.ContractVersion,
-		"failure_stage":     strings.TrimSpace(stage),
-	}
+	payload := semanticAssessmentFailurePayload(stage, true, firstError(failureCause))
 	if failureClass = strings.TrimSpace(failureClass); failureClass != "" {
+		failureClass = boundedPlacementFailureClass(failureClass)
 		payload["failure_class"] = failureClass
+		payload["failure_reason_code"] = placementFailureReasonCode(stage, failureClass)
 	}
 	if providerStatus > 0 {
 		payload["provider_status"] = providerStatus
@@ -524,7 +546,10 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithFailure
 		Payload:                      payload,
 	})
 	if err == nil && completed == nil {
-		return errors.New("submission assessment worker: nil terminal result")
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil terminal result"))
+	}
+	if err != nil {
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, err)
 	}
 	if err == nil && completed != nil {
 		observability.RecordAssessorTerminalFailure(s.metrics, stage)
@@ -538,10 +563,8 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 	scope repository.SubmissionAssessmentRunScope,
 	status, category, stage string,
 ) error {
-	payload := map[string]any{
-		"assessor_contract": domain.ContractVersion,
-		"failure_stage":     strings.TrimSpace(stage),
-	}
+	payload := semanticAssessmentFailurePayload(stage, false, nil)
+	payload["assessor_contract"] = domain.ContractVersion
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,
 		OutcomeKind:                  "submission_assessment_terminal",
@@ -550,7 +573,10 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 		Payload:                      payload,
 	})
 	if err == nil && completed == nil {
-		return errors.New("submission assessment worker: nil terminal result")
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil terminal result"))
+	}
+	if err != nil {
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, err)
 	}
 	if err == nil && completed != nil && status == string(domain.SemanticReviewTerminalFailure) {
 		observability.RecordAssessorTerminalFailure(s.metrics, stage)
@@ -570,110 +596,28 @@ func (s *submissionAssessmentPlacementWorkerService) completeDeterministicSecuri
 ) error {
 	quarantines, err := submissionAssessmentDeterministicQuarantines(plan, scan)
 	if err != nil {
-		return err
+		return newPlacementWorkerDiagnosticError(scope.TeamID, scope.IngestID, placementFailureDiagnosticFor(stage, err), err)
 	}
+	payload := semanticAssessmentFailurePayload(stage, false, nil)
+	payload["assessor_contract"] = domain.ContractVersion
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,
 		OutcomeKind:                  "submission_assessment_security",
 		Status:                       string(domain.SemanticReviewQuarantined),
 		Category:                     "quarantined",
-		Payload: map[string]any{
-			"assessor_contract": domain.ContractVersion,
-			"failure_stage":     stage,
-		},
-		SecurityQuarantines: quarantines,
+		Payload:                      payload,
+		SecurityQuarantines:          quarantines,
 	})
 	if err == nil && completed == nil {
-		return errors.New("submission assessment worker: nil security terminal result")
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil security terminal result"))
+	}
+	if err != nil {
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, err)
 	}
 	if err == nil {
 		s.logLifecycle(scope, "submission_quarantined", "quarantined", stage, string(SubmissionErrorQuarantined), nil)
 	}
 	return err
-}
-
-func submissionAssessmentDeterministicQuarantines(
-	plan submissionAssessmentPlan,
-	scan SubmissionSecurityBatchScan,
-) ([]repository.SubmissionAssessmentSecurityQuarantineInput, error) {
-	if len(plan.Items) == 0 {
-		return nil, errors.New("submission assessment security quarantine requires evidence")
-	}
-	type group struct {
-		signals []SubmissionSecurityBatchSignal
-	}
-	byFragmentID := map[string]*group{}
-	proposalSignals := make([]SubmissionSecurityBatchSignal, 0)
-	for _, signal := range scan.Signals {
-		switch signal.Source {
-		case submissionSecuritySourceEvidence:
-			item, ok := plan.itemsByEvidenceID[submissionAssessmentEvidenceID(signal.EvidenceIndex)]
-			if !ok {
-				return nil, errors.New("submission assessment security signal references unknown evidence")
-			}
-			entry := byFragmentID[item.Fragment.FragmentID]
-			if entry == nil {
-				entry = &group{}
-				byFragmentID[item.Fragment.FragmentID] = entry
-			}
-			entry.signals = append(entry.signals, signal)
-		case submissionSecuritySourceProposal:
-			proposalSignals = append(proposalSignals, signal)
-		default:
-			return nil, errors.New("submission assessment security signal source is unsupported")
-		}
-	}
-	if len(proposalSignals) > 0 {
-		for _, item := range plan.Items {
-			entry := byFragmentID[item.Fragment.FragmentID]
-			if entry == nil {
-				entry = &group{}
-				byFragmentID[item.Fragment.FragmentID] = entry
-			}
-			entry.signals = append(entry.signals, proposalSignals...)
-		}
-	}
-	if len(byFragmentID) == 0 {
-		byFragmentID[plan.Items[0].Fragment.FragmentID] = &group{}
-	}
-	quarantines := make([]repository.SubmissionAssessmentSecurityQuarantineInput, 0, len(byFragmentID))
-	for _, item := range plan.Items {
-		entry := byFragmentID[item.Fragment.FragmentID]
-		if entry == nil {
-			continue
-		}
-		signals := make([]SubmissionSecuritySignal, 0, len(entry.signals))
-		sources := make([]string, 0, len(entry.signals))
-		for _, signal := range entry.signals {
-			signals = append(signals, signal.SubmissionSecuritySignal)
-			sources = append(sources, signal.Source)
-		}
-		draft := submissionSecurityQuarantineEventForSignals(signals, scan.SignalsTruncated, sources)
-		for index, signal := range entry.signals {
-			if index >= len(draft.Signals) {
-				continue
-			}
-			if signal.Source == submissionSecuritySourceProposal {
-				draft.Signals[index].Metadata["scope"] = "submission"
-				continue
-			}
-			if signal.Source != submissionSecuritySourceEvidence {
-				continue
-			}
-			quote, err := verifier.SemanticEvidenceSpan(item.Fragment.Content, signal.Start, signal.End)
-			if err == nil {
-				draft.Signals[index].Quote = quote
-			}
-		}
-		quarantines = append(quarantines, repository.SubmissionAssessmentSecurityQuarantineInput{
-			FragmentID:         item.Fragment.FragmentID,
-			SecurityEventDraft: draft,
-		})
-	}
-	if len(quarantines) == 0 {
-		return nil, errors.New("submission assessment security quarantine has no target")
-	}
-	return quarantines, nil
 }
 
 func (s *submissionAssessmentPlacementWorkerService) completeProviderSecurityQuarantine(
@@ -726,21 +670,24 @@ func (s *submissionAssessmentPlacementWorkerService) completeProviderSecurityQua
 		})
 	}
 	if len(quarantines) == 0 {
-		return errors.New("submission assessor security quarantine has no target")
+		err := errors.New("submission assessor security quarantine has no target")
+		return newPlacementWorkerDiagnosticError(scope.TeamID, scope.IngestID, placementFailureDiagnosticFor(stage, err), err)
 	}
+	payload := semanticAssessmentFailurePayload(stage, true, nil)
+	payload["assessor_contract"] = domain.ContractVersion
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,
 		OutcomeKind:                  "submission_assessment_security",
 		Status:                       string(domain.SemanticReviewQuarantined),
 		Category:                     "quarantined",
-		Payload: map[string]any{
-			"assessor_contract": domain.ContractVersion,
-			"failure_stage":     stage,
-		},
-		SecurityQuarantines: quarantines,
+		Payload:                      payload,
+		SecurityQuarantines:          quarantines,
 	})
 	if err == nil && completed == nil {
-		return errors.New("submission assessment worker: nil provider security terminal result")
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil provider security terminal result"))
+	}
+	if err != nil {
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, err)
 	}
 	if err == nil {
 		s.logLifecycle(scope, "submission_quarantined", "quarantined", stage, string(SubmissionErrorQuarantined), nil)

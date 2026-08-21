@@ -144,7 +144,7 @@ func TestSemanticAssessmentWorkerRecordsPlacementLoadFailureStage(t *testing.T) 
 	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
 
 	require.True(t, processed)
-	require.ErrorContains(t, err, "placement load failed")
+	require.NoError(t, err)
 	assert.Equal(t, 1, metrics.AssessorTerminalFailureCount("placement_load"))
 	assert.Zero(t, metrics.AssessorTerminalFailureCount("placement_item"))
 }
@@ -155,7 +155,7 @@ func TestSemanticAssessmentWorkerReusesPersistedAssessmentAfterCommitFailure(t *
 
 	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
 	require.True(t, processed)
-	require.ErrorContains(t, err, "semantic transaction failed")
+	require.NoError(t, err)
 	require.Equal(t, 1, provider.calls)
 	require.Equal(t, 1, assessments.persistCalls)
 	require.Len(t, commit.requeues, 1)
@@ -207,7 +207,7 @@ func TestSemanticAssessmentWorkerReleasesProviderFailureForLaterClaim(t *testing
 
 	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
 	require.True(t, processed)
-	require.Error(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, 1, provider.calls)
 	assert.Zero(t, assessments.persistCalls)
 	require.Len(t, commit.requeues, 1)
@@ -228,7 +228,7 @@ func TestSemanticAssessmentWorkerUsesRateLimitRetryAfter(t *testing.T) {
 
 	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
 	require.True(t, processed)
-	require.Error(t, err)
+	require.NoError(t, err)
 	require.Len(t, commit.requeues, 1)
 	assert.Equal(t, 2*time.Minute, commit.requeues[0].RetryAfter)
 	assert.Equal(t, verifier.ProviderFailureClassRateLimited, commit.requeues[0].Payload["failure_class"])
@@ -250,7 +250,7 @@ func TestSemanticAssessmentWorkerTerminalizesProviderFailureAtMaxAttempts(t *tes
 
 	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
 	require.True(t, processed)
-	require.Error(t, err)
+	require.NoError(t, err)
 	assert.Empty(t, commit.requeues)
 	require.Len(t, commit.completions, 1)
 	assert.Equal(t, verifier.ProviderFailureClassHTTPClient, commit.completions[0].Payload["failure_class"])
@@ -276,7 +276,7 @@ func TestSemanticAssessmentWorkerRetriesCatalogPreflightFailure(t *testing.T) {
 
 	processed, err := worker.ProcessNextSemanticAssessmentPlacement(context.Background())
 	require.True(t, processed)
-	require.ErrorContains(t, err, "catalog unavailable")
+	require.NoError(t, err)
 	assert.Zero(t, provider.calls)
 	assert.Zero(t, assessments.persistCalls)
 	require.Len(t, commit.requeues, 1)

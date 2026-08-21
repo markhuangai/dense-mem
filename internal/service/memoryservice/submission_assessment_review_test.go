@@ -178,7 +178,10 @@ func TestSubmissionAssessmentReviewIssuesAndCompletionAreBounded(t *testing.T) {
 		issues,
 		false,
 	)
-	require.ErrorContains(t, err, "nil review result")
+	require.ErrorContains(t, err, "placement worker persistence failed")
+	failure, ok := placementWorkerFailureFromError(err)
+	require.True(t, ok)
+	require.Equal(t, "policy_review", failure.Stage)
 	require.Equal(t, errSubmissionAssessmentRequiresReview.Error(), (&submissionAssessmentReviewRequiredError{}).Error())
 
 	_, found := submissionAssessmentItemForFragment(submissionAssessmentPlan{}, "missing")

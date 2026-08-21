@@ -303,10 +303,13 @@ func (v *OpenAIVerifier) AssessSemantic(ctx context.Context, req SemanticAssessm
 		if inputTokens > v.assessmentLimits.MaxInputTokens {
 			observability.RecordAssessorValidationFailure(v.metrics, "input_budget")
 			return SemanticAssessmentResponse{}, &MalformedResponseError{
-				Provider:     openAIVerifierProvider,
-				Message:      "semantic assessment conversation exceeds input token limit",
-				FailureClass: "input_budget",
-				Attempts:     turn - 1,
+				Provider:                openAIVerifierProvider,
+				Message:                 "semantic assessment conversation exceeds input token limit",
+				FailureClass:            "input_budget",
+				Attempts:                turn - 1,
+				ValidationStage:         "conversation_input_tokens",
+				ValidationFieldFamilies: []string{"input_tokens"},
+				Measurement:             &FailureMeasurement{Unit: "tokens", Observed: inputTokens, Limit: v.assessmentLimits.MaxInputTokens},
 			}
 		}
 
@@ -324,10 +327,13 @@ func (v *OpenAIVerifier) AssessSemantic(ctx context.Context, req SemanticAssessm
 			providerResult.ReportedUsage.PromptTokens > int64(v.assessmentLimits.MaxInputTokens) {
 			observability.RecordAssessorValidationFailure(v.metrics, "input_budget")
 			return SemanticAssessmentResponse{}, &MalformedResponseError{
-				Provider:     openAIVerifierProvider,
-				Message:      "provider reported input tokens beyond semantic assessment limit",
-				FailureClass: "input_budget",
-				Attempts:     turn,
+				Provider:                openAIVerifierProvider,
+				Message:                 "provider reported input tokens beyond semantic assessment limit",
+				FailureClass:            "input_budget",
+				Attempts:                turn,
+				ValidationStage:         "conversation_input_tokens",
+				ValidationFieldFamilies: []string{"input_tokens"},
+				Measurement:             &FailureMeasurement{Unit: "tokens", Observed: int(providerResult.ReportedUsage.PromptTokens), Limit: v.assessmentLimits.MaxInputTokens},
 			}
 		}
 
@@ -351,10 +357,12 @@ func (v *OpenAIVerifier) AssessSemantic(ctx context.Context, req SemanticAssessm
 		}
 		if turn == SemanticAssessmentMaxProviderTurns {
 			return SemanticAssessmentResponse{}, &MalformedResponseError{
-				Provider:     openAIVerifierProvider,
-				Message:      "semantic assessment response remained invalid after bounded correction",
-				FailureClass: "malformed_exhausted",
-				Attempts:     turn,
+				Provider:                openAIVerifierProvider,
+				Message:                 "semantic assessment response remained invalid after bounded correction",
+				FailureClass:            "malformed_exhausted",
+				Attempts:                turn,
+				ValidationStage:         failureStage,
+				ValidationFieldFamilies: semanticAssessmentValidationFieldFamilies(responseErrors),
 			}
 		}
 

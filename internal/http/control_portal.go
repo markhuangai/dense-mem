@@ -26,6 +26,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	"github.com/markhuangai/dense-mem/internal/tools"
 )
 
 // NewControlPortalServer creates the token-protected management portal server.
@@ -102,7 +103,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 				observability.Int("status", v.Status),
 			}
 			if v.Error != nil {
-				logger.Error("control_http_request", v.Error, attrs...)
+				logger.Error("control_http_request", errors.New(tools.SanitizeError(v.Error)), attrs...)
 				return nil
 			}
 			logger.Info("control_http_request", attrs...)
@@ -973,7 +974,7 @@ func ShutdownControlPortal(e *echo.Echo, logger observability.LogProvider) error
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := e.Shutdown(ctx); err != nil && logger != nil {
-		logger.Error("control portal shutdown error", err)
+		logger.Error("control portal shutdown error", errors.New(tools.SanitizeError(err)))
 		return err
 	}
 	return nil

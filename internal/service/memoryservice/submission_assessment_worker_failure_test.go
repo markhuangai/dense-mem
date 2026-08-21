@@ -55,14 +55,14 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 			commitErr:   errors.New("commit unavailable"),
 			wantStage:   "semantic_commit",
 			wantRequeue: true,
-			wantError:   true,
+			wantPayload: true,
 		},
 		{
 			name:        "nil commit result requeues",
 			commitNil:   true,
 			wantStage:   "semantic_commit",
 			wantRequeue: true,
-			wantError:   true,
+			wantPayload: true,
 		},
 	}
 	for _, test := range tests {
@@ -84,6 +84,7 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 				assert.Equal(t, "submission_assessment_attempt", assessments.requeues[0].OutcomeKind)
 				if test.wantPayload {
 					assert.Equal(t, test.wantStage, assessments.requeues[0].Payload["failure_stage"])
+					assert.NotEmpty(t, assessments.requeues[0].Payload["failure_reason_code"])
 				} else {
 					assert.Nil(t, assessments.requeues[0].Payload)
 				}
@@ -114,14 +115,16 @@ func TestSubmissionAssessmentWorkerRequeuesRepositoryFailuresByStage(t *testing.
 			mutate: func(assessments *submissionAssessmentWorkerAssessmentStub) {
 				assessments.loadErr = errors.New("assessment read failed")
 			},
-			stage: "assessment",
+			stage:   "assessment",
+			payload: true,
 		},
 		{
 			name: "assessor reservation",
 			mutate: func(assessments *submissionAssessmentWorkerAssessmentStub) {
 				assessments.reserveErr = errors.New("reservation failed")
 			},
-			stage: "assessment",
+			stage:   "assessment",
+			payload: true,
 		},
 		{
 			name: "assessment persistence",
@@ -136,7 +139,8 @@ func TestSubmissionAssessmentWorkerRequeuesRepositoryFailuresByStage(t *testing.
 			mutate: func(assessments *submissionAssessmentWorkerAssessmentStub) {
 				assessments.policyErr = errors.New("policy unavailable")
 			},
-			stage: "confidence_policy",
+			stage:   "confidence_policy",
+			payload: true,
 		},
 	}
 	for _, test := range tests {
@@ -146,12 +150,13 @@ func TestSubmissionAssessmentWorkerRequeuesRepositoryFailuresByStage(t *testing.
 
 			processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 
-			require.Error(t, err)
+			require.NoError(t, err)
 			assert.True(t, processed)
 			require.Len(t, assessments.requeues, 1)
 			assert.Equal(t, "submission_assessment_attempt", assessments.requeues[0].OutcomeKind)
 			if test.payload {
 				assert.Equal(t, test.stage, assessments.requeues[0].Payload["failure_stage"])
+				assert.NotEmpty(t, assessments.requeues[0].Payload["failure_reason_code"])
 			} else {
 				assert.Nil(t, assessments.requeues[0].Payload)
 			}
@@ -166,12 +171,18 @@ func TestSubmissionAssessmentWorkerRejectsNilCompletionAndRetryResults(t *testin
 
 	assessments.completeNil = true
 	err := service.completeTerminal(context.Background(), scope, string(domain.SemanticReviewTerminalFailure), "failed", "test")
-	require.ErrorContains(t, err, "nil terminal result")
+	require.ErrorContains(t, err, "placement worker persistence failed")
+	failure, ok := placementWorkerFailureFromError(err)
+	require.True(t, ok)
+	require.Equal(t, "unknown", failure.Stage)
 
 	assessments.completeNil = false
 	assessments.requeueNil = true
 	err = service.retryOrFail(context.Background(), *ledger.run, scope, "test", false, false)
-	require.ErrorContains(t, err, "nil retry result")
+	require.ErrorContains(t, err, "placement worker persistence failed")
+	failure, ok = placementWorkerFailureFromError(err)
+	require.True(t, ok)
+	require.Equal(t, "unknown", failure.Stage)
 }
 
 func TestSubmissionAssessmentWorkerPreservesOriginalErrorWhenTerminalCompletionFails(t *testing.T) {

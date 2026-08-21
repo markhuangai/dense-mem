@@ -38,6 +38,9 @@ func (s *semanticAssessmentPlacementWorkerService) retryProviderFailure(
 	if err == nil && requeued != nil {
 		s.recordFirstDisposition(ctx, run, requeued.FirstDisposition)
 	}
+	if err != nil {
+		return newPlacementWorkerError(run.TeamID, run.IngestID, stage, err)
+	}
 	return err
 }
 
@@ -46,22 +49,34 @@ func semanticAssessmentRetryPayload(
 	providerAttempted bool,
 	failure ...verifier.ProviderFailureMetadata,
 ) map[string]any {
-	if !providerAttempted {
-		return nil
-	}
-	payload := map[string]any{
-		"assessor_contract":           domain.ContractVersion,
-		"assessor_provider_attempted": true,
-		"failure_stage":               strings.TrimSpace(stage),
-	}
+	diagnostic := placementFailureDiagnosticFor(stage, nil)
 	if len(failure) > 0 {
-		if class := strings.TrimSpace(failure[0].Class); class != "" {
-			payload["failure_class"] = class
-		}
-		if failure[0].StatusCode > 0 {
-			payload["provider_status"] = failure[0].StatusCode
+		diagnostic = placementFailureDiagnosticForProvider(stage, failure[0])
+	}
+	payload := diagnostic.payload(providerAttempted)
+	payload["assessor_contract"] = domain.ContractVersion
+	return payload
+}
+
+func semanticAssessmentFailurePayload(
+	stage string,
+	providerAttempted bool,
+	cause error,
+	failure ...verifier.ProviderFailureMetadata,
+) map[string]any {
+	diagnostic := placementFailureDiagnosticFor(stage, cause)
+	if len(failure) > 0 {
+		diagnostic = placementFailureDiagnosticForProvider(stage, failure[0])
+		if cause != nil {
+			fromCause := placementFailureDiagnosticFor(stage, cause)
+			diagnostic.ValidationStage = fromCause.ValidationStage
+			diagnostic.ValidationFieldFamilies = fromCause.ValidationFieldFamilies
+			diagnostic.Measurement = fromCause.Measurement
+			diagnostic.AssessorTurns = fromCause.AssessorTurns
 		}
 	}
+	payload := diagnostic.payload(providerAttempted)
+	payload["assessor_contract"] = domain.ContractVersion
 	return payload
 }
 
@@ -73,13 +88,17 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminalWithFailure(
 	failureClass string,
 	providerStatus int,
 	providerTurns int,
+	failureCause ...error,
 ) error {
-	payload := map[string]any{
-		"assessor_contract": domain.ContractVersion,
-		"failure_stage":     strings.TrimSpace(stage),
+	var cause error
+	if len(failureCause) > 0 {
+		cause = failureCause[0]
 	}
+	payload := semanticAssessmentFailurePayload(stage, true, cause)
 	if failureClass = strings.TrimSpace(failureClass); failureClass != "" {
+		failureClass = boundedPlacementFailureClass(failureClass)
 		payload["failure_class"] = failureClass
+		payload["failure_reason_code"] = placementFailureReasonCode(stage, failureClass)
 	}
 	if providerStatus > 0 {
 		payload["provider_status"] = providerStatus
@@ -102,6 +121,9 @@ func (s *semanticAssessmentPlacementWorkerService) completeTerminalWithFailure(
 	if err == nil && completed != nil {
 		s.recordFirstDisposition(ctx, run, completed.FirstDisposition)
 		observability.RecordAssessorTerminalFailure(s.metrics, stage)
+	}
+	if err != nil {
+		return newPlacementWorkerError(run.TeamID, run.IngestID, stage, err)
 	}
 	return err
 }

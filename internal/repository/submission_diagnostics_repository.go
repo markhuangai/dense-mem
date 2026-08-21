@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -27,9 +28,25 @@ type SubmissionDiagnosticFilter struct {
 }
 
 type SubmissionDiagnosticRecord struct {
-	TeamName      string
-	EvidenceCount int
-	Placement     CreateIngestResult
+	TeamName            string
+	SourceSummary       string
+	EvidenceCount       int
+	Placement           CreateIngestResult
+	OperatorDiagnostic  map[string]any
+	OperatorDiagnostics []SubmissionDiagnosticOperatorDiagnostic
+}
+
+// SubmissionDiagnosticOperatorDiagnostic is the bounded, append-only failure
+// context retained for the control portal. Payload is populated from an SQL
+// allowlist; it must never contain evidence, prompts, provider responses, or
+// storage error text.
+type SubmissionDiagnosticOperatorDiagnostic struct {
+	ID              string
+	PlacementItemID string
+	OutcomeKind     string
+	Status          string
+	CreatedAt       time.Time
+	Payload         map[string]any
 }
 
 type SubmissionDiagnosticRecordPage struct {
@@ -51,6 +68,70 @@ const submissionDiagnosticProcessingStateSQL = `
 		ELSE 'failed'
 	END`
 
+// Keep this projection in SQL so a future payload field cannot accidentally
+// cross the operator diagnostics boundary by being selected wholesale.
+const submissionDiagnosticSafePayloadSQL = `
+	jsonb_strip_nulls(jsonb_build_object(
+		'failure_reason_code', %s -> 'failure_reason_code',
+		'failure_stage', %s -> 'failure_stage',
+		'failure_class', %s -> 'failure_class',
+		'validation_stage', %s -> 'validation_stage',
+		'validation_field_families', %s -> 'validation_field_families',
+		'failure_measurement', CASE
+			WHEN jsonb_typeof(%s -> 'failure_measurement') = 'object' THEN
+				jsonb_strip_nulls(jsonb_build_object(
+					'unit', (%s -> 'failure_measurement') -> 'unit',
+					'observed', (%s -> 'failure_measurement') -> 'observed',
+					'observed_at_least', (%s -> 'failure_measurement') -> 'observed_at_least',
+					'limit', (%s -> 'failure_measurement') -> 'limit'
+				))
+		END,
+		'provider_status', %s -> 'provider_status',
+		'assessor_turns', %s -> 'assessor_turns',
+		'assessor_provider_attempted', %s -> 'assessor_provider_attempted',
+		'hold_issues', %s -> 'hold_issues',
+		'hold_issues_truncated', %s -> 'hold_issues_truncated',
+		'search_document_ids', %s -> 'search_document_ids',
+		'embedding_job_ids', %s -> 'embedding_job_ids'
+	))`
+
+const submissionDiagnosticOperatorPayloadSQL = `
+	jsonb_strip_nulls(jsonb_build_object(
+		'failure_reason_code', %s -> 'failure_reason_code',
+		'failure_stage', %s -> 'failure_stage',
+		'failure_class', %s -> 'failure_class',
+		'validation_stage', %s -> 'validation_stage',
+		'validation_field_families', %s -> 'validation_field_families',
+		'failure_measurement', CASE
+			WHEN jsonb_typeof(%s -> 'failure_measurement') = 'object' THEN
+				jsonb_strip_nulls(jsonb_build_object(
+					'unit', (%s -> 'failure_measurement') -> 'unit',
+					'observed', (%s -> 'failure_measurement') -> 'observed',
+					'observed_at_least', (%s -> 'failure_measurement') -> 'observed_at_least',
+					'limit', (%s -> 'failure_measurement') -> 'limit'
+				))
+		END,
+		'provider_status', %s -> 'provider_status',
+		'assessor_turns', %s -> 'assessor_turns',
+		'assessor_provider_attempted', %s -> 'assessor_provider_attempted'
+	))`
+
+func submissionDiagnosticSafePayload(alias string) string {
+	args := make([]any, 0, 17)
+	for index := 0; index < 17; index++ {
+		args = append(args, alias)
+	}
+	return fmt.Sprintf(submissionDiagnosticSafePayloadSQL, args...)
+}
+
+func submissionDiagnosticOperatorPayload(alias string) string {
+	args := make([]any, 0, 13)
+	for index := 0; index < 13; index++ {
+		args = append(args, alias)
+	}
+	return fmt.Sprintf(submissionDiagnosticOperatorPayloadSQL, args...)
+}
+
 func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
 	ctx context.Context,
 	filter SubmissionDiagnosticFilter,
@@ -71,7 +152,7 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
 			return err
 		}
 		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT run.team_id::text, team.name, run.owner_profile_id::text, run.ingest_id::text,
+			SELECT run.team_id::text, team.name, COALESCE(ingest.source_summary, ''), run.owner_profile_id::text, run.ingest_id::text,
 			       run.status, COALESCE(ingest.metadata #>> '{actor,correlation_id}', ''),
 			       run.attempts, run.max_attempts, ingest.created_at,
 			       CASE
@@ -92,18 +173,20 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
 			LEFT JOIN submission_holds AS hold
 			  ON hold.team_id = run.team_id AND hold.placement_run_id = run.placement_run_id
 			LEFT JOIN LATERAL (
-				SELECT item.status,
-				       jsonb_strip_nulls(jsonb_build_object(
-				           'failure_stage', item.result -> 'failure_stage',
-				           'failure_class', item.result -> 'failure_class'
-				       )) AS result
+				SELECT item.status, `+submissionDiagnosticOperatorPayload("item.result")+` AS result
 				FROM placement_items AS item
 				WHERE item.team_id = run.team_id
 				  AND item.placement_run_id = run.placement_run_id
 				ORDER BY
-				  CASE WHEN COALESCE(item.result ->> 'failure_stage', '') <> ''
-				         OR COALESCE(item.result ->> 'failure_class', '') <> '' THEN 0 ELSE 1 END,
-				  item.evidence_index ASC
+				  CASE WHEN COALESCE(item.result ->> 'failure_reason_code', '') <> ''
+				         OR COALESCE(item.result ->> 'failure_stage', '') <> ''
+				         OR COALESCE(item.result ->> 'failure_class', '') <> ''
+				         OR COALESCE(item.result ->> 'validation_stage', '') <> ''
+				         OR jsonb_typeof(item.result -> 'failure_measurement') = 'object'
+				         OR COALESCE(item.result ->> 'provider_status', '') <> ''
+				         OR COALESCE(item.result ->> 'assessor_turns', '') <> '' THEN 0 ELSE 1 END,
+				  item.evidence_index ASC,
+				  item.placement_item_id ASC
 				LIMIT 1
 			) AS failure ON true
 			WHERE (?::uuid IS NULL OR run.team_id = ?::uuid)
@@ -172,7 +255,7 @@ func loadSubmissionDiagnostic(
 	var submittedAt, nextAttemptAt, startedAt, updatedAt, completedAt sql.NullTime
 	var quarantineExpiresAt, replacementWindowExpiresAt sql.NullTime
 	err := tx.WithContext(ctx).Raw(`
-		SELECT run.team_id::text, team.name, run.owner_profile_id::text, run.ingest_id::text,
+		SELECT run.team_id::text, team.name, COALESCE(ingest.source_summary, ''), run.owner_profile_id::text, run.ingest_id::text,
 		       run.placement_run_id::text, run.status,
 		       COALESCE(ingest.metadata ->> 'contract_version', ''),
 		       COALESCE(ingest.metadata #>> '{actor,correlation_id}', ''),
@@ -195,6 +278,7 @@ func loadSubmissionDiagnostic(
 	`, teamID, submissionID).Row().Scan(
 		&record.Placement.TeamID,
 		&record.TeamName,
+		&record.SourceSummary,
 		&record.Placement.OwnerProfileID,
 		&record.Placement.IngestID,
 		&record.Placement.PlacementRunID,
@@ -255,14 +339,7 @@ func loadSubmissionDiagnostic(
 	record.EvidenceCount = len(record.Placement.Evidence)
 	itemRows, err := tx.WithContext(ctx).Raw(`
 		SELECT placement_item_id::text, fragment_id::text, evidence_index, status, category,
-		       jsonb_strip_nulls(jsonb_build_object(
-		           'failure_stage', result -> 'failure_stage',
-		           'failure_class', result -> 'failure_class',
-		           'hold_issues', result -> 'hold_issues',
-		           'hold_issues_truncated', result -> 'hold_issues_truncated',
-		           'search_document_ids', result -> 'search_document_ids',
-		           'embedding_job_ids', result -> 'embedding_job_ids'
-		       ))
+		       `+submissionDiagnosticSafePayload("result")+`
 		FROM placement_items
 		WHERE team_id = ?::uuid AND ingest_id = ?::uuid
 		ORDER BY evidence_index ASC
@@ -282,6 +359,9 @@ func loadSubmissionDiagnostic(
 			return nil, err
 		}
 		record.Placement.Items = append(record.Placement.Items, item)
+		if len(record.OperatorDiagnostic) == 0 && hasSubmissionDiagnosticPayload(item.Result) {
+			record.OperatorDiagnostic = submissionDiagnosticOperatorPayloadMap(item.Result)
+		}
 	}
 	if err := itemRows.Err(); err != nil {
 		_ = itemRows.Close()
@@ -296,7 +376,91 @@ func loadSubmissionDiagnostic(
 	if err := hydrateEvidenceLifecycleLineage(ctx, tx, teamID, record.Placement.Evidence); err != nil {
 		return nil, err
 	}
+	if err := loadSubmissionDiagnosticOutcomes(ctx, tx, teamID, record.Placement.PlacementRunID, &record); err != nil {
+		return nil, err
+	}
 	return &record, nil
+}
+
+func loadSubmissionDiagnosticOutcomes(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	placementRunID string,
+	record *SubmissionDiagnosticRecord,
+) error {
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT outcome_id::text, COALESCE(placement_item_id::text, ''), outcome_kind, status,
+		       created_at, `+submissionDiagnosticOperatorPayload("payload")+`
+		FROM placement_outcomes
+		WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+		ORDER BY created_at ASC, outcome_id ASC
+	`, teamID, placementRunID).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var diagnostic SubmissionDiagnosticOperatorDiagnostic
+		var payloadRaw []byte
+		if err := rows.Scan(
+			&diagnostic.ID,
+			&diagnostic.PlacementItemID,
+			&diagnostic.OutcomeKind,
+			&diagnostic.Status,
+			&diagnostic.CreatedAt,
+			&payloadRaw,
+		); err != nil {
+			return err
+		}
+		diagnostic.Payload = map[string]any{}
+		if err := json.Unmarshal(payloadRaw, &diagnostic.Payload); err != nil {
+			return err
+		}
+		if !hasSubmissionDiagnosticPayload(diagnostic.Payload) {
+			continue
+		}
+		record.OperatorDiagnostics = append(record.OperatorDiagnostics, diagnostic)
+		if len(record.OperatorDiagnostic) == 0 {
+			record.OperatorDiagnostic = submissionDiagnosticOperatorPayloadMap(diagnostic.Payload)
+		}
+	}
+	return rows.Err()
+}
+
+func hasSubmissionDiagnosticPayload(payload map[string]any) bool {
+	for _, key := range []string{"failure_reason_code", "failure_stage", "failure_class", "validation_stage", "failure_measurement", "provider_status", "assessor_turns"} {
+		if value, ok := payload[key]; ok && value != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func submissionDiagnosticOperatorPayloadMap(payload map[string]any) map[string]any {
+	if len(payload) == 0 {
+		return nil
+	}
+	operatorPayload := make(map[string]any)
+	for _, key := range []string{
+		"failure_reason_code",
+		"failure_stage",
+		"failure_class",
+		"validation_stage",
+		"validation_field_families",
+		"failure_measurement",
+		"provider_status",
+		"assessor_turns",
+		"assessor_provider_attempted",
+	} {
+		if value, ok := payload[key]; ok && value != nil {
+			operatorPayload[key] = value
+		}
+	}
+	if len(operatorPayload) == 0 {
+		return nil
+	}
+	return operatorPayload
 }
 
 func scanSubmissionDiagnosticRecord(rows *sql.Rows) (SubmissionDiagnosticRecord, error) {
@@ -309,6 +473,7 @@ func scanSubmissionDiagnosticRecord(rows *sql.Rows) (SubmissionDiagnosticRecord,
 	if err := rows.Scan(
 		&record.Placement.TeamID,
 		&record.TeamName,
+		&record.SourceSummary,
 		&record.Placement.OwnerProfileID,
 		&record.Placement.IngestID,
 		&record.Placement.Status,
@@ -345,6 +510,7 @@ func scanSubmissionDiagnosticRecord(rows *sql.Rows) (SubmissionDiagnosticRecord,
 			return SubmissionDiagnosticRecord{}, err
 		}
 		record.Placement.Items = []PlacementItem{item}
+		record.OperatorDiagnostic = submissionDiagnosticOperatorPayloadMap(item.Result)
 	}
 	return record, nil
 }

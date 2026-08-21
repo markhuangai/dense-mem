@@ -95,11 +95,23 @@ func (e *RateLimitError) Is(target error) bool {
 
 // MalformedResponseError wraps ErrVerifierMalformedResponse with additional context.
 type MalformedResponseError struct {
-	Provider     string
-	Message      string
-	RawJSON      string
-	FailureClass string
-	Attempts     int
+	Provider                string
+	Message                 string
+	RawJSON                 string
+	FailureClass            string
+	Attempts                int
+	ValidationStage         string
+	ValidationFieldFamilies []string
+	Measurement             *FailureMeasurement
+}
+
+// FailureMeasurement is bounded numeric context for a deterministic
+// validation failure. It never contains provider or evidence content.
+type FailureMeasurement struct {
+	Unit            string
+	Observed        int
+	ObservedAtLeast bool
+	Limit           int
 }
 
 // Error implements the error interface.

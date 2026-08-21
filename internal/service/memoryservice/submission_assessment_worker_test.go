@@ -186,7 +186,7 @@ func TestSubmissionAssessmentWorkerRequeuesProviderFailure(t *testing.T) {
 
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 
-	require.Error(t, err)
+	require.NoError(t, err)
 	assert.True(t, processed)
 	assert.Equal(t, 1, provider.calls)
 	assert.Zero(t, assessments.persistCalls)
@@ -225,11 +225,12 @@ func TestSubmissionAssessmentWorkerRequeuesPlacementLoadFailure(t *testing.T) {
 
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 
-	require.Error(t, err)
+	require.NoError(t, err)
 	assert.True(t, processed)
 	assert.Zero(t, provider.calls)
 	require.Len(t, assessments.requeues, 1)
-	assert.Nil(t, assessments.requeues[0].Payload)
+	assert.Equal(t, "placement_load", assessments.requeues[0].Payload["failure_stage"])
+	assert.Equal(t, "placement_load_failed", assessments.requeues[0].Payload["failure_reason_code"])
 }
 
 func TestSubmissionAssessmentWorkerCompletesProviderSecurityQuarantine(t *testing.T) {
@@ -375,11 +376,12 @@ func TestSubmissionAssessmentWorkerRequeuesInvalidStoredResponse(t *testing.T) {
 
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 
-	require.Error(t, err)
+	require.NoError(t, err)
 	assert.True(t, processed)
 	assert.Zero(t, provider.calls)
 	require.Len(t, assessments.requeues, 1)
-	assert.Nil(t, assessments.requeues[0].Payload)
+	assert.Equal(t, "assessment", assessments.requeues[0].Payload["failure_stage"])
+	assert.NotEmpty(t, assessments.requeues[0].Payload["failure_reason_code"])
 }
 
 func TestSubmissionAssessmentDeterministicQuarantineUsesSignalEvidenceIndex(t *testing.T) {
@@ -456,7 +458,7 @@ func TestSubmissionAssessmentBuildRequestClassifiesCompleteCatalogAndInputBudget
 	_, err = service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
 	stage, terminal := semanticAssessmentPreflightFailure(err)
 	assert.True(t, terminal)
-	assert.Equal(t, "catalog_context_overflow", stage)
+	assert.Equal(t, "entity_catalog", stage)
 
 	catalog.entityComplete = true
 	catalog.predicateComplete = false
@@ -470,7 +472,7 @@ func TestSubmissionAssessmentBuildRequestClassifiesCompleteCatalogAndInputBudget
 	_, err = service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
 	stage, terminal = semanticAssessmentPreflightFailure(err)
 	assert.True(t, terminal)
-	assert.Equal(t, "assessment_input_overflow", stage)
+	assert.Equal(t, "assessment_input", stage)
 }
 
 func TestSubmissionAssessmentRawValueStringSupportsClosedTypedValues(t *testing.T) {
@@ -634,7 +636,7 @@ func TestSubmissionAssessmentWorkerTerminalizesExhaustedProviderFailure(t *testi
 
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 
-	require.Error(t, err)
+	require.NoError(t, err)
 	assert.True(t, processed)
 	assert.Empty(t, assessments.requeues)
 	require.Len(t, assessments.completions, 1)
@@ -977,7 +979,6 @@ func (s *submissionAssessmentWorkerAssessmentStub) ExpirePlacementAssessmentRevi
 	s.reviewExpiryCalls++
 	return 0, s.reviewExpiryErr
 }
-
 type submissionAssessmentWorkerProviderStub struct {
 	calls    int
 	request  *verifier.SemanticAssessmentRequest

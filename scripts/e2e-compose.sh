@@ -836,7 +836,7 @@ if docker ps -a --format '{{.Names}}' | grep -Fxq "$PROMETHEUS_CONTAINER_NAME"; 
   exit 1
 fi
 prepare_e2e_prometheus_volume
-prepare_conflict_provider_volume
+prepare_oauth_fixture_volume; prepare_conflict_provider_volume
 prepare_embedding_proxy_volume
 
 echo "Starting e2e compose stack on ${USER_URL}, ${CONTROL_URL}, and ${PROMETHEUS_URL}."
