@@ -533,7 +533,6 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 	err = r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		operation, err := scanPrivateMemoryOperation(tx.WithContext(ctx).Raw(privateMemoryOperationSelect+`
 			WHERE id = $1
-			FOR UPDATE
 		`, operationID).Row())
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -548,9 +547,26 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 			return ErrPrivateMemoryManifest
 		}
 
+		// Match queuePrivateMemorySpaceTx's space-before-operation order to avoid a worker/retirement deadlock.
 		space, err := privateMemorySpaceByIDTx(ctx, tx, *operation.SpaceID)
 		if err != nil {
 			return err
+		}
+		operation, err = scanPrivateMemoryOperation(tx.WithContext(ctx).Raw(privateMemoryOperationSelect+`
+			WHERE id = $1
+			FOR UPDATE
+		`, operationID).Row())
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrPrivateMemoryClaimLost
+			}
+			return err
+		}
+		if operation.Status != domain.PrivateMemoryErasureProcessing || operation.WorkerID != workerID || operation.Fence != fence {
+			return ErrPrivateMemoryClaimLost
+		}
+		if operation.SpaceID == nil || operation.SpaceKind == nil || operation.TargetGeneration == nil {
+			return ErrPrivateMemoryManifest
 		}
 		if space.TeamID != operation.TeamID || space.Kind != *operation.SpaceKind ||
 			space.LifecycleState != domain.MemorySpaceSealed || space.Generation != *operation.TargetGeneration+1 {

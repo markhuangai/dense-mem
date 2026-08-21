@@ -669,15 +669,44 @@ func queuePrivateMemorySpaceTx(ctx context.Context, tx *gorm.DB, space *domain.M
 			return nil, err
 		}
 	}
-	var activeOperationID uuid.UUID
-	err := tx.WithContext(ctx).Raw(`
-		SELECT id
-		FROM private_memory_erasure_operations
-		WHERE space_id = $1 AND status IN ('queued', 'processing')
+	activeOperation, err := scanPrivateMemoryOperation(tx.WithContext(ctx).Raw(privateMemoryOperationSelect+`
+		WHERE operation.space_id = $1 AND operation.status IN ('queued', 'processing')
+		ORDER BY operation.requested_at, operation.id
 		LIMIT 1
-	`, space.ID).Row().Scan(&activeOperationID)
+		FOR UPDATE
+	`, space.ID).Row())
 	if err == nil {
-		return nil, ErrPrivateMemoryOperationConflict
+		if !input.RetireSpace {
+			return nil, ErrPrivateMemoryOperationConflict
+		}
+		if input.TargetCredentialID == nil || activeOperation.TargetGeneration == nil || activeOperation.TargetCredentialID == nil {
+			return nil, ErrPrivateMemoryOperationConflict
+		}
+		// Retirement supersedes an active erase without changing its target generation or worker fence.
+		now := time.Now().UTC()
+		result := tx.WithContext(ctx).Exec(`
+			UPDATE private_memory_erasure_operations
+			SET action = $1,
+			    actor_class = $2,
+			    reason_code = $3,
+			    target_credential_id = $4,
+			    retire_space = true,
+			    updated_at = $5
+			WHERE id = $6 AND status IN ('queued', 'processing')
+		`, input.Action, input.ActorClass, input.ReasonCode, input.TargetCredentialID, now, activeOperation.ID)
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected != 1 {
+			return nil, ErrPrivateMemoryOperationConflict
+		}
+		activeOperation.Action = input.Action
+		activeOperation.ActorClass = input.ActorClass
+		activeOperation.ReasonCode = input.ReasonCode
+		activeOperation.TargetCredentialID = cloneUUIDPtr(input.TargetCredentialID)
+		activeOperation.RetireSpace = true
+		activeOperation.UpdatedAt = now
+		return activeOperation, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
