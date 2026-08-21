@@ -545,13 +545,13 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 		FROM pg_constraint
 		WHERE conrelid = 'placement_runs'::regclass AND conname = 'placement_runs_status_check'
 	`).Scan(&statusConstraint))
-	assert.NotContains(t, statusConstraint, "awaiting_review")
+	assert.Contains(t, statusConstraint, "awaiting_review")
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
 		SELECT pg_get_constraintdef(oid)
 		FROM pg_constraint
 		WHERE conrelid = 'placement_runs'::regclass AND conname = 'placement_runs_completion_check'
 	`).Scan(&completionConstraint))
-	assert.NotContains(t, completionConstraint, "awaiting_review")
+	assert.Contains(t, completionConstraint, "awaiting_review")
 	var residualAwaitingRuns, residualAwaitingItems int
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM placement_runs WHERE status = 'awaiting_review'`).Scan(&residualAwaitingRuns))
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM placement_items WHERE status = 'awaiting_review'`).Scan(&residualAwaitingItems))

@@ -480,8 +480,13 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 		to, toErr := assessmentParsedTime(result.ValidTo)
 		if fromErr != nil || toErr != nil {
 			errs = append(errs, semanticErr(field+".validity", "must contain RFC3339 timestamps or null"))
-		} else if from != nil && to != nil && to.Before(*from) {
-			errs = append(errs, semanticErr(field+".valid_to", "must not be before valid_from"))
+		} else {
+			if from != nil || to != nil {
+				errs = append(errs, semanticErr(field+".validity", "structure-only normalization requires null validity; resubmit temporal claims with an evidence-backed workflow"))
+			}
+			if from != nil && to != nil && to.Before(*from) {
+				errs = append(errs, semanticErr(field+".valid_to", "must not be before valid_from"))
+			}
 		}
 		predicateContained, valueContained := false, result.ValueRange == nil
 		for _, support := range result.SupportRanges {

@@ -295,19 +295,20 @@ ALTER TABLE placement_runs
     DROP COLUMN IF EXISTS replaces_placement_run_id,
     DROP COLUMN IF EXISTS superseded_by_placement_run_id;
 
--- The old schema's status constraints are rewritten without awaiting_review.
+-- Remember no longer creates semantic review work, but shared correction and
+-- conflict workflows still use awaiting_review after this restart boundary.
 ALTER TABLE placement_runs DROP CONSTRAINT IF EXISTS placement_runs_status_check;
 ALTER TABLE placement_runs ADD CONSTRAINT placement_runs_status_check
-    CHECK (status IN ('queued', 'guarded', 'quarantined', 'processing', 'completed', 'failed'));
+    CHECK (status IN ('queued', 'guarded', 'quarantined', 'processing', 'awaiting_review', 'completed', 'failed'));
 ALTER TABLE placement_runs DROP CONSTRAINT IF EXISTS placement_runs_completion_check;
 ALTER TABLE placement_runs ADD CONSTRAINT placement_runs_completion_check
     CHECK (
-        (status IN ('completed', 'failed', 'quarantined') AND completed_at IS NOT NULL)
-        OR (status NOT IN ('completed', 'failed', 'quarantined'))
+        (status IN ('awaiting_review', 'completed', 'failed', 'quarantined') AND completed_at IS NOT NULL)
+        OR (status NOT IN ('awaiting_review', 'completed', 'failed', 'quarantined'))
     );
 ALTER TABLE placement_items DROP CONSTRAINT IF EXISTS placement_items_status_check;
 ALTER TABLE placement_items ADD CONSTRAINT placement_items_status_check
-    CHECK (status IN ('queued', 'processing', 'completed', 'failed', 'quarantined'));
+    CHECK (status IN ('queued', 'processing', 'awaiting_review', 'completed', 'failed', 'quarantined'));
 
 -- +goose StatementEnd
 

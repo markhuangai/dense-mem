@@ -23,8 +23,6 @@ func TestRememberNormalizerResponseToSemanticAssessmentConvertsStructure(t *test
 	denseID := request.EntityCandidateGroups[1].Candidates[0].EntityID
 	predicateKey := "works_on"
 	predicateVersion := 1
-	validFrom := "2026-01-01T00:00:00Z"
-	validTo := "2026-01-02T00:00:00Z"
 	scopeKey := "production"
 
 	normalized := verifier.RememberNormalizerResponse{
@@ -49,7 +47,7 @@ func TestRememberNormalizerResponseToSemanticAssessmentConvertsStructure(t *test
 				EvidenceID: "evidence:0", StartRef: supportStartRef, EndRef: supportEndRef,
 				Start: semanticRelationship.SupportRanges[0].Start, End: semanticRelationship.SupportRanges[0].End,
 			}},
-			ValidFrom: &validFrom, ValidTo: &validTo, ScopeStatus: "resolved", ScopeKey: &scopeKey,
+			ScopeStatus: "resolved", ScopeKey: &scopeKey,
 		}},
 	}
 
@@ -66,10 +64,25 @@ func TestRememberNormalizerResponseToSemanticAssessmentConvertsStructure(t *test
 	require.Equal(t, float64(1), relationship.Confidence)
 	require.Equal(t, "normalized structure", relationship.Rationale)
 	require.Equal(t, "entailed", relationship.EvidenceVerdict)
-	require.Equal(t, "entailed", relationship.TemporalVerdict)
+	require.Equal(t, "absent", relationship.TemporalVerdict)
 	require.Equal(t, "works on", relationship.OriginalPredicate)
 	require.Len(t, relationship.SupportRanges, 1)
 	require.Len(t, relationship.Evidence, 1)
+}
+
+func TestRememberNormalizerResponseToSemanticAssessmentRejectsUngroundedTemporalValidity(t *testing.T) {
+	_, _, _, request, semantic, _ := semanticAssessmentConfidenceFixture(t)
+	validFrom := "2026-01-01T00:00:00Z"
+	normalized := verifier.RememberNormalizerResponse{
+		RequestID: request.RequestID,
+		RelationshipResults: []verifier.RememberNormalizerRelationshipResult{{
+			Ref: semantic.RelationshipResults[0].Ref, SubjectRef: semantic.RelationshipResults[0].SubjectRef,
+			ValidFrom: &validFrom,
+		}},
+	}
+
+	_, err := rememberNormalizerResponseToSemanticAssessment(request, normalized)
+	require.EqualError(t, err, "normalizer temporal validity requires an evidence-backed workflow")
 }
 
 func TestRememberNormalizerResponseToSemanticAssessmentSelectsGroundingNearEndpointPredicate(t *testing.T) {

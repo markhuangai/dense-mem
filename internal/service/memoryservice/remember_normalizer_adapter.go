@@ -68,6 +68,9 @@ func rememberNormalizerResponseToSemanticAssessment(
 		response.EntityResults = append(response.EntityResults, result)
 	}
 	for _, relationship := range normalized.RelationshipResults {
+		if relationship.ValidFrom != nil || relationship.ValidTo != nil {
+			return verifier.SemanticAssessmentResponse{}, fmt.Errorf("normalizer temporal validity requires an evidence-backed workflow")
+		}
 		result := verifier.SemanticAssessmentRelationshipResult{
 			Ref:              relationship.Ref,
 			SubjectRef:       relationship.SubjectRef,
@@ -87,9 +90,6 @@ func rememberNormalizerResponseToSemanticAssessment(
 			Rationale:        "normalized structure",
 			EvidenceVerdict:  "entailed",
 			TemporalVerdict:  "absent",
-		}
-		if relationship.ValidFrom != nil || relationship.ValidTo != nil {
-			result.TemporalVerdict = "entailed"
 		}
 		if relationship.ValueRange != nil {
 			valueRange := normalizerRangeToAssessmentRange(*relationship.ValueRange)
