@@ -198,18 +198,44 @@ BEGIN
 END;
 $dense_mem_fail_unfinished_remember$;
 
--- The restart discards every legacy awaiting_review placement row. This
--- catch-all also covers rows whose ingest predates the Remember marker and
--- items left under an already-terminal run, so the replacement constraints
--- cannot fail on stale queue state.
+-- Discard residual legacy Remember awaiting_review rows, including items left
+-- under an already-terminal run, so stale Remember queue state cannot survive
+-- the restart. Shared correction, conflict, and Dream rows remain untouched.
 WITH residual_runs AS MATERIALIZED (
-    SELECT team_id, placement_run_id, ingest_id
-    FROM placement_runs
-    WHERE status = 'awaiting_review'
+    SELECT run.team_id, run.placement_run_id, run.ingest_id
+    FROM placement_runs AS run
+    JOIN knowledge_ingests AS ingest
+      ON ingest.team_id = run.team_id
+     AND ingest.ingest_id = run.ingest_id
+    WHERE run.status = 'awaiting_review'
+      AND (
+          ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+          OR (
+              NULLIF(ingest.metadata ->> 'contract_version', '') IS NOT NULL
+              AND jsonb_typeof(ingest.metadata -> 'actor') = 'object'
+              AND ingest.metadata #>> '{actor,team_id}' = ingest.team_id::text
+              AND ingest.metadata #>> '{actor,profile_id}' = ingest.owner_profile_id::text
+          )
+      )
 ), residual_items AS MATERIALIZED (
-    SELECT team_id, placement_item_id
-    FROM placement_items
-    WHERE status = 'awaiting_review'
+    SELECT item.team_id, item.placement_item_id
+    FROM placement_items AS item
+    JOIN placement_runs AS run
+      ON run.team_id = item.team_id
+     AND run.placement_run_id = item.placement_run_id
+    JOIN knowledge_ingests AS ingest
+      ON ingest.team_id = run.team_id
+     AND ingest.ingest_id = run.ingest_id
+    WHERE item.status = 'awaiting_review'
+      AND (
+          ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+          OR (
+              NULLIF(ingest.metadata ->> 'contract_version', '') IS NOT NULL
+              AND jsonb_typeof(ingest.metadata -> 'actor') = 'object'
+              AND ingest.metadata #>> '{actor,team_id}' = ingest.team_id::text
+              AND ingest.metadata #>> '{actor,profile_id}' = ingest.owner_profile_id::text
+          )
+      )
 )
 UPDATE review_tasks AS task
 SET status = 'canceled',
@@ -241,9 +267,21 @@ SET status = 'failed',
 WHERE EXISTS (
     SELECT 1
     FROM placement_runs AS run
+    JOIN knowledge_ingests AS legacy_ingest
+      ON legacy_ingest.team_id = run.team_id
+     AND legacy_ingest.ingest_id = run.ingest_id
     WHERE run.team_id = ingest.team_id
       AND run.ingest_id = ingest.ingest_id
       AND run.status = 'awaiting_review'
+      AND (
+          legacy_ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+          OR (
+              NULLIF(legacy_ingest.metadata ->> 'contract_version', '') IS NOT NULL
+              AND jsonb_typeof(legacy_ingest.metadata -> 'actor') = 'object'
+              AND legacy_ingest.metadata #>> '{actor,team_id}' = legacy_ingest.team_id::text
+              AND legacy_ingest.metadata #>> '{actor,profile_id}' = legacy_ingest.owner_profile_id::text
+          )
+      )
 );
 
 UPDATE placement_items AS item
@@ -261,7 +299,25 @@ SET status = 'failed',
     ),
     error = 'remember normalizer restarted; resubmit the complete batch',
     updated_at = now()
-WHERE item.status = 'awaiting_review';
+WHERE item.status = 'awaiting_review'
+  AND EXISTS (
+      SELECT 1
+      FROM placement_runs AS legacy_run
+      JOIN knowledge_ingests AS legacy_ingest
+        ON legacy_ingest.team_id = legacy_run.team_id
+       AND legacy_ingest.ingest_id = legacy_run.ingest_id
+      WHERE legacy_run.team_id = item.team_id
+        AND legacy_run.placement_run_id = item.placement_run_id
+        AND (
+            legacy_ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+            OR (
+                NULLIF(legacy_ingest.metadata ->> 'contract_version', '') IS NOT NULL
+                AND jsonb_typeof(legacy_ingest.metadata -> 'actor') = 'object'
+                AND legacy_ingest.metadata #>> '{actor,team_id}' = legacy_ingest.team_id::text
+                AND legacy_ingest.metadata #>> '{actor,profile_id}' = legacy_ingest.owner_profile_id::text
+            )
+        )
+  );
 
 UPDATE placement_runs AS run
 SET status = 'failed',
@@ -272,7 +328,22 @@ SET status = 'failed',
     assessor_attempted_at = NULL,
     completed_at = COALESCE(run.completed_at, now()),
     updated_at = now()
-WHERE run.status = 'awaiting_review';
+WHERE run.status = 'awaiting_review'
+  AND EXISTS (
+      SELECT 1
+      FROM knowledge_ingests AS legacy_ingest
+      WHERE legacy_ingest.team_id = run.team_id
+        AND legacy_ingest.ingest_id = run.ingest_id
+        AND (
+            legacy_ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+            OR (
+                NULLIF(legacy_ingest.metadata ->> 'contract_version', '') IS NOT NULL
+                AND jsonb_typeof(legacy_ingest.metadata -> 'actor') = 'object'
+                AND legacy_ingest.metadata #>> '{actor,team_id}' = legacy_ingest.team_id::text
+                AND legacy_ingest.metadata #>> '{actor,profile_id}' = legacy_ingest.owner_profile_id::text
+            )
+        )
+  );
 
 -- Remember no longer creates semantic review work. The shared review_tasks
 -- table remains because correction, conflict, and Dream workflows still use

@@ -67,9 +67,23 @@ func rememberNormalizerResponseToSemanticAssessment(
 		}
 		response.EntityResults = append(response.EntityResults, result)
 	}
+	relationshipTargets := make(map[string]verifier.SemanticAssessmentRequiredRelationshipRef)
+	if req.SubmissionContract != nil {
+		for _, target := range req.SubmissionContract.Relationships {
+			relationshipTargets[target.ProposalID] = target
+		}
+	}
 	for _, relationship := range normalized.RelationshipResults {
-		if relationship.ValidFrom != nil || relationship.ValidTo != nil {
-			return verifier.SemanticAssessmentResponse{}, fmt.Errorf("normalizer temporal validity requires an evidence-backed workflow")
+		target, ok := relationshipTargets[relationship.Ref]
+		if req.SubmissionContract != nil && !ok {
+			return verifier.SemanticAssessmentResponse{}, fmt.Errorf("normalizer relationship %q is outside the submitted contract", relationship.Ref)
+		}
+		if ok && (!normalizerOptionalStringEqual(relationship.ValidFrom, target.ValidFrom) || !normalizerOptionalStringEqual(relationship.ValidTo, target.ValidTo)) {
+			return verifier.SemanticAssessmentResponse{}, fmt.Errorf("normalizer relationship %q does not preserve submitted temporal bounds", relationship.Ref)
+		}
+		validFrom, validTo := relationship.ValidFrom, relationship.ValidTo
+		if ok {
+			validFrom, validTo = target.ValidFrom, target.ValidTo
 		}
 		result := verifier.SemanticAssessmentRelationshipResult{
 			Ref:              relationship.Ref,
@@ -82,8 +96,8 @@ func rememberNormalizerResponseToSemanticAssessment(
 			ObjectValue:      relationship.ObjectValue,
 			Polarity:         relationship.Polarity,
 			Modality:         relationship.Modality,
-			ValidFrom:        relationship.ValidFrom,
-			ValidTo:          relationship.ValidTo,
+			ValidFrom:        validFrom,
+			ValidTo:          validTo,
 			ScopeStatus:      relationship.ScopeStatus,
 			ScopeKey:         relationship.ScopeKey,
 			Confidence:       1,
@@ -115,6 +129,13 @@ func rememberNormalizerResponseToSemanticAssessment(
 		response.RelationshipResults = append(response.RelationshipResults, result)
 	}
 	return response, nil
+}
+
+func normalizerOptionalStringEqual(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }
 
 // rememberNormalizerPredicateRangesByEntityRef keeps endpoint context for

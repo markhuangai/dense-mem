@@ -322,21 +322,27 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 		},
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "awaiting_review", completedAt: timePointer(now.Add(-3 * time.Hour)),
-			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+			legacyRemember: true,
+			items:          []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
 		},
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "completed", completedAt: timePointer(now.Add(-4 * time.Hour)),
-			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+			legacyRemember: true,
+			items:          []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
 		},
 	}
 	unrelated := submissionAssessmentMigrationRun{
 		ingestID: uuid.NewString(), runID: uuid.NewString(), status: "queued",
 		items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
 	}
+	unrelatedAwaiting := submissionAssessmentMigrationRun{
+		ingestID: uuid.NewString(), runID: uuid.NewString(), status: "awaiting_review", completedAt: timePointer(now.Add(-5 * time.Hour)),
+		items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+	}
 	unrelatedTaskID := uuid.NewString()
 	legacyReviewTaskID := uuid.NewString()
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
-		for _, fixture := range append(fixtures, unrelated) {
+		for _, fixture := range append(fixtures, unrelated, unrelatedAwaiting) {
 			if err := insertSubmissionAssessmentMigrationRun(ctx, tx, teamID, profileID, fixture); err != nil {
 				return err
 			}
@@ -473,6 +479,15 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 	assert.Equal(t, "queued", unrelatedRunStatus)
 	assert.Empty(t, unrelatedRunError)
 	assertPlacementItemState(t, ctx, sqlDB, teamID, unrelated.items[0].itemID, "queued", "pending")
+	var unrelatedAwaitingRunStatus, unrelatedAwaitingRunError string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status, error
+		FROM placement_runs
+		WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+	`, teamID, unrelatedAwaiting.runID).Scan(&unrelatedAwaitingRunStatus, &unrelatedAwaitingRunError))
+	assert.Equal(t, "awaiting_review", unrelatedAwaitingRunStatus)
+	assert.Empty(t, unrelatedAwaitingRunError)
+	assertPlacementItemState(t, ctx, sqlDB, teamID, unrelatedAwaiting.items[0].itemID, "awaiting_review", "candidate")
 	var unrelatedAssessorAttempt sql.NullString
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
 		SELECT assessor_attempt_id::text
@@ -553,8 +568,24 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 	`).Scan(&completionConstraint))
 	assert.Contains(t, completionConstraint, "awaiting_review")
 	var residualAwaitingRuns, residualAwaitingItems int
-	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM placement_runs WHERE status = 'awaiting_review'`).Scan(&residualAwaitingRuns))
-	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM placement_items WHERE status = 'awaiting_review'`).Scan(&residualAwaitingItems))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM placement_runs AS run
+		JOIN knowledge_ingests AS ingest
+		  ON ingest.team_id = run.team_id AND ingest.ingest_id = run.ingest_id
+		WHERE run.status = 'awaiting_review'
+		  AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+	`).Scan(&residualAwaitingRuns))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM placement_items AS item
+		JOIN placement_runs AS run
+		  ON run.team_id = item.team_id AND run.placement_run_id = item.placement_run_id
+		JOIN knowledge_ingests AS ingest
+		  ON ingest.team_id = run.team_id AND ingest.ingest_id = run.ingest_id
+		WHERE item.status = 'awaiting_review'
+		  AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+	`).Scan(&residualAwaitingItems))
 	assert.Zero(t, residualAwaitingRuns)
 	assert.Zero(t, residualAwaitingItems)
 }

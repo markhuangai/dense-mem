@@ -24,6 +24,11 @@ func TestRememberNormalizerResponseToSemanticAssessmentConvertsStructure(t *test
 	predicateKey := "works_on"
 	predicateVersion := 1
 	scopeKey := "production"
+	validFrom := "2026-01-01T00:00:00Z"
+	validTo := "2026-01-02T00:00:00Z"
+	contract := adapterTestSubmissionContract()
+	contract.Relationships[0].ValidFrom = &validFrom
+	contract.Relationships[0].ValidTo = &validTo
 
 	normalized := verifier.RememberNormalizerResponse{
 		RequestID: request.RequestID,
@@ -47,9 +52,10 @@ func TestRememberNormalizerResponseToSemanticAssessmentConvertsStructure(t *test
 				EvidenceID: "evidence:0", StartRef: supportStartRef, EndRef: supportEndRef,
 				Start: semanticRelationship.SupportRanges[0].Start, End: semanticRelationship.SupportRanges[0].End,
 			}},
-			ScopeStatus: "resolved", ScopeKey: &scopeKey,
+			ValidFrom: &validFrom, ValidTo: &validTo, ScopeStatus: "resolved", ScopeKey: &scopeKey,
 		}},
 	}
+	request.SubmissionContract = contract
 
 	converted, err := rememberNormalizerResponseToSemanticAssessment(request, normalized)
 	require.NoError(t, err)
@@ -70,9 +76,10 @@ func TestRememberNormalizerResponseToSemanticAssessmentConvertsStructure(t *test
 	require.Len(t, relationship.Evidence, 1)
 }
 
-func TestRememberNormalizerResponseToSemanticAssessmentRejectsUngroundedTemporalValidity(t *testing.T) {
+func TestRememberNormalizerResponseToSemanticAssessmentRejectsMismatchedTemporalValidity(t *testing.T) {
 	_, _, _, request, semantic, _ := semanticAssessmentConfidenceFixture(t)
 	validFrom := "2026-01-01T00:00:00Z"
+	request.SubmissionContract = adapterTestSubmissionContract()
 	normalized := verifier.RememberNormalizerResponse{
 		RequestID: request.RequestID,
 		RelationshipResults: []verifier.RememberNormalizerRelationshipResult{{
@@ -82,7 +89,7 @@ func TestRememberNormalizerResponseToSemanticAssessmentRejectsUngroundedTemporal
 	}
 
 	_, err := rememberNormalizerResponseToSemanticAssessment(request, normalized)
-	require.EqualError(t, err, "normalizer temporal validity requires an evidence-backed workflow")
+	require.EqualError(t, err, "normalizer relationship \"works-on\" does not preserve submitted temporal bounds")
 }
 
 func TestRememberNormalizerResponseToSemanticAssessmentSelectsGroundingNearEndpointPredicate(t *testing.T) {

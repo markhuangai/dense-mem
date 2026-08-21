@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -236,6 +237,17 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	if !submissionAssessmentOneOf(modality, "statement", "question", "proposal", "speculation", "quoted") {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship modality is unsupported")
 	}
+	validFrom, err := reviewOptionalTime(raw, "valid_from")
+	if err != nil {
+		return submissionAssessmentRelationshipTarget{}, nil, err
+	}
+	validTo, err := reviewOptionalTime(raw, "valid_to")
+	if err != nil {
+		return submissionAssessmentRelationshipTarget{}, nil, err
+	}
+	if validFrom != nil && validTo != nil && validTo.Before(*validFrom) {
+		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship valid_to must not be before valid_from")
+	}
 	target := verifier.SemanticAssessmentRequiredRelationshipRef{
 		ProposalID:    ref,
 		PredicateHint: proposedPredicate,
@@ -245,6 +257,8 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		ObjectValue:   objectValue,
 		Polarity:      polarity,
 		Modality:      modality,
+		ValidFrom:     submissionAssessmentTimeString(validFrom),
+		ValidTo:       submissionAssessmentTimeString(validTo),
 	}
 	entry := submissionAssessmentRelationshipTarget{
 		Target:            target,
@@ -273,6 +287,14 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		}
 	}
 	return entry, entities, nil
+}
+
+func submissionAssessmentTimeString(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	formatted := value.UTC().Format(time.RFC3339Nano)
+	return &formatted
 }
 
 func submissionAssessmentEvidenceIDsFromProposal(
