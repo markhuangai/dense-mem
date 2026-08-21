@@ -136,6 +136,37 @@ test("automatic AI review waits for successful current-head PR CI", async () => 
   );
 });
 
+test("AI review status identity remains scoped to the resolved pull request", async () => {
+  const workflow = await readFile(reviewWorkflowURL, "utf8");
+  const normalizedWorkflow = workflow.replace(/\s+/g, " ");
+  const statusWrites =
+    workflow.match(/context: process\.env\.REVIEW_STATUS_CONTEXT/g) ?? [];
+
+  assert.match(workflow, /REVIEW_STATUS_CONTEXT_PREFIX: AI PR review/);
+  assert.match(
+    workflow,
+    /review_status_context: \$\{\{ steps\.resolve\.outputs\.review_status_context \}\}/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /const reviewStatusContext = `\$\{process\.env\.REVIEW_STATUS_CONTEXT_PREFIX\} \/ PR #\$\{pull\.number\}`/,
+  );
+  assert.match(workflow, /status\.context === reviewStatusContext/);
+  assert.match(
+    workflow,
+    /core\.setOutput\("review_status_context", reviewStatusContext\)/,
+  );
+  assert.match(
+    workflow,
+    /REVIEW_STATUS_CONTEXT: \$\{\{ needs\.resolve\.outputs\.review_status_context \}\}/,
+  );
+  assert.equal(statusWrites.length, 2);
+  assert.doesNotMatch(
+    workflow,
+    /status\.context === process\.env\.REVIEW_STATUS_CONTEXT/,
+  );
+});
+
 test("final review status is fenced by the live pull request head", async () => {
   const workflow = await readFile(reviewWorkflowURL, "utf8");
   const finalStatusStep = workflow.slice(

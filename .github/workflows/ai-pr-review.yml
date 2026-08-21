@@ -18,7 +18,7 @@ permissions:
   statuses: read
 
 env:
-  REVIEW_STATUS_CONTEXT: AI PR review
+  REVIEW_STATUS_CONTEXT_PREFIX: AI PR review
   REVIEW_PROTOCOL: >-
     Before deciding, call the configured dense_mem_project_memory server's
     read-only recall_memory tool with a focused query about the affected
@@ -66,6 +66,7 @@ jobs:
     outputs:
       head_sha: ${{ steps.resolve.outputs.head_sha }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
+      review_status_context: ${{ steps.resolve.outputs.review_status_context }}
       should_run: ${{ steps.resolve.outputs.should_run }}
 
     steps:
@@ -173,6 +174,8 @@ jobs:
               return;
             }
 
+            const reviewStatusContext =
+              `${process.env.REVIEW_STATUS_CONTEXT_PREFIX} / PR #${pull.number}`;
             if (eventName === "workflow_run") {
               const statuses = await github.paginate(
                 github.rest.repos.listCommitStatusesForRef,
@@ -184,7 +187,7 @@ jobs:
                 },
               );
               const latestReviewStatus = statuses
-                .filter((status) => status.context === process.env.REVIEW_STATUS_CONTEXT)
+                .filter((status) => status.context === reviewStatusContext)
                 .sort((left, right) => right.id - left.id)[0];
               if (
                 latestReviewStatus &&
@@ -192,7 +195,7 @@ jobs:
               ) {
                 skip(
                   `Pull request #${pullNumber} already has ${latestReviewStatus.state} ` +
-                    `${process.env.REVIEW_STATUS_CONTEXT} status at this head.`,
+                    `${reviewStatusContext} status at this head.`,
                 );
                 return;
               }
@@ -200,6 +203,7 @@ jobs:
 
             core.setOutput("head_sha", pull.head.sha);
             core.setOutput("pr_number", String(pull.number));
+            core.setOutput("review_status_context", reviewStatusContext);
             core.setOutput("should_run", "true");
 
   review:
@@ -207,6 +211,8 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.should_run == 'true'
     runs-on: docker-runner
+    env:
+      REVIEW_STATUS_CONTEXT: ${{ needs.resolve.outputs.review_status_context }}
 
     concurrency:
       group: ai-pr-review-${{ github.repository }}-${{ needs.resolve.outputs.pr_number }}
