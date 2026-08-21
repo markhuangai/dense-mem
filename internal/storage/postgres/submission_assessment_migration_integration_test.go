@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -310,6 +311,11 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
 		},
 		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "awaiting_review", completedAt: timePointer(now.Add(-90 * time.Minute)),
+			legacyRemember: true,
+			items:          []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+		},
+		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "completed", completedAt: timePointer(now.Add(-2 * time.Hour)),
 			remember: true,
 			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
@@ -320,6 +326,7 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 		items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
 	}
 	unrelatedTaskID := uuid.NewString()
+	legacyReviewTaskID := uuid.NewString()
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		for _, fixture := range append(fixtures, unrelated) {
 			if err := insertSubmissionAssessmentMigrationRun(ctx, tx, teamID, profileID, fixture); err != nil {
@@ -357,6 +364,17 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 		`, teamID, uuid.NewString(), profileID, fixtures[0].ingestID,
 			fixtures[0].items[0].itemID, "remember-normalizer-review:"+fixtures[0].items[0].itemID)
 		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+				INSERT INTO review_tasks (
+				    team_id, review_task_id, owner_profile_id, ingest_id,
+				    placement_item_id, task_type, status, reason, payload, dedupe_key
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				          $5::uuid, 'identity_needs_review', 'open', 'legacy Remember review',
+				          '{"semantic_kind":"identity"}'::jsonb, $6)
+			`, teamID, legacyReviewTaskID, profileID, fixtures[4].ingestID,
+			fixtures[4].items[0].itemID, "remember-normalizer-legacy-review:"+fixtures[4].items[0].itemID); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `
@@ -477,6 +495,14 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 	`, teamID, fixtures[0].ingestID).Scan(&ingestStatus, &ingestError))
 	assert.Equal(t, "failed", ingestStatus)
 	assert.Equal(t, "remember normalizer restarted; resubmit the complete batch", ingestError)
+	var legacyIngestStatus, legacyIngestError string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status, error
+		FROM knowledge_ingests
+		WHERE team_id = $1::uuid AND ingest_id = $2::uuid
+	`, teamID, fixtures[4].ingestID).Scan(&legacyIngestStatus, &legacyIngestError))
+	assert.Equal(t, "failed", legacyIngestStatus)
+	assert.Equal(t, "remember normalizer restarted; resubmit the complete batch", legacyIngestError)
 
 	var reviewStatus, reviewReason string
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
@@ -484,6 +510,13 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 		FROM review_tasks
 		WHERE team_id = $1::uuid AND ingest_id = $2::uuid
 	`, teamID, fixtures[0].ingestID).Scan(&reviewStatus, &reviewReason))
+	assert.Equal(t, "canceled", reviewStatus)
+	assert.Equal(t, "remember_normalizer_restart", reviewReason)
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status, resolution->>'reason'
+		FROM review_tasks
+		WHERE team_id = $1::uuid AND review_task_id = $2::uuid
+	`, teamID, legacyReviewTaskID).Scan(&reviewStatus, &reviewReason))
 	assert.Equal(t, "canceled", reviewStatus)
 	assert.Equal(t, "remember_normalizer_restart", reviewReason)
 	var unrelatedReviewStatus string
@@ -510,15 +543,16 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 }
 
 type submissionAssessmentMigrationRun struct {
-	ingestID    string
-	runID       string
-	status      string
-	remember    bool
-	attempts    int
-	workerID    string
-	leaseUntil  *time.Time
-	completedAt *time.Time
-	items       []submissionAssessmentMigrationItem
+	ingestID       string
+	runID          string
+	status         string
+	remember       bool
+	legacyRemember bool
+	attempts       int
+	workerID       string
+	leaseUntil     *time.Time
+	completedAt    *time.Time
+	items          []submissionAssessmentMigrationItem
 }
 
 type submissionAssessmentMigrationItem struct {
@@ -536,13 +570,19 @@ func insertSubmissionAssessmentMigrationRun(
 	profileID string,
 	fixture submissionAssessmentMigrationRun,
 ) error {
+	metadata := `{}`
+	if fixture.remember {
+		metadata = `{"_dense_mem_telemetry_origin":"remember"}`
+	} else if fixture.legacyRemember {
+		metadata = fmt.Sprintf(`{"contract_version":"dense-mem.v2.4","actor":{"team_id":"%s","profile_id":"%s"}}`, teamID, profileID)
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO knowledge_ingests (
 		    team_id, ingest_id, owner_profile_id, status, proposal, metadata
 		) VALUES ($1::uuid, $2::uuid, $3::uuid, 'queued',
 		          '{"relationship_hints":[{"ref":"legacy","subject_ref":"subject","object_ref":"object","original_predicate":"uses","evidence":[{"evidence_index":0,"start":0,"end":6}]}]}'::jsonb,
-		          CASE WHEN $4 THEN '{"_dense_mem_telemetry_origin":"remember"}'::jsonb ELSE '{}'::jsonb END)
-	`, teamID, fixture.ingestID, profileID, fixture.remember); err != nil {
+		          $4::jsonb)
+	`, teamID, fixture.ingestID, profileID, metadata); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `

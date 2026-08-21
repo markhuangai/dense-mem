@@ -430,7 +430,7 @@ func TestSubmissionErrorGuidanceAndQuarantineAreActionable(t *testing.T) {
 		{SubmissionErrorNormalizationFailed, true, SubmissionNextActionResubmitSubmission},
 		{SubmissionErrorNormalizerUnavailable, true, SubmissionNextActionResubmitSubmission},
 		{SubmissionErrorPolicyRejected, true, SubmissionNextActionResubmitSubmission},
-		{SubmissionErrorAssessorUnavailable, true, SubmissionNextActionResubmitSubmission},
+		{SubmissionErrorAssessorUnavailable, false, SubmissionNextActionContactOperator},
 		{SubmissionErrorContractSuperseded, true, SubmissionNextActionResubmitSubmission},
 		{SubmissionErrorRelationshipVersionStale, true, SubmissionNextActionRetryCorrection},
 		{SubmissionErrorNoChange, false, SubmissionNextActionNone},

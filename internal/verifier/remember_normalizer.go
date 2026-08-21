@@ -290,8 +290,7 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 					errs = append(errs, semanticErr(fmt.Sprintf("security_signals[%d]", index), "is duplicated"))
 				}
 				seenSecuritySignals[key] = struct{}{}
-				quote, quoteErr := SemanticEvidenceSpan(evidence.Content, start, end)
-				if quoteErr != nil || !rememberNormalizerSecuritySignalSpanMatchesKind(signal.Kind, quote) {
+				if !rememberNormalizerSecuritySignalSpanMatchesEvidence(signal.Kind, evidence.Content, start, end) {
 					errs = append(errs, semanticErr(fmt.Sprintf("security_signals[%d].span", index), "does not match deterministic security policy"))
 				}
 			}
@@ -525,6 +524,34 @@ func rememberNormalizerSecuritySignalSpanMatchesKind(kind, quote string) bool {
 		quote = inner
 	}
 	return rememberNormalizerSecuritySignalSpanMatchesKindUnquoted(kind, quote)
+}
+
+func rememberNormalizerSecuritySignalSpanMatchesEvidence(kind, content string, start, end int) bool {
+	quote, err := SemanticEvidenceSpan(content, start, end)
+	if err != nil || !rememberNormalizerSecuritySignalSpanMatchesKind(kind, quote) {
+		return false
+	}
+	if !rememberNormalizerQuotedExample(quote) {
+		return true
+	}
+	quoteRunes := []rune(strings.TrimSpace(quote))
+	if len(quoteRunes) > 0 && strings.ContainsRune("\"'`", quoteRunes[0]) {
+		return false
+	}
+	runes := []rune(content)
+	if start < 0 || end < start || end > len(runes) {
+		return false
+	}
+	prefix := strings.ToLower(strings.TrimSpace(string(runes[:start])))
+	suffix := strings.ToLower(strings.TrimSpace(string(runes[end:])))
+	for _, marker := range []string{
+		"attack example", "quoted", "quote", "incident report", "example", "reported", "describes", "discusses",
+	} {
+		if strings.Contains(prefix, marker) || strings.Contains(suffix, marker) {
+			return false
+		}
+	}
+	return true
 }
 
 func rememberNormalizerSecuritySignalSpanMatchesKindUnquoted(kind, quote string) bool {

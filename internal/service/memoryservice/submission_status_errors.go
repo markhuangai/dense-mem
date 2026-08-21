@@ -176,7 +176,7 @@ func submissionErrorGuidance(code SubmissionErrorCode) (bool, SubmissionNextActi
 	switch code {
 	case SubmissionErrorSearchIndexingDelayed:
 		return true, SubmissionNextActionPollStatus
-	case SubmissionErrorPolicyRejected, SubmissionErrorAssessorUnavailable,
+	case SubmissionErrorPolicyRejected,
 		SubmissionErrorContractSuperseded,
 		SubmissionErrorRequiresResubmission, SubmissionErrorNormalizationFailed,
 		SubmissionErrorNormalizerUnavailable:
@@ -234,7 +234,7 @@ func submissionFailureCode(stage, class string) SubmissionErrorCode {
 		return SubmissionErrorNormalizationFailed
 	case stage == "normalizer_unavailable":
 		return SubmissionErrorNormalizerUnavailable
-	case class == "malformed_response", class == "validation_failed", class == "provider_protocol":
+	case class == "malformed_response", class == "validation_failed", class == "provider_protocol", class == "request_invalid":
 		return SubmissionErrorAssessorInvalid
 	case class == "timeout", class == "rate_limited", class == "http_4xx", class == "http_5xx",
 		class == "http_unexpected", class == "transport", class == "provider_unavailable":

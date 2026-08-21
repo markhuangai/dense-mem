@@ -79,7 +79,7 @@ func TestSubmissionWorkerLogsCompletedRetryAndResubmissionFailureAfterPersistenc
 
 	logs.Reset()
 	require.NoError(t, service.completeTerminalWithFailure(context.Background(), scope, "assessment", "timeout", 0, 0))
-	failureLog := logs.String()
+	failureLog = logs.String()
 	require.Contains(t, failureLog, `"msg":"submission_failed"`)
 	require.Contains(t, failureLog, `"reason_code":"assessor_unavailable"`)
 	require.NotContains(t, failureLog, "timeout")

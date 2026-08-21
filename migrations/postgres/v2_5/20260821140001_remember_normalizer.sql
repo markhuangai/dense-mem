@@ -38,7 +38,15 @@ WITH restarted_runs AS MATERIALIZED (
     JOIN knowledge_ingests AS ingest
       ON ingest.team_id = run.team_id
      AND ingest.ingest_id = run.ingest_id
-     AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+     AND (
+         ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+         OR (
+             NULLIF(ingest.metadata ->> 'contract_version', '') IS NOT NULL
+             AND jsonb_typeof(ingest.metadata -> 'actor') = 'object'
+             AND ingest.metadata #>> '{actor,team_id}' = ingest.team_id::text
+             AND ingest.metadata #>> '{actor,profile_id}' = ingest.owner_profile_id::text
+         )
+     )
     WHERE run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
 )
 UPDATE review_tasks AS task
@@ -78,7 +86,15 @@ WHERE EXISTS (
     FROM placement_runs AS run
     WHERE run.team_id = ingest.team_id
       AND run.ingest_id = ingest.ingest_id
-      AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+      AND (
+          ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+          OR (
+              NULLIF(ingest.metadata ->> 'contract_version', '') IS NOT NULL
+              AND jsonb_typeof(ingest.metadata -> 'actor') = 'object'
+              AND ingest.metadata #>> '{actor,team_id}' = ingest.team_id::text
+              AND ingest.metadata #>> '{actor,profile_id}' = ingest.owner_profile_id::text
+          )
+      )
       AND run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
 );
 
@@ -98,7 +114,15 @@ WHERE EXISTS (
           FROM knowledge_ingests AS ingest
           WHERE ingest.team_id = run.team_id
             AND ingest.ingest_id = run.ingest_id
-            AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+            AND (
+                ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+                OR (
+                    NULLIF(ingest.metadata ->> 'contract_version', '') IS NOT NULL
+                    AND jsonb_typeof(ingest.metadata -> 'actor') = 'object'
+                    AND ingest.metadata #>> '{actor,team_id}' = ingest.team_id::text
+                    AND ingest.metadata #>> '{actor,profile_id}' = ingest.owner_profile_id::text
+                )
+            )
       )
       AND run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
 );
@@ -131,7 +155,15 @@ BEGIN
                 FROM knowledge_ingests AS ingest
                 WHERE ingest.team_id = run.team_id
                   AND ingest.ingest_id = run.ingest_id
-                  AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+                AND (
+                    ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+                    OR (
+                        NULLIF(ingest.metadata ->> 'contract_version', '') IS NOT NULL
+                        AND jsonb_typeof(ingest.metadata -> 'actor') = 'object'
+                        AND ingest.metadata #>> '{actor,team_id}' = ingest.team_id::text
+                        AND ingest.metadata #>> '{actor,profile_id}' = ingest.owner_profile_id::text
+                    )
+                )
             )
             AND run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
       );
@@ -151,7 +183,15 @@ BEGIN
           FROM knowledge_ingests AS ingest
           WHERE ingest.team_id = run.team_id
             AND ingest.ingest_id = run.ingest_id
-            AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+            AND (
+                ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+                OR (
+                    NULLIF(ingest.metadata ->> 'contract_version', '') IS NOT NULL
+                    AND jsonb_typeof(ingest.metadata -> 'actor') = 'object'
+                    AND ingest.metadata #>> '{actor,team_id}' = ingest.team_id::text
+                    AND ingest.metadata #>> '{actor,profile_id}' = ingest.owner_profile_id::text
+                )
+            )
       );
 
 END;
