@@ -559,7 +559,8 @@ func encodedCandidateRejected(encoded string) bool {
 	if !ok || len(decoded) == 0 || len(decoded) > submissionSecurityMaxDecodedBytes {
 		return false
 	}
-	if strings.ContainsAny(encoded, "=+/_-") || hasBinaryMagic(decoded) {
+	if strings.ContainsAny(encoded, "=+/_-") || hasBinaryMagic(decoded) ||
+		len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true)) > 0 {
 		return true
 	}
 	if printablePercentage(decoded) >= 85 {

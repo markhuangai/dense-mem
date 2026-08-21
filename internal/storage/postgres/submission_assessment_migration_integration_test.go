@@ -291,28 +291,37 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 	fixtures := []submissionAssessmentMigrationRun{
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "queued",
-			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
+			remember: true,
+			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
 		},
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "guarded", attempts: 2,
-			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
+			remember: true,
+			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
 		},
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "processing", workerID: "old-worker", leaseUntil: timePointer(now.Add(time.Hour)),
-			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
+			remember: true,
+			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
 		},
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "awaiting_review", completedAt: timePointer(now.Add(-time.Hour)),
-			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+			remember: true,
+			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
 		},
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "completed", completedAt: timePointer(now.Add(-2 * time.Hour)),
-			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
+			remember: true,
+			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
 		},
+	}
+	unrelated := submissionAssessmentMigrationRun{
+		ingestID: uuid.NewString(), runID: uuid.NewString(), status: "queued",
+		items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
 	}
 	unrelatedTaskID := uuid.NewString()
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
-		for _, fixture := range fixtures {
+		for _, fixture := range append(fixtures, unrelated) {
 			if err := insertSubmissionAssessmentMigrationRun(ctx, tx, teamID, profileID, fixture); err != nil {
 				return err
 			}
@@ -329,6 +338,13 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 			SET assessor_attempt_id = gen_random_uuid(), assessor_attempted_at = now()
 			WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
 		`, teamID, fixtures[2].items[0].itemID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE placement_items
+			SET assessor_attempt_id = gen_random_uuid(), assessor_attempted_at = now()
+			WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
+		`, teamID, unrelated.items[0].itemID); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `
@@ -418,12 +434,39 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 		assert.True(t, retryable)
 		assertPlacementItemState(t, ctx, sqlDB, teamID, fixture.items[0].itemID, "failed", "failed")
 	}
+	var unrelatedRunStatus, unrelatedRunError string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status, error
+		FROM placement_runs
+		WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+	`, teamID, unrelated.runID).Scan(&unrelatedRunStatus, &unrelatedRunError))
+	assert.Equal(t, "queued", unrelatedRunStatus)
+	assert.Empty(t, unrelatedRunError)
+	assertPlacementItemState(t, ctx, sqlDB, teamID, unrelated.items[0].itemID, "queued", "pending")
+	var unrelatedAssessorAttempt sql.NullString
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT assessor_attempt_id::text
+		FROM placement_items
+		WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
+	`, teamID, unrelated.items[0].itemID).Scan(&unrelatedAssessorAttempt))
+	assert.True(t, unrelatedAssessorAttempt.Valid)
+	var unrelatedIngestStatus string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status
+		FROM knowledge_ingests
+		WHERE team_id = $1::uuid AND ingest_id = $2::uuid
+	`, teamID, unrelated.ingestID).Scan(&unrelatedIngestStatus))
+	assert.Equal(t, "queued", unrelatedIngestStatus)
 	var remainingItemClaims int
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
-		SELECT count(*)
-		FROM placement_items
-		WHERE team_id = $1::uuid
-		  AND assessor_attempt_id IS NOT NULL
+	SELECT count(*)
+		FROM placement_items AS item
+		JOIN knowledge_ingests AS ingest
+		  ON ingest.team_id = item.team_id
+		 AND ingest.ingest_id = item.ingest_id
+		 AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+		WHERE item.team_id = $1::uuid
+		  AND item.assessor_attempt_id IS NOT NULL
 	`, teamID).Scan(&remainingItemClaims))
 	assert.Zero(t, remainingItemClaims)
 	var ingestStatus, ingestError string
@@ -470,6 +513,7 @@ type submissionAssessmentMigrationRun struct {
 	ingestID    string
 	runID       string
 	status      string
+	remember    bool
 	attempts    int
 	workerID    string
 	leaseUntil  *time.Time
@@ -494,10 +538,11 @@ func insertSubmissionAssessmentMigrationRun(
 ) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO knowledge_ingests (
-		    team_id, ingest_id, owner_profile_id, status, proposal
+		    team_id, ingest_id, owner_profile_id, status, proposal, metadata
 		) VALUES ($1::uuid, $2::uuid, $3::uuid, 'queued',
-		          '{"relationship_hints":[{"ref":"legacy","subject_ref":"subject","object_ref":"object","original_predicate":"uses","evidence":[{"evidence_index":0,"start":0,"end":6}]}]}'::jsonb)
-	`, teamID, fixture.ingestID, profileID); err != nil {
+		          '{"relationship_hints":[{"ref":"legacy","subject_ref":"subject","object_ref":"object","original_predicate":"uses","evidence":[{"evidence_index":0,"start":0,"end":6}]}]}'::jsonb,
+		          CASE WHEN $4 THEN '{"_dense_mem_telemetry_origin":"remember"}'::jsonb ELSE '{}'::jsonb END)
+	`, teamID, fixture.ingestID, profileID, fixture.remember); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `

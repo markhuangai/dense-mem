@@ -35,6 +35,10 @@ DROP FUNCTION IF EXISTS ensure_submission_hold_for_awaiting_review();
 WITH restarted_runs AS MATERIALIZED (
     SELECT run.team_id, run.placement_run_id, run.ingest_id
     FROM placement_runs AS run
+    JOIN knowledge_ingests AS ingest
+      ON ingest.team_id = run.team_id
+     AND ingest.ingest_id = run.ingest_id
+     AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
     WHERE run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
 )
 UPDATE review_tasks AS task
@@ -74,6 +78,7 @@ WHERE EXISTS (
     FROM placement_runs AS run
     WHERE run.team_id = ingest.team_id
       AND run.ingest_id = ingest.ingest_id
+      AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
       AND run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
 );
 
@@ -88,6 +93,13 @@ WHERE EXISTS (
     FROM placement_runs AS run
     WHERE run.team_id = item.team_id
       AND run.placement_run_id = item.placement_run_id
+      AND EXISTS (
+          SELECT 1
+          FROM knowledge_ingests AS ingest
+          WHERE ingest.team_id = run.team_id
+            AND ingest.ingest_id = run.ingest_id
+            AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+      )
       AND run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
 );
 
@@ -114,6 +126,13 @@ BEGIN
           FROM placement_runs AS run
           WHERE run.team_id = item.team_id
             AND run.placement_run_id = item.placement_run_id
+            AND EXISTS (
+                SELECT 1
+                FROM knowledge_ingests AS ingest
+                WHERE ingest.team_id = run.team_id
+                  AND ingest.ingest_id = run.ingest_id
+                  AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+            )
             AND run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
       );
 
@@ -126,7 +145,14 @@ BEGIN
         assessor_attempted_at = NULL,
         completed_at = COALESCE(run.completed_at, now()),
         updated_at = now()
-    WHERE run.status IN ('queued', 'guarded', 'processing', 'awaiting_review');
+    WHERE run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
+      AND EXISTS (
+          SELECT 1
+          FROM knowledge_ingests AS ingest
+          WHERE ingest.team_id = run.team_id
+            AND ingest.ingest_id = run.ingest_id
+            AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+      );
 
 END;
 $dense_mem_fail_unfinished_remember$;
