@@ -354,13 +354,15 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 	searchErrorAdded := false
 	processing := publicSubmissionProcessingState(placement.Status)
 	statusErrors := make([]SubmissionStatusError, 0, 2)
-	seenStatusErrors := make(map[string]struct{})
 	appendStatusError := func(value SubmissionStatusError) {
-		key := string(value.Code) + "\x00" + value.Message
-		if _, exists := seenStatusErrors[key]; exists {
+		for index := range statusErrors {
+			existing := &statusErrors[index]
+			if existing.Code != value.Code || existing.Message != value.Message {
+				continue
+			}
+			mergeSubmissionResubmissionIssues(existing, value)
 			return
 		}
-		seenStatusErrors[key] = struct{}{}
 		statusErrors = append(statusErrors, value)
 	}
 	for _, item := range placement.Items {
@@ -420,6 +422,30 @@ func submissionStatusResultFromLedger(placement *repository.CreateIngestResult) 
 		result.MaxAttempts = &maxAttempts
 	}
 	return result
+}
+
+func mergeSubmissionResubmissionIssues(target *SubmissionStatusError, source SubmissionStatusError) {
+	if target == nil {
+		return
+	}
+	target.ResubmissionIssuesTruncated = target.ResubmissionIssuesTruncated || source.ResubmissionIssuesTruncated
+	for _, candidate := range source.ResubmissionIssues {
+		duplicate := false
+		for _, existing := range target.ResubmissionIssues {
+			if existing == candidate {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		if len(target.ResubmissionIssues) >= submissionStatusMaxResubmissionIssues {
+			target.ResubmissionIssuesTruncated = true
+			break
+		}
+		target.ResubmissionIssues = append(target.ResubmissionIssues, candidate)
+	}
 }
 
 // ProjectSubmissionStatus exposes the same bounded projection to trusted

@@ -305,6 +305,10 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "awaiting_review", completedAt: timePointer(now.Add(-time.Hour)),
 			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
 		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "completed", completedAt: timePointer(now.Add(-2 * time.Hour)),
+			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
+		},
 	}
 	unrelatedTaskID := uuid.NewString()
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
@@ -365,6 +369,17 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 	}
 
 	for _, fixture := range fixtures {
+		if fixture.status == "completed" {
+			var runStatus string
+			require.NoError(t, sqlDB.QueryRowContext(ctx, `
+				SELECT status
+				FROM placement_runs
+				WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+			`, teamID, fixture.runID).Scan(&runStatus))
+			assert.Equal(t, "completed", runStatus)
+			assertPlacementItemState(t, ctx, sqlDB, teamID, fixture.items[0].itemID, "queued", "pending")
+			continue
+		}
 		var runStatus, runError, workerID string
 		var leaseUntil, completedAt sql.NullTime
 		require.NoError(t, sqlDB.QueryRowContext(ctx, `

@@ -108,7 +108,14 @@ BEGIN
         ),
         error = 'remember normalizer restarted; resubmit the complete batch',
         updated_at = now()
-    WHERE item.status IN ('queued', 'processing', 'awaiting_review');
+    WHERE item.status IN ('queued', 'processing', 'awaiting_review')
+      AND EXISTS (
+          SELECT 1
+          FROM placement_runs AS run
+          WHERE run.team_id = item.team_id
+            AND run.placement_run_id = item.placement_run_id
+            AND run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
+      );
 
     UPDATE placement_runs AS run
     SET status = 'failed',

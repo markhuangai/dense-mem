@@ -11,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
 func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
@@ -36,6 +37,11 @@ func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
 				Status: string(domain.PlacementRunFailed), CorrelationID: "corr-diagnostics",
 				Attempts: 5, MaxAttempts: 5, SubmittedAt: &now, UpdatedAt: &now, CompletedAt: &now,
 				Items: []repository.PlacementItem{{Status: "failed", Result: map[string]any{
+					"failure_code": string(memoryservice.SubmissionErrorRequiresResubmission),
+					"resubmission_issues": []map[string]any{{
+						"code": "entity_resolution_ambiguous", "relationship_ref": "rel-1",
+						"component": "subject", "message": "choose one active Entity",
+					}},
 					"failure_reason_code": "assessor_provider_failed",
 					"failure_stage":       "assessment",
 					"failure_class":       "timeout",
@@ -59,9 +65,11 @@ func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
 	require.Equal(t, "corr-diagnostics", item.CorrelationID)
 	require.Equal(t, 5, item.Attempts)
 	require.NotNil(t, item.Error)
-	require.Equal(t, "assessor_unavailable", item.Error.Code)
-	require.False(t, item.Error.Retryable)
-	require.Equal(t, "contact_operator", item.Error.NextAction)
+	require.Equal(t, "submission_requires_resubmission", item.Error.Code)
+	require.True(t, item.Error.Retryable)
+	require.Equal(t, "resubmit_submission", item.Error.NextAction)
+	require.Len(t, item.Error.ResubmissionIssues, 1)
+	require.Equal(t, "rel-1", item.Error.ResubmissionIssues[0].RelationshipRef)
 	require.NotContains(t, item.Error.Message, "timeout")
 	require.NotContains(t, item.Error.Message, "must not cross")
 	require.Equal(t, "document evidence", item.SourceSummary)

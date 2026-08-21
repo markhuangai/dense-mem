@@ -87,6 +87,40 @@ func TestSubmissionItemFailureErrorDoesNotInventReviewFailures(t *testing.T) {
 	require.Equal(t, string(SubmissionErrorAssessorInvalid), requestInvalidError.Code)
 }
 
+func TestSubmissionStatusProjectsBoundedResubmissionIssues(t *testing.T) {
+	longMessage := strings.Repeat("unsafe detail ", 100)
+	status := submissionStatusResultFromLedger(&repository.CreateIngestResult{
+		IngestID: "submission-issues",
+		Status:   string(domain.PlacementRunFailed),
+		Items: []repository.PlacementItem{
+			{FragmentID: "evidence-0", Status: "failed", Result: map[string]any{
+				"failure_code": string(SubmissionErrorRequiresResubmission),
+				"resubmission_issues": []map[string]any{{
+					"code": "predicate_registration_conflict", "relationship_ref": "rel-1",
+					"component": "predicate", "message": "choose a registered predicate",
+				}},
+			}},
+			{FragmentID: "evidence-1", Status: "failed", Result: map[string]any{
+				"failure_code": string(SubmissionErrorRequiresResubmission),
+				"resubmission_issues": []map[string]any{{
+					"code": "entity_resolution_ambiguous", "relationship_ref": "rel-2",
+					"component": "subject", "message": longMessage,
+				}},
+			}},
+		},
+	})
+
+	require.Len(t, status.Errors, 1)
+	require.Equal(t, string(SubmissionErrorRequiresResubmission), status.Errors[0].Code)
+	require.Len(t, status.Errors[0].ResubmissionIssues, 2)
+	require.Equal(t, "predicate_registration_conflict", status.Errors[0].ResubmissionIssues[0].Code)
+	require.Equal(t, "rel-2", status.Errors[0].ResubmissionIssues[1].RelationshipRef)
+	require.Len(t, []rune(status.Errors[0].ResubmissionIssues[1].Message), submissionStatusMaxIssueMessageLength)
+	require.True(t, status.Errors[0].ResubmissionIssuesTruncated)
+	require.Len(t, status.Evidence[0].Error.ResubmissionIssues, 1)
+	require.Len(t, status.Evidence[1].Error.ResubmissionIssues, 1)
+}
+
 func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T) {
 	const exactContent = `  C:\notes\[draft]\report.txt includes "\u0041", '\x42', [%20], and {&amp;}.  `
 	teamID := uuid.New()

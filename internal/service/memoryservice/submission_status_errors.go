@@ -79,11 +79,20 @@ func SubmissionErrorCodes() []string {
 }
 
 type SubmissionStatusError struct {
-	Code        string `json:"code"`
-	Message     string `json:"message"`
-	Retryable   bool   `json:"retryable"`
-	NextAction  string `json:"next_action"`
-	Remediation string `json:"remediation"`
+	Code                        string                        `json:"code"`
+	Message                     string                        `json:"message"`
+	Retryable                   bool                          `json:"retryable"`
+	NextAction                  string                        `json:"next_action"`
+	Remediation                 string                        `json:"remediation"`
+	ResubmissionIssues          []SubmissionResubmissionIssue `json:"resubmission_issues,omitempty"`
+	ResubmissionIssuesTruncated bool                          `json:"resubmission_issues_truncated,omitempty"`
+}
+
+type SubmissionResubmissionIssue struct {
+	Code            string `json:"code"`
+	RelationshipRef string `json:"relationship_ref,omitempty"`
+	Component       string `json:"component,omitempty"`
+	Message         string `json:"message"`
 }
 
 type SubmissionNextAction string
@@ -250,8 +259,75 @@ func submissionItemFailureError(item repository.PlacementItem, processing string
 	}
 	if strings.TrimSpace(code) != "" {
 		errorValue := submissionStatusErrorForCode(code, processing)
+		attachSubmissionResubmissionIssues(&errorValue, item.Result)
 		return &errorValue
 	}
 	errorValue := submissionStatusError(submissionFailureCode(stage, class))
+	attachSubmissionResubmissionIssues(&errorValue, item.Result)
 	return &errorValue
+}
+
+const (
+	submissionStatusMaxResubmissionIssues = 50
+	submissionStatusMaxIssueCodeLength    = 128
+	submissionStatusMaxIssueRefLength     = 128
+	submissionStatusMaxIssueComponentLen  = 128
+	submissionStatusMaxIssueMessageLength = 512
+)
+
+func attachSubmissionResubmissionIssues(errorValue *SubmissionStatusError, result map[string]any) {
+	if errorValue == nil || errorValue.Code != string(SubmissionErrorRequiresResubmission) {
+		return
+	}
+	issues, truncated := submissionResubmissionIssues(result)
+	errorValue.ResubmissionIssues = issues
+	errorValue.ResubmissionIssuesTruncated = truncated
+}
+
+func submissionResubmissionIssues(result map[string]any) ([]SubmissionResubmissionIssue, bool) {
+	rawIssues := resultArray(result, "resubmission_issues")
+	truncated, _ := result["resubmission_issues_truncated"].(bool)
+	if len(rawIssues) > submissionStatusMaxResubmissionIssues {
+		truncated = true
+	}
+	issues := make([]SubmissionResubmissionIssue, 0, min(len(rawIssues), submissionStatusMaxResubmissionIssues))
+	for index, rawIssue := range rawIssues {
+		if index >= submissionStatusMaxResubmissionIssues {
+			break
+		}
+		issueMap, ok := rawIssue.(map[string]any)
+		if !ok {
+			truncated = true
+			continue
+		}
+		code, codeTruncated := boundedSubmissionIssueString(issueMap["code"], submissionStatusMaxIssueCodeLength)
+		relationshipRef, refTruncated := boundedSubmissionIssueString(issueMap["relationship_ref"], submissionStatusMaxIssueRefLength)
+		component, componentTruncated := boundedSubmissionIssueString(issueMap["component"], submissionStatusMaxIssueComponentLen)
+		message, messageTruncated := boundedSubmissionIssueString(issueMap["message"], submissionStatusMaxIssueMessageLength)
+		truncated = truncated || codeTruncated || refTruncated || componentTruncated || messageTruncated
+		if code == "" || message == "" {
+			truncated = true
+			continue
+		}
+		issues = append(issues, SubmissionResubmissionIssue{
+			Code:            code,
+			RelationshipRef: relationshipRef,
+			Component:       component,
+			Message:         message,
+		})
+	}
+	return issues, truncated
+}
+
+func boundedSubmissionIssueString(raw any, maxLength int) (string, bool) {
+	value, ok := raw.(string)
+	if !ok {
+		return "", raw != nil
+	}
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= maxLength {
+		return value, false
+	}
+	return string(runes[:maxLength]), true
 }
