@@ -219,7 +219,8 @@ func (r *SearchRepositoryImpl) ReserveEmbeddingReconciliationRun(ctx context.Con
 				  AND job.embedding_dimensions = ?
 				  AND COALESCE(job.last_failed_at, job.updated_at) <= statement_timestamp()
 				  AND document.search_state = 'failed'
-			)
+				  AND `+activeSemanticSpaceGenerationSQL("job")+`
+				)
 			ON CONFLICT (embedding_contract_id, embedding_dimensions, local_run_date) DO NOTHING
 				`, input.EmbeddingContractID, input.EmbeddingDimensions, localRunDate,
 				input.EmbeddingContractID, input.EmbeddingDimensions).Error; err != nil {
@@ -362,6 +363,7 @@ func (r *SearchRepositoryImpl) SelectEmbeddingReconciliationCanary(ctx context.C
 		  AND job.embedding_dimensions = ?
 		  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
 		  AND document.search_state = 'failed'
+		  AND `+activeSemanticSpaceGenerationSQL("job")+`
 		ORDER BY COALESCE(job.last_failed_at, job.updated_at), job.embedding_job_id
 		LIMIT 1
 		`, input.RunID, input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff).Row().Scan(
@@ -401,7 +403,7 @@ func (r *SearchRepositoryImpl) MarkEmbeddingReconciliationCanaryAttempt(ctx cont
 		}
 		leaseUntil := databaseNow.Add(input.Lease)
 		result := tx.WithContext(ctx).Exec(`
-			UPDATE embedding_jobs
+			UPDATE embedding_jobs AS job
 			SET status = 'processing', attempts = 1,
 			    total_attempts = total_attempts + 1,
 			    worker_id = ?, lease_until = ?, completed_at = NULL,
@@ -409,7 +411,8 @@ func (r *SearchRepositoryImpl) MarkEmbeddingReconciliationCanaryAttempt(ctx cont
 			    updated_at = now()
 			WHERE team_id = ?::uuid
 			  AND embedding_job_id = ?::uuid
-			  AND status = 'failed'
+			  AND job.status = 'failed'
+			  AND `+activeSemanticSpaceGenerationSQL("job")+`
 		`, EmbeddingReconciliationWorkerIDPrefix+input.RunID, leaseUntil, input.TeamID, input.CanaryJobID)
 		if result.Error != nil {
 			return result.Error

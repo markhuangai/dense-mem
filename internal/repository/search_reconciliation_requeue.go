@@ -99,6 +99,7 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 			  AND job.embedding_dimensions = ?
 			  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
 			  AND document.search_state = 'failed'
+			  AND ` + activeSemanticSpaceGenerationSQL("job") + `
 		`
 		args := []any{
 			input.RunID, input.WorkerID, input.LeaseToken,
@@ -177,6 +178,7 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 			  AND job.embedding_dimensions = ?
 			  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
 			  AND document.search_state = 'failed'
+			  AND `+activeSemanticSpaceGenerationSQL("job")+`
 			ORDER BY candidate.position
 			FOR UPDATE OF job SKIP LOCKED
 		`, pq.Array(candidateTeamIDs), pq.Array(candidateJobIDs),
@@ -225,6 +227,7 @@ func (r *SearchRepositoryImpl) requeueEmbeddingReconciliationBatch(
 				  AND job.embedding_contract_id = ?::uuid
 				  AND job.embedding_dimensions = ?
 				  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
+				  AND `+activeSemanticSpaceGenerationSQL("job")+`
 				  AND EXISTS (
 				      SELECT 1
 				      FROM teams AS team
@@ -326,6 +329,7 @@ func embeddingReconciliationCandidatesRemain(
 			  AND job.embedding_dimensions = ?
 			  AND COALESCE(job.last_failed_at, job.updated_at) <= ?
 			  AND document.search_state = 'failed'
+			  AND `+activeSemanticSpaceGenerationSQL("job")+`
 		)
 	`, input.RunID, input.WorkerID, input.LeaseToken,
 		input.EmbeddingContractID, input.EmbeddingDimensions, input.CandidateCutoff,
