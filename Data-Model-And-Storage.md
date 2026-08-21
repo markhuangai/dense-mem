@@ -1032,3 +1032,58 @@ Space ownership is not inferred from a profile or credential at query time.
 The authenticated context supplies an allowed-space set before a transaction
 starts, and adapters retain the space predicate through hydration. Cross-space
 deduplication and identity resolution are not valid operations.
+
+### Private-memory lifecycle and erasure
+
+Private spaces add an explicit generation and lifecycle:
+
+```text
+active generation N
+  -> accepted erasure seals space and advances catalog generation to N+1
+  -> fenced worker deletes rows stamped with N
+  -> profile/private purge: active generation N+1
+  -> credential deletion: retired generation N+1
+```
+
+Every new or updated memory-owned row carries both `space_id` and the generation
+captured at write time. The migration backfills `space_generation` for every
+existing row that already has a `space_id` in bounded, resumable batches; rows
+without a space remain unscoped. A database trigger takes a key-share lock on
+the catalog row, verifies the row team and active lifecycle, and supplies or
+checks `space_generation` for subsequent writes. This prevents a writer that
+started before sealing from committing after the erasure fence. `team_shared`
+rows are constrained to stay active and are never private-erasure targets.
+Semantic trace, graph, node-detail, lifecycle, search-document, and embedding
+job reads retain the same active-space-generation predicate. Rows from a sealed
+private space may remain physically present until the fenced worker finishes,
+but they are not readable through those paths; a retired space is only reached
+after the worker has verified zero remaining rows.
+
+The durable control tables are:
+
+| Table | Authority |
+| --- | --- |
+| `private_memory_legal_holds` | durable placement/release history; at most one active hold per space |
+| `private_memory_erasure_operations` | idempotent target, requested generation, action, lease/fence, manifest position, counts, and terminal state |
+| `private_memory_retention_runs` | cutoff, configured retention days, queued count, actor class, and completed run receipt |
+
+An erasure request and its space seal commit together. Workers claim with an
+expiring lease and monotonic fence, lock and revalidate the operation, space,
+generation, legal hold, and disabled credential when retirement applies, then
+delete in foreign-key-safe manifest order. Failed work is retried after 1, 2,
+4, and 8 seconds; the fifth failed claim becomes terminal `failed` with bounded
+error metadata. A later authorized intent uses a fresh operation while
+preserving the failed operation and its sealed generation, action, credential
+target, and retirement outcome. Completion is allowed only after every manifest
+table reports zero rows for the space. Audit rows retain their identity,
+operation, actor, and time, but private before/after payloads are set to null
+and metadata becomes `{"private_content_erased":true}`. Credential deletion
+writes its safe revocation audit row in the same transaction before exposing
+the erasure operation; an audit failure rolls back disablement and queueing.
+
+Boot scans PostgreSQL for every table that owns or references a `space_id` and
+compares it with the compiled erasure manifest. An unknown or missing table,
+unsafe foreign-key edge, or incomplete ordering blocks startup instead of
+allowing a partial erasure. Completed private content is not recoverable from
+the live schema; recovery requires an authorized backup/PITR workflow in an
+isolated environment.

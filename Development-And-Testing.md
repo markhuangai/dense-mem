@@ -667,3 +667,46 @@ Memory-space authorization is orthogonal to ingestion and embedding
 mechanisms. The test matrix verifies space authorization, branch determinism,
 and isolation with focused real-logic tests and the space-aware Compose
 scenario.
+
+## OAuth And Private-Erasure E2E
+
+Run the new real-boundary scenarios with unique run IDs:
+
+```bash
+DENSE_MEM_E2E_SCENARIO=oauth_provider_compatibility \
+  DENSE_MEM_E2E_RUN_ID=oauth-provider ./scripts/e2e-compose.sh
+DENSE_MEM_E2E_SCENARIO=mcp_oauth \
+  DENSE_MEM_E2E_RUN_ID=mcp-oauth ./scripts/e2e-compose.sh
+DENSE_MEM_E2E_SCENARIO=private_memory_erasure \
+  DENSE_MEM_E2E_RUN_ID=private-erasure ./scripts/e2e-compose.sh
+```
+
+The OAuth provider scenario uses a local TLS issuer/JWKS fixture and proves
+exact issuer identifiers, including a trailing-slash generic issuer, audience,
+signature/algorithm, key refresh, claims, scope mapping,
+single-team and multi-team resolution, RFC 9728 metadata/challenges, API-key
+compatibility, and portal-cookie rejection. `mcp_oauth` adds the Chromium and
+mobile Playwright flow that signs into `/ui`, verifies the full team UUID and
+copyable scoped MCP URL, switches SSO teams, and verifies the refreshed URL and
+browser-origin fallback.
+
+The private-erasure scenario uses real PostgreSQL/pgvector and A/B/C actors. It
+proves owner and control requests, exact irreversible acknowledgement,
+idempotent replay under row-lock contention, legal holds, retention, immediate
+SSO-credential disablement, credential-only deletion, profile/shared
+preservation, audit redaction, generation/write fencing, manifest zero counts,
+expired-lease recovery, bounded retry backoff, terminal failure visibility, and
+fresh-intent recovery that preserves the failed operation and sealed target
+contract.
+
+Before committing a branch that changes these contracts, run the aggregate
+matrix against the final worktree:
+
+```bash
+DENSE_MEM_E2E_SCENARIO=all \
+  DENSE_MEM_E2E_RUN_ID=final-all ./scripts/e2e-compose.sh
+```
+
+Do not count a focused green scenario as an aggregate pass. Investigate the
+first failing assertion, clean only that run's namespaced Compose resources,
+then restart `all` after any code change.

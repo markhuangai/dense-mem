@@ -63,6 +63,8 @@ CSRF cookie is readable by the first-party UI and is sent as
 The target user portal provides:
 
 - authenticated team/membership/credential/session display
+- full selected team UUID and copyable `/teams/{team_id}/mcp` URL, refreshed
+  after an SSO team switch
 - ranked Evidence recall with separate compact Relationship and Community frontiers
 - Entity/Value graph exploration
 - Relationship trace with evidence/history panels
@@ -70,6 +72,7 @@ The target user portal provides:
 - separate Hypothesis/community views
 - self/team-scoped telemetry according to role
 - current-credential key rotation
+- owner-scoped private-memory erasure routes and status polling
 - same-team credential management for managers
 - SSO login/team switching when configured
 
@@ -141,6 +144,8 @@ The control portal manages:
 - provider/embedding and search-index generation visibility without exposing
   secret values
 - placement and embedding backlog/search freshness
+- private-space inventory, legal holds, retention policy/runs, and erasure
+  operation status
 - Search convergence: structural readiness versus asynchronous embedding recovery,
   allowlisted failure codes, affected teams, guidance, run/canary state, logs,
   and metrics
@@ -263,8 +268,15 @@ immediate revocation.
 
 Revocation stops future authentication but preserves audit and actor references.
 Credential deletion deactivates authentication while retaining its tombstone
-when durable records still reference the actor/owner. Do not cascade-delete
-knowledge or audit because a credential is removed.
+when durable records still reference the actor/owner. Control/manager
+credential deletion also queues erasure of the selected credential's
+`credential_private` space when one exists; it preserves `profile_private`,
+`team_shared`, and the audit tombstone. The safe credential-deletion audit is
+committed before the erasure operation becomes visible to a worker. The
+explicit SSO owner deletion flow requires irreversible acknowledgement and has
+the same private-space boundary.
+A legal hold blocks the physical purge/retirement worker but does not keep a
+credential bearer active.
 
 Team deletion is a soft tombstone: the team row is marked deleted, active
 team credentials are revoked, and future writes/jobs for that team are
@@ -278,6 +290,34 @@ fresh entitlement/key issuance.
 An SSO-owned key is usable only while its external entitlement remains valid.
 Entitlement revalidation can revoke or deny it even when the local hash is
 valid. Manual rotation cannot sever that ownership silently.
+
+Deleting an SSO-owned key requires `Idempotency-Key` and exactly
+`{"acknowledge_irreversible":true}`. An accepted response is `202`, disables
+the key immediately, and returns the durable operation to poll. A legal hold on
+its credential-private space leaves that operation queued until the hold is
+released; it never permits the physical purge to run. A profile-private or
+shared-only key has no credential-private content to erase, so its disable
+operation completes without deleting those retained spaces.
+
+## Private-Memory Erasure
+
+The user portal API exposes irreversible owner routes for the current
+profile-private or credential-private space and owner-scoped status polling.
+The current browser UI exposes SSO-owned credential revocation; it does not yet
+provide a dedicated privacy workspace or controls for profile erasure. The
+control portal API can inventory private spaces, place/release legal holds,
+request a scoped erasure, run retention, and inspect control-only operation
+details. `202 Accepted` means the request is durable and queued; completion is
+asynchronous.
+
+The erasure worker seals and generation-fences the exact private space,
+rechecks holds, deletes the complete space-owned manifest, verifies zero
+remaining rows, and scrubs private audit payloads. There is no cancel or restore
+button. A terminal worker failure leaves the space sealed; after correcting the
+fault, an authorized owner or control request with a fresh idempotency key
+queues a new operation without changing the original target generation or
+retirement outcome. Recovery after completion requires the backup/PITR
+procedure and does not re-enable a credential.
 
 ## Security Rules
 
@@ -303,6 +343,7 @@ valid. Manual rotation cannot sever that ownership silently.
 | SSO entitlement drift | removed user keeps a local personal key | periodic/request-time entitlement revalidation |
 | Profile deletion erases audit | cascading FK removes actor history | deactivate/tombstone actor and preserve durable references |
 | Team deletion erases knowledge | delete path cascades team-owned semantic rows | tombstone team, revoke credentials, and preserve durable knowledge/audit |
+| Credential-private erasure expands to identity/team data | SSO key deletion removes another personal key's profile memory or team knowledge | immutable space binding, exact manifest predicate, A/B/C tests, and terminal zero-count verification |
 
 ## Acceptance Invariants
 
@@ -313,7 +354,8 @@ valid. Manual rotation cannot sever that ownership silently.
 4. browser decisions use the canonical PostgreSQL write pipeline
 5. role and scopes remain independent
 6. raw API keys are returned once and never stored reversibly
-7. credential deletion preserves knowledge and audit history
+7. credential deletion may erase only the selected credential-private space
+   while preserving profile-private, team-shared, and redacted audit history
 8. team deletion tombstones the team and revokes credentials without deleting
    knowledge or audit rows
 9. external memory automation uses MCP; portal handlers remain first-party UI

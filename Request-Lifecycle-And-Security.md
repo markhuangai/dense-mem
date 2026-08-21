@@ -102,6 +102,49 @@ Authentication failures use non-enumerating public responses. Internal audit can
 distinguish malformed, unknown, expired, revoked, and entitlement-denied
 outcomes.
 
+## OAuth Bearer Authentication For MCP
+
+Dense-Mem can also act as an OAuth protected resource for MCP. It accepts a
+customer IdP access token only in the `Authorization: Bearer` header on
+`/mcp` or `/teams/{team_id}/mcp`; it never issues, refreshes, or persists that
+token. Browser SSO and API-key portal cookies are not MCP credentials, even
+when the browser and MCP client use the same identity.
+
+```mermaid
+%%{init: {"sequence": {"rightAngles": true}}}%%
+sequenceDiagram
+  participant C as MCP client
+  participant D as Dense-Mem
+  participant I as Customer IdP
+  participant P as PostgreSQL
+  C->>D: GET RFC 9728 protected-resource metadata
+  D-->>C: Resource URL, issuer, external scopes
+  C->>I: Obtain access token
+  C->>D: Bearer JWT on team-scoped MCP URL
+  D->>I: Fetch discovery/JWKS when cache needs refresh
+  D->>D: Verify algorithm, signature, iss, aud, sub, exp, and claims
+  D->>P: Resolve active identity and entitled membership
+  D->>D: Intersect mapped OAuth scopes with membership grants
+  D-->>C: MCP response under immutable team context
+```
+
+An unscoped OAuth request is valid only when the identity has exactly one
+active Dense-Mem membership or the configured token claim selects one. A
+multi-team client should use `/teams/{team_id}/mcp`; a path/claim mismatch or
+an unentitled team fails closed. API-key bearer authentication remains valid on
+both MCP paths, and its immutable team must match a scoped path.
+
+RFC 9728 metadata is available at
+`/.well-known/oauth-protected-resource/mcp` and
+`/.well-known/oauth-protected-resource/teams/{team_id}/mcp`. An OAuth-enabled
+deployment links the matching metadata document from a `401` challenge with
+`WWW-Authenticate: Bearer resource_metadata="..."`. Metadata responses use
+`Cache-Control: no-store`; disabled providers are not advertised. Both the
+document and challenge link require `MCP_PUBLIC_BASE_URL`; request Host and
+forwarded headers are never an origin fallback. `/ui` separately uses its own
+browser origin when the setting is empty so a user can still copy a scoped MCP
+URL for manual configuration.
+
 ## Browser Session And CSRF
 
 The user portal preserves direct Dense-Mem API-key authentication and browser
@@ -481,6 +524,8 @@ audit ledger.
 | Tenant override | payload chooses another team's Entity | immutable principal, strict schema, same-team ID validation |
 | Raw key leak | downstream log/provider receives Authorization | auth middleware removes header and sensitive-value tests |
 | Cookie CSRF | browser session mutates memory cross-site | SameSite/secure cookie and required CSRF token |
+| Browser cookie reaches MCP | an SSO browser tab appears to authenticate an MCP client without a bearer credential | MCP auth ignores portal cookies and requires an API-key or verified OAuth bearer header |
+| OAuth team confusion | a multi-team JWT is used against the wrong team resource | team-scoped resource URL, optional claim/path equality, active-membership lookup, and non-enumerating denial |
 | Discovery/execution drift | `tools/list` advertises a tool that `tools/call` then hides, or execution bypasses discovery policy | one registry and the same visibility/scope predicate for both methods |
 | HTTP bypass exposes a second memory contract | generic HTTP tool discovery or execution is reintroduced and publishes an MCP-only semantic memory tool | route registration keeps generic HTTP discovery/execution absent plus conformance tests |
 | Portal backend becomes an integration API | external clients depend on browser implementation details and bypass the intended MCP contract | same-origin portal boundary, no public SDK or CORS contract, API-key-or-SSO authentication, and CSRF for SSO-cookie mutations |
@@ -492,6 +537,7 @@ audit ledger.
 | Quarantine bypass | a writer tries to release, extend, or reuse malicious staging | no release tool; database-enforced exact 24-hour expiry; replacement is a fresh complete submission |
 | Recalled prompt injection | returned evidence asks a host to export environment variables | returned evidence is untrusted data; client action/tool policy and least privilege remain mandatory |
 | Source-key takeover | a writer advances another integration's source and demotes team knowledge | bind source identity to immutable owner and require exact prior-revision compare-and-set |
+| Private erasure crosses a space | deleting one SSO-owned credential removes profile-private or team-shared knowledge | seal and generation-fence the exact credential-private space, delete through a catalog-complete manifest, and verify zero rows before completion |
 
 ## Acceptance Invariants
 
@@ -560,3 +606,28 @@ unless policy explicitly grants a private binding; read-only still cannot
 mutate. Team-manager role does not grant access to another member's private
 space. PostgreSQL RLS and every repository query enforce this set, including
 hydration, trace, graph expansion, conflict handling, and background jobs.
+
+## Private-Memory Erasure Boundary
+
+Private-memory erasure is an asynchronous, irreversible first-party portal
+operation. Every accepted request requires an `Idempotency-Key` header and the
+exact body:
+
+```json
+{"acknowledge_irreversible": true}
+```
+
+The `202 Accepted` response identifies the durable operation; it does not mean
+deletion has completed. The request atomically seals the target private space
+and advances its generation, so old or concurrent writers cannot repopulate
+it. A fenced worker rechecks legal holds and ownership, deletes the exact
+catalog manifest, verifies zero remaining rows, scrubs private audit payloads,
+and then completes the operation. Worker failures use bounded backoff and enter
+terminal `failed` after five claims instead of retrying forever. Profile-private
+erasure reopens an empty space at the new generation. Deleting an accepted
+SSO-owned credential disables that credential immediately and retires only its
+`credential_private` space; its profile-private and team-shared spaces remain
+intact. A legal hold blocks physical execution of every private purge. The SSO
+credential-delete path still disables the bearer and seals the exact space
+before recording the queued operation, so a held credential cannot continue to
+authenticate while its content awaits authorized hold release.

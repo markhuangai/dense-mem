@@ -410,6 +410,7 @@ Entities, Relationships, reviews, queues, API keys, or audit.
 | `SSE_MAX_DURATION_SECONDS` | `300` | stream maximum |
 | `SSE_MAX_CONCURRENT_STREAMS` | `10` | streams per principal |
 | `SSO_PUBLIC_BASE_URL` | empty | disable browser SSO when empty |
+| `MCP_PUBLIC_BASE_URL` | empty | canonical public origin for server-generated MCP and RFC 9728 URLs; `/ui` alone falls back to its browser origin when empty |
 | `SCIM_PUBLIC_BASE_URL` | empty | dedicated HTTPS base URL for per-provider SCIM endpoints |
 | `CONTROL_PUBLIC_BASE_URL` | empty | dedicated HTTPS base URL and OIDC callback origin for the control portal |
 | `SSO_ENTITLEMENT_CACHE_TTL_SECONDS` | `300` | entitlement refresh |
@@ -417,6 +418,7 @@ Entities, Relationships, reviews, queues, API keys, or audit.
 | `SSO_STATE_TTL_SECONDS` | `600` | OAuth state/PKCE lifetime |
 | `SSO_HTTP_TIMEOUT_SECONDS` | `10` | provider timeout |
 | `SSO_COOKIE_SECURE` | derived | Secure flag for SSO and API-key portal cookies; true for HTTPS by default |
+| `PRIVATE_MEMORY_RETENTION_DAYS` | `0` | age of private content eligible for automatic erasure; `0` disables scheduled retention |
 
 `SCIM_PUBLIC_BASE_URL` and `CONTROL_PUBLIC_BASE_URL` must be absolute HTTPS URLs
 without a query or fragment. They are control-plane settings, not request
@@ -431,6 +433,38 @@ custom-domain ingress fronts the portal, and set it explicitly to `false` only
 for a local HTTP test instance. The same setting controls the SSO and
 API-key portal cookies; the private control API is the authoritative update
 path.
+
+`MCP_PUBLIC_BASE_URL` and `PRIVATE_MEMORY_RETENTION_DAYS` are also
+PostgreSQL-backed runtime settings edited through the private control portal.
+Use an absolute HTTPS MCP base without credentials, query, or fragment;
+`http://localhost` and `http://127.0.0.1` are allowed for local development.
+When the value is empty, `/ui` still builds the copyable team URL from
+`window.location.origin` and labels that fallback. Server RFC 9728 metadata
+returns unavailable and `401` responses omit `resource_metadata`; request Host
+and forwarded headers never select the advertised resource. Set the canonical
+value before enabling MCP OAuth. Private-memory retention accepts `0` through
+`36500`; a zero value stops only automatic retention, not owner erasure,
+control erasure, or legal holds.
+
+Each SSO provider has a separate `protected_resource` object for MCP OAuth:
+
+| Field | Default | Validation |
+| --- | --- | --- |
+| `enabled` | `false` | requires at least one audience; scope mappings may be empty, which grants no MCP scopes |
+| `audiences` | `[]` | exact token `aud` allowlist, at most 16 values |
+| `jwks_source` | `discovery` | `discovery` or `static` |
+| `jwks_uri` | empty | required absolute HTTPS URL for `static`; empty for discovery |
+| `algorithms` | `["RS256"]` | explicit supported asymmetric algorithm allowlist |
+| `scope_claim` | `scope` | bounded JWT claim name |
+| `team_claim` | empty | optional bounded claim containing a Dense-Mem team UUID |
+| `scope_mappings` | `[]` | at most 32 unique external scopes, each mapped to up to 16 internal `read`, `write`, or `feedback:read` grants |
+
+Discovery and JWKS fetches use the bounded SSO HTTP client (at most ten
+seconds); public keys are cached for five minutes and refreshed once on an
+unknown key ID. Changing the source type, issuer, or static JWKS URI
+invalidates that provider's cache.
+Provider responses are bounded and must contain one unambiguous public
+verification key.
 
 Detailed public-edge policy is in [Public HTTPS And Redis](Public-HTTPS-And-Redis);
 SSO and Entra directory mapping are in [User Portal SSO](User-Portal-SSO).

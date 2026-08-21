@@ -49,7 +49,9 @@ Dense-Mem exposes these user-portal SSO endpoints:
 | `POST` | `/ui/api/sso/credentials` | Creates one SSO-owned credential and returns its plaintext API key once. |
 | `GET` | `/ui/api/sso/credentials/:credentialId` | Gets one owned credential by its stable ID. |
 | `POST` | `/ui/api/sso/credentials/:credentialId/rotate` | Rotates one writable owned credential in place, preserving its ID and binding. |
-| `DELETE` | `/ui/api/sso/credentials/:credentialId` | Revokes one owned credential by its stable ID. |
+| `DELETE` | `/ui/api/sso/credentials/:credentialId` | Disables one owned credential and, only for a credential-private binding, queues erasure and retirement of that credential's private space. |
+| `DELETE` | `/ui/api/sso/private-memory` | Queues erasure of the selected identity's profile-private space. |
+| `GET` | `/ui/api/private-memory/erasures/:operationId` | Polls an owner-visible erasure operation without exposing control-only target IDs. |
 | `POST` | `/ui/api/sso/logout` | Clears the local Dense-Mem SSO session cookies. |
 
 ## API-Key Portal Session
@@ -77,7 +79,8 @@ All three authenticated modes use one session response shape:
     },
     "credential": null,
     "teams": [{ "team": {}, "membership": {} }],
-    "personal_credentials": []
+    "personal_credentials": [],
+    "mcp_public_base_url": "https://memory.example.com"
   }
 }
 ```
@@ -87,6 +90,23 @@ with a locally held bearer identifies direct API-key auth; a non-null
 credential without a locally held bearer identifies an API-key portal-cookie
 session. The response does not expose `auth_method`, capability flags, or the
 permanent owner alias.
+
+### Team And MCP Connection Details
+
+After any API-key, portal-session, or SSO login, `/ui` shows the selected
+team's full UUID and a copyable MCP URL:
+
+```text
+{MCP_PUBLIC_BASE_URL}/teams/{team_id}/mcp
+```
+
+An SSO team switch returns a new session snapshot, so both values refresh
+together. When `MCP_PUBLIC_BASE_URL` is empty, the browser uses its own origin
+and labels that fallback. Configure the canonical HTTPS base in production so
+reverse-proxy host differences cannot produce a client URL for the wrong
+origin. Copying this URL does not copy a credential: configure the MCP client
+with a Dense-Mem API key or customer-IdP OAuth access token. The SSO browser
+cookie is deliberately rejected by MCP routes.
 
 The server stores only SHA-256 fingerprints of the session and CSRF tokens.
 The browser receives a host-only `dense_mem_ui_session` cookie (`HttpOnly`,
@@ -170,10 +190,23 @@ revoked external entitlement can deny a still-present local key. It is not a
 hybrid cookie-and-bearer login.
 
 Creation and rotation are constrained by the selected membership grants and
-the credential's own scopes. Self-service revocation is available to any
-authenticated member for an owned active credential and requires only the
-`read` portal scope because it invalidates bearer material without granting
-memory access.
+the credential's own scopes. Irreversible self-service credential deletion and
+profile erasure require the `write` portal scope in addition to ownership; the
+destructive routes do not grant access to another memory space.
+
+Credential deletion and private-memory erasure are irreversible operations.
+The destructive first-party owner routes require an `Idempotency-Key` and exactly
+`{"acknowledge_irreversible":true}`; `202 Accepted` means the durable erasure
+operation was queued and must be polled. The My credentials browser action
+sends this contract when revoking an SSO-owned key. Once accepted, credential
+deletion disables the bearer immediately. A `credential_private` binding is
+erased and retired, while the same identity's `profile_private` space and the
+team's `team_shared` space are preserved. Deleting a `profile_private` or
+`shared_only` credential does not erase either retained space. An active legal
+hold keeps a credential-private erasure queued until governance releases the
+hold, while the deleted credential remains disabled immediately. Profile
+erasure and operation polling are first-party API routes; the browser UI has no
+dedicated privacy workspace yet.
 
 The current SSO entitlement limits what the member can create or rotate from
 `/ui`:
@@ -181,8 +214,8 @@ The current SSO entitlement limits what the member can create or rotate from
 | SSO entitlement on selected team | Self-service behavior |
 | --- | --- |
 | Manager | Use the Team tab instead of My credentials. |
-| Member with read/write permission | Can create multiple read/write or read-only personal API keys, choose the binding and expiry for each, rotate only a selected key when both membership and credential scopes include write, and revoke owned keys. |
-| Member with read-only permission | Can create multiple read-only personal API keys, revoke owned keys, but cannot rotate them from `/ui`. |
+| Member with read/write permission | Can create multiple read/write or read-only personal API keys, choose the binding and expiry for each, rotate only a selected key when both membership and credential scopes include write, and delete owned keys or request profile erasure. |
+| Member with read-only permission | Can create multiple read-only personal API keys, but cannot rotate or delete them or request profile erasure from `/ui`. |
 
 SSO managers retain the established Team-tab contract: they can manage
 team-scoped credentials through `/ui/api/team/credentials`, but the
@@ -226,6 +259,25 @@ Configure providers in the control portal SSO section.
 | Groups endpoint | Optional endpoint used when group claims are not present or when SSO entitlement refresh needs a provider lookup. |
 | Groups scopes | Scopes for the groups endpoint. If a groups endpoint is configured, these are also requested during browser login. |
 | Enabled | Enables the provider for login after the rest of the setup is correct. |
+
+The same provider can separately validate OAuth access tokens for MCP. This is
+not the browser login flow and remains disabled until its protected-resource
+settings are complete:
+
+| Protected-resource field | Meaning |
+| --- | --- |
+| OAuth protected resource | Enables access-token validation and RFC 9728 discovery for this issuer. |
+| Allowed audiences | Exact accepted `aud` values; at least one is required. |
+| JWKS source | `discovery` reads the issuer's OIDC document; `static` uses the configured JWKS URI. |
+| JWKS URI | Absolute HTTPS public-key endpoint, required only for `static`. |
+| Signature algorithms | Explicit asymmetric allowlist; `RS256` is the initial default. |
+| Scope claim | Token claim containing a space-delimited string or string array, commonly `scope` or `scp`. |
+| Team claim | Optional claim containing a Dense-Mem team UUID. A team-scoped MCP URL is preferred for multi-team users. |
+| Scope mappings | Maps each external OAuth scope to bounded Dense-Mem grants. Effective access is the intersection with the selected membership. |
+
+Dense-Mem matches the token subject through the provider's configured identity
+claim and requires an existing active SSO identity and team membership. It does
+not auto-provision from an MCP token and never stores the token.
 
 Group mappings connect provider group values to Dense-Mem teams:
 

@@ -125,9 +125,17 @@ processing state:
 | quarantined | Security concern; data is isolated. | Do not use it. Submit a separate replacement only if appropriate. |
 | failed | Required work exhausted bounded retry policy. | Use safe error/correlation context, then submit anew if appropriate. |
 
-The status response includes per-evidence search readiness and bounded reason
-codes. For `awaiting_review`, `semantic_hold` contains up to 50 bounded issues,
-an `issues_truncated` flag, and replacement guidance with the required
+The status response carries the original `correlation_id`, durable `attempts`
+and `max_attempts`, and lifecycle times: `submitted_at`, `updated_at`, and, when
+applicable, `next_attempt_at`, `started_at`, and `completed_at`.
+`next_attempt_at` appears only for a scheduled future retry. Each bounded error
+includes `retryable`, one closed `next_action`, and a concrete `remediation`.
+Clients should execute that guidance instead of inferring recovery from the
+message text.
+
+Status also includes per-evidence search readiness and bounded reason codes.
+For `awaiting_review`, `semantic_hold` contains up to 50 bounded issues, an
+`issues_truncated` flag, and replacement guidance with the required
 `replaces_submission_id`. The replacement is one complete corrected batch, not
 a patch or approval. Status does not include placement IDs, assessor prompts,
 raw responses, review tasks, or a control that overrides server policy.

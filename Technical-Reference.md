@@ -76,7 +76,16 @@ Semantic memory tools are MCP-only:
 ~~~text
 POST /mcp
 GET  /mcp
+POST /teams/{team_id}/mcp
+GET  /teams/{team_id}/mcp
+
+GET /.well-known/oauth-protected-resource/mcp
+GET /.well-known/oauth-protected-resource/teams/{team_id}/mcp
 ~~~
+
+The team-scoped and unscoped MCP paths use the same registry and accept a
+Dense-Mem API key or a configured customer-IdP OAuth access token. Browser SSO
+and API-key portal cookies are never accepted as MCP authentication.
 
 First-party interfaces are separate implementation surfaces:
 
@@ -100,6 +109,34 @@ tool-executor route.
   are Unicode code-point positions: start is inclusive and end is exclusive.
 - A model provider does not receive credentials, request headers, environment
   data, tool access, or cross-team data.
+
+### OAuth protected-resource contract
+
+An enabled provider publishes an RFC 9728 document such as:
+
+```json
+{
+  "resource": "https://memory.example.com/teams/2ebf0ad1-09d4-4a9b-a7cc-c930b24ac255/mcp",
+  "resource_name": "Dense-Mem MCP",
+  "authorization_servers": ["https://idp.example.com"],
+  "scopes_supported": ["memory.read", "memory.write"],
+  "bearer_methods_supported": ["header"]
+}
+```
+
+The authorization server and scopes are derived only from enabled,
+non-retired provider configuration. Token validation requires an allowlisted
+asymmetric algorithm, one matching public JWKS key, exact issuer and allowed
+audience, a subject, expiry, configured identity claim, active Dense-Mem
+identity, and active membership. The effective Dense-Mem grants are the
+intersection of mapped external scopes and membership grants. A multi-team
+token must use the scoped resource or a configured team claim; path and claim
+must agree.
+
+The resource URL and matching challenge link require `MCP_PUBLIC_BASE_URL`.
+Dense-Mem does not trust the request Host or forwarded headers as an advertised
+OAuth resource origin. `/ui` may still display its browser-origin fallback for
+manual team-scoped client configuration.
 
 ## remember
 
@@ -251,6 +288,13 @@ visibility does not grant access to another profile's submission.
   "processing_state": "completed",
   "search_state": "current",
   "check_after_seconds": 60,
+  "correlation_id": "corr_01J...",
+  "attempts": 1,
+  "max_attempts": 5,
+  "submitted_at": "2026-08-18T01:00:00Z",
+  "started_at": "2026-08-18T01:00:01Z",
+  "updated_at": "2026-08-18T01:00:03Z",
+  "completed_at": "2026-08-18T01:00:03Z",
   "evidence": [{
     "evidence_id": "evidence_01J...",
     "evidence_index": 0,
@@ -429,6 +473,49 @@ Security scans, quarantine, assessment results, promotion, lifecycle events,
 and audit-sensitive actions are durable where required. Logs and metrics are
 not the audit ledger.
 
+## Private-Memory Portal Operations
+
+These are first-party UI/control operations, not MCP tools. Every erasure or
+manual retention request requires `Idempotency-Key` and rejects unknown JSON
+fields; the body is exactly:
+
+```json
+{"acknowledge_irreversible": true}
+```
+
+Owner routes:
+
+```text
+DELETE /ui/api/sso/private-memory
+DELETE /ui/api/credential/private-memory
+DELETE /ui/api/sso/credentials/{credential_id}
+GET    /ui/api/private-memory/erasures/{operation_id}
+```
+
+Control routes:
+
+```text
+GET    /control/api/private-memory/spaces
+POST   /control/api/private-memory/spaces/{space_id}/legal-hold
+DELETE /control/api/private-memory/spaces/{space_id}/legal-hold
+POST   /control/api/private-memory/spaces/{space_id}/erasures
+GET    /control/api/private-memory/erasures
+GET    /control/api/private-memory/erasures/{operation_id}
+POST   /control/api/private-memory/retention-runs
+GET    /control/api/private-memory/retention-runs
+```
+
+Accepted destructive commands return `202` with a durable operation or
+retention-run envelope. Erasure status is `queued`, `processing`, `completed`,
+or terminal `failed`; control responses include bounded attempt,
+`next_attempt_at`, and error metadata. Owner responses omit control-only team,
+space, worker, and error details. Legal-hold placement requires
+`{"reason_code":"lowercase_code"}` and returns `201` when newly created or
+`200` for an idempotent existing hold. Reusing an idempotency key for a
+different canonical request returns a conflict. A held SSO credential-delete
+operation is accepted and the credential is disabled immediately, but the
+worker cannot claim its physical purge until the hold is released.
+
 ## Contract Risks
 
 | Risk | Concrete failure mode | Mitigation |
@@ -461,14 +548,18 @@ not the audit ledger.
 
 ## Submission Errors And MCP Versions
 
-Every terminal `rejected` or `failed` submission exposes at least one
-`errors[]` item. Codes are closed and server-authored, including
+Every terminal `rejected`, `quarantined`, or `failed` submission exposes at
+least one `errors[]` item. Each item has a closed `code`, bounded `message`,
+boolean `retryable`, closed `next_action`, and bounded `remediation`. The
+allowed actions are `poll_status`, `resubmit_submission`,
+`submit_replacement`, `retry_correction`, `contact_operator`, and `none`.
+Codes are closed and server-authored, including
 `submission_semantic_hold`, `submission_policy_rejected`,
 `assessor_response_invalid`, `assessor_unavailable`,
 `submission_replacement_conflict`, `submission_processing_failed`,
-`contract_superseded`, and the existing `search_indexing_delayed`. Item errors
-and the aggregate list are deterministically deduplicated. Provider output,
-SQL, prompts, credentials,
+`submission_quarantined`, `contract_superseded`, and
+`search_indexing_delayed`. Item errors and the aggregate list are
+deterministically deduplicated. Provider output, SQL, prompts, credentials,
 stack traces, and cross-owner existence are never returned.
 
 The remaining closed correction codes are `relationship_version_stale`,
