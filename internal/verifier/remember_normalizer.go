@@ -306,7 +306,12 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 		}
 	}
 	seenEntities := map[string]struct{}{}
-	seenEntitySpans := map[string]string{}
+	type entitySpanResolution struct {
+		logicalKey  string
+		action      string
+		candidateID string
+	}
+	seenEntitySpans := map[string]entitySpanResolution{}
 	for index := range response.EntityResults {
 		result := &response.EntityResults[index]
 		result.Ref, result.Action = strings.TrimSpace(result.Ref), strings.TrimSpace(result.Action)
@@ -320,16 +325,29 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 			errs = append(errs, semanticErr(field+".ref", "is outside the submitted entity contract"))
 			continue
 		}
+		if result.CandidateEntityID != nil {
+			value := strings.TrimSpace(*result.CandidateEntityID)
+			result.CandidateEntityID = &value
+		}
 		if result.GroundingRef != nil {
 			value := strings.TrimSpace(*result.GroundingRef)
 			result.GroundingRef = &value
 			if grounding, groundingOK := entityGroundingByRef(target.Groundings, value); groundingOK {
 				spanKey := assessmentSpanKey(grounding.EvidenceID, grounding.Start, grounding.End)
 				logicalKey := semanticAssessmentEntityLogicalKey(target.Name, target.Kind)
-				if previous, exists := seenEntitySpans[spanKey]; exists && previous != logicalKey {
-					errs = append(errs, semanticErr(field, "duplicates an entity evidence span"))
+				resolution := entitySpanResolution{logicalKey: logicalKey, action: result.Action}
+				if result.CandidateEntityID != nil {
+					resolution.candidateID = *result.CandidateEntityID
+				}
+				if previous, exists := seenEntitySpans[spanKey]; exists {
+					switch {
+					case previous.logicalKey != logicalKey:
+						errs = append(errs, semanticErr(field, "duplicates an entity evidence span"))
+					case previous.action != resolution.action || previous.candidateID != resolution.candidateID:
+						errs = append(errs, semanticErr(field, "has an inconsistent resolution for a shared entity evidence span"))
+					}
 				} else {
-					seenEntitySpans[spanKey] = logicalKey
+					seenEntitySpans[spanKey] = resolution
 				}
 			}
 		}
@@ -342,10 +360,6 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 			}
 		} else if result.Action != string(domain.EntityResolutionAmbiguous) {
 			errs = append(errs, semanticErr(field+".grounding_ref", "may be null only for an ambiguous result"))
-		}
-		if result.CandidateEntityID != nil {
-			value := strings.TrimSpace(*result.CandidateEntityID)
-			result.CandidateEntityID = &value
 		}
 		candidates, candidateContextTruncated := normalizerCompatibleCandidates(req, target, result.GroundingRef)
 		if result.Action == string(domain.EntityResolutionReuse) {

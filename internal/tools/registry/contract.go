@@ -554,7 +554,7 @@ func validateUniqueStringArray(args map[string]any, field string) error {
 			continue
 		}
 		if _, exists := seen[value]; exists {
-			return fmt.Errorf("%s[%d]: duplicate value %q", field, i, value)
+			return fmt.Errorf("%s[%d]: duplicate value", field, i)
 		}
 		seen[value] = struct{}{}
 	}

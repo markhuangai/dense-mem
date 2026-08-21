@@ -66,6 +66,24 @@ func TestSubmissionAssessmentWorkerPersistsNormalizerModelProvenance(t *testing.
 	assert.Equal(t, "remember-normalizer-model", assessments.assessment.Model)
 }
 
+func TestSubmissionAssessmentWorkerReleasesAttemptWhenNormalizerLimitMeasurementFails(t *testing.T) {
+	_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	service.normalizer = submissionAssessmentWorkerNormalizerStub{
+		response: func(req verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error) {
+			service.limits.Tokenizer = "unsupported-tokenizer"
+			return submissionAssessmentValidNormalizerResponse(req), nil
+		},
+	}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+	require.NoError(t, err)
+	assert.True(t, processed)
+	assert.Zero(t, assessments.persistCalls)
+	require.Len(t, assessments.requeues, 1)
+	assert.True(t, assessments.requeues[0].ReleaseAssessorAttempt)
+}
+
 func TestSubmissionAssessmentWorkerExcludesAdapterFieldsFromNormalizerBudget(t *testing.T) {
 	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
 	service := worker.(*submissionAssessmentPlacementWorkerService)

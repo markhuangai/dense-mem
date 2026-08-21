@@ -31,7 +31,7 @@ func validateSourceRevisionBatch(
 		return nil
 	}
 	if prior != current {
-		return fmt.Errorf("evidence[%d]: source_key %q revision fields must match earlier item in request", index, sourceKey)
+		return fmt.Errorf("evidence[%d]: source_key revision fields must match earlier item in request", index)
 	}
 	return nil
 }
@@ -169,7 +169,7 @@ func validateRecallFeedback(args map[string]any) error {
 		item, _ := objectFields(raw)
 		recallID, _ := item["recall_event_id"].(string)
 		if _, exists := seen[recallID]; exists {
-			return fmt.Errorf("recalls[%d].recall_event_id: duplicate value %q", i, recallID)
+			return fmt.Errorf("recalls[%d].recall_event_id: duplicate value", i)
 		}
 		seen[recallID] = struct{}{}
 		comment, _ := item["feedback_comment"].(string)
@@ -243,7 +243,7 @@ func validateSubmittedRelationships(raw any, evidence []any, path string) error 
 			return fmt.Errorf("%s[%d].ref: must not be blank", path, index)
 		}
 		if _, exists := seenRefs[normalizedRef]; exists {
-			return fmt.Errorf("%s[%d].ref: duplicate ref %q", path, index, normalizedRef)
+			return fmt.Errorf("%s[%d].ref: duplicate ref", path, index)
 		}
 		seenRefs[normalizedRef] = struct{}{}
 		if err := validateSubmittedRelationship(relationship, evidence, fmt.Sprintf("%s[%d]", path, index)); err != nil {

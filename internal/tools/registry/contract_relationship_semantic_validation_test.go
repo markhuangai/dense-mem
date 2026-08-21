@@ -45,7 +45,7 @@ func TestRememberValidatesSpanlessRelationshipSemanticInvariants(t *testing.T) {
 				input["relationships"] = append(relationships, duplicate)
 				return input
 			},
-			want: "duplicate ref \"uses-postgresql\"",
+			want: "duplicate ref",
 		},
 		{
 			name: "duplicate evidence index",

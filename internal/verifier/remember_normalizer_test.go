@@ -562,6 +562,26 @@ func TestPrepareRememberNormalizerResponseRejectsConflictingEntitySpans(t *testi
 	}
 }
 
+func TestPrepareRememberNormalizerResponseRejectsInconsistentSharedEntityResolutions(t *testing.T) {
+	request, limits := validRememberNormalizerRequest(t)
+	shared := request.SubmissionContract.Entities[0].Groundings[0]
+	firstTarget := request.SubmissionContract.Entities[0]
+	shared.GroundingRef = request.SubmissionContract.Entities[1].Groundings[0].GroundingRef
+	request.SubmissionContract.Entities[1] = firstTarget
+	request.SubmissionContract.Entities[1].Groundings[0] = shared
+	request.EntityCandidateGroups[1].GroundingRef = shared.GroundingRef
+	request.EntityCandidateGroups[1].EvidenceID = shared.EvidenceID
+	request.EntityCandidateGroups[1].Start = shared.Start
+	request.EntityCandidateGroups[1].End = shared.End
+	request.EntityCandidateGroups[1].Surface = shared.Surface
+	response := validRememberNormalizerResponse(t, request)
+	response.EntityResults[1].Action = "ambiguous"
+	response.EntityResults[1].CandidateEntityID = nil
+
+	_, errs := PrepareRememberNormalizerResponse(request, response, limits)
+	require.Contains(t, semanticAssessmentJoinedErrors(errs), "entity_results[1]: has an inconsistent resolution for a shared entity evidence span")
+}
+
 func TestPrepareRememberNormalizerResponseEnforcesBoundsAndValueContainment(t *testing.T) {
 	request, limits := validRememberNormalizerRequest(t)
 	limits.MaxEntityResults = 1

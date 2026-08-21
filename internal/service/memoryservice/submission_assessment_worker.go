@@ -353,7 +353,7 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	if s.normalizer != nil {
 		validationLimits, err = rememberNormalizerFinalResponseLimits(validationLimits, response)
 		if err != nil {
-			return nil, verifier.SemanticAssessmentResponse{}, false, true, false, err
+			return nil, verifier.SemanticAssessmentResponse{}, false, true, true, err
 		}
 	}
 	normalized, validationErrors := verifier.PrepareSemanticAssessmentResponse(request, response, validationLimits)

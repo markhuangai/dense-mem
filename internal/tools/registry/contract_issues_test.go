@@ -167,6 +167,44 @@ func TestContractIssueCollectorPreservesJSONPointerWhitespace(t *testing.T) {
 	require.Contains(t, collector.issues, ContractValidationIssue{Path: "/field ", Code: "invalid", Message: "bad value"})
 }
 
+func TestContractValidationErrorsDoNotEchoSubmittedIdentifiers(t *testing.T) {
+	const secret = "submitted-secret-id"
+	rememberInput := validFlatRelationshipSubmission()
+	rememberRelationships := rememberInput["relationships"].([]any)
+	duplicate := cloneMap(relationship(rememberInput))
+	duplicate["ref"] = secret
+	rememberRelationships[0].(map[string]any)["ref"] = secret
+	rememberInput["relationships"] = append(rememberRelationships[:1], duplicate)
+
+	sourceRevisions := map[string]contractSourceRevision{}
+	_ = validateSourceRevisionBatch(0, map[string]any{
+		"source_key":      "source-key",
+		"source_revision": "one",
+	}, sourceRevisions)
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "unique array", err: validateUniqueStringArray(map[string]any{"evidence_ids": []any{secret, secret}}, "evidence_ids")},
+		{name: "recall feedback", err: validateRecallFeedback(map[string]any{"recalls": []any{
+			map[string]any{"recall_event_id": secret},
+			map[string]any{"recall_event_id": secret},
+		}})},
+		{name: "source revision", err: validateSourceRevisionBatch(1, map[string]any{
+			"source_key":      "source-key",
+			"source_revision": "two",
+		}, sourceRevisions)},
+		{name: "submitted relationship", err: validateSubmittedRelationships(rememberInput["relationships"].([]any), rememberInput["evidence"].([]any), "relationships")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Error(t, test.err)
+			require.NotContains(t, test.err.Error(), secret)
+		})
+	}
+}
+
 func TestValidateContractInputIssuesBoundsOversizedTraversal(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)
