@@ -210,7 +210,7 @@ const submissionSourceSummaryMaxRunes = 256
 
 var (
 	submissionSourceURLPattern         = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s<>"']+`)
-	submissionSourceCredentialPattern  = regexp.MustCompile(`(?i)authorization\s*:\s*(?:[^\s]+\s+)?(?:[A-Za-z][A-Za-z0-9_-]*\s*=\s*(?:"[^"]*"|[^,\s]+)|[^,\s]+)(?:\s*,\s*[A-Za-z][A-Za-z0-9_-]*\s*=\s*(?:"[^"]*"|[^,\s]+))*|authorization\s*=\s*(?:[^\s]+\s+)?[^\s]+|bearer\s+[^\s]+|cookie\s*:\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|cookie\s*=\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|((?:access[_-]?token|api[_-]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token)=)[^&\s]+`)
+	submissionSourceCredentialPattern  = regexp.MustCompile(`(?i)authorization\s*:\s*(?:[^\s]+\s+)?(?:[A-Za-z][A-Za-z0-9_-]*\s*=\s*(?:"[^"]*"|[^,\s]+)|[^,\s]+)(?:\s*,\s*[A-Za-z][A-Za-z0-9_-]*\s*=\s*(?:"[^"]*"|[^,\s]+))*|authorization\s*=\s*(?:[^\s]+\s+)?[^\s]+|bearer\s+[^\s]+|cookie\s*:\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|cookie\s*=\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|(?:x[-_]?api[-_]?key|api[-_]?key|apikey)\s*:\s*[^;,\s]+|((?:access[_-]?token|api[_-]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token)=)[^&\s]+`)
 	submissionSourceURLUserinfoPattern = regexp.MustCompile(`(?i)^([a-z][a-z0-9+.-]*://)[^/@\s]+@`)
 )
 
@@ -249,6 +249,14 @@ func sanitizeSubmissionSourceSummary(value string) string {
 		}
 		if strings.HasPrefix(lowerMatch, "bearer") {
 			return "Bearer [REDACTED]"
+		}
+		colon := strings.IndexByte(match, ':')
+		if colon >= 0 {
+			key := strings.ToLower(strings.TrimSpace(match[:colon]))
+			switch key {
+			case "x-api-key", "x_api_key", "api-key", "api_key", "apikey":
+				return match[:colon+1] + " [REDACTED]"
+			}
 		}
 		separator := strings.IndexByte(match, '=')
 		if separator < 0 {
@@ -381,7 +389,7 @@ var (
 		"repository_persistence_failed":           {},
 	}
 	submissionDiagnosticStages = map[string]struct{}{
-		"entity_catalog": {}, "catalog_context": {}, "assessment_input": {},
+		"entity_catalog": {}, "candidate_prefetch": {}, "catalog_context": {}, "assessment_input": {},
 		"catalog_context_validation": {}, "trusted_context_validation": {},
 		"predicate_options_overflow": {}, "placement_load": {}, "assessment": {},
 		"assessment_attempt_consumed": {}, "confidence_policy": {}, "policy_review": {},
@@ -402,7 +410,7 @@ var (
 		"conversation_input_tokens": {}, "stored_response": {},
 	}
 	submissionDiagnosticFieldFamilies = map[string]struct{}{
-		"input_tokens": {}, "request_id": {}, "output_tokens": {}, "response": {},
+		"input_tokens": {}, "request_id": {}, "output_tokens": {}, "response": {}, "other": {},
 		"security_signals": {}, "entity_results": {}, "entity_results.ref": {},
 		"entity_results.span": {}, "entity_results.kind": {}, "entity_results.selection": {},
 		"entity_results.quality": {}, "entity_results.other": {}, "relationship_results": {},

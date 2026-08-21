@@ -145,7 +145,7 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 		`, teamA, failed.IngestID).Error
 	}))
 	duplicateAt := time.Date(2026, time.August, 18, 1, 0, 0, 0, time.UTC)
-	distinctAt := duplicateAt.Add(-time.Minute)
+	terminalAt := duplicateAt.Add(10 * time.Minute)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Exec(`
 			INSERT INTO placement_outcomes (
@@ -161,7 +161,7 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 			        'failure_class', 'validation_failed'
 			    ), ?
 			)
-		`, teamA, failed.PlacementRunID, ownerA, distinctAt).Error; err != nil {
+		`, teamA, failed.PlacementRunID, ownerA, terminalAt).Error; err != nil {
 			return err
 		}
 		return tx.Exec(`
@@ -175,9 +175,10 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 			           'failure_reason_code', 'assessor_provider_failed',
 			           'failure_stage', 'assessment',
 			           'failure_class', 'timeout',
+			           'assessor_turns', series.assessor_turns,
 			           'provider_response', 'must-not-cross-diagnostics-boundary'
-			       ), ?
-			FROM generate_series(1, 201)
+			       ), ?::timestamptz + (series.assessor_turns * interval '1 second')
+			FROM generate_series(1, 201) AS series(assessor_turns)
 		`, teamA, failed.PlacementRunID, ownerA, duplicateAt).Error
 	}))
 
@@ -209,10 +210,12 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 	require.Len(t, detail.Placement.Items, 1)
 	assert.NotContains(t, detail.Placement.Items[0].Result, "provider_response")
 	assert.Equal(t, "assessment", detail.Placement.Items[0].Result["failure_stage"])
-	assert.Len(t, detail.OperatorDiagnostics, 2)
-	assert.Equal(t, "assessor_response_invalid", detail.OperatorDiagnostics[0].Payload["failure_reason_code"])
-	assert.Equal(t, "assessor_provider_failed", detail.OperatorDiagnostics[1].Payload["failure_reason_code"])
-	assert.NotContains(t, detail.OperatorDiagnostics[1].Payload, "provider_response")
+	assert.Len(t, detail.OperatorDiagnostics, 200)
+	assert.Equal(t, "assessor_provider_failed", detail.OperatorDiagnostics[0].Payload["failure_reason_code"])
+	assert.Equal(t, float64(3), detail.OperatorDiagnostics[0].Payload["assessor_turns"])
+	assert.Equal(t, float64(201), detail.OperatorDiagnostics[198].Payload["assessor_turns"])
+	assert.Equal(t, "assessor_response_invalid", detail.OperatorDiagnostics[199].Payload["failure_reason_code"])
+	assert.NotContains(t, detail.OperatorDiagnostics[0].Payload, "provider_response")
 
 	_, err = repo.GetSubmissionDiagnostic(ctx, teamC, failed.IngestID)
 	require.ErrorIs(t, err, ErrSubmissionDiagnosticNotFound)

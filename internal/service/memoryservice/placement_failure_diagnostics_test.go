@@ -101,6 +101,7 @@ func TestPlacementFailureDiagnosticBoundsBranchesAndRetryErrors(t *testing.T) {
 	fields = append(fields, strings.Repeat("x", 65), "", "field_00")
 	require.Len(t, boundedValidationFieldFamilies(fields), 32)
 	require.Equal(t, "", boundedValidationStage("unknown"))
+	require.Equal(t, "candidate_prefetch", boundedPlacementFailureStage("candidate_prefetch"))
 	require.Equal(t, "internal", boundedPlacementFailureClass("unknown"))
 	require.Nil(t, cloneFailureMeasurement(nil))
 	require.Nil(t, cloneFailureMeasurement(&verifier.FailureMeasurement{Unit: "seconds", Observed: 1, Limit: 2}))

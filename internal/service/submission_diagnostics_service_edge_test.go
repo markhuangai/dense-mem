@@ -72,6 +72,12 @@ func TestSubmissionDiagnosticProjectionRejectsUnsafeShapesAndCoversBounds(t *tes
 	require.Equal(t, "placement failure requires operator review", submissionOperatorDiagnosticMessage(SubmissionOperatorDiagnostic{}))
 
 	require.Equal(t, "", allowlistedDiagnosticToken("not-allowed", submissionDiagnosticStages, 64))
+	validOther, ok := projectSubmissionOperatorDiagnosticPayload(map[string]any{
+		"failure_class":             "malformed_response",
+		"validation_field_families": []any{"other"},
+	})
+	require.True(t, ok)
+	require.Equal(t, []string{"other"}, validOther.ValidationFieldFamilies)
 	require.Equal(t, "truncated", boundedDiagnosticToken("truncated-too-long", 9))
 	require.Equal(t, 0, boundedDiagnosticStatus(float64(99)))
 	require.Equal(t, 599, boundedDiagnosticStatus(float64(600)))
@@ -144,6 +150,8 @@ func TestSubmissionDiagnosticSummaryNormalizesSourceText(t *testing.T) {
 	require.Equal(t, "request Cookie: session=[REDACTED]", cookieHeaderMultiple.Value)
 	cookieEquals := boundedSubmissionSourceSummary("browser Cookie=session=opaque-secret; refresh=secret")
 	require.Equal(t, "browser Cookie=[REDACTED]", cookieEquals.Value)
+	apiKeyHeader := boundedSubmissionSourceSummary("source X-API-Key: opaque-secret")
+	require.Equal(t, "source X-API-Key: [REDACTED]", apiKeyHeader.Value)
 	authorizationHeader := boundedSubmissionSourceSummary("source Authorization: Basic dXNlcjpwYXNz")
 	require.Equal(t, "source Authorization: [REDACTED]", authorizationHeader.Value)
 	authorizationToken := boundedSubmissionSourceSummary("source Authorization: opaque-secret")
