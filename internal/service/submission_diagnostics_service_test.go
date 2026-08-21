@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -17,11 +16,14 @@ import (
 func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
 	now := time.Date(2026, time.August, 18, 1, 0, 0, 0, time.UTC)
 	teamID, ownerID, submissionID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	longSummary := strings.Repeat("about ", submissionSourceSummaryMaxRunes)
 	repo := &submissionDiagnosticsRepoStub{page: &repository.SubmissionDiagnosticRecordPage{
 		Records: []repository.SubmissionDiagnosticRecord{{
-			TeamName:      "Staging",
-			SourceSummary: longSummary,
+			TeamName: "Staging",
+			SourceTypes: []string{
+				"document",
+				`{"password":"supersecret"}`,
+				"https://operator:secret@example.test/notes?token=opaque",
+			},
 			OperatorDiagnostic: map[string]any{
 				"failure_reason_code": "assessor_provider_failed",
 				"failure_stage":       "assessment",
@@ -62,8 +64,10 @@ func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
 	require.Equal(t, "contact_operator", item.Error.NextAction)
 	require.NotContains(t, item.Error.Message, "timeout")
 	require.NotContains(t, item.Error.Message, "must not cross")
-	require.Len(t, item.SourceSummary, submissionSourceSummaryMaxRunes)
-	require.True(t, item.SourceSummaryTruncated)
+	require.Equal(t, "document evidence", item.SourceSummary)
+	require.False(t, item.SourceSummaryTruncated)
+	require.NotContains(t, item.SourceSummary, "supersecret")
+	require.NotContains(t, item.SourceSummary, "opaque")
 	require.NotNil(t, item.OperatorDiagnostic)
 	require.Equal(t, "assessor_provider_failed", item.OperatorDiagnostic.FailureReasonCode)
 	require.Equal(t, "tokens", item.OperatorDiagnostic.FailureMeasurement.Unit)
@@ -79,6 +83,7 @@ func TestSubmissionDiagnosticsDetailNeverReturnsEvidenceContentOrRawFailure(t *t
 	evidenceID := uuid.NewString()
 	repo := &submissionDiagnosticsRepoStub{detail: &repository.SubmissionDiagnosticRecord{
 		TeamName:      "Staging",
+		SourceTypes:   []string{"observation", `{"access_token":"opaque-secret"}`},
 		EvidenceCount: 1,
 		Placement: repository.CreateIngestResult{
 			TeamID: teamID, OwnerProfileID: ownerID, IngestID: submissionID,
@@ -95,6 +100,8 @@ func TestSubmissionDiagnosticsDetailNeverReturnsEvidenceContentOrRawFailure(t *t
 	require.NoError(t, err)
 	require.Equal(t, teamID, detail.TeamID)
 	require.Equal(t, ownerID, detail.OwnerProfileID)
+	require.Equal(t, "observation evidence", detail.SourceSummary)
+	require.NotContains(t, detail.SourceSummary, "opaque-secret")
 	require.Len(t, detail.Evidence, 1)
 	require.Equal(t, repo.detail.Placement.Evidence[0].FragmentID, detail.Evidence[0].EvidenceID)
 	require.Len(t, detail.Errors, 1)

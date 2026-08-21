@@ -29,7 +29,7 @@ type SubmissionDiagnosticFilter struct {
 
 type SubmissionDiagnosticRecord struct {
 	TeamName            string
-	SourceSummary       string
+	SourceTypes         []string
 	EvidenceCount       int
 	Placement           CreateIngestResult
 	OperatorDiagnostic  map[string]any
@@ -57,6 +57,17 @@ type SubmissionDiagnosticRecordPage struct {
 var _ SubmissionDiagnosticsRepository = (*LedgerRepositoryImpl)(nil)
 
 const submissionDiagnosticOutcomeLimit = 200
+
+const submissionDiagnosticSourceTypesSQL = `
+	COALESCE((
+		SELECT jsonb_agg(source_type_row.source_type ORDER BY source_type_row.source_type)
+		FROM (
+			SELECT DISTINCT fragment.source_type
+			FROM evidence_fragments AS fragment
+			WHERE fragment.team_id = run.team_id
+			  AND fragment.ingest_id = run.ingest_id
+		) AS source_type_row
+	), '[]'::jsonb)`
 
 const submissionDiagnosticProcessingStateSQL = `
 	CASE
@@ -146,7 +157,7 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
 			return err
 		}
 		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT run.team_id::text, team.name, COALESCE(ingest.source_summary, ''), run.owner_profile_id::text, run.ingest_id::text,
+			SELECT run.team_id::text, team.name, `+submissionDiagnosticSourceTypesSQL+`, run.owner_profile_id::text, run.ingest_id::text,
 			       run.status, COALESCE(ingest.metadata #>> '{actor,correlation_id}', ''),
 			       run.attempts, run.max_attempts, ingest.created_at,
 			       CASE
@@ -248,8 +259,9 @@ func loadSubmissionDiagnostic(
 	var semanticHoldState sql.NullString
 	var submittedAt, nextAttemptAt, startedAt, updatedAt, completedAt sql.NullTime
 	var quarantineExpiresAt, replacementWindowExpiresAt sql.NullTime
+	var sourceTypesRaw []byte
 	err := tx.WithContext(ctx).Raw(`
-		SELECT run.team_id::text, team.name, COALESCE(ingest.source_summary, ''), run.owner_profile_id::text, run.ingest_id::text,
+		SELECT run.team_id::text, team.name, `+submissionDiagnosticSourceTypesSQL+`, run.owner_profile_id::text, run.ingest_id::text,
 		       run.placement_run_id::text, run.status,
 		       COALESCE(ingest.metadata ->> 'contract_version', ''),
 		       COALESCE(ingest.metadata #>> '{actor,correlation_id}', ''),
@@ -272,7 +284,7 @@ func loadSubmissionDiagnostic(
 	`, teamID, submissionID).Row().Scan(
 		&record.Placement.TeamID,
 		&record.TeamName,
-		&record.SourceSummary,
+		&sourceTypesRaw,
 		&record.Placement.OwnerProfileID,
 		&record.Placement.IngestID,
 		&record.Placement.PlacementRunID,
@@ -295,6 +307,9 @@ func loadSubmissionDiagnostic(
 	}
 	if err != nil {
 		return nil, err
+	}
+	if err := json.Unmarshal(sourceTypesRaw, &record.SourceTypes); err != nil {
+		return nil, fmt.Errorf("decode submission diagnostic source types: %w", err)
 	}
 	record.Placement.SubmittedAt = nullableStatusTime(submittedAt)
 	record.Placement.NextAttemptAt = nullableStatusTime(nextAttemptAt)
@@ -478,6 +493,7 @@ func submissionDiagnosticOperatorPayloadMap(payload map[string]any) map[string]a
 
 func scanSubmissionDiagnosticRecord(rows *sql.Rows) (SubmissionDiagnosticRecord, error) {
 	var record SubmissionDiagnosticRecord
+	var sourceTypesRaw []byte
 	var submittedAt, nextAttemptAt, startedAt, updatedAt, completedAt sql.NullTime
 	var semanticHoldState sql.NullString
 	var quarantineExpiresAt, replacementWindowExpiresAt sql.NullTime
@@ -486,7 +502,7 @@ func scanSubmissionDiagnosticRecord(rows *sql.Rows) (SubmissionDiagnosticRecord,
 	if err := rows.Scan(
 		&record.Placement.TeamID,
 		&record.TeamName,
-		&record.SourceSummary,
+		&sourceTypesRaw,
 		&record.Placement.OwnerProfileID,
 		&record.Placement.IngestID,
 		&record.Placement.Status,
@@ -506,6 +522,9 @@ func scanSubmissionDiagnosticRecord(rows *sql.Rows) (SubmissionDiagnosticRecord,
 		&resultRaw,
 	); err != nil {
 		return SubmissionDiagnosticRecord{}, err
+	}
+	if err := json.Unmarshal(sourceTypesRaw, &record.SourceTypes); err != nil {
+		return SubmissionDiagnosticRecord{}, fmt.Errorf("decode submission diagnostic source types: %w", err)
 	}
 	record.Placement.SubmittedAt = nullableStatusTime(submittedAt)
 	record.Placement.NextAttemptAt = nullableStatusTime(nextAttemptAt)

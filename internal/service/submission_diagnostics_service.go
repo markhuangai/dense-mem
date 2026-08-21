@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
@@ -160,14 +159,14 @@ func (s *SubmissionDiagnosticsService) GetSubmissionDiagnostic(
 		return nil, ErrSubmissionDiagnosticsUnavailable
 	}
 	status := memoryservice.ProjectSubmissionStatus(&record.Placement)
+	sourceSummary := submissionSourceSummary(record.SourceTypes)
 	return &SubmissionDiagnosticDetail{
 		SubmissionStatusResult: *status,
 		TeamID:                 record.Placement.TeamID,
 		TeamName:               record.TeamName,
 		OwnerProfileID:         record.Placement.OwnerProfileID,
 		EvidenceCount:          record.EvidenceCount,
-		SourceSummary:          boundedSubmissionSourceSummary(record.SourceSummary).Value,
-		SourceSummaryTruncated: boundedSubmissionSourceSummary(record.SourceSummary).Truncated,
+		SourceSummary:          sourceSummary,
 		OperatorDiagnostic:     projectSubmissionOperatorDiagnostic(record.OperatorDiagnostic),
 		OperatorDiagnostics:    projectSubmissionOperatorDiagnostics(record.OperatorDiagnostics),
 	}, nil
@@ -175,6 +174,7 @@ func (s *SubmissionDiagnosticsService) GetSubmissionDiagnostic(
 
 func submissionDiagnosticSummary(record repository.SubmissionDiagnosticRecord) SubmissionDiagnosticSummary {
 	status := memoryservice.ProjectSubmissionStatus(&record.Placement)
+	sourceSummary := submissionSourceSummary(record.SourceTypes)
 	var statusError *memoryservice.SubmissionStatusError
 	if len(status.Errors) > 0 {
 		value := status.Errors[0]
@@ -185,104 +185,44 @@ func submissionDiagnosticSummary(record repository.SubmissionDiagnosticRecord) S
 		submittedAt = record.Placement.SubmittedAt.UTC()
 	}
 	return SubmissionDiagnosticSummary{
-		TeamID:                 record.Placement.TeamID,
-		TeamName:               record.TeamName,
-		OwnerProfileID:         record.Placement.OwnerProfileID,
-		SubmissionID:           record.Placement.IngestID,
-		ProcessingState:        status.ProcessingState,
-		CorrelationID:          record.Placement.CorrelationID,
-		SourceSummary:          boundedSubmissionSourceSummary(record.SourceSummary).Value,
-		SourceSummaryTruncated: boundedSubmissionSourceSummary(record.SourceSummary).Truncated,
-		Attempts:               record.Placement.Attempts,
-		MaxAttempts:            record.Placement.MaxAttempts,
-		EvidenceCount:          record.EvidenceCount,
-		SubmittedAt:            submittedAt,
-		NextAttemptAt:          record.Placement.NextAttemptAt,
-		StartedAt:              record.Placement.StartedAt,
-		UpdatedAt:              record.Placement.UpdatedAt,
-		CompletedAt:            record.Placement.CompletedAt,
-		Error:                  statusError,
-		OperatorDiagnostic:     projectSubmissionOperatorDiagnostic(record.OperatorDiagnostic),
+		TeamID:             record.Placement.TeamID,
+		TeamName:           record.TeamName,
+		OwnerProfileID:     record.Placement.OwnerProfileID,
+		SubmissionID:       record.Placement.IngestID,
+		ProcessingState:    status.ProcessingState,
+		CorrelationID:      record.Placement.CorrelationID,
+		SourceSummary:      sourceSummary,
+		Attempts:           record.Placement.Attempts,
+		MaxAttempts:        record.Placement.MaxAttempts,
+		EvidenceCount:      record.EvidenceCount,
+		SubmittedAt:        submittedAt,
+		NextAttemptAt:      record.Placement.NextAttemptAt,
+		StartedAt:          record.Placement.StartedAt,
+		UpdatedAt:          record.Placement.UpdatedAt,
+		CompletedAt:        record.Placement.CompletedAt,
+		Error:              statusError,
+		OperatorDiagnostic: projectSubmissionOperatorDiagnostic(record.OperatorDiagnostic),
 	}
 }
 
-const submissionSourceSummaryMaxRunes = 256
-
-var (
-	submissionSourceURLPattern         = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s<>"']+`)
-	submissionSourceCredentialPattern  = regexp.MustCompile(`(?i)authorization\s*:\s*(?:[^\s]+\s+)?(?:[A-Za-z][A-Za-z0-9_-]*\s*=\s*(?:"[^"]*"|[^,\s]+)|[^,\s]+)(?:\s*,\s*[A-Za-z][A-Za-z0-9_-]*\s*=\s*(?:"[^"]*"|[^,\s]+))*|authorization\s*=\s*(?:[^\s]+\s+)?(?:[A-Za-z][A-Za-z0-9_-]*\s*=\s*(?:"[^"]*"|[^,\s]+)|[^,\s]+)(?:\s*,\s*[A-Za-z][A-Za-z0-9_-]*\s*=\s*(?:"[^"]*"|[^,\s]+))*|bearer\s+[^\s]+|cookie\s*:\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|cookie\s*=\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|(?:x[-_]?api[-_]?key|api[-_]?key|apikey)\s*:\s*[^;,\s]+|((?:[A-Za-z0-9]+[_-])*(?:access[_-]?token|api[-_]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token|private[_-]?key)(?:[_-][A-Za-z0-9]+)*\s*=\s*)(?:"[^"]*"|'[^']*'|[^&\r\n]+)|((?:[A-Za-z0-9]+[_-])*(?:access[_-]?token|api[-_]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token|private[_-]?key)(?:[_-][A-Za-z0-9]+)*\s*:\s*)[^;,\r\n]+`)
-	submissionSourceURLUserinfoPattern = regexp.MustCompile(`(?i)^([a-z][a-z0-9+.-]*://)[^/@\s]+@`)
-)
-
-type boundedSubmissionText struct {
-	Value     string
-	Truncated bool
-}
-
-func boundedSubmissionSourceSummary(value string) boundedSubmissionText {
-	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
-	value = sanitizeSubmissionSourceSummary(value)
-	if value == "" {
-		return boundedSubmissionText{}
+func submissionSourceSummary(sourceTypes []string) string {
+	seen := make(map[domain.SourceType]struct{}, len(sourceTypes))
+	for _, sourceType := range sourceTypes {
+		typedSource := domain.SourceType(sourceType)
+		if typedSource.IsValid() {
+			seen[typedSource] = struct{}{}
+		}
 	}
-	runes := []rune(value)
-	if len(runes) <= submissionSourceSummaryMaxRunes {
-		return boundedSubmissionText{Value: value}
+	ordered := make([]string, 0, len(seen))
+	for _, sourceType := range domain.ValidSourceTypes() {
+		if _, ok := seen[sourceType]; ok {
+			ordered = append(ordered, string(sourceType))
+		}
 	}
-	return boundedSubmissionText{
-		Value:     string(runes[:submissionSourceSummaryMaxRunes]),
-		Truncated: true,
-	}
-}
-
-func sanitizeSubmissionSourceSummary(value string) string {
-	if value == "" {
+	if len(ordered) == 0 {
 		return ""
 	}
-	value = submissionSourceURLPattern.ReplaceAllStringFunc(value, sanitizeSubmissionSourceURLToken)
-	return submissionSourceCredentialPattern.ReplaceAllStringFunc(value, func(match string) string {
-		lowerMatch := strings.ToLower(strings.TrimSpace(match))
-		if strings.HasPrefix(lowerMatch, "authorization") {
-			if separator := strings.IndexByte(match, ':'); separator >= 0 {
-				return match[:separator+1] + " [REDACTED]"
-			}
-		}
-		if strings.HasPrefix(lowerMatch, "bearer") {
-			return "Bearer [REDACTED]"
-		}
-		colon := strings.IndexByte(match, ':')
-		if colon >= 0 {
-			key := strings.ToLower(strings.TrimSpace(match[:colon]))
-			switch key {
-			case "x-api-key", "x_api_key", "api-key", "api_key", "apikey":
-				return match[:colon+1] + " [REDACTED]"
-			}
-		}
-		separator := strings.IndexByte(match, '=')
-		if separator < 0 {
-			if colon >= 0 {
-				return match[:colon+1] + " [REDACTED]"
-			}
-			return "[REDACTED]"
-		}
-		return match[:separator+1] + "[REDACTED]"
-	})
-}
-
-func sanitizeSubmissionSourceURLToken(value string) string {
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return submissionSourceURLUserinfoPattern.ReplaceAllString(value, `${1}[REDACTED]@`)
-	}
-	parsed.User = nil
-	parsed.RawQuery = ""
-	parsed.ForceQuery = false
-	parsed.Fragment = ""
-	parsed.RawFragment = ""
-	if safe := parsed.String(); safe != "" {
-		return safe
-	}
-	return value
+	return strings.Join(ordered, " + ") + " evidence"
 }
 
 func projectSubmissionOperatorDiagnostics(values []repository.SubmissionDiagnosticOperatorDiagnostic) []SubmissionOperatorDiagnostic {

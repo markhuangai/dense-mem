@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -111,20 +112,35 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "owner-c")
 	repo := NewLedgerRepository(appDB, rls)
 
-	create := func(teamID, ownerID, key, content string) *CreateIngestResult {
+	create := func(teamID, ownerID, key, content string, sourceTypes ...string) *CreateIngestResult {
+		if len(sourceTypes) == 0 {
+			sourceTypes = []string{"conversation"}
+		}
+		evidence := make([]EvidenceInput, 0, len(sourceTypes))
+		for _, sourceType := range sourceTypes {
+			evidence = append(evidence, EvidenceInput{Content: content, SourceType: sourceType})
+		}
 		result, err := repo.CreateIngest(ctx, CreateIngestInput{
 			TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: key,
 			RequestHash: sha256Hex(content),
 			Metadata:    map[string]any{"actor": map[string]any{"correlation_id": "corr-" + key}},
-			Evidence:    []EvidenceInput{{Content: content}},
+			Evidence:    evidence,
 		})
 		require.NoError(t, err)
 		return result
 	}
-	failed := create(teamA, ownerA, "failed", "private failed evidence")
-	queued := create(teamA, ownerB, "queued", "private queued evidence")
-	foreign := create(teamC, ownerC, "foreign", "private foreign evidence")
+	failed := create(teamA, ownerA, "failed", "private failed evidence", "document")
+	queued := create(teamA, ownerB, "queued", "private queued evidence", "manual", "conversation", "manual")
+	foreign := create(teamC, ownerC, "foreign", "private foreign evidence", "observation")
+	hostileSourceSummary := `{"password":"supersecret","access_token":"opaque-secret"}`
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE knowledge_ingests
+			SET source_summary = ?
+			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
+		`, hostileSourceSummary, teamA, failed.IngestID).Error; err != nil {
+			return err
+		}
 		if err := tx.Exec(`
 			UPDATE placement_items
 			SET status = 'failed', category = 'failed',
@@ -152,7 +168,7 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 			    team_id, placement_run_id, owner_profile_id,
 			    outcome_kind, status, idempotency_key, payload, created_at
 			)
-			VALUES (
+			SELECT
 			    ?::uuid, ?::uuid, ?::uuid,
 			    'submission_assessment_terminal', 'failed', '',
 			    jsonb_build_object(
@@ -160,7 +176,7 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 			        'failure_stage', 'assessment',
 			        'failure_class', 'validation_failed'
 			    ), ?
-			)
+			FROM generate_series(1, 20)
 		`, teamA, failed.PlacementRunID, ownerA, terminalAt).Error; err != nil {
 			return err
 		}
@@ -202,9 +218,19 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 	require.Len(t, failedOnly.Records, 1)
 	assert.Equal(t, failed.IngestID, failedOnly.Records[0].Placement.IngestID)
 	assert.Equal(t, "corr-failed", failedOnly.Records[0].Placement.CorrelationID)
+	assert.Equal(t, []string{"document"}, failedOnly.Records[0].SourceTypes)
+	listJSON, err := json.Marshal(failedOnly.Records[0])
+	require.NoError(t, err)
+	assert.NotContains(t, string(listJSON), "supersecret")
+	assert.NotContains(t, string(listJSON), "opaque-secret")
 
 	detail, err := repo.GetSubmissionDiagnostic(ctx, teamA, failed.IngestID)
 	require.NoError(t, err)
+	assert.Equal(t, []string{"document"}, detail.SourceTypes)
+	detailJSON, err := json.Marshal(detail)
+	require.NoError(t, err)
+	assert.NotContains(t, string(detailJSON), "supersecret")
+	assert.NotContains(t, string(detailJSON), "opaque-secret")
 	require.Len(t, detail.Placement.Evidence, 1)
 	assert.Empty(t, detail.Placement.Evidence[0].Content)
 	require.Len(t, detail.Placement.Items, 1)
@@ -221,6 +247,8 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 	require.ErrorIs(t, err, ErrSubmissionDiagnosticNotFound)
 	_, err = repo.GetSubmissionDiagnostic(ctx, teamA, foreign.IngestID)
 	require.ErrorIs(t, err, ErrSubmissionDiagnosticNotFound)
-	_, err = repo.GetSubmissionDiagnostic(ctx, teamA, queued.IngestID)
+	queuedDetail, err := repo.GetSubmissionDiagnostic(ctx, teamA, queued.IngestID)
 	require.NoError(t, err)
+	assert.Equal(t, []string{"conversation", "manual"}, queuedDetail.SourceTypes)
+	assert.Equal(t, 3, queuedDetail.EvidenceCount)
 }

@@ -132,54 +132,38 @@ func TestSubmissionDiagnosticsServiceHandlesUnavailableAndEmptyRepositories(t *t
 	require.ErrorIs(t, err, ErrSubmissionDiagnosticsUnavailable)
 }
 
-func TestSubmissionDiagnosticSummaryNormalizesSourceText(t *testing.T) {
-	trimmed := boundedSubmissionSourceSummary("  about\n\tthis   memory  ")
-	require.Equal(t, "about this memory", trimmed.Value)
-	require.False(t, trimmed.Truncated)
-	signedURL := boundedSubmissionSourceSummary("https://memory.example.test/notes?X-Amz-Credential=operator&X-Amz-Signature=secret")
-	require.Equal(t, "https://memory.example.test/notes", signedURL.Value)
-	embeddedCredentialURL := boundedSubmissionSourceSummary("Imported from https://operator:supersecret@example.test/notes")
-	require.Equal(t, "Imported from https://example.test/notes", embeddedCredentialURL.Value)
-	credentialLabel := boundedSubmissionSourceSummary("source token=opaque-secret")
-	require.Equal(t, "source token=[REDACTED]", credentialLabel.Value)
-	credentialKey := boundedSubmissionSourceSummary("source credential=opaque-secret")
-	require.Equal(t, "source credential=[REDACTED]", credentialKey.Value)
-	compositeCredentialKey := boundedSubmissionSourceSummary("source AWS_SECRET_ACCESS_KEY=opaque-credential")
-	require.Equal(t, "source AWS_SECRET_ACCESS_KEY=[REDACTED]", compositeCredentialKey.Value)
-	quotedCompositeCredentialKey := boundedSubmissionSourceSummary(`source AWS_SECRET_ACCESS_KEY="opaque credential"`)
-	require.Equal(t, "source AWS_SECRET_ACCESS_KEY=[REDACTED]", quotedCompositeCredentialKey.Value)
-	singleQuotedCompositeCredentialKey := boundedSubmissionSourceSummary("source AWS_SECRET_ACCESS_KEY='opaque credential'")
-	require.Equal(t, "source AWS_SECRET_ACCESS_KEY=[REDACTED]", singleQuotedCompositeCredentialKey.Value)
-	unquotedCompositeCredentialKey := boundedSubmissionSourceSummary("source AWS_SECRET_ACCESS_KEY=opaque credential")
-	require.Equal(t, "source AWS_SECRET_ACCESS_KEY=[REDACTED]", unquotedCompositeCredentialKey.Value)
-	colonCompositeCredentialKey := boundedSubmissionSourceSummary("source AWS_SECRET_ACCESS_KEY: opaque-credential")
-	require.Equal(t, "source AWS_SECRET_ACCESS_KEY: [REDACTED]", colonCompositeCredentialKey.Value)
-	privateKey := boundedSubmissionSourceSummary("source SSH_PRIVATE_KEY=-----BEGIN OPENSSH PRIVATE KEY-----")
-	require.Equal(t, "source SSH_PRIVATE_KEY=[REDACTED]", privateKey.Value)
-	passwordLabel := boundedSubmissionSourceSummary("source Password: supersecret")
-	require.Equal(t, "source Password: [REDACTED]", passwordLabel.Value)
-	accessTokenLabel := boundedSubmissionSourceSummary("source access_token: opaque-secret")
-	require.Equal(t, "source access_token: [REDACTED]", accessTokenLabel.Value)
-	cookieHeader := boundedSubmissionSourceSummary("request Cookie: session=opaque-secret")
-	require.Equal(t, "request Cookie: session=[REDACTED]", cookieHeader.Value)
-	cookieHeaderMultiple := boundedSubmissionSourceSummary("request Cookie: session=opaque; refresh=secret")
-	require.Equal(t, "request Cookie: session=[REDACTED]", cookieHeaderMultiple.Value)
-	cookieEquals := boundedSubmissionSourceSummary("browser Cookie=session=opaque-secret; refresh=secret")
-	require.Equal(t, "browser Cookie=[REDACTED]", cookieEquals.Value)
-	apiKeyHeader := boundedSubmissionSourceSummary("source X-API-Key: opaque-secret")
-	require.Equal(t, "source X-API-Key: [REDACTED]", apiKeyHeader.Value)
-	authorizationHeader := boundedSubmissionSourceSummary("source Authorization: Basic dXNlcjpwYXNz")
-	require.Equal(t, "source Authorization: [REDACTED]", authorizationHeader.Value)
-	authorizationToken := boundedSubmissionSourceSummary("source Authorization: opaque-secret")
-	require.Equal(t, "source Authorization: [REDACTED]", authorizationToken.Value)
-	digestAuthorization := boundedSubmissionSourceSummary(`source Authorization: Digest username="user", realm="private", response="secret"`)
-	require.Equal(t, "source Authorization: [REDACTED]", digestAuthorization.Value)
-	authorizationEquals := boundedSubmissionSourceSummary("source Authorization=Basic dXNlcjpwYXNz")
-	require.Equal(t, "source Authorization=[REDACTED]", authorizationEquals.Value)
-	digestAuthorizationEquals := boundedSubmissionSourceSummary(`source Authorization=Digest username="user", realm="private", response="secret"`)
-	require.Equal(t, "source Authorization=[REDACTED]", digestAuthorizationEquals.Value)
-	require.Equal(t, boundedSubmissionText{}, boundedSubmissionSourceSummary(" \n\t "))
-	long := boundedSubmissionSourceSummary(strings.Repeat("界", submissionSourceSummaryMaxRunes+1))
-	require.Len(t, []rune(long.Value), submissionSourceSummaryMaxRunes)
-	require.True(t, long.Truncated)
+func TestSubmissionDiagnosticSummaryAllowsOnlyConstrainedSourceTypes(t *testing.T) {
+	tests := []struct {
+		name        string
+		sourceTypes []string
+		want        string
+	}{
+		{name: "empty"},
+		{name: "single", sourceTypes: []string{"document"}, want: "document evidence"},
+		{
+			name:        "mixed sources are deterministic and deduplicated",
+			sourceTypes: []string{"manual", "document", "conversation", "document", "observation"},
+			want:        "conversation + document + observation + manual evidence",
+		},
+		{
+			name: "arbitrary source text cannot cross",
+			sourceTypes: []string{
+				`{"password":"supersecret"}`,
+				"https://operator:secret@example.test/notes?token=opaque",
+				"Bearer opaque-secret",
+				"AWS_SECRET_ACCESS_KEY=opaque-credential",
+			},
+		},
+		{
+			name:        "unknown values do not hide allowed values",
+			sourceTypes: []string{`{"access_token":"opaque-secret"}`, "document"},
+			want:        "document evidence",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, submissionSourceSummary(tt.sourceTypes))
+		})
+	}
 }
