@@ -239,6 +239,32 @@ func TestNormalizeRememberRegeneratesAfterProviderOutputTokenOverrun(t *testing.
 	require.Equal(t, 2, response.ProviderTurns)
 }
 
+func TestNormalizeRememberRegeneratesAfterProviderInputTokenOverrun(t *testing.T) {
+	request, limits := validRememberNormalizerRequest(t)
+	valid, err := json.Marshal(validRememberNormalizerResponse(t, request))
+	require.NoError(t, err)
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		usage := map[string]any{"prompt_tokens": 20, "completion_tokens": 30, "total_tokens": 50}
+		if call == 1 {
+			usage["prompt_tokens"] = limits.MaxInputTokens + 1
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": string(valid)}}},
+			"usage":   usage,
+		}))
+	}))
+	defer server.Close()
+
+	verifier := NewOpenAIVerifier(newTestVerifierConfig(server.URL, "key", "normalizer-model"), server.Client())
+	response, err := verifier.NormalizeRemember(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), calls.Load())
+	require.Equal(t, 2, response.ProviderTurns)
+}
+
 func TestNormalizeRememberRegeneratesCompleteResponseAfterValidationError(t *testing.T) {
 	request, _ := validRememberNormalizerRequest(t)
 	valid, err := json.Marshal(validRememberNormalizerResponse(t, request))
@@ -509,18 +535,31 @@ func TestPrepareRememberNormalizerResponseRejectsOverlongPredicateQuote(t *testi
 }
 
 func TestPrepareRememberNormalizerResponseRejectsConflictingEntitySpans(t *testing.T) {
-	request, limits := validRememberNormalizerRequest(t)
-	shared := request.SubmissionContract.Entities[0].Groundings[0]
-	shared.GroundingRef = request.SubmissionContract.Entities[1].Groundings[0].GroundingRef
-	request.SubmissionContract.Entities[1].Groundings[0] = shared
-	request.EntityCandidateGroups[1].GroundingRef = shared.GroundingRef
-	request.EntityCandidateGroups[1].EvidenceID = shared.EvidenceID
-	request.EntityCandidateGroups[1].Start = shared.Start
-	request.EntityCandidateGroups[1].End = shared.End
-	request.EntityCandidateGroups[1].Surface = shared.Surface
-	response := validRememberNormalizerResponse(t, request)
-	_, errs := PrepareRememberNormalizerResponse(request, response, limits)
-	require.Contains(t, semanticAssessmentJoinedErrors(errs), "entity_results[1]: duplicates an entity evidence span")
+	for _, test := range []struct {
+		name   string
+		prefix string
+		suffix string
+	}{
+		{name: "exact", prefix: "", suffix: ""},
+		{name: "whitespace-padded", prefix: " ", suffix: " \t"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request, limits := validRememberNormalizerRequest(t)
+			shared := request.SubmissionContract.Entities[0].Groundings[0]
+			shared.GroundingRef = request.SubmissionContract.Entities[1].Groundings[0].GroundingRef
+			request.SubmissionContract.Entities[1].Groundings[0] = shared
+			request.EntityCandidateGroups[1].GroundingRef = shared.GroundingRef
+			request.EntityCandidateGroups[1].EvidenceID = shared.EvidenceID
+			request.EntityCandidateGroups[1].Start = shared.Start
+			request.EntityCandidateGroups[1].End = shared.End
+			request.EntityCandidateGroups[1].Surface = shared.Surface
+			response := validRememberNormalizerResponse(t, request)
+			padded := test.prefix + shared.GroundingRef + test.suffix
+			response.EntityResults[1].GroundingRef = &padded
+			_, errs := PrepareRememberNormalizerResponse(request, response, limits)
+			require.Contains(t, semanticAssessmentJoinedErrors(errs), "entity_results[1]: duplicates an entity evidence span")
+		})
+	}
 }
 
 func TestPrepareRememberNormalizerResponseEnforcesBoundsAndValueContainment(t *testing.T) {

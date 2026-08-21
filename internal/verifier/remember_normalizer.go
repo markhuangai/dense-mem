@@ -321,7 +321,9 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 			continue
 		}
 		if result.GroundingRef != nil {
-			if grounding, groundingOK := entityGroundingByRef(target.Groundings, *result.GroundingRef); groundingOK {
+			value := strings.TrimSpace(*result.GroundingRef)
+			result.GroundingRef = &value
+			if grounding, groundingOK := entityGroundingByRef(target.Groundings, value); groundingOK {
 				spanKey := assessmentSpanKey(grounding.EvidenceID, grounding.Start, grounding.End)
 				logicalKey := semanticAssessmentEntityLogicalKey(target.Name, target.Kind)
 				if previous, exists := seenEntitySpans[spanKey]; exists && previous != logicalKey {
@@ -335,9 +337,7 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 			errs = append(errs, semanticErr(field+".action", "is unsupported"))
 		}
 		if result.GroundingRef != nil {
-			value := strings.TrimSpace(*result.GroundingRef)
-			result.GroundingRef = &value
-			if _, groundingOK := entityGroundingByRef(target.Groundings, value); !groundingOK {
+			if _, groundingOK := entityGroundingByRef(target.Groundings, *result.GroundingRef); !groundingOK {
 				errs = append(errs, semanticErr(field+".grounding_ref", "is outside the submitted grounding allowlist"))
 			}
 		} else if result.Action != string(domain.EntityResolutionAmbiguous) {
@@ -735,7 +735,9 @@ func (v *OpenAIVerifier) NormalizeRemember(ctx context.Context, req RememberNorm
 			return RememberNormalizerResponse{}, err
 		}
 		var response RememberNormalizerResponse
-		if result.ReportedUsage != nil && result.ReportedUsage.CompletionTokens > int64(v.assessmentLimits.MaxOutputTokens) {
+		if result.ReportedUsage != nil && result.ReportedUsage.PromptTokens > int64(v.assessmentLimits.MaxInputTokens) {
+			validationErrors = []SemanticValidationError{semanticErr("input_tokens", "provider reported input tokens beyond the configured limit")}
+		} else if result.ReportedUsage != nil && result.ReportedUsage.CompletionTokens > int64(v.assessmentLimits.MaxOutputTokens) {
 			validationErrors = []SemanticValidationError{semanticErr("output_tokens", fmt.Sprintf("provider reported more than the allowed %d tokens", v.assessmentLimits.MaxOutputTokens))}
 		} else {
 			response, err = DecodeRememberNormalizerResponseJSON([]byte(result.Content), v.assessmentLimits)
