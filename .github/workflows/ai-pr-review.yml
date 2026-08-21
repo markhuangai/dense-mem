@@ -1,10 +1,6 @@
 name: AI Pull Request Review
 
 on:
-  pull_request_target:
-    branches:
-      - main
-    types: [opened, synchronize, reopened, ready_for_review]
   workflow_run:
     workflows:
       - CI Pull Request
@@ -22,7 +18,7 @@ permissions:
   statuses: read
 
 env:
-  REVIEW_STATUS_CONTEXT: AI PR review
+  REVIEW_STATUS_CONTEXT_PREFIX: AI PR review
   REVIEW_PROTOCOL: >-
     Before deciding, call the configured dense_mem_project_memory server's
     read-only recall_memory tool with a focused query about the affected
@@ -62,10 +58,15 @@ jobs:
   resolve:
     name: Resolve pull request
     runs-on: docker-runner
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success')
 
     outputs:
       head_sha: ${{ steps.resolve.outputs.head_sha }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
+      review_status_context: ${{ steps.resolve.outputs.review_status_context }}
       should_run: ${{ steps.resolve.outputs.should_run }}
 
     steps:
@@ -84,30 +85,32 @@ jobs:
             let pullNumber;
             let triggerHeadSha;
 
-            if (eventName === "pull_request_target") {
-              const pull = context.payload.pull_request;
-              if (!pull) {
-                throw new Error("The pull_request_target payload has no pull request.");
-              }
-              if (pull.draft) {
-                skip(`Pull request #${pull.number} is a draft.`);
-                return;
-              }
-              if (pull.user?.login?.toLowerCase() === "dependabot[bot]") {
-                skip(`Pull request #${pull.number} will use the trusted CI completion path.`);
-                return;
-              }
-              pullNumber = pull.number;
-              triggerHeadSha = pull.head?.sha;
-            } else if (eventName === "workflow_run") {
+            if (eventName === "workflow_run") {
               const workflowRun = context.payload.workflow_run;
               if (!workflowRun || workflowRun.event !== "pull_request") {
                 skip("The completed CI run was not triggered by a pull request.");
                 return;
               }
+              if (workflowRun.conclusion !== "success") {
+                skip(
+                  `The completed CI run concluded ${workflowRun.conclusion || "without a result"}.`,
+                );
+                return;
+              }
               triggerHeadSha = workflowRun.head_sha;
+              const triggerHeadRef = workflowRun.head_branch;
+              const triggerHeadRepositoryId = workflowRun.head_repository?.id;
               if (typeof triggerHeadSha !== "string") {
                 throw new Error("The workflow_run payload has no head SHA.");
+              }
+              if (typeof triggerHeadRef !== "string" || triggerHeadRef.length === 0) {
+                throw new Error("The workflow_run payload has no head branch.");
+              }
+              if (
+                !Number.isSafeInteger(triggerHeadRepositoryId) ||
+                triggerHeadRepositoryId < 1
+              ) {
+                throw new Error("The workflow_run payload has no head repository ID.");
               }
 
               const pulls = await github.paginate(github.rest.pulls.list, {
@@ -117,7 +120,12 @@ jobs:
                 base: "main",
                 per_page: 100,
               });
-              const matches = pulls.filter((pull) => pull.head.sha === triggerHeadSha);
+              const matches = pulls.filter(
+                (pull) =>
+                  pull.head.sha === triggerHeadSha &&
+                  pull.head.ref === triggerHeadRef &&
+                  pull.head.repo?.id === triggerHeadRepositoryId,
+              );
               if (matches.length === 0) {
                 skip(`No current open pull request targets main at ${triggerHeadSha}.`);
                 return;
@@ -166,6 +174,8 @@ jobs:
               return;
             }
 
+            const reviewStatusContext =
+              `${process.env.REVIEW_STATUS_CONTEXT_PREFIX} / PR #${pull.number}`;
             if (eventName === "workflow_run") {
               const statuses = await github.paginate(
                 github.rest.repos.listCommitStatusesForRef,
@@ -177,7 +187,7 @@ jobs:
                 },
               );
               const latestReviewStatus = statuses
-                .filter((status) => status.context === process.env.REVIEW_STATUS_CONTEXT)
+                .filter((status) => status.context === reviewStatusContext)
                 .sort((left, right) => right.id - left.id)[0];
               if (
                 latestReviewStatus &&
@@ -185,7 +195,7 @@ jobs:
               ) {
                 skip(
                   `Pull request #${pullNumber} already has ${latestReviewStatus.state} ` +
-                    `${process.env.REVIEW_STATUS_CONTEXT} status at this head.`,
+                    `${reviewStatusContext} status at this head.`,
                 );
                 return;
               }
@@ -193,6 +203,7 @@ jobs:
 
             core.setOutput("head_sha", pull.head.sha);
             core.setOutput("pr_number", String(pull.number));
+            core.setOutput("review_status_context", reviewStatusContext);
             core.setOutput("should_run", "true");
 
   review:
@@ -200,6 +211,8 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.should_run == 'true'
     runs-on: docker-runner
+    env:
+      REVIEW_STATUS_CONTEXT: ${{ needs.resolve.outputs.review_status_context }}
 
     concurrency:
       group: ai-pr-review-${{ github.repository }}-${{ needs.resolve.outputs.pr_number }}
@@ -257,7 +270,8 @@ jobs:
           ai-secret: ${{ secrets.LOCAL_AI_SECRET }}
           ai-auth-mode: auth-token
           model: auto
-          parallel-count: "5"
+          effort: high
+          parallel-count: "7"
           max-turns: "100"
           auto-approve: "false"
           review-prompts: |

@@ -92,7 +92,8 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   );
   assert.match(workflow, /EXPECTED_HEAD_SHA: \$\{\{ needs\.resolve\.outputs\.head_sha \}\}/);
   assert.match(workflow, /persist-credentials: false/);
-  assert.match(workflow, /parallel-count: "5"/);
+  assert.match(workflow, /effort: high/);
+  assert.match(workflow, /parallel-count: "7"/);
   assert.match(workflow, /max-turns: "100"/);
   assert.match(workflow, /auto-approve: "false"/);
   assert.match(workflow, /permission_policy: always_allow/);
@@ -102,6 +103,68 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
     /node --test tests\/uat\/ai_pr_review_policy\.test\.mjs/,
   );
   assert.match(ciCheck, /node --test tests\/uat\/ai_pr_review_policy\.test\.mjs/);
+});
+
+test("automatic AI review waits for successful current-head PR CI", async () => {
+  const workflow = await readFile(reviewWorkflowURL, "utf8");
+  const normalizedWorkflow = workflow.replace(/\s+/g, " ");
+
+  assert.doesNotMatch(workflow, /^\s+pull_request_target:/m);
+  assert.match(workflow, /^\s+workflow_run:/m);
+  assert.match(workflow, /^\s+workflow_dispatch:/m);
+  assert.match(normalizedWorkflow, /workflows: - CI Pull Request types: \[completed\]/);
+  assert.match(
+    normalizedWorkflow,
+    /github\.event_name == 'workflow_dispatch' \|\| \(github\.event\.workflow_run\.event == 'pull_request' && github\.event\.workflow_run\.conclusion == 'success'\)/,
+  );
+  assert.match(workflow, /workflowRun\.event !== "pull_request"/);
+  assert.match(workflow, /workflowRun\.conclusion !== "success"/);
+  assert.match(workflow, /const triggerHeadRef = workflowRun\.head_branch/);
+  assert.match(
+    workflow,
+    /const triggerHeadRepositoryId = workflowRun\.head_repository\?\.id/,
+  );
+  assert.match(workflow, /typeof triggerHeadRef !== "string"/);
+  assert.match(workflow, /!Number\.isSafeInteger\(triggerHeadRepositoryId\)/);
+  assert.match(
+    normalizedWorkflow,
+    /pull\.head\.sha === triggerHeadSha && pull\.head\.ref === triggerHeadRef && pull\.head\.repo\?\.id === triggerHeadRepositoryId/,
+  );
+  assert.match(
+    workflow,
+    /pull\.head\.sha !== triggerHeadSha/,
+  );
+});
+
+test("AI review status identity remains scoped to the resolved pull request", async () => {
+  const workflow = await readFile(reviewWorkflowURL, "utf8");
+  const normalizedWorkflow = workflow.replace(/\s+/g, " ");
+  const statusWrites =
+    workflow.match(/context: process\.env\.REVIEW_STATUS_CONTEXT/g) ?? [];
+
+  assert.match(workflow, /REVIEW_STATUS_CONTEXT_PREFIX: AI PR review/);
+  assert.match(
+    workflow,
+    /review_status_context: \$\{\{ steps\.resolve\.outputs\.review_status_context \}\}/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /const reviewStatusContext = `\$\{process\.env\.REVIEW_STATUS_CONTEXT_PREFIX\} \/ PR #\$\{pull\.number\}`/,
+  );
+  assert.match(workflow, /status\.context === reviewStatusContext/);
+  assert.match(
+    workflow,
+    /core\.setOutput\("review_status_context", reviewStatusContext\)/,
+  );
+  assert.match(
+    workflow,
+    /REVIEW_STATUS_CONTEXT: \$\{\{ needs\.resolve\.outputs\.review_status_context \}\}/,
+  );
+  assert.equal(statusWrites.length, 2);
+  assert.doesNotMatch(
+    workflow,
+    /status\.context === process\.env\.REVIEW_STATUS_CONTEXT/,
+  );
 });
 
 test("final review status is fenced by the live pull request head", async () => {
