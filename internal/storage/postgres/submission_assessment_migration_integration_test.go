@@ -320,6 +320,14 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 			remember: true,
 			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
 		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "awaiting_review", completedAt: timePointer(now.Add(-3 * time.Hour)),
+			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "completed", completedAt: timePointer(now.Add(-4 * time.Hour)),
+			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+		},
 	}
 	unrelated := submissionAssessmentMigrationRun{
 		ingestID: uuid.NewString(), runID: uuid.NewString(), status: "queued",
@@ -411,7 +419,11 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 				WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
 			`, teamID, fixture.runID).Scan(&runStatus))
 			assert.Equal(t, "completed", runStatus)
-			assertPlacementItemState(t, ctx, sqlDB, teamID, fixture.items[0].itemID, "queued", "pending")
+			wantItemStatus, wantItemCategory := "queued", "pending"
+			if fixture.items[0].status == "awaiting_review" {
+				wantItemStatus, wantItemCategory = "failed", "failed"
+			}
+			assertPlacementItemState(t, ctx, sqlDB, teamID, fixture.items[0].itemID, wantItemStatus, wantItemCategory)
 			continue
 		}
 		var runStatus, runError, workerID string
@@ -540,6 +552,11 @@ func TestRememberNormalizerMigrationFailsUnfinishedRunsAndRemovesHoldSchema(t *t
 		WHERE conrelid = 'placement_runs'::regclass AND conname = 'placement_runs_completion_check'
 	`).Scan(&completionConstraint))
 	assert.NotContains(t, completionConstraint, "awaiting_review")
+	var residualAwaitingRuns, residualAwaitingItems int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM placement_runs WHERE status = 'awaiting_review'`).Scan(&residualAwaitingRuns))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM placement_items WHERE status = 'awaiting_review'`).Scan(&residualAwaitingItems))
+	assert.Zero(t, residualAwaitingRuns)
+	assert.Zero(t, residualAwaitingItems)
 }
 
 type submissionAssessmentMigrationRun struct {

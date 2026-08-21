@@ -6,9 +6,10 @@
 -- RLS impact: the migration explicitly enters migration mode and clears the
 -- team/profile context. Existing placement/review policies remain authoritative;
 -- dropped hold policies and indexes are removed with the obsolete table.
--- Backfill: unfinished Remember runs/items and matching ingests are terminalized
--- as failed, assessor claims are cleared, and linked review tasks are canceled;
--- completed canonical state and unrelated review work are retained.
+-- Backfill: unfinished Remember runs/items and any residual legacy
+-- awaiting_review rows are terminalized as failed, assessor claims are
+-- cleared, and linked review tasks are canceled; completed canonical state
+-- and unrelated queued review work are retained.
 -- Backward compatibility: this is a one-way V2.5 restart boundary. Historical
 -- awaiting_review work is not resumed, and callers must resubmit the complete
 -- evidence batch with a new idempotency key after the service restarts.
@@ -196,6 +197,82 @@ BEGIN
 
 END;
 $dense_mem_fail_unfinished_remember$;
+
+-- The restart discards every legacy awaiting_review placement row. This
+-- catch-all also covers rows whose ingest predates the Remember marker and
+-- items left under an already-terminal run, so the replacement constraints
+-- cannot fail on stale queue state.
+WITH residual_runs AS MATERIALIZED (
+    SELECT team_id, placement_run_id, ingest_id
+    FROM placement_runs
+    WHERE status = 'awaiting_review'
+), residual_items AS MATERIALIZED (
+    SELECT team_id, placement_item_id
+    FROM placement_items
+    WHERE status = 'awaiting_review'
+)
+UPDATE review_tasks AS task
+SET status = 'canceled',
+    reason = 'remember_normalizer_restart',
+    resolution = jsonb_build_object('reason', 'remember_normalizer_restart'),
+    resolved_at = COALESCE(task.resolved_at, now()),
+    updated_at = now()
+WHERE task.status IN ('open', 'acknowledged')
+  AND (
+      EXISTS (
+          SELECT 1
+          FROM residual_items AS item
+          WHERE item.team_id = task.team_id
+            AND item.placement_item_id = task.placement_item_id
+      )
+      OR EXISTS (
+          SELECT 1
+          FROM residual_runs AS run
+          WHERE run.team_id = task.team_id
+            AND run.ingest_id = task.ingest_id
+      )
+  );
+
+UPDATE knowledge_ingests AS ingest
+SET status = 'failed',
+    error = 'remember normalizer restarted; resubmit the complete batch',
+    completed_at = COALESCE(ingest.completed_at, now()),
+    updated_at = now()
+WHERE EXISTS (
+    SELECT 1
+    FROM placement_runs AS run
+    WHERE run.team_id = ingest.team_id
+      AND run.ingest_id = ingest.ingest_id
+      AND run.status = 'awaiting_review'
+);
+
+UPDATE placement_items AS item
+SET status = 'failed',
+    category = 'failed',
+    assessor_attempt_id = NULL,
+    assessor_attempted_at = NULL,
+    version = version + 1,
+    result = jsonb_build_object(
+        'failure_stage', 'normalization_failed',
+        'failure_code', 'submission_requires_resubmission',
+        'retryable', true,
+        'next_action', 'resubmit_submission',
+        'reason', 'remember normalizer restarted'
+    ),
+    error = 'remember normalizer restarted; resubmit the complete batch',
+    updated_at = now()
+WHERE item.status = 'awaiting_review';
+
+UPDATE placement_runs AS run
+SET status = 'failed',
+    error = 'remember normalizer restarted; resubmit the complete batch',
+    worker_id = '',
+    lease_until = NULL,
+    assessor_attempt_id = NULL,
+    assessor_attempted_at = NULL,
+    completed_at = COALESCE(run.completed_at, now()),
+    updated_at = now()
+WHERE run.status = 'awaiting_review';
 
 -- Remember no longer creates semantic review work. The shared review_tasks
 -- table remains because correction, conflict, and Dream workflows still use

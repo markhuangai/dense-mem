@@ -257,6 +257,9 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 				advanced, err := advanceSourceRevisionInTx(ctx, tx, AdvanceSourceRevisionInput{
 					TeamID:                        input.TeamID,
 					OwnerProfileID:                input.OwnerProfileID,
+					IngestID:                      ingestID,
+					SpaceID:                       input.SpaceID,
+					SpaceGeneration:               input.SpaceGeneration,
 					SourceKey:                     item.SourceKey,
 					SourceKind:                    sourceKindForEvidence(item.SourceType),
 					Authority:                     item.Authority,

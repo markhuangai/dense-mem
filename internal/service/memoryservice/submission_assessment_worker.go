@@ -500,7 +500,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithFailure
 	failureCode := submissionFailureCode(stage, failureClass)
 	if s.normalizer != nil {
 		switch failureClass {
-		case "malformed_exhausted", "malformed_response", "validation_failed":
+		case "input_budget", "malformed_exhausted", "malformed_response", "validation_failed":
 			failureCode = SubmissionErrorNormalizationFailed
 		case verifier.ProviderFailureClassTimeout, verifier.ProviderFailureClassRateLimited,
 			verifier.ProviderFailureClassHTTPClient, verifier.ProviderFailureClassHTTPServer,
@@ -582,7 +582,10 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 		observability.RecordAssessorTerminalFailure(s.metrics, stage)
 	}
 	if err == nil && completed != nil {
-		event, destination, reasonCode := "submission_failed", "failed", string(submissionFailureCode(stage, failureClass))
+		event, destination, reasonCode := "submission_failed", "failed", string(failureCode)
+		if failureClass != "" && s.normalizer == nil {
+			reasonCode = string(submissionFailureCode(stage, failureClass))
+		}
 		if status == string(domain.SemanticReviewSuperseded) {
 			event, destination, reasonCode = "submission_superseded", "superseded", strings.TrimSpace(stage)
 		}

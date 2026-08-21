@@ -183,7 +183,7 @@ func (s *PrivateMemoryService) RequestControlErasure(ctx context.Context, spaceI
 	operation, _, err := s.repository.RequestControlErasure(
 		ctx,
 		spaceID,
-		privateMemoryServiceHash("control_erasure", key),
+		privateMemoryServiceHash("control_erasure", spaceID.String(), key),
 		privateMemoryServiceHash("control_erasure", spaceID.String(), reason, "acknowledged"),
 		reason,
 	)

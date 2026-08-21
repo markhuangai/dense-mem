@@ -354,7 +354,7 @@ func TestPrivateMemoryServiceIdempotencyScopesBindTargets(t *testing.T) {
 	firstControlScope := repo.controlScopeHash
 	_, err = svc.RequestControlErasure(ctx, spaceTwo, command)
 	require.NoError(t, err)
-	require.Equal(t, firstControlScope, repo.controlScopeHash)
+	require.NotEqual(t, firstControlScope, repo.controlScopeHash)
 }
 
 func TestPrivateMemoryServiceDelegatesAuthorizedReadsHoldsAndRetention(t *testing.T) {

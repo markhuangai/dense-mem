@@ -94,6 +94,22 @@ func TestSubmissionWorkerLogsCompletedRetryAndResubmissionFailureAfterPersistenc
 	require.Contains(t, classifiedFailureLog, `"reason_code":"assessor_response_invalid"`)
 }
 
+func TestSubmissionWorkerLogsPersistedNormalizerFailureCode(t *testing.T) {
+	logger, logs := submissionLifecycleTestLogger()
+	ledger, _, _, _, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	service.logger = logger
+	service.normalizer = submissionAssessmentWorkerNormalizerStub{}
+	scope := submissionAssessmentRunScope(*ledger.run, service.workerID)
+
+	require.NoError(t, service.completeTerminal(
+		context.Background(), scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_input",
+	))
+	require.Contains(t, logs.String(), `"msg":"submission_failed"`)
+	require.Contains(t, logs.String(), `"reason_code":"submission_requires_resubmission"`)
+	require.NotContains(t, logs.String(), `"reason_code":"submission_processing_failed"`)
+}
+
 func TestSubmissionWorkerLogsStaleSourceAsSuperseded(t *testing.T) {
 	logger, logs := submissionLifecycleTestLogger()
 	_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)

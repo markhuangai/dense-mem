@@ -84,6 +84,26 @@ func TestSubmissionAssessmentWorkerReleasesAttemptWhenNormalizerLimitMeasurement
 	assert.True(t, assessments.requeues[0].ReleaseAssessorAttempt)
 }
 
+func TestSubmissionAssessmentWorkerMapsNormalizerInputBudgetFailure(t *testing.T) {
+	_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+	worker.(*submissionAssessmentPlacementWorkerService).normalizer = submissionAssessmentWorkerNormalizerStub{
+		response: func(verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error) {
+			return verifier.RememberNormalizerResponse{}, &verifier.MalformedResponseError{
+				Provider:     "stub",
+				Message:      "normalizer conversation exceeds input token limit",
+				FailureClass: "input_budget",
+				Attempts:     4,
+			}
+		},
+	}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Len(t, assessments.completions, 1)
+	assert.Equal(t, string(SubmissionErrorNormalizationFailed), assessments.completions[0].Payload["failure_code"])
+}
+
 func TestSubmissionAssessmentWorkerExcludesAdapterFieldsFromNormalizerBudget(t *testing.T) {
 	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
 	service := worker.(*submissionAssessmentPlacementWorkerService)
