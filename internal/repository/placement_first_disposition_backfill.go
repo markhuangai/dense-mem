@@ -184,6 +184,8 @@ func appendPlacementFirstDispositionBackfillBatch(
 				ingest.ingest_id,
 				run.placement_run_id,
 				run.owner_profile_id,
+				run.space_id,
+				run.space_generation,
 				run.status AS marker_status
 			FROM knowledge_ingests AS ingest
 			JOIN placement_runs AS run
@@ -219,13 +221,15 @@ func appendPlacementFirstDispositionBackfillBatch(
 			FOR UPDATE OF run SKIP LOCKED
 		), inserted AS (
 			INSERT INTO placement_outcomes (
-				team_id, placement_run_id, owner_profile_id,
+				team_id, placement_run_id, owner_profile_id, space_id, space_generation,
 				outcome_kind, status, idempotency_key, payload
 			)
 			SELECT
 				team_id,
 				placement_run_id,
 				owner_profile_id,
+				space_id,
+				space_generation,
 				'telemetry_first_disposition',
 				CASE
 				    WHEN marker_status IN ('queued', 'guarded', 'processing') THEN 'suppressed'

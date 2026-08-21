@@ -54,15 +54,19 @@ func (r *LedgerRepositoryImpl) PurgeExpiredSubmissionQuarantinePayloads(ctx cont
 		for _, item := range candidates {
 			if err := tx.WithContext(ctx).Exec(`
 				INSERT INTO placement_outcomes (
-				    team_id, placement_run_id, owner_profile_id,
+				    team_id, placement_run_id, owner_profile_id, space_id, space_generation,
 				    outcome_kind, status, payload, created_at
-				) VALUES (
-				    ?::uuid, ?::uuid, ?::uuid,
-				    'submission_quarantine_purged', 'purged',
-				    jsonb_build_object('quarantine_payload_id', ?::text, 'purged_at', ?::timestamptz), ?
 				)
+				SELECT run.team_id, run.placement_run_id, run.owner_profile_id,
+				       run.space_id, run.space_generation,
+				       'submission_quarantine_purged', 'purged',
+				       jsonb_build_object('quarantine_payload_id', ?::text, 'purged_at', ?::timestamptz), ?
+				FROM placement_runs AS run
+				WHERE run.team_id = ?::uuid
+				  AND run.placement_run_id = ?::uuid
+				  AND run.owner_profile_id = ?::uuid
 				ON CONFLICT DO NOTHING
-			`, item.teamID, item.runID, item.ownerID, item.payloadID, now, now).Error; err != nil {
+			`, item.payloadID, now, now, item.teamID, item.runID, item.ownerID).Error; err != nil {
 				return err
 			}
 			if err := tx.WithContext(ctx).Exec(`

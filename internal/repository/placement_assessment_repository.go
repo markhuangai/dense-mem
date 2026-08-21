@@ -478,16 +478,20 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 			result := tx.WithContext(ctx).Exec(`
 				INSERT INTO placement_outcomes (
 				    team_id, placement_run_id, placement_item_id, owner_profile_id,
-				    outcome_kind, status, idempotency_key, payload
-				) VALUES (
-				    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-				    'semantic_review_expired', 'expired', ?, ?::jsonb
+				    space_id, space_generation, outcome_kind, status, idempotency_key, payload
 				)
+				SELECT run.team_id, run.placement_run_id, ?::uuid, run.owner_profile_id,
+				       run.space_id, run.space_generation,
+				       'semantic_review_expired', 'expired', ?, ?::jsonb
+				FROM placement_runs AS run
+				WHERE run.team_id = ?::uuid
+				  AND run.placement_run_id = ?::uuid
+				  AND run.owner_profile_id = ?::uuid
 				ON CONFLICT (team_id, owner_profile_id, idempotency_key)
 				WHERE idempotency_key <> ''
 				DO NOTHING
-			`, input.TeamID, task.placementRunID, task.placementItemID, task.ownerProfileID,
-				"system:semantic_review_expiry:"+task.reviewTaskID, string(payload))
+			`, task.placementItemID, "system:semantic_review_expiry:"+task.reviewTaskID, string(payload),
+				input.TeamID, task.placementRunID, task.ownerProfileID)
 			if result.Error != nil {
 				return result.Error
 			}
