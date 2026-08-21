@@ -432,9 +432,16 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 			    updated_at = ?,
 			    version = task.version + 1
 			FROM placement_items AS item
+			JOIN placement_runs AS run
+			  ON run.team_id = item.team_id
+			 AND run.placement_run_id = item.placement_run_id
+			 AND run.owner_profile_id = item.owner_profile_id
 			WHERE task.team_id = ?::uuid
 			  AND task.placement_item_id = item.placement_item_id
 			  AND item.team_id = task.team_id
+			  AND `+activeSemanticSpaceGenerationSQL("task")+`
+			  AND `+activeSemanticSpaceGenerationSQL("item")+`
+			  AND `+activeSemanticSpaceGenerationSQL("run")+`
 			  AND task.status IN ('open', 'acknowledged')
 			  AND task.expires_at IS NOT NULL
 			  AND task.expires_at <= ?
@@ -487,6 +494,7 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 				WHERE run.team_id = ?::uuid
 				  AND run.placement_run_id = ?::uuid
 				  AND run.owner_profile_id = ?::uuid
+				  AND `+activeSemanticSpaceGenerationSQL("run")+`
 				ON CONFLICT (team_id, owner_profile_id, idempotency_key)
 				WHERE idempotency_key <> ''
 				DO NOTHING
@@ -503,8 +511,18 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 			WITH eligible_items AS (
 			    SELECT DISTINCT task.placement_item_id
 			    FROM review_tasks AS task
+			    JOIN placement_items AS item
+			      ON item.team_id = task.team_id
+			     AND item.placement_item_id = task.placement_item_id
+			    JOIN placement_runs AS run
+			      ON run.team_id = item.team_id
+			     AND run.placement_run_id = item.placement_run_id
+			     AND run.owner_profile_id = item.owner_profile_id
 			    WHERE task.team_id = ?::uuid
 			      AND task.placement_item_id IS NOT NULL
+			      AND `+activeSemanticSpaceGenerationSQL("task")+`
+			      AND `+activeSemanticSpaceGenerationSQL("item")+`
+			      AND `+activeSemanticSpaceGenerationSQL("run")+`
 			      AND task.status = 'expired'
 			      AND task.expires_at IS NOT NULL
 			      AND task.expires_at <= ?
@@ -528,6 +546,7 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 			        updated_at = now()
 			WHERE item.team_id = ?::uuid
 			  AND item.status = 'awaiting_review'
+			  AND `+activeSemanticSpaceGenerationSQL("item")+`
 			  AND item.placement_item_id IN (SELECT placement_item_id FROM eligible_items)
 		    RETURNING item.placement_run_id, item.placement_item_id
 		), affected_runs AS (
@@ -541,6 +560,7 @@ func (r *LedgerRepositoryImpl) ExpirePlacementAssessmentReviews(
 			    updated_at = now()
 			WHERE run.team_id = ?::uuid
 			  AND run.status = 'awaiting_review'
+			  AND `+activeSemanticSpaceGenerationSQL("run")+`
 			  AND run.placement_run_id IN (SELECT placement_run_id FROM affected_runs)
 			  AND NOT EXISTS (
 			      SELECT 1
