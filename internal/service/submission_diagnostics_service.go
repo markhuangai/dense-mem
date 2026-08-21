@@ -208,7 +208,11 @@ func submissionDiagnosticSummary(record repository.SubmissionDiagnosticRecord) S
 
 const submissionSourceSummaryMaxRunes = 256
 
-var submissionSourceCredentialPattern = regexp.MustCompile(`(?i)authorization\s*:\s*(?:[^\s]+\s+)?[^\s]+|authorization\s*=\s*(?:[^\s]+\s+)?[^\s]+|bearer\s+[^\s]+|cookie\s*:\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|((?:access[_-]?token|api[_-]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token)=)[^&\s]+`)
+var (
+	submissionSourceURLPattern         = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s<>"']+`)
+	submissionSourceCredentialPattern  = regexp.MustCompile(`(?i)authorization\s*:\s*(?:[^\s]+\s+)?[^\s]+|authorization\s*=\s*(?:[^\s]+\s+)?[^\s]+|bearer\s+[^\s]+|cookie\s*:\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|((?:access[_-]?token|api[_-]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token)=)[^&\s]+`)
+	submissionSourceURLUserinfoPattern = regexp.MustCompile(`(?i)^([a-z][a-z0-9+.-]*://)[^/@\s]+@`)
+)
 
 type boundedSubmissionText struct {
 	Value     string
@@ -235,16 +239,7 @@ func sanitizeSubmissionSourceSummary(value string) string {
 	if value == "" {
 		return ""
 	}
-	if parsed, err := url.Parse(value); err == nil && parsed.Scheme != "" && strings.Contains(value, "://") {
-		parsed.User = nil
-		parsed.RawQuery = ""
-		parsed.ForceQuery = false
-		parsed.Fragment = ""
-		parsed.RawFragment = ""
-		if safe := parsed.String(); safe != "" {
-			return safe
-		}
-	}
+	value = submissionSourceURLPattern.ReplaceAllStringFunc(value, sanitizeSubmissionSourceURLToken)
 	return submissionSourceCredentialPattern.ReplaceAllStringFunc(value, func(match string) string {
 		lowerMatch := strings.ToLower(strings.TrimSpace(match))
 		if strings.HasPrefix(lowerMatch, "authorization") {
@@ -261,6 +256,22 @@ func sanitizeSubmissionSourceSummary(value string) string {
 		}
 		return match[:separator+1] + "[REDACTED]"
 	})
+}
+
+func sanitizeSubmissionSourceURLToken(value string) string {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return submissionSourceURLUserinfoPattern.ReplaceAllString(value, `${1}[REDACTED]@`)
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	parsed.RawFragment = ""
+	if safe := parsed.String(); safe != "" {
+		return safe
+	}
+	return value
 }
 
 func projectSubmissionOperatorDiagnostics(values []repository.SubmissionDiagnosticOperatorDiagnostic) []SubmissionOperatorDiagnostic {

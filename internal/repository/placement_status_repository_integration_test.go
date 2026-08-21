@@ -144,6 +144,42 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
 		`, teamA, failed.IngestID).Error
 	}))
+	duplicateAt := time.Date(2026, time.August, 18, 1, 0, 0, 0, time.UTC)
+	distinctAt := duplicateAt.Add(-time.Minute)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO placement_outcomes (
+			    team_id, placement_run_id, owner_profile_id,
+			    outcome_kind, status, idempotency_key, payload, created_at
+			)
+			VALUES (
+			    ?::uuid, ?::uuid, ?::uuid,
+			    'submission_assessment_terminal', 'failed', '',
+			    jsonb_build_object(
+			        'failure_reason_code', 'assessor_response_invalid',
+			        'failure_stage', 'assessment',
+			        'failure_class', 'validation_failed'
+			    ), ?
+			)
+		`, teamA, failed.PlacementRunID, ownerA, distinctAt).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO placement_outcomes (
+			    team_id, placement_run_id, owner_profile_id,
+			    outcome_kind, status, idempotency_key, payload, created_at
+			)
+			SELECT ?::uuid, ?::uuid, ?::uuid,
+			       'submission_assessment_attempt', 'retryable', '',
+			       jsonb_build_object(
+			           'failure_reason_code', 'assessor_provider_failed',
+			           'failure_stage', 'assessment',
+			           'failure_class', 'timeout',
+			           'provider_response', 'must-not-cross-diagnostics-boundary'
+			       ), ?
+			FROM generate_series(1, 201)
+		`, teamA, failed.PlacementRunID, ownerA, duplicateAt).Error
+	}))
 
 	all, err := repo.ListSubmissionDiagnostics(ctx, SubmissionDiagnosticFilter{Limit: 10})
 	require.NoError(t, err)
@@ -173,6 +209,10 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 	require.Len(t, detail.Placement.Items, 1)
 	assert.NotContains(t, detail.Placement.Items[0].Result, "provider_response")
 	assert.Equal(t, "assessment", detail.Placement.Items[0].Result["failure_stage"])
+	assert.Len(t, detail.OperatorDiagnostics, 2)
+	assert.Equal(t, "assessor_response_invalid", detail.OperatorDiagnostics[0].Payload["failure_reason_code"])
+	assert.Equal(t, "assessor_provider_failed", detail.OperatorDiagnostics[1].Payload["failure_reason_code"])
+	assert.NotContains(t, detail.OperatorDiagnostics[1].Payload, "provider_response")
 
 	_, err = repo.GetSubmissionDiagnostic(ctx, teamC, failed.IngestID)
 	require.ErrorIs(t, err, ErrSubmissionDiagnosticNotFound)

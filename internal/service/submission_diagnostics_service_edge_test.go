@@ -132,6 +132,8 @@ func TestSubmissionDiagnosticSummaryNormalizesSourceText(t *testing.T) {
 	require.False(t, trimmed.Truncated)
 	signedURL := boundedSubmissionSourceSummary("https://memory.example.test/notes?X-Amz-Credential=operator&X-Amz-Signature=secret")
 	require.Equal(t, "https://memory.example.test/notes", signedURL.Value)
+	embeddedCredentialURL := boundedSubmissionSourceSummary("Imported from https://operator:supersecret@example.test/notes")
+	require.Equal(t, "Imported from https://example.test/notes", embeddedCredentialURL.Value)
 	credentialLabel := boundedSubmissionSourceSummary("source token=opaque-secret")
 	require.Equal(t, "source token=[REDACTED]", credentialLabel.Value)
 	credentialKey := boundedSubmissionSourceSummary("source credential=opaque-secret")

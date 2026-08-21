@@ -384,15 +384,29 @@ func loadSubmissionDiagnosticOutcomes(
 	record *SubmissionDiagnosticRecord,
 ) error {
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT outcome_id::text, COALESCE(placement_item_id::text, ''), outcome_kind, status,
-		       created_at, `+submissionDiagnosticOperatorPayload("payload")+`
-		FROM (
-			SELECT outcome_id, placement_item_id, outcome_kind, status, created_at, payload
+		WITH projected_outcomes AS (
+			SELECT outcome_id, placement_item_id, outcome_kind, status, created_at,
+			       `+submissionDiagnosticOperatorPayload("payload")+` AS operator_payload
 			FROM placement_outcomes
 			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+		), diagnostic_outcomes AS (
+			SELECT outcome_id, placement_item_id, outcome_kind, status, created_at, operator_payload
+			FROM projected_outcomes
+			WHERE operator_payload <> '{}'::jsonb
+		), deduplicated_outcomes AS (
+			SELECT DISTINCT ON (created_at, outcome_kind, status, operator_payload)
+			       outcome_id, placement_item_id, outcome_kind, status, created_at, operator_payload
+			FROM diagnostic_outcomes
+			ORDER BY created_at DESC, outcome_kind ASC, status ASC, operator_payload ASC, outcome_id DESC
+		), bounded_outcomes AS (
+			SELECT outcome_id, placement_item_id, outcome_kind, status, created_at, operator_payload
+			FROM deduplicated_outcomes
 			ORDER BY created_at DESC, outcome_id DESC
 			LIMIT `+fmt.Sprint(submissionDiagnosticOutcomeLimit)+`
-		) AS bounded_outcomes
+		)
+		SELECT outcome_id::text, COALESCE(placement_item_id::text, ''), outcome_kind, status,
+		       created_at, operator_payload
+		FROM bounded_outcomes
 		ORDER BY created_at ASC, outcome_id ASC
 	`, teamID, placementRunID).Rows()
 	if err != nil {
