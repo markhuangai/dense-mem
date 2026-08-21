@@ -210,7 +210,7 @@ const submissionSourceSummaryMaxRunes = 256
 
 var (
 	submissionSourceURLPattern         = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s<>"']+`)
-	submissionSourceCredentialPattern  = regexp.MustCompile(`(?i)authorization\s*:\s*(?:[^\s]+\s+)?(?:[A-Za-z][A-Za-z0-9_-]*\s*=\s*(?:"[^"]*"|[^,\s]+)|[^,\s]+)(?:\s*,\s*[A-Za-z][A-Za-z0-9_-]*\s*=\s*(?:"[^"]*"|[^,\s]+))*|authorization\s*=\s*(?:[^\s]+\s+)?[^\s]+|bearer\s+[^\s]+|cookie\s*:\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|cookie\s*=\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|(?:x[-_]?api[-_]?key|api[-_]?key|apikey)\s*:\s*[^;,\s]+|((?:access[_-]?token|api[_-]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token)=)[^&\s]+`)
+	submissionSourceCredentialPattern  = regexp.MustCompile(`(?i)authorization\s*:\s*(?:[^\s]+\s+)?(?:[A-Za-z][A-Za-z0-9_-]*\s*=\s*(?:"[^"]*"|[^,\s]+)|[^,\s]+)(?:\s*,\s*[A-Za-z][A-Za-z0-9_-]*\s*=\s*(?:"[^"]*"|[^,\s]+))*|authorization\s*=\s*(?:[^\s]+\s+)?[^\s]+|bearer\s+[^\s]+|cookie\s*:\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|cookie\s*=\s*[^;\s]+(?:\s*;\s*[^;\s]+)*|(?:x[-_]?api[-_]?key|api[-_]?key|apikey)\s*:\s*[^;,\s]+|((?:access[_-]?token|api[-_]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token)\s*=\s*)[^&\s]+|((?:access[_-]?token|api[-_]?key|apikey|authorization|password|passwd|secret|credential|signature|sig|token)\s*:\s*)[^;,\r\n]+`)
 	submissionSourceURLUserinfoPattern = regexp.MustCompile(`(?i)^([a-z][a-z0-9+.-]*://)[^/@\s]+@`)
 )
 
@@ -260,6 +260,9 @@ func sanitizeSubmissionSourceSummary(value string) string {
 		}
 		separator := strings.IndexByte(match, '=')
 		if separator < 0 {
+			if colon >= 0 {
+				return match[:colon+1] + " [REDACTED]"
+			}
 			return "[REDACTED]"
 		}
 		return match[:separator+1] + "[REDACTED]"
