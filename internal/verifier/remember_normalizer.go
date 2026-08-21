@@ -270,6 +270,7 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 		errs = append(errs, semanticErr("relationship_results", fmt.Sprintf("must contain at most %d entries", limits.MaxRelationshipResults)))
 	}
 	evidenceByID := semanticEvidenceByID(req.Evidence)
+	seenSecuritySignals := make(map[string]struct{}, len(response.SecuritySignals))
 	for index := range response.SecuritySignals {
 		signal := &response.SecuritySignals[index]
 		signal.EvidenceID, signal.Kind = strings.TrimSpace(signal.EvidenceID), strings.TrimSpace(signal.Kind)
@@ -284,6 +285,11 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 				errs = append(errs, semanticErr(fmt.Sprintf("security_signals[%d]", index), "contains invalid boundary references"))
 			} else {
 				signal.Start, signal.End = start, end
+				key := fmt.Sprintf("%s:%s:%d:%d", signal.EvidenceID, signal.Kind, signal.Start, signal.End)
+				if _, exists := seenSecuritySignals[key]; exists {
+					errs = append(errs, semanticErr(fmt.Sprintf("security_signals[%d]", index), "is duplicated"))
+				}
+				seenSecuritySignals[key] = struct{}{}
 				quote, quoteErr := SemanticEvidenceSpan(evidence.Content, start, end)
 				if quoteErr != nil || !rememberNormalizerSecuritySignalSpanMatchesKind(signal.Kind, quote) {
 					errs = append(errs, semanticErr(fmt.Sprintf("security_signals[%d].span", index), "does not match deterministic security policy"))
@@ -380,8 +386,11 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 			errs = append(errs, semanticErr(field, "does not preserve the submitted subject, polarity, or modality"))
 		}
 		allowedEvidence := stringSet(target.EvidenceIDs)
-		if !normalizerRangeValid(&result.PredicateRange, evidenceByID, allowedEvidence, field+".predicate_range") {
+		predicateRangeValid := normalizerRangeValid(&result.PredicateRange, evidenceByID, allowedEvidence, field+".predicate_range")
+		if !predicateRangeValid {
 			errs = append(errs, semanticErr(field+".predicate_range", "must use an exact submitted boundary range"))
+		} else if quote, quoteErr := SemanticEvidenceSpan(evidenceByID[result.PredicateRange.EvidenceID].Content, result.PredicateRange.Start, result.PredicateRange.End); quoteErr != nil || !assessmentBoundedRequiredString(strings.TrimSpace(quote), 256) {
+			errs = append(errs, semanticErr(field+".predicate_range", "must select a predicate span bounded to 256 characters"))
 		}
 		seenSupportRanges := make(map[string]struct{}, len(result.SupportRanges))
 		for spanIndex := range result.SupportRanges {

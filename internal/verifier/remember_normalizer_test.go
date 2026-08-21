@@ -435,10 +435,34 @@ func TestPrepareRememberNormalizerResponseValidatesSecuritySignalSpans(t *testin
 	_, errs := PrepareRememberNormalizerResponse(request, response, limits)
 	require.Empty(t, errs)
 
+	response.SecuritySignals = append(response.SecuritySignals, response.SecuritySignals[0])
+	_, errs = PrepareRememberNormalizerResponse(request, response, limits)
+	require.Contains(t, semanticAssessmentJoinedErrors(errs), "security_signals[1]: is duplicated")
+	response.SecuritySignals = response.SecuritySignals[:1]
+
 	response.SecuritySignals[0].StartRef, _ = SemanticAssessmentBoundaryRef(evidence, 0)
 	response.SecuritySignals[0].EndRef, _ = SemanticAssessmentBoundaryRef(evidence, 4)
 	_, errs = PrepareRememberNormalizerResponse(request, response, limits)
 	require.Contains(t, semanticAssessmentJoinedErrors(errs), "does not match deterministic security policy")
+}
+
+func TestPrepareRememberNormalizerResponseRejectsOverlongPredicateQuote(t *testing.T) {
+	request, limits := validRememberNormalizerRequest(t)
+	longEvidence := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{
+		EvidenceID: "ev-long",
+		Content:    strings.Repeat("predicate ", 26),
+	})
+	request.Evidence = append(request.Evidence, longEvidence)
+	request.SubmissionContract.Relationships[0].EvidenceIDs = append(request.SubmissionContract.Relationships[0].EvidenceIDs, longEvidence.EvidenceID)
+	startRef, startOK := SemanticAssessmentBoundaryRef(longEvidence, 0)
+	endRef, endOK := SemanticAssessmentBoundaryRef(longEvidence, len([]rune(longEvidence.Content)))
+	require.True(t, startOK && endOK)
+	response := validRememberNormalizerResponse(t, request)
+	response.RelationshipResults[0].PredicateRange = RememberNormalizerRange{EvidenceID: longEvidence.EvidenceID, StartRef: startRef, EndRef: endRef}
+	response.RelationshipResults[0].SupportRanges = []RememberNormalizerRange{{EvidenceID: longEvidence.EvidenceID, StartRef: startRef, EndRef: endRef}}
+
+	_, errs := PrepareRememberNormalizerResponse(request, response, limits)
+	require.Contains(t, semanticAssessmentJoinedErrors(errs), "predicate span bounded to 256 characters")
 }
 
 func TestPrepareRememberNormalizerResponseEnforcesBoundsAndValueContainment(t *testing.T) {
