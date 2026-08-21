@@ -305,10 +305,14 @@ func insertPlacementEntity(
 		return "", err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		INSERT INTO entity_records (team_id, entity_kind, identity_context, metadata)
-		VALUES (?::uuid, ?, ?::jsonb, '{}'::jsonb)
+		INSERT INTO entity_records (team_id, entity_kind, identity_context, metadata, space_id, space_generation)
+		SELECT ?::uuid, ?, ?::jsonb, '{}'::jsonb, ingest.space_id, ingest.space_generation
+		FROM knowledge_ingests AS ingest
+		WHERE ingest.team_id = ?::uuid
+		  AND ingest.ingest_id = ?::uuid
+		  AND ingest.owner_profile_id = ?::uuid
 		RETURNING entity_id::text
-	`, commit.TeamID, input.EntityKind, string(identityContext)).Rows()
+	`, commit.TeamID, input.EntityKind, string(identityContext), commit.TeamID, commit.IngestID, commit.OwnerProfileID).Rows()
 	if err != nil {
 		return "", err
 	}

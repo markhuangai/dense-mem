@@ -321,8 +321,40 @@ func TestPrivateMemoryServiceCredentialDeletionReasonBindsRequestHash(t *testing
 	command.ReasonCode = "privacy_request"
 	_, err = svc.DeleteSSOCredential(ctx, teamID, identityID, credentialID, command, PrivateMemoryAuditContext{})
 	require.ErrorIs(t, err, repository.ErrPrivateMemoryIdempotency)
-	require.Equal(t, repo.disableRequest.IdempotencyScopeHash, privateMemoryServiceHash("owner_sso_credential_delete", teamID.String(), identityID.String(), command.IdempotencyKey))
+	require.Equal(t, repo.disableRequest.IdempotencyScopeHash, privateMemoryServiceHash("owner_sso_credential_delete", teamID.String(), identityID.String(), credentialID.String(), command.IdempotencyKey))
 	require.NotEqual(t, firstHash, repo.disableRequest.RequestHash)
+}
+
+func TestPrivateMemoryServiceIdempotencyScopesBindTargets(t *testing.T) {
+	ctx := context.Background()
+	teamID := uuid.New()
+	identityID := uuid.New()
+	credentialOne := uuid.New()
+	credentialTwo := uuid.New()
+	spaceOne := uuid.New()
+	spaceTwo := uuid.New()
+	repo := &privateMemoryRepositoryStub{
+		operation:            &domain.PrivateMemoryErasureOperation{ID: uuid.New()},
+		disableRequestHashes: make(map[string]string),
+	}
+	svc := NewPrivateMemoryService(PrivateMemoryServiceConfig{
+		Repository: repo, AuditService: &privateMemoryAuditStub{},
+	})
+	command := PrivateMemoryCommand{AcknowledgeIrreversible: true, IdempotencyKey: "same-target-key", ReasonCode: "credential_deleted"}
+	_, err := svc.DeleteSSOCredential(ctx, teamID, identityID, credentialOne, command, PrivateMemoryAuditContext{})
+	require.NoError(t, err)
+	firstScope := repo.disableRequest.IdempotencyScopeHash
+	_, err = svc.DeleteSSOCredential(ctx, teamID, identityID, credentialTwo, command, PrivateMemoryAuditContext{})
+	require.NoError(t, err)
+	require.NotEqual(t, firstScope, repo.disableRequest.IdempotencyScopeHash)
+
+	command.ReasonCode = "privacy_request"
+	_, err = svc.RequestControlErasure(ctx, spaceOne, command)
+	require.NoError(t, err)
+	firstControlScope := repo.controlScopeHash
+	_, err = svc.RequestControlErasure(ctx, spaceTwo, command)
+	require.NoError(t, err)
+	require.NotEqual(t, firstControlScope, repo.controlScopeHash)
 }
 
 func TestPrivateMemoryServiceDelegatesAuthorizedReadsHoldsAndRetention(t *testing.T) {

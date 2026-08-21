@@ -400,10 +400,15 @@ func insertSubmissionAssessment(
 		    team_id, assessment_scope, placement_run_id, ingest_id, owner_profile_id,
 		    request_id, assessor_contract_version, model, tokenizer,
 		    input_tokens, output_tokens, candidate_context_tokens,
-		    candidate_context_truncated, normalized_response, response_hash, validated_at
+		    candidate_context_truncated, normalized_response, response_hash, validated_at,
+		    space_id, space_generation
 		) VALUES (
 		    ?::uuid, 'submission', ?::uuid, ?::uuid, ?::uuid,
 		    ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?
+		    ,(SELECT run.space_id FROM placement_runs AS run
+		      WHERE run.team_id = ?::uuid AND run.placement_run_id = ?::uuid),
+		     (SELECT run.space_generation FROM placement_runs AS run
+		      WHERE run.team_id = ?::uuid AND run.placement_run_id = ?::uuid)
 		)
 		ON CONFLICT (team_id, placement_run_id) WHERE assessment_scope = 'submission' DO NOTHING
 		RETURNING team_id::text, assessment_id::text, owner_profile_id::text,
@@ -416,7 +421,7 @@ func insertSubmissionAssessment(
 		input.RequestID, input.AssessorContractVersion, input.Model, input.Tokenizer,
 		input.InputTokens, input.OutputTokens, input.CandidateContextTokens,
 		input.CandidateContextTruncated, string(input.NormalizedResponse), input.ResponseHash,
-		input.ValidatedAt).Rows()
+		input.ValidatedAt, input.TeamID, input.PlacementRunID, input.TeamID, input.PlacementRunID).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -670,22 +675,29 @@ func storeSubmissionQuarantinePayload(ctx context.Context, tx *gorm.DB, scope Su
 	if err := tx.WithContext(ctx).Exec(`
 		INSERT INTO submission_quarantine_payloads (
 		    team_id, placement_run_id, ingest_id, owner_profile_id,
-		    proposal, evidence, assessor_response, payload_sha256,
+		    proposal, evidence, assessor_response, payload_sha256, space_id, space_generation,
 		    quarantined_at, expires_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-		    ?::jsonb, ?::jsonb, ?::jsonb, ?, now(), now() + interval '24 hours'
+		    ?::jsonb, ?::jsonb, ?::jsonb, ?,
+		    (SELECT run.space_id FROM placement_runs AS run
+		     WHERE run.team_id = ?::uuid AND run.placement_run_id = ?::uuid),
+		    (SELECT run.space_generation FROM placement_runs AS run
+		     WHERE run.team_id = ?::uuid AND run.placement_run_id = ?::uuid),
+		    now(), now() + interval '24 hours'
 		)
 	`, scope.TeamID, scope.PlacementRunID, scope.IngestID, scope.OwnerProfileID,
-		string(proposal), string(evidence), string(assessorResponse), hex.EncodeToString(sum[:])).Error; err != nil {
+		string(proposal), string(evidence), string(assessorResponse), hex.EncodeToString(sum[:]),
+		scope.TeamID, scope.PlacementRunID, scope.TeamID, scope.PlacementRunID).Error; err != nil {
 		return err
 	}
 	if err := tx.WithContext(ctx).Exec(`
 		INSERT INTO submission_quarantine_tombstones (
-		    team_id, fragment_id, ingest_id, owner_profile_id, content_hash
+		    team_id, fragment_id, ingest_id, owner_profile_id, content_hash, space_id, space_generation
 		)
 		SELECT fragment.team_id, fragment.fragment_id, fragment.ingest_id,
-		       fragment.owner_profile_id, fragment.content_hash
+		       fragment.owner_profile_id, fragment.content_hash,
+		       fragment.space_id, fragment.space_generation
 		FROM evidence_fragments AS fragment
 		WHERE fragment.team_id = ?::uuid
 		  AND fragment.ingest_id = ?::uuid

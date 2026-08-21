@@ -149,7 +149,7 @@ func (s *PrivateMemoryService) DeleteSSOCredential(ctx context.Context, teamID, 
 	}
 	operation, _, err := s.repository.DisableSSOCredential(ctx, repository.PrivateMemoryErasureRequest{
 		TeamID: teamID, OwnerID: identityID, CredentialID: credentialID,
-		IdempotencyScopeHash: privateMemoryServiceHash("owner_sso_credential_delete", teamID.String(), identityID.String(), key),
+		IdempotencyScopeHash: privateMemoryServiceHash("owner_sso_credential_delete", teamID.String(), identityID.String(), credentialID.String(), key),
 		RequestHash:          privateMemoryServiceHash(string(domain.PrivateMemoryRetireCredential), teamID.String(), identityID.String(), credentialID.String(), reason, "acknowledged"),
 		ReasonCode:           reason,
 		CredentialRevocationAudit: &repository.PrivateMemoryCredentialRevocationAudit{
@@ -183,7 +183,7 @@ func (s *PrivateMemoryService) RequestControlErasure(ctx context.Context, spaceI
 	operation, _, err := s.repository.RequestControlErasure(
 		ctx,
 		spaceID,
-		privateMemoryServiceHash("control_erasure", key),
+		privateMemoryServiceHash("control_erasure", spaceID.String(), key),
 		privateMemoryServiceHash("control_erasure", spaceID.String(), reason, "acknowledged"),
 		reason,
 	)

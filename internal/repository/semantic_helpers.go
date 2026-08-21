@@ -423,14 +423,18 @@ func insertEntityName(ctx context.Context, tx *gorm.DB, input AddEntityNameInput
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO entity_names (
 		    team_id, entity_id, owner_profile_id, display_name, normalized_name,
-		    name_kind, locale, metadata
+		    name_kind, locale, metadata, space_id, space_generation
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb
+		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb,
+		    (SELECT entity.space_id FROM entity_records AS entity
+		     WHERE entity.team_id = ?::uuid AND entity.entity_id = ?::uuid),
+		    (SELECT entity.space_generation FROM entity_records AS entity
+		     WHERE entity.team_id = ?::uuid AND entity.entity_id = ?::uuid)
 		)
 		RETURNING entity_name_id::text
 	`, input.TeamID, input.EntityID, input.OwnerProfileID, input.DisplayName,
 		normalizeName(input.DisplayName), input.NameKind, input.Locale,
-		string(metadata)).Rows()
+		string(metadata), input.TeamID, input.EntityID, input.TeamID, input.EntityID).Rows()
 	if err != nil {
 		return "", err
 	}

@@ -34,7 +34,7 @@ const (
 
 const relationshipCorrectionSubmissionSelectSQL = `
 	SELECT submission.team_id::text, submission.submission_id::text,
-	       submission.owner_profile_id::text, submission.relationship_id::text,
+	       submission.owner_profile_id::text, submission.space_id::text, submission.relationship_id::text,
 	       submission.expected_version, submission.request_hash,
 	       submission.patch, submission.supports, submission.reason,
 	       submission.idempotency_key, submission.confirmation_idempotency_key,
@@ -80,6 +80,7 @@ type relationshipCorrectionSubmissionRow struct {
 	TeamID                  string
 	SubmissionID            string
 	OwnerProfileID          string
+	SpaceID                 string
 	RelationshipID          string
 	ExpectedVersion         int
 	RequestHash             string
@@ -695,7 +696,7 @@ func scanRelationshipCorrectionSubmission(row *sql.Row) (*relationshipCorrection
 	var patchJSON, supportsJSON, candidatesJSON, selectionJSON []byte
 	var expiresAt sql.NullTime
 	if err := row.Scan(
-		&loaded.TeamID, &loaded.SubmissionID, &loaded.OwnerProfileID, &loaded.RelationshipID,
+		&loaded.TeamID, &loaded.SubmissionID, &loaded.OwnerProfileID, &loaded.SpaceID, &loaded.RelationshipID,
 		&loaded.ExpectedVersion, &loaded.RequestHash, &patchJSON, &supportsJSON, &loaded.Reason,
 		&loaded.IdempotencyKey, &loaded.ConfirmationIdempotency, &loaded.ConfirmationRequestHash,
 		&loaded.ProcessingState, &loaded.ConfirmationRound, &loaded.ConfirmationToken, &expiresAt,

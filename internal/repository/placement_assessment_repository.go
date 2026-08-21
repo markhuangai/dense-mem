@@ -730,9 +730,14 @@ func insertPlacementAssessment(
 		    team_id, placement_item_id, claim_key, owner_profile_id, request_id,
 		    assessor_contract_version, model, tokenizer,
 		    input_tokens, output_tokens, candidate_context_tokens,
-		    candidate_context_truncated, normalized_response, response_hash, validated_at
+		    candidate_context_truncated, normalized_response, response_hash, validated_at,
+		    space_id, space_generation
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?
+		    ,(SELECT item.space_id FROM placement_items AS item
+		      WHERE item.team_id = ?::uuid AND item.placement_item_id = ?::uuid),
+		     (SELECT item.space_generation FROM placement_items AS item
+		      WHERE item.team_id = ?::uuid AND item.placement_item_id = ?::uuid)
 		)
 		ON CONFLICT DO NOTHING
 		RETURNING team_id::text, assessment_id::text, owner_profile_id::text,
@@ -745,7 +750,7 @@ func insertPlacementAssessment(
 		input.AssessorContractVersion, input.Model, input.Tokenizer,
 		input.InputTokens, input.OutputTokens, input.CandidateContextTokens,
 		input.CandidateContextTruncated, string(input.NormalizedResponse), input.ResponseHash,
-		input.ValidatedAt).Rows()
+		input.ValidatedAt, input.TeamID, input.PlacementItemID, input.TeamID, input.PlacementItemID).Rows()
 	if err != nil {
 		return nil, err
 	}

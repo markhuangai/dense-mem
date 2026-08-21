@@ -830,10 +830,12 @@ func createRelationshipCorrectionEntity(
 	}
 	var entityID string
 	if err := tx.WithContext(ctx).Raw(`
-		INSERT INTO entity_records (team_id, entity_kind, identity_context, metadata)
-		VALUES (?::uuid, ?, ?::jsonb, ?::jsonb)
+		INSERT INTO entity_records (team_id, entity_kind, identity_context, metadata, space_id, space_generation)
+		VALUES (?::uuid, ?, ?::jsonb, ?::jsonb,
+		        ?::uuid,
+		        (SELECT generation FROM memory_spaces WHERE id = ?::uuid AND team_id = ?::uuid))
 		RETURNING entity_id::text
-	`, row.TeamID, patch.EntityKind, string(identityContext), string(metadata)).Row().Scan(&entityID); err != nil {
+	`, row.TeamID, patch.EntityKind, string(identityContext), string(metadata), row.SpaceID, row.SpaceID, row.TeamID).Row().Scan(&entityID); err != nil {
 		return "", err
 	}
 	if _, err := insertEntityName(ctx, tx, AddEntityNameInput{

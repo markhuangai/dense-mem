@@ -202,7 +202,6 @@ func NewLedgerRepositoryWithEmbeddingJobMaxAttempts(
 ) *LedgerRepositoryImpl {
 	return NewLedgerRepositoryWithRuntimeConfig(db, rls, maxAttempts, ConflictRuntimeConfig{})
 }
-
 func NewLedgerRepositoryWithRuntimeConfig(
 	db *gorm.DB,
 	rls *postgres.RLS,
@@ -218,7 +217,6 @@ func NewLedgerRepositoryWithRuntimeConfig(
 		conflictReviewTimezone:  conflictConfig.Timezone,
 	}
 }
-
 func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIngestInput) (*CreateIngestResult, error) {
 	input = normalizeCreateIngestInput(input)
 	if err := validateCreateIngestInput(input); err != nil {
@@ -271,6 +269,7 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 				advanced, err := advanceSourceRevisionInTx(ctx, tx, AdvanceSourceRevisionInput{
 					TeamID:                        input.TeamID,
 					OwnerProfileID:                input.OwnerProfileID,
+					IngestID:                      ingestID,
 					SourceKey:                     item.SourceKey,
 					SourceKind:                    sourceKindForEvidence(item.SourceType),
 					Authority:                     item.Authority,
