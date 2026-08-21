@@ -142,6 +142,8 @@ func TestSubmissionDiagnosticSummaryNormalizesSourceText(t *testing.T) {
 	require.Equal(t, "request Cookie: session=[REDACTED]", cookieHeader.Value)
 	cookieHeaderMultiple := boundedSubmissionSourceSummary("request Cookie: session=opaque; refresh=secret")
 	require.Equal(t, "request Cookie: session=[REDACTED]", cookieHeaderMultiple.Value)
+	cookieEquals := boundedSubmissionSourceSummary("browser Cookie=session=opaque-secret; refresh=secret")
+	require.Equal(t, "browser Cookie=[REDACTED]", cookieEquals.Value)
 	authorizationHeader := boundedSubmissionSourceSummary("source Authorization: Basic dXNlcjpwYXNz")
 	require.Equal(t, "source Authorization: [REDACTED]", authorizationHeader.Value)
 	authorizationToken := boundedSubmissionSourceSummary("source Authorization: opaque-secret")
