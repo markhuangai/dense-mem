@@ -566,6 +566,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 ) error {
 	payload := semanticAssessmentFailurePayload(stage, false, firstError(failureCause))
 	payload["assessor_contract"] = domain.ContractVersion
+	failureClass, _ := payload["failure_class"].(string)
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,
 		OutcomeKind:                  "submission_assessment_terminal",
@@ -583,7 +584,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 		observability.RecordAssessorTerminalFailure(s.metrics, stage)
 	}
 	if err == nil && completed != nil {
-		s.logLifecycle(scope, "submission_failed", "failed", stage, string(submissionFailureCode(stage, "")), nil)
+		s.logLifecycle(scope, "submission_failed", "failed", stage, string(submissionFailureCode(stage, failureClass)), nil)
 	}
 	return err
 }

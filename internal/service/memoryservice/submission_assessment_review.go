@@ -53,8 +53,10 @@ func (s *submissionAssessmentPlacementWorkerService) completeReview(
 			"message":          issue.Message,
 		})
 	}
-	payload := semanticAssessmentFailurePayload(stage, false, nil)
-	payload["assessor_contract"] = domain.ContractVersion
+	payload := map[string]any{
+		"assessor_contract": domain.ContractVersion,
+		"review_stage":      boundedPlacementFailureStage(stage),
+	}
 	payload["hold_issues"] = holdIssues
 	payload["hold_issues_truncated"] = truncated
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{

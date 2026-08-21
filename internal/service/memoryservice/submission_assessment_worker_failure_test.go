@@ -93,7 +93,13 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 			}
 			require.Len(t, assessments.completions, 1)
 			assert.Equal(t, test.wantStatus, assessments.completions[0].Status)
-			assert.Equal(t, test.wantStage, assessments.completions[0].Payload["failure_stage"])
+			if test.wantStatus == string(domain.SemanticReviewReviewRequired) {
+				assert.Equal(t, test.wantStage, assessments.completions[0].Payload["review_stage"])
+				assert.NotContains(t, assessments.completions[0].Payload, "failure_reason_code")
+				assert.NotContains(t, assessments.completions[0].Payload, "failure_class")
+			} else {
+				assert.Equal(t, test.wantStage, assessments.completions[0].Payload["failure_stage"])
+			}
 			if test.wantIssue != "" {
 				issues, ok := assessments.completions[0].Payload["hold_issues"].([]map[string]any)
 				require.True(t, ok)

@@ -83,6 +83,15 @@ func TestSubmissionWorkerLogsCompletedRetryAndHeldTransitionsAfterPersistence(t 
 	require.Contains(t, failureLog, `"msg":"submission_failed"`)
 	require.Contains(t, failureLog, `"reason_code":"assessor_unavailable"`)
 	require.NotContains(t, failureLog, "timeout")
+
+	logs.Reset()
+	preflight := deterministicSemanticAssessmentPreflightError("assessment_input", "input exceeds the configured token limit")
+	require.NoError(t, service.completeTerminal(
+		context.Background(), scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_input", preflight,
+	))
+	classifiedFailureLog := logs.String()
+	require.Contains(t, classifiedFailureLog, `"msg":"submission_failed"`)
+	require.Contains(t, classifiedFailureLog, `"reason_code":"assessor_response_invalid"`)
 }
 
 func TestSubmissionWorkerDoesNotLogTransitionWhenPersistenceFails(t *testing.T) {
