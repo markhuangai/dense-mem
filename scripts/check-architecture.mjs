@@ -111,6 +111,12 @@ function unitMap(manifest, kind) {
   return new Map((Array.isArray(units) ? units : []).map((unit) => [unit.id, unit]));
 }
 
+function isBrowserTestOnlyPath(value) {
+  return value.split("/").includes("test")
+    || value.split("/").includes("tests")
+    || /\.(?:test|spec)(?:-helpers)?\.[cm]?[jt]sx?$/u.test(value);
+}
+
 export function validateManifest(manifest, actualModulePath = null) {
   const diagnostics = [];
   if (!manifest || typeof manifest !== "object") {
@@ -221,6 +227,8 @@ export function validateManifest(manifest, actualModulePath = null) {
     for (const exclusion of exclusions) {
       if (typeof exclusion !== "string" || hasWildcard(exclusion)) {
         diagnostics.push(diagnostic("wildcard", `browser exclusion ${exclusion ?? "?"} must be exact`));
+      } else if (!exclusion.startsWith("web/") || !isBrowserTestOnlyPath(exclusion)) {
+        diagnostics.push(diagnostic("invalid-manifest", `browser exclusion ${exclusion} must target a test-only module`));
       }
     }
   }
@@ -405,7 +413,7 @@ function absoluteViteGlobPattern(root, filePath, pattern) {
     throw new Error(`Vite glob ${pattern} must be relative or root-absolute`);
   }
   const absolute = value.startsWith("/")
-    ? path.resolve(root, value.slice(1))
+    ? path.resolve(root, "web", value.slice(1))
     : path.resolve(path.dirname(filePath), value);
   const relative = path.relative(root, absolute);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
