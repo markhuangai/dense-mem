@@ -383,14 +383,17 @@ fails closed instead of falling through to another cookie path.
 
 ## Idempotency
 
-Write operations accept operation-scoped idempotency keys. The key binds to the
-authenticated principal and a canonical request hash.
+Write operations accept operation-scoped idempotency keys. The server derives
+the scope from the operation kind, authenticated namespace, and, when the
+contract defines target-scoped retries, the immutable target identity. Within
+that scope, the raw key binds to a canonical request hash.
 
 | Reuse | Result |
 | --- | --- |
-| same key, same request | return/recover the original operation |
-| same key, different request | conflict error |
-| same key, another team/profile | unrelated namespace |
+| same key, same scope, same request | return/recover the original operation |
+| same key, same scope, different request | conflict error |
+| same raw key, different target for a target-scoped operation | unrelated namespace |
+| same raw key, another team/profile | unrelated namespace |
 | expired retention | treated according to documented operation policy |
 
 Idempotency state is durable in PostgreSQL, not Redis.
@@ -620,6 +623,14 @@ exact body:
 ```json
 {"acknowledge_irreversible": true}
 ```
+
+Private-memory erasure idempotency is target-scoped. Control erasure includes
+the exact target space ID in its scope; owner erasure uses the authenticated
+target identity that resolves the space. Reusing the same raw key for the same
+target and canonical request returns the original operation. A different
+canonical request within that target scope returns `409 Conflict`. Reusing the
+same raw key for another eligible target creates a separate operation and
+returns `202 Accepted` with a different operation ID.
 
 The `202 Accepted` response identifies the durable operation; it does not mean
 deletion has completed. The request atomically seals the target private space

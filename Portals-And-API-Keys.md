@@ -297,6 +297,11 @@ request a scoped erasure, run retention, and inspect control-only operation
 details. `202 Accepted` means the request is durable and queued; completion is
 asynchronous.
 
+Erasure idempotency is target-scoped. Retrying the same canonical request for
+the same target returns the original operation. Reusing the same raw key for
+another eligible private target creates a distinct operation; changing the
+canonical request within the same target scope returns `409 Conflict`.
+
 The erasure worker seals and generation-fences the exact private space,
 rechecks holds, deletes the complete space-owned manifest, verifies zero
 remaining rows, and scrubs private audit payloads. There is no cancel or restore
