@@ -79,7 +79,7 @@ mapfile -t tracked_files < <(
 
 mapfile -t tracked_dirs < <(
 	printf '%s\n' "${tracked_files[@]}" |
-	awk '{ file = $0; sub(/\/[^\/]+$/, "", file); print file }' |
+	awk '{ file = $0; if (file ~ /\//) { sub(/\/[^\/]+$/, "", file) } else { file = "." }; print file }' |
 	while IFS= read -r dir; do
 		if [[ "${PRODUCTION_ONLY}" == true ]] && is_excluded "${dir}"; then
 			continue

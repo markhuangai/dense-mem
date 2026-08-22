@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -8,6 +9,9 @@ import {
   discoverBrowser,
   discoverGo,
   discoverWorkers,
+  parseArgs,
+  resolveBrowserImport,
+  scanGoTokens,
   validateManifest,
 } from "../../scripts/check-architecture.mjs";
 
@@ -42,24 +46,28 @@ function fixtureManifest() {
   };
 }
 
+function assertEdgeExpectation(edge, result) {
+  if (edge.expected === "allowed") {
+    assert.deepEqual(result.diagnostics, []);
+    return;
+  }
+  assert.equal(result.diagnostics.length, 1);
+  assert.match(result.diagnostics[0], new RegExp(`^${edge.expected}:`));
+}
+
 test("allows composition-to-adapter edges", () => {
   const edge = fixture("allowed-edge.json");
-  const result = checkGoEdges(fixtureManifest(), [edge]);
-  assert.deepEqual(result.diagnostics, []);
+  assertEdgeExpectation(edge, checkGoEdges(fixtureManifest(), [edge]));
 });
 
 test("rejects a transport-to-PostgreSQL falsification edge", () => {
   const edge = fixture("forbidden-transport-postgres.json");
-  const result = checkGoEdges(fixtureManifest(), [edge]);
-  assert.equal(result.diagnostics.length, 1);
-  assert.match(result.diagnostics[0], /forbidden/);
+  assertEdgeExpectation(edge, checkGoEdges(fixtureManifest(), [edge]));
 });
 
 test("rejects an unclassified package", () => {
   const edge = fixture("unclassified-package.json");
-  const result = checkGoEdges(fixtureManifest(), [edge]);
-  assert.equal(result.diagnostics.length, 1);
-  assert.match(result.diagnostics[0], /unclassified/);
+  assertEdgeExpectation(edge, checkGoEdges(fixtureManifest(), [edge]));
 });
 
 test("rejects an exception that expires at the enforced issue", () => {
@@ -87,5 +95,61 @@ test("discovers both Go profiles, browser entry graph, and worker anchors", asyn
 
   const workers = discoverWorkers(root);
   assert.ok(workers.length > 0);
-  assert.ok(workers.every((worker) => productionManifest.workers.some((entry) => entry.path === worker.path && entry.anchor === worker.anchor)));
+  assert.ok(workers.some((worker) => worker.path === "cmd/oauth-compat-harness/main.go"));
+  assert.ok(workers.some((worker) => worker.path === "internal/http/server.go"));
+  assert.ok(workers.some((worker) => worker.path === "internal/sse/lifecycle.go"));
+  assert.ok(workers.every((worker) => productionManifest.workers.some((entry) => (
+    entry.path === worker.path
+      && entry.function === worker.function
+      && entry.kind === worker.kind
+      && entry.ordinal === worker.ordinal
+  ))));
+});
+
+test("rejects missing checker option values", () => {
+  assert.throws(() => parseArgs(["--root"]), /--root requires a value/);
+  assert.throws(() => parseArgs(["--root", ""]), /--root requires a value/);
+  assert.throws(() => parseArgs(["--manifest"]), /--manifest requires a value/);
+  assert.throws(() => parseArgs(["--root", "--manifest"]), /--root requires a value/);
+});
+
+test("resolves browser JavaScript aliases and ignores asset imports", () => {
+  const importer = path.join(root, "web/src/main.tsx");
+  const alias = resolveBrowserImport(root, importer, "./App.js?import");
+  assert.equal(alias.file, path.join(root, "web/src/App.tsx"));
+  assert.deepEqual(resolveBrowserImport(root, importer, "./logo.svg?url"), { asset: true });
+});
+
+test("does not treat Go comments or strings as worker signals", () => {
+  const tokens = scanGoTokens(`package fixture
+// go ignored() and .Run()
+var text = "go ignored() .Run()"
+func run() { go work(); client.Run() }
+`);
+  assert.equal(tokens.filter((token) => token.text === "go").length, 1);
+  assert.equal(tokens.filter((token) => token.text === "Run").length, 1);
+});
+
+test("keeps worker scope across composite return types and anonymous results", () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "architecture-worker-"));
+  try {
+    const fixtureDirectory = path.join(fixtureRoot, "cmd", "fixture");
+    fs.mkdirSync(fixtureDirectory, { recursive: true });
+    fs.writeFileSync(path.join(fixtureDirectory, "main.go"), `package fixture
+import "context"
+var _ = context.Background
+func returnsStruct() struct { value int } { go work() }
+func literal() { go func() error { return nil }() }
+func work() {}
+`);
+    assert.deepEqual(discoverWorkers(fixtureRoot).map((worker) => ({
+      function: worker.function,
+      kind: worker.kind,
+    })), [
+      { function: "returnsStruct", kind: "goroutine" },
+      { function: "literal", kind: "goroutine" },
+    ]);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });

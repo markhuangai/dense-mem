@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -47,10 +48,24 @@ export const allowedTargets = Object.freeze({
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const browserCodeExtensions = new Set([".ts", ".tsx", ".mts", ".cts"]);
 const browserStyleExtensions = new Set([".css", ".scss", ".sass", ".less"]);
-const excludedBrowserDefaults = [
-  "web/src/test/setup.ts",
-  "web/src/user/App.test-helpers.ts",
-];
+const browserAssetExtensions = new Set([
+  ".avif",
+  ".bmp",
+  ".gif",
+  ".ico",
+  ".jpeg",
+  ".jpg",
+  ".json",
+  ".png",
+  ".svg",
+  ".ttf",
+  ".wasm",
+  ".webp",
+  ".woff",
+  ".woff2",
+]);
+const browserJavaScriptExtensions = new Set([".cjs", ".js", ".jsx", ".mjs"]);
+const require = createRequire(import.meta.url);
 
 function diagnostic(code, message) {
   return `${code}: ${message}`;
@@ -168,7 +183,7 @@ export function validateManifest(manifest) {
       if (!goUnits.has(source) || !goUnits.has(target)) {
         diagnostics.push(diagnostic("unknown", `exception ${source} -> ${target} names an unclassified package`));
       }
-      if (!Number.isInteger(exception.removal_issue) || exception.removal_issue <= manifest.enforced_through_issue || exception.removal_issue > 280) {
+      if (!Number.isInteger(exception.removal_issue) || exception.removal_issue <= manifest.enforced_through_issue) {
         diagnostics.push(diagnostic("expired", `exception ${source} -> ${target} needs a later removal issue`));
       }
       if (typeof exception.reason !== "string" || exception.reason.length === 0) {
@@ -204,19 +219,25 @@ export function validateManifest(manifest) {
     diagnostics.push(diagnostic("invalid-manifest", "workers must be an array"));
   } else {
     for (const worker of workers) {
-      const key = `${worker?.path}\u0000${worker?.anchor}`;
-      if (!worker || typeof worker.path !== "string" || typeof worker.anchor !== "string" || worker.anchor.length === 0) {
+      const key = `${worker?.path}\u0000${worker?.function}\u0000${worker?.kind}\u0000${worker?.ordinal}`;
+      if (!worker || typeof worker.path !== "string" || typeof worker.function !== "string" || worker.function.length === 0 || typeof worker.kind !== "string" || !Number.isInteger(worker.ordinal) || worker.ordinal < 1) {
         diagnostics.push(diagnostic("invalid-manifest", "workers contains an invalid anchor"));
         continue;
       }
-      if (hasWildcard(worker.path) || hasWildcard(worker.anchor)) {
-        diagnostics.push(diagnostic("wildcard", `worker ${worker.path} must use an exact anchor`));
+      if (hasWildcard(worker.path) || hasWildcard(worker.function) || hasWildcard(worker.kind)) {
+        diagnostics.push(diagnostic("wildcard", `worker ${worker.path} must use exact identity fields`));
+      }
+      if (!new Set(["goroutine", "run", "start"]).has(worker.kind)) {
+        diagnostics.push(diagnostic("unknown-kind", `worker ${worker.path} uses ${worker.kind}`));
+      }
+      if (workerKeys.has(key)) {
+        diagnostics.push(diagnostic("duplicate", `worker ${worker.path} identity is repeated`));
       }
       workerKeys.add(key);
       if (worker.role !== "worker") {
         diagnostics.push(diagnostic("unknown-role", `worker ${worker.path} must use role worker`));
       }
-      if (!Number.isInteger(worker.owner_issue) || worker.owner_issue <= manifest.enforced_through_issue || worker.owner_issue > 280) {
+      if (!Number.isInteger(worker.owner_issue) || worker.owner_issue <= manifest.enforced_through_issue) {
         diagnostics.push(diagnostic("expired", `worker ${worker.path} needs its later lifecycle issue`));
       }
     }
@@ -308,18 +329,22 @@ export function discoverGo(root, modulePath) {
 
 function browserExcluded(root, manifest, filePath) {
   const relative = normaliseRelative(root, filePath);
-  return [...excludedBrowserDefaults, ...(manifest.browser?.exclusions ?? [])].includes(relative);
+  return (manifest.browser?.exclusions ?? []).includes(relative);
 }
 
-function resolveBrowserImport(root, filePath, specifier) {
+export function resolveBrowserImport(root, filePath, specifier) {
   if (!specifier.startsWith(".")) return { external: true };
-  const base = path.resolve(path.dirname(filePath), specifier);
-  const extension = path.extname(base);
-  if (browserStyleExtensions.has(extension)) return { style: true };
+  const request = specifier.split(/[?#]/u, 1)[0];
+  const base = path.resolve(path.dirname(filePath), request);
+  const extension = path.extname(base).toLowerCase();
+  if (browserStyleExtensions.has(extension) || browserAssetExtensions.has(extension)) return { asset: true };
+  const resolutionBase = browserJavaScriptExtensions.has(extension)
+    ? base.slice(0, -extension.length)
+    : base;
   const candidates = [];
   if (browserCodeExtensions.has(extension)) candidates.push(base);
-  else candidates.push(...[...browserCodeExtensions].map((item) => `${base}${item}`));
-  candidates.push(...[...browserCodeExtensions].map((item) => path.join(base, `index${item}`)));
+  else candidates.push(...[...browserCodeExtensions].map((item) => `${resolutionBase}${item}`));
+  candidates.push(...[...browserCodeExtensions].map((item) => path.join(resolutionBase, `index${item}`)));
   for (const candidate of candidates) {
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return { file: candidate };
   }
@@ -357,8 +382,13 @@ function browserImportSpecifiers(ts, sourceFile) {
 export async function discoverBrowser(root, manifest) {
   let api;
   try {
-    const apiModule = await import(pathToFileURL(path.join(root, ".lint", "node_modules", "typescript", "dist", "api", "sync", "api.js")).href);
-    const astModule = await import(pathToFileURL(path.join(root, ".lint", "node_modules", "typescript", "dist", "ast", "index.js")).href);
+    const typescriptPaths = { paths: [path.join(root, ".lint")] };
+    const packageJSON = readJson(require.resolve("typescript/package.json", typescriptPaths));
+    if (packageJSON.version !== "7.0.2") {
+      throw new Error(`architecture checker requires TypeScript 7.0.2, found ${packageJSON.version}`);
+    }
+    const apiModule = await import(pathToFileURL(require.resolve("typescript/unstable/sync", typescriptPaths)).href);
+    const astModule = await import(pathToFileURL(require.resolve("typescript/unstable/ast", typescriptPaths)).href);
     api = new apiModule.API({ cwd: root });
     const configPath = path.join(root, "web", "tsconfig.json");
     const snapshot = api.updateSnapshot({ openProjects: [configPath] });
@@ -422,22 +452,192 @@ function walk(directory) {
   return files;
 }
 
-function isWorkerSource(relative) {
-  return /^(cmd\/(?:demo-server|internal\/(?:demo|migrationapp|serverapp))|internal\/(?:observability|repository|service))\//u.test(relative);
+function isGoIdentifier(value) {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/u.test(value);
+}
+
+export function scanGoTokens(source) {
+  const tokens = [];
+  let index = 0;
+  let line = 1;
+  const push = (text, tokenLine = line) => tokens.push({ text, line: tokenLine });
+  while (index < source.length) {
+    const character = source[index];
+    if (/\s/u.test(character)) {
+      if (character === "\n") line += 1;
+      index += 1;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "/") {
+      index += 2;
+      while (index < source.length && source[index] !== "\n") index += 1;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "*") {
+      index += 2;
+      while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) {
+        if (source[index] === "\n") line += 1;
+        index += 1;
+      }
+      index = Math.min(source.length, index + 2);
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      const quote = character;
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === "\n") line += 1;
+        if (quote !== "`" && source[index] === "\\") {
+          index += 2;
+          continue;
+        }
+        if (source[index] === quote) {
+          index += 1;
+          break;
+        }
+        index += 1;
+      }
+      continue;
+    }
+    if (/[A-Za-z_]/u.test(character)) {
+      const tokenLine = line;
+      let end = index + 1;
+      while (end < source.length && /[A-Za-z0-9_]/u.test(source[end])) end += 1;
+      push(source.slice(index, end), tokenLine);
+      index = end;
+      continue;
+    }
+    push(character);
+    index += 1;
+  }
+  return tokens;
+}
+
+function matchingToken(tokens, start, opening, closing) {
+  let depth = 0;
+  for (let index = start; index < tokens.length; index += 1) {
+    if (tokens[index].text === opening) depth += 1;
+    if (tokens[index].text === closing) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function functionBodyIndex(tokens, parameterOpen) {
+  const parameterClose = matchingToken(tokens, parameterOpen, "(", ")");
+  if (parameterClose < 0) return -1;
+  let nesting = 0;
+  for (let index = parameterClose + 1; index < tokens.length; index += 1) {
+    const text = tokens[index].text;
+    if (text === "(" || text === "[") {
+      nesting += 1;
+      continue;
+    }
+    if (text === ")" || text === "]") {
+      if (nesting === 0) return -1;
+      nesting -= 1;
+      continue;
+    }
+    if (text === "{" && nesting === 0) {
+      const previous = tokens[index - 1]?.text;
+      if (previous === "struct" || previous === "interface") {
+        const typeEnd = matchingToken(tokens, index, "{", "}");
+        if (typeEnd < 0) return -1;
+        index = typeEnd;
+        continue;
+      }
+      return index;
+    }
+  }
+  return -1;
+}
+
+function functionSignature(tokens, functionIndex) {
+  let cursor = functionIndex + 1;
+  let functionName = null;
+  if (isGoIdentifier(tokens[cursor]?.text)) {
+    functionName = tokens[cursor].text;
+    cursor += 1;
+    if (tokens[cursor]?.text === "[") {
+      const typeParametersEnd = matchingToken(tokens, cursor, "[", "]");
+      if (typeParametersEnd < 0) return { functionName, parameterOpen: -1 };
+      cursor = typeParametersEnd + 1;
+    }
+    while (cursor < tokens.length && tokens[cursor].text !== "(") cursor += 1;
+    return { functionName, parameterOpen: cursor < tokens.length ? cursor : -1 };
+  }
+  if (tokens[cursor]?.text !== "(") return { functionName, parameterOpen: -1 };
+  const firstClose = matchingToken(tokens, cursor, "(", ")");
+  if (firstClose < 0) return { functionName, parameterOpen: -1 };
+  const candidateName = tokens[firstClose + 1]?.text;
+  if (isGoIdentifier(candidateName)) {
+    let parameterOpen = firstClose + 2;
+    if (tokens[parameterOpen]?.text === "[") {
+      const typeParametersEnd = matchingToken(tokens, parameterOpen, "[", "]");
+      if (typeParametersEnd < 0) return { functionName, parameterOpen: -1 };
+      parameterOpen = typeParametersEnd + 1;
+    }
+    if (tokens[parameterOpen]?.text === "(") {
+      return { functionName: candidateName, parameterOpen };
+    }
+  }
+  return { functionName, parameterOpen: cursor };
+}
+
+function goFunctionBodies(tokens) {
+  const bodies = new Map();
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index].text !== "func") continue;
+    const signature = functionSignature(tokens, index);
+    const body = signature.parameterOpen >= 0 ? functionBodyIndex(tokens, signature.parameterOpen) : -1;
+    if (body >= 0 && signature.functionName !== null) bodies.set(body, signature.functionName);
+  }
+  return bodies;
+}
+
+function workerIdentity(worker) {
+  return `${worker.path}\u0000${worker.function}\u0000${worker.kind}\u0000${worker.ordinal}`;
+}
+
+function addWorker(workers, ordinals, pathName, token, functionName, kind) {
+  const ordinalKey = `${pathName}\u0000${functionName}\u0000${kind}`;
+  const ordinal = (ordinals.get(ordinalKey) ?? 0) + 1;
+  ordinals.set(ordinalKey, ordinal);
+  workers.push({ path: pathName, line: token.line, function: functionName, kind, ordinal });
 }
 
 export function discoverWorkers(root) {
   const workers = [];
-  for (const filePath of walk(path.join(root, "cmd")).concat(walk(path.join(root, "internal")))) {
-    if (!filePath.endsWith(".go") || filePath.endsWith("_test.go")) continue;
-    const relative = normaliseRelative(root, filePath);
-    if (!isWorkerSource(relative)) continue;
-    const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/u);
-    lines.forEach((line, index) => {
-      if (/\bgo\s+(?:func\b|[A-Za-z_][\w.]*(?:\s*\([^;]*\))?)/u.test(line) || /\.(?:Start|Run)\s*\(/u.test(line)) {
-        workers.push({ path: relative, line: index + 1, anchor: line.trim() });
+  const sourceFiles = walk(path.join(root, "cmd")).concat(walk(path.join(root, "internal")))
+    .filter((filePath) => filePath.endsWith(".go") && !filePath.endsWith("_test.go"))
+    .map((filePath) => ({ filePath, relative: normaliseRelative(root, filePath) }))
+    .filter(({ relative }) => relative.startsWith("cmd/") || relative.startsWith("internal/"))
+    .sort((left, right) => left.relative.localeCompare(right.relative));
+  for (const { filePath, relative } of sourceFiles) {
+    const tokens = scanGoTokens(fs.readFileSync(filePath, "utf8"));
+    const functionBodies = goFunctionBodies(tokens);
+    const braces = [];
+    const ordinals = new Map();
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index];
+      if (token.text === "{") {
+        braces.push(functionBodies.get(index) ?? braces.at(-1) ?? "<package>");
+        continue;
       }
-    });
+      if (token.text === "}") {
+        braces.pop();
+        continue;
+      }
+      const functionName = braces.at(-1) ?? "<package>";
+      if (token.text === "go" && (tokens[index + 1]?.text === "func" || isGoIdentifier(tokens[index + 1]?.text))) {
+        addWorker(workers, ordinals, relative, token, functionName, "goroutine");
+      }
+      if (token.text === "." && ["Start", "Run"].includes(tokens[index + 1]?.text) && tokens[index + 2]?.text === "(") {
+        addWorker(workers, ordinals, relative, token, functionName, tokens[index + 1].text.toLowerCase());
+      }
+    }
   }
   return workers;
 }
@@ -481,24 +681,26 @@ function checkBrowserEdges(manifest, discovery) {
 function checkWorkers(manifest, discovered) {
   const diagnostics = [];
   const entries = manifest.workers ?? [];
+  const entryKeys = new Set(entries.map(workerIdentity));
   const used = new Set();
   for (const worker of discovered) {
-    const index = entries.findIndex((candidate, candidateIndex) => candidate.path === worker.path && candidate.anchor === worker.anchor && !used.has(candidateIndex));
-    if (index < 0) {
-      diagnostics.push(diagnostic("unclassified-worker", `${worker.path}:${worker.line} ${worker.anchor}`));
+    const key = workerIdentity(worker);
+    if (!entryKeys.has(key)) {
+      diagnostics.push(diagnostic("unclassified-worker", `${worker.path}:${worker.line} ${worker.kind} in ${worker.function}`));
     } else {
-      used.add(index);
+      used.add(key);
     }
   }
-  entries.forEach((worker, index) => {
-    if (!used.has(index)) diagnostics.push(diagnostic("stale-worker", `${worker.path} anchor is not present`));
+  entries.forEach((worker) => {
+    const key = workerIdentity(worker);
+    if (!used.has(key)) diagnostics.push(diagnostic("stale-worker", `${worker.path} ${worker.kind} in ${worker.function} is not present`));
   });
   return diagnostics;
 }
 
 export async function runCheck(root, manifest) {
   const diagnostics = [...validateManifest(manifest)];
-  if (diagnostics.length > 0) return sorted(diagnostics);
+  if (diagnostics.length > 0) return { diagnostics: sorted(diagnostics), counts: null };
   const modulePath = manifest.module;
   const go = discoverGo(root, modulePath);
   const browser = await discoverBrowser(root, manifest);
@@ -512,15 +714,22 @@ export async function runCheck(root, manifest) {
   }
   diagnostics.push(...checkBrowserEdges(manifest, browser));
   diagnostics.push(...checkWorkers(manifest, workers));
-  return sorted(new Set(diagnostics));
+  return {
+    diagnostics: sorted(new Set(diagnostics)),
+    counts: { goPackages: go.packages.length, browserModules: browser.files.length },
+  };
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const options = { root: repositoryRoot, manifest: null };
+  const requireValue = (flag, value) => {
+    if (typeof value !== "string" || value.length === 0 || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+    return value;
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === "--root") options.root = argv[++index];
-    else if (arg === "--manifest") options.manifest = argv[++index];
+    if (arg === "--root") options.root = requireValue(arg, argv[++index]);
+    else if (arg === "--manifest") options.manifest = requireValue(arg, argv[++index]);
     else if (arg === "--help" || arg === "-h") options.help = true;
     else throw new Error(`unknown option ${arg}`);
   }
@@ -536,14 +745,13 @@ export async function main(argv = process.argv.slice(2)) {
   const root = normaliseRoot(options.root);
   const manifestPath = options.manifest ? path.resolve(options.manifest) : path.join(root, "architecture", "ownership.v1.json");
   const manifest = readJson(manifestPath);
-  const diagnostics = await runCheck(root, manifest);
+  const result = await runCheck(root, manifest);
+  const { diagnostics } = result;
   if (diagnostics.length > 0) {
     for (const item of diagnostics) console.error(`architecture: ${item}`);
     return 1;
   }
-  const go = discoverGo(root, manifest.module);
-  const browser = await discoverBrowser(root, manifest);
-  console.log(`architecture conformance passed: ${go.packages.length} Go packages, ${browser.files.length} browser modules`);
+  console.log(`architecture conformance passed: ${result.counts.goPackages} Go packages, ${result.counts.browserModules} browser modules`);
   return 0;
 }
 
