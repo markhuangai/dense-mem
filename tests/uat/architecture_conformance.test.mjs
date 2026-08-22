@@ -89,6 +89,12 @@ test("rejects Go profiles that the checker cannot discover", () => {
   assert.ok(validateManifest(manifest).some((item) => item.includes("go.profiles must exactly match")));
 });
 
+test("rejects a manifest module that differs from go.mod", () => {
+  const manifest = structuredClone(productionManifest);
+  manifest.module = `${productionManifest.module}/internal`;
+  assert.ok(validateManifest(manifest, productionManifest.module).some((item) => item.includes("module must match go.mod module declaration")));
+});
+
 test("discovers both Go profiles, browser entry graph, and worker anchors", async () => {
   const go = discoverGo(root, productionManifest.module);
   assert.ok(go.packages.includes(`${productionManifest.module}/cmd/server`));
@@ -143,6 +149,12 @@ test("resolves browser JavaScript aliases and ignores asset imports", () => {
   const alias = resolveBrowserImport(root, importer, "./App.js?import");
   assert.equal(alias.file, path.join(root, "web/src/App.tsx"));
   assert.deepEqual(resolveBrowserImport(root, importer, "./logo.svg?url"), { asset: true });
+});
+
+test("resolves Vite root-absolute browser imports inside web", () => {
+  const importer = path.join(root, "web/src/main.tsx");
+  const resolved = resolveBrowserImport(root, importer, "/src/control/ConfigPanel.tsx");
+  assert.equal(resolved.file, path.join(root, "web/src/control/ConfigPanel.tsx"));
 });
 
 test("keeps module-root imports inside the discovered graph", () => {

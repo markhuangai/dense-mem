@@ -111,7 +111,7 @@ function unitMap(manifest, kind) {
   return new Map((Array.isArray(units) ? units : []).map((unit) => [unit.id, unit]));
 }
 
-export function validateManifest(manifest) {
+export function validateManifest(manifest, actualModulePath = null) {
   const diagnostics = [];
   if (!manifest || typeof manifest !== "object") {
     return [diagnostic("invalid-manifest", "manifest must be an object")];
@@ -124,6 +124,8 @@ export function validateManifest(manifest) {
   }
   if (!manifest.module || typeof manifest.module !== "string" || hasWildcard(manifest.module)) {
     diagnostics.push(diagnostic("invalid-manifest", "module must be a concrete module path"));
+  } else if (actualModulePath !== null && manifest.module !== actualModulePath) {
+    diagnostics.push(diagnostic("invalid-manifest", `module must match go.mod module declaration ${actualModulePath}`));
   }
   if (!manifest.allowed_targets || typeof manifest.allowed_targets !== "object") {
     diagnostics.push(diagnostic("invalid-manifest", "allowed_targets is required"));
@@ -348,9 +350,12 @@ function browserExcluded(root, manifest, filePath) {
 }
 
 export function resolveBrowserImport(root, filePath, specifier) {
-  if (!specifier.startsWith(".")) return { external: true };
   const request = specifier.split(/[?#]/u, 1)[0];
-  const base = path.resolve(path.dirname(filePath), request);
+  const rootAbsolute = request.startsWith("/");
+  if (!specifier.startsWith(".") && !rootAbsolute) return { external: true };
+  const base = rootAbsolute
+    ? path.resolve(root, "web", request.slice(1))
+    : path.resolve(path.dirname(filePath), request);
   const extension = path.extname(base).toLowerCase();
   if (browserStyleExtensions.has(extension) || browserAssetExtensions.has(extension)) return { asset: true };
   const resolutionBase = browserJavaScriptExtensions.has(extension)
@@ -805,9 +810,9 @@ function checkWorkers(manifest, discovered) {
 }
 
 export async function runCheck(root, manifest) {
-  const diagnostics = [...validateManifest(manifest)];
+  const modulePath = readModulePath(root);
+  const diagnostics = [...validateManifest(manifest, modulePath)];
   if (diagnostics.length > 0) return { diagnostics: sorted(diagnostics), counts: null };
-  const modulePath = manifest.module;
   const go = discoverGo(root, modulePath, manifest.go.profiles);
   const browser = await discoverBrowser(root, manifest);
   const workers = discoverWorkers(root);
