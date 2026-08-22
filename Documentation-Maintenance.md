@@ -166,6 +166,21 @@ git -C ../dense-mem log -1 --format='%cI %s'
 A dirty working tree is not a stable revision. State whether evidence comes from
 `HEAD`, a named branch, a working tree, or a deployed image.
 
+### Keep architecture ownership current
+
+`architecture/ownership.v1.json` is the canonical source for current package,
+browser-module, and worker ownership. When a package or entry point is added,
+removed, or moved, update that manifest in the same implementation slice and
+run the repository conformance fixtures. Record only verified current
+ownership; future moves belong in an exact exception with a reason and a later
+removal issue. The checker must remain deterministic and fail on unclassified
+or stale units, forbidden imports, unresolved browser edges, missing worker
+anchors, and expired or unused exceptions.
+
+Architecture pages should explain the role matrix and the maintenance rule,
+then link to the manifest and checker. They should not copy the generated
+inventory or describe a future package split as if it already shipped.
+
 ### Trace the path
 
 ```mermaid

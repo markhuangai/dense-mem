@@ -162,6 +162,44 @@ This tree is a responsibility map, not a command to preserve or invent package
 names. Before implementation, map current packages and move code only where a
 boundary is otherwise unenforceable.
 
+## Architecture Conformance
+
+The versioned `architecture/ownership.v1.json` manifest records the current
+capability and role of every production Go package and reachable browser module.
+It is a conformance record, not a speculative future package tree. The
+deterministic `scripts/check-architecture.mjs` check discovers both Go profiles
+(`production` and `evaluation`), walks the two browser entry points, and scans
+long-running worker identities. A discovered package, module, or worker that is
+not classified exactly once fails the check; a stale manifest entry fails too.
+
+The enforced dependency direction is:
+
+```text
+transport -> application_api -> domain + port
+                              <- adapter
+worker    -> application_api + domain + port
+composition/offline_evaluation -> any declared role
+```
+
+The checker evaluates actual import edges against the role matrix. A temporary
+edge may be listed only as an exact source/target pair with a reason and a
+later removal issue. Wildcards, missing removal bounds, unused exceptions, and
+exceptions whose bound has passed are errors. Browser discovery starts only at
+the declared production entries; test setup and helper modules are excluded by
+explicit paths.
+
+Run the same check locally and in shared CI:
+
+```bash
+node scripts/check-architecture.mjs
+node --test tests/uat/architecture_conformance.test.mjs
+```
+
+The fixtures exercise an allowed composition edge, a forbidden transport to
+PostgreSQL edge, an unclassified target, and an expired exception. This gate
+changes enforcement only; it does not alter runtime contracts or package
+ownership by itself.
+
 ## Startup And Shutdown
 
 ```mermaid

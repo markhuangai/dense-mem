@@ -113,6 +113,33 @@ Forbidden dependencies:
 - recall reconstructing truth from search-document text
 - compatibility types leaking into canonical domain APIs
 
+## Architecture Conformance Check
+
+The repository keeps the current ownership inventory in
+`architecture/ownership.v1.json`. Run the checker and its real-logic fixtures
+before committing package, command, worker, or browser-module changes:
+
+```bash
+node scripts/check-architecture.mjs
+node --test tests/uat/architecture_conformance.test.mjs
+```
+
+`scripts/ci-check.sh` and the shared CI workflow run both commands. Go
+discovery uses `scripts/go-packages.sh` with a production profile plus the
+`evaluation` build-tag profile; browser discovery follows the declared
+production entries through TypeScript imports. Worker identities combine the
+source path, enclosing function, signal kind, and per-function ordinal, so
+adding or removing a long-running loop requires an explicit manifest update
+without tying ownership to a line number. A new production unit, forbidden
+edge, stale unit, unresolved browser import, unclassified worker, or
+expired/unused exception fails closed.
+
+Keep exceptions narrow: each one names an exact source and target, explains the
+current coupling, and points to the later issue that removes it. Do not use a
+wildcard or add an exception to hide a package that should be moved in the
+current slice. The check is an enforcement gate and must not introduce runtime
+imports or public contract changes.
+
 ## Implementation Boundaries
 
 - PostgreSQL migrations live under the release directories
