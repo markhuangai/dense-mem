@@ -15,17 +15,17 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 // CredentialServiceInterface defines the interface for API credential service operations.
 // This allows mocking in tests and decouples the handler from concrete implementations.
 type CredentialServiceInterface interface {
-	CreateCredential(ctx context.Context, teamID uuid.UUID, req service.CreateCredentialRequest, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, string, error)
+	CreateCredential(ctx context.Context, teamID uuid.UUID, req accessservice.CreateCredentialRequest, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, string, error)
 	UpdateNameForTeam(ctx context.Context, teamID, id uuid.UUID, name string, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, error)
 	UpdateRoleForTeam(ctx context.Context, teamID, id uuid.UUID, role string, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, error)
 	UpdateScopesForTeam(ctx context.Context, teamID, id uuid.UUID, scopes []string, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, error)
-	RotateForTeam(ctx context.Context, teamID, id uuid.UUID, req service.CreateCredentialRequest, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, string, error)
+	RotateForTeam(ctx context.Context, teamID, id uuid.UUID, req accessservice.CreateCredentialRequest, actorCredentialID *string, actorRole, clientIP, correlationID string) (*domain.Credential, string, error)
 	ListByTeam(ctx context.Context, teamID uuid.UUID, limit, offset int) ([]*domain.Credential, error)
 	CountByTeam(ctx context.Context, teamID uuid.UUID) (int64, error)
 	GetByIDForTeam(ctx context.Context, teamID, id uuid.UUID) (*domain.Credential, error)
@@ -89,14 +89,14 @@ func (h *CredentialHandler) Create(c echo.Context) error {
 	}
 
 	// Build service request
-	req := service.CreateCredentialRequest{
+	req := accessservice.CreateCredentialRequest{
 		Name:      body.Name,
 		RateLimit: body.RateLimit,
-		Role:      service.CredentialRoleMember,
+		Role:      accessservice.CredentialRoleMember,
 	}
 	if body.Scopes != nil {
 		if len(*body.Scopes) == 0 {
-			return httperr.New(httperr.VALIDATION_ERROR, service.CredentialScopeValidationMessage())
+			return httperr.New(httperr.VALIDATION_ERROR, accessservice.CredentialScopeValidationMessage())
 		}
 		req.Scopes = append([]string(nil), (*body.Scopes)...)
 	}
@@ -112,10 +112,10 @@ func (h *CredentialHandler) Create(c echo.Context) error {
 	}
 	if principal != nil &&
 		principal.AuthMethod == "sso_session" &&
-		principal.Role == service.CredentialRoleManager &&
+		principal.Role == accessservice.CredentialRoleManager &&
 		principal.IdentityID != uuid.Nil {
 		binding := strings.TrimSpace(req.MemoryBinding)
-		if binding == "" || binding == service.CredentialBindingProfilePrivate {
+		if binding == "" || binding == accessservice.CredentialBindingProfilePrivate {
 			identityID := principal.IdentityID
 			req.OwnerIdentityID = &identityID
 		}
@@ -123,7 +123,7 @@ func (h *CredentialHandler) Create(c echo.Context) error {
 
 	// Get actor metadata from principal
 	actorCredentialID := principalCredentialID(principal)
-	actorRole := service.CredentialRoleMember
+	actorRole := accessservice.CredentialRoleMember
 	if principal != nil {
 		actorRole = principal.Role
 	}
@@ -271,7 +271,7 @@ func (h *CredentialHandler) Update(c echo.Context) error {
 	}
 
 	actorCredentialID := principalCredentialID(principal)
-	actorRole := service.CredentialRoleMember
+	actorRole := accessservice.CredentialRoleMember
 	if principal != nil {
 		actorRole = principal.Role
 	}
@@ -323,7 +323,7 @@ func (h *CredentialHandler) Rotate(c echo.Context) error {
 		return httperr.New(httperr.VALIDATION_ERROR, "memory_binding cannot be changed by rotating a credential")
 	}
 
-	req := service.CreateCredentialRequest{
+	req := accessservice.CreateCredentialRequest{
 		Name:      body.Name,
 		RateLimit: body.RateLimit,
 	}
@@ -340,7 +340,7 @@ func (h *CredentialHandler) Rotate(c echo.Context) error {
 		return err
 	}
 
-	actorRole := service.CredentialRoleMember
+	actorRole := accessservice.CredentialRoleMember
 	if principal != nil {
 		actorRole = principal.Role
 	}
@@ -392,7 +392,7 @@ func (h *CredentialHandler) Delete(c echo.Context) error {
 		return err
 	}
 
-	actorRole := service.CredentialRoleMember
+	actorRole := accessservice.CredentialRoleMember
 	if principal != nil {
 		actorRole = principal.Role
 	}
@@ -414,7 +414,7 @@ func (h *CredentialHandler) rejectManagerTarget(ctx context.Context, teamID, cre
 	if credential == nil {
 		return httperr.New(httperr.NOT_FOUND, fmt.Sprintf("credential with id '%s' not found", credentialID.String()))
 	}
-	if credential.GetRole() == service.CredentialRoleManager {
+	if credential.GetRole() == accessservice.CredentialRoleManager {
 		return httperr.New(httperr.FORBIDDEN, "manager credentials can only be managed from the control portal")
 	}
 	return nil

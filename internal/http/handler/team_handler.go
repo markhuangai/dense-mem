@@ -12,18 +12,18 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 // TeamServiceInterface defines the interface for team service operations.
 // This allows mocking in tests and decouples the handler from concrete implementations.
 type TeamServiceInterface interface {
-	Create(ctx context.Context, req service.CreateTeamRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.Team, error)
+	Create(ctx context.Context, req accessservice.CreateTeamRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.Team, error)
 	Get(ctx context.Context, id uuid.UUID) (*domain.Team, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Team, error)
 	List(ctx context.Context, limit, offset int) ([]*domain.Team, error)
 	Count(ctx context.Context) (int64, error)
-	Update(ctx context.Context, id uuid.UUID, req service.UpdateTeamRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.Team, error)
+	Update(ctx context.Context, id uuid.UUID, req accessservice.UpdateTeamRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.Team, error)
 	Delete(ctx context.Context, id uuid.UUID, actorKeyID *string, actorRole, clientIP, correlationID string) error
 }
 
@@ -123,7 +123,7 @@ func (h *TeamHandler) Patch(c echo.Context) error {
 	if body.Description != "" {
 		descPtr = &body.Description
 	}
-	req := service.UpdateTeamRequest{
+	req := accessservice.UpdateTeamRequest{
 		Name:        namePtr,
 		Description: descPtr,
 		Metadata:    body.Metadata,
