@@ -21,6 +21,15 @@ type activityBatchRepo struct {
 	err     error
 }
 
+type activitySingleRepo struct {
+	updates int
+}
+
+func (r *activitySingleRepo) TouchLastUsed(context.Context, uuid.UUID) error {
+	r.updates++
+	return nil
+}
+
 func (r *activityBatchRepo) TouchLastUsedBatch(_ context.Context, updates []LastUsedUpdate) error {
 	if r.err != nil {
 		return r.err
@@ -68,6 +77,25 @@ func TestCredentialActivityWriterCoalescesAndFlushesNewestTimestamp(t *testing.T
 	require.Len(t, repo.updates, 1)
 	require.Equal(t, id, repo.updates[0].ID)
 	require.True(t, repo.updates[0].At.Equal(newer))
+}
+
+func TestCredentialActivityWriterUsesExplicitBatchPort(t *testing.T) {
+	repo := &activitySingleRepo{}
+	batch := &activityBatchRepo{}
+	writer := NewCredentialActivityWriterWithBatch(repo, batch)
+	id := uuid.New()
+	at := time.Now().UTC()
+
+	writer.RecordLastUsed(id, at)
+	require.NoError(t, writer.flush(context.Background()))
+
+	repoUpdates := repo.updates
+	batch.mu.Lock()
+	defer batch.mu.Unlock()
+	require.Zero(t, repoUpdates)
+	require.Len(t, batch.updates, 1)
+	require.Equal(t, id, batch.updates[0].ID)
+	require.True(t, batch.updates[0].At.Equal(at))
 }
 
 func TestCredentialActivityWriterFlushesOnContextCancellation(t *testing.T) {

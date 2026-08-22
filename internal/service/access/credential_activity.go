@@ -34,9 +34,17 @@ type CredentialActivityWriter struct {
 }
 
 func NewCredentialActivityWriter(repo CredentialActivityStore, loggers ...observability.LogProvider) *CredentialActivityWriter {
-	var batchRepo CredentialLastUsedBatchStore
-	if candidate, ok := repo.(CredentialLastUsedBatchStore); ok {
-		batchRepo = candidate
+	return NewCredentialActivityWriterWithBatch(repo, nil, loggers...)
+}
+
+// NewCredentialActivityWriterWithBatch constructs a writer with an explicit
+// batch port when the activity and batch adapters use different concrete value
+// types at the storage boundary.
+func NewCredentialActivityWriterWithBatch(repo CredentialActivityStore, batchRepo CredentialLastUsedBatchStore, loggers ...observability.LogProvider) *CredentialActivityWriter {
+	if batchRepo == nil {
+		if candidate, ok := repo.(CredentialLastUsedBatchStore); ok {
+			batchRepo = candidate
+		}
 	}
 	var logger observability.LogProvider
 	if len(loggers) > 0 {

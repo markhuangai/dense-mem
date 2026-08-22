@@ -102,7 +102,11 @@ func RunActiveServer(
 	teamRepo := repository.NewTeamRepository(pgDB.GetDB(), rlsHelper)
 	credentialRepo := repository.NewCredentialRepository(pgDB.GetDB(), rlsHelper)
 	credentialVerifier := crypto.NewArgon2Verifier(cfg.AuthVerifyMaxConcurrency)
-	activityWriter := accessservice.NewCredentialActivityWriter(credentialRepo, logger)
+	activityWriter := accessservice.NewCredentialActivityWriterWithBatch(
+		credentialRepo,
+		newCredentialActivityBatchAdapter(credentialRepo),
+		logger,
+	)
 	activityWriter.Start(context.Background())
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

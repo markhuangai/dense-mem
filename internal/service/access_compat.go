@@ -63,6 +63,10 @@ func NewCredentialActivityWriter(repo CredentialActivityStore, loggers ...observ
 	return accessservice.NewCredentialActivityWriter(repo, loggers...)
 }
 
+func NewCredentialActivityWriterWithBatch(repo CredentialActivityStore, batchRepo CredentialLastUsedBatchStore, loggers ...observability.LogProvider) *CredentialActivityWriter {
+	return accessservice.NewCredentialActivityWriterWithBatch(repo, batchRepo, loggers...)
+}
+
 type ControlIdentityConfig = accessservice.ControlIdentityConfig
 type ControlIdentityService = accessservice.ControlIdentityService
 type ControlLoginStart = accessservice.ControlLoginStart

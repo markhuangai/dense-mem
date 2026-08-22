@@ -2,7 +2,7 @@ package access
 
 import (
 	"context"
-	"strings"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -24,30 +24,36 @@ func TestAccessCredentialOwnershipUsesTeamAndOwnerBoundaries(t *testing.T) {
 	audit := new(MockAuditService)
 	svc := NewCredentialService(repo, teams, audit, nil)
 
-	t.Run("owner A can read its team credential", func(t *testing.T) {
-		credential := &domain.Credential{ID: credentialID, TeamID: teamA, OwnerIdentityID: &ownerA}
+	credential := &domain.Credential{ID: credentialID, TeamID: teamA, OwnerIdentityID: &ownerA, Name: "owner A key", RateLimit: 10}
+	t.Run("same-team read remains visible", func(t *testing.T) {
 		repo.On("GetByIDForTeam", ctx, teamA, credentialID).Return(credential, nil).Once()
 		got, err := svc.GetByIDForTeam(ctx, teamA, credentialID)
 		require.NoError(t, err)
 		require.Equal(t, credential, got)
 	})
 
-	for _, tc := range []struct {
-		name  string
-		team  uuid.UUID
-		owner uuid.UUID
-	}{
-		{name: "owner B cannot mutate owner A credential", team: teamA, owner: ownerB},
-		{name: "team B receives no existence oracle", team: teamB, owner: ownerB},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			repo.On("GetByIDForTeam", ctx, tc.team, credentialID).Return(nil, nil).Once()
-			got, err := svc.GetByIDForTeam(ctx, tc.team, credentialID)
-			require.Error(t, err)
-			require.Nil(t, got)
-			require.Contains(t, err.Error(), "not found")
-		})
-	}
+	t.Run("owner A can mutate its owned credential", func(t *testing.T) {
+		repo.On("GetSSOOwnedCredentialByID", ctx, teamA, ownerA, credentialID).Return(credential, nil).Once()
+		repo.On("GetByIDForTeam", ctx, teamA, credentialID).Return(credential, nil).Once()
+		repo.On("RevokeForTeam", ctx, teamA, credentialID).Return(int64(1), nil).Once()
+		audit.On("CredentialRevoked", ctx, mock.Anything, credentialID.String(), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		require.NoError(t, svc.RevokeSSOOwnedCredential(ctx, teamA, ownerA, credentialID, nil, CredentialRoleMember, "", "owner-a"))
+	})
+
+	t.Run("owner B cannot mutate owner A credential", func(t *testing.T) {
+		repo.On("GetSSOOwnedCredentialByID", ctx, teamA, ownerB, credentialID).Return(nil, nil).Once()
+		err := svc.RevokeSSOOwnedCredential(ctx, teamA, ownerB, credentialID, nil, CredentialRoleMember, "", "owner-b")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("team B receives no existence oracle", func(t *testing.T) {
+		repo.On("GetByIDForTeam", ctx, teamB, credentialID).Return(nil, nil).Once()
+		got, err := svc.GetByIDForTeam(ctx, teamB, credentialID)
+		require.Error(t, err)
+		require.Nil(t, got)
+		require.Contains(t, err.Error(), "not found")
+	})
 	repo.AssertExpectations(t)
 }
 
@@ -55,6 +61,7 @@ func TestAccessCredentialAuditNeverCarriesBearerMaterial(t *testing.T) {
 	ctx := context.Background()
 	teamID := uuid.New()
 	var captured map[string]interface{}
+	var generatedHash string
 	repo := new(MockCredentialRepository)
 	teams := new(MockTeamService)
 	audit := new(MockAuditService)
@@ -63,7 +70,9 @@ func TestAccessCredentialAuditNeverCarriesBearerMaterial(t *testing.T) {
 	teams.On("Get", ctx, teamID).Return(&domain.Team{ID: teamID}, nil).Once()
 	repo.On("CountByTeam", ctx, teamID).Return(int64(0), nil).Once()
 	repo.On("CreateCredential", ctx, mock.AnythingOfType("*domain.Credential")).Run(func(args mock.Arguments) {
-		args.Get(1).(*domain.Credential).ID = uuid.New()
+		credential := args.Get(1).(*domain.Credential)
+		generatedHash = credential.KeyHash
+		credential.ID = uuid.New()
 	}).Return(nil).Once()
 	audit.On("CredentialCreated", ctx, mock.AnythingOfType("*string"), mock.AnythingOfType("string"), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { captured = args.Get(3).(map[string]interface{}) }).Return(nil).Once()
@@ -71,9 +80,11 @@ func TestAccessCredentialAuditNeverCarriesBearerMaterial(t *testing.T) {
 	_, raw, err := svc.CreateCredential(ctx, teamID, CreateCredentialRequest{Name: "boundary"}, nil, CredentialRoleMember, "", "corr")
 	require.NoError(t, err)
 	require.NotEmpty(t, raw)
-	require.NotContains(t, captured, "key_hash")
-	require.NotContains(t, captured, "raw_key")
-	require.NotContains(t, strings.Join(strings.Fields(raw), ""), "key_hash")
+	require.NotEmpty(t, generatedHash)
+	serialized, err := json.Marshal(captured)
+	require.NoError(t, err)
+	require.NotContains(t, string(serialized), raw)
+	require.NotContains(t, string(serialized), generatedHash)
 	audit.AssertExpectations(t)
 }
 
