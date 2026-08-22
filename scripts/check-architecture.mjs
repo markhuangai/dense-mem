@@ -402,17 +402,20 @@ function isImportMetaUrl(ts, node) {
 }
 
 function viteWorkerImport(ts, node) {
-  if (!ts.isNewExpression(node) || !ts.isIdentifier(node.expression) || node.expression.text !== "Worker") return null;
+  if (!ts.isNewExpression(node)
+    || !ts.isIdentifier(node.expression)
+    || !["Worker", "SharedWorker"].includes(node.expression.text)) return null;
+  const constructor = node.expression.text;
   const argumentsList = node.arguments ?? [];
   const urlExpression = argumentsList[0];
   if (!ts.isNewExpression(urlExpression)
     || !ts.isIdentifier(urlExpression.expression)
     || urlExpression.expression.text !== "URL"
-    || urlExpression.arguments.length !== 2) {
-    return { unsupported: true };
+    || urlExpression.arguments?.length !== 2) {
+    return { unsupported: true, constructor };
   }
   const specifier = stringLiteralText(ts, urlExpression.arguments[0]);
-  if (specifier === null || !isImportMetaUrl(ts, urlExpression.arguments[1])) return { unsupported: true };
+  if (specifier === null || !isImportMetaUrl(ts, urlExpression.arguments[1])) return { unsupported: true, constructor };
   return { specifier };
 }
 
@@ -503,7 +506,7 @@ function browserImportSpecifiers(ts, sourceFile, root, filePath, globSync) {
     const workerImport = viteWorkerImport(ts, node);
     if (workerImport) {
       if (workerImport.unsupported) {
-        diagnostics.push(diagnostic("unsupported-worker", `Worker in ${normaliseRelative(root, filePath)} must use new URL(<literal>, import.meta.url)`));
+        diagnostics.push(diagnostic("unsupported-worker", `${workerImport.constructor} in ${normaliseRelative(root, filePath)} must use new URL(<literal>, import.meta.url)`));
       } else {
         specifiers.push(workerImport.specifier);
       }
@@ -539,10 +542,19 @@ export async function discoverBrowser(root, manifest) {
     const discovered = new Set();
     const edges = [];
     const diagnostics = [];
+    const reportedExclusions = new Set();
     const pending = [...entries];
     while (pending.length > 0) {
       const filePath = pending.pop();
-      if (discovered.has(filePath) || browserExcluded(root, manifest, filePath)) continue;
+      if (discovered.has(filePath)) continue;
+      if (browserExcluded(root, manifest, filePath)) {
+        const relative = normaliseRelative(root, filePath);
+        if (!reportedExclusions.has(relative)) {
+          diagnostics.push(diagnostic("invalid-manifest", `browser exclusion ${relative} is reachable from a production entry`));
+          reportedExclusions.add(relative);
+        }
+        continue;
+      }
       if (!fs.existsSync(filePath)) {
         diagnostics.push(diagnostic("missing-entry", `browser entry ${normaliseRelative(root, filePath)} does not exist`));
         continue;
@@ -559,7 +571,7 @@ export async function discoverBrowser(root, manifest) {
         const resolution = resolveBrowserImport(root, filePath, specifier);
         if (resolution.error) {
           diagnostics.push(diagnostic("unresolved", resolution.error));
-        } else if (resolution.file && !browserExcluded(root, manifest, resolution.file)) {
+        } else if (resolution.file) {
           pending.push(resolution.file);
           edges.push({
             source: normaliseRelative(root, filePath),
@@ -750,14 +762,42 @@ function addWorker(workers, ordinals, pathName, token, functionName, kind) {
 }
 
 function isGoroutineInvocation(tokens, index) {
-  const next = index + 1;
-  if (tokens[next]?.text === "func" || isGoIdentifier(tokens[next]?.text)) return true;
-  if (tokens[next]?.text !== "(") return false;
-  const calleeEnd = matchingToken(tokens, next, "(", ")");
-  if (calleeEnd <= next) return false;
-  let callOpen = calleeEnd + 1;
-  while (tokens[callOpen]?.text === "." && isGoIdentifier(tokens[callOpen + 1]?.text)) callOpen += 2;
-  return tokens[callOpen]?.text === "(";
+  let cursor = index + 1;
+  let sawCallee = false;
+  while (cursor < tokens.length) {
+    const text = tokens[cursor].text;
+    if (text === ";") return false;
+    if (text === "(") {
+      const close = matchingToken(tokens, cursor, "(", ")");
+      if (close < 0) return false;
+      const after = tokens[close + 1]?.text;
+      if (after === "{") {
+        const bodyClose = matchingToken(tokens, close + 1, "{", "}");
+        if (bodyClose < 0) return false;
+        sawCallee = true;
+        cursor = bodyClose + 1;
+        continue;
+      }
+      if (sawCallee || after === "(") return true;
+      cursor = close + 1;
+      sawCallee = true;
+      continue;
+    }
+    if (text === "[" || text === "{") {
+      const close = matchingToken(tokens, cursor, text, text === "[" ? "]" : "}");
+      if (close < 0) return false;
+      sawCallee = true;
+      cursor = close + 1;
+      continue;
+    }
+    if (text === "." || text === "*" || text === "&" || isGoIdentifier(text)) {
+      sawCallee = true;
+      cursor += 1;
+      continue;
+    }
+    return false;
+  }
+  return false;
 }
 
 export function discoverWorkers(root) {

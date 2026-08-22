@@ -158,6 +158,26 @@ test("resolves root-absolute Vite globs from the web root", async () => {
   }
 });
 
+test("rejects exclusions reached from production browser entries", async () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const entryName = `architecture-exclusion-entry-${suffix}.tsx`;
+  const excludedName = `architecture-production-${suffix}.test.tsx`;
+  const entryPath = path.join(root, "web/src", entryName);
+  const excludedPath = path.join(root, "web/src/test", excludedName);
+  fs.writeFileSync(entryPath, `import "./test/${excludedName}";\n`);
+  fs.writeFileSync(excludedPath, "export const hidden = true;\n");
+  try {
+    const manifest = structuredClone(productionManifest);
+    manifest.browser.entries = [`web/src/${entryName}`];
+    manifest.browser.exclusions = [`web/src/test/${excludedName}`];
+    const browser = await discoverBrowser(root, manifest);
+    assert.ok(browser.diagnostics.some((item) => item.includes(`browser exclusion web/src/test/${excludedName} is reachable from a production entry`)));
+  } finally {
+    fs.rmSync(entryPath, { force: true });
+    fs.rmSync(excludedPath, { force: true });
+  }
+});
+
 test("fails closed on variable dynamic imports", async () => {
   const fixtureName = `architecture-dynamic-import-${process.pid}-${Date.now()}.tsx`;
   const fixturePath = path.join(root, "web/src", fixtureName);
@@ -182,6 +202,35 @@ test("traverses statically analyzable Vite Worker modules", async () => {
     const browser = await discoverBrowser(root, manifest);
     assert.equal(browser.diagnostics.length, 0);
     assert.ok(browser.files.includes("web/src/control/ConfigPanel.tsx"));
+  } finally {
+    fs.rmSync(fixturePath, { force: true });
+  }
+});
+
+test("traverses statically analyzable Vite SharedWorker modules", async () => {
+  const fixtureName = `architecture-shared-worker-import-${process.pid}-${Date.now()}.tsx`;
+  const fixturePath = path.join(root, "web/src", fixtureName);
+  fs.writeFileSync(fixturePath, `export const worker = new SharedWorker(new URL("./control/ConfigPanel.tsx", import.meta.url), { type: "module" });\n`);
+  try {
+    const manifest = structuredClone(productionManifest);
+    manifest.browser.entries = [`web/src/${fixtureName}`];
+    const browser = await discoverBrowser(root, manifest);
+    assert.equal(browser.diagnostics.length, 0);
+    assert.ok(browser.files.includes("web/src/control/ConfigPanel.tsx"));
+  } finally {
+    fs.rmSync(fixturePath, { force: true });
+  }
+});
+
+test("fails closed on malformed Vite Worker constructors", async () => {
+  const fixtureName = `architecture-worker-malformed-${process.pid}-${Date.now()}.tsx`;
+  const fixturePath = path.join(root, "web/src", fixtureName);
+  fs.writeFileSync(fixturePath, "export const worker = new Worker(new URL);\n");
+  try {
+    const manifest = structuredClone(productionManifest);
+    manifest.browser.entries = [`web/src/${fixtureName}`];
+    const browser = await discoverBrowser(root, manifest);
+    assert.ok(browser.diagnostics.some((item) => item.startsWith("unsupported-worker:")));
   } finally {
     fs.rmSync(fixturePath, { force: true });
   }
@@ -235,6 +284,7 @@ func returnsStruct() struct { value int } { go work() }
 func literal() { go func() error { return nil }() }
 func parenthesized() { go (work)() }
 func selector(worker *workerType) { go (*worker).serve() }
+func composite() { go []func(){work}[0]() }
 func work() {}
 type workerType struct{}
 func (workerType) serve() {}
@@ -247,6 +297,7 @@ func (workerType) serve() {}
       { function: "literal", kind: "goroutine" },
       { function: "parenthesized", kind: "goroutine" },
       { function: "selector", kind: "goroutine" },
+      { function: "composite", kind: "goroutine" },
     ]);
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
