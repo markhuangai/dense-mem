@@ -70,7 +70,7 @@ func TestRememberNormalizerResponseToSemanticAssessmentConvertsStructure(t *test
 	require.Equal(t, float64(1), relationship.Confidence)
 	require.Equal(t, "normalized structure", relationship.Rationale)
 	require.Equal(t, "entailed", relationship.EvidenceVerdict)
-	require.Equal(t, "absent", relationship.TemporalVerdict)
+	require.Equal(t, "entailed", relationship.TemporalVerdict)
 	require.Equal(t, "works on", relationship.OriginalPredicate)
 	require.Len(t, relationship.SupportRanges, 1)
 	require.Len(t, relationship.Evidence, 1)

@@ -23,13 +23,19 @@ func TestLedgerPlacementClaimSkipsSealedPrivateGeneration(t *testing.T) {
 	privateCredential := createOwnedCredential(t, credentialRepo, teamID, ownerID, "private-claim", domain.CredentialBindingCredentialPrivate)
 	repo := NewLedgerRepository(appDB, rls)
 
-	_, err := repo.CreateIngest(ctx, CreateIngestInput{
+	privateIngest, err := repo.CreateIngest(ctx, CreateIngestInput{
 		TeamID:          teamID.String(),
 		OwnerProfileID:  privateCredential.ID.String(),
 		SpaceID:         privateCredential.MemorySpaceID.String(),
 		SpaceGeneration: privateCredential.MemorySpaceGeneration,
 		Evidence:        []EvidenceInput{{Content: "A sealed private placement must not be claimed."}},
 	})
+	require.NoError(t, err)
+	privateClaimed, err := repo.ClaimNextPlacementRun(ctx, teamID.String(), "private-generation-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, privateClaimed)
+	assert.Equal(t, privateIngest.PlacementRunID, privateClaimed.PlacementRunID)
+	_, err = repo.FinishPlacementRun(ctx, teamID.String(), privateClaimed.PlacementRunID, "private-generation-worker", string(domain.PlacementRunCompleted), "")
 	require.NoError(t, err)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`

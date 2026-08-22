@@ -390,6 +390,7 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 				SELECT placement_run_id, available_at, created_at
 				FROM placement_runs AS run
 				WHERE run.team_id = ?::uuid
+				  AND `+activeSemanticSpaceGenerationSQL("run")+`
 				  AND run.attempts < run.max_attempts
 				  AND run.status IN ('queued', 'guarded')
 				  AND run.available_at <= now()
@@ -401,6 +402,7 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 				SELECT placement_run_id, available_at, created_at
 				FROM placement_runs AS run
 				WHERE run.team_id = ?::uuid
+				  AND `+activeSemanticSpaceGenerationSQL("run")+`
 				  AND run.attempts < run.max_attempts
 				  AND run.status = 'processing'
 				  AND run.lease_until IS NOT NULL
@@ -433,6 +435,7 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 				FROM next
 				WHERE run.team_id = ?::uuid
 				  AND run.placement_run_id = next.placement_run_id
+				  AND `+activeSemanticSpaceGenerationSQL("run")+`
 				RETURNING run.team_id, run.placement_run_id, run.ingest_id,
 				          run.owner_profile_id, run.space_id, run.space_generation,
 				          run.status, run.attempts, run.max_attempts,

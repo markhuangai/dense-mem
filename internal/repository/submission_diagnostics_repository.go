@@ -58,7 +58,7 @@ var _ SubmissionDiagnosticsRepository = (*LedgerRepositoryImpl)(nil)
 
 const submissionDiagnosticOutcomeLimit = 200
 
-const submissionDiagnosticSourceTypesSQL = `
+var submissionDiagnosticSourceTypesSQL = `
 	COALESCE((
 		SELECT jsonb_agg(source_type_row.source_type ORDER BY source_type_row.source_type)
 		FROM (
@@ -66,6 +66,7 @@ const submissionDiagnosticSourceTypesSQL = `
 			FROM evidence_fragments AS fragment
 			WHERE fragment.team_id = run.team_id
 			  AND fragment.ingest_id = run.ingest_id
+			  AND ` + activeSemanticSpaceGenerationSQL("fragment") + `
 		) AS source_type_row
 	), '[]'::jsonb)`
 
@@ -151,6 +152,7 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
 			SELECT count(*)
 			FROM placement_runs AS run
 			WHERE (?::uuid IS NULL OR run.team_id = ?::uuid)
+			  AND `+activeSemanticSpaceGenerationSQL("run")+`
 			  AND (? = '' OR `+submissionDiagnosticProcessingStateSQL+` = ?)
 		`, teamID, teamID, filter.ProcessingState, filter.ProcessingState).Scan(&page.Total).Error; err != nil {
 			return err
@@ -168,7 +170,9 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
 			       run.started_at, run.updated_at, run.completed_at,
 			       run.quarantine_expires_at,
 			       (SELECT count(*) FROM evidence_fragments AS fragment
-			        WHERE fragment.team_id = run.team_id AND fragment.ingest_id = run.ingest_id),
+			        WHERE fragment.team_id = run.team_id
+			          AND fragment.ingest_id = run.ingest_id
+			          AND `+activeSemanticSpaceGenerationSQL("fragment")+`),
 			       COALESCE(failure.status, ''), COALESCE(failure.result, '{}'::jsonb)
 			FROM placement_runs AS run
 			JOIN knowledge_ingests AS ingest
@@ -179,6 +183,7 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
 				FROM placement_items AS item
 				WHERE item.team_id = run.team_id
 				  AND item.placement_run_id = run.placement_run_id
+				  AND `+activeSemanticSpaceGenerationSQL("item")+`
 				ORDER BY
 				  CASE WHEN COALESCE(item.result ->> 'failure_reason_code', '') <> ''
 				         OR COALESCE(item.result ->> 'failure_stage', '') <> ''
@@ -193,6 +198,7 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
 				LIMIT 1
 			) AS failure ON true
 			WHERE (?::uuid IS NULL OR run.team_id = ?::uuid)
+			  AND `+activeSemanticSpaceGenerationSQL("run")+`
 			  AND (? = '' OR `+submissionDiagnosticProcessingStateSQL+` = ?)
 			ORDER BY run.created_at DESC, run.placement_run_id DESC
 			LIMIT ? OFFSET ?
@@ -276,6 +282,7 @@ func loadSubmissionDiagnostic(
 		  ON ingest.team_id = run.team_id AND ingest.ingest_id = run.ingest_id
 		JOIN teams AS team ON team.id = run.team_id
 		WHERE run.team_id = ?::uuid AND run.ingest_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("run")+`
 	`, teamID, submissionID).Row().Scan(
 		&record.Placement.TeamID,
 		&record.TeamName,
@@ -312,8 +319,9 @@ func loadSubmissionDiagnostic(
 	record.Placement.QuarantineExpiresAt = nullableStatusTime(quarantineExpiresAt)
 	evidenceRows, err := tx.WithContext(ctx).Raw(`
 		SELECT fragment_id::text, evidence_index
-		FROM evidence_fragments
-		WHERE team_id = ?::uuid AND ingest_id = ?::uuid
+		FROM evidence_fragments AS fragment
+		WHERE fragment.team_id = ?::uuid AND fragment.ingest_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("fragment")+`
 		ORDER BY evidence_index ASC
 	`, teamID, submissionID).Rows()
 	if err != nil {
@@ -338,8 +346,9 @@ func loadSubmissionDiagnostic(
 	itemRows, err := tx.WithContext(ctx).Raw(`
 		SELECT placement_item_id::text, fragment_id::text, evidence_index, status, category,
 		       `+submissionDiagnosticSafePayload("result")+`
-		FROM placement_items
-		WHERE team_id = ?::uuid AND ingest_id = ?::uuid
+		FROM placement_items AS item
+		WHERE item.team_id = ?::uuid AND item.ingest_id = ?::uuid
+		  AND `+activeSemanticSpaceGenerationSQL("item")+`
 		ORDER BY evidence_index ASC
 	`, teamID, submissionID).Rows()
 	if err != nil {
@@ -391,8 +400,9 @@ func loadSubmissionDiagnosticOutcomes(
 		WITH projected_outcomes AS (
 			SELECT outcome_id, placement_item_id, outcome_kind, status, created_at,
 			       `+submissionDiagnosticOperatorPayload("payload")+` AS operator_payload
-			FROM placement_outcomes
-			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+			FROM placement_outcomes AS outcome
+			WHERE outcome.team_id = ?::uuid AND outcome.placement_run_id = ?::uuid
+			  AND `+activeSemanticSpaceGenerationSQL("outcome")+`
 		), diagnostic_outcomes AS (
 			SELECT outcome_id, placement_item_id, outcome_kind, status, created_at, operator_payload
 			FROM projected_outcomes

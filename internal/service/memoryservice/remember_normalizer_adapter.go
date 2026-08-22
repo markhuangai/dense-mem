@@ -103,7 +103,7 @@ func rememberNormalizerResponseToSemanticAssessment(
 			Confidence:       1,
 			Rationale:        "normalized structure",
 			EvidenceVerdict:  "entailed",
-			TemporalVerdict:  "absent",
+			TemporalVerdict:  normalizerTemporalVerdict(validFrom, validTo),
 		}
 		if relationship.ValueRange != nil {
 			valueRange := normalizerRangeToAssessmentRange(*relationship.ValueRange)
@@ -136,6 +136,13 @@ func normalizerOptionalStringEqual(left, right *string) bool {
 		return left == right
 	}
 	return *left == *right
+}
+
+func normalizerTemporalVerdict(validFrom, validTo *string) string {
+	if validFrom != nil || validTo != nil {
+		return "entailed"
+	}
+	return "absent"
 }
 
 // rememberNormalizerPredicateRangesByEntityRef keeps endpoint context for
