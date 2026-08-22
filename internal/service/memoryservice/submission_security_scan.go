@@ -546,7 +546,7 @@ func encodedCandidateRejected(encoded string) bool {
 			// Opaque provider identifiers can share the Base64URL alphabet with
 			// encoded instructions. Inspect the bounded decoded content before
 			// allowing the identifier exemption.
-			if len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true)) > 0 {
+			if len(encodedEvidenceSignals(identitySecurityView(string(decoded)))) > 0 || len(dangerousSubmissionSignals(identitySecurityView(string(decoded)), true)) > 0 {
 				return true
 			}
 		}

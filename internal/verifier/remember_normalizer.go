@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 // RememberNormalizerRequest is the server-frozen request sent to the model.
@@ -93,6 +94,7 @@ var (
 	rememberNormalizerSecretExtractionPattern    = regexp.MustCompile(`(?is)\b(?:reveal|show|send|dump|print|return|output|exfiltrate)\b.{0,100}\b(?:system[[:space:]_-]*prompt|hidden[[:space:]_-]*instructions?|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?|passwords?|private[[:space:]_-]*keys?|authorization[[:space:]_-]*headers?)\b`)
 	rememberNormalizerToolExfiltrationPattern    = regexp.MustCompile(`(?is)\b(?:use[[:space:]]+(?:your[[:space:]]+)?tools?|curl|wget|fetch|post|send|upload|exfiltrate|transmit|make[[:space:]]+(?:an[[:space:]]+)?(?:http[[:space:]]*|network[[:space:]]*)?request|call[[:space:]]+(?:an[[:space:]]+)?api)\b.{0,180}(?:https?://|webhook|endpoint|external|environment[[:space:]_-]*variables?|env|api[[:space:]_-]*keys?|credentials?|secrets?|cookies?|tokens?)`)
 	rememberNormalizerToolDirectiveStartPattern  = regexp.MustCompile(`(?is)^(?:please|kindly|you\b|ignore\b|disregard\b|forget\b|override\b|use\b|curl\b|wget\b|fetch\b|post\b|send\b|upload\b|exfiltrate\b|transmit\b|make\b|call\b)`)
+	rememberNormalizerTemporalTokenPattern       = regexp.MustCompile(`(?i)\b[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?)?\b`)
 )
 
 func RememberNormalizerResponseSchema() map[string]any {
@@ -487,6 +489,12 @@ func PrepareRememberNormalizerResponse(req RememberNormalizerRequest, response R
 			if from != nil && to != nil && to.Before(*from) {
 				errs = append(errs, semanticErr(field+".valid_to", "must not be before valid_from"))
 			}
+			if from != nil && !rememberNormalizerTemporalBoundSupported(result.ValidFrom, target.EvidenceIDs, evidenceByID) {
+				errs = append(errs, semanticErr(field+".valid_from", "is not supported by submitted evidence"))
+			}
+			if to != nil && !rememberNormalizerTemporalBoundSupported(result.ValidTo, target.EvidenceIDs, evidenceByID) {
+				errs = append(errs, semanticErr(field+".valid_to", "is not supported by submitted evidence"))
+			}
 		}
 		predicateContained, valueContained := false, result.ValueRange == nil
 		for _, support := range result.SupportRanges {
@@ -550,14 +558,24 @@ func rememberNormalizerSecuritySignalSpanMatchesEvidence(kind, content string, s
 	if err != nil || !rememberNormalizerSecuritySignalSpanMatchesKind(kind, quote) {
 		return false
 	}
-	if !rememberNormalizerQuotedExample(quote) {
-		return true
-	}
-	quoteRunes := []rune(strings.TrimSpace(quote))
-	if len(quoteRunes) > 0 && strings.ContainsRune("\"'`", quoteRunes[0]) {
+	runes := []rune(content)
+	if start < 0 || end < start || end > len(runes) {
 		return false
 	}
-	runes := []rune(content)
+	if rememberNormalizerQuotedExample(quote) {
+		quoteRunes := []rune(strings.TrimSpace(quote))
+		if len(quoteRunes) > 0 && strings.ContainsRune("\"'`", quoteRunes[0]) {
+			return false
+		}
+		return !rememberNormalizerSecuritySignalContextIsExample(runes, start, end)
+	}
+	if rememberNormalizerSelectionIsDelimited(runes, start, end) && rememberNormalizerSecuritySignalContextIsExample(runes, start, end) {
+		return false
+	}
+	return true
+}
+
+func rememberNormalizerSecuritySignalContextIsExample(runes []rune, start, end int) bool {
 	if start < 0 || end < start || end > len(runes) {
 		return false
 	}
@@ -567,10 +585,18 @@ func rememberNormalizerSecuritySignalSpanMatchesEvidence(kind, content string, s
 		"attack example", "quoted", "quote", "incident report", "example", "reported", "describes", "discusses",
 	} {
 		if strings.Contains(prefix, marker) || strings.Contains(suffix, marker) {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+func rememberNormalizerSelectionIsDelimited(runes []rune, start, end int) bool {
+	if start <= 0 || end < start || end >= len(runes) {
+		return false
+	}
+	closing := map[rune]rune{'"': '"', '\'': '\'', '`': '`', '[': ']', '(': ')', '{': '}'}
+	return closing[runes[start-1]] == runes[end]
 }
 
 func rememberNormalizerSecuritySignalSpanMatchesKindUnquoted(kind, quote string) bool {
@@ -726,6 +752,110 @@ func optionalStringEqual(left, right *string) bool {
 	return *left == *right
 }
 
+func rememberNormalizerResponseForCorrection(
+	prepared RememberNormalizerRequest,
+	result openAIStructuredChatResult,
+	limits SemanticAssessmentLimits,
+) (RememberNormalizerResponse, []SemanticValidationError, string) {
+	if result.ReportedUsage != nil && result.ReportedUsage.CompletionTokens > int64(limits.MaxOutputTokens) {
+		return RememberNormalizerResponse{}, []SemanticValidationError{semanticErr(
+			"output_tokens",
+			fmt.Sprintf("provider reported more than the allowed %d tokens", limits.MaxOutputTokens),
+		)}, "response_output_tokens"
+	}
+	outputTokens, err := CountTokens(result.Content, limits.Tokenizer)
+	if err != nil {
+		return RememberNormalizerResponse{}, []SemanticValidationError{semanticErr("response", "could not be token-counted")}, "response_json"
+	}
+	if outputTokens > limits.MaxOutputTokens {
+		return RememberNormalizerResponse{}, []SemanticValidationError{semanticErr(
+			"output_tokens",
+			fmt.Sprintf("must be less than or equal to %d", limits.MaxOutputTokens),
+		)}, "response_output_tokens"
+	}
+	if validationErrors := validateRememberNormalizerResponseRaw([]byte(result.Content)); len(validationErrors) > 0 {
+		return RememberNormalizerResponse{}, validationErrors, "response_json"
+	}
+	response, err := DecodeRememberNormalizerResponseJSON([]byte(result.Content), limits)
+	if err != nil {
+		field := "response"
+		message := "must be one complete JSON object matching the required field types"
+		var typeError *json.UnmarshalTypeError
+		if errors.As(err, &typeError) && typeError.Field != "" {
+			field = typeError.Field
+			message = "must match the required JSON type"
+		}
+		return RememberNormalizerResponse{}, []SemanticValidationError{semanticErr(field, message)}, "response_json"
+	}
+	response, validationErrors := PrepareRememberNormalizerResponse(prepared, response, limits)
+	if len(validationErrors) > 0 {
+		stage := "response_contract"
+		if len(validationErrors) == 1 && validationErrors[0].Field == "output_tokens" {
+			stage = "response_output_tokens"
+		}
+		return response, validationErrors, stage
+	}
+	return response, nil, ""
+}
+
+func recordRememberNormalizerValidation(metrics observability.DiscoverabilityMetrics, stage string, validationErrors []SemanticValidationError) {
+	observability.RecordAssessorValidationFailure(metrics, stage)
+	for _, family := range semanticAssessmentValidationFieldFamilies(validationErrors) {
+		observability.RecordAssessorValidationFieldFailure(metrics, stage, family)
+	}
+}
+
+func rememberNormalizerTemporalBoundSupported(
+	value *string,
+	evidenceIDs []string,
+	evidenceByID map[string]SemanticReviewEvidence,
+) bool {
+	if value == nil {
+		return true
+	}
+	target, err := assessmentParsedTime(value)
+	if err != nil {
+		return false
+	}
+	representations := []string{
+		strings.TrimSpace(*value),
+		target.UTC().Format(time.RFC3339Nano),
+		target.UTC().Format(time.RFC3339),
+		target.UTC().Format("2006-01-02"),
+	}
+	seenEvidence := make(map[string]struct{}, len(evidenceIDs))
+	for _, evidenceID := range evidenceIDs {
+		if _, seen := seenEvidence[evidenceID]; seen {
+			continue
+		}
+		seenEvidence[evidenceID] = struct{}{}
+		evidence, ok := evidenceByID[evidenceID]
+		if !ok {
+			continue
+		}
+		for _, representation := range representations {
+			if representation != "" && strings.Contains(evidence.Content, representation) {
+				return true
+			}
+		}
+		for _, token := range rememberNormalizerTemporalTokenPattern.FindAllString(evidence.Content, -1) {
+			if len(token) == len("2006-01-02") {
+				date, parseErr := time.Parse("2006-01-02", token)
+				if parseErr == nil && date.UTC().Format("2006-01-02") == target.UTC().Format("2006-01-02") {
+					return true
+				}
+				continue
+			}
+			candidate := strings.Replace(token, " ", "T", 1)
+			parsed, parseErr := time.Parse(time.RFC3339Nano, candidate)
+			if parseErr == nil && parsed.Equal(*target) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // NormalizeRemember performs one initial response and at most four complete
 // replacements. Invalid responses never escape this boundary.
 func (v *OpenAIVerifier) NormalizeRemember(ctx context.Context, req RememberNormalizerRequest) (RememberNormalizerResponse, error) {
@@ -747,24 +877,29 @@ func (v *OpenAIVerifier) NormalizeRemember(ctx context.Context, req RememberNorm
 			return RememberNormalizerResponse{}, &ProviderError{Provider: openAIVerifierProvider, Message: "failed to count remember normalizer conversation tokens", Cause: err, FailureClass: ProviderFailureClassProviderUnavailable}
 		}
 		if inputTokens > v.assessmentLimits.MaxInputTokens {
-			return RememberNormalizerResponse{}, &MalformedResponseError{Provider: openAIVerifierProvider, Message: "remember normalizer conversation exceeds input token limit", FailureClass: "input_budget", Attempts: turn - 1}
+			validationErrors := []SemanticValidationError{semanticErr("input_tokens", "remember normalizer conversation exceeds input token limit")}
+			recordRememberNormalizerValidation(v.metrics, "input_budget", validationErrors)
+			return RememberNormalizerResponse{}, &MalformedResponseError{
+				Provider:                openAIVerifierProvider,
+				Message:                 "remember normalizer conversation exceeds input token limit",
+				FailureClass:            "input_budget",
+				Attempts:                turn - 1,
+				ValidationStage:         "input_budget",
+				ValidationFieldFamilies: semanticAssessmentValidationFieldFamilies(validationErrors),
+			}
 		}
 		result, err := v.rememberNormalizerChatWithTransportRetry(ctx, messages)
 		if err != nil {
 			return RememberNormalizerResponse{}, err
 		}
 		var response RememberNormalizerResponse
+		var validationErrors []SemanticValidationError
+		var failureStage string
 		if result.ReportedUsage != nil && result.ReportedUsage.PromptTokens > int64(v.assessmentLimits.MaxInputTokens) {
 			validationErrors = []SemanticValidationError{semanticErr("input_tokens", "provider reported input tokens beyond the configured limit")}
-		} else if result.ReportedUsage != nil && result.ReportedUsage.CompletionTokens > int64(v.assessmentLimits.MaxOutputTokens) {
-			validationErrors = []SemanticValidationError{semanticErr("output_tokens", fmt.Sprintf("provider reported more than the allowed %d tokens", v.assessmentLimits.MaxOutputTokens))}
+			failureStage = "input_budget"
 		} else {
-			response, err = DecodeRememberNormalizerResponseJSON([]byte(result.Content), v.assessmentLimits)
-			if err == nil {
-				response, validationErrors = PrepareRememberNormalizerResponse(prepared, response, v.assessmentLimits)
-			} else {
-				validationErrors = []SemanticValidationError{semanticErr("response", err.Error())}
-			}
+			response, validationErrors, failureStage = rememberNormalizerResponseForCorrection(prepared, result, v.assessmentLimits)
 		}
 		if len(validationErrors) == 0 {
 			response.InputTokens = inputTokens
@@ -774,8 +909,16 @@ func (v *OpenAIVerifier) NormalizeRemember(ctx context.Context, req RememberNorm
 			response.ProviderTurns = turn
 			return response, nil
 		}
+		recordRememberNormalizerValidation(v.metrics, failureStage, validationErrors)
 		if turn == RememberNormalizerMaxProviderTurns {
-			return RememberNormalizerResponse{}, &MalformedResponseError{Provider: openAIVerifierProvider, Message: "remember normalizer response remained invalid after bounded correction", FailureClass: "malformed_exhausted", Attempts: turn}
+			return RememberNormalizerResponse{}, &MalformedResponseError{
+				Provider:                openAIVerifierProvider,
+				Message:                 "remember normalizer response remained invalid after bounded correction",
+				FailureClass:            "malformed_exhausted",
+				Attempts:                turn,
+				ValidationStage:         failureStage,
+				ValidationFieldFamilies: semanticAssessmentValidationFieldFamilies(validationErrors),
+			}
 		}
 		correction, err := json.Marshal(struct {
 			ValidationErrors []SemanticValidationError `json:"validation_errors"`

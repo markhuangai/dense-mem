@@ -295,20 +295,24 @@ func TestRememberNormalizerMigrationFailsLegacyWorkAndPreservesIndependentWorkfl
 	fixtures := []submissionAssessmentMigrationRun{
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "queued",
-			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
+			remember: true,
+			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
 		},
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "guarded",
-			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
+			legacyRemember: true,
+			items:          []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
 		},
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "processing", attempts: 2,
+			remember: true,
 			workerID: "legacy-worker", leaseUntil: timePointer(now.Add(time.Hour)),
 			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
 		},
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "awaiting_review", completedAt: timePointer(now.Add(-time.Hour)),
-			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+			legacyRemember: true,
+			items:          []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
 		},
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "processing",
@@ -320,7 +324,8 @@ func TestRememberNormalizerMigrationFailsLegacyWorkAndPreservesIndependentWorkfl
 		},
 		{
 			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "completed", completedAt: timePointer(now.Add(-2 * time.Hour)),
-			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+			remember: true,
+			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
 		},
 	}
 	stable := submissionAssessmentMigrationRun{
@@ -473,7 +478,24 @@ func TestRememberNormalizerMigrationFailsLegacyWorkAndPreservesIndependentWorkfl
 		assert.False(t, exists, column)
 	}
 
-	for _, fixture := range fixtures {
+	for index, fixture := range fixtures {
+		if index == 4 {
+			var runStatus, runError, workerID string
+			var leaseUntil, completedAt sql.NullTime
+			require.NoError(t, sqlDB.QueryRowContext(ctx, `
+				SELECT status, error, worker_id, lease_until, completed_at
+				FROM placement_runs
+				WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+			`, teamID, fixture.runID).Scan(&runStatus, &runError, &workerID, &leaseUntil, &completedAt))
+			assert.Equal(t, "processing", runStatus)
+			assert.Empty(t, runError)
+			assert.Equal(t, "partial-worker", workerID)
+			assert.True(t, leaseUntil.Valid)
+			assert.False(t, completedAt.Valid)
+			assertPlacementItemState(t, ctx, sqlDB, teamID, fixture.items[0].itemID, "completed", "validated_claim")
+			assertPlacementItemState(t, ctx, sqlDB, teamID, fixture.items[1].itemID, "queued", "pending")
+			continue
+		}
 		var runStatus, runError, workerID string
 		var leaseUntil, completedAt sql.NullTime
 		var assessorAttempt sql.NullString

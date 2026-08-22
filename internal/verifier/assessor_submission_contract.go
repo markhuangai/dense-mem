@@ -478,6 +478,9 @@ func validateSemanticAssessmentSubmissionResponse(
 		if result.SubjectRef != target.SubjectRef || result.Polarity != target.Polarity || result.Modality != target.Modality {
 			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d]", i), "does not preserve its submitted relationship target"))
 		}
+		if !optionalStringEqual(result.ValidFrom, target.ValidFrom) || !optionalStringEqual(result.ValidTo, target.ValidTo) {
+			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].validity", i), "does not preserve the submitted temporal bounds"))
+		}
 		if !semanticAssessmentSubmittedObjectMatches(target, result) {
 			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].object", i), "does not preserve its submitted object"))
 		}

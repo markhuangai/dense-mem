@@ -6,6 +6,8 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestSemanticAssessmentRequestRejectsInvalidCandidateContext(t *testing.T) {
@@ -255,6 +257,41 @@ func TestSemanticAssessmentSubmissionRangeValidationIsDeterministic(t *testing.T
 		"relationship_results[0].value_range.evidence_id",
 	}; len(fields) != len(want) || fields[0] != want[0] || fields[1] != want[1] {
 		t.Fatalf("range validation fields = %#v, want %#v", fields, want)
+	}
+}
+
+func TestSemanticAssessmentSubmissionPreservesTemporalBounds(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*SemanticAssessmentRelationshipResult)
+	}{
+		{
+			name: "changed valid_from",
+			mutate: func(result *SemanticAssessmentRelationshipResult) {
+				result.ValidFrom = stringPointer("2026-07-01T00:00:00Z")
+			},
+		},
+		{
+			name: "cleared valid_to",
+			mutate: func(result *SemanticAssessmentRelationshipResult) {
+				result.ValidTo = nil
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request, limits := semanticAssessmentSubmissionContractTestRequest(t)
+			from, to := "2026-06-20T00:00:00Z", "2026-06-27T00:00:00Z"
+			request.SubmissionContract.Relationships[0].ValidFrom = &from
+			request.SubmissionContract.Relationships[0].ValidTo = &to
+			prepared, errs := PrepareSemanticAssessmentRequest(request, limits)
+			require.Empty(t, errs)
+			response := semanticAssessmentTestResponse()
+			response.RelationshipResults[0].ValidFrom = stringPointer(from)
+			response.RelationshipResults[0].ValidTo = stringPointer(to)
+			test.mutate(&response.RelationshipResults[0])
+			validationErrors := validateSemanticAssessmentSubmissionResponse(prepared.SubmissionContract, response)
+			require.Contains(t, semanticAssessmentJoinedErrors(validationErrors), "does not preserve the submitted temporal bounds")
+		})
 	}
 }
 

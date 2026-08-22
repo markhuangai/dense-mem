@@ -876,6 +876,7 @@ func normalizeAssessorValidationStage(value string) string {
 func normalizeAssessorValidationFieldFamily(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "request_id",
+		"input_tokens",
 		"output_tokens",
 		"response",
 		"security_signals",

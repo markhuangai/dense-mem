@@ -57,6 +57,8 @@ func semanticAssessmentValidationFieldFamily(field string) string {
 	switch field {
 	case "request_id":
 		return "request_id"
+	case "input_tokens":
+		return "input_tokens"
 	case "output_tokens":
 		return "output_tokens"
 	case "response":
@@ -108,13 +110,13 @@ func semanticAssessmentRelationshipValidationFieldFamily(field string) string {
 		return "relationship_results.predicate"
 	case "object", "object_ref", "object_value":
 		return "relationship_results.object"
-	case "evidence", "evidence_id", "start", "end":
+	case "evidence", "evidence_id", "start", "end", "predicate_range", "value_range", "support_ranges":
 		return "relationship_results.evidence"
 	case "polarity", "modality":
 		return "relationship_results.semantics"
 	case "evidence_verdict":
 		return "relationship_results.verdict"
-	case "valid_from", "valid_to", "temporal_verdict":
+	case "validity", "valid_from", "valid_to", "temporal_verdict":
 		return "relationship_results.temporal"
 	case "scope_key", "scope_status":
 		return "relationship_results.scope"

@@ -5,10 +5,10 @@
 -- RLS impact: migration mode is explicit. Existing placement and review-task
 -- policies remain in place; obsolete hold-table policies disappear with the
 -- table.
--- Backfill: every legacy unfinished placement submission becomes failed and
--- requires full resubmission with a new idempotency key. Completed item siblings
--- stay completed. Open or acknowledged placement review tasks attached to those
--- discarded submissions are canceled.
+-- Backfill: every legacy unfinished Remember placement submission becomes failed
+-- and requires full resubmission with a new idempotency key. Completed item
+-- siblings stay completed. Open or acknowledged placement review tasks attached
+-- to those discarded submissions are canceled.
 -- Correction submissions and relationship conflict cases are not modified.
 -- Backward compatibility: this is a one-way V2.5 restart boundary. No legacy
 -- queue or awaiting-review work is resumed.
@@ -33,14 +33,26 @@ DROP FUNCTION IF EXISTS ensure_submission_hold_for_awaiting_review();
 WITH affected_runs AS MATERIALIZED (
     SELECT run.team_id, run.placement_run_id, run.ingest_id
     FROM placement_runs AS run
-    WHERE run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
+    JOIN knowledge_ingests AS ingest
+      ON ingest.team_id = run.team_id
+     AND ingest.ingest_id = run.ingest_id
+    WHERE (
+        ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+        OR (
+            NULLIF(ingest.metadata ->> 'contract_version', '') IS NOT NULL
+            AND jsonb_typeof(ingest.metadata -> 'actor') = 'object'
+            AND ingest.metadata #>> '{actor,team_id}' = ingest.team_id::text
+            AND ingest.metadata #>> '{actor,profile_id}' = ingest.owner_profile_id::text
+        )
+    )
+    AND (run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
        OR EXISTS (
            SELECT 1
            FROM placement_items AS item
            WHERE item.team_id = run.team_id
              AND item.placement_run_id = run.placement_run_id
              AND item.status = 'awaiting_review'
-       )
+       ))
 )
 UPDATE review_tasks AS task
 SET status = 'canceled',
@@ -63,20 +75,33 @@ WHERE task.status IN ('open', 'acknowledged')
         AND item.placement_item_id = task.placement_item_id
   );
 
--- The service restart makes every nonterminal run a legacy queue entry. Also
--- include inconsistent terminal runs that still contain an awaiting-review
--- item so no removed workflow state survives behind a terminal parent.
+-- The service restart makes every unfinished Remember run a legacy queue entry.
+-- Also include inconsistent terminal Remember runs that still contain an
+-- awaiting-review item so no removed workflow state survives behind a terminal
+-- parent. Non-Remember placement work remains on its supported path.
 WITH affected_runs AS MATERIALIZED (
     SELECT run.team_id, run.placement_run_id, run.ingest_id
     FROM placement_runs AS run
-    WHERE run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
+    JOIN knowledge_ingests AS ingest
+      ON ingest.team_id = run.team_id
+     AND ingest.ingest_id = run.ingest_id
+    WHERE (
+        ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
+        OR (
+            NULLIF(ingest.metadata ->> 'contract_version', '') IS NOT NULL
+            AND jsonb_typeof(ingest.metadata -> 'actor') = 'object'
+            AND ingest.metadata #>> '{actor,team_id}' = ingest.team_id::text
+            AND ingest.metadata #>> '{actor,profile_id}' = ingest.owner_profile_id::text
+        )
+    )
+    AND (run.status IN ('queued', 'guarded', 'processing', 'awaiting_review')
        OR EXISTS (
            SELECT 1
            FROM placement_items AS item
            WHERE item.team_id = run.team_id
              AND item.placement_run_id = run.placement_run_id
              AND item.status = 'awaiting_review'
-       )
+       ))
 ), failed_ingests AS (
     UPDATE knowledge_ingests AS ingest
     SET status = 'failed',
