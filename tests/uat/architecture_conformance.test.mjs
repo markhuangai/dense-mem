@@ -285,7 +285,9 @@ func literal() { go func() error { return nil }() }
 func parenthesized() { go (work)() }
 func selector(worker *workerType) { go (*worker).serve() }
 func composite() { go []func(){work}[0]() }
+func unicode() { go 启动() }
 func work() {}
+func 启动() {}
 type workerType struct{}
 func (workerType) serve() {}
 `);
@@ -298,6 +300,7 @@ func (workerType) serve() {}
       { function: "parenthesized", kind: "goroutine" },
       { function: "selector", kind: "goroutine" },
       { function: "composite", kind: "goroutine" },
+      { function: "unicode", kind: "goroutine" },
     ]);
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });

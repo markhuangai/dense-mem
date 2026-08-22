@@ -606,7 +606,15 @@ function walk(directory) {
 }
 
 function isGoIdentifier(value) {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/u.test(value);
+  return /^[\p{L}_][\p{L}\p{N}_]*$/u.test(value);
+}
+
+function isGoIdentifierStart(value) {
+  return /^[\p{L}_]$/u.test(value);
+}
+
+function isGoIdentifierContinue(value) {
+  return /^[\p{L}\p{N}_]$/u.test(value);
 }
 
 export function scanGoTokens(source) {
@@ -615,10 +623,11 @@ export function scanGoTokens(source) {
   let line = 1;
   const push = (text, tokenLine = line) => tokens.push({ text, line: tokenLine });
   while (index < source.length) {
-    const character = source[index];
+    const character = String.fromCodePoint(source.codePointAt(index));
+    const characterWidth = character.length;
     if (/\s/u.test(character)) {
       if (character === "\n") line += 1;
-      index += 1;
+      index += characterWidth;
       continue;
     }
     if (character === "/" && source[index + 1] === "/") {
@@ -652,16 +661,20 @@ export function scanGoTokens(source) {
       }
       continue;
     }
-    if (/[A-Za-z_]/u.test(character)) {
+    if (isGoIdentifierStart(character)) {
       const tokenLine = line;
-      let end = index + 1;
-      while (end < source.length && /[A-Za-z0-9_]/u.test(source[end])) end += 1;
+      let end = index + characterWidth;
+      while (end < source.length) {
+        const next = String.fromCodePoint(source.codePointAt(end));
+        if (!isGoIdentifierContinue(next)) break;
+        end += next.length;
+      }
       push(source.slice(index, end), tokenLine);
       index = end;
       continue;
     }
     push(character);
-    index += 1;
+    index += characterWidth;
   }
   return tokens;
 }
