@@ -158,6 +158,35 @@ test("resolves root-absolute Vite globs from the web root", async () => {
   }
 });
 
+test("fails closed on variable dynamic imports", async () => {
+  const fixtureName = `architecture-dynamic-import-${process.pid}-${Date.now()}.tsx`;
+  const fixturePath = path.join(root, "web/src", fixtureName);
+  fs.writeFileSync(fixturePath, `const panel = "ConfigPanel"; export const module = import(\`./control/\${panel}.tsx\`);\n`);
+  try {
+    const manifest = structuredClone(productionManifest);
+    manifest.browser.entries = [`web/src/${fixtureName}`];
+    const browser = await discoverBrowser(root, manifest);
+    assert.ok(browser.diagnostics.some((item) => item.startsWith("unsupported-import:")));
+  } finally {
+    fs.rmSync(fixturePath, { force: true });
+  }
+});
+
+test("traverses statically analyzable Vite Worker modules", async () => {
+  const fixtureName = `architecture-worker-import-${process.pid}-${Date.now()}.tsx`;
+  const fixturePath = path.join(root, "web/src", fixtureName);
+  fs.writeFileSync(fixturePath, `export const worker = new Worker(new URL("./control/ConfigPanel.tsx", import.meta.url), { type: "module" });\n`);
+  try {
+    const manifest = structuredClone(productionManifest);
+    manifest.browser.entries = [`web/src/${fixtureName}`];
+    const browser = await discoverBrowser(root, manifest);
+    assert.equal(browser.diagnostics.length, 0);
+    assert.ok(browser.files.includes("web/src/control/ConfigPanel.tsx"));
+  } finally {
+    fs.rmSync(fixturePath, { force: true });
+  }
+});
+
 test("rejects missing checker option values", () => {
   assert.throws(() => parseArgs(["--root"]), /--root requires a value/);
   assert.throws(() => parseArgs(["--root", ""]), /--root requires a value/);

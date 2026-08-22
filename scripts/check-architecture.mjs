@@ -393,6 +393,29 @@ function isViteGlobCall(ts, expression) {
     && receiver.name?.text === "meta";
 }
 
+function isImportMetaUrl(ts, node) {
+  if (!ts.isPropertyAccessExpression(node) || node.name?.text !== "url") return false;
+  const receiver = node.expression;
+  return ts.isMetaProperty(receiver)
+    && receiver.keywordToken === ts.SyntaxKind.ImportKeyword
+    && receiver.name?.text === "meta";
+}
+
+function viteWorkerImport(ts, node) {
+  if (!ts.isNewExpression(node) || !ts.isIdentifier(node.expression) || node.expression.text !== "Worker") return null;
+  const argumentsList = node.arguments ?? [];
+  const urlExpression = argumentsList[0];
+  if (!ts.isNewExpression(urlExpression)
+    || !ts.isIdentifier(urlExpression.expression)
+    || urlExpression.expression.text !== "URL"
+    || urlExpression.arguments.length !== 2) {
+    return { unsupported: true };
+  }
+  const specifier = stringLiteralText(ts, urlExpression.arguments[0]);
+  if (specifier === null || !isImportMetaUrl(ts, urlExpression.arguments[1])) return { unsupported: true };
+  return { specifier };
+}
+
 function viteGlobPatterns(ts, node) {
   const single = stringLiteralText(ts, node);
   if (single !== null) return [single];
@@ -455,6 +478,8 @@ function browserImportSpecifiers(ts, sourceFile, root, filePath, globSync) {
       const argument = node.arguments.length === 1 ? stringLiteralText(ts, node.arguments[0]) : null;
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword && argument !== null) {
         specifiers.push(argument);
+      } else if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        diagnostics.push(diagnostic("unsupported-import", `dynamic import in ${normaliseRelative(root, filePath)} must use a literal specifier`));
       }
       if (ts.isIdentifier(node.expression) && node.expression.text === "require" && argument !== null) {
         specifiers.push(argument);
@@ -473,6 +498,14 @@ function browserImportSpecifiers(ts, sourceFile, root, filePath, globSync) {
             diagnostics.push(diagnostic("invalid-glob", `Vite glob in ${location} is invalid: ${error.message}`));
           }
         }
+      }
+    }
+    const workerImport = viteWorkerImport(ts, node);
+    if (workerImport) {
+      if (workerImport.unsupported) {
+        diagnostics.push(diagnostic("unsupported-worker", `Worker in ${normaliseRelative(root, filePath)} must use new URL(<literal>, import.meta.url)`));
+      } else {
+        specifiers.push(workerImport.specifier);
       }
     }
     node.forEachChild(visit);
