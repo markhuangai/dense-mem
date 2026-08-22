@@ -1,0 +1,6 @@
+{
+  "source": "fixture/transport",
+  "target": "fixture/postgres",
+  "removal_issue": 260,
+  "expected": "expired"
+}

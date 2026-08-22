@@ -1,0 +1,5 @@
+{
+  "source": "fixture/composition",
+  "target": "fixture/postgres",
+  "expected": "allowed"
+}

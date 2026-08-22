@@ -61,6 +61,11 @@ jobs:
       - name: Run repository lint
         run: npm run --prefix .lint lint:lines
 
+      - name: Run architecture conformance
+        run: |
+          node scripts/check-architecture.mjs
+          node --test tests/uat/architecture_conformance.test.mjs
+
       - name: Run MCP proxy tests
         run: npm test --prefix packages/mcp-proxy
 
