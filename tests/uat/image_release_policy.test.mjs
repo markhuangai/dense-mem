@@ -50,13 +50,36 @@ test("OCI promotion avoids jq 1.6 reserved variable names", async () => {
 });
 
 test("prerelease publication waits for the staging migration rehearsal", async () => {
-  const workflow = await readFile(
+  const releaseWorkflow = await readFile(
     new URL("../../.github/workflows/release-rc.yml", import.meta.url),
     "utf8",
   );
-  const rehearsal = workflowJob(workflow, "staging-migration-rehearsal");
-  const prepare = workflowJob(workflow, "prepare-prerelease");
+  const rehearsalWorkflow = await readFile(
+    new URL(
+      "../../.github/workflows/staging-migration-rehearsal.yml",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const rehearsalCall = workflowJob(
+    releaseWorkflow,
+    "staging-migration-rehearsal",
+  );
+  const rehearsal = workflowJob(
+    rehearsalWorkflow,
+    "staging-migration-rehearsal",
+  );
+  const prepare = workflowJob(releaseWorkflow, "prepare-prerelease");
 
+  assert.match(
+    rehearsalCall,
+    /^    uses: \.\/\.github\/workflows\/staging-migration-rehearsal\.yml$/m,
+  );
+  assert.match(
+    rehearsalCall,
+    /^      revision: \$\{\{ github\.event\.workflow_run\.head_sha \}\}$/m,
+  );
+  assert.doesNotMatch(rehearsalCall, /PGVECTOR_STAGE_DSN|sync\.sh|go test/);
   assert.match(rehearsal, /^    runs-on: \[home-server, bash, non-root\]$/m);
   assert.match(rehearsal, /^    timeout-minutes: 75$/m);
   assert.match(rehearsal, /^    environment: staging-migration$/m);
@@ -90,11 +113,34 @@ test("prerelease publication waits for the staging migration rehearsal", async (
     "publish-demo-image",
   ]) {
     assert.match(
-      workflowJob(workflow, jobName),
+      workflowJob(releaseWorkflow, jobName),
       /(?:^    needs: prepare-prerelease$|^      - prepare-prerelease$)/m,
       `${jobName} must remain downstream of prepare-prerelease`,
     );
   }
+});
+
+test("staging migration rehearsal supports manual and reusable execution", async () => {
+  const workflow = await readFile(
+    new URL(
+      "../../.github/workflows/staging-migration-rehearsal.yml",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const rehearsal = workflowJob(workflow, "staging-migration-rehearsal");
+
+  assert.match(workflow, /^  workflow_dispatch:$/m);
+  assert.match(workflow, /^  workflow_call:$/m);
+  assert.match(
+    workflow,
+    /^      revision:\n        description: "Commit, branch, or tag to rehearse\."\n        required: true\n        type: string$/m,
+  );
+  assert.doesNotMatch(workflow, /prepare-prerelease|publish-image|contents: write/);
+  assert.match(
+    rehearsal,
+    /^          ref: \$\{\{ inputs\.revision \|\| github\.sha \}\}$/m,
+  );
 });
 
 test("same-repository pushes rebuild while the preview label remains", () => {
