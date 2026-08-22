@@ -28,6 +28,7 @@ jobs:
     uses: ./.github/workflows/staging-migration-rehearsal.yml
     with:
       revision: ${{ github.event.workflow_run.head_sha }}
+    secrets: inherit
 
   prepare-prerelease:
     name: Prepare prerelease

@@ -79,6 +79,7 @@ test("prerelease publication waits for the staging migration rehearsal", async (
     rehearsalCall,
     /^      revision: \$\{\{ github\.event\.workflow_run\.head_sha \}\}$/m,
   );
+  assert.match(rehearsalCall, /^    secrets: inherit$/m);
   assert.doesNotMatch(rehearsalCall, /PGVECTOR_STAGE_DSN|sync\.sh|go test/);
   assert.match(rehearsal, /^    runs-on: \[home-server, bash, non-root\]$/m);
   assert.match(rehearsal, /^    timeout-minutes: 75$/m);
