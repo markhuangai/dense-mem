@@ -83,11 +83,19 @@ test("rejects an exception that expires at the enforced issue", () => {
   assert.ok(validateManifest(manifest).some((item) => item.startsWith("expired:")));
 });
 
+test("rejects Go profiles that the checker cannot discover", () => {
+  const manifest = structuredClone(productionManifest);
+  manifest.go.profiles = ["production", "integration"];
+  assert.ok(validateManifest(manifest).some((item) => item.includes("go.profiles must exactly match")));
+});
+
 test("discovers both Go profiles, browser entry graph, and worker anchors", async () => {
   const go = discoverGo(root, productionManifest.module);
   assert.ok(go.packages.includes(`${productionManifest.module}/cmd/server`));
   assert.ok(go.packages.includes(`${productionManifest.module}/cmd/eval-runner`));
   assert.ok(go.edges.some((edge) => edge.profile === "evaluation"));
+  const productionOnly = discoverGo(root, productionManifest.module, ["production"]);
+  assert.equal(productionOnly.packages.includes(`${productionManifest.module}/cmd/eval-runner`), false);
 
   const browser = await discoverBrowser(root, productionManifest);
   assert.ok(browser.files.includes("web/src/main.tsx"));
@@ -105,6 +113,22 @@ test("discovers both Go profiles, browser entry graph, and worker anchors", asyn
       && entry.kind === worker.kind
       && entry.ordinal === worker.ordinal
   ))));
+});
+
+test("traverses statically analyzable Vite glob modules", async () => {
+  const fixtureName = `architecture-glob-${process.pid}-${Date.now()}.tsx`;
+  const fixturePath = path.join(root, "web/src", fixtureName);
+  fs.writeFileSync(fixturePath, `export const modules = import.meta.glob(["./control/*.tsx", "!./control/*.test.tsx"]);\n`);
+  try {
+    const manifest = structuredClone(productionManifest);
+    manifest.browser.entries = [`web/src/${fixtureName}`];
+    const browser = await discoverBrowser(root, manifest);
+    assert.equal(browser.diagnostics.length, 0);
+    assert.ok(browser.files.includes("web/src/control/ConfigPanel.tsx"));
+    assert.equal(browser.files.some((filePath) => filePath.endsWith(".test.tsx")), false);
+  } finally {
+    fs.rmSync(fixturePath, { force: true });
+  }
 });
 
 test("rejects missing checker option values", () => {

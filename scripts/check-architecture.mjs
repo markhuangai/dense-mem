@@ -16,6 +16,12 @@ const roles = new Set([
   "offline_evaluation",
 ]);
 
+const supportedGoProfiles = Object.freeze({
+  production: Object.freeze({ name: "production", tags: "", production: true }),
+  evaluation: Object.freeze({ name: "evaluation", tags: "evaluation", production: false }),
+});
+const supportedGoProfileNames = Object.freeze(Object.keys(supportedGoProfiles));
+
 export const allowedTargets = Object.freeze({
   domain: ["domain"],
   port: ["domain", "port"],
@@ -160,6 +166,10 @@ export function validateManifest(manifest) {
   }
 
   const goUnits = unitMap(manifest, "go");
+  const profiles = manifest?.go?.profiles;
+  if (!Array.isArray(profiles) || JSON.stringify(profiles) !== JSON.stringify(supportedGoProfileNames)) {
+    diagnostics.push(diagnostic("invalid-manifest", `go.profiles must exactly match [${supportedGoProfileNames.join(", ")}]`));
+  }
   const exceptions = manifest.exceptions;
   const exceptionKeys = new Set();
   if (!Array.isArray(exceptions)) {
@@ -305,11 +315,12 @@ export function isModuleImport(modulePath, packagePath) {
   return packagePath === modulePath || packagePath.startsWith(`${modulePath}/`);
 }
 
-export function discoverGo(root, modulePath) {
-  const profiles = [
-    { name: "production", tags: "", production: true },
-    { name: "evaluation", tags: "evaluation", production: false },
-  ];
+export function discoverGo(root, modulePath, profileNames = supportedGoProfileNames) {
+  const profiles = profileNames.map((name) => {
+    const profile = supportedGoProfiles[name];
+    if (!profile) throw new Error(`unsupported Go discovery profile ${name}`);
+    return profile;
+  });
   const packages = new Set();
   const edges = [];
   for (const profile of profiles) {
@@ -361,8 +372,67 @@ function stringLiteralText(ts, node) {
   return null;
 }
 
-function browserImportSpecifiers(ts, sourceFile) {
+function isViteGlobCall(ts, expression) {
+  if (!ts.isPropertyAccessExpression(expression) || expression.name?.text !== "glob") return false;
+  const receiver = expression.expression;
+  return ts.isMetaProperty(receiver)
+    && receiver.keywordToken === ts.SyntaxKind.ImportKeyword
+    && receiver.name?.text === "meta";
+}
+
+function viteGlobPatterns(ts, node) {
+  const single = stringLiteralText(ts, node);
+  if (single !== null) return [single];
+  if (!ts.isArrayLiteralExpression(node)) return null;
+  const patterns = [];
+  for (const element of node.elements) {
+    const pattern = stringLiteralText(ts, element);
+    if (pattern === null) return null;
+    patterns.push(pattern);
+  }
+  return patterns.length > 0 ? patterns : null;
+}
+
+function absoluteViteGlobPattern(root, filePath, pattern) {
+  const negative = pattern.startsWith("!");
+  const value = negative ? pattern.slice(1) : pattern;
+  if (!value.startsWith(".") && !value.startsWith("/")) {
+    throw new Error(`Vite glob ${pattern} must be relative or root-absolute`);
+  }
+  const absolute = value.startsWith("/")
+    ? path.resolve(root, value.slice(1))
+    : path.resolve(path.dirname(filePath), value);
+  const relative = path.relative(root, absolute);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Vite glob ${pattern} escapes the repository root`);
+  }
+  return negative ? `!${absolute}` : absolute;
+}
+
+function expandViteGlob(root, filePath, patterns, globSync) {
+  const absolutePatterns = patterns.map((pattern) => absoluteViteGlobPattern(root, filePath, pattern));
+  const options = { absolute: true, dot: true, nodir: true, follow: false };
+  const positivePatterns = absolutePatterns.filter((pattern) => !pattern.startsWith("!"));
+  const negativePatterns = absolutePatterns
+    .filter((pattern) => pattern.startsWith("!"))
+    .map((pattern) => pattern.slice(1));
+  const excluded = new Set(globSync(negativePatterns, options).map((match) => path.resolve(match)));
+  return sorted(globSync(positivePatterns, options)
+    .map((match) => path.resolve(match))
+    .filter((match) => !excluded.has(match))
+    .filter((match) => {
+      const relative = path.relative(root, match);
+      return !relative.startsWith("..") && !path.isAbsolute(relative);
+    }));
+}
+
+function browserImportSpecifiers(ts, sourceFile, root, filePath, globSync) {
   const specifiers = [];
+  const diagnostics = [];
+  const relativeSpecifier = (target) => {
+    const relative = path.relative(path.dirname(filePath), target).split(path.sep).join("/");
+    return relative.startsWith(".") ? relative : `./${relative}`;
+  };
   function visit(node) {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
       const text = stringLiteralText(ts, node.moduleSpecifier);
@@ -376,11 +446,26 @@ function browserImportSpecifiers(ts, sourceFile) {
       if (ts.isIdentifier(node.expression) && node.expression.text === "require" && argument !== null) {
         specifiers.push(argument);
       }
+      if (isViteGlobCall(ts, node.expression)) {
+        const patterns = viteGlobPatterns(ts, node.arguments[0]);
+        const location = normaliseRelative(root, filePath);
+        if (patterns === null) {
+          diagnostics.push(diagnostic("unsupported-glob", `Vite glob in ${location} must use literal string patterns`));
+        } else {
+          try {
+            for (const match of expandViteGlob(root, filePath, patterns, globSync)) {
+              specifiers.push(relativeSpecifier(match));
+            }
+          } catch (error) {
+            diagnostics.push(diagnostic("invalid-glob", `Vite glob in ${location} is invalid: ${error.message}`));
+          }
+        }
+      }
     }
     node.forEachChild(visit);
   }
   visit(sourceFile);
-  return specifiers;
+  return { specifiers, diagnostics };
 }
 
 export async function discoverBrowser(root, manifest) {
@@ -395,12 +480,16 @@ export async function discoverBrowser(root, manifest) {
     const astModule = await import(pathToFileURL(require.resolve("typescript/unstable/ast", typescriptPaths)).href);
     api = new apiModule.API({ cwd: root });
     const configPath = path.join(root, "web", "tsconfig.json");
-    const snapshot = api.updateSnapshot({ openProjects: [configPath] });
+    const entries = manifest.browser.entries.map((entry) => path.resolve(root, entry));
+    const snapshot = api.updateSnapshot({
+      openFiles: entries.filter((entry) => fs.existsSync(entry)),
+      openProjects: [configPath],
+    });
     const project = snapshot.getProject(configPath);
     if (!project) throw new Error(`TypeScript could not load ${normaliseRelative(root, configPath)}`);
     const program = project.program;
     const ts = astModule;
-    const entries = manifest.browser.entries.map((entry) => path.resolve(root, entry));
+    const { globSync } = await import(pathToFileURL(require.resolve("glob", typescriptPaths)).href);
     const discovered = new Set();
     const edges = [];
     const diagnostics = [];
@@ -418,7 +507,9 @@ export async function discoverBrowser(root, manifest) {
         continue;
       }
       discovered.add(filePath);
-      for (const specifier of browserImportSpecifiers(ts, sourceFile)) {
+      const imports = browserImportSpecifiers(ts, sourceFile, root, filePath, globSync);
+      diagnostics.push(...imports.diagnostics);
+      for (const specifier of imports.specifiers) {
         const resolution = resolveBrowserImport(root, filePath, specifier);
         if (resolution.error) {
           diagnostics.push(diagnostic("unresolved", resolution.error));
@@ -717,7 +808,7 @@ export async function runCheck(root, manifest) {
   const diagnostics = [...validateManifest(manifest)];
   if (diagnostics.length > 0) return { diagnostics: sorted(diagnostics), counts: null };
   const modulePath = manifest.module;
-  const go = discoverGo(root, modulePath);
+  const go = discoverGo(root, modulePath, manifest.go.profiles);
   const browser = await discoverBrowser(root, manifest);
   const workers = discoverWorkers(root);
   diagnostics.push(...checkDiscoveredUnits(manifest, go, browser));
