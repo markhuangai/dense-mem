@@ -608,6 +608,14 @@ function addWorker(workers, ordinals, pathName, token, functionName, kind) {
   workers.push({ path: pathName, line: token.line, function: functionName, kind, ordinal });
 }
 
+function isGoroutineInvocation(tokens, index) {
+  const next = index + 1;
+  if (tokens[next]?.text === "func" || isGoIdentifier(tokens[next]?.text)) return true;
+  if (tokens[next]?.text !== "(") return false;
+  const calleeEnd = matchingToken(tokens, next, "(", ")");
+  return calleeEnd > next && tokens[calleeEnd + 1]?.text === "(";
+}
+
 export function discoverWorkers(root) {
   const workers = [];
   const sourceFiles = walk(path.join(root, "cmd")).concat(walk(path.join(root, "internal")))
@@ -631,7 +639,7 @@ export function discoverWorkers(root) {
         continue;
       }
       const functionName = braces.at(-1) ?? "<package>";
-      if (token.text === "go" && (tokens[index + 1]?.text === "func" || isGoIdentifier(tokens[index + 1]?.text))) {
+      if (token.text === "go" && isGoroutineInvocation(tokens, index)) {
         addWorker(workers, ordinals, relative, token, functionName, "goroutine");
       }
       if (token.text === "." && ["Start", "Run"].includes(tokens[index + 1]?.text) && tokens[index + 2]?.text === "(") {

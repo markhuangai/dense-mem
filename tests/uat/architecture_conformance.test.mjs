@@ -140,6 +140,7 @@ import "context"
 var _ = context.Background
 func returnsStruct() struct { value int } { go work() }
 func literal() { go func() error { return nil }() }
+func parenthesized() { go (work)() }
 func work() {}
 `);
     assert.deepEqual(discoverWorkers(fixtureRoot).map((worker) => ({
@@ -148,6 +149,7 @@ func work() {}
     })), [
       { function: "returnsStruct", kind: "goroutine" },
       { function: "literal", kind: "goroutine" },
+      { function: "parenthesized", kind: "goroutine" },
     ]);
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
