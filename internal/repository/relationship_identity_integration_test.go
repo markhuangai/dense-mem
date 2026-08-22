@@ -26,7 +26,7 @@ func TestSemanticGroupKeyExcludesMutableValidTo(t *testing.T) {
 	assert.Equal(t, semanticGroupKey(open), semanticGroupKey(bounded))
 }
 
-func TestSemanticValidToDisagreementCreatesReviewWithoutMutatingCanonicalRelationship(t *testing.T) {
+func TestSemanticValidToDisagreementFailsAtomicallyWithoutMutatingCanonicalRelationship(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -60,7 +60,7 @@ func TestSemanticValidToDisagreementCreatesReviewWithoutMutatingCanonicalRelatio
 	secondIngest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
 		"valid-to-bounded", "Subject stopped working on Object.")
 	validTo := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
-	review := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+	_, err := semanticRepo.ApplyRelationshipDecision(ctx, ApplyRelationshipDecisionInput{
 		TeamID:          teamID,
 		OwnerProfileID:  ownerID,
 		IngestID:        secondIngest.IngestID,
@@ -77,11 +77,7 @@ func TestSemanticValidToDisagreementCreatesReviewWithoutMutatingCanonicalRelatio
 			Authority:      "primary",
 		},
 	})
-	assert.Nil(t, review.Relationship)
-	assert.NotEmpty(t, review.ObservationID)
-	assert.NotEmpty(t, review.VerificationEventID)
-	assert.NotEmpty(t, review.ReviewTaskID)
-	assert.Equal(t, "relationship_needs_review", review.Category)
+	require.ErrorIs(t, err, errRelationshipDecisionNonPromotable)
 
 	trace, err := semanticRepo.TraceRelationship(ctx, TraceRelationshipInput{
 		TeamID:         teamID,
@@ -92,7 +88,7 @@ func TestSemanticValidToDisagreementCreatesReviewWithoutMutatingCanonicalRelatio
 	assert.Empty(t, trace.Relationship.IdentityAliasOfID)
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		var relationshipCount, observationCount, unresolvedObservationCount, supportCount int
+		var relationshipCount, observationCount, unresolvedObservationCount, supportCount, reviewTaskCount int
 		if err := tx.Raw(`
 			SELECT count(*)::int
 			FROM relationship_records
@@ -116,9 +112,17 @@ func TestSemanticValidToDisagreementCreatesReviewWithoutMutatingCanonicalRelatio
 			return err
 		}
 		assert.Equal(t, 1, relationshipCount)
-		assert.Equal(t, 2, observationCount)
-		assert.Equal(t, 1, unresolvedObservationCount)
+		assert.Equal(t, 1, observationCount)
+		assert.Zero(t, unresolvedObservationCount)
 		assert.Equal(t, 1, supportCount)
+		if err := tx.Raw(`
+			SELECT count(*)::int
+			FROM review_tasks
+			WHERE team_id = ?::uuid
+		`, teamID).Scan(&reviewTaskCount).Error; err != nil {
+			return err
+		}
+		assert.Zero(t, reviewTaskCount)
 
 		var persistedValidTo sql.NullTime
 		var relationshipSupportCount int
@@ -132,21 +136,6 @@ func TestSemanticValidToDisagreementCreatesReviewWithoutMutatingCanonicalRelatio
 		}
 		assert.False(t, persistedValidTo.Valid)
 		assert.Equal(t, 1, relationshipSupportCount)
-
-		var taskRelationshipID, taskReason, proposedValidTo string
-		if err := tx.Raw(`
-			SELECT relationship_id::text,
-			       reason,
-			       payload->>'proposed_valid_to'
-			FROM review_tasks
-			WHERE team_id = ?::uuid
-			  AND review_task_id = ?::uuid
-		`, teamID, review.ReviewTaskID).Row().Scan(&taskRelationshipID, &taskReason, &proposedValidTo); err != nil {
-			return err
-		}
-		assert.Equal(t, canonical.Relationship.RelationshipID, taskRelationshipID)
-		assert.Equal(t, "relationship_identity_valid_to_conflict", taskReason)
-		assert.Equal(t, validTo.Format(time.RFC3339Nano), proposedValidTo)
 		return nil
 	}))
 }

@@ -363,7 +363,7 @@ function assertStatusShape(status, id) {
         typeof item.remediation !== "string") {
       throw new Error("submission status returned incomplete error guidance");
     }
-    if (!["poll_status", "resubmit_submission", "submit_replacement", "retry_correction", "contact_operator", "none"].includes(item.next_action)) {
+    if (!["poll_status", "resubmit_submission", "retry_correction", "contact_operator", "none"].includes(item.next_action)) {
       throw new Error(`submission status returned unknown next_action ${item.next_action}`);
     }
   }

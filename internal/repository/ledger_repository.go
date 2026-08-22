@@ -17,15 +17,13 @@ import (
 )
 
 var (
-	ErrIdempotencyConflict           = errors.New("idempotency conflict")
-	ErrPlacementLeaseConflict        = errors.New("placement lease conflict")
-	ErrPlacementNotFound             = errors.New("placement not found")
-	ErrSourceRevisionConflict        = errors.New("source revision conflict")
-	ErrEvidenceLifecycleNotFound     = errors.New("evidence lifecycle target not found")
-	ErrEvidenceLifecycleConflict     = errors.New("evidence lifecycle conflict")
-	ErrTeamInactive                  = errors.New("team is not active")
-	ErrSubmissionReplacementNotFound = errors.New("submission replacement target not found")
-	ErrSubmissionReplacementConflict = errors.New("submission replacement target conflict")
+	ErrIdempotencyConflict       = errors.New("idempotency conflict")
+	ErrPlacementLeaseConflict    = errors.New("placement lease conflict")
+	ErrPlacementNotFound         = errors.New("placement not found")
+	ErrSourceRevisionConflict    = errors.New("source revision conflict")
+	ErrEvidenceLifecycleNotFound = errors.New("evidence lifecycle target not found")
+	ErrEvidenceLifecycleConflict = errors.New("evidence lifecycle conflict")
+	ErrTeamInactive              = errors.New("team is not active")
 )
 
 type LedgerRepository interface {
@@ -39,19 +37,18 @@ type LedgerRepository interface {
 }
 
 type CreateIngestInput struct {
-	TeamID               string
-	OwnerProfileID       string
-	SpaceID              string
-	SpaceGeneration      int64
-	IdempotencyKey       string
-	RequestHash          string
-	ReplacesSubmissionID string
-	SourceSummary        string
-	Status               string
-	TelemetryRemember    bool
-	Proposal             map[string]any
-	Metadata             map[string]any
-	Evidence             []EvidenceInput
+	TeamID            string
+	OwnerProfileID    string
+	SpaceID           string
+	SpaceGeneration   int64
+	IdempotencyKey    string
+	RequestHash       string
+	SourceSummary     string
+	Status            string
+	TelemetryRemember bool
+	Proposal          map[string]any
+	Metadata          map[string]any
+	Evidence          []EvidenceInput
 }
 
 type GetPlacementRunInput struct {
@@ -120,14 +117,12 @@ type CreateIngestResult struct {
 	FirstDisposition *PlacementFirstDisposition
 	// Status projection metadata is loaded for the owner-scoped public status
 	// endpoint; it is not placement data and is never exposed directly.
-	SubmittedAt                *time.Time
-	NextAttemptAt              *time.Time
-	StartedAt                  *time.Time
-	UpdatedAt                  *time.Time
-	CompletedAt                *time.Time
-	QuarantineExpiresAt        *time.Time
-	ReplacementWindowExpiresAt *time.Time
-	SemanticHoldState          string
+	SubmittedAt         *time.Time
+	NextAttemptAt       *time.Time
+	StartedAt           *time.Time
+	UpdatedAt           *time.Time
+	CompletedAt         *time.Time
+	QuarantineExpiresAt *time.Time
 }
 
 type EvidenceFragment struct {
@@ -142,18 +137,17 @@ type EvidenceFragment struct {
 }
 
 type PlacementRun struct {
-	TeamID                     string
-	PlacementRunID             string
-	IngestID                   string
-	OwnerProfileID             string
-	CorrelationID              string
-	Status                     string
-	Attempts                   int
-	MaxAttempts                int
-	LeaseUntil                 *time.Time
-	SemanticHoldState          string
-	ReplacesPlacementRunID     string
-	SupersededByPlacementRunID string
+	TeamID          string
+	PlacementRunID  string
+	IngestID        string
+	OwnerProfileID  string
+	SpaceID         string
+	SpaceGeneration int64
+	CorrelationID   string
+	Status          string
+	Attempts        int
+	MaxAttempts     int
+	LeaseUntil      *time.Time
 }
 
 type PlacementItem struct {
@@ -163,18 +157,6 @@ type PlacementItem struct {
 	Status, Category            string
 	Version                     int
 	Result                      map[string]any
-	ReviewTasks                 []PlacementReviewTask
-}
-
-type PlacementReviewTask struct {
-	ReviewTaskID string
-	Version      int
-	Kind         string
-	Status       string
-	Question     string
-	Options      []map[string]any
-	Guidance     string
-	ExpiresAt    *time.Time
 }
 
 // Keep the historical package-local name for tests and constructors while
@@ -202,6 +184,7 @@ func NewLedgerRepositoryWithEmbeddingJobMaxAttempts(
 ) *LedgerRepositoryImpl {
 	return NewLedgerRepositoryWithRuntimeConfig(db, rls, maxAttempts, ConflictRuntimeConfig{})
 }
+
 func NewLedgerRepositoryWithRuntimeConfig(
 	db *gorm.DB,
 	rls *postgres.RLS,
@@ -217,6 +200,7 @@ func NewLedgerRepositoryWithRuntimeConfig(
 		conflictReviewTimezone:  conflictConfig.Timezone,
 	}
 }
+
 func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIngestInput) (*CreateIngestResult, error) {
 	input = normalizeCreateIngestInput(input)
 	if err := validateCreateIngestInput(input); err != nil {
@@ -248,15 +232,7 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 			result = loaded
 			return nil
 		}
-		replacementTargetID := ""
-		if input.ReplacesSubmissionID != "" {
-			target, err := lockSubmissionReplacementTarget(ctx, tx, input.TeamID, input.OwnerProfileID, input.ReplacesSubmissionID)
-			if err != nil {
-				return err
-			}
-			replacementTargetID = target.PlacementRunID
-		}
-		placementRunID, createdAt, completedAt, err := insertPlacementRun(ctx, tx, input, ingestID, replacementTargetID)
+		placementRunID, createdAt, completedAt, err := insertPlacementRun(ctx, tx, input, ingestID)
 		if err != nil {
 			return err
 		}
@@ -270,6 +246,8 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 					TeamID:                        input.TeamID,
 					OwnerProfileID:                input.OwnerProfileID,
 					IngestID:                      ingestID,
+					SpaceID:                       input.SpaceID,
+					SpaceGeneration:               input.SpaceGeneration,
 					SourceKey:                     item.SourceKey,
 					SourceKind:                    sourceKindForEvidence(item.SourceType),
 					Authority:                     item.Authority,
@@ -395,12 +373,10 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 	}
 	var run *PlacementRun
 	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT set_config('app.tx_mode', 'system', true)").Error; err != nil {
-			return fmt.Errorf("ledger: enable worker system mode: %w", err)
-		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH ready AS MATERIALIZED (
-				SELECT placement_run_id, available_at, created_at FROM placement_runs AS run
+				SELECT placement_run_id, available_at, created_at
+				FROM placement_runs AS run
 				WHERE run.team_id = ?::uuid
 				  AND `+activeSemanticSpaceGenerationSQL("run")+`
 				  AND run.attempts < run.max_attempts
@@ -449,11 +425,12 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 				  AND run.placement_run_id = next.placement_run_id
 				  AND `+activeSemanticSpaceGenerationSQL("run")+`
 				RETURNING run.team_id, run.placement_run_id, run.ingest_id,
-				          run.owner_profile_id, run.status, run.attempts, run.max_attempts,
+				          run.owner_profile_id, run.space_id, run.space_generation,
+				          run.status, run.attempts, run.max_attempts,
 				          run.lease_until
 			)
 			SELECT updated.team_id::text, updated.placement_run_id::text, updated.ingest_id::text,
-			       updated.owner_profile_id::text,
+			       updated.owner_profile_id::text, updated.space_id::text, updated.space_generation,
 			       COALESCE(ingest.metadata #>> '{actor,correlation_id}', ''),
 			       updated.status, updated.attempts, updated.max_attempts, updated.lease_until
 			FROM updated
@@ -470,7 +447,7 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 		}
 		loaded := PlacementRun{}
 		var leaseUntil sql.NullTime
-		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.CorrelationID, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &leaseUntil); err != nil {
+		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.SpaceID, &loaded.SpaceGeneration, &loaded.CorrelationID, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &leaseUntil); err != nil {
 			return err
 		}
 		if leaseUntil.Valid {
@@ -767,7 +744,7 @@ func selectKnowledgeIngestByIdempotency(ctx context.Context, tx *gorm.DB, input 
 	return ingestID, requestHash, nil
 }
 
-func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string, replacementTargetID string) (string, time.Time, *time.Time, error) {
+func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string) (string, time.Time, *time.Time, error) {
 	completedExpr := "NULL"
 	if input.Status == string(domain.PlacementRunQuarantined) {
 		completedExpr = "now()"
@@ -775,17 +752,15 @@ func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInpu
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
 		INSERT INTO placement_runs (
 		    team_id, ingest_id, owner_profile_id, space_id, space_generation,
-		    status, completed_at, quarantine_expires_at,
-		    replaces_placement_run_id
+		    status, completed_at, quarantine_expires_at
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
 		    ?, %s,
-		    CASE WHEN ? = 'quarantined' THEN now() + interval '24 hours' ELSE NULL END,
-		    NULLIF(?, '')::uuid
+		    CASE WHEN ? = 'quarantined' THEN now() + interval '24 hours' ELSE NULL END
 		)
 		RETURNING placement_run_id::text, created_at, completed_at
 	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
-		input.Status, input.Status, replacementTargetID).Rows()
+		input.Status, input.Status).Rows()
 	if err != nil {
 		return "", time.Time{}, nil, err
 	}
@@ -986,9 +961,6 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 		return nil, err
 	}
 	if err := hydratePlacementItemSearchStates(ctx, tx, result.TeamID, result.OwnerProfileID, result.Items); err != nil {
-		return nil, err
-	}
-	if err := hydratePlacementItemReviewTasks(ctx, tx, result.TeamID, result.OwnerProfileID, result.IngestID, result.Items); err != nil {
 		return nil, err
 	}
 	if err := hydrateEvidenceLifecycleLineage(ctx, tx, result.TeamID, result.Evidence); err != nil {

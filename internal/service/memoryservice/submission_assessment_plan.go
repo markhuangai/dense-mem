@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -151,7 +152,7 @@ func submissionAssessmentObjectArray(raw map[string]any, keys ...string) ([]map[
 		case []any:
 			out := make([]map[string]any, 0, len(typed))
 			for _, item := range typed {
-				fields, ok := reviewMap(item)
+				fields, ok := proposalMap(item)
 				if !ok {
 					return nil, errors.New("submission assessment array contains a non-object")
 				}
@@ -179,7 +180,7 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		return submissionAssessmentRelationshipTarget{}, nil, err
 	}
 
-	subjectRaw, ok := reviewMap(raw["subject"])
+	subjectRaw, ok := proposalMap(raw["subject"])
 	if !ok {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship subject is required")
 	}
@@ -188,7 +189,7 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		return submissionAssessmentRelationshipTarget{}, nil, err
 	}
 
-	predicateRaw, ok := reviewMap(raw["predicate"])
+	predicateRaw, ok := proposalMap(raw["predicate"])
 	if !ok {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship predicate is required")
 	}
@@ -197,12 +198,12 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment proposed predicate is required and bounded")
 	}
 
-	objectRaw, ok := reviewMap(raw["object"])
+	objectRaw, ok := proposalMap(raw["object"])
 	if !ok {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship object is required")
 	}
-	objectEntityRaw, hasEntity := reviewMap(objectRaw["entity"])
-	objectValueRaw, hasValue := reviewMap(objectRaw["value"])
+	objectEntityRaw, hasEntity := proposalMap(objectRaw["entity"])
+	objectValueRaw, hasValue := proposalMap(objectRaw["value"])
 	if hasEntity == hasValue {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship requires exactly one object endpoint")
 	}
@@ -236,6 +237,17 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	if !submissionAssessmentOneOf(modality, "statement", "question", "proposal", "speculation", "quoted") {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship modality is unsupported")
 	}
+	validFrom, err := proposalOptionalTime(raw, "valid_from")
+	if err != nil {
+		return submissionAssessmentRelationshipTarget{}, nil, err
+	}
+	validTo, err := proposalOptionalTime(raw, "valid_to")
+	if err != nil {
+		return submissionAssessmentRelationshipTarget{}, nil, err
+	}
+	if validFrom != nil && validTo != nil && validTo.Before(*validFrom) {
+		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship valid_to must not be before valid_from")
+	}
 	target := verifier.SemanticAssessmentRequiredRelationshipRef{
 		ProposalID:    ref,
 		PredicateHint: proposedPredicate,
@@ -245,6 +257,8 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		ObjectValue:   objectValue,
 		Polarity:      polarity,
 		Modality:      modality,
+		ValidFrom:     submissionAssessmentTimeString(validFrom),
+		ValidTo:       submissionAssessmentTimeString(validTo),
 	}
 	entry := submissionAssessmentRelationshipTarget{
 		Target:            target,
@@ -253,7 +267,7 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		ObjectKind:        objectKind,
 	}
 	if _, exists := raw["correction_target"]; exists {
-		correction, ok := placementReviewCorrectionTarget(raw)
+		correction, ok := placementProposalCorrectionTarget(raw)
 		if !ok {
 			return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment correction target is invalid")
 		}
@@ -263,7 +277,7 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		}
 	}
 	if _, exists := raw["conflict_context"]; exists {
-		conflict, ok := placementReviewConflictContext(raw)
+		conflict, ok := placementProposalConflictContext(raw)
 		if !ok {
 			return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment conflict context is invalid")
 		}
@@ -273,6 +287,14 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		}
 	}
 	return entry, entities, nil
+}
+
+func submissionAssessmentTimeString(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	formatted := value.UTC().Format(time.RFC3339Nano)
+	return &formatted
 }
 
 func submissionAssessmentEvidenceIDsFromProposal(

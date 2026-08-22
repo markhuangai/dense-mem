@@ -139,7 +139,7 @@ identity hash, copied-artifact hashes, relationship contract count, excluded
 ledger rows, and any source IDs that needed a documented sentence-bounded
 fallback proposal. A fallback changes only the non-authoritative client
 proposal; it never changes evidence, and the assessor still normalizes it to
-an active team predicate or returns `needs_review`.
+an active team predicate or returns `unresolved`.
 
 Generic `compare` remains same-seed only. `compare-v2-cohort` is the explicit
 cross-seed path: it reruns cohort validation, binds the V1 and V2 run summaries
@@ -318,11 +318,11 @@ Resume behavior is based on the latest placement attempt for each
 | Latest state | Resume action |
 | --- | --- |
 | `completed` and live fragment exists | Skip the corpus row. |
-| `awaiting_review` and live fragment exists | Skip the corpus row and report review burden separately. |
 | `failed` | Stop the monitor; investigate the failed placement before using a fresh isolated team/runtime. |
 | No attempt | Import the corpus row. |
 | `queued` or `processing` | Wait for the placement worker; do not duplicate it. |
 | Completed checkpoint but fragment is missing | Retry the corpus row. |
+| `quarantined` | Skip the corpus row and report it as comparison-only input. |
 
 One failed concurrent request stops scheduling new rows but allows already
 active requests to finish. The monitor then fails instead of retrying the
@@ -350,7 +350,7 @@ tests/eval/runtime/v1/runs/baseline/summary.json
 `placement_summary.json` reports latest completed/awaiting-review/failed/pending
 counts, category and item-status counts, promotion rate, rejection rate, review
 burden, and historical retry attempts. Recall starts only when all latest
-placements are terminal (`completed` or `awaiting_review` with a live fragment),
+placements are terminal (`completed` or `quarantined` with a live fragment),
 there are no failed or pending latest attempts, the team-scoped eval fragment
 count equals `counts.corpus`, and the remember-only import artifacts exist.
 

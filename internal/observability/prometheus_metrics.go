@@ -77,7 +77,6 @@ type PrometheusMetrics struct {
 	assessorPersistence             *prometheus.CounterVec
 	assessorDuplicatePrevention     *prometheus.CounterVec
 	assessorConfidenceGate          *prometheus.CounterVec
-	assessorReviewExpiry            prometheus.Counter
 	assessorTerminalFailures        *prometheus.CounterVec
 	quarantinePurgeFailures         prometheus.Counter
 	communityRuns                   *prometheus.CounterVec
@@ -255,10 +254,6 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 			Name: "densemem_assessor_confidence_gate_total",
 			Help: "Integrated assessor confidence gate bands.",
 		}, []string{"band"}),
-		assessorReviewExpiry: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "densemem_assessor_review_expiry_total",
-			Help: "Integrated assessor semantic review tasks expired by the scheduler.",
-		}),
 		assessorTerminalFailures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "densemem_assessor_terminal_failures_total",
 			Help: "Integrated assessor terminal failures by bounded stage.",
@@ -316,7 +311,7 @@ func NewPrometheusMetrics(pricingResolvers ...AIPricingResolver) *PrometheusMetr
 		m.aiOperationTokens, m.aiOperationCosts, m.aiOperationItems, m.aiOperationUnpriced,
 		m.assessorCalls, m.assessorDur, m.assessorTokens, m.assessorValidation, m.assessorValidationFields,
 		m.assessorCandidateTruncations, m.assessorPersistence, m.assessorDuplicatePrevention,
-		m.assessorConfidenceGate, m.assessorReviewExpiry,
+		m.assessorConfidenceGate,
 		m.assessorTerminalFailures,
 		m.quarantinePurgeFailures, m.communityRuns, m.communitySummaries, m.communityRecalls,
 		m.conflictAssessments, m.conflictResolutions,
@@ -618,12 +613,6 @@ func (m *PrometheusMetrics) IncAssessorConfidenceGate(band string) {
 	m.assessorConfidenceGate.WithLabelValues(normalizeAssessorConfidenceGateBand(band)).Inc()
 }
 
-func (m *PrometheusMetrics) AddAssessorReviewExpiry(count int64) {
-	if count > 0 {
-		m.assessorReviewExpiry.Add(float64(count))
-	}
-}
-
 func (m *PrometheusMetrics) IncAssessorTerminalFailure(stage string) {
 	m.assessorTerminalFailures.WithLabelValues(NormalizeAssessorTerminalFailureStage(stage)).Inc()
 }
@@ -887,6 +876,7 @@ func normalizeAssessorValidationStage(value string) string {
 func normalizeAssessorValidationFieldFamily(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "request_id",
+		"input_tokens",
 		"output_tokens",
 		"response",
 		"security_signals",
@@ -982,12 +972,6 @@ func RecordAssessorDuplicateRequestPrevention(metrics DiscoverabilityMetrics, st
 func RecordAssessorConfidenceGate(metrics DiscoverabilityMetrics, band string) {
 	if recorder, ok := metrics.(AssessorMetrics); ok {
 		recorder.IncAssessorConfidenceGate(band)
-	}
-}
-
-func RecordAssessorReviewExpiry(metrics DiscoverabilityMetrics, count int64) {
-	if recorder, ok := metrics.(AssessorMetrics); ok {
-		recorder.AddAssessorReviewExpiry(count)
 	}
 }
 

@@ -32,6 +32,22 @@ func TestSubmissionAssessmentPlanPreservesValidatedReviewContext(t *testing.T) {
 	assert.Equal(t, 4, plan.relationshipsByRef["r:depends"].ConflictContext.ExpectedVersion)
 }
 
+func TestSubmissionAssessmentPlanPreservesSubmittedTemporalBounds(t *testing.T) {
+	ledger, _, _, _, _ := submissionAssessmentWorkerFixture(t)
+	relationship := ledger.placement.Proposal["relationship_hints"].([]any)[0].(map[string]any)
+	relationship["valid_from"] = "2026-01-01T01:00:00+01:00"
+	relationship["valid_to"] = "2026-01-03T00:00:00Z"
+
+	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
+
+	require.NoError(t, err)
+	target := plan.relationshipsByRef["r:uses"].Target
+	require.NotNil(t, target.ValidFrom)
+	require.NotNil(t, target.ValidTo)
+	assert.Equal(t, "2026-01-01T00:00:00Z", *target.ValidFrom)
+	assert.Equal(t, "2026-01-03T00:00:00Z", *target.ValidTo)
+}
+
 func TestSubmissionAssessmentPlanPreservesKnownEntityIDForLogicalEndpoint(t *testing.T) {
 	ledger, _, _, _, _ := submissionAssessmentWorkerFixture(t)
 	relationships := ledger.placement.Proposal["relationship_hints"].([]any)

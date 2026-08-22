@@ -66,7 +66,6 @@ var freshAuthorityApplicationTables = []string{
 	"placement_runs",
 	"placement_items",
 	"placement_outcomes",
-	"submission_holds",
 	"entity_records",
 	"entity_names",
 	"value_records",

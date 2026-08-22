@@ -653,80 +653,6 @@ func TestOpenAIVerifierSemanticAdapters(t *testing.T) {
 		assert.Equal(t, "rel:uses", got.RelationshipProposals[0].ProposalID)
 	})
 
-	t.Run("ReviewSemantic", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var reqBody openAIVerifierRequest
-			require.NoError(t, json.NewDecoder(r.Body).Decode(&reqBody))
-			assert.Equal(t, "verifier-model", reqBody.Model)
-			assert.Equal(t, VerifierResponseSchemaName, reqBody.ResponseFormat.JSONSchema.Name)
-			assert.Contains(t, reqBody.Messages[0].Content, "semantic verifier")
-			assert.Contains(t, reqBody.Messages[0].Content, `actions "create" and "ambiguous" require candidate_entity_id to be null`)
-			var userPayload map[string]any
-			require.NoError(t, json.Unmarshal([]byte(reqBody.Messages[1].Content), &userPayload))
-			assert.Equal(t, float64(2), userPayload["attempt"])
-			assert.Equal(t, []any{"entity_results[0].candidate_entity_id: must be null"}, userPayload["validation_feedback"])
-			assert.Equal(t, "sha256:previous", userPayload["previous_response_hash"])
-			assert.NotContains(t, userPayload, "team_id")
-			assert.NotContains(t, userPayload, "owner_profile_id")
-			predicateKey := "uses"
-			writeStructuredChatContent(t, w, map[string]any{
-				"request_id":       "verify-1",
-				"security_signals": []any{},
-				"entity_results": []map[string]any{
-					{"ref": "project_1", "action": "create", "candidate_entity_id": nil, "confidence": 0.9, "rationale": "Evidence names the project."},
-					{"ref": "db_1", "action": "create", "candidate_entity_id": nil, "confidence": 0.9, "rationale": "Evidence names the database."},
-				},
-				"relationship_results": []map[string]any{{
-					"ref":              "rel:uses",
-					"predicate_status": "resolved",
-					"predicate_key":    predicateKey,
-					"evidence_verdict": "entailed",
-					"confidence":       0.9,
-					"rationale":        "The evidence states the relationship.",
-				}},
-			})
-		}))
-		defer srv.Close()
-
-		content := "Dense-Mem uses PostgreSQL."
-		cfg := newTestVerifierConfig(srv.URL, "sk-test", "verifier-model")
-		v := NewOpenAIVerifier(cfg, srv.Client())
-		got, err := v.ReviewSemantic(context.Background(), SemanticReviewRequest{
-			RequestID:            "verify-1",
-			TeamID:               "team-a",
-			OwnerProfileID:       "profile-a",
-			Attempt:              2,
-			ValidationFeedback:   []string{"entity_results[0].candidate_entity_id: must be null"},
-			PreviousResponseHash: "sha256:previous",
-			Evidence: []SemanticReviewEvidence{{
-				EvidenceID: "evidence:0",
-				Content:    content,
-			}},
-			EntityMentions: []SemanticEntityMention{
-				{Ref: "project_1", Surface: "Dense-Mem", Kind: "project", EvidenceID: "evidence:0", Start: 0, End: len([]rune("Dense-Mem"))},
-				{Ref: "db_1", Surface: "PostgreSQL", Kind: "project", EvidenceID: "evidence:0", Start: len([]rune("Dense-Mem uses ")), End: len([]rune("Dense-Mem uses PostgreSQL"))},
-			},
-			RelationshipObservations: []SemanticRelationshipObservation{{
-				Ref:               "rel:uses",
-				SubjectRef:        "project_1",
-				OriginalPredicate: "uses",
-				PredicateCandidates: []SemanticPredicateCandidate{{
-					PredicateKey:        "uses",
-					Version:             1,
-					AllowedSubjectKinds: []string{"project"},
-					AllowedObjectKinds:  []string{"project"},
-				}},
-				ObjectRef:  "db_1",
-				EvidenceID: "evidence:0",
-				Quote:      content,
-				Start:      0,
-				End:        len([]rune(content)),
-			}},
-		})
-		require.NoError(t, err)
-		require.Len(t, got.RelationshipResults, 1)
-		assert.Equal(t, "rel:uses", got.RelationshipResults[0].Ref)
-	})
 }
 
 func TestOpenAIVerifierSemanticAdapterErrors(t *testing.T) {
@@ -741,52 +667,12 @@ func TestOpenAIVerifierSemanticAdapterErrors(t *testing.T) {
 			}},
 		}
 	}
-	validReviewRequest := func() SemanticReviewRequest {
-		content := "Dense-Mem uses PostgreSQL."
-		return SemanticReviewRequest{
-			RequestID: "verify-1",
-			TeamID:    "team-a",
-			Evidence: []SemanticReviewEvidence{{
-				EvidenceID: "evidence:0",
-				Content:    content,
-			}},
-			EntityMentions: []SemanticEntityMention{
-				{Ref: "project_1", Surface: "Dense-Mem", Kind: "project", EvidenceID: "evidence:0", Start: 0, End: len([]rune("Dense-Mem"))},
-				{Ref: "db_1", Surface: "PostgreSQL", Kind: "project", EvidenceID: "evidence:0", Start: len([]rune("Dense-Mem uses ")), End: len([]rune("Dense-Mem uses PostgreSQL"))},
-			},
-			RelationshipObservations: []SemanticRelationshipObservation{{
-				Ref:               "rel:uses",
-				SubjectRef:        "project_1",
-				OriginalPredicate: "uses",
-				PredicateCandidates: []SemanticPredicateCandidate{{
-					PredicateKey:        "uses",
-					Version:             1,
-					AllowedSubjectKinds: []string{"project"},
-					AllowedObjectKinds:  []string{"project"},
-				}},
-				ObjectRef:  "db_1",
-				EvidenceID: "evidence:0",
-				Quote:      content,
-				Start:      0,
-				End:        len([]rune(content)),
-			}},
-		}
-	}
-
 	t.Run("invalid proposal request", func(t *testing.T) {
 		v := NewOpenAIVerifier(newTestVerifierConfig("https://example.com/v1", "sk-test", "gpt-4o-mini"), nil)
 		_, err := v.ProposeSemantic(context.Background(), ProviderProposalRequest{})
 		var providerErr *ProviderError
 		require.ErrorAs(t, err, &providerErr)
 		assert.Contains(t, providerErr.Message, "invalid provider proposal request")
-	})
-
-	t.Run("invalid review request", func(t *testing.T) {
-		v := NewOpenAIVerifier(newTestVerifierConfig("https://example.com/v1", "sk-test", "gpt-4o-mini"), nil)
-		_, err := v.ReviewSemantic(context.Background(), SemanticReviewRequest{})
-		var providerErr *ProviderError
-		require.ErrorAs(t, err, &providerErr)
-		assert.Contains(t, providerErr.Message, "invalid semantic review request")
 	})
 
 	t.Run("no choices", func(t *testing.T) {
@@ -829,7 +715,7 @@ func TestOpenAIVerifierSemanticAdapterErrors(t *testing.T) {
 		defer srv.Close()
 		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
 
-		_, err := v.ReviewSemantic(context.Background(), validReviewRequest())
+		_, err := v.ProposeSemantic(context.Background(), validProposalRequest())
 
 		var providerErr *ProviderError
 		require.ErrorAs(t, err, &providerErr)
@@ -846,7 +732,7 @@ func TestOpenAIVerifierSemanticAdapterErrors(t *testing.T) {
 		defer srv.Close()
 		v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "sk-test", "gpt-4o-mini"), srv.Client())
 
-		_, err := v.ReviewSemantic(context.Background(), validReviewRequest())
+		_, err := v.ProposeSemantic(context.Background(), validProposalRequest())
 
 		var rateLimited *RateLimitError
 		require.ErrorAs(t, err, &rateLimited)

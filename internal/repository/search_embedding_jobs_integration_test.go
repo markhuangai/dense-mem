@@ -45,6 +45,42 @@ func TestSearchRenewEmbeddingJobLeaseUsesWorkerAndAttemptFence(t *testing.T) {
 	require.ErrorIs(t, err, ErrEmbeddingLeaseLost)
 }
 
+func TestSearchClaimEmbeddingJobsSeesPrivateSpaceWithoutRequestActor(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-private-space-claim-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-private-space-claim-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-private-space-claim", 3, "exact", "")
+
+	var spaceID string
+	var generation int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT memory_space_id::text, space.generation
+			FROM credentials AS credential
+			JOIN memory_spaces AS space ON space.id = credential.memory_space_id
+			WHERE credential.id = ?::uuid
+		`, ownerID).Row().Scan(&spaceID, &generation)
+	}))
+
+	repo := NewSearchRepository(appDB, rls)
+	_, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: uuid.NewString(),
+		SourceVersion: 1, DocumentText: "private space embedding claim",
+		SpaceID: spaceID, SpaceGeneration: generation,
+	})
+	require.NoError(t, err)
+
+	claimed, err := repo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{
+		TeamID: teamID, WorkerID: "private-space-claim-worker", Limit: 1, Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.Equal(t, spaceID, claimed[0].SpaceID)
+	require.Equal(t, generation, claimed[0].SpaceGeneration)
+}
+
 func TestSearchEmbeddingJobFinalizationFencesSpaceID(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

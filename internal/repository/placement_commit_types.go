@@ -18,27 +18,22 @@ type CommitPlacementSemanticInput struct {
 
 	EntityResolutions        []PlacementEntityResolutionInput
 	RelationshipObservations []PlacementRelationshipDecisionInput
-	RelationshipReviews      []PlacementRelationshipReviewInput
 	RelationshipDecisions    []ApplyRelationshipDecisionInput
 }
 
 type PlacementEntityResolutionInput struct {
-	MentionRef         string
-	Action             string
-	EntityID           string
-	EntityKind         string
-	CanonicalName      string
-	FragmentID         string
-	SpanStart          *int
-	SpanEnd            *int
-	IdentityContext    map[string]any
-	VerifierResult     map[string]any
-	Metadata           map[string]any
-	AssessmentID       string
-	SemanticReviewKind string
-	ReviewQuestion     string
-	ReviewOptions      []map[string]any
-	ReviewGuidance     string
+	MentionRef      string
+	Action          string
+	EntityID        string
+	EntityKind      string
+	CanonicalName   string
+	FragmentID      string
+	SpanStart       *int
+	SpanEnd         *int
+	IdentityContext map[string]any
+	VerifierResult  map[string]any
+	Metadata        map[string]any
+	AssessmentID    string
 }
 
 type PlacementRelationshipDecisionInput struct {
@@ -71,44 +66,12 @@ type PlacementRelationshipDecisionInput struct {
 	ThresholdUsed           *float64
 	GateResult              string
 	SuppressSupport         bool
-	SemanticReviewKind      string
-	ReviewQuestion          string
-	ReviewOptions           []map[string]any
-	ReviewGuidance          string
 }
 
 type PlacementPredicateCandidateInput struct {
 	PredicateKey     string
 	PredicateVersion int
 	RelationshipKind string
-}
-
-type PlacementRelationshipReviewInput struct {
-	Ref                     string
-	SubjectRef              string
-	OriginalPredicate       string
-	ObjectRef               string
-	ObjectValue             *PlacementValueInput
-	Polarity                string
-	EvidenceVerdict         string
-	Confidence              *float64
-	Rationale               string
-	Model                   string
-	ResponseHash            string
-	Support                 *EvidenceSupportInput
-	Supports                []EvidenceSupportInput
-	CorrectionTarget        *PlacementCorrectionTargetInput
-	ConflictContext         *PlacementConflictContextInput
-	Reason                  string
-	Payload                 map[string]any
-	AssessmentID            string
-	AssessmentPolicyVersion string
-	ThresholdUsed           *float64
-	GateResult              string
-	SemanticReviewKind      string
-	ReviewQuestion          string
-	ReviewOptions           []map[string]any
-	ReviewGuidance          string
 }
 
 type PlacementCorrectionTargetInput struct {
@@ -131,18 +94,17 @@ type PlacementValueInput struct {
 	Metadata             map[string]any
 }
 
-type CommitPlacementSemanticResult struct {
+type submissionSemanticCommitState struct {
 	Status              string
 	OutcomeID           string
 	FirstDisposition    *PlacementFirstDisposition
 	RelationshipResults []RelationshipDecisionResult
 	SearchDocuments     []SearchDocumentResult
 	EntityResolutionIDs []string
-	ReviewTaskIDs       []string
 }
 
 // PlacementFirstDisposition is produced once, in the transaction that first
-// moves a placement run to a terminal or review disposition.
+// moves a placement run to a terminal disposition.
 type PlacementFirstDisposition struct {
 	Status      string
 	CreatedAt   time.Time

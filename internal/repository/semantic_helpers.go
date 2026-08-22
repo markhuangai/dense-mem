@@ -47,6 +47,24 @@ type transitionInput struct {
 	SupportDecisionID   string
 }
 
+func statusForVerdict(verdict string) string {
+	switch verdict {
+	case string(domain.VerificationContradicted):
+		return string(domain.RelationshipStatusRejected)
+	case string(domain.VerificationInsufficient):
+		return string(domain.RelationshipStatusPendingEvidence)
+	default:
+		return string(domain.RelationshipStatusActive)
+	}
+}
+
+func statusForRelationshipDecision(input ApplyRelationshipDecisionInput) string {
+	if input.SuppressSupport && input.EvidenceVerdict == string(domain.VerificationEntailed) {
+		return string(domain.RelationshipStatusPendingEvidence)
+	}
+	return statusForVerdict(input.EvidenceVerdict)
+}
+
 func normalizeCreateEntityInput(input CreateEntityInput) CreateEntityInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
@@ -163,9 +181,6 @@ func normalizeApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInpu
 	input.AssessmentID = strings.TrimSpace(input.AssessmentID)
 	input.AssessmentPolicyVersion = strings.TrimSpace(input.AssessmentPolicyVersion)
 	input.GateResult = strings.TrimSpace(input.GateResult)
-	input.SemanticReviewKind = strings.TrimSpace(input.SemanticReviewKind)
-	input.ReviewQuestion = strings.TrimSpace(input.ReviewQuestion)
-	input.ReviewGuidance = strings.TrimSpace(input.ReviewGuidance)
 	if input.PredicateVersion == 0 {
 		input.PredicateVersion = 1
 	}
@@ -288,9 +303,6 @@ func validateApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInput
 		return errors.New("confidence must be between 0 and 1")
 	}
 	if err := validateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
-		return err
-	}
-	if err := validateSemanticReviewDetails(input.AssessmentID, input.SemanticReviewKind, input.ReviewQuestion, input.ReviewOptions, input.ReviewGuidance); err != nil {
 		return err
 	}
 	if input.ValidFrom != nil && input.ValidTo != nil && input.ValidTo.Before(*input.ValidFrom) {
@@ -530,75 +542,6 @@ func loadValueType(ctx context.Context, tx *gorm.DB, teamID, valueID string) (st
 		return "", err
 	}
 	return valueType, nil
-}
-
-func insertPredicateReview(
-	ctx context.Context,
-	tx *gorm.DB,
-	input ApplyRelationshipDecisionInput,
-) (*RelationshipDecisionResult, error) {
-	observationInput := input
-	observationInput.PredicateKey = ""
-	observationInput.PredicateVersion = 0
-	observationID, err := insertRelationshipObservation(ctx, tx, observationInput, "")
-	if err != nil {
-		return nil, err
-	}
-	verificationID, err := insertVerificationEvent(ctx, tx, input, observationID)
-	if err != nil {
-		return nil, err
-	}
-	payload, err := marshalJSON(map[string]any{
-		"original_predicate":       input.OriginalPredicate,
-		"predicate_key":            input.PredicateKey,
-		"predicate_policy_version": domain.PredicatePolicyVersion,
-	})
-	if err != nil {
-		return nil, err
-	}
-	dedupeKey := ""
-	if input.PlacementItemID != "" && input.ProposalRef != "" {
-		dedupeKey = "relationship:" + input.PlacementItemID + ":" + input.ProposalRef + ":predicate_needs_review"
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		INSERT INTO review_tasks (
-		    team_id, owner_profile_id, ingest_id, placement_item_id,
-		    observation_id, space_id, task_type, status, reason, payload, dedupe_key, updated_at
-		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid,
-		    ?::uuid,
-		    (SELECT observation.space_id
-		     FROM relationship_observations AS observation
-		     WHERE observation.team_id = ?::uuid
-		       AND observation.observation_id = ?::uuid),
-		    'predicate_needs_review', 'open', 'unknown_predicate', ?::jsonb, ?, now()
-		)
-		ON CONFLICT (team_id, dedupe_key)
-		WHERE dedupe_key <> '' AND status IN ('open', 'acknowledged')
-		DO UPDATE SET updated_at = now()
-		RETURNING review_task_id::text
-	`, input.TeamID, input.OwnerProfileID, input.IngestID, input.PlacementItemID,
-		observationID, input.TeamID, observationID, string(payload), dedupeKey).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return nil, rows.Err()
-	}
-	var reviewTaskID string
-	if err := rows.Scan(&reviewTaskID); err != nil {
-		return nil, err
-	}
-	return &RelationshipDecisionResult{
-		ObservationID:       observationID,
-		VerificationEventID: verificationID,
-		ReviewTaskID:        reviewTaskID,
-		ProposalID:          input.ProposalRef,
-		OwnerProfileID:      input.OwnerProfileID,
-		Category:            string(domain.OutcomePredicateNeedsReview),
-		Reason:              "unknown_predicate",
-	}, rows.Err()
 }
 
 func upsertRelationshipRecord(

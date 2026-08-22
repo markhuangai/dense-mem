@@ -38,7 +38,6 @@ type AssessorMetrics interface {
 	IncAssessorAssessmentPersistence(outcome string)
 	IncAssessorDuplicateRequestPrevention(stage string)
 	IncAssessorConfidenceGate(band string)
-	AddAssessorReviewExpiry(count int64)
 	IncAssessorTerminalFailure(stage string)
 }
 
@@ -71,7 +70,6 @@ func (noopMetrics) IncAssessorCandidateTruncation()              {}
 func (noopMetrics) IncAssessorAssessmentPersistence(string)      {}
 func (noopMetrics) IncAssessorDuplicateRequestPrevention(string) {}
 func (noopMetrics) IncAssessorConfidenceGate(string)             {}
-func (noopMetrics) AddAssessorReviewExpiry(int64)                {}
 func (noopMetrics) IncAssessorTerminalFailure(string)            {}
 func (noopMetrics) IncSubmissionQuarantinePurgeFailure()         {}
 
@@ -93,7 +91,6 @@ type InMemoryDiscoverabilityMetrics struct {
 	assessorPersistence         map[string]int
 	assessorDuplicatePrevention map[string]int
 	assessorGateBands           map[string]int
-	assessorReviewExpiry        int64
 	assessorTerminalFailures    map[string]int
 	quarantinePurgeFailures     int
 	reconciliationRuns          map[string]int
@@ -353,15 +350,6 @@ func (m *InMemoryDiscoverabilityMetrics) IncAssessorConfidenceGate(band string) 
 	m.assessorGateBands[band]++
 }
 
-func (m *InMemoryDiscoverabilityMetrics) AddAssessorReviewExpiry(count int64) {
-	if count <= 0 {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.assessorReviewExpiry += count
-}
-
 func (m *InMemoryDiscoverabilityMetrics) IncAssessorTerminalFailure(stage string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -418,12 +406,6 @@ func (m *InMemoryDiscoverabilityMetrics) AssessorConfidenceGateCount(band string
 	return m.assessorGateBands[band]
 }
 
-func (m *InMemoryDiscoverabilityMetrics) AssessorReviewExpiryCount() int64 {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.assessorReviewExpiry
-}
-
 func (m *InMemoryDiscoverabilityMetrics) AssessorTerminalFailureCount(stage string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -439,8 +421,8 @@ func NormalizeAssessorTerminalFailureStage(value string) string {
 		"catalog_context_validation", "predicate_options_overflow",
 		"assessment_input_overflow", "candidate_context_validation", "candidate_context_limit",
 		"candidate_prefetch", "assessment_attempt_consumed", "assessment", "provider",
-		"review_override", "security_signal", "confidence_policy", "policy_review",
-		"deterministic_policy", "commit_review", "replacement_conflict", "assessment_scope",
+		"security_signal", "confidence_policy", "policy_validation",
+		"deterministic_policy", "replacement_conflict", "assessment_scope",
 		"stale_source", "semantic_commit", "verification", "stored_response",
 		"predicate_catalog", "extraction", "preflight":
 		return strings.ToLower(strings.TrimSpace(value))

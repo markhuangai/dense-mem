@@ -23,6 +23,7 @@ type submissionLockedItem struct {
 	Category        string
 	Fragment        EvidenceFragment
 	SourceStale     bool
+	DeletionOnly    bool
 }
 
 func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
@@ -34,7 +35,7 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 		return nil, err
 	}
 	result := &CommitSubmissionAssessmentResult{Status: string(domain.SemanticReviewAccepted)}
-	semanticResult := &CommitPlacementSemanticResult{Status: string(domain.SemanticReviewAccepted)}
+	semanticResult := &submissionSemanticCommitState{Status: string(domain.SemanticReviewAccepted)}
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		if err := lockSubmissionAssessmentRun(ctx, tx, input.SubmissionAssessmentRunScope); err != nil {
 			return fmt.Errorf("lock submission assessment run: %w", err)
@@ -61,19 +62,11 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 				return ErrPlacementStaleSource
 			}
 		}
-		conflictContexts := make([]PlacementConflictContextInput, 0, len(input.RelationshipObservations))
-		for _, entry := range input.RelationshipObservations {
-			conflictContext := entry.Observation.ConflictContext
-			if conflictContext == nil {
-				continue
+		deletionOnly := items[0].DeletionOnly
+		for _, item := range items[1:] {
+			if item.DeletionOnly != deletionOnly {
+				return ErrSubmissionAssessmentNonPromotable
 			}
-			conflictContexts = append(conflictContexts, *conflictContext)
-		}
-		if err := requireRelationshipConflictContextsCurrent(ctx, tx, input.TeamID, conflictContexts); err != nil {
-			return err
-		}
-		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
-			return err
 		}
 
 		itemByID := make(map[string]submissionLockedItem, len(items))
@@ -81,9 +74,6 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 		for _, item := range items {
 			itemByID[item.PlacementItemID] = item
 			fragmentItemIDs[item.FragmentID] = struct{}{}
-		}
-		if err := resolveSubmissionPredicates(ctx, tx, &input); err != nil {
-			return err
 		}
 
 		common := CommitPlacementSemanticInput{
@@ -97,106 +87,131 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 			Status:           string(domain.SemanticReviewAccepted),
 			Category:         "validated_claim",
 		}
-		entitiesByRef := make(map[string]string, len(input.EntityResolutions))
-		for _, entry := range input.EntityResolutions {
-			item, ok := itemByID[entry.PlacementItemID]
-			if !ok {
-				return ErrPlacementLeaseLost
-			}
-			commit := common
-			commit.PlacementItemID = entry.PlacementItemID
-			if entry.Resolution.FragmentID != item.FragmentID {
-				return errors.New("submission entity resolution fragment does not match placement item")
-			}
-			resolutionID, entityID, err := insertPlacementEntityResolution(ctx, tx, commit, entry.Resolution)
-			if err != nil {
-				return err
-			}
-			if entityID == "" {
-				return ErrSubmissionAssessmentNonPromotable
-			}
-			if _, exists := entitiesByRef[entry.Resolution.MentionRef]; exists {
-				return errors.New("submission entity resolution mention_ref is duplicated")
-			}
-			entitiesByRef[entry.Resolution.MentionRef] = entityID
-			semanticResult.EntityResolutionIDs = append(semanticResult.EntityResolutionIDs, resolutionID)
-		}
-
-		for _, entry := range input.RelationshipObservations {
-			item, ok := itemByID[entry.PlacementItemID]
-			if !ok {
-				return ErrPlacementLeaseLost
-			}
-			for _, support := range relationshipEvidenceSupports(entry.Observation.Support, entry.Observation.Supports) {
-				if _, ok := fragmentItemIDs[support.FragmentID]; !ok {
-					return errors.New("submission relationship support is outside the placement run")
+		if !deletionOnly {
+			conflictContexts := make([]PlacementConflictContextInput, 0, len(input.RelationshipObservations))
+			for _, entry := range input.RelationshipObservations {
+				conflictContext := entry.Observation.ConflictContext
+				if conflictContext != nil {
+					conflictContexts = append(conflictContexts, *conflictContext)
 				}
 			}
-			commit := common
-			commit.PlacementItemID = entry.PlacementItemID
-			decision, err := relationshipDecisionFromPlacementObservation(ctx, tx, commit, entry.Observation, entitiesByRef)
-			if err != nil {
+			if err := requireRelationshipConflictContextsCurrent(ctx, tx, input.TeamID, conflictContexts); err != nil {
 				return err
 			}
-			if entry.Observation.ConflictContext != nil {
-				if err := requireRelationshipConflictContextMatchesDecision(
+			if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
+				return err
+			}
+			if err := resolveSubmissionPredicates(ctx, tx, &input); err != nil {
+				return err
+			}
+
+			entitiesByRef := make(map[string]string, len(input.EntityResolutions))
+			for _, entry := range input.EntityResolutions {
+				item, ok := itemByID[entry.PlacementItemID]
+				if !ok {
+					return ErrPlacementLeaseLost
+				}
+				commit := common
+				commit.PlacementItemID = entry.PlacementItemID
+				if entry.Resolution.FragmentID != item.FragmentID {
+					return errors.New("submission entity resolution fragment does not match placement item")
+				}
+				resolutionID, entityID, err := insertPlacementEntityResolution(ctx, tx, commit, entry.Resolution)
+				if err != nil {
+					return err
+				}
+				if entityID == "" {
+					return ErrSubmissionAssessmentNonPromotable
+				}
+				if _, exists := entitiesByRef[entry.Resolution.MentionRef]; exists {
+					return errors.New("submission entity resolution mention_ref is duplicated")
+				}
+				entitiesByRef[entry.Resolution.MentionRef] = entityID
+				semanticResult.EntityResolutionIDs = append(semanticResult.EntityResolutionIDs, resolutionID)
+			}
+
+			for _, entry := range input.RelationshipObservations {
+				item, ok := itemByID[entry.PlacementItemID]
+				if !ok {
+					return ErrPlacementLeaseLost
+				}
+				for _, support := range relationshipEvidenceSupports(entry.Observation.Support, entry.Observation.Supports) {
+					if _, ok := fragmentItemIDs[support.FragmentID]; !ok {
+						return errors.New("submission relationship support is outside the placement run")
+					}
+				}
+				commit := common
+				commit.PlacementItemID = entry.PlacementItemID
+				decision, err := relationshipDecisionFromPlacementObservation(ctx, tx, commit, entry.Observation, entitiesByRef)
+				if err != nil {
+					return err
+				}
+				if entry.Observation.ConflictContext != nil {
+					if err := requireRelationshipConflictContextMatchesDecision(
+						ctx,
+						tx,
+						input.TeamID,
+						*entry.Observation.ConflictContext,
+						decision,
+					); err != nil {
+						return err
+					}
+				}
+				appliedBefore := len(semanticResult.RelationshipResults)
+				if err := applyPlacementRelationshipDecision(
 					ctx,
 					tx,
-					input.TeamID,
-					*entry.Observation.ConflictContext,
+					commit,
 					decision,
+					entry.Observation.CorrectionTarget,
+					entry.Observation.ConflictContext,
+					item.FragmentID,
+					r.embeddingJobMaxAttempts,
+					ConflictRuntimeConfig{ReviewTTLDays: r.conflictReviewTTLDays, Timezone: r.conflictReviewTimezone},
+					semanticResult,
 				); err != nil {
 					return err
 				}
+				if len(semanticResult.RelationshipResults) != appliedBefore+1 {
+					return ErrSubmissionAssessmentNonPromotable
+				}
+				applied := semanticResult.RelationshipResults[len(semanticResult.RelationshipResults)-1]
+				if applied.Relationship == nil || applied.Relationship.Status != string(domain.RelationshipStatusActive) {
+					return ErrSubmissionAssessmentNonPromotable
+				}
 			}
-			appliedBefore := len(semanticResult.RelationshipResults)
-			if err := applyPlacementRelationshipDecision(
-				ctx,
-				tx,
-				commit,
-				decision,
-				entry.Observation.CorrectionTarget,
-				entry.Observation.ConflictContext,
-				item.FragmentID,
-				r.embeddingJobMaxAttempts,
-				ConflictRuntimeConfig{ReviewTTLDays: r.conflictReviewTTLDays, Timezone: r.conflictReviewTimezone},
-				semanticResult,
-			); err != nil {
-				return err
-			}
-			if len(semanticResult.RelationshipResults) != appliedBefore+1 {
-				return ErrSubmissionAssessmentNonPromotable
-			}
-			applied := semanticResult.RelationshipResults[len(semanticResult.RelationshipResults)-1]
-			if applied.ReviewTaskID != "" || applied.Relationship == nil || applied.Relationship.Status != string(domain.RelationshipStatusActive) {
-				return ErrSubmissionAssessmentNonPromotable
-			}
-		}
 
-		evidenceSearchContract, err := loadActiveSearchContractInTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		for _, item := range items {
-			commit := common
-			commit.PlacementItemID = item.PlacementItemID
-			document, err := upsertPlacementEvidenceSearchDocumentWithContract(
-				ctx,
-				tx,
-				commit,
-				item.FragmentID,
-				map[string]any{"placement_item_id": commit.PlacementItemID},
-				evidenceSearchContract,
-				r.embeddingJobMaxAttempts,
-			)
+			evidenceSearchContract, err := loadActiveSearchContractInTx(ctx, tx)
 			if err != nil {
 				return err
 			}
-			appendPlacementSearchDocument(semanticResult, document)
+			for _, item := range items {
+				commit := common
+				commit.PlacementItemID = item.PlacementItemID
+				document, err := upsertPlacementEvidenceSearchDocumentWithContract(
+					ctx,
+					tx,
+					commit,
+					item.FragmentID,
+					map[string]any{"placement_item_id": commit.PlacementItemID},
+					evidenceSearchContract,
+					r.embeddingJobMaxAttempts,
+				)
+				if err != nil {
+					return err
+				}
+				appendPlacementSearchDocument(semanticResult, document)
+			}
 		}
 
 		payload := placementCommitPayload(input.Payload, semanticResult)
 		payload["submission_atomic"] = true
+		itemCategory := "validated_claim"
+		if deletionOnly {
+			payload["conflict_resolution_deletion_only"] = true
+			payload["semantic_projection"] = "not_allowed"
+			itemCategory = "candidate"
+		}
 		for _, item := range items {
 			itemPayload := cloneSubmissionPayload(payload)
 			itemPayload["evidence_index"] = item.EvidenceIndex
@@ -217,15 +232,12 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 				OwnerProfileID:     input.OwnerProfileID,
 				PlacementItemID:    item.PlacementItemID,
 				UpdateItemStatus:   string(domain.PlacementRunCompleted),
-				UpdateItemCategory: "validated_claim",
+				UpdateItemCategory: itemCategory,
 				Payload:            itemPayload,
 			}); err != nil {
 				return err
 			}
 			result.OutcomeIDs = append(result.OutcomeIDs, outcomeID)
-		}
-		if err := promoteSubmissionReplacement(ctx, tx, input.SubmissionAssessmentRunScope); err != nil {
-			return err
 		}
 		firstDisposition, err := completeSubmissionPlacementRun(ctx, tx, input.SubmissionAssessmentRunScope, string(domain.PlacementRunCompleted), "")
 		if err != nil {
@@ -278,9 +290,6 @@ func normalizeSubmissionEntityResolution(input PlacementEntityResolutionInput) P
 	input.CanonicalName = strings.TrimSpace(input.CanonicalName)
 	input.FragmentID = strings.TrimSpace(input.FragmentID)
 	input.AssessmentID = strings.TrimSpace(input.AssessmentID)
-	input.SemanticReviewKind = strings.TrimSpace(input.SemanticReviewKind)
-	input.ReviewQuestion = strings.TrimSpace(input.ReviewQuestion)
-	input.ReviewGuidance = strings.TrimSpace(input.ReviewGuidance)
 	return input
 }
 
@@ -312,7 +321,7 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 		if _, err := uuid.Parse(entry.PlacementItemID); err != nil {
 			return fmt.Errorf("entity resolution placement_item_id is required: %w", err)
 		}
-		if entry.Resolution.Action == string(domain.EntityResolutionAmbiguous) || entry.Resolution.SemanticReviewKind != "" {
+		if entry.Resolution.Action == string(domain.EntityResolutionAmbiguous) {
 			return ErrSubmissionAssessmentNonPromotable
 		}
 		if err := validatePlacementEntityResolutionInput(entry.Resolution); err != nil {
@@ -335,7 +344,7 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 		if _, err := uuid.Parse(entry.PlacementItemID); err != nil {
 			return fmt.Errorf("relationship observation placement_item_id is required: %w", err)
 		}
-		if entry.Observation.PredicateCandidate != nil || entry.Observation.SemanticReviewKind != "" || entry.Observation.SuppressSupport || entry.Observation.EvidenceVerdict != string(domain.VerificationEntailed) || entry.Observation.Confidence == nil || math.IsNaN(*entry.Observation.Confidence) || math.IsInf(*entry.Observation.Confidence, 0) {
+		if entry.Observation.PredicateCandidate != nil || entry.Observation.SuppressSupport || entry.Observation.EvidenceVerdict != string(domain.VerificationEntailed) || entry.Observation.Confidence == nil || math.IsNaN(*entry.Observation.Confidence) || math.IsInf(*entry.Observation.Confidence, 0) {
 			return ErrSubmissionAssessmentNonPromotable
 		}
 		validationObservation := entry.Observation
@@ -449,7 +458,22 @@ func loadLockedSubmissionAssessmentItems(
 		           FROM evidence_lifecycle_events AS lifecycle
 		           WHERE lifecycle.team_id = fragment.team_id
 		             AND lifecycle.target_fragment_id = fragment.fragment_id
-		       ) AS retired
+		       ) AS retired,
+		       EXISTS (
+		           SELECT 1
+		           FROM knowledge_ingests AS deletion_ingest
+		           JOIN ownership_aliases AS alias
+		             ON alias.team_id = fragment.team_id
+		            AND alias.legacy_owner_id = fragment.owner_profile_id
+		           JOIN actor_identities AS identity
+		             ON identity.id = alias.canonical_identity_id
+		           WHERE deletion_ingest.team_id = fragment.team_id
+		             AND deletion_ingest.ingest_id = fragment.ingest_id
+		             AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') = 'true'
+		             AND COALESCE(deletion_ingest.metadata->>'conflict_resolution_deletion_only', '') = 'true'
+		             AND deletion_ingest.source_summary = ?
+		             AND identity.kind = 'system'
+		       ) AS deletion_only
 		FROM placement_items AS item
 		JOIN evidence_fragments AS fragment
 		  ON fragment.team_id = item.team_id
@@ -463,7 +487,7 @@ func loadLockedSubmissionAssessmentItems(
 		  AND item.placement_run_id = ?::uuid
 		ORDER BY item.evidence_index ASC, item.placement_item_id ASC
 		FOR UPDATE OF item
-	`, scope.TeamID, scope.OwnerProfileID, scope.IngestID, scope.PlacementRunID).Rows()
+	`, conflictResolutionDeletionOnlySourceSummary, scope.TeamID, scope.OwnerProfileID, scope.IngestID, scope.PlacementRunID).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -486,6 +510,7 @@ func loadLockedSubmissionAssessmentItems(
 			&item.Fragment.SourceRevisionID,
 			&currentRevisionID,
 			&retired,
+			&item.DeletionOnly,
 		); err != nil {
 			return nil, err
 		}

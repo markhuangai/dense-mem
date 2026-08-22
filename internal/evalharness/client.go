@@ -481,7 +481,7 @@ func (c *HTTPClient) WaitForSubmissionStatusResult(ctx context.Context, submissi
 			default:
 				return nil, fmt.Errorf("submission %s returned unknown search_state %q", submissionID, searchState)
 			}
-		case "queued", "processing", "awaiting_review":
+		case "queued", "processing":
 		case "rejected":
 			if evidenceIDFromSubmission(out) != "" {
 				return out, nil

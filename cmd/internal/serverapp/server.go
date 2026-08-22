@@ -269,11 +269,8 @@ func RunActiveServer(
 		Metrics:   discoverabilityMetrics,
 	})
 	lifecycleSvc := memoryservice.NewLifecycleService(memoryservice.LifecycleDependencies{
-		Semantic:  semanticRepo,
-		Placement: ledgerRepo,
-		Evidence:  ledgerRepo,
-		Auditor:   securityRejectionAuditor,
-		Metrics:   discoverabilityMetrics,
+		Semantic: semanticRepo,
+		Evidence: ledgerRepo,
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
@@ -933,7 +930,6 @@ func startActiveWorkers(
 			worker := memoryservice.NewSubmissionAssessmentPlacementWorkerService(memoryservice.SubmissionAssessmentPlacementWorkerDependencies{
 				Ledger:                    ledger,
 				Assessments:               ledger,
-				ReviewExpiry:              ledger,
 				Catalog:                   semantic,
 				Provider:                  assessor,
 				Limits:                    assessmentLimits,

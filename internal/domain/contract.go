@@ -173,13 +173,12 @@ const (
 type PlacementRunStatus string
 
 const (
-	PlacementRunQueued         PlacementRunStatus = "queued"
-	PlacementRunGuarded        PlacementRunStatus = "guarded"
-	PlacementRunQuarantined    PlacementRunStatus = "quarantined"
-	PlacementRunProcessing     PlacementRunStatus = "processing"
-	PlacementRunAwaitingReview PlacementRunStatus = "awaiting_review"
-	PlacementRunCompleted      PlacementRunStatus = "completed"
-	PlacementRunFailed         PlacementRunStatus = "failed"
+	PlacementRunQueued      PlacementRunStatus = "queued"
+	PlacementRunGuarded     PlacementRunStatus = "guarded"
+	PlacementRunQuarantined PlacementRunStatus = "quarantined"
+	PlacementRunProcessing  PlacementRunStatus = "processing"
+	PlacementRunCompleted   PlacementRunStatus = "completed"
+	PlacementRunFailed      PlacementRunStatus = "failed"
 )
 
 type SearchProjectionState string
@@ -273,7 +272,6 @@ type SemanticReviewStatus string
 
 const (
 	SemanticReviewAccepted        SemanticReviewStatus = "accepted"
-	SemanticReviewReviewRequired  SemanticReviewStatus = "review_required"
 	SemanticReviewQuarantined     SemanticReviewStatus = "quarantined"
 	SemanticReviewRejected        SemanticReviewStatus = "rejected"
 	SemanticReviewRetryable       SemanticReviewStatus = "retryable"
@@ -427,7 +425,6 @@ func RelationshipOutcomeCategories() []string {
 func SemanticReviewStatuses() []string {
 	return []string{
 		string(SemanticReviewAccepted),
-		string(SemanticReviewReviewRequired),
 		string(SemanticReviewQuarantined),
 		string(SemanticReviewRejected),
 		string(SemanticReviewRetryable),
@@ -473,7 +470,6 @@ func PlacementRunStatuses() []string {
 		string(PlacementRunGuarded),
 		string(PlacementRunQuarantined),
 		string(PlacementRunProcessing),
-		string(PlacementRunAwaitingReview),
 		string(PlacementRunCompleted),
 		string(PlacementRunFailed),
 	}

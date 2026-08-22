@@ -680,8 +680,8 @@ if [[ "$E2E_MODE" != "standard" && "$E2E_MODE" != "entra_scim" ]]; then
   echo "DENSE_MEM_E2E_MODE must be standard or entra_scim." >&2
   exit 1
 fi
-if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "mcp_sdk_parity" && "$E2E_SCENARIO" != "mcp_sdk_transport" && "$E2E_SCENARIO" != "oauth_provider_compatibility" && "$E2E_SCENARIO" != "mcp_oauth" && "$E2E_SCENARIO" != "private_memory_erasure" && "$E2E_SCENARIO" != "security_runtime" && "$E2E_SCENARIO" != "infrastructure_credentials" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "submission_terminal_errors" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "semantic_holds" && "$E2E_SCENARIO" != "identity_cleanup" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" && "$E2E_SCENARIO" != "memory_space_backfill" && "$E2E_SCENARIO" != "memory_space_isolation" && "$E2E_SCENARIO" != "space_aware_recall" && "$E2E_SCENARIO" != "credential_memory_binding" && "$E2E_SCENARIO" != "all" ]]; then
-  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, mcp_sdk_parity, mcp_sdk_transport, oauth_provider_compatibility, mcp_oauth, private_memory_erasure, security_runtime, infrastructure_credentials, submission_status, submission_terminal_errors, security_intake, submission_assessment, semantic_holds, identity_cleanup, community, conflict, conflict_queue, embedding_reconciliation, embedding_resilience, memory_space_backfill, memory_space_isolation, space_aware_recall, credential_memory_binding, or all." >&2
+if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "mcp_sdk_parity" && "$E2E_SCENARIO" != "mcp_sdk_transport" && "$E2E_SCENARIO" != "oauth_provider_compatibility" && "$E2E_SCENARIO" != "mcp_oauth" && "$E2E_SCENARIO" != "private_memory_erasure" && "$E2E_SCENARIO" != "security_runtime" && "$E2E_SCENARIO" != "infrastructure_credentials" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "submission_terminal_errors" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "identity_cleanup" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" && "$E2E_SCENARIO" != "memory_space_backfill" && "$E2E_SCENARIO" != "memory_space_isolation" && "$E2E_SCENARIO" != "space_aware_recall" && "$E2E_SCENARIO" != "credential_memory_binding" && "$E2E_SCENARIO" != "all" ]]; then
+  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, mcp_sdk_parity, mcp_sdk_transport, oauth_provider_compatibility, mcp_oauth, private_memory_erasure, security_runtime, infrastructure_credentials, submission_status, submission_terminal_errors, security_intake, submission_assessment, identity_cleanup, community, conflict, conflict_queue, embedding_reconciliation, embedding_resilience, memory_space_backfill, memory_space_isolation, space_aware_recall, credential_memory_binding, or all." >&2
   exit 1
 fi
 
@@ -695,7 +695,7 @@ if [[ "$E2E_SCENARIO" == "all" ]]; then
     echo "DENSE_MEM_E2E_SCENARIO=all requires DENSE_MEM_E2E_MODE=standard." >&2
     exit 1
   fi
-  for scenario in mcp_boundaries mcp_sdk_parity mcp_sdk_transport oauth_provider_compatibility mcp_oauth private_memory_erasure security_runtime infrastructure_credentials submission_status submission_terminal_errors security_intake submission_assessment semantic_holds identity_cleanup community conflict conflict_queue embedding_reconciliation embedding_resilience memory_space_backfill memory_space_isolation space_aware_recall credential_memory_binding full; do
+  for scenario in mcp_boundaries mcp_sdk_parity mcp_sdk_transport oauth_provider_compatibility mcp_oauth private_memory_erasure security_runtime infrastructure_credentials submission_status submission_terminal_errors security_intake submission_assessment identity_cleanup community conflict conflict_queue embedding_reconciliation embedding_resilience memory_space_backfill memory_space_isolation space_aware_recall credential_memory_binding full; do
     echo "Running compose e2e scenario ${scenario} as part of all."
     DENSE_MEM_E2E_SCENARIO="$scenario" \
     DENSE_MEM_E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-all}-$(printf '%s' "$scenario" | tr '[:upper:]' '[:lower:]')" \
@@ -765,7 +765,7 @@ require_env_value AI_API_URL >/dev/null
 require_env_value AI_API_KEY >/dev/null
 require_env_value AI_API_EMBEDDING_MODEL >/dev/null
 require_env_value AI_API_EMBEDDING_DIMENSIONS >/dev/null
-if [[ "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "submission_terminal_errors" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "semantic_holds" || "$E2E_SCENARIO" == "community" || "$E2E_SCENARIO" == "conflict_queue" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
+if [[ "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "submission_terminal_errors" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "community" || "$E2E_SCENARIO" == "conflict_queue" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
   require_env_value AI_VERIFIER_API_URL >/dev/null
   require_env_value AI_VERIFIER_API_KEY >/dev/null
   require_env_value AI_VERIFIER_MODEL >/dev/null
@@ -942,19 +942,6 @@ if [[ "$E2E_SCENARIO" == "submission_assessment" ]]; then
   DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
   DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
   node "$ROOT_DIR/tests/uat/submission_assessment_mcp_e2e.mjs"
-  exit 0
-fi
-if [[ "$E2E_SCENARIO" == "semantic_holds" ]]; then
-  echo "Running compose-backed semantic-hold and replacement e2e with the configured live verifier."
-  DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
-  DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
-  DENSE_MEM_USER_URL="$USER_URL" \
-  DENSE_MEM_E2E_TEAM_ID="$team_id" \
-  DENSE_MEM_E2E_API_KEY="$api_key" \
-  DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" \
-  DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
-  DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
-  node "$ROOT_DIR/tests/uat/semantic_holds_mcp_e2e.mjs"
   exit 0
 fi
 if [[ "$E2E_SCENARIO" == "identity_cleanup" ]]; then run_identity_cleanup_consumer_e2e "$team_id" "$CREATED_CREDENTIAL_ID" "$api_key"; exit 0; fi

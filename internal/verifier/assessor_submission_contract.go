@@ -4,9 +4,34 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
+
+func normalizeOptionalAssessmentTime(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	parsed, err := assessmentParsedTime(&trimmed)
+	if err != nil {
+		return &trimmed
+	}
+	canonical := parsed.UTC().Format(time.RFC3339Nano)
+	return &canonical
+}
+
+func cloneOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
 
 const SemanticAssessmentMaxEntityGroundings = 20
 
@@ -23,6 +48,8 @@ type SemanticAssessmentRequiredRelationshipRef struct {
 	ObjectValue       *SemanticAssessmentValue
 	Polarity          string
 	Modality          string
+	ValidFrom         *string
+	ValidTo           *string
 }
 
 type SemanticAssessmentSubmissionContract struct {
@@ -68,6 +95,8 @@ type SemanticAssessmentSubmittedRelationship struct {
 	Polarity      string                   `json:"polarity"`
 	Modality      string                   `json:"modality"`
 	EvidenceIDs   []string                 `json:"evidence_ids"`
+	ValidFrom     *string                  `json:"valid_from,omitempty"`
+	ValidTo       *string                  `json:"valid_to,omitempty"`
 }
 
 func normalizeSemanticAssessmentSubmissionContract(
@@ -177,6 +206,8 @@ func normalizeSemanticAssessmentSubmissionContract(
 		target.SubjectRef = strings.TrimSpace(target.SubjectRef)
 		target.Polarity = strings.TrimSpace(target.Polarity)
 		target.Modality = strings.TrimSpace(target.Modality)
+		target.ValidFrom = normalizeOptionalAssessmentTime(target.ValidFrom)
+		target.ValidTo = normalizeOptionalAssessmentTime(target.ValidTo)
 		target.EvidenceIDs = normalizedUniqueStrings(target.EvidenceIDs)
 		field := fmt.Sprintf("submission_contract.relationships[%d]", i)
 		if !assessmentBoundedRequiredString(target.ProposalID, 128) {
@@ -211,6 +242,13 @@ func normalizeSemanticAssessmentSubmissionContract(
 		if !semanticOneOf(target.Modality, "statement", "question", "proposal", "speculation", "quoted") {
 			errs = append(errs, semanticErr(field+".modality", "is unsupported"))
 		}
+		from, fromErr := assessmentParsedTime(target.ValidFrom)
+		to, toErr := assessmentParsedTime(target.ValidTo)
+		if fromErr != nil || toErr != nil {
+			errs = append(errs, semanticErr(field+".validity", "must contain RFC3339 timestamps or null"))
+		} else if from != nil && to != nil && to.Before(*from) {
+			errs = append(errs, semanticErr(field+".valid_to", "must not be before valid_from"))
+		}
 		if len(target.EvidenceIDs) == 0 || len(target.EvidenceIDs) > SemanticAssessmentMaxEvidenceSpans {
 			errs = append(errs, semanticErr(field+".evidence_ids", "must be present and bounded"))
 		}
@@ -244,6 +282,8 @@ func normalizeSemanticAssessmentSubmissionContract(
 			Polarity:      target.Polarity,
 			Modality:      target.Modality,
 			EvidenceIDs:   append([]string(nil), target.EvidenceIDs...),
+			ValidFrom:     cloneOptionalString(target.ValidFrom),
+			ValidTo:       cloneOptionalString(target.ValidTo),
 		})
 	}
 	return nil
@@ -437,6 +477,9 @@ func validateSemanticAssessmentSubmissionResponse(
 		seen[result.Ref] = struct{}{}
 		if result.SubjectRef != target.SubjectRef || result.Polarity != target.Polarity || result.Modality != target.Modality {
 			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d]", i), "does not preserve its submitted relationship target"))
+		}
+		if !optionalStringEqual(result.ValidFrom, target.ValidFrom) || !optionalStringEqual(result.ValidTo, target.ValidTo) {
+			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].validity", i), "does not preserve the submitted temporal bounds"))
 		}
 		if !semanticAssessmentSubmittedObjectMatches(target, result) {
 			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].object", i), "does not preserve its submitted object"))

@@ -1,9 +1,6 @@
 package registry
 
-import (
-	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-)
+import "github.com/markhuangai/dense-mem/internal/domain"
 
 func contractInput(required []string, properties map[string]any) map[string]any {
 	requireNonEmptyStrings(required, properties)
@@ -20,10 +17,9 @@ func contractInput(required []string, properties map[string]any) map[string]any 
 
 func rememberInputSchema() map[string]any {
 	return contractInput([]string{"evidence", "relationships"}, map[string]any{
-		"evidence":               evidenceArraySchema(),
-		"relationships":          relationshipSubmissionArraySchema(),
-		"idempotency_key":        schemaString("Ingest retry key scoped to team and profile.", 128),
-		"replaces_submission_id": uuidStringSchema("Same-owner held submission to replace."),
+		"evidence":        evidenceArraySchema(),
+		"relationships":   relationshipSubmissionArraySchema(),
+		"idempotency_key": schemaString("Ingest retry key scoped to team and profile.", 128),
 	})
 }
 
@@ -61,7 +57,7 @@ func relationshipSubmissionArraySchema() map[string]any {
 		"type":        "array",
 		"minItems":    1,
 		"maxItems":    200,
-		"description": "Relationship evidence_indices across the submission must collectively cover every submitted evidence item. The server and assessor own exact grounding.",
+		"description": "Each Relationship must cite submitted evidence_indices. Every submitted evidence item must be cited across the submission. The server and normalizer own exact grounding.",
 		"items":       relationshipSubmissionSchema(),
 	}
 }
@@ -364,7 +360,7 @@ func rememberOutputSchema() map[string]any {
 		map[string]any{
 			"submission_id":       schemaString("Submission ID.", 128),
 			"submission_kind":     schemaEnum([]string{"remember"}),
-			"processing_state":    schemaEnum([]string{"queued", "processing", "awaiting_review", "completed", "rejected", "quarantined", "failed"}),
+			"processing_state":    schemaEnum([]string{"queued", "processing", "completed", "rejected", "quarantined", "failed"}),
 			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
 			"status_tool":         schemaEnum([]string{ToolGetSubmissionStatus}),
 			"correlation_id":      schemaString("Request correlation ID.", 128),
@@ -378,7 +374,7 @@ func submissionStatusOutputSchema() map[string]any {
 		map[string]any{
 			"submission_id":       schemaString("Submission ID.", 128),
 			"submission_kind":     schemaEnum([]string{"remember", "relationship_correction"}),
-			"processing_state":    schemaEnum([]string{"queued", "processing", "awaiting_review", "awaiting_confirmation", "completed", "rejected", "quarantined", "failed"}),
+			"processing_state":    schemaEnum([]string{"queued", "processing", "awaiting_confirmation", "completed", "rejected", "quarantined", "failed"}),
 			"search_state":        schemaEnum(domain.SearchProjectionStates()),
 			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
 			"correlation_id":      schemaString("Request correlation ID for operator diagnostics.", 128),
@@ -399,40 +395,10 @@ func submissionStatusOutputSchema() map[string]any {
 					"error":                   map[string]any{"oneOf": []any{map[string]any{"type": "null"}, submissionStatusErrorSchema()}},
 				},
 			), 0, 100),
-			"errors":                        submissionStatusErrorArraySchema(),
-			"quarantine_expires_at":         nullableString("Fixed quarantine expiry.", 64),
-			"replacement_window_expires_at": nullableString("Replacement window expiry.", 64),
-			"awaiting_confirmation":         relationshipCorrectionConfirmationSchema(),
-			"correction_result":             relationshipCorrectionResultSchema(),
-			"semantic_hold":                 submissionSemanticHoldSchema(),
-		},
-	)
-}
-
-func submissionSemanticHoldSchema() map[string]any {
-	return closedObject(
-		[]string{"state", "issues", "issues_truncated", "replacement"},
-		map[string]any{
-			"state": schemaEnum([]string{"active", "expired"}),
-			"issues": array(closedObject(
-				[]string{"code", "component", "message"},
-				map[string]any{
-					"code":             schemaEnum(memoryservice.SubmissionHoldIssueCodes()),
-					"relationship_ref": schemaString("Client Relationship proposal ref.", 128),
-					"component":        schemaEnum(memoryservice.SubmissionHoldIssueComponents()),
-					"message":          schemaString("Bounded semantic hold guidance.", 512),
-				},
-			), 1, 50),
-			"issues_truncated": map[string]any{"type": "boolean"},
-			"replacement": closedObject(
-				[]string{"tool", "replaces_submission_id", "expires_at", "instruction"},
-				map[string]any{
-					"tool":                   schemaEnum([]string{ToolRemember}),
-					"replaces_submission_id": schemaString("Held submission to replace.", 128),
-					"expires_at":             nullableString("Replacement window expiry.", 64),
-					"instruction":            schemaString("Bounded replacement instruction.", 512),
-				},
-			),
+			"errors":                submissionStatusErrorArraySchema(),
+			"quarantine_expires_at": nullableString("Fixed quarantine expiry.", 64),
+			"awaiting_confirmation": relationshipCorrectionConfirmationSchema(),
+			"correction_result":     relationshipCorrectionResultSchema(),
 		},
 	)
 }

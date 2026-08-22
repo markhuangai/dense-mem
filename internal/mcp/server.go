@@ -132,13 +132,18 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 		return nil, &rpcError{Code: errCodeInvalidParams, Message: "evaluation tools do not accept team_id or profile_id"}
 	}
 	if registry.IsContractTool(tool) {
-		if err := registry.ValidateContractInput(tool, args, s.validationScopes(tool)); err != nil {
+		validation := registry.ValidateContractInputIssues(tool, args, s.validationScopes(tool))
+		if len(validation.Issues) > 0 {
 			reasonCode := "contract_validation_failed"
 			if registry.HasTenantOverrideArgs(args) {
 				reasonCode = "tenant_override_rejected"
 			}
 			s.logToolInputRejected(ctx, tool.Name, reasonCode)
-			return nil, &rpcError{Code: errCodeInvalidParams, Message: boundedRPCText(err.Error())}
+			return nil, &rpcError{
+				Code:    errCodeInvalidParams,
+				Message: boundedRPCText(validation.Issues[0].Message),
+				Data:    registry.ContractValidationErrorData(validation),
+			}
 		}
 	} else {
 		// Strip tenant IDs to prevent callers from overriding the fixed server

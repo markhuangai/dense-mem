@@ -324,7 +324,23 @@ func TestSemanticRelationshipLifecycleAndRLS(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, edges, 1, "candidates and hypotheses must not become SemanticEdges")
 
-	unknown := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+	var beforeObservations, beforeReviews int64
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT COUNT(*)
+			FROM relationship_observations
+			WHERE team_id = ?::uuid
+		`, teamA).Scan(&beforeObservations).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM review_tasks
+			WHERE team_id = ?::uuid
+		`, teamA).Scan(&beforeReviews).Error
+	})
+	require.NoError(t, err)
+	_, err = semanticRepo.ApplyRelationshipDecision(ctx, ApplyRelationshipDecisionInput{
 		TeamID:          teamA,
 		OwnerProfileID:  ownerA,
 		IngestID:        candidateIngest.IngestID,
@@ -340,25 +356,7 @@ func TestSemanticRelationshipLifecycleAndRLS(t *testing.T) {
 			Authority:      "primary",
 		},
 	})
-	assert.Nil(t, unknown.Relationship)
-	assert.NotEmpty(t, unknown.ReviewTaskID)
-
-	var beforeObservations, beforeReviews int64
-	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		if err := tx.Raw(`
-				SELECT COUNT(*)
-				FROM relationship_observations
-				WHERE team_id = ?::uuid
-			`, teamA).Scan(&beforeObservations).Error; err != nil {
-			return err
-		}
-		return tx.Raw(`
-				SELECT COUNT(*)
-				FROM review_tasks
-				WHERE team_id = ?::uuid
-			`, teamA).Scan(&beforeReviews).Error
-	})
-	require.NoError(t, err)
+	require.ErrorIs(t, err, errRelationshipDecisionNonPromotable)
 	_, err = semanticRepo.ApplyRelationshipDecision(ctx, ApplyRelationshipDecisionInput{
 		TeamID:          teamA,
 		OwnerProfileID:  ownerB,

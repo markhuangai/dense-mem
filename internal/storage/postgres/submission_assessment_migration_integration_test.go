@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -261,15 +262,375 @@ func TestSubmissionAssessmentMigrationReconcilesLegacyRuns(t *testing.T) {
 	require.ErrorContains(t, err, "legacy reconciliation outcomes")
 }
 
+func TestRememberNormalizerMigrationFailsLegacyWorkAndPreservesIndependentWorkflows(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026081901)
+	teamID, profileID, identityID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO teams (id, name, description, metadata, config)
+			VALUES ($1::uuid, $2, '', '{}'::jsonb, '{}'::jsonb)
+		`, teamID, "remember-normalizer-migration-"+teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO actor_identities (id, kind, team_id, display_name)
+			VALUES ($1::uuid, 'human', $2::uuid, 'remember normalizer migration owner')
+		`, identityID, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id)
+			VALUES ($1::uuid, $2::uuid, $3::uuid)
+		`, teamID, profileID, identityID); err != nil {
+			return err
+		}
+		return nil
+	}))
+
+	now := time.Now().UTC()
+	fixtures := []submissionAssessmentMigrationRun{
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "queued",
+			remember: true,
+			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "guarded",
+			legacyRemember: true,
+			items:          []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "processing", attempts: 2,
+			remember: true,
+			workerID: "legacy-worker", leaseUntil: timePointer(now.Add(time.Hour)),
+			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "awaiting_review", completedAt: timePointer(now.Add(-time.Hour)),
+			legacyRemember: true,
+			items:          []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "processing",
+			workerID: "partial-worker", leaseUntil: timePointer(now.Add(time.Hour)),
+			items: []submissionAssessmentMigrationItem{
+				{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "completed", category: "validated_claim", result: `{"accepted":true}`},
+				{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`},
+			},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "completed", completedAt: timePointer(now.Add(-2 * time.Hour)),
+			remember: true,
+			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+		},
+	}
+	stable := submissionAssessmentMigrationRun{
+		ingestID: uuid.NewString(), runID: uuid.NewString(), status: "completed", completedAt: timePointer(now.Add(-3 * time.Hour)),
+		items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "completed", category: "validated_claim", result: `{"accepted":true}`}},
+	}
+
+	openReviewID, acknowledgedReviewID, resolvedReviewID, stableReviewID, correctionReviewID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	relationshipID, subjectID, objectID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	correctionID := uuid.NewString()
+	openConflictID, overdueConflictID := uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		for _, fixture := range append(fixtures, stable) {
+			if err := insertSubmissionAssessmentMigrationRun(ctx, tx, teamID, profileID, fixture); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE placement_runs
+			SET assessor_attempt_id = gen_random_uuid(), assessor_attempted_at = now()
+			WHERE team_id = $1::uuid AND placement_run_id IN ($2::uuid, $3::uuid)
+		`, teamID, fixtures[2].runID, fixtures[4].runID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE placement_items
+			SET assessor_attempt_id = gen_random_uuid(), assessor_attempted_at = now()
+			WHERE team_id = $1::uuid AND placement_item_id IN ($2::uuid, $3::uuid)
+		`, teamID, fixtures[2].items[0].itemID, fixtures[4].items[0].itemID); err != nil {
+			return err
+		}
+		for _, review := range []struct {
+			id              string
+			status          string
+			ingestID        string
+			placementItemID string
+		}{
+			{openReviewID, "open", fixtures[0].ingestID, fixtures[0].items[0].itemID},
+			{acknowledgedReviewID, "acknowledged", fixtures[1].ingestID, fixtures[1].items[0].itemID},
+			{resolvedReviewID, "resolved", fixtures[2].ingestID, fixtures[2].items[0].itemID},
+			{stableReviewID, "open", stable.ingestID, stable.items[0].itemID},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO review_tasks (
+				    team_id, review_task_id, owner_profile_id, ingest_id, placement_item_id,
+				    task_type, status, reason, payload, dedupe_key,
+				    resolution, resolved_at
+				) VALUES (
+				    $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+				    'policy_needs_review', $6, 'legacy placement review', '{}'::jsonb, $7,
+				    CASE WHEN $6 = 'resolved' THEN '{"reason":"already_resolved"}'::jsonb ELSE '{}'::jsonb END,
+				    CASE WHEN $6 = 'resolved' THEN now() ELSE NULL END
+				)
+			`, teamID, review.id, profileID, review.ingestID, review.placementItemID, review.status, "legacy-review:"+review.id); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO team_predicate_definitions (
+			    team_id, predicate_key, version, relationship_kind, current_cardinality
+			) VALUES ($1::uuid, 'migration_predicate', 1, 'state', 'one')
+		`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO entity_records (team_id, entity_id, entity_kind)
+			VALUES ($1::uuid, $2::uuid, 'project'), ($1::uuid, $3::uuid, 'product')
+		`, teamID, subjectID, objectID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO relationship_records (
+			    team_id, relationship_id, owner_profile_id, semantic_group_key,
+			    subject_entity_id, predicate_key, predicate_version, object_entity_id,
+			    relationship_kind, current_cardinality, status
+			) VALUES (
+			    $1::uuid, $2::uuid, $3::uuid, 'migration-correction-target',
+			    $4::uuid, 'migration_predicate', 1, $5::uuid,
+			    'state', 'one', 'active'
+			)
+		`, teamID, relationshipID, profileID, subjectID, objectID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO review_tasks (
+			    team_id, review_task_id, owner_profile_id, relationship_id,
+			    task_type, status, reason, payload, dedupe_key
+			) VALUES (
+			    $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			    'correction_needs_review', 'open', 'correction_pending', '{}'::jsonb, $5
+			)
+		`, teamID, correctionReviewID, profileID, relationshipID, "correction-review:"+correctionReviewID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO relationship_correction_submissions (
+			    team_id, submission_id, owner_profile_id, relationship_id,
+			    expected_version, request_hash, reason, idempotency_key,
+			    processing_state, confirmation_token, confirmation_expires_at,
+			    candidates
+			) VALUES (
+			    $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			    1, 'migration-correction-hash', 'migration correction',
+			    'migration-correction-idempotency', 'awaiting_confirmation',
+			    'migration-confirmation-token', now() + interval '1 hour',
+			    '[{"candidate":"a"},{"candidate":"b"}]'::jsonb
+			)
+		`, teamID, correctionID, profileID, relationshipID); err != nil {
+			return err
+		}
+		for _, conflict := range []struct {
+			id     string
+			status string
+			scope  string
+		}{
+			{openConflictID, "open", "migration-open-conflict"},
+			{overdueConflictID, "overdue", "migration-overdue-conflict"},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO relationship_conflict_cases (
+				    team_id, conflict_id, semantic_scope_key, status,
+				    subject_entity_id, predicate_key, predicate_version,
+				    relationship_kind, current_cardinality, review_due_at,
+				    next_review_at, review_ttl_days
+				) VALUES (
+				    $1::uuid, $2::uuid, $3, $4,
+				    $5::uuid, 'migration_predicate', 1,
+				    'state', 'one', now(), now(), 7
+				)
+			`, teamID, conflict.id, conflict.scope, conflict.status, subjectID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	runGooseUpTo(t, ctx, sqlDB, 20260821160001)
+
+	require.False(t, tableExists(t, ctx, sqlDB, "submission_holds"))
+	require.False(t, tableExists(t, ctx, sqlDB, "remember_normalizer_cutover"))
+	require.True(t, tableExists(t, ctx, sqlDB, "review_tasks"))
+	for _, column := range []string{"semantic_hold_state", "semantic_hold_version", "semantic_hold_updated_at", "replaces_placement_run_id", "superseded_by_placement_run_id"} {
+		var exists bool
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = 'public' AND table_name = 'placement_runs' AND column_name = $1
+			)
+		`, column).Scan(&exists))
+		assert.False(t, exists, column)
+	}
+
+	for index, fixture := range fixtures {
+		if index == 4 {
+			var runStatus, runError, workerID string
+			var leaseUntil, completedAt sql.NullTime
+			require.NoError(t, sqlDB.QueryRowContext(ctx, `
+				SELECT status, error, worker_id, lease_until, completed_at
+				FROM placement_runs
+				WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+			`, teamID, fixture.runID).Scan(&runStatus, &runError, &workerID, &leaseUntil, &completedAt))
+			assert.Equal(t, "processing", runStatus)
+			assert.Empty(t, runError)
+			assert.Equal(t, "partial-worker", workerID)
+			assert.True(t, leaseUntil.Valid)
+			assert.False(t, completedAt.Valid)
+			assertPlacementItemState(t, ctx, sqlDB, teamID, fixture.items[0].itemID, "completed", "validated_claim")
+			assertPlacementItemState(t, ctx, sqlDB, teamID, fixture.items[1].itemID, "queued", "pending")
+			continue
+		}
+		var runStatus, runError, workerID string
+		var leaseUntil, completedAt sql.NullTime
+		var assessorAttempt sql.NullString
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT status, error, worker_id, lease_until, completed_at, assessor_attempt_id::text
+			FROM placement_runs
+			WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+		`, teamID, fixture.runID).Scan(&runStatus, &runError, &workerID, &leaseUntil, &completedAt, &assessorAttempt))
+		assert.Equal(t, "failed", runStatus)
+		assert.Equal(t, "legacy remember processing removed; resubmit the complete submission", runError)
+		assert.Empty(t, workerID)
+		assert.False(t, leaseUntil.Valid)
+		assert.True(t, completedAt.Valid)
+		assert.False(t, assessorAttempt.Valid)
+		for _, item := range fixture.items {
+			var itemStatus, itemCategory, result string
+			var itemAssessorAttempt sql.NullString
+			require.NoError(t, sqlDB.QueryRowContext(ctx, `
+				SELECT status, category, result::text, assessor_attempt_id::text
+				FROM placement_items
+				WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
+			`, teamID, item.itemID).Scan(&itemStatus, &itemCategory, &result, &itemAssessorAttempt))
+			assert.False(t, itemAssessorAttempt.Valid)
+			if item.status == "completed" {
+				assert.Equal(t, "completed", itemStatus)
+				assert.Equal(t, "validated_claim", itemCategory)
+				assert.JSONEq(t, item.result, result)
+				continue
+			}
+			assert.Equal(t, "failed", itemStatus)
+			assert.Equal(t, "failed", itemCategory)
+			var failureCode, nextAction string
+			require.NoError(t, sqlDB.QueryRowContext(ctx, `
+				SELECT result->>'failure_code', result->>'next_action'
+				FROM placement_items
+				WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
+			`, teamID, item.itemID).Scan(&failureCode, &nextAction))
+			assert.Equal(t, "submission_requires_resubmission", failureCode)
+			assert.Equal(t, "resubmit_submission", nextAction)
+		}
+	}
+	assertPlacementItemState(t, ctx, sqlDB, teamID, stable.items[0].itemID, "completed", "validated_claim")
+	var stableRunStatus string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status FROM placement_runs
+		WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+	`, teamID, stable.runID).Scan(&stableRunStatus))
+	assert.Equal(t, "completed", stableRunStatus)
+
+	for _, review := range []struct {
+		id         string
+		wantStatus string
+		wantReason string
+	}{
+		{openReviewID, "canceled", "legacy_placement_review_removed"},
+		{acknowledgedReviewID, "canceled", "legacy_placement_review_removed"},
+		{resolvedReviewID, "resolved", "already_resolved"},
+		{stableReviewID, "open", ""},
+	} {
+		var status, reason string
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT status, COALESCE(resolution->>'reason', '')
+			FROM review_tasks
+			WHERE team_id = $1::uuid AND review_task_id = $2::uuid
+		`, teamID, review.id).Scan(&status, &reason))
+		assert.Equal(t, review.wantStatus, status)
+		assert.Equal(t, review.wantReason, reason)
+	}
+	var correctionReviewStatus string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status
+		FROM review_tasks
+		WHERE team_id = $1::uuid AND review_task_id = $2::uuid
+	`, teamID, correctionReviewID).Scan(&correctionReviewStatus))
+	assert.Equal(t, "open", correctionReviewStatus)
+	var correctionState string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT processing_state
+		FROM relationship_correction_submissions
+		WHERE team_id = $1::uuid AND submission_id = $2::uuid
+	`, teamID, correctionID).Scan(&correctionState))
+	assert.Equal(t, "awaiting_confirmation", correctionState)
+	rows, err := sqlDB.QueryContext(ctx, `
+		SELECT conflict_id::text, status
+		FROM relationship_conflict_cases
+		WHERE team_id = $1::uuid AND conflict_id IN ($2::uuid, $3::uuid)
+		ORDER BY conflict_id
+	`, teamID, openConflictID, overdueConflictID)
+	require.NoError(t, err)
+	defer rows.Close()
+	conflictStates := map[string]string{}
+	for rows.Next() {
+		var id, status string
+		require.NoError(t, rows.Scan(&id, &status))
+		conflictStates[id] = status
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, "open", conflictStates[openConflictID])
+	assert.Equal(t, "overdue", conflictStates[overdueConflictID])
+
+	var statusConstraint, completionConstraint, itemConstraint string
+	for name, target := range map[string]*string{
+		"placement_runs_status_check":     &statusConstraint,
+		"placement_runs_completion_check": &completionConstraint,
+		"placement_items_status_check":    &itemConstraint,
+	} {
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT pg_get_constraintdef(oid)
+			FROM pg_constraint
+			WHERE conname = $1
+		`, name).Scan(target))
+		assert.NotContains(t, *target, "awaiting_review")
+	}
+	var awaitingRuns, awaitingItems int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*) FROM placement_runs WHERE status = 'awaiting_review'
+	`).Scan(&awaitingRuns))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*) FROM placement_items WHERE status = 'awaiting_review'
+	`).Scan(&awaitingItems))
+	assert.Zero(t, awaitingRuns)
+	assert.Zero(t, awaitingItems)
+}
+
 type submissionAssessmentMigrationRun struct {
-	ingestID    string
-	runID       string
-	status      string
-	attempts    int
-	workerID    string
-	leaseUntil  *time.Time
-	completedAt *time.Time
-	items       []submissionAssessmentMigrationItem
+	ingestID       string
+	runID          string
+	status         string
+	remember       bool
+	legacyRemember bool
+	attempts       int
+	workerID       string
+	leaseUntil     *time.Time
+	completedAt    *time.Time
+	items          []submissionAssessmentMigrationItem
 }
 
 type submissionAssessmentMigrationItem struct {
@@ -287,12 +648,19 @@ func insertSubmissionAssessmentMigrationRun(
 	profileID string,
 	fixture submissionAssessmentMigrationRun,
 ) error {
+	metadata := `{}`
+	if fixture.remember {
+		metadata = `{"_dense_mem_telemetry_origin":"remember"}`
+	} else if fixture.legacyRemember {
+		metadata = fmt.Sprintf(`{"contract_version":"dense-mem.v2.4","actor":{"team_id":"%s","profile_id":"%s"}}`, teamID, profileID)
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO knowledge_ingests (
-		    team_id, ingest_id, owner_profile_id, status, proposal
+		    team_id, ingest_id, owner_profile_id, status, proposal, metadata
 		) VALUES ($1::uuid, $2::uuid, $3::uuid, 'queued',
-		          '{"relationship_hints":[{"ref":"legacy","subject_ref":"subject","object_ref":"object","original_predicate":"uses","evidence":[{"evidence_index":0,"start":0,"end":6}]}]}'::jsonb)
-	`, teamID, fixture.ingestID, profileID); err != nil {
+		          '{"relationship_hints":[{"ref":"legacy","subject_ref":"subject","object_ref":"object","original_predicate":"uses","evidence":[{"evidence_index":0,"start":0,"end":6}]}]}'::jsonb,
+		          $4::jsonb)
+	`, teamID, fixture.ingestID, profileID, metadata); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `

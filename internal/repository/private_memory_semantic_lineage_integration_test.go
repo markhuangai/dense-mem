@@ -160,53 +160,6 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 		require.Equal(t, target.MemorySpaceID.String(), spaceID)
 	}
 
-	reviewIngestID, reviewFragmentID := uuid.New(), uuid.New()
-	reviewContent := "Private semantic review evidence."
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		if err := tx.Exec(`
-			INSERT INTO knowledge_ingests (
-				team_id, ingest_id, owner_profile_id, idempotency_key, request_hash,
-				source_summary, status, proposal, metadata, space_id
-			) VALUES (?, ?, ?, ?, ?, ?, 'queued', '{}'::jsonb, '{}'::jsonb, ?)
-		`, teamID, reviewIngestID, ownerID, "private-review-"+reviewIngestID.String(), "hash-"+reviewIngestID.String(), reviewContent, target.MemorySpaceID).Error; err != nil {
-			return err
-		}
-		return tx.Exec(`
-			INSERT INTO evidence_fragments (
-				team_id, fragment_id, ingest_id, owner_profile_id, evidence_index,
-				content, content_hash, source_type, authority, labels, metadata, space_id
-			) VALUES (?, ?, ?, ?, 0, ?, ?, 'conversation', 'primary', ARRAY[]::text[], '{}'::jsonb, ?)
-		`, teamID, reviewFragmentID, reviewIngestID, ownerID, reviewContent, "hash-"+reviewFragmentID.String(), target.MemorySpaceID).Error
-	}))
-	review, err := semantic.ApplyRelationshipDecision(semanticCtx, ApplyRelationshipDecisionInput{
-		TeamID:            teamID.String(),
-		OwnerProfileID:    ownerID.String(),
-		IngestID:          reviewIngestID.String(),
-		SubjectEntityID:   privateSubjectID.String(),
-		PredicateKey:      "private_unknown_predicate",
-		PredicateVersion:  1,
-		OriginalPredicate: "private_unknown_predicate",
-		SubjectRef:        "Private subject",
-		ObjectRef:         "Private object",
-		ObjectEntityID:    privateObjectID.String(),
-		EvidenceVerdict:   string(domain.VerificationInsufficient),
-	})
-	require.NoError(t, err)
-	require.Empty(t, review.Relationship)
-	require.NotEmpty(t, review.ReviewTaskID)
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		var observationSpace, taskSpace string
-		if err := tx.Raw(`SELECT space_id::text FROM relationship_observations WHERE observation_id = ?`, review.ObservationID).Row().Scan(&observationSpace); err != nil {
-			return err
-		}
-		if err := tx.Raw(`SELECT space_id::text FROM review_tasks WHERE review_task_id = ?`, review.ReviewTaskID).Row().Scan(&taskSpace); err != nil {
-			return err
-		}
-		require.Equal(t, target.MemorySpaceID.String(), observationSpace)
-		require.Equal(t, target.MemorySpaceID.String(), taskSpace)
-		return nil
-	}))
-
 	trace, err := semantic.TraceRelationship(semanticCtx, TraceRelationshipInput{
 		TeamID: teamID.String(), RelationshipID: relationshipID, MaxEvents: 20,
 	})

@@ -13,11 +13,12 @@ import (
 type SubmissionErrorCode string
 
 const (
-	SubmissionErrorSemanticHold          SubmissionErrorCode = "submission_semantic_hold"
+	SubmissionErrorRequiresResubmission  SubmissionErrorCode = "submission_requires_resubmission"
+	SubmissionErrorNormalizationFailed   SubmissionErrorCode = "normalization_failed"
+	SubmissionErrorNormalizerUnavailable SubmissionErrorCode = "normalizer_unavailable"
 	SubmissionErrorPolicyRejected        SubmissionErrorCode = "submission_policy_rejected"
 	SubmissionErrorAssessorInvalid       SubmissionErrorCode = "assessor_response_invalid"
 	SubmissionErrorAssessorUnavailable   SubmissionErrorCode = "assessor_unavailable"
-	SubmissionErrorReplacementConflict   SubmissionErrorCode = "submission_replacement_conflict"
 	SubmissionErrorProcessingFailed      SubmissionErrorCode = "submission_processing_failed"
 	SubmissionErrorContractSuperseded    SubmissionErrorCode = "contract_superseded"
 	SubmissionErrorSearchIndexingDelayed SubmissionErrorCode = "search_indexing_delayed"
@@ -41,11 +42,12 @@ const (
 )
 
 var submissionErrorCodes = []SubmissionErrorCode{
-	SubmissionErrorSemanticHold,
+	SubmissionErrorRequiresResubmission,
+	SubmissionErrorNormalizationFailed,
+	SubmissionErrorNormalizerUnavailable,
 	SubmissionErrorPolicyRejected,
 	SubmissionErrorAssessorInvalid,
 	SubmissionErrorAssessorUnavailable,
-	SubmissionErrorReplacementConflict,
 	SubmissionErrorProcessingFailed,
 	SubmissionErrorContractSuperseded,
 	SubmissionErrorSearchIndexingDelayed,
@@ -77,11 +79,20 @@ func SubmissionErrorCodes() []string {
 }
 
 type SubmissionStatusError struct {
-	Code        string `json:"code"`
-	Message     string `json:"message"`
-	Retryable   bool   `json:"retryable"`
-	NextAction  string `json:"next_action"`
-	Remediation string `json:"remediation"`
+	Code                        string                        `json:"code"`
+	Message                     string                        `json:"message"`
+	Retryable                   bool                          `json:"retryable"`
+	NextAction                  string                        `json:"next_action"`
+	Remediation                 string                        `json:"remediation"`
+	ResubmissionIssues          []SubmissionResubmissionIssue `json:"resubmission_issues,omitempty"`
+	ResubmissionIssuesTruncated bool                          `json:"resubmission_issues_truncated,omitempty"`
+}
+
+type SubmissionResubmissionIssue struct {
+	Code            string `json:"code"`
+	RelationshipRef string `json:"relationship_ref,omitempty"`
+	Component       string `json:"component,omitempty"`
+	Message         string `json:"message"`
 }
 
 type SubmissionNextAction string
@@ -89,7 +100,6 @@ type SubmissionNextAction string
 const (
 	SubmissionNextActionPollStatus         SubmissionNextAction = "poll_status"
 	SubmissionNextActionResubmitSubmission SubmissionNextAction = "resubmit_submission"
-	SubmissionNextActionSubmitReplacement  SubmissionNextAction = "submit_replacement"
 	SubmissionNextActionRetryCorrection    SubmissionNextAction = "retry_correction"
 	SubmissionNextActionContactOperator    SubmissionNextAction = "contact_operator"
 	SubmissionNextActionNone               SubmissionNextAction = "none"
@@ -98,7 +108,6 @@ const (
 var submissionNextActions = []SubmissionNextAction{
 	SubmissionNextActionPollStatus,
 	SubmissionNextActionResubmitSubmission,
-	SubmissionNextActionSubmitReplacement,
 	SubmissionNextActionRetryCorrection,
 	SubmissionNextActionContactOperator,
 	SubmissionNextActionNone,
@@ -113,11 +122,12 @@ func SubmissionNextActions() []string {
 }
 
 var submissionErrorMessages = map[SubmissionErrorCode]string{
-	SubmissionErrorSemanticHold:          "submission was rejected by semantic hold policy",
+	SubmissionErrorRequiresResubmission:  "the complete submission must be sent again",
+	SubmissionErrorNormalizationFailed:   "submission normalization failed after bounded corrections",
+	SubmissionErrorNormalizerUnavailable: "the submission normalizer was unavailable after bounded retries",
 	SubmissionErrorPolicyRejected:        "submission was rejected by semantic placement policy",
 	SubmissionErrorAssessorInvalid:       "submission assessment returned an invalid response",
 	SubmissionErrorAssessorUnavailable:   "submission assessment was unavailable after bounded retries",
-	SubmissionErrorReplacementConflict:   "submission replacement conflicted with current state",
 	SubmissionErrorProcessingFailed:      "submission processing failed",
 	SubmissionErrorContractSuperseded:    "submission uses a superseded remember contract; resubmit the complete batch using the current contract",
 	SubmissionErrorSearchIndexingDelayed: "search indexing is delayed",
@@ -166,9 +176,10 @@ func submissionErrorGuidance(code SubmissionErrorCode) (bool, SubmissionNextActi
 	switch code {
 	case SubmissionErrorSearchIndexingDelayed:
 		return true, SubmissionNextActionPollStatus
-	case SubmissionErrorSemanticHold:
-		return true, SubmissionNextActionSubmitReplacement
-	case SubmissionErrorContractSuperseded, SubmissionErrorReplacementConflict:
+	case SubmissionErrorPolicyRejected,
+		SubmissionErrorContractSuperseded,
+		SubmissionErrorRequiresResubmission, SubmissionErrorNormalizationFailed,
+		SubmissionErrorNormalizerUnavailable:
 		return true, SubmissionNextActionResubmitSubmission
 	case SubmissionErrorNoChange:
 		return false, SubmissionNextActionNone
@@ -191,8 +202,6 @@ func submissionErrorRemediation(action SubmissionNextAction) string {
 		return "Poll get_submission_status after check_after_seconds."
 	case SubmissionNextActionResubmitSubmission:
 		return "Submit the complete batch again with remember and a new idempotency_key after correcting the input."
-	case SubmissionNextActionSubmitReplacement:
-		return "Call remember with a complete corrected batch and replaces_submission_id set to this submission_id."
 	case SubmissionNextActionRetryCorrection:
 		return "Retry correct_relationship with current relationship state and a new idempotency_key."
 	case SubmissionNextActionNone:
@@ -221,15 +230,17 @@ func submissionFailureCode(stage, class string) SubmissionErrorCode {
 	switch {
 	case stage == "contract_superseded":
 		return SubmissionErrorContractSuperseded
-	case stage == "replacement_conflict":
-		return SubmissionErrorReplacementConflict
-	case class == "malformed_response", class == "malformed_exhausted", class == "input_budget", class == "validation_failed", class == "provider_protocol", class == "request_invalid":
+	case stage == "normalization_failed" || stage == "assessment" && class == "malformed_exhausted":
+		return SubmissionErrorNormalizationFailed
+	case stage == "normalizer_unavailable":
+		return SubmissionErrorNormalizerUnavailable
+	case class == "malformed_response", class == "validation_failed", class == "provider_protocol", class == "request_invalid":
 		return SubmissionErrorAssessorInvalid
 	case class == "timeout", class == "rate_limited", class == "http_4xx", class == "http_5xx",
 		class == "http_unexpected", class == "transport", class == "provider_unavailable":
 		return SubmissionErrorAssessorUnavailable
-	case stage == "policy_review", stage == "confidence_policy", stage == "security_signal",
-		stage == "commit_review", stage == "conflict_context_stale":
+	case stage == "policy_validation", stage == "confidence_policy", stage == "security_signal",
+		stage == "semantic_commit", stage == "conflict_context_stale":
 		return SubmissionErrorPolicyRejected
 	default:
 		return SubmissionErrorProcessingFailed
@@ -237,17 +248,86 @@ func submissionFailureCode(stage, class string) SubmissionErrorCode {
 }
 
 func submissionItemFailureError(item repository.PlacementItem, processing string) *SubmissionStatusError {
-	if processing == "awaiting_review" {
-		return nil
-	}
-	if item.Status != string(domain.PlacementRunFailed) && item.Status != "failed" && item.Status != "rejected" && item.Status != "awaiting_review" {
+	if item.Status != string(domain.PlacementRunFailed) && item.Status != "failed" && item.Status != "rejected" {
 		return nil
 	}
 	stage, _ := item.Result["failure_stage"].(string)
 	class, _ := item.Result["failure_class"].(string)
-	if (item.Status == "rejected" || item.Status == "awaiting_review") && strings.TrimSpace(stage) == "" && strings.TrimSpace(class) == "" {
+	code, _ := item.Result["failure_code"].(string)
+	if item.Status == "rejected" && strings.TrimSpace(stage) == "" && strings.TrimSpace(class) == "" {
 		return nil
 	}
+	if strings.TrimSpace(code) != "" {
+		errorValue := submissionStatusErrorForCode(code, processing)
+		attachSubmissionResubmissionIssues(&errorValue, item.Result)
+		return &errorValue
+	}
 	errorValue := submissionStatusError(submissionFailureCode(stage, class))
+	attachSubmissionResubmissionIssues(&errorValue, item.Result)
 	return &errorValue
+}
+
+const (
+	submissionStatusMaxResubmissionIssues = 50
+	submissionStatusMaxIssueCodeLength    = 128
+	submissionStatusMaxIssueRefLength     = 128
+	submissionStatusMaxIssueComponentLen  = 128
+	submissionStatusMaxIssueMessageLength = 512
+)
+
+func attachSubmissionResubmissionIssues(errorValue *SubmissionStatusError, result map[string]any) {
+	if errorValue == nil || errorValue.Code != string(SubmissionErrorRequiresResubmission) {
+		return
+	}
+	issues, truncated := submissionResubmissionIssues(result)
+	errorValue.ResubmissionIssues = issues
+	errorValue.ResubmissionIssuesTruncated = truncated
+}
+
+func submissionResubmissionIssues(result map[string]any) ([]SubmissionResubmissionIssue, bool) {
+	rawIssues := resultArray(result, "resubmission_issues")
+	truncated, _ := result["resubmission_issues_truncated"].(bool)
+	if len(rawIssues) > submissionStatusMaxResubmissionIssues {
+		truncated = true
+	}
+	issues := make([]SubmissionResubmissionIssue, 0, min(len(rawIssues), submissionStatusMaxResubmissionIssues))
+	for index, rawIssue := range rawIssues {
+		if index >= submissionStatusMaxResubmissionIssues {
+			break
+		}
+		issueMap, ok := rawIssue.(map[string]any)
+		if !ok {
+			truncated = true
+			continue
+		}
+		code, codeTruncated := boundedSubmissionIssueString(issueMap["code"], submissionStatusMaxIssueCodeLength)
+		relationshipRef, refTruncated := boundedSubmissionIssueString(issueMap["relationship_ref"], submissionStatusMaxIssueRefLength)
+		component, componentTruncated := boundedSubmissionIssueString(issueMap["component"], submissionStatusMaxIssueComponentLen)
+		message, messageTruncated := boundedSubmissionIssueString(issueMap["message"], submissionStatusMaxIssueMessageLength)
+		truncated = truncated || codeTruncated || refTruncated || componentTruncated || messageTruncated
+		if code == "" || message == "" {
+			truncated = true
+			continue
+		}
+		issues = append(issues, SubmissionResubmissionIssue{
+			Code:            code,
+			RelationshipRef: relationshipRef,
+			Component:       component,
+			Message:         message,
+		})
+	}
+	return issues, truncated
+}
+
+func boundedSubmissionIssueString(raw any, maxLength int) (string, bool) {
+	value, ok := raw.(string)
+	if !ok {
+		return "", raw != nil
+	}
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= maxLength {
+		return value, false
+	}
+	return string(runes[:maxLength]), true
 }

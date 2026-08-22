@@ -50,8 +50,8 @@ function assertTerminalErrors(status) {
     throw new Error("terminal failure returned an empty errors array");
   }
   const allowedCodes = new Set([
-    "submission_semantic_hold", "submission_policy_rejected", "assessor_response_invalid", "assessor_unavailable",
-    "submission_replacement_conflict", "submission_processing_failed", "contract_superseded", "search_indexing_delayed",
+    "submission_requires_resubmission", "normalization_failed", "normalizer_unavailable", "submission_policy_rejected",
+    "assessor_response_invalid", "assessor_unavailable", "submission_processing_failed", "contract_superseded", "search_indexing_delayed",
     "submission_quarantined",
     "relationship_version_stale", "relationship_not_active", "object_kind_change_forbidden",
     "support_set_mismatch", "entity_not_found", "too_many_entity_candidates",
@@ -60,11 +60,12 @@ function assertTerminalErrors(status) {
     "persistent_ambiguity", "inactive_relationship_collision",
   ]);
   const allowedMessages = new Set([
-    "submission was rejected by semantic hold policy",
+    "the complete submission must be sent again",
+    "submission normalization failed after bounded corrections",
+    "the submission normalizer was unavailable after bounded retries",
     "submission was rejected by semantic placement policy",
     "submission assessment returned an invalid response",
     "submission assessment was unavailable after bounded retries",
-    "submission replacement conflicted with current state",
     "submission processing failed",
     "submission uses a superseded remember contract; resubmit the complete batch using the current contract",
     "search indexing is delayed",
@@ -88,7 +89,7 @@ function assertTerminalErrors(status) {
     "Semantic search indexing is delayed; check the control portal for recovery guidance.",
   ]);
   const allowedActions = new Set([
-    "poll_status", "resubmit_submission", "submit_replacement", "retry_correction", "contact_operator", "none",
+    "poll_status", "resubmit_submission", "retry_correction", "contact_operator", "none",
   ]);
   const seen = new Set();
   for (const item of status.errors) {

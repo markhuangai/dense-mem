@@ -30,8 +30,17 @@ export type SubmissionStatusError = {
   code: string;
   message: string;
   retryable: boolean;
-  next_action: "poll_status" | "resubmit_submission" | "submit_replacement" | "retry_correction" | "contact_operator" | "none";
+  next_action: "poll_status" | "resubmit_submission" | "retry_correction" | "contact_operator" | "none";
   remediation: string;
+  resubmission_issues?: SubmissionResubmissionIssue[];
+  resubmission_issues_truncated?: boolean;
+};
+
+export type SubmissionResubmissionIssue = {
+  code: string;
+  relationship_ref?: string;
+  component?: string;
+  message: string;
 };
 
 export type SubmissionDiagnosticSummary = {
@@ -86,18 +95,6 @@ export type SubmissionEvidenceStatus = {
   error?: SubmissionStatusError | null;
 };
 
-export type SubmissionSemanticHold = {
-  state: string;
-  issues: Array<{ code: string; relationship_ref?: string; component: string; message: string }>;
-  issues_truncated: boolean;
-  replacement: {
-    tool: string;
-    replaces_submission_id: string;
-    expires_at?: string | null;
-    instruction: string;
-  };
-};
-
 export type SubmissionDiagnosticDetail = {
   team_id: string;
   team_name: string;
@@ -121,10 +118,8 @@ export type SubmissionDiagnosticDetail = {
   evidence: SubmissionEvidenceStatus[];
   errors: SubmissionStatusError[];
   quarantine_expires_at?: string | null;
-  replacement_window_expires_at?: string | null;
-  semantic_hold?: SubmissionSemanticHold | null;
-  operator_diagnostic?: SubmissionOperatorDiagnostic | null;
-  operator_diagnostics: SubmissionOperatorDiagnostic[];
+	operator_diagnostic?: SubmissionOperatorDiagnostic | null;
+	operator_diagnostics: SubmissionOperatorDiagnostic[];
 };
 
 export type SubmissionDiagnosticQuery = {

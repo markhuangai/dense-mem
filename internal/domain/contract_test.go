@@ -66,7 +66,7 @@ func TestContractEnums(t *testing.T) {
 			t.Fatalf("RelationshipOutcomeCategories missing %s", category)
 		}
 	}
-	for _, status := range []string{"accepted", "review_required", "quarantined", "rejected", "retryable", "terminal_failure", "superseded"} {
+	for _, status := range []string{"accepted", "quarantined", "rejected", "retryable", "terminal_failure", "superseded"} {
 		if !slices.Contains(SemanticReviewStatuses(), status) {
 			t.Fatalf("SemanticReviewStatuses missing %s", status)
 		}
@@ -99,11 +99,6 @@ func TestContractEnums(t *testing.T) {
 	for _, disposition := range []string{"candidate", "preferred", "suppressed_current"} {
 		if !slices.Contains(RelationshipConflictPositionDispositions(), disposition) {
 			t.Fatalf("RelationshipConflictPositionDispositions missing %s", disposition)
-		}
-	}
-	for _, status := range []string{"queued", "guarded", "quarantined", "processing", "awaiting_review", "completed", "failed"} {
-		if !slices.Contains(PlacementRunStatuses(), status) {
-			t.Fatalf("PlacementRunStatuses missing %s", status)
 		}
 	}
 	if slices.Contains(PlacementRunStatuses(), "stale") {
@@ -193,6 +188,52 @@ func TestEmbeddingFailureContractValidatesClassCodePairs(t *testing.T) {
 	}
 	if !EmbeddingFailureCodeValid("provider_timeout") || EmbeddingFailureCodeValid("provider_broken") {
 		t.Fatal("EmbeddingFailureCodeValid accepted an invalid code")
+	}
+}
+
+func TestCombineSearchProjectionStatesUsesDegradedPrecedence(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		left, right string
+		want        string
+	}{
+		{name: "failed left", left: "failed", right: "current", want: "failed"},
+		{name: "failed right", left: "current", right: "failed", want: "failed"},
+		{name: "pending", left: "current", right: "pending", want: "pending"},
+		{name: "current", left: "not_required", right: "current", want: "current"},
+		{name: "not required", left: "not_required", right: "", want: "not_required"},
+		{name: "empty left", left: "", right: "custom", want: "custom"},
+		{name: "unknown left", left: "custom", right: "other", want: "custom"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := CombineSearchProjectionStates(test.left, test.right); got != test.want {
+				t.Fatalf("CombineSearchProjectionStates(%q, %q) = %q, want %q", test.left, test.right, got, test.want)
+			}
+		})
+	}
+}
+
+func TestEmbeddingFailureMessageUsesBoundedMessages(t *testing.T) {
+	for _, test := range []struct {
+		code string
+		want string
+	}{
+		{string(EmbeddingFailureProviderRateLimited), "embedding provider rate limited"},
+		{string(EmbeddingFailureProviderTimeout), "embedding provider timed out"},
+		{string(EmbeddingFailureProviderNetworkError), "embedding provider network failure"},
+		{string(EmbeddingFailureProviderServerError), "embedding provider server failure"},
+		{string(EmbeddingFailureProviderQuotaExhausted), "embedding provider quota exhausted"},
+		{string(EmbeddingFailureProviderAuthentication), "embedding provider authentication failed"},
+		{string(EmbeddingFailureProviderPermissionDenied), "embedding provider permission denied"},
+		{string(EmbeddingFailureProviderContractRejected), "embedding provider contract rejected"},
+		{string(EmbeddingFailureProviderResponseInvalid), "embedding provider response invalid"},
+		{string(EmbeddingFailureInputRejected), "embedding input rejected"},
+		{string(EmbeddingFailureContractMismatch), "embedding contract mismatch"},
+		{"unknown", "embedding processing failed"},
+	} {
+		if got := EmbeddingFailureMessage(test.code); got != test.want {
+			t.Fatalf("EmbeddingFailureMessage(%q) = %q, want %q", test.code, got, test.want)
+		}
 	}
 }
 

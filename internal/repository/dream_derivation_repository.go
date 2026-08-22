@@ -192,15 +192,6 @@ func dreamSourceRelationshipEligible(
 			        AND cross_reference.target_relationship_id = relationship.relationship_id
 			        AND cross_reference.kind = 'challenges'
 			  )
-			  AND NOT EXISTS (
-			      SELECT 1
-			      FROM review_tasks review
-				WHERE review.team_id = relationship.team_id
-				  AND review.space_id = relationship.space_id
-				  AND review.space_generation = relationship.space_generation
-			        AND review.relationship_id = relationship.relationship_id
-			        AND review.status IN ('open', 'acknowledged')
-			  )
 		)
 	`, teamID, relationshipID, status).Scan(&eligible).Error
 	return eligible, err

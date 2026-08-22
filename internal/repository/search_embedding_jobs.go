@@ -122,7 +122,7 @@ func (r *SearchRepositoryImpl) ClaimEmbeddingJobs(
 		return nil, err
 	}
 	jobs := []EmbeddingJob{}
-	err := r.withActiveTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+	err := r.withActiveSystemTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		cleanupLimit := input.Limit * 2
 		if cleanupLimit < 64 {
 			cleanupLimit = 64

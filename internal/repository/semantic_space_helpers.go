@@ -16,13 +16,7 @@ type semanticSpaceFence struct {
 
 // activeSemanticSpaceGenerationSQL keeps reads on the active generation after a private space is sealed.
 func activeSemanticSpaceGenerationSQL(alias string) string {
-	return fmt.Sprintf(`%s.space_generation = (
-		SELECT generation
-		FROM memory_spaces
-		WHERE id = %s.space_id
-		  AND team_id = %s.team_id
-		  AND lifecycle_state = 'active'
-	)`, alias, alias, alias)
+	return fmt.Sprintf(`%s.space_generation = dense_mem_active_space_generation(%s.team_id, %s.space_id)`, alias, alias, alias)
 }
 
 func loadTeamSharedSpaceFence(ctx context.Context, tx *gorm.DB, teamID string) (semanticSpaceFence, error) {

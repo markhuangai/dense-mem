@@ -590,20 +590,6 @@ func (r *LedgerRepositoryImpl) CompleteSubmissionAssessment(
 		if err != nil {
 			return err
 		}
-		if input.Status == string(domain.SemanticReviewReviewRequired) {
-			reasonCode := "policy_review"
-			if value, ok := input.Payload["review_stage"].(string); ok && strings.TrimSpace(value) != "" {
-				reasonCode = strings.TrimSpace(value)
-			} else if value, ok := input.Payload["failure_stage"].(string); ok && strings.TrimSpace(value) != "" {
-				reasonCode = strings.TrimSpace(value)
-			}
-			if err := createSubmissionHoldProjection(ctx, tx, input.SubmissionAssessmentRunScope, reasonCode); err != nil {
-				return err
-			}
-		}
-		if err := releaseSubmissionReplacement(ctx, tx, input.SubmissionAssessmentRunScope, input.Status, input.Category); err != nil {
-			return err
-		}
 		result.FirstDisposition = firstDisposition
 		return nil
 	})
@@ -799,6 +785,28 @@ func (r *LedgerRepositoryImpl) RequeueSubmissionAssessment(
 	return result, nil
 }
 
+func retryPlacementPayload(base map[string]any) map[string]any {
+	payload := map[string]any{
+		"contract_version": domain.ContractVersion,
+		"status":           string(domain.SemanticReviewRetryable),
+	}
+	for key, value := range base {
+		payload[key] = value
+	}
+	return payload
+}
+
+func terminalPlacementPayload(base map[string]any, status string) map[string]any {
+	payload := map[string]any{
+		"contract_version": domain.ContractVersion,
+		"status":           status,
+	}
+	for key, value := range base {
+		payload[key] = value
+	}
+	return payload
+}
+
 func normalizeCompleteSubmissionAssessmentInput(input CompleteSubmissionAssessmentInput) CompleteSubmissionAssessmentInput {
 	input.SubmissionAssessmentRunScope = normalizeSubmissionAssessmentRunScope(input.SubmissionAssessmentRunScope)
 	input.OutcomeKind = strings.TrimSpace(input.OutcomeKind)
@@ -820,7 +828,7 @@ func validateCompleteSubmissionAssessmentInput(input CompleteSubmissionAssessmen
 		return err
 	}
 	switch input.Status {
-	case string(domain.SemanticReviewReviewRequired), string(domain.SemanticReviewTerminalFailure), string(domain.SemanticReviewQuarantined), string(domain.SemanticReviewRejected), string(domain.SemanticReviewSuperseded):
+	case string(domain.SemanticReviewTerminalFailure), string(domain.SemanticReviewQuarantined), string(domain.SemanticReviewRejected), string(domain.SemanticReviewSuperseded):
 	default:
 		return fmt.Errorf("unsupported submission terminal status %q", input.Status)
 	}
@@ -877,8 +885,6 @@ func submissionTerminalStatuses(status, category string) (string, string, string
 		return "failed", "failed", string(domain.PlacementRunFailed)
 	case string(domain.SemanticReviewRejected):
 		return "failed", "failed", string(domain.PlacementRunFailed)
-	case string(domain.SemanticReviewReviewRequired):
-		return string(domain.PlacementRunAwaitingReview), "candidate", string(domain.PlacementRunAwaitingReview)
 	default:
 		if category == "" {
 			category = "candidate"

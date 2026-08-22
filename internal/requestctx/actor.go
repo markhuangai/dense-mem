@@ -9,6 +9,7 @@ import (
 )
 
 type actorContextKey struct{}
+type allowedSpacesContextKey struct{}
 
 // Actor is the immutable authenticated identity projected into application code.
 // OwnerID is the permanent semantic ownership alias; it is distinct from the
@@ -46,6 +47,17 @@ func ActorFromContext(ctx context.Context) (Actor, bool) {
 		actor.CredentialID = &credentialID
 	}
 	return actor, ok
+}
+
+// WithAllowedSpaces carries trusted worker-derived memory-space access through
+// repository transactions that do not have an HTTP actor context.
+func WithAllowedSpaces(ctx context.Context, spaces []domain.MemorySpaceAccess) context.Context {
+	return context.WithValue(ctx, allowedSpacesContextKey{}, append([]domain.MemorySpaceAccess(nil), spaces...))
+}
+
+func AllowedSpacesFromContext(ctx context.Context) []domain.MemorySpaceAccess {
+	spaces, _ := ctx.Value(allowedSpacesContextKey{}).([]domain.MemorySpaceAccess)
+	return append([]domain.MemorySpaceAccess(nil), spaces...)
 }
 
 func ActorOwner(ctx context.Context) (ownerID, ownerName string, ok bool) {

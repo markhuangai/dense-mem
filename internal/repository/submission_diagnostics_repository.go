@@ -58,7 +58,7 @@ var _ SubmissionDiagnosticsRepository = (*LedgerRepositoryImpl)(nil)
 
 const submissionDiagnosticOutcomeLimit = 200
 
-const submissionDiagnosticSourceTypesSQL = `
+var submissionDiagnosticSourceTypesSQL = `
 	COALESCE((
 		SELECT jsonb_agg(source_type_row.source_type ORDER BY source_type_row.source_type)
 		FROM (
@@ -66,17 +66,15 @@ const submissionDiagnosticSourceTypesSQL = `
 			FROM evidence_fragments AS fragment
 			WHERE fragment.team_id = run.team_id
 			  AND fragment.ingest_id = run.ingest_id
+			  AND ` + activeSemanticSpaceGenerationSQL("fragment") + `
 		) AS source_type_row
 	), '[]'::jsonb)`
 
 const submissionDiagnosticProcessingStateSQL = `
 	CASE
-		WHEN run.semantic_hold_state IN ('active', 'expired') THEN 'awaiting_review'
-		WHEN run.semantic_hold_state = 'superseded' THEN 'rejected'
 		WHEN run.status IN ('queued', 'guarded') THEN 'queued'
 		WHEN run.status = 'processing' THEN 'processing'
 		WHEN run.status = 'completed' THEN 'completed'
-		WHEN run.status = 'awaiting_review' THEN 'awaiting_review'
 		WHEN run.status = 'quarantined' THEN 'quarantined'
 		ELSE 'failed'
 	END`
@@ -86,6 +84,7 @@ const submissionDiagnosticProcessingStateSQL = `
 const submissionDiagnosticSafePayloadSQL = `
 	jsonb_strip_nulls(jsonb_build_object(
 		'failure_reason_code', {{payload}} -> 'failure_reason_code',
+		'failure_code', {{payload}} -> 'failure_code',
 		'failure_stage', {{payload}} -> 'failure_stage',
 		'failure_class', {{payload}} -> 'failure_class',
 		'validation_stage', {{payload}} -> 'validation_stage',
@@ -102,8 +101,8 @@ const submissionDiagnosticSafePayloadSQL = `
 		'provider_status', {{payload}} -> 'provider_status',
 		'assessor_turns', {{payload}} -> 'assessor_turns',
 		'assessor_provider_attempted', {{payload}} -> 'assessor_provider_attempted',
-		'hold_issues', {{payload}} -> 'hold_issues',
-		'hold_issues_truncated', {{payload}} -> 'hold_issues_truncated',
+		'resubmission_issues', {{payload}} -> 'resubmission_issues',
+		'resubmission_issues_truncated', {{payload}} -> 'resubmission_issues_truncated',
 		'search_document_ids', {{payload}} -> 'search_document_ids',
 		'embedding_job_ids', {{payload}} -> 'embedding_job_ids'
 	))`
@@ -111,6 +110,7 @@ const submissionDiagnosticSafePayloadSQL = `
 const submissionDiagnosticOperatorPayloadSQL = `
 	jsonb_strip_nulls(jsonb_build_object(
 		'failure_reason_code', {{payload}} -> 'failure_reason_code',
+		'failure_code', {{payload}} -> 'failure_code',
 		'failure_stage', {{payload}} -> 'failure_stage',
 		'failure_class', {{payload}} -> 'failure_class',
 		'validation_stage', {{payload}} -> 'validation_stage',
@@ -168,7 +168,7 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
 			           THEN run.available_at
 			       END,
 			       run.started_at, run.updated_at, run.completed_at,
-			       run.semantic_hold_state, run.quarantine_expires_at, hold.expires_at,
+			       run.quarantine_expires_at,
 			       (SELECT count(*) FROM evidence_fragments AS fragment
 			        WHERE fragment.team_id = run.team_id
 			          AND fragment.ingest_id = run.ingest_id
@@ -176,14 +176,8 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
 			       COALESCE(failure.status, ''), COALESCE(failure.result, '{}'::jsonb)
 			FROM placement_runs AS run
 			JOIN knowledge_ingests AS ingest
-			  ON ingest.team_id = run.team_id
-			 AND ingest.ingest_id = run.ingest_id
-			 AND `+activeSemanticSpaceGenerationSQL("ingest")+`
+			  ON ingest.team_id = run.team_id AND ingest.ingest_id = run.ingest_id
 			JOIN teams AS team ON team.id = run.team_id
-			LEFT JOIN submission_holds AS hold
-			  ON hold.team_id = run.team_id
-			 AND hold.placement_run_id = run.placement_run_id
-			 AND `+activeSemanticSpaceGenerationSQL("hold")+`
 			LEFT JOIN LATERAL (
 				SELECT item.status, `+submissionDiagnosticOperatorPayload("item.result")+` AS result
 				FROM placement_items AS item
@@ -194,6 +188,7 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(
 				  CASE WHEN COALESCE(item.result ->> 'failure_reason_code', '') <> ''
 				         OR COALESCE(item.result ->> 'failure_stage', '') <> ''
 				         OR COALESCE(item.result ->> 'failure_class', '') <> ''
+				         OR COALESCE(item.result ->> 'failure_code', '') <> ''
 				         OR COALESCE(item.result ->> 'validation_stage', '') <> ''
 				         OR jsonb_typeof(item.result -> 'failure_measurement') = 'object'
 				         OR COALESCE(item.result ->> 'provider_status', '') <> ''
@@ -265,9 +260,8 @@ func loadSubmissionDiagnostic(
 	submissionID string,
 ) (*SubmissionDiagnosticRecord, error) {
 	var record SubmissionDiagnosticRecord
-	var semanticHoldState sql.NullString
 	var submittedAt, nextAttemptAt, startedAt, updatedAt, completedAt sql.NullTime
-	var quarantineExpiresAt, replacementWindowExpiresAt sql.NullTime
+	var quarantineExpiresAt sql.NullTime
 	var sourceTypesRaw []byte
 	err := tx.WithContext(ctx).Raw(`
 		SELECT run.team_id::text, team.name, `+submissionDiagnosticSourceTypesSQL+`, run.owner_profile_id::text, run.ingest_id::text,
@@ -282,19 +276,12 @@ func loadSubmissionDiagnostic(
 		           THEN run.available_at
 		       END,
 		       run.started_at, run.updated_at, run.completed_at,
-		       run.semantic_hold_state, run.quarantine_expires_at, hold.expires_at
+		       run.quarantine_expires_at
 		FROM placement_runs AS run
 		JOIN knowledge_ingests AS ingest
-		  ON ingest.team_id = run.team_id
-		 AND ingest.ingest_id = run.ingest_id
-		 AND `+activeSemanticSpaceGenerationSQL("ingest")+`
+		  ON ingest.team_id = run.team_id AND ingest.ingest_id = run.ingest_id
 		JOIN teams AS team ON team.id = run.team_id
-		LEFT JOIN submission_holds AS hold
-		  ON hold.team_id = run.team_id
-		 AND hold.placement_run_id = run.placement_run_id
-		 AND `+activeSemanticSpaceGenerationSQL("hold")+`
-		WHERE run.team_id = ?::uuid
-		  AND run.ingest_id = ?::uuid
+		WHERE run.team_id = ?::uuid AND run.ingest_id = ?::uuid
 		  AND `+activeSemanticSpaceGenerationSQL("run")+`
 	`, teamID, submissionID).Row().Scan(
 		&record.Placement.TeamID,
@@ -313,9 +300,7 @@ func loadSubmissionDiagnostic(
 		&startedAt,
 		&updatedAt,
 		&completedAt,
-		&semanticHoldState,
 		&quarantineExpiresAt,
-		&replacementWindowExpiresAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrSubmissionDiagnosticNotFound
@@ -332,15 +317,10 @@ func loadSubmissionDiagnostic(
 	record.Placement.UpdatedAt = nullableStatusTime(updatedAt)
 	record.Placement.CompletedAt = nullableStatusTime(completedAt)
 	record.Placement.QuarantineExpiresAt = nullableStatusTime(quarantineExpiresAt)
-	record.Placement.ReplacementWindowExpiresAt = nullableStatusTime(replacementWindowExpiresAt)
-	if semanticHoldState.Valid {
-		record.Placement.SemanticHoldState = strings.TrimSpace(semanticHoldState.String)
-	}
 	evidenceRows, err := tx.WithContext(ctx).Raw(`
 		SELECT fragment_id::text, evidence_index
 		FROM evidence_fragments AS fragment
-		WHERE fragment.team_id = ?::uuid
-		  AND fragment.ingest_id = ?::uuid
+		WHERE fragment.team_id = ?::uuid AND fragment.ingest_id = ?::uuid
 		  AND `+activeSemanticSpaceGenerationSQL("fragment")+`
 		ORDER BY evidence_index ASC
 	`, teamID, submissionID).Rows()
@@ -367,8 +347,7 @@ func loadSubmissionDiagnostic(
 		SELECT placement_item_id::text, fragment_id::text, evidence_index, status, category,
 		       `+submissionDiagnosticSafePayload("result")+`
 		FROM placement_items AS item
-		WHERE item.team_id = ?::uuid
-		  AND item.ingest_id = ?::uuid
+		WHERE item.team_id = ?::uuid AND item.ingest_id = ?::uuid
 		  AND `+activeSemanticSpaceGenerationSQL("item")+`
 		ORDER BY evidence_index ASC
 	`, teamID, submissionID).Rows()
@@ -421,8 +400,9 @@ func loadSubmissionDiagnosticOutcomes(
 		WITH projected_outcomes AS (
 			SELECT outcome_id, placement_item_id, outcome_kind, status, created_at,
 			       `+submissionDiagnosticOperatorPayload("payload")+` AS operator_payload
-			FROM placement_outcomes
-			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
+			FROM placement_outcomes AS outcome
+			WHERE outcome.team_id = ?::uuid AND outcome.placement_run_id = ?::uuid
+			  AND `+activeSemanticSpaceGenerationSQL("outcome")+`
 		), diagnostic_outcomes AS (
 			SELECT outcome_id, placement_item_id, outcome_kind, status, created_at, operator_payload
 			FROM projected_outcomes
@@ -514,8 +494,7 @@ func scanSubmissionDiagnosticRecord(rows *sql.Rows) (SubmissionDiagnosticRecord,
 	var record SubmissionDiagnosticRecord
 	var sourceTypesRaw []byte
 	var submittedAt, nextAttemptAt, startedAt, updatedAt, completedAt sql.NullTime
-	var semanticHoldState sql.NullString
-	var quarantineExpiresAt, replacementWindowExpiresAt sql.NullTime
+	var quarantineExpiresAt sql.NullTime
 	var itemStatus string
 	var resultRaw []byte
 	if err := rows.Scan(
@@ -533,9 +512,7 @@ func scanSubmissionDiagnosticRecord(rows *sql.Rows) (SubmissionDiagnosticRecord,
 		&startedAt,
 		&updatedAt,
 		&completedAt,
-		&semanticHoldState,
 		&quarantineExpiresAt,
-		&replacementWindowExpiresAt,
 		&record.EvidenceCount,
 		&itemStatus,
 		&resultRaw,
@@ -551,10 +528,6 @@ func scanSubmissionDiagnosticRecord(rows *sql.Rows) (SubmissionDiagnosticRecord,
 	record.Placement.UpdatedAt = nullableStatusTime(updatedAt)
 	record.Placement.CompletedAt = nullableStatusTime(completedAt)
 	record.Placement.QuarantineExpiresAt = nullableStatusTime(quarantineExpiresAt)
-	record.Placement.ReplacementWindowExpiresAt = nullableStatusTime(replacementWindowExpiresAt)
-	if semanticHoldState.Valid {
-		record.Placement.SemanticHoldState = strings.TrimSpace(semanticHoldState.String)
-	}
 	if itemStatus != "" {
 		item := PlacementItem{Status: itemStatus, Result: map[string]any{}}
 		if err := json.Unmarshal(resultRaw, &item.Result); err != nil {
@@ -588,7 +561,7 @@ func validateSubmissionDiagnosticFilter(filter SubmissionDiagnosticFilter) error
 		}
 	}
 	switch filter.ProcessingState {
-	case "", "queued", "processing", "awaiting_review", "completed", "rejected", "quarantined", "failed":
+	case "", "queued", "processing", "completed", "quarantined", "failed":
 	default:
 		return fmt.Errorf("unsupported processing_state %q", filter.ProcessingState)
 	}

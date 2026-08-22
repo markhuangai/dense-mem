@@ -33,8 +33,10 @@ func TestDreamInputsIncludeExpiredPendingEvidence(t *testing.T) {
 	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
 	content := "Dense-Mem may use PostgreSQL after independent review."
 	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID, "dream-pending-input", content)
-	assessment, _, err := ledgerRepo.PersistPlacementAssessment(ctx, placementAssessmentPersistInput(teamID, ownerID, ingest.Items[0]))
+	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "dream-pending-input-worker", time.Minute)
 	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assessment := persistSubmissionAssessment(t, ctx, ledgerRepo, *claimed)
 	threshold := 0.8
 	pending := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
 		TeamID:                  teamID,
@@ -66,7 +68,7 @@ func TestDreamInputsIncludeExpiredPendingEvidence(t *testing.T) {
 			    payload, dedupe_key, assessment_id
 			) VALUES (
 			    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-			    ?::uuid, ?::uuid, 'relationship_needs_review', 'expired', 'support_confidence',
+			    ?::uuid, ?::uuid, 'relationship_needs_review', 'open', 'legacy_placement_review',
 			    '{}'::jsonb, '', ?::uuid
 			)
 		`, teamID, ownerID, ingest.IngestID, ingest.Items[0].PlacementItemID,
@@ -364,6 +366,17 @@ func TestDreamRepositoryPersistsTeamScopedPredicateHypothesis(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "depends_transitively_on", predicate.PredicateKey)
+
+	targetPredicates, err := semanticRepo.ListDreamTargetPredicates(ctx, teamID)
+	require.NoError(t, err)
+	require.Contains(t, targetPredicates, DreamTargetPredicate{
+		PredicateKey:        predicate.PredicateKey,
+		Version:             predicate.Version,
+		AllowedSubjectKinds: []string{"project"},
+		AllowedObjectKinds:  []string{"product"},
+		RelationshipKind:    "state",
+		CurrentCardinality:  "many",
+	})
 
 	var globalPredicateCount int
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {

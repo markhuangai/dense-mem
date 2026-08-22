@@ -228,93 +228,9 @@ func (r *SemanticRepositoryImpl) ApplyRelationshipDecision(
 		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
-		if err := validateSupportOwnership(ctx, tx, input); err != nil {
-			return err
-		}
-		predicate, err := loadPredicateDefinition(ctx, tx, input.TeamID, input.PredicateKey, input.PredicateVersion)
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			review, err := insertPredicateReview(ctx, tx, input)
-			if err != nil {
-				return err
-			}
-			result = review
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if err := validateRelationshipEndpointKinds(ctx, tx, input, predicate); err != nil {
-			return err
-		}
-		status := statusForRelationshipDecision(input)
-		groupKey := semanticGroupKey(input)
-		recordState, err := upsertRelationshipRecord(ctx, tx, input, predicate, status, groupKey)
-		if err != nil {
-			return err
-		}
-		if recordState.ValidToConflict {
-			review, err := insertRelationshipValidToReview(ctx, tx, input, recordState.Record)
-			if err != nil {
-				return err
-			}
-			result = review
-			return nil
-		}
-		observationID, err := insertRelationshipObservation(ctx, tx, input, recordState.Record.RelationshipID)
-		if err != nil {
-			return err
-		}
-		verificationID, err := insertVerificationEvent(ctx, tx, input, observationID)
-		if err != nil {
-			return err
-		}
-		var supportID, supportDecisionID string
-		var supportIDs []string
-		if input.EvidenceVerdict == string(domain.VerificationEntailed) && len(relationshipEvidenceSupports(input.Support, input.Supports)) > 0 && !input.SuppressSupport {
-			var supportDecisionIDs []string
-			supportIDs, supportDecisionIDs, err = insertRelationshipSupports(ctx, tx, input, recordState.Record.RelationshipID, observationID, verificationID)
-			if err != nil {
-				return err
-			}
-			if len(supportIDs) > 0 {
-				supportID = supportIDs[0]
-			}
-			if len(supportDecisionIDs) > 0 {
-				supportDecisionID = supportDecisionIDs[0]
-			}
-			if err := refreshRelationshipSupportCounts(ctx, tx, input.TeamID, recordState.Record.RelationshipID); err != nil {
-				return err
-			}
-		}
-		if recordState.Changed {
-			if _, err := insertRelationshipTransition(ctx, tx, transitionInput{
-				TeamID:              input.TeamID,
-				OwnerProfileID:      input.OwnerProfileID,
-				RelationshipID:      recordState.Record.RelationshipID,
-				FromStatus:          recordState.FromStatus,
-				ToStatus:            status,
-				Reason:              "verifier_decision",
-				VerificationEventID: verificationID,
-				SupportDecisionID:   supportDecisionID,
-				IdempotencyKey:      relationshipTransitionIdempotencyKey(verificationID, supportDecisionID),
-			}); err != nil {
-				return err
-			}
-		}
-		loaded, err := loadRelationshipRecord(ctx, tx, input.TeamID, recordState.Record.RelationshipID)
-		if err != nil {
-			return err
-		}
-		result = &RelationshipDecisionResult{
-			Relationship:        loaded,
-			ObservationID:       observationID,
-			VerificationEventID: verificationID,
-			SupportID:           supportID,
-			SupportIDs:          supportIDs,
-			SupportDecisionID:   supportDecisionID,
-			CreatedRelationship: recordState.Created,
-		}
-		return nil
+		var err error
+		result, err = applyRelationshipDecisionInTx(ctx, tx, input)
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("semantic: apply relationship decision: %w", err)

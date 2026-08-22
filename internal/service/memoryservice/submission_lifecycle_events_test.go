@@ -42,7 +42,7 @@ func TestRememberLogsAcceptedSubmissionWithoutEvidence(t *testing.T) {
 	require.NotContains(t, logged, "private evidence")
 }
 
-func TestSubmissionWorkerLogsCompletedRetryAndHeldTransitionsAfterPersistence(t *testing.T) {
+func TestSubmissionWorkerLogsCompletedRetryAndResubmissionFailureAfterPersistence(t *testing.T) {
 	logger, logs := submissionLifecycleTestLogger()
 	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
 	service := worker.(*submissionAssessmentPlacementWorkerService)
@@ -71,15 +71,15 @@ func TestSubmissionWorkerLogsCompletedRetryAndHeldTransitionsAfterPersistence(t 
 	require.Contains(t, retryLog, `"max_attempts":3`)
 
 	logs.Reset()
-	require.NoError(t, service.completeReview(context.Background(), scope, "policy_review", nil, false))
-	holdLog := logs.String()
-	require.Contains(t, holdLog, `"msg":"submission_held"`)
-	require.Contains(t, holdLog, `"reason_code":"policy_review"`)
-	require.NotContains(t, holdLog, "complete corrected replacement")
+	require.NoError(t, service.completeResubmissionFailure(context.Background(), scope, "policy_validation", nil, false))
+	failureLog := logs.String()
+	require.Contains(t, failureLog, `"msg":"submission_failed"`)
+	require.Contains(t, failureLog, `"reason_code":"submission_requires_resubmission"`)
+	require.NotContains(t, failureLog, "complete corrected replacement")
 
 	logs.Reset()
 	require.NoError(t, service.completeTerminalWithFailure(context.Background(), scope, "assessment", "timeout", 0, 0))
-	failureLog := logs.String()
+	failureLog = logs.String()
 	require.Contains(t, failureLog, `"msg":"submission_failed"`)
 	require.Contains(t, failureLog, `"reason_code":"assessor_unavailable"`)
 	require.NotContains(t, failureLog, "timeout")
@@ -92,6 +92,22 @@ func TestSubmissionWorkerLogsCompletedRetryAndHeldTransitionsAfterPersistence(t 
 	classifiedFailureLog := logs.String()
 	require.Contains(t, classifiedFailureLog, `"msg":"submission_failed"`)
 	require.Contains(t, classifiedFailureLog, `"reason_code":"assessor_response_invalid"`)
+}
+
+func TestSubmissionWorkerLogsPersistedNormalizerFailureCode(t *testing.T) {
+	logger, logs := submissionLifecycleTestLogger()
+	ledger, _, _, _, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	service.logger = logger
+	service.normalizer = submissionAssessmentWorkerNormalizerStub{}
+	scope := submissionAssessmentRunScope(*ledger.run, service.workerID)
+
+	require.NoError(t, service.completeTerminal(
+		context.Background(), scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_input",
+	))
+	require.Contains(t, logs.String(), `"msg":"submission_failed"`)
+	require.Contains(t, logs.String(), `"reason_code":"submission_requires_resubmission"`)
+	require.NotContains(t, logs.String(), `"reason_code":"submission_processing_failed"`)
 }
 
 func TestSubmissionWorkerLogsStaleSourceAsSuperseded(t *testing.T) {

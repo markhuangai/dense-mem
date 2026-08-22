@@ -166,12 +166,21 @@ func (r *RLS) WithSystemReadOnlyRepeatableTx(ctx context.Context, db *gorm.DB, f
 
 func setAllowedSpaceIDs(tx *gorm.DB, ctx context.Context) error {
 	actor, ok := requestctx.ActorFromContext(ctx)
-	if !ok || len(actor.AllowedSpaces) == 0 {
+	spaces := requestctx.AllowedSpacesFromContext(ctx)
+	if ok {
+		spaces = append(spaces, actor.AllowedSpaces...)
+	}
+	if len(spaces) == 0 {
 		return tx.Exec("SELECT set_config('app.allowed_space_ids', '', true)").Error
 	}
-	ids := make([]string, 0, len(actor.AllowedSpaces))
-	for _, space := range actor.AllowedSpaces {
+	ids := make([]string, 0, len(spaces))
+	seen := make(map[uuid.UUID]struct{}, len(spaces))
+	for _, space := range spaces {
 		if space.ID != uuid.Nil {
+			if _, exists := seen[space.ID]; exists {
+				continue
+			}
+			seen[space.ID] = struct{}{}
 			ids = append(ids, space.ID.String())
 		}
 	}

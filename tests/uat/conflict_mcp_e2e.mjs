@@ -214,13 +214,10 @@ async function provenanceAndIsolationScenario() {
     sourceGroup: `${runID}:provenance:stale:c`,
     authority: "primary",
     conflictContext: { conflict_id: fixture.conflictID, expected_version: observedVersion },
-    expectedState: "awaiting_review",
+    expectedState: "failed",
   });
-  const staleIssues = Array.isArray(stale.status.semantic_hold?.issues) ? stale.status.semantic_hold.issues : [];
-  assert(staleIssues.some((issue) => issue?.code === "conflict_context_stale"), `stale conflict submission omitted its hold reason: ${JSON.stringify(stale.status)}`);
-  assert(stale.status.semantic_hold?.replacement?.tool === "remember" && stale.status.semantic_hold?.replacement?.replaces_submission_id === stale.submissionID, `stale conflict submission omitted replacement guidance: ${JSON.stringify(stale.status)}`);
-  assert(stale.status.processing_state === "awaiting_review", `stale conflict submission was not held for review: ${JSON.stringify(stale.status)}`);
-  assert(stale.status.semantic_hold?.issues?.some((issue) => issue?.code === "conflict_context_stale"), `stale conflict submission omitted conflict_context_stale: ${JSON.stringify(stale.status)}`);
+  const staleError = (stale.status.errors ?? []).find((error) => error?.code === "submission_requires_resubmission");
+  assert(staleError?.next_action === "resubmit_submission", `stale conflict submission omitted resubmission guidance: ${JSON.stringify(stale.status)}`);
   const semanticAfterStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
   assert(stableJSON(semanticAfterStale) === stableJSON(semanticBeforeStale), `stale conflict submission changed semantic state: before=${JSON.stringify(semanticBeforeStale)} after=${JSON.stringify(semanticAfterStale)}`);
 
@@ -435,7 +432,7 @@ async function waitForSubmission(apiKey, submissionID) {
   const attempts = Math.ceil((submissionTimeoutSeconds * 1_000) / 250);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const status = await mcpSuccess(apiKey, "get_submission_status", { submission_id: submissionID });
-    if (["completed", "awaiting_review", "rejected", "failed", "quarantined"].includes(status.processing_state)) return status;
+    if (["completed", "rejected", "failed", "quarantined"].includes(status.processing_state)) return status;
     await delay(250);
   }
   throw new Error(`timed out waiting for submission ${submissionID} after ${submissionTimeoutSeconds}s`);
@@ -633,7 +630,7 @@ async function createTeam(label) {
 async function createCredential(teamID, name) {
   const response = await controlJSON(`/teams/${teamID}/credentials`, {
     method: "POST",
-    body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }),
+    body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" }),
   });
   const apiKey = String(response.data?.api_key ?? "");
   const profileID = String(response.data?.credential?.id ?? "");

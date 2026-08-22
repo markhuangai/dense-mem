@@ -11,7 +11,7 @@ import {
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
 
-const PROCESSING_STATES = ["", "queued", "processing", "awaiting_review", "completed", "rejected", "quarantined", "failed"];
+const PROCESSING_STATES = ["", "queued", "processing", "completed", "quarantined", "failed"];
 const PAGE_SIZE = 50;
 
 export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team }) {
@@ -283,6 +283,22 @@ function SubmissionDetail({
             <strong>{statusError.code}</strong>
             <p>{statusError.message}</p>
             <p className="submission-remediation">{statusError.remediation}</p>
+            {statusError.resubmission_issues?.map((issue, index) => (
+              <div className="submission-resubmission-issue" key={`${issue.code}:${issue.relationship_ref ?? ""}:${index}`}>
+                <strong>{issue.code}</strong>
+                {(issue.relationship_ref || issue.component) && (
+                  <small>
+                    {issue.relationship_ref ? `Relationship ${issue.relationship_ref}` : ""}
+                    {issue.relationship_ref && issue.component ? " · " : ""}
+                    {issue.component ? `Component ${issue.component}` : ""}
+                  </small>
+                )}
+                <p>{issue.message}</p>
+              </div>
+            ))}
+            {statusError.resubmission_issues_truncated && (
+              <p className="submission-remediation">Additional resubmission issues are not shown.</p>
+            )}
           </div>
           <span className={statusError.retryable ? "status-pill warning" : "status-pill error"}>
             {actionLabel(statusError.next_action)}
@@ -304,25 +320,8 @@ function SubmissionDetail({
               </li>
             ))}
           </ol>
-        </section>
+      </section>
       )}
-
-      {detail.semantic_hold && (
-        <div className="submission-hold">
-          <strong>Replacement required</strong>
-          <p>{detail.semantic_hold.replacement.instruction}</p>
-          {detail.semantic_hold.issues.map((issue) => (
-            <div className="submission-hold-issue" key={`${issue.code}:${issue.relationship_ref ?? ""}:${issue.component}`}>
-              <code>{issue.code}</code>
-              <span>{issue.message}</span>
-            </div>
-          ))}
-          {detail.semantic_hold.issues_truncated && (
-            <p className="submission-hold-truncated">Additional hold issues were omitted from this bounded diagnostic response.</p>
-          )}
-        </div>
-      )}
-
       <div className="submission-detail-grid">
         <section>
           <h3>Evidence placement</h3>
@@ -449,8 +448,6 @@ function submissionStateClass(state: string): string {
     case "queued":
     case "processing":
       return "status-pill";
-    case "awaiting_review":
-      return "status-pill warning";
     default:
       return "status-pill error";
   }

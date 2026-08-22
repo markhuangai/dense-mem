@@ -133,11 +133,25 @@ func submissionStatusErrorSchema() map[string]any {
 	return closedObject(
 		[]string{"code", "message", "retryable", "next_action", "remediation"},
 		map[string]any{
-			"code":        schemaEnum(memoryservice.SubmissionErrorCodes()),
-			"message":     schemaString("Bounded safe submission error.", 512),
-			"retryable":   map[string]any{"type": "boolean"},
-			"next_action": schemaEnum(memoryservice.SubmissionNextActions()),
-			"remediation": schemaString("Bounded action the caller can take next.", 512),
+			"code":                          schemaEnum(memoryservice.SubmissionErrorCodes()),
+			"message":                       schemaString("Bounded safe submission error.", 512),
+			"retryable":                     map[string]any{"type": "boolean"},
+			"next_action":                   schemaEnum(memoryservice.SubmissionNextActions()),
+			"remediation":                   schemaString("Bounded action the caller can take next.", 512),
+			"resubmission_issues":           array(submissionResubmissionIssueSchema(), 0, 50),
+			"resubmission_issues_truncated": map[string]any{"type": "boolean"},
+		},
+	)
+}
+
+func submissionResubmissionIssueSchema() map[string]any {
+	return closedObject(
+		[]string{"code", "message"},
+		map[string]any{
+			"code":             schemaString("Bounded resubmission issue code.", 128),
+			"relationship_ref": schemaString("Client-local relationship reference.", 128),
+			"component":        schemaString("Relationship component requiring correction.", 128),
+			"message":          schemaString("Bounded resubmission guidance.", 512),
 		},
 	)
 }

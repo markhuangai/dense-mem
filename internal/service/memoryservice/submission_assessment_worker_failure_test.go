@@ -26,23 +26,23 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 		wantIssue   string
 	}{
 		{
-			name:       "non-promotable assessment requires review",
+			name:       "non-promotable assessment requires resubmission",
 			commitErr:  repository.ErrSubmissionAssessmentNonPromotable,
-			wantStatus: string(domain.SemanticReviewReviewRequired),
-			wantStage:  "commit_review",
+			wantStatus: string(domain.SemanticReviewTerminalFailure),
+			wantStage:  "semantic_commit",
 			wantIssue:  "semantic_commit_non_promotable",
 		},
 		{
-			name:       "predicate registration hold requires review",
+			name:       "predicate registration conflict requires resubmission",
 			commitErr:  repository.ErrSubmissionPredicateRegistrationHeld,
-			wantStatus: string(domain.SemanticReviewReviewRequired),
-			wantStage:  "commit_review",
+			wantStatus: string(domain.SemanticReviewTerminalFailure),
+			wantStage:  "semantic_commit",
 			wantIssue:  "predicate_registration_conflict",
 		},
 		{
-			name:       "stale conflict context requires review",
+			name:       "stale conflict context requires resubmission",
 			commitErr:  repository.ErrConflictContextStale,
-			wantStatus: string(domain.SemanticReviewReviewRequired),
+			wantStatus: string(domain.SemanticReviewTerminalFailure),
 			wantStage:  "conflict_context_stale",
 		},
 		{
@@ -93,15 +93,9 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 			}
 			require.Len(t, assessments.completions, 1)
 			assert.Equal(t, test.wantStatus, assessments.completions[0].Status)
-			if test.wantStatus == string(domain.SemanticReviewReviewRequired) {
-				assert.Equal(t, test.wantStage, assessments.completions[0].Payload["review_stage"])
-				assert.NotContains(t, assessments.completions[0].Payload, "failure_reason_code")
-				assert.NotContains(t, assessments.completions[0].Payload, "failure_class")
-			} else {
-				assert.Equal(t, test.wantStage, assessments.completions[0].Payload["failure_stage"])
-			}
+			assert.Equal(t, test.wantStage, assessments.completions[0].Payload["failure_stage"])
 			if test.wantIssue != "" {
-				issues, ok := assessments.completions[0].Payload["hold_issues"].([]map[string]any)
+				issues, ok := assessments.completions[0].Payload["resubmission_issues"].([]map[string]any)
 				require.True(t, ok)
 				require.Len(t, issues, 1)
 				assert.Equal(t, test.wantIssue, issues[0]["code"])
@@ -227,17 +221,4 @@ func TestSubmissionAssessmentWorkerPreservesOriginalErrorWhenTerminalCompletionF
 		assert.ErrorIs(t, err, completionErr)
 	})
 
-	t.Run("replacement conflict", func(t *testing.T) {
-		_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
-		assessments.commitErr = repository.ErrSubmissionReplacementConflict
-		completionErr := errors.New("replacement terminal completion unavailable")
-		assessments.completeErr = completionErr
-
-		processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
-
-		require.True(t, processed)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, repository.ErrSubmissionReplacementConflict)
-		assert.ErrorIs(t, err, completionErr)
-	})
 }

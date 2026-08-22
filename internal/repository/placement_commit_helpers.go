@@ -34,7 +34,7 @@ const placementRunGuardedStatusCase = `
 	    ELSE 'queued'
 	END`
 
-func appendPlacementSearchDocument(result *CommitPlacementSemanticResult, document *SearchDocumentResult) {
+func appendPlacementSearchDocument(result *submissionSemanticCommitState, document *SearchDocumentResult) {
 	if result == nil || document == nil || document.SearchDocumentID == "" {
 		return
 	}
@@ -44,25 +44,6 @@ func appendPlacementSearchDocument(result *CommitPlacementSemanticResult, docume
 		}
 	}
 	result.SearchDocuments = append(result.SearchDocuments, *document)
-}
-
-func appendPlacementReviewTaskID(result *CommitPlacementSemanticResult, taskID string) {
-	if result == nil || strings.TrimSpace(taskID) == "" {
-		return
-	}
-	for _, existing := range result.ReviewTaskIDs {
-		if existing == taskID {
-			return
-		}
-	}
-	result.ReviewTaskIDs = append(result.ReviewTaskIDs, taskID)
-}
-
-func appendPlacementRelationshipResult(result *CommitPlacementSemanticResult, relationship *RelationshipDecisionResult) {
-	if result == nil || relationship == nil {
-		return
-	}
-	result.RelationshipResults = append(result.RelationshipResults, *relationship)
 }
 
 func applyPlacementRelationshipDecision(
@@ -75,9 +56,12 @@ func applyPlacementRelationshipDecision(
 	placementFragmentID string,
 	embeddingJobMaxAttempts int,
 	conflictConfig ConflictRuntimeConfig,
-	result *CommitPlacementSemanticResult,
+	result *submissionSemanticCommitState,
 ) error {
 	applied, err := applyRelationshipDecisionInTx(ctx, tx, decision)
+	if errors.Is(err, errRelationshipDecisionNonPromotable) {
+		return ErrSubmissionAssessmentNonPromotable
+	}
 	if err != nil {
 		return err
 	}
@@ -87,15 +71,7 @@ func applyPlacementRelationshipDecision(
 	applied.Reason = relationshipOutcomeReason(decision, applied)
 	applied.ConfidenceGate = decision.GateResult
 	applied.PolicyVersion = decision.AssessmentPolicyVersion
-	if applied.ReviewTaskID == "" && decision.SemanticReviewKind != "" {
-		taskID, err := insertPlacementSemanticReviewTask(ctx, tx, commit, decision, applied, correctionTarget, conflictContext)
-		if err != nil {
-			return err
-		}
-		applied.ReviewTaskID = taskID
-	}
 	result.RelationshipResults = append(result.RelationshipResults, *applied)
-	appendPlacementReviewTaskID(result, applied.ReviewTaskID)
 	if applied.Relationship == nil || applied.Relationship.Status != string(domain.RelationshipStatusActive) {
 		return nil
 	}
@@ -150,15 +126,6 @@ func applyPlacementRelationshipDecision(
 		return err
 	}
 	return nil
-}
-
-func placementEvidenceSearchableStatus(status string) bool {
-	switch strings.TrimSpace(status) {
-	case string(domain.SemanticReviewAccepted), string(domain.SemanticReviewReviewRequired):
-		return true
-	default:
-		return false
-	}
 }
 
 type placementCorrectionTargetRecord struct {
@@ -415,7 +382,7 @@ func resolvePlacementPredicateCandidate(
 	if len(matches) > 1 {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate %q resolves to multiple team definitions",
-			errPlacementPredicateReview,
+			errPlacementPredicateUnresolved,
 			decision.OriginalPredicate,
 		)
 	}
@@ -426,7 +393,7 @@ func resolvePlacementPredicateCandidate(
 	) {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate candidate %q is not a safe canonical key",
-			errPlacementPredicateReview,
+			errPlacementPredicateUnresolved,
 			candidate.PredicateKey,
 		)
 	}
@@ -462,7 +429,7 @@ func resolvePlacementPredicateCandidate(
 	if resolved.LifecycleState != string(domain.PredicateLifecycleActive) {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate %q lifecycle is %q",
-			errPlacementPredicateReview,
+			errPlacementPredicateUnresolved,
 			resolved.PredicateKey,
 			resolved.LifecycleState,
 		)
@@ -470,7 +437,7 @@ func resolvePlacementPredicateCandidate(
 	if resolved.RelationshipKind != candidate.RelationshipKind {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate %q relationship_kind is %q, candidate requested %q",
-			errPlacementPredicateReview,
+			errPlacementPredicateUnresolved,
 			resolved.PredicateKey,
 			resolved.RelationshipKind,
 			candidate.RelationshipKind,
@@ -479,7 +446,7 @@ func resolvePlacementPredicateCandidate(
 	if !placementPredicateKindAllowed(resolved.AllowedSubjectKinds, subjectKind) {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate %q does not allow subject kind %q",
-			errPlacementPredicateReview,
+			errPlacementPredicateUnresolved,
 			resolved.PredicateKey,
 			subjectKind,
 		)
@@ -487,7 +454,7 @@ func resolvePlacementPredicateCandidate(
 	if !placementPredicateKindAllowed(resolved.AllowedObjectKinds, objectKind) {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate %q does not allow object kind %q",
-			errPlacementPredicateReview,
+			errPlacementPredicateUnresolved,
 			resolved.PredicateKey,
 			objectKind,
 		)
@@ -584,7 +551,7 @@ func applyRelationshipDecisionInTx(
 	}
 	predicate, err := loadPredicateDefinition(ctx, tx, input.TeamID, input.PredicateKey, input.PredicateVersion)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return insertPredicateReview(ctx, tx, input)
+		return nil, fmt.Errorf("%w: predicate %q version %d is not active", errRelationshipDecisionNonPromotable, input.PredicateKey, input.PredicateVersion)
 	}
 	if err != nil {
 		return nil, err
@@ -599,7 +566,7 @@ func applyRelationshipDecisionInTx(
 		return nil, err
 	}
 	if recordState.ValidToConflict {
-		return insertRelationshipValidToReview(ctx, tx, input, recordState.Record)
+		return nil, fmt.Errorf("%w: relationship valid_to conflicts with current state", errRelationshipDecisionNonPromotable)
 	}
 	observationID, err := insertRelationshipObservation(ctx, tx, input, recordState.Record.RelationshipID)
 	if err != nil {
@@ -655,14 +622,6 @@ func applyRelationshipDecisionInTx(
 		SupportDecisionID:   supportDecisionID,
 		CreatedRelationship: recordState.Created,
 	}, nil
-}
-
-func withPlacementDecisionScope(input CommitPlacementSemanticInput, decision ApplyRelationshipDecisionInput) ApplyRelationshipDecisionInput {
-	decision.TeamID = input.TeamID
-	decision.OwnerProfileID = input.OwnerProfileID
-	decision.IngestID = input.IngestID
-	decision.PlacementItemID = input.PlacementItemID
-	return decision
 }
 
 func upsertPlacementRelationshipSearchDocument(
@@ -722,7 +681,7 @@ func upsertPlacementRelationshipSearchDocument(
 	return result, nil
 }
 
-func placementCommitPayload(base map[string]any, result *CommitPlacementSemanticResult) map[string]any {
+func placementCommitPayload(base map[string]any, result *submissionSemanticCommitState) map[string]any {
 	payload := map[string]any{
 		"contract_version": domain.ContractVersion,
 	}
@@ -748,23 +707,12 @@ func placementCommitPayload(base map[string]any, result *CommitPlacementSemantic
 	payload["search_document_ids"] = searchDocuments
 	payload["embedding_job_ids"] = embeddingJobs
 	payload["entity_resolution_ids"] = append([]string(nil), result.EntityResolutionIDs...)
-	payload["review_task_ids"] = append([]string(nil), result.ReviewTaskIDs...)
 	return payload
 }
 
 func relationshipOutcomeCategory(result *RelationshipDecisionResult) string {
 	if result == nil {
 		return string(domain.OutcomeRelationshipRejected)
-	}
-	if result.ReviewTaskID != "" && result.Relationship == nil {
-		switch result.Category {
-		case string(domain.OutcomeIdentityNeedsReview):
-			return string(domain.OutcomeIdentityNeedsReview)
-		case string(domain.OutcomePredicateNeedsReview):
-			return string(domain.OutcomePredicateNeedsReview)
-		default:
-			return string(domain.OutcomeRelationshipNeedsReview)
-		}
 	}
 	if result.Relationship == nil {
 		return string(domain.OutcomeRelationshipRejected)
@@ -784,9 +732,6 @@ func relationshipOutcomeReason(decision ApplyRelationshipDecisionInput, result *
 	}
 	if rationale := strings.TrimSpace(decision.Rationale); rationale != "" {
 		return rationale
-	}
-	if result != nil && result.ReviewTaskID != "" && result.Relationship == nil {
-		return "predicate requires review before a canonical relationship can be created"
 	}
 	if result == nil || result.Relationship == nil {
 		return "relationship did not produce an active semantic record"
@@ -824,119 +769,9 @@ func placementRelationshipOutcomePayload(results []RelationshipDecisionResult) [
 			}
 			item["relationship_status"] = result.Relationship.Status
 		}
-		if result.ReviewTaskID != "" {
-			item["review_task"] = result.ReviewTaskID
-		}
 		out = append(out, item)
 	}
 	return out
-}
-
-func finishPlacementRunIfTerminal(ctx context.Context, tx *gorm.DB, input CommitPlacementSemanticInput, status string) (*PlacementFirstDisposition, error) {
-	var openCount, reviewCount int64
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT
-		    COUNT(*) FILTER (WHERE status IN ('queued', 'processing')),
-		    COUNT(*) FILTER (WHERE status = 'awaiting_review')
-		FROM placement_items
-		WHERE team_id = ?::uuid
-		  AND placement_run_id = ?::uuid
-	`, input.TeamID, input.PlacementRunID).Row().Scan(&openCount, &reviewCount); err != nil {
-		return nil, err
-	}
-	if openCount > 0 {
-		result := tx.WithContext(ctx).Exec(`
-			UPDATE placement_runs
-			SET status = `+placementRunGuardedStatusCase+`,
-			    worker_id = '',
-			    lease_until = NULL,
-			    attempts = 0,
-			    available_at = now(),
-			    updated_at = now()
-			WHERE team_id = ?::uuid
-			  AND placement_run_id = ?::uuid
-			  AND owner_profile_id = ?::uuid
-			  AND status = 'processing'
-			  AND worker_id = ?
-			  AND attempts = ?
-			  AND lease_until > clock_timestamp()
-		`, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
-		if result.Error != nil {
-			return nil, result.Error
-		}
-		if result.RowsAffected != 1 {
-			return nil, ErrPlacementLeaseLost
-		}
-		return nil, nil
-	}
-	runStatus := status
-	if reviewCount > 0 && status != string(domain.PlacementRunFailed) && status != string(domain.PlacementRunQuarantined) {
-		runStatus = string(domain.PlacementRunAwaitingReview)
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		UPDATE placement_runs
-		SET status = ?,
-		    error = '',
-		    lease_until = NULL,
-		    completed_at = now(),
-		    updated_at = now()
-		WHERE team_id = ?::uuid
-		  AND placement_run_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND status = 'processing'
-		  AND worker_id = ?
-		  AND attempts = ?
-		  AND lease_until > clock_timestamp()
-		RETURNING created_at, completed_at
-	`, runStatus, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-		return nil, ErrPlacementLeaseLost
-	}
-	var createdAt, completedAt time.Time
-	if err := rows.Scan(&createdAt, &completedAt); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	return appendPlacementFirstDisposition(ctx, tx, input.TeamID, input.OwnerProfileID, input.PlacementRunID, runStatus, createdAt, completedAt)
-}
-
-func requeuePlacementRunForRetry(ctx context.Context, tx *gorm.DB, input CommitPlacementSemanticInput) error {
-	retryDelay := placementEffectiveRetryDelay(input.ExpectedAttempts, input.PlacementItemID, input.RetryAfter)
-	retryDelaySeconds := int(retryDelay / time.Second)
-	result := tx.WithContext(ctx).Exec(`
-		UPDATE placement_runs
-		SET status = `+placementRunGuardedStatusCase+`,
-		    worker_id = '',
-		    lease_until = NULL,
-		    available_at = now() + (? * interval '1 second'),
-		    updated_at = now()
-		WHERE team_id = ?::uuid
-		  AND placement_run_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND status = 'processing'
-		  AND worker_id = ?
-		  AND attempts = ?
-		  AND lease_until > clock_timestamp()
-	`, retryDelaySeconds, input.TeamID, input.PlacementRunID, input.OwnerProfileID, input.WorkerID, input.ExpectedAttempts)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return ErrPlacementLeaseLost
-	}
-	return nil
 }
 
 func placementRetryDelay(attempt int, placementItemID string) time.Duration {

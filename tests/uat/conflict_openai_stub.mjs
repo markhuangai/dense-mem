@@ -26,6 +26,9 @@ const server = http.createServer(async (request, response) => {
     if (schemaName === "dense_mem_semantic_assessment_response") {
       return sendChat(response, semanticAssessmentResponse(providerInput));
     }
+    if (schemaName === "dense_mem_remember_normalizer_response") {
+      return sendChat(response, rememberNormalizerResponse(providerInput));
+    }
     if (schemaName === "dense_mem_conflict_assessment_response") {
       const contents = (providerInput.evidence ?? []).map((item) => String(item?.content ?? ""));
       if (contents.some((content) => content.includes("[conflict-ai-fail]"))) {
@@ -143,6 +146,46 @@ function semanticAssessmentResponse(input) {
     security_signals: [],
     entity_results: entityResults,
     relationship_results: relationshipResults,
+  };
+}
+
+function rememberNormalizerResponse(input) {
+  const semantic = semanticAssessmentResponse(input);
+  return {
+    request_id: semantic.request_id,
+    security_signals: semantic.security_signals,
+    entity_results: semantic.entity_results.map((entity) => ({
+      ref: entity.ref,
+      grounding_ref: entity.grounding_ref,
+      action: entity.action,
+      candidate_entity_id: entity.candidate_entity_id,
+    })),
+    relationship_results: semantic.relationship_results.map((relationship) => ({
+      ref: relationship.ref,
+      subject_ref: relationship.subject_ref,
+      predicate_range: normalizerRange(relationship.predicate_range),
+      predicate_status: relationship.predicate_status,
+      predicate_key: relationship.predicate_key,
+      predicate_version: relationship.predicate_version,
+      object_ref: relationship.object_ref,
+      object_value: relationship.object_value,
+      value_range: relationship.value_range ? normalizerRange(relationship.value_range) : null,
+      polarity: relationship.polarity,
+      modality: relationship.modality,
+      support_ranges: relationship.support_ranges.map(normalizerRange),
+      valid_from: relationship.valid_from,
+      valid_to: relationship.valid_to,
+      scope_status: relationship.scope_status,
+      scope_key: relationship.scope_key,
+    })),
+  };
+}
+
+function normalizerRange(range) {
+  return {
+    evidence_id: range.evidence_id,
+    start_ref: range.start_ref,
+    end_ref: range.end_ref,
   };
 }
 
