@@ -197,8 +197,8 @@ promote_preview() {
 						(. as $image |
 							(["pr", "head", "main", "run-id", "run-attempt"] |
 								map("io.dense-mem.preview." + .)) as $preview_labels |
-							([$preview_labels[] as $label |
-								select($image.config.Labels | has($label))] | length == 0))
+							([$preview_labels[] as $preview_label |
+								select($image.config.Labels | has($preview_label))] | length == 0))
 					' >/dev/null || fail "${target_ref} has invalid ${platform} RC metadata"
 	done
 	[[ "$(platform_layers "${target_ref}@${target_digest}" linux/amd64)" == "${source_layers_amd64}" ]] ||

@@ -40,6 +40,15 @@ test("low-trust preview builds do not export an Actions cache", async () => {
   assert.doesNotMatch(workflow, /^\s+cache-to:/m);
 });
 
+test("OCI promotion avoids jq 1.6 reserved variable names", async () => {
+  const script = await readFile(
+    new URL("../../.github/scripts/oci-image.sh", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(script, /\bas \$label\b/);
+});
+
 test("prerelease publication waits for the staging migration rehearsal", async () => {
   const workflow = await readFile(
     new URL("../../.github/workflows/release-rc.yml", import.meta.url),
