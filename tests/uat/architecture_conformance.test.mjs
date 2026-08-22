@@ -9,6 +9,7 @@ import {
   discoverBrowser,
   discoverGo,
   discoverWorkers,
+  isModuleImport,
   parseArgs,
   resolveBrowserImport,
   scanGoTokens,
@@ -120,6 +121,12 @@ test("resolves browser JavaScript aliases and ignores asset imports", () => {
   assert.deepEqual(resolveBrowserImport(root, importer, "./logo.svg?url"), { asset: true });
 });
 
+test("keeps module-root imports inside the discovered graph", () => {
+  assert.equal(isModuleImport("example.test/dense-mem", "example.test/dense-mem"), true);
+  assert.equal(isModuleImport("example.test/dense-mem", "example.test/dense-mem/internal/service"), true);
+  assert.equal(isModuleImport("example.test/dense-mem", "example.test/dense-memory"), false);
+});
+
 test("does not treat Go comments or strings as worker signals", () => {
   const tokens = scanGoTokens(`package fixture
 // go ignored() and .Run()
@@ -141,7 +148,10 @@ var _ = context.Background
 func returnsStruct() struct { value int } { go work() }
 func literal() { go func() error { return nil }() }
 func parenthesized() { go (work)() }
+func selector(worker *workerType) { go (*worker).serve() }
 func work() {}
+type workerType struct{}
+func (workerType) serve() {}
 `);
     assert.deepEqual(discoverWorkers(fixtureRoot).map((worker) => ({
       function: worker.function,
@@ -150,6 +160,7 @@ func work() {}
       { function: "returnsStruct", kind: "goroutine" },
       { function: "literal", kind: "goroutine" },
       { function: "parenthesized", kind: "goroutine" },
+      { function: "selector", kind: "goroutine" },
     ]);
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });

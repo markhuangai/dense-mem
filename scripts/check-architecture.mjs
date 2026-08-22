@@ -301,6 +301,10 @@ function packageList(root, tags, production) {
   return sorted(run("bash", args, root).split(/\r?\n/u).map((line) => line.trim()).filter(Boolean));
 }
 
+export function isModuleImport(modulePath, packagePath) {
+  return packagePath === modulePath || packagePath.startsWith(`${modulePath}/`);
+}
+
 export function discoverGo(root, modulePath) {
   const profiles = [
     { name: "production", tags: "", production: true },
@@ -320,7 +324,7 @@ export function discoverGo(root, modulePath) {
       const separator = line.indexOf("|");
       if (separator < 0) throw new Error(`unexpected go list output: ${line}`);
       const source = line.slice(0, separator);
-      const imports = line.slice(separator + 1).split(",").filter((item) => item.startsWith(`${modulePath}/`));
+      const imports = line.slice(separator + 1).split(",").filter((item) => isModuleImport(modulePath, item));
       for (const target of imports) edges.push({ source, target, profile: profile.name });
     }
   }
@@ -613,7 +617,10 @@ function isGoroutineInvocation(tokens, index) {
   if (tokens[next]?.text === "func" || isGoIdentifier(tokens[next]?.text)) return true;
   if (tokens[next]?.text !== "(") return false;
   const calleeEnd = matchingToken(tokens, next, "(", ")");
-  return calleeEnd > next && tokens[calleeEnd + 1]?.text === "(";
+  if (calleeEnd <= next) return false;
+  let callOpen = calleeEnd + 1;
+  while (tokens[callOpen]?.text === "." && isGoIdentifier(tokens[callOpen + 1]?.text)) callOpen += 2;
+  return tokens[callOpen]?.text === "(";
 }
 
 export function discoverWorkers(root) {
