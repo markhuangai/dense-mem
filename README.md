@@ -241,7 +241,7 @@ Remember uses a structure-only normalizer. Invalid or non-promotable complete
 responses never create partial semantic state: the submission becomes terminal
 `failed` with bounded `errors[]` guidance. Resubmit the entire evidence and
 Relationships batch with a new `idempotency_key`; partial replacement and
-`awaiting_review` holds are not part of the Remember workflow.
+interactive placement review are not part of the Remember workflow.
 
 To retract evidence without a replacement, call `retract_evidence` with owned
 current IDs, a bounded reason, and an idempotency key:

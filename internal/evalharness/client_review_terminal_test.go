@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestHTTPClientImportCorpusAllowsReviewTerminalWithEvidence(t *testing.T) {
@@ -66,17 +65,17 @@ func TestHTTPClientImportCorpusRejectsQuarantinedSubmissionEvenWithEvidence(t *t
 	}
 }
 
-func TestHTTPClientImportCorpusDoesNotAcceptAwaitingReviewWithEvidence(t *testing.T) {
+func TestHTTPClientImportCorpusRejectsUnknownProcessingStateWithEvidence(t *testing.T) {
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "tool:remember":
-			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-awaiting-review"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-unknown-state"})
 		case "tool:get_submission_status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    "submission-awaiting-review",
-				"processing_state": "awaiting_review",
+				"submission_id":    "submission-unknown-state",
+				"processing_state": "unknown_state",
 				"evidence": []map[string]any{{
-					"evidence_id": "evidence-awaiting-review",
+					"evidence_id": "evidence-unknown-state",
 				}},
 			})
 		default:
@@ -85,9 +84,9 @@ func TestHTTPClientImportCorpusDoesNotAcceptAwaitingReviewWithEvidence(t *testin
 	}))
 	defer server.Close()
 
-	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", PlacementTimeout: 20 * time.Millisecond, Client: server.Client()}
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-awaiting-review", Content: "content"}})
-	if err == nil || !strings.Contains(err.Error(), "did not complete within") {
+	if err == nil || !strings.Contains(err.Error(), `returned unknown processing_state "unknown_state"`) {
 		t.Fatalf("ImportCorpus err = %v", err)
 	}
 }

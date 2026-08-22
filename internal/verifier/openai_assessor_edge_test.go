@@ -46,7 +46,7 @@ func TestOpenAIVerifierAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 		assert.Equal(t, "assessor-model", request.Model)
 		assert.Equal(t, "dense_mem_semantic_assessment_response", request.ResponseFormat.JSONSchema.Name)
 		assert.Contains(t, request.Messages[0].Content, "integrated structure and support assessor")
-		assert.Contains(t, request.Messages[0].Content, "registration_required and needs_review require predicate_key and predicate_version both null")
+		assert.Contains(t, request.Messages[0].Content, "registration_required and unresolved require predicate_key and predicate_version both null")
 		var payload map[string]any
 		if !assert.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &payload)) {
 			http.Error(w, "invalid assessor payload", http.StatusBadRequest)
@@ -324,7 +324,7 @@ func TestSemanticAssessmentInstructionsExposeRequestDependentRules(t *testing.T)
 		"return exactly one result for each submitted ref",
 		"Every Relationship requires exactly one of object_ref and object_value",
 		`otherwise use predicate_status "registration_required" when the evidence clearly supports a reusable relationship`,
-		"registration_required and needs_review require predicate_key and predicate_version both null",
+		"registration_required and unresolved require predicate_key and predicate_version both null",
 		"Pronouns and inferred coreference are not grounding options",
 		`temporal_verdict "absent"`,
 		`temporal_verdict "entailed"`,

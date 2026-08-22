@@ -157,18 +157,6 @@ type PlacementItem struct {
 	Status, Category            string
 	Version                     int
 	Result                      map[string]any
-	ReviewTasks                 []PlacementReviewTask
-}
-
-type PlacementReviewTask struct {
-	ReviewTaskID string
-	Version      int
-	Kind         string
-	Status       string
-	Question     string
-	Options      []map[string]any
-	Guidance     string
-	ExpiresAt    *time.Time
 }
 
 // Keep the historical package-local name for tests and constructors while
@@ -973,9 +961,6 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 		return nil, err
 	}
 	if err := hydratePlacementItemSearchStates(ctx, tx, result.TeamID, result.OwnerProfileID, result.Items); err != nil {
-		return nil, err
-	}
-	if err := hydratePlacementItemReviewTasks(ctx, tx, result.TeamID, result.OwnerProfileID, result.IngestID, result.Items); err != nil {
 		return nil, err
 	}
 	if err := hydrateEvidenceLifecycleLineage(ctx, tx, result.TeamID, result.Evidence); err != nil {

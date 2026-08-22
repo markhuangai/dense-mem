@@ -146,7 +146,7 @@ func validateSemanticAssessmentTimeAndScope(index int, result SemanticAssessment
 		if result.ScopeKey == nil || !assessmentBoundedRequiredString(*result.ScopeKey, 256) {
 			errs = append(errs, semanticErr(field+".scope_key", "is required and must be bounded for resolved scope"))
 		}
-	case "absent", "needs_review":
+	case "absent", "unresolved":
 		if result.ScopeKey != nil {
 			errs = append(errs, semanticErr(field+".scope_key", "must be null unless scope_status is resolved"))
 		}

@@ -653,9 +653,6 @@ func TestProviderAndEmbeddingContracts(t *testing.T) {
 	if err := assertProviderProposalSchema(verifier.ProviderProposalSchema()); err != nil {
 		t.Fatal(err)
 	}
-	if err := assertVerifierResponseSchema(verifier.VerifierResponseSchema()); err != nil {
-		t.Fatal(err)
-	}
 	sourceKinds := embedding.EmbeddingSourceKinds()
 	for _, want := range []string{"evidence", "search_document", "recall_query"} {
 		if !slices.Contains(sourceKinds, want) {

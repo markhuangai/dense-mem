@@ -215,16 +215,6 @@ func TestSubmissionAssessmentWorkerQuarantinesProposalSignalsAcrossEveryFragment
 	}
 }
 
-func TestSubmissionAssessmentWorkerDoesNotExpireLegacyReviews(t *testing.T) {
-	_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
-
-	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
-
-	require.NoError(t, err)
-	assert.True(t, processed)
-	assert.Equal(t, 0, assessments.reviewExpiryCalls)
-}
-
 func TestSubmissionAssessmentWorkerMarksStaleSourceSuperseded(t *testing.T) {
 	_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
 	assessments.commitErr = repository.ErrPlacementStaleSource
@@ -411,27 +401,14 @@ func TestSubmissionAssessmentWorkerPlansAndCommitsTypedValue(t *testing.T) {
 	assert.Equal(t, "42", commit.RelationshipObservations[0].Observation.ObjectValue.CanonicalValue)
 }
 
-func TestSubmissionAssessmentWorkerIgnoresLegacyReviewExpiryFailure(t *testing.T) {
-	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
-	assessments.reviewExpiryErr = errors.New("review expiry failed")
-
-	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
-
-	require.NoError(t, err)
-	assert.True(t, processed)
-	assert.Equal(t, 0, assessments.reviewExpiryCalls)
-	assert.Equal(t, 1, provider.calls)
-}
-
 func TestSubmissionAssessmentWorkerReturnsIdleWhenNoRunIsClaimable(t *testing.T) {
-	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	ledger, _, _, provider, worker := submissionAssessmentWorkerFixture(t)
 	ledger.claimNil = true
 
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 
 	require.NoError(t, err)
 	assert.False(t, processed)
-	assert.Equal(t, 0, assessments.reviewExpiryCalls)
 	assert.Zero(t, provider.calls)
 }
 
@@ -500,7 +477,7 @@ func TestSubmissionAssessmentEntityCandidateGroupsFailClosed(t *testing.T) {
 	}
 	evidence := make([]verifier.SemanticReviewEvidence, 0, len(plan.Items))
 	for _, item := range plan.Items {
-		evidence = append(evidence, verifier.PrepareSemanticAssessmentEvidence(semanticReviewEvidence(item.Fragment, item.EvidenceID)))
+		evidence = append(evidence, verifier.PrepareSemanticAssessmentEvidence(semanticAssessmentEvidence(item.Fragment, item.EvidenceID)))
 	}
 
 	tests := []struct {
@@ -916,7 +893,7 @@ func submissionAssessmentValidNormalizerResponse(req verifier.RememberNormalizer
 	}
 	for _, relationship := range semantic.RelationshipResults {
 		predicateStatus := relationship.PredicateStatus
-		if predicateStatus == "needs_review" {
+		if predicateStatus == "unresolved" {
 			predicateStatus = "registration_required"
 		}
 		converted := verifier.RememberNormalizerRelationshipResult{

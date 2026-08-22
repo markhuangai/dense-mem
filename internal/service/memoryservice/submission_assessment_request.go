@@ -49,7 +49,7 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 	}
 	evidence := make([]verifier.SemanticReviewEvidence, 0, len(plan.Items))
 	for _, item := range plan.Items {
-		preparedEvidence := verifier.PrepareSemanticAssessmentEvidence(semanticReviewEvidence(item.Fragment, item.EvidenceID))
+		preparedEvidence := verifier.PrepareSemanticAssessmentEvidence(semanticAssessmentEvidence(item.Fragment, item.EvidenceID))
 		evidence = append(evidence, preparedEvidence)
 	}
 	contractEntities, entityGroups, err := submissionAssessmentGroundedEntities(plan, entityCatalog, evidence)

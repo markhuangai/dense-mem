@@ -73,7 +73,7 @@ func TestSubmissionAssessmentCommitInputFailsClosedForUnsafeResults(t *testing.T
 		{
 			name: "review required relationship",
 			mutate: func(fixture *submissionAssessmentCommitFixture) {
-				fixture.response.RelationshipResults[0].PredicateStatus = "needs_review"
+				fixture.response.RelationshipResults[0].PredicateStatus = "unresolved"
 			},
 			needsReview: true,
 		},
@@ -124,7 +124,7 @@ func TestSubmissionAssessmentCommitInputFailsClosedForUnsafeResults(t *testing.T
 
 			require.Error(t, err)
 			if test.needsReview {
-				assert.ErrorIs(t, err, errSubmissionAssessmentRequiresReview)
+				assert.ErrorIs(t, err, errSubmissionAssessmentRequiresResubmission)
 			}
 		})
 	}

@@ -17,26 +17,26 @@ export V1_DATA_DIR="${tmp_dir}/runtime"
 # shellcheck source=run_full_public_rag_eval_until_done.sh
 source "${ROOT_DIR}/tests/eval/scripts/run_full_public_rag_eval_until_done.sh"
 
-if [[ "$(terminal_placement_statuses_sql)" != "'completed', 'awaiting_review', 'quarantined'" ]]; then
+if [[ "$(terminal_placement_statuses_sql)" != "'completed', 'quarantined'" ]]; then
   echo "terminal placement status list excludes quarantined" >&2
   exit 1
 fi
-if [[ "$(terminal_placement_count 413 577 1)" != "991" ]]; then
+if [[ "$(terminal_placement_count 413 578)" != "991" ]]; then
   echo "terminal placement count excludes quarantined" >&2
   exit 1
 fi
 
-write_import_gate_result 991 991 413 577 1 0 0 0 1
+write_import_gate_result 991 991 413 578 0 0 0 1
 jq -e '
   .schema_version == 1 and
   .status == "comparison_only" and
   .passed == false and
   .terminal == 991 and
-  .quarantined == 1 and
+  .quarantined == 578 and
   .reasons == ["quarantined_placements"]
 ' "${IMPORT_GATE_RESULT}" >/dev/null
 
-write_import_gate_result 991 991 413 578 0 0 0 0 1
+write_import_gate_result 991 991 991 0 0 0 0 1
 jq -e '
   .status == "passed" and
   .passed == true and
@@ -45,7 +45,7 @@ jq -e '
   .reasons == []
 ' "${IMPORT_GATE_RESULT}" >/dev/null
 
-write_import_gate_result "" "" "" "" "" "" "" "" "" "placement_or_fragment_count_failed"
+write_import_gate_result "" "" "" "" "" "" "" "" "placement_or_fragment_count_failed"
 jq -e '
   .status == "failed" and
   .passed == false and
@@ -56,7 +56,7 @@ jq -e '
   .reasons == ["placement_or_fragment_count_failed"]
 ' "${IMPORT_GATE_RESULT}" >/dev/null
 
-write_import_gate_result 992 992 413 578 0 0 0 0 2 "dataset_count_exceeds_target"
+write_import_gate_result 992 992 413 578 0 0 0 2 "dataset_count_exceeds_target"
 jq -e '
   .status == "failed" and
   .passed == false and
@@ -78,7 +78,7 @@ if [[ "$(sha256sum "${RUNNER}" | awk '{print $1}')" != "${runner_hash_before}" ]
   exit 1
 fi
 
-write_status "test" 991 991 413 577 1 0 0 0 1 "" "" ""
+write_status "test" 991 991 990 1 0 0 0 1 "" "" ""
 jq -e '
   .quarantined == 1 and
   .terminal == 991 and

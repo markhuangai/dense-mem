@@ -263,7 +263,6 @@ func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testin
 	metrics.IncAssessorAssessmentPersistence("persisted")
 	metrics.IncAssessorDuplicateRequestPrevention("post_persist")
 	metrics.IncAssessorConfidenceGate("below_write_threshold")
-	metrics.AddAssessorReviewExpiry(3)
 	metrics.IncAssessorTerminalFailure("predicate_options_overflow")
 
 	body := scrapePrometheusMetrics(t, metrics)
@@ -280,7 +279,6 @@ func TestPrometheusMetrics_RecordsAssessorMetricsWithoutIdentityLabels(t *testin
 		`densemem_assessor_assessment_persistence_total{outcome="persisted"}`,
 		`densemem_assessor_duplicate_request_prevented_total{stage="post_persist"}`,
 		`densemem_assessor_confidence_gate_total{band="below_write_threshold"}`,
-		`densemem_assessor_review_expiry_total 3`,
 		`densemem_assessor_terminal_failures_total{stage="predicate_options_overflow"} 1`,
 	} {
 		if !strings.Contains(body, want) {
@@ -343,7 +341,6 @@ func TestNoopDiscoverabilityMetrics_ConsumesCalls(t *testing.T) {
 	assessor.IncAssessorAssessmentPersistence("persisted")
 	assessor.IncAssessorDuplicateRequestPrevention("post_persist")
 	assessor.IncAssessorConfidenceGate("meets_write_threshold")
-	assessor.AddAssessorReviewExpiry(1)
 	assessor.IncAssessorTerminalFailure("assessment")
 }
 
@@ -356,8 +353,6 @@ func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
 	RecordAssessorAssessmentPersistence(metrics, "persisted")
 	RecordAssessorDuplicateRequestPrevention(metrics, "post_persist")
 	RecordAssessorConfidenceGate(metrics, "below_write_threshold")
-	RecordAssessorReviewExpiry(metrics, 2)
-	RecordAssessorReviewExpiry(metrics, 0)
 	RecordAssessorTerminalFailure(metrics, "assessment")
 
 	calls := metrics.AssessorCalls()
@@ -385,9 +380,6 @@ func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
 	if got := metrics.AssessorConfidenceGateCount("below_write_threshold"); got != 1 {
 		t.Fatalf("AssessorConfidenceGateCount() = %d, want 1", got)
 	}
-	if got := metrics.AssessorReviewExpiryCount(); got != 2 {
-		t.Fatalf("AssessorReviewExpiryCount() = %d, want 2", got)
-	}
 	if got := metrics.AssessorTerminalFailureCount("assessment"); got != 1 {
 		t.Fatalf("AssessorTerminalFailureCount() = %d, want 1", got)
 	}
@@ -407,7 +399,6 @@ func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
 	RecordAssessorAssessmentPersistence(NoopDiscoverabilityMetrics(), "")
 	RecordAssessorDuplicateRequestPrevention(NoopDiscoverabilityMetrics(), "")
 	RecordAssessorConfidenceGate(NoopDiscoverabilityMetrics(), "")
-	RecordAssessorReviewExpiry(NoopDiscoverabilityMetrics(), 0)
 	RecordAssessorTerminalFailure(NoopDiscoverabilityMetrics(), "")
 }
 func scrapePrometheusMetrics(t *testing.T, metrics *PrometheusMetrics) string {

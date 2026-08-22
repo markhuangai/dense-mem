@@ -139,7 +139,7 @@ func TestPrivatePlacementDerivedWritersInheritMemorySpace(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 
-	committed, err := repo.CommitPlacementSemanticResult(ctx, CommitPlacementSemanticInput{
+	committed, err := commitAcceptedSubmissionFixture(t, ctx, repo, CommitPlacementSemanticInput{
 		TeamID:           teamID.String(),
 		OwnerProfileID:   privateCredential.ID.String(),
 		IngestID:         created.IngestID,

@@ -92,6 +92,87 @@ func applySemanticDecision(
 	return result
 }
 
+func commitAcceptedSubmissionFixture(
+	t *testing.T,
+	ctx context.Context,
+	repo *LedgerRepositoryImpl,
+	input CommitPlacementSemanticInput,
+) (*CommitSubmissionAssessmentResult, error) {
+	t.Helper()
+	status, err := repo.GetPlacementRun(ctx, GetPlacementRunInput{
+		TeamID:         input.TeamID,
+		OwnerProfileID: input.OwnerProfileID,
+		IngestID:       input.IngestID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	assessment := persistSubmissionAssessment(t, ctx, repo, PlacementRun{
+		TeamID:         input.TeamID,
+		OwnerProfileID: input.OwnerProfileID,
+		IngestID:       input.IngestID,
+		PlacementRunID: input.PlacementRunID,
+		Attempts:       input.ExpectedAttempts,
+	})
+	fragmentByItemID := make(map[string]EvidenceFragment, len(status.Items))
+	for index, item := range status.Items {
+		if index < len(status.Evidence) {
+			fragmentByItemID[item.PlacementItemID] = status.Evidence[index]
+		}
+	}
+	itemID := input.PlacementItemID
+	fragment, ok := fragmentByItemID[itemID]
+	if !ok {
+		return nil, ErrPlacementLeaseLost
+	}
+	entityResolutions := make([]SubmissionAssessmentEntityResolutionInput, 0, len(input.EntityResolutions))
+	for _, resolution := range input.EntityResolutions {
+		if resolution.FragmentID == "" {
+			resolution.FragmentID = fragment.FragmentID
+		}
+		resolution.AssessmentID = assessment.AssessmentID
+		entityResolutions = append(entityResolutions, SubmissionAssessmentEntityResolutionInput{
+			PlacementItemID: itemID,
+			Resolution:      resolution,
+		})
+	}
+	threshold := 0.7
+	confidence := 0.9
+	relationships := make([]SubmissionAssessmentRelationshipObservationInput, 0, len(input.RelationshipObservations))
+	for _, observation := range input.RelationshipObservations {
+		observation = normalizePlacementRelationshipDecisionInput(observation)
+		if observation.Confidence == nil {
+			observation.Confidence = &confidence
+		}
+		observation.AssessmentID = assessment.AssessmentID
+		observation.AssessmentPolicyVersion = "submission-assessment-test"
+		observation.ThresholdUsed = &threshold
+		observation.GateResult = "meets_write_threshold"
+		relationships = append(relationships, SubmissionAssessmentRelationshipObservationInput{
+			PlacementItemID: itemID,
+			Observation:     observation,
+		})
+	}
+	return repo.CommitSubmissionAssessment(ctx, CommitSubmissionAssessmentInput{
+		SubmissionAssessmentRunScope: SubmissionAssessmentRunScope{
+			TeamID:           input.TeamID,
+			OwnerProfileID:   input.OwnerProfileID,
+			IngestID:         input.IngestID,
+			PlacementRunID:   input.PlacementRunID,
+			WorkerID:         input.WorkerID,
+			ExpectedAttempts: input.ExpectedAttempts,
+		},
+		AssessmentID: assessment.AssessmentID,
+		Items: []SubmissionAssessmentItemInput{{
+			PlacementItemID: itemID,
+			FragmentID:      fragment.FragmentID,
+		}},
+		EntityResolutions:        entityResolutions,
+		RelationshipObservations: relationships,
+		Payload:                  input.Payload,
+	})
+}
+
 func assertSameTeamCanReadSemanticEdge(
 	t *testing.T,
 	ctx context.Context,

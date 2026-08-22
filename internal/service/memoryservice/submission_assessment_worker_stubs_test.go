@@ -59,24 +59,22 @@ func (*submissionAssessmentWorkerLedgerStub) FinishPlacementRun(context.Context,
 }
 
 type submissionAssessmentWorkerAssessmentStub struct {
-	assessment        *repository.SubmissionAssessment
-	loadErr           error
-	reserveErr        error
-	persistErr        error
-	policyErr         error
-	persistCalls      int
-	reserved          bool
-	policy            repository.AutoWriteConfidencePolicy
-	commits           []repository.CommitSubmissionAssessmentInput
-	completions       []repository.CompleteSubmissionAssessmentInput
-	requeues          []repository.RequeueSubmissionAssessmentInput
-	completeNil       bool
-	completeErr       error
-	requeueNil        bool
-	reviewExpiryCalls int
-	reviewExpiryErr   error
-	commitErr         error
-	commitNil         bool
+	assessment   *repository.SubmissionAssessment
+	loadErr      error
+	reserveErr   error
+	persistErr   error
+	policyErr    error
+	persistCalls int
+	reserved     bool
+	policy       repository.AutoWriteConfidencePolicy
+	commits      []repository.CommitSubmissionAssessmentInput
+	completions  []repository.CompleteSubmissionAssessmentInput
+	requeues     []repository.RequeueSubmissionAssessmentInput
+	completeNil  bool
+	completeErr  error
+	requeueNil   bool
+	commitErr    error
+	commitNil    bool
 }
 
 func (s *submissionAssessmentWorkerAssessmentStub) LoadSubmissionAssessment(context.Context, repository.LoadSubmissionAssessmentInput) (*repository.SubmissionAssessment, error) {
@@ -149,11 +147,6 @@ func (s *submissionAssessmentWorkerAssessmentStub) RequeueSubmissionAssessment(_
 		return nil, nil
 	}
 	return &repository.RequeueSubmissionAssessmentResult{Status: string(domain.SemanticReviewRetryable)}, nil
-}
-
-func (s *submissionAssessmentWorkerAssessmentStub) ExpirePlacementAssessmentReviews(context.Context, repository.ExpirePlacementAssessmentReviewsInput) (int64, error) {
-	s.reviewExpiryCalls++
-	return 0, s.reviewExpiryErr
 }
 
 type submissionAssessmentWorkerProviderStub struct {

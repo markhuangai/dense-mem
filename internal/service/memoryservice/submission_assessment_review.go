@@ -11,7 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-const submissionAssessmentMaxReviewIssues = 50
+const submissionAssessmentMaxResubmissionIssues = 50
 
 type submissionAssessmentIssue struct {
 	Code            string
@@ -20,20 +20,20 @@ type submissionAssessmentIssue struct {
 	Message         string
 }
 
-type submissionAssessmentReviewRequiredError struct {
+type submissionAssessmentResubmissionRequiredError struct {
 	Issues    []submissionAssessmentIssue
 	Truncated bool
 }
 
-func (e *submissionAssessmentReviewRequiredError) Error() string {
-	return errSubmissionAssessmentRequiresReview.Error()
+func (e *submissionAssessmentResubmissionRequiredError) Error() string {
+	return errSubmissionAssessmentRequiresResubmission.Error()
 }
 
-func (e *submissionAssessmentReviewRequiredError) Unwrap() error {
-	return errSubmissionAssessmentRequiresReview
+func (e *submissionAssessmentResubmissionRequiredError) Unwrap() error {
+	return errSubmissionAssessmentRequiresResubmission
 }
 
-func (s *submissionAssessmentPlacementWorkerService) completeReview(
+func (s *submissionAssessmentPlacementWorkerService) completeResubmissionFailure(
 	ctx context.Context,
 	scope repository.SubmissionAssessmentRunScope,
 	stage string,
@@ -42,13 +42,13 @@ func (s *submissionAssessmentPlacementWorkerService) completeReview(
 ) error {
 	if len(issues) == 0 {
 		issues = []submissionAssessmentIssue{{
-			Code:      "commit_review_required",
+			Code:      "resubmission_required",
 			Component: "relationship",
 			Message:   "submission requires a corrected complete resubmission before semantic commit",
 		}}
 	}
-	if len(issues) > submissionAssessmentMaxReviewIssues {
-		issues = append([]submissionAssessmentIssue(nil), issues[:submissionAssessmentMaxReviewIssues]...)
+	if len(issues) > submissionAssessmentMaxResubmissionIssues {
+		issues = append([]submissionAssessmentIssue(nil), issues[:submissionAssessmentMaxResubmissionIssues]...)
 		truncated = true
 	}
 	resubmissionIssues := make([]map[string]any, 0, len(issues))
@@ -77,7 +77,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeReview(
 		Payload:                      payload,
 	})
 	if err == nil && completed == nil {
-		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil review result"))
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil completion result"))
 	}
 	if err != nil {
 		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, err)
@@ -88,7 +88,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeReview(
 	return err
 }
 
-func submissionAssessmentReviewIssues(
+func submissionAssessmentResubmissionIssues(
 	plan submissionAssessmentPlan,
 	response verifier.SemanticAssessmentResponse,
 	threshold float64,
@@ -102,7 +102,7 @@ func submissionAssessmentReviewIssues(
 			return
 		}
 		seen[key] = struct{}{}
-		if len(issues) == submissionAssessmentMaxReviewIssues {
+		if len(issues) == submissionAssessmentMaxResubmissionIssues {
 			truncated = true
 			return
 		}
@@ -134,11 +134,11 @@ func submissionAssessmentReviewIssues(
 		if result.Modality != "statement" {
 			appendIssue(submissionAssessmentIssue{Code: "unsupported_modality", RelationshipRef: result.Ref, Component: "relationship", Message: "only statement relationships are eligible for automatic semantic commit"})
 		}
-		if result.PredicateStatus == "needs_review" {
-			appendIssue(submissionAssessmentIssue{Code: "predicate_needs_review", RelationshipRef: result.Ref, Component: "predicate", Message: "predicate could not be resolved or registered safely"})
+		if result.PredicateStatus == "unresolved" {
+			appendIssue(submissionAssessmentIssue{Code: "predicate_unresolved", RelationshipRef: result.Ref, Component: "predicate", Message: "predicate could not be resolved or registered safely"})
 		}
-		if result.ScopeStatus == "needs_review" {
-			appendIssue(submissionAssessmentIssue{Code: "scope_needs_review", RelationshipRef: result.Ref, Component: "relationship", Message: "relationship scope requires review"})
+		if result.ScopeStatus == "unresolved" {
+			appendIssue(submissionAssessmentIssue{Code: "scope_unresolved", RelationshipRef: result.Ref, Component: "relationship", Message: "relationship scope could not be resolved safely"})
 		}
 		if result.TemporalVerdict == "ambiguous" || result.TemporalVerdict == "contradicted" {
 			appendIssue(submissionAssessmentIssue{Code: "temporal_uncertain", RelationshipRef: result.Ref, Component: "relationship", Message: "relationship time bounds are ambiguous or contradicted"})

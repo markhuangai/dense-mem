@@ -78,30 +78,6 @@ func TestPlacementStatusReadsCurrentOwnerScopedItemVersions(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPlacementNotFound), err)
-
-	_, err = ledgerRepo.ResolvePlacementReview(ctx, ResolvePlacementReviewInput{
-		TeamID:               teamID,
-		OwnerProfileID:       ownerA,
-		Action:               "reject",
-		IngestID:             ingest.IngestID,
-		PlacementItemID:      ingest.Items[0].PlacementItemID,
-		PlacementItemVersion: ingest.Items[0].Version,
-		Message:              "not durable memory",
-		IdempotencyKey:       "reject-status",
-	})
-	require.NoError(t, err)
-
-	status, err = ledgerRepo.GetPlacementRun(ctx, GetPlacementRunInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerA,
-		IngestID:       ingest.IngestID,
-	})
-	require.NoError(t, err)
-	require.Len(t, status.Items, 1)
-	assert.Equal(t, "completed", status.Status)
-	assert.Equal(t, 2, status.Items[0].Version)
-	assert.Equal(t, "completed", status.Items[0].Status)
-	assert.Equal(t, "candidate", status.Items[0].Category)
 }
 
 func TestPlacementStatusHidesSealedPrivateGeneration(t *testing.T) {

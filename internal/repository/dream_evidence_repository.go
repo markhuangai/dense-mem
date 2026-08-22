@@ -243,27 +243,12 @@ func listPendingDreamEvidence(ctx context.Context, tx *gorm.DB, teamID, relation
 			 AND assessment.assessment_id = verification.assessment_id
 			 AND assessment.space_id = verification.space_id
 			 AND assessment.space_generation = verification.space_generation
-			JOIN review_tasks review
-			  ON review.team_id = verification.team_id
-			 AND review.assessment_id = verification.assessment_id
-			 AND review.space_id = verification.space_id
-			 AND review.space_generation = verification.space_generation
 			WHERE observation.team_id = ?::uuid
 			  AND observation.space_id = dense_mem_team_shared_space(observation.team_id)
 			  AND observation.space_generation = dense_mem_team_shared_generation(observation.team_id)
 			  AND observation.relationship_id = ?::uuid
 			  AND verification.evidence_verdict IN ('insufficient', 'entailed')
 			  AND verification.gate_result = 'below_write_threshold'
-			  AND review.status = 'expired'
-			  AND NOT EXISTS (
-			      SELECT 1
-				FROM review_tasks open_review
-				WHERE open_review.team_id = observation.team_id
-				  AND open_review.space_id = observation.space_id
-				  AND open_review.space_generation = observation.space_generation
-			        AND open_review.relationship_id = observation.relationship_id
-			        AND open_review.status IN ('open', 'acknowledged')
-			  )
 			ORDER BY verification.created_at DESC, verification.verification_event_id DESC
 			LIMIT 1
 		), observation_evidence AS (
@@ -349,27 +334,12 @@ func listPendingDreamEvidenceBatch(
 			 AND assessment.assessment_id = verification.assessment_id
 			 AND assessment.space_id = verification.space_id
 			 AND assessment.space_generation = verification.space_generation
-			JOIN review_tasks review
-			  ON review.team_id = verification.team_id
-			 AND review.assessment_id = verification.assessment_id
-			 AND review.space_id = verification.space_id
-			 AND review.space_generation = verification.space_generation
 			WHERE observation.team_id = ?::uuid
 			  AND observation.space_id = dense_mem_team_shared_space(observation.team_id)
 			  AND observation.space_generation = dense_mem_team_shared_generation(observation.team_id)
 			  AND observation.relationship_id = ANY(?::uuid[])
 			  AND verification.evidence_verdict IN ('insufficient', 'entailed')
 			  AND verification.gate_result = 'below_write_threshold'
-			  AND review.status = 'expired'
-			  AND NOT EXISTS (
-			      SELECT 1
-				FROM review_tasks open_review
-				WHERE open_review.team_id = observation.team_id
-				  AND open_review.space_id = observation.space_id
-				  AND open_review.space_generation = observation.space_generation
-			        AND open_review.relationship_id = observation.relationship_id
-			        AND open_review.status IN ('open', 'acknowledged')
-			  )
 			ORDER BY observation.relationship_id,
 			         verification.created_at DESC,
 			         verification.verification_event_id DESC

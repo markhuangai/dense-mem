@@ -247,10 +247,6 @@ type ApplyRelationshipDecisionInput struct {
 	ThresholdUsed           *float64
 	GateResult              string
 	SuppressSupport         bool
-	SemanticReviewKind      string
-	ReviewQuestion          string
-	ReviewOptions           []map[string]any
-	ReviewGuidance          string
 }
 
 type RelationshipRecord struct {
@@ -285,7 +281,6 @@ type RelationshipDecisionResult struct {
 	SupportID           string
 	SupportIDs          []string
 	SupportDecisionID   string
-	ReviewTaskID        string
 	ProposalID          string
 	OwnerProfileID      string
 	Category            string

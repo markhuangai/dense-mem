@@ -39,7 +39,7 @@ type placementFirstDispositionBackfillBatch struct {
 
 // BackfillPlacementFirstDispositionMarkers appends a bounded batch of
 // non-emitting suppression markers for Remember runs that already reached
-// their first terminal or review disposition before a new worker could record
+// their first terminal disposition before a new worker could record
 // it. The persisted state makes the scan restart-safe and prevents a completed
 // recovery from scanning historical data after restart.
 func (r *LedgerRepositoryImpl) BackfillPlacementFirstDispositionMarkers(
@@ -194,7 +194,7 @@ func appendPlacementFirstDispositionBackfillBatch(
 			WHERE %s
 			  AND (
 			      (
-			          run.status IN ('awaiting_review', 'completed', 'failed', 'quarantined')
+			          run.status IN ('completed', 'failed', 'quarantined')
 			          AND run.completed_at IS NOT NULL
 			      )
 			      OR (
@@ -285,7 +285,7 @@ func placementFirstDispositionBackfillCandidatesExist(
 			WHERE %s
 			  AND (
 			      (
-			          run.status IN ('awaiting_review', 'completed', 'failed', 'quarantined')
+			          run.status IN ('completed', 'failed', 'quarantined')
 			          AND run.completed_at IS NOT NULL
 			      )
 			      OR (

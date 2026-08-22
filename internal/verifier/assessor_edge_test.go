@@ -272,7 +272,7 @@ func TestSemanticAssessmentResponseNormalizesSecurityTimeScopeAndValue(t *testin
 		EvidenceID: "ev-1", Kind: "instruction_override", StartRef: securityStartRef, EndRef: securityEndRef,
 	}}
 	relationship := &response.RelationshipResults[0]
-	relationship.PredicateStatus = "needs_review"
+	relationship.PredicateStatus = "unresolved"
 	relationship.PredicateKey = nil
 	relationship.PredicateVersion = nil
 	relationship.ObjectRef = nil
@@ -576,9 +576,9 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 		{
 			name: "review predicate cannot retain selection",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].PredicateStatus = "needs_review"
+				response.RelationshipResults[0].PredicateStatus = "unresolved"
 			},
-			want: "predicate_key and predicate_version must be null for needs_review",
+			want: "predicate_key and predicate_version must be null for unresolved",
 		},
 		{
 			name: "relationship object must be exactly one typed value or entity",

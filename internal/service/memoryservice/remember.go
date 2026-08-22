@@ -488,8 +488,6 @@ func publicSubmissionProcessingState(status string) string {
 		return "processing"
 	case string(domain.PlacementRunCompleted):
 		return "completed"
-	case string(domain.PlacementRunAwaitingReview):
-		return "failed"
 	case string(domain.PlacementRunQuarantined):
 		return "quarantined"
 	case string(domain.PlacementRunFailed):

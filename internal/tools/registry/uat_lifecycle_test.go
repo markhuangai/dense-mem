@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
@@ -151,22 +150,9 @@ func TestBuildActiveCorrectRelationshipRejectsTenantOverride(t *testing.T) {
 }
 
 type stubLifecycleService struct {
-	req        memoryservice.ResolveMemoryPlacementRequest
 	correctReq memoryservice.CorrectRelationshipRequest
 	retractReq memoryservice.RetractEvidenceRequest
 	retractErr error
-}
-
-func (s *stubLifecycleService) ResolveMemoryPlacement(
-	_ context.Context,
-	req memoryservice.ResolveMemoryPlacementRequest,
-) (*memoryservice.ResolveMemoryPlacementResult, error) {
-	s.req = req
-	return &memoryservice.ResolveMemoryPlacementResult{
-		DecisionID:      "decision-canonical",
-		ProcessingState: string(domain.PlacementRunCompleted),
-		ImpactSummary:   "relationship retracted",
-	}, nil
 }
 
 func (s *stubLifecycleService) CorrectRelationship(

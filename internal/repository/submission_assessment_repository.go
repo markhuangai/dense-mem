@@ -785,6 +785,28 @@ func (r *LedgerRepositoryImpl) RequeueSubmissionAssessment(
 	return result, nil
 }
 
+func retryPlacementPayload(base map[string]any) map[string]any {
+	payload := map[string]any{
+		"contract_version": domain.ContractVersion,
+		"status":           string(domain.SemanticReviewRetryable),
+	}
+	for key, value := range base {
+		payload[key] = value
+	}
+	return payload
+}
+
+func terminalPlacementPayload(base map[string]any, status string) map[string]any {
+	payload := map[string]any{
+		"contract_version": domain.ContractVersion,
+		"status":           status,
+	}
+	for key, value := range base {
+		payload[key] = value
+	}
+	return payload
+}
+
 func normalizeCompleteSubmissionAssessmentInput(input CompleteSubmissionAssessmentInput) CompleteSubmissionAssessmentInput {
 	input.SubmissionAssessmentRunScope = normalizeSubmissionAssessmentRunScope(input.SubmissionAssessmentRunScope)
 	input.OutcomeKind = strings.TrimSpace(input.OutcomeKind)
@@ -806,7 +828,7 @@ func validateCompleteSubmissionAssessmentInput(input CompleteSubmissionAssessmen
 		return err
 	}
 	switch input.Status {
-	case string(domain.SemanticReviewReviewRequired), string(domain.SemanticReviewTerminalFailure), string(domain.SemanticReviewQuarantined), string(domain.SemanticReviewRejected), string(domain.SemanticReviewSuperseded):
+	case string(domain.SemanticReviewTerminalFailure), string(domain.SemanticReviewQuarantined), string(domain.SemanticReviewRejected), string(domain.SemanticReviewSuperseded):
 	default:
 		return fmt.Errorf("unsupported submission terminal status %q", input.Status)
 	}
@@ -862,8 +884,6 @@ func submissionTerminalStatuses(status, category string) (string, string, string
 	case string(domain.SemanticReviewSuperseded):
 		return "failed", "failed", string(domain.PlacementRunFailed)
 	case string(domain.SemanticReviewRejected):
-		return "failed", "failed", string(domain.PlacementRunFailed)
-	case string(domain.SemanticReviewReviewRequired):
 		return "failed", "failed", string(domain.PlacementRunFailed)
 	default:
 		if category == "" {

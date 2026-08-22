@@ -16,7 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-var errSubmissionAssessmentRequiresReview = errors.New("submission assessment requires review")
+var errSubmissionAssessmentRequiresResubmission = errors.New("submission assessment requires resubmission")
 
 // SubmissionAssessmentCatalog provides the server-owned entity candidates and
 // exact-plus-relevant predicate options used by one closed submission
@@ -196,12 +196,12 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		})
 	}
 	commitInput, err := submissionAssessmentCommitInput(*run, scope, plan, request, response, assessment, policy, reused)
-	var reviewRequired *submissionAssessmentReviewRequiredError
-	if errors.As(err, &reviewRequired) {
-		return true, s.completeReview(ctx, scope, "policy_review", reviewRequired.Issues, reviewRequired.Truncated)
+	var resubmissionRequired *submissionAssessmentResubmissionRequiredError
+	if errors.As(err, &resubmissionRequired) {
+		return true, s.completeResubmissionFailure(ctx, scope, "policy_validation", resubmissionRequired.Issues, resubmissionRequired.Truncated)
 	}
-	if errors.Is(err, errSubmissionAssessmentRequiresReview) {
-		return true, s.completeReview(ctx, scope, "policy_review", nil, false)
+	if errors.Is(err, errSubmissionAssessmentRequiresResubmission) {
+		return true, s.completeResubmissionFailure(ctx, scope, "policy_validation", nil, false)
 	}
 	if err != nil {
 		return true, terminalizeAfterError(err, func() error {
@@ -211,17 +211,17 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	recordSubmissionAssessmentGateBands(s.metrics, commitInput)
 	committed, err := s.assessments.CommitSubmissionAssessment(ctx, commitInput)
 	if errors.Is(err, repository.ErrSubmissionAssessmentNonPromotable) {
-		return true, s.completeReview(ctx, scope, "commit_review", []submissionAssessmentIssue{{
+		return true, s.completeResubmissionFailure(ctx, scope, "semantic_commit", []submissionAssessmentIssue{{
 			Code: "semantic_commit_non_promotable", Component: "relationship", Message: "submission could not be promoted safely",
 		}}, false)
 	}
 	if errors.Is(err, repository.ErrSubmissionPredicateRegistrationHeld) {
-		return true, s.completeReview(ctx, scope, "commit_review", []submissionAssessmentIssue{{
+		return true, s.completeResubmissionFailure(ctx, scope, "semantic_commit", []submissionAssessmentIssue{{
 			Code: "predicate_registration_conflict", Component: "predicate", Message: "predicate registration conflicted with current state",
 		}}, false)
 	}
 	if errors.Is(err, repository.ErrConflictContextStale) {
-		return true, s.completeReview(ctx, scope, "conflict_context_stale", []submissionAssessmentIssue{{
+		return true, s.completeResubmissionFailure(ctx, scope, "conflict_context_stale", []submissionAssessmentIssue{{
 			Code: "conflict_context_stale", Component: "conflict", Message: "relationship conflict context changed before commit",
 		}}, false)
 	}
@@ -718,8 +718,8 @@ func submissionAssessmentCommitInput(
 	}
 	policyVersion := assessmentPolicyVersion(policy)
 	threshold := policy.Threshold
-	if issues, truncated := submissionAssessmentReviewIssues(plan, response, threshold); len(issues) > 0 {
-		return repository.CommitSubmissionAssessmentInput{}, &submissionAssessmentReviewRequiredError{Issues: issues, Truncated: truncated}
+	if issues, truncated := submissionAssessmentResubmissionIssues(plan, response, threshold); len(issues) > 0 {
+		return repository.CommitSubmissionAssessmentInput{}, &submissionAssessmentResubmissionRequiredError{Issues: issues, Truncated: truncated}
 	}
 	items := make([]repository.SubmissionAssessmentItemInput, 0, len(plan.Items))
 	for _, item := range plan.Items {
@@ -744,7 +744,7 @@ func submissionAssessmentCommitInput(
 			return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor entity result is outside the contract")
 		}
 		if result.Action == string(domain.EntityResolutionAmbiguous) {
-			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
+			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresResubmission
 		}
 		item, ok := plan.itemsByEvidenceID[result.EvidenceID]
 		if !ok {
@@ -772,20 +772,20 @@ func submissionAssessmentCommitInput(
 		switch result.Action {
 		case string(domain.EntityResolutionReuse):
 			if result.CandidateEntityID == nil {
-				return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
+				return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresResubmission
 			}
 			resolution.EntityID = *result.CandidateEntityID
 		case string(domain.EntityResolutionCreate):
 			group := entityGroups[assessmentCandidateGroupKey(result.EvidenceID, result.Start, result.End)]
 			if group != nil && (group.CandidateContextTruncated || assessmentCompatibleCandidateExists(group, result.Kind)) {
-				return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
+				return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresResubmission
 			}
 			resolution.IdentityContext = map[string]any{
 				"surface": result.Surface,
 				"source":  "submission_assessment",
 			}
 		default:
-			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
+			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresResubmission
 		}
 		entityKinds[result.Ref] = result.Kind
 		groundingKey := fmt.Sprintf("%s:%d:%d:%s", result.EvidenceID, result.Start, result.End, result.Kind)
@@ -793,7 +793,7 @@ func submissionAssessmentCommitInput(
 		if previous, exists := entityResolutionsByGrounding[groundingKey]; exists {
 			if previous.action != resolution.Action || previous.candidateID != candidateID ||
 				(previous.knownEntityID != "" && target.KnownEntityID != "" && previous.knownEntityID != target.KnownEntityID) {
-				return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
+				return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresResubmission
 			}
 			entityRefAliases[result.Ref] = previous.mentionRef
 			continue
@@ -821,14 +821,14 @@ func submissionAssessmentCommitInput(
 		if !ok {
 			return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor relationship result is outside the contract")
 		}
-		if result.PredicateStatus == "needs_review" || result.Modality != "statement" ||
-			result.ScopeStatus == "needs_review" || result.TemporalVerdict == "ambiguous" ||
+		if result.PredicateStatus == "unresolved" || result.Modality != "statement" ||
+			result.ScopeStatus == "unresolved" || result.TemporalVerdict == "ambiguous" ||
 			result.TemporalVerdict == "contradicted" || result.EvidenceVerdict != string(domain.VerificationEntailed) ||
 			result.Confidence < threshold {
-			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
+			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresResubmission
 		}
 		if result.PredicateStatus != "resolved" && result.PredicateStatus != "registration_required" {
-			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
+			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresResubmission
 		}
 		validFrom, validTo, err := semanticAssessmentValidity(result)
 		if err != nil {
@@ -851,7 +851,7 @@ func submissionAssessmentCommitInput(
 			return repository.CommitSubmissionAssessmentInput{}, err
 		}
 		if entityKinds[result.SubjectRef] == "" || (objectRef != "" && entityKinds[objectRef] == "") {
-			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
+			return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresResubmission
 		}
 		subjectRef := result.SubjectRef
 		if canonicalRef := entityRefAliases[subjectRef]; canonicalRef != "" {
@@ -904,7 +904,7 @@ func submissionAssessmentCommitInput(
 		switch result.PredicateStatus {
 		case "resolved":
 			if result.PredicateKey == nil || result.PredicateVersion == nil {
-				return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresReview
+				return repository.CommitSubmissionAssessmentInput{}, errSubmissionAssessmentRequiresResubmission
 			}
 			observation.PredicateKey = *result.PredicateKey
 			observation.PredicateVersion = *result.PredicateVersion

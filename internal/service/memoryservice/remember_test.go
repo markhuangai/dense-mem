@@ -55,18 +55,14 @@ func TestSubmissionStatusSearchStateHelpers(t *testing.T) {
 	}
 }
 
-func TestSubmissionItemFailureErrorDoesNotInventReviewFailures(t *testing.T) {
-	for _, status := range []string{"rejected", "awaiting_review"} {
-		t.Run(status, func(t *testing.T) {
-			require.Nil(t, submissionItemFailureError(repository.PlacementItem{Status: status, Result: map[string]any{}}, status))
-		})
-	}
+func TestSubmissionItemFailureErrorDoesNotInventRejectedFailure(t *testing.T) {
+	require.Nil(t, submissionItemFailureError(repository.PlacementItem{Status: "rejected", Result: map[string]any{}}, "rejected"))
 
 	errorValue := submissionItemFailureError(repository.PlacementItem{Status: "failed", Result: map[string]any{}}, "failed")
 	require.NotNil(t, errorValue)
 	require.Equal(t, string(SubmissionErrorProcessingFailed), errorValue.Code)
 
-	for _, stage := range []string{"policy_review", "commit_review", "conflict_context_stale"} {
+	for _, stage := range []string{"policy_validation", "semantic_commit", "conflict_context_stale"} {
 		t.Run(stage, func(t *testing.T) {
 			errorValue := submissionItemFailureError(repository.PlacementItem{Status: "rejected", Result: map[string]any{"failure_stage": stage}}, "rejected")
 			require.NotNil(t, errorValue)
@@ -252,14 +248,13 @@ func TestCanonicalRequestHashPreservesLegacyEmptyReplacementField(t *testing.T) 
 func TestRememberReplayMapsInternalStatesToPublicProcessingStates(t *testing.T) {
 	teamID, profileID, keyID := uuid.New(), uuid.New(), uuid.New()
 	for status, want := range map[string]string{
-		string(domain.PlacementRunQueued):         "queued",
-		string(domain.PlacementRunGuarded):        "queued",
-		string(domain.PlacementRunProcessing):     "processing",
-		string(domain.PlacementRunCompleted):      "completed",
-		string(domain.PlacementRunAwaitingReview): "failed",
-		string(domain.PlacementRunQuarantined):    "quarantined",
-		string(domain.PlacementRunFailed):         "failed",
-		"unexpected":                              "failed",
+		string(domain.PlacementRunQueued):      "queued",
+		string(domain.PlacementRunGuarded):     "queued",
+		string(domain.PlacementRunProcessing):  "processing",
+		string(domain.PlacementRunCompleted):   "completed",
+		string(domain.PlacementRunQuarantined): "quarantined",
+		string(domain.PlacementRunFailed):      "failed",
+		"unexpected":                           "failed",
 	} {
 		ledger := &rememberLedgerStub{result: &repository.CreateIngestResult{
 			TeamID: teamID.String(), IngestID: uuid.NewString(), PlacementRunID: uuid.NewString(), Status: status,
@@ -345,14 +340,13 @@ func TestGetSubmissionStatusRejectsInvalidSubmissionID(t *testing.T) {
 
 func TestSubmissionStatusProjectionMapsProcessingStatesAndErrors(t *testing.T) {
 	states := map[string]string{
-		string(domain.PlacementRunQueued):         "queued",
-		string(domain.PlacementRunGuarded):        "queued",
-		string(domain.PlacementRunProcessing):     "processing",
-		string(domain.PlacementRunCompleted):      "completed",
-		string(domain.PlacementRunAwaitingReview): "failed",
-		string(domain.PlacementRunQuarantined):    "quarantined",
-		string(domain.PlacementRunFailed):         "failed",
-		"unexpected":                              "failed",
+		string(domain.PlacementRunQueued):      "queued",
+		string(domain.PlacementRunGuarded):     "queued",
+		string(domain.PlacementRunProcessing):  "processing",
+		string(domain.PlacementRunCompleted):   "completed",
+		string(domain.PlacementRunQuarantined): "quarantined",
+		string(domain.PlacementRunFailed):      "failed",
+		"unexpected":                           "failed",
 	}
 	for status, want := range states {
 		result := submissionStatusResultFromLedger(&repository.CreateIngestResult{
@@ -363,7 +357,7 @@ func TestSubmissionStatusProjectionMapsProcessingStatesAndErrors(t *testing.T) {
 		if result.ProcessingState != want || result.SearchState != string(domain.SearchProjectionCurrent) {
 			t.Fatalf("status %q projection = %#v, want processing %q/current", status, result, want)
 		}
-		if status == string(domain.PlacementRunFailed) || status == string(domain.PlacementRunAwaitingReview) || status == string(domain.PlacementRunQuarantined) || status == "unexpected" {
+		if status == string(domain.PlacementRunFailed) || status == string(domain.PlacementRunQuarantined) || status == "unexpected" {
 			require.Len(t, result.Errors, 1)
 		} else {
 			require.Empty(t, result.Errors)

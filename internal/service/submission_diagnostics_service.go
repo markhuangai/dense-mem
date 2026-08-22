@@ -335,11 +335,11 @@ var (
 		"entity_catalog": {}, "candidate_prefetch": {}, "catalog_context": {}, "assessment_input": {},
 		"catalog_context_validation": {}, "trusted_context_validation": {},
 		"predicate_options_overflow": {}, "placement_load": {}, "assessment": {},
-		"assessment_attempt_consumed": {}, "confidence_policy": {}, "policy_review": {},
-		"deterministic_policy": {}, "commit_review": {}, "conflict_context_stale": {},
+		"assessment_attempt_consumed": {}, "confidence_policy": {}, "policy_validation": {},
+		"deterministic_policy": {}, "conflict_context_stale": {},
 		"semantic_commit": {}, "contract_superseded": {}, "replacement_conflict": {},
 		"stale_source": {}, "deterministic_security_scan": {}, "security_signal": {},
-		"assessment_scope": {}, "review_override": {}, "placement_item": {},
+		"assessment_scope": {}, "placement_item": {},
 	}
 	submissionDiagnosticClasses = map[string]struct{}{
 		"timeout": {}, "rate_limited": {}, "http_4xx": {}, "http_5xx": {},

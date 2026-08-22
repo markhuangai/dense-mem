@@ -46,24 +46,6 @@ func assertProviderProposalSchema(schema map[string]any) error {
 	return nil
 }
 
-func assertVerifierResponseSchema(schema map[string]any) error {
-	if !schemaDisallowsAdditionalProperties(schema) {
-		return errors.New("verifier response schema is not closed")
-	}
-	props := schemaProperties(schema)
-	for _, required := range []string{"request_id", "security_signals", "entity_results", "relationship_results"} {
-		if _, ok := props[required]; !ok {
-			return fmt.Errorf("verifier response schema has no %s", required)
-		}
-	}
-	for _, forbidden := range []string{"tier", "status", "support_count", "predicate_definitions"} {
-		if _, ok := props[forbidden]; ok {
-			return fmt.Errorf("verifier response schema allows %s", forbidden)
-		}
-	}
-	return nil
-}
-
 func schemaAllowsNull(schema map[string]any) bool {
 	if schema == nil {
 		return false

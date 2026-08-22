@@ -29,14 +29,14 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 			name:       "non-promotable assessment requires resubmission",
 			commitErr:  repository.ErrSubmissionAssessmentNonPromotable,
 			wantStatus: string(domain.SemanticReviewTerminalFailure),
-			wantStage:  "commit_review",
+			wantStage:  "semantic_commit",
 			wantIssue:  "semantic_commit_non_promotable",
 		},
 		{
 			name:       "predicate registration conflict requires resubmission",
 			commitErr:  repository.ErrSubmissionPredicateRegistrationHeld,
 			wantStatus: string(domain.SemanticReviewTerminalFailure),
-			wantStage:  "commit_review",
+			wantStage:  "semantic_commit",
 			wantIssue:  "predicate_registration_conflict",
 		},
 		{
@@ -93,13 +93,7 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 			}
 			require.Len(t, assessments.completions, 1)
 			assert.Equal(t, test.wantStatus, assessments.completions[0].Status)
-			if test.wantStatus == string(domain.SemanticReviewReviewRequired) {
-				assert.Equal(t, test.wantStage, assessments.completions[0].Payload["review_stage"])
-				assert.NotContains(t, assessments.completions[0].Payload, "failure_reason_code")
-				assert.NotContains(t, assessments.completions[0].Payload, "failure_class")
-			} else {
-				assert.Equal(t, test.wantStage, assessments.completions[0].Payload["failure_stage"])
-			}
+			assert.Equal(t, test.wantStage, assessments.completions[0].Payload["failure_stage"])
 			if test.wantIssue != "" {
 				issues, ok := assessments.completions[0].Payload["resubmission_issues"].([]map[string]any)
 				require.True(t, ok)

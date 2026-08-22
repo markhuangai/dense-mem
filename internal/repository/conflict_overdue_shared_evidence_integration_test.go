@@ -45,7 +45,7 @@ func TestOverdueConflictResolutionPreservesSharedEvidenceOutsideConflict(t *test
 	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-overdue-shared-loser", time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
-	committed, err := ledgerRepo.CommitPlacementSemanticResult(ctx, CommitPlacementSemanticInput{
+	committed, err := commitAcceptedSubmissionFixture(t, ctx, ledgerRepo, CommitPlacementSemanticInput{
 		TeamID:           teamID,
 		OwnerProfileID:   ownerB,
 		IngestID:         sharedIngest.IngestID,

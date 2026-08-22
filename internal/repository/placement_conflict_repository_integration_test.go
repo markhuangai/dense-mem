@@ -709,7 +709,7 @@ func commitPlacementRelationshipForConflictTest(
 	subjectEntityID string,
 	objectEntityID string,
 	sourceGroupKey string,
-) *CommitPlacementSemanticResult {
+) *CommitSubmissionAssessmentResult {
 	t.Helper()
 	committed, err := attemptPlacementRelationshipForConflictTest(
 		t, ctx, repo, teamID, ownerID, workerID, idempotencyKey, content,
@@ -748,7 +748,7 @@ func commitPlacementRelationshipForConflictTestWithOptions(
 	objectEntityID string,
 	sourceGroupKey string,
 	options conflictTestRelationshipOptions,
-) *CommitPlacementSemanticResult {
+) *CommitSubmissionAssessmentResult {
 	t.Helper()
 	committed, err := attemptPlacementRelationshipForConflictTest(
 		t, ctx, repo, teamID, ownerID, workerID, idempotencyKey, content,
@@ -774,7 +774,7 @@ func attemptPlacementRelationshipForConflictTest(
 	sourceGroupKey string,
 	conflictContext *PlacementConflictContextInput,
 	options ...conflictTestRelationshipOptions,
-) (*CommitPlacementSemanticResult, error) {
+) (*CommitSubmissionAssessmentResult, error) {
 	t.Helper()
 	option := conflictTestRelationshipOptions{authority: "primary"}
 	if len(options) > 0 {
@@ -802,7 +802,7 @@ func attemptPlacementRelationshipForConflictTest(
 			Authority:      authority,
 		})
 	}
-	return repo.CommitPlacementSemanticResult(ctx, CommitPlacementSemanticInput{
+	return commitAcceptedSubmissionFixture(t, ctx, repo, CommitPlacementSemanticInput{
 		TeamID:           teamID,
 		OwnerProfileID:   ownerID,
 		IngestID:         ingest.IngestID,

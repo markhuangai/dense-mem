@@ -594,7 +594,7 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, derivedIngest.PlacementRunID, claimed.PlacementRunID)
-	derivedCommit, err := ledgerRepo.CommitPlacementSemanticResult(ctx, CommitPlacementSemanticInput{
+	derivedCommit, err := commitAcceptedSubmissionFixture(t, ctx, ledgerRepo, CommitPlacementSemanticInput{
 		TeamID:           teamID,
 		OwnerProfileID:   systemProfileID,
 		IngestID:         derivedIngest.IngestID,

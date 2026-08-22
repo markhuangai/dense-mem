@@ -80,7 +80,7 @@ func validatePlacementOutcomeInput(input PlacementOutcomeInput) error {
 	if input.Status == "" {
 		return errors.New("status is required")
 	}
-	if input.UpdateItemStatus != "" && !contains([]string{"queued", "processing", "awaiting_review", "completed", "failed", "quarantined"}, input.UpdateItemStatus) {
+	if input.UpdateItemStatus != "" && !contains([]string{"queued", "processing", "completed", "failed", "quarantined"}, input.UpdateItemStatus) {
 		return fmt.Errorf("unsupported placement item status %q", input.UpdateItemStatus)
 	}
 	if input.UpdateItemCategory != "" && !contains([]string{"pending", "fragment_only", "candidate", "validated_claim", "fact", "quarantined", "failed"}, input.UpdateItemCategory) {

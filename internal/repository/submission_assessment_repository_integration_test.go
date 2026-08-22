@@ -394,19 +394,16 @@ func TestSubmissionAssessmentQuarantineRetainsRawCopyUntilSystemPurge(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	persistSubmissionAssessment(t, ctx, repo, *claimed)
-	securityQuarantine := deterministicPlacementSecurityQuarantine(ingest.Evidence[0].FragmentID)
+	securityQuarantine := submissionAssessmentSecurityQuarantine(ingest.Evidence[0].FragmentID)
 	completed, err := repo.CompleteSubmissionAssessment(ctx, CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: SubmissionAssessmentRunScope{
 			TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID, PlacementRunID: ingest.PlacementRunID,
 			WorkerID: "submission-quarantine-worker", ExpectedAttempts: claimed.Attempts,
 		},
-		Status:   string(domain.SemanticReviewQuarantined),
-		Category: "quarantined",
-		Payload:  map[string]any{"failure_stage": "deterministic_security_scan"},
-		SecurityQuarantines: []SubmissionAssessmentSecurityQuarantineInput{{
-			FragmentID:         securityQuarantine.FragmentID,
-			SecurityEventDraft: securityQuarantine.SecurityEventDraft,
-		}},
+		Status:              string(domain.SemanticReviewQuarantined),
+		Category:            "quarantined",
+		Payload:             map[string]any{"failure_stage": "deterministic_security_scan"},
+		SecurityQuarantines: []SubmissionAssessmentSecurityQuarantineInput{securityQuarantine},
 	})
 	require.NoError(t, err)
 	require.Equal(t, string(domain.SemanticReviewQuarantined), completed.Status)
@@ -513,6 +510,24 @@ func TestSubmissionAssessmentQuarantineRetainsRawCopyUntilSystemPurge(t *testing
 	assert.Zero(t, payloadCount)
 	assert.Equal(t, int64(2), tombstoneCount)
 	assert.Equal(t, int64(2), sourceCount)
+}
+
+func submissionAssessmentSecurityQuarantine(fragmentID string) SubmissionAssessmentSecurityQuarantineInput {
+	return SubmissionAssessmentSecurityQuarantineInput{
+		FragmentID: fragmentID,
+		SecurityEventDraft: SecurityEventDraft{
+			EventKind: "deterministic_scan",
+			Decision:  "quarantine",
+			Reason:    "deterministic intake scan rejected evidence",
+			Signals: []SecuritySignalInput{{
+				Kind:      "instruction_override",
+				Severity:  "critical",
+				SpanStart: 0,
+				SpanEnd:   6,
+				Metadata:  map[string]any{"rule_id": "instruction_override"},
+			}},
+		},
+	}
 }
 
 func TestSubmissionAssessmentCommitReusesCompatiblePredicateAlias(t *testing.T) {

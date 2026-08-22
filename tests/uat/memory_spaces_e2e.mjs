@@ -151,7 +151,7 @@ async function waitForCompletedPlacement(submissionID, key = apiKey, attempts = 
     lastState = status.processing_state ?? "unknown";
     lastSearchState = status.search_state ?? "unknown";
     if (lastState === "completed" && ["current", "not_required"].includes(lastSearchState)) return status;
-    if (["awaiting_review", "rejected", "failed", "quarantined"].includes(lastState) || lastSearchState === "failed") {
+    if (["rejected", "failed", "quarantined"].includes(lastState) || lastSearchState === "failed") {
       throw new Error(`memory-space submission reached ${lastState}/${lastSearchState}: ${JSON.stringify(status.errors ?? [])}`);
     }
     if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, delayMs));

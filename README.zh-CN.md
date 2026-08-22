@@ -216,7 +216,7 @@ Relationship 改为列出支持它的从零开始的 `evidence_indices`，且这
 Remember 使用只负责结构的 normalizer。无效或无法提升的完整响应不会产生部分语义状态，
 提交会以终态 `failed` 返回有界的 `errors[]` 指引。请使用新的 `idempotency_key` 重新
 提交完整的 evidence 与 Relationships batch；Remember 流程不再提供部分替换或
-`awaiting_review` hold。
+交互式 placement review。
 
 若无需替代证据，请使用 `retract_evidence`，提供自己拥有的当前 ID、有界原因和
 幂等键：

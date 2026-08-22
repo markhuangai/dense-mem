@@ -4,7 +4,6 @@ import "github.com/markhuangai/dense-mem/internal/domain"
 
 const (
 	ProviderProposalSchemaName = "dense_mem_v2_provider_proposal"
-	VerifierResponseSchemaName = "dense_mem_v2_verifier_response"
 )
 
 func ProviderProposalSchema() map[string]any {
@@ -29,42 +28,6 @@ func ProviderProposalSchema() map[string]any {
 			"relationship_proposals": map[string]any{
 				"type": "array", "maxItems": 200,
 				"items": relationshipProposalSchema(),
-			},
-		},
-	)
-}
-
-func VerifierResponseSchema() map[string]any {
-	return closedObject(
-		[]string{"request_id", "security_signals", "entity_results", "relationship_results"},
-		map[string]any{
-			"request_id": stringSchema(1, 128),
-			"security_signals": map[string]any{
-				"type": "array", "maxItems": 64,
-				"items": closedObject(
-					[]string{"evidence_id", "kind", "start", "end"},
-					map[string]any{
-						"evidence_id": stringSchema(1, 128),
-						"kind": enumSchema([]string{
-							"role_control_spoofing",
-							"instruction_override",
-							"prompt_secret_extraction",
-							"tool_exfiltration",
-							"obfuscated_instruction",
-							"hidden_control_markup",
-						}),
-						"start": integerSchema(0, -1),
-						"end":   integerSchema(0, -1),
-					},
-				),
-			},
-			"entity_results": map[string]any{
-				"type": "array", "maxItems": 100,
-				"items": entityResultSchema(),
-			},
-			"relationship_results": map[string]any{
-				"type": "array", "maxItems": 200,
-				"items": relationshipResultSchema(),
 			},
 		},
 	)
@@ -107,51 +70,6 @@ func relationshipProposalSchema() map[string]any {
 			"client_comment": nullableStringSchema(1000),
 		},
 	)
-}
-
-func entityResultSchema() map[string]any {
-	return closedObject(
-		[]string{"ref", "action", "candidate_entity_id", "confidence", "rationale"},
-		map[string]any{
-			"ref":                 stringSchema(1, 128),
-			"action":              enumSchema([]string{"reuse", "create", "ambiguous"}),
-			"candidate_entity_id": nullableStringSchema(128),
-			"confidence":          numberSchema(0, 1),
-			"rationale":           stringSchema(1, 1000),
-		},
-	)
-}
-
-func relationshipResultSchema() map[string]any {
-	return closedObject(
-		[]string{"ref", "predicate_status", "predicate_key", "evidence_verdict", "confidence", "rationale"},
-		map[string]any{
-			"ref":              stringSchema(1, 128),
-			"predicate_status": enumSchema([]string{"resolved", "needs_review"}),
-			"predicate_key":    nullableStringSchema(128),
-			"evidence_verdict": enumSchema([]string{"entailed", "contradicted", "insufficient"}),
-			"confidence":       numberSchema(0, 1),
-			"rationale":        stringSchema(1, 1000),
-		},
-	)
-}
-
-func predicateOptionArraySchema() map[string]any {
-	return map[string]any{
-		"type": "array", "maxItems": 100,
-		"items": closedObject(
-			[]string{"predicate_key", "version", "relationship_kind", "current_cardinality"},
-			map[string]any{
-				"predicate_key":         stringSchema(1, 128),
-				"aliases":               stringArraySchema(50, 128),
-				"allowed_subject_kinds": stringArraySchema(20, 64),
-				"allowed_object_kinds":  stringArraySchema(20, 64),
-				"relationship_kind":     enumSchema(domain.RelationshipKinds()),
-				"current_cardinality":   enumSchema(domain.CurrentCardinalities()),
-				"version":               integerSchema(1, -1),
-			},
-		),
-	}
 }
 
 func evidenceSpanArraySchema() map[string]any {

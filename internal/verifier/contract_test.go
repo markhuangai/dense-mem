@@ -45,48 +45,9 @@ func TestProviderProposalSchemaIsClosedAndCanonical(t *testing.T) {
 	}
 }
 
-func TestVerifierResponseSchemaMatchesStrictWikiContract(t *testing.T) {
-	schema := VerifierResponseSchema()
-	assertClosedProviderObjects(t, schema, "verifier response")
-	wantRequired := []string{"request_id", "security_signals", "entity_results", "relationship_results"}
-	if got := schema["required"]; !reflect.DeepEqual(got, wantRequired) {
-		t.Fatalf("required = %#v, want %#v", got, wantRequired)
-	}
-	props := schemaPropertiesForTest(t, schema)
-	entities := schemaPropertiesForTest(t, itemSchemaForTest(t, props["entity_results"]))
-	assertEnumForTest(t, entities["action"], []string{"reuse", "create", "ambiguous"})
-	relationships := schemaPropertiesForTest(t, itemSchemaForTest(t, props["relationship_results"]))
-	assertEnumForTest(t, relationships["predicate_status"], []string{"resolved", "needs_review"})
-	assertEnumForTest(t, relationships["evidence_verdict"], []string{"entailed", "contradicted", "insufficient"})
-	signals := schemaPropertiesForTest(t, itemSchemaForTest(t, props["security_signals"]))
-	assertEnumForTest(t, signals["kind"], []string{
-		"role_control_spoofing",
-		"instruction_override",
-		"prompt_secret_extraction",
-		"tool_exfiltration",
-		"obfuscated_instruction",
-		"hidden_control_markup",
-	})
-}
-
-func TestPredicateOptionArraySchemaStaysClosed(t *testing.T) {
-	schema := predicateOptionArraySchema()
-	items := itemSchemaForTest(t, schema)
-	props := schemaPropertiesForTest(t, items)
-	for _, field := range []string{"predicate_key", "aliases", "allowed_subject_kinds", "allowed_object_kinds", "relationship_kind", "current_cardinality", "version"} {
-		if _, ok := props[field]; !ok {
-			t.Fatalf("predicate option schema missing %s", field)
-		}
-	}
-	assertEnumForTest(t, props["relationship_kind"], []string{"state", "event"})
-	assertEnumForTest(t, props["current_cardinality"], []string{"one", "many"})
-	assertClosedProviderObjects(t, schema, "predicate options")
-}
-
 func TestStructuredOutputSchemasUseOpenAISupportedStrictSubset(t *testing.T) {
 	for name, schema := range map[string]map[string]any{
 		ProviderProposalSchemaName: ProviderProposalSchema(),
-		VerifierResponseSchemaName: VerifierResponseSchema(),
 	} {
 		assertOpenAIStrictSchemaSubset(t, schema, name)
 	}

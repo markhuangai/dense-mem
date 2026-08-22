@@ -133,15 +133,6 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 				  AND cross_reference.target_relationship_id = relationship.relationship_id
 				  AND cross_reference.kind = 'challenges'
 			)
-			AND NOT EXISTS (
-				SELECT 1
-				FROM review_tasks review
-					WHERE review.team_id = relationship.team_id
-					  AND review.space_id = relationship.space_id
-					  AND review.space_generation = relationship.space_generation
-				  AND review.relationship_id = relationship.relationship_id
-				  AND review.status IN ('open', 'acknowledged')
-			)
 			AND (
 				(
 					relationship.status = 'active'
@@ -218,11 +209,6 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 						 AND assessment.assessment_id = verification.assessment_id
 						 AND assessment.space_id = verification.space_id
 						 AND assessment.space_generation = verification.space_generation
-						JOIN review_tasks review
-						  ON review.team_id = verification.team_id
-						 AND review.assessment_id = verification.assessment_id
-						 AND review.space_id = verification.space_id
-						 AND review.space_generation = verification.space_generation
 						JOIN LATERAL jsonb_array_elements(observation.evidence) evidence(value) ON true
 						JOIN evidence_fragments fragment
 						  ON fragment.team_id = observation.team_id
@@ -241,7 +227,6 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 						  AND observation.relationship_id = derivation.relationship_id
 						  AND verification.evidence_verdict IN ('insufficient', 'entailed')
 						  AND verification.gate_result = 'below_write_threshold'
-						  AND review.status = 'expired'
 						  AND fragment.fragment_id = derivation.fragment_id
 						  AND fragment.source_id IS NOT DISTINCT FROM derivation.source_id
 						  AND fragment.source_revision_id IS NOT DISTINCT FROM derivation.source_revision_id
@@ -348,16 +333,12 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 				JOIN placement_assessments assessment
 				  ON assessment.team_id = verification.team_id
 				 AND assessment.assessment_id = verification.assessment_id
-				JOIN review_tasks review
-				  ON review.team_id = verification.team_id
-				 AND review.assessment_id = verification.assessment_id
 				WHERE observation.team_id = ?::uuid
 				  AND observation.space_id = dense_mem_team_shared_space(observation.team_id)
 				  AND observation.space_generation = dense_mem_team_shared_generation(observation.team_id)
 				  AND observation.relationship_id IS NOT NULL
 				  AND verification.evidence_verdict IN ('insufficient', 'entailed')
 				  AND verification.gate_result = 'below_write_threshold'
-				  AND review.status = 'expired'
 				ORDER BY observation.relationship_id, verification.created_at DESC, verification.verification_event_id DESC
 			)
 			SELECT r.relationship_id::text,
@@ -427,15 +408,6 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 			      AND cross_reference.space_generation = r.space_generation
 			      AND cross_reference.target_relationship_id = r.relationship_id
 			      AND cross_reference.kind = 'challenges'
-			  )
-			  AND NOT EXISTS (
-			    SELECT 1
-			    FROM review_tasks review
-			    WHERE review.team_id = r.team_id
-			      AND review.space_id = r.space_id
-			      AND review.space_generation = r.space_generation
-			      AND review.relationship_id = r.relationship_id
-			      AND review.status IN ('open', 'acknowledged')
 			  )
 			  AND (r.object_entity_id IS NULL OR object_entity.entity_id IS NOT NULL)
 			ORDER BY r.updated_at DESC, r.relationship_id

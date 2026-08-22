@@ -71,7 +71,7 @@ func TestSubmissionWorkerLogsCompletedRetryAndResubmissionFailureAfterPersistenc
 	require.Contains(t, retryLog, `"max_attempts":3`)
 
 	logs.Reset()
-	require.NoError(t, service.completeReview(context.Background(), scope, "policy_review", nil, false))
+	require.NoError(t, service.completeResubmissionFailure(context.Background(), scope, "policy_validation", nil, false))
 	failureLog := logs.String()
 	require.Contains(t, failureLog, `"msg":"submission_failed"`)
 	require.Contains(t, failureLog, `"reason_code":"submission_requires_resubmission"`)

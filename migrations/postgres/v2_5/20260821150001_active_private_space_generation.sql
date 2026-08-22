@@ -1,6 +1,6 @@
 -- Lock/rewrite impact: function creation is metadata-only and does not rewrite
 -- memory-owned tables; each call performs a bounded primary-key lookup.
--- RLS impact: the SECURITY DEFINER helper enters transaction-local system mode
+-- RLS impact: the SECURITY DEFINER helper uses a function-local system mode
 -- only while reading the requested team/space generation, then restores it.
 -- Backfill: none; existing rows already carry space_id and space_generation.
 -- Backward compatibility: older binaries do not call this helper; the function
@@ -39,6 +39,8 @@ EXCEPTION WHEN OTHERS THEN
     RAISE;
 END;
 $$;
+
+REVOKE EXECUTE ON FUNCTION dense_mem_active_space_generation(UUID, UUID) FROM PUBLIC;
 
 -- +goose StatementEnd
 

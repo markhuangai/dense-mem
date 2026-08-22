@@ -3,6 +3,7 @@ package memoryservice
 import (
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -10,7 +11,7 @@ import (
 )
 
 func TestRememberNormalizerResponseToSemanticAssessmentConvertsStructure(t *testing.T) {
-	_, _, _, request, semantic, _ := semanticAssessmentConfidenceFixture(t)
+	request, semantic := rememberNormalizerAdapterFixture(t)
 	request.SubmissionContract = adapterTestSubmissionContract()
 	semanticRelationship := semantic.RelationshipResults[0]
 	startRef := semanticRelationship.PredicateRange.StartRef
@@ -77,7 +78,7 @@ func TestRememberNormalizerResponseToSemanticAssessmentConvertsStructure(t *test
 }
 
 func TestRememberNormalizerResponseToSemanticAssessmentRejectsMismatchedTemporalValidity(t *testing.T) {
-	_, _, _, request, semantic, _ := semanticAssessmentConfidenceFixture(t)
+	request, semantic := rememberNormalizerAdapterFixture(t)
 	validFrom := "2026-01-01T00:00:00Z"
 	request.SubmissionContract = adapterTestSubmissionContract()
 	normalized := verifier.RememberNormalizerResponse{
@@ -273,7 +274,7 @@ func adapterTestSubmissionContract() *verifier.SemanticAssessmentSubmissionContr
 }
 
 func TestRememberNormalizerResponseToSemanticAssessmentConvertsValueObject(t *testing.T) {
-	_, _, _, request, semantic, _ := semanticAssessmentConfidenceFixture(t)
+	request, semantic := rememberNormalizerAdapterFixture(t)
 	request.SubmissionContract = adapterTestSubmissionContract()
 	target := request.SubmissionContract.Relationships[0]
 	target.ObjectRef = nil
@@ -302,7 +303,7 @@ func TestRememberNormalizerResponseToSemanticAssessmentConvertsValueObject(t *te
 }
 
 func TestRememberNormalizerResponsePreservesRegistrationRequired(t *testing.T) {
-	_, _, _, request, semantic, _ := semanticAssessmentConfidenceFixture(t)
+	request, semantic := rememberNormalizerAdapterFixture(t)
 	request.SubmissionContract = adapterTestSubmissionContract()
 	relationship := semantic.RelationshipResults[0]
 	normalized := verifier.RememberNormalizerResponse{
@@ -337,7 +338,7 @@ func TestRememberNormalizerResponsePreservesRegistrationRequired(t *testing.T) {
 }
 
 func TestRememberNormalizerResponseToSemanticAssessmentRejectsInvalidPredicateSpan(t *testing.T) {
-	_, _, _, request, semantic, _ := semanticAssessmentConfidenceFixture(t)
+	request, semantic := rememberNormalizerAdapterFixture(t)
 	predicateKey := "works_on"
 	predicateVersion := 1
 	normalized := verifier.RememberNormalizerResponse{
@@ -366,4 +367,48 @@ func TestNormalizerRangeToAssessmentRangePreservesBounds(t *testing.T) {
 	require.Equal(t, 1.0, converted.Confidence)
 	require.Equal(t, 2, converted.Start)
 	require.Equal(t, 7, converted.End)
+}
+
+func rememberNormalizerAdapterFixture(t *testing.T) (verifier.SemanticAssessmentRequest, verifier.SemanticAssessmentResponse) {
+	t.Helper()
+	content := "Mark works on Dense-Mem."
+	predicateKey := "works_on"
+	predicateVersion := 1
+	request := verifier.SemanticAssessmentRequest{
+		RequestID:      "semantic-assessment:" + uuid.NewString(),
+		TeamID:         uuid.NewString(),
+		OwnerProfileID: uuid.NewString(),
+		Evidence: []verifier.SemanticReviewEvidence{{
+			EvidenceID: "evidence:0", FragmentID: uuid.NewString(), Content: content,
+		}},
+		EntityCandidateGroups: []verifier.SemanticAssessmentEntityCandidateGroup{
+			{
+				Surface: "Mark", EvidenceID: "evidence:0", Start: 0, End: 4,
+				Candidates: []verifier.SemanticAssessmentEntityCandidate{{EntityID: uuid.NewString(), CanonicalName: "Mark", Kind: "person", IdentityContext: map[string]any{}}},
+			},
+			{
+				Surface: "Dense-Mem", EvidenceID: "evidence:0", Start: 14, End: 23,
+				Candidates: []verifier.SemanticAssessmentEntityCandidate{{EntityID: uuid.NewString(), CanonicalName: "Dense-Mem", Kind: "product", IdentityContext: map[string]any{}}},
+			},
+		},
+		PredicateOptions: []verifier.SemanticAssessmentPredicateOption{{
+			PredicateKey: predicateKey, Version: predicateVersion, Aliases: []string{"works on"},
+			AllowedSubjectKinds: []string{"person"}, AllowedObjectKinds: []string{"product"},
+			RelationshipKind: "state", CurrentCardinality: "many",
+		}},
+	}
+	prepared, validationErrors := verifier.PrepareSemanticAssessmentRequest(request, verifier.DefaultSemanticAssessmentLimits())
+	require.Empty(t, validationErrors)
+	predicateRange := submissionAssessmentTestRange(prepared.Evidence[0], 5, 13)
+	supportRange := submissionAssessmentTestRange(prepared.Evidence[0], 0, len([]rune(content)))
+	return prepared, verifier.SemanticAssessmentResponse{
+		RequestID: prepared.RequestID,
+		RelationshipResults: []verifier.SemanticAssessmentRelationshipResult{{
+			Ref: "works-on", SubjectRef: "mark", PredicateRange: predicateRange,
+			PredicateStatus: "resolved", PredicateKey: &predicateKey, PredicateVersion: &predicateVersion,
+			ObjectRef: stringPointer("dense-mem"), Polarity: "+", Modality: "statement",
+			SupportRanges: []verifier.SemanticAssessmentGroundedRange{supportRange}, ScopeStatus: "absent",
+			EvidenceVerdict: "entailed", TemporalVerdict: "absent", Confidence: 0.7,
+		}},
+	}
 }
