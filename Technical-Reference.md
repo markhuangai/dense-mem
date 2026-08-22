@@ -224,7 +224,7 @@ optional hints and are grounded by the assessor.
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| content | yes | Verbatim source text. Base64 and other encoded payload bodies are not accepted; ordinary paths, backslashes, quotes, brackets, and harmless escape notation are allowed unless their decoded inspection view forms a threat. |
+| content | yes | Verbatim source text. Explicit encoded/obfuscated payloads are rejected when their bounded decode or shape indicates a threat; ordinary paths, opaque IDs, backslashes, quotes, brackets, and harmless escape notation are not rejected for entropy alone. |
 | source_type | no | conversation, document, observation, or manual; it grants no authority. |
 | source | no | Bounded provenance label. |
 | authority | no | Proposed source authority, subject to server policy. |
@@ -237,10 +237,10 @@ optional hints and are grounded by the assessor.
 
 Direct supersession and a source revision advance cannot be combined.
 
-To replace a held submission, make a new complete remember request and set
-`replaces_submission_id`. The target must be an owned semantic hold (active or
-expired); it cannot target a quarantined submission. The replacement is staged
-and assessed as a complete submission, never as a patch.
+There is no held-submission target or `replaces_submission_id` field. When a
+Remember run fails, correct the evidence and Relationships and send one new
+complete request with a new idempotency key. Evidence-level supersession via
+`supersedes_evidence_ids` remains a separate lifecycle operation.
 
 ### Response
 
@@ -258,15 +258,12 @@ and assessed as a complete submission, never as a patch.
 This is durable staging acknowledgement only. It does not say the evidence is
 active knowledge or that a vector is current.
 
-A valid but non-promotable submission is represented internally as an immutable
-semantic hold: the complete assessment, reason, owner, and terminal timestamp
-remain traceable, while the run projection records `active`, `expired`, or
-`superseded` and an exact 24-hour expiry. Expiry changes only that projection;
-it does not delete evidence, create semantic state, or make the hold recallable.
-Only one queued/guarded/processing successor may target a hold. A held, rejected,
-quarantined, failed, or expired successor releases that slot and leaves the
-target unchanged. A successful successor atomically marks the target
-`superseded` in the same PostgreSQL transaction as its canonical promotion.
+A valid structure response still passes deterministic server policy. If policy,
+normalization, provider availability, or persistence cannot complete the whole
+run, the submission becomes terminal `failed` with zero semantic commit and a
+closed resubmission error. There is no approval, hold, replacement slot, or
+partial semantic state; the caller submits a corrected complete batch with a new
+idempotency key.
 
 ## get_submission_status
 
@@ -305,25 +302,31 @@ visibility does not grant access to another profile's submission.
 }
 ~~~
 
-The remember processing states are queued, processing, awaiting_review,
-completed, rejected, quarantined, and failed. Relationship correction may also
-return awaiting_confirmation.
+The Remember processing states are queued, processing, completed, rejected,
+quarantined, and failed. Relationship correction may also return
+awaiting_confirmation.
 
 | State | Meaning |
 | --- | --- |
 | queued | The submission is durably staged and awaiting a worker. |
 | processing | A worker holds a current assessment lease. |
-| awaiting_review | The complete submission is a semantic hold with zero semantic commit and bounded replacement guidance. |
 | completed | Atomic canonical promotion completed. |
 | rejected | Server semantic/contract policy rejected it with no client review path. |
 | quarantined | A worker-time deterministic or assessor security concern isolated already-staged data. |
 | failed | A required worker, provider, or persistence operation exhausted bounded retry policy. |
 
-An `awaiting_review` response includes `semantic_hold.state` (`active` or
-`expired`), one to fifty bounded `issues`, `issues_truncated`, and
-`replacement`. The replacement object names the `remember` tool, provides the
-held `replaces_submission_id` and expiry, and instructs the caller to submit one
-complete corrected batch. It is not an approval or partial patch.
+There is no `awaiting_review` response or `semantic_hold` projection. Terminal
+normalizer/provider/policy failures expose a deduplicated `errors[]` item with a
+closed next action. `submission_requires_resubmission`,
+`normalization_failed`, `normalizer_unavailable`, `assessor_response_invalid`,
+and `assessor_unavailable` use `resubmit_submission`; send the complete batch
+again after correction. A `submission_requires_resubmission` error also carries
+the bounded `resubmission_issues` list when the server can identify the
+relationship reference and component that need correction. Each issue contains
+only a closed code, optional client-local `relationship_ref`, optional
+`component`, and bounded guidance `message`. If the list was capped or a stored
+issue was malformed, `resubmission_issues_truncated` is true; callers must
+correct the returned issues without treating the list as a complete inventory.
 
 search_state is not the processing state:
 
@@ -345,22 +348,24 @@ returns raw assessor prompts or responses, placement IDs, review tasks, security
 override controls, credentials, or cross-profile data. Legacy placement and
 review tools are absent from the catalog.
 
-## Deterministic Security Gate and Assessor
+## Deterministic Security Gate and Remember Normalizer
 
-The write-time scanner rejects Base64/encoded material, hidden controls,
+The write-time scanner rejects explicit encoded/obfuscated payloads when their
+bounded decode or shape indicates a threat, along with hidden controls,
 instruction overrides, role spoofing, active markup, secret-extraction attempts,
-and exfiltration or tool-invocation instructions before any submission is
-stored. A rejection returns a bounded error and records safe audit metadata
-only; it creates no fragment, provider request, search document, or embedding
-job. The worker repeats the scan for staged evidence, where a deterministic
-concern quarantines that staged submission. The scanner inspects one bounded
-decoded view of percent, hexadecimal, Unicode, and HTML-entity escapes while
-preserving exact source text. Punctuation has no security meaning by itself:
-direct quoted or bracketed directives still reject, while descriptive quoted
-tool/network examples remain eligible. Audit and security-event records retain
-bounded rules and spans without a scanner version or policy hash.
+and exfiltration or tool-invocation instructions. Opaque UUIDs, hashes, provider
+IDs, and other high-entropy identifiers do not trigger `encoded_evidence_not_allowed`
+by entropy alone. A rejection returns a bounded error and records safe audit
+metadata only; it creates no fragment, provider request, search document, or
+embedding job. The worker repeats the scan for staged evidence, where a
+deterministic concern quarantines that staged submission. The scanner inspects
+one bounded decoded view of percent, hexadecimal, Unicode, and HTML-entity
+escapes while preserving exact source text. Punctuation has no security meaning
+by itself: direct quoted or bracketed directives still reject, while descriptive
+quoted tool/network examples remain eligible. Audit and security-event records
+retain bounded rules and spans without a scanner version or policy hash.
 
-A passed submission receives one logical capability-free assessor conversation
+A passed submission receives one logical capability-free normalizer conversation
 for the whole run. It contains the full staged evidence, raw logical client
 Relationships, server-generated Entity occurrence groundings and complete
 matching candidate sets, all exact active predicate key/alias matches, and
@@ -368,7 +373,7 @@ bounded evidence-relevant predicate options. A limit-plus-one query proves that
 exact candidate and predicate matches fit their configured bounds; they are
 never silently truncated. `catalog_context_overflow`,
 `predicate_options_overflow`, or `assessment_input_overflow` ends the run before
-a provider call and creates no semantic state. The closed response contains:
+a provider call and creates no semantic state. The closed structure-only response contains:
 
 - one security verdict, signals, and bounded justification for each evidence
   item;
@@ -377,15 +382,15 @@ a provider call and creates no semantic state. The closed response contains:
 - an allowlisted existing predicate choice or a typed registration-required
   result.
 
-The assessor cannot clear a deterministic signal, choose an unprovided stored
-ID, access tools or secrets, set durable state, create or activate a predicate,
-or commit a record. Predicate registration is a server-controlled, locked,
-auditable step inside the atomic semantic transaction. An assessor security
-concern quarantines a staged submission; an invalid assessor response cannot
-cause a partial semantic commit. A valid result that policy cannot promote
-becomes an `awaiting_review` semantic hold with zero semantic state and no
-review task. Public status exposes bounded issues and whole-submission
-replacement guidance.
+The normalizer cannot clear a deterministic signal, choose an unprovided stored
+ID, access tools or secrets, set durable state, return confidence/rationale or
+review fields, create or activate a predicate, or commit a record. Predicate
+registration is a server-controlled, locked, auditable step inside the atomic
+semantic transaction. A normalizer security concern quarantines a staged
+submission; an invalid or incomplete response is regenerated as one complete
+replacement in the same conversation, bounded to four correction turns. An
+exhausted response or unavailable provider terminalizes the whole submission
+with zero semantic commit and resubmission guidance.
 
 ## Evidence Lifecycle and Corrections
 
@@ -512,7 +517,13 @@ or terminal `failed`; control responses include bounded attempt,
 space, worker, and error details. Legal-hold placement requires
 `{"reason_code":"lowercase_code"}` and returns `201` when newly created or
 `200` for an idempotent existing hold. Reusing an idempotency key for a
-different canonical request returns a conflict. A held SSO credential-delete
+different canonical request returns a conflict. The system-only
+`private_memory_erasure_idempotency_keys` table maps both the original request
+and any retirement alias to one operation. If an SSO credential deletion meets
+an active private erase, the new alias upgrades that operation to
+`retire_credential` while preserving its sealed target generation and worker
+fence; the credential is disabled in the same transaction. Reusing either key
+with a different request hash remains a conflict. A held SSO credential-delete
 operation is accepted and the credential is disabled immediately, but the
 worker cannot claim its physical purge until the hold is released.
 
@@ -520,7 +531,7 @@ worker cannot claim its physical purge until the hold is released.
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Encoded prompt injection | A Base64 payload or escaped instruction survives textual inspection. | Reject encoded payload bodies, inspect one bounded escape layer before staging, and rescan at worker claim without rejecting harmless escape notation alone. |
+| Encoded prompt injection | A real encoded instruction survives textual inspection, or an opaque identifier is rejected as if it were encoded evidence. | Inspect one bounded decode layer and explicit encoded shapes before staging, rescan at worker claim, and require meaningful decoded/binary evidence rather than entropy alone. |
 | Assessor coercion | Evidence tells the model to leak secrets or call an API. | Treat evidence as data, provide no tools/secrets/environment, require closed schema, and quarantine a security concern. |
 | Client follows recalled text | Recalled evidence asks the host to exfiltrate a key. | Mark all returned evidence untrusted and require client-side action/tool policy. |
 | Partial canonical commit | One malformed assessor item leaves another Relationship promoted. | Validate complete coverage, then promote all accepted state in one PostgreSQL transaction. |
@@ -552,12 +563,13 @@ Every terminal `rejected`, `quarantined`, or `failed` submission exposes at
 least one `errors[]` item. Each item has a closed `code`, bounded `message`,
 boolean `retryable`, closed `next_action`, and bounded `remediation`. The
 allowed actions are `poll_status`, `resubmit_submission`,
-`submit_replacement`, `retry_correction`, `contact_operator`, and `none`.
+`retry_correction`, `contact_operator`, and `none`.
 Codes are closed and server-authored, including
-`submission_semantic_hold`, `submission_policy_rejected`,
+`submission_requires_resubmission`, `normalization_failed`,
+`normalizer_unavailable`, `submission_policy_rejected`,
 `assessor_response_invalid`, `assessor_unavailable`,
-`submission_replacement_conflict`, `submission_processing_failed`,
-`submission_quarantined`, `contract_superseded`, and
+`submission_processing_failed`, `submission_quarantined`,
+`contract_superseded`, and
 `search_indexing_delayed`. Item errors and the aggregate list are
 deterministically deduplicated. Provider output, SQL, prompts, credentials,
 stack traces, and cross-owner existence are never returned.

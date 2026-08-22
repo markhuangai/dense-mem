@@ -18,21 +18,21 @@ flowchart LR
   Scan -- reject --> Reject["Safe write error; nothing staged"]
   Scan -- pass --> Stage["Isolated PostgreSQL submission"]
   Stage --> Status["submission_id"]
-  Stage --> Worker["Server assessment worker"]
+  Stage --> Worker["Server placement worker"]
   Worker --> Ground["Server-owned grounding<br/>and bounded catalogs"]
-  Ground --> Assessor["Capability-free assessor"]
+  Ground --> Assessor["Capability-free Remember normalizer"]
   Assessor --> Security{"Security concern?"}
   Security -- yes --> Quarantine["Quarantine for exactly 24 hours"]
   Security -- no --> Validate{"Closed-schema validation"}
-  Validate -- invalid --> Failed["Bounded regeneration<br/>or terminal failure"]
-  Validate -- valid --> Policy{"Promotable?"}
-  Policy -- no --> Hold["awaiting_review;<br/>zero semantic commit"]
-  Policy -- yes --> Promote["Atomic canonical promotion"]
+  Validate -- invalid --> Correct["Complete same-history correction<br/>or terminal resubmission failure"]
+  Validate -- valid --> Policy["Deterministic server policy"]
+  Policy -- reject --> Failed["Terminal failed;<br/>resubmit complete batch"]
+  Policy -- accept --> Promote["Atomic canonical promotion"]
   Promote --> Search["Derived search/embedding jobs"]
   Status --> Poll["get_submission_status"]
   Quarantine --> Poll
   Failed --> Poll
-  Hold --> Poll
+  Correct --> Poll
   Search --> Poll
 ~~~
 
@@ -111,8 +111,9 @@ previous_source_revision; they cannot be combined.
 Before a submission row is created, the server scans every raw evidence item.
 It rejects, at minimum:
 
-- Base64 and encoded payloads, including data URIs, PEM-like material, JWT-like
-  tokens, and folded encoded blocks
+- explicit encoded/obfuscated payloads, including data URIs, PEM-like material,
+  JWT-like tokens, and folded encoded blocks when their bounded decode or shape
+  indicates a threat
 - hidden controls or bidirectional Unicode that form an evasive control flood
   or normalize into another threat pattern
 - executable or active markup
@@ -121,13 +122,15 @@ It rejects, at minimum:
   network calls, or data exfiltration
 
 The scan normalizes a bounded set of common encodings before checking. It is a
-deny gate, not proof that the evidence is benign. Rejections return a bounded
+deny gate, not proof that the evidence is benign. Opaque UUIDs, hashes, provider
+IDs, and other high-entropy identifiers do not produce
+`encoded_evidence_not_allowed` by entropy alone. Rejections return a bounded
 safe error with bounded rule IDs and source spans, and create no submission or
-canonical memory. One inspection layer covers percent escapes, `\xNN`,
-`\uNNNN`, and HTML entities without changing the staged text. Those forms,
-backslashes, quotes, and brackets are not rejection reasons by themselves. A
-direct directive remains unsafe when wrapped in punctuation; descriptive prose
-that quotes a tool/network attack remains eligible. Structured proposal string
+canonical memory. One inspection layer covers percent escapes, `\xNN`, `\uNNNN`,
+and HTML entities without changing the staged text. Those forms, backslashes,
+quotes, and brackets are not rejection reasons by themselves. A direct
+directive remains unsafe when wrapped in punctuation; descriptive prose that
+quotes a tool/network attack remains eligible. Structured proposal string
 values are scanned as values rather than inferred from serialized JSON quotes.
 
 The worker repeats the deterministic scan before it uses staged content. This
@@ -146,7 +149,7 @@ submission_runs
   ├── client relationships
   ├── attempts, lease, and bounded error code
   ├── assessor response and per-item outcomes
-  └── optional same-owner replacement link
+  └── terminal resubmission guidance when required
 
 canonical knowledge (separate until promotion)
   ├── evidence and observations
@@ -159,36 +162,42 @@ The raw staging boundary is not searchable, recallable, or canonical memory.
 Every row is team- and owner-scoped using the authenticated request context and
 PostgreSQL RLS.
 
-### Semantic hold lifecycle
+### Restart boundary and resubmission lifecycle
 
-When the complete assessor response is valid but grounding confidence or other
-server policy cannot promote it, the run and every item become
-`awaiting_review`/`candidate` with zero semantic writes and no review task. An
-immutable `submission_holds` fact records the assessment, bounded issues, owner,
-terminal timestamp, and exact 24-hour expiry. The run projection is `active`
-until the server expiry job changes it to `expired`; neither state is recallable
-or an approval.
+Remember has no semantic hold, replacement slot, approval state, or
+`submission_holds` table. A clean structure response still passes through
+deterministic server policy; a policy rejection, exhausted normalizer
+correction, unavailable normalizer, or other required failure ends the complete
+submission as `failed` with a closed error and `resubmit_submission` guidance.
+No Entity, Value, Relationship, lifecycle, search document, or embedding job is
+committed from a failed run. The caller corrects the complete evidence and
+Relationships batch and submits it again with a new idempotency key.
 
-`replaces_submission_id` is optional public intake input. It names only an
-owned active or expired hold and creates a complete successor through the
-normal scanner, assessor, catalog, and atomic-commit path. A queued, guarded, or
-processing successor occupies the one replacement slot. A held, rejected,
-quarantined, failed, or expired successor emits a release outcome and leaves the
-target unchanged. On the first successful successor promotion, PostgreSQL
-locks the target and marks it `superseded` in the same transaction as the new
-semantic/search writes. Replays are idempotent; cross-profile, cross-team,
-absent, and already-superseded targets return the same bounded error classes.
+The V2.5 restart migration terminalizes unfinished queued, guarded, processing,
+and historical `awaiting_review` placement work whose ingest metadata identifies
+explicit or pre-marker Remember origin. It marks those ingests failed, clears
+claims, and records `submission_requires_resubmission`; unrelated non-Remember
+placement work remains untouched. Review tasks attached to discarded Remember
+runs are canceled while independent correction, Conflict, and Dream tasks remain.
+It does not create a cutover marker or a new queue/hold table. Already completed
+canonical state is retained; incomplete knowledge is intentionally resubmitted
+after restart.
 
-## Server-Owned Assessment
+## Server-Owned Normalization and Assessment
 
-The worker assesses the complete staged submission as one run-scoped unit. For
+The worker processes the complete staged submission as one run-scoped unit. For
 each submitted Entity name, it finds bounded whole-token occurrences of that
 name and active candidate aliases only within the Relationship's cited evidence.
 It assigns opaque grounding and boundary references, loads complete same-team
 candidate sets, resolves each proposed predicate key or alias exactly, and adds
 bounded active predicate options ranked by the submitted keys and evidence
-wording. It sends that context in one capability-free assessor conversation. It
-never assesses or commits an evidence item independently.
+wording. It sends that context in one capability-free Remember-normalizer
+conversation. The normalizer returns structure only; it never decides truth,
+confidence, ownership, lifecycle, review, or promotion policy, and it never
+assesses or commits an evidence item independently. Submitted `valid_from` and
+`valid_to` values are preserved exactly; a non-null bound is accepted only when
+its RFC3339/date representation occurs in the cited evidence. Unsupported or
+hallucinated bounds receive another complete correction turn.
 
 The assessor receives:
 
@@ -213,23 +222,25 @@ overflow remains `catalog_context_overflow`; if the exact evidence and contract
 cannot fit the input budget, it ends as `assessment_input_overflow`. An omitted
 exact predicate must never become a false registration decision.
 
-One placement-run attempt has one logical assessor conversation whose initial
+One placement-run attempt has one logical normalizer conversation whose initial
 request contains every evidence item and relationship ref. A malformed complete
-response can receive at most four same-history complete-regeneration turns. A
-timeout, transport, protocol, or HTTP failure ends that conversation and
-requeues a fresh history through the durable placement-attempt budget. Once a
-valid run-scoped assessment is persisted, restart, lease reclaim, and commit
-retry reuse it and make no further provider call.
+response can receive at most four same-history complete-regeneration turns after
+the initial response. Timeout/transport failures receive bounded in-claim
+transport retries; an exhausted provider failure requeues through the durable
+placement-attempt budget. Once a valid run-scoped response is persisted,
+restart, lease reclaim, and commit retry reuse it and make no further provider
+call.
 
-The response is a closed schema. It must contain one security verdict, signals,
-and bounded justification for every evidence item plus normalized Entity and
-Relationship results. Entity results select an allowlisted grounding reference;
-Relationship results select boundary-reference ranges for predicates, typed
-Values, and supports. A predicate result can select only an allowlisted active
-predicate or return a typed registration-required result. The provider cannot
-clear a deterministic security signal, use a range outside the cited evidence,
+The response is a closed structure-only schema. It must contain complete
+security signals plus normalized Entity and Relationship results. Entity results
+select an allowlisted grounding reference; Relationship results select
+boundary-reference ranges for predicates, typed Values, and supports. A
+predicate result can select only an allowlisted active predicate or return a
+typed registration-required result. The provider cannot clear a deterministic
+security signal, use a range outside the cited evidence, return policy fields,
 decide durable status, create or activate a predicate, or override authenticated
-ownership.
+ownership. The existing atomic commit adapter supplies only deterministic
+server defaults needed by the legacy commit path.
 
 A `hidden_control_markup` signal is valid only when its exact cited span contains
 a covered hidden control or active markup. An ungrounded signal invalidates the
@@ -239,10 +250,11 @@ A registration-required result follows a controlled, auditable predicate
 workflow. In the same semantic transaction, the server takes a team/key advisory
 lock, rechecks the latest definition, reuses a compatible active definition, or
 creates a restricted definition with append-only registration provenance. It
-does not make a raw client or assessor predicate durable by itself. If server
-policy cannot promote a valid complete result, every item enters an
-`awaiting_review` semantic hold with zero semantic commit and no review task.
-Public status exposes bounded issues and whole-submission replacement guidance.
+does not make a raw client or normalizer predicate durable by itself. If server
+policy cannot promote a valid complete result, every item is terminalized with
+zero semantic commit. Public status exposes a bounded closed error and tells
+the caller to resubmit the complete batch; it never exposes a review task or
+approval action.
 
 Malformed, incomplete, duplicate, out-of-allowlist, or otherwise invalid
 responses do not produce a partial semantic commit. Malformed content uses the
@@ -291,7 +303,6 @@ The status is owner-scoped and contains safe, bounded state only:
 | --- | --- | --- |
 | queued | Staged and waiting for a worker. | Poll later. |
 | processing | A worker owns a live assessment lease. | Poll later. |
-| awaiting_review | Grounding confidence or another semantic policy held the complete submission with zero semantic commit. | Read `semantic_hold.issues` and submit one complete corrected replacement using its guidance. |
 | completed | Canonical promotion succeeded. | Recall or trace normally. |
 | rejected | The server rejected the submission. | Submit a new complete request if appropriate. |
 | quarantined | Security concern; the isolated raw payload copy expires after 24 hours while immutable source history remains restricted and non-recallable. | Do not use it; optionally submit a replacement. |
@@ -299,10 +310,12 @@ The status is owner-scoped and contains safe, bounded state only:
 
 Status reports per-evidence search readiness, bounded error codes,
 quarantine_expires_at when applicable, and search state.
-Terminal placement failures use the closed `submission_processing_failed`,
-`assessor_response_invalid`, or `assessor_unavailable` codes; the internal
-stage is never exposed. Raw provider, database, prompt, and credential details
-never appear in status.
+Terminal placement failures use closed codes such as
+`submission_requires_resubmission`, `normalization_failed`,
+`normalizer_unavailable`, `submission_policy_rejected`,
+`assessor_response_invalid`, `assessor_unavailable`, or
+`submission_processing_failed`; the internal stage is never exposed. Raw
+provider, database, prompt, and credential details never appear in status.
 search_state=pending means canonical promotion may be complete while a derived
 embedding is still being built. current and not_required are ready for the
 evaluation/recall freshness gate; failed is a visible degradation.
@@ -329,9 +342,12 @@ metrics.
 There is deliberately no client-facing placement/review tool, review task,
 client confidence value, or follow-up-evidence action in this contract.
 
-`awaiting_review` is not a client approval action or partial promotion. Its
-public `semantic_hold` projection contains bounded issues, truncation state, and
-the exact `replaces_submission_id` needed for one complete corrected successor.
+There is no `awaiting_review` state or `semantic_hold` projection. Every
+terminal normalization/provider/policy failure carries a closed error with one
+next action. For `submission_requires_resubmission`,
+`normalization_failed`, `normalizer_unavailable`, `assessor_response_invalid`,
+or `assessor_unavailable`, the next action is `resubmit_submission`; send one
+complete corrected batch with a new idempotency key.
 
 ## Recall Safety Boundary
 
@@ -359,11 +375,16 @@ required even when the write-time scanner and assessor have passed.
 ## Migration Boundary
 
 The V2.5 contract is a hard switch from caller-owned text ranges to server-owned
-grounding. Unfinished V2.4 queued, guarded, or processing submissions terminate
-with `contract_superseded` and zero semantic writes; callers resubmit one
-complete V2.5 evidence-and-Relationships batch. Already accepted semantic state
-and durable provenance ranges remain unchanged. Normal runtime paths do not
-accept the old remember fields or reinterpret old proposals.
+grounding and structure-only normalization. The restart migration terminalizes
+unfinished V2.4 queued, guarded, processing, and historical `awaiting_review`
+Remember submissions identified by the explicit or pre-marker origin predicate.
+It marks their ingest rows failed, cancels linked placement review tasks, clears
+claims, and drops the obsolete hold/replacement projection. Unrelated
+non-Remember placement work and independent correction/Conflict/Dream workflows
+remain unchanged. It creates no cutover marker and no new Remember queue/hold
+table. Already accepted semantic state and durable provenance ranges remain
+unchanged. Normal runtime paths do not accept the old Remember fields or
+reinterpret old proposals.
 
 ## Acceptance Checks
 
@@ -380,16 +401,13 @@ accept the old remember fields or reinterpret old proposals.
    receives every distinct relationship ref in one run-scoped request;
 8. exact predicate, candidate-context, or input overflow makes zero provider
    call and zero semantic write;
-9. a valid but non-promotable run becomes an `awaiting_review` semantic hold
-   with no review task or semantic subset, and expiry changes only its
-   projection;
-10. status never exposes a review task or raw assessor/prompt content;
-11. a same-owner complete replacement leaves its target unchanged until a
-   successful atomic promotion, while a successful successor supersedes it;
-12. quarantined staging is removed only after its exact 24-hour retention;
-13. a predicate is added or activated only through the controlled validated
+9. a malformed, unavailable, or policy-rejected normalizer run is terminalized
+   with zero semantic subset and bounded resubmission guidance;
+10. status never exposes a review task, semantic hold, or raw assessor/prompt content;
+11. quarantined staging is removed only after its exact 24-hour retention;
+12. a predicate is added or activated only through the controlled validated
    registration workflow; and
-14. recall remains evidence-first and treats returned content as untrusted.
+13. recall remains evidence-first and treats returned content as untrusted.
 
 ## Terminal Status Error Completeness
 

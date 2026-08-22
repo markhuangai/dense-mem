@@ -68,7 +68,7 @@ The target user portal provides:
 - ranked Evidence recall with separate compact Relationship and Community frontiers
 - Entity/Value graph exploration
 - Relationship trace with evidence/history panels
-- placement review and correction workflow
+- caller-owned correction workflow
 - separate Hypothesis/community views
 - self/team-scoped telemetry according to role
 - current-credential key rotation
@@ -107,23 +107,10 @@ merges their lifecycle or data.
 
 This is a read-only visualization consequence, not a cross-profile Conflict
 inbox. The initial Conflict workflow is MCP-only; the portal cannot select a
-preferred position or submit a bare confirmation. Placement review below
-continues to cover owner-scoped identity/predicate/Relationship decisions.
-
-## Placement Review
-
-The portal shows:
-
-- exact item and `relationship_id` when available
-- immutable owner alias and same-team conflict references
-- current versus proposed Relationship
-- Entity candidates and discriminator context
-- evidence/source handles
-- status/effective-support and search state
-- explicit decision effects
-
-Decisions append durable input and re-enter normal processing. The browser never
-edits a SemanticEdge or current-state row directly.
+preferred position or submit a bare confirmation. Caller-owned corrections use
+the authenticated `correct_relationship` MCP workflow and never expose the
+retired placement-review controls. The browser never edits a SemanticEdge or
+current-state row directly.
 
 ## User Portal SSO
 

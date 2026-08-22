@@ -350,12 +350,12 @@ The control portal's team **Submissions** workspace reads authoritative
 PostgreSQL placement state. It lists state, attempts, evidence count,
 correlation ID, timestamps, and a scheduled retry. Detail shows the closed
 error, retryability, next action, remediation, per-evidence search state, and
-semantic-hold replacement guidance without returning evidence text, prompts,
+resubmission guidance without returning evidence text, prompts,
 provider payloads, or internal placement IDs.
 
 The detail timeline is supplemental history from operation logs. Durable
 transitions emit `submission_accepted`, `submission_retry_scheduled`,
-`submission_completed`, `submission_held`, `submission_failed`, or
+`submission_completed`, `submission_failed`, or
 `submission_quarantined` only after the corresponding PostgreSQL transition
 succeeds. The safe attributes include team/profile/correlation/submission,
 from/to state, attempts, stage, reason code, and the next retry time when one
@@ -377,9 +377,9 @@ flowchart TD
   Workers -- Yes --> Lease{"Leases advancing?"}
   Lease -- No --> Locks["Inspect PostgreSQL locks,<br/>clock and lease ownership"]
   Lease -- Yes --> Stage{"Dominant stage?"}
-  Stage -- assessor --> Provider["Inspect provider limits,<br/>schema failures and cooldown"]
+  Stage -- normalizer --> Provider["Inspect provider limits,<br/>schema failures and cooldown"]
   Stage -- commit --> DB["Inspect lock waits, constraints,<br/>deadlocks and pool saturation"]
-  Stage -- review --> Review["Semantic hold;<br/>verify zero semantic commit"]
+  Stage -- failed --> Resubmit["Verify zero semantic commit;<br/>caller resubmits complete batch"]
 ```
 
 Required checks:
@@ -390,81 +390,69 @@ Required checks:
 - `densemem_assessor_terminal_failures_total{stage=...}` and owner-scoped
   submission status `errors`; use the stage to distinguish predicate option
   overflow, input/catalog overflow, provider exhaustion, and commit failures
-- invalid-assessor count, JSON-pointer classes, provider turns per assessor
-  conversation, and persisted-assessment reuse
+- invalid-normalizer count, JSON-pointer classes, provider turns per normalizer
+  conversation, persisted-assessment reuse, and
+  `densemem_assessor_validation_failures_total` /
+  `densemem_assessor_validation_field_failures_total` by bounded stage and
+  field family (including input/output budgets, JSON/schema, contract, and
+  temporal validation)
 - provider 429/cooldown/concurrency
 - database deadlocks, lock timeouts, serialization failures, and constraint
   errors
-- compatibility-hold age separately from worker backlog
+- restart-terminalized count and `submission_requires_resubmission` guidance
+  separately from the live worker backlog
 
 Retryable provider failures use deterministic exponential backoff with bounded
 jitter. The first four retry releases wait about 15s, 30s, 60s, and 120s. A
 valid `Retry-After` hint may extend that delay; the effective delay remains
 capped at 300s. Attempts are not reset by ordinary retries. A schema-invalid
-HTTP 200 response does not release the placement item: the assessor receives
+HTTP 200 response does not release the placement item: the normalizer receives
 the bounded validation errors in the same message history and may return a
-complete replacement, for at most five provider turns in that conversation.
+complete replacement, for at most five provider turns total in that
+conversation. Transport failures use bounded in-claim retries; exhausted
+normalization/provider failures use the durable attempt budget.
 
 Public submission status projects only closed safe error codes such as
-`submission_processing_failed`, `assessor_response_invalid`, or
-`assessor_unavailable`; internal stages such as `predicate_options_overflow`
-remain operator-only. Never use provider/database error text from logs or SQL as
-a client diagnostic. If the operator stage is `unknown`, inspect
+`submission_requires_resubmission`, `normalization_failed`,
+`normalizer_unavailable`, `submission_policy_rejected`,
+`assessor_response_invalid`, `assessor_unavailable`, or
+`submission_processing_failed`; internal stages such as
+`predicate_options_overflow` remain operator-only. Never use provider/database
+error text from logs or SQL as a client diagnostic. If the operator stage is `unknown`, inspect
 the authenticated correlation window, worker lease/attempt row, and PostgreSQL
 transaction/constraint state without exporting raw payloads.
 
-When a legacy authority handoff reaches the end of its source cursor with all
-items terminal but some items failed or were excluded, the supervisor pauses the
-run instead of repeatedly trying cutover. The private portal shows whether
-resume can repair the run. Supported repair may requeue abandoned processing
-rows, orphan review rows, and retryable exhausted placement failures.
-
-Legacy evidence missing its owner is auto-repairable only when the active
-same-team legacy corpus has exactly one distinct owner. Resume rewinds the
-legacy cursor, the executor validates that exact team/profile pair in
-PostgreSQL, and stable idempotency skips evidence that was already staged. The
-original exclusion row remains as audit history and stops blocking cutover only
-after the evidence is durably staged. Zero owners, multiple owners, invalid
-team/profile membership, other cutover exclusions, and deterministic terminal
-failures remain hard blockers that need operator investigation.
-
-For the submission-wide worker, a valid but non-promotable result is terminal
-for worker progress when every item and its run are `awaiting_review` with the
-same `candidate` category. It has zero semantic commit and deliberately creates
-no review task or approval action. Public status exposes bounded issues and
-whole-submission replacement guidance. Treat it as a semantic hold, not a
-missing review-task incident. Legacy item-scoped review rows remain a separate
-compatibility path:
-those rows still require their historical task invariants.
-
-For semantic holds, inspect `submission_holds` and the run projection together.
-The immutable fact must retain its assessment, reason, owner, `held_at`, and
-`expires_at = held_at + 24 hours`; expiry may change only
-`placement_runs.semantic_hold_state` and append an outcome. A successor is
-allowed only from the same owner and may be queued/guarded/processing once per
-target. Never manually mark a target superseded: only the successor's successful
-semantic transaction may do so. Failed, held, rejected, quarantined, or expired
-successors must release the slot without changing the target.
+The Remember normalizer restart is an explicit migration boundary, not a
+resumable legacy queue handoff. The migration terminalizes unfinished queued,
+guarded, processing, and historical `awaiting_review` Remember runs/items
+identified by explicit or pre-marker origin metadata, marks their ingests failed,
+clears claims, and records `submission_requires_resubmission`. Unrelated
+non-Remember placement work remains untouched. Only placement-linked review
+tasks attached to discarded Remember runs are canceled; unrelated correction,
+Conflict, and Dream tasks remain available. Do not requeue those rows, create
+review rows, inspect a `submission_holds` table, or manually reset attempts.
+Operators should ask the caller to submit the complete batch again with a new
+idempotency key. Already completed canonical state is retained.
 
 Do not mark jobs complete, delete queue rows, reset attempts, or extend leases
 with direct SQL. Repair the root cause, use the supported pause/resume repair
 path, and let stable idempotency converge retries.
 
-## Invalid Assessor Responses
+## Invalid Remember-Normalizer Responses
 
 The application never repairs or splices provider output.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Invalid["ASSESSOR_RESPONSE_INVALID"] --> Persisted{"Valid assessment already<br/>persisted for claim?"}
+  Invalid["ASSESSOR_RESPONSE_INVALID"] --> Persisted{"Valid response already<br/>persisted for claim?"}
   Persisted -- Yes --> Resume["Resume deterministic policy/commit;<br/>make no provider call"]
   Persisted -- No --> Classify["JSON parse, schema,<br/>coverage, allowlist, dependency"]
   Classify --> Contract{"Model, prompt revision, and local<br/>contract hash match deployment?"}
   Contract -- No --> Rollback["Restore compatible model/prompt<br/>or deploy the intended contract"]
   Contract -- Yes --> Turns{"Fewer than five provider<br/>turns used?"}
   Turns -- Yes --> Correct["Append invalid assistant output and<br/>bounded validation errors to same history"]
-  Correct --> Replace["Request one complete replacement;<br/>never a patch"]
+  Correct --> Replace["Request one complete response;<br/>never a patch"]
   Replace --> Invalid
   Turns -- No --> Reproduce["Record terminal malformed outcome;<br/>reproduce with redacted IDs"]
   Reproduce --> Fix["Fix prompt/provider adapter<br/>before requeueing new work"]
@@ -671,7 +659,7 @@ Rollback restores the pre-migration PostgreSQL backup and the matching old
 application release together. Never roll back one without the other or allow
 old and new workers to overlap.
 
-### V2.4 integrated-assessor placement upgrade
+### V2.4 integrated-assessor placement upgrade (historical)
 
 Run this upgrade only after the Relationship projection migration is complete
 and healthy. V2.4 changes placement and semantic-review workflow. It
@@ -686,8 +674,8 @@ Before cutover:
    vectors, and embedding jobs;
 3. export search-text hashes by source kind plus the active projection,
    embedding, and HNSW generation IDs;
-4. identify unresolved semantic reviews separately from security quarantine and
-   cross-profile Conflict cases;
+4. inventory legacy semantic review rows separately from security quarantine and
+   cross-profile Conflict cases; V2.5 does not resume those rows;
 5. take and restore-test the PostgreSQL backup.
 
 During cutover:
@@ -877,10 +865,33 @@ disables the selected credential and queues the same credential-private
 retirement when that binding exists, without an owner acknowledgement body;
 profile-private and team-shared spaces remain preserved.
 
+The SSO owner path appends its safe `REVOKE` audit row before the credential
+disable and erasure queue become visible; the control/manager path does the
+same with a `DELETE` audit row. An audit insert failure rolls back the
+disablement and queueing. Session invalidation happens after commit and is
+best-effort coordination cleanup: a failure is logged and does not undo the
+durable credential state. If a credential deletion arrives while an erase is
+already queued or processing, its second idempotency mapping upgrades that
+operation to retirement while preserving the sealed target generation and
+worker fence. A different request hash still returns an idempotency conflict.
+
+Placement workers use the same fence: run and outcome rows carry the run's
+private `space_id` and `space_generation`, and claims require that generation to
+remain active. Sealed or stale-generation runs are left unclaimed; they are not
+replayed under a new space generation. Team/RLS predicates remain in force for
+both the claim and the later semantic commit.
+
+Team soft-delete marks only queued or processing embedding jobs from the active
+semantic generation as stale. Jobs stamped with a sealed or stale private
+generation remain untouched; they are not reclassified or replayed under the
+new generation.
+
 The worker reclaims expired leases with a higher fence. It rechecks the
 operation, sealed generation, legal hold, and credential state, then deletes
 the catalog-complete manifest in one transaction, verifies zero remaining rows,
-and redacts private audit payloads while retaining the audit tombstone. A worker
+and redacts private audit payloads while retaining the audit tombstone. If a
+team hard-delete later removes a memory-space catalog row, the append-only audit
+row remains and its `memory_space_id` becomes `NULL`. A worker
 failure is requeued after 1, 2, 4, and 8 seconds; the fifth failed attempt or
 an exhausted expired lease becomes terminal `failed`. Do not manually update
 `status`, `fence`, `manifest_position`, space lifecycle, or deleted counts.
@@ -986,7 +997,7 @@ Never restore another data store over newer PostgreSQL state.
 | --- | --- |
 | PostgreSQL | backup verification, vacuum/analyze, bloat, locks, slow plans, WAL/disk, replica/PITR checks |
 | `pgvector` | index size/build health, Recall@K, iterative-scan cost, reindex planning |
-| placement | queue age, lease churn, semantic review age/expiry, assessor schema failures, turns per conversation, durable provider retries, persisted-result reuse |
+| placement | queue age, lease churn, restart-resubmission failures, normalizer schema failures, turns per conversation, durable provider retries, persisted-result reuse |
 | embeddings | pending/failed age, provider quota, version mismatch, rebuild progress |
 | Conflict review | run/due/overdue age, lease recovery, policy parity, resolved/reopened/dismissed events, three-profile recall smoke |
 | security | key/session cleanup, audit retention, RLS tests |
@@ -1053,7 +1064,7 @@ dumps.
 | Mixed-version rollback writes incompatible state | old workers resume against the migrated schema | stop/lease audit before migration and restore database plus matching application as one unit |
 | Placement retry calls the assessor after persistence | a worker loses its lease after persisting a valid result and the next worker starts another conversation | unique claim assessment, post-persist provider-turn alert, stop workers on any violation, and resume from stored result |
 | Team threshold change rewrites history | an operator expects a new value to rescore active or held Relationships | commit-time policy applies only to future/in-flight work; audit the effective version and prohibit backfill |
-| Review expiry becomes approval | an expiry worker grants support to clear backlog | expiry may update only task state; lifecycle/support invariants page on any associated activation |
+| Retired review metadata becomes approval | an operator treats an old expiry field as permission to clear a failed run | V2.5 has no review-task expiry or approval path; inspect the bounded failure and resubmit the complete batch |
 | V2.4 cutover re-embeds Relationships | a shared format/version bump queues vectors even though search text is unchanged | pre/post text hashes and job/provider counts; treat any V2.4 embedding work as a blocker |
 
 ## Operational Acceptance
@@ -1083,5 +1094,5 @@ Before production:
     lifecycle mutation
 14. V2.4 migration makes zero embedding calls/jobs and leaves search hashes,
     vectors, projection formats, and active embedding/index contracts unchanged
-15. seven-day semantic review expiry closes workflow without activating
-    knowledge or directly creating a Hypothesis
+15. Remember restart terminalization closes unfinished placement work without
+    activating knowledge; missing knowledge is resubmitted as a complete batch

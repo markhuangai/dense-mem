@@ -260,8 +260,9 @@ One revalidated known ID or one unique compatible exact match may be reused.
 Multiple/conflicting matches remain `ambiguous`; more than 20 exact candidates
 or groundings fails preflight rather than silently truncating the allowlist. An
 empty candidate list does not automatically authorize `create`, and a submitted
-name with no eligible grounding produces a whole-submission semantic hold. A
-retrieval error is not an empty result and fails placement visibly.
+name with no eligible grounding terminalizes the complete Remember run with
+zero semantic commit and resubmission guidance. A retrieval error is not an
+empty result and fails placement visibly.
 
 ## One Assessor Conversation
 
@@ -298,7 +299,7 @@ flowchart TD
   Refs["Submitted Entity refs and<br/>server-issued groundings"] --> Results["One Entity result per ref"]
   Results --> Map["Map refs to Entity IDs<br/>or typed Value IDs"]
   Map --> Ready{"All required endpoints resolved?"}
-  Ready -- No --> Hold["Whole-submission semantic hold;<br/>zero semantic commit"]
+  Ready -- No --> Hold["Terminal failed;<br/>zero semantic commit + resubmit"]
   Ready -- Yes --> Predicate{"Predicate resolved or<br/>safe to register?"}
   Predicate -- No --> Hold
   Predicate -- Yes --> Identity["Compute Relationship identity"]

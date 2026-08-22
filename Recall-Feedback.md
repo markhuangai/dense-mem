@@ -125,6 +125,15 @@ Hypothesis judgments
 actor and timestamps
 ```
 
+New snapshots also retain `space_id` and `space_generation` from the
+authenticated recall context. A feedback submission must match the stored
+team, space, and generation exactly; the service additionally requires the
+actor's current allowed-space set to contain that same generation. Listing and
+getting events expose only rows whose private space is still active at its
+current generation, so a sealed or retired snapshot cannot be updated or
+resolved through a stale reference. Legacy unscoped events remain readable only
+through their existing compatibility path.
+
 Retention and text-storage policy must be explicit because queries/comments may
 contain sensitive information.
 

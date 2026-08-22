@@ -14,7 +14,8 @@ Relationships.
 This page owns recall eligibility, frontier flow, grouping, and degradation.
 Cosine distance and RRF are defined in
 [Vector Search And Ranking](Vector-Search-And-Ranking). Exact public fields and
-limits are defined in [Technical Reference](Technical-Reference#recall_memory).
+limits are defined in
+[Technical Reference](Technical-Reference#recall_memory-and-trace_memory).
 Relationship lifecycle eligibility is defined in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle#status-and-effective-support).
 

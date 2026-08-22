@@ -386,12 +386,12 @@ result for the submitted key.
 flowchart TD
   Registry["Open-ended team registry"] --> Exact["All exact key/alias matches"]
   Exact --> Catalog["Add evidence-relevant options<br/>within the request bound"]
-  Catalog --> Assess["Assessor resolves, requests registration,<br/>or needs review"]
+  Catalog --> Assess["Assessor resolves, requests registration,<br/>or returns unresolved"]
   Assess --> Selected{"Result?"}
   Selected -- resolved --> Recheck["Server rechecks current registry<br/>under transaction lock"]
   Recheck --> Use["Use canonical definition and version"]
   Selected -- registration --> Register["Server reuses or creates a restricted<br/>definition under the same lock"]
-  Selected -- needs review --> Review["Whole-submission semantic hold"]
+  Selected -- unresolved --> Review["Remember run fails;<br/>resubmit complete batch"]
 ```
 
 The assessor cannot define a durable version, endpoint allowlist, Relationship
@@ -400,8 +400,8 @@ a team/key transaction lock. An existing compatible definition wins; otherwise
 server policy may register only a restricted definition with append-only
 provenance in the atomic semantic transaction. Exact-match overflow fails before
 the provider call. Key/alias collisions, ambiguous aliases, incompatible
-endpoint kinds, or incompatible Relationship kinds hold the complete submission
-with zero semantic commit.
+endpoint kinds, or incompatible Relationship kinds fail the complete submission
+with zero semantic commit and resubmission guidance.
 
 ## Observation And Evidence
 
@@ -559,7 +559,7 @@ explicit user/system decisions.
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
   Observation["Valid whole-submission assessment"] --> Structure{"Endpoints, predicate, and required<br/>scope/time resolved?"}
-  Structure -- No --> Hold["Whole-submission semantic hold;<br/>zero semantic commit"]
+  Structure -- No --> Hold["Terminal failed;<br/>zero semantic commit + resubmit"]
   Structure -- Yes --> Verdict{"Evidence verdict"}
   Verdict -- contradicted/insufficient --> Hold
   Verdict -- entailed --> Gate{"Confidence >= effective<br/>team threshold?"}
@@ -588,7 +588,7 @@ The global bootstrap threshold is `0.7`. A manager may override it per team at
 is `0` through `1`, and the comparison is inclusive. The effective value is
 loaded immediately before semantic commit and recorded with the event.
 Threshold changes apply to future or in-flight commits only. They do not
-rescore completed or already-held assessments.
+rescore completed or failed assessments.
 
 The gate applies only to positive Relationship support. It cannot resolve
 Entity identity, approve an unknown predicate, repair scope or time, clear a
@@ -817,7 +817,8 @@ flowchart TD
 
 A legacy insufficient pending Relationship may remain in PostgreSQL so its
 context is not lost. It is excluded from default recall and the SemanticEdge
-view. A V2.5 semantic hold creates no Relationship and is never Dream input.
+view. A failed V2.5 Remember submission creates no Relationship and is never
+Dream input; the caller must resubmit the complete batch.
 
 Dreaming may use a bounded pending Relationship only when:
 
@@ -825,7 +826,8 @@ Dreaming may use a bounded pending Relationship only when:
 - its predicate is registered
 - its final valid assessment is `insufficient`, or it is `entailed` below the
   positive-support threshold
-- its seven-day semantic review has expired without resolution
+- its retained review policy allows pending-input eligibility without treating
+  a failed Remember submission as a pending Relationship
 - it is not contradicted, quarantined, rejected, disputed, or identity-ambiguous
 
 Provider failures with no schema-valid assessor response remain preserved
@@ -849,10 +851,10 @@ status, or SemanticEdge. If a Hypothesis mentions a new concept, that concept
 remains text until later evidence enters `remember` and normal Entity
 resolution.
 
-Legacy review expiry closes that retained workflow; it is not evidence and never
-activates a Relationship or promotes it directly to a Hypothesis. A structurally
-complete legacy Relationship remains `pending_evidence` and may become bounded
-Dream input.
+Retained legacy review rows are audit history, not evidence, and never activate
+a Relationship or promote it directly to a Hypothesis. A structurally complete
+legacy Relationship remains `pending_evidence` and may become bounded Dream
+input only under the existing pending-input policy.
 Unresolved identity, predicate, scope, or time remains Evidence plus Observation
 only and is not Dream input.
 
@@ -879,11 +881,11 @@ referential and audit integrity.
 | --- | --- |
 | Evidence transaction fails | Create no ingest or semantic state. |
 | Assessor response is unavailable or invalid | Preserve staged evidence; expose failure; create no support, VerificationEvent, or SemanticEdge. |
-| Entity endpoint is ambiguous | Preserve the staged evidence and whole-submission semantic hold; create no semantic subset or SemanticEdge. |
-| Predicate cannot be resolved or registered safely | Preserve the whole-submission semantic hold; create no Relationship or SemanticEdge. |
-| Predicate key/alias is ambiguous, colliding, or kind-incompatible | Preserve the whole-submission semantic hold; create no Relationship or SemanticEdge. |
-| Verdict is insufficient | Preserve the staged evidence and whole-submission semantic hold; create no semantic subset or SemanticEdge. |
-| Entity, predicate, Value, support, or Relationship grounding confidence is below the effective threshold | Preserve the whole-submission semantic hold with bounded replacement guidance; grant no support or SemanticEdge. |
+| Entity endpoint is ambiguous | Preserve the staged evidence and fail the complete Remember run; create no semantic subset or SemanticEdge. |
+| Predicate cannot be resolved or registered safely | Fail the complete run with resubmission guidance; create no Relationship or SemanticEdge. |
+| Predicate key/alias is ambiguous, colliding, or kind-incompatible | Fail the complete run; create no Relationship or SemanticEdge. |
+| Verdict is insufficient | Preserve the staged evidence and fail the complete run; create no semantic subset or SemanticEdge. |
+| Entity, predicate, Value, support, or Relationship grounding confidence is below the effective threshold | Preserve the staged evidence and fail the complete run with bounded resubmission guidance; grant no support or SemanticEdge. |
 | Search embedding fails | Preserve authoritative Relationship; expose degraded search state and retry the derived embedding job. |
 | Same-owner knowledge conflicts with new evidence | Hold review or apply owner-authorized supersession; never use stored knowledge as self-supporting evidence. |
 | Another profile's knowledge conflicts with new evidence | Preserve both eligible authored records during placement, append a challenge/correction cross-reference, and create/update the team Conflict case in the same transaction. |
@@ -911,7 +913,7 @@ referential and audit integrity.
 | Registry edit rewrites history | Predicate meaning is immutable per key; behavior changes use a new key or reviewed migration, while records retain the applied version. |
 | Single-current behavior removes parallel truth | Explicit `relationship_kind` and `current_cardinality` plus scope-aware review. |
 | The bootstrap `0.7` threshold is poorly calibrated for a team or model | Record model/prompt/policy versions, measure reliability by confidence bucket, permit a bounded team override, and change policy only for future commits. |
-| Review expiry is mistaken for evidence or approval | Expiry only closes the task; the Relationship stays pending and can enter Dream only when its structure is already resolved. |
+| Retired review metadata is mistaken for evidence or approval | V2.5 has no review-task expiry or approval path; failed Remember work is resubmitted as a complete batch. |
 
 ## Acceptance Invariants
 
@@ -977,6 +979,6 @@ The refactor is incomplete until tests prove:
 31. only `entailed` Relationship support at or above the commit-time effective
     team threshold may grant support; the gate cannot override any structural,
     temporal, security, or conflict hold
-32. changing the team threshold does not rescore completed or held assessments
-33. a legacy semantic review expires after seven days without activating knowledge;
-    only structurally complete pending Relationships may later enter Dream
+32. changing the team threshold does not rescore completed or failed assessments
+33. retained legacy review rows never activate knowledge; only structurally
+    complete pending Relationships may later enter Dream under policy

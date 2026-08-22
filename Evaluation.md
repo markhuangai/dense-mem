@@ -114,7 +114,7 @@ If a historical ledger term is no longer present in its recorded support window
 in the frozen V1 evidence, the generator records that source ID and uses a
 sentence-bounded best-effort logical proposal instead. This changes only the
 non-authoritative proposal; it never changes the evidence, and the live server
-still owns exact grounding and any semantic hold.
+still owns exact grounding and terminal resubmission policy.
 
 Before release use, every row is checked by the same Go code as production:
 

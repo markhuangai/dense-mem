@@ -271,7 +271,7 @@ but no schema-version field is sent to or accepted from the model.
 inclusive. A manager may override it at
 `teams.config.memory_write.auto_write_confidence_threshold`. The update is
 audited and applies at commit time to in-flight/future assessments only; it
-never re-scores completed or already-held knowledge. It gates only positive
+never re-scores completed or failed knowledge. It gates only positive
 Relationship support and cannot resolve identity, predicate, scope, time,
 security, or Conflict state.
 

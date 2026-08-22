@@ -120,7 +120,7 @@ flowchart LR
 | `entity_resolution_events` | append-only assessor and server decisions for evidence-local mentions |
 | `entity_correction_events` | append-only merge, split, and reassignment decisions |
 | `relationship_observations` | immutable extracted statements tied to exact evidence spans |
-| `placement_assessments` | append-once normalized assessor response for one legacy item claim or one submission-wide run; scope-bound uniqueness makes restart and commit retry reuse it |
+| `placement_assessments` | append-once normalized Remember response for one legacy item claim or one submission-wide run; scope-bound uniqueness makes restart and commit retry reuse it |
 | `predicate_registration_events` | append-only provenance for server-controlled predicate creation or reuse during a submission-wide semantic transaction |
 | `verification_events` | append-only Relationship judgments derived from persisted schema-valid assessor results |
 | `relationship_records` | one authored Relationship episode's current status, effective support, validity, author, and version |
@@ -128,7 +128,7 @@ flowchart LR
 | `relationship_support_decision_events` | append-only grant/revoke/reinstate decisions controlling effective support |
 | `relationship_transition_events` | append-only status/validity-bound history |
 | `relationship_cross_references` | append-only same-team confirmation, challenge, correction, and evidence-adoption links between profile-owned Relationships |
-| `review_tasks` | bounded identity, predicate, scope, time, support-confidence, same-owner Relationship conflict, correction, and policy decisions needing a client; the five V2.4 semantic kinds carry seven-day expiry |
+| `review_tasks` | inert historical audit rows for retired placement decisions and older policy/correction records; V2.5 Remember creates no review task or client approval state |
 | `relationship_conflict_cases` | current team-scoped status, version, deadline, due/lease metadata, effective time, and preferred-position disposition for material cross-profile Relationship conflicts |
 | `relationship_conflict_positions` | current bounded grouping of authored Relationship IDs/versions into equivalent case positions without merging ownership |
 | `relationship_conflict_events` | append-only open, membership, evaluation, resolve, reopen, overdue, and dismiss history |
@@ -143,8 +143,7 @@ flowchart LR
 | `embedding_contracts` | versioned provider/model/dimension/normalization/query meaning shared by compatible query and document vectors |
 | `search_projection_generations` | per-team, per-source-kind text projection convergence and vector activation state |
 | `search_index_generations` | versioned pgvector physical index compatibility, build state, and active pointer |
-| `placement_runs` / `placement_items` | observable processing workflow, stable claim identity, retry, failure state, semantic-hold projection, and successor links |
-| `submission_holds` | append-only immutable hold facts: assessment, reason, owner, terminal timestamp, and exact 24-hour expiry |
+| `placement_runs` / `placement_items` | observable Remember processing workflow, stable claim identity, retry, failure state, and terminal resubmission guidance |
 
 Terminal embedding jobs are coordination history, not canonical memory. A
 system-context retention pass deletes only `completed`, `stale`, and
@@ -156,9 +155,9 @@ removed by this retention path.
 Quarantined payloads are isolated from normal profile reads. Only system or
 migration transactions may purge the raw JSON after its database-enforced
 expiry; the purge appends a bounded `submission_quarantine_purged` outcome and
-retains tombstone hashes for audit. This retention path is separate from the
-semantic `submission_holds` lifecycle: a semantic hold is not security
-quarantine and is never exposed as raw provider or evidence payload.
+retains tombstone hashes for audit. This retention path is separate from
+Remember processing failures and is never exposed as raw provider or evidence
+payload.
 
 ### Persisted assessment and semantic review shape
 
@@ -208,35 +207,29 @@ V2.4 adds nullable audit fields to `verification_events` for
 `gate_result`. They remain null on legacy rows. `gate_result` is one of
 `meets_write_threshold`, `below_write_threshold`, or `not_applicable`.
 
-A semantic `review_tasks` row stores a public-safe question, bounded options,
-guidance, current state, and `expires_at`. Its public kind is
-`support_confidence`, `identity`, `predicate`, `scope`, or `time`; its state is
-`open`, `acknowledged`, `resolved`, `canceled`, or `expired`. Storage may retain
-the existing `task_type` and reason for historical rows while a versioned,
-closed mapping exposes the public kind. V2.4 does not rewrite a legacy task's
-meaning merely to rename it. An unresolved open/acknowledged semantic task
-closes at seven days.
-Security quarantine and durable cross-profile Conflict cases retain their own
-workflows and are not converted to expiring semantic review tasks.
-The V2.5 `remember` path does not create a review task for semantic uncertainty;
-it records the whole-submission hold below.
+Historical `review_tasks` rows may contain public-safe questions, bounded
+options, guidance, old task types, and expiry metadata. They are retained only
+for audit and are not a current client workflow: V2.5 has no task expiry worker,
+approval action, or Remember writer for this table. Security quarantine,
+caller-owned correction, and cross-profile Conflict cases use their dedicated
+workflows. The V2.5 `remember` path stores the complete normalizer response,
+applies server policy, and either promotes atomically or ends the run as
+`failed` with `submission_requires_resubmission` (or another closed error).
+There is no `submission_holds` table, hold projection, approval state,
+replacement slot, or successor link.
 
-### Immutable semantic holds and replacements
+### Restart and resubmission boundary
 
-`submission_holds` is an append-only fact ledger. Its `held_at` and `expires_at`
-are immutable, with `expires_at = held_at + 24 hours`; it has no mutable approval
-state. `placement_runs.semantic_hold_state`, version, and timestamp are the
-mutable projection. Hold expiry updates only that projection and appends an
-outcome, preserving the staged evidence, assessment, and audit lineage.
-
-`placement_runs.replaces_placement_run_id` links a complete same-owner successor
-to the target hold, and `superseded_by_placement_run_id` records the successful
-promotion. A partial unique index permits one queued, guarded, or processing
-successor per target. Terminal non-success releases the slot without changing
-the target; successful semantic commit locks the target and atomically records
-target supersession plus successor promotion outcomes. RLS and explicit owner
-predicates make absent, cross-team, and cross-profile targets the same bounded
-not-found result.
+Migration `20260821160001_remember_normalizer` is an exclusive restart boundary.
+Unfinished `queued`, `guarded`, `processing`, and historical `awaiting_review`
+Remember placement runs/items identified by the explicit or pre-marker origin
+predicate and their ingest rows are terminalized as `failed`, their claims are
+cleared, and each item records `resubmit_submission` guidance. Unrelated
+non-Remember placement work remains untouched. Only placement-linked legacy
+review tasks attached to discarded Remember runs are canceled; unlinked
+correction/conflict audit rows remain unchanged. Completed canonical state is
+retained. Missing knowledge is intentionally resubmitted as one complete new
+Remember request with a new idempotency key.
 
 The exact Relationship identity, fields, and lifecycle belong only in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle). Entity
@@ -576,14 +569,16 @@ restores the backup and the matching application release before traffic opens.
 
 V2.4 follows the Relationship/search cutover. It changes
 write-time assessment and review workflow, not stored Relationship meaning,
-search projection text, or the numerical embedding contract.
+search projection text, or the numerical embedding contract. This section is
+historical migration context only: the V2.5 restart boundary below does not
+resume its semantic review workflow or expiry behavior.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
   Baseline["V2.3 data after the projection cutover"] --> Pause["Pause placement workers"]
   Pause --> Additive["Add assessment, audit,<br/>review-expiry, and team-config fields"]
-  Additive --> TTL["Give open semantic reviews<br/>a fresh seven-day expiry"]
+  Additive --> TTL["Record legacy review-expiry<br/>metadata for the transition"]
   TTL --> Deploy["Deploy V2.4 API and workers together"]
   Deploy --> New["Only new/in-flight claims use<br/>integrated assessment policy"]
 ```
@@ -597,9 +592,9 @@ The release migration must:
 3. add `placement_assessments`, stable claim keys, nullable assessment audit
    fields, the bounded team threshold override, and semantic review expiry
    fields without rewriting existing semantic rows
-4. set each currently unresolved semantic review (`open` or `acknowledged`) to
-   expire seven days after the V2.4 cutover; leave resolved/canceled/expired
-   tasks, security quarantine, and Conflict cases unchanged
+4. record the historical seven-day expiry metadata for unresolved semantic
+   reviews (`open` or `acknowledged`); leave resolved/canceled/expired tasks,
+   security quarantine, and Conflict cases unchanged
 5. deploy the API and workers using the integrated-assessor contract, then
    resume claims; an in-flight item with no persisted valid assessment opens
    one bounded conversation per durable provider attempt, while one with a
@@ -804,7 +799,8 @@ Commit resolution checks the complete team registry under a team/key advisory
 transaction lock. A compatible existing definition is reused; an absent key may
 be created with only the submitted endpoint kinds and an append-only
 registration event. An inactive, ambiguous, colliding, or kind-incompatible key
-holds the whole run with zero semantic commit and no client review task.
+fails the whole run with zero semantic commit and complete resubmission guidance;
+it does not create a client review task.
 
 The registry does not contain `policy_family`. The
 canonical contract and unknown-predicate behavior are defined in
@@ -919,7 +915,7 @@ drills. Runbook commands belong in
 | Mixed-version rollback corrupts search state | old workers interpret new generation fields or new workers run against restored old schema | treat application release and database backup as one rollback unit and prohibit mixed-version operation |
 | Restart causes a second assessor decision | a worker receives a valid response, loses its lease before semantic commit, then calls the model again | persist the first valid normalized response under a unique stable claim key and reload it on every retry |
 | V2.4 migration silently changes existing knowledge | a backfill applies the new threshold to legacy events and demotes active Relationships | keep new audit fields nullable, prohibit rescoring/status/support updates, and reconcile lifecycle counts before opening traffic |
-| Review expiry activates uncertain knowledge | an expiry job treats an unanswered confidence task as approval | expiry changes only workflow state; structurally complete Relationships remain pending and unresolved structures remain observations |
+| Retired review metadata is treated as current approval | an operator or new worker interprets an old expiry field as permission to promote | V2.5 creates no review task or expiry worker; unfinished Remember work fails and requires complete resubmission |
 
 ## Storage Invariants
 
@@ -972,7 +968,7 @@ drills. Runbook commands belong in
     restart, lease reclaim, and commit retry reuses it.
 30. V2.4 migration makes no model or embedding call and changes no existing
     Relationship status, support, search text, vector, or embedding job.
-31. Semantic review expiry closes the task without granting support or creating
+31. Retained legacy review rows are audit-only and never grant support or create
     active knowledge.
 
 ## Canonical Identity And Permanent Ownership Aliases
@@ -1054,10 +1050,16 @@ checks `space_generation` for subsequent writes. This prevents a writer that
 started before sealing from committing after the erasure fence. `team_shared`
 rows are constrained to stay active and are never private-erasure targets.
 Semantic trace, graph, node-detail, lifecycle, search-document, and embedding
-job reads retain the same active-space-generation predicate. Rows from a sealed
-private space may remain physically present until the fenced worker finishes,
-but they are not readable through those paths; a retired space is only reached
-after the worker has verified zero remaining rows.
+job reads, semantic assessment/review candidate catalogs, and lifecycle
+telemetry retain the same active-space-generation predicate. Placement runs and
+their outcomes carry the run's `space_id` and `space_generation`; placement
+claims require the catalog generation to be active and skip sealed or stale
+runs. Rows from a sealed private space may remain physically present until the
+fenced worker finishes, but they are not readable through those paths; a retired
+space is only reached after the worker has verified zero remaining rows.
+Recall-feedback snapshots also persist the team, space, and generation. Feedback
+updates require an exact team/space/generation match, and listing/getting filters
+to active current generations.
 
 The durable control tables are:
 
@@ -1065,6 +1067,7 @@ The durable control tables are:
 | --- | --- |
 | `private_memory_legal_holds` | durable placement/release history; at most one active hold per space |
 | `private_memory_erasure_operations` | idempotent target, requested generation, action, lease/fence, manifest position, counts, and terminal state |
+| `private_memory_erasure_idempotency_keys` | system-only canonical and retirement-alias idempotency mappings to one erasure operation |
 | `private_memory_retention_runs` | cutoff, configured retention days, queued count, actor class, and completed run receipt |
 
 An erasure request and its space seal commit together. Workers claim with an
@@ -1078,8 +1081,16 @@ target, and retirement outcome. Completion is allowed only after every manifest
 table reports zero rows for the space. Audit rows retain their identity,
 operation, actor, and time, but private before/after payloads are set to null
 and metadata becomes `{"private_content_erased":true}`. Credential deletion
-writes its safe revocation audit row in the same transaction before exposing
-the erasure operation; an audit failure rolls back disablement and queueing.
+writes its safe `DELETE` or `REVOKE` audit row in the same transaction before
+exposing the erasure operation; an audit failure rolls back disablement and
+queueing. When an SSO credential deletion arrives while an erase is active, its
+second idempotency mapping can upgrade that same operation to credential
+retirement without changing the sealed target generation or worker fence.
+Replaying either mapping with a different request hash remains a conflict.
+
+Team hard-delete retains append-only audit rows. Removing a memory-space catalog
+row sets `audit_log.memory_space_id` to `NULL` through its foreign key rather
+than deleting the audit record.
 
 Boot scans PostgreSQL for every table that owns or references a `space_id` and
 compares it with the compiled erasure manifest. An unknown or missing table,

@@ -46,7 +46,7 @@ records, not Prometheus.
 | `densemem_verify_verdict_total` | `model`, `outcome` | Compatibility collector for server-recorded verifier verdict outcomes; it is not a dashboard catalog item. |
 | `densemem_remember_acknowledgements_total` | `outcome` | Remember requests acknowledged after durable evidence staging. |
 | `densemem_remember_acknowledgement_duration_seconds` | `outcome` | Time from remember request receipt to durable acknowledgement. |
-| `densemem_remember_first_disposition_total` | `status` | First durable placement disposition: `completed`, `awaiting_review`, `failed`, or `quarantined`. |
+| `densemem_remember_first_disposition_total` | `status` | First durable placement disposition: `completed`, `failed`, or `quarantined`. |
 | `densemem_remember_first_disposition_duration_seconds` | `status` | Time from durable staging to the first placement disposition. |
 | `densemem_ai_operation_tokens_total` | `operation`, `component`, `model`, `kind`, `source` | Tokens used by a cost-accounted verifier or embedding operation. |
 | `densemem_ai_operation_cost_usd_total` | `operation`, `component`, `model`, `source` | Estimated USD cost using the current operator rate card. |

@@ -42,7 +42,9 @@ one of the following:
 - neither is eligible when its endpoints are inactive, its Relationship has a
   challenge or open review, or it has no usable exact excerpt.
 
-A V2.5 whole-submission semantic hold is not a Relationship or Dream input.
+An unfinished or failed Remember submission is not a Relationship or Dream
+input. It must be resubmitted as a complete batch before it can produce
+canonical knowledge.
 
 The server then constructs only direct, directed two-edge paths:
 
@@ -395,8 +397,8 @@ related Hypothesis retrieval.
 | Pending-state pollution | weak insufficient text becomes an active edge through dreaming | Hypothesis-only output; no lifecycle mutation; new evidence must enter `remember` |
 | Dream invents nodes | generator creates a new “search freshness” Entity to complete an idea | endpoint allowlists, existing-ID validation, and reject any unknown ID |
 | Dream invents predicates | plausible free-form verb becomes durable graph vocabulary | registry allowlist and rejection; only an authorized registry workflow can add predicates |
-| Provider failure becomes a seed | invalid assessor output is treated as an assessed legacy pending Relationship | require a final schema-valid assessment plus an expired legacy semantic review for pending-input eligibility |
-| Expiry becomes promotion | an unanswered review directly creates a Hypothesis or active edge | expiry changes only review state; Dream may later read an already resolved pending Relationship and still emits Hypothesis only |
+| Provider failure becomes a seed | invalid or failed Remember output is treated as an assessed pending Relationship | require a persisted schema-valid legacy assessment and the existing pending-input policy; failed current runs are never Dream input |
+| Retired review metadata becomes promotion | an old expiry field is treated as permission to create a Hypothesis or active edge | review-task rows are audit-only; Dream may read only an already eligible pending Relationship and still emits Hypothesis only |
 | Circular evidence | generated statement is submitted as its own proof | require independent user/external evidence and reject Hypothesis/source text as support |
 | AI invents a premise | provider fabricates an entity, evidence, or relation to make a plausible link | server builds paths first; opaque refs, closed schema, exact two-premise citations, and current-state revalidation reject it |
 | Primary recall contamination | Hypothesis is ranked with Evidence | separate table, response field, and query path |
@@ -415,8 +417,9 @@ related Hypothesis retrieval.
    change, or SemanticEdge
 2. every endpoint and source ID already exists in the same team
 3. every proposed predicate is registered for the endpoint kinds
-4. legacy pending Relationships are eligible only after a schema-valid final
-   `insufficient` or below-threshold assessment and legacy semantic review expiry
+4. legacy pending Relationships are eligible only after their retained
+   schema-valid assessment and the existing pending-input policy; a failed
+   Remember submission is never treated as a pending Relationship
 5. primary recall never contains Hypotheses
 6. confirmation without new evidence fails
 7. submitted evidence enters the normal strict `remember` pipeline
@@ -434,7 +437,7 @@ related Hypothesis retrieval.
     cannot commit provider output
 14. equivalent authored Relationships do not multiply dream weight
 15. unresolved cross-profile conflict sets are not dream premises
-16. review expiry never creates a Hypothesis, support link, or active
+16. retained review-task rows never create a Hypothesis, support link, or active
     Relationship directly
 17. a scheduled cycle is team-owned and has no initiating or creating profile
 18. a late scheduler start records `missed` rather than running catch-up work

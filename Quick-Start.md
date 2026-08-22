@@ -66,11 +66,14 @@ gate. Follow
 [Relationship projection upgrade](Operations-Runbook#relationship-projection-upgrade).
 
 Only after that prerequisite is complete, apply the V2.4 secure-submission
-upgrade. It stages safe legacy queued/processing work, preserves accepted
-semantic state, terminalizes unresolved legacy review work, and replaces the
-public placement/review loop with server-owned submissions. It does not rescore
-accepted legacy knowledge or re-embed data. Do not run mixed-version API or
-workers in the cutover.
+upgrade and then the current V2.5 Remember normalizer restart migration. The
+V2.5 migration is a hard restart boundary: it preserves accepted canonical
+state, terminalizes unfinished queued/guarded/processing and historical
+`awaiting_review` placement work with `submission_requires_resubmission`, and
+cancels only placement-linked review tasks attached to that discarded work. It
+does not create a cutover marker or a new queue/hold table. Callers resubmit
+missing knowledge as one complete batch with a new idempotency key. Do not run
+mixed-version API or workers in the cutover.
 
 ## 2. Configure Required Values
 
@@ -186,7 +189,7 @@ flowchart LR
   Intake --> Poll["get_submission_status"]
   Poll --> State{"processing_state"}
   State -- queued/processing --> Poll
-  State -- awaiting_review --> Replace["Read semantic_hold issues;<br/>submit one complete replacement"]
+  State -- failed --> Diagnose["Read closed errors;<br/>resubmit the complete batch"]
   State -- rejected --> New["Submit new complete evidence-and-Relationships batch if appropriate"]
   State -- quarantined --> Isolated["Do not use content; optional fresh independent batch"]
   State -- failed --> Diagnose["Use safe error and correlation ID"]
@@ -200,8 +203,8 @@ flowchart LR
 Valid outcomes:
 
 - completed canonical promotion with active eligible support
-- an `awaiting_review` semantic hold with zero semantic commit and bounded
-  whole-submission replacement guidance
+- a failed terminal run with zero semantic commit and bounded
+  `resubmit_submission` guidance
 - explicit rejected, quarantined, or failed terminal outcome
 - a separate search state: pending/current/not_required/failed
 - no client approval task, placement selection, or quarantine-release action

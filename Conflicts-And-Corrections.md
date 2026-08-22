@@ -1,9 +1,10 @@
 # Conflicts And Corrections
 
 Dense-Mem preserves raw evidence and resolves stale authored state with audited
-Relationship lifecycle transitions. When identity, predicate, scope, time, or
-current-state behavior cannot be resolved safely, it returns a whole-submission
-semantic hold with bounded correction guidance. A profile cannot mutate another profile's Relationship, but
+Relationship lifecycle transitions. Remember normalizes structure before the
+server applies deterministic policy; if that complete run cannot be promoted,
+it fails with bounded resubmission guidance and zero semantic commit. A profile
+cannot mutate another profile's Relationship, but
 the bounded system Conflict reviewer may close a losing team Relationship episode
 after an evidence-backed case resolution. Evidence bytes, observations, support
 links, and author attribution remain immutable.
@@ -28,7 +29,7 @@ sequenceDiagram
   User->>Host: Production now deploys from release
   Host->>DM: remember(new evidence)
   DM->>PG: Preserve evidence, observation, VerificationEvent, and conflict
-  DM-->>Host: awaiting_review + semantic_hold issues
+  DM-->>Host: failed + resubmit_submission guidance
   Host->>DM: trace_memory(related relationship_id)
   DM->>PG: Load current state and append-only history
   PG-->>DM: Existing/new evidence, decisions, and transitions
@@ -50,12 +51,12 @@ cross-reference to the other profile's record.
 
 | Cause | Example | Safe result |
 | --- | --- | --- |
-| Entity ambiguity | context now suggests a different person named Mark | hold the complete submission; no guessed split or dependent edge |
-| Predicate ambiguity | “Dense-Mem dogfoods PostgreSQL” cannot be resolved or registered safely | hold the complete submission with a predicate issue |
-| Scope ambiguity | “uses PostgreSQL” may mean production or tests | hold the complete submission and request a corrected batch |
-| Current-state conflict | production has competing `deploys_from` values | preserve current history and hold the new complete submission |
-| Temporal ambiguity | new evidence may describe past rather than current state | hold the complete submission with a temporal issue |
-| Insufficient change evidence | weak evidence should not replace a supported current Relationship | hold the complete submission with zero semantic commit and preserve the current Relationship |
+| Entity ambiguity | context now suggests a different person named Mark | fail the complete Remember run; no guessed split or dependent edge |
+| Predicate ambiguity | “Dense-Mem dogfoods PostgreSQL” cannot be resolved or registered safely | fail the run with zero semantic commit and resubmission guidance |
+| Scope ambiguity | “uses PostgreSQL” may mean production or tests | fail the run and request a corrected complete batch |
+| Current-state conflict | production has competing `deploys_from` values | preserve current history; fail the new Remember run if policy cannot decide |
+| Temporal ambiguity | new evidence may describe past rather than current state | fail the run with zero semantic commit and bounded guidance |
+| Insufficient change evidence | weak evidence should not replace a supported current Relationship | fail the run and preserve the current Relationship |
 | Correction ambiguity | “that is wrong” identifies no Relationship | request `relationship_id` or a disambiguating query |
 | Cross-profile disagreement | profile B supplies stronger evidence against profile A's Relationship | preserve A, create B's eligible Relationship, append a challenge/correction cross-reference, and create/update the team Conflict case |
 
@@ -396,8 +397,8 @@ An opaque “accept or reject?” prompt is insufficient.
 
 Entity, predicate, scope, and temporal ambiguity remain isolated in the
 assessment ledger. The client receives only the bounded submission state from
-`get_submission_status`; it cannot select a candidate, release a quarantine,
-acknowledge a review task, or append a decision to an existing submission.
+`get_submission_status`; it cannot select a candidate, release a quarantine, or
+append a decision to an existing submission.
 
 When new source material resolves the ambiguity, submit one complete,
 authenticated `remember` request with exact evidence, logical Relationships,

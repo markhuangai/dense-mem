@@ -473,17 +473,18 @@ reject; valid bidirectional prose and descriptive quotations remain eligible.
 Safe audit metadata contains bounded decisions, rules, sources, and spans, not a
 scanner version or policy hash.
 
-The assessor receives the full staged submission plus bounded candidate/predicate
-context in one capability-free structured request. It has no tools, credentials,
-environment data, request headers, cross-team records, or prior raw evidence
-history. It must return one security verdict and bounded justification per
-evidence item. Its output cannot clear a deterministic signal, select an
-unprovided stored ID, create support, release quarantine, set lifecycle status,
-or commit canonical state.
+The Remember normalizer receives the full staged submission plus bounded
+candidate/predicate context in one capability-free structured request. It has no
+tools, credentials, environment data, request headers, cross-team records, or
+prior raw evidence history. It returns structure only: complete security
+signals, allowlisted groundings, predicate/range selections, and submitted
+endpoints. It cannot return confidence, rationale, ownership, lifecycle,
+review, or promotion fields. The server validates the complete response and
+applies all durable policy before the atomic commit.
 
 A `hidden_control_markup` output must cite an exact span with a covered hidden
-control or active markup. Otherwise the closed assessor response is invalid and
-cannot create a quarantine.
+control or active markup. Otherwise the closed normalizer response is invalid
+and cannot create a quarantine.
 
 A worker-time deterministic or model security concern quarantines the staged
 submission. For a deterministic worker hit, PostgreSQL atomically records the
@@ -491,10 +492,12 @@ matching placement fragment's security event, quarantine record, and terminal pl
 PostgreSQL retains an isolated raw payload copy for exactly 24 hours, then
 hard-deletes that copy. Append-only evidence, identifiers, hashes, security
 events, and lineage remain restricted audit history and are never recallable or
-provider input. A client can only submit a new complete replacement linked to the quarantined
-submission; it cannot negotiate, release, or append evidence to it. Complete
-closed-schema validation is required before one atomic canonical promotion; no
-partial semantic commit is allowed.
+provider input. A client can only submit a new independent complete batch; it
+cannot negotiate, release, or append evidence to quarantined data. Complete
+closed-schema normalizer validation is required before one atomic canonical
+promotion; no partial semantic commit is allowed. Normalizer correction is
+bounded to the same conversation, and exhaustion returns terminal resubmission
+guidance.
 
 ## Audit
 
@@ -559,13 +562,14 @@ audit ledger.
     explicit API-key portal sessions and SSO sessions use HttpOnly/SameSite
     cookies, CSRF protection, and current-authorization revalidation
 13. no client can release a quarantine or append evidence to an existing
-    submission; a replacement is a fresh complete submission
+    submission; recovery is a fresh complete submission with a new idempotency key
 14. a source revision can be advanced only by its immutable source owner and an
     exact expected prior token
 15. semantic memory tools are visible and executable through MCP only; generic
     HTTP discovery and execution routes cannot expose them
-16. deterministic security rejection happens before staging, and every assessor
-    response contains one security verdict for every staged evidence item
+16. deterministic security rejection happens before staging, and every
+    Remember-normalizer response contains complete, exact security signals for
+    the staged evidence boundary
 17. the quarantined raw payload copy is isolated for exactly 24 hours and then
     hard-deleted; immutable source evidence and lineage remain restricted audit
     history;

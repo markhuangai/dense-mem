@@ -412,8 +412,8 @@ change relies on it.
     makes zero provider calls.
 19. The confidence threshold gates only positive entailed Relationship support
     and never resolves structure, time, security, or conflict.
-20. Semantic review expiry closes workflow without activating knowledge or
-    directly creating a Hypothesis.
+20. Retained legacy review rows are audit-only; they never activate knowledge or
+    directly create a Hypothesis.
 21. V2.4 changes no search projection or embedding input and therefore requires
     no re-embedding.
 22. MCP has one current closed schema per running server; clients do not select

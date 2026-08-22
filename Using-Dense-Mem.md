@@ -119,7 +119,6 @@ processing state:
 | --- | --- | --- |
 | queued | Isolated staging is waiting for the worker. | Poll later. |
 | processing | The worker holds a current assessment lease. | Poll later. |
-| awaiting_review | The complete submission is held with zero semantic commit. | Read `semantic_hold.issues` and submit one complete corrected replacement. |
 | completed | Canonical evidence/semantic state promoted atomically. | Recall or trace normally. |
 | rejected | Server semantic policy rejected the submission. | Submit a new complete request if new evidence exists. |
 | quarantined | Security concern; data is isolated. | Do not use it. Submit a separate replacement only if appropriate. |
@@ -134,11 +133,12 @@ Clients should execute that guidance instead of inferring recovery from the
 message text.
 
 Status also includes per-evidence search readiness and bounded reason codes.
-For `awaiting_review`, `semantic_hold` contains up to 50 bounded issues, an
-`issues_truncated` flag, and replacement guidance with the required
-`replaces_submission_id`. The replacement is one complete corrected batch, not
-a patch or approval. Status does not include placement IDs, assessor prompts,
-raw responses, review tasks, or a control that overrides server policy.
+There is no `awaiting_review` state, `semantic_hold` object, replacement slot,
+or approval action. Normalization, policy, provider, and persistence failures
+return closed error guidance; `resubmit_submission` means send one complete
+corrected batch with a new idempotency key. Status does not include placement
+IDs, assessor prompts, raw responses, review tasks, or a control that overrides
+server policy.
 
 quarantined submissions retain an isolated raw payload copy for exactly 24
 hours, then that copy is hard-deleted. The append-only evidence, identifiers,
@@ -189,9 +189,11 @@ can still show prior knowledge.
 ## Entity Reuse and Predicates
 
 The client can include a known_entity_id only as a same-team candidate hint. The
-assessor normalizes its evidence-grounded Entity proposal using bounded
-candidates and the team predicate catalog. The server then validates and commits
-the result.
+Remember normalizer returns only evidence-grounded structure using bounded
+candidates and the team predicate catalog. Complete-response validation and
+bounded same-history regeneration happen before the server adapts the result to
+the atomic commit path. The server, not the model, supplies confidence,
+ownership, lifecycle, and promotion policy.
 
 A novel predicate candidate can be accepted and registered by the server in the
 same atomic promotion transaction. There is no predicate review task and no

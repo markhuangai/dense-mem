@@ -266,14 +266,14 @@ real PostgreSQL/`pgvector` instance and actual service logic.
 - repeated same-owner evidence attaches to one Relationship
 - another profile's equivalent/correcting evidence creates its own Relationship
   and cross-reference
-- `insufficient` holds the complete V2.5 submission with no semantic write or
-  SemanticEdge
+- `insufficient` fails the complete V2.5 submission with no semantic write or
+  SemanticEdge and bounded resubmission guidance
 - one accepted entailed support at or above the effective team threshold
   activates the Relationship
-- entailed support or grounding below the threshold holds the complete V2.5
+- entailed support or grounding below the threshold fails the complete V2.5
   submission without a review task; confidence equal to the threshold passes
 - a threshold change affects future/in-flight commits and never rescores a
-  completed or held assessment
+  completed or failed assessment
 - additional independent accepted sources improve provenance but do not change
   lifecycle class or correlation rank
 - two stored Relationships do not automatically prove a third Relationship
@@ -345,9 +345,9 @@ workers from persisting different valid responses.
 - two or more evidence items and every distinct relationship ref are sent in
   one logical assessor conversation, including two relationships that cite the
   same evidence index
-- one invalid, low-confidence, unresolved, or incompatible result leaves every
-  sibling without semantic state and records one `awaiting_review` semantic
-  hold without a review task
+- one invalid, unresolved, or incompatible result leaves every sibling without
+  semantic state and terminalizes the complete Remember run with bounded
+  `resubmit_submission` guidance; it creates no review task or partial state
 - repeated names, active aliases, Unicode boundaries, and overlapping
   Relationships prove that the server issues bounded grounding choices and the
   assessor cannot select a range outside each Relationship's cited evidence
@@ -358,41 +358,26 @@ workers from persisting different valid responses.
   the latest definition, and records created/reused append-only provenance
 - real PostgreSQL A/B/C tests cover catalog isolation, run binding, all-or-zero
   commit, rollback after a later sibling failure, and registration races
-- real PostgreSQL tests cover the semantic-hold expiry boundary, immutable hold
-  facts, concurrent expiry idempotency, cross-profile/team replacement denial,
-  failed-successor release, and successful atomic supersession
+- real PostgreSQL tests cover the restart boundary, terminalization of every
+  unfinished run/item state, cleared claims, zero semantic writes, and absence
+  of the obsolete hold table/columns
+- status and control-diagnostic tests verify bounded `resubmission_issues`
+  survive storage hydration and are merged into the closed resubmission error
+  without exposing provider or database details
 - a live Compose MCP E2E uses an actual credential and proves one request over
   multiple evidence/relationships promotes atomically
 
-### Semantic holds and replacement submissions
+### Restart and resubmission
 
-- a policy-held submission has one append-only hold fact, no review task, no
-  semantic/search writes, and an exact 24-hour expiry
-- expiry immediately before, at, and after the boundary is state-only and one
-  of two concurrent workers records the transition
-- an optional `replaces_submission_id` accepts only an owned active/expired hold;
-  absent, cross-profile, cross-team, and superseded targets are bounded
-- a staged/processing/held/rejected/quarantined/failed successor leaves the
-  target unchanged, while the first successful successor atomically supersedes
-  it and records both audit outcomes
-
-### Legacy semantic review expiry
-
-The V2.5 remember path uses 24-hour whole-submission holds; these seven-day
-cases cover retained legacy review tasks. Use an injected virtual clock; do not
-sleep for seven days. Cover every semantic kind (`support_confidence`,
-`identity`, `predicate`, `scope`, and `time`) at one instant before, exactly at,
-and one instant after `expires_at`.
-
-- only `open` or `acknowledged` tasks become `expired`
-- expiry is idempotent under two workers and lease recovery
-- expiry grants no support and creates no active Relationship or Hypothesis
-- a structurally complete pending Relationship becomes Dream-eligible only
-  after expiry
-- unresolved identity, predicate, scope, or time remains Evidence plus
-  Observation only
-- selecting a supplied Entity/predicate option reuses the persisted assessment
-  and makes zero assessor calls
+- the migration terminalizes queued, guarded, processing, and historical
+  `awaiting_review` Remember work in one transaction and cancels only linked
+  placement review rows
+- terminalized items expose `submission_requires_resubmission` and
+  `resubmit_submission`, with no semantic/search writes
+- no Remember code or schema path creates a hold, replacement slot, or approval
+  action
+- a complete resubmission uses a new idempotency key and follows the same
+  scanner, normalizer, policy, and atomic commit path
 - accept/correct with exact new evidence creates one new placement claim and
   one bounded assessor conversation
 - security quarantine and cross-profile Conflict cases are unaffected
@@ -554,12 +539,13 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 
 - domain term has one canonical owner in the wiki
 - no active pending Relationship or Hypothesis path
-- assessor response remains closed and atomic; malformed correction stays in
-  one history for at most five turns, while provider failures use durable retry
-- first valid assessment is persisted and reused before semantic policy/commit
-- positive-support confidence gates only entailed Relationships; it cannot
-  override identity, predicate, scope, time, security, or conflict holds
-- legacy semantic review expiry never grants support or creates a Hypothesis directly
+- Remember-normalizer response remains closed and atomic; malformed correction
+  stays in one history for at most five turns, while provider failures use
+  durable retry
+- the first valid normalizer response is persisted and reused before semantic
+  policy/commit
+- server policy gates promotion and cannot override identity, predicate, scope,
+  time, security, or conflict decisions
 - scanner decisions and model signals can only restrict semantic processing
 - source currentness, support revocation, status transition, and search intent commit
   atomically
@@ -581,7 +567,7 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 | Unit mocks hide storage bugs | mocked repository passes while RLS or unique identity fails | real PostgreSQL/`pgvector` integration is required |
 | Assessor accommodation returns | adapter accepts old/alternate field names to keep tests green | one committed schema, negative fixtures, same-history complete regeneration, and no local coercion |
 | Restart breaks assessment reuse | a valid response is lost before semantic commit and the next worker starts another conversation | append-once assessment row, stable claim key, and crash/lease/transaction integration fixtures |
-| Seven-day tests become slow or flaky | tests use wall-clock sleeps or race the expiry scheduler | injected clock with exact boundary cases and two-worker idempotency checks |
+| Legacy audit-row fixtures become misleading | a test treats retained review metadata as a live client workflow | assert audit-only storage and use real correction/Conflict fixtures for active workflows |
 | V2.4 migration triggers unnecessary vectors | a broad version bump rewrites search documents and queues embeddings | populated projection-migration fixture, before/after search hashes/job counts, and a hard zero-provider-call assertion |
 | ANN benchmark is misleading | global unfiltered test passes while small tenants lose results | tenant-filtered exact baseline under representative skew/concurrency |
 | Cross-profile tests collapse to one actor | ownership bugs pass because every fixture uses one profile | mandatory A/B/C read, correct, split, adopt, and forget integration cases |
@@ -595,7 +581,7 @@ The implementation is release-ready only when:
 
 1. every target domain/storage/API acceptance invariant passes
 2. PostgreSQL and `pgvector` integration tests run in CI
-3. strict assessor fixtures prove zero partial commits, exact same-history
+3. strict normalizer fixtures prove zero partial commits, exact same-history
    correction with five-turn exhaustion, and separate durable provider retry
 4. exact-vs-ANN recall and concurrent load meet release gates
 5. server, Compose, configuration, readiness, documentation, and dependencies
@@ -608,8 +594,8 @@ The implementation is release-ready only when:
    and unchanged Evidence/index contracts
 9. V2.4 migration tests start after the projection migration and prove zero model calls, rescoring,
    lifecycle/search mutation, embedding jobs, or re-embedding
-10. virtual-clock tests prove legacy seven-day semantic review expiry and the
-    pending-to-Dream boundary without promotion
+10. restart-migration tests prove unfinished Remember work is terminalized with
+    zero promotion and complete resubmission guidance
 11. paired multi-round scripted and real-host evaluation reports placement
     quality, confidence reliability, call/token/latency savings, and review
     burden

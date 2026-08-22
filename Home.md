@@ -76,7 +76,7 @@ profiles disagree       -> preserve each author; use a team Conflict case
 new real identity       -> create one Entity
 new relationship        -> create one Relationship
 actual ambiguity        -> server assessment; no client resolution loop
-uncertain grounding/evidence -> semantic hold; no semantic commit/default recall
+uncertain grounding/evidence -> failed complete run; resubmit; no semantic commit/default recall
 dream speculation       -> Hypothesis only; no new node
 ```
 
