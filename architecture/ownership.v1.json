@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "enforced_through_issue": 261,
+  "enforced_through_issue": 262,
   "module": "github.com/markhuangai/dense-mem",
   "allowed_targets": {
     "domain": ["domain"],
