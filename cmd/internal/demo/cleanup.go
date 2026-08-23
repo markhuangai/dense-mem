@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -71,13 +71,13 @@ func (r *Repository) ExpiredTeamIDs(ctx context.Context, now time.Time, limit in
 
 type Cleaner struct {
 	repo     ExpiredTeamRepository
-	teams    service.TeamService
+	teams    accessservice.TeamService
 	interval time.Duration
 	batch    int
 	now      func() time.Time
 }
 
-func NewCleaner(repo ExpiredTeamRepository, teams service.TeamService, interval time.Duration) *Cleaner {
+func NewCleaner(repo ExpiredTeamRepository, teams accessservice.TeamService, interval time.Duration) *Cleaner {
 	if interval <= 0 {
 		interval = 10 * time.Minute
 	}

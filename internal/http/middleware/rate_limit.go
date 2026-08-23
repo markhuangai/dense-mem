@@ -10,11 +10,11 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 // RateLimitMiddleware creates a rate limiting middleware using the fixed-window algorithm.
-func RateLimitMiddleware(svc service.RateLimitServiceInterface, cfg config.ConfigProvider, auditSvc service.AuditService) echo.MiddlewareFunc {
+func RateLimitMiddleware(svc accessservice.RateLimitServiceInterface, cfg config.ConfigProvider, auditSvc accessservice.AuditService) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			// Get the principal from context
@@ -85,7 +85,7 @@ func rateLimitRoutePath(routePath string) string {
 }
 
 // logRateLimit logs and audits a rate limit event.
-func logRateLimit(c echo.Context, auditSvc service.AuditService, profileID, routePath string, limit, remaining int, resetAt time.Time) {
+func logRateLimit(c echo.Context, auditSvc accessservice.AuditService, profileID, routePath string, limit, remaining int, resetAt time.Time) {
 	if auditSvc == nil {
 		return
 	}

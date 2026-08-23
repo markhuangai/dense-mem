@@ -95,7 +95,7 @@ func TestSecurityServiceDeleteSecurityBanResetsFailures(t *testing.T) {
 func TestSecurityServiceSettingsManualBanAndHelpers(t *testing.T) {
 	repo := newFakeSecurityRepository()
 	audit := new(MockAuditService)
-	audit.On("Append", mock.Anything, mock.AnythingOfType("service.AuditLogEntry")).Return(nil)
+	audit.On("Append", mock.Anything, mock.AnythingOfType("access.AuditLogEntry")).Return(nil)
 	svc := NewSecurityService(repo, audit)
 	now := time.Now().UTC()
 	svc.now = func() time.Time { return now }

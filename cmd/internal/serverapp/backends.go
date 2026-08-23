@@ -7,7 +7,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
 	"github.com/markhuangai/dense-mem/internal/storage/redis"
@@ -16,7 +16,7 @@ import (
 // backendBundle holds the wired backend components for either Redis or in-memory mode.
 type backendBundle struct {
 	cleanupRepo        redis.CleanupRepositoryInterface
-	rateLimitService   service.RateLimitServiceInterface
+	rateLimitService   accessservice.RateLimitServiceInterface
 	counterStore       CounterStore
 	concurrencyLimiter sse.ConcurrencyLimiter
 	streamCleanupRepo  sse.StreamCleanupRepository
@@ -47,7 +47,7 @@ func buildRedisBackend(ctx context.Context, cfg config.Config) (*backendBundle, 
 
 	redisCleanup := redis.NewCleanupRepository(redisClient.GetClient())
 
-	rateLimitService := service.NewRateLimitService(redisClient)
+	rateLimitService := accessservice.NewRateLimitService(redisClient)
 
 	concurrencyLimiter := sse.NewConcurrencyLimiterWithConfig(redisClient, cfg.SSEMaxConcurrentStreams, 3600)
 	streamCleanupRepo := sse.NewStreamCleanupRepository(redisClient)
@@ -67,7 +67,7 @@ func buildRedisBackend(ctx context.Context, cfg config.Config) (*backendBundle, 
 
 func buildInMemoryBackend(cfg config.Config) (*backendBundle, error) {
 	inmemStore := inmem.NewInMemoryRateLimitStore()
-	rateLimitService := service.NewRateLimitService(inmemStore)
+	rateLimitService := accessservice.NewRateLimitService(inmemStore)
 
 	concurrencyLimiter := inmem.NewInMemoryConcurrencyLimiter(cfg.SSEMaxConcurrentStreams, time.Hour)
 	streamCleanupRepo := inmem.NewNoopStreamCleanupRepository()

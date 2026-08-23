@@ -16,55 +16,14 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-// AuditLogEntry represents a single audit log entry to be written.
-type AuditLogEntry struct {
-	ID            string
-	ProfileID     *string
-	MemorySpaceID *string
-	Timestamp     time.Time
-	Operation     string
-	EntityType    string
-	EntityID      string
-	BeforePayload map[string]interface{}
-	AfterPayload  map[string]interface{}
-	ActorKeyID    *string
-	ActorRole     string
-	ClientIP      string
-	CorrelationID string
-	Metadata      map[string]interface{}
-}
-
-// AuditService is the companion interface for audit logging operations.
-// Consumers and tests depend on this abstraction rather than the concrete struct.
-type AuditService interface {
-	Append(ctx context.Context, entry AuditLogEntry) error
-
-	// List retrieves audit log entries for a specific team with pagination.
-	// Returns entries, total count, and error.
-	List(ctx context.Context, teamID string, limit, offset int) ([]AuditLogEntry, int, error)
-
-	// Team lifecycle helpers preserve historical audit entity values.
-	TeamCreated(ctx context.Context, teamID string, afterPayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error
-	TeamUpdated(ctx context.Context, teamID string, beforePayload, afterPayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error
-	TeamDeleteBlocked(ctx context.Context, teamID string, beforePayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string, reason string) error
-	TeamDeleted(ctx context.Context, teamID string, beforePayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error
-
-	// Credential lifecycle helpers preserve historical audit field values.
-	CredentialCreated(ctx context.Context, teamID *string, credentialID string, afterPayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error
-	CredentialRevoked(ctx context.Context, teamID *string, credentialID string, beforePayload map[string]interface{}, actorCredentialID *string, actorRole, clientIP, correlationID string) error
-
-	// Security event helpers
-	AuthFailure(ctx context.Context, profileID *string, entityType, entityID string, metadata map[string]interface{}, clientIP, correlationID string) error
-	CrossTeamDenied(ctx context.Context, actorTeamID, targetTeamID string, operation string, metadata map[string]interface{}, clientIP, correlationID string) error
-	RateLimited(ctx context.Context, profileID *string, operation string, metadata map[string]interface{}, clientIP, correlationID string) error
-
-	// System event helpers
-	SystemQuery(ctx context.Context, queryType string, metadata map[string]interface{}, actorKeyID *string, actorRole, clientIP, correlationID string) error
-	InvariantViolation(ctx context.Context, entityType, entityID string, violation string, metadata map[string]interface{}, clientIP, correlationID string) error
-}
+// AuditLogEntry and AuditService remain source-compatible aliases while the
+// access capability owns the consumer-facing audit port.
+type AuditLogEntry = accessservice.AuditLogEntry
+type AuditService = accessservice.AuditService
 
 // AuditServiceImpl implements the AuditService interface.
 type AuditServiceImpl struct {

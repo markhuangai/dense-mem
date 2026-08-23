@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "enforced_through_issue": 260,
+  "enforced_through_issue": 261,
   "module": "github.com/markhuangai/dense-mem",
   "allowed_targets": {
     "domain": ["domain"],
@@ -46,6 +46,7 @@
       {"id": "github.com/markhuangai/dense-mem/internal/repository", "capability": "legacy-storage-adapter", "role": "adapter"},
       {"id": "github.com/markhuangai/dense-mem/internal/requestctx", "capability": "request-context-policy", "role": "domain"},
       {"id": "github.com/markhuangai/dense-mem/internal/service", "capability": "application-services", "role": "application_api"},
+      {"id": "github.com/markhuangai/dense-mem/internal/service/access", "capability": "access-application", "role": "application_api"},
       {"id": "github.com/markhuangai/dense-mem/internal/service/classification", "capability": "classification-policy", "role": "domain"},
       {"id": "github.com/markhuangai/dense-mem/internal/service/communityservice", "capability": "community-application", "role": "application_api"},
       {"id": "github.com/markhuangai/dense-mem/internal/service/conflictqueue", "capability": "conflict-application", "role": "application_api"},
@@ -122,6 +123,7 @@
     {"source": "github.com/markhuangai/dense-mem/internal/http/middleware", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 276, "reason": "HTTP middleware still reaches the legacy repository adapter until transport consolidation."},
     {"source": "github.com/markhuangai/dense-mem/internal/mcp", "target": "github.com/markhuangai/dense-mem/internal/observability", "removal_issue": 276, "reason": "MCP transport still consumes the shared observability implementation until transport consolidation."},
     {"source": "github.com/markhuangai/dense-mem/internal/repository", "target": "github.com/markhuangai/dense-mem/internal/storage/postgres", "removal_issue": 265, "reason": "The legacy repository package still contains PostgreSQL adapter coupling until capability storage ownership is split."},
+    {"source": "github.com/markhuangai/dense-mem/internal/service/access", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 280, "reason": "Access policy now consumes consumer-owned ports, while the legacy repository implementation remains the staged PostgreSQL bridge until final architecture certification."},
     {"source": "github.com/markhuangai/dense-mem/internal/service", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 280, "reason": "The broad application service still consumes the legacy repository adapter until final architecture certification."},
     {"source": "github.com/markhuangai/dense-mem/internal/service", "target": "github.com/markhuangai/dense-mem/internal/storage/postgres", "removal_issue": 280, "reason": "The broad application service still consumes PostgreSQL during the staged adapter extraction."},
     {"source": "github.com/markhuangai/dense-mem/internal/service/communityservice", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 269, "reason": "Community application code still consumes the legacy repository until community storage ownership is isolated."},
@@ -187,7 +189,7 @@
     {"path":"internal/repository/submission_quarantine_payload_repository.go","function":"StartSubmissionQuarantinePurger","kind":"goroutine","ordinal":1,"role":"worker","owner_issue":277},
     {"path":"internal/service/communityservice/scheduler.go","function":"runDue","kind":"goroutine","ordinal":1,"role":"worker","owner_issue":277},
     {"path":"internal/service/communityservice/service.go","function":"RunScheduled","kind":"goroutine","ordinal":1,"role":"worker","owner_issue":277},
-    {"path":"internal/service/credential_activity.go","function":"Start","kind":"goroutine","ordinal":1,"role":"worker","owner_issue":277},
+    {"path":"internal/service/access/credential_activity.go","function":"Start","kind":"goroutine","ordinal":1,"role":"worker","owner_issue":277},
     {"path":"internal/service/embeddingservice/reconciliation.go","function":"Start","kind":"goroutine","ordinal":1,"role":"worker","owner_issue":277},
     {"path":"internal/service/embeddingservice/service.go","function":"newEmbeddingLeaseScope","kind":"goroutine","ordinal":1,"role":"worker","owner_issue":277},
     {"path":"internal/service/embeddingservice/service.go","function":"renewEmbeddingLeases","kind":"goroutine","ordinal":1,"role":"worker","owner_issue":277},

@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
 type Provisioner struct {
-	teams       service.TeamService
-	credentials service.CredentialService
+	teams       accessservice.TeamService
+	credentials accessservice.CredentialService
 	store       CounterStore
 	quotas      Quotas
 	now         func() time.Time
@@ -39,7 +39,7 @@ type ProvisionResponse struct {
 	Notice         string      `json:"notice"`
 }
 
-func NewProvisioner(teams service.TeamService, credentials service.CredentialService, store CounterStore, quotas Quotas) *Provisioner {
+func NewProvisioner(teams accessservice.TeamService, credentials accessservice.CredentialService, store CounterStore, quotas Quotas) *Provisioner {
 	return &Provisioner{
 		teams:       teams,
 		credentials: credentials,
@@ -68,7 +68,7 @@ func (p *Provisioner) Provision(ctx context.Context, opts ProvisionOptions) (*Pr
 	teamName := fmt.Sprintf("demo-%s-%s", now.Format("20060102-150405"), suffix)
 	credentialName := "demo-credential-" + suffix
 
-	team, err := p.teams.Create(ctx, service.CreateTeamRequest{
+	team, err := p.teams.Create(ctx, accessservice.CreateTeamRequest{
 		Name:        teamName,
 		Description: "Temporary dense-mem public demo team. Data expires automatically.",
 		Metadata: map[string]any{
@@ -83,12 +83,12 @@ func (p *Provisioner) Provision(ctx context.Context, opts ProvisionOptions) (*Pr
 		return nil, err
 	}
 
-	credential, rawKey, err := p.credentials.CreateCredential(ctx, team.ID, service.CreateCredentialRequest{
+	credential, rawKey, err := p.credentials.CreateCredential(ctx, team.ID, accessservice.CreateCredentialRequest{
 		Name:      credentialName,
 		RateLimit: quotas.PerMinuteRequests,
 		ExpiresAt: &expiresAt,
-		Scopes:    service.StandardCredentialScopes(),
-		Role:      service.CredentialRoleMember,
+		Scopes:    accessservice.StandardCredentialScopes(),
+		Role:      accessservice.CredentialRoleMember,
 	}, nil, "demo", opts.ClientIP, "demo-provision")
 	if err != nil {
 		_ = p.teams.Delete(ctx, team.ID, nil, "demo", opts.ClientIP, "demo-provision-rollback")

@@ -42,6 +42,7 @@ async function runScenario() {
   const ownerB = await createControlCredential(teamAID, `${runID} owner B`, "credential_private");
   const ownerC = await createControlCredential(teamC.id, `${runID} owner C`, "credential_private");
   const controlTarget = await createControlCredential(teamAID, `${runID} control`, "credential_private");
+  const idempotencyTarget = await createControlCredential(teamAID, `${runID} idempotency target`, "credential_private");
   const recoveryTarget = await createControlCredential(teamAID, `${runID} recovery`, "credential_private");
   const retentionEligible = await createControlCredential(teamAID, `${runID} retention eligible`, "credential_private");
   const retentionHeld = await createControlCredential(teamAID, `${runID} retention held`, "credential_private");
@@ -49,7 +50,7 @@ async function runScenario() {
   const ssoProfileCredential = await createSSOCredential(sso.a, `${runID} SSO profile`, "profile_private");
   const ssoSharedCredential = await createSSOCredential(sso.a, `${runID} SSO shared`, "shared_only");
 
-  for (const credential of [ownerA, ownerB, ownerC, controlTarget, recoveryTarget, retentionEligible, retentionHeld, ssoCredentialTarget, ssoProfileCredential, ssoSharedCredential]) {
+  for (const credential of [ownerA, ownerB, ownerC, controlTarget, idempotencyTarget, recoveryTarget, retentionEligible, retentionHeld, ssoCredentialTarget, ssoProfileCredential, ssoSharedCredential]) {
     sensitiveValues.add(credential.apiKey);
   }
   for (const actor of Object.values(sso)) {
@@ -63,6 +64,7 @@ async function runScenario() {
   const ownerBSpace = credentialSpace(spaces, ownerB.credential.id);
   const ownerCSpace = credentialSpace(spaces, ownerC.credential.id);
   const controlSpace = credentialSpace(spaces, controlTarget.credential.id);
+  const idempotencySpace = credentialSpace(spaces, idempotencyTarget.credential.id);
   const recoverySpace = credentialSpace(spaces, recoveryTarget.credential.id);
   const retentionEligibleSpace = credentialSpace(spaces, retentionEligible.credential.id);
   const retentionHeldSpace = credentialSpace(spaces, retentionHeld.credential.id);
@@ -136,7 +138,12 @@ async function runScenario() {
   const controlCompleted = await waitControlOperation(controlOperationID, "completed");
   const controlReplay = await controlErasure(controlSpace.id, "control-erase");
   assert(controlReplay.status === 202 && controlReplay.payload.data?.operation_id === controlOperationID, "control idempotency replay changed operation");
-  await expectStatus(controlErasure(ownerBSpace.id, "control-erase"), 409, "control idempotency key was reused for a different target");
+  const controlDifferentTarget = await controlErasure(idempotencySpace.id, "control-erase");
+  assert(controlDifferentTarget.status === 202, "control idempotency key was not scoped to its target");
+  const differentTargetOperationID = requiredString(controlDifferentTarget.payload.data?.operation_id, "different-target control operation ID");
+  assert(differentTargetOperationID !== controlOperationID, "control idempotency key reused the original target operation");
+  const differentTargetCompleted = await waitControlOperation(differentTargetOperationID, "completed");
+  assert(differentTargetCompleted.space_id === idempotencySpace.id, "different-target control operation resolved to the wrong space");
   assertErasedSpace(controlSpace.id, controlCompleted, controlFixture, "active");
   assertCredentialStatus(controlTarget.credential.id, "active");
   assertPreserved(ownerBSpace.id, ownerBFixture);

@@ -28,6 +28,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/conflictqueue"
 	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
@@ -53,8 +54,8 @@ type CounterStore interface {
 type RuntimeContext struct {
 	Echo              *echo.Echo
 	Config            *config.Config
-	TeamService       service.TeamService
-	CredentialService service.CredentialService
+	TeamService       accessservice.TeamService
+	CredentialService accessservice.CredentialService
 	CounterStore      CounterStore
 	PostgresDB        *gorm.DB
 	RLS               postgres.RLSHelper
@@ -101,7 +102,11 @@ func RunActiveServer(
 	teamRepo := repository.NewTeamRepository(pgDB.GetDB(), rlsHelper)
 	credentialRepo := repository.NewCredentialRepository(pgDB.GetDB(), rlsHelper)
 	credentialVerifier := crypto.NewArgon2Verifier(cfg.AuthVerifyMaxConcurrency)
-	activityWriter := service.NewCredentialActivityWriter(credentialRepo, logger)
+	activityWriter := accessservice.NewCredentialActivityWriterWithBatch(
+		credentialRepo,
+		newCredentialActivityBatchAdapter(credentialRepo),
+		logger,
+	)
 	activityWriter.Start(context.Background())
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -166,15 +171,15 @@ func RunActiveServer(
 	securityService := service.NewSecurityService(securityRepo, auditService)
 	usageMetricsService := service.NewUsageMetricsService(usageMetricsRepo, logger)
 	usageMetricsService.Start(context.Background())
-	teamService := service.NewTeamService(teamRepo, auditService, backend.cleanupRepo)
-	credentialService := service.NewCredentialService(credentialRepo, teamService, auditService, backend.cleanupRepo)
-	ssoService := service.NewSSOService(ssoRepo, service.SSOConfig{
+	teamService := accessservice.NewTeamService(teamRepo, auditService, backend.cleanupRepo)
+	credentialService := accessservice.NewCredentialService(credentialRepo, teamService, auditService, backend.cleanupRepo)
+	ssoService := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{
 		RuntimeConfig: appConfigService,
 		Logger:        logger,
 	})
-	portalSessionService := service.NewUserPortalSessionService(portalSessionRepo, credentialRepo, nil)
-	directoryIdentityService := service.NewDirectoryIdentityService(directoryIdentityRepo, service.DirectoryIdentityConfig{CredentialVerifier: credentialVerifier})
-	controlIdentityService := service.NewControlIdentityService(controlIdentityRepo, ssoRepo, service.ControlIdentityConfig{RuntimeConfig: appConfigService})
+	portalSessionService := accessservice.NewUserPortalSessionService(portalSessionRepo, credentialRepo, nil)
+	directoryIdentityService := accessservice.NewDirectoryIdentityService(directoryIdentityRepo, accessservice.DirectoryIdentityConfig{CredentialVerifier: credentialVerifier})
+	controlIdentityService := accessservice.NewControlIdentityService(controlIdentityRepo, ssoRepo, accessservice.ControlIdentityConfig{RuntimeConfig: appConfigService})
 	privateMemoryService, err := preparePrivateMemoryService(
 		startupCtx, privateMemoryRepo, appConfigService, backend.cleanupRepo, auditService, logger,
 	)
