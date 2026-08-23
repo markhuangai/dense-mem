@@ -36,6 +36,11 @@ The user and control portals use first-party server handlers built for their
 own browser views. Those handlers are not a public client SDK or an alternative
 memory automation contract; external memory use goes through MCP.
 
+Portal handlers consume the access application API for authentication,
+identity, credentials, SSO/OAuth/SCIM entitlements, sessions, and rate limits.
+They do not import PostgreSQL, Redis, or in-process access adapters and cannot
+replace the authenticated team or permanent owner with route or body data.
+
 The only supported application API prefixes are `/mcp`, `/ui/api/*`, and
 `/control/api/*`. `/ui` is the user-portal document route. Health endpoints are
 operational probes, not memory APIs. Retired generic REST paths, including

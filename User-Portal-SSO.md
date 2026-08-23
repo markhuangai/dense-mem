@@ -16,6 +16,13 @@ supports direct API-key authentication and an explicit, separate API-key portal
 session described below; an API-key login is never converted into an SSO
 session.
 
+SSO, OAuth, and directory/SCIM inputs are handled by the access application
+boundary. Provider claims propose an external identity or entitlement; access
+policy validates the mapping, resolves the selected team membership and
+permanent owner alias, and persists through narrow storage ports. Browser
+handlers never persist provider output directly or let a claim choose a team,
+profile, credential, or memory space.
+
 When SSO is configured, the user portal adds public SSO endpoints under the main
 Dense-Mem public base URL.
 

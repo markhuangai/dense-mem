@@ -51,6 +51,29 @@ flowchart LR
 A handler never receives the raw bearer credential and never accepts a payload
 `team_id` as authority.
 
+## Access Application Boundary
+
+After authentication fixes the principal, access policy is applied through one
+application API. That boundary owns identity, credential, SSO/OAuth/SCIM,
+portal-session, entitlement, rate-limit, cleanup, and redacted access-audit
+use cases. Its consumer-owned ports cover persistence and coordination; the
+transport layer does not call PostgreSQL, Redis, or process-local stores
+directly.
+
+```text
+MCP/HTTP middleware and portal handlers
+                 │ immutable principal + access use case
+                 ▼
+       access application policy
+                 │ narrow ports
+                 ▼
+ PostgreSQL repositories / Redis or in-process coordination
+```
+
+The adapters remain interchangeable implementations. Redis and process memory
+coordinate limits, stream slots, and leases only; PostgreSQL remains
+authoritative for identity, credentials, sessions, audit, and durable state.
+
 ## Principal
 
 ```text

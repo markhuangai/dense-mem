@@ -104,6 +104,12 @@ Redis coordinates:
 - bounded wakeups/leases/cleanup coordination
 - optional provider-quota coordination across replicas
 
+Rate-limit policy remains in the access application boundary. Redis implements
+the distributed coordination port when replicas require it; a single process
+may use the equivalent in-process implementation. Neither coordination backend
+authenticates callers, chooses a team, or becomes the source of identity,
+credential, session, or audit truth.
+
 Redis never owns:
 
 - evidence or ingests

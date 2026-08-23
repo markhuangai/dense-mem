@@ -56,6 +56,21 @@ Store ownership and recovery belong in
 boundaries belong in
 [Request Lifecycle And Security](Request-Lifecycle-And-Security).
 
+## Access Capability Boundary
+
+The `internal/service/access` application boundary owns team and profile
+identity, credential lifecycle, SSO/OAuth/SCIM reconciliation, portal sessions,
+entitlement checks, rate-limit policy, and access audit values. It declares the
+narrow ports that those policies consume. HTTP/MCP middleware and portal
+handlers establish or consume the immutable principal through this API; they do
+not select a team, profile owner, or storage adapter.
+
+PostgreSQL repositories, Redis coordination, and the single-node in-process
+implementation satisfy those ports at composition time. They preserve the
+existing persistence, key, and session formats without becoming access policy.
+Compatibility aliases may keep serial callers compiling during a migration, but
+they are not a second policy owner.
+
 ## Request Paths
 
 ```mermaid
@@ -120,6 +135,7 @@ internal/
     verification/
     hypothesis/
   service/
+    access/
     remember/
     recall/
     trace/
