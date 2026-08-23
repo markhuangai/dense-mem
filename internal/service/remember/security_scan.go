@@ -65,7 +65,7 @@ func (e *SubmissionSecurityError) Error() string {
 
 func (e *SubmissionSecurityError) Is(target error) bool {
 	other, ok := target.(*SubmissionSecurityError)
-	return ok && e != nil && e.Code == other.Code
+	return ok && e != nil && other != nil && e.Code == other.Code
 }
 
 // SubmissionSecuritySignal identifies a bounded rule and source range. It
@@ -138,8 +138,9 @@ func buildOverridePattern() string {
 // than one representation layer and never returns submitted content.
 func ScanSubmissionEvidence(content string) (SubmissionSecurityScan, error) {
 	signals := make([]SubmissionSecuritySignal, 0, submissionSecurityMaxSignals)
-	signals = append(signals, encodedEvidenceSignals(identitySecurityView(content))...)
-	signals = append(signals, dangerousSubmissionSignals(identitySecurityView(content), false)...)
+	identity := identitySecurityView(content)
+	signals = append(signals, encodedEvidenceSignals(identity)...)
+	signals = append(signals, dangerousSubmissionSignals(identity, false)...)
 
 	decoded := oneLayerSubmissionDecode(content)
 	if decoded.text != content {
@@ -235,6 +236,7 @@ func appendSubmissionSecurityProposalValues(value any, values *[]string) {
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
+			*values = append(*values, key)
 			appendSubmissionSecurityProposalValues(typed[key], values)
 		}
 	}
@@ -755,29 +757,6 @@ func hasBinaryMagic(decoded []byte) bool {
 		}
 	}
 	return false
-}
-
-func base64CharacterClassCount(value string) int {
-	hasUpper, hasLower, hasDigit, hasSymbol := false, false, false, false
-	for _, value := range value {
-		switch {
-		case value >= 'A' && value <= 'Z':
-			hasUpper = true
-		case value >= 'a' && value <= 'z':
-			hasLower = true
-		case value >= '0' && value <= '9':
-			hasDigit = true
-		default:
-			hasSymbol = true
-		}
-	}
-	count := 0
-	for _, exists := range []bool{hasUpper, hasLower, hasDigit, hasSymbol} {
-		if exists {
-			count++
-		}
-	}
-	return count
 }
 
 func shannonEntropy(value string) float64 {

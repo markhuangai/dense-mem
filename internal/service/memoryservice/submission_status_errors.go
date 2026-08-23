@@ -62,10 +62,6 @@ func submissionStatusError(code SubmissionErrorCode) SubmissionStatusError {
 	return rememberapp.StatusError(code)
 }
 
-func submissionStatusErrorWithMessage(code SubmissionErrorCode, message string) SubmissionStatusError {
-	return rememberapp.StatusErrorWithMessage(code, message)
-}
-
 func submissionStatusErrorForCode(rawCode string, fallbackState string) SubmissionStatusError {
 	return rememberapp.StatusErrorForCode(rawCode, fallbackState)
 }

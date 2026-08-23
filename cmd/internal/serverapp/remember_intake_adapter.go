@@ -66,7 +66,7 @@ func rememberEvidenceInputs(items []rememberapp.EvidenceInput) []repository.Evid
 			for _, signal := range item.InitialEvent.Signals {
 				event.Signals = append(event.Signals, repository.SecuritySignalInput{
 					Kind: signal.Kind, Severity: signal.Severity, SpanStart: signal.SpanStart,
-					SpanEnd: signal.SpanEnd, Quote: signal.Quote, Metadata: signal.Metadata,
+					SpanEnd: signal.SpanEnd, Metadata: signal.Metadata,
 				})
 			}
 		}

@@ -72,7 +72,6 @@ type SecuritySignalInput struct {
 	Severity  string
 	SpanStart int
 	SpanEnd   int
-	Quote     string
 	Metadata  map[string]any
 }
 

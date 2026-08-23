@@ -13,11 +13,6 @@ const (
 
 	submissionSecuritySourceEvidence = rememberapp.SecuritySourceEvidence
 	submissionSecuritySourceProposal = rememberapp.SecuritySourceProposal
-
-	submissionSecurityMaxSignals           = 8
-	submissionSecurityMaxBatchSignals      = 16
-	submissionSecurityMaxEncodedCandidates = 8
-	submissionSecurityMaxDecodedBytes      = 4 << 10
 )
 
 var (
@@ -79,7 +74,7 @@ func repositorySecurityEvent(event rememberapp.SecurityEventDraft) repository.Se
 	for _, signal := range event.Signals {
 		converted.Signals = append(converted.Signals, repository.SecuritySignalInput{
 			Kind: signal.Kind, Severity: signal.Severity, SpanStart: signal.SpanStart,
-			SpanEnd: signal.SpanEnd, Quote: signal.Quote, Metadata: signal.Metadata,
+			SpanEnd: signal.SpanEnd, Metadata: signal.Metadata,
 		})
 	}
 	return converted

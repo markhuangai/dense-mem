@@ -63,6 +63,8 @@ func (a *rememberServiceCompat) GetSubmissionStatus(ctx context.Context, req mem
 		Attempts: result.Attempts, MaxAttempts: result.MaxAttempts, SubmittedAt: result.SubmittedAt, NextAttemptAt: result.NextAttemptAt,
 		StartedAt: result.StartedAt, UpdatedAt: result.UpdatedAt, CompletedAt: result.CompletedAt,
 		QuarantineExpiresAt: result.QuarantineExpiresAt,
+		Evidence:            make([]memoryservice.SubmissionEvidenceStatus, 0, len(result.Evidence)),
+		Errors:              make([]memoryservice.SubmissionStatusError, 0, len(result.Errors)),
 	}
 	for _, item := range result.Evidence {
 		superseded := append([]string(nil), item.SupersededEvidenceIDs...)

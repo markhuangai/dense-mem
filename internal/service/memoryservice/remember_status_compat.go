@@ -61,6 +61,8 @@ func rememberStatusCompat(result *rememberapp.SubmissionStatusResult) *Submissio
 		Attempts: result.Attempts, MaxAttempts: result.MaxAttempts, SubmittedAt: result.SubmittedAt,
 		NextAttemptAt: result.NextAttemptAt, StartedAt: result.StartedAt, UpdatedAt: result.UpdatedAt,
 		CompletedAt: result.CompletedAt, QuarantineExpiresAt: result.QuarantineExpiresAt,
+		Evidence: make([]SubmissionEvidenceStatus, 0, len(result.Evidence)),
+		Errors:   make([]SubmissionStatusError, 0, len(result.Errors)),
 	}
 	for _, item := range result.Evidence {
 		superseded := append([]string(nil), item.SupersededEvidenceIDs...)

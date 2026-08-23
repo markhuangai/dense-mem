@@ -3,11 +3,13 @@ package remember
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -20,6 +22,7 @@ var ErrSecurityAuditPersistence = errors.New("memory security: audit persistence
 func recordSubmissionSecurityRejection(
 	ctx context.Context,
 	auditor SecurityRejectionAuditor,
+	logger observability.LogProvider,
 	actor requestctx.Actor,
 	surface string,
 	scan SubmissionSecurityBatchScan,
@@ -57,6 +60,12 @@ func recordSubmissionSecurityRejection(
 		Signals:          signals,
 		SignalsTruncated: scan.SignalsTruncated,
 	}); err != nil {
+		if logger != nil {
+			logger.Warn("remember_security_audit_failed",
+				observability.String("error_class", fmt.Sprintf("%T", err)),
+				observability.String("surface", strings.TrimSpace(surface)),
+			)
+		}
 		return ErrSecurityAuditPersistence
 	}
 	return nil

@@ -78,7 +78,7 @@ func normalizeSubmissionSecuritySignals(signals []SubmissionSecuritySignal) ([]S
 		}
 		return signals[left].RuleID < signals[right].RuleID
 	})
-	out := make([]SubmissionSecuritySignal, 0, minInt(len(signals), submissionSecurityMaxSignals))
+	out := make([]SubmissionSecuritySignal, 0, min(len(signals), submissionSecurityMaxSignals))
 	seen := make(map[string]struct{}, len(signals))
 	truncated := false
 	for _, signal := range signals {
@@ -97,11 +97,4 @@ func normalizeSubmissionSecuritySignals(signals []SubmissionSecuritySignal) ([]S
 		out = append(out, signal)
 	}
 	return out, truncated
-}
-
-func minInt(left, right int) int {
-	if left < right {
-		return left
-	}
-	return right
 }

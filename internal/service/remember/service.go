@@ -42,7 +42,9 @@ type Service interface {
 type RememberService = Service
 
 type Dependencies struct {
-	Intake  IntakePort
+	Intake IntakePort
+	// Auditor is required for security-rejected submissions. A nil auditor
+	// fails closed as ErrRememberPersistence instead of staging the input.
 	Auditor SecurityRejectionAuditor
 	Metrics observability.DiscoverabilityMetrics
 	Logger  observability.LogProvider
@@ -179,7 +181,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	}
 	scan, scanErr := scanSubmissionWithProviderProposal(contents, proposal)
 	if scanErr != nil {
-		if err := recordSubmissionSecurityRejection(ctx, s.auditor, actor, "remember", scan, scanErr); err != nil {
+		if err := recordSubmissionSecurityRejection(ctx, s.auditor, s.logger, actor, "remember", scan, scanErr); err != nil {
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
 			return nil, ErrRememberPersistence
 		}
@@ -220,6 +222,10 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if err != nil {
 		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
 		return nil, translateRememberLedgerError(err)
+	}
+	if created == nil {
+		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
+		return nil, ErrRememberPersistence
 	}
 	observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "ok")
 	if !created.Existing {

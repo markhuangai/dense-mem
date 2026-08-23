@@ -204,7 +204,6 @@ func TestRememberSecurityEventAdaptersAndScannerWrappers(t *testing.T) {
 	require.Equal(t, "quarantine", single.Decision)
 	public := SubmissionSecurityQuarantineEventForSignals([]SubmissionSecuritySignal{{Kind: "kind", RuleID: "rule", Start: 1, End: 2}}, false, nil)
 	require.Equal(t, "quarantine", public.Decision)
-	require.Greater(t, base64CharacterClassCount("abcXYZ012+/="), 0)
 	require.NotNil(t, ItemFailureError(PlacementItem{Status: "failed", Result: map[string]any{"failure_class": "timeout"}}, "failed"))
 	actor := requestctx.Actor{AllowedSpaces: []domain.MemorySpaceAccess{{Kind: domain.MemorySpaceTeamShared}, {Kind: domain.MemorySpaceCredentialPrivate}}}
 	require.Equal(t, domain.MemorySpaceCredentialPrivate, rememberSpace(actor).Kind)
