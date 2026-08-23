@@ -37,6 +37,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -252,13 +253,13 @@ func RunActiveServer(
 	if err != nil {
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
-	securityRejectionAuditor := newSecurityRejectionAuditAdapter(auditService)
-	rememberSvc := memoryservice.NewRememberService(memoryservice.RememberDependencies{
-		Ledger:  ledgerRepo,
-		Auditor: securityRejectionAuditor,
+	rememberCore := rememberapp.NewService(rememberapp.Dependencies{
+		Intake:  newRememberLedgerAdapter(ledgerRepo),
+		Auditor: newRememberSecurityRejectionAuditAdapter(auditService),
 		Metrics: discoverabilityMetrics,
 		Logger:  logger,
 	})
+	rememberSvc := newRememberServiceCompat(rememberCore)
 	recallSvc := memoryservice.NewRecallService(memoryservice.RecallDependencies{
 		Search:          searchRepo,
 		Provider:        retryEmbedder,

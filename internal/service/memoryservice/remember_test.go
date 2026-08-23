@@ -17,7 +17,20 @@ import (
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
+
+func TestRememberStatusCompatPreservesEmptyArrays(t *testing.T) {
+	result := rememberStatusCompat(&rememberapp.SubmissionStatusResult{
+		Evidence: []rememberapp.SubmissionEvidenceStatus{},
+		Errors:   []rememberapp.SubmissionStatusError{},
+	})
+
+	require.NotNil(t, result.Evidence)
+	require.NotNil(t, result.Errors)
+	require.Empty(t, result.Evidence)
+	require.Empty(t, result.Errors)
+}
 
 func scannerPayload(parts ...string) string {
 	return strings.Join(parts, "")
