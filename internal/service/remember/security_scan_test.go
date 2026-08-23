@@ -1,4 +1,4 @@
-package memoryservice
+package remember
 
 import (
 	"encoding/base64"
