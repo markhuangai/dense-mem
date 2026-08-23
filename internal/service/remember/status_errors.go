@@ -12,14 +12,23 @@ import (
 type SubmissionErrorCode string
 
 const (
-	SubmissionErrorRequiresResubmission  SubmissionErrorCode = "submission_requires_resubmission"
-	SubmissionErrorNormalizationFailed   SubmissionErrorCode = "normalization_failed"
-	SubmissionErrorNormalizerUnavailable SubmissionErrorCode = "normalizer_unavailable"
+	// Remember semantic rejection is intentionally limited to these two codes.
+	SubmissionErrorNoSupportedMemory SubmissionErrorCode = "no_supported_memory"
+	SubmissionErrorStaleInput        SubmissionErrorCode = "stale_input"
+
+	SubmissionErrorProviderUnavailable     SubmissionErrorCode = "provider_unavailable"
+	SubmissionErrorProviderResponseInvalid SubmissionErrorCode = "provider_response_invalid"
+	SubmissionErrorInputBudgetExceeded     SubmissionErrorCode = "input_budget_exceeded"
+	SubmissionErrorConfigurationInvalid    SubmissionErrorCode = "configuration_invalid"
+	SubmissionErrorDatabaseFailure         SubmissionErrorCode = "database_failure"
+	SubmissionErrorInternalFailure         SubmissionErrorCode = "internal_failure"
+
+	// These aliases are retained for correction and internal call sites; the
+	// v2.6 Remember status projection emits the canonical codes above.
 	SubmissionErrorPolicyRejected        SubmissionErrorCode = "submission_policy_rejected"
-	SubmissionErrorAssessorInvalid       SubmissionErrorCode = "assessor_response_invalid"
-	SubmissionErrorAssessorUnavailable   SubmissionErrorCode = "assessor_unavailable"
-	SubmissionErrorProcessingFailed      SubmissionErrorCode = "submission_processing_failed"
-	SubmissionErrorContractSuperseded    SubmissionErrorCode = "contract_superseded"
+	SubmissionErrorAssessorInvalid       SubmissionErrorCode = SubmissionErrorProviderResponseInvalid
+	SubmissionErrorAssessorUnavailable   SubmissionErrorCode = SubmissionErrorProviderUnavailable
+	SubmissionErrorProcessingFailed      SubmissionErrorCode = SubmissionErrorInternalFailure
 	SubmissionErrorSearchIndexingDelayed SubmissionErrorCode = "search_indexing_delayed"
 	SubmissionErrorQuarantined           SubmissionErrorCode = "submission_quarantined"
 
@@ -41,16 +50,17 @@ const (
 )
 
 var submissionErrorCodes = []SubmissionErrorCode{
-	SubmissionErrorRequiresResubmission,
-	SubmissionErrorNormalizationFailed,
-	SubmissionErrorNormalizerUnavailable,
-	SubmissionErrorPolicyRejected,
-	SubmissionErrorAssessorInvalid,
-	SubmissionErrorAssessorUnavailable,
-	SubmissionErrorProcessingFailed,
-	SubmissionErrorContractSuperseded,
+	SubmissionErrorNoSupportedMemory,
+	SubmissionErrorStaleInput,
+	SubmissionErrorProviderUnavailable,
+	SubmissionErrorProviderResponseInvalid,
+	SubmissionErrorInputBudgetExceeded,
+	SubmissionErrorConfigurationInvalid,
+	SubmissionErrorDatabaseFailure,
+	SubmissionErrorInternalFailure,
 	SubmissionErrorSearchIndexingDelayed,
 	SubmissionErrorQuarantined,
+	SubmissionErrorPolicyRejected,
 	SubmissionErrorRelationshipVersionStale,
 	SubmissionErrorRelationshipNotActive,
 	SubmissionErrorObjectKindChangeForbidden,
@@ -78,20 +88,11 @@ func SubmissionErrorCodes() []string {
 }
 
 type SubmissionStatusError struct {
-	Code                        string                        `json:"code"`
-	Message                     string                        `json:"message"`
-	Retryable                   bool                          `json:"retryable"`
-	NextAction                  string                        `json:"next_action"`
-	Remediation                 string                        `json:"remediation"`
-	ResubmissionIssues          []SubmissionResubmissionIssue `json:"resubmission_issues,omitempty"`
-	ResubmissionIssuesTruncated bool                          `json:"resubmission_issues_truncated,omitempty"`
-}
-
-type SubmissionResubmissionIssue struct {
-	Code            string `json:"code"`
-	RelationshipRef string `json:"relationship_ref,omitempty"`
-	Component       string `json:"component,omitempty"`
-	Message         string `json:"message"`
+	Code        string `json:"code"`
+	Message     string `json:"message"`
+	Retryable   bool   `json:"retryable"`
+	NextAction  string `json:"next_action"`
+	Remediation string `json:"remediation"`
 }
 
 type SubmissionNextAction string
@@ -121,16 +122,17 @@ func SubmissionNextActions() []string {
 }
 
 var submissionErrorMessages = map[SubmissionErrorCode]string{
-	SubmissionErrorRequiresResubmission:  "the complete submission must be sent again",
-	SubmissionErrorNormalizationFailed:   "submission normalization failed after bounded corrections",
-	SubmissionErrorNormalizerUnavailable: "the submission normalizer was unavailable after bounded retries",
-	SubmissionErrorPolicyRejected:        "submission was rejected by semantic placement policy",
-	SubmissionErrorAssessorInvalid:       "submission assessment returned an invalid response",
-	SubmissionErrorAssessorUnavailable:   "submission assessment was unavailable after bounded retries",
-	SubmissionErrorProcessingFailed:      "submission processing failed",
-	SubmissionErrorContractSuperseded:    "submission uses a superseded remember contract; resubmit the complete batch using the current contract",
-	SubmissionErrorSearchIndexingDelayed: "search indexing is delayed",
-	SubmissionErrorQuarantined:           "submission was quarantined by security policy",
+	SubmissionErrorNoSupportedMemory:       "no supported memory could be stored from this submission",
+	SubmissionErrorStaleInput:              "an exact client-owned input changed before commit",
+	SubmissionErrorProviderUnavailable:     "the semantic assessor was unavailable",
+	SubmissionErrorProviderResponseInvalid: "the semantic assessor returned an invalid response",
+	SubmissionErrorInputBudgetExceeded:     "the semantic assessor input exceeded the configured budget",
+	SubmissionErrorConfigurationInvalid:    "Dense-Mem is missing valid semantic-assessor configuration",
+	SubmissionErrorDatabaseFailure:         "Dense-Mem could not persist the submission",
+	SubmissionErrorInternalFailure:         "Dense-Mem could not complete the submission",
+	SubmissionErrorPolicyRejected:          "submission was rejected by semantic placement policy",
+	SubmissionErrorSearchIndexingDelayed:   "search indexing is delayed",
+	SubmissionErrorQuarantined:             "submission was quarantined by security policy",
 
 	SubmissionErrorRelationshipVersionStale:      "relationship version is stale",
 	SubmissionErrorRelationshipNotActive:         "relationship must be active, supported, and canonical",
@@ -152,7 +154,7 @@ var submissionErrorMessages = map[SubmissionErrorCode]string{
 func submissionStatusError(code SubmissionErrorCode) SubmissionStatusError {
 	message := submissionErrorMessages[code]
 	if message == "" {
-		code = SubmissionErrorProcessingFailed
+		code = SubmissionErrorInternalFailure
 		message = submissionErrorMessages[code]
 	}
 	retryable, nextAction := submissionErrorGuidance(code)
@@ -186,10 +188,7 @@ func submissionErrorGuidance(code SubmissionErrorCode) (bool, SubmissionNextActi
 	switch code {
 	case SubmissionErrorSearchIndexingDelayed:
 		return true, SubmissionNextActionPollStatus
-	case SubmissionErrorPolicyRejected,
-		SubmissionErrorContractSuperseded,
-		SubmissionErrorRequiresResubmission, SubmissionErrorNormalizationFailed,
-		SubmissionErrorNormalizerUnavailable:
+	case SubmissionErrorNoSupportedMemory, SubmissionErrorStaleInput:
 		return true, SubmissionNextActionResubmitSubmission
 	case SubmissionErrorNoChange:
 		return false, SubmissionNextActionNone
@@ -229,9 +228,9 @@ func submissionStatusErrorForCode(rawCode string, fallbackState string) Submissi
 		}
 	}
 	if fallbackState == "rejected" {
-		return submissionStatusError(SubmissionErrorPolicyRejected)
+		return submissionStatusError(SubmissionErrorNoSupportedMemory)
 	}
-	return submissionStatusError(SubmissionErrorProcessingFailed)
+	return submissionStatusError(SubmissionErrorInternalFailure)
 }
 
 // StatusErrorForCode translates stored failure metadata into the closed public
@@ -245,21 +244,24 @@ func submissionFailureCode(stage, class string) SubmissionErrorCode {
 	class = strings.TrimSpace(class)
 	switch {
 	case stage == "contract_superseded":
-		return SubmissionErrorContractSuperseded
-	case stage == "normalization_failed" || stage == "assessment" && class == "malformed_exhausted":
-		return SubmissionErrorNormalizationFailed
-	case stage == "normalizer_unavailable":
-		return SubmissionErrorNormalizerUnavailable
-	case class == "malformed_response", class == "validation_failed", class == "provider_protocol", class == "request_invalid":
-		return SubmissionErrorAssessorInvalid
+		return SubmissionErrorInternalFailure
+	case stage == "input_budget" || stage == "input_budget_exceeded" || class == "input_budget":
+		return SubmissionErrorInputBudgetExceeded
+	case stage == "entity_catalog" || stage == "catalog_context" ||
+		stage == "predicate_options_overflow" || stage == "assessment_input" || stage == "assessment_budget":
+		return SubmissionErrorInputBudgetExceeded
+	case stage == "configuration" || stage == "configuration_invalid":
+		return SubmissionErrorConfigurationInvalid
+	case stage == "database" || stage == "database_failure" || class == "database_failure":
+		return SubmissionErrorDatabaseFailure
+	case stage == "assessment" && class == "malformed_exhausted",
+		class == "malformed_response", class == "validation_failed", class == "provider_protocol", class == "request_invalid":
+		return SubmissionErrorProviderResponseInvalid
 	case class == "timeout", class == "rate_limited", class == "http_4xx", class == "http_5xx",
 		class == "http_unexpected", class == "transport", class == "provider_unavailable":
-		return SubmissionErrorAssessorUnavailable
-	case stage == "policy_validation", stage == "confidence_policy", stage == "security_signal",
-		stage == "semantic_commit", stage == "conflict_context_stale":
-		return SubmissionErrorPolicyRejected
+		return SubmissionErrorProviderUnavailable
 	default:
-		return SubmissionErrorProcessingFailed
+		return SubmissionErrorInternalFailure
 	}
 }
 
@@ -276,16 +278,14 @@ func submissionItemFailureError(item PlacementItem, processing string) *Submissi
 	stage, _ := item.Result["failure_stage"].(string)
 	class, _ := item.Result["failure_class"].(string)
 	code, _ := item.Result["failure_code"].(string)
-	if item.Status == "rejected" && strings.TrimSpace(stage) == "" && strings.TrimSpace(class) == "" {
+	if item.Status == "rejected" && strings.TrimSpace(stage) == "" && strings.TrimSpace(class) == "" && strings.TrimSpace(code) == "" {
 		return nil
 	}
 	if strings.TrimSpace(code) != "" {
 		errorValue := submissionStatusErrorForCode(code, processing)
-		attachSubmissionResubmissionIssues(&errorValue, item.Result)
 		return &errorValue
 	}
 	errorValue := submissionStatusError(submissionFailureCode(stage, class))
-	attachSubmissionResubmissionIssues(&errorValue, item.Result)
 	return &errorValue
 }
 
@@ -293,69 +293,4 @@ func submissionItemFailureError(item PlacementItem, processing string) *Submissi
 // status error.
 func ItemFailureError(item PlacementItem, processing string) *SubmissionStatusError {
 	return submissionItemFailureError(item, processing)
-}
-
-const (
-	submissionStatusMaxResubmissionIssues = 50
-	submissionStatusMaxIssueCodeLength    = 128
-	submissionStatusMaxIssueRefLength     = 128
-	submissionStatusMaxIssueComponentLen  = 128
-	submissionStatusMaxIssueMessageLength = 512
-)
-
-func attachSubmissionResubmissionIssues(errorValue *SubmissionStatusError, result map[string]any) {
-	if errorValue == nil || errorValue.Code != string(SubmissionErrorRequiresResubmission) {
-		return
-	}
-	issues, truncated := submissionResubmissionIssues(result)
-	errorValue.ResubmissionIssues = issues
-	errorValue.ResubmissionIssuesTruncated = truncated
-}
-
-func submissionResubmissionIssues(result map[string]any) ([]SubmissionResubmissionIssue, bool) {
-	rawIssues := resultArray(result, "resubmission_issues")
-	truncated, _ := result["resubmission_issues_truncated"].(bool)
-	if len(rawIssues) > submissionStatusMaxResubmissionIssues {
-		truncated = true
-	}
-	issues := make([]SubmissionResubmissionIssue, 0, min(len(rawIssues), submissionStatusMaxResubmissionIssues))
-	for index, rawIssue := range rawIssues {
-		if index >= submissionStatusMaxResubmissionIssues {
-			break
-		}
-		issueMap, ok := rawIssue.(map[string]any)
-		if !ok {
-			truncated = true
-			continue
-		}
-		code, codeTruncated := boundedSubmissionIssueString(issueMap["code"], submissionStatusMaxIssueCodeLength)
-		relationshipRef, refTruncated := boundedSubmissionIssueString(issueMap["relationship_ref"], submissionStatusMaxIssueRefLength)
-		component, componentTruncated := boundedSubmissionIssueString(issueMap["component"], submissionStatusMaxIssueComponentLen)
-		message, messageTruncated := boundedSubmissionIssueString(issueMap["message"], submissionStatusMaxIssueMessageLength)
-		truncated = truncated || codeTruncated || refTruncated || componentTruncated || messageTruncated
-		if code == "" || message == "" {
-			truncated = true
-			continue
-		}
-		issues = append(issues, SubmissionResubmissionIssue{
-			Code:            code,
-			RelationshipRef: relationshipRef,
-			Component:       component,
-			Message:         message,
-		})
-	}
-	return issues, truncated
-}
-
-func boundedSubmissionIssueString(raw any, maxLength int) (string, bool) {
-	value, ok := raw.(string)
-	if !ok {
-		return "", raw != nil
-	}
-	value = strings.TrimSpace(value)
-	runes := []rune(value)
-	if len(runes) <= maxLength {
-		return value, false
-	}
-	return string(runes[:maxLength]), true
 }

@@ -202,7 +202,7 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 			    ?::uuid, ?::uuid, ?::uuid,
 			    'submission_assessment_terminal', 'failed', '',
 			    jsonb_build_object(
-			        'failure_reason_code', 'assessor_response_invalid',
+			        'failure_reason_code', 'provider_response_invalid',
 			        'failure_stage', 'assessment',
 			        'failure_class', 'validation_failed'
 			    ), ?
@@ -272,7 +272,7 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 	assert.Equal(t, "assessor_provider_failed", detail.OperatorDiagnostics[0].Payload["failure_reason_code"])
 	assert.Equal(t, float64(3), detail.OperatorDiagnostics[0].Payload["assessor_turns"])
 	assert.Equal(t, float64(201), detail.OperatorDiagnostics[198].Payload["assessor_turns"])
-	assert.Equal(t, "assessor_response_invalid", detail.OperatorDiagnostics[199].Payload["failure_reason_code"])
+	assert.Equal(t, "provider_response_invalid", detail.OperatorDiagnostics[199].Payload["failure_reason_code"])
 	assert.NotContains(t, detail.OperatorDiagnostics[0].Payload, "provider_response")
 
 	_, err = repo.GetSubmissionDiagnostic(ctx, teamC, failed.IngestID)

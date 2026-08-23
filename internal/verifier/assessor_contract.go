@@ -3,7 +3,7 @@ package verifier
 import "github.com/markhuangai/dense-mem/internal/domain"
 
 // SemanticAssessmentResponseSchema is the strict structured-output contract for
-// the integrated V2.5 assessor. Request-dependent spans and allowlists are
+// the integrated V2.6 assessor. Request-dependent spans and allowlists are
 // intentionally validated after decoding against the frozen request.
 func SemanticAssessmentResponseSchema() map[string]any {
 	return closedObject(
@@ -21,14 +21,12 @@ func semanticAssessmentEntityResultSchema() map[string]any {
 	return map[string]any{
 		"type": "array", "maxItems": SemanticAssessmentMaxEntityResults,
 		"items": closedObject(
-			[]string{"ref", "grounding_ref", "action", "candidate_entity_id", "confidence", "rationale"},
+			[]string{"ref", "grounding_ref", "action", "candidate_entity_id"},
 			map[string]any{
 				"ref":                 stringSchema(1, 128),
 				"grounding_ref":       nullableStringSchema(128),
 				"action":              enumSchema(domain.EntityResolutionActions()),
 				"candidate_entity_id": nullableStringSchema(128),
-				"confidence":          numberSchema(0, 1),
-				"rationale":           stringSchema(1, 1000),
 			},
 		),
 	}
@@ -38,39 +36,60 @@ func semanticAssessmentRelationshipResultSchema() map[string]any {
 	return map[string]any{
 		"type": "array", "maxItems": SemanticAssessmentMaxRelationshipResults,
 		"items": closedObject(
-			[]string{
-				"ref", "subject_ref", "predicate_range", "predicate_status", "predicate_key", "predicate_version",
-				"object_ref", "object_value", "value_range", "polarity", "modality", "support_ranges", "valid_from", "valid_to",
-				"scope_status", "scope_key", "evidence_verdict", "temporal_verdict", "confidence", "rationale",
-			},
+			[]string{"ref", "disposition", "reason", "splits"},
 			map[string]any{
-				"ref":               stringSchema(1, 128),
-				"subject_ref":       stringSchema(1, 128),
-				"predicate_range":   semanticAssessmentGroundedRangeSchema(),
-				"predicate_status":  enumSchema([]string{"resolved", "registration_required", "unresolved"}),
-				"predicate_key":     nullableStringSchema(128),
-				"predicate_version": nullableIntegerSchema(1),
-				"object_ref":        nullableStringSchema(128),
-				"object_value": map[string]any{
-					"anyOf": []any{map[string]any{"type": "null"}, semanticAssessmentValueSchema()},
+				"ref":         stringSchema(1, 128),
+				"disposition": enumSchema([]string{"stored", "not_supported"}),
+				"reason":      nullableStringSchema(128),
+				"splits": map[string]any{
+					"type": "array", "maxItems": SemanticAssessmentMaxRelationshipSplits,
+					"items": semanticAssessmentRelationshipSplitSchema(),
 				},
-				"value_range": map[string]any{
-					"anyOf": []any{map[string]any{"type": "null"}, semanticAssessmentGroundedRangeSchema()},
-				},
-				"polarity":         enumSchema([]string{"+", "-"}),
-				"modality":         enumSchema([]string{"statement", "question", "proposal", "speculation", "quoted"}),
-				"support_ranges":   semanticAssessmentGroundedRangeArraySchema(),
-				"valid_from":       nullableDateTimeSchema(),
-				"valid_to":         nullableDateTimeSchema(),
-				"scope_status":     enumSchema([]string{"resolved", "absent", "unresolved"}),
-				"scope_key":        nullableStringSchema(256),
-				"evidence_verdict": enumSchema(domain.VerificationVerdicts()),
-				"temporal_verdict": enumSchema([]string{"entailed", "absent", "ambiguous", "contradicted"}),
-				"confidence":       numberSchema(0, 1),
-				"rationale":        stringSchema(1, 1000),
 			},
 		),
 	}
+}
+
+func semanticAssessmentRelationshipSplitSchema() map[string]any {
+	return closedObject(
+		[]string{
+			"split_index", "subject_ref", "predicate_range", "predicate_status", "predicate_key", "predicate_version",
+			"predicate_registration", "object_ref", "object_value", "value_range", "polarity", "support_ranges", "valid_from", "valid_to",
+		},
+		map[string]any{
+			"split_index":       map[string]any{"type": "integer", "minimum": 0},
+			"subject_ref":       stringSchema(1, 128),
+			"predicate_range":   semanticAssessmentGroundedRangeSchema(),
+			"predicate_status":  enumSchema([]string{"resolved", "registration_required"}),
+			"predicate_key":     nullableStringSchema(128),
+			"predicate_version": nullableIntegerSchema(1),
+			"predicate_registration": map[string]any{
+				"anyOf": []any{map[string]any{"type": "null"}, semanticAssessmentPredicateRegistrationSchema()},
+			},
+			"object_ref": nullableStringSchema(128),
+			"object_value": map[string]any{
+				"anyOf": []any{map[string]any{"type": "null"}, semanticAssessmentValueSchema()},
+			},
+			"value_range": map[string]any{
+				"anyOf": []any{map[string]any{"type": "null"}, semanticAssessmentGroundedRangeSchema()},
+			},
+			"polarity":       enumSchema([]string{"+", "-"}),
+			"support_ranges": semanticAssessmentGroundedRangeArraySchema(),
+			"valid_from":     nullableDateTimeSchema(),
+			"valid_to":       nullableDateTimeSchema(),
+		},
+	)
+}
+
+func semanticAssessmentPredicateRegistrationSchema() map[string]any {
+	return closedObject(
+		[]string{"predicate_key", "relationship_kind", "current_cardinality"},
+		map[string]any{
+			"predicate_key":       stringSchema(1, 128),
+			"relationship_kind":   enumSchema(domain.RelationshipKinds()),
+			"current_cardinality": enumSchema(domain.CurrentCardinalities()),
+		},
+	)
 }
 
 func semanticAssessmentValueSchema() map[string]any {
@@ -94,12 +113,11 @@ func semanticAssessmentGroundedRangeArraySchema() map[string]any {
 
 func semanticAssessmentGroundedRangeSchema() map[string]any {
 	return closedObject(
-		[]string{"evidence_id", "start_ref", "end_ref", "confidence"},
+		[]string{"evidence_id", "start_ref", "end_ref"},
 		map[string]any{
 			"evidence_id": stringSchema(1, 128),
 			"start_ref":   stringSchema(1, 128),
 			"end_ref":     stringSchema(1, 128),
-			"confidence":  numberSchema(0, 1),
 		},
 	)
 }

@@ -141,6 +141,9 @@ func (r *SemanticRepositoryImpl) ResolveSemanticReviewPredicateCandidates(
 	}
 	out := []SemanticReviewPredicateResolution{}
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
+			return err
+		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH requested AS (
 			    SELECT btrim(input.requested_predicate) AS requested_predicate,

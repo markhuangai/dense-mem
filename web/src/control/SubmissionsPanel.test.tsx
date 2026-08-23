@@ -11,7 +11,7 @@ describe("SubmissionsPanel", () => {
         team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1",
         submission_id: "submission-1", processing_state: "failed", correlation_id: "corr-1",
         attempts: 5, max_attempts: 5, evidence_count: 1, submitted_at: "2026-08-18T01:00:00Z",
-        error: { code: "assessor_unavailable", message: "submission assessment was unavailable after bounded retries", retryable: true, next_action: "resubmit_submission", remediation: "Submit the complete batch again with remember." },
+        error: { code: "no_supported_memory", message: "no supported memory could be stored from this submission", retryable: true, next_action: "resubmit_submission", remediation: "Submit the complete batch again with remember and a new idempotency_key after correcting the input." },
       }],
       pagination: { limit: 50, offset: 0, total: 1 },
     });
@@ -21,7 +21,7 @@ describe("SubmissionsPanel", () => {
       check_after_seconds: 60, correlation_id: "corr-1", attempts: 5, max_attempts: 5,
       submitted_at: "2026-08-18T01:00:00Z", updated_at: "2026-08-18T01:05:00Z",
       evidence: [{ evidence_id: "evidence-1", evidence_index: 0, superseded_evidence_ids: [], search_state: "not_required" }],
-      errors: [{ code: "assessor_unavailable", message: "submission assessment was unavailable after bounded retries", retryable: true, next_action: "resubmit_submission", remediation: "Submit the complete batch again with remember." }],
+      errors: [{ code: "no_supported_memory", message: "no supported memory could be stored from this submission", retryable: true, next_action: "resubmit_submission", remediation: "Submit the complete batch again with remember and a new idempotency_key after correcting the input." }],
     });
     const listOperationLogs = vi.fn().mockResolvedValue({
       data: [{ id: "log-1", timestamp: "2026-08-18T01:05:00Z", severity: "WARN", severity_rank: 30, message: "submission_failed", source: "worker", team_id: "team-1", profile_id: "owner-1", correlation_id: "corr-1", error: "", attrs: { from: "processing", to: "failed", stage: "assessment", reason_code: "terminal_failure" } }],
@@ -31,8 +31,8 @@ describe("SubmissionsPanel", () => {
 
     render(<SubmissionsPanel api={api} team={team()} />);
 
-    expect(await screen.findByText("assessor_unavailable")).toBeInTheDocument();
-    expect(screen.getByText("Submit the complete batch again with remember.")).toBeInTheDocument();
+    expect(await screen.findByText("no_supported_memory")).toBeInTheDocument();
+    expect(screen.getByText("Submit the complete batch again with remember and a new idempotency_key after correcting the input.")).toBeInTheDocument();
     expect(screen.getByText("Resubmit Submission")).toBeInTheDocument();
     expect(screen.getAllByText("Failed").length).toBeGreaterThan(0);
     expect(screen.getByText(/Processing → Failed/)).toBeInTheDocument();
@@ -209,7 +209,7 @@ describe("SubmissionsPanel", () => {
     expect(screen.getByText("0-0 of 0")).toBeInTheDocument();
   });
 
-  it("shows complete resubmission guidance and evidence-specific remediation", async () => {
+  it("shows bounded rejection and search guidance without client repair fields", async () => {
     const summary = {
       team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1",
       submission_id: "submission-failed", processing_state: "failed", correlation_id: "corr-failed",
@@ -225,23 +225,16 @@ describe("SubmissionsPanel", () => {
         evidence: [{
           evidence_id: "evidence-held", evidence_index: 0, superseded_evidence_ids: [], search_state: "failed",
           error: {
-            code: "search_projection_failed", message: "search projection failed", retryable: true,
+            code: "search_indexing_delayed", message: "Semantic search indexing is delayed.", retryable: true,
             next_action: "contact_operator", remediation: "Inspect the embedding worker and retry the submission.",
           },
         }],
         errors: [{
-          code: "submission_requires_resubmission",
-          message: "the complete submission must be sent again",
+          code: "no_supported_memory",
+          message: "no supported memory could be stored from this submission",
           retryable: true,
           next_action: "resubmit_submission",
           remediation: "Submit the complete batch again with remember and a new idempotency_key after correcting the input.",
-          resubmission_issues: [{
-            code: "relationship_component_invalid",
-            relationship_ref: "relationship-1",
-            component: "predicate",
-            message: "Choose a registered predicate for relationship-1.",
-          }],
-          resubmission_issues_truncated: true,
         }],
       }),
       listOperationLogs: vi.fn().mockResolvedValue({
@@ -251,13 +244,10 @@ describe("SubmissionsPanel", () => {
 
     render(<SubmissionsPanel api={api} team={team()} />);
 
-    expect(await screen.findByText("search_projection_failed")).toBeInTheDocument();
+    expect(await screen.findByText("search_indexing_delayed")).toBeInTheDocument();
     expect(screen.getByText("Inspect the embedding worker and retry the submission.")).toBeInTheDocument();
     expect(screen.getByText("Submit the complete batch again with remember and a new idempotency_key after correcting the input.")).toBeInTheDocument();
-    expect(screen.getByText("relationship_component_invalid")).toBeInTheDocument();
-    expect(screen.getByText("Relationship relationship-1 · Component predicate")).toBeInTheDocument();
-    expect(screen.getByText("Choose a registered predicate for relationship-1.")).toBeInTheDocument();
-    expect(screen.getByText("Additional resubmission issues are not shown.")).toBeInTheDocument();
+    expect(screen.queryByText("relationship_component_invalid")).not.toBeInTheDocument();
   });
 
   it("does not leave a previous submission detail visible after a new detail request fails", async () => {

@@ -149,6 +149,164 @@ func TestSubmissionAssessmentPersistsOneRunAndAtomicallyCommitsEveryItem(t *test
 	assert.Contains(t, err.Error(), "append-only")
 }
 
+func TestSubmissionAssessmentCommitPersistsContiguousRelationshipSplits(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-assessment-split-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-split-owner")
+	insertSearchTestContract(t, adminDB, rls, "submission-assessment-split-search", 3, "exact", "")
+	repo := NewLedgerRepository(appDB, rls)
+	ingest := createSubmissionAssessmentIngest(t, ctx, repo, teamID, ownerID, "submission-assessment-split")
+	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+	input := submissionAssessmentCommitFixture(*claimed, ingest, assessment.AssessmentID, false)
+
+	second := input.RelationshipObservations[0]
+	second.SplitIndex = 1
+	second.Observation.Ref = "r:orion-vega#split:1"
+	second.Observation.OriginalPredicate = "references"
+	secondSupport := *second.Observation.Support
+	second.Observation.Support = &secondSupport
+	second.Observation.Support.SourceGroupKey = "submission-assessment:r:orion-vega:split:1"
+	input.RelationshipObservations = append(input.RelationshipObservations, second)
+	input.PredicateRegistrations = append(input.PredicateRegistrations, SubmissionPredicateRegistrationInput{
+		RelationshipRef: second.Observation.Ref, PredicateKey: "references",
+		SubjectKind: "concept", ObjectKind: "concept", RelationshipKind: "state", CurrentCardinality: "many",
+	})
+
+	committed, err := repo.CommitSubmissionAssessment(ctx, input)
+	require.NoError(t, err)
+	require.Len(t, committed.RelationshipResults, 3)
+	status, err := repo.GetPlacementRun(ctx, GetPlacementRunInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+	})
+	require.NoError(t, err)
+
+	var splitResult SubmissionRelationshipResult
+	for _, result := range status.RelationshipResults {
+		if result.RelationshipRef == "r:orion-vega" {
+			splitResult = result
+			break
+		}
+	}
+	require.Equal(t, "stored", splitResult.Disposition)
+	require.Len(t, splitResult.Splits, 2)
+	assert.Equal(t, 0, splitResult.Splits[0].SplitIndex)
+	assert.Equal(t, 1, splitResult.Splits[1].SplitIndex)
+	assert.NotEqual(t, splitResult.Splits[0].RelationshipID, splitResult.Splits[1].RelationshipID)
+}
+
+func TestSubmissionAssessmentResponseRevisionIsAppendOnlyAndLatestForReplay(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-assessment-revision-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-revision-owner")
+	repo := NewLedgerRepository(appDB, rls)
+	ingest := createSubmissionAssessmentIngest(t, ctx, repo, teamID, ownerID, "submission-assessment-revision")
+	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+
+	revisionJSON := json.RawMessage(`{"request_id":"submission-assessment-revision","security_signals":[],"entity_results":[],"relationship_results":[]}`)
+	input := AppendSubmissionAssessmentRevisionInput{
+		SubmissionAssessmentRunScope: SubmissionAssessmentRunScope{
+			TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+			PlacementRunID: ingest.PlacementRunID, WorkerID: "submission-worker", ExpectedAttempts: claimed.Attempts,
+		},
+		AssessmentID: assessment.AssessmentID, ProviderTurns: 2,
+		InputTokens: 20, OutputTokens: 10, CandidateContextTokens: 5,
+		NormalizedResponse: revisionJSON, ResponseHash: sha256Hex(string(revisionJSON)), ValidatedAt: time.Now().UTC(),
+	}
+	latest, existing, err := repo.AppendSubmissionAssessmentRevision(ctx, input)
+	require.NoError(t, err)
+	assert.False(t, existing)
+	require.NotNil(t, latest)
+	assert.Equal(t, 1, latest.RevisionNumber)
+	assert.Equal(t, 2, latest.ProviderTurns)
+	assert.JSONEq(t, string(revisionJSON), string(latest.NormalizedResponse))
+
+	replayed, existing, err := repo.AppendSubmissionAssessmentRevision(ctx, input)
+	require.NoError(t, err)
+	assert.True(t, existing)
+	assert.Equal(t, latest.ResponseHash, replayed.ResponseHash)
+
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE submission_assessment_response_revisions SET output_tokens = 11
+			WHERE team_id = ?::uuid AND assessment_id = ?::uuid
+		`, teamID, assessment.AssessmentID).Error
+	})
+	assert.Error(t, err)
+	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			DELETE FROM submission_assessment_response_revisions
+			WHERE team_id = ?::uuid AND assessment_id = ?::uuid
+		`, teamID, assessment.AssessmentID).Error
+	})
+	assert.Error(t, err)
+}
+
+func TestSubmissionAssessmentCommitRejectsChangedExactEntityConstraintAtomically(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-assessment-exact-entity-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-exact-entity-owner")
+	insertSearchTestContract(t, adminDB, rls, "submission-assessment-exact-entity-search", 3, "exact", "")
+	semantic := NewSemanticRepository(appDB, rls)
+	exactEntity := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "concept", "Exact Orion")
+	repo := NewLedgerRepository(appDB, rls)
+	ingest := createSubmissionAssessmentIngest(t, ctx, repo, teamID, ownerID, "submission-assessment-exact-entity")
+	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-worker", time.Minute)
+	require.NoError(t, err)
+	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+	input := submissionAssessmentCommitFixture(*claimed, ingest, assessment.AssessmentID, false)
+	input.EntityResolutions[0].Resolution.Action = string(domain.EntityResolutionReuse)
+	input.EntityResolutions[0].Resolution.EntityID = exactEntity.EntityID
+	input.EntityResolutions[0].Resolution.ExactEntityID = exactEntity.EntityID
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE entity_records SET status = 'retired' WHERE team_id = ?::uuid AND entity_id = ?::uuid`, teamID, exactEntity.EntityID).Error
+	}))
+	before := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerID, ingest.PlacementRunID)
+
+	_, err = repo.CommitSubmissionAssessment(ctx, input)
+	require.ErrorIs(t, err, ErrRememberExactReferenceStale)
+	after := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerID, ingest.PlacementRunID)
+	assert.Equal(t, before, after)
+}
+
+func TestSubmissionAssessmentCommitRejectsChangedExactPredicateConstraintAtomically(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-assessment-exact-predicate-stale-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-exact-predicate-stale-owner")
+	insertSearchTestContract(t, adminDB, rls, "submission-assessment-exact-predicate-stale-search", 3, "exact", "")
+	repo := NewLedgerRepository(appDB, rls)
+	ingest := createSubmissionAssessmentIngest(t, ctx, repo, teamID, ownerID, "submission-assessment-exact-predicate-stale")
+	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-worker", time.Minute)
+	require.NoError(t, err)
+	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+	input := submissionAssessmentCommitFixture(*claimed, ingest, assessment.AssessmentID, false)
+	input.PredicateRegistrations = nil
+	for index := range input.RelationshipObservations {
+		input.RelationshipObservations[index].Observation.PredicateKey = "removed_exact_predicate"
+		input.RelationshipObservations[index].Observation.PredicateVersion = 1
+		input.RelationshipObservations[index].Observation.ExactPredicateKey = "removed_exact_predicate"
+	}
+	before := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerID, ingest.PlacementRunID)
+
+	_, err = repo.CommitSubmissionAssessment(ctx, input)
+	require.ErrorIs(t, err, ErrRememberExactReferenceStale)
+	after := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerID, ingest.PlacementRunID)
+	assert.Equal(t, before, after)
+}
+
 func TestSubmissionAssessmentRollsBackEverySemanticWriteWhenOneRelationshipFails(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -379,155 +537,6 @@ func TestSubmissionAssessmentCommitRejectsDifferentProfileAndTeam(t *testing.T) 
 	assert.ErrorIs(t, err, ErrPlacementLeaseLost)
 	afterDifferentTeam := submissionAssessmentSemanticCounts(t, ctx, appDB, rls, teamID, ownerID, ingest.PlacementRunID)
 	assert.Equal(t, before, afterDifferentTeam)
-}
-
-func TestSubmissionAssessmentQuarantineRetainsRawCopyUntilSystemPurge(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	teamID := createLedgerTeam(t, adminDB, rls, "submission-assessment-quarantine-team")
-	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-quarantine-owner")
-	foreignID := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-quarantine-foreign")
-	repo := NewLedgerRepository(appDB, rls)
-	ingest := createSubmissionAssessmentIngest(t, ctx, repo, teamID, ownerID, "submission-assessment-quarantine")
-	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-quarantine-worker", time.Minute)
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	persistSubmissionAssessment(t, ctx, repo, *claimed)
-	securityQuarantine := submissionAssessmentSecurityQuarantine(ingest.Evidence[0].FragmentID)
-	completed, err := repo.CompleteSubmissionAssessment(ctx, CompleteSubmissionAssessmentInput{
-		SubmissionAssessmentRunScope: SubmissionAssessmentRunScope{
-			TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID, PlacementRunID: ingest.PlacementRunID,
-			WorkerID: "submission-quarantine-worker", ExpectedAttempts: claimed.Attempts,
-		},
-		Status:              string(domain.SemanticReviewQuarantined),
-		Category:            "quarantined",
-		Payload:             map[string]any{"failure_stage": "deterministic_security_scan"},
-		SecurityQuarantines: []SubmissionAssessmentSecurityQuarantineInput{securityQuarantine},
-	})
-	require.NoError(t, err)
-	require.Equal(t, string(domain.SemanticReviewQuarantined), completed.Status)
-
-	var payloadCount, tombstoneCount, sourceCount int64
-	var payloadSHA string
-	var rawEvidence, rawAssessment string
-	var retentionSeconds float64
-	var placementCompletedAt, placementExpiry time.Time
-	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
-		if err := tx.Raw(`
-			SELECT COUNT(*), COALESCE(MAX(payload_sha256), ''),
-			       COALESCE(MAX(evidence::text), ''), COALESCE(MAX(assessor_response::text), ''),
-			       COALESCE(EXTRACT(EPOCH FROM MAX(expires_at - quarantined_at)), 0)
-			FROM submission_quarantine_payloads
-			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
-		`, teamID, ingest.PlacementRunID).Row().Scan(&payloadCount, &payloadSHA, &rawEvidence, &rawAssessment, &retentionSeconds); err != nil {
-			return err
-		}
-		if err := tx.Raw(`
-			SELECT COUNT(*) FROM submission_quarantine_tombstones
-			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
-		`, teamID, ingest.IngestID).Scan(&tombstoneCount).Error; err != nil {
-			return err
-		}
-		if err := tx.Raw(`
-			SELECT COUNT(*) FROM evidence_fragments
-			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
-		`, teamID, ingest.IngestID).Scan(&sourceCount).Error; err != nil {
-			return err
-		}
-		return tx.Raw(`
-			SELECT completed_at, quarantine_expires_at
-			FROM placement_runs
-			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
-		`, teamID, ingest.PlacementRunID).Row().Scan(&placementCompletedAt, &placementExpiry)
-	}))
-	assert.Equal(t, int64(1), payloadCount)
-	assert.NotEmpty(t, payloadSHA)
-	assert.Contains(t, rawEvidence, "Orion links Vega.")
-	assert.Contains(t, rawAssessment, "submission-assessment")
-	assert.InDelta(t, float64((24 * time.Hour).Seconds()), retentionSeconds, 1)
-	assert.WithinDuration(t, placementCompletedAt.Add(24*time.Hour), placementExpiry, time.Second)
-	assert.Equal(t, int64(2), tombstoneCount)
-	assert.Equal(t, int64(2), sourceCount)
-	for _, expiryExpression := range []string{
-		"completed_at + interval '25 hours'",
-		"NULL",
-	} {
-		err := rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
-			return tx.Exec(`
-				UPDATE placement_runs
-				SET quarantine_expires_at = `+expiryExpression+`
-				WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
-			`, teamID, ingest.PlacementRunID).Error
-		})
-		require.Error(t, err, "quarantined placement runs must reject expiry %s", expiryExpression)
-	}
-
-	for _, profileID := range []string{ownerID, foreignID} {
-		var visible int64
-		require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, profileID, func(tx *gorm.DB) error {
-			return tx.Raw(`
-				SELECT COUNT(*) FROM submission_quarantine_payloads
-				WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
-			`, teamID, ingest.PlacementRunID).Scan(&visible).Error
-		}))
-		assert.Zero(t, visible, "raw quarantine payload must remain system-only")
-	}
-
-	referenceTime := time.Now().UTC()
-	purged, err := repo.PurgeExpiredSubmissionQuarantinePayloads(ctx, referenceTime.Add(23*time.Hour), 100)
-	require.NoError(t, err)
-	assert.Zero(t, purged)
-	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			SELECT COUNT(*) FROM submission_quarantine_payloads
-			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
-		`, teamID, ingest.PlacementRunID).Scan(&payloadCount).Error
-	}))
-	assert.Equal(t, int64(1), payloadCount)
-
-	purged, err = repo.PurgeExpiredSubmissionQuarantinePayloads(ctx, referenceTime.Add(25*time.Hour), 100)
-	require.NoError(t, err)
-	assert.Equal(t, 1, purged)
-	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
-		if err := tx.Raw(`
-			SELECT COUNT(*) FROM submission_quarantine_payloads
-			WHERE team_id = ?::uuid AND placement_run_id = ?::uuid
-		`, teamID, ingest.PlacementRunID).Scan(&payloadCount).Error; err != nil {
-			return err
-		}
-		if err := tx.Raw(`
-			SELECT COUNT(*) FROM submission_quarantine_tombstones
-			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
-		`, teamID, ingest.IngestID).Scan(&tombstoneCount).Error; err != nil {
-			return err
-		}
-		return tx.Raw(`
-			SELECT COUNT(*) FROM evidence_fragments
-			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
-		`, teamID, ingest.IngestID).Scan(&sourceCount).Error
-	}))
-	assert.Zero(t, payloadCount)
-	assert.Equal(t, int64(2), tombstoneCount)
-	assert.Equal(t, int64(2), sourceCount)
-}
-
-func submissionAssessmentSecurityQuarantine(fragmentID string) SubmissionAssessmentSecurityQuarantineInput {
-	return SubmissionAssessmentSecurityQuarantineInput{
-		FragmentID: fragmentID,
-		SecurityEventDraft: SecurityEventDraft{
-			EventKind: "deterministic_scan",
-			Decision:  "quarantine",
-			Reason:    "deterministic intake scan rejected evidence",
-			Signals: []SecuritySignalInput{{
-				Kind:      "instruction_override",
-				Severity:  "critical",
-				SpanStart: 0,
-				SpanEnd:   6,
-				Metadata:  map[string]any{"rule_id": "instruction_override"},
-			}},
-		},
-	}
 }
 
 func TestSubmissionAssessmentCommitReusesCompatiblePredicateAlias(t *testing.T) {
@@ -807,10 +816,13 @@ func submissionAssessmentConflictCommitFixture(
 		},
 		RelationshipObservations: []SubmissionAssessmentRelationshipObservationInput{{
 			PlacementItemID: ingest.Items[0].PlacementItemID,
+			RelationshipRef: "relationship",
+			SplitIndex:      0,
 			Observation: PlacementRelationshipDecisionInput{
 				Ref: "relationship", SubjectRef: "subject", OriginalPredicate: "primary database",
 				PredicateKey: "primary_database", PredicateVersion: 1, ObjectRef: "object", Polarity: "+",
-				EvidenceVerdict: string(domain.VerificationEntailed), Confidence: &confidence,
+				AssessorAccepted: true,
+				EvidenceVerdict:  string(domain.VerificationEntailed), Confidence: &confidence,
 				Rationale: "The evidence explicitly states the relationship.", Model: "submission-assessment-test",
 				ResponseHash: "sha256:submission-assessment-test", AssessmentID: assessment.AssessmentID,
 				AssessmentPolicyVersion: "submission-assessment-test", ThresholdUsed: &threshold,
@@ -820,6 +832,9 @@ func submissionAssessmentConflictCommitFixture(
 					SpanStart: 0, SpanEnd: len(content), Quote: content, Authority: "primary",
 				},
 			},
+		}},
+		RelationshipResults: []SubmissionRelationshipResultInput{{
+			RelationshipRef: "relationship", Disposition: "stored",
 		}},
 		Payload: map[string]any{"assessor_contract": domain.ContractVersion},
 	}
@@ -846,9 +861,12 @@ func submissionAssessmentCommitFixture(run PlacementRun, ingest *CreateIngestRes
 		confidence := 0.9
 		return SubmissionAssessmentRelationshipObservationInput{
 			PlacementItemID: item.PlacementItemID,
+			RelationshipRef: ref,
+			SplitIndex:      0,
 			Observation: PlacementRelationshipDecisionInput{
 				Ref: ref, SubjectRef: subjectRef, OriginalPredicate: "links", ObjectRef: objectRef, Polarity: "+",
-				EvidenceVerdict: string(domain.VerificationEntailed), Confidence: &confidence, Rationale: "The evidence explicitly states the link.",
+				AssessorAccepted: true,
+				EvidenceVerdict:  string(domain.VerificationEntailed), Confidence: &confidence, Rationale: "The evidence explicitly states the link.",
 				Model: "submission-assessment-test", ResponseHash: "sha256:submission-assessment-test",
 				Support:      &EvidenceSupportInput{FragmentID: fragment.FragmentID, SourceGroupKey: "submission-assessment:" + ref, SpanStart: start, SpanEnd: end, Quote: quote, Authority: "primary"},
 				AssessmentID: assessmentID, AssessmentPolicyVersion: "submission-assessment-test", ThresholdUsed: &threshold, GateResult: "meets_write_threshold",
@@ -877,8 +895,12 @@ func submissionAssessmentCommitFixture(run PlacementRun, ingest *CreateIngestRes
 			observation(ingest.Items[1], ingest.Evidence[1], "r:vega-lyra", "vega-second", secondObjectRef, "Vega links Lyra.", 0, 16),
 		},
 		PredicateRegistrations: []SubmissionPredicateRegistrationInput{
-			{RelationshipRef: "r:orion-vega", PredicateKey: "links", SubjectKind: "concept", ObjectKind: "concept"},
-			{RelationshipRef: "r:vega-lyra", PredicateKey: "links", SubjectKind: "concept", ObjectKind: "concept"},
+			{RelationshipRef: "r:orion-vega", PredicateKey: "links", SubjectKind: "concept", ObjectKind: "concept", RelationshipKind: "state", CurrentCardinality: "many"},
+			{RelationshipRef: "r:vega-lyra", PredicateKey: "links", SubjectKind: "concept", ObjectKind: "concept", RelationshipKind: "state", CurrentCardinality: "many"},
+		},
+		RelationshipResults: []SubmissionRelationshipResultInput{
+			{RelationshipRef: "r:orion-vega", Disposition: "stored"},
+			{RelationshipRef: "r:vega-lyra", Disposition: "stored"},
 		},
 		Payload: map[string]any{"assessor_contract": domain.ContractVersion},
 	}

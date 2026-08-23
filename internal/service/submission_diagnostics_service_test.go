@@ -37,11 +37,7 @@ func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
 				Status: string(domain.PlacementRunFailed), CorrelationID: "corr-diagnostics",
 				Attempts: 5, MaxAttempts: 5, SubmittedAt: &now, UpdatedAt: &now, CompletedAt: &now,
 				Items: []repository.PlacementItem{{Status: "failed", Result: map[string]any{
-					"failure_code": string(memoryservice.SubmissionErrorRequiresResubmission),
-					"resubmission_issues": []map[string]any{{
-						"code": "entity_resolution_ambiguous", "relationship_ref": "rel-1",
-						"component": "subject", "message": "choose one active Entity",
-					}},
+					"failure_code":        string(memoryservice.SubmissionErrorProviderUnavailable),
 					"failure_reason_code": "assessor_provider_failed",
 					"failure_stage":       "assessment",
 					"failure_class":       "timeout",
@@ -65,11 +61,9 @@ func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
 	require.Equal(t, "corr-diagnostics", item.CorrelationID)
 	require.Equal(t, 5, item.Attempts)
 	require.NotNil(t, item.Error)
-	require.Equal(t, "submission_requires_resubmission", item.Error.Code)
-	require.True(t, item.Error.Retryable)
-	require.Equal(t, "resubmit_submission", item.Error.NextAction)
-	require.Len(t, item.Error.ResubmissionIssues, 1)
-	require.Equal(t, "rel-1", item.Error.ResubmissionIssues[0].RelationshipRef)
+	require.Equal(t, "provider_unavailable", item.Error.Code)
+	require.False(t, item.Error.Retryable)
+	require.Equal(t, "contact_operator", item.Error.NextAction)
 	require.NotContains(t, item.Error.Message, "timeout")
 	require.NotContains(t, item.Error.Message, "must not cross")
 	require.Equal(t, "document evidence", item.SourceSummary)
@@ -113,7 +107,7 @@ func TestSubmissionDiagnosticsDetailNeverReturnsEvidenceContentOrRawFailure(t *t
 	require.Len(t, detail.Evidence, 1)
 	require.Equal(t, repo.detail.Placement.Evidence[0].FragmentID, detail.Evidence[0].EvidenceID)
 	require.Len(t, detail.Errors, 1)
-	require.Equal(t, "submission_processing_failed", detail.Errors[0].Code)
+	require.Equal(t, "internal_failure", detail.Errors[0].Code)
 	require.NotContains(t, detail.Errors[0].Message, "secret-provider-response")
 	require.NotContains(t, detail.Errors[0].Message, "unknown-provider-detail")
 	require.Nil(t, detail.OperatorDiagnostic, "unknown diagnostic tokens must not cross the control boundary")
@@ -134,7 +128,7 @@ func TestSubmissionDiagnosticsDetailOrdersAndFiltersOperatorHistory(t *testing.T
 				"failure_reason_code": "assessor_provider_failed", "failure_stage": "assessment", "failure_class": "timeout",
 			}},
 			{ID: "second", OutcomeKind: "submission_assessment_terminal", Status: "failed", CreatedAt: second, Payload: map[string]any{
-				"failure_reason_code": "assessor_response_invalid", "failure_stage": "assessment", "failure_class": "validation_failed",
+				"failure_reason_code": "provider_response_invalid", "failure_stage": "assessment", "failure_class": "validation_failed",
 			}},
 			{ID: "secret", OutcomeKind: "internal", Status: "failed", CreatedAt: second.Add(time.Minute), Payload: map[string]any{
 				"failure_stage": "provider-secret-detail", "failure_class": "provider-secret-detail",

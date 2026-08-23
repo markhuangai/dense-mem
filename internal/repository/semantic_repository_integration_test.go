@@ -72,6 +72,22 @@ func TestSemanticApplyRelationshipDecisionValidationRequiresEntailedSupport(t *t
 	assert.Contains(t, err.Error(), "entailed relationship decisions require support")
 }
 
+func TestSemanticApplyRelationshipDecisionValidationAllowsStructuralRememberAcceptance(t *testing.T) {
+	input := validApplyRelationshipDecisionInput()
+	input.AssessorAccepted = true
+	input.AssessmentID = uuid.NewString()
+	input.EvidenceVerdict = ""
+	input.Confidence = nil
+	input.Rationale = ""
+	input.AssessmentPolicyVersion = ""
+	input.ThresholdUsed = nil
+	input.GateResult = ""
+
+	err := validateApplyRelationshipDecisionInput(normalizeApplyRelationshipDecisionInput(input))
+
+	require.NoError(t, err)
+}
+
 func TestSemanticEntitiesAllowHomonymsAndTypedValuesDeduplicate(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

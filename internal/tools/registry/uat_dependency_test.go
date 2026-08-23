@@ -151,6 +151,8 @@ func TestBuildActiveWiresExecutableDreamTools(t *testing.T) {
 		t.Fatalf("resolve_dream_feedback missing evidence err = %v", err)
 	}
 	resolveInput := validFlatRelationshipSubmission()
+	delete(resolveInput, "idempotency_key")
+	relationship(resolveInput)["modality"] = "statement"
 	resolveInput["hypothesis_id"] = "dream-v2"
 	resolveInput["decision"] = "confirm_true"
 	resolveOut, err := resolve.Invoke(contractInvokeContext("write"), "ignored-profile", resolveInput)

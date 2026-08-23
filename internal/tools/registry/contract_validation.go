@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type contractSourceRevision struct {
@@ -31,14 +33,17 @@ func validateSourceRevisionBatch(
 		return nil
 	}
 	if prior != current {
-		return fmt.Errorf("evidence[%d]: source_key revision fields must match earlier item in request", index)
+		field := "source_revision"
+		if prior.revision == current.revision {
+			field = "previous_source_revision"
+		}
+		return fmt.Errorf("evidence[%d].%s: source_key revision fields must match earlier item in request", index, field)
 	}
 	return nil
 }
 
 func validateDirectEvidenceSupersessions(evidence []any) error {
 	targets := map[string]int{}
-	keys := map[string]int{}
 	for index, item := range evidence {
 		fields, ok := objectFields(item)
 		if !ok {
@@ -48,18 +53,10 @@ func validateDirectEvidenceSupersessions(evidence []any) error {
 		if len(targetIDs) == 0 {
 			continue
 		}
-		key := strings.TrimSpace(stringField(fields, "idempotency_key"))
-		if key == "" {
-			return fmt.Errorf("evidence[%d]: idempotency_key is required when supersedes_evidence_ids is set", index)
-		}
-		if previous, exists := keys[key]; exists {
-			return fmt.Errorf("evidence[%d]: idempotency_key duplicates evidence[%d] direct supersession", index, previous)
-		}
-		keys[key] = index
 		for _, rawID := range targetIDs {
 			targetID, _ := rawID.(string)
 			if previous, exists := targets[targetID]; exists {
-				return fmt.Errorf("evidence[%d]: supersedes_evidence_ids duplicates target from evidence[%d]", index, previous)
+				return fmt.Errorf("evidence[%d].supersedes_evidence_ids: duplicates target from evidence[%d]", index, previous)
 			}
 			targets[targetID] = index
 		}
@@ -296,9 +293,15 @@ func validateSubmittedRelationship(relationship map[string]any, evidence []any, 
 	if _, ok := objectFields(relationship["subject"]); !ok {
 		return fmt.Errorf("%s.subject must be an object", path)
 	}
+	if err := validateRememberEntityHintValue(relationship["subject"], path+".subject"); err != nil {
+		return err
+	}
 
 	if _, ok := objectFields(relationship["predicate"]); !ok {
 		return fmt.Errorf("%s.predicate must be an object", path)
+	}
+	if err := validateRememberPredicateHintValue(relationship["predicate"], path+".predicate"); err != nil {
+		return err
 	}
 
 	object, ok := objectFields(relationship["object"])
@@ -313,6 +316,9 @@ func validateSubmittedRelationship(relationship map[string]any, evidence []any, 
 	if hasEntity {
 		if _, ok := objectFields(object["entity"]); !ok {
 			return fmt.Errorf("%s.object.entity must be an object", path)
+		}
+		if err := validateRememberEntityHintValue(object["entity"], path+".object.entity"); err != nil {
+			return err
 		}
 	} else {
 		value, ok := objectFields(object["value"])
@@ -335,6 +341,35 @@ func validateSubmittedRelationship(relationship map[string]any, evidence []any, 
 		}
 	}
 	return validateRelationshipValidityWindow(relationship, path)
+}
+
+func validateRememberEntityHintValue(raw any, path string) error {
+	entity, ok := objectFields(raw)
+	if !ok {
+		return fmt.Errorf("%s must be an object", path)
+	}
+	name := strings.TrimSpace(stringField(entity, "name"))
+	knownID := strings.TrimSpace(stringField(entity, "known_entity_id"))
+	if name == "" && knownID == "" {
+		return fmt.Errorf("%s requires name or known_entity_id", path)
+	}
+	if knownID != "" {
+		if _, err := uuid.Parse(knownID); err != nil {
+			return fmt.Errorf("%s.known_entity_id must be a UUID", path)
+		}
+	}
+	return nil
+}
+
+func validateRememberPredicateHintValue(raw any, path string) error {
+	predicate, ok := objectFields(raw)
+	if !ok {
+		return fmt.Errorf("%s must be an object", path)
+	}
+	if strings.TrimSpace(stringField(predicate, "proposed_key")) == "" && strings.TrimSpace(stringField(predicate, "known_predicate_key")) == "" {
+		return fmt.Errorf("%s requires proposed_key or known_predicate_key", path)
+	}
+	return nil
 }
 
 func submittedRelationshipEvidenceIndices(raw any, evidenceCount int, path string) ([]int, error) {

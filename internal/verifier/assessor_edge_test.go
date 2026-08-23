@@ -3,7 +3,6 @@ package verifier
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"strings"
 	"testing"
 
@@ -157,9 +156,12 @@ func TestSemanticAssessmentSubmissionContractRequiresExactCompleteResponse(t *te
 
 	t.Run("accepts exact response and registration request", func(t *testing.T) {
 		response := semanticAssessmentTestResponse()
-		response.RelationshipResults[0].PredicateStatus = "registration_required"
-		response.RelationshipResults[0].PredicateKey = nil
-		response.RelationshipResults[0].PredicateVersion = nil
+		response.RelationshipResults[0].Splits[0].PredicateStatus = "registration_required"
+		response.RelationshipResults[0].Splits[0].PredicateKey = nil
+		response.RelationshipResults[0].Splits[0].PredicateVersion = nil
+		response.RelationshipResults[0].Splits[0].PredicateRegistration = &SemanticAssessmentPredicateRegistration{
+			PredicateKey: "works_on", RelationshipKind: "state", CurrentCardinality: "many",
+		}
 		if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) != 0 {
 			t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v", errs)
 		}
@@ -182,13 +184,13 @@ func TestSemanticAssessmentSubmissionContractRequiresExactCompleteResponse(t *te
 		},
 		{
 			name:   "changes preserved relationship polarity",
-			mutate: func(response *SemanticAssessmentResponse) { response.RelationshipResults[0].Polarity = "-" },
+			mutate: func(response *SemanticAssessmentResponse) { response.RelationshipResults[0].Splits[0].Polarity = "-" },
 			want:   "does not preserve its submitted relationship target",
 		},
 		{
 			name: "adds support outside evidence allowlist",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].SupportRanges[0].EvidenceID = "ev-other"
+				response.RelationshipResults[0].Splits[0].SupportRanges[0].EvidenceID = "ev-other"
 			},
 			want: "is outside the submitted evidence allowlist",
 		},
@@ -201,6 +203,53 @@ func TestSemanticAssessmentSubmissionContractRequiresExactCompleteResponse(t *te
 			}
 		})
 	}
+}
+
+func TestSemanticAssessmentRelationshipDispositionsAndSplits(t *testing.T) {
+	request, limits := semanticAssessmentSubmissionContractTestRequest(t)
+	prepared, errs := PrepareSemanticAssessmentRequest(request, limits)
+	require.Empty(t, errs)
+
+	t.Run("not supported permits intentionally ungrounded entities", func(t *testing.T) {
+		response := semanticAssessmentTestResponse()
+		reason := "not_supported_by_evidence"
+		response.RelationshipResults[0] = SemanticAssessmentRelationshipResult{
+			Ref: response.RelationshipResults[0].Ref, Disposition: "not_supported", Reason: &reason,
+			Splits: []SemanticAssessmentRelationshipSplit{},
+		}
+		for index := range response.EntityResults {
+			response.EntityResults[index].GroundingRef = nil
+			response.EntityResults[index].Action = "ambiguous"
+			response.EntityResults[index].CandidateEntityID = nil
+		}
+
+		_, validationErrors := PrepareSemanticAssessmentResponse(prepared, response, limits)
+		require.Empty(t, validationErrors)
+	})
+
+	t.Run("stored split requires grounded entities", func(t *testing.T) {
+		response := semanticAssessmentTestResponse()
+		response.EntityResults[0].GroundingRef = nil
+		response.EntityResults[0].Action = "ambiguous"
+		response.EntityResults[0].CandidateEntityID = nil
+
+		_, validationErrors := PrepareSemanticAssessmentResponse(prepared, response, limits)
+		require.Contains(t, semanticAssessmentJoinedErrors(validationErrors), "references an ungrounded Entity")
+	})
+
+	t.Run("stored splits are contiguous", func(t *testing.T) {
+		response := semanticAssessmentTestResponse()
+		second := response.RelationshipResults[0].Splits[0]
+		second.SplitIndex = 1
+		response.RelationshipResults[0].Splits = append(response.RelationshipResults[0].Splits, second)
+
+		_, validationErrors := PrepareSemanticAssessmentResponse(prepared, response, limits)
+		require.Empty(t, validationErrors)
+
+		response.RelationshipResults[0].Splits[1].SplitIndex = 2
+		_, validationErrors = PrepareSemanticAssessmentResponse(prepared, response, limits)
+		require.Contains(t, semanticAssessmentJoinedErrors(validationErrors), "split_index: must equal 1")
+	})
 }
 
 func TestSemanticAssessmentLegacyEvidenceIsBounded(t *testing.T) {
@@ -241,9 +290,9 @@ func TestSemanticAssessmentSubmissionRangeValidationIsDeterministic(t *testing.T
 		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
 	}
 	response := semanticAssessmentTestResponse()
-	response.RelationshipResults[0].PredicateRange.EvidenceID = "ev-other"
-	valueRange := response.RelationshipResults[0].PredicateRange
-	response.RelationshipResults[0].ValueRange = &valueRange
+	response.RelationshipResults[0].Splits[0].PredicateRange.EvidenceID = "ev-other"
+	valueRange := response.RelationshipResults[0].Splits[0].PredicateRange
+	response.RelationshipResults[0].Splits[0].ValueRange = &valueRange
 
 	validationErrors := validateSemanticAssessmentSubmissionResponse(prepared.SubmissionContract, response)
 	fields := make([]string, 0, 2)
@@ -253,8 +302,8 @@ func TestSemanticAssessmentSubmissionRangeValidationIsDeterministic(t *testing.T
 		}
 	}
 	if want := []string{
-		"relationship_results[0].predicate_range.evidence_id",
-		"relationship_results[0].value_range.evidence_id",
+		"relationship_results[0].splits[0].predicate_range.evidence_id",
+		"relationship_results[0].splits[0].value_range.evidence_id",
 	}; len(fields) != len(want) || fields[0] != want[0] || fields[1] != want[1] {
 		t.Fatalf("range validation fields = %#v, want %#v", fields, want)
 	}
@@ -263,17 +312,17 @@ func TestSemanticAssessmentSubmissionRangeValidationIsDeterministic(t *testing.T
 func TestSemanticAssessmentSubmissionPreservesTemporalBounds(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		mutate func(*SemanticAssessmentRelationshipResult)
+		mutate func(*SemanticAssessmentRelationshipSplit)
 	}{
 		{
 			name: "changed valid_from",
-			mutate: func(result *SemanticAssessmentRelationshipResult) {
+			mutate: func(result *SemanticAssessmentRelationshipSplit) {
 				result.ValidFrom = stringPointer("2026-07-01T00:00:00Z")
 			},
 		},
 		{
 			name: "cleared valid_to",
-			mutate: func(result *SemanticAssessmentRelationshipResult) {
+			mutate: func(result *SemanticAssessmentRelationshipSplit) {
 				result.ValidTo = nil
 			},
 		},
@@ -286,16 +335,16 @@ func TestSemanticAssessmentSubmissionPreservesTemporalBounds(t *testing.T) {
 			prepared, errs := PrepareSemanticAssessmentRequest(request, limits)
 			require.Empty(t, errs)
 			response := semanticAssessmentTestResponse()
-			response.RelationshipResults[0].ValidFrom = stringPointer(from)
-			response.RelationshipResults[0].ValidTo = stringPointer(to)
-			test.mutate(&response.RelationshipResults[0])
+			response.RelationshipResults[0].Splits[0].ValidFrom = stringPointer(from)
+			response.RelationshipResults[0].Splits[0].ValidTo = stringPointer(to)
+			test.mutate(&response.RelationshipResults[0].Splits[0])
 			validationErrors := validateSemanticAssessmentSubmissionResponse(prepared.SubmissionContract, response)
 			require.Contains(t, semanticAssessmentJoinedErrors(validationErrors), "does not preserve the submitted temporal bounds")
 		})
 	}
 }
 
-func TestSemanticAssessmentResponseNormalizesSecurityTimeScopeAndValue(t *testing.T) {
+func TestSemanticAssessmentResponseNormalizesSecurityTimeAndValue(t *testing.T) {
 	req, limits := semanticAssessmentTestRequest(t)
 	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
 	if len(errs) != 0 {
@@ -308,10 +357,13 @@ func TestSemanticAssessmentResponseNormalizesSecurityTimeScopeAndValue(t *testin
 	response.SecuritySignals = []SemanticAssessmentSecuritySignal{{
 		EvidenceID: "ev-1", Kind: "instruction_override", StartRef: securityStartRef, EndRef: securityEndRef,
 	}}
-	relationship := &response.RelationshipResults[0]
-	relationship.PredicateStatus = "unresolved"
+	relationship := &response.RelationshipResults[0].Splits[0]
+	relationship.PredicateStatus = "registration_required"
 	relationship.PredicateKey = nil
 	relationship.PredicateVersion = nil
+	relationship.PredicateRegistration = &SemanticAssessmentPredicateRegistration{
+		PredicateKey: "describes", RelationshipKind: "state", CurrentCardinality: "many",
+	}
 	relationship.ObjectRef = nil
 	relationship.ObjectValue = &SemanticAssessmentValue{
 		ValueType:      "string",
@@ -321,9 +373,6 @@ func TestSemanticAssessmentResponseNormalizesSecurityTimeScopeAndValue(t *testin
 	}
 	relationship.ValidFrom = stringPointer("2026-07-28T04:00:00+04:00")
 	relationship.ValidTo = stringPointer("2026-07-30T00:00:00Z")
-	relationship.TemporalVerdict = "entailed"
-	relationship.ScopeStatus = "resolved"
-	relationship.ScopeKey = stringPointer(" project:dense-mem ")
 
 	encoded, err := json.Marshal(response)
 	if err != nil {
@@ -337,13 +386,10 @@ func TestSemanticAssessmentResponseNormalizesSecurityTimeScopeAndValue(t *testin
 	if len(errs) != 0 {
 		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v", errs)
 	}
-	if got := *validated.RelationshipResults[0].ValidFrom; got != "2026-07-28T00:00:00Z" {
+	if got := *validated.RelationshipResults[0].Splits[0].ValidFrom; got != "2026-07-28T00:00:00Z" {
 		t.Fatalf("normalized valid_from = %q, want UTC", got)
 	}
-	if got := *validated.RelationshipResults[0].ScopeKey; got != "project:dense-mem" {
-		t.Fatalf("normalized scope_key = %q, want trimmed key", got)
-	}
-	if got := validated.RelationshipResults[0].ObjectValue.CanonicalValue; got != "Dense-Mem" {
+	if got := validated.RelationshipResults[0].Splits[0].ObjectValue.CanonicalValue; got != "Dense-Mem" {
 		t.Fatalf("normalized canonical_value = %q, want trimmed value", got)
 	}
 }
@@ -377,8 +423,8 @@ func TestSemanticAssessmentResponseRejectsEachTypedObjectValueBound(t *testing.T
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			response := semanticAssessmentTestResponse()
-			response.RelationshipResults[0].ObjectRef = nil
-			response.RelationshipResults[0].ObjectValue = &testCase.value
+			response.RelationshipResults[0].Splits[0].ObjectRef = nil
+			response.RelationshipResults[0].Splits[0].ObjectValue = &testCase.value
 			_, errs := PrepareSemanticAssessmentResponse(prepared, response, limits)
 			if len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), testCase.want) {
 				t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want %q", errs, testCase.want)
@@ -412,12 +458,13 @@ func TestDecodeSemanticAssessmentResponseRejectsRawShapeBoundaries(t *testing.T)
 			mutate: func(payload map[string]any) {
 				relationships := payload["relationship_results"].([]any)
 				relationship := relationships[0].(map[string]any)
-				relationship["object_ref"] = nil
-				relationship["object_value"] = map[string]any{
+				split := relationship["splits"].([]any)[0].(map[string]any)
+				split["object_ref"] = nil
+				split["object_value"] = map[string]any{
 					"value_type": "string", "canonical_value": "Dense-Mem", "display": nil, "unit": nil, "unknown": true,
 				}
 			},
-			want: "relationship_results[0].object_value.unknown: is unknown",
+			want: "relationship_results[0].splits[0].object_value.unknown: is unknown",
 		},
 	}
 
@@ -462,7 +509,7 @@ func TestSemanticAssessmentLimitNormalizationAndTokenizerFailure(t *testing.T) {
 	}
 }
 
-func TestSemanticAssessmentPreservesPredicateCatalogRankAndRejectsNonFiniteConfidence(t *testing.T) {
+func TestSemanticAssessmentPreservesPredicateCatalogRank(t *testing.T) {
 	req, limits := semanticAssessmentTestRequest(t)
 	second := req.PredicateOptions[0]
 	second.PredicateKey = "second_ranked"
@@ -479,14 +526,6 @@ func TestSemanticAssessmentPreservesPredicateCatalogRankAndRejectsNonFiniteConfi
 		t.Fatalf("predicate order = %#v, want catalog rank order", got)
 	}
 
-	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
-		response := semanticAssessmentTestResponse()
-		response.EntityResults[0].Confidence = value
-		response.RelationshipResults[0].Confidence = value
-		if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "confidence: must be between 0 and 1") {
-			t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want non-finite confidence rejection", errs)
-		}
-	}
 }
 
 func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.T) {
@@ -548,8 +587,6 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 				result.Ref = ""
 				result.Surface = "not Mark"
 				result.Kind = "unsupported"
-				result.Confidence = 2
-				result.Rationale = ""
 				result.Action = "unsupported"
 			},
 			want: "entity_results[0].action: is unsupported",
@@ -569,8 +606,6 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 					End:               4,
 					Action:            "ambiguous",
 					CandidateEntityID: stringPointer("entity-mark"),
-					Confidence:        0.5,
-					Rationale:         "Ambiguous evidence.",
 				})
 			},
 			want: "candidate_entity_id: is required for reuse",
@@ -578,57 +613,51 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 		{
 			name: "relationship required fields and enums",
 			mutate: func(response *SemanticAssessmentResponse) {
-				result := &response.RelationshipResults[0]
-				result.Ref = ""
+				response.RelationshipResults[0].Ref = ""
+				result := &response.RelationshipResults[0].Splits[0]
 				result.SubjectRef = "missing"
 				result.OriginalPredicate = ""
 				result.ObjectRef = stringPointer("missing")
 				result.Polarity = "?"
-				result.Modality = "?"
 				result.PredicateStatus = "unsupported"
 				result.Evidence = nil
-				result.EvidenceVerdict = "?"
-				result.TemporalVerdict = "?"
-				result.Confidence = 2
-				result.Rationale = ""
-				result.ScopeStatus = "unsupported"
 			},
-			want: "relationship_results[0].subject_ref: is unknown",
+			want: "relationship_results[0].splits[0].subject_ref: is unknown",
 		},
 		{
 			name: "resolved predicate requires selected allowlist member",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].PredicateKey = nil
-				response.RelationshipResults[0].PredicateVersion = nil
+				response.RelationshipResults[0].Splits[0].PredicateKey = nil
+				response.RelationshipResults[0].Splits[0].PredicateVersion = nil
 			},
 			want: "predicate_key and predicate_version are required for resolved",
 		},
 		{
 			name: "resolved predicate cannot escape allowlist",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].PredicateKey = stringPointer("not_allowed")
+				response.RelationshipResults[0].Splits[0].PredicateKey = stringPointer("not_allowed")
 			},
 			want: "predicate_key: is outside predicate allowlist",
 		},
 		{
-			name: "review predicate cannot retain selection",
+			name: "unresolved predicate is not a stored outcome",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].PredicateStatus = "unresolved"
+				response.RelationshipResults[0].Splits[0].PredicateStatus = "unresolved"
 			},
-			want: "predicate_key and predicate_version must be null for unresolved",
+			want: "predicate_status: is unsupported",
 		},
 		{
 			name: "relationship object must be exactly one typed value or entity",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].ObjectValue = &SemanticAssessmentValue{ValueType: "string", CanonicalValue: "Dense-Mem"}
+				response.RelationshipResults[0].Splits[0].ObjectValue = &SemanticAssessmentValue{ValueType: "string", CanonicalValue: "Dense-Mem"}
 			},
 			want: "object: requires exactly one object_ref or object_value",
 		},
 		{
 			name: "typed object value is bounded and typed",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].ObjectRef = nil
-				response.RelationshipResults[0].ObjectValue = &SemanticAssessmentValue{
+				response.RelationshipResults[0].Splits[0].ObjectRef = nil
+				response.RelationshipResults[0].Splits[0].ObjectValue = &SemanticAssessmentValue{
 					ValueType:      "unsupported",
 					CanonicalValue: "",
 					Display:        stringPointer(strings.Repeat("d", 4097)),
@@ -640,8 +669,8 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 		{
 			name: "typed object display and unit are bounded",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].ObjectRef = nil
-				response.RelationshipResults[0].ObjectValue = &SemanticAssessmentValue{
+				response.RelationshipResults[0].Splits[0].ObjectRef = nil
+				response.RelationshipResults[0].Splits[0].ObjectValue = &SemanticAssessmentValue{
 					ValueType:      "string",
 					CanonicalValue: "Dense-Mem",
 					Display:        stringPointer(strings.Repeat("d", 4097)),
@@ -653,43 +682,24 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 		{
 			name: "relationship support ranges require valid references",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].SupportRanges[0].StartRef = "invalid"
+				response.RelationshipResults[0].Splits[0].SupportRanges[0].StartRef = "invalid"
 			},
-			want: "relationship_results[0].support_ranges[0]: boundary references are invalid",
+			want: "relationship_results[0].splits[0].support_ranges[0]: boundary references are invalid",
 		},
 		{
-			name: "temporal bounds are ordered and entailed",
+			name: "temporal bounds are ordered",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].ValidFrom = stringPointer("2026-07-30T00:00:00Z")
-				response.RelationshipResults[0].ValidTo = stringPointer("2026-07-28T00:00:00Z")
-				response.RelationshipResults[0].TemporalVerdict = "entailed"
+				response.RelationshipResults[0].Splits[0].ValidFrom = stringPointer("2026-07-30T00:00:00Z")
+				response.RelationshipResults[0].Splits[0].ValidTo = stringPointer("2026-07-28T00:00:00Z")
 			},
 			want: "valid_to: must not be before valid_from",
 		},
 		{
-			name: "time and scope require consistent fields",
+			name: "time requires an RFC3339 timestamp",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].ValidFrom = stringPointer("not-a-time")
-				response.RelationshipResults[0].TemporalVerdict = "absent"
-				response.RelationshipResults[0].ScopeStatus = "resolved"
-				response.RelationshipResults[0].ScopeKey = nil
+				response.RelationshipResults[0].Splits[0].ValidFrom = stringPointer("not-a-time")
 			},
 			want: "valid_from: must be an RFC3339 timestamp or null",
-		},
-		{
-			name: "entailed time requires a bound",
-			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].TemporalVerdict = "entailed"
-			},
-			want: "temporal_verdict: entailed requires valid_from or valid_to",
-		},
-		{
-			name: "nonentailed time and absent scope reject fields",
-			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].ValidFrom = stringPointer("2026-07-28T00:00:00Z")
-				response.RelationshipResults[0].ScopeKey = stringPointer("project:dense-mem")
-			},
-			want: "temporal_verdict: only entailed may provide validity bounds",
 		},
 	}
 

@@ -101,8 +101,6 @@ const submissionDiagnosticSafePayloadSQL = `
 		'provider_status', {{payload}} -> 'provider_status',
 		'assessor_turns', {{payload}} -> 'assessor_turns',
 		'assessor_provider_attempted', {{payload}} -> 'assessor_provider_attempted',
-		'resubmission_issues', {{payload}} -> 'resubmission_issues',
-		'resubmission_issues_truncated', {{payload}} -> 'resubmission_issues_truncated',
 		'search_document_ids', {{payload}} -> 'search_document_ids',
 		'embedding_job_ids', {{payload}} -> 'embedding_job_ids'
 	))`

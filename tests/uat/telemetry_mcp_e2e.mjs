@@ -40,12 +40,12 @@ await controlJSON("/config/telemetry-pricing", {
 
 const telemetryContent = `Telemetry E2E ${runID}: Dense-Mem uses exact evidence before semantic processing.`;
 const remember = await mcpTool("remember", {
+  idempotency_key: `${runID}:batch`,
   evidence: [{
     content: telemetryContent,
     source_type: "document",
     source: `telemetry:${runID}`,
     source_group: `telemetry:${runID}`,
-    idempotency_key: runID,
   }],
   relationships: [{
     ref: `${runID}:relationship`,
@@ -63,7 +63,6 @@ const remember = await mcpTool("remember", {
       },
     },
     polarity: "+",
-    modality: "statement",
     evidence_indices: [0],
   }],
 });

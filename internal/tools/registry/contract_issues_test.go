@@ -273,6 +273,42 @@ func TestValidateContractInputIssuesCoversRememberShapeBranches(t *testing.T) {
 	}
 }
 
+func TestValidateContractInputIssuesUsesExactNestedJSONPointers(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+		path   string
+	}{
+		{name: "known entity", path: "/relationships/0/subject/known_entity_id", mutate: func(input map[string]any) {
+			relationship(input)["subject"].(map[string]any)["known_entity_id"] = "not-a-uuid"
+		}},
+		{name: "typed value", path: "/relationships/0/object/value/value", mutate: func(input map[string]any) {
+			relationship(input)["object"] = map[string]any{"value": map[string]any{"type": "number", "value": "not-a-number"}}
+		}},
+		{name: "correction version", path: "/relationships/0/correction_target/expected_version", mutate: func(input map[string]any) {
+			relationship(input)["correction_target"] = map[string]any{"relationship_id": "relationship", "expected_version": 0}
+		}},
+		{name: "source revision", path: "/evidence/0/previous_source_revision", mutate: func(input map[string]any) {
+			input["evidence"].([]any)[0].(map[string]any)["previous_source_revision"] = "rev-1"
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := validFlatRelationshipSubmission()
+			test.mutate(input)
+			result := ValidateContractInputIssues(remember, input, []string{"write"})
+			paths := make([]string, 0, len(result.Issues))
+			for _, issue := range result.Issues {
+				paths = append(paths, issue.Path)
+			}
+			require.Contains(t, paths, test.path)
+		})
+	}
+}
+
 func issueMessages(result ContractValidationResult) []string {
 	messages := make([]string, 0, len(result.Issues))
 	for _, issue := range result.Issues {

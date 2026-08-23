@@ -28,6 +28,39 @@ func (assessorErrorReader) Read([]byte) (int, error) {
 	return 0, errors.New("read failed")
 }
 
+func runSemanticAssessmentSessionForTest(
+	ctx context.Context,
+	provider *OpenAIVerifier,
+	request SemanticAssessmentRequest,
+) (SemanticAssessmentResponse, error) {
+	session, turn, err := provider.Assess(ctx, request)
+	if err != nil {
+		return SemanticAssessmentResponse{}, err
+	}
+	for {
+		if len(turn.ValidationErrors) == 0 {
+			return turn.Response, nil
+		}
+		if turn.Turn >= SemanticAssessmentMaxProviderTurns {
+			return SemanticAssessmentResponse{}, &MalformedResponseError{
+				Provider:                openAIVerifierProvider,
+				Message:                 "semantic assessment response remained invalid after bounded correction",
+				FailureClass:            "malformed_exhausted",
+				Attempts:                turn.Turn,
+				ValidationStage:         turn.ValidationStage,
+				ValidationFieldFamilies: semanticAssessmentValidationFieldFamilies(turn.ValidationErrors),
+			}
+		}
+		turn, err = provider.Repair(ctx, session, SemanticAssessmentRepairRequest{
+			Request:          request,
+			ValidationErrors: turn.ValidationErrors,
+		})
+		if err != nil {
+			return SemanticAssessmentResponse{}, err
+		}
+	}
+}
+
 func TestOpenAIVerifierAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var raw map[string]json.RawMessage
@@ -46,7 +79,7 @@ func TestOpenAIVerifierAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 		assert.Equal(t, "assessor-model", request.Model)
 		assert.Equal(t, "dense_mem_semantic_assessment_response", request.ResponseFormat.JSONSchema.Name)
 		assert.Contains(t, request.Messages[0].Content, "integrated structure and support assessor")
-		assert.Contains(t, request.Messages[0].Content, "registration_required and unresolved require predicate_key and predicate_version both null")
+		assert.Contains(t, request.Messages[0].Content, "registration_required predicate requires null predicate_key and predicate_version")
 		var payload map[string]any
 		if !assert.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &payload)) {
 			http.Error(w, "invalid assessor payload", http.StatusBadRequest)
@@ -70,13 +103,117 @@ func TestOpenAIVerifierAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 	cfg := newTestVerifierConfig(srv.URL, "sk-test", "assessor-model")
 	v := NewOpenAIVerifier(cfg, srv.Client())
 	req, _ := semanticAssessmentTestRequest(t)
-	response, err := v.AssessSemantic(context.Background(), req)
+	response, err := runSemanticAssessmentSessionForTest(context.Background(), v, req)
 	require.NoError(t, err)
 	assert.Equal(t, "assess-1", response.RequestID)
 	require.Len(t, response.RelationshipResults, 1)
-	assert.Equal(t, "entailed", response.RelationshipResults[0].EvidenceVerdict)
 	assert.Equal(t, 1, response.ProviderTurns)
 	assert.Equal(t, 200, response.InputTokens)
+}
+
+func TestOpenAIVerifierRememberSessionRepairsWithRefreshedCandidates(t *testing.T) {
+	var requests []openAIVerifierRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request openAIVerifierRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		requests = append(requests, request)
+		response := semanticAssessmentTestResponse()
+		if len(requests) == 1 {
+			response.EntityResults[0].GroundingRef = nil
+		}
+		content, err := json.Marshal(response)
+		require.NoError(t, err)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
+		}))
+	}))
+	defer srv.Close()
+
+	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	session, first, err := v.Assess(context.Background(), request)
+	require.NoError(t, err)
+	require.NotNil(t, session)
+	require.NotEmpty(t, first.ValidationErrors)
+	assert.True(t, semanticAssessmentTestHasValidationField(first.ValidationErrors, "entity_results[0].grounding_ref"))
+	assert.Equal(t, 1, first.Turn)
+
+	refreshed := request
+	refreshed.EntityCandidateGroups = append([]SemanticAssessmentEntityCandidateGroup(nil), request.EntityCandidateGroups...)
+	refreshed.EntityCandidateGroups[0].Candidates[0].IdentityContext = map[string]any{"source": "refreshed-catalog"}
+	second, err := v.Repair(context.Background(), session, SemanticAssessmentRepairRequest{
+		Request:          refreshed,
+		ValidationErrors: first.ValidationErrors,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, second.ValidationErrors)
+	assert.Equal(t, 2, second.Turn)
+	assert.Equal(t, session.SessionID(), session.(*openAISemanticAssessmentSession).SessionID())
+	require.Len(t, requests, 2)
+	assert.Equal(t, []string{"system", "user", "assistant", "user"}, assessmentMessageRoles(requests[1].Messages))
+	assert.Contains(t, requests[1].Messages[3].Content, "refreshed_candidate_context")
+	assert.Contains(t, requests[1].Messages[3].Content, "refreshed-catalog")
+}
+
+func TestOpenAIVerifierRememberSessionRejectsInvalidRepairState(t *testing.T) {
+	var nilSession *openAISemanticAssessmentSession
+	assert.Empty(t, nilSession.SessionID())
+
+	v := NewOpenAIVerifier(newTestVerifierConfig("", "key", "assessor-model"), nil)
+	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	prepared, validationErrors := PrepareSemanticAssessmentRequest(request, v.assessmentLimits)
+	require.Empty(t, validationErrors)
+
+	_, err := v.Repair(context.Background(), nil, SemanticAssessmentRepairRequest{Request: prepared})
+	require.Error(t, err)
+	var providerErr *ProviderError
+	require.ErrorAs(t, err, &providerErr)
+	assert.Equal(t, ProviderFailureClassRequestInvalid, providerErr.FailureClass)
+
+	maxed := &openAISemanticAssessmentSession{id: "maxed", turn: SemanticAssessmentMaxProviderTurns}
+	_, err = v.Repair(context.Background(), maxed, SemanticAssessmentRepairRequest{Request: prepared})
+	var malformed *MalformedResponseError
+	require.ErrorAs(t, err, &malformed)
+	assert.Equal(t, "malformed_exhausted", malformed.FailureClass)
+
+	_, err = v.Repair(context.Background(), &openAISemanticAssessmentSession{id: "valid"}, SemanticAssessmentRepairRequest{})
+	require.ErrorAs(t, err, &providerErr)
+	assert.Equal(t, ProviderFailureClassRequestInvalid, providerErr.FailureClass)
+
+	changed := prepared
+	changed.RequestID = "changed-request"
+	_, err = v.Repair(context.Background(), &openAISemanticAssessmentSession{id: "valid", prepared: prepared}, SemanticAssessmentRepairRequest{Request: changed})
+	require.ErrorAs(t, err, &providerErr)
+	assert.Equal(t, ProviderFailureClassRequestInvalid, providerErr.FailureClass)
+}
+
+func TestOpenAIVerifierRememberSessionEnforcesConversationInputBudget(t *testing.T) {
+	limits := DefaultSemanticAssessmentLimits()
+	limits.MaxInputTokens = 1
+	v := NewOpenAIVerifierWithAssessmentLimits(newTestVerifierConfig("", "key", "assessor-model"), nil, limits)
+	_, _, err := v.runRememberAssessmentTurn(context.Background(), &openAISemanticAssessmentSession{id: "budget"}, SemanticAssessmentRequest{}, []openAIVerifierMessage{{Role: "user", Content: "this cannot fit"}})
+	var malformed *MalformedResponseError
+	require.ErrorAs(t, err, &malformed)
+	assert.Equal(t, "input_budget", malformed.FailureClass)
+}
+
+func TestOpenAIVerifierRememberSessionRejectsProviderReportedInputOverflow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		content, err := json.Marshal(semanticAssessmentTestResponse())
+		require.NoError(t, err)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
+			"usage":   map[string]any{"prompt_tokens": 999999, "completion_tokens": 1, "total_tokens": 1000000},
+		}))
+	}))
+	defer srv.Close()
+
+	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	_, _, err := v.Assess(context.Background(), request)
+	var malformed *MalformedResponseError
+	require.ErrorAs(t, err, &malformed)
+	assert.Equal(t, "input_budget", malformed.FailureClass)
 }
 
 func TestOpenAIStructuredChatRecordsProviderUsageBeforeRejectingContent(t *testing.T) {
@@ -176,11 +313,9 @@ func TestOpenAIVerifierAssessSemanticCorrectsMalformedContentInSameHistory(t *te
 	}))
 	defer srv.Close()
 
-	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
-	v.SetMetrics(metrics)
 	req, _ := semanticAssessmentTestRequest(t)
-	response, err := v.AssessSemantic(context.Background(), req)
+	response, err := runSemanticAssessmentSessionForTest(context.Background(), v, req)
 	require.NoError(t, err)
 	require.Len(t, requests, 2)
 	assert.Equal(t, 2, response.ProviderTurns)
@@ -189,15 +324,13 @@ func TestOpenAIVerifierAssessSemanticCorrectsMalformedContentInSameHistory(t *te
 	assert.Equal(t, []string{"system", "user", "assistant", "user"}, assessmentMessageRoles(requests[1].Messages))
 	assert.Equal(t, invalidContent, requests[1].Messages[2].Content)
 
-	var correction semanticAssessmentCorrection
+	var correction semanticAssessmentSessionRepair
 	require.NoError(t, json.Unmarshal([]byte(requests[1].Messages[3].Content), &correction))
 	require.Len(t, correction.ValidationErrors, 1)
 	assert.Equal(t, "request_id", correction.ValidationErrors[0].Field)
 	assert.Contains(t, correction.ValidationErrors[0].Message, `expected "assess-1"`)
 	assert.Contains(t, correction.Instruction, "complete replacement JSON object")
-	assert.Contains(t, correction.Instruction, "predicate_key and predicate_version both null")
-	assert.Equal(t, 1, metrics.AssessorValidationFailureCount("response_contract"))
-	assert.Equal(t, 1, metrics.AssessorValidationFieldFailureCount("response_contract", "request_id"))
+	assert.Contains(t, correction.Instruction, "complete predicate_registration")
 }
 
 func TestOpenAIVerifierAssessSemanticRegeneratesInvalidGroundingReference(t *testing.T) {
@@ -232,13 +365,13 @@ func TestOpenAIVerifierAssessSemanticRegeneratesInvalidGroundingReference(t *tes
 
 	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	req, _ := semanticAssessmentSubmissionContractTestRequest(t)
-	response, err := v.AssessSemantic(context.Background(), req)
+	response, err := runSemanticAssessmentSessionForTest(context.Background(), v, req)
 	require.NoError(t, err)
 	require.Len(t, requests, 2)
 	assert.Equal(t, 2, response.ProviderTurns)
 	assert.Equal(t, invalidContent, requests[1].Messages[2].Content)
 
-	var correction semanticAssessmentCorrection
+	var correction semanticAssessmentSessionRepair
 	require.NoError(t, json.Unmarshal([]byte(requests[1].Messages[3].Content), &correction))
 	assert.True(t, semanticAssessmentTestHasValidationField(correction.ValidationErrors, "entity_results[0].grounding_ref"))
 	assert.NotContains(t, requests[1].Messages[3].Content, "span_hints")
@@ -275,12 +408,12 @@ func TestOpenAIVerifierAssessSemanticRegeneratesInvalidEntitySelection(t *testin
 
 	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	req, _ := semanticAssessmentSubmissionContractTestRequest(t)
-	response, err := v.AssessSemantic(context.Background(), req)
+	response, err := runSemanticAssessmentSessionForTest(context.Background(), v, req)
 	require.NoError(t, err)
 	require.Len(t, requests, 2)
 	assert.Equal(t, 2, response.ProviderTurns)
 
-	var correction semanticAssessmentCorrection
+	var correction semanticAssessmentSessionRepair
 	require.NoError(t, json.Unmarshal([]byte(requests[1].Messages[3].Content), &correction))
 	assert.True(t, semanticAssessmentTestHasValidationField(correction.ValidationErrors, "entity_results[0].action"))
 	assert.NotContains(t, requests[1].Messages[3].Content, "entity_selection_hints")
@@ -322,12 +455,12 @@ func TestSemanticAssessmentInstructionsExposeRequestDependentRules(t *testing.T)
 		"Never return numeric text offsets",
 		"start_ref is inclusive and end_ref is exclusive",
 		"return exactly one result for each submitted ref",
-		"Every Relationship requires exactly one of object_ref and object_value",
-		`otherwise use predicate_status "registration_required" when the evidence clearly supports a reusable relationship`,
-		"registration_required and unresolved require predicate_key and predicate_version both null",
+		"Every stored split requires exactly one of object_ref and object_value",
+		`otherwise use predicate_status "registration_required" with a complete predicate_registration`,
+		"registration_required predicate requires null predicate_key and predicate_version",
+		"contiguous split_index entries starting at zero",
+		"not_supported_by_evidence",
 		"Pronouns and inferred coreference are not grounding options",
-		`temporal_verdict "absent"`,
-		`temporal_verdict "entailed"`,
 		"RFC3339",
 		"hidden control rune or active markup",
 	} {
@@ -337,8 +470,8 @@ func TestSemanticAssessmentInstructionsExposeRequestDependentRules(t *testing.T)
 		"Never return numeric offsets",
 		"Copy only grounding_ref, start_ref, and end_ref values present in the immutable request",
 		"same array index",
-		"Preserve every submitted ref, endpoint, typed value, polarity, and modality",
-		"predicate_key and predicate_version both null",
+		"Preserve every submitted ref, endpoint, typed value, polarity, and submitted temporal bounds",
+		"registration_required with a complete predicate_registration",
 		"one complete replacement JSON object",
 	} {
 		assert.Contains(t, semanticAssessmentCorrectionInstruction, expected)
@@ -368,7 +501,7 @@ func TestOpenAIVerifierAssessSemanticStopsConversationOnProviderFailure(t *testi
 
 	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	req, _ := semanticAssessmentTestRequest(t)
-	_, err := v.AssessSemantic(context.Background(), req)
+	_, err := runSemanticAssessmentSessionForTest(context.Background(), v, req)
 	require.ErrorIs(t, err, ErrVerifierProvider)
 	var provider *ProviderError
 	require.ErrorAs(t, err, &provider)
@@ -587,7 +720,7 @@ func TestOpenAIVerifierAssessSemanticRejectsProviderBoundaries(t *testing.T) {
 			defer srv.Close()
 			v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 			req, _ := semanticAssessmentTestRequest(t)
-			_, err := v.AssessSemantic(context.Background(), req)
+			_, err := runSemanticAssessmentSessionForTest(context.Background(), v, req)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), testCase.wantDetail)
 			if testCase.forbidDetail != "" {
@@ -617,7 +750,7 @@ func TestOpenAIVerifierAssessSemanticRejectsProviderBoundaries(t *testing.T) {
 
 func TestOpenAIVerifierAssessSemanticRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
 	v := NewOpenAIVerifier(newTestVerifierConfig("https://example.invalid", "key", "assessor-model"), nil)
-	_, err := v.AssessSemantic(context.Background(), SemanticAssessmentRequest{})
+	_, err := runSemanticAssessmentSessionForTest(context.Background(), v, SemanticAssessmentRequest{})
 	var provider *ProviderError
 	require.ErrorAs(t, err, &provider)
 	assert.Contains(t, provider.Message, "invalid semantic assessment request")

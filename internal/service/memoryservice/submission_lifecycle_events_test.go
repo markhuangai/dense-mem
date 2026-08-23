@@ -27,6 +27,7 @@ func TestRememberLogsAcceptedSubmissionWithoutEvidence(t *testing.T) {
 	svc := NewRememberService(RememberDependencies{Ledger: ledger, Logger: logger})
 
 	_, err := svc.Remember(authenticatedRememberContext(teamID, profileID, keyID), RememberRequest{
+		IdempotencyKey:    "lifecycle-accepted",
 		Evidence:          []RememberEvidenceInput{{Content: "private evidence must not be logged"}},
 		RelationshipHints: completeRememberRelationshipHints(1),
 	})
@@ -42,7 +43,7 @@ func TestRememberLogsAcceptedSubmissionWithoutEvidence(t *testing.T) {
 	require.NotContains(t, logged, "private evidence")
 }
 
-func TestSubmissionWorkerLogsCompletedRetryAndResubmissionFailureAfterPersistence(t *testing.T) {
+func TestSubmissionWorkerLogsCompletedRetryAndTerminalOutcomesAfterPersistence(t *testing.T) {
 	logger, logs := submissionLifecycleTestLogger()
 	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
 	service := worker.(*submissionAssessmentPlacementWorkerService)
@@ -71,17 +72,17 @@ func TestSubmissionWorkerLogsCompletedRetryAndResubmissionFailureAfterPersistenc
 	require.Contains(t, retryLog, `"max_attempts":3`)
 
 	logs.Reset()
-	require.NoError(t, service.completeResubmissionFailure(context.Background(), scope, "policy_validation", nil, false))
+	require.NoError(t, service.completeRejected(context.Background(), scope, SubmissionErrorNoSupportedMemory))
 	failureLog := logs.String()
-	require.Contains(t, failureLog, `"msg":"submission_failed"`)
-	require.Contains(t, failureLog, `"reason_code":"submission_requires_resubmission"`)
-	require.NotContains(t, failureLog, "complete corrected replacement")
+	require.Contains(t, failureLog, `"msg":"submission_rejected"`)
+	require.Contains(t, failureLog, `"reason_code":"no_supported_memory"`)
+	require.NotContains(t, failureLog, "resubmission_issues")
 
 	logs.Reset()
 	require.NoError(t, service.completeTerminalWithFailure(context.Background(), scope, "assessment", "timeout", 0, 0))
 	failureLog = logs.String()
 	require.Contains(t, failureLog, `"msg":"submission_failed"`)
-	require.Contains(t, failureLog, `"reason_code":"assessor_unavailable"`)
+	require.Contains(t, failureLog, `"reason_code":"provider_unavailable"`)
 	require.NotContains(t, failureLog, "timeout")
 
 	logs.Reset()
@@ -91,26 +92,10 @@ func TestSubmissionWorkerLogsCompletedRetryAndResubmissionFailureAfterPersistenc
 	))
 	classifiedFailureLog := logs.String()
 	require.Contains(t, classifiedFailureLog, `"msg":"submission_failed"`)
-	require.Contains(t, classifiedFailureLog, `"reason_code":"assessor_response_invalid"`)
+	require.Contains(t, classifiedFailureLog, `"reason_code":"input_budget_exceeded"`)
 }
 
-func TestSubmissionWorkerLogsPersistedNormalizerFailureCode(t *testing.T) {
-	logger, logs := submissionLifecycleTestLogger()
-	ledger, _, _, _, worker := submissionAssessmentWorkerFixture(t)
-	service := worker.(*submissionAssessmentPlacementWorkerService)
-	service.logger = logger
-	service.normalizer = submissionAssessmentWorkerNormalizerStub{}
-	scope := submissionAssessmentRunScope(*ledger.run, service.workerID)
-
-	require.NoError(t, service.completeTerminal(
-		context.Background(), scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_input",
-	))
-	require.Contains(t, logs.String(), `"msg":"submission_failed"`)
-	require.Contains(t, logs.String(), `"reason_code":"submission_requires_resubmission"`)
-	require.NotContains(t, logs.String(), `"reason_code":"submission_processing_failed"`)
-}
-
-func TestSubmissionWorkerLogsStaleSourceAsSuperseded(t *testing.T) {
+func TestSubmissionWorkerLogsStaleSourceAsRejected(t *testing.T) {
 	logger, logs := submissionLifecycleTestLogger()
 	_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
 	service := worker.(*submissionAssessmentPlacementWorkerService)
@@ -120,10 +105,10 @@ func TestSubmissionWorkerLogsStaleSourceAsSuperseded(t *testing.T) {
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 	require.NoError(t, err)
 	require.True(t, processed)
-	require.Contains(t, logs.String(), `"msg":"submission_superseded"`)
-	require.Contains(t, logs.String(), `"to":"superseded"`)
-	require.Contains(t, logs.String(), `"reason_code":"stale_source"`)
-	require.NotContains(t, logs.String(), `"msg":"submission_failed"`)
+	require.Contains(t, logs.String(), `"msg":"submission_rejected"`)
+	require.Contains(t, logs.String(), `"to":"rejected"`)
+	require.Contains(t, logs.String(), `"reason_code":"stale_input"`)
+	require.NotContains(t, logs.String(), `"msg":"submission_superseded"`)
 	require.NotContains(t, logs.String(), `"level":"ERROR"`)
 }
 

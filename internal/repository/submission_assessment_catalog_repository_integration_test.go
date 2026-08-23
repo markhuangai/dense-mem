@@ -18,6 +18,8 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 	ownerB := createLedgerProfile(t, adminDB, rls, teamA, "submission-catalog-owner-b")
 	teamC := createLedgerTeam(t, adminDB, rls, "submission-catalog-team-c")
 	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "submission-catalog-owner-c")
+	emptyTeam := createLedgerTeam(t, adminDB, rls, "submission-catalog-empty-team")
+	emptyOwner := createLedgerProfile(t, adminDB, rls, emptyTeam, "submission-catalog-empty-owner")
 	repo := NewSemanticRepository(appDB, rls)
 	teamAEntity := createSemanticEntity(t, ctx, repo, teamA, ownerA, "project", "Dense Mem")
 	teamCEntity := createSemanticEntity(t, ctx, repo, teamC, ownerC, "project", "Dense Mem")
@@ -71,6 +73,18 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 	assert.NotEqual(t, teamCEntity.EntityID, entityCatalog.Groups[0].Candidates[0].EntityID)
 	assert.Contains(t, entityCatalog.Groups[0].Candidates[0].ActiveNames, "Dense Memory")
 
+	knownOnlyCatalog, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
+		TeamID: teamA, OwnerProfileID: ownerB,
+		Entities: []SubmissionAssessmentEntityCatalogTarget{{
+			Ref: "known-only", KnownEntityID: teamAEntity.EntityID,
+		}},
+		CandidateLimit: 20,
+	})
+	require.NoError(t, err)
+	require.Len(t, knownOnlyCatalog.Groups, 1)
+	require.Len(t, knownOnlyCatalog.Groups[0].Candidates, 1)
+	assert.Equal(t, teamAEntity.EntityID, knownOnlyCatalog.Groups[0].Candidates[0].EntityID)
+
 	inactiveCatalog, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
 		TeamID: teamA, OwnerProfileID: ownerB,
 		Entities: []SubmissionAssessmentEntityCatalogTarget{{
@@ -101,4 +115,18 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 	require.NoError(t, err)
 	require.NotEmpty(t, options)
 	assert.Equal(t, "team_a_only", options[0].PredicateKey)
+
+	emptyTeamPredicates, err := repo.ResolveSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateResolutionInput{
+		TeamID: emptyTeam, OwnerProfileID: emptyOwner, Predicates: []string{"uses"}, Limit: 2,
+	})
+	require.NoError(t, err)
+	require.Len(t, emptyTeamPredicates, 1)
+	assert.Equal(t, "uses", emptyTeamPredicates[0].Candidate.PredicateKey)
+
+	emptyTeamOptions, err := repo.ListSemanticAssessmentPredicateOptions(ctx, SemanticAssessmentPredicateOptionsInput{
+		TeamID: emptyTeam, OwnerProfileID: emptyOwner, QueryText: "Project uses Atlas", ProposedKeys: []string{"uses"}, Limit: 20,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, emptyTeamOptions)
+	assert.Equal(t, "uses", emptyTeamOptions[0].PredicateKey)
 }

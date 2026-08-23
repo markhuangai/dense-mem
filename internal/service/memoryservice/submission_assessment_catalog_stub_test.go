@@ -9,16 +9,22 @@ import (
 )
 
 type submissionAssessmentWorkerCatalogStub struct {
-	entityInputs          []repository.SubmissionAssessmentEntityCatalogInput
-	predicateInputs       []repository.SemanticReviewPredicateResolutionInput
-	predicateOptionInputs []repository.SemanticAssessmentPredicateOptionsInput
-	predicateOptions      []repository.SemanticReviewPredicateCandidate
-	entityComplete        bool
-	predicateComplete     bool
+	entityInputs           []repository.SubmissionAssessmentEntityCatalogInput
+	predicateInputs        []repository.SemanticReviewPredicateResolutionInput
+	predicateOptionInputs  []repository.SemanticAssessmentPredicateOptionsInput
+	predicateOptions       []repository.SemanticReviewPredicateCandidate
+	entityComplete         bool
+	predicateComplete      bool
+	entityErr              error
+	predicateResolutionErr error
+	predicateOptionsErr    error
 }
 
 func (s *submissionAssessmentWorkerCatalogStub) ListSubmissionAssessmentEntityCatalog(_ context.Context, input repository.SubmissionAssessmentEntityCatalogInput) (repository.SubmissionAssessmentEntityCatalogResult, error) {
 	s.entityInputs = append(s.entityInputs, input)
+	if s.entityErr != nil {
+		return repository.SubmissionAssessmentEntityCatalogResult{}, s.entityErr
+	}
 	groups := make([]repository.SubmissionAssessmentEntityCatalogGroup, 0, len(input.Entities))
 	for _, entity := range input.Entities {
 		groups = append(groups, repository.SubmissionAssessmentEntityCatalogGroup{Ref: entity.Ref, Candidates: []repository.SemanticReviewEntityCandidate{}, Complete: true})
@@ -28,6 +34,9 @@ func (s *submissionAssessmentWorkerCatalogStub) ListSubmissionAssessmentEntityCa
 
 func (s *submissionAssessmentWorkerCatalogStub) ResolveSemanticReviewPredicateCandidates(_ context.Context, input repository.SemanticReviewPredicateResolutionInput) ([]repository.SemanticReviewPredicateResolution, error) {
 	s.predicateInputs = append(s.predicateInputs, input)
+	if s.predicateResolutionErr != nil {
+		return nil, s.predicateResolutionErr
+	}
 	if !s.predicateComplete {
 		resolutions := make([]repository.SemanticReviewPredicateResolution, 0, verifier.SemanticAssessmentMaxPredicateOptions+1)
 		for index := 0; index <= verifier.SemanticAssessmentMaxPredicateOptions; index++ {
@@ -65,5 +74,8 @@ func (s *submissionAssessmentWorkerCatalogStub) ResolveSemanticReviewPredicateCa
 
 func (s *submissionAssessmentWorkerCatalogStub) ListSemanticAssessmentPredicateOptions(_ context.Context, input repository.SemanticAssessmentPredicateOptionsInput) ([]repository.SemanticReviewPredicateCandidate, error) {
 	s.predicateOptionInputs = append(s.predicateOptionInputs, input)
+	if s.predicateOptionsErr != nil {
+		return nil, s.predicateOptionsErr
+	}
 	return append([]repository.SemanticReviewPredicateCandidate(nil), s.predicateOptions...), nil
 }

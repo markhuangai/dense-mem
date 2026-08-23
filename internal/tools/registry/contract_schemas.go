@@ -16,10 +16,10 @@ func contractInput(required []string, properties map[string]any) map[string]any 
 }
 
 func rememberInputSchema() map[string]any {
-	return contractInput([]string{"evidence", "relationships"}, map[string]any{
+	return contractInput([]string{"evidence", "relationships", "idempotency_key"}, map[string]any{
 		"evidence":        evidenceArraySchema(),
 		"relationships":   relationshipSubmissionArraySchema(),
-		"idempotency_key": schemaString("Ingest retry key scoped to team and profile.", 128),
+		"idempotency_key": nonEmptyStringSchema("One batch retry key scoped to team and profile.", 128),
 	})
 }
 
@@ -43,7 +43,6 @@ func evidenceArraySchema() map[string]any {
 				"source_revision":          schemaString("Opaque current source revision token.", 256),
 				"previous_source_revision": schemaString("Exact previous source revision token.", 256),
 				"supersedes_evidence_ids":  stringArraySchema("Caller-owned evidence ID to supersede.", 50, 128),
-				"idempotency_key":          schemaString("Evidence retry key scoped to team and profile.", 128),
 				"labels":                   stringArraySchema("Evidence label.", 20, 64),
 				"metadata":                 boundedMap("Source-policy-approved metadata."),
 			},
@@ -52,12 +51,20 @@ func evidenceArraySchema() map[string]any {
 	}
 }
 
+func dreamEvidenceArraySchema() map[string]any {
+	schema := evidenceArraySchema()
+	item, _ := schema["items"].(map[string]any)
+	properties, _ := item["properties"].(map[string]any)
+	properties["idempotency_key"] = schemaString("Evidence retry key scoped to team and profile.", 128)
+	return schema
+}
+
 func relationshipSubmissionArraySchema() map[string]any {
 	return map[string]any{
 		"type":        "array",
 		"minItems":    1,
 		"maxItems":    200,
-		"description": "Each Relationship must cite submitted evidence_indices. Every submitted evidence item must be cited across the submission. The server and normalizer own exact grounding.",
+		"description": "Each Relationship must cite submitted evidence_indices. Every submitted evidence item must be cited across the submission. The server and assessor own exact grounding.",
 		"items":       relationshipSubmissionSchema(),
 	}
 }
@@ -65,14 +72,13 @@ func relationshipSubmissionArraySchema() map[string]any {
 func relationshipSubmissionSchema() map[string]any {
 	return map[string]any{
 		"type":     "object",
-		"required": []string{"ref", "subject", "predicate", "object", "polarity", "modality", "evidence_indices"},
+		"required": []string{"ref", "subject", "predicate", "object", "polarity", "evidence_indices"},
 		"properties": map[string]any{
 			"ref":               nonEmptyStringSchema("Client-local Relationship proposal ref.", 128),
 			"subject":           inlineRelationshipEntitySchema("Proposed subject Entity."),
 			"predicate":         relationshipPredicateSchema(),
 			"object":            relationshipObjectSchema(),
 			"polarity":          schemaEnum([]string{"+", "-"}),
-			"modality":          schemaEnum([]string{"statement", "question", "proposal", "speculation", "quoted"}),
 			"valid_from":        nullableDateTime("Evidence-supported validity start."),
 			"valid_to":          nullableDateTime("Evidence-supported validity end."),
 			"correction_target": relationshipCorrectionTargetSchema(),
@@ -87,11 +93,11 @@ func relationshipSubmissionSchema() map[string]any {
 func inlineRelationshipEntitySchema(description string) map[string]any {
 	return map[string]any{
 		"type":     "object",
-		"required": []string{"name", "entity_kind"},
+		"required": []string{},
 		"properties": map[string]any{
 			"name":            nonEmptyStringSchema(description, 256),
 			"entity_kind":     schemaEnum(domain.EntityKinds()),
-			"known_entity_id": nullableString("Server-issued Entity candidate hint.", 128),
+			"known_entity_id": nullableString("Exact server-issued Entity identity hint.", 128),
 		},
 		"additionalProperties": false,
 	}
@@ -100,9 +106,10 @@ func inlineRelationshipEntitySchema(description string) map[string]any {
 func relationshipPredicateSchema() map[string]any {
 	return map[string]any{
 		"type":     "object",
-		"required": []string{"proposed_key"},
+		"required": []string{},
 		"properties": map[string]any{
-			"proposed_key": nonEmptyStringSchema("Best-effort team predicate key proposal.", 128),
+			"proposed_key":        nonEmptyStringSchema("Best-effort team predicate key proposal.", 128),
+			"known_predicate_key": nonEmptyStringSchema("Exact active team predicate key hint.", 128),
 		},
 		"additionalProperties": false,
 	}
@@ -339,9 +346,39 @@ func resolveDreamFeedbackInputSchema() map[string]any {
 			"confirm_false",
 		}),
 		"reason":        schemaString("Bounded lifecycle feedback reason.", 1000),
-		"evidence":      evidenceArraySchema(),
-		"relationships": relationshipSubmissionArraySchema(),
+		"evidence":      dreamEvidenceArraySchema(),
+		"relationships": dreamRelationshipSubmissionArraySchema(),
 	})
+}
+
+func dreamRelationshipSubmissionArraySchema() map[string]any {
+	schema := relationshipSubmissionArraySchema()
+	item, _ := schema["items"].(map[string]any)
+	if item == nil {
+		return schema
+	}
+	required, _ := item["required"].([]string)
+	item["required"] = append(required, "modality")
+	properties, _ := item["properties"].(map[string]any)
+	if properties == nil {
+		properties = map[string]any{}
+		item["properties"] = properties
+	}
+	properties["modality"] = schemaEnum([]string{"statement", "question", "proposal", "speculation", "quoted"})
+	if subject, ok := properties["subject"].(map[string]any); ok {
+		subject["required"] = []string{"name", "entity_kind"}
+	}
+	if predicate, ok := properties["predicate"].(map[string]any); ok {
+		predicate["required"] = []string{"proposed_key"}
+		predicateProperties, _ := predicate["properties"].(map[string]any)
+		delete(predicateProperties, "known_predicate_key")
+	}
+	if object, ok := properties["object"].(map[string]any); ok {
+		if entity := schemaProperties(object)["entity"]; entity != nil {
+			entity["required"] = []string{"name", "entity_kind"}
+		}
+	}
+	return schema
 }
 
 func exportMemoryPackInputSchema() map[string]any {
@@ -356,8 +393,9 @@ func exportMemoryPackInputSchema() map[string]any {
 
 func rememberOutputSchema() map[string]any {
 	return closedObject(
-		[]string{"submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"},
+		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"},
 		map[string]any{
+			"contract_version":    schemaEnum([]string{domain.ContractVersion}),
 			"submission_id":       schemaString("Submission ID.", 128),
 			"submission_kind":     schemaEnum([]string{"remember"}),
 			"processing_state":    schemaEnum([]string{"queued", "processing", "completed", "rejected", "quarantined", "failed"}),
@@ -370,8 +408,9 @@ func rememberOutputSchema() map[string]any {
 
 func submissionStatusOutputSchema() map[string]any {
 	return closedObject(
-		[]string{"submission_id", "submission_kind", "processing_state", "search_state", "check_after_seconds", "evidence", "errors"},
+		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "check_after_seconds", "evidence", "errors", "degradations"},
 		map[string]any{
+			"contract_version":    schemaEnum([]string{domain.ContractVersion}),
 			"submission_id":       schemaString("Submission ID.", 128),
 			"submission_kind":     schemaEnum([]string{"remember", "relationship_correction"}),
 			"processing_state":    schemaEnum([]string{"queued", "processing", "awaiting_confirmation", "completed", "rejected", "quarantined", "failed"}),
@@ -396,6 +435,8 @@ func submissionStatusOutputSchema() map[string]any {
 				},
 			), 0, 100),
 			"errors":                submissionStatusErrorArraySchema(),
+			"degradations":          submissionStatusDegradationArraySchema(),
+			"relationship_results":  submissionRelationshipResultsSchema(),
 			"quarantine_expires_at": nullableString("Fixed quarantine expiry.", 64),
 			"awaiting_confirmation": relationshipCorrectionConfirmationSchema(),
 			"correction_result":     relationshipCorrectionResultSchema(),
@@ -458,8 +499,9 @@ func retractEvidenceOutputSchema() map[string]any {
 
 func correctRelationshipOutputSchema() map[string]any {
 	return closedObject(
-		[]string{"submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"},
+		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"},
 		map[string]any{
+			"contract_version":    schemaEnum([]string{domain.ContractVersion}),
 			"submission_id":       schemaString("Correction submission ID.", 128),
 			"submission_kind":     schemaEnum([]string{"relationship_correction"}),
 			"processing_state":    schemaEnum([]string{"awaiting_confirmation", "completed", "rejected", "failed"}),

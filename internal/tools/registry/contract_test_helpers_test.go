@@ -51,11 +51,16 @@ func contractInvokeContext(scopes ...string) context.Context {
 type stubRememberService struct {
 	req       memoryservice.RememberRequest
 	statusReq memoryservice.GetSubmissionStatusRequest
+	err       error
 }
 
 func (s *stubRememberService) Remember(_ context.Context, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
 	s.req = req
+	if s.err != nil {
+		return nil, s.err
+	}
 	return &memoryservice.RememberResult{
+		ContractVersion:   domain.ContractVersion,
 		IngestID:          "ingest-canonical",
 		SubmissionID:      "ingest-canonical",
 		SubmissionKind:    "remember",
@@ -72,6 +77,7 @@ func (s *stubRememberService) GetSubmissionStatus(
 ) (*memoryservice.SubmissionStatusResult, error) {
 	s.statusReq = req
 	return &memoryservice.SubmissionStatusResult{
+		ContractVersion:   domain.ContractVersion,
 		SubmissionID:      req.SubmissionID,
 		SubmissionKind:    "remember",
 		ProcessingState:   string(domain.PlacementRunCompleted),
@@ -83,7 +89,8 @@ func (s *stubRememberService) GetSubmissionStatus(
 			SupersededEvidenceIDs: []string{},
 			SearchState:           string(domain.SearchProjectionCurrent),
 		}},
-		Errors: []memoryservice.SubmissionStatusError{},
+		Errors:       []memoryservice.SubmissionStatusError{},
+		Degradations: []memoryservice.SubmissionStatusDegradation{},
 	}, nil
 }
 

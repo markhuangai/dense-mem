@@ -299,11 +299,13 @@ func TestSemanticLedgerMigrationUpgradesPopulated1703(t *testing.T) {
 	m := NewMigratorWithDB(sqlDB)
 	require.NoError(t, m.RunUp(ctx))
 
-	_, err := sqlDB.ExecContext(ctx, `
-		INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
-		VALUES ($1::uuid, $2::uuid, 'doc://post-1704-inferred', 'document', 'inferred')
-	`, teamID, profileID)
-	require.NoError(t, err)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
+			VALUES ($1::uuid, $2::uuid, 'doc://post-1704-inferred', 'document', 'inferred')
+		`, teamID, profileID)
+		return err
+	}))
 }
 
 func TestEmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion(t *testing.T) {

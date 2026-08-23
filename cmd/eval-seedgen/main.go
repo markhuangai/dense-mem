@@ -238,14 +238,13 @@ func localEval100Relationship(content string) (map[string]any, error) {
 	}
 	predicateSurface := ""
 	predicateKey := ""
-	modality := "statement"
 	switch {
 	case strings.HasPrefix(content, "Canonical owner registry"):
 		predicateSurface, predicateKey = "current primary owner for", "has_current_primary_owner"
 	case strings.HasPrefix(content, "Legacy note"):
 		predicateSurface, predicateKey = "previously used", "previously_used"
 	case strings.HasPrefix(content, "Unapproved draft"):
-		predicateSurface, predicateKey, modality = "proposed owner for", "has_proposed_owner", "proposal"
+		predicateSurface, predicateKey = "proposed owner for", "has_proposed_owner"
 	case strings.HasPrefix(content, "Neighbor account"):
 		predicateSurface, predicateKey = "currently uses", "currently_uses"
 	default:
@@ -266,7 +265,6 @@ func localEval100Relationship(content string) (map[string]any, error) {
 			"name": object, "entity_kind": "other",
 		}},
 		"polarity":         "+",
-		"modality":         modality,
 		"evidence_indices": []any{0},
 	}, nil
 }

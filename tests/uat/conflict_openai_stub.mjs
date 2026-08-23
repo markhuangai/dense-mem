@@ -22,12 +22,17 @@ const server = http.createServer(async (request, response) => {
     }
 
     const schemaName = payload?.response_format?.json_schema?.name;
-    const providerInput = initialProviderInput(payload?.messages);
+    const conversation = providerConversation(payload?.messages);
+    const providerInput = conversation.input;
     if (schemaName === "dense_mem_semantic_assessment_response") {
-      return sendChat(response, semanticAssessmentResponse(providerInput));
-    }
-    if (schemaName === "dense_mem_remember_normalizer_response") {
-      return sendChat(response, rememberNormalizerResponse(providerInput));
+      if (evidenceContains(providerInput, "[remember-provider-fail]")) {
+        await delay(1_000);
+        return sendJSON(response, 503, { error: { message: "deterministic remember provider failure" } });
+      }
+      if (evidenceContains(providerInput, "[remember-database-fail]") || evidenceContains(providerInput, "[remember-post-ack-stale]")) {
+        await delay(2_000);
+      }
+      return sendChat(response, semanticAssessmentResponse(providerInput, conversation.repairTurn));
     }
     if (schemaName === "dense_mem_conflict_assessment_response") {
       const contents = (providerInput.evidence ?? []).map((item) => String(item?.content ?? ""));
@@ -73,71 +78,56 @@ function deterministicVector(text, dimensions) {
   return Array.from({ length: dimensions }, (_, index) => (((seed + index * 2654435761) >>> 0) % 2001 - 1000) / 1000);
 }
 
-function semanticAssessmentResponse(input) {
+function semanticAssessmentResponse(input, repairTurn) {
   const candidateGroups = Array.isArray(input.entity_candidate_groups) ? input.entity_candidate_groups : [];
   const predicateOptions = Array.isArray(input.predicate_options) ? input.predicate_options : [];
   const submittedEntities = Array.isArray(input.submitted_entities) ? input.submitted_entities : [];
   const submittedRelationships = Array.isArray(input.submitted_relationships) ? input.submitted_relationships : [];
+  const groundingRepair = evidenceContains(input, "[remember-grounding-repair]");
+  const mixed = evidenceContains(input, "[remember-mixed]");
+  const multiSplit = evidenceContains(input, "[remember-multi-split]");
 
-  const entityResults = submittedEntities.map((entity) => {
-	const grounding = Array.isArray(entity.groundings) ? entity.groundings[0] : undefined;
-	const group = candidateGroups.find((candidate) => candidate?.grounding_ref === grounding?.grounding_ref);
+  const entityResults = submittedEntities.map((entity, index) => {
+    const grounding = Array.isArray(entity.groundings) ? entity.groundings[0] : undefined;
+    const group = candidateGroups.find((candidate) => candidate?.grounding_ref === grounding?.grounding_ref);
     const compatible = (group?.candidates ?? []).filter((candidate) => candidate?.kind === entity.kind);
     const reusable = compatible.length === 1 && !group?.candidate_context_truncated;
+    const knownEntityID = String(entity.known_entity_id ?? "");
+    const exact = knownEntityID !== "";
     return {
       ref: entity.ref,
-	  grounding_ref: grounding?.grounding_ref ?? null,
-	  action: grounding ? (reusable ? "reuse" : compatible.length === 0 ? "create" : "ambiguous") : "ambiguous",
-      candidate_entity_id: reusable ? compatible[0].entity_id : null,
-      confidence: 0.99,
-	  rationale: reusable ? "The submitted candidate is an exact compatible match." : "The submitted Entity is assessed from the supplied grounding options.",
+      grounding_ref: groundingRepair && !repairTurn && index === 0 ? "stale-grounding-ref" : grounding?.grounding_ref ?? null,
+      action: grounding ? (exact || reusable ? "reuse" : compatible.length === 0 ? "create" : "ambiguous") : "ambiguous",
+      candidate_entity_id: exact ? knownEntityID : reusable ? compatible[0].entity_id : null,
     };
   });
 
   const relationshipResults = submittedRelationships.map((relationship) => {
-    const hint = findRef(input.client_proposal, relationship.ref);
-    const proposedKey = String(hint?.predicate?.proposed_key ?? "");
-    const predicate = predicateOptions.find((option) => option?.predicate_key === proposedKey)
-      ?? predicateOptions.find((option) => option?.predicate_key === "primary_database");
-    if (!predicate) {
-      throw new Error(`no predicate option for submitted relationship ${relationship.ref}`);
+    if (mixed && String(relationship.ref).includes("not-supported")) {
+      return {
+        ref: relationship.ref,
+        disposition: "not_supported",
+        reason: "not_supported_by_evidence",
+        splits: [],
+      };
     }
-    const validFrom = nullableString(hint?.valid_from);
-    const validTo = nullableString(hint?.valid_to);
-	const evidenceID = relationship.evidence_ids?.[0];
-	const evidence = (input.evidence ?? []).find((item) => item?.evidence_id === evidenceID);
-	if (!evidence) {
-	  throw new Error(`no evidence for submitted relationship ${relationship.ref}`);
-	}
-	const predicateSurface = proposedKey.replaceAll("_", " ");
-	const predicateRange = groundedTextRange(evidence, predicateSurface);
-	const supportRange = groundedOffsetRange(evidence, 0, Array.from(String(evidence.content ?? "")).length);
-	let valueRange = null;
-	if (relationship.object_value) {
-	  const valueText = String(relationship.object_value.display ?? relationship.object_value.canonical_value ?? "");
-	  valueRange = groundedTextRange(evidence, valueText);
-	}
+    const hint = findRef(input.client_proposal, relationship.ref);
+    const proposedKey = String(relationship.known_predicate_key ?? hint?.predicate?.known_predicate_key ?? hint?.predicate?.proposed_key ?? relationship.predicate_hint ?? "");
+    const splitSpecs = multiSplit && String(relationship.ref).includes("multi-split")
+      ? [{ key: "uses", surface: "uses" }, { key: "works_on", surface: "works on" }]
+      : [{ key: proposedKey, surface: String(relationship.predicate_hint ?? proposedKey).replaceAll("_", " ") }];
     return {
       ref: relationship.ref,
-      subject_ref: relationship.subject_ref,
-	  predicate_range: predicateRange,
-      predicate_status: "resolved",
-      predicate_key: predicate.predicate_key,
-      predicate_version: predicate.version,
-      object_ref: relationship.object_ref ?? null,
-      object_value: relationship.object_value ?? null,
-	  value_range: valueRange,
-      polarity: relationship.polarity,
-      modality: relationship.modality,
-	  support_ranges: [supportRange],
-      valid_from: validFrom,
-      valid_to: validTo,
-      scope_status: "absent",
-      scope_key: null,
-      evidence_verdict: "entailed",
-      temporal_verdict: validFrom || validTo ? "entailed" : "absent",
-      confidence: 0.99,
-      rationale: "The submitted evidence directly supports the relationship.",
+      disposition: "stored",
+      reason: null,
+      splits: splitSpecs.map((spec, splitIndex) => semanticAssessmentSplit(
+        input,
+        relationship,
+        predicateOptions,
+        splitIndex,
+        spec.key,
+        spec.surface,
+      )),
     };
   });
 
@@ -149,43 +139,41 @@ function semanticAssessmentResponse(input) {
   };
 }
 
-function rememberNormalizerResponse(input) {
-  const semantic = semanticAssessmentResponse(input);
+function semanticAssessmentSplit(input, relationship, predicateOptions, splitIndex, predicateKey, predicateSurface) {
+  const evidenceID = relationship.evidence_ids?.[0];
+  const evidence = (input.evidence ?? []).find((item) => item?.evidence_id === evidenceID);
+  if (!evidence) {
+    throw new Error(`no evidence for submitted relationship ${relationship.ref}`);
+  }
+  const predicate = predicateOptions.find((option) => option?.predicate_key === predicateKey);
+  if (relationship.known_predicate_key && !predicate) {
+    throw new Error(`exact predicate option is absent for submitted relationship ${relationship.ref}`);
+  }
+  const supportRange = groundedOffsetRange(evidence, 0, Array.from(String(evidence.content ?? "")).length);
+  let valueRange = null;
+  if (relationship.object_value) {
+    const valueText = String(relationship.object_value.display ?? relationship.object_value.canonical_value ?? "");
+    valueRange = groundedTextRange(evidence, valueText);
+  }
   return {
-    request_id: semantic.request_id,
-    security_signals: semantic.security_signals,
-    entity_results: semantic.entity_results.map((entity) => ({
-      ref: entity.ref,
-      grounding_ref: entity.grounding_ref,
-      action: entity.action,
-      candidate_entity_id: entity.candidate_entity_id,
-    })),
-    relationship_results: semantic.relationship_results.map((relationship) => ({
-      ref: relationship.ref,
-      subject_ref: relationship.subject_ref,
-      predicate_range: normalizerRange(relationship.predicate_range),
-      predicate_status: relationship.predicate_status,
-      predicate_key: relationship.predicate_key,
-      predicate_version: relationship.predicate_version,
-      object_ref: relationship.object_ref,
-      object_value: relationship.object_value,
-      value_range: relationship.value_range ? normalizerRange(relationship.value_range) : null,
-      polarity: relationship.polarity,
-      modality: relationship.modality,
-      support_ranges: relationship.support_ranges.map(normalizerRange),
-      valid_from: relationship.valid_from,
-      valid_to: relationship.valid_to,
-      scope_status: relationship.scope_status,
-      scope_key: relationship.scope_key,
-    })),
-  };
-}
-
-function normalizerRange(range) {
-  return {
-    evidence_id: range.evidence_id,
-    start_ref: range.start_ref,
-    end_ref: range.end_ref,
+    split_index: splitIndex,
+    subject_ref: relationship.subject_ref,
+    predicate_range: groundedTextRange(evidence, predicateSurface),
+    predicate_status: predicate ? "resolved" : "registration_required",
+    predicate_key: predicate?.predicate_key ?? null,
+    predicate_version: predicate?.version ?? null,
+    predicate_registration: predicate ? null : {
+      predicate_key: predicateKey,
+      relationship_kind: "state",
+      current_cardinality: "many",
+    },
+    object_ref: relationship.object_ref ?? null,
+    object_value: relationship.object_value ?? null,
+    value_range: valueRange,
+    polarity: relationship.polarity,
+    support_ranges: [supportRange],
+    valid_from: nullableString(relationship.valid_from),
+    valid_to: nullableString(relationship.valid_to),
   };
 }
 
@@ -207,7 +195,7 @@ function groundedOffsetRange(evidence, start, end) {
   if (!refs[start] || !refs[end] || end <= start) {
     throw new Error("evidence boundary references are incomplete");
   }
-  return { evidence_id: evidence.evidence_id, start_ref: refs[start], end_ref: refs[end], confidence: 0.99 };
+  return { evidence_id: evidence.evidence_id, start_ref: refs[start], end_ref: refs[end] };
 }
 
 function conflictAssessmentResponse(input) {
@@ -229,24 +217,46 @@ function conflictAssessmentResponse(input) {
   };
 }
 
-function initialProviderInput(messages) {
+function providerConversation(messages) {
   if (!Array.isArray(messages)) {
     throw new Error("messages must be an array");
   }
+  let initial = null;
+  const repairs = [];
   for (const message of messages) {
     if (message?.role !== "user" || typeof message.content !== "string") {
       continue;
     }
     try {
       const value = JSON.parse(message.content);
-      if (value && typeof value === "object" && !Object.hasOwn(value, "validation_errors")) {
-        return value;
+      if (!value || typeof value !== "object") {
+        continue;
+      }
+      if (Object.hasOwn(value, "validation_errors")) {
+        repairs.push(value);
+      } else if (initial === null) {
+        initial = value;
       }
     } catch {
       // The initial structured payload is the only user message that must parse.
     }
   }
-  throw new Error("initial provider payload is missing");
+  if (initial === null) {
+    throw new Error("initial provider payload is missing");
+  }
+  const refreshed = repairs.at(-1)?.refreshed_candidate_context;
+  const input = refreshed && typeof refreshed === "object"
+    ? {
+        ...initial,
+        entity_candidate_groups: refreshed.entity_candidate_groups ?? initial.entity_candidate_groups,
+        predicate_options: refreshed.predicate_options ?? initial.predicate_options,
+      }
+    : initial;
+  return { input, repairTurn: repairs.length > 0 };
+}
+
+function evidenceContains(input, marker) {
+  return (input.evidence ?? []).some((item) => String(item?.content ?? "").includes(marker));
 }
 
 function findRef(value, ref) {
@@ -297,4 +307,8 @@ function positiveInteger(value, name) {
 
 function nullableString(value) {
   return typeof value === "string" && value ? value : null;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

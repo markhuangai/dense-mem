@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestSemanticAssessmentPrepareAndValidateCompleteResponse(t *testing.T) {
@@ -30,6 +32,26 @@ func TestSemanticAssessmentPrepareAndValidateCompleteResponse(t *testing.T) {
 	}
 	if validated.OutputTokens <= 0 {
 		t.Fatalf("OutputTokens = %d, want positive", validated.OutputTokens)
+	}
+}
+
+func TestSemanticAssessmentWireRejectsObsoleteAssessorFields(t *testing.T) {
+	_, limits := semanticAssessmentTestRequest(t)
+	base, err := json.Marshal(semanticAssessmentTestResponse())
+	require.NoError(t, err)
+
+	for _, field := range []string{"confidence", "rationale", "modality", "scope_status", "scope_key", "evidence_verdict", "temporal_verdict"} {
+		t.Run(field, func(t *testing.T) {
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(base, &payload))
+			relationships := payload["relationship_results"].([]any)
+			relationships[0].(map[string]any)[field] = "obsolete"
+			encoded, marshalErr := json.Marshal(payload)
+			require.NoError(t, marshalErr)
+			_, decodeErr := DecodeSemanticAssessmentResponseJSON(encoded, limits)
+			require.Error(t, decodeErr)
+			require.Contains(t, decodeErr.Error(), field+": is unknown")
+		})
 	}
 }
 
@@ -72,7 +94,6 @@ func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 					ValueType: " number ", CanonicalValue: " 42 ", Display: &display, Unit: &unit,
 				},
 				Polarity: "+",
-				Modality: "statement",
 			}},
 		},
 	}
@@ -101,36 +122,55 @@ func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 		RequestID:       prepared.RequestID,
 		SecuritySignals: []SemanticAssessmentSecuritySignal{},
 		EntityResults: []SemanticAssessmentEntityResult{{
-			Ref: "entity:latency", GroundingRef: &groundingRef, Action: "create", Confidence: 0.99, Rationale: "No candidate exists in the complete catalog.",
+			Ref: "entity:latency", GroundingRef: &groundingRef, Action: "create",
 		}},
 		RelationshipResults: []SemanticAssessmentRelationshipResult{{
-			Ref:              "relationship:latency",
-			SubjectRef:       "entity:latency",
-			PredicateRange:   predicateRange,
-			PredicateStatus:  "resolved",
-			PredicateKey:     &predicate,
-			PredicateVersion: &version,
-			ObjectValue: &SemanticAssessmentValue{
-				ValueType: "number", CanonicalValue: "42", Display: &responseDisplay, Unit: &responseUnit,
-			},
-			ValueRange: &valueRange,
-			Polarity:   "+", Modality: "statement",
-			SupportRanges:   []SemanticAssessmentGroundedRange{supportRange},
-			ScopeStatus:     "absent",
-			EvidenceVerdict: "entailed",
-			TemporalVerdict: "absent",
-			Confidence:      0.99,
-			Rationale:       "The evidence explicitly states the typed value.",
+			Ref: "relationship:latency", Disposition: "stored",
+			Splits: []SemanticAssessmentRelationshipSplit{{
+				SplitIndex:       0,
+				SubjectRef:       "entity:latency",
+				PredicateRange:   predicateRange,
+				PredicateStatus:  "resolved",
+				PredicateKey:     &predicate,
+				PredicateVersion: &version,
+				ObjectValue: &SemanticAssessmentValue{
+					ValueType: "number", CanonicalValue: "42", Display: &responseDisplay, Unit: &responseUnit,
+				},
+				ValueRange:    &valueRange,
+				Polarity:      "+",
+				SupportRanges: []SemanticAssessmentGroundedRange{supportRange},
+			}},
 		}},
 	}
 	if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) != 0 {
 		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v", errs)
 	}
 
-	response.RelationshipResults[0].ObjectValue.CanonicalValue = "43"
+	response.RelationshipResults[0].Splits[0].ObjectValue.CanonicalValue = "43"
 	if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "does not preserve its submitted object") {
 		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want typed value preservation error", errs)
 	}
+}
+
+func TestSemanticAssessmentSubmissionContractRepairsChangedExactConstraints(t *testing.T) {
+	req, limits := semanticAssessmentSubmissionContractTestRequest(t)
+	req.SubmissionContract.Entities[0].KnownEntityID = "entity-mark"
+	req.SubmissionContract.Relationships[0].KnownPredicateKey = "works_on"
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	require.Empty(t, errs)
+	require.Equal(t, "entity-mark", prepared.SubmittedEntities[0].KnownEntityID)
+	require.Equal(t, "works_on", prepared.SubmittedRelationships[0].KnownPredicateKey)
+
+	response := semanticAssessmentTestResponse()
+	response.EntityResults[0].Action = "create"
+	response.EntityResults[0].CandidateEntityID = nil
+	otherPredicate := "other_predicate"
+	response.RelationshipResults[0].Splits[0].PredicateKey = &otherPredicate
+	_, errs = PrepareSemanticAssessmentResponse(prepared, response, limits)
+	joined := semanticAssessmentJoinedErrors(errs)
+	require.Contains(t, joined, "must reuse the exact known_entity_id")
+	require.Contains(t, joined, "must equal the exact known_entity_id")
+	require.Contains(t, joined, "must equal the exact known_predicate_key")
 }
 
 func TestSemanticAssessmentSubmissionContractRejectsUntrustedTargets(t *testing.T) {
@@ -197,13 +237,6 @@ func TestSemanticAssessmentSubmissionContractRejectsUntrustedTargets(t *testing.
 			},
 			want: "must be present and bounded",
 		},
-		{
-			name: "relationship modality is unsupported",
-			mutate: func(request *SemanticAssessmentRequest) {
-				request.SubmissionContract.Relationships[0].Modality = "unsupported"
-			},
-			want: "modality",
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -242,14 +275,14 @@ func TestSemanticAssessmentSubmissionContractRejectsResponseTargetDrift(t *testi
 		{
 			name: "relationship target drift",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].Polarity = "-"
+				response.RelationshipResults[0].Splits[0].Polarity = "-"
 			},
 			want: "does not preserve its submitted relationship target",
 		},
 		{
 			name: "relationship evidence outside contract",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.RelationshipResults[0].SupportRanges[0].EvidenceID = "ev-other"
+				response.RelationshipResults[0].Splits[0].SupportRanges[0].EvidenceID = "ev-other"
 			},
 			want: "is outside the submitted evidence allowlist",
 		},
@@ -304,7 +337,7 @@ func TestSemanticAssessmentRequiresTrustedProposalCorrespondence(t *testing.T) {
 		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v", errs)
 	}
 
-	response.RelationshipResults[0].SupportRanges[0] = semanticAssessmentTestRange(prepared.Evidence[0], 0, 4)
+	response.RelationshipResults[0].Splits[0].SupportRanges[0] = semanticAssessmentTestRange(prepared.Evidence[0], 0, 4)
 	if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "does not use trusted proposal evidence") {
 		t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want trusted span rejection", errs)
 	}
@@ -326,7 +359,8 @@ func TestSemanticAssessmentRejectsWholeResponseWhenRequiredFieldIsMissing(t *tes
 		t.Fatalf("unmarshal response: %v", err)
 	}
 	relationships := payload["relationship_results"].([]any)
-	delete(relationships[0].(map[string]any), "predicate_version")
+	splits := relationships[0].(map[string]any)["splits"].([]any)
+	delete(splits[0].(map[string]any), "predicate_version")
 	encoded, err = json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal malformed response: %v", err)
@@ -396,6 +430,14 @@ func TestSemanticAssessmentRejectsUnknownDuplicateAndUnauthorizedCompleteRespons
 		response.EntityResults[0].GroundingRef = &invalidGrounding
 		if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "is outside the grounding allowlist") {
 			t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want span rejection", errs)
+		}
+	})
+
+	t.Run("non-ambiguous entity requires grounding", func(t *testing.T) {
+		response := semanticAssessmentTestResponse()
+		response.EntityResults[0].GroundingRef = nil
+		if _, errs := PrepareSemanticAssessmentResponse(prepared, response, limits); len(errs) == 0 || !strings.Contains(semanticAssessmentJoinedErrors(errs), "grounding_ref: is required unless action is ambiguous") {
+			t.Fatalf("PrepareSemanticAssessmentResponse() errors = %#v, want repairable grounding rejection", errs)
 		}
 	})
 }
@@ -473,8 +515,8 @@ func TestSemanticAssessmentRejectsResolvedPredicateWithIncompatibleEndpointKind(
 		t.Fatalf("PrepareSemanticAssessmentRequest() errors = %#v", errs)
 	}
 	response := semanticAssessmentTestResponse()
-	response.RelationshipResults[0].ObjectRef = nil
-	response.RelationshipResults[0].ObjectValue = &SemanticAssessmentValue{
+	response.RelationshipResults[0].Splits[0].ObjectRef = nil
+	response.RelationshipResults[0].Splits[0].ObjectValue = &SemanticAssessmentValue{
 		ValueType:      "string",
 		CanonicalValue: "Dense-Mem",
 	}
@@ -607,7 +649,6 @@ func semanticAssessmentSubmissionContractTestRequest(t *testing.T) (SemanticAsse
 			SubjectRef:    "person-1",
 			ObjectRef:     &productRef,
 			Polarity:      "+",
-			Modality:      "statement",
 		}},
 	}
 	return request, limits
@@ -635,8 +676,6 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 				End:               4,
 				Action:            "reuse",
 				CandidateEntityID: &mark,
-				Confidence:        0.99,
-				Rationale:         "The exact candidate matches the evidence.",
 			},
 			{
 				Ref:               "product-1",
@@ -648,36 +687,30 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 				End:               23,
 				Action:            "reuse",
 				CandidateEntityID: &denseMem,
-				Confidence:        0.99,
-				Rationale:         "The exact candidate matches the evidence.",
 			},
 		},
 		RelationshipResults: []SemanticAssessmentRelationshipResult{{
-			Ref:               "relationship-1",
-			SubjectRef:        "person-1",
-			OriginalPredicate: "works on",
-			PredicateRange:    semanticAssessmentTestRange(evidence, 5, 13),
-			PredicateStatus:   "resolved",
-			PredicateKey:      &predicate,
-			PredicateVersion:  &version,
-			ObjectRef:         stringPointer("product-1"),
-			ObjectValue:       nil,
-			Polarity:          "+",
-			Modality:          "statement",
-			Evidence: []SemanticAssessmentEvidenceSpan{{
-				EvidenceID: "ev-1",
-				Start:      0,
-				End:        24,
+			Ref: "relationship-1", Disposition: "stored",
+			Splits: []SemanticAssessmentRelationshipSplit{{
+				SplitIndex:        0,
+				SubjectRef:        "person-1",
+				OriginalPredicate: "works on",
+				PredicateRange:    semanticAssessmentTestRange(evidence, 5, 13),
+				PredicateStatus:   "resolved",
+				PredicateKey:      &predicate,
+				PredicateVersion:  &version,
+				ObjectRef:         stringPointer("product-1"),
+				ObjectValue:       nil,
+				Polarity:          "+",
+				Evidence: []SemanticAssessmentEvidenceSpan{{
+					EvidenceID: "ev-1",
+					Start:      0,
+					End:        24,
+				}},
+				SupportRanges: []SemanticAssessmentGroundedRange{semanticAssessmentTestRange(evidence, 0, 24)},
+				ValidFrom:     nil,
+				ValidTo:       nil,
 			}},
-			SupportRanges:   []SemanticAssessmentGroundedRange{semanticAssessmentTestRange(evidence, 0, 24)},
-			ValidFrom:       nil,
-			ValidTo:         nil,
-			ScopeStatus:     "absent",
-			ScopeKey:        nil,
-			EvidenceVerdict: "entailed",
-			TemporalVerdict: "absent",
-			Confidence:      0.96,
-			Rationale:       "The evidence directly states the relationship.",
 		}},
 	}
 }
@@ -692,7 +725,6 @@ func semanticAssessmentTestRange(evidence SemanticReviewEvidence, start, end int
 		EvidenceID: evidence.EvidenceID,
 		StartRef:   startRef,
 		EndRef:     endRef,
-		Confidence: 0.99,
 		Start:      start,
 		End:        end,
 	}

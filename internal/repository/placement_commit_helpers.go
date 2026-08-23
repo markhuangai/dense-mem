@@ -149,7 +149,10 @@ func appendPlacementCorrectionTarget(
 	if err := requireRelationshipVersion(ctx, tx, commit.TeamID, source.RelationshipID, commit.OwnerProfileID, source.Version); err != nil {
 		return err
 	}
-	if err := requireRelationshipVersion(ctx, tx, commit.TeamID, target.RelationshipID, "", target.ExpectedVersion); err != nil {
+	if err := requireRelationshipVersion(ctx, tx, commit.TeamID, target.RelationshipID, commit.OwnerProfileID, target.ExpectedVersion); err != nil {
+		if errors.Is(err, errRelationshipVersionMismatch) {
+			return fmt.Errorf("%w: correction target changed", ErrCorrectionTargetStale)
+		}
 		return err
 	}
 	if err := requireVerificationForRelationship(ctx, tx, commit.TeamID, applied.VerificationEventID, commit.OwnerProfileID, source.RelationshipID); err != nil {
@@ -578,7 +581,7 @@ func applyRelationshipDecisionInTx(
 	}
 	var supportID, supportDecisionID string
 	var supportIDs []string
-	if input.EvidenceVerdict == string(domain.VerificationEntailed) && len(relationshipEvidenceSupports(input.Support, input.Supports)) > 0 && !input.SuppressSupport {
+	if (input.AssessorAccepted || input.EvidenceVerdict == string(domain.VerificationEntailed)) && len(relationshipEvidenceSupports(input.Support, input.Supports)) > 0 && !input.SuppressSupport {
 		var supportDecisionIDs []string
 		supportIDs, supportDecisionIDs, err = insertRelationshipSupports(ctx, tx, input, recordState.Record.RelationshipID, observationID, verificationID)
 		if err != nil {

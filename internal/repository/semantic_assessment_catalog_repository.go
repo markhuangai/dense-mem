@@ -197,6 +197,9 @@ func (r *SemanticRepositoryImpl) ListSemanticAssessmentPredicateOptions(
 	}
 	out := []SemanticReviewPredicateCandidate{}
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
+			return err
+		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH latest AS (
 			    SELECT DISTINCT ON (predicate_key)

@@ -209,15 +209,18 @@ async function provenanceAndIsolationScenario() {
   assert(Number(afterIndependent.version) > observedVersion, "fresh conflict_context support did not advance the conflict version");
 
   const semanticBeforeStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
-  const stale = await submitPositionSupport(fixture, profileC, {
+  const stale = await submitRelationshipExpectValidationError(profileC.apiKey, {
     label: "provenance-stale-c",
+    subjectName: fixture.subjectName,
+    objectName: fixture.objectAName,
+    subjectEntityID: fixture.subjectEntityID,
+    objectEntityID: fixture.objectAEntityID,
     sourceGroup: `${runID}:provenance:stale:c`,
     authority: "primary",
     conflictContext: { conflict_id: fixture.conflictID, expected_version: observedVersion },
-    expectedState: "failed",
   });
-  const staleError = (stale.status.errors ?? []).find((error) => error?.code === "submission_requires_resubmission");
-  assert(staleError?.next_action === "resubmit_submission", `stale conflict submission omitted resubmission guidance: ${JSON.stringify(stale.status)}`);
+  const staleIssue = (stale.data?.issues ?? []).find((issue) => issue?.path === "/relationships/0/conflict_context/expected_version");
+  assert(stale.code === -32602 && stale.data?.reason === "validation_failed" && staleIssue?.code === "stale", `stale conflict submission did not fail exact preflight: ${JSON.stringify(stale)}`);
   const semanticAfterStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
   assert(stableJSON(semanticAfterStale) === stableJSON(semanticBeforeStale), `stale conflict submission changed semantic state: before=${JSON.stringify(semanticBeforeStale)} after=${JSON.stringify(semanticAfterStale)}`);
 
@@ -363,18 +366,7 @@ async function submitPositionSupport(fixture, profile, options) {
 
 async function submitRelationship(apiKey, input) {
   const evidence = relationshipEvidence(input);
-  const receipt = await mcpSuccess(apiKey, "remember", {
-    idempotency_key: `${runID}:${input.label}`,
-    evidence: [{
-      content: evidence,
-      source_type: "document",
-      source: input.sourceGroup,
-      source_group: input.sourceGroup,
-      authority: input.authority,
-      idempotency_key: `${runID}:${input.label}:evidence`,
-    }],
-    relationships: [relationshipHint(input, evidence)],
-  });
+  const receipt = await mcpSuccess(apiKey, "remember", rememberRequest(input, evidence));
   const submissionID = String(receipt.submission_id ?? "");
   assert(submissionID && receipt.status_tool === "get_submission_status", `remember receipt is invalid: ${JSON.stringify(receipt)}`);
   const status = await waitForSubmission(apiKey, submissionID);
@@ -396,6 +388,33 @@ async function submitRelationship(apiKey, input) {
   `);
   assert(relationshipID, `completed submission ${input.label} did not create a relationship observation`);
   return { submissionID, relationshipID, evidenceID, status };
+}
+
+async function submitRelationshipExpectValidationError(apiKey, input) {
+  const evidence = relationshipEvidence(input);
+  const idempotencyKey = `${runID}:${input.label}`;
+  const response = await mcpRaw(apiKey, "remember", rememberRequest(input, evidence));
+  assert(response.error && response.result === undefined, `stale remember unexpectedly staged: ${JSON.stringify(response)}`);
+  const staged = Number(postgresQuery(`
+    SELECT count(*) FROM knowledge_ingests
+    WHERE idempotency_key = ${sqlLiteral(idempotencyKey)}
+  `));
+  assert(staged === 0, `stale remember created ${staged} ingest rows`);
+  return response.error;
+}
+
+function rememberRequest(input, evidence) {
+  return {
+    idempotency_key: `${runID}:${input.label}`,
+    evidence: [{
+      content: evidence,
+      source_type: "document",
+      source: input.sourceGroup,
+      source_group: input.sourceGroup,
+      authority: input.authority,
+    }],
+    relationships: [relationshipHint(input, evidence)],
+  };
 }
 
 function relationshipEvidence(input) {
@@ -421,7 +440,6 @@ function relationshipHint(input, evidence) {
       ...(input.objectEntityID ? { known_entity_id: input.objectEntityID } : {}),
     } },
     polarity: "+",
-    modality: "statement",
     ...(input.validFrom ? { valid_from: input.validFrom } : {}),
     ...(input.conflictContext ? { conflict_context: input.conflictContext } : {}),
     evidence_indices: [0],

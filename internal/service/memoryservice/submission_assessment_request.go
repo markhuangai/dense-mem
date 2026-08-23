@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -56,12 +57,28 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 	if err != nil {
 		return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("catalog_context_validation", "submission entity catalog is invalid")
 	}
+	// Keep the derived, evidence-backed grounding catalog on the plan as well
+	// as in the provider request. Commit-time repair uses the plan and must be
+	// able to recover a missing grounding without inventing a span.
+	for _, target := range contractEntities {
+		entry, ok := plan.entityTargetsByRef[target.Ref]
+		if !ok {
+			continue
+		}
+		entry.Target = target
+		plan.entityTargetsByRef[target.Ref] = entry
+	}
 	contract := verifier.SemanticAssessmentSubmissionContract{
 		Entities:      contractEntities,
 		Relationships: make([]verifier.SemanticAssessmentRequiredRelationshipRef, 0, len(plan.RelationshipTargets)),
 	}
 	for _, relationship := range plan.RelationshipTargets {
-		contract.Relationships = append(contract.Relationships, relationship.Target)
+		target := relationship.Target
+		target.KnownPredicateKey = relationship.KnownPredicateKey
+		if relationship.CorrectionTarget != nil || relationship.ConflictContext != nil {
+			target.MaxSplits = 1
+		}
+		contract.Relationships = append(contract.Relationships, target)
 	}
 	predicateOptions, err := s.submissionAssessmentPredicateOptions(ctx, run, plan)
 	if err != nil {
@@ -254,13 +271,38 @@ func submissionAssessmentGroundedEntities(
 			}
 			allowedNames[normalized] = entry
 		}
-		addName(entity.Target.Name, catalogGroup.Candidates)
+		target := entity.Target
+		target.KnownEntityID = entity.KnownEntityID
+		if target.Name == "" && len(catalogGroup.Candidates) == 1 {
+			target.Name = catalogGroup.Candidates[0].CanonicalName
+		}
+		if target.Kind == "" {
+			candidateKinds := make(map[string]struct{}, len(catalogGroup.Candidates))
+			for _, candidate := range catalogGroup.Candidates {
+				if kind := strings.TrimSpace(candidate.EntityKind); kind != "" {
+					candidateKinds[kind] = struct{}{}
+				}
+			}
+			if len(candidateKinds) == 1 {
+				for kind := range candidateKinds {
+					target.Kind = kind
+				}
+			} else {
+				// A missing kind is a non-authoritative hint. Keep the closed
+				// assessor contract valid while allowing the selected candidate's
+				// catalog kind to determine reuse below.
+				target.Kind = string(domain.EntityKindOther)
+			}
+		}
+		if target.Name == "" || target.Kind == "" {
+			return nil, nil, errors.New("known entity catalog target has no canonical identity")
+		}
+		addName(target.Name, catalogGroup.Candidates)
 		for _, candidate := range catalogGroup.Candidates {
 			for _, activeName := range candidate.ActiveNames {
 				addName(activeName, []repository.SemanticReviewEntityCandidate{candidate})
 			}
 		}
-		target := entity.Target
 		target.Groundings = []verifier.SemanticAssessmentEntityGrounding{}
 		groundingIndex := 0
 		for _, evidenceID := range target.EvidenceIDs {

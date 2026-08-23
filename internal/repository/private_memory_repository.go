@@ -51,6 +51,8 @@ var privateMemoryErasureManifest = []string{
 	"knowledge_ingests", "evidence_sources", "evidence_source_revisions",
 	"evidence_fragments", "evidence_security_events", "evidence_security_signals",
 	"evidence_quarantines", "evidence_lifecycle_operations", "evidence_lifecycle_events",
+	"remember_source_revision_intents", "remember_supersession_intents", "submission_assessment_response_revisions",
+	"submission_relationship_results",
 	"placement_runs", "placement_items", "placement_outcomes", "placement_assessments", "predicate_registration_events",
 	"entity_records", "entity_names", "entity_resolution_events",
 	"entity_correction_plans", "entity_correction_events", "value_records",

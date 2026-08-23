@@ -102,14 +102,14 @@ func TestRememberAllowsAssessorToGroundLogicalEndpoints(t *testing.T) {
 
 func validFlatRelationshipSubmission() map[string]any {
 	return map[string]any{
-		"evidence": []any{map[string]any{"content": "Dense-Mem uses PostgreSQL."}},
+		"idempotency_key": "remember-test-batch",
+		"evidence":        []any{map[string]any{"content": "Dense-Mem uses PostgreSQL."}},
 		"relationships": []any{map[string]any{
 			"ref":              "uses-postgresql",
 			"subject":          map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
 			"predicate":        map[string]any{"proposed_key": "uses"},
 			"object":           map[string]any{"entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}},
 			"polarity":         "+",
-			"modality":         "statement",
 			"evidence_indices": []any{0},
 		}},
 	}
@@ -121,6 +121,9 @@ func relationship(input map[string]any) map[string]any {
 
 func withRequiredFlatRelationship(input map[string]any) map[string]any {
 	output := cloneMap(input)
+	if _, exists := output["idempotency_key"]; !exists {
+		output["idempotency_key"] = "remember-test-batch"
+	}
 	evidence, _ := output["evidence"].([]any)
 	relationshipInput := validFlatRelationshipSubmission()
 	relationshipValue := relationship(relationshipInput)

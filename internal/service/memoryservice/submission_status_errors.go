@@ -1,6 +1,8 @@
 package memoryservice
 
 import (
+	"strings"
+
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
@@ -10,20 +12,26 @@ import (
 // names during the capability migration.
 type SubmissionErrorCode = rememberapp.SubmissionErrorCode
 type SubmissionStatusError = rememberapp.SubmissionStatusError
-type SubmissionResubmissionIssue = rememberapp.SubmissionResubmissionIssue
+type SubmissionStatusDegradation = rememberapp.SubmissionStatusDegradation
 type SubmissionNextAction = rememberapp.SubmissionNextAction
 
 const submissionStatusMaxIssueMessageLength = 512
 
 const (
-	SubmissionErrorRequiresResubmission  = rememberapp.SubmissionErrorRequiresResubmission
-	SubmissionErrorNormalizationFailed   = rememberapp.SubmissionErrorNormalizationFailed
-	SubmissionErrorNormalizerUnavailable = rememberapp.SubmissionErrorNormalizerUnavailable
+	SubmissionErrorNoSupportedMemory = rememberapp.SubmissionErrorNoSupportedMemory
+	SubmissionErrorStaleInput        = rememberapp.SubmissionErrorStaleInput
+
+	SubmissionErrorProviderUnavailable     = rememberapp.SubmissionErrorProviderUnavailable
+	SubmissionErrorProviderResponseInvalid = rememberapp.SubmissionErrorProviderResponseInvalid
+	SubmissionErrorInputBudgetExceeded     = rememberapp.SubmissionErrorInputBudgetExceeded
+	SubmissionErrorConfigurationInvalid    = rememberapp.SubmissionErrorConfigurationInvalid
+	SubmissionErrorDatabaseFailure         = rememberapp.SubmissionErrorDatabaseFailure
+	SubmissionErrorInternalFailure         = rememberapp.SubmissionErrorInternalFailure
+
 	SubmissionErrorPolicyRejected        = rememberapp.SubmissionErrorPolicyRejected
 	SubmissionErrorAssessorInvalid       = rememberapp.SubmissionErrorAssessorInvalid
 	SubmissionErrorAssessorUnavailable   = rememberapp.SubmissionErrorAssessorUnavailable
 	SubmissionErrorProcessingFailed      = rememberapp.SubmissionErrorProcessingFailed
-	SubmissionErrorContractSuperseded    = rememberapp.SubmissionErrorContractSuperseded
 	SubmissionErrorSearchIndexingDelayed = rememberapp.SubmissionErrorSearchIndexingDelayed
 	SubmissionErrorQuarantined           = rememberapp.SubmissionErrorQuarantined
 
@@ -64,6 +72,14 @@ func submissionStatusError(code SubmissionErrorCode) SubmissionStatusError {
 
 func submissionStatusErrorForCode(rawCode string, fallbackState string) SubmissionStatusError {
 	return rememberapp.StatusErrorForCode(rawCode, fallbackState)
+}
+
+func correctionStatusErrorForCode(rawCode string, fallbackState string) SubmissionStatusError {
+	if strings.TrimSpace(rawCode) == string(SubmissionErrorPolicyRejected) ||
+		(strings.TrimSpace(rawCode) == "" && strings.TrimSpace(fallbackState) == "rejected") {
+		return submissionStatusError(SubmissionErrorPolicyRejected)
+	}
+	return submissionStatusErrorForCode(rawCode, fallbackState)
 }
 
 func submissionFailureCode(stage, class string) SubmissionErrorCode {

@@ -847,9 +847,6 @@ func dreamSubmissionEvidence(
 		if item.Source == "" {
 			item.Source = "dream_feedback:" + record.HypothesisID
 		}
-		if item.IdempotencyKey == "" {
-			item.IdempotencyKey = fmt.Sprintf("dream-feedback:%s:%d", record.HypothesisID, i)
-		}
 		if item.Metadata == nil {
 			item.Metadata = map[string]any{}
 		}

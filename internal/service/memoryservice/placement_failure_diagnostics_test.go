@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -20,6 +21,14 @@ func TestPlacementFailureDiagnosticDoesNotClassifyRepositoryErrorsAsProviderFail
 	require.Equal(t, "internal", diagnostic.Class)
 	require.Equal(t, "unknown_internal_failure", diagnostic.ReasonCode)
 	require.Zero(t, diagnostic.ProviderStatus)
+}
+
+func TestPlacementFailureDiagnosticClassifiesPostgresFailures(t *testing.T) {
+	diagnostic := placementFailureDiagnosticFor("semantic_commit", &pgconn.PgError{Code: "08006"})
+
+	require.Equal(t, "database_failure", diagnostic.Class)
+	require.Equal(t, "database_failure", diagnostic.ReasonCode)
+	require.Equal(t, SubmissionErrorDatabaseFailure, submissionFailureCode(diagnostic.Stage, diagnostic.Class))
 }
 
 func TestPlacementFailureDiagnosticRetainsBoundedProviderMetadata(t *testing.T) {
@@ -78,7 +87,7 @@ func TestPlacementFailureDiagnosticCapturesMalformedValidationAndMeasurement(t *
 	diagnostic := placementFailureDiagnosticFor("assessment", malformed)
 	require.Equal(t, "assessment", diagnostic.Stage)
 	require.Equal(t, "malformed_exhausted", diagnostic.Class)
-	require.Equal(t, "assessor_response_invalid", diagnostic.ReasonCode)
+	require.Equal(t, "provider_response_invalid", diagnostic.ReasonCode)
 	require.Equal(t, "response_contract", diagnostic.ValidationStage)
 	require.Equal(t, []string{"response", "relationship_results.ref"}, diagnostic.ValidationFieldFamilies)
 	require.Equal(t, 3, diagnostic.AssessorTurns)
@@ -98,7 +107,7 @@ func TestPlacementFailureDiagnosticCapturesStoredAssessmentValidation(t *testing
 
 	require.Equal(t, "validation_failed", diagnostic.Class)
 	require.Equal(t, "stored_response", diagnostic.ValidationStage)
-	require.Equal(t, "assessor_response_invalid", diagnostic.ReasonCode)
+	require.Equal(t, "provider_response_invalid", diagnostic.ReasonCode)
 
 	payload := diagnostic.payload(false)
 	require.Equal(t, "stored_response", payload["validation_stage"])
@@ -113,6 +122,7 @@ func TestPlacementFailureDiagnosticBoundsBranchesAndRetryErrors(t *testing.T) {
 	require.Len(t, boundedValidationFieldFamilies(fields), 32)
 	require.Equal(t, "", boundedValidationStage("unknown"))
 	require.Equal(t, "candidate_prefetch", boundedPlacementFailureStage("candidate_prefetch"))
+	require.Equal(t, "semantic_rejection", boundedPlacementFailureStage("semantic_rejection"))
 	require.Equal(t, "internal", boundedPlacementFailureClass("unknown"))
 	require.Nil(t, cloneFailureMeasurement(nil))
 	require.Nil(t, cloneFailureMeasurement(&verifier.FailureMeasurement{Unit: "seconds", Observed: 1, Limit: 2}))

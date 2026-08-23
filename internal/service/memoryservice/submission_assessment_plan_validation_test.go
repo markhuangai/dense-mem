@@ -104,10 +104,6 @@ func TestSubmissionAssessmentPlanRejectsUnsupportedEndpointContext(t *testing.T)
 				relationship["evidence_indices"] = []any{99}
 			},
 		},
-		{
-			name:   "unsupported modality",
-			mutate: func(relationship map[string]any) { relationship["modality"] = "unsupported" },
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

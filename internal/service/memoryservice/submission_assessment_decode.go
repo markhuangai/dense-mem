@@ -39,5 +39,8 @@ func decodeStoredSubmissionAssessment(
 	if len(validationErrors) > 0 {
 		return verifier.SemanticAssessmentResponse{}, newStoredSubmissionAssessmentValidationError(errors.New("stored submission assessment does not match its current contract"))
 	}
+	prepared.ProviderTurns = assessment.ProviderTurns
+	prepared.InputTokens = assessment.InputTokens
+	prepared.OutputTokens = assessment.OutputTokens
 	return prepared, nil
 }

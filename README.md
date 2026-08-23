@@ -204,8 +204,7 @@ source revision with `previous_source_revision`; do not combine them.
     {
       "content": "Dense-Mem now uses PostgreSQL as its only deployment target.",
       "source_type": "manual",
-      "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"],
-      "idempotency_key": "deployment-target-correction-20260729"
+      "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"]
     }
   ],
   "relationships": [
@@ -225,7 +224,6 @@ source revision with `previous_source_revision`; do not combine them.
         }
       },
       "polarity": "+",
-      "modality": "statement",
       "evidence_indices": [0]
     }
   ],
@@ -237,11 +235,21 @@ The target is retired atomically when the replacement is accepted for intake,
 even if later placement is rejected or quarantined. This preserves the exact
 correction decision instead of silently leaving stale evidence effective.
 
-Remember uses a structure-only normalizer. Invalid or non-promotable complete
-responses never create partial semantic state: the submission becomes terminal
-`failed` with bounded `errors[]` guidance. Resubmit the entire evidence and
-Relationships batch with a new `idempotency_key`; partial replacement and
-interactive placement review are not part of the Remember workflow.
+Remember uses one assessor conversation for the complete batch. The assessor
+owns grounding repair, identity choice, predicate reconciliation, support
+decisions, and repairable races; deterministic server policy still owns
+authorization, lifecycle, and durable state. Every submitted Relationship ref
+gets a `stored` or `not_stored` disposition. Unsupported hints are not client
+errors when stored support still covers every evidence item; otherwise the
+submission is rejected with `no_supported_memory`. Exact client-owned changes
+after staging are rejected with `stale_input`. Provider, configuration,
+database, and internal faults are typed operational failures. All accepted
+semantic effects commit atomically, with no partial replacement or interactive
+placement review.
+
+Remember requires one top-level `idempotency_key`; evidence-level and derived
+keys are not accepted. If a complete batch needs correction, submit the entire
+batch again with a new key.
 
 To retract evidence without a replacement, call `retract_evidence` with owned
 current IDs, a bounded reason, and an idempotency key:

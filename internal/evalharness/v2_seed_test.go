@@ -40,7 +40,7 @@ func TestDeriveV2SeedRetainsV1EvidenceAndProducesFlatRelationships(t *testing.T)
 		t.Fatalf("target corpus = %+v", targetCorpus)
 	}
 	relationship := targetCorpus[0].Relationships[0].(map[string]any)
-	if relationship["ref"] != "relationship_1" || relationship["polarity"] != "+" || relationship["modality"] != "statement" {
+	if relationship["ref"] != "relationship_1" || relationship["polarity"] != "+" {
 		t.Fatalf("relationship = %#v", relationship)
 	}
 	subject := relationship["subject"].(map[string]any)

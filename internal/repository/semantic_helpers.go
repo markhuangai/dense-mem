@@ -59,6 +59,9 @@ func statusForVerdict(verdict string) string {
 }
 
 func statusForRelationshipDecision(input ApplyRelationshipDecisionInput) string {
+	if input.AssessorAccepted {
+		return string(domain.RelationshipStatusActive)
+	}
 	if input.SuppressSupport && input.EvidenceVerdict == string(domain.VerificationEntailed) {
 		return string(domain.RelationshipStatusPendingEvidence)
 	}
@@ -199,7 +202,7 @@ func normalizeApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInpu
 	if input.Polarity == "" {
 		input.Polarity = "+"
 	}
-	if input.EvidenceVerdict == "" {
+	if input.EvidenceVerdict == "" && !input.AssessorAccepted {
 		input.EvidenceVerdict = string(domain.VerificationEntailed)
 	}
 	input.Support, input.Supports = normalizeEvidenceSupports(input.Support, input.Supports)
@@ -296,14 +299,23 @@ func validateApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInput
 	if input.Polarity != "+" && input.Polarity != "-" {
 		return fmt.Errorf("unsupported polarity %q", input.Polarity)
 	}
-	if !contains(domain.VerificationVerdicts(), input.EvidenceVerdict) {
-		return fmt.Errorf("unsupported evidence_verdict %q", input.EvidenceVerdict)
-	}
-	if input.Confidence != nil && (*input.Confidence < 0 || *input.Confidence > 1) {
-		return errors.New("confidence must be between 0 and 1")
-	}
-	if err := validateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
-		return err
+	if input.AssessorAccepted {
+		if _, err := uuid.Parse(input.AssessmentID); err != nil {
+			return fmt.Errorf("assessor accepted relationship assessment_id is required: %w", err)
+		}
+		if input.SuppressSupport {
+			return errors.New("assessor accepted relationship cannot carry legacy policy fields")
+		}
+	} else {
+		if !contains(domain.VerificationVerdicts(), input.EvidenceVerdict) {
+			return fmt.Errorf("unsupported evidence_verdict %q", input.EvidenceVerdict)
+		}
+		if input.Confidence != nil && (*input.Confidence < 0 || *input.Confidence > 1) {
+			return errors.New("confidence must be between 0 and 1")
+		}
+		if err := validateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
+			return err
+		}
 	}
 	if input.ValidFrom != nil && input.ValidTo != nil && input.ValidTo.Before(*input.ValidFrom) {
 		return errors.New("valid_to must be greater than or equal to valid_from")
@@ -311,8 +323,13 @@ func validateApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInput
 	if err := validateRelationshipEvidenceSupports(input.Support, input.Supports); err != nil {
 		return err
 	}
-	if input.EvidenceVerdict == string(domain.VerificationEntailed) && len(relationshipEvidenceSupports(input.Support, input.Supports)) == 0 {
-		return errors.New("entailed relationship decisions require support")
+	if len(relationshipEvidenceSupports(input.Support, input.Supports)) == 0 {
+		if input.AssessorAccepted {
+			return errors.New("accepted relationship decisions require support")
+		}
+		if input.EvidenceVerdict == string(domain.VerificationEntailed) {
+			return errors.New("entailed relationship decisions require support")
+		}
 	}
 	if input.SuppressSupport && input.EvidenceVerdict != string(domain.VerificationEntailed) {
 		return errors.New("support suppression requires an entailed relationship decision")

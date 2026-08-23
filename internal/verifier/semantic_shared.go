@@ -10,7 +10,7 @@ import (
 var semanticHiddenControlMarkupPattern = regexp.MustCompile(`(?is)<!--|<\s*(?:script|iframe|object|embed|meta|svg)\b|\bon[a-z]{3,32}\s*=`)
 
 // SemanticReviewEvidence is the immutable evidence envelope shared by the
-// active proposal, assessor, and normalizer contracts.
+// active proposal and assessor contracts.
 type SemanticReviewEvidence struct {
 	EvidenceID              string         `json:"evidence_id"`
 	FragmentID              string         `json:"-"`

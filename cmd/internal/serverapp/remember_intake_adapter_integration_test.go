@@ -60,6 +60,7 @@ func TestRememberServiceAndLedgerAdapterRespectTeamProfileIsolation(t *testing.T
 			require.Equal(t, target.submissionID, status.SubmissionID)
 			require.NotNil(t, status.Evidence)
 			require.NotNil(t, status.Errors)
+			require.NotNil(t, status.Degradations)
 		})
 	}
 
@@ -76,6 +77,21 @@ func TestRememberServiceAndLedgerAdapterRespectTeamProfileIsolation(t *testing.T
 			require.Equal(t, httperr.NOT_FOUND, apiErr.Code)
 		})
 	}
+
+	require.NoError(t, rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE knowledge_ingests
+			SET metadata = jsonb_set(metadata, '{contract_version}', to_jsonb('dense-mem.v2.5'::text))
+			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
+		`, teamA, ownerASubmission).Error
+	}))
+	_, err := service.GetSubmissionStatus(
+		rememberBoundaryActorContext(teamA, ownerA),
+		rememberapp.GetSubmissionStatusRequest{SubmissionID: ownerASubmission},
+	)
+	var apiErr *httperr.APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, httperr.NOT_FOUND, apiErr.Code)
 
 }
 

@@ -15,16 +15,16 @@ const rejectedMarker = "embed-reject!";
 
 const content = [
   `Subject 0 uses Store 0. ${runID} good evidence alpha uses the durable store.`,
-  `Subject 1 uses Store 1. ${runID} ${rejectedMarker} bad evidence exceeds the provider input limit.`,
+  `Subject 1 uses Store 1. ${runID} embedding fixture token ${rejectedMarker}.`,
   `Subject 2 uses Store 2. ${runID} good evidence beta uses the durable store.`,
 ];
 const remember = await mcpTool("remember", {
+  idempotency_key: `${runID}:batch`,
   evidence: content.map((value, index) => ({
     content: value,
     source_type: "document",
     source: `${runID}:${index}`,
     source_group: runID,
-    idempotency_key: `${runID}:evidence:${index}`,
   })),
   relationships: content.map((value, index) => {
     const subject = `Subject ${index}`;
@@ -36,7 +36,6 @@ const remember = await mcpTool("remember", {
       predicate: { proposed_key: predicate },
       object: { entity: { name: object, entity_kind: "concept" } },
       polarity: "+",
-      modality: "statement",
       evidence_indices: [index],
     };
   }),

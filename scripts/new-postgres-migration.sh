@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIGRATIONS_ROOT="${ROOT_DIR}/migrations/postgres"
-CURRENT_RELEASE="v2_5"
+CURRENT_RELEASE="v2_6"
 MIGRATIONS_DIR="${MIGRATIONS_ROOT}/${CURRENT_RELEASE}"
 name="${1:-}"
 

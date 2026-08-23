@@ -2,7 +2,7 @@ E2E_CONFLICT_PROVIDER_PORT=""
 E2E_CONFLICT_REVIEW_DRIVER=""
 
 append_conflict_e2e_environment() {
-  if [[ "$E2E_SCENARIO" != "conflict" ]]; then
+  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "submission_assessment" ]]; then
     return
   fi
   printf '%s\n' \
@@ -16,7 +16,7 @@ append_conflict_e2e_environment() {
 }
 
 prepare_conflict_provider_files() {
-  if [[ "$E2E_SCENARIO" != "conflict" ]]; then
+  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "submission_assessment" ]]; then
     return
   fi
   E2E_COMPOSE_OVERLAY_FILE="${ROOT_DIR}/docker-compose.conflict-e2e-${E2E_FILE_ID}.yml"
@@ -52,7 +52,7 @@ NODE
 
 prepare_conflict_provider_volume() {
   local container_id
-  if [[ "$E2E_SCENARIO" != "conflict" ]]; then
+  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "submission_assessment" ]]; then
     return
   fi
   compose create conflict-provider >/dev/null

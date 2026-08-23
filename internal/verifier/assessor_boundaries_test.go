@@ -28,7 +28,7 @@ func TestPrepareSemanticAssessmentEvidenceUsesUnicodeCodePointBoundaries(t *test
 
 	startRef, _ := SemanticAssessmentBoundaryRef(prepared, 1)
 	endRef, _ := SemanticAssessmentBoundaryRef(prepared, 3)
-	rangeValue := SemanticAssessmentGroundedRange{EvidenceID: prepared.EvidenceID, StartRef: startRef, EndRef: endRef, Confidence: 1}
+	rangeValue := SemanticAssessmentGroundedRange{EvidenceID: prepared.EvidenceID, StartRef: startRef, EndRef: endRef}
 	require.NoError(t, resolveSemanticAssessmentRange(map[string]SemanticReviewEvidence{prepared.EvidenceID: prepared}, &rangeValue))
 	quote, err := SemanticEvidenceSpan(prepared.Content, rangeValue.Start, rangeValue.End)
 	require.NoError(t, err)

@@ -136,7 +136,7 @@ func TestRetractEvidenceRequestHashCanonicalizesEvidenceIDsAndKeepsContractMarke
 		EvidenceIDs: []string{"b", "a"}, Reason: "entered in error", IdempotencyKey: "retract-compat",
 	})
 	require.NoError(t, err)
-	require.Equal(t, "sha256:72fbf75d4468d6232c78c592ea5331bd639dbe29aefb2926cf4f8776ce098ceb", hash)
+	require.Equal(t, "sha256:80694fa5effea4aa3f4ef2eaab680910a293161aa2e6441c18ed6426a3d5abec", hash)
 }
 
 func TestLifecycleRetractEvidenceMapsRepositoryErrors(t *testing.T) {

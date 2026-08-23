@@ -1,7 +1,6 @@
 package memoryservice
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,7 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-// SemanticPlacementMaxAssessorTurns covers the initial normalizer response and
+// SemanticPlacementMaxAssessorTurns covers the initial assessor response and
 // bounded complete-response corrections in the same provider conversation.
 const SemanticPlacementMaxAssessorTurns = verifier.SemanticAssessmentMaxProviderTurns
 
@@ -74,16 +73,6 @@ func terminalizeAfterError(original error, complete func() error) error {
 		return errors.Join(original, completionErr)
 	}
 	return nil
-}
-
-type SemanticAssessorProvider interface {
-	AssessSemantic(ctx context.Context, req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error)
-	ModelName() string
-}
-
-type RememberNormalizerProvider interface {
-	NormalizeRemember(ctx context.Context, req verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error)
-	ModelName() string
 }
 
 func assessmentTokenizer(limits verifier.SemanticAssessmentLimits) string {
@@ -181,14 +170,6 @@ func assessmentGroupsBySpan(groups []verifier.SemanticAssessmentEntityCandidateG
 		result[assessmentCandidateGroupKey(group.EvidenceID, group.Start, group.End)] = group
 	}
 	return result
-}
-
-func assessmentPolicyVersion(policy repository.AutoWriteConfidencePolicy) string {
-	version := strings.TrimSpace(policy.Version)
-	if version == "" {
-		version = repository.AssessmentPolicyVersion
-	}
-	return version + ":config-" + strconv.FormatInt(policy.ConfigVersion, 10)
 }
 
 func semanticAssessmentEvidence(fragment repository.EvidenceFragment, evidenceID string) verifier.SemanticReviewEvidence {

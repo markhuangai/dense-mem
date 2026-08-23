@@ -50,9 +50,9 @@ function assertTerminalErrors(status) {
     throw new Error("terminal failure returned an empty errors array");
   }
   const allowedCodes = new Set([
-    "submission_requires_resubmission", "normalization_failed", "normalizer_unavailable", "submission_policy_rejected",
-    "assessor_response_invalid", "assessor_unavailable", "submission_processing_failed", "contract_superseded", "search_indexing_delayed",
-    "submission_quarantined",
+    "provider_unavailable", "provider_response_invalid", "input_budget_exceeded", "configuration_invalid", "database_failure", "internal_failure",
+    "search_indexing_delayed",
+    "submission_quarantined", "submission_policy_rejected",
     "relationship_version_stale", "relationship_not_active", "object_kind_change_forbidden",
     "support_set_mismatch", "entity_not_found", "too_many_entity_candidates",
     "predicate_not_found", "predicate_subject_kind_mismatch", "predicate_object_kind_mismatch",
@@ -60,16 +60,15 @@ function assertTerminalErrors(status) {
     "persistent_ambiguity", "inactive_relationship_collision",
   ]);
   const allowedMessages = new Set([
-    "the complete submission must be sent again",
-    "submission normalization failed after bounded corrections",
-    "the submission normalizer was unavailable after bounded retries",
-    "submission was rejected by semantic placement policy",
-    "submission assessment returned an invalid response",
-    "submission assessment was unavailable after bounded retries",
-    "submission processing failed",
-    "submission uses a superseded remember contract; resubmit the complete batch using the current contract",
+    "the semantic assessor was unavailable",
+    "the semantic assessor returned an invalid response",
+    "the semantic assessor input exceeded the configured budget",
+    "Dense-Mem is missing valid semantic-assessor configuration",
+    "Dense-Mem could not persist the submission",
+    "Dense-Mem could not complete the submission",
     "search indexing is delayed",
     "submission was quarantined by security policy",
+    "submission was rejected by semantic placement policy",
     "relationship version is stale",
     "relationship must be active, supported, and canonical",
     "a Value object cannot be replaced with an Entity",
@@ -143,7 +142,7 @@ function overflowFixture() {
       indexes.push(index);
     }
     const content = `${clauses.join(". ")}.`;
-    evidence.push({ content, source_type: "document", source: `${runID}:evidence:${evidenceIndex}`, source_group: runID, idempotency_key: `${runID}:evidence:${evidenceIndex}` });
+    evidence.push({ content, source_type: "document", source: `${runID}:evidence:${evidenceIndex}`, source_group: runID });
     for (const index of indexes) relationships.push(relationship(content, evidenceIndex, `${runID}:${index}`, "A", predicateKey(index), "B"));
   }
   return { evidence, relationships, idempotency_key: `${runID}:batch` };
@@ -155,7 +154,7 @@ function relationship(content, evidenceIndex, ref, subject, predicate, object) {
     subject: { name: subject, entity_kind: "project" },
     predicate: { proposed_key: predicate },
     object: { entity: { name: object, entity_kind: "product" } },
-    polarity: "+", modality: "statement", evidence_indices: [evidenceIndex],
+    polarity: "+", evidence_indices: [evidenceIndex],
   };
 }
 

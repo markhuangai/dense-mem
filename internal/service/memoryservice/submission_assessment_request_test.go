@@ -67,6 +67,47 @@ func TestSubmissionAssessmentRejectsPronounAndPartialWordGrounding(t *testing.T)
 	}
 }
 
+func TestSubmissionAssessmentChoosesKindWhenHintIsOmitted(t *testing.T) {
+	evidence := verifier.PrepareSemanticAssessmentEvidence(verifier.SemanticReviewEvidence{
+		EvidenceID: "evidence:0",
+		Content:    "Dense-Mem protects PostgreSQL.",
+	})
+	plan := submissionAssessmentGroundingTestPlan("Dense-Mem", "")
+	candidate := repository.SemanticReviewEntityCandidate{
+		TeamID: "team-a", EntityID: "entity-dense-mem", EntityKind: "project", CanonicalName: "Dense-Mem",
+		ActiveNames: []string{"Dense-Mem"}, Status: "active", IdentityContext: map[string]any{},
+	}
+
+	entities, groups, err := submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{
+		Complete: true,
+		Groups: []repository.SubmissionAssessmentEntityCatalogGroup{{
+			Ref: "entity:subject", Candidates: []repository.SemanticReviewEntityCandidate{candidate}, Complete: true,
+		}},
+	}, []verifier.SemanticReviewEvidence{evidence})
+
+	require.NoError(t, err)
+	require.Len(t, entities, 1)
+	assert.Equal(t, "project", entities[0].Kind)
+	require.Len(t, groups, 1)
+}
+
+func TestSubmissionAssessmentDefaultsNewEntityKindWhenHintIsOmitted(t *testing.T) {
+	evidence := verifier.PrepareSemanticAssessmentEvidence(verifier.SemanticReviewEvidence{
+		EvidenceID: "evidence:0",
+		Content:    "Dense-Mem protects PostgreSQL.",
+	})
+	plan := submissionAssessmentGroundingTestPlan("Dense-Mem", "")
+
+	entities, _, err := submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{
+		Complete: true,
+		Groups:   []repository.SubmissionAssessmentEntityCatalogGroup{{Ref: "entity:subject", Complete: true}},
+	}, []verifier.SemanticReviewEvidence{evidence})
+
+	require.NoError(t, err)
+	require.Len(t, entities, 1)
+	assert.Equal(t, "other", entities[0].Kind)
+}
+
 func submissionAssessmentGroundingTestPlan(name, kind string) submissionAssessmentPlan {
 	target := submissionAssessmentEntityTarget{Target: verifier.SemanticAssessmentRequiredEntityRef{
 		Ref: "entity:subject", Name: name, Kind: kind, EvidenceIDs: []string{"evidence:0"},

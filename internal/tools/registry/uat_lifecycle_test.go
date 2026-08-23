@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
@@ -161,7 +162,8 @@ func (s *stubLifecycleService) CorrectRelationship(
 ) (*memoryservice.CorrectRelationshipReceipt, error) {
 	s.correctReq = req
 	return &memoryservice.CorrectRelationshipReceipt{
-		SubmissionID: "correction-canonical", SubmissionKind: "relationship_correction",
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    "correction-canonical", SubmissionKind: "relationship_correction",
 		ProcessingState: "completed", StatusTool: ToolGetSubmissionStatus, CorrelationID: "correlation-canonical",
 	}, nil
 }
@@ -171,8 +173,10 @@ func (s *stubLifecycleService) GetRelationshipCorrectionStatus(
 	req memoryservice.GetSubmissionStatusRequest,
 ) (*memoryservice.SubmissionStatusResult, error) {
 	return &memoryservice.SubmissionStatusResult{
-		SubmissionID: req.SubmissionID, SubmissionKind: "relationship_correction",
-		ProcessingState: "completed", SearchState: "not_required", Evidence: []memoryservice.SubmissionEvidenceStatus{}, Errors: []memoryservice.SubmissionStatusError{},
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    req.SubmissionID, SubmissionKind: "relationship_correction",
+		ProcessingState: "completed", SearchState: "not_required", Evidence: []memoryservice.SubmissionEvidenceStatus{},
+		Errors: []memoryservice.SubmissionStatusError{}, Degradations: []memoryservice.SubmissionStatusDegradation{},
 	}, nil
 }
 

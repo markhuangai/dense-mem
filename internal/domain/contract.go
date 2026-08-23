@@ -1,7 +1,7 @@
 package domain
 
 const (
-	ContractVersion              = "dense-mem.v2.5"
+	ContractVersion              = "dense-mem.v2.6"
 	PredicatePolicyVersion       = "open_vocabulary_v1"
 	ConflictPolicyVersion        = "cross_profile_supporter_majority_after_ttl"
 	ConflictOverduePolicyVersion = "overdue_conflict_ai_supporter_voting"
@@ -178,6 +178,7 @@ const (
 	PlacementRunQuarantined PlacementRunStatus = "quarantined"
 	PlacementRunProcessing  PlacementRunStatus = "processing"
 	PlacementRunCompleted   PlacementRunStatus = "completed"
+	PlacementRunRejected    PlacementRunStatus = "rejected"
 	PlacementRunFailed      PlacementRunStatus = "failed"
 )
 
@@ -471,6 +472,7 @@ func PlacementRunStatuses() []string {
 		string(PlacementRunQuarantined),
 		string(PlacementRunProcessing),
 		string(PlacementRunCompleted),
+		string(PlacementRunRejected),
 		string(PlacementRunFailed),
 	}
 }

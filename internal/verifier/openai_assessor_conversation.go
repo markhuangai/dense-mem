@@ -88,8 +88,6 @@ func semanticAssessmentEntityValidationFieldFamily(field string) string {
 		return "entity_results.kind"
 	case "action", "candidate_entity_id":
 		return "entity_results.selection"
-	case "confidence", "rationale":
-		return "entity_results.quality"
 	default:
 		return "entity_results.other"
 	}
@@ -112,16 +110,10 @@ func semanticAssessmentRelationshipValidationFieldFamily(field string) string {
 		return "relationship_results.object"
 	case "evidence", "evidence_id", "start", "end", "predicate_range", "value_range", "support_ranges":
 		return "relationship_results.evidence"
-	case "polarity", "modality":
+	case "polarity":
 		return "relationship_results.semantics"
-	case "evidence_verdict":
-		return "relationship_results.verdict"
-	case "validity", "valid_from", "valid_to", "temporal_verdict":
+	case "validity", "valid_from", "valid_to":
 		return "relationship_results.temporal"
-	case "scope_key", "scope_status":
-		return "relationship_results.scope"
-	case "confidence", "rationale":
-		return "relationship_results.quality"
 	default:
 		return "relationship_results.other"
 	}

@@ -2,9 +2,11 @@ package memoryservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -26,24 +28,22 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 		wantIssue   string
 	}{
 		{
-			name:       "non-promotable assessment requires resubmission",
-			commitErr:  repository.ErrSubmissionAssessmentNonPromotable,
-			wantStatus: string(domain.SemanticReviewTerminalFailure),
-			wantStage:  "semantic_commit",
-			wantIssue:  "semantic_commit_non_promotable",
-		},
-		{
-			name:       "predicate registration conflict requires resubmission",
-			commitErr:  repository.ErrSubmissionPredicateRegistrationHeld,
-			wantStatus: string(domain.SemanticReviewTerminalFailure),
-			wantStage:  "semantic_commit",
-			wantIssue:  "predicate_registration_conflict",
-		},
-		{
-			name:       "stale conflict context requires resubmission",
+			name:       "stale conflict context is stale input",
 			commitErr:  repository.ErrConflictContextStale,
-			wantStatus: string(domain.SemanticReviewTerminalFailure),
-			wantStage:  "conflict_context_stale",
+			wantStatus: string(domain.SemanticReviewRejected),
+			wantStage:  "exact_reference_preflight",
+		},
+		{
+			name:       "stale exact reference is stale input",
+			commitErr:  repository.ErrRememberExactReferenceStale,
+			wantStatus: string(domain.SemanticReviewRejected),
+			wantStage:  "exact_reference_preflight",
+		},
+		{
+			name:       "stale correction target is stale input",
+			commitErr:  repository.ErrCorrectionTargetStale,
+			wantStatus: string(domain.SemanticReviewRejected),
+			wantStage:  "exact_reference_preflight",
 		},
 		{
 			name:       "scope mismatch terminalizes",
@@ -94,14 +94,118 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 			require.Len(t, assessments.completions, 1)
 			assert.Equal(t, test.wantStatus, assessments.completions[0].Status)
 			assert.Equal(t, test.wantStage, assessments.completions[0].Payload["failure_stage"])
-			if test.wantIssue != "" {
-				issues, ok := assessments.completions[0].Payload["resubmission_issues"].([]map[string]any)
-				require.True(t, ok)
-				require.Len(t, issues, 1)
-				assert.Equal(t, test.wantIssue, issues[0]["code"])
+			if test.wantStatus == string(domain.SemanticReviewRejected) {
+				assert.Equal(t, string(SubmissionErrorStaleInput), assessments.completions[0].Payload["failure_code"])
 			}
 		})
 	}
+}
+
+func TestSubmissionAssessmentWorkerPersistsDatabaseFailureCode(t *testing.T) {
+	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	scope := submissionAssessmentRunScope(*ledger.run, "submission-assessment-worker")
+
+	err := service.completeTerminal(
+		context.Background(), scope,
+		string(domain.SemanticReviewTerminalFailure), "failed", "semantic_commit",
+		&pgconn.PgError{Code: "08006"},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, assessments.completions, 1)
+	assert.Equal(t, string(SubmissionErrorDatabaseFailure), assessments.completions[0].Payload["failure_code"])
+}
+
+func TestSubmissionAssessmentWorkerRepairsCommitRacesInSameSession(t *testing.T) {
+	for _, race := range []error{
+		repository.ErrSubmissionAssessmentNonPromotable,
+		repository.ErrSubmissionPredicateRegistrationHeld,
+	} {
+		t.Run(race.Error(), func(t *testing.T) {
+			_, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
+			assessments.commitErrors = []error{race, nil}
+
+			processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+			require.NoError(t, err)
+			require.True(t, processed)
+			require.Len(t, assessments.commits, 2)
+			require.Len(t, assessments.revisionInputs, 1)
+			assert.Equal(t, 2, assessments.revisionInputs[0].ProviderTurns)
+			assert.Equal(t, 2, provider.calls)
+			assert.Equal(t, provider.startSessionID, provider.repairSessionID)
+			assert.Len(t, catalog.entityInputs, 2)
+			assert.Empty(t, assessments.requeues)
+			assert.Empty(t, assessments.completions)
+		})
+	}
+}
+
+func TestSubmissionAssessmentWorkerRecoversPersistedCommitRaceWithFreshSession(t *testing.T) {
+	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
+	require.NoError(t, err)
+	request, err := service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
+	require.NoError(t, err)
+	response := submissionAssessmentValidResponse(request, false)
+	response.ProviderTurns = 1
+	raw, err := json.Marshal(response)
+	require.NoError(t, err)
+	canonical, err := verifier.CanonicalJSON(raw)
+	require.NoError(t, err)
+	assessments.assessment = &repository.SubmissionAssessment{
+		TeamID: ledger.run.TeamID, AssessmentID: "00000000-0000-0000-0000-000000000901",
+		OwnerProfileID: ledger.run.OwnerProfileID, IngestID: ledger.run.IngestID, PlacementRunID: ledger.run.PlacementRunID,
+		RequestID: request.RequestID, AssessorContractVersion: domain.ContractVersion, Model: provider.ModelName(), Tokenizer: assessmentTokenizer(service.limits),
+		ProviderTurns: 1, InputTokens: request.InputTokens, OutputTokens: response.OutputTokens,
+		CandidateContextTokens: request.CandidateContextTokens, NormalizedResponse: canonical, ResponseHash: semanticAssessmentHash(canonical),
+	}
+	assessments.commitErrors = []error{repository.ErrSubmissionPredicateRegistrationHeld, nil}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Len(t, assessments.commits, 2)
+	require.Len(t, assessments.revisionInputs, 1)
+	assert.Equal(t, 2, assessments.revisionInputs[0].ProviderTurns)
+	assert.Equal(t, 1, provider.calls)
+	assert.Empty(t, assessments.requeues)
+}
+
+func TestSubmissionAssessmentWorkerStopsPersistedCommitRepairAtSubmissionTurnBound(t *testing.T) {
+	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
+	require.NoError(t, err)
+	request, err := service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
+	require.NoError(t, err)
+	response := submissionAssessmentValidResponse(request, false)
+	response.ProviderTurns = SemanticPlacementMaxAssessorTurns
+	raw, err := json.Marshal(response)
+	require.NoError(t, err)
+	canonical, err := verifier.CanonicalJSON(raw)
+	require.NoError(t, err)
+	assessments.assessment = &repository.SubmissionAssessment{
+		TeamID: ledger.run.TeamID, AssessmentID: "00000000-0000-0000-0000-000000000902",
+		OwnerProfileID: ledger.run.OwnerProfileID, IngestID: ledger.run.IngestID, PlacementRunID: ledger.run.PlacementRunID,
+		RequestID: request.RequestID, AssessorContractVersion: domain.ContractVersion, Model: provider.ModelName(), Tokenizer: assessmentTokenizer(service.limits),
+		ProviderTurns: SemanticPlacementMaxAssessorTurns, InputTokens: request.InputTokens, OutputTokens: response.OutputTokens,
+		CandidateContextTokens: request.CandidateContextTokens, NormalizedResponse: canonical, ResponseHash: semanticAssessmentHash(canonical),
+	}
+	assessments.commitErrors = []error{repository.ErrSubmissionPredicateRegistrationHeld}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Zero(t, provider.calls)
+	assert.Empty(t, assessments.revisionInputs)
+	require.Len(t, assessments.completions, 1)
+	assert.Equal(t, string(SubmissionErrorInternalFailure), assessments.completions[0].Payload["failure_code"])
+	assert.Equal(t, "commit_race_exhausted", assessments.completions[0].Payload["failure_stage"])
 }
 
 func TestSubmissionAssessmentWorkerRequeuesRepositoryFailuresByStage(t *testing.T) {
@@ -133,14 +237,6 @@ func TestSubmissionAssessmentWorkerRequeuesRepositoryFailuresByStage(t *testing.
 				assessments.persistErr = errors.New("assessment persistence failed")
 			},
 			stage:   "assessment",
-			payload: true,
-		},
-		{
-			name: "confidence policy",
-			mutate: func(assessments *submissionAssessmentWorkerAssessmentStub) {
-				assessments.policyErr = errors.New("policy unavailable")
-			},
-			stage:   "confidence_policy",
 			payload: true,
 		},
 	}

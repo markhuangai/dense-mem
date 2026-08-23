@@ -3,7 +3,9 @@ package serverapp
 import (
 	"context"
 	"errors"
+	"strings"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
@@ -48,6 +50,9 @@ func (a *rememberLedgerAdapter) Status(ctx context.Context, input rememberapp.St
 	if err != nil {
 		return nil, translateRememberAdapterError(err)
 	}
+	if strings.TrimSpace(result.ContractVersion) != domain.ContractVersion {
+		return nil, rememberapp.ErrPlacementNotFound
+	}
 	return rememberStageResult(result), nil
 }
 
@@ -75,8 +80,8 @@ func rememberEvidenceInputs(items []rememberapp.EvidenceInput) []repository.Evid
 			Authority: item.Authority, SourceRef: item.SourceRef, SourceKey: item.SourceKey,
 			SourceRevisionToken: item.SourceRevisionToken, ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
 			SourceRevisionContentHash: item.SourceRevisionContentHash, SourceRevisionEnvelope: item.SourceRevisionEnvelope,
-			SupersedesEvidenceIDs: append([]string(nil), item.SupersedesEvidenceIDs...), IdempotencyKey: item.IdempotencyKey,
-			Labels: append([]string(nil), item.Labels...), Metadata: item.Metadata, InitialEvent: event,
+			SupersedesEvidenceIDs: append([]string(nil), item.SupersedesEvidenceIDs...),
+			Labels:                append([]string(nil), item.Labels...), Metadata: item.Metadata, InitialEvent: event,
 		})
 	}
 	return result
@@ -93,6 +98,21 @@ func rememberStageResult(result *repository.CreateIngestResult) *rememberapp.Sta
 		Proposal: result.Proposal, SubmittedAt: result.SubmittedAt, NextAttemptAt: result.NextAttemptAt,
 		StartedAt: result.StartedAt, UpdatedAt: result.UpdatedAt, CompletedAt: result.CompletedAt,
 		QuarantineExpiresAt: result.QuarantineExpiresAt,
+	}
+	for _, item := range result.RelationshipResults {
+		convertedResult := rememberapp.SubmissionRelationshipResult{
+			RelationshipRef: item.RelationshipRef,
+			Disposition:     item.Disposition,
+			Reason:          item.Reason,
+			Splits:          make([]rememberapp.SubmissionRelationshipSplit, 0, len(item.Splits)),
+		}
+		for _, split := range item.Splits {
+			convertedResult.Splits = append(convertedResult.Splits, rememberapp.SubmissionRelationshipSplit{
+				SplitIndex: split.SplitIndex, RelationshipID: split.RelationshipID,
+				RelationshipVersion: split.RelationshipVersion, Status: split.Status,
+			})
+		}
+		converted.RelationshipResults = append(converted.RelationshipResults, convertedResult)
 	}
 	for _, item := range result.Evidence {
 		converted.Evidence = append(converted.Evidence, rememberapp.EvidenceFragment{
@@ -118,6 +138,16 @@ func rememberStageResult(result *repository.CreateIngestResult) *rememberapp.Sta
 }
 
 func translateRememberAdapterError(err error) error {
+	var preflight *repository.RememberPreflightError
+	if errors.As(err, &preflight) {
+		translated := &rememberapp.RememberValidationError{IssuesTruncated: preflight.IssuesTruncated}
+		for _, issue := range preflight.Issues {
+			translated.Issues = append(translated.Issues, rememberapp.RememberValidationIssue{
+				Path: issue.Path, Code: issue.Code, Message: issue.Message,
+			})
+		}
+		return translated
+	}
 	switch {
 	case errors.Is(err, repository.ErrIdempotencyConflict):
 		return rememberapp.ErrIdempotencyConflict

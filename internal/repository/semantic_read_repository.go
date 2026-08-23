@@ -590,8 +590,8 @@ func loadTraceVerificationEvents(
 ) ([]RelationshipVerificationEvent, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT v.verification_event_id::text, v.observation_id::text,
-		       v.owner_profile_id::text, v.evidence_verdict, v.confidence,
-		       v.rationale, v.model, v.response_hash, v.metadata::text, v.created_at
+		       v.owner_profile_id::text, COALESCE(v.evidence_verdict, ''), v.confidence,
+		       COALESCE(v.rationale, ''), v.model, v.response_hash, v.metadata::text, v.created_at
 		FROM verification_events v
 		JOIN relationship_observations o
 		  ON o.team_id = v.team_id

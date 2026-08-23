@@ -15,6 +15,24 @@ var (
 	ErrTeamInactive           = errors.New("remember: team is inactive")
 )
 
+type RememberValidationIssue struct {
+	Path    string `json:"path"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type RememberValidationError struct {
+	Issues          []RememberValidationIssue `json:"issues"`
+	IssuesTruncated bool                      `json:"issues_truncated"`
+}
+
+func (e *RememberValidationError) Error() string {
+	if e == nil || len(e.Issues) == 0 {
+		return "remember validation failed"
+	}
+	return e.Issues[0].Message
+}
+
 type IntakePort interface {
 	Stage(context.Context, StageRequest) (*StageResult, error)
 	Status(context.Context, StatusRequest) (*StageResult, error)
@@ -53,7 +71,6 @@ type EvidenceInput struct {
 	SourceRevisionContentHash     string
 	SourceRevisionEnvelope        map[string]any
 	SupersedesEvidenceIDs         []string
-	IdempotencyKey                string
 	Labels                        []string
 	Metadata                      map[string]any
 	InitialEvent                  *SecurityEventDraft
@@ -97,6 +114,20 @@ type PlacementItem struct {
 	Result          map[string]any
 }
 
+type SubmissionRelationshipSplit struct {
+	SplitIndex          int    `json:"split_index"`
+	RelationshipID      string `json:"relationship_id"`
+	RelationshipVersion int    `json:"relationship_version"`
+	Status              string `json:"status"`
+}
+
+type SubmissionRelationshipResult struct {
+	RelationshipRef string                        `json:"ref"`
+	Disposition     string                        `json:"disposition"`
+	Reason          string                        `json:"reason,omitempty"`
+	Splits          []SubmissionRelationshipSplit `json:"splits"`
+}
+
 type FirstDisposition struct {
 	Status      string
 	CreatedAt   time.Time
@@ -117,6 +148,7 @@ type StageResult struct {
 	Proposal            map[string]any
 	Evidence            []EvidenceFragment
 	Items               []PlacementItem
+	RelationshipResults []SubmissionRelationshipResult
 	FirstDisposition    *FirstDisposition
 	SubmittedAt         *time.Time
 	NextAttemptAt       *time.Time

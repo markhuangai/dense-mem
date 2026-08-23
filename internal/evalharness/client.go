@@ -384,13 +384,12 @@ func (c *HTTPClient) importCorpusGroup(ctx context.Context, corpus []CorpusItem)
 func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (KnowledgeMapping, error) {
 	mapping := newKnowledgeMapping()
 	evidence := map[string]any{
-		"content":         item.Content,
-		"source":          firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
-		"idempotency_key": "eval:" + item.SourceDocID,
-		"labels":          item.Labels,
-		"metadata":        seedMetadata(item),
+		"content":  item.Content,
+		"source":   firstNonEmpty(item.SourceDataset, item.Title, "eval-seed"),
+		"labels":   item.Labels,
+		"metadata": seedMetadata(item),
 	}
-	input := map[string]any{"evidence": []map[string]any{evidence}}
+	input := map[string]any{"idempotency_key": "eval:" + item.SourceDocID, "evidence": []map[string]any{evidence}}
 	if len(item.Relationships) > 0 {
 		input["relationships"] = item.Relationships
 	}

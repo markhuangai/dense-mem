@@ -101,8 +101,8 @@ if (recovered.latest_run.recovered_count !== 1 || recovered.latest_run.requeued_
 }
 
 const finalStatus = await waitForCurrentSubmission(submissionID);
-if (finalStatus.errors?.some((item) => item.code === "search_indexing_delayed")) {
-  throw new Error(`public submission status retained a stale indexing error: ${JSON.stringify(finalStatus)}`);
+if (finalStatus.degradations?.some((item) => item.code === "search_indexing_delayed")) {
+  throw new Error(`public submission status retained a stale indexing degradation: ${JSON.stringify(finalStatus)}`);
 }
 const proxyAfter = await proxyJSON("/stats");
 if (proxyAfter.forwarded < 1 || proxyAfter.request_item_counts[proxyBefore.requests] !== 1) {
@@ -141,22 +141,23 @@ function rememberInput() {
   const firstPredicate = "uses";
   const firstObject = "daily canaries";
   return {
+    idempotency_key: `${runID}:batch`,
     evidence: [
-      { content: first, source_type: "document", source: `${runID}:first`, source_group: runID, idempotency_key: `${runID}:evidence:first` },
-      { content: second, source_type: "document", source: `${runID}:second`, source_group: runID, idempotency_key: `${runID}:evidence:second` },
+      { content: first, source_type: "document", source: `${runID}:first`, source_group: runID },
+      { content: second, source_type: "document", source: `${runID}:second`, source_group: runID },
     ],
     relationships: [{
       ref: `${runID}:relationship:first`,
       subject: { name: firstSubject, entity_kind: "concept" },
       predicate: { proposed_key: firstPredicate },
       object: { entity: { name: firstObject, entity_kind: "concept" } },
-      polarity: "+", modality: "statement", evidence_indices: [0],
+      polarity: "+", evidence_indices: [0],
     }, {
       ref: `${runID}:relationship:second`,
       subject: { name: "provider quota", entity_kind: "concept" },
       predicate: { proposed_key: "uses" },
       object: { entity: { name: "active contract", entity_kind: "concept" } },
-      polarity: "+", modality: "statement", evidence_indices: [1],
+      polarity: "+", evidence_indices: [1],
     }],
   };
 }
@@ -231,7 +232,10 @@ async function waitForCurrentSubmission(id) {
 
 function assertPublicDelayedStatus(status, id) {
   if (status.submission_id !== id || status.search_state !== "failed") throw new Error(`failed submission status is not bounded: ${JSON.stringify(status)}`);
-  if (!status.errors?.some((item) => item.code === "search_indexing_delayed")) throw new Error(`submission status omitted search_indexing_delayed: ${JSON.stringify(status)}`);
+  if (!Array.isArray(status.errors) || status.errors.length !== 0) throw new Error(`indexing degradation became a terminal submission error: ${JSON.stringify(status)}`);
+  if (!status.degradations?.some((item) => item.frontier === "search" && item.optional === true && item.code === "search_indexing_delayed")) {
+    throw new Error(`submission status omitted the search_indexing_delayed degradation: ${JSON.stringify(status)}`);
+  }
   if (JSON.stringify(status).includes("insufficient_quota")) throw new Error("public status exposed provider failure details");
 }
 

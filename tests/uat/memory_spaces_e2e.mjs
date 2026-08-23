@@ -12,8 +12,9 @@ let rpcID = 0;
 const created = [];
 const privateRead = await createCredential(teamID, "E2E private read", { scopes: ["read"], memory_binding: "credential_private" });
 const sharedRead = await createCredential(teamID, "E2E shared read", { scopes: ["read"], memory_binding: "shared_only" });
+const sharedWrite = await createCredential(teamID, "E2E shared write", { scopes: ["read", "write"], memory_binding: "shared_only" });
 const privateWrite = await createCredential(teamID, "E2E private write", { scopes: ["read", "write"], memory_binding: "credential_private" });
-created.push(privateRead, sharedRead, privateWrite);
+created.push(privateRead, sharedRead, sharedWrite, privateWrite);
 
 const listedBeforeLifecycle = await controlJSON(`/teams/${teamID}/credentials?limit=100&offset=0`);
 const listedIDs = new Set((listedBeforeLifecycle.data ?? []).map((item) => item.id));
@@ -45,9 +46,9 @@ if (scenario === "credential_memory_binding") {
   assert(denied.status >= 401 && denied.status < 500, "revoked credential remained usable");
 } else if (scenario === "space_aware_recall") {
   const sharedNeedle = "memory space e2e mentions team shared evidence sentinel";
-  const sharedSubmission = await mcpSuccess("remember", rememberInput(sharedNeedle, "memory space e2e", "mentions", "sentinel"), apiKey);
-  await waitForCompletedPlacement(sharedSubmission.submission_id, apiKey);
-  const recall = await waitForRecall(sharedNeedle, sharedNeedle, apiKey);
+  const sharedSubmission = await mcpSuccess("remember", rememberInput(sharedNeedle, "memory space e2e", "mentions", "sentinel"), sharedWrite.apiKey);
+  await waitForCompletedPlacement(sharedSubmission.submission_id, sharedWrite.apiKey);
+  const recall = await waitForRecall(sharedNeedle, sharedNeedle, sharedWrite.apiKey);
   assert((recall.results ?? []).some((item) => item.context?.includes(sharedNeedle)), "team-shared recall positive control did not return the seeded evidence");
   for (const item of recall.results ?? []) assert(item.space_kind === "team_shared", `team-shared result lacked its space label: ${JSON.stringify(item)}`);
   const privateRecall = await waitForRecall(sharedNeedle, sharedNeedle, privateRead.apiKey);
@@ -177,13 +178,14 @@ function assert(condition, message) { if (!condition) throw new Error(message); 
 
 function rememberInput(content, subject, predicate, object) {
   return {
+    idempotency_key: `memory-space-e2e:${Date.now()}:${Math.random()}`,
     evidence: [{ content, source_type: "document", source: "memory-space-e2e", source_group: "memory-space-e2e" }],
     relationships: [{
       ref: `memory-space-e2e:${Date.now()}:${Math.random()}`,
       subject: { name: subject, entity_kind: "project" },
       predicate: { proposed_key: predicate },
       object: { entity: { name: object, entity_kind: "concept" } },
-      polarity: "+", modality: "statement", evidence_indices: [0],
+      polarity: "+", evidence_indices: [0],
     }],
   };
 }

@@ -101,20 +101,21 @@ type SecuritySignalInput struct {
 }
 
 type CreateIngestResult struct {
-	TeamID           string
-	OwnerProfileID   string
-	IngestID         string
-	PlacementRunID   string
-	Status           string
-	CorrelationID    string
-	Attempts         int
-	MaxAttempts      int
-	Existing         bool
-	Proposal         map[string]any
-	ContractVersion  string
-	Evidence         []EvidenceFragment
-	Items            []PlacementItem
-	FirstDisposition *PlacementFirstDisposition
+	TeamID              string
+	OwnerProfileID      string
+	IngestID            string
+	PlacementRunID      string
+	Status              string
+	CorrelationID       string
+	Attempts            int
+	MaxAttempts         int
+	Existing            bool
+	Proposal            map[string]any
+	ContractVersion     string
+	Evidence            []EvidenceFragment
+	Items               []PlacementItem
+	RelationshipResults []SubmissionRelationshipResult
+	FirstDisposition    *PlacementFirstDisposition
 	// Status projection metadata is loaded for the owner-scoped public status
 	// endpoint; it is not placement data and is never exposed directly.
 	SubmittedAt         *time.Time
@@ -173,34 +174,6 @@ type LedgerRepositoryImpl struct {
 
 var _ LedgerRepository = (*LedgerRepositoryImpl)(nil)
 
-func NewLedgerRepository(db *gorm.DB, rls *postgres.RLS) *LedgerRepositoryImpl {
-	return NewLedgerRepositoryWithEmbeddingJobMaxAttempts(db, rls, defaultEmbeddingJobMaxAttempts)
-}
-
-func NewLedgerRepositoryWithEmbeddingJobMaxAttempts(
-	db *gorm.DB,
-	rls *postgres.RLS,
-	maxAttempts int,
-) *LedgerRepositoryImpl {
-	return NewLedgerRepositoryWithRuntimeConfig(db, rls, maxAttempts, ConflictRuntimeConfig{})
-}
-
-func NewLedgerRepositoryWithRuntimeConfig(
-	db *gorm.DB,
-	rls *postgres.RLS,
-	maxAttempts int,
-	conflictConfig ConflictRuntimeConfig,
-) *LedgerRepositoryImpl {
-	conflictConfig = normalizeConflictRuntimeConfig(conflictConfig)
-	return &LedgerRepositoryImpl{
-		db:                      db,
-		rls:                     rls,
-		embeddingJobMaxAttempts: normalizeEmbeddingJobMaxAttempts(maxAttempts),
-		conflictReviewTTLDays:   conflictConfig.ReviewTTLDays,
-		conflictReviewTimezone:  conflictConfig.Timezone,
-	}
-}
-
 func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIngestInput) (*CreateIngestResult, error) {
 	input = normalizeCreateIngestInput(input)
 	if err := validateCreateIngestInput(input); err != nil {
@@ -208,14 +181,16 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 	}
 	var result *CreateIngestResult
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
-		if replay, err := loadDirectSupersessionReplay(ctx, tx, input); err != nil {
-			return err
-		} else if replay != nil {
-			result = replay
-			return nil
+		if !input.TelemetryRemember {
+			if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
+				return err
+			}
+			if replay, err := loadDirectSupersessionReplay(ctx, tx, input); err != nil {
+				return err
+			} else if replay != nil {
+				result = replay
+				return nil
+			}
 		}
 		ingestID, created, err := insertKnowledgeIngest(ctx, tx, input)
 		if err != nil {
@@ -232,6 +207,11 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 			result = loaded
 			return nil
 		}
+		if input.TelemetryRemember {
+			if err := validateRememberSubmissionPreflight(ctx, tx, input); err != nil {
+				return err
+			}
+		}
 		placementRunID, createdAt, completedAt, err := insertPlacementRun(ctx, tx, input, ingestID)
 		if err != nil {
 			return err
@@ -241,7 +221,7 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 		sources := make(map[string]SourceRevisionResult)
 		for i, item := range input.Evidence {
 			var source *SourceRevisionResult
-			if item.SourceKey != "" {
+			if !input.TelemetryRemember && item.SourceKey != "" {
 				advanced, err := advanceSourceRevisionInTx(ctx, tx, AdvanceSourceRevisionInput{
 					TeamID:                        input.TeamID,
 					OwnerProfileID:                input.OwnerProfileID,
@@ -264,6 +244,11 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 			fragment, err := insertEvidenceFragment(ctx, tx, input, ingestID, i, item, source)
 			if err != nil {
 				return err
+			}
+			if input.TelemetryRemember {
+				if err := insertRememberSubmissionIntents(ctx, tx, input, ingestID, fragment.FragmentID, item); err != nil {
+					return err
+				}
 			}
 			evidence = append(evidence, fragment)
 			placementItem, err := insertPlacementItem(ctx, tx, input, ingestID, placementRunID, fragment, item)
@@ -289,7 +274,11 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 				}
 			}
 		}
-		if err := applyDirectEvidenceSupersessions(ctx, tx, input, ingestID, evidence); err != nil {
+		if input.TelemetryRemember {
+			if err := validateRememberSubmissionSupersessionTargets(ctx, tx, input, ingestID); err != nil {
+				return err
+			}
+		} else if err := applyDirectEvidenceSupersessions(ctx, tx, input, ingestID, evidence); err != nil {
 			return err
 		}
 		var firstDisposition *PlacementFirstDisposition
@@ -494,7 +483,7 @@ func (r *LedgerRepositoryImpl) FinishPlacementRun(ctx context.Context, teamID st
 			        ELSE quarantine_expires_at
 			    END,
 			    updated_at = now()
-			WHERE team_id = ?::uuid
+				WHERE team_id = ?::uuid
 			  AND placement_run_id = ?::uuid
 			  AND status = 'processing'
 			  AND worker_id = ?
@@ -898,12 +887,18 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 		return nil, err
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-			SELECT fragment_id::text, evidence_index, content, content_hash, authority,
-			       COALESCE(source_id::text, ''), COALESCE(source_revision_id::text, '')
-			FROM evidence_fragments
-			WHERE team_id = ?::uuid
-			  AND ingest_id = ?::uuid
-			ORDER BY evidence_index ASC
+			SELECT fragment.fragment_id::text, fragment.evidence_index, fragment.content, fragment.content_hash, fragment.authority,
+			       COALESCE(fragment.source_id::text, intent.source_id::text, ''),
+			       COALESCE(fragment.source_revision_id::text, intent.source_revision_id::text, '')
+			FROM evidence_fragments AS fragment
+			LEFT JOIN remember_source_revision_intents AS intent
+			  ON intent.team_id = fragment.team_id
+			 AND intent.ingest_id = fragment.ingest_id
+			 AND intent.fragment_id = fragment.fragment_id
+			 AND intent.owner_profile_id = fragment.owner_profile_id
+			WHERE fragment.team_id = ?::uuid
+			  AND fragment.ingest_id = ?::uuid
+			ORDER BY fragment.evidence_index ASC
 	`, teamID, ingestID).Rows()
 	if err != nil {
 		return nil, err
@@ -964,6 +959,13 @@ func loadCreateIngestResult(ctx context.Context, tx *gorm.DB, teamID string, ing
 		return nil, err
 	}
 	if err := hydrateEvidenceLifecycleLineage(ctx, tx, result.TeamID, result.Evidence); err != nil {
+		return nil, err
+	}
+	if err := loadSubmissionRelationshipResults(ctx, tx, GetPlacementRunInput{
+		TeamID:         result.TeamID,
+		OwnerProfileID: result.OwnerProfileID,
+		IngestID:       result.IngestID,
+	}, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

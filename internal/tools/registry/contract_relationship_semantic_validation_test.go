@@ -135,14 +135,14 @@ func TestRememberValidatesSpanlessRelationshipSemanticInvariants(t *testing.T) {
 
 func validFlatValueRelationshipSubmission() map[string]any {
 	return map[string]any{
-		"evidence": []any{map[string]any{"content": "Widget costs 20 USD."}},
+		"idempotency_key": "remember-test-value-batch",
+		"evidence":        []any{map[string]any{"content": "Widget costs 20 USD."}},
 		"relationships": []any{map[string]any{
 			"ref":              "widget-cost",
 			"subject":          map[string]any{"name": "Widget", "entity_kind": "product"},
 			"predicate":        map[string]any{"proposed_key": "costs"},
 			"object":           map[string]any{"value": map[string]any{"type": "number", "value": 20, "display": "20 USD", "unit": "USD"}},
 			"polarity":         "+",
-			"modality":         "statement",
 			"evidence_indices": []any{0},
 		}},
 	}

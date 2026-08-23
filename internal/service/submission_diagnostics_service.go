@@ -325,7 +325,7 @@ var (
 		"security_quarantine":                     {},
 		"semantic_commit_failed":                  {},
 		"placement_load_failed":                   {},
-		"assessor_response_invalid":               {},
+		"provider_response_invalid":               {},
 		"assessor_provider_failed":                {},
 		"lease_lost":                              {},
 		"unknown_internal_failure":                {},

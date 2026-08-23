@@ -205,19 +205,18 @@ function relationshipRememberInput(payload, idempotencyKey, source, clientCommen
       },
     },
     polarity: "+",
-    modality: "statement",
     evidence_indices: [0],
   };
   if (clientComment) {
     relationship.client_comment = clientComment;
   }
   return {
+    idempotency_key: idempotencyKey,
     evidence: [{
       content,
       source_type: "document",
       source,
       source_group: source,
-      idempotency_key: idempotencyKey,
     }],
     relationships: [relationship],
   };

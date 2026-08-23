@@ -25,153 +25,6 @@ var (
 	ErrSubmissionAssessmentNonPromotable   = errors.New("submission assessment is not promotable")
 )
 
-// SubmissionAssessmentRepository is the run-scoped, append-once assessment
-// boundary. One row represents the complete assessor conversation for every
-// evidence item in the placement run.
-type SubmissionAssessmentRepository interface {
-	LoadSubmissionAssessment(ctx context.Context, input LoadSubmissionAssessmentInput) (*SubmissionAssessment, error)
-	ReserveSubmissionAssessorAttempt(ctx context.Context, input ReserveSubmissionAssessorAttemptInput) (bool, error)
-	PersistSubmissionAssessment(ctx context.Context, input PersistSubmissionAssessmentInput) (*SubmissionAssessment, bool, error)
-	LoadAutoWriteConfidencePolicy(ctx context.Context, input LoadAutoWriteConfidencePolicyInput) (AutoWriteConfidencePolicy, error)
-	CommitSubmissionAssessment(ctx context.Context, input CommitSubmissionAssessmentInput) (*CommitSubmissionAssessmentResult, error)
-	CompleteSubmissionAssessment(ctx context.Context, input CompleteSubmissionAssessmentInput) (*CompleteSubmissionAssessmentResult, error)
-	RequeueSubmissionAssessment(ctx context.Context, input RequeueSubmissionAssessmentInput) (*RequeueSubmissionAssessmentResult, error)
-}
-
-type SubmissionAssessmentRunScope struct {
-	TeamID           string
-	OwnerProfileID   string
-	IngestID         string
-	PlacementRunID   string
-	CorrelationID    string
-	WorkerID         string
-	ExpectedAttempts int
-	MaxAttempts      int
-}
-
-type LoadSubmissionAssessmentInput struct {
-	TeamID         string
-	OwnerProfileID string
-	PlacementRunID string
-}
-
-type ReserveSubmissionAssessorAttemptInput struct {
-	SubmissionAssessmentRunScope
-}
-
-type PersistSubmissionAssessmentInput struct {
-	TeamID                    string
-	OwnerProfileID            string
-	IngestID                  string
-	PlacementRunID            string
-	RequestID                 string
-	AssessorContractVersion   string
-	Model                     string
-	Tokenizer                 string
-	InputTokens               int
-	OutputTokens              int
-	CandidateContextTokens    int
-	CandidateContextTruncated bool
-	NormalizedResponse        json.RawMessage
-	ResponseHash              string
-	ValidatedAt               time.Time
-}
-
-type SubmissionAssessment struct {
-	TeamID                    string
-	AssessmentID              string
-	OwnerProfileID            string
-	IngestID                  string
-	PlacementRunID            string
-	RequestID                 string
-	AssessorContractVersion   string
-	Model                     string
-	Tokenizer                 string
-	InputTokens               int
-	OutputTokens              int
-	CandidateContextTokens    int
-	CandidateContextTruncated bool
-	NormalizedResponse        json.RawMessage
-	ResponseHash              string
-	ValidatedAt               time.Time
-	CreatedAt                 time.Time
-}
-
-type SubmissionAssessmentItemInput struct {
-	PlacementItemID string
-	FragmentID      string
-}
-
-type SubmissionAssessmentEntityResolutionInput struct {
-	PlacementItemID string
-	Resolution      PlacementEntityResolutionInput
-}
-
-type SubmissionAssessmentRelationshipObservationInput struct {
-	PlacementItemID string
-	Observation     PlacementRelationshipDecisionInput
-}
-
-type SubmissionPredicateRegistrationInput struct {
-	RelationshipRef string
-	PredicateKey    string
-	SubjectKind     string
-	ObjectKind      string
-}
-
-type CommitSubmissionAssessmentInput struct {
-	SubmissionAssessmentRunScope
-	AssessmentID             string
-	Items                    []SubmissionAssessmentItemInput
-	EntityResolutions        []SubmissionAssessmentEntityResolutionInput
-	RelationshipObservations []SubmissionAssessmentRelationshipObservationInput
-	PredicateRegistrations   []SubmissionPredicateRegistrationInput
-	Payload                  map[string]any
-}
-
-type CommitSubmissionAssessmentResult struct {
-	Status              string
-	OutcomeIDs          []string
-	FirstDisposition    *PlacementFirstDisposition
-	RelationshipResults []RelationshipDecisionResult
-	SearchDocuments     []SearchDocumentResult
-	EntityResolutionIDs []string
-}
-
-type SubmissionAssessmentSecurityQuarantineInput struct {
-	FragmentID string
-	SecurityEventDraft
-}
-
-type CompleteSubmissionAssessmentInput struct {
-	SubmissionAssessmentRunScope
-	OutcomeKind         string
-	Status              string
-	Category            string
-	Payload             map[string]any
-	SecurityQuarantines []SubmissionAssessmentSecurityQuarantineInput
-}
-
-type CompleteSubmissionAssessmentResult struct {
-	Status           string
-	OutcomeIDs       []string
-	FirstDisposition *PlacementFirstDisposition
-}
-
-type RequeueSubmissionAssessmentInput struct {
-	SubmissionAssessmentRunScope
-	OutcomeKind            string
-	Payload                map[string]any
-	RetryAfter             time.Duration
-	ReleaseAssessorAttempt bool
-}
-
-type RequeueSubmissionAssessmentResult struct {
-	Status        string
-	OutcomeIDs    []string
-	NextAttemptAt *time.Time
-}
-
 var _ SubmissionAssessmentRepository = (*LedgerRepositoryImpl)(nil)
 
 func (r *LedgerRepositoryImpl) LoadSubmissionAssessment(
@@ -291,6 +144,44 @@ func (r *LedgerRepositoryImpl) PersistSubmissionAssessment(
 	return assessment, existing, nil
 }
 
+func (r *LedgerRepositoryImpl) AppendSubmissionAssessmentRevision(
+	ctx context.Context,
+	input AppendSubmissionAssessmentRevisionInput,
+) (*SubmissionAssessment, bool, error) {
+	input = normalizeAppendSubmissionAssessmentRevisionInput(input)
+	if err := validateAppendSubmissionAssessmentRevisionInput(input); err != nil {
+		return nil, false, err
+	}
+	var assessment *SubmissionAssessment
+	existing := false
+	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		if err := lockSubmissionAssessmentRun(ctx, tx, input.SubmissionAssessmentRunScope); err != nil {
+			return err
+		}
+		current, err := loadSubmissionAssessment(ctx, tx, input.TeamID, input.OwnerProfileID, input.PlacementRunID)
+		if err != nil {
+			return err
+		}
+		if current.AssessmentID != input.AssessmentID {
+			return ErrSubmissionAssessmentScopeMismatch
+		}
+		if current.RevisionNumber > 0 && current.ResponseHash == input.ResponseHash && current.ProviderTurns == input.ProviderTurns {
+			assessment = current
+			existing = true
+			return nil
+		}
+		if err := insertSubmissionAssessmentRevision(ctx, tx, input, current.RevisionNumber+1); err != nil {
+			return err
+		}
+		assessment, err = loadSubmissionAssessment(ctx, tx, input.TeamID, input.OwnerProfileID, input.PlacementRunID)
+		return err
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("submission assessment revision append: %w", err)
+	}
+	return assessment, existing, nil
+}
+
 func normalizeSubmissionAssessmentRunScope(scope SubmissionAssessmentRunScope) SubmissionAssessmentRunScope {
 	scope.TeamID = strings.TrimSpace(scope.TeamID)
 	scope.OwnerProfileID = strings.TrimSpace(scope.OwnerProfileID)
@@ -351,6 +242,9 @@ func normalizePersistSubmissionAssessmentInput(input PersistSubmissionAssessment
 	input.Model = strings.TrimSpace(input.Model)
 	input.Tokenizer = strings.TrimSpace(input.Tokenizer)
 	input.ResponseHash = strings.TrimSpace(input.ResponseHash)
+	if input.ProviderTurns == 0 {
+		input.ProviderTurns = 1
+	}
 	if input.ValidatedAt.IsZero() {
 		input.ValidatedAt = time.Now().UTC()
 	} else {
@@ -381,8 +275,45 @@ func validatePersistSubmissionAssessmentInput(input PersistSubmissionAssessmentI
 			return fmt.Errorf("%s is required", label)
 		}
 	}
+	if input.ProviderTurns < 1 || input.ProviderTurns > 5 {
+		return errors.New("provider_turns must be between 1 and 5")
+	}
 	if input.InputTokens < 0 || input.OutputTokens < 0 || input.CandidateContextTokens < 0 {
 		return errors.New("assessment token counts must be non-negative")
+	}
+	if !jsonObject(input.NormalizedResponse) {
+		return errors.New("normalized_response must be a JSON object")
+	}
+	return nil
+}
+
+func normalizeAppendSubmissionAssessmentRevisionInput(input AppendSubmissionAssessmentRevisionInput) AppendSubmissionAssessmentRevisionInput {
+	input.SubmissionAssessmentRunScope = normalizeSubmissionAssessmentRunScope(input.SubmissionAssessmentRunScope)
+	input.AssessmentID = strings.TrimSpace(input.AssessmentID)
+	input.ResponseHash = strings.TrimSpace(input.ResponseHash)
+	if input.ValidatedAt.IsZero() {
+		input.ValidatedAt = time.Now().UTC()
+	} else {
+		input.ValidatedAt = input.ValidatedAt.UTC()
+	}
+	return input
+}
+
+func validateAppendSubmissionAssessmentRevisionInput(input AppendSubmissionAssessmentRevisionInput) error {
+	if err := validateSubmissionAssessmentRunScope(input.SubmissionAssessmentRunScope); err != nil {
+		return err
+	}
+	if _, err := uuid.Parse(input.AssessmentID); err != nil {
+		return fmt.Errorf("assessment_id is required: %w", err)
+	}
+	if input.ProviderTurns < 1 || input.ProviderTurns > 5 {
+		return errors.New("provider_turns must be between 1 and 5")
+	}
+	if input.InputTokens < 0 || input.OutputTokens < 0 || input.CandidateContextTokens < 0 {
+		return errors.New("assessment revision token counts must be non-negative")
+	}
+	if input.ResponseHash == "" {
+		return errors.New("response_hash is required")
 	}
 	if !jsonObject(input.NormalizedResponse) {
 		return errors.New("normalized_response must be a JSON object")
@@ -398,13 +329,13 @@ func insertSubmissionAssessment(
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO placement_assessments (
 		    team_id, assessment_scope, placement_run_id, ingest_id, owner_profile_id,
-		    request_id, assessor_contract_version, model, tokenizer,
-		    input_tokens, output_tokens, candidate_context_tokens,
+			    request_id, assessor_contract_version, model, tokenizer,
+			    provider_turns, input_tokens, output_tokens, candidate_context_tokens,
 		    candidate_context_truncated, normalized_response, response_hash, validated_at,
 		    space_id, space_generation
 		) VALUES (
 		    ?::uuid, 'submission', ?::uuid, ?::uuid, ?::uuid,
-		    ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?
+			    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?
 		    ,(SELECT run.space_id FROM placement_runs AS run
 		      WHERE run.team_id = ?::uuid AND run.placement_run_id = ?::uuid),
 		     (SELECT run.space_generation FROM placement_runs AS run
@@ -413,12 +344,12 @@ func insertSubmissionAssessment(
 		ON CONFLICT (team_id, placement_run_id) WHERE assessment_scope = 'submission' DO NOTHING
 		RETURNING team_id::text, assessment_id::text, owner_profile_id::text,
 		          ingest_id::text, placement_run_id::text, request_id,
-		          assessor_contract_version, model, tokenizer,
-		          input_tokens, output_tokens, candidate_context_tokens,
+			          assessor_contract_version, model, tokenizer, 0 AS revision_number, provider_turns,
+			          input_tokens, output_tokens, candidate_context_tokens,
 		          candidate_context_truncated, normalized_response, response_hash,
 		          validated_at, created_at
 	`, input.TeamID, input.PlacementRunID, input.IngestID, input.OwnerProfileID,
-		input.RequestID, input.AssessorContractVersion, input.Model, input.Tokenizer,
+		input.RequestID, input.AssessorContractVersion, input.Model, input.Tokenizer, input.ProviderTurns,
 		input.InputTokens, input.OutputTokens, input.CandidateContextTokens,
 		input.CandidateContextTruncated, string(input.NormalizedResponse), input.ResponseHash,
 		input.ValidatedAt, input.TeamID, input.PlacementRunID, input.TeamID, input.PlacementRunID).Rows()
@@ -439,23 +370,63 @@ func insertSubmissionAssessment(
 	return assessment, rows.Err()
 }
 
+func insertSubmissionAssessmentRevision(
+	ctx context.Context,
+	tx *gorm.DB,
+	input AppendSubmissionAssessmentRevisionInput,
+	revisionNumber int,
+) error {
+	return tx.WithContext(ctx).Exec(`
+		INSERT INTO submission_assessment_response_revisions (
+		    team_id, assessment_id, ingest_id, placement_run_id, owner_profile_id,
+		    revision_number, provider_turns, input_tokens, output_tokens, candidate_context_tokens,
+		    candidate_context_truncated, normalized_response, response_hash, validated_at,
+		    space_id, space_generation
+		) VALUES (
+		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+		    ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?,
+		    (SELECT run.space_id FROM placement_runs AS run
+		      WHERE run.team_id = ?::uuid AND run.placement_run_id = ?::uuid),
+		    (SELECT run.space_generation FROM placement_runs AS run
+		      WHERE run.team_id = ?::uuid AND run.placement_run_id = ?::uuid)
+		)
+	`, input.TeamID, input.AssessmentID, input.IngestID, input.PlacementRunID, input.OwnerProfileID,
+		revisionNumber, input.ProviderTurns, input.InputTokens, input.OutputTokens, input.CandidateContextTokens,
+		input.CandidateContextTruncated, string(input.NormalizedResponse), input.ResponseHash, input.ValidatedAt,
+		input.TeamID, input.PlacementRunID, input.TeamID, input.PlacementRunID).Error
+}
+
 func loadSubmissionAssessment(
 	ctx context.Context,
 	tx *gorm.DB,
 	teamID, ownerProfileID, placementRunID string,
 ) (*SubmissionAssessment, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT team_id::text, assessment_id::text, owner_profile_id::text,
-		       ingest_id::text, placement_run_id::text, request_id,
-		       assessor_contract_version, model, tokenizer,
-		       input_tokens, output_tokens, candidate_context_tokens,
-		       candidate_context_truncated, normalized_response, response_hash,
-		       validated_at, created_at
-		FROM placement_assessments
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND placement_run_id = ?::uuid
-		  AND assessment_scope = 'submission'
+			SELECT assessment.team_id::text, assessment.assessment_id::text, assessment.owner_profile_id::text,
+			       assessment.ingest_id::text, assessment.placement_run_id::text, assessment.request_id,
+			       assessment.assessor_contract_version, assessment.model, assessment.tokenizer,
+			       COALESCE(revision.revision_number, 0),
+			       COALESCE(revision.provider_turns, assessment.provider_turns),
+			       COALESCE(revision.input_tokens, assessment.input_tokens),
+			       COALESCE(revision.output_tokens, assessment.output_tokens),
+			       COALESCE(revision.candidate_context_tokens, assessment.candidate_context_tokens),
+			       COALESCE(revision.candidate_context_truncated, assessment.candidate_context_truncated),
+			       COALESCE(revision.normalized_response, assessment.normalized_response),
+			       COALESCE(revision.response_hash, assessment.response_hash),
+			       COALESCE(revision.validated_at, assessment.validated_at), assessment.created_at
+			FROM placement_assessments AS assessment
+			LEFT JOIN LATERAL (
+			    SELECT revision_number, provider_turns, input_tokens, output_tokens, candidate_context_tokens,
+			           candidate_context_truncated, normalized_response, response_hash, validated_at
+			    FROM submission_assessment_response_revisions
+			    WHERE team_id = assessment.team_id AND assessment_id = assessment.assessment_id
+			    ORDER BY revision_number DESC
+			    LIMIT 1
+			) AS revision ON true
+			WHERE assessment.team_id = ?::uuid
+			  AND assessment.owner_profile_id = ?::uuid
+			  AND assessment.placement_run_id = ?::uuid
+			  AND assessment.assessment_scope = 'submission'
 		LIMIT 1
 	`, teamID, ownerProfileID, placementRunID).Rows()
 	if err != nil {
@@ -488,6 +459,8 @@ func scanSubmissionAssessment(rows *sql.Rows) (*SubmissionAssessment, error) {
 		&assessment.AssessorContractVersion,
 		&assessment.Model,
 		&assessment.Tokenizer,
+		&assessment.RevisionNumber,
+		&assessment.ProviderTurns,
 		&assessment.InputTokens,
 		&assessment.OutputTokens,
 		&assessment.CandidateContextTokens,
@@ -586,6 +559,9 @@ func (r *LedgerRepositoryImpl) CompleteSubmissionAssessment(
 			}
 			result.OutcomeIDs = append(result.OutcomeIDs, outcomeID)
 		}
+		if err := insertSubmissionRelationshipResults(ctx, tx, input.SubmissionAssessmentRunScope, input.RelationshipResults, nil); err != nil {
+			return err
+		}
 		firstDisposition, err := completeSubmissionPlacementRun(ctx, tx, input.SubmissionAssessmentRunScope, runStatus, "")
 		if err != nil {
 			return err
@@ -607,10 +583,18 @@ func storeSubmissionQuarantinePayload(ctx context.Context, tx *gorm.DB, scope Su
 	var proposal, evidence, assessorResponse []byte
 	row := tx.WithContext(ctx).Raw(`
 		SELECT COALESCE(ingest.proposal, '{}'::jsonb),
-		       COALESCE((
-		           SELECT assessment.normalized_response
-		           FROM placement_assessments AS assessment
-		           WHERE assessment.team_id = run.team_id
+			   COALESCE((
+			       SELECT COALESCE(revision.normalized_response, assessment.normalized_response)
+			       FROM placement_assessments AS assessment
+			       LEFT JOIN LATERAL (
+			           SELECT response_revision.normalized_response
+			           FROM submission_assessment_response_revisions AS response_revision
+			           WHERE response_revision.team_id = assessment.team_id
+			             AND response_revision.assessment_id = assessment.assessment_id
+			           ORDER BY response_revision.revision_number DESC
+			           LIMIT 1
+			       ) AS revision ON true
+			       WHERE assessment.team_id = run.team_id
 		             AND assessment.placement_run_id = run.placement_run_id
 		             AND assessment.ingest_id = run.ingest_id
 		             AND assessment.owner_profile_id = run.owner_profile_id
@@ -884,7 +868,7 @@ func submissionTerminalStatuses(status, category string) (string, string, string
 	case string(domain.SemanticReviewSuperseded):
 		return "failed", "failed", string(domain.PlacementRunFailed)
 	case string(domain.SemanticReviewRejected):
-		return "failed", "failed", string(domain.PlacementRunFailed)
+		return "rejected", "rejected", string(domain.PlacementRunRejected)
 	default:
 		if category == "" {
 			category = "candidate"

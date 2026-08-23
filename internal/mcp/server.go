@@ -161,6 +161,14 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 		if errors.Is(err, registry.ErrToolDisabled) {
 			return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", name)}
 		}
+		if validation, ok := registry.ContractValidationResultFromError(err); ok {
+			s.logToolInputRejected(ctx, tool.Name, "contract_preflight_failed")
+			return nil, &rpcError{
+				Code:    errCodeInvalidParams,
+				Message: boundedRPCText(validation.Issues[0].Message),
+				Data:    registry.ContractValidationErrorData(validation),
+			}
+		}
 		safeMessage := tools.SanitizeError(err)
 		if s.logger != nil {
 			s.logger.Error("mcp: tool invocation failed", errors.New(safeMessage),

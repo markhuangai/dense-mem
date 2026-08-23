@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,6 +17,8 @@ var (
 	ErrPlacementLeaseLost                = errors.New("placement lease lost")
 	ErrPlacementStaleSource              = errors.New("placement stale source")
 	ErrConflictContextStale              = errors.New("conflict context stale")
+	ErrRememberExactReferenceStale       = errors.New("remember exact reference stale")
+	ErrCorrectionTargetStale             = errors.New("correction target stale")
 	errPlacementUnresolvedEndpoint       = errors.New("placement unresolved relationship endpoint")
 	errPlacementPredicateUnresolved      = errors.New("placement predicate cannot be resolved safely")
 	errRelationshipDecisionNonPromotable = errors.New("relationship decision is not promotable")
@@ -29,6 +32,14 @@ func validatePlacementEntityResolutionInput(input PlacementEntityResolutionInput
 	}
 	if input.MentionRef == "" {
 		return errors.New("entity resolution mention_ref is required")
+	}
+	if input.ExactEntityID != "" {
+		if _, err := uuid.Parse(input.ExactEntityID); err != nil {
+			return fmt.Errorf("entity resolution exact_entity_id is invalid: %w", err)
+		}
+		if input.Action != string(domain.EntityResolutionReuse) || input.EntityID != input.ExactEntityID {
+			return ErrRememberExactReferenceStale
+		}
 	}
 	switch input.Action {
 	case string(domain.EntityResolutionReuse):
@@ -55,6 +66,7 @@ func normalizePlacementRelationshipDecisionInput(input PlacementRelationshipDeci
 	input.SubjectRef = strings.TrimSpace(input.SubjectRef)
 	input.OriginalPredicate = strings.TrimSpace(input.OriginalPredicate)
 	input.PredicateKey = strings.TrimSpace(input.PredicateKey)
+	input.ExactPredicateKey = strings.TrimSpace(input.ExactPredicateKey)
 	input.ObjectRef = strings.TrimSpace(input.ObjectRef)
 	input.Polarity = strings.TrimSpace(input.Polarity)
 	input.ScopeKey = strings.TrimSpace(input.ScopeKey)
@@ -80,7 +92,7 @@ func normalizePlacementRelationshipDecisionInput(input PlacementRelationshipDeci
 	if input.Polarity == "" {
 		input.Polarity = "+"
 	}
-	if input.EvidenceVerdict == "" {
+	if input.EvidenceVerdict == "" && !input.AssessorAccepted {
 		input.EvidenceVerdict = string(domain.VerificationEntailed)
 	}
 	if input.ObjectValue != nil {
@@ -102,11 +114,23 @@ func normalizePlacementRelationshipDecisionInput(input PlacementRelationshipDeci
 }
 
 func validatePlacementRelationshipDecisionInput(input PlacementRelationshipDecisionInput) error {
-	if err := validateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
-		return err
+	if input.AssessorAccepted {
+		if _, err := uuid.Parse(input.AssessmentID); err != nil {
+			return fmt.Errorf("assessor accepted relationship assessment_id is required: %w", err)
+		}
+		if input.PredicateCandidate != nil || input.SuppressSupport {
+			return errRelationshipDecisionNonPromotable
+		}
+	} else {
+		if err := validateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
+			return err
+		}
 	}
 	if input.SubjectRef == "" {
 		return errors.New("relationship observation subject_ref is required")
+	}
+	if input.ExactPredicateKey != "" && input.PredicateKey != input.ExactPredicateKey {
+		return ErrRememberExactReferenceStale
 	}
 	if input.PredicateKey == "" {
 		return errors.New("relationship observation predicate_key is required")
@@ -139,18 +163,20 @@ func validatePlacementRelationshipDecisionInput(input PlacementRelationshipDecis
 	if input.Polarity != "+" && input.Polarity != "-" {
 		return fmt.Errorf("unsupported relationship observation polarity %q", input.Polarity)
 	}
-	if !contains(domain.VerificationVerdicts(), input.EvidenceVerdict) {
-		return fmt.Errorf("unsupported relationship observation evidence_verdict %q", input.EvidenceVerdict)
-	}
-	if input.Confidence != nil && (*input.Confidence < 0 || *input.Confidence > 1) {
-		return errors.New("relationship observation confidence must be between 0 and 1")
+	if !input.AssessorAccepted {
+		if !contains(domain.VerificationVerdicts(), input.EvidenceVerdict) {
+			return fmt.Errorf("unsupported relationship observation evidence_verdict %q", input.EvidenceVerdict)
+		}
+		if input.Confidence != nil && (*input.Confidence < 0 || *input.Confidence > 1) {
+			return errors.New("relationship observation confidence must be between 0 and 1")
+		}
 	}
 	if input.ValidFrom != nil && input.ValidTo != nil && input.ValidTo.Before(*input.ValidFrom) {
 		return errors.New("relationship observation valid_to must be greater than or equal to valid_from")
 	}
-	if input.EvidenceVerdict == string(domain.VerificationEntailed) {
+	if (input.AssessorAccepted || input.EvidenceVerdict == string(domain.VerificationEntailed)) && !input.SuppressSupport {
 		if len(relationshipEvidenceSupports(input.Support, input.Supports)) == 0 {
-			return errors.New("entailed relationship observations require support")
+			return errors.New("accepted relationship observations require support")
 		}
 	}
 	if err := validateRelationshipEvidenceSupports(input.Support, input.Supports); err != nil {
@@ -223,6 +249,26 @@ func insertPlacementEntityResolution(
 	commit CommitPlacementSemanticInput,
 	input PlacementEntityResolutionInput,
 ) (string, string, error) {
+	if input.ExactEntityID != "" {
+		var status string
+		err := withSystemModeInTx(ctx, tx, commit.TeamID, commit.OwnerProfileID, func(systemTx *gorm.DB) error {
+			return systemTx.WithContext(ctx).Raw(`
+				SELECT status FROM entity_records
+				WHERE team_id = ?::uuid AND entity_id = ?::uuid
+				LIMIT 1
+				FOR SHARE
+			`, commit.TeamID, input.ExactEntityID).Row().Scan(&status)
+		})
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return "", "", ErrRememberExactReferenceStale
+			}
+			return "", "", err
+		}
+		if status != "active" {
+			return "", "", ErrRememberExactReferenceStale
+		}
+	}
 	entityID := input.EntityID
 	if input.Action == string(domain.EntityResolutionCreate) {
 		created, err := insertPlacementEntity(ctx, tx, commit, input)
@@ -302,6 +348,7 @@ func relationshipDecisionFromPlacementObservation(
 		ValidFrom:               input.ValidFrom,
 		ValidTo:                 input.ValidTo,
 		EvidenceVerdict:         input.EvidenceVerdict,
+		AssessorAccepted:        input.AssessorAccepted,
 		PromoteToFact:           input.PromoteToFact,
 		Confidence:              input.Confidence,
 		Rationale:               input.Rationale,

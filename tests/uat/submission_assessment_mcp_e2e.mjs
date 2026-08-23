@@ -12,6 +12,7 @@ const placementTimeoutSeconds = positiveIntEnv("DENSE_MEM_E2E_PLACEMENT_TIMEOUT_
 
 let rpcID = 0;
 const runID = `submission-assessment-e2e-${Date.now()}`;
+const contractVersion = "dense-mem.v2.6";
 const evidence = [
   "Project Aurora uses LedgerDB. Project Aurora uses Atlas.",
   "Atlas enables Relay.",
@@ -20,9 +21,10 @@ const verifierBefore = await prometheusValue("densemem_verifier_requests_total")
 
 const coverageRunID = `${runID}:coverage`;
 const coverageError = await mcpToolExpectError("remember", {
+  idempotency_key: `${coverageRunID}:batch`,
   evidence: [
-    { content: "Covered uses evidence.", source_type: "document", source: coverageRunID, source_group: coverageRunID, idempotency_key: `${coverageRunID}:evidence:0` },
-    { content: "Uncovered evidence.", source_type: "document", source: coverageRunID, source_group: coverageRunID, idempotency_key: `${coverageRunID}:evidence:1` },
+    { content: "Covered uses evidence.", source_type: "document", source: coverageRunID, source_group: coverageRunID },
+    { content: "Uncovered evidence.", source_type: "document", source: coverageRunID, source_group: coverageRunID },
   ],
   relationships: [simpleRelationship("Covered uses evidence.", "coverage-rel", 0, "Covered", "uses", "evidence", "uses", "project", "product", "Covered uses evidence.")],
 });
@@ -32,21 +34,54 @@ if (!coverageError.includes("missing evidence indexes: [1]")) {
 const coverageStaged = positiveCount(postgresRow(`
   SELECT count(*) FROM knowledge_ingests
   WHERE team_id = ${sqlLiteral(teamID)}::uuid
-    AND idempotency_key = ${sqlLiteral(`${coverageRunID}:evidence:0`)}
+    AND idempotency_key = ${sqlLiteral(`${coverageRunID}:batch`)}
 `)[0]);
 if (coverageStaged !== 0) {
   throw new Error("coverage-rejected remember unexpectedly staged an ingest");
 }
 
+const dynamicRunID = `${runID}:dynamic-preflight`;
+const dynamicError = await mcpToolError("remember", {
+  idempotency_key: dynamicRunID,
+  evidence: [{
+    content: "Unavailable exact references must fail before staging.",
+    source_type: "document",
+    source: dynamicRunID,
+    source_group: dynamicRunID,
+  }],
+  relationships: [{
+    ref: "dynamic-preflight",
+    subject: { known_entity_id: "00000000-0000-4000-8000-000000000261" },
+    predicate: { known_predicate_key: `${runID}:missing-predicate` },
+    object: { entity: { name: "Dynamic target" } },
+    polarity: "+",
+    evidence_indices: [0],
+  }],
+});
+const dynamicIssues = Array.isArray(dynamicError.data?.issues) ? dynamicError.data.issues : [];
+if (!dynamicIssues.some((issue) => issue.path === "/relationships/0/subject/known_entity_id" && issue.code === "unavailable")) {
+  throw new Error("dynamic exact-reference validation did not return the bounded known_entity_id issue");
+}
+const dynamicStaged = positiveCount(postgresRow(`
+  SELECT count(*) FROM knowledge_ingests
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND idempotency_key = ${sqlLiteral(dynamicRunID)}
+`)[0]);
+if (dynamicStaged !== 0) {
+  throw new Error("dynamic exact-reference validation unexpectedly staged an ingest");
+}
+
 seedPredicates("unrelated", 2500);
 
-const remember = await mcpTool("remember", {
+const remember = await submitRemember("baseline", {
+  idempotency_key: `${runID}:batch`,
   evidence: evidence.map((content, index) => ({
     content,
     source_type: "document",
     source: `${runID}:evidence:${index}`,
     source_group: runID,
-    idempotency_key: `${runID}:evidence:${index}`,
+    source_key: `${runID}:source:${index}`,
+    source_revision: "revision-1",
   })),
   relationships: [
     relationship("r:uses-ledger", 0, "Project Aurora", "uses", "LedgerDB", "uses", "project", "product", "Project Aurora uses LedgerDB."),
@@ -59,14 +94,23 @@ if (!submissionID) {
   throw new Error("remember did not return a submission_id");
 }
 
-await waitForCompletedPlacement(submissionID);
+const completedStatus = await waitForCompletedPlacement(submissionID, "baseline");
+const completedRelationshipResults = Array.isArray(completedStatus.relationship_results) ? completedStatus.relationship_results : [];
+if (completedStatus.contract_version !== contractVersion || remember.contract_version !== contractVersion) {
+  throw new Error("baseline Remember receipt or status did not expose dense-mem.v2.6");
+}
+if (completedRelationshipResults.length !== 3 || completedRelationshipResults.some((result) => result.disposition !== "stored")) {
+  throw new Error("baseline status did not expose one stored result for every submitted relationship ref");
+}
 const verifierAfter = await waitForStableVerifierRequests(verifierBefore + 1);
 const summary = submissionSummary(submissionID);
 
 if (summary.assessments !== 1 || summary.completedItems !== 2 || summary.commitOutcomes !== 2) {
   throw new Error("submission did not complete as one atomic placement run");
 }
-if (summary.entityResolutions !== 6 || summary.relationshipObservations !== 3 || summary.verifications !== 3) {
+// Repeated mentions may share one grounded span and are canonically resolved
+// to one entity event; this fixture still requires all five distinct entities.
+if (summary.entityResolutions < 5 || summary.entityResolutions > 6 || summary.relationshipObservations !== 3 || summary.verifications !== 3) {
   throw new Error("submission assessment did not preserve every submitted entity and relationship target");
 }
 if (summary.reviewTasks !== 0 || summary.registrationEvents !== 1 || summary.enablesRegistrations !== 1 || summary.createdRegistrations !== 1) {
@@ -75,18 +119,174 @@ if (summary.reviewTasks !== 0 || summary.registrationEvents !== 1 || summary.ena
 if (summary.searchDocuments !== 5) {
   throw new Error("atomic submission commit did not create evidence and relationship search documents");
 }
+const baselineSourceActivations = positiveCount(postgresRow(`
+  SELECT count(*)
+  FROM remember_source_revision_intents
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND ingest_id = ${sqlLiteral(submissionID)}::uuid
+    AND source_id IS NOT NULL
+    AND source_revision_id IS NOT NULL
+`)[0]);
+if (baselineSourceActivations !== evidence.length) {
+  throw new Error("accepted baseline did not atomically activate every staged source revision intent");
+}
 
-const overflowBefore = verifierAfter;
+const mixedContent = "[remember-mixed] Aurora Mixed uses Atlas Mixed. Aurora Mixed imagines Phantom Mixed.";
+const mixedRemember = await submitRemember("mixed dispositions", {
+  idempotency_key: `${runID}:mixed`,
+  evidence: [{ content: mixedContent, source_type: "document", source: `${runID}:mixed`, source_group: `${runID}:mixed` }],
+  relationships: [
+    relationshipForContent(mixedContent, "mixed-stored", 0, "Aurora Mixed", "uses", "Atlas Mixed", "uses", "project", "product", "Aurora Mixed uses Atlas Mixed"),
+    relationshipForContent(mixedContent, "mixed-not-supported", 0, "Aurora Mixed", "imagines", "Phantom Mixed", "imagines", "project", "product", "Aurora Mixed imagines Phantom Mixed"),
+  ],
+});
+const mixedStatus = await waitForCompletedPlacement(mixedRemember.submission_id, "mixed dispositions");
+const mixedStored = relationshipResult(mixedStatus, "mixed-stored");
+const mixedNotStored = relationshipResult(mixedStatus, "mixed-not-supported");
+if (mixedStored.disposition !== "stored" || mixedStored.splits.length !== 1) {
+  throw new Error("mixed submission did not expose its stored relationship result");
+}
+if (mixedNotStored.disposition !== "not_stored" || mixedNotStored.reason !== "not_supported_by_evidence" || mixedNotStored.splits.length !== 0) {
+  throw new Error("mixed submission did not expose its explicit not_stored relationship result");
+}
+
+const multiSplitContent = "[remember-multi-split] Aurora Multi uses and works on Atlas Multi.";
+const multiSplitRemember = await submitRemember("multi split", {
+  idempotency_key: `${runID}:multi-split`,
+  evidence: [{ content: multiSplitContent, source_type: "document", source: `${runID}:multi-split`, source_group: `${runID}:multi-split` }],
+  relationships: [relationshipForContent(
+    multiSplitContent,
+    "multi-split",
+    0,
+    "Aurora Multi",
+    "uses and works on",
+    "Atlas Multi",
+    "uses_and_works_on",
+    "project",
+    "product",
+    "Aurora Multi uses and works on Atlas Multi",
+  )],
+});
+const multiSplitStatus = await waitForCompletedPlacement(multiSplitRemember.submission_id, "multi split");
+const multiSplitResult = relationshipResult(multiSplitStatus, "multi-split");
+if (multiSplitResult.disposition !== "stored" || multiSplitResult.splits.length !== 2) {
+  throw new Error("multi-split submission did not expose two stored splits");
+}
+if (multiSplitResult.splits[0].split_index !== 0 || multiSplitResult.splits[1].split_index !== 1) {
+  throw new Error("multi-split submission did not preserve contiguous split indexes");
+}
+
+const groundingContent = "[remember-grounding-repair] Issue #261 is blocked by the private-memory UAT conflict.";
+const groundingRemember = await submitRemember("issue 261 grounding repair", {
+  idempotency_key: `${runID}:grounding-repair`,
+  evidence: [{ content: groundingContent, source_type: "document", source: `${runID}:grounding-repair`, source_group: `${runID}:grounding-repair` }],
+  relationships: [{
+    ref: "issue-261-blocked",
+    subject: { name: "Issue #261" },
+    predicate: { proposed_key: "blocked_by" },
+    object: { value: { type: "string", value: "the private-memory UAT conflict" } },
+    polarity: "+",
+    evidence_indices: [0],
+  }],
+});
+await waitForCompletedPlacement(groundingRemember.submission_id, "issue 261 grounding repair");
+const groundingTurns = positiveCount(postgresRow(`
+  SELECT provider_turns
+  FROM placement_assessments
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND ingest_id = ${sqlLiteral(groundingRemember.submission_id)}::uuid
+    AND assessment_scope = 'submission'
+`)[0]);
+if (groundingTurns !== 2) {
+  throw new Error(`issue-261 grounding repair used ${groundingTurns} provider turns instead of one same-session repair`);
+}
+
+const baselineTarget = relationshipResult(completedStatus, "r:uses-ledger").splits[0];
+const staleContent = "[remember-post-ack-stale] Project Aurora uses LedgerDB Next.";
+const staleRelationship = relationshipForContent(
+  staleContent,
+  "post-ack-stale",
+  0,
+  "Project Aurora",
+  "uses",
+  "LedgerDB Next",
+  "uses",
+  "project",
+  "product",
+  "Project Aurora uses LedgerDB Next",
+);
+staleRelationship.predicate = { known_predicate_key: "uses" };
+staleRelationship.correction_target = {
+  relationship_id: baselineTarget.relationship_id,
+  expected_version: baselineTarget.relationship_version,
+};
+const staleRemember = await submitRemember("post-ack stale input", {
+  idempotency_key: `${runID}:post-ack-stale`,
+  evidence: [{
+    content: staleContent,
+    source_type: "document",
+    source: `${runID}:post-ack-stale`,
+    source_group: `${runID}:post-ack-stale`,
+  }],
+  relationships: [staleRelationship],
+});
+bumpRelationshipVersion(baselineTarget.relationship_id, baselineTarget.relationship_version);
+const staleStatus = await waitForSubmissionState(staleRemember.submission_id, "rejected", "post-ack stale input");
+assertOnlyStatusError(staleStatus, "stale_input", "post-ack stale input");
+assertNoCommittedSemanticEffects(staleRemember.submission_id, "post-ack stale input");
+
+const providerFailureContent = "[remember-provider-fail] Provider Failure uses Target Failure.";
+const providerFailureRemember = await submitRemember("provider failure", {
+  idempotency_key: `${runID}:provider-failure`,
+  evidence: [{
+    content: providerFailureContent,
+    source_type: "document",
+    source: `${runID}:provider-failure`,
+    source_group: `${runID}:provider-failure`,
+    source_key: `${runID}:provider-failure-source`,
+    source_revision: "revision-1",
+  }],
+  relationships: [relationshipForContent(providerFailureContent, "provider-failure", 0, "Provider Failure", "uses", "Target Failure", "uses", "project", "product", "Provider Failure uses Target Failure")],
+});
+await forceNextAttemptToBeTerminal(providerFailureRemember.submission_id, "provider failure");
+const providerFailureStatus = await waitForSubmissionState(providerFailureRemember.submission_id, "failed", "provider failure");
+assertOnlyStatusError(providerFailureStatus, "provider_unavailable", "provider failure");
+assertNoCommittedSemanticEffects(providerFailureRemember.submission_id, "provider failure");
+
+const databaseFailureContent = "[remember-database-fail] Database Failure uses Target Database.";
+const databaseFailureRemember = await submitRemember("database failure", {
+  idempotency_key: `${runID}:database-failure`,
+  evidence: [{
+    content: databaseFailureContent,
+    source_type: "document",
+    source: `${runID}:database-failure`,
+    source_group: `${runID}:database-failure`,
+  }],
+  relationships: [relationshipForContent(databaseFailureContent, "database-failure", 0, "Database Failure", "uses", "Target Database", "uses", "project", "product", "Database Failure uses Target Database")],
+});
+const databaseFailureRunID = placementRunID(databaseFailureRemember.submission_id);
+installDatabaseFailureTrigger(databaseFailureRunID);
+let databaseFailureStatus;
+try {
+  await forceNextAttemptToBeTerminal(databaseFailureRemember.submission_id, "database failure");
+  databaseFailureStatus = await waitForSubmissionState(databaseFailureRemember.submission_id, "failed", "database failure");
+} finally {
+  dropDatabaseFailureTrigger();
+}
+assertOnlyStatusError(databaseFailureStatus, "database_failure", "database failure");
+assertNoCommittedSemanticEffects(databaseFailureRemember.submission_id, "database failure");
+
+const overflowBefore = await waitForStableVerifierRequests(verifierAfter);
 const overflowSubmission = overflowFixture();
 seedPredicates("overflow", overflowSubmission.relationships.length, "overflow");
-const overflowRemember = await mcpTool("remember", overflowSubmission);
+const overflowRemember = await submitRemember("predicate overflow", overflowSubmission);
 const overflowSubmissionID = stringValue(overflowRemember.submission_id);
 if (!overflowSubmissionID) {
   throw new Error("predicate overflow remember did not return a submission_id");
 }
 const overflowStatus = await waitForFailedSubmission(overflowSubmissionID);
 const overflowErrors = Array.isArray(overflowStatus.errors) ? overflowStatus.errors : [];
-if (!overflowErrors.some((item) => stringValue(item.code) === "submission_requires_resubmission")) {
+if (!overflowErrors.some((item) => stringValue(item.code) === "input_budget_exceeded")) {
   throw new Error("predicate overflow status did not expose its bounded terminal failure");
 }
 const overflowProviderState = postgresRow(`
@@ -122,13 +322,21 @@ console.log(JSON.stringify({
   run_id: runID,
   submission_id: submissionID,
   verifier_requests_before: verifierBefore,
-  verifier_requests_after: verifierAfter,
+  verifier_requests_after_baseline: verifierAfter,
+  verifier_requests_before_overflow: overflowBefore,
   overflow_assessor_attempts: overflowAttempts,
   overflow_assessments: overflowAssessments,
+  mixed_dispositions: [mixedStored.disposition, mixedNotStored.disposition],
+  multi_split_count: multiSplitResult.splits.length,
+  grounding_repair_turns: groundingTurns,
+  stale_input_state: staleStatus.processing_state,
+  provider_failure_state: providerFailureStatus.processing_state,
+  database_failure_state: databaseFailureStatus.processing_state,
   assessments: summary.assessments,
   completed_items: summary.completedItems,
   relationship_observations: summary.relationshipObservations,
   predicate_registration_events: summary.registrationEvents,
+  baseline_source_activations: baselineSourceActivations,
 }, null, 2));
 
 function relationship(ref, evidenceIndex, subject, predicateSurface, object, proposedKey, subjectKind, objectKind, supportText) {
@@ -167,7 +375,6 @@ function relationshipForContent(content, ref, evidenceIndex, subject, predicateS
       },
     },
     polarity: "+",
-    modality: "statement",
     evidence_indices: [evidenceIndex],
   };
 }
@@ -213,7 +420,6 @@ function overflowFixture() {
       source_type: "document",
       source: `${runID}:overflow:evidence:${evidenceIndex}`,
       source_group: `${runID}:overflow`,
-      idempotency_key: `${runID}:overflow:evidence:${evidenceIndex}`,
     });
     for (const index of indexes) {
       relationships.push(relationshipForContent(
@@ -230,39 +436,192 @@ function overflowFixture() {
       ));
     }
   }
-  return { evidence: overflowEvidence, relationships };
+  return { idempotency_key: `${runID}:overflow:batch`, evidence: overflowEvidence, relationships };
 }
 
-async function waitForCompletedPlacement(submissionID) {
-  const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2_000);
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const placement = await mcpTool("get_submission_status", { submission_id: submissionID });
-    const state = stringValue(placement.processing_state);
-    if (state === "completed") {
-      return;
-    }
-    if (["rejected", "failed", "quarantined"].includes(state)) {
-      throw new Error(`submission reached unexpected terminal state ${state}`);
-    }
-    await delay(2_000);
+async function submitRemember(label, submission) {
+  const result = await mcpTool("remember", submission);
+  if (result.contract_version !== contractVersion) {
+    throw new Error(`${label} Remember receipt did not expose ${contractVersion}`);
   }
-  throw new Error("timed out waiting for submission completion");
+  if (!stringValue(result.submission_id)) {
+    throw new Error(`${label} Remember receipt did not include a submission_id`);
+  }
+  return result;
+}
+
+function relationshipResult(status, ref) {
+  const results = Array.isArray(status.relationship_results) ? status.relationship_results : [];
+  const result = results.find((item) => item?.ref === ref);
+  if (!result || !Array.isArray(result.splits)) {
+    throw new Error(`submission status omitted relationship result ${ref}`);
+  }
+  return result;
+}
+
+function assertOnlyStatusError(status, code, label) {
+  const errors = Array.isArray(status?.errors) ? status.errors : [];
+  if (errors.length !== 1 || stringValue(errors[0]?.code) !== code) {
+    throw new Error(`${label} status did not expose exactly ${code}: ${JSON.stringify(errors)}`);
+  }
+}
+
+async function waitForCompletedPlacement(submissionID, label = "submission") {
+  return waitForSubmissionState(submissionID, "completed", label);
 }
 
 async function waitForFailedSubmission(submissionID) {
+  return waitForSubmissionState(submissionID, "failed", "predicate overflow");
+}
+
+async function waitForSubmissionState(submissionID, expectedState, label) {
   const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2_000);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const placement = await mcpTool("get_submission_status", { submission_id: submissionID });
+    if (placement.contract_version !== contractVersion) {
+      throw new Error(`${label} status did not expose ${contractVersion}`);
+    }
     const state = stringValue(placement.processing_state);
-    if (state === "failed") {
+    if (state === expectedState) {
       return placement;
     }
-    if (["completed", "rejected", "quarantined"].includes(state)) {
-      throw new Error(`predicate overflow reached unexpected terminal state ${state}`);
+    if (["completed", "rejected", "failed", "quarantined"].includes(state)) {
+      throw new Error(`${label} reached unexpected terminal state ${state}; expected ${expectedState}`);
     }
     await delay(2_000);
   }
-  throw new Error("timed out waiting for predicate overflow failure");
+  throw new Error(`timed out waiting for ${label} to reach ${expectedState}`);
+}
+
+async function forceNextAttemptToBeTerminal(submissionID, label) {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    const row = postgresRow(`
+      SELECT status, attempts, max_attempts
+      FROM placement_runs
+      WHERE team_id = ${sqlLiteral(teamID)}::uuid
+        AND ingest_id = ${sqlLiteral(submissionID)}::uuid
+    `);
+    const status = stringValue(row[0]);
+    const observedAttempts = Number(row[1] ?? -1);
+    if (["queued", "guarded"].includes(status) && Number.isInteger(observedAttempts) && observedAttempts >= 1) {
+      const updated = postgresRow(`
+        WITH updated AS (
+          UPDATE placement_runs
+          SET max_attempts = attempts + 1, available_at = now(), updated_at = now()
+          WHERE team_id = ${sqlLiteral(teamID)}::uuid
+            AND ingest_id = ${sqlLiteral(submissionID)}::uuid
+            AND status IN ('queued', 'guarded')
+            AND attempts = ${observedAttempts}
+          RETURNING max_attempts
+        )
+        SELECT max_attempts FROM updated
+      `);
+      if (positiveCount(updated[0]) === observedAttempts + 1) {
+        return;
+      }
+    }
+    if (["completed", "rejected", "failed", "quarantined"].includes(status)) {
+      throw new Error(`${label} reached ${status} before retry fault injection completed`);
+    }
+    await delay(250);
+  }
+  throw new Error(`timed out waiting for ${label} to requeue`);
+}
+
+function placementRunID(submissionID) {
+  const runIDValue = stringValue(postgresRow(`
+    SELECT placement_run_id
+    FROM placement_runs
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND ingest_id = ${sqlLiteral(submissionID)}::uuid
+  `)[0]);
+  if (!runIDValue) {
+    throw new Error("placement run ID is missing");
+  }
+  return runIDValue;
+}
+
+function bumpRelationshipVersion(relationshipID, expectedVersion) {
+  const nextVersion = positiveCount(postgresRow(`
+    WITH updated AS (
+      UPDATE relationship_records
+      SET version = version + 1, updated_at = now()
+      WHERE team_id = ${sqlLiteral(teamID)}::uuid
+        AND relationship_id = ${sqlLiteral(relationshipID)}::uuid
+        AND version = ${Number(expectedVersion)}
+      RETURNING version
+    )
+    SELECT version FROM updated
+  `)[0]);
+  if (nextVersion !== Number(expectedVersion) + 1) {
+    throw new Error("post-ack correction target race did not advance the exact relationship version");
+  }
+}
+
+function installDatabaseFailureTrigger(runIDValue) {
+  postgresRow(`
+    DROP TRIGGER IF EXISTS dense_mem_e2e_submission_result_failure ON submission_relationship_results;
+    DROP FUNCTION IF EXISTS dense_mem_e2e_submission_result_failure();
+    CREATE FUNCTION dense_mem_e2e_submission_result_failure() RETURNS trigger AS $dense_mem_e2e$
+    BEGIN
+      IF NEW.team_id = ${sqlLiteral(teamID)}::uuid
+         AND NEW.placement_run_id = ${sqlLiteral(runIDValue)}::uuid THEN
+        RAISE EXCEPTION 'deterministic submission result persistence failure' USING ERRCODE = 'XX000';
+      END IF;
+      RETURN NEW;
+    END;
+    $dense_mem_e2e$ LANGUAGE plpgsql;
+    CREATE TRIGGER dense_mem_e2e_submission_result_failure
+      BEFORE INSERT ON submission_relationship_results
+      FOR EACH ROW EXECUTE FUNCTION dense_mem_e2e_submission_result_failure();
+  `);
+}
+
+function dropDatabaseFailureTrigger() {
+  postgresRow(`
+    DROP TRIGGER IF EXISTS dense_mem_e2e_submission_result_failure ON submission_relationship_results;
+    DROP FUNCTION IF EXISTS dense_mem_e2e_submission_result_failure();
+  `);
+}
+
+function assertNoCommittedSemanticEffects(submissionID, label) {
+  const summary = submissionSummary(submissionID);
+  const row = postgresRow(`
+    WITH documents AS (
+      SELECT document.search_document_id
+      FROM search_documents AS document
+      WHERE document.team_id = ${sqlLiteral(teamID)}::uuid
+        AND document.source_kind = 'evidence'
+        AND document.source_id IN (
+          SELECT fragment_id FROM evidence_fragments
+          WHERE team_id = ${sqlLiteral(teamID)}::uuid
+            AND ingest_id = ${sqlLiteral(submissionID)}::uuid
+        )
+    )
+    SELECT
+      (SELECT count(*) FROM embedding_jobs WHERE team_id = ${sqlLiteral(teamID)}::uuid AND search_document_id IN (SELECT search_document_id FROM documents)),
+      (SELECT count(*) FROM remember_source_revision_intents
+       WHERE team_id = ${sqlLiteral(teamID)}::uuid
+         AND ingest_id = ${sqlLiteral(submissionID)}::uuid
+         AND (source_id IS NOT NULL OR source_revision_id IS NOT NULL)),
+      (SELECT count(*) FROM submission_relationship_results
+       WHERE team_id = ${sqlLiteral(teamID)}::uuid
+         AND ingest_id = ${sqlLiteral(submissionID)}::uuid)
+  `);
+  const counts = [
+    summary.completedItems,
+    summary.commitOutcomes,
+    summary.entityResolutions,
+    summary.relationshipObservations,
+    summary.verifications,
+    summary.searchDocuments,
+    positiveCount(row[0]),
+    positiveCount(row[1]),
+    positiveCount(row[2]),
+  ];
+  if (counts.some((count) => count !== 0)) {
+    throw new Error(`${label} committed semantic, source, result, search, or embedding effects`);
+  }
 }
 
 async function waitForStableVerifierRequests(minimum) {
@@ -381,6 +740,11 @@ async function mcpTool(name, args) {
 }
 
 async function mcpToolExpectError(name, args) {
+  const error = await mcpToolError(name, args);
+  return error.message;
+}
+
+async function mcpToolError(name, args) {
   const response = await httpJSON(`${userURL}/mcp`, {
     method: "POST",
     headers: {
@@ -402,7 +766,7 @@ async function mcpToolExpectError(name, args) {
   if (typeof message !== "string") {
     throw new Error(`MCP ${name} returned an unrecognized bounded error`);
   }
-  return message;
+  return response.error;
 }
 
 async function prometheusValue(metric) {
@@ -422,7 +786,7 @@ async function prometheusValueSelector(metric, selector) {
 }
 
 async function waitForPrometheusValueSelector(metric, selector, minimum) {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
     const value = await prometheusValueSelector(metric, selector);
     if (value >= minimum) {
       return value;

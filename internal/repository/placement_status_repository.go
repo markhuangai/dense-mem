@@ -120,14 +120,20 @@ func loadPlacementRunStatus(
 		result.QuarantineExpiresAt = &value
 	}
 	evidenceRows, err := tx.WithContext(ctx).Raw(`
-		SELECT fragment_id::text, evidence_index, content, content_hash, authority,
-		       COALESCE(source_id::text, ''), COALESCE(source_revision_id::text, '')
+		SELECT fragment.fragment_id::text, fragment.evidence_index, fragment.content, fragment.content_hash, fragment.authority,
+		       COALESCE(fragment.source_id::text, intent.source_id::text, ''),
+		       COALESCE(fragment.source_revision_id::text, intent.source_revision_id::text, '')
 		FROM evidence_fragments AS fragment
+		LEFT JOIN remember_source_revision_intents AS intent
+		  ON intent.team_id = fragment.team_id
+		 AND intent.ingest_id = fragment.ingest_id
+		 AND intent.fragment_id = fragment.fragment_id
+		 AND intent.owner_profile_id = fragment.owner_profile_id
 		WHERE fragment.team_id = ?::uuid
 		  AND fragment.owner_profile_id = ?::uuid
 		  AND fragment.ingest_id = ?::uuid
 		  AND `+activeSemanticSpaceGenerationSQL("fragment")+`
-		ORDER BY evidence_index ASC
+		ORDER BY fragment.evidence_index ASC
 	`, input.TeamID, input.OwnerProfileID, input.IngestID).Rows()
 	if err != nil {
 		return nil, err
@@ -197,7 +203,48 @@ func loadPlacementRunStatus(
 	if err := hydrateEvidenceLifecycleLineage(ctx, tx, result.TeamID, result.Evidence); err != nil {
 		return nil, err
 	}
+	if err := loadSubmissionRelationshipResults(ctx, tx, input, result); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+func loadSubmissionRelationshipResults(
+	ctx context.Context,
+	tx *gorm.DB,
+	input GetPlacementRunInput,
+	result *CreateIngestResult,
+) error {
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT relationship_ref, disposition, reason, splits
+		FROM submission_relationship_results
+		WHERE team_id = ?::uuid
+		  AND placement_run_id = ?::uuid
+		  AND ingest_id = ?::uuid
+		  AND owner_profile_id = ?::uuid
+		ORDER BY relationship_ref ASC
+	`, input.TeamID, result.PlacementRunID, input.IngestID, input.OwnerProfileID).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item SubmissionRelationshipResult
+		var splitsRaw []byte
+		if err := rows.Scan(&item.RelationshipRef, &item.Disposition, &item.Reason, &splitsRaw); err != nil {
+			return err
+		}
+		if len(splitsRaw) > 0 && string(splitsRaw) != "null" {
+			if err := json.Unmarshal(splitsRaw, &item.Splits); err != nil {
+				return err
+			}
+		}
+		if item.Splits == nil {
+			item.Splits = []SubmissionRelationshipSplitInput{}
+		}
+		result.RelationshipResults = append(result.RelationshipResults, item)
+	}
+	return rows.Err()
 }
 
 func nullableStatusTime(value sql.NullTime) *time.Time {
