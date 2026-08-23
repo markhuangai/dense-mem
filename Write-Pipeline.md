@@ -39,6 +39,14 @@ flowchart LR
 remember acknowledges only durable submission staging. It does not claim that
 the evidence has become active memory or that an embedding is current.
 
+The intake operation is implemented by the Remember capability boundary. Its
+application API performs strict conversion, validates evidence-index coverage,
+scans evidence and structured proposal values before persistence, and sends a
+single staging request through a consumer-owned port. The PostgreSQL adapter is
+composition-only and returns the submission identifier only after the existing
+ledger transaction has committed exact evidence plus processing intent. Provider
+calls and placement policy remain downstream worker responsibilities.
+
 ## Client Submission Contract
 
 The client supplies a nonempty top-level `relationships` array; it is required,

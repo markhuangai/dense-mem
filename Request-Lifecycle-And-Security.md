@@ -326,6 +326,17 @@ not a recall. `tools/call` is the execution envelope used for every memory tool;
 the selected tool still owns its exact input, authorization, idempotency, and
 read/write behavior.
 
+### Remember admission boundary
+
+After transport validation and immutable principal binding, Remember enters the
+`internal/service/remember` application boundary. The boundary converts the
+strict request, verifies evidence-index coverage, scans evidence and structured
+proposal values, and records only bounded security-rejection metadata on a
+pre-stage failure. A successful call invokes one intake port; acknowledgement is
+possible only after that port returns a committed submission containing exact
+evidence and processing intent. The port does not expose provider, placement,
+search, or database types, and status reads use the same team/profile scope.
+
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
 sequenceDiagram

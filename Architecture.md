@@ -71,6 +71,22 @@ existing persistence, key, and session formats without becoming access policy.
 Compatibility aliases may keep serial callers compiling during a migration, but
 they are not a second policy owner.
 
+## Remember Intake Capability Boundary
+
+The `internal/service/remember` application capability owns Remember conversion,
+the deterministic pre-stage security gate, exact evidence and processing-intent
+staging, safe rejection audit metadata, and the bounded submission-status
+projection. It depends on the authenticated request context and a narrow intake
+port. The port returns only staged submission/status values; it does not expose
+provider, placement, search, or PostgreSQL types.
+
+The composition root adapts the existing PostgreSQL ledger and audit writer to
+that port. The adapter returns only after the existing transaction has durably
+created the exact evidence, source-revision state, placement work, and initial
+security events. A compatibility forwarding seam remains for serial callers
+until the later placement, recall, and final-convergence issues remove the
+legacy memory-service package edges.
+
 ## Request Paths
 
 ```mermaid

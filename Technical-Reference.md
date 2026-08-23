@@ -140,6 +140,15 @@ manual team-scoped client configuration.
 
 ## remember
 
+### Application boundary
+
+Remember intake is owned by `internal/service/remember`. It performs strict
+conversion, evidence-index coverage checks, deterministic security admission,
+processing-intent construction, and the bounded owner-scoped status projection.
+The application depends on a narrow intake port. The composition root adapts the
+existing PostgreSQL ledger and audit writer; no provider, placement worker, or
+concrete PostgreSQL package is imported by the Remember application itself.
+
 ### Request
 
 remember requires evidence and a top-level nonempty `relationships` array. The
