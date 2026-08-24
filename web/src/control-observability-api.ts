@@ -32,15 +32,6 @@ export type SubmissionStatusError = {
   retryable: boolean;
   next_action: "poll_status" | "resubmit_submission" | "retry_correction" | "contact_operator" | "none";
   remediation: string;
-  resubmission_issues?: SubmissionResubmissionIssue[];
-  resubmission_issues_truncated?: boolean;
-};
-
-export type SubmissionResubmissionIssue = {
-  code: string;
-  relationship_ref?: string;
-  component?: string;
-  message: string;
 };
 
 export type SubmissionDiagnosticSummary = {

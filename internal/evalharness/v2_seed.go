@@ -36,7 +36,6 @@ type relationshipLedgerRow struct {
 	ObjectOccurrence    *int   `json:"object_occurrence,omitempty"`
 	ObjectKind          string `json:"object_kind,omitempty"`
 	Polarity            string `json:"polarity,omitempty"`
-	Modality            string `json:"modality,omitempty"`
 }
 
 // DeriveV2Seed copies a V1 seed's evaluation inputs unchanged and adds one
@@ -298,8 +297,9 @@ func validateV2CorpusRelationships(manifest *SeedManifest, corpus []CorpusItem) 
 			return fmt.Errorf("V2 corpus row %d (%s) has no relationships", index+1, item.SourceDocID)
 		}
 		input := map[string]any{
-			"evidence":      []any{map[string]any{"content": item.Content}},
-			"relationships": item.Relationships,
+			"idempotency_key": "validate:" + item.SourceDocID,
+			"evidence":        []any{map[string]any{"content": item.Content}},
+			"relationships":   item.Relationships,
 		}
 		if err := registry.ValidateContractInput(remember, input, []string{"write"}); err != nil {
 			return fmt.Errorf("V2 corpus row %d (%s) relationship contract: %w", index+1, item.SourceDocID, err)
@@ -387,7 +387,7 @@ func decodeRelationshipLedgerRow(raw []byte) (relationshipLedgerRow, error) {
 	allowed := map[string]struct{}{
 		"source_doc_id": {}, "support": {}, "support_occurrence": {}, "subject": {}, "subject_occurrence": {},
 		"subject_kind": {}, "predicate": {}, "predicate_occurrence": {}, "object": {}, "object_occurrence": {},
-		"object_kind": {}, "polarity": {}, "modality": {},
+		"object_kind": {}, "polarity": {},
 	}
 	for field := range fields {
 		if _, ok := allowed[field]; !ok {
@@ -428,24 +428,12 @@ func validateRelationshipLedgerRow(row relationshipLedgerRow) error {
 	if row.Polarity != "" && row.Polarity != "+" && row.Polarity != "-" {
 		return fmt.Errorf("polarity %q is unsupported", row.Polarity)
 	}
-	if row.Modality != "" && !allowedRelationshipModality(row.Modality) {
-		return fmt.Errorf("modality %q is unsupported", row.Modality)
-	}
 	return nil
 }
 
 func allowedEntityKind(kind string) bool {
 	for _, candidate := range domain.EntityKinds() {
 		if kind == candidate {
-			return true
-		}
-	}
-	return false
-}
-
-func allowedRelationshipModality(value string) bool {
-	for _, candidate := range []string{"statement", "question", "proposal", "speculation", "quoted"} {
-		if value == candidate {
 			return true
 		}
 	}
@@ -504,10 +492,6 @@ func flatRelationshipFromLedger(content string, row relationshipLedgerRow) (map[
 	if polarity == "" {
 		polarity = "+"
 	}
-	modality := row.Modality
-	if modality == "" {
-		modality = "statement"
-	}
 	return map[string]any{
 		"ref": "relationship_1",
 		"subject": map[string]any{
@@ -520,7 +504,6 @@ func flatRelationshipFromLedger(content string, row relationshipLedgerRow) (map[
 			"name": row.Object, "entity_kind": objectKind,
 		}},
 		"polarity":         polarity,
-		"modality":         modality,
 		"evidence_indices": []any{0},
 	}, nil
 }
@@ -561,10 +544,6 @@ func flatRelationshipFallback(content string, row relationshipLedgerRow) (map[st
 	if polarity == "" {
 		polarity = "+"
 	}
-	modality := row.Modality
-	if modality == "" {
-		modality = "statement"
-	}
 	return map[string]any{
 		"ref": "relationship_1",
 		"subject": map[string]any{
@@ -577,7 +556,6 @@ func flatRelationshipFallback(content string, row relationshipLedgerRow) (map[st
 			"name": string(runes[objectStart:objectEnd]), "entity_kind": "other",
 		}},
 		"polarity":         polarity,
-		"modality":         modality,
 		"evidence_indices": []any{0},
 	}, nil
 }

@@ -21,9 +21,9 @@ import (
 )
 
 const (
-	rememberCheckAfterSeconds        = 60
-	rememberStatusTool               = "get_submission_status"
-	legacyRequestHashContractVersion = "dense-mem.v2.4"
+	rememberCheckAfterSeconds  = 60
+	rememberStatusTool         = "get_submission_status"
+	requestHashContractVersion = "dense-mem.v2.6"
 )
 
 var (
@@ -86,12 +86,12 @@ type RememberEvidenceInput struct {
 	SourceRevision         string         `json:"source_revision,omitempty"`
 	PreviousSourceRevision string         `json:"previous_source_revision,omitempty"`
 	SupersedesEvidenceIDs  []string       `json:"supersedes_evidence_ids,omitempty"`
-	IdempotencyKey         string         `json:"idempotency_key,omitempty"`
 	Labels                 []string       `json:"labels,omitempty"`
 	Metadata               map[string]any `json:"metadata,omitempty"`
 }
 
 type RememberResult struct {
+	ContractVersion   string `json:"contract_version"`
 	IngestID          string `json:"-"`
 	SubmissionID      string `json:"submission_id"`
 	SubmissionKind    string `json:"submission_kind"`
@@ -102,6 +102,7 @@ type RememberResult struct {
 }
 
 type SubmissionStatusResult struct {
+	ContractVersion      string                          `json:"contract_version"`
 	SubmissionID         string                          `json:"submission_id"`
 	SubmissionKind       string                          `json:"submission_kind"`
 	ProcessingState      string                          `json:"processing_state"`
@@ -117,9 +118,18 @@ type SubmissionStatusResult struct {
 	CompletedAt          *time.Time                      `json:"completed_at,omitempty"`
 	Evidence             []SubmissionEvidenceStatus      `json:"evidence"`
 	Errors               []SubmissionStatusError         `json:"errors"`
+	Degradations         []SubmissionStatusDegradation   `json:"degradations"`
+	RelationshipResults  []SubmissionRelationshipResult  `json:"relationship_results,omitempty"`
 	QuarantineExpiresAt  *time.Time                      `json:"quarantine_expires_at,omitempty"`
 	AwaitingConfirmation *SubmissionAwaitingConfirmation `json:"awaiting_confirmation,omitempty"`
 	CorrectionResult     *RelationshipCorrectionResult   `json:"correction_result,omitempty"`
+}
+
+type SubmissionStatusDegradation struct {
+	Frontier string `json:"frontier"`
+	Optional bool   `json:"optional"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
 }
 
 type SubmissionAwaitingConfirmation struct {
@@ -166,6 +176,9 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	}
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("remember: evidence is required")
+	}
+	if strings.TrimSpace(req.IdempotencyKey) == "" {
+		return nil, errors.New("remember: idempotency_key is required")
 	}
 	if err := validateRememberRelationshipCoverage(len(req.Evidence), req.RelationshipHints); err != nil {
 		return nil, err
@@ -381,6 +394,8 @@ func publicSubmissionProcessingState(status string) string {
 		return "completed"
 	case string(domain.PlacementRunQuarantined):
 		return "quarantined"
+	case string(domain.PlacementRunRejected):
+		return "rejected"
 	case string(domain.PlacementRunFailed):
 		return "failed"
 	default:
@@ -421,30 +436,25 @@ func sourceRevisionBatchHash(contents []string) string {
 }
 
 func canonicalRequestHash(req RememberRequest) (string, error) {
-	payload := map[string]any{
-		"contract_version":       legacyRequestHashContractVersion,
-		"replaces_submission_id": "",
-		"evidence":               req.Evidence,
-		"entity_hints":           req.EntityHints,
-		"relationship_hints":     req.RelationshipHints,
-		"idempotency_key":        strings.TrimSpace(req.IdempotencyKey),
-	}
-	data, err := json.Marshal(payload)
+	hash, err := CanonicalRequestBodyHash(req.Evidence, req.EntityHints, req.RelationshipHints)
 	if err != nil {
 		return "", fmt.Errorf("remember: canonical request hash: %w", err)
 	}
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return hash, nil
 }
 
 func rememberResultFromLedger(created *StageResult, correlationID string) *RememberResult {
 	if created.Existing && strings.TrimSpace(created.CorrelationID) != "" {
 		correlationID = created.CorrelationID
 	}
-	return &RememberResult{IngestID: created.SubmissionID, SubmissionID: created.SubmissionID, SubmissionKind: "remember", ProcessingState: publicSubmissionProcessingState(created.Status), CheckAfterSeconds: rememberCheckAfterSeconds, StatusTool: rememberStatusTool, CorrelationID: correlationID}
+	return &RememberResult{ContractVersion: domain.ContractVersion, IngestID: created.SubmissionID, SubmissionID: created.SubmissionID, SubmissionKind: "remember", ProcessingState: publicSubmissionProcessingState(created.Status), CheckAfterSeconds: rememberCheckAfterSeconds, StatusTool: rememberStatusTool, CorrelationID: correlationID}
 }
 
 func translateRememberLedgerError(err error) error {
+	var validation *RememberValidationError
+	if errors.As(err, &validation) {
+		return validation
+	}
 	switch {
 	case errors.Is(err, ErrIdempotencyConflict), errors.Is(err, ErrSourceRevisionConflict):
 		return fmt.Errorf("%w: duplicate or stale intake request", ErrRememberConflict)
@@ -480,9 +490,6 @@ func ledgerAuthorityAndMetadata(authority string, metadata map[string]any) (stri
 func evidenceProcessingIntentMetadata(metadata map[string]any, item RememberEvidenceInput) map[string]any {
 	if len(item.SupersedesEvidenceIDs) > 0 {
 		metadata["supersedes_evidence_ids"] = append([]string(nil), item.SupersedesEvidenceIDs...)
-	}
-	if value := strings.TrimSpace(item.IdempotencyKey); value != "" {
-		metadata["evidence_idempotency_key"] = value
 	}
 	if value := strings.TrimSpace(item.SourceGroup); value != "" {
 		metadata["contract_source_group"] = value

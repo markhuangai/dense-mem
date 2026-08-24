@@ -34,6 +34,7 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		for _, target := range input.Entities {
 			group := SubmissionAssessmentEntityCatalogGroup{Ref: target.Ref, Candidates: []SemanticReviewEntityCandidate{}, Complete: true}
+			normalizedSurface := normalizeName(target.Surface)
 			rows, err := tx.WithContext(ctx).Raw(`
 				WITH candidates AS (
 				    SELECT DISTINCT ON (rec.entity_id)
@@ -64,10 +65,19 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 				     AND canonical.valid_to IS NULL
 				    WHERE rec.team_id = ?::uuid
 				      AND rec.status = 'active'
-				      AND rec.entity_kind = ?
+				      AND (? = '' OR rec.entity_kind = ?)
 				      AND (
 				          rec.entity_id = NULLIF(?, '')::uuid
-			          OR name.normalized_name = ?
+				          OR (
+				              name.normalized_name = ?
+				              AND NOT EXISTS (
+				                  SELECT 1
+				                  FROM entity_records AS exact
+				                  WHERE exact.team_id = rec.team_id
+				                    AND exact.entity_id = NULLIF(?, '')::uuid
+				                    AND exact.status = 'active'
+				              )
+				          )
 				      )
 				    ORDER BY rec.entity_id, known_rank, name_rank, name.created_at DESC
 				)
@@ -75,8 +85,8 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 				FROM candidates
 				ORDER BY known_rank, name_rank, entity_id
 				LIMIT ?
-		`, target.KnownEntityID, normalizeName(target.Surface), input.TeamID, target.EntityKind,
-				target.KnownEntityID, normalizeName(target.Surface), input.CandidateLimit+1).Rows()
+			`, target.KnownEntityID, normalizedSurface, input.TeamID, target.EntityKind, target.EntityKind,
+				target.KnownEntityID, normalizedSurface, target.KnownEntityID, input.CandidateLimit+1).Rows()
 			if err != nil {
 				return err
 			}
@@ -168,10 +178,13 @@ func validateSubmissionAssessmentEntityCatalogInput(input SubmissionAssessmentEn
 		if target.Ref == "" || len([]rune(target.Ref)) > 128 {
 			return errors.New("entity ref is required and must be bounded")
 		}
-		if target.Surface == "" || len([]rune(target.Surface)) > 1000 {
-			return errors.New("entity surface is required and must be bounded")
+		if target.Surface != "" && len([]rune(target.Surface)) > 1000 {
+			return errors.New("entity surface must be bounded")
 		}
-		if !contains(domain.EntityKinds(), target.EntityKind) {
+		if target.Surface == "" && target.KnownEntityID == "" {
+			return errors.New("entity surface or known_entity_id is required")
+		}
+		if target.EntityKind != "" && !contains(domain.EntityKinds(), target.EntityKind) {
 			return fmt.Errorf("entity kind is unsupported %q", target.EntityKind)
 		}
 		if target.KnownEntityID != "" {

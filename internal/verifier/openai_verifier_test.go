@@ -117,7 +117,7 @@ func TestOpenAIVerifierAssessSemanticStopsBeforeCorrectionExceedsInputBudget(t *
 	cfg := newTestVerifierConfig(srv.URL, "key", "assessor-model")
 	cfg.AIVerifierMaxInputTokens = initialTokens + 5
 	v := NewOpenAIVerifier(cfg, srv.Client())
-	_, err = v.AssessSemantic(context.Background(), req)
+	_, err = runSemanticAssessmentSessionForTest(context.Background(), v, req)
 	var malformed *MalformedResponseError
 	require.ErrorAs(t, err, &malformed)
 	assert.Equal(t, "input_budget", malformed.FailureClass)
@@ -134,7 +134,7 @@ func TestOpenAIVerifierAssessSemanticHonorsRetryAfterMetadata(t *testing.T) {
 
 	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	req, _ := semanticAssessmentTestRequest(t)
-	_, err := v.AssessSemantic(context.Background(), req)
+	_, err := runSemanticAssessmentSessionForTest(context.Background(), v, req)
 	var rateLimit *RateLimitError
 	require.ErrorAs(t, err, &rateLimit)
 	assert.Equal(t, 120, rateLimit.RetryAfter)
@@ -183,7 +183,7 @@ func TestOpenAIVerifierAssessSemanticRejectsProviderOutputOverAcceptanceCap(t *t
 	cfg.AIVerifierMaxOutputTokens = 1
 	v := NewOpenAIVerifier(cfg, srv.Client())
 	req, _ := semanticAssessmentTestRequest(t)
-	_, err := v.AssessSemantic(context.Background(), req)
+	_, err := runSemanticAssessmentSessionForTest(context.Background(), v, req)
 	assert.ErrorIs(t, err, ErrVerifierMalformedResponse)
 }
 

@@ -233,6 +233,7 @@ type ApplyRelationshipDecisionInput struct {
 	ValidFrom               *time.Time
 	ValidTo                 *time.Time
 	EvidenceVerdict         string
+	AssessorAccepted        bool
 	PromoteToFact           bool
 	Confidence              *float64
 	Rationale               string

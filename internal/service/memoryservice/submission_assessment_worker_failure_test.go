@@ -2,9 +2,11 @@ package memoryservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -26,24 +28,22 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 		wantIssue   string
 	}{
 		{
-			name:       "non-promotable assessment requires resubmission",
-			commitErr:  repository.ErrSubmissionAssessmentNonPromotable,
-			wantStatus: string(domain.SemanticReviewTerminalFailure),
-			wantStage:  "semantic_commit",
-			wantIssue:  "semantic_commit_non_promotable",
-		},
-		{
-			name:       "predicate registration conflict requires resubmission",
-			commitErr:  repository.ErrSubmissionPredicateRegistrationHeld,
-			wantStatus: string(domain.SemanticReviewTerminalFailure),
-			wantStage:  "semantic_commit",
-			wantIssue:  "predicate_registration_conflict",
-		},
-		{
-			name:       "stale conflict context requires resubmission",
+			name:       "stale conflict context is stale input",
 			commitErr:  repository.ErrConflictContextStale,
-			wantStatus: string(domain.SemanticReviewTerminalFailure),
-			wantStage:  "conflict_context_stale",
+			wantStatus: string(domain.SemanticReviewRejected),
+			wantStage:  "exact_reference_preflight",
+		},
+		{
+			name:       "stale exact reference is stale input",
+			commitErr:  repository.ErrRememberExactReferenceStale,
+			wantStatus: string(domain.SemanticReviewRejected),
+			wantStage:  "exact_reference_preflight",
+		},
+		{
+			name:       "stale correction target is stale input",
+			commitErr:  repository.ErrCorrectionTargetStale,
+			wantStatus: string(domain.SemanticReviewRejected),
+			wantStage:  "exact_reference_preflight",
 		},
 		{
 			name:       "scope mismatch terminalizes",
@@ -94,13 +94,380 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 			require.Len(t, assessments.completions, 1)
 			assert.Equal(t, test.wantStatus, assessments.completions[0].Status)
 			assert.Equal(t, test.wantStage, assessments.completions[0].Payload["failure_stage"])
-			if test.wantIssue != "" {
-				issues, ok := assessments.completions[0].Payload["resubmission_issues"].([]map[string]any)
-				require.True(t, ok)
-				require.Len(t, issues, 1)
-				assert.Equal(t, test.wantIssue, issues[0]["code"])
+			if test.wantStatus == string(domain.SemanticReviewRejected) {
+				assert.Equal(t, string(SubmissionErrorStaleInput), assessments.completions[0].Payload["failure_code"])
 			}
 		})
+	}
+}
+
+func TestSubmissionAssessmentWorkerPersistsResultsForDeterministicPreflightFailure(t *testing.T) {
+	_, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
+	catalog.entityComplete = false
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	assert.True(t, processed)
+	assert.Zero(t, provider.calls)
+	require.Len(t, assessments.completions, 1)
+	completion := assessments.completions[0]
+	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), completion.Status)
+	assert.Equal(t, "entity_catalog", completion.Payload["failure_stage"])
+	require.Len(t, completion.RelationshipResults, 3)
+	for _, result := range completion.RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+		assert.Empty(t, result.Splits)
+	}
+}
+
+func TestSubmissionAssessmentWorkerPersistsResultsWhenPreflightRetryExhausts(t *testing.T) {
+	ledger, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
+	ledger.run.Attempts = ledger.run.MaxAttempts
+	catalog.entityErr = errors.New("catalog unavailable")
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	assert.True(t, processed)
+	assert.Zero(t, provider.calls)
+	require.Len(t, assessments.completions, 1)
+	completion := assessments.completions[0]
+	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), completion.Status)
+	assert.Equal(t, "candidate_prefetch", completion.Payload["failure_stage"])
+	require.Len(t, completion.RelationshipResults, 3)
+	for _, result := range completion.RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+	}
+}
+
+func TestSubmissionAssessmentWorkerRequestsFallbackResultsWhenPlacementLoadRetryExhausts(t *testing.T) {
+	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	ledger.run.Attempts = ledger.run.MaxAttempts
+	ledger.getErr = errors.New("placement unavailable")
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Zero(t, provider.calls)
+	require.Len(t, assessments.completions, 1)
+	completion := assessments.completions[0]
+	assert.Equal(t, "placement_load", completion.Payload["failure_stage"])
+	assert.Empty(t, completion.RelationshipResults)
+	assert.Equal(t, string(SubmissionErrorInternalFailure), completion.DefaultRelationshipResultReason)
+}
+
+func TestSubmissionAssessmentWorkerBoundsTurnsAcrossRevisionPersistenceFailure(t *testing.T) {
+	tests := []struct {
+		name         string
+		revisionErrs []error
+		wantTerminal bool
+	}{
+		{name: "retry persists before continuing", revisionErrs: []error{errors.New("temporary revision failure"), nil}},
+		{name: "persistent failure terminalizes", revisionErrs: []error{errors.New("revision unavailable"), errors.New("revision unavailable")}, wantTerminal: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+			assessments.assessment = &repository.SubmissionAssessment{
+				AssessmentID:       "00000000-0000-0000-0000-000000000903",
+				ProviderTurns:      1,
+				NormalizedResponse: json.RawMessage(`{}`),
+				ResponseHash:       semanticAssessmentHash([]byte(`{}`)),
+			}
+			assessments.revisionErrors = append([]error(nil), test.revisionErrs...)
+
+			processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+			require.NoError(t, err)
+			assert.True(t, processed)
+			assert.Equal(t, 1, provider.calls)
+			assert.Len(t, assessments.revisionInputs, len(test.revisionErrs))
+			assert.Empty(t, assessments.requeues)
+			if !test.wantTerminal {
+				assert.Empty(t, assessments.completions)
+				require.Len(t, assessments.commits, 1)
+				return
+			}
+			require.Len(t, assessments.completions, 1)
+			completion := assessments.completions[0]
+			assert.Equal(t, string(domain.SemanticReviewTerminalFailure), completion.Status)
+			assert.Equal(t, "assessment_persist", completion.Payload["failure_stage"])
+			require.Len(t, completion.RelationshipResults, 3)
+			for _, result := range completion.RelationshipResults {
+				assert.Equal(t, "not_stored", result.Disposition)
+				assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+			}
+		})
+	}
+}
+
+func TestSubmissionAssessmentWorkerPersistsInvalidTurnsBeforeRepairFailureRetry(t *testing.T) {
+	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	assessments.assessment = &repository.SubmissionAssessment{
+		AssessmentID:       "00000000-0000-0000-0000-000000000904",
+		ProviderTurns:      1,
+		NormalizedResponse: json.RawMessage(`{}`),
+		ResponseHash:       semanticAssessmentHash([]byte(`{}`)),
+	}
+	provider.responseForTurn = func(verifier.SemanticAssessmentRequest, int) (verifier.SemanticAssessmentResponse, error) {
+		return verifier.SemanticAssessmentResponse{}, nil
+	}
+	provider.repairErr = &verifier.ProviderError{
+		Provider: "stub", FailureClass: verifier.ProviderFailureClassHTTPServer, StatusCode: 503,
+	}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	assert.True(t, processed)
+	assert.Equal(t, 2, provider.calls)
+	require.Len(t, assessments.revisionInputs, 1)
+	assert.Equal(t, 2, assessments.revisionInputs[0].ProviderTurns)
+	assert.Equal(t, 2, assessments.assessment.ProviderTurns)
+	require.Len(t, assessments.requeues, 1)
+	assert.Empty(t, assessments.completions)
+}
+
+func TestSubmissionAssessmentWorkerCarriesInitialSessionTurnsAcrossRetry(t *testing.T) {
+	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	provider.responseForTurn = func(verifier.SemanticAssessmentRequest, int) (verifier.SemanticAssessmentResponse, error) {
+		return verifier.SemanticAssessmentResponse{}, nil
+	}
+	provider.repairErr = &verifier.ProviderError{
+		Provider: "stub", FailureClass: verifier.ProviderFailureClassHTTPServer, StatusCode: 503,
+	}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Equal(t, 2, provider.calls)
+	require.Len(t, assessments.requeues, 1)
+	assert.Equal(t, 1, assessments.requeues[0].AssessorTurnsReserved)
+	assert.Nil(t, assessments.assessment)
+
+	ledger.run.Attempts++
+	ledger.run.AssessorTurnsReserved = assessments.requeues[0].AssessorTurnsReserved
+	assessments.loadCalls = 0
+	assessments.reserved = false
+	assessments.requeues = nil
+	provider.calls = 0
+	provider.responseForTurn = nil
+	provider.repairErr = nil
+
+	processed, err = worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Equal(t, 1, provider.calls)
+	require.NotNil(t, assessments.assessment)
+	assert.Equal(t, 2, assessments.assessment.ProviderTurns)
+	require.Len(t, assessments.commits, 1)
+}
+
+func TestSubmissionAssessmentWorkerStopsBeforeProviderWhenInitialTurnBudgetIsReserved(t *testing.T) {
+	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	ledger.run.AssessorTurnsReserved = SemanticPlacementMaxAssessorTurns
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Zero(t, provider.calls)
+	require.Len(t, assessments.completions, 1)
+	assert.Equal(t, SemanticPlacementMaxAssessorTurns, assessments.completions[0].Payload["assessor_turns"])
+	assert.Equal(t, "malformed_exhausted", assessments.completions[0].Payload["failure_class"])
+}
+
+func TestSubmissionAssessmentWorkerPersistsCommitRepairTurnsBeforeProviderFailureRetry(t *testing.T) {
+	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	provider.responseForTurn = func(req verifier.SemanticAssessmentRequest, turns int) (verifier.SemanticAssessmentResponse, error) {
+		if turns == 1 {
+			return submissionAssessmentValidResponse(req, false), nil
+		}
+		return verifier.SemanticAssessmentResponse{}, nil
+	}
+	provider.repairErrors = []error{nil, &verifier.ProviderError{
+		Provider: "stub", FailureClass: verifier.ProviderFailureClassHTTPServer, StatusCode: 503,
+	}}
+	assessments.commitErrors = []error{repository.ErrSubmissionPredicateRegistrationHeld}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Equal(t, 3, provider.calls)
+	require.Len(t, assessments.revisionInputs, 1)
+	assert.Equal(t, 2, assessments.revisionInputs[0].ProviderTurns)
+	require.NotNil(t, assessments.assessment)
+	assert.Equal(t, 2, assessments.assessment.ProviderTurns)
+	require.Len(t, assessments.requeues, 1)
+	assert.Zero(t, assessments.requeues[0].AssessorTurnsReserved)
+}
+
+func TestSubmissionAssessmentWorkerPersistsDatabaseFailureCode(t *testing.T) {
+	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	scope := submissionAssessmentRunScope(*ledger.run, "submission-assessment-worker")
+
+	err := service.completeTerminal(
+		context.Background(), scope,
+		string(domain.SemanticReviewTerminalFailure), "failed", "semantic_commit",
+		&pgconn.PgError{Code: "08006"},
+	)
+
+	require.NoError(t, err)
+	require.Len(t, assessments.completions, 1)
+	assert.Equal(t, string(SubmissionErrorDatabaseFailure), assessments.completions[0].Payload["failure_code"])
+}
+
+func TestSubmissionAssessmentWorkerRepairsCommitRacesInSameSession(t *testing.T) {
+	for _, race := range []error{
+		repository.ErrSubmissionAssessmentNonPromotable,
+		repository.ErrSubmissionPredicateRegistrationHeld,
+	} {
+		t.Run(race.Error(), func(t *testing.T) {
+			_, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
+			assessments.commitErrors = []error{race, nil}
+
+			processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+			require.NoError(t, err)
+			require.True(t, processed)
+			require.Len(t, assessments.commits, 2)
+			require.Len(t, assessments.revisionInputs, 1)
+			assert.Equal(t, 2, assessments.revisionInputs[0].ProviderTurns)
+			assert.Equal(t, 2, provider.calls)
+			assert.Equal(t, provider.startSessionID, provider.repairSessionID)
+			assert.Len(t, catalog.entityInputs, 2)
+			assert.Empty(t, assessments.requeues)
+			assert.Empty(t, assessments.completions)
+		})
+	}
+}
+
+func TestSubmissionAssessmentWorkerRecoversPersistedCommitRaceWithFreshSession(t *testing.T) {
+	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
+	require.NoError(t, err)
+	request, err := service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
+	require.NoError(t, err)
+	response := submissionAssessmentValidResponse(request, false)
+	response.ProviderTurns = 1
+	raw, err := json.Marshal(response)
+	require.NoError(t, err)
+	canonical, err := verifier.CanonicalJSON(raw)
+	require.NoError(t, err)
+	assessments.assessment = &repository.SubmissionAssessment{
+		TeamID: ledger.run.TeamID, AssessmentID: "00000000-0000-0000-0000-000000000901",
+		OwnerProfileID: ledger.run.OwnerProfileID, IngestID: ledger.run.IngestID, PlacementRunID: ledger.run.PlacementRunID,
+		RequestID: request.RequestID, AssessorContractVersion: domain.ContractVersion, Model: provider.ModelName(), Tokenizer: assessmentTokenizer(service.limits),
+		ProviderTurns: 1, InputTokens: request.InputTokens, OutputTokens: response.OutputTokens,
+		CandidateContextTokens: request.CandidateContextTokens, NormalizedResponse: canonical, ResponseHash: semanticAssessmentHash(canonical),
+	}
+	assessments.commitErrors = []error{repository.ErrSubmissionPredicateRegistrationHeld, nil}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Len(t, assessments.commits, 2)
+	require.Len(t, assessments.revisionInputs, 1)
+	assert.Equal(t, 2, assessments.revisionInputs[0].ProviderTurns)
+	assert.Equal(t, 1, provider.calls)
+	assert.Empty(t, assessments.requeues)
+}
+
+func TestSubmissionAssessmentWorkerStopsPersistedCommitRepairAtSubmissionTurnBound(t *testing.T) {
+	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
+	require.NoError(t, err)
+	request, err := service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
+	require.NoError(t, err)
+	response := submissionAssessmentValidResponse(request, false)
+	response.ProviderTurns = SemanticPlacementMaxAssessorTurns
+	raw, err := json.Marshal(response)
+	require.NoError(t, err)
+	canonical, err := verifier.CanonicalJSON(raw)
+	require.NoError(t, err)
+	assessments.assessment = &repository.SubmissionAssessment{
+		TeamID: ledger.run.TeamID, AssessmentID: "00000000-0000-0000-0000-000000000902",
+		OwnerProfileID: ledger.run.OwnerProfileID, IngestID: ledger.run.IngestID, PlacementRunID: ledger.run.PlacementRunID,
+		RequestID: request.RequestID, AssessorContractVersion: domain.ContractVersion, Model: provider.ModelName(), Tokenizer: assessmentTokenizer(service.limits),
+		ProviderTurns: SemanticPlacementMaxAssessorTurns, InputTokens: request.InputTokens, OutputTokens: response.OutputTokens,
+		CandidateContextTokens: request.CandidateContextTokens, NormalizedResponse: canonical, ResponseHash: semanticAssessmentHash(canonical),
+	}
+	assessments.commitErrors = []error{repository.ErrSubmissionPredicateRegistrationHeld}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Zero(t, provider.calls)
+	assert.Empty(t, assessments.revisionInputs)
+	require.Len(t, assessments.completions, 1)
+	completion := assessments.completions[0]
+	assert.Equal(t, string(SubmissionErrorInternalFailure), completion.Payload["failure_code"])
+	assert.Equal(t, "commit_race_exhausted", completion.Payload["failure_stage"])
+	require.Len(t, completion.RelationshipResults, 3)
+	for _, result := range completion.RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+		assert.Empty(t, result.Splits)
+	}
+}
+
+func TestSubmissionAssessmentWorkerPreservesResultsWhenCommitRepairTurnsMalformed(t *testing.T) {
+	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	provider.responseForTurn = func(req verifier.SemanticAssessmentRequest, turns int) (verifier.SemanticAssessmentResponse, error) {
+		if turns == 1 {
+			return submissionAssessmentValidResponse(req, false), nil
+		}
+		return verifier.SemanticAssessmentResponse{}, nil
+	}
+	assessments.commitErrors = []error{repository.ErrSubmissionPredicateRegistrationHeld}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Equal(t, SemanticPlacementMaxAssessorTurns, provider.calls)
+	require.Len(t, assessments.completions, 1)
+	completion := assessments.completions[0]
+	assert.Equal(t, string(SubmissionErrorProviderResponseInvalid), completion.Payload["failure_code"])
+	assert.Equal(t, "assessment", completion.Payload["failure_stage"])
+	assert.Equal(t, "malformed_exhausted", completion.Payload["failure_class"])
+	require.Len(t, completion.RelationshipResults, 3)
+	for _, result := range completion.RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+		assert.Empty(t, result.Splits)
+	}
+}
+
+func TestSubmissionAssessmentWorkerPersistsResultsWhenProviderRetriesExhausted(t *testing.T) {
+	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	ledger.run.Attempts = ledger.run.MaxAttempts
+	provider.startErr = &verifier.ProviderError{
+		Provider: "stub", FailureClass: verifier.ProviderFailureClassHTTPServer, StatusCode: 503,
+	}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Len(t, assessments.completions, 1)
+	completion := assessments.completions[0]
+	require.Len(t, completion.RelationshipResults, 3)
+	for _, result := range completion.RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
 	}
 }
 
@@ -133,14 +500,6 @@ func TestSubmissionAssessmentWorkerRequeuesRepositoryFailuresByStage(t *testing.
 				assessments.persistErr = errors.New("assessment persistence failed")
 			},
 			stage:   "assessment",
-			payload: true,
-		},
-		{
-			name: "confidence policy",
-			mutate: func(assessments *submissionAssessmentWorkerAssessmentStub) {
-				assessments.policyErr = errors.New("policy unavailable")
-			},
-			stage:   "confidence_policy",
 			payload: true,
 		},
 	}

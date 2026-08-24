@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -47,8 +46,12 @@ func TestStatusProjectionCoversStatesAndBoundedFailures(t *testing.T) {
 		Items: []PlacementItem{{FragmentID: "evidence-1", Result: map[string]any{"search_document_states": []any{"failed"}}}},
 	})
 	require.Equal(t, string(domain.SearchProjectionFailed), failedSearch.SearchState)
-	require.Equal(t, "search_indexing_delayed", failedSearch.Errors[0].Code)
-	require.Equal(t, "Semantic search indexing is delayed.", failedSearch.Evidence[0].Error.Message)
+	require.Empty(t, failedSearch.Errors)
+	require.Nil(t, failedSearch.Evidence[0].Error)
+	require.Len(t, failedSearch.Degradations, 1)
+	require.Equal(t, "search_indexing_delayed", failedSearch.Degradations[0].Code)
+	require.Equal(t, "search", failedSearch.Degradations[0].Frontier)
+	require.True(t, failedSearch.Degradations[0].Optional)
 
 	failed := ProjectSubmissionStatus(&StageResult{
 		SubmissionID: "submission-3", Status: string(domain.PlacementRunFailed),
@@ -62,42 +65,64 @@ func TestStatusProjectionCoversStatesAndBoundedFailures(t *testing.T) {
 	require.Equal(t, string(SubmissionNextActionContactOperator), failed.Errors[0].NextAction)
 	require.Equal(t, failed.Errors[0].Code, failed.Evidence[1].Error.Code)
 
-	longMessage := strings.Repeat("unsafe detail ", 100)
-	resubmission := ProjectSubmissionStatus(&StageResult{
-		SubmissionID: "submission-4", Status: string(domain.PlacementRunFailed),
-		Items: []PlacementItem{
-			{FragmentID: "e1", Status: "failed", Result: map[string]any{
-				"failure_code":        string(SubmissionErrorRequiresResubmission),
-				"resubmission_issues": []map[string]any{{"code": "predicate_registration_conflict", "message": "choose a registered predicate"}},
-			}},
-			{FragmentID: "e2", Status: "failed", Result: map[string]any{
-				"failure_code":        string(SubmissionErrorRequiresResubmission),
-				"resubmission_issues": []map[string]any{{"code": "entity_resolution_ambiguous", "message": longMessage}},
-			}},
-		},
+	rejected := ProjectSubmissionStatus(&StageResult{
+		SubmissionID: "submission-4", Status: "rejected",
+		Items: []PlacementItem{{FragmentID: "e1", Status: "rejected", Result: map[string]any{
+			"failure_code": string(SubmissionErrorNoSupportedMemory),
+		}}},
 	})
-	require.Len(t, resubmission.Errors, 1)
-	require.Len(t, resubmission.Errors[0].ResubmissionIssues, 2)
-	require.Len(t, []rune(resubmission.Errors[0].ResubmissionIssues[1].Message), 512)
-	require.True(t, resubmission.Errors[0].ResubmissionIssuesTruncated)
+	require.Len(t, rejected.Errors, 1)
+	require.Equal(t, string(SubmissionErrorNoSupportedMemory), rejected.Errors[0].Code)
+
+	stale := ProjectSubmissionStatus(&StageResult{
+		SubmissionID: "submission-5", Status: "rejected",
+		Items: []PlacementItem{{FragmentID: "e1", Status: "rejected", Result: map[string]any{
+			"failure_code": string(SubmissionErrorStaleInput),
+		}}},
+	})
+	require.Len(t, stale.Errors, 1)
+	require.Equal(t, string(SubmissionErrorStaleInput), stale.Errors[0].Code)
+
+	rich := ProjectSubmissionStatus(&StageResult{
+		SubmissionID: "submission-6", Status: string(domain.PlacementRunCompleted), Attempts: 2, MaxAttempts: 5,
+		Evidence: []EvidenceFragment{{FragmentID: "evidence-1", SupersededEvidenceIDs: []string{"evidence-old"}}},
+		Items: []PlacementItem{{FragmentID: "evidence-1", EvidenceIndex: 3, Result: map[string]any{
+			"search_document_ids": []string{"document-1"},
+		}}},
+		RelationshipResults: []SubmissionRelationshipResult{{
+			RelationshipRef: "relationship-a", Disposition: "stored",
+			Splits: []SubmissionRelationshipSplit{{SplitIndex: 0, RelationshipID: "relationship-id", RelationshipVersion: 4, Status: "active"}},
+		}},
+	})
+	require.Equal(t, domain.ContractVersion, rich.ContractVersion)
+	require.Equal(t, 2, *rich.Attempts)
+	require.Equal(t, 5, *rich.MaxAttempts)
+	require.Equal(t, []string{"evidence-old"}, rich.Evidence[0].SupersededEvidenceIDs)
+	require.Equal(t, "stored", rich.RelationshipResults[0].Disposition)
+	require.Equal(t, 4, rich.RelationshipResults[0].Splits[0].RelationshipVersion)
+
+	rejectedWithoutItems := ProjectSubmissionStatus(&StageResult{Status: string(domain.PlacementRunRejected)})
+	require.Equal(t, string(SubmissionErrorNoSupportedMemory), rejectedWithoutItems.Errors[0].Code)
 
 	require.Empty(t, ProjectSubmissionStatus(nil).Evidence)
 	require.Empty(t, ProjectSubmissionStatus(nil).Errors)
+	require.Empty(t, ProjectSubmissionStatus(nil).Degradations)
 }
 
 func TestStatusPolicyAdaptersAndSearchHelpers(t *testing.T) {
 	require.Contains(t, SubmissionErrorCodes(), string(SubmissionErrorProcessingFailed))
 	require.Contains(t, SubmissionErrorCodes(), string(SubmissionErrorQuarantined))
+	require.Contains(t, SubmissionErrorCodes(), string(SubmissionErrorPolicyRejected))
+	require.NotContains(t, SubmissionErrorCodes(), "contract_superseded")
 	require.NotEmpty(t, SubmissionNextActions())
 	require.Equal(t, "custom", StatusErrorWithMessage(SubmissionErrorProcessingFailed, "custom").Message)
-	require.Equal(t, string(SubmissionErrorPolicyRejected), StatusErrorForCode("unknown", "rejected").Code)
-	require.Equal(t, string(SubmissionErrorProcessingFailed), StatusErrorForCode("unknown", "failed").Code)
+	require.Equal(t, string(SubmissionErrorNoSupportedMemory), StatusErrorForCode("unknown", "rejected").Code)
+	require.Equal(t, string(SubmissionErrorInternalFailure), StatusErrorForCode("unknown", "failed").Code)
 
 	for _, code := range []SubmissionErrorCode{
-		SubmissionErrorSearchIndexingDelayed, SubmissionErrorRequiresResubmission,
-		SubmissionErrorNormalizationFailed, SubmissionErrorNormalizerUnavailable,
+		SubmissionErrorSearchIndexingDelayed,
 		SubmissionErrorPolicyRejected, SubmissionErrorAssessorUnavailable,
-		SubmissionErrorContractSuperseded, SubmissionErrorRelationshipVersionStale,
+		SubmissionErrorRelationshipVersionStale,
 		SubmissionErrorNoChange, SubmissionErrorAssessorInvalid,
 		SubmissionErrorProcessingFailed, SubmissionErrorQuarantined,
 	} {
@@ -110,14 +135,18 @@ func TestStatusPolicyAdaptersAndSearchHelpers(t *testing.T) {
 		stage, class string
 		want         SubmissionErrorCode
 	}{
-		{"contract_superseded", "", SubmissionErrorContractSuperseded},
-		{"normalization_failed", "", SubmissionErrorNormalizationFailed},
-		{"assessment", "malformed_exhausted", SubmissionErrorNormalizationFailed},
-		{"normalizer_unavailable", "", SubmissionErrorNormalizerUnavailable},
-		{"", "malformed_response", SubmissionErrorAssessorInvalid},
-		{"", "timeout", SubmissionErrorAssessorUnavailable},
-		{"policy_validation", "", SubmissionErrorPolicyRejected},
-		{"", "", SubmissionErrorProcessingFailed},
+		{"contract_superseded", "", SubmissionErrorInternalFailure},
+		{"normalization_failed", "", SubmissionErrorInternalFailure},
+		{"assessment", "malformed_exhausted", SubmissionErrorProviderResponseInvalid},
+		{"normalizer_unavailable", "", SubmissionErrorInternalFailure},
+		{"", "malformed_response", SubmissionErrorProviderResponseInvalid},
+		{"", "timeout", SubmissionErrorProviderUnavailable},
+		{"policy_validation", "", SubmissionErrorInternalFailure},
+		{"", "", SubmissionErrorInternalFailure},
+		{"entity_catalog", "", SubmissionErrorInputBudgetExceeded},
+		{"catalog_context", "", SubmissionErrorInputBudgetExceeded},
+		{"predicate_options_overflow", "", SubmissionErrorInputBudgetExceeded},
+		{"assessment_input", "", SubmissionErrorInputBudgetExceeded},
 	} {
 		require.Equal(t, test.want, FailureCode(test.stage, test.class))
 	}
@@ -146,8 +175,8 @@ func TestStatusPolicyAdaptersAndSearchHelpers(t *testing.T) {
 
 func TestRememberConversionAndValidationBranches(t *testing.T) {
 	content := []RememberEvidenceInput{
-		{Content: "a", SourceType: "", Authority: "", SourceKey: "doc", SourceRevision: "rev", PreviousSourceRevision: "old", SourceGroup: "group", SupersedesEvidenceIDs: []string{"old-a"}, IdempotencyKey: "item-a", Metadata: map[string]any{"k": "v"}},
-		{Content: "b", SourceType: "document", Authority: "authoritative", SourceKey: "doc", SourceRevision: "rev", PreviousSourceRevision: "old", SupersedesEvidenceIDs: []string{"old-b"}, IdempotencyKey: "item-b"},
+		{Content: "a", SourceType: "", Authority: "", SourceKey: "doc", SourceRevision: "rev", PreviousSourceRevision: "old", SourceGroup: "group", SupersedesEvidenceIDs: []string{"old-a"}, Metadata: map[string]any{"k": "v"}},
+		{Content: "b", SourceType: "document", Authority: "authoritative", SourceKey: "doc", SourceRevision: "rev", PreviousSourceRevision: "old", SupersedesEvidenceIDs: []string{"old-b"}},
 	}
 	converted := repositoryEvidenceInputs(content)
 	require.Len(t, converted, 2)
@@ -156,7 +185,6 @@ func TestRememberConversionAndValidationBranches(t *testing.T) {
 	require.Equal(t, "authoritative", converted[1].Authority)
 	require.Equal(t, converted[0].SourceRevisionContentHash, converted[1].SourceRevisionContentHash)
 	require.Equal(t, "group", converted[0].Metadata["contract_source_group"])
-	require.Equal(t, "item-a", converted[0].Metadata["evidence_idempotency_key"])
 	require.NotNil(t, converted[0].InitialEvent)
 	require.Equal(t, "deterministic_scan", converted[0].InitialEvent.EventKind)
 	require.Equal(t, "doc", sourceSummary(content))
@@ -233,7 +261,8 @@ func TestRememberBoundaryRejectsMissingInputsAndBoundsStorageErrors(t *testing.T
 	for _, storageErr := range []error{ErrTeamInactive, errors.New("database unavailable")} {
 		intake := &intakeStub{stageErr: storageErr}
 		_, err = NewService(Dependencies{Intake: intake}).Remember(ctx, RememberRequest{
-			Evidence: []RememberEvidenceInput{{Content: "evidence"}}, RelationshipHints: coveredRelationships(1),
+			IdempotencyKey: "status-boundary",
+			Evidence:       []RememberEvidenceInput{{Content: "evidence"}}, RelationshipHints: coveredRelationships(1),
 		})
 		require.Error(t, err)
 		if errors.Is(storageErr, ErrTeamInactive) {

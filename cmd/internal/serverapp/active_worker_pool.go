@@ -11,7 +11,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 var (
@@ -44,7 +43,7 @@ func activePlacementLease(verifierTimeoutSeconds int, commitTimeoutSeconds int) 
 	if commitTimeoutSeconds <= 0 {
 		commitTimeoutSeconds = 10
 	}
-	providerWindow := verifierTimeoutSeconds * memoryservice.SemanticPlacementMaxAssessorTurns * verifier.RememberNormalizerTransportAttempts
+	providerWindow := verifierTimeoutSeconds * memoryservice.SemanticPlacementMaxAssessorTurns
 	lease := time.Duration(providerWindow+commitTimeoutSeconds+30) * time.Second
 	if lease < 5*time.Minute {
 		return 5 * time.Minute

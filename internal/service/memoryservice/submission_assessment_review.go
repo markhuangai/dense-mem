@@ -11,170 +11,62 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-const submissionAssessmentMaxResubmissionIssues = 50
+var errSubmissionAssessmentStaleInput = errors.New("submission assessment exact input is stale")
 
-type submissionAssessmentIssue struct {
-	Code            string
-	RelationshipRef string
-	Component       string
-	Message         string
+type submissionAssessmentNoSupportedMemoryError struct {
+	RelationshipResults []repository.SubmissionRelationshipResultInput
 }
 
-type submissionAssessmentResubmissionRequiredError struct {
-	Issues    []submissionAssessmentIssue
-	Truncated bool
+func (e *submissionAssessmentNoSupportedMemoryError) Error() string {
+	return "submission assessment contains no supported memory"
 }
 
-func (e *submissionAssessmentResubmissionRequiredError) Error() string {
-	return errSubmissionAssessmentRequiresResubmission.Error()
+func isRememberStaleInputError(err error) bool {
+	return errors.Is(err, errSubmissionAssessmentStaleInput) ||
+		errors.Is(err, repository.ErrSourceRevisionConflict) ||
+		errors.Is(err, repository.ErrEvidenceLifecycleConflict) ||
+		errors.Is(err, repository.ErrConflictContextStale) ||
+		errors.Is(err, repository.ErrRememberExactReferenceStale) ||
+		errors.Is(err, repository.ErrCorrectionTargetStale) ||
+		errors.Is(err, repository.ErrPlacementStaleSource)
 }
 
-func (e *submissionAssessmentResubmissionRequiredError) Unwrap() error {
-	return errSubmissionAssessmentRequiresResubmission
-}
-
-func (s *submissionAssessmentPlacementWorkerService) completeResubmissionFailure(
+func (s *submissionAssessmentPlacementWorkerService) completeRejected(
 	ctx context.Context,
 	scope repository.SubmissionAssessmentRunScope,
-	stage string,
-	issues []submissionAssessmentIssue,
-	truncated bool,
+	code SubmissionErrorCode,
+	relationshipResults []repository.SubmissionRelationshipResultInput,
 ) error {
-	if len(issues) == 0 {
-		issues = []submissionAssessmentIssue{{
-			Code:      "resubmission_required",
-			Component: "relationship",
-			Message:   "submission requires a corrected complete resubmission before semantic commit",
-		}}
-	}
-	if len(issues) > submissionAssessmentMaxResubmissionIssues {
-		issues = append([]submissionAssessmentIssue(nil), issues[:submissionAssessmentMaxResubmissionIssues]...)
-		truncated = true
-	}
-	resubmissionIssues := make([]map[string]any, 0, len(issues))
-	for _, issue := range issues {
-		resubmissionIssues = append(resubmissionIssues, map[string]any{
-			"code":             issue.Code,
-			"relationship_ref": issue.RelationshipRef,
-			"component":        issue.Component,
-			"message":          issue.Message,
-		})
+	if code != SubmissionErrorStaleInput {
+		code = SubmissionErrorNoSupportedMemory
 	}
 	payload := map[string]any{
-		"assessor_contract":             domain.ContractVersion,
-		"failure_stage":                 strings.TrimSpace(stage),
-		"failure_code":                  string(SubmissionErrorRequiresResubmission),
-		"retryable":                     true,
-		"next_action":                   string(SubmissionNextActionResubmitSubmission),
-		"resubmission_issues":           resubmissionIssues,
-		"resubmission_issues_truncated": truncated,
+		"assessor_contract": domain.ContractVersion,
+		"failure_stage":     "semantic_commit",
+		"failure_code":      string(code),
+		"retryable":         true,
+		"next_action":       string(SubmissionNextActionResubmitSubmission),
+	}
+	if code == SubmissionErrorStaleInput {
+		payload["failure_stage"] = "exact_reference_preflight"
 	}
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,
-		OutcomeKind:                  "submission_assessment_terminal",
-		Status:                       string(domain.SemanticReviewTerminalFailure),
-		Category:                     "failed",
+		OutcomeKind:                  "submission_assessment_rejected",
+		Status:                       string(domain.SemanticReviewRejected),
+		Category:                     "rejected",
 		Payload:                      payload,
+		RelationshipResults:          relationshipResults,
 	})
 	if err == nil && completed == nil {
-		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil completion result"))
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, "semantic_rejection", errors.New("submission assessment worker: nil rejection result"))
 	}
 	if err != nil {
-		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, err)
+		return newPlacementWorkerError(scope.TeamID, scope.IngestID, "semantic_rejection", err)
 	}
-	if err == nil {
-		s.logLifecycle(scope, "submission_failed", "failed", stage, string(SubmissionErrorRequiresResubmission), nil)
-	}
-	return err
-}
-
-func submissionAssessmentResubmissionIssues(
-	plan submissionAssessmentPlan,
-	response verifier.SemanticAssessmentResponse,
-	threshold float64,
-) ([]submissionAssessmentIssue, bool) {
-	issues := make([]submissionAssessmentIssue, 0)
-	seen := map[string]struct{}{}
-	truncated := false
-	appendIssue := func(issue submissionAssessmentIssue) {
-		key := issue.Code + "\x00" + issue.RelationshipRef + "\x00" + issue.Component
-		if _, exists := seen[key]; exists {
-			return
-		}
-		seen[key] = struct{}{}
-		if len(issues) == submissionAssessmentMaxResubmissionIssues {
-			truncated = true
-			return
-		}
-		issues = append(issues, issue)
-	}
-	for _, result := range response.EntityResults {
-		relationshipRef, component := submissionAssessmentEntityIssueTarget(plan, result.Ref)
-		if result.GroundingRef == nil {
-			appendIssue(submissionAssessmentIssue{
-				Code: "entity_grounding_missing", RelationshipRef: relationshipRef, Component: component,
-				Message: "submitted Entity name or active same-team alias was not grounded in eligible evidence",
-			})
-			continue
-		}
-		if result.Action == string(domain.EntityResolutionAmbiguous) {
-			appendIssue(submissionAssessmentIssue{
-				Code: "entity_resolution_ambiguous", RelationshipRef: relationshipRef, Component: component,
-				Message: "grounded Entity could not be resolved to one safe identity action",
-			})
-		}
-		if result.Confidence < threshold {
-			appendIssue(submissionAssessmentIssue{
-				Code: "grounding_low_confidence", RelationshipRef: relationshipRef, Component: component,
-				Message: "Entity grounding confidence is below the effective write threshold",
-			})
-		}
-	}
-	for _, result := range response.RelationshipResults {
-		if result.Modality != "statement" {
-			appendIssue(submissionAssessmentIssue{Code: "unsupported_modality", RelationshipRef: result.Ref, Component: "relationship", Message: "only statement relationships are eligible for automatic semantic commit"})
-		}
-		if result.PredicateStatus == "unresolved" {
-			appendIssue(submissionAssessmentIssue{Code: "predicate_unresolved", RelationshipRef: result.Ref, Component: "predicate", Message: "predicate could not be resolved or registered safely"})
-		}
-		if result.ScopeStatus == "unresolved" {
-			appendIssue(submissionAssessmentIssue{Code: "scope_unresolved", RelationshipRef: result.Ref, Component: "relationship", Message: "relationship scope could not be resolved safely"})
-		}
-		if result.TemporalVerdict == "ambiguous" || result.TemporalVerdict == "contradicted" {
-			appendIssue(submissionAssessmentIssue{Code: "temporal_uncertain", RelationshipRef: result.Ref, Component: "relationship", Message: "relationship time bounds are ambiguous or contradicted"})
-		}
-		if result.EvidenceVerdict != string(domain.VerificationEntailed) {
-			appendIssue(submissionAssessmentIssue{Code: "evidence_not_entailed", RelationshipRef: result.Ref, Component: "support", Message: "eligible evidence does not entail the proposed relationship"})
-		}
-		if result.Confidence < threshold {
-			appendIssue(submissionAssessmentIssue{Code: "grounding_low_confidence", RelationshipRef: result.Ref, Component: "relationship", Message: "relationship confidence is below the effective write threshold"})
-		}
-		if result.PredicateRange.Confidence < threshold {
-			appendIssue(submissionAssessmentIssue{Code: "grounding_low_confidence", RelationshipRef: result.Ref, Component: "predicate", Message: "predicate grounding confidence is below the effective write threshold"})
-		}
-		if result.ValueRange != nil && result.ValueRange.Confidence < threshold {
-			appendIssue(submissionAssessmentIssue{Code: "grounding_low_confidence", RelationshipRef: result.Ref, Component: "object", Message: "Value grounding confidence is below the effective write threshold"})
-		}
-		for _, support := range result.SupportRanges {
-			if support.Confidence < threshold {
-				appendIssue(submissionAssessmentIssue{Code: "grounding_low_confidence", RelationshipRef: result.Ref, Component: "support", Message: "support grounding confidence is below the effective write threshold"})
-				break
-			}
-		}
-	}
-	return issues, truncated
-}
-
-func submissionAssessmentEntityIssueTarget(plan submissionAssessmentPlan, entityRef string) (string, string) {
-	for _, relationship := range plan.RelationshipTargets {
-		if relationship.Target.SubjectRef == entityRef {
-			return relationship.Target.ProposalID, "subject"
-		}
-		if relationship.Target.ObjectRef != nil && *relationship.Target.ObjectRef == entityRef {
-			return relationship.Target.ProposalID, "object"
-		}
-	}
-	return "", "relationship"
+	s.logLifecycle(scope, "submission_rejected", "rejected", "semantic_commit", payload["failure_code"].(string), nil)
+	s.recordFirstDisposition(ctx, scope.TeamID, scope.OwnerProfileID, completed.FirstDisposition)
+	return nil
 }
 
 func submissionAssessmentSupports(
@@ -225,4 +117,39 @@ func submissionAssessmentItemForFragment(plan submissionAssessmentPlan, fragment
 		}
 	}
 	return submissionAssessmentItem{}, false
+}
+
+// repairSubmissionAssessmentResponse records entity results that the assessor
+// explicitly left ambiguous. It never invents a grounding, identity action, or
+// candidate; those are provider-owned semantic decisions.
+func repairSubmissionAssessmentResponse(
+	plan *submissionAssessmentPlan,
+	response *verifier.SemanticAssessmentResponse,
+) map[string]struct{} {
+	unsupported := make(map[string]struct{})
+	if plan == nil || response == nil {
+		return unsupported
+	}
+	for index := range response.EntityResults {
+		result := &response.EntityResults[index]
+		if _, ok := plan.entityTargetsByRef[result.Ref]; !ok {
+			continue
+		}
+		if result.Action == string(domain.EntityResolutionAmbiguous) ||
+			result.GroundingRef == nil || strings.TrimSpace(*result.GroundingRef) == "" {
+			unsupported[result.Ref] = struct{}{}
+		}
+	}
+	return unsupported
+}
+
+func unsupportedEntityResult(result verifier.SemanticAssessmentRelationshipSplit, unsupported map[string]struct{}) bool {
+	if _, found := unsupported[result.SubjectRef]; found {
+		return true
+	}
+	if result.ObjectRef != nil {
+		_, found := unsupported[*result.ObjectRef]
+		return found
+	}
+	return false
 }

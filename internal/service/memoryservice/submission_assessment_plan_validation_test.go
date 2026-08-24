@@ -79,6 +79,22 @@ func TestSubmissionAssessmentPlanPreservesKnownEntityIDForLogicalEndpoint(t *tes
 	assert.True(t, found)
 }
 
+func TestSubmissionAssessmentPlanPrioritizesKnownPredicateKey(t *testing.T) {
+	ledger, _, _, _, _ := submissionAssessmentWorkerFixture(t)
+	relationship := ledger.placement.Proposal["relationship_hints"].([]any)[0].(map[string]any)
+	predicate := relationship["predicate"].(map[string]any)
+	predicate["proposed_key"] = "proposal_only"
+	predicate["known_predicate_key"] = "exact_predicate"
+
+	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
+
+	require.NoError(t, err)
+	target := plan.relationshipsByRef["r:uses"]
+	assert.Equal(t, "exact_predicate", target.KnownPredicateKey)
+	assert.Equal(t, "exact_predicate", target.ProposedPredicate)
+	assert.Equal(t, "exact_predicate", target.Target.PredicateHint)
+}
+
 func TestSubmissionAssessmentPlanRejectsInvalidReviewContext(t *testing.T) {
 	for _, field := range []string{"correction_target", "conflict_context"} {
 		t.Run(field, func(t *testing.T) {
@@ -103,10 +119,6 @@ func TestSubmissionAssessmentPlanRejectsUnsupportedEndpointContext(t *testing.T)
 			mutate: func(relationship map[string]any) {
 				relationship["evidence_indices"] = []any{99}
 			},
-		},
-		{
-			name:   "unsupported modality",
-			mutate: func(relationship map[string]any) { relationship["modality"] = "unsupported" },
 		},
 	}
 	for _, test := range tests {

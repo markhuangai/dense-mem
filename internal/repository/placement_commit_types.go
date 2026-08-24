@@ -25,6 +25,7 @@ type PlacementEntityResolutionInput struct {
 	MentionRef      string
 	Action          string
 	EntityID        string
+	ExactEntityID   string
 	EntityKind      string
 	CanonicalName   string
 	FragmentID      string
@@ -37,19 +38,24 @@ type PlacementEntityResolutionInput struct {
 }
 
 type PlacementRelationshipDecisionInput struct {
-	Ref                     string
-	SubjectRef              string
-	OriginalPredicate       string
-	PredicateKey            string
-	PredicateVersion        int
-	PredicateCandidate      *PlacementPredicateCandidateInput
-	ObjectRef               string
-	ObjectValue             *PlacementValueInput
-	Polarity                string
-	ScopeKey                string
-	ValidFrom               *time.Time
-	ValidTo                 *time.Time
-	EvidenceVerdict         string
+	Ref                string
+	SubjectRef         string
+	OriginalPredicate  string
+	PredicateKey       string
+	PredicateVersion   int
+	ExactPredicateKey  string
+	PredicateCandidate *PlacementPredicateCandidateInput
+	ObjectRef          string
+	ObjectValue        *PlacementValueInput
+	Polarity           string
+	ScopeKey           string
+	ValidFrom          *time.Time
+	ValidTo            *time.Time
+	EvidenceVerdict    string
+	// AssessorAccepted marks the v2.6 Remember structural-assessment path.
+	// It carries support spans without manufacturing a legacy verdict or
+	// confidence policy value for the shared semantic tables.
+	AssessorAccepted        bool
 	PromoteToFact           bool
 	Confidence              *float64
 	Rationale               string

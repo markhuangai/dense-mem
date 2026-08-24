@@ -107,11 +107,30 @@ for (const testCase of acceptedCases) {
   assertAcceptedIngest(submissionID, input.evidence[0].content);
   verifierAfterAccepted = await waitForExactlyOneVerifierRequest(verifierAfterAccepted, teamID);
   const placement = await waitForTerminalPlacement(submissionID, testCase.allowProviderQuarantine);
+  assertTerminalRelationshipDisposition(placement, testCase.name);
   acceptedResults.push({
     name: testCase.name,
     submission_id: submissionID,
     processing_state: placement.processing_state,
   });
+}
+
+function assertTerminalRelationshipDisposition(placement, label) {
+  const results = Array.isArray(placement.relationship_results) ? placement.relationship_results : [];
+  if (results.length !== 1 || results[0]?.ref !== "security-e2e-uses") {
+    throw new Error(`${label} terminal status omitted its submitted Relationship disposition`);
+  }
+  const result = results[0];
+  if (placement.processing_state === "completed" && result.disposition !== "stored") {
+    throw new Error(`${label} completed without a stored Relationship disposition`);
+  }
+  if (placement.processing_state === "quarantined" &&
+      (result.disposition !== "not_stored" || result.reason !== "security_quarantine" || result.splits?.length !== 0)) {
+    throw new Error(`${label} quarantine did not return not_stored/security_quarantine`);
+  }
+  if (placement.processing_state === "rejected" && result.disposition !== "not_stored") {
+    throw new Error(`${label} rejection did not return a not_stored Relationship disposition`);
+  }
 }
 
 const isolatedTeam = await createTeam(`Security Intake Isolated ${runID}`);
@@ -205,19 +224,18 @@ function relationshipRememberInput(payload, idempotencyKey, source, clientCommen
       },
     },
     polarity: "+",
-    modality: "statement",
     evidence_indices: [0],
   };
   if (clientComment) {
     relationship.client_comment = clientComment;
   }
   return {
+    idempotency_key: idempotencyKey,
     evidence: [{
       content,
       source_type: "document",
       source,
       source_group: source,
-      idempotency_key: idempotencyKey,
     }],
     relationships: [relationship],
   };

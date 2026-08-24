@@ -205,9 +205,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode remember body: %v", err)
 			}
-			evidence := input["evidence"].([]any)
-			firstEvidence := evidence[0].(map[string]any)
-			idempotencyKey := firstEvidence["idempotency_key"].(string)
+			idempotencyKey := input["idempotency_key"].(string)
 			if _, ok := rememberIDs[idempotencyKey]; !ok {
 				t.Fatalf("remember input = %#v", input)
 			}

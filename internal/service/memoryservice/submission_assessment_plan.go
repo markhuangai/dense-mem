@@ -28,6 +28,7 @@ type submissionAssessmentEntityTarget struct {
 type submissionAssessmentRelationshipTarget struct {
 	Target            verifier.SemanticAssessmentRequiredRelationshipRef
 	ProposedPredicate string
+	KnownPredicateKey string
 	SubjectKind       string
 	ObjectKind        string
 	CorrectionTarget  *repository.PlacementCorrectionTargetInput
@@ -194,8 +195,12 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship predicate is required")
 	}
 	proposedPredicate := strings.TrimSpace(submissionAssessmentRawString(predicateRaw, "proposed_key"))
+	knownPredicateKey := strings.TrimSpace(submissionAssessmentRawString(predicateRaw, "known_predicate_key"))
+	if knownPredicateKey != "" {
+		proposedPredicate = knownPredicateKey
+	}
 	if proposedPredicate == "" || len([]rune(proposedPredicate)) > 128 {
-		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment proposed predicate is required and bounded")
+		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment predicate hint is required and bounded")
 	}
 
 	objectRaw, ok := proposalMap(raw["object"])
@@ -233,10 +238,6 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	if polarity != "+" && polarity != "-" {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship polarity is unsupported")
 	}
-	modality := strings.TrimSpace(submissionAssessmentRawString(raw, "modality"))
-	if !submissionAssessmentOneOf(modality, "statement", "question", "proposal", "speculation", "quoted") {
-		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship modality is unsupported")
-	}
 	validFrom, err := proposalOptionalTime(raw, "valid_from")
 	if err != nil {
 		return submissionAssessmentRelationshipTarget{}, nil, err
@@ -256,13 +257,13 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		ObjectRef:     objectRef,
 		ObjectValue:   objectValue,
 		Polarity:      polarity,
-		Modality:      modality,
 		ValidFrom:     submissionAssessmentTimeString(validFrom),
 		ValidTo:       submissionAssessmentTimeString(validTo),
 	}
 	entry := submissionAssessmentRelationshipTarget{
 		Target:            target,
 		ProposedPredicate: proposedPredicate,
+		KnownPredicateKey: knownPredicateKey,
 		SubjectKind:       subject.Target.Kind,
 		ObjectKind:        objectKind,
 	}
@@ -332,14 +333,17 @@ func submissionAssessmentEntityTargetFromProposal(
 	evidenceIDs []string,
 ) (submissionAssessmentEntityTarget, error) {
 	name := strings.TrimSpace(submissionAssessmentRawString(raw, "name"))
-	if name == "" || len([]rune(name)) > 256 {
-		return submissionAssessmentEntityTarget{}, errors.New("submission assessment entity name is required and bounded")
+	if name != "" && len([]rune(name)) > 256 {
+		return submissionAssessmentEntityTarget{}, errors.New("submission assessment entity name is too long")
 	}
 	kind := strings.TrimSpace(submissionAssessmentRawString(raw, "entity_kind"))
-	if !submissionAssessmentContains(domain.EntityKinds(), kind) {
+	if kind != "" && !submissionAssessmentContains(domain.EntityKinds(), kind) {
 		return submissionAssessmentEntityTarget{}, errors.New("submission assessment entity kind is unsupported")
 	}
 	knownEntityID := strings.TrimSpace(submissionAssessmentRawString(raw, "known_entity_id"))
+	if name == "" && knownEntityID == "" {
+		return submissionAssessmentEntityTarget{}, errors.New("submission assessment entity requires name or known_entity_id")
+	}
 	if knownEntityID != "" {
 		if _, err := uuid.Parse(knownEntityID); err != nil {
 			return submissionAssessmentEntityTarget{}, errors.New("submission assessment known entity id is invalid")

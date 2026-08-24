@@ -27,6 +27,21 @@ func rememberStageResultCompat(result *repository.CreateIngestResult) *remembera
 		StartedAt: result.StartedAt, UpdatedAt: result.UpdatedAt, CompletedAt: result.CompletedAt,
 		QuarantineExpiresAt: result.QuarantineExpiresAt,
 	}
+	for _, item := range result.RelationshipResults {
+		convertedResult := rememberapp.SubmissionRelationshipResult{
+			RelationshipRef: item.RelationshipRef,
+			Disposition:     item.Disposition,
+			Reason:          item.Reason,
+			Splits:          make([]rememberapp.SubmissionRelationshipSplit, 0, len(item.Splits)),
+		}
+		for _, split := range item.Splits {
+			convertedResult.Splits = append(convertedResult.Splits, rememberapp.SubmissionRelationshipSplit{
+				SplitIndex: split.SplitIndex, RelationshipID: split.RelationshipID,
+				RelationshipVersion: split.RelationshipVersion, Status: split.Status,
+			})
+		}
+		converted.RelationshipResults = append(converted.RelationshipResults, convertedResult)
+	}
 	for _, item := range result.Evidence {
 		converted.Evidence = append(converted.Evidence, rememberapp.EvidenceFragment{
 			FragmentID: item.FragmentID, EvidenceIndex: item.EvidenceIndex, Content: item.Content,
@@ -55,14 +70,31 @@ func rememberStatusCompat(result *rememberapp.SubmissionStatusResult) *Submissio
 		return nil
 	}
 	converted := &SubmissionStatusResult{
-		SubmissionID: result.SubmissionID, SubmissionKind: result.SubmissionKind,
+		ContractVersion: result.ContractVersion,
+		SubmissionID:    result.SubmissionID, SubmissionKind: result.SubmissionKind,
 		ProcessingState: result.ProcessingState, SearchState: result.SearchState,
 		CheckAfterSeconds: result.CheckAfterSeconds, CorrelationID: result.CorrelationID,
 		Attempts: result.Attempts, MaxAttempts: result.MaxAttempts, SubmittedAt: result.SubmittedAt,
 		NextAttemptAt: result.NextAttemptAt, StartedAt: result.StartedAt, UpdatedAt: result.UpdatedAt,
 		CompletedAt: result.CompletedAt, QuarantineExpiresAt: result.QuarantineExpiresAt,
-		Evidence: make([]SubmissionEvidenceStatus, 0, len(result.Evidence)),
-		Errors:   make([]SubmissionStatusError, 0, len(result.Errors)),
+		Evidence:     make([]SubmissionEvidenceStatus, 0, len(result.Evidence)),
+		Errors:       make([]SubmissionStatusError, 0, len(result.Errors)),
+		Degradations: make([]SubmissionStatusDegradation, 0, len(result.Degradations)),
+	}
+	for _, item := range result.RelationshipResults {
+		convertedResult := SubmissionRelationshipResult{
+			RelationshipRef: item.RelationshipRef,
+			Disposition:     item.Disposition,
+			Reason:          item.Reason,
+			Splits:          make([]SubmissionRelationshipSplit, 0, len(item.Splits)),
+		}
+		for _, split := range item.Splits {
+			convertedResult.Splits = append(convertedResult.Splits, SubmissionRelationshipSplit{
+				SplitIndex: split.SplitIndex, RelationshipID: split.RelationshipID,
+				RelationshipVersion: split.RelationshipVersion, Status: split.Status,
+			})
+		}
+		converted.RelationshipResults = append(converted.RelationshipResults, convertedResult)
 	}
 	for _, item := range result.Evidence {
 		superseded := append([]string(nil), item.SupersededEvidenceIDs...)
@@ -76,6 +108,7 @@ func rememberStatusCompat(result *rememberapp.SubmissionStatusResult) *Submissio
 		})
 	}
 	converted.Errors = append(converted.Errors, result.Errors...)
+	converted.Degradations = append(converted.Degradations, result.Degradations...)
 	if result.AwaitingConfirmation != nil {
 		converted.AwaitingConfirmation = &SubmissionAwaitingConfirmation{
 			ConfirmationToken: result.AwaitingConfirmation.ConfirmationToken,

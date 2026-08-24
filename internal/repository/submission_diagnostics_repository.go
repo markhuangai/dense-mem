@@ -75,6 +75,7 @@ const submissionDiagnosticProcessingStateSQL = `
 		WHEN run.status IN ('queued', 'guarded') THEN 'queued'
 		WHEN run.status = 'processing' THEN 'processing'
 		WHEN run.status = 'completed' THEN 'completed'
+		WHEN run.status = 'rejected' THEN 'rejected'
 		WHEN run.status = 'quarantined' THEN 'quarantined'
 		ELSE 'failed'
 	END`
@@ -101,8 +102,6 @@ const submissionDiagnosticSafePayloadSQL = `
 		'provider_status', {{payload}} -> 'provider_status',
 		'assessor_turns', {{payload}} -> 'assessor_turns',
 		'assessor_provider_attempted', {{payload}} -> 'assessor_provider_attempted',
-		'resubmission_issues', {{payload}} -> 'resubmission_issues',
-		'resubmission_issues_truncated', {{payload}} -> 'resubmission_issues_truncated',
 		'search_document_ids', {{payload}} -> 'search_document_ids',
 		'embedding_job_ids', {{payload}} -> 'embedding_job_ids'
 	))`
@@ -561,7 +560,7 @@ func validateSubmissionDiagnosticFilter(filter SubmissionDiagnosticFilter) error
 		}
 	}
 	switch filter.ProcessingState {
-	case "", "queued", "processing", "completed", "quarantined", "failed":
+	case "", "queued", "processing", "completed", "rejected", "quarantined", "failed":
 	default:
 		return fmt.Errorf("unsupported processing_state %q", filter.ProcessingState)
 	}

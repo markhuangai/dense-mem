@@ -24,7 +24,7 @@ E2E_FILE_ID=""
 E2E_SERVER_IMAGE=""
 E2E_PLAYWRIGHT_CONTAINER=""
 
-source "${ROOT_DIR}/scripts/e2e-compose-json.sh"; source "${ROOT_DIR}/scripts/e2e-compose-conflict.sh"; source "${ROOT_DIR}/scripts/e2e-compose-embedding-reconciliation.sh"; source "${ROOT_DIR}/scripts/e2e-compose-submission-status.sh"; source "${ROOT_DIR}/scripts/e2e-compose-security.sh"; source "${ROOT_DIR}/scripts/e2e-compose-prometheus.sh"
+source "${ROOT_DIR}/scripts/e2e-compose-json.sh"; source "${ROOT_DIR}/scripts/e2e-compose-all.sh"; source "${ROOT_DIR}/scripts/e2e-compose-conflict.sh"; source "${ROOT_DIR}/scripts/e2e-compose-embedding-reconciliation.sh"; source "${ROOT_DIR}/scripts/e2e-compose-submission-status.sh"; source "${ROOT_DIR}/scripts/e2e-compose-security.sh"; source "${ROOT_DIR}/scripts/e2e-compose-prometheus.sh"
 source "${ROOT_DIR}/scripts/e2e-compose-identity-cleanup.sh"; source "${ROOT_DIR}/scripts/e2e-compose-memory-spaces.sh"; source "${ROOT_DIR}/scripts/e2e-compose-oauth.sh"; source "${ROOT_DIR}/scripts/e2e-compose-private-memory.sh"
 sanitize_project_name() {
   local raw="$1"
@@ -332,7 +332,9 @@ compose_server_environment_value() {
 
 wait_for_postgres_service() {
   for _ in $(seq 1 90); do
-    if compose exec -T postgres sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
+    if compose exec -T postgres sh -ec \
+      'test "$(cat /proc/1/comm 2>/dev/null)" = postgres && pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+      >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
@@ -695,13 +697,7 @@ if [[ "$E2E_SCENARIO" == "all" ]]; then
     echo "DENSE_MEM_E2E_SCENARIO=all requires DENSE_MEM_E2E_MODE=standard." >&2
     exit 1
   fi
-  for scenario in mcp_boundaries mcp_sdk_parity mcp_sdk_transport oauth_provider_compatibility mcp_oauth private_memory_erasure security_runtime infrastructure_credentials submission_status submission_terminal_errors security_intake submission_assessment identity_cleanup community conflict conflict_queue embedding_reconciliation embedding_resilience memory_space_backfill memory_space_isolation space_aware_recall credential_memory_binding full; do
-    echo "Running compose e2e scenario ${scenario} as part of all."
-    DENSE_MEM_E2E_SCENARIO="$scenario" \
-    DENSE_MEM_E2E_RUN_ID="${DENSE_MEM_E2E_RUN_ID:-all}-$(printf '%s' "$scenario" | tr '[:upper:]' '[:lower:]')" \
-    DENSE_MEM_E2E_SKIP_PRECHECKS="${DENSE_MEM_E2E_SKIP_PRECHECKS:-1}" \
-    "$0"
-  done
+  run_all_e2e_scenarios
   exit 0
 fi
 
@@ -765,7 +761,7 @@ require_env_value AI_API_URL >/dev/null
 require_env_value AI_API_KEY >/dev/null
 require_env_value AI_API_EMBEDDING_MODEL >/dev/null
 require_env_value AI_API_EMBEDDING_DIMENSIONS >/dev/null
-if [[ "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "submission_terminal_errors" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "community" || "$E2E_SCENARIO" == "conflict_queue" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ]]; then
+if [[ "$E2E_MODE" != "entra_scim" && ( "$E2E_SCENARIO" == "full" || "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "submission_terminal_errors" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "community" || "$E2E_SCENARIO" == "conflict_queue" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ) ]]; then
   require_env_value AI_VERIFIER_API_URL >/dev/null
   require_env_value AI_VERIFIER_API_KEY >/dev/null
   require_env_value AI_VERIFIER_MODEL >/dev/null
@@ -794,7 +790,9 @@ fi
 export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
 
-if [[ "$E2E_MODE" == "entra_scim" ]]; then
+if [[ "${DENSE_MEM_E2E_PRECHECKS_COMPLETED:-0}" == "1" ]]; then
+  :
+elif [[ "$E2E_MODE" == "entra_scim" ]]; then
   echo "Skipping unrelated compose prechecks for the Entra SCIM scenario."
 elif [[ "$E2E_SCENARIO" == "portal" || "$E2E_SCENARIO" == "oauth_provider_compatibility" ]]; then
   echo "Skipping unrelated disposable PostgreSQL prechecks for the ${E2E_SCENARIO} scenario."
@@ -802,11 +800,7 @@ elif [[ "${DENSE_MEM_E2E_SKIP_PRECHECKS:-0}" == "1" ]]; then
   echo "Skipping disposable PostgreSQL prechecks by DENSE_MEM_E2E_SKIP_PRECHECKS."
 else
   echo "Running disposable PostgreSQL SSO and evidence-grounded Dreams regressions."
-  DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 go test \
-    ./internal/repository \
-    ./internal/http \
-    -run '^(TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment|TestScheduledDreamRecoveryFencesExpiredLease|TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited|TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration)$' \
-    -count=1
+  run_disposable_postgres_prechecks
 fi
 
 prepare_conflict_review_driver
@@ -957,6 +951,10 @@ if [[ "$E2E_SCENARIO" == "conflict_queue" ]]; then run_conflict_queue_e2e "$team
 if [[ "$E2E_SCENARIO" == "embedding_reconciliation" ]]; then run_embedding_reconciliation_e2e "$team_id"; exit 0; fi
 if [[ "$E2E_SCENARIO" == "embedding_resilience" ]]; then run_embedding_resilience_e2e "$team_id"; exit 0; fi
 if [[ "$E2E_SCENARIO" == "memory_space_backfill" || "$E2E_SCENARIO" == "memory_space_isolation" || "$E2E_SCENARIO" == "space_aware_recall" || "$E2E_SCENARIO" == "credential_memory_binding" ]]; then run_memory_spaces_e2e "$team_id" "$api_key"; exit 0; fi
+if [[ "$E2E_SCENARIO" == "full" ]]; then
+  echo "Seeding the submission-status graph fixture for the full portal suite."
+  run_submission_status_e2e "$team_id" 1
+fi
 echo "Running compose-backed scheduled team dreaming e2e."
 dream_json="$(DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
 DENSE_MEM_USER_URL="$USER_URL" \

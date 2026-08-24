@@ -50,90 +50,31 @@ func TestSubmissionAssessmentWorkerAssessesWholeRunAndCommitsAtomically(t *testi
 	assert.Len(t, catalog.predicateOptionInputs, 1)
 }
 
-func TestSubmissionAssessmentWorkerPersistsNormalizerModelProvenance(t *testing.T) {
-	_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
-	service := worker.(*submissionAssessmentPlacementWorkerService)
-	service.normalizer = submissionAssessmentWorkerNormalizerStub{
-		response: func(req verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error) {
-			return submissionAssessmentValidNormalizerResponse(req), nil
-		},
+func TestSubmissionAssessmentWorkerRepairsInSameSessionWithRefreshedCandidates(t *testing.T) {
+	_, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
+	provider.responseForTurn = func(req verifier.SemanticAssessmentRequest, turn int) (verifier.SemanticAssessmentResponse, error) {
+		response := submissionAssessmentValidResponse(req, false)
+		if turn == 1 {
+			response.EntityResults[0].GroundingRef = nil
+			response.EntityResults[0].Action = string(domain.EntityResolutionAmbiguous)
+			response.EntityResults[0].CandidateEntityID = nil
+		}
+		return response, nil
 	}
 
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
 	require.NoError(t, err)
 	require.True(t, processed)
-	require.NotNil(t, assessments.assessment)
-	assert.Equal(t, "remember-normalizer-model", assessments.assessment.Model)
-}
-
-func TestSubmissionAssessmentWorkerReleasesAttemptWhenNormalizerLimitMeasurementFails(t *testing.T) {
-	_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
-	service := worker.(*submissionAssessmentPlacementWorkerService)
-	service.normalizer = submissionAssessmentWorkerNormalizerStub{
-		response: func(req verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error) {
-			service.limits.Tokenizer = "unsupported-tokenizer"
-			return submissionAssessmentValidNormalizerResponse(req), nil
-		},
-	}
-
-	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
-	require.NoError(t, err)
-	assert.True(t, processed)
-	assert.Zero(t, assessments.persistCalls)
-	require.Len(t, assessments.requeues, 1)
-	assert.True(t, assessments.requeues[0].ReleaseAssessorAttempt)
-}
-
-func TestSubmissionAssessmentWorkerMapsNormalizerInputBudgetFailure(t *testing.T) {
-	_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
-	worker.(*submissionAssessmentPlacementWorkerService).normalizer = submissionAssessmentWorkerNormalizerStub{
-		response: func(verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error) {
-			return verifier.RememberNormalizerResponse{}, &verifier.MalformedResponseError{
-				Provider:     "stub",
-				Message:      "normalizer conversation exceeds input token limit",
-				FailureClass: "input_budget",
-				Attempts:     4,
-			}
-		},
-	}
-
-	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
-	require.NoError(t, err)
-	require.True(t, processed)
-	require.Len(t, assessments.completions, 1)
-	assert.Equal(t, string(SubmissionErrorNormalizationFailed), assessments.completions[0].Payload["failure_code"])
-}
-
-func TestSubmissionAssessmentWorkerExcludesAdapterFieldsFromNormalizerBudget(t *testing.T) {
-	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
-	service := worker.(*submissionAssessmentPlacementWorkerService)
-	service.normalizer = submissionAssessmentWorkerNormalizerStub{
-		response: func(req verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error) {
-			return submissionAssessmentValidNormalizerResponse(req), nil
-		},
-	}
-
-	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
-	require.NoError(t, err)
-	probeRequest, err := service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
-	require.NoError(t, err)
-	normalizerResponse := submissionAssessmentValidNormalizerResponse(probeRequest)
-	raw, err := json.Marshal(normalizerResponse)
-	require.NoError(t, err)
-	normalizerTokens, err := verifier.CountTokens(string(raw), service.limits.Tokenizer)
-	require.NoError(t, err)
-	service.limits.MaxOutputTokens = normalizerTokens
-
-	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
-	require.NoError(t, err)
-	require.True(t, processed)
-	require.NotNil(t, assessments.assessment)
-	assert.Greater(t, assessments.assessment.OutputTokens, normalizerTokens)
+	assert.Equal(t, 2, provider.calls)
+	assert.Equal(t, provider.startSessionID, provider.repairSessionID)
+	assert.Len(t, catalog.entityInputs, 2, "candidate context must be refreshed before repair")
+	assert.Len(t, assessments.commits, 1)
+	assert.Equal(t, 1, assessments.persistCalls, "only the repaired complete response may be persisted")
 }
 
 func TestSubmissionAssessmentWorkerTerminalizesPredicateOptionOverflowBeforeProvider(t *testing.T) {
 	_, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
-	worker.(*submissionAssessmentPlacementWorkerService).normalizer = submissionAssessmentWorkerNormalizerStub{}
 	catalog.predicateComplete = false
 
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
@@ -145,7 +86,7 @@ func TestSubmissionAssessmentWorkerTerminalizesPredicateOptionOverflowBeforeProv
 	require.Len(t, assessments.completions, 1)
 	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), assessments.completions[0].Status)
 	assert.Equal(t, "predicate_options_overflow", assessments.completions[0].Payload["failure_stage"])
-	assert.Equal(t, string(SubmissionErrorRequiresResubmission), assessments.completions[0].Payload["failure_code"])
+	assert.Equal(t, string(SubmissionErrorInputBudgetExceeded), assessments.completions[0].Payload["failure_code"])
 }
 
 func TestSubmissionAssessmentWorkerPassesControlledRegistrationToAtomicCommit(t *testing.T) {
@@ -204,6 +145,7 @@ func TestSubmissionAssessmentWorkerQuarantinesProposalSignalsAcrossEveryFragment
 	completion := assessments.completions[0]
 	assert.Equal(t, string(domain.SemanticReviewQuarantined), completion.Status)
 	assert.Equal(t, map[string]any{"assessor_contract": domain.ContractVersion}, completion.Payload)
+	assertSubmissionAssessmentQuarantineRelationshipResults(t, completion.RelationshipResults)
 	require.Len(t, completion.SecurityQuarantines, len(ledger.placement.Evidence))
 	for _, quarantine := range completion.SecurityQuarantines {
 		require.NotEmpty(t, quarantine.Signals)
@@ -215,7 +157,7 @@ func TestSubmissionAssessmentWorkerQuarantinesProposalSignalsAcrossEveryFragment
 	}
 }
 
-func TestSubmissionAssessmentWorkerMarksStaleSourceSuperseded(t *testing.T) {
+func TestSubmissionAssessmentWorkerMarksStaleSourceRejected(t *testing.T) {
 	_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
 	assessments.commitErr = repository.ErrPlacementStaleSource
 
@@ -224,8 +166,76 @@ func TestSubmissionAssessmentWorkerMarksStaleSourceSuperseded(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, processed)
 	require.Len(t, assessments.completions, 1)
-	assert.Equal(t, string(domain.SemanticReviewSuperseded), assessments.completions[0].Status)
-	assert.Equal(t, map[string]any{"assessor_contract": domain.ContractVersion}, assessments.completions[0].Payload)
+	assert.Equal(t, string(domain.SemanticReviewRejected), assessments.completions[0].Status)
+	assert.Equal(t, string(SubmissionErrorStaleInput), assessments.completions[0].Payload["failure_code"])
+	require.Len(t, assessments.completions[0].RelationshipResults, 3)
+	for _, result := range assessments.completions[0].RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorStaleInput), result.Reason)
+		assert.Empty(t, result.Splits)
+	}
+}
+
+func TestSubmissionAssessmentWorkerPersistsNotStoredResultsForPartialCoverageRejection(t *testing.T) {
+	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+		response := submissionAssessmentValidResponse(req, false)
+		for index := range response.RelationshipResults {
+			result := &response.RelationshipResults[index]
+			if result.Ref != "r:supports" {
+				continue
+			}
+			reason := "not_supported_by_evidence"
+			result.Disposition = "not_supported"
+			result.Reason = &reason
+			result.Splits = nil
+		}
+		return response, nil
+	}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Empty(t, assessments.commits)
+	require.Len(t, assessments.completions, 1)
+	completion := assessments.completions[0]
+	require.Equal(t, string(domain.SemanticReviewRejected), completion.Status)
+	require.Equal(t, string(SubmissionErrorNoSupportedMemory), completion.Payload["failure_code"])
+	require.Len(t, completion.RelationshipResults, 3)
+	for _, result := range completion.RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, "not_supported_by_evidence", result.Reason)
+		assert.Empty(t, result.Splits)
+	}
+}
+
+func TestSubmissionAssessmentWorkerPersistsAllUnsupportedRelationshipResults(t *testing.T) {
+	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+		response := submissionAssessmentValidResponse(req, false)
+		for index := range response.RelationshipResults {
+			reason := "not_supported_by_evidence"
+			response.RelationshipResults[index].Disposition = "not_supported"
+			response.RelationshipResults[index].Reason = &reason
+			response.RelationshipResults[index].Splits = nil
+		}
+		return response, nil
+	}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Empty(t, assessments.commits)
+	require.Len(t, assessments.completions, 1)
+	results := assessments.completions[0].RelationshipResults
+	require.Len(t, results, 3)
+	for _, result := range results {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, "not_supported_by_evidence", result.Reason)
+		assert.Empty(t, result.Splits)
+	}
 }
 
 func TestSubmissionAssessmentWorkerReusesPersistedAssessmentWithoutAnotherProviderCall(t *testing.T) {
@@ -281,14 +291,14 @@ func TestSubmissionAssessmentWorkerTerminalizesMalformedProviderResponse(t *test
 
 	require.NoError(t, err)
 	assert.True(t, processed)
-	assert.Equal(t, 1, provider.calls)
+	assert.Equal(t, SemanticPlacementMaxAssessorTurns, provider.calls)
 	assert.Zero(t, assessments.persistCalls)
 	assert.Empty(t, assessments.requeues)
 	require.Len(t, assessments.completions, 1)
 	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), assessments.completions[0].Status)
 	assert.Equal(t, "assessment", assessments.completions[0].Payload["failure_stage"])
-	assert.Equal(t, "malformed_response", assessments.completions[0].Payload["failure_class"])
-	assert.Equal(t, 1, assessments.completions[0].Payload["assessor_turns"])
+	assert.Equal(t, "malformed_exhausted", assessments.completions[0].Payload["failure_class"])
+	assert.Equal(t, SemanticPlacementMaxAssessorTurns, assessments.completions[0].Payload["assessor_turns"])
 }
 
 func TestSubmissionAssessmentWorkerRequeuesPlacementLoadFailure(t *testing.T) {
@@ -325,14 +335,29 @@ func TestSubmissionAssessmentWorkerCompletesProviderSecurityQuarantine(t *testin
 	completion := assessments.completions[0]
 	assert.Equal(t, string(domain.SemanticReviewQuarantined), completion.Status)
 	assert.Equal(t, map[string]any{"assessor_contract": domain.ContractVersion}, completion.Payload)
+	assertSubmissionAssessmentQuarantineRelationshipResults(t, completion.RelationshipResults)
 	require.Len(t, completion.SecurityQuarantines, 1)
 	assert.Equal(t, ledger.placement.Evidence[1].FragmentID, completion.SecurityQuarantines[0].FragmentID)
 	require.Len(t, completion.SecurityQuarantines[0].Signals, 1)
 	assert.Equal(t, "Gamma", completion.SecurityQuarantines[0].Signals[0].Quote)
 }
 
+func assertSubmissionAssessmentQuarantineRelationshipResults(
+	t *testing.T,
+	results []repository.SubmissionRelationshipResultInput,
+) {
+	t.Helper()
+	require.Len(t, results, 3)
+	for index, wantRef := range []string{"r:depends", "r:supports", "r:uses"} {
+		assert.Equal(t, wantRef, results[index].RelationshipRef)
+		assert.Equal(t, "not_stored", results[index].Disposition)
+		assert.Equal(t, "security_quarantine", results[index].Reason)
+		assert.Empty(t, results[index].Splits)
+	}
+}
+
 func TestSubmissionAssessmentWorkerPlansAndCommitsTypedValue(t *testing.T) {
-	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+	ledger, _, _, _, worker := submissionAssessmentWorkerFixture(t)
 	placement := submissionAssessmentValueFixturePlacement(t, ledger.run)
 	plan, err := buildSubmissionAssessmentPlan(placement)
 	require.NoError(t, err)
@@ -357,24 +382,19 @@ func TestSubmissionAssessmentWorkerPlansAndCommitsTypedValue(t *testing.T) {
 		RequestID:       request.RequestID,
 		SecuritySignals: []verifier.SemanticAssessmentSecuritySignal{},
 		EntityResults: []verifier.SemanticAssessmentEntityResult{{
-			Ref: entity.Ref, GroundingRef: &groundingRef, Action: string(domain.EntityResolutionCreate), Confidence: 0.99,
-			Rationale: "No candidate is present in the complete catalog.",
+			Ref: entity.Ref, GroundingRef: &groundingRef, Action: string(domain.EntityResolutionCreate),
 		}},
 		RelationshipResults: []verifier.SemanticAssessmentRelationshipResult{{
-			Ref:             request.SubmittedRelationships[0].Ref,
-			SubjectRef:      request.SubmittedRelationships[0].SubjectRef,
-			PredicateRange:  predicateRange,
-			PredicateStatus: "registration_required",
-			ObjectValue:     &value,
-			ValueRange:      &valueRange,
-			Polarity:        "+",
-			Modality:        "statement",
-			SupportRanges:   []verifier.SemanticAssessmentGroundedRange{supportRange},
-			ScopeStatus:     "absent",
-			EvidenceVerdict: string(domain.VerificationEntailed),
-			TemporalVerdict: "absent",
-			Confidence:      0.99,
-			Rationale:       "The evidence explicitly states the typed value.",
+			Ref: request.SubmittedRelationships[0].Ref, Disposition: "stored",
+			Splits: []verifier.SemanticAssessmentRelationshipSplit{{
+				SplitIndex: 0, SubjectRef: request.SubmittedRelationships[0].SubjectRef,
+				PredicateRange: predicateRange, PredicateStatus: "registration_required",
+				PredicateRegistration: &verifier.SemanticAssessmentPredicateRegistration{
+					PredicateKey: "has_latency", RelationshipKind: "state", CurrentCardinality: "many",
+				},
+				ObjectValue: &value, ValueRange: &valueRange, Polarity: "+",
+				SupportRanges: []verifier.SemanticAssessmentGroundedRange{supportRange},
+			}},
 		}},
 	}
 	prepared, validationErrors := verifier.PrepareSemanticAssessmentResponse(request, response, service.limits)
@@ -386,10 +406,8 @@ func TestSubmissionAssessmentWorkerPlansAndCommitsTypedValue(t *testing.T) {
 		*ledger.run,
 		submissionAssessmentRunScope(*ledger.run, "submission-assessment-worker"),
 		plan,
-		request,
 		prepared,
 		assessment,
-		assessments.policy,
 		false,
 	)
 	require.NoError(t, err)
@@ -424,9 +442,14 @@ func TestSubmissionAssessmentWorkerTerminalizesConsumedAssessmentAttempt(t *test
 	require.Len(t, assessments.completions, 1)
 	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), assessments.completions[0].Status)
 	assert.Equal(t, "assessment_attempt_consumed", assessments.completions[0].Payload["failure_stage"])
+	require.Len(t, assessments.completions[0].RelationshipResults, 3)
+	for _, result := range assessments.completions[0].RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+	}
 }
 
-func TestSubmissionAssessmentWorkerRequeuesInvalidStoredResponse(t *testing.T) {
+func TestSubmissionAssessmentWorkerRegeneratesInvalidStoredResponse(t *testing.T) {
 	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
 	assessments.assessment = &repository.SubmissionAssessment{
 		AssessmentID: uuid.NewString(), NormalizedResponse: json.RawMessage(`not-json`), ResponseHash: "sha256:invalid",
@@ -436,10 +459,11 @@ func TestSubmissionAssessmentWorkerRequeuesInvalidStoredResponse(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, processed)
-	assert.Zero(t, provider.calls)
-	require.Len(t, assessments.requeues, 1)
-	assert.Equal(t, "assessment", assessments.requeues[0].Payload["failure_stage"])
-	assert.NotEmpty(t, assessments.requeues[0].Payload["failure_reason_code"])
+	assert.Equal(t, 1, provider.calls)
+	require.Len(t, assessments.revisionInputs, 1)
+	assert.Equal(t, 1, assessments.revisionInputs[0].ProviderTurns)
+	assert.Empty(t, assessments.requeues)
+	assert.Len(t, assessments.commits, 1)
 }
 
 func TestSubmissionAssessmentDeterministicQuarantineUsesSignalEvidenceIndex(t *testing.T) {
@@ -564,8 +588,6 @@ func TestSubmissionAssessmentWorkerValidatesRequiredDependencies(t *testing.T) {
 		{name: "provider", mutate: func(service *submissionAssessmentPlacementWorkerService) { service.provider = nil }},
 		{name: "team", mutate: func(service *submissionAssessmentPlacementWorkerService) { service.teamID = "" }},
 		{name: "worker", mutate: func(service *submissionAssessmentPlacementWorkerService) { service.workerID = "" }},
-		{name: "low threshold", mutate: func(service *submissionAssessmentPlacementWorkerService) { service.globalConfidenceThreshold = -0.01 }},
-		{name: "high threshold", mutate: func(service *submissionAssessmentPlacementWorkerService) { service.globalConfidenceThreshold = 1.01 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -600,7 +622,7 @@ func TestDecodeStoredSubmissionAssessmentRejectsTamperingAndContractDrift(t *tes
 		{name: "contract drift", mutate: func(assessment *repository.SubmissionAssessment) {
 			var response verifier.SemanticAssessmentResponse
 			require.NoError(t, json.Unmarshal(assessment.NormalizedResponse, &response))
-			response.RelationshipResults[0].Polarity = "-"
+			response.RelationshipResults[0].Splits[0].Polarity = "-"
 			raw, err := json.Marshal(response)
 			require.NoError(t, err)
 			canonical, err := verifier.CanonicalJSON(raw)
@@ -718,11 +740,7 @@ func submissionAssessmentWorkerFixture(t *testing.T) (*submissionAssessmentWorke
 	}
 	placement := submissionAssessmentFixturePlacement(t, run)
 	ledger := &submissionAssessmentWorkerLedgerStub{run: run, placement: placement}
-	assessments := &submissionAssessmentWorkerAssessmentStub{policy: repository.AutoWriteConfidencePolicy{
-		Threshold:     0.7,
-		ConfigVersion: 1,
-		Version:       repository.AssessmentPolicyVersion,
-	}}
+	assessments := &submissionAssessmentWorkerAssessmentStub{}
 	catalog := &submissionAssessmentWorkerCatalogStub{
 		predicateOptions: []repository.SemanticReviewPredicateCandidate{
 			{PredicateKey: "uses", Version: 1, AllowedSubjectKinds: []string{"concept"}, AllowedObjectKinds: []string{"concept"}, RelationshipKind: "state", CurrentCardinality: "many", LifecycleState: "active"},
@@ -734,15 +752,14 @@ func submissionAssessmentWorkerFixture(t *testing.T) (*submissionAssessmentWorke
 	}
 	provider := &submissionAssessmentWorkerProviderStub{}
 	worker := NewSubmissionAssessmentPlacementWorkerService(SubmissionAssessmentPlacementWorkerDependencies{
-		Ledger:                    ledger,
-		Assessments:               assessments,
-		Catalog:                   catalog,
-		Provider:                  provider,
-		Limits:                    verifier.DefaultSemanticAssessmentLimits(),
-		GlobalConfidenceThreshold: 0.7,
-		TeamID:                    teamID,
-		WorkerID:                  "submission-assessment-worker",
-		Now:                       func() time.Time { return time.Unix(0, 0).UTC() },
+		Ledger:      ledger,
+		Assessments: assessments,
+		Catalog:     catalog,
+		Provider:    provider,
+		Limits:      verifier.DefaultSemanticAssessmentLimits(),
+		TeamID:      teamID,
+		WorkerID:    "submission-assessment-worker",
+		Now:         func() time.Time { return time.Unix(0, 0).UTC() },
 	})
 	return ledger, assessments, catalog, provider, worker
 }
@@ -796,7 +813,6 @@ func submissionAssessmentValueFixturePlacement(t *testing.T, run *repository.Pla
 				"type": "number", "value": 42, "display": " 42 ms ", "unit": " ms ",
 			}},
 			"polarity":         "+",
-			"modality":         "statement",
 			"evidence_indices": []any{0},
 		}}},
 		Evidence: []repository.EvidenceFragment{fragment},
@@ -813,7 +829,6 @@ func submissionAssessmentRelationship(ref string, evidenceIndex int, subject, ob
 		"predicate":        map[string]any{"proposed_key": proposedKey},
 		"object":           map[string]any{"entity": map[string]any{"name": object, "entity_kind": "concept"}},
 		"polarity":         "+",
-		"modality":         "statement",
 		"evidence_indices": []any{evidenceIndex},
 	}
 }
@@ -834,7 +849,7 @@ func submissionAssessmentValidResponse(req verifier.SemanticAssessmentRequest, r
 		usedGroundings[grounding.EvidenceID+":"+grounding.StartRef+":"+grounding.EndRef] = struct{}{}
 		groundingRef := grounding.GroundingRef
 		entities = append(entities, verifier.SemanticAssessmentEntityResult{
-			Ref: entity.Ref, GroundingRef: &groundingRef, Action: "create", Confidence: 0.99, Rationale: "No matching entity is in the complete candidate catalog.",
+			Ref: entity.Ref, GroundingRef: &groundingRef, Action: "create",
 		})
 	}
 	ranges := map[string][4]int{
@@ -847,20 +862,25 @@ func submissionAssessmentValidResponse(req verifier.SemanticAssessmentRequest, r
 		positions := ranges[relationship.Ref]
 		evidence := submissionAssessmentTestEvidence(req, relationship.EvidenceIDs[0])
 		result := verifier.SemanticAssessmentRelationshipResult{
-			Ref: relationship.Ref, SubjectRef: relationship.SubjectRef,
-			PredicateRange: submissionAssessmentTestRange(evidence, positions[0], positions[1]),
-			ObjectRef:      relationship.ObjectRef, ObjectValue: relationship.ObjectValue, Polarity: relationship.Polarity, Modality: relationship.Modality,
-			SupportRanges: []verifier.SemanticAssessmentGroundedRange{submissionAssessmentTestRange(evidence, positions[2], positions[3])}, ScopeStatus: "absent", EvidenceVerdict: "entailed", TemporalVerdict: "absent", Confidence: 0.95,
-			Rationale: "The exact submitted evidence supports the relationship.",
+			Ref: relationship.Ref, Disposition: "stored",
+			Splits: []verifier.SemanticAssessmentRelationshipSplit{{
+				SplitIndex: 0, SubjectRef: relationship.SubjectRef,
+				PredicateRange: submissionAssessmentTestRange(evidence, positions[0], positions[1]),
+				ObjectRef:      relationship.ObjectRef, ObjectValue: relationship.ObjectValue, Polarity: relationship.Polarity,
+				SupportRanges: []verifier.SemanticAssessmentGroundedRange{submissionAssessmentTestRange(evidence, positions[2], positions[3])},
+			}},
 		}
 		if registerSupports && relationship.Ref == "r:supports" {
-			result.PredicateStatus = "registration_required"
+			result.Splits[0].PredicateStatus = "registration_required"
+			result.Splits[0].PredicateRegistration = &verifier.SemanticAssessmentPredicateRegistration{
+				PredicateKey: "supports", RelationshipKind: "state", CurrentCardinality: "many",
+			}
 		} else {
 			key := map[string]string{"r:uses": "uses", "r:depends": "depends_on", "r:supports": "supports"}[relationship.Ref]
 			version := 1
-			result.PredicateStatus = "resolved"
-			result.PredicateKey = &key
-			result.PredicateVersion = &version
+			result.Splits[0].PredicateStatus = "resolved"
+			result.Splits[0].PredicateKey = &key
+			result.Splits[0].PredicateVersion = &version
 		}
 		relationships = append(relationships, result)
 	}
@@ -870,62 +890,6 @@ func submissionAssessmentValidResponse(req verifier.SemanticAssessmentRequest, r
 		EntityResults:       entities,
 		RelationshipResults: relationships,
 	}
-}
-
-func submissionAssessmentValidNormalizerResponse(req verifier.RememberNormalizerRequest) verifier.RememberNormalizerResponse {
-	semantic := submissionAssessmentValidResponse(req, false)
-	response := verifier.RememberNormalizerResponse{
-		RequestID:           semantic.RequestID,
-		SecuritySignals:     make([]verifier.RememberNormalizerSecuritySignal, 0, len(semantic.SecuritySignals)),
-		EntityResults:       make([]verifier.RememberNormalizerEntityResult, 0, len(semantic.EntityResults)),
-		RelationshipResults: make([]verifier.RememberNormalizerRelationshipResult, 0, len(semantic.RelationshipResults)),
-	}
-	for _, signal := range semantic.SecuritySignals {
-		response.SecuritySignals = append(response.SecuritySignals, verifier.RememberNormalizerSecuritySignal(signal))
-	}
-	for _, entity := range semantic.EntityResults {
-		response.EntityResults = append(response.EntityResults, verifier.RememberNormalizerEntityResult{
-			Ref:               entity.Ref,
-			GroundingRef:      entity.GroundingRef,
-			Action:            entity.Action,
-			CandidateEntityID: entity.CandidateEntityID,
-		})
-	}
-	for _, relationship := range semantic.RelationshipResults {
-		predicateStatus := relationship.PredicateStatus
-		if predicateStatus == "unresolved" {
-			predicateStatus = "registration_required"
-		}
-		converted := verifier.RememberNormalizerRelationshipResult{
-			Ref:              relationship.Ref,
-			SubjectRef:       relationship.SubjectRef,
-			PredicateRange:   submissionAssessmentNormalizerRange(relationship.PredicateRange),
-			PredicateStatus:  predicateStatus,
-			PredicateKey:     relationship.PredicateKey,
-			PredicateVersion: relationship.PredicateVersion,
-			ObjectRef:        relationship.ObjectRef,
-			ObjectValue:      relationship.ObjectValue,
-			Polarity:         relationship.Polarity,
-			Modality:         relationship.Modality,
-			ScopeStatus:      relationship.ScopeStatus,
-			ScopeKey:         relationship.ScopeKey,
-			ValidFrom:        relationship.ValidFrom,
-			ValidTo:          relationship.ValidTo,
-		}
-		for _, support := range relationship.SupportRanges {
-			converted.SupportRanges = append(converted.SupportRanges, submissionAssessmentNormalizerRange(support))
-		}
-		if relationship.ValueRange != nil {
-			valueRange := submissionAssessmentNormalizerRange(*relationship.ValueRange)
-			converted.ValueRange = &valueRange
-		}
-		response.RelationshipResults = append(response.RelationshipResults, converted)
-	}
-	return response
-}
-
-func submissionAssessmentNormalizerRange(value verifier.SemanticAssessmentGroundedRange) verifier.RememberNormalizerRange {
-	return verifier.RememberNormalizerRange{EvidenceID: value.EvidenceID, StartRef: value.StartRef, EndRef: value.EndRef, Start: value.Start, End: value.End}
 }
 
 func submissionAssessmentTestEvidence(req verifier.SemanticAssessmentRequest, evidenceID string) verifier.SemanticReviewEvidence {
@@ -947,7 +911,6 @@ func submissionAssessmentTestRange(evidence verifier.SemanticReviewEvidence, sta
 		EvidenceID: evidence.EvidenceID,
 		StartRef:   startRef,
 		EndRef:     endRef,
-		Confidence: 0.99,
 		Start:      start,
 		End:        end,
 	}

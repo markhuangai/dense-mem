@@ -129,29 +129,47 @@ func submissionStatusErrorArraySchema() map[string]any {
 	return array(submissionStatusErrorSchema(), 0, 50)
 }
 
+func submissionStatusDegradationArraySchema() map[string]any {
+	return array(closedObject(
+		[]string{"frontier", "optional", "code", "message"},
+		map[string]any{
+			"frontier": schemaEnum([]string{"search"}),
+			"optional": map[string]any{"type": "boolean"},
+			"code":     schemaEnum([]string{string(memoryservice.SubmissionErrorSearchIndexingDelayed)}),
+			"message":  schemaString("Bounded optional submission degradation.", 512),
+		},
+	), 0, 10)
+}
+
+func submissionRelationshipResultsSchema() map[string]any {
+	return array(closedObject(
+		[]string{"ref", "disposition", "splits"},
+		map[string]any{
+			"ref":         schemaString("Client-local relationship reference.", 128),
+			"disposition": schemaEnum([]string{"stored", "not_stored"}),
+			"reason":      schemaString("Bounded server disposition reason.", 256),
+			"splits": array(closedObject(
+				[]string{"split_index", "relationship_id", "relationship_version", "status"},
+				map[string]any{
+					"split_index":          map[string]any{"type": "integer", "minimum": 0},
+					"relationship_id":      schemaString("Canonical Relationship ID.", 128),
+					"relationship_version": map[string]any{"type": "integer", "minimum": 1},
+					"status":               schemaString("Canonical Relationship status.", 64),
+				},
+			), 0, 50),
+		},
+	), 0, 200)
+}
+
 func submissionStatusErrorSchema() map[string]any {
 	return closedObject(
 		[]string{"code", "message", "retryable", "next_action", "remediation"},
 		map[string]any{
-			"code":                          schemaEnum(memoryservice.SubmissionErrorCodes()),
-			"message":                       schemaString("Bounded safe submission error.", 512),
-			"retryable":                     map[string]any{"type": "boolean"},
-			"next_action":                   schemaEnum(memoryservice.SubmissionNextActions()),
-			"remediation":                   schemaString("Bounded action the caller can take next.", 512),
-			"resubmission_issues":           array(submissionResubmissionIssueSchema(), 0, 50),
-			"resubmission_issues_truncated": map[string]any{"type": "boolean"},
-		},
-	)
-}
-
-func submissionResubmissionIssueSchema() map[string]any {
-	return closedObject(
-		[]string{"code", "message"},
-		map[string]any{
-			"code":             schemaString("Bounded resubmission issue code.", 128),
-			"relationship_ref": schemaString("Client-local relationship reference.", 128),
-			"component":        schemaString("Relationship component requiring correction.", 128),
-			"message":          schemaString("Bounded resubmission guidance.", 512),
+			"code":        schemaEnum(memoryservice.SubmissionErrorCodes()),
+			"message":     schemaString("Bounded safe submission error.", 512),
+			"retryable":   map[string]any{"type": "boolean"},
+			"next_action": schemaEnum(memoryservice.SubmissionNextActions()),
+			"remediation": schemaString("Bounded action the caller can take next.", 512),
 		},
 	)
 }

@@ -121,7 +121,6 @@ async function submitRelationship(apiKey, teamID, input) {
       source: input.sourceGroup,
       source_group: input.sourceGroup,
       authority: input.authority,
-      idempotency_key: `${runID}:${input.label}:evidence`,
     }],
     relationships: [{
       ref: `${input.label}:relationship`,
@@ -138,7 +137,6 @@ async function submitRelationship(apiKey, teamID, input) {
         entity_kind: "product",
       } },
       polarity: "+",
-      modality: "statement",
       evidence_indices: [0],
     }],
   });
@@ -252,7 +250,7 @@ async function createTeam(label) {
 }
 
 async function createCredential(teamID, name) {
-  const response = await controlJSON(`/teams/${teamID}/credentials`, { method: "POST", body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300 }) });
+  const response = await controlJSON(`/teams/${teamID}/credentials`, { method: "POST", body: JSON.stringify({ name, role: "member", scopes: ["read", "write"], rate_limit: 300, memory_binding: "shared_only" }) });
   const apiKey = String(response.data?.api_key ?? "");
   const profileID = String(response.data?.credential?.id ?? "");
   assert(apiKey && profileID, `credential ${name} omitted key material or ID`);

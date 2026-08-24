@@ -2,8 +2,12 @@ package memoryservice
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"strings"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
@@ -134,6 +138,9 @@ func placementFailureDiagnosticFor(stage string, cause error) placementFailureDi
 		diagnostic.Class = boundedPlacementFailureClass(failure.Class)
 		diagnostic.ProviderStatus = boundedProviderStatus(failure.StatusCode)
 	}
+	if isRepositoryDatabaseFailure(cause) {
+		diagnostic.Class = "database_failure"
+	}
 	if errors.Is(cause, repository.ErrPlacementLeaseLost) || errors.Is(cause, repository.ErrPlacementLeaseConflict) {
 		diagnostic.Class = "lease_lost"
 	}
@@ -147,6 +154,16 @@ func placementFailureDiagnosticFor(stage string, cause error) placementFailureDi
 		diagnostic.ReasonCode = placementFailureReasonCode(diagnostic.Stage, diagnostic.Class)
 	}
 	return diagnostic
+}
+
+func isRepositoryDatabaseFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var postgresError *pgconn.PgError
+	return errors.As(err, &postgresError) ||
+		errors.Is(err, sql.ErrConnDone) ||
+		errors.Is(err, driver.ErrBadConn)
 }
 
 func isVerifierProviderFailure(err error) bool {
@@ -195,6 +212,9 @@ func (diagnostic placementFailureDiagnostic) payload(providerAttempted bool) map
 }
 
 func placementFailureReasonCode(stage, class string) string {
+	if class == "database_failure" {
+		return "database_failure"
+	}
 	switch stage {
 	case "entity_catalog":
 		return "entity_catalog_candidate_limit_exceeded"
@@ -214,12 +234,14 @@ func placementFailureReasonCode(stage, class string) string {
 		return "security_quarantine"
 	case "semantic_commit":
 		return "semantic_commit_failed"
+	case "assessment_persist":
+		return "assessment_persist_failed"
 	case "placement_load":
 		return "placement_load_failed"
 	}
 	switch class {
 	case "malformed_response", "malformed_exhausted", "input_budget", "validation_failed", "provider_protocol", "request_invalid":
-		return "assessor_response_invalid"
+		return "provider_response_invalid"
 	case "timeout", "rate_limited", "http_4xx", "http_5xx", "http_unexpected", "transport", "provider_unavailable":
 		return "assessor_provider_failed"
 	case "lease_lost":
@@ -231,7 +253,7 @@ func placementFailureReasonCode(stage, class string) string {
 func boundedPlacementFailureStage(value string) string {
 	value = strings.TrimSpace(value)
 	switch value {
-	case "entity_catalog", "candidate_prefetch", "catalog_context", "assessment_input", "catalog_context_validation", "trusted_context_validation", "predicate_options_overflow", "placement_load", "assessment", "assessment_attempt_consumed", "confidence_policy", "policy_validation", "deterministic_policy", "conflict_context_stale", "semantic_commit", "contract_superseded", "replacement_conflict", "stale_source", "deterministic_security_scan", "security_signal", "assessment_scope", "placement_item":
+	case "entity_catalog", "candidate_prefetch", "catalog_context", "assessment_input", "catalog_context_validation", "trusted_context_validation", "predicate_options_overflow", "placement_load", "assessment", "assessment_attempt_consumed", "assessment_persist", "confidence_policy", "policy_validation", "deterministic_policy", "conflict_context_stale", "semantic_commit", "semantic_rejection", "commit_race_exhausted", "contract_superseded", "replacement_conflict", "stale_source", "deterministic_security_scan", "security_signal", "assessment_scope", "placement_item":
 		return value
 	default:
 		return "unknown"
@@ -241,7 +263,7 @@ func boundedPlacementFailureStage(value string) string {
 func boundedPlacementFailureClass(value string) string {
 	value = strings.TrimSpace(value)
 	switch value {
-	case "timeout", "rate_limited", "http_4xx", "http_5xx", "http_unexpected", "transport", "provider_protocol", "provider_unavailable", "request_invalid", "malformed_response", "malformed_exhausted", "input_budget", "validation_failed", "internal", "repository", "lease_lost", "canceled", "deadline":
+	case "timeout", "rate_limited", "http_4xx", "http_5xx", "http_unexpected", "transport", "provider_protocol", "provider_unavailable", "request_invalid", "malformed_response", "malformed_exhausted", "input_budget", "validation_failed", "database_failure", "internal", "repository", "lease_lost", "canceled", "deadline":
 		return value
 	default:
 		return "internal"

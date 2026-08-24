@@ -34,7 +34,10 @@ const submissionID = stringValue(remember.submission_id);
 if (!submissionID || Object.hasOwn(remember, "ingest_id") || Object.hasOwn(remember, "placement")) {
   throw new Error(`remember returned a removed or missing identifier: ${JSON.stringify(remember)}`);
 }
-assertKeys(remember, ["submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"]);
+assertKeys(remember, ["contract_version", "submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"]);
+if (remember.contract_version !== "dense-mem.v2.6") {
+  throw new Error(`remember contract_version = ${remember.contract_version}`);
+}
 if (remember.submission_kind !== "remember") {
   throw new Error(`remember submission_kind = ${remember.submission_kind}`);
 }
@@ -176,7 +179,10 @@ if (!nonOwnerCorrection.error || nonOwnerCorrection.result !== undefined || JSON
 }
 
 const correction = await mcpSuccess("correct_relationship", correctionInput);
-assertKeys(correction, ["submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"]);
+assertKeys(correction, ["contract_version", "submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"]);
+if (correction.contract_version !== "dense-mem.v2.6") {
+  throw new Error(`correction contract_version = ${correction.contract_version}`);
+}
 if (correction.submission_kind !== "relationship_correction" || correction.status_tool !== "get_submission_status") {
   throw new Error(`correction receipt is invalid: ${JSON.stringify(correction)}`);
 }
@@ -292,12 +298,12 @@ function rememberInput() {
   const predicate = "uses";
   const object = "LedgerDB";
   return {
+    idempotency_key: `${runID}:batch`,
     evidence: [{
       content,
       source_type: "document",
       source: `${runID}:source`,
       source_group: runID,
-      idempotency_key: `${runID}:evidence`,
     }],
     relationships: [{
       ref: `${runID}:relationship`,
@@ -315,7 +321,6 @@ function rememberInput() {
         },
       },
       polarity: "+",
-      modality: "statement",
       evidence_indices: [0],
     }],
   };
@@ -344,7 +349,10 @@ async function waitForTerminal(id) {
 }
 
 function assertStatusShape(status, id) {
-  assertKeys(status, ["submission_id", "submission_kind", "processing_state", "search_state", "check_after_seconds", "evidence", "errors"]);
+  assertKeys(status, ["contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "check_after_seconds", "evidence", "errors", "degradations"]);
+  if (status.contract_version !== "dense-mem.v2.6") {
+    throw new Error(`submission status contract_version = ${status.contract_version}`);
+  }
   if (status.submission_id !== id || Object.hasOwn(status, "ingest_id") || Object.hasOwn(status, "placement_run_id") || Object.hasOwn(status, "items") || Object.hasOwn(status, "review_tasks")) {
     throw new Error("submission status exposed a removed internal field");
   }

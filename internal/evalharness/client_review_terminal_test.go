@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestHTTPClientImportCorpusAllowsReviewTerminalWithEvidence(t *testing.T) {
+func TestHTTPClientImportCorpusRejectsSemanticRejectionEvenWithEvidence(t *testing.T) {
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "tool:remember":
@@ -29,13 +29,9 @@ func TestHTTPClientImportCorpusAllowsReviewTerminalWithEvidence(t *testing.T) {
 	defer server.Close()
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
-	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-review-terminal", Content: "content"}})
-	if err != nil {
-		t.Fatalf("ImportCorpus: %v", err)
-	}
-	ref, ok := mapping.BySourceDocID["doc-review-terminal"]
-	if !ok || ref.Type != "fragment" || ref.ID != "evidence-review-terminal" {
-		t.Fatalf("source mapping = %+v, %v", ref, ok)
+	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-review-terminal", Content: "content"}})
+	if err == nil || !strings.Contains(err.Error(), "import doc-review-terminal: submission status rejected") {
+		t.Fatalf("ImportCorpus err = %v", err)
 	}
 }
 

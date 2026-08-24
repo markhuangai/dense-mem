@@ -37,11 +37,7 @@ func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
 				Status: string(domain.PlacementRunFailed), CorrelationID: "corr-diagnostics",
 				Attempts: 5, MaxAttempts: 5, SubmittedAt: &now, UpdatedAt: &now, CompletedAt: &now,
 				Items: []repository.PlacementItem{{Status: "failed", Result: map[string]any{
-					"failure_code": string(memoryservice.SubmissionErrorRequiresResubmission),
-					"resubmission_issues": []map[string]any{{
-						"code": "entity_resolution_ambiguous", "relationship_ref": "rel-1",
-						"component": "subject", "message": "choose one active Entity",
-					}},
+					"failure_code":        string(memoryservice.SubmissionErrorProviderUnavailable),
 					"failure_reason_code": "assessor_provider_failed",
 					"failure_stage":       "assessment",
 					"failure_class":       "timeout",
@@ -65,11 +61,9 @@ func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
 	require.Equal(t, "corr-diagnostics", item.CorrelationID)
 	require.Equal(t, 5, item.Attempts)
 	require.NotNil(t, item.Error)
-	require.Equal(t, "submission_requires_resubmission", item.Error.Code)
-	require.True(t, item.Error.Retryable)
-	require.Equal(t, "resubmit_submission", item.Error.NextAction)
-	require.Len(t, item.Error.ResubmissionIssues, 1)
-	require.Equal(t, "rel-1", item.Error.ResubmissionIssues[0].RelationshipRef)
+	require.Equal(t, "provider_unavailable", item.Error.Code)
+	require.False(t, item.Error.Retryable)
+	require.Equal(t, "contact_operator", item.Error.NextAction)
 	require.NotContains(t, item.Error.Message, "timeout")
 	require.NotContains(t, item.Error.Message, "must not cross")
 	require.Equal(t, "document evidence", item.SourceSummary)
@@ -113,7 +107,7 @@ func TestSubmissionDiagnosticsDetailNeverReturnsEvidenceContentOrRawFailure(t *t
 	require.Len(t, detail.Evidence, 1)
 	require.Equal(t, repo.detail.Placement.Evidence[0].FragmentID, detail.Evidence[0].EvidenceID)
 	require.Len(t, detail.Errors, 1)
-	require.Equal(t, "submission_processing_failed", detail.Errors[0].Code)
+	require.Equal(t, "internal_failure", detail.Errors[0].Code)
 	require.NotContains(t, detail.Errors[0].Message, "secret-provider-response")
 	require.NotContains(t, detail.Errors[0].Message, "unknown-provider-detail")
 	require.Nil(t, detail.OperatorDiagnostic, "unknown diagnostic tokens must not cross the control boundary")
@@ -123,6 +117,7 @@ func TestSubmissionDiagnosticsDetailOrdersAndFiltersOperatorHistory(t *testing.T
 	teamID, ownerID, submissionID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	first := time.Date(2026, time.August, 18, 1, 0, 0, 0, time.UTC)
 	second := first.Add(time.Minute)
+	legacy := second.Add(time.Minute)
 	repo := &submissionDiagnosticsRepoStub{detail: &repository.SubmissionDiagnosticRecord{
 		TeamName: "Staging",
 		Placement: repository.CreateIngestResult{
@@ -134,37 +129,56 @@ func TestSubmissionDiagnosticsDetailOrdersAndFiltersOperatorHistory(t *testing.T
 				"failure_reason_code": "assessor_provider_failed", "failure_stage": "assessment", "failure_class": "timeout",
 			}},
 			{ID: "second", OutcomeKind: "submission_assessment_terminal", Status: "failed", CreatedAt: second, Payload: map[string]any{
+				"failure_reason_code": "provider_response_invalid", "failure_stage": "assessment", "failure_class": "validation_failed",
+			}},
+			{ID: "legacy", OutcomeKind: "submission_assessment_terminal", Status: "failed", CreatedAt: legacy, Payload: map[string]any{
 				"failure_reason_code": "assessor_response_invalid", "failure_stage": "assessment", "failure_class": "validation_failed",
 			}},
-			{ID: "secret", OutcomeKind: "internal", Status: "failed", CreatedAt: second.Add(time.Minute), Payload: map[string]any{
+			{ID: "secret", OutcomeKind: "internal", Status: "failed", CreatedAt: legacy.Add(time.Minute), Payload: map[string]any{
 				"failure_stage": "provider-secret-detail", "failure_class": "provider-secret-detail",
 			}},
 		},
 	}}
 	detail, err := NewSubmissionDiagnosticsService(repo).GetSubmissionDiagnostic(context.Background(), teamID, submissionID)
 	require.NoError(t, err)
-	require.Len(t, detail.OperatorDiagnostics, 2)
+	require.Len(t, detail.OperatorDiagnostics, 3)
 	require.Equal(t, "first", detail.OperatorDiagnostics[0].ID)
 	require.Equal(t, first, detail.OperatorDiagnostics[0].OccurredAt.UTC())
 	require.Equal(t, "second", detail.OperatorDiagnostics[1].ID)
 	require.Equal(t, second, detail.OperatorDiagnostics[1].OccurredAt.UTC())
+	require.Equal(t, "legacy", detail.OperatorDiagnostics[2].ID)
+	require.Equal(t, "assessor_response_invalid", detail.OperatorDiagnostics[2].FailureReasonCode)
 	for _, diagnostic := range detail.OperatorDiagnostics {
 		require.NotContains(t, diagnostic.Message, "provider-secret-detail")
 	}
 }
 
+func TestSubmissionDiagnosticsProjectsCommitRaceExhaustionStage(t *testing.T) {
+	diagnostic := projectSubmissionOperatorDiagnostic(map[string]any{
+		"failure_reason_code": "unknown_internal_failure",
+		"failure_stage":       "commit_race_exhausted",
+		"failure_class":       "internal",
+	})
+
+	require.NotNil(t, diagnostic)
+	require.Equal(t, "commit_race_exhausted", diagnostic.FailureStage)
+	require.Equal(t, "unknown_internal_failure", diagnostic.FailureReasonCode)
+}
+
 func TestSubmissionDiagnosticsValidatesScopeAndBoundsRepositoryErrors(t *testing.T) {
-	svc := NewSubmissionDiagnosticsService(&submissionDiagnosticsRepoStub{})
+	repo := &submissionDiagnosticsRepoStub{}
+	svc := NewSubmissionDiagnosticsService(repo)
 	_, err := svc.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{TeamID: "bad"})
 	require.ErrorContains(t, err, "team_id")
 	_, err = svc.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{ProcessingState: "unknown"})
 	require.ErrorContains(t, err, "processing_state")
 	_, err = svc.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{ProcessingState: "rejected"})
-	require.ErrorContains(t, err, "processing_state")
+	require.NoError(t, err)
+	require.Equal(t, "rejected", repo.listFilter.ProcessingState)
 	_, err = svc.GetSubmissionDiagnostic(context.Background(), "bad", uuid.NewString())
 	require.ErrorContains(t, err, "team_id")
 
-	repo := &submissionDiagnosticsRepoStub{err: errors.New("database detail")}
+	repo = &submissionDiagnosticsRepoStub{err: errors.New("database detail")}
 	svc = NewSubmissionDiagnosticsService(repo)
 	_, err = svc.GetSubmissionDiagnostic(context.Background(), uuid.NewString(), uuid.NewString())
 	require.ErrorIs(t, err, ErrSubmissionDiagnosticsUnavailable)

@@ -83,7 +83,6 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 		return fmt.Errorf("evidence count %d exceeds maximum %d", len(input.Evidence), maxEvidenceItems)
 	}
 	directTargets := make(map[string]int)
-	directIdempotencyKeys := make(map[string]int)
 	for i, item := range input.Evidence {
 		if strings.TrimSpace(item.Content) == "" {
 			return fmt.Errorf("evidence[%d].content is required", i)
@@ -115,16 +114,6 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 		if len(item.SupersedesEvidenceIDs) > 0 {
 			if item.ExpectedPreviousRevisionToken != "" {
 				return fmt.Errorf("evidence[%d].supersedes_evidence_ids cannot be combined with previous_source_revision", i)
-			}
-			if strings.TrimSpace(item.IdempotencyKey) == "" {
-				return fmt.Errorf("evidence[%d].idempotency_key is required when supersedes_evidence_ids is set", i)
-			}
-			if previous, exists := directIdempotencyKeys[item.IdempotencyKey]; exists {
-				return fmt.Errorf("evidence[%d].idempotency_key duplicates direct supersession evidence[%d]", i, previous)
-			}
-			directIdempotencyKeys[item.IdempotencyKey] = i
-			if input.RequestHash == "" {
-				return errors.New("request_hash is required when supersedes_evidence_ids is set")
 			}
 			if len(item.SupersedesEvidenceIDs) > 50 {
 				return fmt.Errorf("evidence[%d].supersedes_evidence_ids exceeds maximum 50", i)

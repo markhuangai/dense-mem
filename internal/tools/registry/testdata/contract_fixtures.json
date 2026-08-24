@@ -5,6 +5,7 @@
     "scopes": ["write"],
     "valid": true,
     "input": {
+      "idempotency_key": "fixture-remember-1",
       "evidence": [
         {
           "content": "Dense-Mem durable authority is PostgreSQL with pgvector.",
@@ -12,8 +13,7 @@
           "source": "architecture review",
           "source_group": "wiki:target-architecture",
           "source_key": "wiki:target-architecture",
-          "source_revision": "rev-1",
-          "idempotency_key": "ev-1"
+          "source_revision": "rev-1"
         }
       ],
       "relationships": [
@@ -34,12 +34,12 @@
             }
           },
           "polarity": "+",
-          "modality": "statement",
           "evidence_indices": [0]
         }
       ]
     },
     "output": {
+      "contract_version": "dense-mem.v2.6",
       "submission_id": "ing-1",
       "submission_kind": "remember",
       "processing_state": "queued",
@@ -55,6 +55,7 @@
     "valid": true,
     "input": {"submission_id": "ing-1"},
     "output": {
+      "contract_version": "dense-mem.v2.6",
       "submission_id": "ing-1",
       "submission_kind": "remember",
       "processing_state": "completed",
@@ -68,7 +69,8 @@
           "search_state": "current"
         }
       ],
-      "errors": []
+	      "errors": [],
+	      "degradations": []
     }
   },
   {
@@ -86,6 +88,7 @@
       "idempotency_key": "relationship-correction-1"
     },
     "output": {
+      "contract_version": "dense-mem.v2.6",
       "submission_id": "correction-1",
       "submission_kind": "relationship_correction",
       "processing_state": "completed",
@@ -107,6 +110,7 @@
       "idempotency_key": "relationship-correction-confirm-1"
     },
     "output": {
+      "contract_version": "dense-mem.v2.6",
       "submission_id": "correction-1",
       "submission_kind": "relationship_correction",
       "processing_state": "completed",
@@ -288,6 +292,7 @@
     "valid": false,
     "want_error": "unknown field: tier",
     "input": {
+      "idempotency_key": "fixture-remember-invalid-1",
       "tier": "fact",
       "evidence": [{"content": "Dense-Mem uses PostgreSQL."}],
       "relationships": [{
@@ -295,7 +300,7 @@
         "subject": {"name": "Dense-Mem", "entity_kind": "project"},
         "predicate": {"proposed_key": "uses"},
         "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product"}},
-        "polarity": "+", "modality": "statement", "evidence_indices": [0]
+        "polarity": "+", "evidence_indices": [0]
       }]
     }
   },
@@ -306,6 +311,7 @@
     "valid": false,
     "want_error": "unknown field: entity_hints",
     "input": {
+      "idempotency_key": "fixture-remember-invalid-2",
       "evidence": [{"content": "Dense-Mem uses PostgreSQL."}],
       "entity_hints": [],
       "relationships": [{
@@ -313,7 +319,7 @@
         "subject": {"name": "Dense-Mem", "entity_kind": "project"},
         "predicate": {"proposed_key": "uses"},
         "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product"}},
-        "polarity": "+", "modality": "statement", "evidence_indices": [0]
+        "polarity": "+", "evidence_indices": [0]
       }]
     }
   },
@@ -332,6 +338,7 @@
     "valid": false,
     "want_error": "duplicate ref",
     "input": {
+      "idempotency_key": "fixture-remember-invalid-3",
       "evidence": [{"content": "A uses B."}],
       "relationships": [
         {
@@ -339,14 +346,14 @@
           "subject": {"name": "A", "entity_kind": "other"},
           "predicate": {"proposed_key": "uses"},
           "object": {"entity": {"name": "B", "entity_kind": "other"}},
-          "polarity": "+", "modality": "statement", "evidence_indices": [0]
+          "polarity": "+", "evidence_indices": [0]
         },
         {
           "ref": "r1",
           "subject": {"name": "A", "entity_kind": "other"},
           "predicate": {"proposed_key": "uses"},
           "object": {"entity": {"name": "B", "entity_kind": "other"}},
-          "polarity": "+", "modality": "statement", "evidence_indices": [0]
+          "polarity": "+", "evidence_indices": [0]
         }
       ]
     }
@@ -406,6 +413,7 @@
     "valid": false,
     "want_error": "source_key and source_revision must appear together",
     "input": {
+      "idempotency_key": "fixture-remember-invalid-4",
       "evidence": [
         {"content": "A source key needs a revision.", "source_key": "wiki:target-architecture"},
         {"content": "Dense-Mem uses PostgreSQL."}
@@ -415,7 +423,7 @@
         "subject": {"name": "Dense-Mem", "entity_kind": "project"},
         "predicate": {"proposed_key": "uses"},
         "object": {"entity": {"name": "PostgreSQL", "entity_kind": "product"}},
-        "polarity": "+", "modality": "statement", "evidence_indices": [0, 1]
+        "polarity": "+", "evidence_indices": [0, 1]
       }]
     }
   },

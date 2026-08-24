@@ -59,27 +59,48 @@ func (*submissionAssessmentWorkerLedgerStub) FinishPlacementRun(context.Context,
 }
 
 type submissionAssessmentWorkerAssessmentStub struct {
-	assessment   *repository.SubmissionAssessment
-	loadErr      error
-	reserveErr   error
-	persistErr   error
-	policyErr    error
-	persistCalls int
-	reserved     bool
-	policy       repository.AutoWriteConfidencePolicy
-	commits      []repository.CommitSubmissionAssessmentInput
-	completions  []repository.CompleteSubmissionAssessmentInput
-	requeues     []repository.RequeueSubmissionAssessmentInput
-	completeNil  bool
-	completeErr  error
-	requeueNil   bool
-	commitErr    error
-	commitNil    bool
+	assessment                *repository.SubmissionAssessment
+	loadErr                   error
+	loadCalls                 int
+	loadNotFoundCall          int
+	loadAfterReservation      *repository.SubmissionAssessment
+	loadAfterReservationErr   error
+	reserveErr                error
+	persistErr                error
+	persistExisting           bool
+	persistNormalizedResponse json.RawMessage
+	persistCalls              int
+	revisionInputs            []repository.AppendSubmissionAssessmentRevisionInput
+	revisionErr               error
+	revisionErrors            []error
+	revisionExisting          bool
+	reserved                  bool
+	commits                   []repository.CommitSubmissionAssessmentInput
+	completions               []repository.CompleteSubmissionAssessmentInput
+	requeues                  []repository.RequeueSubmissionAssessmentInput
+	completeNil               bool
+	completeErr               error
+	completeFirstDisposition  *repository.PlacementFirstDisposition
+	requeueNil                bool
+	requeueErr                error
+	commitErr                 error
+	commitErrors              []error
+	commitNil                 bool
 }
 
 func (s *submissionAssessmentWorkerAssessmentStub) LoadSubmissionAssessment(context.Context, repository.LoadSubmissionAssessmentInput) (*repository.SubmissionAssessment, error) {
+	s.loadCalls++
 	if s.loadErr != nil {
 		return nil, s.loadErr
+	}
+	if s.loadNotFoundCall > 0 && s.loadCalls == s.loadNotFoundCall {
+		return nil, repository.ErrSubmissionAssessmentNotFound
+	}
+	if s.loadCalls > 1 && s.loadAfterReservationErr != nil {
+		return nil, s.loadAfterReservationErr
+	}
+	if s.loadCalls > 1 && s.loadAfterReservation != nil {
+		return s.loadAfterReservation, nil
 	}
 	if s.assessment == nil {
 		return nil, repository.ErrSubmissionAssessmentNotFound
@@ -106,21 +127,54 @@ func (s *submissionAssessmentWorkerAssessmentStub) PersistSubmissionAssessment(_
 	s.assessment = &repository.SubmissionAssessment{
 		TeamID: input.TeamID, AssessmentID: uuid.NewString(), OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID, PlacementRunID: input.PlacementRunID,
 		RequestID: input.RequestID, AssessorContractVersion: input.AssessorContractVersion, Model: input.Model, Tokenizer: input.Tokenizer,
-		InputTokens: input.InputTokens, OutputTokens: input.OutputTokens, CandidateContextTokens: input.CandidateContextTokens,
+		ProviderTurns: input.ProviderTurns, InputTokens: input.InputTokens, OutputTokens: input.OutputTokens, CandidateContextTokens: input.CandidateContextTokens,
 		CandidateContextTruncated: input.CandidateContextTruncated, NormalizedResponse: append(json.RawMessage(nil), input.NormalizedResponse...), ResponseHash: input.ResponseHash, ValidatedAt: input.ValidatedAt,
 	}
-	return s.assessment, false, nil
+	if s.persistNormalizedResponse != nil {
+		s.assessment.NormalizedResponse = append(json.RawMessage(nil), s.persistNormalizedResponse...)
+	}
+	return s.assessment, s.persistExisting, nil
 }
 
-func (s *submissionAssessmentWorkerAssessmentStub) LoadAutoWriteConfidencePolicy(context.Context, repository.LoadAutoWriteConfidencePolicyInput) (repository.AutoWriteConfidencePolicy, error) {
-	if s.policyErr != nil {
-		return repository.AutoWriteConfidencePolicy{}, s.policyErr
+func (s *submissionAssessmentWorkerAssessmentStub) AppendSubmissionAssessmentRevision(
+	_ context.Context,
+	input repository.AppendSubmissionAssessmentRevisionInput,
+) (*repository.SubmissionAssessment, bool, error) {
+	s.revisionInputs = append(s.revisionInputs, input)
+	if len(s.revisionErrors) > 0 {
+		err := s.revisionErrors[0]
+		s.revisionErrors = s.revisionErrors[1:]
+		if err != nil {
+			return nil, false, err
+		}
 	}
-	return s.policy, nil
+	if s.revisionErr != nil {
+		return nil, false, s.revisionErr
+	}
+	if s.assessment == nil {
+		return nil, false, repository.ErrSubmissionAssessmentNotFound
+	}
+	s.assessment.RevisionNumber++
+	s.assessment.ProviderTurns = input.ProviderTurns
+	s.assessment.InputTokens = input.InputTokens
+	s.assessment.OutputTokens = input.OutputTokens
+	s.assessment.CandidateContextTokens = input.CandidateContextTokens
+	s.assessment.CandidateContextTruncated = input.CandidateContextTruncated
+	s.assessment.NormalizedResponse = append(json.RawMessage(nil), input.NormalizedResponse...)
+	s.assessment.ResponseHash = input.ResponseHash
+	s.assessment.ValidatedAt = input.ValidatedAt
+	return s.assessment, s.revisionExisting, nil
 }
 
 func (s *submissionAssessmentWorkerAssessmentStub) CommitSubmissionAssessment(_ context.Context, input repository.CommitSubmissionAssessmentInput) (*repository.CommitSubmissionAssessmentResult, error) {
 	s.commits = append(s.commits, input)
+	if len(s.commitErrors) > 0 {
+		err := s.commitErrors[0]
+		s.commitErrors = s.commitErrors[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if s.commitErr != nil {
 		return nil, s.commitErr
 	}
@@ -138,11 +192,16 @@ func (s *submissionAssessmentWorkerAssessmentStub) CompleteSubmissionAssessment(
 	if s.completeNil {
 		return nil, nil
 	}
-	return &repository.CompleteSubmissionAssessmentResult{Status: input.Status}, nil
+	return &repository.CompleteSubmissionAssessmentResult{
+		Status: input.Status, FirstDisposition: s.completeFirstDisposition,
+	}, nil
 }
 
 func (s *submissionAssessmentWorkerAssessmentStub) RequeueSubmissionAssessment(_ context.Context, input repository.RequeueSubmissionAssessmentInput) (*repository.RequeueSubmissionAssessmentResult, error) {
 	s.requeues = append(s.requeues, input)
+	if s.requeueErr != nil {
+		return nil, s.requeueErr
+	}
 	if s.requeueNil {
 		return nil, nil
 	}
@@ -150,33 +209,80 @@ func (s *submissionAssessmentWorkerAssessmentStub) RequeueSubmissionAssessment(_
 }
 
 type submissionAssessmentWorkerProviderStub struct {
-	calls    int
-	request  *verifier.SemanticAssessmentRequest
-	response func(verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error)
+	calls           int
+	request         *verifier.SemanticAssessmentRequest
+	response        func(verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error)
+	responseForTurn func(verifier.SemanticAssessmentRequest, int) (verifier.SemanticAssessmentResponse, error)
+	startSessionID  string
+	repairSessionID string
+	startErr        error
+	repairErr       error
+	repairErrors    []error
 }
 
-type submissionAssessmentWorkerNormalizerStub struct {
-	response func(verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error)
+type submissionAssessmentWorkerProviderSession struct {
+	id    string
+	turns int
 }
 
-func (s submissionAssessmentWorkerNormalizerStub) NormalizeRemember(_ context.Context, req verifier.RememberNormalizerRequest) (verifier.RememberNormalizerResponse, error) {
-	if s.response != nil {
-		return s.response(req)
-	}
-	return verifier.RememberNormalizerResponse{}, nil
-}
+func (s *submissionAssessmentWorkerProviderSession) SessionID() string { return s.id }
 
-func (submissionAssessmentWorkerNormalizerStub) ModelName() string {
-	return "remember-normalizer-model"
-}
-
-func (s *submissionAssessmentWorkerProviderStub) AssessSemantic(_ context.Context, req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+func (s *submissionAssessmentWorkerProviderStub) Assess(_ context.Context, req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentSession, verifier.SemanticAssessmentTurn, error) {
 	s.calls++
-	s.request = &req
-	if s.response != nil {
-		return s.response(req)
+	if s.startErr != nil {
+		return nil, verifier.SemanticAssessmentTurn{}, s.startErr
 	}
-	return submissionAssessmentValidResponse(req, false), nil
+	s.request = &req
+	session := &submissionAssessmentWorkerProviderSession{id: "stub-session", turns: 1}
+	s.startSessionID = session.SessionID()
+	turn, err := s.turn(req, session.turns)
+	return session, turn, err
+}
+
+func (s *submissionAssessmentWorkerProviderStub) Repair(_ context.Context, sessionRef verifier.SemanticAssessmentSession, repair verifier.SemanticAssessmentRepairRequest) (verifier.SemanticAssessmentTurn, error) {
+	session, ok := sessionRef.(*submissionAssessmentWorkerProviderSession)
+	if !ok || session == nil {
+		return verifier.SemanticAssessmentTurn{}, errors.New("invalid stub assessor session")
+	}
+	s.calls++
+	if len(s.repairErrors) > 0 {
+		err := s.repairErrors[0]
+		s.repairErrors = s.repairErrors[1:]
+		if err != nil {
+			return verifier.SemanticAssessmentTurn{}, err
+		}
+	}
+	if s.repairErr != nil {
+		return verifier.SemanticAssessmentTurn{}, s.repairErr
+	}
+	s.request = &repair.Request
+	s.repairSessionID = session.SessionID()
+	session.turns++
+	return s.turn(repair.Request, session.turns)
+}
+
+func (s *submissionAssessmentWorkerProviderStub) turn(req verifier.SemanticAssessmentRequest, turns int) (verifier.SemanticAssessmentTurn, error) {
+	response := submissionAssessmentValidResponse(req, false)
+	if s.responseForTurn != nil {
+		var err error
+		response, err = s.responseForTurn(req, turns)
+		if err != nil {
+			return verifier.SemanticAssessmentTurn{}, err
+		}
+	} else if s.response != nil {
+		var err error
+		response, err = s.response(req)
+		if err != nil {
+			return verifier.SemanticAssessmentTurn{}, err
+		}
+	}
+	normalized, validationErrors := verifier.PrepareSemanticAssessmentResponse(req, response, verifier.DefaultSemanticAssessmentLimits())
+	return verifier.SemanticAssessmentTurn{
+		Response:         normalized,
+		ValidationErrors: validationErrors,
+		ValidationStage:  "response_contract",
+		Turn:             turns,
+	}, nil
 }
 
 func (*submissionAssessmentWorkerProviderStub) ModelName() string {

@@ -205,7 +205,7 @@ const operationLogsSnapshot: OperationLog[] = [
     attrs: {
       reference_type: "submission", reference_id: "submission-1",
       from: "processing", to: "failed", attempts: 5, max_attempts: 5,
-      stage: "assessment", reason_code: "assessor_unavailable",
+		stage: "assessment", reason_code: "provider_unavailable",
     },
   },
 ];
@@ -576,7 +576,7 @@ describe("App", () => {
     expect(screen.getByText("provider_kind=generic_oidc")).toBeInTheDocument();
     expect(screen.getByText("submission failed")).toBeInTheDocument();
     expect(screen.getByText("reference_type=submission")).toBeInTheDocument();
-    expect(screen.getByText("reason_code=assessor_unavailable")).toBeInTheDocument();
+	expect(screen.getByText("reason_code=provider_unavailable")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /view raw log GET \/control\/api\/logs status 200/i }));
     expect(await screen.findByLabelText(/Raw log body GET \/control\/api\/logs status 200/i)).toHaveTextContent('"msg": "control_http_request"');

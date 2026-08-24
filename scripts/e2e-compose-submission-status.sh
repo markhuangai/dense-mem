@@ -14,6 +14,7 @@ set_submission_status_playwright_args() {
 
 run_submission_status_e2e() {
   local team_id="$1"
+  local skip_playwright="${2:-0}"
   local submission_status_json
 
   echo "Running compose-backed submission status and public-contract e2e with the configured live verifier."
@@ -38,7 +39,7 @@ run_submission_status_e2e() {
     return 1
   fi
   dream_statement="submission status e2e"
-  if [[ "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" == "1" ]]; then
+  if [[ "$skip_playwright" == "1" || "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" == "1" ]]; then
     echo "Skipping compose-backed submission-status Playwright tests by DENSE_MEM_E2E_SKIP_PLAYWRIGHT."
     return
   fi

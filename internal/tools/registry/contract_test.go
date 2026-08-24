@@ -78,6 +78,7 @@ func TestContractRememberBoundaryContent(t *testing.T) {
 
 func flatRelationshipForContent(content string) map[string]any {
 	return map[string]any{
+		"idempotency_key": "remember-test-batch",
 		"evidence": []any{
 			map[string]any{"content": content},
 		},
@@ -87,7 +88,6 @@ func flatRelationshipForContent(content string) map[string]any {
 			"predicate":        map[string]any{"proposed_key": "uses"},
 			"object":           map[string]any{"entity": map[string]any{"name": "a", "entity_kind": "product"}},
 			"polarity":         "+",
-			"modality":         "statement",
 			"evidence_indices": []any{0},
 		}},
 	}
@@ -214,6 +214,38 @@ func TestRememberRejectsMixedSourceRevisionBatch(t *testing.T) {
 	}), []string{"write"})
 	if err == nil || !strings.Contains(err.Error(), "revision fields must match") {
 		t.Fatalf("ValidateContractInput err = %v, want mixed source revision rejection", err)
+	}
+}
+
+func TestRememberRejectsMixedSourceRevisionProvenance(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	require.NoError(t, err)
+	base := []any{
+		map[string]any{
+			"content": "first source fragment", "source_key": "wiki://write-pipeline", "source_revision": "rev-1",
+			"source_type": "document", "authority": "primary", "source": "wiki", "metadata": map[string]any{"section": "one"},
+		},
+		map[string]any{
+			"content": "second source fragment", "source_key": "wiki://write-pipeline", "source_revision": "rev-1",
+			"source_type": "document", "authority": "primary", "source": "wiki", "metadata": map[string]any{"section": "one"},
+		},
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "source type", mutate: func(item map[string]any) { item["source_type"] = "manual" }},
+		{name: "authority", mutate: func(item map[string]any) { item["authority"] = "secondary" }},
+		{name: "metadata", mutate: func(item map[string]any) { item["metadata"] = map[string]any{"section": "two"} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			evidence := []any{cloneMap(base[0].(map[string]any)), cloneMap(base[1].(map[string]any))}
+			test.mutate(evidence[1].(map[string]any))
+
+			err := ValidateContractInput(remember, withRequiredFlatRelationship(map[string]any{"evidence": evidence}), []string{"write"})
+
+			require.ErrorContains(t, err, "including source provenance")
+		})
 	}
 }
 
@@ -699,75 +731,6 @@ func TestPublicErrorSchemaContract(t *testing.T) {
 	detailsSchema := schemaProperties(schema)["details"]
 	if detailsSchema["maxProperties"] != metadataMaxProperties || detailsSchema["x-max-depth"] != 4 {
 		t.Fatalf("details schema is not bounded: %#v", detailsSchema)
-	}
-}
-
-func TestRememberIngestIdempotencyKeyFromEvidence(t *testing.T) {
-	single := rememberIngestIdempotencyKey([]memoryservice.RememberEvidenceInput{{
-		IdempotencyKey: " eval:doc-alpha ",
-	}})
-	if single != "eval:doc-alpha" {
-		t.Fatalf("single key = %q", single)
-	}
-
-	batch := rememberIngestIdempotencyKey([]memoryservice.RememberEvidenceInput{
-		{IdempotencyKey: "eval:doc-alpha"},
-		{IdempotencyKey: "eval:doc-beta"},
-	})
-	if !strings.HasPrefix(batch, "batch:") || len(batch) != len("batch:")+64 {
-		t.Fatalf("batch key = %q", batch)
-	}
-	if batch != rememberIngestIdempotencyKey([]memoryservice.RememberEvidenceInput{
-		{IdempotencyKey: "eval:doc-alpha"},
-		{IdempotencyKey: "eval:doc-beta"},
-	}) {
-		t.Fatal("batch key is not deterministic")
-	}
-	if got := rememberIngestIdempotencyKey([]memoryservice.RememberEvidenceInput{
-		{IdempotencyKey: "eval:doc-alpha"},
-		{},
-	}); got != "" {
-		t.Fatalf("partial batch key = %q", got)
-	}
-}
-
-func TestRememberRequestFromContractInputDerivesIngestIdempotency(t *testing.T) {
-	req, err := rememberRequestFromContractInput(map[string]any{
-		"contract_version": domain.ContractVersion,
-		"evidence": []any{
-			map[string]any{
-				"content":         "alpha evidence",
-				"idempotency_key": " eval:doc-alpha ",
-			},
-			map[string]any{
-				"content":         "beta evidence",
-				"idempotency_key": "eval:doc-beta",
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("map request: %v", err)
-	}
-	want := rememberIngestIdempotencyKey(req.Evidence)
-	if req.IdempotencyKey != want || !strings.HasPrefix(req.IdempotencyKey, "batch:") {
-		t.Fatalf("derived request key = %q, want %q", req.IdempotencyKey, want)
-	}
-
-	explicit, err := rememberRequestFromContractInput(map[string]any{
-		"contract_version": domain.ContractVersion,
-		"idempotency_key":  "explicit-ingest-key",
-		"evidence": []any{
-			map[string]any{
-				"content":         "alpha evidence",
-				"idempotency_key": "eval:doc-alpha",
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("map explicit request: %v", err)
-	}
-	if explicit.IdempotencyKey != "explicit-ingest-key" {
-		t.Fatalf("explicit request key = %q", explicit.IdempotencyKey)
 	}
 }
 

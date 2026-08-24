@@ -181,8 +181,7 @@ Relationship 改为列出支持它的从零开始的 `evidence_indices`，且这
     {
       "content": "Dense-Mem 现在仅使用 PostgreSQL 作为部署目标。",
       "source_type": "manual",
-      "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"],
-      "idempotency_key": "deployment-target-correction-20260729"
+      "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"]
     }
   ],
   "relationships": [
@@ -202,7 +201,6 @@ Relationship 改为列出支持它的从零开始的 `evidence_indices`，且这
         }
       },
       "polarity": "+",
-      "modality": "statement",
       "evidence_indices": [0]
     }
   ],
@@ -210,13 +208,20 @@ Relationship 改为列出支持它的从零开始的 `evidence_indices`，且这
 }
 ```
 
-替换证据被接收入库时，目标会在同一原子动作中退役；即使后续 placement 被拒绝或
-隔离，这个更正决定仍会保留。这样不会让过期证据继续保持有效。
+直接 supersession 会随完整 batch 暂存。只有在语义提交被接受的同一事务中，目标才会
+退役；被拒绝、失败或隔离的提交会让目标继续有效。这样，未成为受支持记忆的替换不会
+使当前证据失效。
 
-Remember 使用只负责结构的 normalizer。无效或无法提升的完整响应不会产生部分语义状态，
-提交会以终态 `failed` 返回有界的 `errors[]` 指引。请使用新的 `idempotency_key` 重新
-提交完整的 evidence 与 Relationships batch；Remember 流程不再提供部分替换或
-交互式 placement review。
+Remember 使用一个覆盖完整 batch 的 assessor 会话。assessor 负责 grounding 修复、
+身份选择、predicate 协调、support 决策和可修复的竞态；确定性服务端策略仍负责
+授权、生命周期和持久化状态。每个提交的 Relationship ref 都会得到 `stored` 或
+`not_stored` disposition。当已存储的 support 仍覆盖每条 evidence 时，不支持的 hint
+不是客户端错误；否则提交会以 `no_supported_memory` 拒绝。暂存后发生的客户端自有
+约束变化会以 `stale_input` 拒绝。provider、配置、数据库和内部故障使用有界的运维
+错误码。所有接受的语义效果原子提交，不提供部分替换或交互式 placement review。
+
+Remember 只接受一个顶层 `idempotency_key`，不接受 evidence 级或派生 key。若完整
+batch 需要修正，请使用新的 key 重新提交整个 batch。
 
 若无需替代证据，请使用 `retract_evidence`，提供自己拥有的当前 ID、有界原因和
 幂等键：

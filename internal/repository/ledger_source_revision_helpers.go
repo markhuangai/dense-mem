@@ -9,6 +9,9 @@ type sourceRevisionBatch struct {
 	RevisionToken                 string
 	ExpectedPreviousRevisionToken string
 	SourceRevisionContentHash     string
+	SourceKind                    string
+	Authority                     string
+	SourceRevisionEnvelope        string
 }
 
 func sourceRevisionBatchKey(item EvidenceInput) string {
@@ -54,10 +57,17 @@ func validateSourceRevisionBatch(evidence []EvidenceInput) error {
 		if item.SourceKey == "" {
 			continue
 		}
+		envelope, err := marshalJSON(item.SourceRevisionEnvelope)
+		if err != nil {
+			return fmt.Errorf("evidence[%d].source_revision envelope: %w", i, err)
+		}
 		current := sourceRevisionBatch{
 			RevisionToken:                 item.SourceRevisionToken,
 			ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
 			SourceRevisionContentHash:     item.SourceRevisionContentHash,
+			SourceKind:                    sourceKindForEvidence(item.SourceType),
+			Authority:                     item.Authority,
+			SourceRevisionEnvelope:        string(envelope),
 		}
 		previous, ok := seen[item.SourceKey]
 		if !ok {
@@ -65,7 +75,7 @@ func validateSourceRevisionBatch(evidence []EvidenceInput) error {
 			continue
 		}
 		if previous != current {
-			return fmt.Errorf("evidence[%d].source_key %q revision fields must match earlier item in request", i, item.SourceKey)
+			return fmt.Errorf("evidence[%d].source_key %q revision fields must match earlier item in request, including source provenance", i, item.SourceKey)
 		}
 	}
 	return nil

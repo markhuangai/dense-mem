@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 func TestBuildActiveWiresExecutableRemember(t *testing.T) {
@@ -27,7 +29,7 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 		t.Fatal("BuildActive remember invoker is nil")
 	}
 	input := validFlatRelationshipSubmission()
-	input["evidence"].([]any)[0].(map[string]any)["idempotency_key"] = "eval:doc-alpha"
+	input["idempotency_key"] = "eval:doc-alpha"
 	relationship(input)["ref"] = "rel:uses"
 	relationship(input)["correction_target"] = map[string]any{
 		"relationship_id":  correctionTargetID,
@@ -93,6 +95,24 @@ func TestBuildActiveRememberRejectsTenantOverride(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "team_id") {
 		t.Fatalf("remember.Invoke err = %v, want tenant override rejection", err)
 	}
+}
+
+func TestBuildActiveRememberReturnsTypedDynamicValidation(t *testing.T) {
+	stub := &stubRememberService{err: &rememberapp.RememberValidationError{
+		Issues: []rememberapp.RememberValidationIssue{{
+			Path: "/relationships/0/predicate/known_predicate_key", Code: "unavailable", Message: "known_predicate_key is unavailable",
+		}},
+	}}
+	reg, err := BuildActive(Dependencies{Remember: stub})
+	require.NoError(t, err)
+	remember, ok := reg.Get(ToolRemember)
+	require.True(t, ok)
+	_, err = remember.Invoke(contractInvokeContext("write"), "ignored-profile", validFlatRelationshipSubmission())
+	result, ok := ContractValidationResultFromError(err)
+	require.True(t, ok)
+	require.Equal(t, []ContractValidationIssue{{
+		Path: "/relationships/0/predicate/known_predicate_key", Code: "unavailable", Message: "known_predicate_key is unavailable",
+	}}, result.Issues)
 }
 
 func TestBuildActiveRememberRejectsReadOnlyCredential(t *testing.T) {

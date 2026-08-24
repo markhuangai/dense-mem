@@ -136,21 +136,29 @@ func commitAcceptedSubmissionFixture(
 			Resolution:      resolution,
 		})
 	}
-	threshold := 0.7
-	confidence := 0.9
 	relationships := make([]SubmissionAssessmentRelationshipObservationInput, 0, len(input.RelationshipObservations))
 	for _, observation := range input.RelationshipObservations {
 		observation = normalizePlacementRelationshipDecisionInput(observation)
-		if observation.Confidence == nil {
-			observation.Confidence = &confidence
-		}
+		observation.AssessorAccepted = true
+		observation.EvidenceVerdict = ""
+		observation.Confidence = nil
+		observation.Rationale = ""
 		observation.AssessmentID = assessment.AssessmentID
-		observation.AssessmentPolicyVersion = "submission-assessment-test"
-		observation.ThresholdUsed = &threshold
-		observation.GateResult = "meets_write_threshold"
+		observation.AssessmentPolicyVersion = ""
+		observation.ThresholdUsed = nil
+		observation.GateResult = ""
 		relationships = append(relationships, SubmissionAssessmentRelationshipObservationInput{
 			PlacementItemID: itemID,
+			RelationshipRef: observation.Ref,
+			SplitIndex:      0,
 			Observation:     observation,
+		})
+	}
+	relationshipResults := make([]SubmissionRelationshipResultInput, 0, len(relationships))
+	for _, relationship := range relationships {
+		relationshipResults = append(relationshipResults, SubmissionRelationshipResultInput{
+			RelationshipRef: relationship.Observation.Ref,
+			Disposition:     "stored",
 		})
 	}
 	return repo.CommitSubmissionAssessment(ctx, CommitSubmissionAssessmentInput{
@@ -169,6 +177,7 @@ func commitAcceptedSubmissionFixture(
 		}},
 		EntityResolutions:        entityResolutions,
 		RelationshipObservations: relationships,
+		RelationshipResults:      relationshipResults,
 		Payload:                  input.Payload,
 	})
 }

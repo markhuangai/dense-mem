@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/google/uuid"
@@ -36,6 +35,7 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 	}
 	result := &CommitSubmissionAssessmentResult{Status: string(domain.SemanticReviewAccepted)}
 	semanticResult := &submissionSemanticCommitState{Status: string(domain.SemanticReviewAccepted)}
+	appliedSplits := make([]submissionRelationshipAppliedSplit, 0, len(input.RelationshipObservations))
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		if err := lockSubmissionAssessmentRun(ctx, tx, input.SubmissionAssessmentRunScope); err != nil {
 			return fmt.Errorf("lock submission assessment run: %w", err)
@@ -43,10 +43,14 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 		if err := validateSubmissionAssessmentCommitScope(ctx, tx, input); err != nil {
 			return err
 		}
+		if err := applyRememberSubmissionIntents(ctx, tx, input.SubmissionAssessmentRunScope); err != nil {
+			return fmt.Errorf("apply remember submission intents: %w", err)
+		}
 		items, err := loadLockedSubmissionAssessmentItems(ctx, tx, input.SubmissionAssessmentRunScope)
 		if err != nil {
 			return fmt.Errorf("lock submission assessment items: %w", err)
 		}
+		applyRememberSourceReferencesToObservations(input.RelationshipObservations, items)
 		if err := validateSubmissionCommitItems(input.Items, items); err != nil {
 			return fmt.Errorf("validate submission assessment items: %w", err)
 		}
@@ -179,6 +183,11 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 				if applied.Relationship == nil || applied.Relationship.Status != string(domain.RelationshipStatusActive) {
 					return ErrSubmissionAssessmentNonPromotable
 				}
+				appliedSplits = append(appliedSplits, submissionRelationshipAppliedSplit{
+					RelationshipRef: entry.RelationshipRef,
+					SplitIndex:      entry.SplitIndex,
+					Result:          applied,
+				})
 			}
 
 			evidenceSearchContract, err := loadActiveSearchContractInTx(ctx, tx)
@@ -239,6 +248,9 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 			}
 			result.OutcomeIDs = append(result.OutcomeIDs, outcomeID)
 		}
+		if err := insertSubmissionRelationshipResults(ctx, tx, input.SubmissionAssessmentRunScope, input.RelationshipResults, appliedSplits); err != nil {
+			return err
+		}
 		firstDisposition, err := completeSubmissionPlacementRun(ctx, tx, input.SubmissionAssessmentRunScope, string(domain.PlacementRunCompleted), "")
 		if err != nil {
 			return err
@@ -270,6 +282,7 @@ func normalizeCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentIn
 	for i := range input.RelationshipObservations {
 		entry := &input.RelationshipObservations[i]
 		entry.PlacementItemID = strings.TrimSpace(entry.PlacementItemID)
+		entry.RelationshipRef = strings.TrimSpace(entry.RelationshipRef)
 		entry.Observation = normalizePlacementRelationshipDecisionInput(entry.Observation)
 	}
 	for i := range input.PredicateRegistrations {
@@ -278,6 +291,8 @@ func normalizeCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentIn
 		registration.PredicateKey = strings.TrimSpace(registration.PredicateKey)
 		registration.SubjectKind = strings.TrimSpace(registration.SubjectKind)
 		registration.ObjectKind = strings.TrimSpace(registration.ObjectKind)
+		registration.RelationshipKind = strings.TrimSpace(registration.RelationshipKind)
+		registration.CurrentCardinality = strings.TrimSpace(registration.CurrentCardinality)
 	}
 	return input
 }
@@ -286,6 +301,7 @@ func normalizeSubmissionEntityResolution(input PlacementEntityResolutionInput) P
 	input.MentionRef = strings.TrimSpace(input.MentionRef)
 	input.Action = strings.TrimSpace(input.Action)
 	input.EntityID = strings.TrimSpace(input.EntityID)
+	input.ExactEntityID = strings.TrimSpace(input.ExactEntityID)
 	input.EntityKind = strings.TrimSpace(input.EntityKind)
 	input.CanonicalName = strings.TrimSpace(input.CanonicalName)
 	input.FragmentID = strings.TrimSpace(input.FragmentID)
@@ -336,6 +352,7 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 		seenEntities[entry.Resolution.MentionRef] = struct{}{}
 	}
 	seenRelationships := map[string]struct{}{}
+	splitsByRelationship := map[string]map[int]struct{}{}
 	registrationByRef := map[string]SubmissionPredicateRegistrationInput{}
 	for _, registration := range input.PredicateRegistrations {
 		registrationByRef[registration.RelationshipRef] = registration
@@ -344,7 +361,7 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 		if _, err := uuid.Parse(entry.PlacementItemID); err != nil {
 			return fmt.Errorf("relationship observation placement_item_id is required: %w", err)
 		}
-		if entry.Observation.PredicateCandidate != nil || entry.Observation.SuppressSupport || entry.Observation.EvidenceVerdict != string(domain.VerificationEntailed) || entry.Observation.Confidence == nil || math.IsNaN(*entry.Observation.Confidence) || math.IsInf(*entry.Observation.Confidence, 0) {
+		if !entry.Observation.AssessorAccepted || entry.Observation.PredicateCandidate != nil || entry.Observation.SuppressSupport {
 			return ErrSubmissionAssessmentNonPromotable
 		}
 		validationObservation := entry.Observation
@@ -358,10 +375,72 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 		if entry.Observation.AssessmentID != input.AssessmentID {
 			return errors.New("submission relationship observation assessment_id does not match the submission assessment")
 		}
+		if entry.RelationshipRef == "" {
+			return errors.New("submission relationship observation relationship_ref is required")
+		}
+		if entry.SplitIndex < 0 {
+			return errors.New("submission relationship observation split_index must be non-negative")
+		}
 		if _, exists := seenRelationships[entry.Observation.Ref]; exists {
 			return errors.New("submission relationship observation ref is duplicated")
 		}
 		seenRelationships[entry.Observation.Ref] = struct{}{}
+		splits := splitsByRelationship[entry.RelationshipRef]
+		if splits == nil {
+			splits = map[int]struct{}{}
+			splitsByRelationship[entry.RelationshipRef] = splits
+		}
+		if _, exists := splits[entry.SplitIndex]; exists {
+			return fmt.Errorf("submission relationship result %q split_index is duplicated", entry.RelationshipRef)
+		}
+		splits[entry.SplitIndex] = struct{}{}
+	}
+	seenResults := map[string]struct{}{}
+	for index := range input.RelationshipResults {
+		result := &input.RelationshipResults[index]
+		result.RelationshipRef = strings.TrimSpace(result.RelationshipRef)
+		if result.RelationshipRef == "" {
+			return errors.New("submission relationship result ref is required")
+		}
+		if _, exists := seenResults[result.RelationshipRef]; exists {
+			return errors.New("submission relationship result ref is duplicated")
+		}
+		seenResults[result.RelationshipRef] = struct{}{}
+		switch result.Disposition {
+		case "stored":
+			if strings.TrimSpace(result.Reason) != "" {
+				return fmt.Errorf("submission relationship result %q stored reason must be empty", result.RelationshipRef)
+			}
+			if len(result.Splits) != 0 {
+				return fmt.Errorf("submission relationship result %q supplies committed splits before commit", result.RelationshipRef)
+			}
+			splits := splitsByRelationship[result.RelationshipRef]
+			if len(splits) == 0 {
+				return fmt.Errorf("submission relationship result %q has no stored split", result.RelationshipRef)
+			}
+			for splitIndex := range len(splits) {
+				if _, exists := splits[splitIndex]; !exists {
+					return fmt.Errorf("submission relationship result %q split_index must be contiguous", result.RelationshipRef)
+				}
+			}
+		case "not_stored":
+			if len(splitsByRelationship[result.RelationshipRef]) != 0 {
+				return fmt.Errorf("submission relationship result %q has not_stored observations", result.RelationshipRef)
+			}
+			if len(result.Splits) > 0 {
+				return fmt.Errorf("submission relationship result %q has not_stored splits", result.RelationshipRef)
+			}
+			if strings.TrimSpace(result.Reason) != "not_supported_by_evidence" {
+				return fmt.Errorf("submission relationship result %q requires reason not_supported_by_evidence", result.RelationshipRef)
+			}
+		default:
+			return fmt.Errorf("submission relationship result %q has unsupported disposition", result.RelationshipRef)
+		}
+	}
+	for ref := range splitsByRelationship {
+		if _, exists := seenResults[ref]; !exists {
+			return fmt.Errorf("submission relationship result %q is missing", ref)
+		}
 	}
 	seenRegistrations := map[string]struct{}{}
 	for _, registration := range input.PredicateRegistrations {
@@ -373,6 +452,12 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 		}
 		if !contains(domain.EntityKinds(), registration.SubjectKind) || !contains(append(domain.EntityKinds(), domain.ValueTypes()...), registration.ObjectKind) {
 			return errors.New("submission predicate registration endpoint kinds are unsupported")
+		}
+		if !contains(domain.RelationshipKinds(), registration.RelationshipKind) {
+			return errors.New("submission predicate registration relationship_kind is unsupported")
+		}
+		if !contains(domain.CurrentCardinalities(), registration.CurrentCardinality) {
+			return errors.New("submission predicate registration current_cardinality is unsupported")
 		}
 		if _, exists := seenRegistrations[registration.RelationshipRef]; exists {
 			return errors.New("submission predicate registration relationship_ref is duplicated")
@@ -404,7 +489,7 @@ func validateSubmissionAssessmentCommitScope(
 	if found != 1 {
 		return ErrSubmissionAssessmentScopeMismatch
 	}
-	return nil
+	return validateSubmissionAssessmentContextSpaces(ctx, tx, input)
 }
 
 func lockSubmissionAssessmentRun(
@@ -450,8 +535,8 @@ func loadLockedSubmissionAssessmentItems(
 		       fragment.content,
 		       fragment.content_hash,
 		       fragment.authority,
-		       COALESCE(fragment.source_id::text, ''),
-		       COALESCE(fragment.source_revision_id::text, ''),
+		       COALESCE(fragment.source_id::text, source_intent.source_id::text, ''),
+		       COALESCE(fragment.source_revision_id::text, source_intent.source_revision_id::text, ''),
 		       COALESCE(source.current_revision_id::text, ''),
 		       EXISTS (
 		           SELECT 1
@@ -478,9 +563,14 @@ func loadLockedSubmissionAssessmentItems(
 		JOIN evidence_fragments AS fragment
 		  ON fragment.team_id = item.team_id
 		 AND fragment.fragment_id = item.fragment_id
+		LEFT JOIN remember_source_revision_intents AS source_intent
+		  ON source_intent.team_id = fragment.team_id
+		 AND source_intent.ingest_id = fragment.ingest_id
+		 AND source_intent.fragment_id = fragment.fragment_id
+		 AND source_intent.owner_profile_id = fragment.owner_profile_id
 		LEFT JOIN evidence_sources AS source
 		  ON source.team_id = fragment.team_id
-		 AND source.source_id = fragment.source_id
+		 AND source.source_id = COALESCE(fragment.source_id, source_intent.source_id)
 		WHERE item.team_id = ?::uuid
 		  AND item.owner_profile_id = ?::uuid
 		  AND item.ingest_id = ?::uuid
@@ -551,6 +641,47 @@ func validateSubmissionCommitItems(
 	return nil
 }
 
+// applyRememberSourceReferencesToObservations attaches source lineage that is
+// resolved during the accepted commit. Remember staging intentionally leaves
+// evidence_fragments unbound, so provider-facing assessment objects cannot
+// carry IDs for a source that did not exist yet.
+func applyRememberSourceReferencesToObservations(
+	observations []SubmissionAssessmentRelationshipObservationInput,
+	items []submissionLockedItem,
+) {
+	type sourceReference struct {
+		sourceID         string
+		sourceRevisionID string
+	}
+	byFragment := make(map[string]sourceReference, len(items))
+	for _, item := range items {
+		if item.Fragment.SourceID == "" || item.Fragment.SourceRevisionID == "" {
+			continue
+		}
+		byFragment[item.Fragment.FragmentID] = sourceReference{
+			sourceID:         item.Fragment.SourceID,
+			sourceRevisionID: item.Fragment.SourceRevisionID,
+		}
+	}
+	apply := func(support *EvidenceSupportInput) {
+		if support == nil {
+			return
+		}
+		reference, ok := byFragment[support.FragmentID]
+		if !ok {
+			return
+		}
+		support.SourceID = reference.sourceID
+		support.SourceRevisionID = reference.sourceRevisionID
+	}
+	for i := range observations {
+		apply(observations[i].Observation.Support)
+		for j := range observations[i].Observation.Supports {
+			apply(&observations[i].Observation.Supports[j])
+		}
+	}
+}
+
 func resolveSubmissionPredicates(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -568,9 +699,22 @@ func resolveSubmissionPredicates(
 		}
 		seen[observation.Ref] = struct{}{}
 		registration, needsRegistration := registrations[observation.Ref]
+		if needsRegistration && observation.ExactPredicateKey != "" {
+			return ErrRememberExactReferenceStale
+		}
 		if !needsRegistration {
 			if observation.PredicateKey == "" || observation.PredicateVersion < 1 {
 				return ErrSubmissionAssessmentNonPromotable
+			}
+			if observation.ExactPredicateKey != "" {
+				if observation.PredicateKey != observation.ExactPredicateKey {
+					return ErrRememberExactReferenceStale
+				}
+				version, err := loadCurrentExactSubmissionPredicateVersion(ctx, tx, input.TeamID, observation.ExactPredicateKey)
+				if err != nil {
+					return err
+				}
+				observation.PredicateVersion = version
 			}
 			continue
 		}
@@ -595,6 +739,24 @@ func resolveSubmissionPredicates(
 	return nil
 }
 
+func loadCurrentExactSubmissionPredicateVersion(ctx context.Context, tx *gorm.DB, teamID, predicateKey string) (int, error) {
+	var version int
+	err := tx.WithContext(ctx).Raw(`
+		SELECT version
+		FROM team_predicate_definitions
+		WHERE team_id = ?::uuid AND predicate_key = ? AND lifecycle_state = 'active'
+		ORDER BY version DESC
+		LIMIT 1
+	`, teamID, predicateKey).Row().Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrRememberExactReferenceStale
+	}
+	if err != nil {
+		return 0, err
+	}
+	return version, nil
+}
+
 func resolveSubmissionPredicateRegistration(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -616,7 +778,9 @@ func resolveSubmissionPredicateRegistration(
 	if loaded != nil {
 		if loaded.LifecycleState != string(domain.PredicateLifecycleActive) ||
 			!placementPredicateKindAllowed(loaded.AllowedSubjectKinds, registration.SubjectKind) ||
-			!placementPredicateKindAllowed(loaded.AllowedObjectKinds, registration.ObjectKind) {
+			!placementPredicateKindAllowed(loaded.AllowedObjectKinds, registration.ObjectKind) ||
+			loaded.RelationshipKind != registration.RelationshipKind ||
+			loaded.CurrentCardinality != registration.CurrentCardinality {
 			return SemanticReviewPredicateCandidate{}, "", ErrSubmissionPredicateRegistrationHeld
 		}
 		return *loaded, "reused", nil
@@ -638,7 +802,7 @@ func resolveSubmissionPredicateRegistration(
 		    lifecycle_state, origin, metadata
 		) VALUES (
 		    ?::uuid, ?, 1, ARRAY[]::text[], ?::text[], ?::text[],
-		    'state', 'many', 'active', 'submission_registration', ?::jsonb
+		    ?, ?, 'active', 'submission_registration', ?::jsonb
 		)
 		RETURNING predicate_key, version, aliases, allowed_subject_kinds,
 		          allowed_object_kinds, relationship_kind, current_cardinality,
@@ -646,6 +810,7 @@ func resolveSubmissionPredicateRegistration(
 	`, input.TeamID, canonicalKey,
 		pq.Array([]string{registration.SubjectKind}),
 		pq.Array([]string{registration.ObjectKind}),
+		registration.RelationshipKind, registration.CurrentCardinality,
 		string(metadata)).Rows()
 	if err != nil {
 		return SemanticReviewPredicateCandidate{}, "", err

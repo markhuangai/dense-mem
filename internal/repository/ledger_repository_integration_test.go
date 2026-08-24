@@ -810,10 +810,11 @@ func TestLedgerSourceRevisionCompareAndSet(t *testing.T) {
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		Evidence: []EvidenceInput{{
-			Content:                   "The source revision lineage must be preserved on evidence fragments.",
-			SourceKey:                 "doc://policy",
-			SourceRevisionToken:       "rev-2",
-			SourceRevisionContentHash: "sha256:second",
+			Content:                       "The source revision lineage must be preserved on evidence fragments.",
+			SourceKey:                     "doc://policy",
+			SourceRevisionToken:           "rev-2",
+			ExpectedPreviousRevisionToken: "rev-1",
+			SourceRevisionContentHash:     "sha256:second",
 		}},
 	})
 	require.NoError(t, err)

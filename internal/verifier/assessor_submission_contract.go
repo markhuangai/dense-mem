@@ -40,6 +40,7 @@ const SemanticAssessmentMaxEntityGroundings = 20
 type SemanticAssessmentRequiredRelationshipRef struct {
 	ProposalID        string
 	PredicateHint     string
+	KnownPredicateKey string
 	EvidenceIDs       []string
 	Evidence          []SemanticAssessmentEvidenceSpan
 	SubjectRef        string
@@ -47,9 +48,9 @@ type SemanticAssessmentRequiredRelationshipRef struct {
 	ObjectRef         *string
 	ObjectValue       *SemanticAssessmentValue
 	Polarity          string
-	Modality          string
 	ValidFrom         *string
 	ValidTo           *string
+	MaxSplits         int
 }
 
 type SemanticAssessmentSubmissionContract struct {
@@ -58,15 +59,16 @@ type SemanticAssessmentSubmissionContract struct {
 }
 
 type SemanticAssessmentRequiredEntityRef struct {
-	Ref         string
-	Name        string
-	Kind        string
-	EvidenceIDs []string
-	Groundings  []SemanticAssessmentEntityGrounding
-	Surface     string
-	EvidenceID  string
-	Start       int
-	End         int
+	Ref           string
+	Name          string
+	Kind          string
+	KnownEntityID string
+	EvidenceIDs   []string
+	Groundings    []SemanticAssessmentEntityGrounding
+	Surface       string
+	EvidenceID    string
+	Start         int
+	End           int
 }
 
 type SemanticAssessmentEntityGrounding struct {
@@ -80,23 +82,24 @@ type SemanticAssessmentEntityGrounding struct {
 }
 
 type SemanticAssessmentSubmittedEntity struct {
-	Ref        string                              `json:"ref"`
-	Name       string                              `json:"name"`
-	Kind       string                              `json:"kind"`
-	Groundings []SemanticAssessmentEntityGrounding `json:"groundings"`
+	Ref           string                              `json:"ref"`
+	Name          string                              `json:"name"`
+	Kind          string                              `json:"kind"`
+	KnownEntityID string                              `json:"known_entity_id,omitempty"`
+	Groundings    []SemanticAssessmentEntityGrounding `json:"groundings"`
 }
 
 type SemanticAssessmentSubmittedRelationship struct {
-	Ref           string                   `json:"ref"`
-	SubjectRef    string                   `json:"subject_ref"`
-	PredicateHint string                   `json:"predicate_hint"`
-	ObjectRef     *string                  `json:"object_ref"`
-	ObjectValue   *SemanticAssessmentValue `json:"object_value"`
-	Polarity      string                   `json:"polarity"`
-	Modality      string                   `json:"modality"`
-	EvidenceIDs   []string                 `json:"evidence_ids"`
-	ValidFrom     *string                  `json:"valid_from,omitempty"`
-	ValidTo       *string                  `json:"valid_to,omitempty"`
+	Ref               string                   `json:"ref"`
+	SubjectRef        string                   `json:"subject_ref"`
+	PredicateHint     string                   `json:"predicate_hint"`
+	KnownPredicateKey string                   `json:"known_predicate_key,omitempty"`
+	ObjectRef         *string                  `json:"object_ref"`
+	ObjectValue       *SemanticAssessmentValue `json:"object_value"`
+	Polarity          string                   `json:"polarity"`
+	EvidenceIDs       []string                 `json:"evidence_ids"`
+	ValidFrom         *string                  `json:"valid_from,omitempty"`
+	ValidTo           *string                  `json:"valid_to,omitempty"`
 }
 
 func normalizeSemanticAssessmentSubmissionContract(
@@ -134,6 +137,7 @@ func normalizeSemanticAssessmentSubmissionContract(
 		target.Ref = strings.TrimSpace(target.Ref)
 		target.Name = strings.TrimSpace(target.Name)
 		target.Kind = strings.TrimSpace(target.Kind)
+		target.KnownEntityID = strings.TrimSpace(target.KnownEntityID)
 		target.EvidenceIDs = normalizedUniqueStrings(target.EvidenceIDs)
 		field := fmt.Sprintf("submission_contract.entities[%d]", i)
 		if !assessmentBoundedRequiredString(target.Ref, 128) {
@@ -203,9 +207,9 @@ func normalizeSemanticAssessmentSubmissionContract(
 		target := &contract.Relationships[i]
 		target.ProposalID = strings.TrimSpace(target.ProposalID)
 		target.PredicateHint = strings.TrimSpace(target.PredicateHint)
+		target.KnownPredicateKey = strings.TrimSpace(target.KnownPredicateKey)
 		target.SubjectRef = strings.TrimSpace(target.SubjectRef)
 		target.Polarity = strings.TrimSpace(target.Polarity)
-		target.Modality = strings.TrimSpace(target.Modality)
 		target.ValidFrom = normalizeOptionalAssessmentTime(target.ValidFrom)
 		target.ValidTo = normalizeOptionalAssessmentTime(target.ValidTo)
 		target.EvidenceIDs = normalizedUniqueStrings(target.EvidenceIDs)
@@ -239,9 +243,6 @@ func normalizeSemanticAssessmentSubmissionContract(
 		if !semanticOneOf(target.Polarity, "+", "-") {
 			errs = append(errs, semanticErr(field+".polarity", "is unsupported"))
 		}
-		if !semanticOneOf(target.Modality, "statement", "question", "proposal", "speculation", "quoted") {
-			errs = append(errs, semanticErr(field+".modality", "is unsupported"))
-		}
 		from, fromErr := assessmentParsedTime(target.ValidFrom)
 		to, toErr := assessmentParsedTime(target.ValidTo)
 		if fromErr != nil || toErr != nil {
@@ -265,25 +266,26 @@ func normalizeSemanticAssessmentSubmissionContract(
 	req.SubmittedEntities = make([]SemanticAssessmentSubmittedEntity, 0, len(contract.Entities))
 	for _, target := range contract.Entities {
 		req.SubmittedEntities = append(req.SubmittedEntities, SemanticAssessmentSubmittedEntity{
-			Ref:        target.Ref,
-			Name:       target.Name,
-			Kind:       target.Kind,
-			Groundings: append([]SemanticAssessmentEntityGrounding(nil), target.Groundings...),
+			Ref:           target.Ref,
+			Name:          target.Name,
+			Kind:          target.Kind,
+			KnownEntityID: target.KnownEntityID,
+			Groundings:    append([]SemanticAssessmentEntityGrounding(nil), target.Groundings...),
 		})
 	}
 	req.SubmittedRelationships = make([]SemanticAssessmentSubmittedRelationship, 0, len(contract.Relationships))
 	for _, target := range contract.Relationships {
 		req.SubmittedRelationships = append(req.SubmittedRelationships, SemanticAssessmentSubmittedRelationship{
-			Ref:           target.ProposalID,
-			SubjectRef:    target.SubjectRef,
-			PredicateHint: target.PredicateHint,
-			ObjectRef:     target.ObjectRef,
-			ObjectValue:   cloneSemanticAssessmentValue(target.ObjectValue),
-			Polarity:      target.Polarity,
-			Modality:      target.Modality,
-			EvidenceIDs:   append([]string(nil), target.EvidenceIDs...),
-			ValidFrom:     cloneOptionalString(target.ValidFrom),
-			ValidTo:       cloneOptionalString(target.ValidTo),
+			Ref:               target.ProposalID,
+			SubjectRef:        target.SubjectRef,
+			PredicateHint:     target.PredicateHint,
+			KnownPredicateKey: target.KnownPredicateKey,
+			ObjectRef:         target.ObjectRef,
+			ObjectValue:       cloneSemanticAssessmentValue(target.ObjectValue),
+			Polarity:          target.Polarity,
+			EvidenceIDs:       append([]string(nil), target.EvidenceIDs...),
+			ValidFrom:         cloneOptionalString(target.ValidFrom),
+			ValidTo:           cloneOptionalString(target.ValidTo),
 		})
 	}
 	return nil
@@ -331,6 +333,16 @@ func resolveSemanticAssessmentSubmissionResponse(
 			result.EvidenceID = grounding.EvidenceID
 			result.Start = grounding.Start
 			result.End = grounding.End
+			if result.CandidateEntityID != nil {
+				if group, ok := groupsByGroundingRef[selected]; ok {
+					for _, candidate := range group.Candidates {
+						if candidate.EntityID == *result.CandidateEntityID {
+							result.Kind = candidate.Kind
+							break
+						}
+					}
+				}
+			}
 			continue
 		}
 		group, ok := groupsByGroundingRef[selected]
@@ -354,29 +366,33 @@ func resolveSemanticAssessmentSubmissionResponse(
 
 	for i := range response.RelationshipResults {
 		result := &response.RelationshipResults[i]
-		if err := resolveSemanticAssessmentRange(evidenceByID, &result.PredicateRange); err != nil {
-			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].predicate_range", i), err.Error()))
-		} else {
-			evidence := evidenceByID[result.PredicateRange.EvidenceID]
-			result.OriginalPredicate, _ = SemanticEvidenceSpan(evidence.Content, result.PredicateRange.Start, result.PredicateRange.End)
-		}
-		if result.ValueRange != nil {
-			if err := resolveSemanticAssessmentRange(evidenceByID, result.ValueRange); err != nil {
-				errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].value_range", i), err.Error()))
+		for j := range result.Splits {
+			split := &result.Splits[j]
+			path := fmt.Sprintf("relationship_results[%d].splits[%d]", i, j)
+			if err := resolveSemanticAssessmentRange(evidenceByID, &split.PredicateRange); err != nil {
+				errs = append(errs, semanticErr(path+".predicate_range", err.Error()))
+			} else {
+				evidence := evidenceByID[split.PredicateRange.EvidenceID]
+				split.OriginalPredicate, _ = SemanticEvidenceSpan(evidence.Content, split.PredicateRange.Start, split.PredicateRange.End)
 			}
-		}
-		result.Evidence = make([]SemanticAssessmentEvidenceSpan, 0, len(result.SupportRanges))
-		for j := range result.SupportRanges {
-			rangeValue := &result.SupportRanges[j]
-			if err := resolveSemanticAssessmentRange(evidenceByID, rangeValue); err != nil {
-				errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].support_ranges[%d]", i, j), err.Error()))
-				continue
+			if split.ValueRange != nil {
+				if err := resolveSemanticAssessmentRange(evidenceByID, split.ValueRange); err != nil {
+					errs = append(errs, semanticErr(path+".value_range", err.Error()))
+				}
 			}
-			result.Evidence = append(result.Evidence, SemanticAssessmentEvidenceSpan{
-				EvidenceID: rangeValue.EvidenceID,
-				Start:      rangeValue.Start,
-				End:        rangeValue.End,
-			})
+			split.Evidence = make([]SemanticAssessmentEvidenceSpan, 0, len(split.SupportRanges))
+			for k := range split.SupportRanges {
+				rangeValue := &split.SupportRanges[k]
+				if err := resolveSemanticAssessmentRange(evidenceByID, rangeValue); err != nil {
+					errs = append(errs, semanticErr(fmt.Sprintf("%s.support_ranges[%d]", path, k), err.Error()))
+					continue
+				}
+				split.Evidence = append(split.Evidence, SemanticAssessmentEvidenceSpan{
+					EvidenceID: rangeValue.EvidenceID,
+					Start:      rangeValue.Start,
+					End:        rangeValue.End,
+				})
+			}
 		}
 	}
 	return errs
@@ -420,7 +436,7 @@ func normalizeSemanticAssessmentSubmissionValue(value *SemanticAssessmentValue, 
 		trimmed := strings.TrimSpace(*value.Unit)
 		value.Unit = &trimmed
 	}
-	_, detail := assessmentRelationshipObjectKind(SemanticAssessmentRelationshipResult{ObjectValue: value}, map[string]SemanticAssessmentEntityResult{})
+	_, detail := assessmentRelationshipObjectKind(SemanticAssessmentRelationshipSplit{ObjectValue: value}, map[string]SemanticAssessmentEntityResult{})
 	if detail == "" {
 		return nil
 	}
@@ -447,9 +463,21 @@ func validateSemanticAssessmentSubmissionResponse(
 			continue
 		}
 		entities[result.Ref] = result
+		if target.KnownEntityID != "" {
+			if result.Action != string(domain.EntityResolutionReuse) {
+				errs = append(errs, semanticErr(fmt.Sprintf("entity_results[%d].action", i), "must reuse the exact known_entity_id"))
+			}
+			if result.CandidateEntityID == nil || strings.TrimSpace(*result.CandidateEntityID) != target.KnownEntityID {
+				errs = append(errs, semanticErr(fmt.Sprintf("entity_results[%d].candidate_entity_id", i), "must equal the exact known_entity_id"))
+			}
+		}
 		if result.GroundingRef == nil {
-			if result.Action != string(domain.EntityResolutionAmbiguous) || result.CandidateEntityID != nil {
-				errs = append(errs, semanticErr(fmt.Sprintf("entity_results[%d].grounding_ref", i), "may be null only for an ambiguous result"))
+			if result.Action != string(domain.EntityResolutionAmbiguous) &&
+				!semanticAssessmentAllowsUngroundedExactReuse(contract, response.RelationshipResults, result) {
+				errs = append(errs, semanticErr(fmt.Sprintf("entity_results[%d].grounding_ref", i), "is required unless action is ambiguous"))
+			}
+			if result.CandidateEntityID != nil && result.Action != string(domain.EntityResolutionReuse) {
+				errs = append(errs, semanticErr(fmt.Sprintf("entity_results[%d].candidate_entity_id", i), "requires reuse when grounding_ref is null"))
 			}
 			continue
 		}
@@ -475,47 +503,64 @@ func validateSemanticAssessmentSubmissionResponse(
 			continue
 		}
 		seen[result.Ref] = struct{}{}
-		if result.SubjectRef != target.SubjectRef || result.Polarity != target.Polarity || result.Modality != target.Modality {
-			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d]", i), "does not preserve its submitted relationship target"))
+		if result.Disposition == "not_supported" {
+			continue
 		}
-		if !optionalStringEqual(result.ValidFrom, target.ValidFrom) || !optionalStringEqual(result.ValidTo, target.ValidTo) {
-			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].validity", i), "does not preserve the submitted temporal bounds"))
-		}
-		if !semanticAssessmentSubmittedObjectMatches(target, result) {
-			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].object", i), "does not preserve its submitted object"))
+		if target.MaxSplits > 0 && len(result.Splits) > target.MaxSplits {
+			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].splits", i), fmt.Sprintf("must contain at most %d entries for this relationship", target.MaxSplits)))
 		}
 		allowedEvidence := stringSet(target.EvidenceIDs)
-		for _, entry := range []struct {
-			field      string
-			rangeValue *SemanticAssessmentGroundedRange
-		}{
-			{field: "predicate_range", rangeValue: &result.PredicateRange},
-			{field: "value_range", rangeValue: result.ValueRange},
-		} {
-			field, rangeValue := entry.field, entry.rangeValue
-			if rangeValue != nil && !containsString(allowedEvidence, rangeValue.EvidenceID) {
-				errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].%s.evidence_id", i, field), "is outside the submitted evidence allowlist"))
+		for j, split := range result.Splits {
+			path := fmt.Sprintf("relationship_results[%d].splits[%d]", i, j)
+			if target.KnownPredicateKey != "" {
+				if split.PredicateStatus != "resolved" {
+					errs = append(errs, semanticErr(path+".predicate_status", "must resolve the exact known_predicate_key"))
+				}
+				if split.PredicateKey == nil || strings.TrimSpace(*split.PredicateKey) != target.KnownPredicateKey {
+					errs = append(errs, semanticErr(path+".predicate_key", "must equal the exact known_predicate_key"))
+				}
 			}
-		}
-		if (target.ObjectValue == nil) != (result.ValueRange == nil) {
-			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].value_range", i), "must be present exactly for a Value object"))
-		}
-		seenSupports := map[string]struct{}{}
-		for j, support := range result.SupportRanges {
-			if !containsString(allowedEvidence, support.EvidenceID) {
-				errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].support_ranges[%d].evidence_id", i, j), "is outside the submitted evidence allowlist"))
+			if split.SubjectRef != target.SubjectRef || split.Polarity != target.Polarity {
+				errs = append(errs, semanticErr(path, "does not preserve its submitted relationship target"))
 			}
-			key := assessmentSpanKey(support.EvidenceID, support.Start, support.End)
-			if _, exists := seenSupports[key]; exists {
-				errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].support_ranges[%d]", i, j), "is duplicated"))
+			if !semanticAssessmentStringPointersEqual(split.ValidFrom, target.ValidFrom) || !semanticAssessmentStringPointersEqual(split.ValidTo, target.ValidTo) {
+				errs = append(errs, semanticErr(path+".validity", "does not preserve the submitted temporal bounds"))
 			}
-			seenSupports[key] = struct{}{}
-		}
-		if !semanticAssessmentRangeCovered(result.PredicateRange, result.SupportRanges) {
-			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].predicate_range", i), "must be covered by a support range"))
-		}
-		if result.ValueRange != nil && !semanticAssessmentRangeCovered(*result.ValueRange, result.SupportRanges) {
-			errs = append(errs, semanticErr(fmt.Sprintf("relationship_results[%d].value_range", i), "must be covered by a support range"))
+			if !semanticAssessmentSubmittedObjectMatches(target, split) {
+				errs = append(errs, semanticErr(path+".object", "does not preserve its submitted object"))
+			}
+			for _, entry := range []struct {
+				field      string
+				rangeValue *SemanticAssessmentGroundedRange
+			}{
+				{field: "predicate_range", rangeValue: &split.PredicateRange},
+				{field: "value_range", rangeValue: split.ValueRange},
+			} {
+				field, rangeValue := entry.field, entry.rangeValue
+				if rangeValue != nil && !containsString(allowedEvidence, rangeValue.EvidenceID) {
+					errs = append(errs, semanticErr(path+"."+field+".evidence_id", "is outside the submitted evidence allowlist"))
+				}
+			}
+			if (target.ObjectValue == nil) != (split.ValueRange == nil) {
+				errs = append(errs, semanticErr(path+".value_range", "must be present exactly for a Value object"))
+			}
+			seenSupports := map[string]struct{}{}
+			for k, support := range split.SupportRanges {
+				if !containsString(allowedEvidence, support.EvidenceID) {
+					errs = append(errs, semanticErr(fmt.Sprintf("%s.support_ranges[%d].evidence_id", path, k), "is outside the submitted evidence allowlist"))
+				}
+				key := assessmentSpanKey(support.EvidenceID, support.Start, support.End)
+				if _, exists := seenSupports[key]; exists {
+					errs = append(errs, semanticErr(fmt.Sprintf("%s.support_ranges[%d]", path, k), "is duplicated"))
+				}
+				seenSupports[key] = struct{}{}
+			}
+			if !semanticAssessmentRangeCovered(split.PredicateRange, split.SupportRanges) {
+				errs = append(errs, semanticErr(path+".predicate_range", "must be covered by a support range"))
+			}
+			if split.ValueRange != nil && !semanticAssessmentRangeCovered(*split.ValueRange, split.SupportRanges) {
+				errs = append(errs, semanticErr(path+".value_range", "must be covered by a support range"))
+			}
 		}
 	}
 	for ref := range relationshipTargets {
@@ -524,6 +569,49 @@ func validateSemanticAssessmentSubmissionResponse(
 		}
 	}
 	return errs
+}
+
+func semanticAssessmentAllowsUngroundedExactReuse(
+	contract *SemanticAssessmentSubmissionContract,
+	relationshipResults []SemanticAssessmentRelationshipResult,
+	entityResult SemanticAssessmentEntityResult,
+) bool {
+	if contract == nil || entityResult.GroundingRef != nil ||
+		entityResult.Action != string(domain.EntityResolutionReuse) || entityResult.CandidateEntityID == nil {
+		return false
+	}
+	knownEntityID := ""
+	for _, target := range contract.Entities {
+		if target.Ref == entityResult.Ref {
+			knownEntityID = target.KnownEntityID
+			break
+		}
+	}
+	if knownEntityID == "" || strings.TrimSpace(*entityResult.CandidateEntityID) != knownEntityID {
+		return false
+	}
+	dependent := false
+	for _, target := range contract.Relationships {
+		usesEntity := target.SubjectRef == entityResult.Ref ||
+			(target.ObjectRef != nil && *target.ObjectRef == entityResult.Ref)
+		if !usesEntity {
+			continue
+		}
+		dependent = true
+		matches := 0
+		for _, result := range relationshipResults {
+			if result.Ref == target.ProposalID {
+				matches++
+				if result.Disposition != "not_supported" {
+					return false
+				}
+			}
+		}
+		if matches != 1 {
+			return false
+		}
+	}
+	return dependent
 }
 
 func semanticAssessmentRangeCovered(value SemanticAssessmentGroundedRange, supports []SemanticAssessmentGroundedRange) bool {
@@ -537,7 +625,7 @@ func semanticAssessmentRangeCovered(value SemanticAssessmentGroundedRange, suppo
 
 func semanticAssessmentSubmittedObjectMatches(
 	target SemanticAssessmentRequiredRelationshipRef,
-	result SemanticAssessmentRelationshipResult,
+	result SemanticAssessmentRelationshipSplit,
 ) bool {
 	if target.ObjectRef != nil {
 		return result.ObjectValue == nil && result.ObjectRef != nil && *result.ObjectRef == *target.ObjectRef

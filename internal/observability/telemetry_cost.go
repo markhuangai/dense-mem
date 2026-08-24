@@ -170,7 +170,7 @@ func normalizeRememberOutcome(value string) string {
 
 func normalizePlacementStatus(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "completed", "failed", "quarantined":
+	case "completed", "failed", "quarantined", "rejected":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return unknownMetricLabel

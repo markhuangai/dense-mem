@@ -9,7 +9,12 @@ import (
 
 func submissionStatusResultFromLedger(placement *StageResult) *SubmissionStatusResult {
 	if placement == nil {
-		return &SubmissionStatusResult{Evidence: []SubmissionEvidenceStatus{}, Errors: []SubmissionStatusError{}}
+		return &SubmissionStatusResult{
+			ContractVersion: domain.ContractVersion,
+			Evidence:        []SubmissionEvidenceStatus{},
+			Errors:          []SubmissionStatusError{},
+			Degradations:    []SubmissionStatusDegradation{},
+		}
 	}
 	items := make([]SubmissionEvidenceStatus, 0, len(placement.Items))
 	lineage := make(map[string][]string, len(placement.Evidence))
@@ -17,16 +22,15 @@ func submissionStatusResultFromLedger(placement *StageResult) *SubmissionStatusR
 		lineage[evidence.FragmentID] = append([]string(nil), evidence.SupersededEvidenceIDs...)
 	}
 	searchState := string(domain.SearchProjectionNotRequired)
-	searchErrorAdded := false
 	processing := publicSubmissionProcessingState(placement.Status)
 	statusErrors := make([]SubmissionStatusError, 0, 2)
+	degradations := make([]SubmissionStatusDegradation, 0, 1)
 	appendStatusError := func(value SubmissionStatusError) {
 		for index := range statusErrors {
 			existing := &statusErrors[index]
 			if existing.Code != value.Code || existing.Message != value.Message {
 				continue
 			}
-			mergeSubmissionResubmissionIssues(existing, value)
 			return
 		}
 		statusErrors = append(statusErrors, value)
@@ -43,25 +47,46 @@ func submissionStatusResultFromLedger(placement *StageResult) *SubmissionStatusR
 			itemError = semanticError
 			appendStatusError(*semanticError)
 		} else if itemSearchState == string(domain.SearchProjectionFailed) {
-			searchError := submissionStatusErrorWithMessage(SubmissionErrorSearchIndexingDelayed, "Semantic search indexing is delayed.")
-			itemError = &searchError
-			searchErrorAdded = true
+			if len(degradations) == 0 {
+				degradations = append(degradations, SubmissionStatusDegradation{
+					Frontier: "search",
+					Optional: true,
+					Code:     string(SubmissionErrorSearchIndexingDelayed),
+					Message:  "Semantic search indexing is delayed; canonical memory remains committed.",
+				})
+			}
 		}
 		items = append(items, SubmissionEvidenceStatus{EvidenceID: item.FragmentID, EvidenceIndex: item.EvidenceIndex, SupersededEvidenceIDs: superseded, SearchState: itemSearchState, Error: itemError})
 	}
-	if processing == "failed" && len(statusErrors) == 0 {
+	if processing == "rejected" && len(statusErrors) == 0 {
+		appendStatusError(submissionStatusError(SubmissionErrorNoSupportedMemory))
+	} else if processing == "failed" && len(statusErrors) == 0 {
 		appendStatusError(submissionStatusError(SubmissionErrorProcessingFailed))
 	} else if processing == "quarantined" && len(statusErrors) == 0 {
 		appendStatusError(submissionStatusError(SubmissionErrorQuarantined))
 	}
-	if searchErrorAdded {
-		appendStatusError(submissionStatusErrorWithMessage(SubmissionErrorSearchIndexingDelayed, "Semantic search indexing is delayed; check the control portal for recovery guidance."))
-	}
 	result := &SubmissionStatusResult{
-		SubmissionID: placement.SubmissionID, SubmissionKind: "remember", ProcessingState: processing, SearchState: searchState,
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    placement.SubmissionID, SubmissionKind: "remember", ProcessingState: processing, SearchState: searchState,
 		CheckAfterSeconds: rememberCheckAfterSeconds, CorrelationID: placement.CorrelationID, SubmittedAt: placement.SubmittedAt,
 		NextAttemptAt: placement.NextAttemptAt, StartedAt: placement.StartedAt, UpdatedAt: placement.UpdatedAt,
-		CompletedAt: placement.CompletedAt, Evidence: items, Errors: statusErrors, QuarantineExpiresAt: placement.QuarantineExpiresAt,
+		CompletedAt: placement.CompletedAt, Evidence: items, Errors: statusErrors, Degradations: degradations,
+		QuarantineExpiresAt: placement.QuarantineExpiresAt,
+	}
+	for _, item := range placement.RelationshipResults {
+		copy := SubmissionRelationshipResult{
+			RelationshipRef: item.RelationshipRef,
+			Disposition:     item.Disposition,
+			Reason:          item.Reason,
+			Splits:          make([]SubmissionRelationshipSplit, 0, len(item.Splits)),
+		}
+		for _, split := range item.Splits {
+			copy.Splits = append(copy.Splits, SubmissionRelationshipSplit{
+				SplitIndex: split.SplitIndex, RelationshipID: split.RelationshipID,
+				RelationshipVersion: split.RelationshipVersion, Status: split.Status,
+			})
+		}
+		result.RelationshipResults = append(result.RelationshipResults, copy)
 	}
 	if placement.MaxAttempts > 0 {
 		attempts, maxAttempts := placement.Attempts, placement.MaxAttempts
@@ -69,30 +94,6 @@ func submissionStatusResultFromLedger(placement *StageResult) *SubmissionStatusR
 		result.MaxAttempts = &maxAttempts
 	}
 	return result
-}
-
-func mergeSubmissionResubmissionIssues(target *SubmissionStatusError, source SubmissionStatusError) {
-	if target == nil {
-		return
-	}
-	target.ResubmissionIssuesTruncated = target.ResubmissionIssuesTruncated || source.ResubmissionIssuesTruncated
-	for _, candidate := range source.ResubmissionIssues {
-		duplicate := false
-		for _, existing := range target.ResubmissionIssues {
-			if existing == candidate {
-				duplicate = true
-				break
-			}
-		}
-		if duplicate {
-			continue
-		}
-		if len(target.ResubmissionIssues) >= submissionStatusMaxResubmissionIssues {
-			target.ResubmissionIssuesTruncated = true
-			break
-		}
-		target.ResubmissionIssues = append(target.ResubmissionIssues, candidate)
-	}
 }
 
 func ProjectSubmissionStatus(placement *StageResult) *SubmissionStatusResult {

@@ -217,13 +217,14 @@ function rememberInput() {
   const predicate = "uses";
   const object = "canonical credentials";
   return {
-    evidence: [{ content, source_type: "document", source: `${runID}:source`, source_group: runID, idempotency_key: `${runID}:evidence` }],
+    idempotency_key: `${runID}:batch`,
+    evidence: [{ content, source_type: "document", source: `${runID}:source`, source_group: runID }],
     relationships: [{
       ref: `${runID}:relationship`,
       subject: { name: subject, entity_kind: "concept" },
       predicate: { proposed_key: predicate },
       object: { entity: { name: object, entity_kind: "concept" } },
-      polarity: "+", modality: "statement", evidence_indices: [0],
+      polarity: "+", evidence_indices: [0],
     }],
   };
 }

@@ -50,7 +50,7 @@ func ContractTools() []Tool {
 	return []Tool{
 		contractTool(
 			ToolRemember,
-			"Submit exact evidence and relationship proposals for server-owned placement; supports must cover every submitted evidence item by evidence_index. Use exactly one object shape: {\"object\":{\"entity\":{\"name\":\"PostgreSQL\",\"entity_kind\":\"product\"}}} or {\"object\":{\"value\":{\"type\":\"string\",\"value\":\"PostgreSQL\"}}}.",
+			"Submit exact evidence and relationship proposals for server-owned placement; every submitted evidence item must be cited by evidence_index. The server and assessor own exact grounding. Use exactly one object shape: {\"object\":{\"entity\":{\"name\":\"PostgreSQL\",\"entity_kind\":\"product\"}}} or {\"object\":{\"value\":{\"type\":\"string\",\"value\":\"PostgreSQL\"}}}.",
 			[]string{"write"},
 			rememberInputSchema(),
 			rememberOutputSchema(),
@@ -148,7 +148,7 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				res, err := deps.Remember.Remember(ctx, req)
 				if err != nil {
-					return nil, err
+					return nil, wrapRememberValidationError(err)
 				}
 				return structToMap(res)
 			}
@@ -424,6 +424,14 @@ func ValidateContractInput(tool Tool, args map[string]any, scopes []string) erro
 	if HasTenantOverrideArgs(args) {
 		return fmt.Errorf("%s: team_id and profile_id are not accepted", tool.Name)
 	}
+	if tool.Name == ToolRemember {
+		if _, ok := args["evidence"]; !ok {
+			return fmt.Errorf("evidence is required")
+		}
+		if _, ok := args["relationships"]; !ok {
+			return fmt.Errorf("relationships is required")
+		}
+	}
 	if err := ValidateInput(tool, args); err != nil {
 		return err
 	}
@@ -508,17 +516,21 @@ func validateSourceRevisionFields(index int, fields map[string]any) error {
 	_, hasPreviousRevision := fields["previous_source_revision"]
 	_, hasSupersededEvidence := fields["supersedes_evidence_ids"]
 	if hasSourceKey != hasSourceRevision {
-		return fmt.Errorf("evidence[%d]: source_key and source_revision must appear together", index)
+		missing := "source_revision"
+		if !hasSourceKey {
+			missing = "source_key"
+		}
+		return fmt.Errorf("evidence[%d].%s: source_key and source_revision must appear together", index, missing)
 	}
 	if hasPreviousRevision && (!hasSourceKey || !hasSourceRevision) {
 		return fmt.Errorf(
-			"evidence[%d]: previous_source_revision requires source_key and source_revision",
+			"evidence[%d].previous_source_revision: requires source_key and source_revision",
 			index,
 		)
 	}
 	if hasSupersededEvidence && hasPreviousRevision {
 		return fmt.Errorf(
-			"evidence[%d]: supersedes_evidence_ids cannot be combined with previous_source_revision",
+			"evidence[%d].supersedes_evidence_ids: cannot be combined with previous_source_revision",
 			index,
 		)
 	}

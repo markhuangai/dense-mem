@@ -56,6 +56,9 @@ func TestAIOperationContextUsesBoundedLabels(t *testing.T) {
 			t.Errorf("%s label = %q; want %q", test.name, test.got, unknownMetricLabel)
 		}
 	}
+	if got := normalizePlacementStatus(" REJECTED "); got != "rejected" {
+		t.Fatalf("placement status = %q; want rejected", got)
+	}
 }
 
 func TestAIOperationCostUSDRequiresCompleteRateCard(t *testing.T) {

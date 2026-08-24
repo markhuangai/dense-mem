@@ -326,6 +326,7 @@ var (
 		"semantic_commit_failed":                  {},
 		"placement_load_failed":                   {},
 		"assessor_response_invalid":               {},
+		"provider_response_invalid":               {},
 		"assessor_provider_failed":                {},
 		"lease_lost":                              {},
 		"unknown_internal_failure":                {},
@@ -339,7 +340,7 @@ var (
 		"deterministic_policy": {}, "conflict_context_stale": {},
 		"semantic_commit": {}, "contract_superseded": {}, "replacement_conflict": {},
 		"stale_source": {}, "deterministic_security_scan": {}, "security_signal": {},
-		"assessment_scope": {}, "placement_item": {},
+		"assessment_scope": {}, "placement_item": {}, "commit_race_exhausted": {},
 	}
 	submissionDiagnosticClasses = map[string]struct{}{
 		"timeout": {}, "rate_limited": {}, "http_4xx": {}, "http_5xx": {},
@@ -471,7 +472,7 @@ func normalizeSubmissionDiagnosticServiceFilter(filter SubmissionDiagnosticFilte
 		}
 	}
 	switch filter.ProcessingState {
-	case "", "queued", "processing", "completed", "quarantined", "failed":
+	case "", "queued", "processing", "completed", "rejected", "quarantined", "failed":
 	default:
 		return SubmissionDiagnosticFilter{}, fmt.Errorf("processing_state is unsupported")
 	}

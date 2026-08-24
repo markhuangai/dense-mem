@@ -28,9 +28,7 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode remember body: %v", err)
 			}
-			evidence := input["evidence"].([]any)
-			firstEvidence := evidence[0].(map[string]any)
-			idempotencyKey := firstEvidence["idempotency_key"].(string)
+			idempotencyKey := input["idempotency_key"].(string)
 			if _, ok := rememberIDs[idempotencyKey]; !ok {
 				t.Fatalf("remember input = %#v", input)
 			}
@@ -160,8 +158,7 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Fatalf("decode remember body: %v", err)
 			}
-			evidence := input["evidence"].([]any)[0].(map[string]any)
-			sourceDocID := strings.TrimPrefix(evidence["idempotency_key"].(string), "eval:")
+			sourceDocID := strings.TrimPrefix(input["idempotency_key"].(string), "eval:")
 			remembered = append(remembered, sourceDocID)
 			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-" + sourceDocID})
 		case "tool:get_submission_status":
@@ -309,7 +306,6 @@ func evalImportRelationship(t *testing.T, content, ref string) map[string]any {
 			"name": string(runes[objectStart:objectEnd]), "entity_kind": "other",
 		}},
 		"polarity":         "+",
-		"modality":         "statement",
 		"evidence_indices": []any{0},
 	}
 }

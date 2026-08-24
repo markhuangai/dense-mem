@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
@@ -20,43 +19,22 @@ type submissionAssessmentCommitFixture struct {
 	request    verifier.SemanticAssessmentRequest
 	response   verifier.SemanticAssessmentResponse
 	assessment *repository.SubmissionAssessment
-	policy     repository.AutoWriteConfidencePolicy
 }
 
 func TestSubmissionAssessmentCommitInputFailsClosedForUnsafeResults(t *testing.T) {
 	tests := []struct {
-		name        string
-		mutate      func(*submissionAssessmentCommitFixture)
-		needsReview bool
+		name   string
+		mutate func(*submissionAssessmentCommitFixture)
 	}{
 		{
 			name:   "missing persisted assessment",
 			mutate: func(fixture *submissionAssessmentCommitFixture) { fixture.assessment = nil },
 		},
 		{
-			name:   "invalid confidence threshold",
-			mutate: func(fixture *submissionAssessmentCommitFixture) { fixture.policy.Threshold = 1.01 },
-		},
-		{
 			name: "entity outside contract",
 			mutate: func(fixture *submissionAssessmentCommitFixture) {
 				fixture.response.EntityResults[0].Ref = "entity:unknown"
 			},
-		},
-		{
-			name: "ambiguous entity",
-			mutate: func(fixture *submissionAssessmentCommitFixture) {
-				fixture.response.EntityResults[0].Action = string(domain.EntityResolutionAmbiguous)
-			},
-			needsReview: true,
-		},
-		{
-			name: "reuse without controlled candidate",
-			mutate: func(fixture *submissionAssessmentCommitFixture) {
-				fixture.response.EntityResults[0].Action = string(domain.EntityResolutionReuse)
-				fixture.response.EntityResults[0].CandidateEntityID = nil
-			},
-			needsReview: true,
 		},
 		{
 			name: "omitted relationship",
@@ -71,38 +49,23 @@ func TestSubmissionAssessmentCommitInputFailsClosedForUnsafeResults(t *testing.T
 			},
 		},
 		{
-			name: "review required relationship",
-			mutate: func(fixture *submissionAssessmentCommitFixture) {
-				fixture.response.RelationshipResults[0].PredicateStatus = "unresolved"
-			},
-			needsReview: true,
-		},
-		{
 			name: "missing relationship support",
 			mutate: func(fixture *submissionAssessmentCommitFixture) {
-				fixture.response.RelationshipResults[0].Evidence = nil
+				fixture.response.RelationshipResults[0].Splits[0].Evidence = nil
 			},
 		},
 		{
 			name: "resolved predicate lacks versioned key",
 			mutate: func(fixture *submissionAssessmentCommitFixture) {
-				fixture.response.RelationshipResults[0].PredicateKey = nil
-				fixture.response.RelationshipResults[0].PredicateVersion = nil
+				fixture.response.RelationshipResults[0].Splits[0].PredicateKey = nil
+				fixture.response.RelationshipResults[0].Splits[0].PredicateVersion = nil
 			},
-			needsReview: true,
-		},
-		{
-			name: "relationship references unresolved entity",
-			mutate: func(fixture *submissionAssessmentCommitFixture) {
-				fixture.response.RelationshipResults[0].SubjectRef = "entity:unknown"
-			},
-			needsReview: true,
 		},
 		{
 			name: "relationship object is missing",
 			mutate: func(fixture *submissionAssessmentCommitFixture) {
-				fixture.response.RelationshipResults[0].ObjectRef = nil
-				fixture.response.RelationshipResults[0].ObjectValue = nil
+				fixture.response.RelationshipResults[0].Splits[0].ObjectRef = nil
+				fixture.response.RelationshipResults[0].Splits[0].ObjectValue = nil
 			},
 		},
 	}
@@ -115,17 +78,12 @@ func TestSubmissionAssessmentCommitInputFailsClosedForUnsafeResults(t *testing.T
 				fixture.run,
 				fixture.scope,
 				fixture.plan,
-				fixture.request,
 				fixture.response,
 				fixture.assessment,
-				fixture.policy,
 				false,
 			)
 
 			require.Error(t, err)
-			if test.needsReview {
-				assert.ErrorIs(t, err, errSubmissionAssessmentRequiresResubmission)
-			}
 		})
 	}
 }
@@ -152,10 +110,8 @@ func TestSubmissionAssessmentCommitInputCanonicalizesRelationshipRefsAfterEntity
 		fixture.run,
 		fixture.scope,
 		fixture.plan,
-		fixture.request,
 		fixture.response,
 		fixture.assessment,
-		fixture.policy,
 		false,
 	)
 
@@ -169,6 +125,140 @@ func TestSubmissionAssessmentCommitInputCanonicalizesRelationshipRefsAfterEntity
 	}
 	require.NotEmpty(t, dependsOn.Ref)
 	assert.Equal(t, "entity:0:subject", dependsOn.SubjectRef)
+}
+
+func TestSubmissionAssessmentCommitInputDoesNotManufactureLegacyAssessmentDefaults(t *testing.T) {
+	fixture := submissionAssessmentCommitInputFixture(t)
+
+	commit, err := submissionAssessmentCommitInput(
+		fixture.run,
+		fixture.scope,
+		fixture.plan,
+		fixture.response,
+		fixture.assessment,
+		false,
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, commit.RelationshipObservations)
+	for _, entry := range commit.RelationshipObservations {
+		observation := entry.Observation
+		assert.True(t, observation.AssessorAccepted)
+		assert.Empty(t, observation.EvidenceVerdict)
+		assert.Nil(t, observation.Confidence)
+		assert.Empty(t, observation.Rationale)
+		assert.Empty(t, observation.AssessmentPolicyVersion)
+		assert.Nil(t, observation.ThresholdUsed)
+		assert.Empty(t, observation.GateResult)
+	}
+}
+
+func TestSubmissionAssessmentCommitInputCarriesExactConstraintsIntoAtomicCommit(t *testing.T) {
+	fixture := submissionAssessmentCommitInputFixture(t)
+	entityResult := &fixture.response.EntityResults[0]
+	knownEntityID := uuid.NewString()
+	entityResult.Action = "reuse"
+	entityResult.CandidateEntityID = &knownEntityID
+	entityTarget := fixture.plan.entityTargetsByRef[entityResult.Ref]
+	entityTarget.KnownEntityID = knownEntityID
+	fixture.plan.entityTargetsByRef[entityResult.Ref] = entityTarget
+	relationshipTarget := fixture.plan.relationshipsByRef["r:uses"]
+	predicateKey := relationshipTarget.Target.PredicateHint
+	for _, result := range fixture.response.RelationshipResults {
+		if result.Ref == "r:uses" && len(result.Splits) > 0 && result.Splits[0].PredicateKey != nil {
+			predicateKey = *result.Splits[0].PredicateKey
+		}
+	}
+	relationshipTarget.KnownPredicateKey = predicateKey
+	fixture.plan.relationshipsByRef["r:uses"] = relationshipTarget
+
+	commit, err := submissionAssessmentCommitInput(
+		fixture.run, fixture.scope, fixture.plan, fixture.response, fixture.assessment, false,
+	)
+	require.NoError(t, err)
+
+	foundEntity := false
+	for _, entry := range commit.EntityResolutions {
+		if entry.Resolution.MentionRef == entityResult.Ref {
+			assert.Equal(t, knownEntityID, entry.Resolution.ExactEntityID)
+			foundEntity = true
+		}
+	}
+	require.True(t, foundEntity)
+	foundRelationship := false
+	for _, entry := range commit.RelationshipObservations {
+		if entry.RelationshipRef == "r:uses" {
+			assert.Equal(t, predicateKey, entry.Observation.ExactPredicateKey)
+			foundRelationship = true
+		}
+	}
+	require.True(t, foundRelationship)
+}
+
+func TestSubmissionAssessmentCommitInputRejectsStoredUngroundedRelationship(t *testing.T) {
+	fixture := submissionAssessmentCommitInputFixture(t)
+	var betaTarget *submissionAssessmentEntityTarget
+	for index := range fixture.plan.EntityTargets {
+		if fixture.plan.EntityTargets[index].Target.Ref == "entity:0:object" {
+			betaTarget = &fixture.plan.EntityTargets[index]
+			break
+		}
+	}
+	require.NotNil(t, betaTarget)
+	betaTarget.Target.Groundings = nil
+	fixture.plan.entityTargetsByRef[betaTarget.Target.Ref] = *betaTarget
+	for index := range fixture.response.EntityResults {
+		if fixture.response.EntityResults[index].Ref == betaTarget.Target.Ref {
+			fixture.response.EntityResults[index].GroundingRef = nil
+			break
+		}
+	}
+
+	_, err := submissionAssessmentCommitInput(
+		fixture.run,
+		fixture.scope,
+		fixture.plan,
+		fixture.response,
+		fixture.assessment,
+		false,
+	)
+
+	require.ErrorContains(t, err, "stored split references an ungrounded Entity")
+}
+
+func TestSubmissionAssessmentCommitInputPreservesMultipleSplits(t *testing.T) {
+	fixture := submissionAssessmentCommitInputFixture(t)
+	var target *verifier.SemanticAssessmentRelationshipResult
+	for index := range fixture.response.RelationshipResults {
+		if fixture.response.RelationshipResults[index].Ref == "r:uses" {
+			target = &fixture.response.RelationshipResults[index]
+			break
+		}
+	}
+	require.NotNil(t, target)
+	second := target.Splits[0]
+	second.SplitIndex = 1
+	target.Splits = append(target.Splits, second)
+
+	commit, err := submissionAssessmentCommitInput(
+		fixture.run,
+		fixture.scope,
+		fixture.plan,
+		fixture.response,
+		fixture.assessment,
+		false,
+	)
+	require.NoError(t, err)
+
+	var splits []repository.SubmissionAssessmentRelationshipObservationInput
+	for _, observation := range commit.RelationshipObservations {
+		if observation.RelationshipRef == "r:uses" {
+			splits = append(splits, observation)
+		}
+	}
+	require.Len(t, splits, 2)
+	assert.Equal(t, 0, splits[0].SplitIndex)
+	assert.Equal(t, 1, splits[1].SplitIndex)
+	assert.NotEqual(t, splits[0].Observation.Ref, splits[1].Observation.Ref)
 }
 
 func TestSubmissionAssessmentSupportsFailClosedForInvalidProvenance(t *testing.T) {
@@ -193,7 +283,7 @@ func TestSubmissionAssessmentSupportsFailClosedForInvalidProvenance(t *testing.T
 
 func submissionAssessmentCommitInputFixture(t *testing.T) submissionAssessmentCommitFixture {
 	t.Helper()
-	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+	ledger, _, _, _, worker := submissionAssessmentWorkerFixture(t)
 	service := worker.(*submissionAssessmentPlacementWorkerService)
 	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
 	require.NoError(t, err)
@@ -213,6 +303,5 @@ func submissionAssessmentCommitInputFixture(t *testing.T) submissionAssessmentCo
 			ResponseHash: "sha256:test",
 			RequestID:    request.RequestID,
 		},
-		policy: assessments.policy,
 	}
 }

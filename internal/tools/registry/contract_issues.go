@@ -1,9 +1,12 @@
 package registry
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 // ContractValidationIssue is the bounded, machine-readable form of one
@@ -21,6 +24,39 @@ type ContractValidationIssue struct {
 type ContractValidationResult struct {
 	Issues          []ContractValidationIssue `json:"issues"`
 	IssuesTruncated bool                      `json:"issues_truncated"`
+}
+
+type ContractValidationFailure struct {
+	Result ContractValidationResult
+}
+
+func (e *ContractValidationFailure) Error() string {
+	if e == nil || len(e.Result.Issues) == 0 {
+		return "contract validation failed"
+	}
+	return e.Result.Issues[0].Message
+}
+
+func wrapRememberValidationError(err error) error {
+	var validation *rememberapp.RememberValidationError
+	if !errors.As(err, &validation) {
+		return err
+	}
+	result := ContractValidationResult{IssuesTruncated: validation.IssuesTruncated}
+	for _, issue := range validation.Issues {
+		result.Issues = append(result.Issues, ContractValidationIssue{
+			Path: issue.Path, Code: issue.Code, Message: issue.Message,
+		})
+	}
+	return &ContractValidationFailure{Result: result}
+}
+
+func ContractValidationResultFromError(err error) (ContractValidationResult, bool) {
+	var validation *ContractValidationFailure
+	if !errors.As(err, &validation) || validation == nil || len(validation.Result.Issues) == 0 {
+		return ContractValidationResult{}, false
+	}
+	return validation.Result, true
 }
 
 const (
@@ -157,6 +193,9 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 	if _, ok := args["relationships"]; !ok {
 		collector.add("/relationships", "required", "relationships is required")
 	}
+	if _, ok := args["idempotency_key"]; !ok {
+		collector.add("/idempotency_key", "required", "idempotency_key is required")
+	}
 
 	evidence := collectAnyArray(args["evidence"])
 	if _, exists := args["evidence"]; exists && evidence == nil {
@@ -197,14 +236,14 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 			}
 		}
 		if err := validateSourceRevisionFields(index, fields); err != nil {
-			collector.add(path, classifyContractIssue(err.Error()), err.Error())
+			collector.add(contractIssuePath(err, path), classifyContractIssue(err.Error()), err.Error())
 		}
 		if err := validateSourceRevisionBatch(index, fields, sourceRevisions); err != nil {
-			collector.add(path, classifyContractIssue(err.Error()), err.Error())
+			collector.add(contractIssuePath(err, path), classifyContractIssue(err.Error()), err.Error())
 		}
 	}
 	if err := validateDirectEvidenceSupersessions(evidence); err != nil {
-		collector.add("/evidence", classifyContractIssue(err.Error()), err.Error())
+		collector.add(contractIssuePath(err, "/evidence"), classifyContractIssue(err.Error()), err.Error())
 	}
 
 	relationships := collectAnyArray(args["relationships"])
@@ -247,13 +286,30 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 		} else {
 			seenRefs[ref] = struct{}{}
 		}
-		for _, required := range []string{"subject", "predicate", "object", "polarity", "modality"} {
+		for _, required := range []string{"subject", "predicate", "object", "polarity"} {
 			if _, exists := relationship[required]; !exists {
 				collector.add(path+"/"+required, "required", "relationship."+required+" is required")
 			}
 		}
 		if err := validateSubmittedRelationship(relationship, evidence, path); err != nil {
-			collector.add(path, classifyContractIssue(err.Error()), err.Error())
+			collector.add(contractIssuePath(err, path), classifyContractIssue(err.Error()), err.Error())
+		}
+		if subject, exists := relationship["subject"]; exists {
+			if err := validateRememberEntityHintValue(subject, path+"/subject"); err != nil {
+				collector.add(contractIssuePath(err, path+"/subject"), classifyContractIssue(err.Error()), err.Error())
+			}
+		}
+		if predicate, exists := relationship["predicate"]; exists {
+			if err := validateRememberPredicateHintValue(predicate, path+"/predicate"); err != nil {
+				collector.add(contractIssuePath(err, path+"/predicate"), classifyContractIssue(err.Error()), err.Error())
+			}
+		}
+		if object, ok := objectFields(relationship["object"]); ok {
+			if entity, exists := object["entity"]; exists {
+				if err := validateRememberEntityHintValue(entity, path+"/object/entity"); err != nil {
+					collector.add(contractIssuePath(err, path+"/object/entity"), classifyContractIssue(err.Error()), err.Error())
+				}
+			}
 		}
 		indices := collectAnyArray(relationship["evidence_indices"])
 		for position, rawIndex := range indices {
@@ -277,6 +333,82 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 	if err := ValidateInput(tool, args); err != nil {
 		collector.add("", classifyContractIssue(err.Error()), err.Error())
 	}
+}
+
+func contractIssuePath(err error, fallback string) string {
+	if err == nil {
+		return fallback
+	}
+	message := strings.TrimSpace(err.Error())
+	end := len(message)
+	for index, char := range message {
+		if char == ':' || char == ' ' || char == '\t' || char == '\n' {
+			end = index
+			break
+		}
+	}
+	path := message[:end]
+	if strings.HasPrefix(path, "/") {
+		dot := strings.IndexByte(path, '.')
+		if dot < 0 {
+			return path
+		}
+		suffix, ok := contractDotPathPointer(path[dot+1:])
+		if !ok {
+			return fallback
+		}
+		return path[:dot] + suffix
+	}
+	if !strings.HasPrefix(path, "evidence[") && !strings.HasPrefix(path, "relationships[") {
+		return fallback
+	}
+	pointer, ok := contractDotPathPointer(path)
+	if !ok {
+		return fallback
+	}
+	return pointer
+}
+
+func contractDotPathPointer(path string) (string, bool) {
+	parts := make([]string, 0, 8)
+	for index := 0; index < len(path); {
+		start := index
+		for index < len(path) && path[index] != '.' && path[index] != '[' {
+			index++
+		}
+		if index > start {
+			parts = append(parts, path[start:index])
+		}
+		if index == len(path) {
+			break
+		}
+		if path[index] == '.' {
+			index++
+			continue
+		}
+		index++
+		start = index
+		for index < len(path) && path[index] != ']' {
+			index++
+		}
+		if index == len(path) || index == start {
+			return "", false
+		}
+		parts = append(parts, path[start:index])
+		index++
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	var pointer strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			return "", false
+		}
+		pointer.WriteByte('/')
+		pointer.WriteString(jsonPointerToken(part))
+	}
+	return pointer.String(), true
 }
 
 func collectAnyArray(value any) []any {

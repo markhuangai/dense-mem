@@ -43,7 +43,8 @@ func semanticAssessmentPrimarySupport(supports []repository.EvidenceSupportInput
 }
 
 func semanticAssessmentObject(
-	result verifier.SemanticAssessmentRelationshipResult,
+	ref string,
+	result verifier.SemanticAssessmentRelationshipSplit,
 ) (string, *repository.PlacementValueInput, error) {
 	if result.ObjectRef != nil {
 		return *result.ObjectRef, nil, nil
@@ -60,7 +61,7 @@ func semanticAssessmentObject(
 		unit = *result.ObjectValue.Unit
 	}
 	return "", &repository.PlacementValueInput{
-		Ref:            "value:" + result.Ref,
+		Ref:            "value:" + ref,
 		ValueType:      result.ObjectValue.ValueType,
 		CanonicalValue: result.ObjectValue.CanonicalValue,
 		Display:        display,
@@ -68,7 +69,7 @@ func semanticAssessmentObject(
 	}, nil
 }
 
-func semanticAssessmentValidity(result verifier.SemanticAssessmentRelationshipResult) (*time.Time, *time.Time, error) {
+func semanticAssessmentValidity(result verifier.SemanticAssessmentRelationshipSplit) (*time.Time, *time.Time, error) {
 	parse := func(value *string) (*time.Time, error) {
 		if value == nil {
 			return nil, nil
@@ -89,11 +90,4 @@ func semanticAssessmentValidity(result verifier.SemanticAssessmentRelationshipRe
 		return nil, nil, err
 	}
 	return from, to, nil
-}
-
-func semanticAssessmentScopeKey(result verifier.SemanticAssessmentRelationshipResult) string {
-	if result.ScopeStatus == "resolved" && result.ScopeKey != nil {
-		return *result.ScopeKey
-	}
-	return ""
 }

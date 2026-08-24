@@ -2,14 +2,11 @@ package memoryservice
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
@@ -20,171 +17,60 @@ func TestSubmissionAssessmentWorkerSupersedesQueuedOlderContractBeforeAssessment
 	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 
 	require.NoError(t, err)
-	assert.True(t, processed)
-	assert.Zero(t, provider.calls)
-	assert.Empty(t, catalog.entityInputs)
-	assert.Empty(t, assessments.commits)
-	require.Len(t, assessments.completions, 1)
-	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), assessments.completions[0].Status)
-	assert.Equal(t, "contract_superseded", assessments.completions[0].Payload["failure_stage"])
-}
-
-func TestSubmissionAssessmentWorkerFailsWholeRunWhenOneSupportRangeIsLowConfidence(t *testing.T) {
-	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
-	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
-		response := submissionAssessmentValidResponse(req, false)
-		response.RelationshipResults[1].SupportRanges[0].Confidence = 0.4
-		return response, nil
-	}
-
-	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
-	require.NoError(t, err)
 	require.True(t, processed)
-	assert.Equal(t, 1, provider.calls)
-	assert.Equal(t, 1, assessments.persistCalls)
-	assert.Empty(t, assessments.commits)
+	require.Zero(t, provider.calls)
+	require.Empty(t, catalog.entityInputs)
+	require.Empty(t, assessments.commits)
 	require.Len(t, assessments.completions, 1)
-	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), assessments.completions[0].Status)
-	assert.Equal(t, "policy_validation", assessments.completions[0].Payload["failure_stage"])
-	assert.Equal(t, string(SubmissionErrorRequiresResubmission), assessments.completions[0].Payload["failure_code"])
-	issues, ok := assessments.completions[0].Payload["resubmission_issues"].([]map[string]any)
-	require.True(t, ok)
-	require.Len(t, issues, 1)
-	assert.Equal(t, "grounding_low_confidence", issues[0]["code"])
-	assert.Equal(t, "support", issues[0]["component"])
+	require.Equal(t, string(domain.SemanticReviewTerminalFailure), assessments.completions[0].Status)
+	require.Equal(t, "contract_superseded", assessments.completions[0].Payload["failure_stage"])
+	require.Equal(t, string(SubmissionErrorInternalFailure), assessments.completions[0].Payload["failure_code"])
 }
 
-func TestSubmissionAssessmentReviewIssuesReportEveryHoldReason(t *testing.T) {
-	groundingRef := "grounding-1"
-	objectRef := "object"
-	plan := submissionAssessmentPlan{RelationshipTargets: []submissionAssessmentRelationshipTarget{{
-		Target: verifier.SemanticAssessmentRequiredRelationshipRef{
-			ProposalID: "relationship-1",
-			SubjectRef: "subject",
-			ObjectRef:  &objectRef,
-		},
-	}}}
-	response := verifier.SemanticAssessmentResponse{
-		EntityResults: []verifier.SemanticAssessmentEntityResult{
-			{Ref: "subject"},
-			{Ref: "object", GroundingRef: &groundingRef, Action: string(domain.EntityResolutionAmbiguous), Confidence: 0.9},
-		},
-		RelationshipResults: []verifier.SemanticAssessmentRelationshipResult{{
-			Ref:             "relationship-1",
-			Modality:        "proposal",
-			PredicateStatus: "unresolved",
-			ScopeStatus:     "unresolved",
-			TemporalVerdict: "ambiguous",
-			EvidenceVerdict: string(domain.VerificationContradicted),
-			Confidence:      0.4,
-			PredicateRange:  verifier.SemanticAssessmentGroundedRange{Confidence: 0.4},
-			ValueRange:      &verifier.SemanticAssessmentGroundedRange{Confidence: 0.4},
-			SupportRanges: []verifier.SemanticAssessmentGroundedRange{
-				{Confidence: 0.4},
-				{Confidence: 0.4},
-			},
-		}},
+func TestRepairSubmissionAssessmentResponseDoesNotInventGroundingOrIdentity(t *testing.T) {
+	ledger, _, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	service := worker.(*submissionAssessmentPlacementWorkerService)
+	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
+	require.NoError(t, err)
+	request, err := service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
+	require.NoError(t, err)
+	response := submissionAssessmentValidResponse(request, false)
+	var repairedRef string
+	for index := range response.EntityResults {
+		result := &response.EntityResults[index]
+		target := plan.entityTargetsByRef[result.Ref]
+		if len(target.Target.Groundings) == 0 {
+			continue
+		}
+		repairedRef = result.Ref
+		result.GroundingRef = nil
+		result.Action = string(domain.EntityResolutionAmbiguous)
+		break
 	}
+	require.NotEmpty(t, repairedRef)
 
-	issues, truncated := submissionAssessmentResubmissionIssues(plan, response, 0.8)
+	unsupported := repairSubmissionAssessmentResponse(&plan, &response)
 
-	require.False(t, truncated)
-	require.Len(t, issues, 11)
-	issueKinds := make(map[string]struct{}, len(issues))
-	for _, issue := range issues {
-		issueKinds[issue.Code+":"+issue.Component] = struct{}{}
+	require.Contains(t, unsupported, repairedRef)
+	for _, result := range response.EntityResults {
+		if result.Ref != repairedRef {
+			continue
+		}
+		require.Nil(t, result.GroundingRef)
+		require.Equal(t, string(domain.EntityResolutionAmbiguous), result.Action)
 	}
-	for _, expected := range []string{
-		"entity_grounding_missing:subject",
-		"entity_resolution_ambiguous:object",
-		"unsupported_modality:relationship",
-		"predicate_unresolved:predicate",
-		"scope_unresolved:relationship",
-		"temporal_uncertain:relationship",
-		"evidence_not_entailed:support",
-		"grounding_low_confidence:relationship",
-		"grounding_low_confidence:predicate",
-		"grounding_low_confidence:object",
-		"grounding_low_confidence:support",
-	} {
-		assert.Contains(t, issueKinds, expected)
-	}
+	require.Equal(t, "submission-assessment-model", provider.ModelName())
 }
 
-func TestSubmissionAssessmentReviewIssuesHoldsLowConfidenceEntityGrounding(t *testing.T) {
-	groundingRef := "grounding-1"
-	objectRef := "object"
-	plan := submissionAssessmentPlan{RelationshipTargets: []submissionAssessmentRelationshipTarget{{
-		Target: verifier.SemanticAssessmentRequiredRelationshipRef{
-			ProposalID: "relationship-1",
-			SubjectRef: "subject",
-			ObjectRef:  &objectRef,
-		},
-	}}}
-	issues, truncated := submissionAssessmentResubmissionIssues(plan, verifier.SemanticAssessmentResponse{
-		EntityResults: []verifier.SemanticAssessmentEntityResult{{
-			Ref: "subject", GroundingRef: &groundingRef, Action: string(domain.EntityResolutionCreate), Confidence: 0.4,
-		}},
-	}, 0.8)
-
-	require.False(t, truncated)
-	require.Len(t, issues, 1)
-	assert.Equal(t, "grounding_low_confidence", issues[0].Code)
-	assert.Equal(t, "relationship-1", issues[0].RelationshipRef)
-	assert.Equal(t, "subject", issues[0].Component)
-}
-
-func TestSubmissionAssessmentReviewIssuesAndCompletionAreBounded(t *testing.T) {
-	results := make([]verifier.SemanticAssessmentRelationshipResult, 0, submissionAssessmentMaxResubmissionIssues+1)
-	for index := 0; index <= submissionAssessmentMaxResubmissionIssues; index++ {
-		results = append(results, verifier.SemanticAssessmentRelationshipResult{
-			Ref:             fmt.Sprintf("relationship-%d", index),
-			Modality:        "statement",
-			PredicateStatus: "resolved",
-			ScopeStatus:     "absent",
-			TemporalVerdict: "absent",
-			EvidenceVerdict: string(domain.VerificationEntailed),
-			Confidence:      0.4,
-			PredicateRange:  verifier.SemanticAssessmentGroundedRange{Confidence: 1},
-			SupportRanges:   []verifier.SemanticAssessmentGroundedRange{{Confidence: 1}},
-		})
+func TestRepairSubmissionAssessmentResponseMarksUngroundableEntityUnsupported(t *testing.T) {
+	plan := submissionAssessmentPlan{
+		EntityTargets:      []submissionAssessmentEntityTarget{{Target: verifier.SemanticAssessmentRequiredEntityRef{Ref: "entity:missing"}}},
+		entityTargetsByRef: map[string]submissionAssessmentEntityTarget{},
 	}
-	issues, truncated := submissionAssessmentResubmissionIssues(
-		submissionAssessmentPlan{},
-		verifier.SemanticAssessmentResponse{RelationshipResults: results},
-		0.8,
-	)
-	require.True(t, truncated)
-	require.Len(t, issues, submissionAssessmentMaxResubmissionIssues)
+	plan.entityTargetsByRef["entity:missing"] = plan.EntityTargets[0]
+	response := verifier.SemanticAssessmentResponse{EntityResults: []verifier.SemanticAssessmentEntityResult{{Ref: "entity:missing"}}}
 
-	assessments := &submissionAssessmentWorkerAssessmentStub{}
-	worker := &submissionAssessmentPlacementWorkerService{assessments: assessments}
-	require.NoError(t, worker.completeResubmissionFailure(context.Background(), repository.SubmissionAssessmentRunScope{}, " policy_validation ", nil, false))
-	require.NoError(t, worker.completeResubmissionFailure(context.Background(), repository.SubmissionAssessmentRunScope{}, "policy_validation", append(issues, issues[0]), false))
-	require.Len(t, assessments.completions, 2)
-	defaultIssues, ok := assessments.completions[0].Payload["resubmission_issues"].([]map[string]any)
-	require.True(t, ok)
-	require.Len(t, defaultIssues, 1)
-	assert.Equal(t, "resubmission_required", defaultIssues[0]["code"])
-	boundedIssues, ok := assessments.completions[1].Payload["resubmission_issues"].([]map[string]any)
-	require.True(t, ok)
-	require.Len(t, boundedIssues, submissionAssessmentMaxResubmissionIssues)
-	assert.Equal(t, true, assessments.completions[1].Payload["resubmission_issues_truncated"])
+	unsupported := repairSubmissionAssessmentResponse(&plan, &response)
 
-	nilCompletion := &submissionAssessmentWorkerAssessmentStub{completeNil: true}
-	err := (&submissionAssessmentPlacementWorkerService{assessments: nilCompletion}).completeResubmissionFailure(
-		context.Background(),
-		repository.SubmissionAssessmentRunScope{},
-		"policy_validation",
-		issues,
-		false,
-	)
-	require.ErrorContains(t, err, "placement worker persistence failed")
-	failure, ok := placementWorkerFailureFromError(err)
-	require.True(t, ok)
-	require.Equal(t, "policy_validation", failure.Stage)
-	require.Equal(t, errSubmissionAssessmentRequiresResubmission.Error(), (&submissionAssessmentResubmissionRequiredError{}).Error())
-
-	_, found := submissionAssessmentItemForFragment(submissionAssessmentPlan{}, "missing")
-	require.False(t, found)
+	require.Contains(t, unsupported, "entity:missing")
 }

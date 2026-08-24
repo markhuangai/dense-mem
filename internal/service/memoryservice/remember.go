@@ -19,6 +19,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 const (
@@ -75,8 +76,7 @@ type GetSubmissionStatusRequest struct {
 	SubmissionID string `json:"submission_id"`
 }
 
-// Keep the marker used by persisted pre-v2.4 idempotency hashes during replay.
-const legacyRequestHashContractVersion = "dense-mem.v2.4"
+const requestHashContractVersion = "dense-mem.v2.6"
 
 type RememberEvidenceInput struct {
 	Content                string         `json:"content"`
@@ -88,13 +88,13 @@ type RememberEvidenceInput struct {
 	SourceRevision         string         `json:"source_revision,omitempty"`
 	PreviousSourceRevision string         `json:"previous_source_revision,omitempty"`
 	SupersedesEvidenceIDs  []string       `json:"supersedes_evidence_ids,omitempty"`
-	IdempotencyKey         string         `json:"idempotency_key,omitempty"`
 	Labels                 []string       `json:"labels,omitempty"`
 	Metadata               map[string]any `json:"metadata,omitempty"`
 }
 
 type RememberResult struct {
 	// IngestID is retained for internal compatibility and is never serialized.
+	ContractVersion   string `json:"contract_version"`
 	IngestID          string `json:"-"`
 	SubmissionID      string `json:"submission_id"`
 	SubmissionKind    string `json:"submission_kind"`
@@ -105,6 +105,7 @@ type RememberResult struct {
 }
 
 type SubmissionStatusResult struct {
+	ContractVersion      string                                   `json:"contract_version"`
 	SubmissionID         string                                   `json:"submission_id"`
 	SubmissionKind       string                                   `json:"submission_kind"`
 	ProcessingState      string                                   `json:"processing_state"`
@@ -120,9 +121,25 @@ type SubmissionStatusResult struct {
 	CompletedAt          *time.Time                               `json:"completed_at,omitempty"`
 	Evidence             []SubmissionEvidenceStatus               `json:"evidence"`
 	Errors               []SubmissionStatusError                  `json:"errors"`
+	Degradations         []SubmissionStatusDegradation            `json:"degradations"`
+	RelationshipResults  []SubmissionRelationshipResult           `json:"relationship_results,omitempty"`
 	QuarantineExpiresAt  *time.Time                               `json:"quarantine_expires_at,omitempty"`
 	AwaitingConfirmation *SubmissionAwaitingConfirmation          `json:"awaiting_confirmation,omitempty"`
 	CorrectionResult     *repository.RelationshipCorrectionResult `json:"correction_result,omitempty"`
+}
+
+type SubmissionRelationshipSplit struct {
+	SplitIndex          int    `json:"split_index"`
+	RelationshipID      string `json:"relationship_id"`
+	RelationshipVersion int    `json:"relationship_version"`
+	Status              string `json:"status"`
+}
+
+type SubmissionRelationshipResult struct {
+	RelationshipRef string                        `json:"ref"`
+	Disposition     string                        `json:"disposition"`
+	Reason          string                        `json:"reason,omitempty"`
+	Splits          []SubmissionRelationshipSplit `json:"splits"`
 }
 
 type SubmissionAwaitingConfirmation struct {
@@ -154,6 +171,9 @@ func (s *rememberService) Remember(ctx context.Context, req RememberRequest) (*R
 	}
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("remember: evidence is required")
+	}
+	if strings.TrimSpace(req.IdempotencyKey) == "" {
+		return nil, errors.New("remember: idempotency_key is required")
 	}
 	if err := validateRememberRelationshipCoverage(len(req.Evidence), req.RelationshipHints); err != nil {
 		return nil, err
@@ -375,6 +395,8 @@ func publicSubmissionProcessingState(status string) string {
 		return "processing"
 	case string(domain.PlacementRunCompleted):
 		return "completed"
+	case string(domain.PlacementRunRejected):
+		return "rejected"
 	case string(domain.PlacementRunQuarantined):
 		return "quarantined"
 	case string(domain.PlacementRunFailed):
@@ -420,20 +442,11 @@ func sourceRevisionBatchHash(contents []string) string {
 }
 
 func canonicalRequestHash(req RememberRequest) (string, error) {
-	payload := map[string]any{
-		"contract_version":       legacyRequestHashContractVersion,
-		"replaces_submission_id": "",
-		"evidence":               req.Evidence,
-		"entity_hints":           req.EntityHints,
-		"relationship_hints":     req.RelationshipHints,
-		"idempotency_key":        strings.TrimSpace(req.IdempotencyKey),
-	}
-	data, err := json.Marshal(payload)
+	hash, err := rememberapp.CanonicalRequestBodyHash(req.Evidence, req.EntityHints, req.RelationshipHints)
 	if err != nil {
 		return "", fmt.Errorf("remember: canonical request hash: %w", err)
 	}
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return hash, nil
 }
 
 func rememberResultFromLedger(created *repository.CreateIngestResult, correlationID string) *RememberResult {
@@ -441,6 +454,7 @@ func rememberResultFromLedger(created *repository.CreateIngestResult, correlatio
 		correlationID = created.CorrelationID
 	}
 	return &RememberResult{
+		ContractVersion:   domain.ContractVersion,
 		IngestID:          created.IngestID,
 		SubmissionID:      created.IngestID,
 		SubmissionKind:    "remember",
@@ -524,6 +538,16 @@ func resultArray(result map[string]any, key string) []any {
 }
 
 func translateRememberLedgerError(err error) error {
+	var preflight *repository.RememberPreflightError
+	if errors.As(err, &preflight) {
+		translated := &rememberapp.RememberValidationError{IssuesTruncated: preflight.IssuesTruncated}
+		for _, issue := range preflight.Issues {
+			translated.Issues = append(translated.Issues, rememberapp.RememberValidationIssue{
+				Path: issue.Path, Code: issue.Code, Message: issue.Message,
+			})
+		}
+		return translated
+	}
 	switch {
 	case errors.Is(err, repository.ErrIdempotencyConflict), errors.Is(err, repository.ErrSourceRevisionConflict):
 		return fmt.Errorf("%w: duplicate or stale intake request", ErrRememberConflict)
@@ -563,9 +587,6 @@ func ledgerAuthorityAndMetadata(authority string, metadata map[string]any) (stri
 func evidenceProcessingIntentMetadata(metadata map[string]any, item RememberEvidenceInput) map[string]any {
 	if len(item.SupersedesEvidenceIDs) > 0 {
 		metadata["supersedes_evidence_ids"] = append([]string(nil), item.SupersedesEvidenceIDs...)
-	}
-	if value := strings.TrimSpace(item.IdempotencyKey); value != "" {
-		metadata["evidence_idempotency_key"] = value
 	}
 	if value := strings.TrimSpace(item.SourceGroup); value != "" {
 		metadata["contract_source_group"] = value

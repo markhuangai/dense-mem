@@ -31,7 +31,6 @@ func repositoryEvidenceInputs(evidence []RememberEvidenceInput) []repository.Evi
 			SourceRevisionContentHash:     sourceRevisionHashes[sourceRevisionBatchKey(item)],
 			SourceRevisionEnvelope:        sourceRevisionEnvelope(item),
 			SupersedesEvidenceIDs:         append([]string(nil), item.SupersedesEvidenceIDs...),
-			IdempotencyKey:                strings.TrimSpace(item.IdempotencyKey),
 			Labels:                        append([]string(nil), item.Labels...),
 			Metadata:                      metadata,
 			InitialEvent:                  &event,

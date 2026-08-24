@@ -86,7 +86,7 @@ func insertVerificationEvent(ctx context.Context, tx *gorm.DB, input ApplyRelati
 		    confidence, rationale, model, response_hash, metadata,
 		    assessment_id, assessment_policy_version, threshold_used, gate_result, space_id
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?::jsonb,
+		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, ''), ?, NULLIF(?, ''), ?, ?, ?::jsonb,
 		    NULLIF(?, '')::uuid, NULLIF(?, ''), ?, NULLIF(?, ''),
 		    (SELECT observation.space_id
 		     FROM relationship_observations AS observation

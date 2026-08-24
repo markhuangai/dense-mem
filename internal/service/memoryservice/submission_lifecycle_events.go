@@ -80,13 +80,14 @@ func submissionAssessmentRunScope(run repository.PlacementRun, workerID string) 
 
 func (s *submissionAssessmentPlacementWorkerService) recordFirstDisposition(
 	ctx context.Context,
-	run repository.PlacementRun,
+	teamID string,
+	ownerProfileID string,
 	disposition *repository.PlacementFirstDisposition,
 ) {
 	if disposition == nil || !disposition.IsRemember {
 		return
 	}
-	metricCtx := observability.WithMetricIdentity(ctx, run.TeamID, run.OwnerProfileID)
+	metricCtx := observability.WithMetricIdentity(ctx, teamID, ownerProfileID)
 	observability.RecordRememberFirstDisposition(metricCtx, s.metrics, disposition.CompletedAt.Sub(disposition.CreatedAt), disposition.Status)
 }
 

@@ -2,7 +2,6 @@ package verifier
 
 import (
 	"fmt"
-	"math"
 	"reflect"
 	"strings"
 	"time"
@@ -31,12 +30,20 @@ func ValidateSemanticAssessmentRequiredRelationshipRefs(
 			errs = append(errs, semanticErr("relationship_results", "missing result for trusted proposal"))
 			continue
 		}
+		if result.Disposition == "not_supported" {
+			continue
+		}
 		matchesEvidence := false
 		if len(required.EvidenceIDs) == 0 {
 			for _, expected := range required.Evidence {
-				for _, actual := range result.Evidence {
-					if actual.EvidenceID == expected.EvidenceID && actual.Start == expected.Start && actual.End == expected.End {
-						matchesEvidence = true
+				for _, split := range result.Splits {
+					for _, actual := range split.Evidence {
+						if actual.EvidenceID == expected.EvidenceID && actual.Start == expected.Start && actual.End == expected.End {
+							matchesEvidence = true
+							break
+						}
+					}
+					if matchesEvidence {
 						break
 					}
 				}
@@ -46,9 +53,14 @@ func ValidateSemanticAssessmentRequiredRelationshipRefs(
 			}
 		}
 		for _, expectedEvidenceID := range required.EvidenceIDs {
-			for _, actual := range result.SupportRanges {
-				if actual.EvidenceID == expectedEvidenceID {
-					matchesEvidence = true
+			for _, split := range result.Splits {
+				for _, actual := range split.SupportRanges {
+					if actual.EvidenceID == expectedEvidenceID {
+						matchesEvidence = true
+						break
+					}
+				}
+				if matchesEvidence {
 					break
 				}
 			}
@@ -63,11 +75,7 @@ func ValidateSemanticAssessmentRequiredRelationshipRefs(
 	return errs
 }
 
-func assessmentConfidenceValid(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1
-}
-
-func assessmentRelationshipObjectKind(result SemanticAssessmentRelationshipResult, entities map[string]SemanticAssessmentEntityResult) (string, string) {
+func assessmentRelationshipObjectKind(result SemanticAssessmentRelationshipSplit, entities map[string]SemanticAssessmentEntityResult) (string, string) {
 	hasRef := result.ObjectRef != nil && *result.ObjectRef != ""
 	hasValue := result.ObjectValue != nil
 	if hasRef == hasValue {
@@ -95,8 +103,8 @@ func assessmentRelationshipObjectKind(result SemanticAssessmentRelationshipResul
 	return result.ObjectValue.ValueType, ""
 }
 
-func validateSemanticAssessmentEvidence(index int, spans []SemanticAssessmentEvidenceSpan, evidenceByID map[string]SemanticReviewEvidence) []SemanticValidationError {
-	field := fmt.Sprintf("relationship_results[%d].evidence", index)
+func validateSemanticAssessmentEvidence(resultIndex, splitIndex int, spans []SemanticAssessmentEvidenceSpan, evidenceByID map[string]SemanticReviewEvidence) []SemanticValidationError {
+	field := fmt.Sprintf("relationship_results[%d].splits[%d].evidence", resultIndex, splitIndex)
 	if len(spans) == 0 || len(spans) > SemanticAssessmentMaxEvidenceSpans {
 		return []SemanticValidationError{semanticErr(field, fmt.Sprintf("must contain between 1 and %d spans", SemanticAssessmentMaxEvidenceSpans))}
 	}
@@ -120,8 +128,8 @@ func validateSemanticAssessmentEvidence(index int, spans []SemanticAssessmentEvi
 	return errs
 }
 
-func validateSemanticAssessmentTimeAndScope(index int, result SemanticAssessmentRelationshipResult) []SemanticValidationError {
-	field := fmt.Sprintf("relationship_results[%d]", index)
+func validateSemanticAssessmentValidity(resultIndex, splitIndex int, result SemanticAssessmentRelationshipSplit) []SemanticValidationError {
+	field := fmt.Sprintf("relationship_results[%d].splits[%d]", resultIndex, splitIndex)
 	var errs []SemanticValidationError
 	validFrom, fromErr := assessmentParsedTime(result.ValidFrom)
 	if fromErr != nil {
@@ -133,25 +141,6 @@ func validateSemanticAssessmentTimeAndScope(index int, result SemanticAssessment
 	}
 	if fromErr == nil && toErr == nil && validFrom != nil && validTo != nil && validTo.Before(*validFrom) {
 		errs = append(errs, semanticErr(field+".valid_to", "must not be before valid_from"))
-	}
-	if result.TemporalVerdict == "entailed" {
-		if validFrom == nil && validTo == nil {
-			errs = append(errs, semanticErr(field+".temporal_verdict", "entailed requires valid_from or valid_to"))
-		}
-	} else if result.ValidFrom != nil || result.ValidTo != nil {
-		errs = append(errs, semanticErr(field+".temporal_verdict", "only entailed may provide validity bounds"))
-	}
-	switch result.ScopeStatus {
-	case "resolved":
-		if result.ScopeKey == nil || !assessmentBoundedRequiredString(*result.ScopeKey, 256) {
-			errs = append(errs, semanticErr(field+".scope_key", "is required and must be bounded for resolved scope"))
-		}
-	case "absent", "unresolved":
-		if result.ScopeKey != nil {
-			errs = append(errs, semanticErr(field+".scope_key", "must be null unless scope_status is resolved"))
-		}
-	default:
-		errs = append(errs, semanticErr(field+".scope_status", "is unsupported"))
 	}
 	return errs
 }

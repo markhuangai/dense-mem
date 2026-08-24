@@ -67,6 +67,7 @@ type CorrectRelationshipRequest struct {
 }
 
 type CorrectRelationshipReceipt struct {
+	ContractVersion   string `json:"contract_version"`
 	SubmissionID      string `json:"submission_id"`
 	SubmissionKind    string `json:"submission_kind"`
 	ProcessingState   string `json:"processing_state"`
@@ -122,6 +123,7 @@ func (s *lifecycleService) CorrectRelationship(
 		return nil, translateRelationshipCorrectionError(err)
 	}
 	return &CorrectRelationshipReceipt{
+		ContractVersion:   domain.ContractVersion,
 		SubmissionID:      result.SubmissionID,
 		SubmissionKind:    "relationship_correction",
 		ProcessingState:   result.ProcessingState,
@@ -170,8 +172,10 @@ func translateRelationshipCorrectionError(err error) error {
 
 func relationshipCorrectionSubmissionStatus(result *repository.RelationshipCorrectionStatus) *SubmissionStatusResult {
 	status := &SubmissionStatusResult{
-		SubmissionKind: "relationship_correction", SearchState: string(domain.SearchProjectionNotRequired),
+		ContractVersion: domain.ContractVersion,
+		SubmissionKind:  "relationship_correction", SearchState: string(domain.SearchProjectionNotRequired),
 		CheckAfterSeconds: 0, Evidence: []SubmissionEvidenceStatus{}, Errors: []SubmissionStatusError{},
+		Degradations: []SubmissionStatusDegradation{},
 	}
 	if result == nil {
 		return status
@@ -190,11 +194,11 @@ func relationshipCorrectionSubmissionStatus(result *repository.RelationshipCorre
 	}
 	status.CorrectionResult = result.Correction
 	if result.ErrorCode != "" {
-		errorValue := submissionStatusErrorForCode(result.ErrorCode, result.ProcessingState)
+		errorValue := correctionStatusErrorForCode(result.ErrorCode, result.ProcessingState)
 		status.Errors = append(status.Errors, errorValue)
 	}
 	if (status.ProcessingState == "rejected" || status.ProcessingState == "failed") && len(status.Errors) == 0 {
-		fallback := submissionStatusErrorForCode("", status.ProcessingState)
+		fallback := correctionStatusErrorForCode("", status.ProcessingState)
 		status.Errors = append(status.Errors, fallback)
 	}
 	return status
@@ -236,6 +240,9 @@ func (s *lifecycleService) RetractEvidence(
 	}, nil
 }
 
+// Retract's unchanged request contract must replay hashes written before v2.6.
+const retractEvidenceRequestHashContractVersion = "dense-mem.v2.4"
+
 func retractEvidenceRequestHash(req RetractEvidenceRequest) (string, error) {
 	evidenceIDs := make([]string, len(req.EvidenceIDs))
 	for index, evidenceID := range req.EvidenceIDs {
@@ -243,7 +250,7 @@ func retractEvidenceRequestHash(req RetractEvidenceRequest) (string, error) {
 	}
 	sort.Strings(evidenceIDs)
 	payload, err := json.Marshal(map[string]any{
-		"contract_version": legacyRequestHashContractVersion,
+		"contract_version": retractEvidenceRequestHashContractVersion,
 		"evidence_ids":     evidenceIDs,
 		"reason":           strings.TrimSpace(req.Reason),
 		"idempotency_key":  strings.TrimSpace(req.IdempotencyKey),

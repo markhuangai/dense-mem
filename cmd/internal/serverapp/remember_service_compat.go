@@ -30,7 +30,8 @@ func (a *rememberServiceCompat) Remember(ctx context.Context, req memoryservice.
 		return nil, err
 	}
 	return &memoryservice.RememberResult{
-		IngestID: result.IngestID, SubmissionID: result.SubmissionID, SubmissionKind: result.SubmissionKind,
+		ContractVersion: result.ContractVersion,
+		IngestID:        result.IngestID, SubmissionID: result.SubmissionID, SubmissionKind: result.SubmissionKind,
 		ProcessingState: result.ProcessingState, CheckAfterSeconds: result.CheckAfterSeconds,
 		StatusTool: result.StatusTool, CorrelationID: result.CorrelationID,
 	}, nil
@@ -46,7 +47,7 @@ func rememberEvidenceRequestCompat(values []memoryservice.RememberEvidenceInput)
 			Content: value.Content, SourceType: value.SourceType, Source: value.Source, SourceGroup: value.SourceGroup,
 			Authority: value.Authority, SourceKey: value.SourceKey, SourceRevision: value.SourceRevision,
 			PreviousSourceRevision: value.PreviousSourceRevision, SupersedesEvidenceIDs: append([]string(nil), value.SupersedesEvidenceIDs...),
-			IdempotencyKey: value.IdempotencyKey, Labels: append([]string(nil), value.Labels...), Metadata: value.Metadata,
+			Labels: append([]string(nil), value.Labels...), Metadata: value.Metadata,
 		})
 	}
 	return converted
@@ -58,13 +59,30 @@ func (a *rememberServiceCompat) GetSubmissionStatus(ctx context.Context, req mem
 		return nil, err
 	}
 	converted := &memoryservice.SubmissionStatusResult{
-		SubmissionID: result.SubmissionID, SubmissionKind: result.SubmissionKind, ProcessingState: result.ProcessingState,
+		ContractVersion: result.ContractVersion,
+		SubmissionID:    result.SubmissionID, SubmissionKind: result.SubmissionKind, ProcessingState: result.ProcessingState,
 		SearchState: result.SearchState, CheckAfterSeconds: result.CheckAfterSeconds, CorrelationID: result.CorrelationID,
 		Attempts: result.Attempts, MaxAttempts: result.MaxAttempts, SubmittedAt: result.SubmittedAt, NextAttemptAt: result.NextAttemptAt,
 		StartedAt: result.StartedAt, UpdatedAt: result.UpdatedAt, CompletedAt: result.CompletedAt,
 		QuarantineExpiresAt: result.QuarantineExpiresAt,
 		Evidence:            make([]memoryservice.SubmissionEvidenceStatus, 0, len(result.Evidence)),
 		Errors:              make([]memoryservice.SubmissionStatusError, 0, len(result.Errors)),
+		Degradations:        make([]memoryservice.SubmissionStatusDegradation, 0, len(result.Degradations)),
+	}
+	for _, item := range result.RelationshipResults {
+		convertedResult := memoryservice.SubmissionRelationshipResult{
+			RelationshipRef: item.RelationshipRef,
+			Disposition:     item.Disposition,
+			Reason:          item.Reason,
+			Splits:          make([]memoryservice.SubmissionRelationshipSplit, 0, len(item.Splits)),
+		}
+		for _, split := range item.Splits {
+			convertedResult.Splits = append(convertedResult.Splits, memoryservice.SubmissionRelationshipSplit{
+				SplitIndex: split.SplitIndex, RelationshipID: split.RelationshipID,
+				RelationshipVersion: split.RelationshipVersion, Status: split.Status,
+			})
+		}
+		converted.RelationshipResults = append(converted.RelationshipResults, convertedResult)
 	}
 	for _, item := range result.Evidence {
 		superseded := append([]string(nil), item.SupersededEvidenceIDs...)
@@ -77,13 +95,8 @@ func (a *rememberServiceCompat) GetSubmissionStatus(ctx context.Context, req mem
 			Error: rememberStatusErrorCompat(item.Error),
 		})
 	}
-	for _, item := range result.Errors {
-		converted.Errors = append(converted.Errors, memoryservice.SubmissionStatusError{
-			Code: item.Code, Message: item.Message, Retryable: item.Retryable, NextAction: item.NextAction,
-			Remediation: item.Remediation, ResubmissionIssues: rememberResubmissionIssuesCompat(item.ResubmissionIssues),
-			ResubmissionIssuesTruncated: item.ResubmissionIssuesTruncated,
-		})
-	}
+	converted.Errors = append(converted.Errors, result.Errors...)
+	converted.Degradations = append(converted.Degradations, result.Degradations...)
 	if result.AwaitingConfirmation != nil {
 		converted.AwaitingConfirmation = &memoryservice.SubmissionAwaitingConfirmation{
 			ConfirmationToken: result.AwaitingConfirmation.ConfirmationToken,
@@ -114,12 +127,7 @@ func rememberStatusErrorCompat(value *rememberapp.SubmissionStatusError) *memory
 	}
 	converted := memoryservice.SubmissionStatusError{
 		Code: value.Code, Message: value.Message, Retryable: value.Retryable, NextAction: value.NextAction,
-		Remediation: value.Remediation, ResubmissionIssues: rememberResubmissionIssuesCompat(value.ResubmissionIssues),
-		ResubmissionIssuesTruncated: value.ResubmissionIssuesTruncated,
+		Remediation: value.Remediation,
 	}
 	return &converted
-}
-
-func rememberResubmissionIssuesCompat(values []rememberapp.SubmissionResubmissionIssue) []memoryservice.SubmissionResubmissionIssue {
-	return values
 }

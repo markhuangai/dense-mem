@@ -28,7 +28,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 		"object": map[string]any{"entity": map[string]any{
 			"name": "Beta", "entity_kind": "other",
 		}},
-		"polarity": "+", "modality": "statement", "evidence_indices": []any{0},
+		"polarity": "+", "evidence_indices": []any{0},
 	}}
 
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -50,6 +50,9 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			if _, ok := input["auto_promote"]; ok {
 				t.Fatalf("remember input contains auto_promote: %#v", input)
 			}
+			if input["idempotency_key"] != "eval:doc-alpha" {
+				t.Fatalf("remember idempotency_key = %#v", input["idempotency_key"])
+			}
 			relationships, ok := input["relationships"].([]any)
 			if !ok || len(relationships) != 1 {
 				t.Fatalf("remember relationships = %#v", input["relationships"])
@@ -63,7 +66,7 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 			evidence := input["evidence"].([]any)
 			firstEvidence := evidence[0].(map[string]any)
 			metadata := firstEvidence["metadata"].(map[string]any)
-			if firstEvidence["idempotency_key"] != "eval:doc-alpha" ||
+			if _, exists := firstEvidence["idempotency_key"]; exists ||
 				metadata["source_doc_id"] != "doc-alpha" ||
 				metadata["eval_seed"] != true {
 				t.Fatalf("remember input = %#v", input)
@@ -747,8 +750,7 @@ func TestHTTPClientImportCorpusWithConcurrency(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		evidence := input["evidence"].([]any)[0].(map[string]any)
-		sourceDocID := strings.TrimPrefix(evidence["idempotency_key"].(string), "eval:")
+		sourceDocID := strings.TrimPrefix(input["idempotency_key"].(string), "eval:")
 		_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-" + sourceDocID})
 	}))
 	defer server.Close()
@@ -796,8 +798,7 @@ func TestHTTPClientConcurrentFileImportDrainsActiveRequestsAfterError(t *testing
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		evidence := input["evidence"].([]any)[0].(map[string]any)
-		sourceDocID := strings.TrimPrefix(evidence["idempotency_key"].(string), "eval:")
+		sourceDocID := strings.TrimPrefix(input["idempotency_key"].(string), "eval:")
 		if atomic.AddInt32(&started, 1) == 2 {
 			close(startedTwo)
 		}

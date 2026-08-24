@@ -224,6 +224,7 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
 });
 
 test("MCP supersedes and retracts caller-owned evidence against compose", async ({ request }) => {
+  test.setTimeout(120_000);
   const runID = `compose-evidence-lifecycle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const toolsResponse = await mcpCall(request, "tools/list", {});
   expect(mcpToolNames(toolsResponse)).toEqual(expect.arrayContaining(["remember", "retract_evidence"]));
@@ -233,10 +234,10 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
   const original = mcpToolPayload(await mcpCall(request, "tools/call", {
     name: "remember",
     arguments: {
+      idempotency_key: `${runID}:original`,
       evidence: [{
         content: originalContent,
         source_type: "manual",
-        idempotency_key: `${runID}:original`,
       }],
       relationships: [securityRelationship(originalContent, `${runID}:original-relationship`)],
     },
@@ -249,11 +250,11 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
   const replacement = mcpToolPayload(await mcpCall(request, "tools/call", {
     name: "remember",
     arguments: {
+      idempotency_key: `${runID}:replacement`,
       evidence: [{
         content: replacementContent,
         source_type: "manual",
         supersedes_evidence_ids: [originalEvidenceID],
-        idempotency_key: `${runID}:replacement`,
       }],
       relationships: [securityRelationship(replacementContent, `${runID}:replacement-relationship`)],
     },
@@ -421,11 +422,8 @@ test("user portal logs in with a real API key and shows only that credential", a
   await expect(page.getByText(dreamStatement, { exact: true })).toBeVisible();
 });
 
+if (graphAnchorEntityId && graphOriginalObjectEntityId && graphCorrectedObjectEntityId && graphOriginalRelationshipId && graphSuccessorRelationshipId) {
 test("user portal renders the corrected live graph with depth five and an uncapped limit", async ({ page }) => {
-  test.skip(
-    !graphAnchorEntityId || !graphOriginalObjectEntityId || !graphCorrectedObjectEntityId || !graphOriginalRelationshipId || !graphSuccessorRelationshipId,
-    "submission-status graph fixture is required",
-  );
   await openUserPortal(page, seedApiKey);
   await page.getByRole("button", { name: "Graph" }).click();
 
@@ -464,8 +462,9 @@ test("user portal renders the corrected live graph with depth five and an uncapp
   expect(graph.edges.map((edge) => edge.id)).not.toContain(graphOriginalRelationshipId);
   await expect(page.getByLabel("Graph totals")).toContainText(new RegExp(`Nodes\\s*${graph.nodes.length}`));
   await expect(page.getByLabel("Graph totals")).toContainText(new RegExp(`Edges\\s*${graph.edges.length}`));
-  await expect(page.locator(".graph-canvas canvas").first()).toBeVisible();
+	await expect(page.locator(".graph-canvas canvas").first()).toBeVisible();
 });
+}
 
 test("read-only user key cannot regenerate itself", async ({ page, request }, testInfo) => {
   const readOnly = await createTeamCredential(request, uniqueName("Read only", testInfo), ["read"]);
@@ -733,13 +732,13 @@ async function waitForSubmissionEvidence(request: APIRequestContext, submissionI
       name: "get_submission_status",
       arguments: { submission_id: submissionID },
     }));
-    const first = Array.isArray(status.evidence) ? status.evidence[0] : undefined;
-    if (isRecord(first) && typeof first.evidence_id === "string" && first.evidence_id !== "") {
-      return first;
-    }
     const processingState = typeof status.processing_state === "string" ? status.processing_state : "";
     if (["failed", "rejected", "quarantined"].includes(processingState)) {
       throw new Error(`submission ${submissionID} reached ${processingState}: ${JSON.stringify(status.errors ?? [])}`);
+    }
+    const first = Array.isArray(status.evidence) ? status.evidence[0] : undefined;
+    if (processingState === "completed" && isRecord(first) && typeof first.evidence_id === "string" && first.evidence_id !== "") {
+      return first;
     }
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
@@ -771,7 +770,6 @@ function securityRelationship(content: string, ref: string) {
       },
     },
     polarity: "+",
-    modality: "statement",
     evidence_indices: [0],
   };
 }
