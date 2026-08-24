@@ -308,6 +308,29 @@ func TestRememberPreflightFencesExactEntitiesToTheIngestSpace(t *testing.T) {
 	_, err = ledger.CreateIngest(privateCtx, CreateIngestInput{
 		TeamID: teamID.String(), OwnerProfileID: credentialA.ID.String(),
 		SpaceID: credentialA.MemorySpaceID.String(), SpaceGeneration: generationA,
+		IdempotencyKey: "remember-private-kind-mismatch", RequestHash: "remember-private-kind-mismatch-hash", TelemetryRemember: true,
+		Proposal: map[string]any{"relationship_hints": []map[string]any{{
+			"subject": map[string]any{"known_entity_id": entityA.String(), "entity_kind": "product"},
+		}}},
+		Evidence: []EvidenceInput{{Content: "A conflicting exact Entity kind must be rejected before staging."}},
+	})
+	var kindPreflight *RememberPreflightError
+	require.True(t, errors.As(err, &kindPreflight), "err=%v", err)
+	require.Contains(t, kindPreflight.Issues, RememberPreflightIssue{
+		Path: "/relationships/0/subject/entity_kind", Code: "conflict", Message: "entity_kind does not match known_entity_id",
+	})
+	var kindMismatchStaged int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT COUNT(*) FROM knowledge_ingests
+			WHERE team_id = ? AND owner_profile_id = ? AND idempotency_key = 'remember-private-kind-mismatch'
+		`, teamID, credentialA.ID).Scan(&kindMismatchStaged).Error
+	}))
+	require.Zero(t, kindMismatchStaged)
+
+	_, err = ledger.CreateIngest(privateCtx, CreateIngestInput{
+		TeamID: teamID.String(), OwnerProfileID: credentialA.ID.String(),
+		SpaceID: credentialA.MemorySpaceID.String(), SpaceGeneration: generationA,
 		IdempotencyKey: "remember-private-cross-space", RequestHash: "remember-private-cross-space-hash", TelemetryRemember: true,
 		Proposal: map[string]any{"relationship_hints": []map[string]any{{
 			"subject": map[string]any{"known_entity_id": entityB.String()},

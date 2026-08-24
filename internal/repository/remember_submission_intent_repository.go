@@ -87,6 +87,12 @@ type rememberPreflightRelationship struct {
 
 type rememberPreflightEntity struct {
 	KnownEntityID string `json:"known_entity_id"`
+	EntityKind    string `json:"entity_kind"`
+}
+
+type rememberPreflightEntityState struct {
+	Status     string
+	EntityKind string
 }
 
 type rememberPreflightPredicate struct {
@@ -117,16 +123,16 @@ func validateRememberSubmissionPreflight(ctx context.Context, tx *gorm.DB, input
 		return err
 	}
 	collector := &rememberPreflightCollector{}
-	entityStates := map[string]bool{}
+	entityStates := map[string]rememberPreflightEntityState{}
 	predicateStates := map[string]bool{}
 	for index, relationship := range proposal.RelationshipHints {
-		if err := validateRememberExactEntity(ctx, tx, input.TeamID, input.OwnerProfileID, ingestID, relationship.Subject.KnownEntityID,
-			fmt.Sprintf("/relationships/%d/subject/known_entity_id", index), entityStates, collector); err != nil {
+		if err := validateRememberExactEntity(ctx, tx, input.TeamID, input.OwnerProfileID, ingestID, relationship.Subject,
+			fmt.Sprintf("/relationships/%d/subject", index), entityStates, collector); err != nil {
 			return err
 		}
 		if relationship.Object.Entity != nil {
-			if err := validateRememberExactEntity(ctx, tx, input.TeamID, input.OwnerProfileID, ingestID, relationship.Object.Entity.KnownEntityID,
-				fmt.Sprintf("/relationships/%d/object/entity/known_entity_id", index), entityStates, collector); err != nil {
+			if err := validateRememberExactEntity(ctx, tx, input.TeamID, input.OwnerProfileID, ingestID, *relationship.Object.Entity,
+				fmt.Sprintf("/relationships/%d/object/entity", index), entityStates, collector); err != nil {
 				return err
 			}
 		}
@@ -156,25 +162,24 @@ func validateRememberExactEntity(
 	teamID string,
 	ownerProfileID string,
 	ingestID string,
-	entityID string,
-	path string,
-	states map[string]bool,
+	entity rememberPreflightEntity,
+	basePath string,
+	states map[string]rememberPreflightEntityState,
 	collector *rememberPreflightCollector,
 ) error {
-	entityID = strings.TrimSpace(entityID)
+	entityID := strings.TrimSpace(entity.KnownEntityID)
 	if entityID == "" {
 		return nil
 	}
 	if _, err := uuid.Parse(entityID); err != nil {
-		collector.add(path, "invalid", "known_entity_id must be a UUID")
+		collector.add(basePath+"/known_entity_id", "invalid", "known_entity_id must be a UUID")
 		return nil
 	}
-	active, loaded := states[entityID]
+	state, loaded := states[entityID]
 	if !loaded {
-		var status string
 		err := withSystemModeInTx(ctx, tx, teamID, ownerProfileID, func(systemTx *gorm.DB) error {
 			return systemTx.WithContext(ctx).Raw(`
-				SELECT entity.status
+				SELECT entity.status, entity.entity_kind
 				FROM entity_records AS entity
 				JOIN knowledge_ingests AS ingest
 				  ON ingest.team_id = entity.team_id
@@ -186,16 +191,19 @@ func validateRememberExactEntity(
 				  AND entity.entity_id = ?::uuid
 				LIMIT 1
 				FOR SHARE OF entity
-			`, teamID, ownerProfileID, ingestID, entityID).Row().Scan(&status)
+			`, teamID, ownerProfileID, ingestID, entityID).Row().Scan(&state.Status, &state.EntityKind)
 		})
-		active = err == nil && status == "active"
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		states[entityID] = active
+		states[entityID] = state
 	}
-	if !active {
-		collector.add(path, "unavailable", "known_entity_id is unavailable")
+	if state.Status != "active" {
+		collector.add(basePath+"/known_entity_id", "unavailable", "known_entity_id is unavailable")
+		return nil
+	}
+	if entityKind := strings.TrimSpace(entity.EntityKind); entityKind != "" && entityKind != state.EntityKind {
+		collector.add(basePath+"/entity_kind", "conflict", "entity_kind does not match known_entity_id")
 	}
 	return nil
 }
