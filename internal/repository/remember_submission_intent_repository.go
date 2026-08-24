@@ -682,12 +682,23 @@ func applyRememberSubmissionIntents(
 	if err != nil {
 		return err
 	}
-	if existing, err := loadEvidenceLifecycleOperation(ctx, tx, scope.TeamID, scope.OwnerProfileID, idempotencyKey); err != nil {
+	lifecycleKey := rememberSupersessionLifecycleKey(scope.IngestID)
+	if err := lockEvidenceLifecycleIdempotencyKeys(ctx, tx, scope.TeamID, scope.OwnerProfileID, []string{lifecycleKey}); err != nil {
+		return err
+	}
+	if existing, err := loadEvidenceLifecycleOperation(ctx, tx, scope.TeamID, scope.OwnerProfileID, lifecycleKey); err != nil {
 		return err
 	} else if existing != nil {
 		if existing.Action != "supersede" || existing.RequestHash != requestHash {
 			return fmt.Errorf("%w: remember supersession key reused with a different request", ErrIdempotencyConflict)
 		}
+		return nil
+	}
+	// Remember supersessions used the submission key before lifecycle keys were
+	// namespaced. Replay that exact legacy operation without reapplying events.
+	if legacy, err := loadEvidenceLifecycleOperation(ctx, tx, scope.TeamID, scope.OwnerProfileID, idempotencyKey); err != nil {
+		return err
+	} else if legacy != nil && legacy.Action == "supersede" && legacy.RequestHash == requestHash && legacy.ReplacementIngestID == scope.IngestID {
 		return nil
 	}
 	targetIDs := make([]string, 0, len(supersessions))
@@ -702,7 +713,7 @@ func applyRememberSubmissionIntents(
 		OwnerProfileID:      scope.OwnerProfileID,
 		Action:              "supersede",
 		EvidenceIDs:         targetIDs,
-		IdempotencyKey:      idempotencyKey,
+		IdempotencyKey:      lifecycleKey,
 		RequestHash:         requestHash,
 		ReplacementIngestID: scope.IngestID,
 	}
@@ -718,6 +729,10 @@ func applyRememberSubmissionIntents(
 		return err
 	}
 	return applyEvidenceLifecycleEffects(ctx, tx, operation, operationID, planned)
+}
+
+func rememberSupersessionLifecycleKey(ingestID string) string {
+	return "remember:supersession:" + strings.TrimSpace(ingestID)
 }
 
 func loadRememberSubmissionIdentity(ctx context.Context, tx *gorm.DB, scope SubmissionAssessmentRunScope) (string, string, error) {
