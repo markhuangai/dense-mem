@@ -610,7 +610,7 @@ func TestRememberSourceIntentCommitsWithSemanticPlacementAtomically(t *testing.T
 	require.NoError(t, err)
 	require.NotNil(t, committed)
 
-	var sourceID, sourceRevisionID sql.NullString
+	var sourceID, sourceRevisionID, fragmentSourceID, fragmentSourceRevisionID sql.NullString
 	var resultCount, sourceSupportCount int64
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
@@ -618,6 +618,13 @@ func TestRememberSourceIntentCommitsWithSemanticPlacementAtomically(t *testing.T
 			FROM remember_source_revision_intents
 			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
 		`, teamID, staged.IngestID).Row().Scan(&sourceID, &sourceRevisionID); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT source_id::text, source_revision_id::text
+			FROM evidence_fragments
+			WHERE team_id = ?::uuid AND ingest_id = ?::uuid AND fragment_id = ?::uuid
+		`, teamID, staged.IngestID, staged.Evidence[0].FragmentID).Row().Scan(&fragmentSourceID, &fragmentSourceRevisionID); err != nil {
 			return err
 		}
 		return tx.Raw(`
@@ -638,8 +645,21 @@ func TestRememberSourceIntentCommitsWithSemanticPlacementAtomically(t *testing.T
 	require.NoError(t, err)
 	assert.True(t, sourceID.Valid)
 	assert.True(t, sourceRevisionID.Valid)
+	assert.Equal(t, sourceID, fragmentSourceID)
+	assert.Equal(t, sourceRevisionID, fragmentSourceRevisionID)
 	assert.Equal(t, int64(1), resultCount)
 	assert.Equal(t, int64(1), sourceSupportCount)
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			UPDATE evidence_fragments
+			SET source_id = NULL, source_revision_id = NULL
+			WHERE team_id = ?::uuid AND fragment_id = ?::uuid
+		`, teamID, staged.Evidence[0].FragmentID)
+		require.NoError(t, result.Error)
+		assert.Zero(t, result.RowsAffected)
+		return nil
+	})
+	require.NoError(t, err)
 }
 
 func TestRememberRejectedSubmissionDoesNotActivateSourceOrSupersession(t *testing.T) {

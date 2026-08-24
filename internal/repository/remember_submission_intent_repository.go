@@ -644,6 +644,19 @@ func applyRememberSubmissionIntents(
 		if updated.RowsAffected != 1 {
 			return errors.New("remember source revision intent no longer matches staged evidence")
 		}
+		bound := tx.WithContext(ctx).Exec(`
+			UPDATE evidence_fragments
+			SET source_id = ?::uuid, source_revision_id = ?::uuid
+			WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND fragment_id = ?::uuid
+			  AND ingest_id = ?::uuid AND source_id IS NULL AND source_revision_id IS NULL
+		`, advanced.SourceID, advanced.SourceRevisionID, scope.TeamID, scope.OwnerProfileID,
+			intent.FragmentID, scope.IngestID)
+		if bound.Error != nil {
+			return bound.Error
+		}
+		if bound.RowsAffected != 1 {
+			return errors.New("remember source revision no longer matches staged evidence")
+		}
 	}
 
 	supersessions, err := loadRememberSupersessionIntents(ctx, tx, scope)

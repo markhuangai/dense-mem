@@ -103,6 +103,30 @@ func TestRememberReliabilityMigrationDownRejectsQueuedV26RememberIngest(t *testi
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "v2.6 Remember ingest history exists")
 	assert.True(t, tableExists(t, ctx, db, "remember_source_revision_intents"))
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM placement_runs
+			WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+		`, teamID, runID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			DELETE FROM knowledge_ingests
+			WHERE team_id = $1::uuid AND ingest_id = $2::uuid
+		`, teamID, ingestID)
+		return err
+	}))
+	require.NoError(t, migrationDownTo(ctx, db, rememberReliabilityMigrationBaseVersion))
+	assert.False(t, tableExists(t, ctx, db, "remember_source_revision_intents"))
+	var fragmentGuard string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT function_row.proname
+		FROM pg_trigger AS trigger_row
+		JOIN pg_proc AS function_row ON function_row.oid = trigger_row.tgfoid
+		WHERE trigger_row.tgrelid = 'evidence_fragments'::regclass
+		  AND trigger_row.tgname = 'evidence_fragments_append_only'
+	`).Scan(&fragmentGuard))
+	assert.Equal(t, "prevent_append_only_mutation", fragmentGuard)
 }
 
 func TestRememberReliabilityMigrationUsesBoundedLockTimeout(t *testing.T) {

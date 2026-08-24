@@ -130,6 +130,22 @@ const baselineSourceActivations = positiveCount(postgresRow(`
 if (baselineSourceActivations !== evidence.length) {
   throw new Error("accepted baseline did not atomically activate every staged source revision intent");
 }
+const baselineBoundFragments = positiveCount(postgresRow(`
+  SELECT count(*)
+  FROM evidence_fragments AS fragment
+  JOIN remember_source_revision_intents AS intent
+    ON intent.team_id = fragment.team_id
+   AND intent.ingest_id = fragment.ingest_id
+   AND intent.owner_profile_id = fragment.owner_profile_id
+   AND intent.fragment_id = fragment.fragment_id
+   AND intent.source_id = fragment.source_id
+   AND intent.source_revision_id = fragment.source_revision_id
+  WHERE fragment.team_id = ${sqlLiteral(teamID)}::uuid
+    AND fragment.ingest_id = ${sqlLiteral(submissionID)}::uuid
+`)[0]);
+if (baselineBoundFragments !== evidence.length) {
+  throw new Error("accepted baseline did not bind every fragment to its activated source revision");
+}
 
 const mixedContent = "[remember-mixed] Aurora Mixed uses Atlas Mixed. Aurora Mixed imagines Phantom Mixed.";
 const mixedRemember = await submitRemember("mixed dispositions", {
@@ -325,6 +341,58 @@ const staleStatus = await waitForSubmissionState(staleRemember.submission_id, "r
 assertOnlyStatusError(staleStatus, "stale_input", "post-ack stale input");
 assertNoCommittedSemanticEffects(staleRemember.submission_id, "post-ack stale input");
 
+const sourceRevisionContent = "[remember-source-revision-2] Project Aurora uses LedgerDB Next.";
+const sourceRevisionRemember = await submitRemember("source revision advancement", {
+  idempotency_key: `${runID}:source-revision-2`,
+  evidence: [{
+    content: sourceRevisionContent,
+    source_type: "document",
+    source: `${runID}:evidence:0`,
+    source_group: runID,
+    source_key: `${runID}:source:0`,
+    source_revision: "revision-2",
+    previous_source_revision: "revision-1",
+  }],
+  relationships: [relationshipForContent(
+    sourceRevisionContent,
+    "source-revision-2",
+    0,
+    "Project Aurora",
+    "uses",
+    "LedgerDB Next",
+    "uses",
+    "project",
+    "product",
+    "Project Aurora uses LedgerDB Next",
+  )],
+});
+await waitForCompletedPlacement(sourceRevisionRemember.submission_id, "source revision advancement");
+const sourceRevisionState = postgresRow(`
+  SELECT
+    (SELECT count(*)
+     FROM evidence_fragments AS fragment
+     JOIN evidence_sources AS source
+       ON source.team_id = fragment.team_id
+      AND source.source_id = fragment.source_id
+     WHERE fragment.team_id = ${sqlLiteral(teamID)}::uuid
+       AND fragment.ingest_id = ${sqlLiteral(submissionID)}::uuid
+       AND fragment.evidence_index = 0
+       AND source.current_revision_id <> fragment.source_revision_id),
+    (SELECT count(*)
+     FROM evidence_fragments AS fragment
+     JOIN evidence_sources AS source
+       ON source.team_id = fragment.team_id
+      AND source.source_id = fragment.source_id
+     WHERE fragment.team_id = ${sqlLiteral(teamID)}::uuid
+       AND fragment.ingest_id = ${sqlLiteral(sourceRevisionRemember.submission_id)}::uuid
+       AND source.current_revision_id = fragment.source_revision_id);
+`);
+const staleSourceFragments = positiveCount(sourceRevisionState[0]);
+const currentSourceFragments = positiveCount(sourceRevisionState[1]);
+if (staleSourceFragments !== 1 || currentSourceFragments !== 1) {
+  throw new Error("source revision advancement did not make the old fragment stale and the new fragment current");
+}
+
 const providerFailureContent = "[remember-provider-fail] Provider Failure uses Target Failure.";
 const providerFailureRemember = await submitRemember("provider failure", {
   idempotency_key: `${runID}:provider-failure`,
@@ -430,6 +498,9 @@ console.log(JSON.stringify({
   relationship_observations: summary.relationshipObservations,
   predicate_registration_events: summary.registrationEvents,
   baseline_source_activations: baselineSourceActivations,
+  baseline_bound_fragments: baselineBoundFragments,
+  stale_source_fragments: staleSourceFragments,
+  current_source_fragments: currentSourceFragments,
 }, null, 2));
 
 function relationship(ref, evidenceIndex, subject, predicateSurface, object, proposedKey, subjectKind, objectKind, supportText) {

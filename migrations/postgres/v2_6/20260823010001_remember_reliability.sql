@@ -8,11 +8,13 @@
 -- additive and indexed by submission scope.
 -- RLS impact: intent rows are readable by the owning team, writable only by
 -- the owning profile, and updatable only for the one-time source activation.
--- Result rows are append-only and use the same team/profile boundary as the
--- placement assessment that produced them. Delete attempts retain their
--- owner/system visibility so append-only guards return explicit errors; those
--- guards permit deletion only for the system private-erasure transaction and
--- its exact row space.
+-- An activated intent permits the owning profile to bind its staged fragment
+-- once from a null source pair to that exact source revision. Result rows are
+-- append-only and use the same team/profile boundary as the placement
+-- assessment that produced them. Delete attempts retain their owner/system
+-- visibility so append-only guards return explicit errors; those guards permit
+-- deletion only for the system private-erasure transaction and its exact row
+-- space.
 -- Backfill: unfinished v2.5 Remember work is terminalized as failed with the
 -- contract_superseded failure code. Accepted history is never rewritten. The
 -- v2.6 worker only consumes new intent rows and persists v2.6 results.
@@ -471,6 +473,81 @@ BEGIN
 END;
 $dense_mem_remember_reliability_rls$;
 
+DROP POLICY IF EXISTS evidence_fragments_remember_source_bind ON evidence_fragments;
+CREATE POLICY evidence_fragments_remember_source_bind ON evidence_fragments
+    FOR UPDATE
+    USING (
+        current_setting('app.tx_mode', true) = 'profile'
+        AND team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+        AND owner_profile_id = NULLIF(current_setting('app.current_profile_id', true), '')::uuid
+        AND source_id IS NULL
+        AND source_revision_id IS NULL
+        AND EXISTS (
+            SELECT 1
+            FROM remember_source_revision_intents AS intent
+            WHERE intent.team_id = evidence_fragments.team_id
+              AND intent.ingest_id = evidence_fragments.ingest_id
+              AND intent.owner_profile_id = evidence_fragments.owner_profile_id
+              AND intent.fragment_id = evidence_fragments.fragment_id
+              AND intent.source_id IS NOT NULL
+              AND intent.source_revision_id IS NOT NULL
+        )
+    )
+    WITH CHECK (
+        current_setting('app.tx_mode', true) = 'profile'
+        AND team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+        AND owner_profile_id = NULLIF(current_setting('app.current_profile_id', true), '')::uuid
+        AND source_id IS NOT NULL
+        AND source_revision_id IS NOT NULL
+        AND EXISTS (
+            SELECT 1
+            FROM remember_source_revision_intents AS intent
+            WHERE intent.team_id = evidence_fragments.team_id
+              AND intent.ingest_id = evidence_fragments.ingest_id
+              AND intent.owner_profile_id = evidence_fragments.owner_profile_id
+              AND intent.fragment_id = evidence_fragments.fragment_id
+              AND intent.source_id = evidence_fragments.source_id
+              AND intent.source_revision_id = evidence_fragments.source_revision_id
+        )
+    );
+
+CREATE OR REPLACE FUNCTION prevent_evidence_fragment_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'DELETE'
+       AND current_setting('app.tx_mode', true) = 'system'
+       AND NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid = OLD.space_id THEN
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'UPDATE'
+       AND current_setting('app.tx_mode', true) = 'profile'
+       AND OLD.source_id IS NULL
+       AND OLD.source_revision_id IS NULL
+       AND NEW.source_id IS NOT NULL
+       AND NEW.source_revision_id IS NOT NULL
+       AND (to_jsonb(NEW) - ARRAY['source_id', 'source_revision_id']::TEXT[])
+           = (to_jsonb(OLD) - ARRAY['source_id', 'source_revision_id']::TEXT[])
+       AND EXISTS (
+           SELECT 1
+           FROM remember_source_revision_intents AS intent
+           WHERE intent.team_id = OLD.team_id
+             AND intent.ingest_id = OLD.ingest_id
+             AND intent.owner_profile_id = OLD.owner_profile_id
+             AND intent.fragment_id = OLD.fragment_id
+             AND intent.source_id = NEW.source_id
+             AND intent.source_revision_id = NEW.source_revision_id
+       ) THEN
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'evidence_fragments is append-only: % operations are not allowed', TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS evidence_fragments_append_only ON evidence_fragments;
+CREATE TRIGGER evidence_fragments_append_only
+    BEFORE UPDATE OR DELETE ON evidence_fragments
+    FOR EACH ROW EXECUTE FUNCTION prevent_evidence_fragment_mutation();
+
 CREATE OR REPLACE FUNCTION prevent_remember_source_intent_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -559,6 +636,13 @@ BEGIN
     END IF;
 END;
 $dense_mem_remember_reliability_down$;
+
+DROP POLICY IF EXISTS evidence_fragments_remember_source_bind ON evidence_fragments;
+DROP TRIGGER IF EXISTS evidence_fragments_append_only ON evidence_fragments;
+CREATE TRIGGER evidence_fragments_append_only
+    BEFORE UPDATE OR DELETE ON evidence_fragments
+    FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation();
+DROP FUNCTION IF EXISTS prevent_evidence_fragment_mutation();
 
 DROP TRIGGER IF EXISTS submission_relationship_results_append_only ON submission_relationship_results;
 DROP TRIGGER IF EXISTS submission_assessment_response_revisions_append_only ON submission_assessment_response_revisions;
