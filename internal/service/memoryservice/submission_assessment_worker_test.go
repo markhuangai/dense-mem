@@ -145,6 +145,7 @@ func TestSubmissionAssessmentWorkerQuarantinesProposalSignalsAcrossEveryFragment
 	completion := assessments.completions[0]
 	assert.Equal(t, string(domain.SemanticReviewQuarantined), completion.Status)
 	assert.Equal(t, map[string]any{"assessor_contract": domain.ContractVersion}, completion.Payload)
+	assertSubmissionAssessmentQuarantineRelationshipResults(t, completion.RelationshipResults)
 	require.Len(t, completion.SecurityQuarantines, len(ledger.placement.Evidence))
 	for _, quarantine := range completion.SecurityQuarantines {
 		require.NotEmpty(t, quarantine.Signals)
@@ -334,10 +335,25 @@ func TestSubmissionAssessmentWorkerCompletesProviderSecurityQuarantine(t *testin
 	completion := assessments.completions[0]
 	assert.Equal(t, string(domain.SemanticReviewQuarantined), completion.Status)
 	assert.Equal(t, map[string]any{"assessor_contract": domain.ContractVersion}, completion.Payload)
+	assertSubmissionAssessmentQuarantineRelationshipResults(t, completion.RelationshipResults)
 	require.Len(t, completion.SecurityQuarantines, 1)
 	assert.Equal(t, ledger.placement.Evidence[1].FragmentID, completion.SecurityQuarantines[0].FragmentID)
 	require.Len(t, completion.SecurityQuarantines[0].Signals, 1)
 	assert.Equal(t, "Gamma", completion.SecurityQuarantines[0].Signals[0].Quote)
+}
+
+func assertSubmissionAssessmentQuarantineRelationshipResults(
+	t *testing.T,
+	results []repository.SubmissionRelationshipResultInput,
+) {
+	t.Helper()
+	require.Len(t, results, 3)
+	for index, wantRef := range []string{"r:depends", "r:supports", "r:uses"} {
+		assert.Equal(t, wantRef, results[index].RelationshipRef)
+		assert.Equal(t, "not_stored", results[index].Disposition)
+		assert.Equal(t, "security_quarantine", results[index].Reason)
+		assert.Empty(t, results[index].Splits)
+	}
 }
 
 func TestSubmissionAssessmentWorkerPlansAndCommitsTypedValue(t *testing.T) {

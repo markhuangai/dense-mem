@@ -153,6 +153,18 @@ func TestSubmissionDiagnosticsDetailOrdersAndFiltersOperatorHistory(t *testing.T
 	}
 }
 
+func TestSubmissionDiagnosticsProjectsCommitRaceExhaustionStage(t *testing.T) {
+	diagnostic := projectSubmissionOperatorDiagnostic(map[string]any{
+		"failure_reason_code": "unknown_internal_failure",
+		"failure_stage":       "commit_race_exhausted",
+		"failure_class":       "internal",
+	})
+
+	require.NotNil(t, diagnostic)
+	require.Equal(t, "commit_race_exhausted", diagnostic.FailureStage)
+	require.Equal(t, "unknown_internal_failure", diagnostic.FailureReasonCode)
+}
+
 func TestSubmissionDiagnosticsValidatesScopeAndBoundsRepositoryErrors(t *testing.T) {
 	repo := &submissionDiagnosticsRepoStub{}
 	svc := NewSubmissionDiagnosticsService(repo)

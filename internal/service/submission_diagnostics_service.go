@@ -340,7 +340,7 @@ var (
 		"deterministic_policy": {}, "conflict_context_stale": {},
 		"semantic_commit": {}, "contract_superseded": {}, "replacement_conflict": {},
 		"stale_source": {}, "deterministic_security_scan": {}, "security_signal": {},
-		"assessment_scope": {}, "placement_item": {},
+		"assessment_scope": {}, "placement_item": {}, "commit_race_exhausted": {},
 	}
 	submissionDiagnosticClasses = map[string]struct{}{
 		"timeout": {}, "rate_limited": {}, "http_4xx": {}, "http_5xx": {},

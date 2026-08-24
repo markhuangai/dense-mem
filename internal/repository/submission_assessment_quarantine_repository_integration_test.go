@@ -47,9 +47,23 @@ func TestSubmissionAssessmentQuarantineRetainsRawCopyUntilSystemPurge(t *testing
 		Category:            "quarantined",
 		Payload:             map[string]any{"failure_stage": "deterministic_security_scan"},
 		SecurityQuarantines: []SubmissionAssessmentSecurityQuarantineInput{securityQuarantine},
+		RelationshipResults: []SubmissionRelationshipResultInput{{
+			RelationshipRef: "quarantined-ref",
+			Disposition:     "not_stored",
+			Reason:          "security_quarantine",
+		}},
 	})
 	require.NoError(t, err)
 	require.Equal(t, string(domain.SemanticReviewQuarantined), completed.Status)
+	status, err := repo.GetPlacementRun(ctx, GetPlacementRunInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+	})
+	require.NoError(t, err)
+	require.Len(t, status.RelationshipResults, 1)
+	assert.Equal(t, "quarantined-ref", status.RelationshipResults[0].RelationshipRef)
+	assert.Equal(t, "not_stored", status.RelationshipResults[0].Disposition)
+	assert.Equal(t, "security_quarantine", status.RelationshipResults[0].Reason)
+	assert.Empty(t, status.RelationshipResults[0].Splits)
 
 	var payloadCount, tombstoneCount, sourceCount int64
 	var payloadSHA string

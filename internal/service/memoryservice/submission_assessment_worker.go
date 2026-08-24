@@ -566,6 +566,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeDeterministicSecuri
 		Category:                     "quarantined",
 		Payload:                      payload,
 		SecurityQuarantines:          quarantines,
+		RelationshipResults:          submissionAssessmentQuarantineRelationshipResults(plan),
 	})
 	if err == nil && completed == nil {
 		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil security terminal result"))
@@ -640,6 +641,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeProviderSecurityQua
 		Category:                     "quarantined",
 		Payload:                      payload,
 		SecurityQuarantines:          quarantines,
+		RelationshipResults:          submissionAssessmentQuarantineRelationshipResults(plan),
 	})
 	if err == nil && completed == nil {
 		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil provider security terminal result"))
@@ -651,6 +653,20 @@ func (s *submissionAssessmentPlacementWorkerService) completeProviderSecurityQua
 		s.logLifecycle(scope, "submission_quarantined", "quarantined", stage, string(SubmissionErrorQuarantined), nil)
 	}
 	return err
+}
+
+func submissionAssessmentQuarantineRelationshipResults(
+	plan submissionAssessmentPlan,
+) []repository.SubmissionRelationshipResultInput {
+	results := make([]repository.SubmissionRelationshipResultInput, len(plan.RelationshipTargets))
+	for index, target := range plan.RelationshipTargets {
+		results[index] = repository.SubmissionRelationshipResultInput{
+			RelationshipRef: target.Target.ProposalID,
+			Disposition:     "not_stored",
+			Reason:          "security_quarantine",
+		}
+	}
+	return results
 }
 
 func submissionAssessmentCommitInput(

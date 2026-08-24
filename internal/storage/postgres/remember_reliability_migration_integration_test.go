@@ -16,6 +16,7 @@ import (
 )
 
 const rememberReliabilityMigrationVersion int64 = 20260823010001
+const rememberSecurityQuarantineDispositionMigrationVersion int64 = 20260823010002
 const rememberReliabilityMigrationBaseVersion int64 = 20260821160001
 
 func TestRememberReliabilityMigrationTerminalizesOnlyUnfinishedLegacyRememberRuns(t *testing.T) {
@@ -155,7 +156,7 @@ func TestRememberReliabilityMigrationEnforcesRelationshipResultShape(t *testing.
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
-	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
+	runGooseUpTo(t, ctx, db, rememberSecurityQuarantineDispositionMigrationVersion)
 	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
 	ingestID, runID := uuid.NewString(), uuid.NewString()
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
@@ -190,6 +191,7 @@ func TestRememberReliabilityMigrationEnforcesRelationshipResultShape(t *testing.
 	require.NoError(t, insertResult("stored-valid", "stored", "", `[{"split_index":0,"relationship_id":"`+validRelationshipID+`","relationship_version":1,"status":"active"}]`))
 	require.NoError(t, insertResult("not-stored-valid", "not_stored", "not_supported_by_evidence", `[]`))
 	require.NoError(t, insertResult("stale-input-valid", "not_stored", "stale_input", `[]`))
+	require.NoError(t, insertResult("security-quarantine-valid", "not_stored", "security_quarantine", `[]`))
 
 	tests := []struct {
 		name        string
@@ -216,6 +218,32 @@ func TestRememberReliabilityMigrationEnforcesRelationshipResultShape(t *testing.
 			assert.Equal(t, "23514", pgErr.Code)
 		})
 	}
+	err := migrationDownTo(ctx, db, rememberReliabilityMigrationVersion)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "security quarantine Relationship results exist")
+}
+
+func TestRememberSecurityQuarantineDispositionMigrationUpgradesAndRollsBackBeforeUse(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
+
+	shapeAllowsSecurityQuarantine := func() bool {
+		var allowed bool
+		require.NoError(t, db.QueryRowContext(ctx, `
+			SELECT submission_relationship_result_shape_valid(
+				'not_stored', 'security_quarantine', '[]'::jsonb
+			)
+		`).Scan(&allowed))
+		return allowed
+	}
+
+	assert.False(t, shapeAllowsSecurityQuarantine())
+	runGooseUpTo(t, ctx, db, rememberSecurityQuarantineDispositionMigrationVersion)
+	assert.True(t, shapeAllowsSecurityQuarantine())
+	require.NoError(t, migrationDownTo(ctx, db, rememberReliabilityMigrationVersion))
+	assert.False(t, shapeAllowsSecurityQuarantine())
 }
 
 func insertRememberReliabilityIdentityFixture(t *testing.T, ctx context.Context, db *sql.DB) (string, string) {
