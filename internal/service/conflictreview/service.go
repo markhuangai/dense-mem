@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/conflictassessment"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 const AssessmentConfidenceThreshold = 0.70
@@ -29,7 +29,7 @@ type Repository interface {
 }
 
 type Provider interface {
-	AssessRelationshipConflict(context.Context, verifier.ConflictAssessmentRequest) (verifier.ConflictAssessmentResponse, error)
+	AssessRelationshipConflict(context.Context, conflictassessment.ConflictAssessmentRequest) (conflictassessment.ConflictAssessmentResponse, error)
 	ModelName() string
 }
 
@@ -42,7 +42,7 @@ type Dependencies struct {
 	Provider   Provider
 	Metrics    observability.DiscoverabilityMetrics
 	Timezone   string
-	Limits     verifier.SemanticAssessmentLimits
+	Limits     conflictassessment.SemanticAssessmentLimits
 	Now        func() time.Time
 }
 
@@ -51,7 +51,7 @@ type Service struct {
 	provider   Provider
 	metrics    observability.DiscoverabilityMetrics
 	location   *time.Location
-	limits     verifier.SemanticAssessmentLimits
+	limits     conflictassessment.SemanticAssessmentLimits
 	now        func() time.Time
 }
 
@@ -159,7 +159,7 @@ func (s *Service) ReviewRelationshipConflictCase(
 	if requestErr != nil {
 		return s.recordAssessmentFailure(ctx, result, input, reservation, dossier, "dossier_invalid")
 	}
-	prepared, validationErrors := verifier.PrepareConflictAssessmentRequest(request, s.limits)
+	prepared, validationErrors := conflictassessment.PrepareConflictAssessmentRequest(request, s.limits)
 	if len(validationErrors) > 0 {
 		return s.recordAssessmentFailure(ctx, result, input, reservation, dossier, "dossier_bound_exceeded")
 	}
@@ -206,10 +206,10 @@ func (s *Service) applyAssessmentResponse(
 	input repository.ReviewRelationshipConflictCaseInput,
 	reservation *repository.OverdueConflictAssessmentReservation,
 	dossier *repository.OverdueConflictAssessmentDossier,
-	response verifier.ConflictAssessmentResponse,
+	response conflictassessment.ConflictAssessmentResponse,
 ) (*repository.ReviewRelationshipConflictCaseResult, error) {
 	response.Decision = strings.TrimSpace(response.Decision)
-	if response.Decision == verifier.ConflictAssessmentDecisionSelect {
+	if response.Decision == conflictassessment.ConflictAssessmentDecisionSelect {
 		positionID, valid := validSelectedConflictPosition(dossier, response)
 		if !valid {
 			return s.recordAssessmentFailure(ctx, result, input, reservation, dossier, "invalid_response")
@@ -244,7 +244,7 @@ func (s *Service) applyAssessmentResponse(
 		}
 		return s.applyResolutionResult(ctx, result, input, reservation.AssessmentAttemptID, "ai", applied)
 	}
-	if response.Decision == verifier.ConflictAssessmentDecisionAbstain && response.PositionID == nil && response.Confidence == 0 {
+	if response.Decision == conflictassessment.ConflictAssessmentDecisionAbstain && response.PositionID == nil && response.Confidence == 0 {
 		confidence := float64(0)
 		if _, err := s.completeAssessment(ctx, input, reservation, repository.CompleteOverdueConflictAssessmentInput{
 			Decision:      "abstained",
@@ -424,27 +424,27 @@ func (s *Service) handleAssessmentCompletionError(result *repository.ReviewRelat
 func conflictAssessmentRequest(
 	reservation *repository.OverdueConflictAssessmentReservation,
 	dossier *repository.OverdueConflictAssessmentDossier,
-) (verifier.ConflictAssessmentRequest, error) {
+) (conflictassessment.ConflictAssessmentRequest, error) {
 	if reservation == nil || dossier == nil {
-		return verifier.ConflictAssessmentRequest{}, errors.New("assessment reservation and dossier are required")
+		return conflictassessment.ConflictAssessmentRequest{}, errors.New("assessment reservation and dossier are required")
 	}
-	request := verifier.ConflictAssessmentRequest{
+	request := conflictassessment.ConflictAssessmentRequest{
 		RequestID: reservation.AssessmentAttemptID,
 		CaseID:    dossier.ConflictID,
 		Version:   dossier.CaseVersion,
 		Question:  dossier.Question,
-		Positions: make([]verifier.ConflictAssessmentPosition, 0, len(dossier.Positions)),
-		Evidence:  make([]verifier.ConflictAssessmentEvidence, 0, len(dossier.Evidence)),
+		Positions: make([]conflictassessment.ConflictAssessmentPosition, 0, len(dossier.Positions)),
+		Evidence:  make([]conflictassessment.ConflictAssessmentEvidence, 0, len(dossier.Evidence)),
 	}
 	for _, position := range dossier.Positions {
-		request.Positions = append(request.Positions, verifier.ConflictAssessmentPosition{
+		request.Positions = append(request.Positions, conflictassessment.ConflictAssessmentPosition{
 			PositionID:     position.PositionID,
 			PositionKey:    position.PositionKey,
 			SupporterCount: position.SupporterCount,
 		})
 	}
 	for _, evidence := range dossier.Evidence {
-		request.Evidence = append(request.Evidence, verifier.ConflictAssessmentEvidence{
+		request.Evidence = append(request.Evidence, conflictassessment.ConflictAssessmentEvidence{
 			EvidenceID:   evidence.FragmentID,
 			PositionID:   evidence.PositionID,
 			SupportID:    evidence.SupportID,
@@ -458,7 +458,7 @@ func conflictAssessmentRequest(
 	return request, nil
 }
 
-func validSelectedConflictPosition(dossier *repository.OverdueConflictAssessmentDossier, response verifier.ConflictAssessmentResponse) (string, bool) {
+func validSelectedConflictPosition(dossier *repository.OverdueConflictAssessmentDossier, response conflictassessment.ConflictAssessmentResponse) (string, bool) {
 	if dossier == nil || response.PositionID == nil || response.Confidence < 0 || response.Confidence > 1 {
 		return "", false
 	}
@@ -475,17 +475,17 @@ func validSelectedConflictPosition(dossier *repository.OverdueConflictAssessment
 }
 
 func conflictAssessmentFailureClass(err error) string {
-	if errors.Is(err, verifier.ErrVerifierMalformedResponse) {
+	if errors.Is(err, conflictassessment.ErrVerifierMalformedResponse) {
 		return "malformed_response"
 	}
-	class := strings.TrimSpace(verifier.ProviderFailureDetails(err).Class)
+	class := strings.TrimSpace(conflictassessment.ProviderFailureDetails(err).Class)
 	if class == "" || len(class) > 128 {
 		return "provider_unavailable"
 	}
 	return class
 }
 
-func conflictAssessmentResponseHash(response verifier.ConflictAssessmentResponse) string {
+func conflictAssessmentResponseHash(response conflictassessment.ConflictAssessmentResponse) string {
 	positionID := ""
 	if response.PositionID != nil {
 		positionID = strings.TrimSpace(*response.PositionID)

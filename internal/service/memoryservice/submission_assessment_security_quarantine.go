@@ -3,8 +3,8 @@ package memoryservice
 import (
 	"errors"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 func submissionAssessmentDeterministicQuarantines(
@@ -75,7 +75,7 @@ func submissionAssessmentDeterministicQuarantines(
 			if signal.Source != submissionSecuritySourceEvidence {
 				continue
 			}
-			quote, err := verifier.SemanticEvidenceSpan(item.Fragment.Content, signal.Start, signal.End)
+			quote, err := assessor.SemanticEvidenceSpan(item.Fragment.Content, signal.Start, signal.End)
 			if err == nil {
 				draft.Signals[index].Quote = quote
 			}

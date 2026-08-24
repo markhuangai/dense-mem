@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 func TestPlacementFailureDiagnosticDoesNotClassifyRepositoryErrorsAsProviderFailures(t *testing.T) {
@@ -32,9 +32,9 @@ func TestPlacementFailureDiagnosticClassifiesPostgresFailures(t *testing.T) {
 }
 
 func TestPlacementFailureDiagnosticRetainsBoundedProviderMetadata(t *testing.T) {
-	diagnostic := placementFailureDiagnosticFor("assessment", &verifier.ProviderError{
+	diagnostic := placementFailureDiagnosticFor("assessment", &assessor.ProviderError{
 		Provider:     "provider",
-		FailureClass: verifier.ProviderFailureClassHTTPServer,
+		FailureClass: assessor.ProviderFailureClassHTTPServer,
 		StatusCode:   503,
 	})
 
@@ -77,12 +77,12 @@ func TestPlacementWorkerFailurePreservesSpecificRepositoryCauseClassification(t 
 }
 
 func TestPlacementFailureDiagnosticCapturesMalformedValidationAndMeasurement(t *testing.T) {
-	malformed := &verifier.MalformedResponseError{
+	malformed := &assessor.MalformedResponseError{
 		FailureClass:            "malformed_exhausted",
 		Attempts:                3,
 		ValidationStage:         "response_contract",
 		ValidationFieldFamilies: []string{"response", "response", "relationship_results.ref"},
-		Measurement:             &verifier.FailureMeasurement{Unit: "tokens", Observed: 120, ObservedAtLeast: true, Limit: 100},
+		Measurement:             &assessor.FailureMeasurement{Unit: "tokens", Observed: 120, ObservedAtLeast: true, Limit: 100},
 	}
 	diagnostic := placementFailureDiagnosticFor("assessment", malformed)
 	require.Equal(t, "assessment", diagnostic.Stage)
@@ -91,7 +91,7 @@ func TestPlacementFailureDiagnosticCapturesMalformedValidationAndMeasurement(t *
 	require.Equal(t, "response_contract", diagnostic.ValidationStage)
 	require.Equal(t, []string{"response", "relationship_results.ref"}, diagnostic.ValidationFieldFamilies)
 	require.Equal(t, 3, diagnostic.AssessorTurns)
-	require.Equal(t, &verifier.FailureMeasurement{Unit: "tokens", Observed: 120, ObservedAtLeast: true, Limit: 100}, diagnostic.Measurement)
+	require.Equal(t, &assessor.FailureMeasurement{Unit: "tokens", Observed: 120, ObservedAtLeast: true, Limit: 100}, diagnostic.Measurement)
 
 	payload := diagnostic.payload(true)
 	require.Equal(t, "assessment", payload["failure_stage"])
@@ -125,9 +125,9 @@ func TestPlacementFailureDiagnosticBoundsBranchesAndRetryErrors(t *testing.T) {
 	require.Equal(t, "semantic_rejection", boundedPlacementFailureStage("semantic_rejection"))
 	require.Equal(t, "internal", boundedPlacementFailureClass("unknown"))
 	require.Nil(t, cloneFailureMeasurement(nil))
-	require.Nil(t, cloneFailureMeasurement(&verifier.FailureMeasurement{Unit: "seconds", Observed: 1, Limit: 2}))
-	require.Nil(t, cloneFailureMeasurement(&verifier.FailureMeasurement{Unit: "tokens", Observed: -1, Limit: 2}))
-	require.Nil(t, cloneFailureMeasurement(&verifier.FailureMeasurement{Unit: "tokens", Observed: 1, Limit: -1}))
+	require.Nil(t, cloneFailureMeasurement(&assessor.FailureMeasurement{Unit: "seconds", Observed: 1, Limit: 2}))
+	require.Nil(t, cloneFailureMeasurement(&assessor.FailureMeasurement{Unit: "tokens", Observed: -1, Limit: 2}))
+	require.Nil(t, cloneFailureMeasurement(&assessor.FailureMeasurement{Unit: "tokens", Observed: 1, Limit: -1}))
 	require.Nil(t, failureMeasurementPayload(nil))
 	require.Equal(t, 0, boundedPositive(-1))
 	require.Equal(t, 1000, boundedPositive(1001))
@@ -154,7 +154,7 @@ func TestPlacementFailureDiagnosticBoundsBranchesAndRetryErrors(t *testing.T) {
 		require.Equal(t, test.reason, placementFailureReasonCode(test.stage, test.class))
 	}
 
-	providerDiagnostic := placementFailureDiagnosticForProvider("assessment", verifier.ProviderFailureMetadata{Class: "http_5xx", StatusCode: 503})
+	providerDiagnostic := placementFailureDiagnosticForProvider("assessment", assessor.ProviderFailureMetadata{Class: "http_5xx", StatusCode: 503})
 	require.Equal(t, "http_5xx", providerDiagnostic.Class)
 	require.Equal(t, 503, providerDiagnostic.ProviderStatus)
 

@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/conflictassessment"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 const (
@@ -36,8 +36,8 @@ const (
 func TestServiceResolvesSelectedAssessment(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	provider := &conflictReviewProviderStub{
-		response: verifier.ConflictAssessmentResponse{
-			Decision:      verifier.ConflictAssessmentDecisionSelect,
+		response: conflictassessment.ConflictAssessmentResponse{
+			Decision:      conflictassessment.ConflictAssessmentDecisionSelect,
 			PositionID:    pointer(conflictReviewTestPositionBID),
 			Confidence:    0.91,
 			Rationale:     "The supplied evidence supports this position.",
@@ -69,8 +69,8 @@ func TestServiceResolvesSelectedAssessment(t *testing.T) {
 func TestServiceUsesLastWriteWinsAfterExplicitAbstention(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	provider := &conflictReviewProviderStub{
-		response: verifier.ConflictAssessmentResponse{
-			Decision:      verifier.ConflictAssessmentDecisionAbstain,
+		response: conflictassessment.ConflictAssessmentResponse{
+			Decision:      conflictassessment.ConflictAssessmentDecisionAbstain,
 			Confidence:    0,
 			Rationale:     "The dossier is not clear enough to choose.",
 			ProviderTurns: 1,
@@ -102,8 +102,8 @@ func TestServiceAttributesProviderUsageToConflictReview(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	provider := &conflictReviewProviderStub{
 		recordUsage: true,
-		response: verifier.ConflictAssessmentResponse{
-			Decision:      verifier.ConflictAssessmentDecisionSelect,
+		response: conflictassessment.ConflictAssessmentResponse{
+			Decision:      conflictassessment.ConflictAssessmentDecisionSelect,
 			PositionID:    pointer(conflictReviewTestPositionBID),
 			Confidence:    0.91,
 			Rationale:     "The supplied evidence supports this position.",
@@ -115,7 +115,7 @@ func TestServiceAttributesProviderUsageToConflictReview(t *testing.T) {
 		Provider:   provider,
 		Metrics:    metrics,
 		Timezone:   "UTC",
-		Limits:     verifier.DefaultSemanticAssessmentLimits(),
+		Limits:     conflictassessment.DefaultSemanticAssessmentLimits(),
 	})
 	require.NoError(t, err)
 
@@ -139,10 +139,10 @@ func TestServiceAttributesProviderUsageToConflictReview(t *testing.T) {
 func TestServiceUsesLastWriteWinsAfterFifthFailedAssessment(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	repo.completeResult.FailureCount = 5
-	provider := &conflictReviewProviderStub{err: &verifier.ProviderError{
+	provider := &conflictReviewProviderStub{err: &conflictassessment.ProviderError{
 		Provider:     "test",
 		Message:      "provider failed",
-		FailureClass: verifier.ProviderFailureClassHTTPServer,
+		FailureClass: conflictassessment.ProviderFailureClassHTTPServer,
 	}}
 	service := newConflictReviewService(t, repo, provider)
 
@@ -152,7 +152,7 @@ func TestServiceUsesLastWriteWinsAfterFifthFailedAssessment(t *testing.T) {
 	assert.Equal(t, "last_write_wins", result.ResolutionMethod)
 	require.Len(t, repo.completions, 1)
 	assert.Equal(t, "failed", repo.completions[0].Decision)
-	assert.Equal(t, verifier.ProviderFailureClassHTTPServer, repo.completions[0].FailureClass)
+	assert.Equal(t, conflictassessment.ProviderFailureClassHTTPServer, repo.completions[0].FailureClass)
 	require.Len(t, repo.applyInputs, 1)
 	assert.Equal(t, "last_write_wins", repo.applyInputs[0].Method)
 }
@@ -160,10 +160,10 @@ func TestServiceUsesLastWriteWinsAfterFifthFailedAssessment(t *testing.T) {
 func TestServiceLeavesFailedAssessmentPendingWhenCompletionResultIsNil(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	repo.completeNil = true
-	provider := &conflictReviewProviderStub{err: &verifier.ProviderError{
+	provider := &conflictReviewProviderStub{err: &conflictassessment.ProviderError{
 		Provider:     "test",
 		Message:      "provider failed",
-		FailureClass: verifier.ProviderFailureClassHTTPServer,
+		FailureClass: conflictassessment.ProviderFailureClassHTTPServer,
 	}}
 	service := newConflictReviewService(t, repo, provider)
 
@@ -227,7 +227,7 @@ func TestServiceObservesPendingResolutionOnlyOnTransition(t *testing.T) {
 		Provider:   &conflictReviewProviderStub{err: errors.New("provider must not be called")},
 		Metrics:    metrics,
 		Timezone:   "UTC",
-		Limits:     verifier.DefaultSemanticAssessmentLimits(),
+		Limits:     conflictassessment.DefaultSemanticAssessmentLimits(),
 	})
 	require.NoError(t, err)
 
@@ -248,8 +248,8 @@ func TestServiceObservesPendingResolutionOnlyOnTransition(t *testing.T) {
 func TestServiceRecordsLowConfidenceSelectionAsFailedAssessment(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	provider := &conflictReviewProviderStub{
-		response: verifier.ConflictAssessmentResponse{
-			Decision:   verifier.ConflictAssessmentDecisionSelect,
+		response: conflictassessment.ConflictAssessmentResponse{
+			Decision:   conflictassessment.ConflictAssessmentDecisionSelect,
 			PositionID: pointer(conflictReviewTestPositionAID),
 			Confidence: AssessmentConfidenceThreshold - 0.01,
 			Rationale:  "The evidence is incomplete.",
@@ -270,8 +270,8 @@ func TestServiceTreatsStaleAssessmentCompletionAsNoOp(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	repo.completeErr = repository.ErrConflictAssessmentReserved
 	provider := &conflictReviewProviderStub{
-		response: verifier.ConflictAssessmentResponse{
-			Decision:   verifier.ConflictAssessmentDecisionSelect,
+		response: conflictassessment.ConflictAssessmentResponse{
+			Decision:   conflictassessment.ConflictAssessmentDecisionSelect,
 			PositionID: pointer(conflictReviewTestPositionAID),
 			Confidence: 0.91,
 			Rationale:  "The evidence supports this position.",
@@ -291,8 +291,8 @@ func TestServiceLeavesUnresolvableLastWriteWinsCaseOverdue(t *testing.T) {
 		repo.dossier.Positions[index].Supports = nil
 	}
 	provider := &conflictReviewProviderStub{
-		response: verifier.ConflictAssessmentResponse{
-			Decision:   verifier.ConflictAssessmentDecisionAbstain,
+		response: conflictassessment.ConflictAssessmentResponse{
+			Decision:   conflictassessment.ConflictAssessmentDecisionAbstain,
 			Rationale:  "The supplied evidence is inconclusive.",
 			Confidence: 0,
 		},
@@ -320,8 +320,8 @@ func TestServiceRecordsDerivedEvidenceStagingFailure(t *testing.T) {
 	}}
 	repo.stageErr = errors.New("derived evidence staging failed")
 	provider := &conflictReviewProviderStub{
-		response: verifier.ConflictAssessmentResponse{
-			Decision:   verifier.ConflictAssessmentDecisionSelect,
+		response: conflictassessment.ConflictAssessmentResponse{
+			Decision:   conflictassessment.ConflictAssessmentDecisionSelect,
 			PositionID: pointer(conflictReviewTestPositionBID),
 			Confidence: 0.91,
 			Rationale:  "The evidence supports this position.",
@@ -420,25 +420,25 @@ func TestNewRejectsInvalidConflictReviewDependencies(t *testing.T) {
 
 func TestNewRunnerRejectsInvalidDependencies(t *testing.T) {
 	provider := &conflictReviewProviderStub{}
-	_, err := NewRunner(nil, provider, "UTC", verifier.DefaultSemanticAssessmentLimits(), nil)
+	_, err := NewRunner(nil, provider, "UTC", conflictassessment.DefaultSemanticAssessmentLimits(), nil)
 	require.EqualError(t, err, "conflict review runner: ledger is required")
 
 	ledger := newConflictReviewRunLedgerStub(t)
-	_, err = NewRunner(ledger, emptyModelConflictReviewProvider{}, "UTC", verifier.DefaultSemanticAssessmentLimits(), nil)
+	_, err = NewRunner(ledger, emptyModelConflictReviewProvider{}, "UTC", conflictassessment.DefaultSemanticAssessmentLimits(), nil)
 	require.EqualError(t, err, "conflict review service: provider model is required")
 }
 
 func TestRunnerExecutesConflictReviewLifecycle(t *testing.T) {
 	ledger := newConflictReviewRunLedgerStub(t)
 	provider := &conflictReviewProviderStub{
-		response: verifier.ConflictAssessmentResponse{
-			Decision:   verifier.ConflictAssessmentDecisionSelect,
+		response: conflictassessment.ConflictAssessmentResponse{
+			Decision:   conflictassessment.ConflictAssessmentDecisionSelect,
 			PositionID: pointer(conflictReviewTestPositionBID),
 			Confidence: 0.91,
 			Rationale:  "The supplied evidence supports this position.",
 		},
 	}
-	runner, err := NewRunner(ledger, provider, "UTC", verifier.DefaultSemanticAssessmentLimits(), nil)
+	runner, err := NewRunner(ledger, provider, "UTC", conflictassessment.DefaultSemanticAssessmentLimits(), nil)
 	require.NoError(t, err)
 
 	run, claimed, err := runner.ReserveRelationshipConflictReviewRun(context.Background(), repository.ConflictReviewRunInput{
@@ -543,7 +543,7 @@ func newConflictReviewService(t *testing.T, repo *conflictReviewRepositoryStub, 
 		Repository: repo,
 		Provider:   provider,
 		Timezone:   "UTC",
-		Limits:     verifier.DefaultSemanticAssessmentLimits(),
+		Limits:     conflictassessment.DefaultSemanticAssessmentLimits(),
 		Now: func() time.Time {
 			return time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)
 		},
@@ -789,14 +789,14 @@ func (s *conflictReviewRepositoryStub) RecordConflictDerivedEvidenceFailure(_ co
 }
 
 type conflictReviewProviderStub struct {
-	response    verifier.ConflictAssessmentResponse
+	response    conflictassessment.ConflictAssessmentResponse
 	err         error
-	requests    []verifier.ConflictAssessmentRequest
+	requests    []conflictassessment.ConflictAssessmentRequest
 	metrics     observability.DiscoverabilityMetrics
 	recordUsage bool
 }
 
-func (s *conflictReviewProviderStub) AssessRelationshipConflict(ctx context.Context, request verifier.ConflictAssessmentRequest) (verifier.ConflictAssessmentResponse, error) {
+func (s *conflictReviewProviderStub) AssessRelationshipConflict(ctx context.Context, request conflictassessment.ConflictAssessmentRequest) (conflictassessment.ConflictAssessmentResponse, error) {
 	s.requests = append(s.requests, request)
 	if s.recordUsage {
 		observability.RecordAIOperationUsage(ctx, s.metrics, observability.AIOperationUsage{
@@ -820,8 +820,8 @@ func (s *conflictReviewProviderStub) ModelName() string {
 
 type emptyModelConflictReviewProvider struct{}
 
-func (emptyModelConflictReviewProvider) AssessRelationshipConflict(context.Context, verifier.ConflictAssessmentRequest) (verifier.ConflictAssessmentResponse, error) {
-	return verifier.ConflictAssessmentResponse{}, nil
+func (emptyModelConflictReviewProvider) AssessRelationshipConflict(context.Context, conflictassessment.ConflictAssessmentRequest) (conflictassessment.ConflictAssessmentResponse, error) {
+	return conflictassessment.ConflictAssessmentResponse{}, nil
 }
 
 func (emptyModelConflictReviewProvider) ModelName() string {

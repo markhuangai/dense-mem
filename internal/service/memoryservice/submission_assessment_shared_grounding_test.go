@@ -7,12 +7,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/markhuangai/dense-mem/internal/verifier"
+	"github.com/markhuangai/dense-mem/internal/assessor"
 )
 
 func TestSubmissionAssessmentWorkerSharesOneEntityResolutionForRepeatedGrounding(t *testing.T) {
 	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
-	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+	provider.response = func(req assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentResponse, error) {
 		response := submissionAssessmentValidResponse(req, false)
 		for index, entity := range req.SubmittedEntities {
 			if entity.Name != "Alpha" {

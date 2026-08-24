@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 func TestSubmissionAssessmentWorkerSupersedesQueuedOlderContractBeforeAssessment(t *testing.T) {
@@ -64,11 +64,11 @@ func TestRepairSubmissionAssessmentResponseDoesNotInventGroundingOrIdentity(t *t
 
 func TestRepairSubmissionAssessmentResponseMarksUngroundableEntityUnsupported(t *testing.T) {
 	plan := submissionAssessmentPlan{
-		EntityTargets:      []submissionAssessmentEntityTarget{{Target: verifier.SemanticAssessmentRequiredEntityRef{Ref: "entity:missing"}}},
+		EntityTargets:      []submissionAssessmentEntityTarget{{Target: assessor.SemanticAssessmentRequiredEntityRef{Ref: "entity:missing"}}},
 		entityTargetsByRef: map[string]submissionAssessmentEntityTarget{},
 	}
 	plan.entityTargetsByRef["entity:missing"] = plan.EntityTargets[0]
-	response := verifier.SemanticAssessmentResponse{EntityResults: []verifier.SemanticAssessmentEntityResult{{Ref: "entity:missing"}}}
+	response := assessor.SemanticAssessmentResponse{EntityResults: []assessor.SemanticAssessmentEntityResult{{Ref: "entity:missing"}}}
 
 	unsupported := repairSubmissionAssessmentResponse(&plan, &response)
 

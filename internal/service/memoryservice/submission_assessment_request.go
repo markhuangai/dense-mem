@@ -8,9 +8,9 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 func (s *submissionAssessmentPlacementWorkerService) buildRequest(
@@ -18,10 +18,10 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 	run repository.PlacementRun,
 	plan submissionAssessmentPlan,
 	proposal map[string]any,
-) (verifier.SemanticAssessmentRequest, error) {
+) (assessor.SemanticAssessmentRequest, error) {
 	candidateLimit := s.limits.MaxCandidatesPerSurface
 	if candidateLimit <= 0 {
-		candidateLimit = verifier.DefaultSemanticAssessmentLimits().MaxCandidatesPerSurface
+		candidateLimit = assessor.DefaultSemanticAssessmentLimits().MaxCandidatesPerSurface
 	}
 	entityInputs := make([]repository.SubmissionAssessmentEntityCatalogTarget, 0, len(plan.EntityTargets))
 	for _, entity := range plan.EntityTargets {
@@ -39,23 +39,23 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 		CandidateLimit: candidateLimit,
 	})
 	if err != nil {
-		return verifier.SemanticAssessmentRequest{}, fmt.Errorf("load submission entity catalog: %w", err)
+		return assessor.SemanticAssessmentRequest{}, fmt.Errorf("load submission entity catalog: %w", err)
 	}
 	if !entityCatalog.Complete {
-		return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+		return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
 			"entity_catalog",
 			"submission entity catalog exceeds its configured complete bound",
-			verifier.FailureMeasurement{Unit: "candidates", Observed: candidateLimit + 1, ObservedAtLeast: true, Limit: candidateLimit},
+			assessor.FailureMeasurement{Unit: "candidates", Observed: candidateLimit + 1, ObservedAtLeast: true, Limit: candidateLimit},
 		)
 	}
-	evidence := make([]verifier.SemanticReviewEvidence, 0, len(plan.Items))
+	evidence := make([]assessor.SemanticReviewEvidence, 0, len(plan.Items))
 	for _, item := range plan.Items {
-		preparedEvidence := verifier.PrepareSemanticAssessmentEvidence(semanticAssessmentEvidence(item.Fragment, item.EvidenceID))
+		preparedEvidence := assessor.PrepareSemanticAssessmentEvidence(semanticAssessmentEvidence(item.Fragment, item.EvidenceID))
 		evidence = append(evidence, preparedEvidence)
 	}
 	contractEntities, entityGroups, err := submissionAssessmentGroundedEntities(plan, entityCatalog, evidence)
 	if err != nil {
-		return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("catalog_context_validation", "submission entity catalog is invalid")
+		return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("catalog_context_validation", "submission entity catalog is invalid")
 	}
 	// Keep the derived, evidence-backed grounding catalog on the plan as well
 	// as in the provider request. Commit-time repair uses the plan and must be
@@ -68,9 +68,9 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 		entry.Target = target
 		plan.entityTargetsByRef[target.Ref] = entry
 	}
-	contract := verifier.SemanticAssessmentSubmissionContract{
+	contract := assessor.SemanticAssessmentSubmissionContract{
 		Entities:      contractEntities,
-		Relationships: make([]verifier.SemanticAssessmentRequiredRelationshipRef, 0, len(plan.RelationshipTargets)),
+		Relationships: make([]assessor.SemanticAssessmentRequiredRelationshipRef, 0, len(plan.RelationshipTargets)),
 	}
 	for _, relationship := range plan.RelationshipTargets {
 		target := relationship.Target
@@ -82,9 +82,9 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 	}
 	predicateOptions, err := s.submissionAssessmentPredicateOptions(ctx, run, plan)
 	if err != nil {
-		return verifier.SemanticAssessmentRequest{}, err
+		return assessor.SemanticAssessmentRequest{}, err
 	}
-	req := verifier.SemanticAssessmentRequest{
+	req := assessor.SemanticAssessmentRequest{
 		RequestID:                "submission-assessment:" + run.PlacementRunID,
 		TeamID:                   run.TeamID,
 		OwnerProfileID:           run.OwnerProfileID,
@@ -92,10 +92,10 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 		ClientProposal:           assessmentClientProposalWithoutTrustedContext(proposal),
 		EntityCandidateGroups:    entityGroups,
 		PredicateOptions:         predicateOptions,
-		RequiredRelationshipRefs: append([]verifier.SemanticAssessmentRequiredRelationshipRef(nil), contract.Relationships...),
+		RequiredRelationshipRefs: append([]assessor.SemanticAssessmentRequiredRelationshipRef(nil), contract.Relationships...),
 		SubmissionContract:       &contract,
 	}
-	prepared, validationErrors := verifier.PrepareSemanticAssessmentRequest(req, s.limits)
+	prepared, validationErrors := assessor.PrepareSemanticAssessmentRequest(req, s.limits)
 	if len(validationErrors) == 0 {
 		return prepared, nil
 	}
@@ -104,39 +104,39 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 		case "candidate_context_tokens":
 			limit := s.limits.MaxCandidateContextTokens
 			if limit <= 0 {
-				limit = verifier.DefaultSemanticAssessmentLimits().MaxCandidateContextTokens
+				limit = assessor.DefaultSemanticAssessmentLimits().MaxCandidateContextTokens
 			}
-			return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+			return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
 				"catalog_context",
 				"submission assessment catalog exceeds its configured token budget",
-				verifier.FailureMeasurement{Unit: "tokens", Observed: prepared.CandidateContextTokens, Limit: limit},
+				assessor.FailureMeasurement{Unit: "tokens", Observed: prepared.CandidateContextTokens, Limit: limit},
 			)
 		case "input_tokens":
 			limit := s.limits.MaxInputTokens
 			if limit <= 0 {
-				limit = verifier.DefaultSemanticAssessmentLimits().MaxInputTokens
+				limit = assessor.DefaultSemanticAssessmentLimits().MaxInputTokens
 			}
-			return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+			return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
 				"assessment_input",
 				"submission assessment input exceeds its configured token budget",
-				verifier.FailureMeasurement{Unit: "tokens", Observed: prepared.InputTokens, Limit: limit},
+				assessor.FailureMeasurement{Unit: "tokens", Observed: prepared.InputTokens, Limit: limit},
 			)
 		}
 	}
-	return verifier.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("trusted_context_validation", "submission assessment contract is invalid")
+	return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("trusted_context_validation", "submission assessment contract is invalid")
 }
 
 func (s *submissionAssessmentPlacementWorkerService) submissionAssessmentPredicateOptions(
 	ctx context.Context,
 	run repository.PlacementRun,
 	plan submissionAssessmentPlan,
-) ([]verifier.SemanticAssessmentPredicateOption, error) {
+) ([]assessor.SemanticAssessmentPredicateOption, error) {
 	limit := s.limits.MaxPredicateOptions
 	if limit <= 0 {
-		limit = verifier.DefaultSemanticAssessmentLimits().MaxPredicateOptions
+		limit = assessor.DefaultSemanticAssessmentLimits().MaxPredicateOptions
 	}
-	if limit > verifier.SemanticAssessmentMaxPredicateOptions {
-		limit = verifier.SemanticAssessmentMaxPredicateOptions
+	if limit > assessor.SemanticAssessmentMaxPredicateOptions {
+		limit = assessor.SemanticAssessmentMaxPredicateOptions
 	}
 
 	proposedKeys := make([]string, 0, len(plan.RelationshipTargets))
@@ -188,7 +188,7 @@ func (s *submissionAssessmentPlacementWorkerService) submissionAssessmentPredica
 		return nil, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
 			"predicate_options_overflow",
 			"submission predicate candidates exceed the configured request bound",
-			verifier.FailureMeasurement{Unit: "candidates", Observed: len(candidates), Limit: limit},
+			assessor.FailureMeasurement{Unit: "candidates", Observed: len(candidates), Limit: limit},
 		)
 	}
 
@@ -209,9 +209,9 @@ func (s *submissionAssessmentPlacementWorkerService) submissionAssessmentPredica
 		appendCandidate(candidate)
 	}
 
-	options := make([]verifier.SemanticAssessmentPredicateOption, 0, len(candidates))
+	options := make([]assessor.SemanticAssessmentPredicateOption, 0, len(candidates))
 	for _, candidate := range candidates {
-		options = append(options, verifier.SemanticAssessmentPredicateOption{
+		options = append(options, assessor.SemanticAssessmentPredicateOption{
 			PredicateKey:        candidate.PredicateKey,
 			Version:             candidate.Version,
 			Aliases:             append([]string(nil), candidate.Aliases...),
@@ -227,8 +227,8 @@ func (s *submissionAssessmentPlacementWorkerService) submissionAssessmentPredica
 func submissionAssessmentGroundedEntities(
 	plan submissionAssessmentPlan,
 	catalog repository.SubmissionAssessmentEntityCatalogResult,
-	evidence []verifier.SemanticReviewEvidence,
-) ([]verifier.SemanticAssessmentRequiredEntityRef, []verifier.SemanticAssessmentEntityCandidateGroup, error) {
+	evidence []assessor.SemanticReviewEvidence,
+) ([]assessor.SemanticAssessmentRequiredEntityRef, []assessor.SemanticAssessmentEntityCandidateGroup, error) {
 	groupsByRef := make(map[string]repository.SubmissionAssessmentEntityCatalogGroup, len(catalog.Groups))
 	for _, group := range catalog.Groups {
 		if _, exists := groupsByRef[group.Ref]; exists || !group.Complete {
@@ -236,18 +236,18 @@ func submissionAssessmentGroundedEntities(
 		}
 		groupsByRef[group.Ref] = group
 	}
-	evidenceByID := make(map[string]verifier.SemanticReviewEvidence, len(evidence))
+	evidenceByID := make(map[string]assessor.SemanticReviewEvidence, len(evidence))
 	for _, item := range evidence {
 		evidenceByID[item.EvidenceID] = item
 	}
-	contractEntities := make([]verifier.SemanticAssessmentRequiredEntityRef, 0, len(plan.EntityTargets))
-	groups := make([]verifier.SemanticAssessmentEntityCandidateGroup, 0, len(plan.EntityTargets))
+	contractEntities := make([]assessor.SemanticAssessmentRequiredEntityRef, 0, len(plan.EntityTargets))
+	groups := make([]assessor.SemanticAssessmentEntityCandidateGroup, 0, len(plan.EntityTargets))
 	for entityIndex, entity := range plan.EntityTargets {
 		catalogGroup, ok := groupsByRef[entity.Target.Ref]
 		if !ok {
 			return nil, nil, errors.New("entity catalog target is missing")
 		}
-		if len(catalogGroup.Candidates) > verifier.SemanticAssessmentMaxEntityCandidatesPerSurface {
+		if len(catalogGroup.Candidates) > assessor.SemanticAssessmentMaxEntityCandidatesPerSurface {
 			return nil, nil, errors.New("entity catalog candidate bound is exceeded")
 		}
 		allowedNames := map[string]submissionAssessmentGroundingName{}
@@ -303,7 +303,7 @@ func submissionAssessmentGroundedEntities(
 				addName(activeName, []repository.SemanticReviewEntityCandidate{candidate})
 			}
 		}
-		target.Groundings = []verifier.SemanticAssessmentEntityGrounding{}
+		target.Groundings = []assessor.SemanticAssessmentEntityGrounding{}
 		groundingIndex := 0
 		for _, evidenceID := range target.EvidenceIDs {
 			evidenceItem, ok := evidenceByID[evidenceID]
@@ -334,14 +334,14 @@ func submissionAssessmentGroundedEntities(
 			sort.Strings(keys)
 			for _, key := range keys {
 				occurrence := occurrences[key]
-				startRef, startOK := verifier.SemanticAssessmentBoundaryRef(evidenceItem, occurrence.Start)
-				endRef, endOK := verifier.SemanticAssessmentBoundaryRef(evidenceItem, occurrence.End)
+				startRef, startOK := assessor.SemanticAssessmentBoundaryRef(evidenceItem, occurrence.Start)
+				endRef, endOK := assessor.SemanticAssessmentBoundaryRef(evidenceItem, occurrence.End)
 				if !startOK || !endOK {
 					return nil, nil, errors.New("entity grounding boundary is missing")
 				}
 				groundingRef := fmt.Sprintf("g%d_%d", entityIndex, groundingIndex)
 				groundingIndex++
-				target.Groundings = append(target.Groundings, verifier.SemanticAssessmentEntityGrounding{
+				target.Groundings = append(target.Groundings, assessor.SemanticAssessmentEntityGrounding{
 					GroundingRef: groundingRef,
 					EvidenceID:   evidenceID,
 					Surface:      occurrence.Surface,
@@ -350,7 +350,7 @@ func submissionAssessmentGroundedEntities(
 					Start:        occurrence.Start,
 					End:          occurrence.End,
 				})
-				if len(target.Groundings) > verifier.SemanticAssessmentMaxEntityGroundings {
+				if len(target.Groundings) > assessor.SemanticAssessmentMaxEntityGroundings {
 					return nil, nil, errors.New("submission assessment entity grounding bound is exceeded")
 				}
 				candidateIDs := make([]string, 0, len(occurrence.Candidates))
@@ -358,13 +358,13 @@ func submissionAssessmentGroundedEntities(
 					candidateIDs = append(candidateIDs, candidateID)
 				}
 				sort.Strings(candidateIDs)
-				group := verifier.SemanticAssessmentEntityCandidateGroup{
+				group := assessor.SemanticAssessmentEntityCandidateGroup{
 					Surface:      occurrence.Surface,
 					EvidenceID:   evidenceID,
 					GroundingRef: groundingRef,
 					Start:        occurrence.Start,
 					End:          occurrence.End,
-					Candidates:   make([]verifier.SemanticAssessmentEntityCandidate, 0, len(candidateIDs)),
+					Candidates:   make([]assessor.SemanticAssessmentEntityCandidate, 0, len(candidateIDs)),
 				}
 				for _, candidateID := range candidateIDs {
 					candidate := occurrence.Candidates[candidateID]
@@ -372,7 +372,7 @@ func submissionAssessmentGroundedEntities(
 					for field, value := range candidate.IdentityContext {
 						identityContext[field] = value
 					}
-					group.Candidates = append(group.Candidates, verifier.SemanticAssessmentEntityCandidate{
+					group.Candidates = append(group.Candidates, assessor.SemanticAssessmentEntityCandidate{
 						EntityID:        candidate.EntityID,
 						CanonicalName:   candidate.CanonicalName,
 						Kind:            candidate.EntityKind,

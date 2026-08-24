@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/markhuangai/dense-mem/internal/verifier"
+	"github.com/markhuangai/dense-mem/internal/assessor"
 )
 
 func submissionAssessmentObservationRef(relationshipRef string, splitIndex, splitCount int) string {
@@ -26,7 +26,7 @@ func assessmentValidationStage(stage string) string {
 	return stage
 }
 
-func semanticAssessmentValidationFieldFamiliesForService(errs []verifier.SemanticValidationError) []string {
+func semanticAssessmentValidationFieldFamiliesForService(errs []assessor.SemanticValidationError) []string {
 	seen := make(map[string]struct{}, len(errs))
 	result := make([]string, 0, len(errs))
 	for _, err := range errs {
@@ -44,7 +44,7 @@ func semanticAssessmentValidationFieldFamiliesForService(errs []verifier.Semanti
 }
 
 func relationshipObjectKind(
-	result verifier.SemanticAssessmentRelationshipSplit,
+	result assessor.SemanticAssessmentRelationshipSplit,
 	entityKinds map[string]string,
 	fallback string,
 ) string {

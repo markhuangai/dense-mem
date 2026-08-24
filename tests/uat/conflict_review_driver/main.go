@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/conflictassessment"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	postgresstorage "github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -35,6 +36,52 @@ type output struct {
 	AssessmentAttemptID  string   `json:"assessment_attempt_id"`
 	UpdatedRelationships []string `json:"updated_relationship_ids"`
 	RetractedEvidenceIDs []string `json:"retracted_evidence_ids"`
+}
+
+type legacyConflictProvider struct {
+	provider *verifier.OpenAIVerifier
+}
+
+func (p legacyConflictProvider) ModelName() string {
+	if p.provider == nil {
+		return ""
+	}
+	return p.provider.ModelName()
+}
+
+func (p legacyConflictProvider) AssessRelationshipConflict(
+	ctx context.Context,
+	request conflictassessment.ConflictAssessmentRequest,
+) (conflictassessment.ConflictAssessmentResponse, error) {
+	legacy := verifier.ConflictAssessmentRequest{
+		RequestID: request.RequestID,
+		CaseID:    request.CaseID,
+		Version:   request.Version,
+		Question:  request.Question,
+		Positions: make([]verifier.ConflictAssessmentPosition, 0, len(request.Positions)),
+		Evidence:  make([]verifier.ConflictAssessmentEvidence, 0, len(request.Evidence)),
+	}
+	for _, position := range request.Positions {
+		legacy.Positions = append(legacy.Positions, verifier.ConflictAssessmentPosition{
+			PositionID: position.PositionID, PositionKey: position.PositionKey, SupporterCount: position.SupporterCount,
+		})
+	}
+	for _, evidence := range request.Evidence {
+		legacy.Evidence = append(legacy.Evidence, verifier.ConflictAssessmentEvidence{
+			EvidenceID: evidence.EvidenceID, PositionID: evidence.PositionID, SupportID: evidence.SupportID,
+			SupporterRef: evidence.SupporterRef, Authority: evidence.Authority, AcceptedAt: evidence.AcceptedAt,
+			EffectiveAt: evidence.EffectiveAt, Content: evidence.Content,
+		})
+	}
+	response, err := p.provider.AssessRelationshipConflict(ctx, legacy)
+	if err != nil {
+		return conflictassessment.ConflictAssessmentResponse{}, err
+	}
+	return conflictassessment.ConflictAssessmentResponse{
+		Decision: response.Decision, PositionID: response.PositionID, Confidence: response.Confidence,
+		Rationale: response.Rationale, InputTokens: response.InputTokens, OutputTokens: response.OutputTokens,
+		ProviderTurns: response.ProviderTurns,
+	}, nil
 }
 
 func main() {
@@ -66,11 +113,11 @@ func main() {
 
 	rls := postgresstorage.NewRLS()
 	ledger := repository.NewLedgerRepository(db, rls)
-	limits := verifier.DefaultSemanticAssessmentLimits()
-	provider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, limits)
+	limits := conflictassessment.DefaultSemanticAssessmentLimits()
+	provider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, verifier.SemanticAssessmentLimits(limits))
 	reviewer, err := conflictreview.New(conflictreview.Dependencies{
 		Repository: ledger,
-		Provider:   provider,
+		Provider:   legacyConflictProvider{provider: provider},
 		Timezone:   "UTC",
 		Limits:     limits,
 	})

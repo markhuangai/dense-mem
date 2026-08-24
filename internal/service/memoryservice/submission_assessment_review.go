@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 var errSubmissionAssessmentStaleInput = errors.New("submission assessment exact input is stale")
@@ -72,7 +72,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeRejected(
 func submissionAssessmentSupports(
 	plan submissionAssessmentPlan,
 	assessmentID string,
-	spans []verifier.SemanticAssessmentEvidenceSpan,
+	spans []assessor.SemanticAssessmentEvidenceSpan,
 ) ([]repository.EvidenceSupportInput, error) {
 	if len(spans) == 0 {
 		return nil, errors.New("submission assessor relationship has no evidence span")
@@ -83,7 +83,7 @@ func submissionAssessmentSupports(
 		if !ok {
 			return nil, errors.New("submission assessor evidence span is outside the run")
 		}
-		quote, err := verifier.SemanticEvidenceSpan(item.Fragment.Content, span.Start, span.End)
+		quote, err := assessor.SemanticEvidenceSpan(item.Fragment.Content, span.Start, span.End)
 		if err != nil {
 			return nil, err
 		}
@@ -124,7 +124,7 @@ func submissionAssessmentItemForFragment(plan submissionAssessmentPlan, fragment
 // candidate; those are provider-owned semantic decisions.
 func repairSubmissionAssessmentResponse(
 	plan *submissionAssessmentPlan,
-	response *verifier.SemanticAssessmentResponse,
+	response *assessor.SemanticAssessmentResponse,
 ) map[string]struct{} {
 	unsupported := make(map[string]struct{})
 	if plan == nil || response == nil {
@@ -143,7 +143,7 @@ func repairSubmissionAssessmentResponse(
 	return unsupported
 }
 
-func unsupportedEntityResult(result verifier.SemanticAssessmentRelationshipSplit, unsupported map[string]struct{}) bool {
+func unsupportedEntityResult(result assessor.SemanticAssessmentRelationshipSplit, unsupported map[string]struct{}) bool {
 	if _, found := unsupported[result.SubjectRef]; found {
 		return true
 	}

@@ -9,8 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 type placementFailureDiagnostic struct {
@@ -19,7 +19,7 @@ type placementFailureDiagnostic struct {
 	Class                   string
 	ValidationStage         string
 	ValidationFieldFamilies []string
-	Measurement             *verifier.FailureMeasurement
+	Measurement             *assessor.FailureMeasurement
 	ProviderStatus          int
 	AssessorTurns           int
 }
@@ -120,7 +120,7 @@ func placementFailureDiagnosticFor(stage string, cause error) placementFailureDi
 		}
 		diagnostic.Measurement = cloneFailureMeasurement(preflight.measurement)
 	}
-	var malformed *verifier.MalformedResponseError
+	var malformed *assessor.MalformedResponseError
 	if errors.As(cause, &malformed) {
 		diagnostic.Class = boundedPlacementFailureClass(malformed.FailureClass)
 		diagnostic.ValidationStage = boundedValidationStage(malformed.ValidationStage)
@@ -134,7 +134,7 @@ func placementFailureDiagnosticFor(stage string, cause error) placementFailureDi
 		diagnostic.ValidationStage = "stored_response"
 	}
 	if isVerifierProviderFailure(cause) {
-		failure := verifier.ProviderFailureDetails(cause)
+		failure := assessor.ProviderFailureDetails(cause)
 		diagnostic.Class = boundedPlacementFailureClass(failure.Class)
 		diagnostic.ProviderStatus = boundedProviderStatus(failure.StatusCode)
 	}
@@ -170,15 +170,15 @@ func isVerifierProviderFailure(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, verifier.ErrVerifierTimeout) || errors.Is(err, verifier.ErrVerifierRateLimit) || errors.Is(err, verifier.ErrVerifierProvider) {
+	if errors.Is(err, assessor.ErrVerifierTimeout) || errors.Is(err, assessor.ErrVerifierRateLimit) || errors.Is(err, assessor.ErrVerifierProvider) {
 		return true
 	}
-	var provider *verifier.ProviderError
-	var rateLimit *verifier.RateLimitError
+	var provider *assessor.ProviderError
+	var rateLimit *assessor.RateLimitError
 	return errors.As(err, &provider) || errors.As(err, &rateLimit)
 }
 
-func placementFailureDiagnosticForProvider(stage string, failure verifier.ProviderFailureMetadata) placementFailureDiagnostic {
+func placementFailureDiagnosticForProvider(stage string, failure assessor.ProviderFailureMetadata) placementFailureDiagnostic {
 	diagnostic := placementFailureDiagnosticFor(stage, nil)
 	diagnostic.Class = boundedPlacementFailureClass(failure.Class)
 	diagnostic.ProviderStatus = boundedProviderStatus(failure.StatusCode)
@@ -300,7 +300,7 @@ func boundedValidationFieldFamilies(values []string) []string {
 	return result
 }
 
-func cloneFailureMeasurement(measurement *verifier.FailureMeasurement) *verifier.FailureMeasurement {
+func cloneFailureMeasurement(measurement *assessor.FailureMeasurement) *assessor.FailureMeasurement {
 	if measurement == nil {
 		return nil
 	}
@@ -314,7 +314,7 @@ func cloneFailureMeasurement(measurement *verifier.FailureMeasurement) *verifier
 	return &copy
 }
 
-func failureMeasurementPayload(measurement *verifier.FailureMeasurement) map[string]any {
+func failureMeasurementPayload(measurement *assessor.FailureMeasurement) map[string]any {
 	measurement = cloneFailureMeasurement(measurement)
 	if measurement == nil {
 		return nil

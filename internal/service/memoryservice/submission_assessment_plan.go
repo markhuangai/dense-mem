@@ -9,9 +9,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 type submissionAssessmentItem struct {
@@ -21,12 +21,12 @@ type submissionAssessmentItem struct {
 }
 
 type submissionAssessmentEntityTarget struct {
-	Target        verifier.SemanticAssessmentRequiredEntityRef
+	Target        assessor.SemanticAssessmentRequiredEntityRef
 	KnownEntityID string
 }
 
 type submissionAssessmentRelationshipTarget struct {
-	Target            verifier.SemanticAssessmentRequiredRelationshipRef
+	Target            assessor.SemanticAssessmentRequiredRelationshipRef
 	ProposedPredicate string
 	KnownPredicateKey string
 	SubjectKind       string
@@ -97,7 +97,7 @@ func buildSubmissionAssessmentPlan(placement *repository.CreateIngestResult) (su
 	if err != nil {
 		return submissionAssessmentPlan{}, err
 	}
-	if len(rawRelationships) == 0 || len(rawRelationships) > verifier.SemanticAssessmentMaxRelationshipResults {
+	if len(rawRelationships) == 0 || len(rawRelationships) > assessor.SemanticAssessmentMaxRelationshipResults {
 		return submissionAssessmentPlan{}, errors.New("submission assessment relationships must be present and bounded")
 	}
 	coveredEvidence := make(map[string]struct{}, len(items))
@@ -122,7 +122,7 @@ func buildSubmissionAssessmentPlan(placement *repository.CreateIngestResult) (su
 		plan.RelationshipTargets = append(plan.RelationshipTargets, target)
 		plan.relationshipsByRef[target.Target.ProposalID] = target
 	}
-	if len(plan.EntityTargets) == 0 || len(plan.EntityTargets) > verifier.SemanticAssessmentMaxEntityResults {
+	if len(plan.EntityTargets) == 0 || len(plan.EntityTargets) > assessor.SemanticAssessmentMaxEntityResults {
 		return submissionAssessmentPlan{}, errors.New("submission assessment entity targets must be present and bounded")
 	}
 	if len(coveredEvidence) != len(items) {
@@ -215,7 +215,7 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	entities := []submissionAssessmentEntityTarget{subject}
 	objectKind := ""
 	var objectRef *string
-	var objectValue *verifier.SemanticAssessmentValue
+	var objectValue *assessor.SemanticAssessmentValue
 	if hasEntity {
 		objectEntity, err := submissionAssessmentEntityTargetFromProposal(objectEntityRaw, fmt.Sprintf("entity:%d:object", index), evidenceIDs)
 		if err != nil {
@@ -249,7 +249,7 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	if validFrom != nil && validTo != nil && validTo.Before(*validFrom) {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship valid_to must not be before valid_from")
 	}
-	target := verifier.SemanticAssessmentRequiredRelationshipRef{
+	target := assessor.SemanticAssessmentRequiredRelationshipRef{
 		ProposalID:    ref,
 		PredicateHint: proposedPredicate,
 		EvidenceIDs:   append([]string(nil), evidenceIDs...),
@@ -303,7 +303,7 @@ func submissionAssessmentEvidenceIDsFromProposal(
 	itemsByEvidenceID map[string]submissionAssessmentItem,
 ) ([]string, error) {
 	values := rememberArrayValues(raw["evidence_indices"])
-	if len(values) == 0 || len(values) > verifier.SemanticAssessmentMaxEvidenceSpans {
+	if len(values) == 0 || len(values) > assessor.SemanticAssessmentMaxEvidenceSpans {
 		return nil, errors.New("submission assessment relationship evidence_indices are required and bounded")
 	}
 	result := make([]string, 0, len(values))
@@ -350,7 +350,7 @@ func submissionAssessmentEntityTargetFromProposal(
 		}
 	}
 	return submissionAssessmentEntityTarget{
-		Target: verifier.SemanticAssessmentRequiredEntityRef{
+		Target: assessor.SemanticAssessmentRequiredEntityRef{
 			Ref:         ref,
 			Name:        name,
 			Kind:        kind,
@@ -360,7 +360,7 @@ func submissionAssessmentEntityTargetFromProposal(
 	}, nil
 }
 
-func submissionAssessmentValueFromProposal(raw map[string]any) (*verifier.SemanticAssessmentValue, error) {
+func submissionAssessmentValueFromProposal(raw map[string]any) (*assessor.SemanticAssessmentValue, error) {
 	valueType := strings.TrimSpace(submissionAssessmentRawString(raw, "type"))
 	if !submissionAssessmentContains(domain.ValueTypes(), valueType) {
 		return nil, errors.New("submission assessment value type is unsupported")
@@ -369,7 +369,7 @@ func submissionAssessmentValueFromProposal(raw map[string]any) (*verifier.Semant
 	if canonicalValue == "" || len([]rune(canonicalValue)) > 4096 {
 		return nil, errors.New("submission assessment canonical value is required and bounded")
 	}
-	value := &verifier.SemanticAssessmentValue{ValueType: valueType, CanonicalValue: canonicalValue}
+	value := &assessor.SemanticAssessmentValue{ValueType: valueType, CanonicalValue: canonicalValue}
 	if display, exists := submissionAssessmentOptionalString(raw, "display"); exists {
 		if len([]rune(display)) > 4096 {
 			return nil, errors.New("submission assessment value display is too long")

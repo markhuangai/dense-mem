@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/verifier"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 )
 
 // TestSanitizeError covers AC-29: SanitizeError scrubs sensitive data from
@@ -84,9 +84,9 @@ func TestSanitizeError(t *testing.T) {
 
 	t.Run("typed verifier failures use the bounded operator message", func(t *testing.T) {
 		errorsToSanitize := []error{
-			&verifier.TimeoutError{Provider: "provider", Message: "provider-secret"},
-			&verifier.RateLimitError{Provider: "provider", Message: "provider-secret"},
-			&verifier.MalformedResponseError{Provider: "provider", Message: "provider-secret"},
+			&modelprovider.TimeoutError{Provider: "provider", Message: "provider-secret"},
+			&modelprovider.RateLimitError{Provider: "provider", Message: "provider-secret"},
+			&modelprovider.MalformedResponseError{Provider: "provider", Message: "provider-secret"},
 		}
 		for _, err := range errorsToSanitize {
 			got := SanitizeError(err)

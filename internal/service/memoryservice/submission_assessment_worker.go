@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 // SubmissionAssessmentCatalog provides the server-owned entity candidates and
@@ -32,8 +32,8 @@ type SubmissionAssessmentPlacementWorkerDependencies struct {
 	Ledger      repository.LedgerRepository
 	Assessments repository.SubmissionAssessmentRepository
 	Catalog     SubmissionAssessmentCatalog
-	Provider    verifier.RememberAssessor
-	Limits      verifier.SemanticAssessmentLimits
+	Provider    assessor.Provider
+	Limits      assessor.SemanticAssessmentLimits
 	TeamID      string
 	WorkerID    string
 	Lease       time.Duration
@@ -46,8 +46,8 @@ type submissionAssessmentPlacementWorkerService struct {
 	ledger      repository.LedgerRepository
 	assessments repository.SubmissionAssessmentRepository
 	catalog     SubmissionAssessmentCatalog
-	provider    verifier.RememberAssessor
-	limits      verifier.SemanticAssessmentLimits
+	provider    assessor.Provider
+	limits      assessor.SemanticAssessmentLimits
 	teamID      string
 	workerID    string
 	lease       time.Duration
@@ -57,8 +57,8 @@ type submissionAssessmentPlacementWorkerService struct {
 }
 
 type submissionAssessmentLiveSession struct {
-	session    verifier.SemanticAssessmentSession
-	request    verifier.SemanticAssessmentRequest
+	session    assessor.SemanticAssessmentSession
+	request    assessor.SemanticAssessmentRequest
 	turnOffset int
 }
 
@@ -154,7 +154,7 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		})
 	}
 
-	refreshRequest := func(refreshCtx context.Context) (verifier.SemanticAssessmentRequest, error) {
+	refreshRequest := func(refreshCtx context.Context) (assessor.SemanticAssessmentRequest, error) {
 		return s.buildRequest(refreshCtx, *run, plan, placement.Proposal)
 	}
 	assessment, response, reused, providerAttempted, releaseProviderAttempt, liveSession, err := s.loadOrAssess(
@@ -178,7 +178,7 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 				return s.completeTerminalWithRelationshipResults(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_attempt_consumed", results, err)
 			})
 		}
-		if providerAttempted && errors.Is(err, verifier.ErrVerifierMalformedResponse) {
+		if providerAttempted && errors.Is(err, assessor.ErrVerifierMalformedResponse) {
 			failureClass, providerTurns := semanticAssessmentMalformedFailure(err)
 			return true, terminalizeAfterError(err, func() error {
 				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
@@ -187,10 +187,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		}
 		if providerAttempted {
 			return true, retryAfterError(err, func() error {
-				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
-				return s.retryProviderFailureWithRelationshipResults(
+				return s.retryProviderFailureWithTerminal(
 					ctx, *run, scope, "assessment", releaseProviderAttempt, assessorTurnsReserved,
-					results, verifier.ProviderFailureDetails(err),
+					assessor.ProviderFailureDetails(err),
 				)
 			})
 		}
@@ -258,7 +257,7 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 						)
 					})
 				}
-				if errors.Is(err, verifier.ErrVerifierMalformedResponse) {
+				if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
 					failureClass, providerTurns := semanticAssessmentMalformedFailure(err)
 					return true, terminalizeAfterError(err, func() error {
 						results := submissionAssessmentNotStoredRelationshipResults(
@@ -268,11 +267,8 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 					})
 				}
 				return true, retryAfterError(err, func() error {
-					results := submissionAssessmentNotStoredRelationshipResults(
-						commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),
-					)
-					return s.retryProviderFailureWithRelationshipResults(
-						ctx, *run, scope, "assessment", true, 0, results, verifier.ProviderFailureDetails(err),
+					return s.retryProviderFailureWithTerminal(
+						ctx, *run, scope, "assessment", true, 0, assessor.ProviderFailureDetails(err),
 					)
 				})
 			}
@@ -359,22 +355,22 @@ func (s *submissionAssessmentPlacementWorkerService) repairRememberCommitRace(
 	run repository.PlacementRun,
 	providerTurns int,
 	live *submissionAssessmentLiveSession,
-	refresh func(context.Context) (verifier.SemanticAssessmentRequest, error),
+	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
 	cause error,
-) (verifier.SemanticAssessmentResponse, *submissionAssessmentLiveSession, error) {
+) (assessor.SemanticAssessmentResponse, *submissionAssessmentLiveSession, error) {
 	if providerTurns >= SemanticPlacementMaxAssessorTurns {
-		return verifier.SemanticAssessmentResponse{}, live, errRememberAssessorTurnBudgetExhausted
+		return assessor.SemanticAssessmentResponse{}, live, errRememberAssessorTurnBudgetExhausted
 	}
 	providerCtx := observability.WithMetricIdentity(ctx, run.TeamID, run.OwnerProfileID)
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationPlacementAssessment, 1)
 	if live == nil || live.session == nil {
 		request, err := refresh(providerCtx)
 		if err != nil {
-			return verifier.SemanticAssessmentResponse{}, nil, err
+			return assessor.SemanticAssessmentResponse{}, nil, err
 		}
 		response, session, finalRequest, err := s.assessRememberSession(providerCtx, request, refresh, providerTurns)
 		if err != nil {
-			return verifier.SemanticAssessmentResponse{}, nil, err
+			return assessor.SemanticAssessmentResponse{}, nil, err
 		}
 		return response, &submissionAssessmentLiveSession{
 			session: session, request: finalRequest, turnOffset: providerTurns,
@@ -382,17 +378,17 @@ func (s *submissionAssessmentPlacementWorkerService) repairRememberCommitRace(
 	}
 	nextRequest, err := refresh(providerCtx)
 	if err != nil {
-		return verifier.SemanticAssessmentResponse{}, live, err
+		return assessor.SemanticAssessmentResponse{}, live, err
 	}
-	turn, err := s.provider.Repair(providerCtx, live.session, verifier.SemanticAssessmentRepairRequest{
+	turn, err := s.provider.Repair(providerCtx, live.session, assessor.SemanticAssessmentRepairRequest{
 		Request: nextRequest,
-		ValidationErrors: []verifier.SemanticValidationError{{
+		ValidationErrors: []assessor.SemanticValidationError{{
 			Field:   "server_state",
 			Message: rememberCommitRaceRepairMessage(cause),
 		}},
 	})
 	if err != nil {
-		return verifier.SemanticAssessmentResponse{}, live, err
+		return assessor.SemanticAssessmentResponse{}, live, err
 	}
 	response, finalRequest, err := s.completeRememberSessionTurns(
 		providerCtx, live.session, turn, nextRequest, refresh, live.turnOffset,
@@ -415,7 +411,7 @@ func (s *submissionAssessmentPlacementWorkerService) retryProviderFailure(
 	stage string,
 	releaseProviderAttempt bool,
 	assessorTurnsReserved int,
-	failure verifier.ProviderFailureMetadata,
+	failure assessor.ProviderFailureMetadata,
 ) error {
 	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
 		return s.completeTerminalWithFailure(ctx, scope, stage, failure.Class, failure.StatusCode, assessorTurnsReserved)
@@ -450,7 +446,11 @@ func (s *submissionAssessmentPlacementWorkerService) retryOrFail(
 	failureCause ...error,
 ) error {
 	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
-		return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage, firstError(failureCause))
+		cause := firstError(failureCause)
+		if isRepositoryDatabaseFailure(cause) {
+			return s.completeTerminalWithoutRelationshipResults(ctx, scope, stage, cause)
+		}
+		return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage, cause)
 	}
 	requeued, err := s.assessments.RequeueSubmissionAssessment(ctx, repository.RequeueSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,
@@ -491,66 +491,6 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 	return s.completeTerminalWithRelationshipResults(ctx, scope, status, category, stage, nil, firstError(failureCause))
 }
 
-func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithRelationshipResults(
-	ctx context.Context,
-	scope repository.SubmissionAssessmentRunScope,
-	status, category, stage string,
-	relationshipResults []repository.SubmissionRelationshipResultInput,
-	failureCause error,
-) error {
-	var payload map[string]any
-	if status == string(domain.SemanticReviewSuperseded) {
-		payload = map[string]any{"assessor_contract": domain.ContractVersion}
-	} else {
-		payload = semanticAssessmentFailurePayload(stage, false, failureCause)
-		payload["assessor_contract"] = domain.ContractVersion
-	}
-	failureClass, _ := payload["failure_class"].(string)
-	failureCode := submissionFailureCode(stage, failureClass)
-	if status != string(domain.SemanticReviewSuperseded) {
-		payload["failure_code"] = string(failureCode)
-	}
-	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
-		SubmissionAssessmentRunScope:    scope,
-		OutcomeKind:                     "submission_assessment_terminal",
-		Status:                          status,
-		Category:                        category,
-		Payload:                         payload,
-		RelationshipResults:             relationshipResults,
-		DefaultRelationshipResultReason: terminalRelationshipResultFallback(status, relationshipResults),
-	})
-	if err == nil && completed == nil {
-		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil terminal result"))
-	}
-	if err != nil {
-		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, err)
-	}
-	if err == nil && completed != nil && status == string(domain.SemanticReviewTerminalFailure) {
-		observability.RecordAssessorTerminalFailure(s.metrics, stage)
-	}
-	if err == nil && completed != nil {
-		event, destination, reasonCode := "submission_failed", "failed", string(failureCode)
-		if failureClass != "" {
-			reasonCode = string(submissionFailureCode(stage, failureClass))
-		}
-		if status == string(domain.SemanticReviewSuperseded) {
-			event, destination, reasonCode = "submission_superseded", "superseded", strings.TrimSpace(stage)
-		}
-		s.logLifecycle(scope, event, destination, stage, reasonCode, nil)
-	}
-	return err
-}
-
-func terminalRelationshipResultFallback(
-	status string,
-	results []repository.SubmissionRelationshipResultInput,
-) string {
-	if status == string(domain.SemanticReviewTerminalFailure) && len(results) == 0 {
-		return string(SubmissionErrorInternalFailure)
-	}
-	return ""
-}
-
 func (s *submissionAssessmentPlacementWorkerService) completeDeterministicSecurityQuarantine(
 	ctx context.Context,
 	scope repository.SubmissionAssessmentRunScope,
@@ -588,7 +528,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeProviderSecurityQua
 	ctx context.Context,
 	scope repository.SubmissionAssessmentRunScope,
 	plan submissionAssessmentPlan,
-	response verifier.SemanticAssessmentResponse,
+	response assessor.SemanticAssessmentResponse,
 	stage string,
 ) error {
 	type group struct {
@@ -600,7 +540,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeProviderSecurityQua
 		if !ok {
 			return errors.New("submission assessor security signal references unknown evidence")
 		}
-		quote, err := verifier.SemanticEvidenceSpan(item.Fragment.Content, signal.Start, signal.End)
+		quote, err := assessor.SemanticEvidenceSpan(item.Fragment.Content, signal.Start, signal.End)
 		if err != nil {
 			return err
 		}
@@ -689,7 +629,7 @@ func submissionAssessmentCommitInput(
 	run repository.PlacementRun,
 	scope repository.SubmissionAssessmentRunScope,
 	plan submissionAssessmentPlan,
-	response verifier.SemanticAssessmentResponse,
+	response assessor.SemanticAssessmentResponse,
 	assessment *repository.SubmissionAssessment,
 	reused bool,
 ) (repository.CommitSubmissionAssessmentInput, error) {

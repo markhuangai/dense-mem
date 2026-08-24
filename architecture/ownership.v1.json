@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "enforced_through_issue": 262,
+  "enforced_through_issue": 263,
   "module": "github.com/markhuangai/dense-mem",
   "allowed_targets": {
     "domain": ["domain"],
@@ -25,9 +25,12 @@
       {"id": "github.com/markhuangai/dense-mem/cmd/server", "capability": "server-composition", "role": "composition"},
       {"id": "github.com/markhuangai/dense-mem/internal/community", "capability": "community-policy", "role": "domain"},
       {"id": "github.com/markhuangai/dense-mem/internal/config", "capability": "configuration-port", "role": "port"},
+      {"id": "github.com/markhuangai/dense-mem/internal/assessor", "capability": "remember-assessor-port", "role": "port"},
+      {"id": "github.com/markhuangai/dense-mem/internal/conflictassessment", "capability": "conflict-assessment-port", "role": "port"},
       {"id": "github.com/markhuangai/dense-mem/internal/correlation", "capability": "correlation-policy", "role": "domain"},
       {"id": "github.com/markhuangai/dense-mem/internal/crypto", "capability": "credential-crypto-port", "role": "port"},
       {"id": "github.com/markhuangai/dense-mem/internal/domain", "capability": "shared-domain", "role": "domain"},
+      {"id": "github.com/markhuangai/dense-mem/internal/dreamgeneration", "capability": "dream-generation-port", "role": "port"},
       {"id": "github.com/markhuangai/dense-mem/internal/embedding", "capability": "embedding-provider", "role": "adapter"},
       {"id": "github.com/markhuangai/dense-mem/internal/evalharness", "capability": "offline-evaluation", "role": "offline_evaluation"},
       {"id": "github.com/markhuangai/dense-mem/internal/fulltextquery", "capability": "full-text-policy", "role": "domain"},
@@ -40,9 +43,11 @@
       {"id": "github.com/markhuangai/dense-mem/internal/httperr", "capability": "http-error-policy", "role": "domain"},
       {"id": "github.com/markhuangai/dense-mem/internal/jsonstrict", "capability": "strict-json-policy", "role": "domain"},
       {"id": "github.com/markhuangai/dense-mem/internal/mcp", "capability": "mcp-transport", "role": "transport"},
+      {"id": "github.com/markhuangai/dense-mem/internal/modelprovider", "capability": "model-provider-error-port", "role": "port"},
       {"id": "github.com/markhuangai/dense-mem/internal/observability", "capability": "observability-port", "role": "port"},
       {"id": "github.com/markhuangai/dense-mem/internal/ownership", "capability": "ownership-policy", "role": "domain"},
       {"id": "github.com/markhuangai/dense-mem/internal/promptcatalog", "capability": "prompt-policy", "role": "domain"},
+      {"id": "github.com/markhuangai/dense-mem/internal/provider/assessor", "capability": "remember-assessor-provider", "role": "adapter"},
       {"id": "github.com/markhuangai/dense-mem/internal/repository", "capability": "legacy-storage-adapter", "role": "adapter"},
       {"id": "github.com/markhuangai/dense-mem/internal/requestctx", "capability": "request-context-policy", "role": "domain"},
       {"id": "github.com/markhuangai/dense-mem/internal/service", "capability": "application-services", "role": "application_api"},
@@ -65,7 +70,7 @@
       {"id": "github.com/markhuangai/dense-mem/internal/storage/redis", "capability": "redis-coordination-adapter", "role": "adapter"},
       {"id": "github.com/markhuangai/dense-mem/internal/tools", "capability": "tool-application-api", "role": "application_api"},
       {"id": "github.com/markhuangai/dense-mem/internal/tools/registry", "capability": "tool-registry-application-api", "role": "application_api"},
-      {"id": "github.com/markhuangai/dense-mem/internal/verifier", "capability": "assessor-provider", "role": "adapter"}
+      {"id": "github.com/markhuangai/dense-mem/internal/verifier", "capability": "legacy-model-provider", "role": "adapter"}
     ]
   },
   "browser": {
@@ -130,19 +135,15 @@
     {"source": "github.com/markhuangai/dense-mem/internal/service/communityservice", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 269, "reason": "Community application code still consumes the legacy repository until community storage ownership is isolated."},
     {"source": "github.com/markhuangai/dense-mem/internal/service/conflictqueue", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 268, "reason": "Conflict queue application code still consumes the legacy repository until conflict ownership is isolated."},
     {"source": "github.com/markhuangai/dense-mem/internal/service/conflictreview", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 268, "reason": "Conflict review application code still consumes the legacy repository until conflict ownership is isolated."},
-    {"source": "github.com/markhuangai/dense-mem/internal/service/conflictreview", "target": "github.com/markhuangai/dense-mem/internal/verifier", "removal_issue": 263, "reason": "Conflict review still calls the verifier adapter until the assessor provider boundary is isolated."},
     {"source": "github.com/markhuangai/dense-mem/internal/service/contextservice", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 270, "reason": "Context application code still consumes the legacy repository until trace ownership is isolated."},
     {"source": "github.com/markhuangai/dense-mem/internal/service/dreamservice", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 269, "reason": "Dream application code still consumes the legacy repository until dreaming ownership is isolated."},
-    {"source": "github.com/markhuangai/dense-mem/internal/service/dreamservice", "target": "github.com/markhuangai/dense-mem/internal/verifier", "removal_issue": 263, "reason": "Dream application code still calls the verifier adapter until the assessor provider boundary is isolated."},
     {"source": "github.com/markhuangai/dense-mem/internal/service/embeddingservice", "target": "github.com/markhuangai/dense-mem/internal/embedding", "removal_issue": 265, "reason": "Embedding application code still calls the provider adapter until search and embedding ownership is isolated."},
     {"source": "github.com/markhuangai/dense-mem/internal/service/embeddingservice", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 265, "reason": "Embedding application code still consumes the legacy repository until search ownership is isolated."},
     {"source": "github.com/markhuangai/dense-mem/internal/service/graphview", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 271, "reason": "Graph application code still consumes the legacy repository until graph view ownership is isolated."},
     {"source": "github.com/markhuangai/dense-mem/internal/service/memoryservice", "target": "github.com/markhuangai/dense-mem/internal/embedding", "removal_issue": 265, "reason": "Memory application code still calls the embedding adapter until search ownership is isolated."},
     {"source": "github.com/markhuangai/dense-mem/internal/service/memoryservice", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 280, "reason": "The legacy memoryservice retains recall, lifecycle, and placement consumers until final capability convergence; Remember intake now uses its own application boundary."},
-    {"source": "github.com/markhuangai/dense-mem/internal/service/memoryservice", "target": "github.com/markhuangai/dense-mem/internal/verifier", "removal_issue": 263, "reason": "Memory application code still calls the verifier adapter until the assessor provider boundary is isolated."},
     {"source": "github.com/markhuangai/dense-mem/internal/service/skillpackservice", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 272, "reason": "Skill-pack application code still consumes the legacy repository until memory-pack ownership is isolated."},
     {"source": "github.com/markhuangai/dense-mem/internal/storage/inmem", "target": "github.com/markhuangai/dense-mem/internal/sse", "removal_issue": 276, "reason": "The in-process coordination adapter still carries SSE lifecycle coupling until transport consolidation."},
-    {"source": "github.com/markhuangai/dense-mem/internal/tools", "target": "github.com/markhuangai/dense-mem/internal/verifier", "removal_issue": 263, "reason": "Tool application code still calls verifier helpers until the assessor provider boundary is isolated."},
     {"source": "github.com/markhuangai/dense-mem/internal/tools/registry", "target": "github.com/markhuangai/dense-mem/internal/repository", "removal_issue": 274, "reason": "The tool registry still consumes the legacy repository until evaluation and production registries are separated."}
   ],
   "workers": [

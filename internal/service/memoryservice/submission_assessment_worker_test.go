@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -52,7 +52,7 @@ func TestSubmissionAssessmentWorkerAssessesWholeRunAndCommitsAtomically(t *testi
 
 func TestSubmissionAssessmentWorkerRepairsInSameSessionWithRefreshedCandidates(t *testing.T) {
 	_, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
-	provider.responseForTurn = func(req verifier.SemanticAssessmentRequest, turn int) (verifier.SemanticAssessmentResponse, error) {
+	provider.responseForTurn = func(req assessor.SemanticAssessmentRequest, turn int) (assessor.SemanticAssessmentResponse, error) {
 		response := submissionAssessmentValidResponse(req, false)
 		if turn == 1 {
 			response.EntityResults[0].GroundingRef = nil
@@ -91,7 +91,7 @@ func TestSubmissionAssessmentWorkerTerminalizesPredicateOptionOverflowBeforeProv
 
 func TestSubmissionAssessmentWorkerPassesControlledRegistrationToAtomicCommit(t *testing.T) {
 	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
-	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+	provider.response = func(req assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentResponse, error) {
 		return submissionAssessmentValidResponse(req, true), nil
 	}
 
@@ -178,7 +178,7 @@ func TestSubmissionAssessmentWorkerMarksStaleSourceRejected(t *testing.T) {
 
 func TestSubmissionAssessmentWorkerPersistsNotStoredResultsForPartialCoverageRejection(t *testing.T) {
 	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
-	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+	provider.response = func(req assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentResponse, error) {
 		response := submissionAssessmentValidResponse(req, false)
 		for index := range response.RelationshipResults {
 			result := &response.RelationshipResults[index]
@@ -212,7 +212,7 @@ func TestSubmissionAssessmentWorkerPersistsNotStoredResultsForPartialCoverageRej
 
 func TestSubmissionAssessmentWorkerPersistsAllUnsupportedRelationshipResults(t *testing.T) {
 	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
-	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+	provider.response = func(req assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentResponse, error) {
 		response := submissionAssessmentValidResponse(req, false)
 		for index := range response.RelationshipResults {
 			reason := "not_supported_by_evidence"
@@ -257,11 +257,11 @@ func TestSubmissionAssessmentWorkerReusesPersistedAssessmentWithoutAnotherProvid
 
 func TestSubmissionAssessmentWorkerRequeuesProviderFailure(t *testing.T) {
 	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
-	provider.response = func(verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
-		return verifier.SemanticAssessmentResponse{}, &verifier.ProviderError{
+	provider.response = func(assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentResponse, error) {
+		return assessor.SemanticAssessmentResponse{}, &assessor.ProviderError{
 			Provider:     "stub",
 			Message:      "provider returned HTTP 503",
-			FailureClass: verifier.ProviderFailureClassHTTPServer,
+			FailureClass: assessor.ProviderFailureClassHTTPServer,
 			StatusCode:   503,
 		}
 	}
@@ -274,16 +274,16 @@ func TestSubmissionAssessmentWorkerRequeuesProviderFailure(t *testing.T) {
 	assert.Zero(t, assessments.persistCalls)
 	require.Len(t, assessments.requeues, 1)
 	assert.True(t, assessments.requeues[0].ReleaseAssessorAttempt)
-	assert.Equal(t, verifier.ProviderFailureClassHTTPServer, assessments.requeues[0].Payload["failure_class"])
+	assert.Equal(t, assessor.ProviderFailureClassHTTPServer, assessments.requeues[0].Payload["failure_class"])
 	assert.Equal(t, 503, assessments.requeues[0].Payload["provider_status"])
 }
 
 func TestSubmissionAssessmentWorkerTerminalizesMalformedProviderResponse(t *testing.T) {
 	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
-	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
-		return verifier.SemanticAssessmentResponse{
+	provider.response = func(req assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentResponse, error) {
+		return assessor.SemanticAssessmentResponse{
 			RequestID:       req.RequestID,
-			SecuritySignals: []verifier.SemanticAssessmentSecuritySignal{},
+			SecuritySignals: []assessor.SemanticAssessmentSecuritySignal{},
 		}, nil
 	}
 
@@ -324,7 +324,7 @@ func TestSubmissionAssessmentWorkerCompletesProviderSecurityQuarantine(t *testin
 		context.Background(),
 		submissionAssessmentRunScope(*ledger.run, "submission-assessment-worker"),
 		plan,
-		verifier.SemanticAssessmentResponse{SecuritySignals: []verifier.SemanticAssessmentSecuritySignal{{
+		assessor.SemanticAssessmentResponse{SecuritySignals: []assessor.SemanticAssessmentSecuritySignal{{
 			EvidenceID: "evidence:1", Kind: "instruction_override", Start: 0, End: 5,
 		}}},
 		"security_signal",
@@ -378,26 +378,26 @@ func TestSubmissionAssessmentWorkerPlansAndCommitsTypedValue(t *testing.T) {
 	predicateRange := submissionAssessmentTestRange(request.Evidence[0], 8, 10)
 	valueRange := submissionAssessmentTestRange(request.Evidence[0], 11, 16)
 	supportRange := submissionAssessmentTestRange(request.Evidence[0], 0, 16)
-	response := verifier.SemanticAssessmentResponse{
+	response := assessor.SemanticAssessmentResponse{
 		RequestID:       request.RequestID,
-		SecuritySignals: []verifier.SemanticAssessmentSecuritySignal{},
-		EntityResults: []verifier.SemanticAssessmentEntityResult{{
+		SecuritySignals: []assessor.SemanticAssessmentSecuritySignal{},
+		EntityResults: []assessor.SemanticAssessmentEntityResult{{
 			Ref: entity.Ref, GroundingRef: &groundingRef, Action: string(domain.EntityResolutionCreate),
 		}},
-		RelationshipResults: []verifier.SemanticAssessmentRelationshipResult{{
+		RelationshipResults: []assessor.SemanticAssessmentRelationshipResult{{
 			Ref: request.SubmittedRelationships[0].Ref, Disposition: "stored",
-			Splits: []verifier.SemanticAssessmentRelationshipSplit{{
+			Splits: []assessor.SemanticAssessmentRelationshipSplit{{
 				SplitIndex: 0, SubjectRef: request.SubmittedRelationships[0].SubjectRef,
 				PredicateRange: predicateRange, PredicateStatus: "registration_required",
-				PredicateRegistration: &verifier.SemanticAssessmentPredicateRegistration{
+				PredicateRegistration: &assessor.SemanticAssessmentPredicateRegistration{
 					PredicateKey: "has_latency", RelationshipKind: "state", CurrentCardinality: "many",
 				},
 				ObjectValue: &value, ValueRange: &valueRange, Polarity: "+",
-				SupportRanges: []verifier.SemanticAssessmentGroundedRange{supportRange},
+				SupportRanges: []assessor.SemanticAssessmentGroundedRange{supportRange},
 			}},
 		}},
 	}
-	prepared, validationErrors := verifier.PrepareSemanticAssessmentResponse(request, response, service.limits)
+	prepared, validationErrors := assessor.PrepareSemanticAssessmentResponse(request, response, service.limits)
 	require.Empty(t, validationErrors)
 	assessment := &repository.SubmissionAssessment{
 		AssessmentID: uuid.NewString(), Model: "submission-assessment-model", ResponseHash: "sha256:typed-value", RequestID: request.RequestID,
@@ -499,9 +499,9 @@ func TestSubmissionAssessmentEntityCandidateGroupsFailClosed(t *testing.T) {
 			Ref: entity.Target.Ref, Candidates: []repository.SemanticReviewEntityCandidate{}, Complete: true,
 		})
 	}
-	evidence := make([]verifier.SemanticReviewEvidence, 0, len(plan.Items))
+	evidence := make([]assessor.SemanticReviewEvidence, 0, len(plan.Items))
 	for _, item := range plan.Items {
-		evidence = append(evidence, verifier.PrepareSemanticAssessmentEvidence(semanticAssessmentEvidence(item.Fragment, item.EvidenceID)))
+		evidence = append(evidence, assessor.PrepareSemanticAssessmentEvidence(semanticAssessmentEvidence(item.Fragment, item.EvidenceID)))
 	}
 
 	tests := []struct {
@@ -518,7 +518,7 @@ func TestSubmissionAssessmentEntityCandidateGroupsFailClosed(t *testing.T) {
 		{name: "unknown ref", groups: append(append([]repository.SubmissionAssessmentEntityCatalogGroup{}, validGroups...), repository.SubmissionAssessmentEntityCatalogGroup{Ref: "unknown", Complete: true})},
 		{name: "candidate bound", groups: func() []repository.SubmissionAssessmentEntityCatalogGroup {
 			groups := append([]repository.SubmissionAssessmentEntityCatalogGroup(nil), validGroups...)
-			groups[0].Candidates = make([]repository.SemanticReviewEntityCandidate, verifier.SemanticAssessmentMaxEntityCandidatesPerSurface+1)
+			groups[0].Candidates = make([]repository.SemanticReviewEntityCandidate, assessor.SemanticAssessmentMaxEntityCandidatesPerSurface+1)
 			return groups
 		}()},
 	}
@@ -608,7 +608,7 @@ func TestDecodeStoredSubmissionAssessmentRejectsTamperingAndContractDrift(t *tes
 	require.NotNil(t, provider.request)
 
 	stored := *assessments.assessment
-	_, err = decodeStoredSubmissionAssessment(&stored, *provider.request, verifier.DefaultSemanticAssessmentLimits())
+	_, err = decodeStoredSubmissionAssessment(&stored, *provider.request, assessor.DefaultSemanticAssessmentLimits())
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -620,12 +620,12 @@ func TestDecodeStoredSubmissionAssessmentRejectsTamperingAndContractDrift(t *tes
 		}},
 		{name: "hash mismatch", mutate: func(assessment *repository.SubmissionAssessment) { assessment.ResponseHash = "sha256:other" }},
 		{name: "contract drift", mutate: func(assessment *repository.SubmissionAssessment) {
-			var response verifier.SemanticAssessmentResponse
+			var response assessor.SemanticAssessmentResponse
 			require.NoError(t, json.Unmarshal(assessment.NormalizedResponse, &response))
 			response.RelationshipResults[0].Splits[0].Polarity = "-"
 			raw, err := json.Marshal(response)
 			require.NoError(t, err)
-			canonical, err := verifier.CanonicalJSON(raw)
+			canonical, err := assessor.CanonicalJSON(raw)
 			require.NoError(t, err)
 			assessment.NormalizedResponse = canonical
 			assessment.ResponseHash = semanticAssessmentHash(canonical)
@@ -635,12 +635,12 @@ func TestDecodeStoredSubmissionAssessmentRejectsTamperingAndContractDrift(t *tes
 		t.Run(test.name, func(t *testing.T) {
 			assessment := stored
 			test.mutate(&assessment)
-			_, err := decodeStoredSubmissionAssessment(&assessment, *provider.request, verifier.DefaultSemanticAssessmentLimits())
+			_, err := decodeStoredSubmissionAssessment(&assessment, *provider.request, assessor.DefaultSemanticAssessmentLimits())
 			require.Error(t, err)
 		})
 	}
 
-	_, err = decodeStoredSubmissionAssessment(nil, *provider.request, verifier.DefaultSemanticAssessmentLimits())
+	_, err = decodeStoredSubmissionAssessment(nil, *provider.request, assessor.DefaultSemanticAssessmentLimits())
 	require.Error(t, err)
 }
 
@@ -708,9 +708,9 @@ func TestSubmissionAssessmentDeterministicQuarantineFailsClosedForInvalidSignals
 func TestSubmissionAssessmentWorkerTerminalizesExhaustedProviderFailure(t *testing.T) {
 	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
 	ledger.run.Attempts = ledger.run.MaxAttempts
-	provider.response = func(verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
-		return verifier.SemanticAssessmentResponse{}, &verifier.ProviderError{
-			Provider: "stub", FailureClass: verifier.ProviderFailureClassHTTPServer, StatusCode: 503,
+	provider.response = func(assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentResponse, error) {
+		return assessor.SemanticAssessmentResponse{}, &assessor.ProviderError{
+			Provider: "stub", FailureClass: assessor.ProviderFailureClassHTTPServer, StatusCode: 503,
 		}
 	}
 
@@ -721,7 +721,7 @@ func TestSubmissionAssessmentWorkerTerminalizesExhaustedProviderFailure(t *testi
 	assert.Empty(t, assessments.requeues)
 	require.Len(t, assessments.completions, 1)
 	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), assessments.completions[0].Status)
-	assert.Equal(t, verifier.ProviderFailureClassHTTPServer, assessments.completions[0].Payload["failure_class"])
+	assert.Equal(t, assessor.ProviderFailureClassHTTPServer, assessments.completions[0].Payload["failure_class"])
 	assert.Equal(t, 503, assessments.completions[0].Payload["provider_status"])
 }
 
@@ -756,7 +756,7 @@ func submissionAssessmentWorkerFixture(t *testing.T) (*submissionAssessmentWorke
 		Assessments: assessments,
 		Catalog:     catalog,
 		Provider:    provider,
-		Limits:      verifier.DefaultSemanticAssessmentLimits(),
+		Limits:      assessor.DefaultSemanticAssessmentLimits(),
 		TeamID:      teamID,
 		WorkerID:    "submission-assessment-worker",
 		Now:         func() time.Time { return time.Unix(0, 0).UTC() },
@@ -833,8 +833,8 @@ func submissionAssessmentRelationship(ref string, evidenceIndex int, subject, ob
 	}
 }
 
-func submissionAssessmentValidResponse(req verifier.SemanticAssessmentRequest, registerSupports bool) verifier.SemanticAssessmentResponse {
-	entities := make([]verifier.SemanticAssessmentEntityResult, 0, len(req.SubmittedEntities))
+func submissionAssessmentValidResponse(req assessor.SemanticAssessmentRequest, registerSupports bool) assessor.SemanticAssessmentResponse {
+	entities := make([]assessor.SemanticAssessmentEntityResult, 0, len(req.SubmittedEntities))
 	usedGroundings := map[string]struct{}{}
 	for _, entity := range req.SubmittedEntities {
 		grounding := entity.Groundings[0]
@@ -848,7 +848,7 @@ func submissionAssessmentValidResponse(req verifier.SemanticAssessmentRequest, r
 		}
 		usedGroundings[grounding.EvidenceID+":"+grounding.StartRef+":"+grounding.EndRef] = struct{}{}
 		groundingRef := grounding.GroundingRef
-		entities = append(entities, verifier.SemanticAssessmentEntityResult{
+		entities = append(entities, assessor.SemanticAssessmentEntityResult{
 			Ref: entity.Ref, GroundingRef: &groundingRef, Action: "create",
 		})
 	}
@@ -857,22 +857,22 @@ func submissionAssessmentValidResponse(req verifier.SemanticAssessmentRequest, r
 		"r:depends":  {23, 30, 17, 40},
 		"r:supports": {6, 14, 0, 21},
 	}
-	relationships := make([]verifier.SemanticAssessmentRelationshipResult, 0, len(req.SubmittedRelationships))
+	relationships := make([]assessor.SemanticAssessmentRelationshipResult, 0, len(req.SubmittedRelationships))
 	for _, relationship := range req.SubmittedRelationships {
 		positions := ranges[relationship.Ref]
 		evidence := submissionAssessmentTestEvidence(req, relationship.EvidenceIDs[0])
-		result := verifier.SemanticAssessmentRelationshipResult{
+		result := assessor.SemanticAssessmentRelationshipResult{
 			Ref: relationship.Ref, Disposition: "stored",
-			Splits: []verifier.SemanticAssessmentRelationshipSplit{{
+			Splits: []assessor.SemanticAssessmentRelationshipSplit{{
 				SplitIndex: 0, SubjectRef: relationship.SubjectRef,
 				PredicateRange: submissionAssessmentTestRange(evidence, positions[0], positions[1]),
 				ObjectRef:      relationship.ObjectRef, ObjectValue: relationship.ObjectValue, Polarity: relationship.Polarity,
-				SupportRanges: []verifier.SemanticAssessmentGroundedRange{submissionAssessmentTestRange(evidence, positions[2], positions[3])},
+				SupportRanges: []assessor.SemanticAssessmentGroundedRange{submissionAssessmentTestRange(evidence, positions[2], positions[3])},
 			}},
 		}
 		if registerSupports && relationship.Ref == "r:supports" {
 			result.Splits[0].PredicateStatus = "registration_required"
-			result.Splits[0].PredicateRegistration = &verifier.SemanticAssessmentPredicateRegistration{
+			result.Splits[0].PredicateRegistration = &assessor.SemanticAssessmentPredicateRegistration{
 				PredicateKey: "supports", RelationshipKind: "state", CurrentCardinality: "many",
 			}
 		} else {
@@ -884,15 +884,15 @@ func submissionAssessmentValidResponse(req verifier.SemanticAssessmentRequest, r
 		}
 		relationships = append(relationships, result)
 	}
-	return verifier.SemanticAssessmentResponse{
+	return assessor.SemanticAssessmentResponse{
 		RequestID:           req.RequestID,
-		SecuritySignals:     []verifier.SemanticAssessmentSecuritySignal{},
+		SecuritySignals:     []assessor.SemanticAssessmentSecuritySignal{},
 		EntityResults:       entities,
 		RelationshipResults: relationships,
 	}
 }
 
-func submissionAssessmentTestEvidence(req verifier.SemanticAssessmentRequest, evidenceID string) verifier.SemanticReviewEvidence {
+func submissionAssessmentTestEvidence(req assessor.SemanticAssessmentRequest, evidenceID string) assessor.SemanticReviewEvidence {
 	for _, evidence := range req.Evidence {
 		if evidence.EvidenceID == evidenceID {
 			return evidence
@@ -901,13 +901,13 @@ func submissionAssessmentTestEvidence(req verifier.SemanticAssessmentRequest, ev
 	panic("submission assessment test evidence is missing")
 }
 
-func submissionAssessmentTestRange(evidence verifier.SemanticReviewEvidence, start, end int) verifier.SemanticAssessmentGroundedRange {
-	startRef, startOK := verifier.SemanticAssessmentBoundaryRef(evidence, start)
-	endRef, endOK := verifier.SemanticAssessmentBoundaryRef(evidence, end)
+func submissionAssessmentTestRange(evidence assessor.SemanticReviewEvidence, start, end int) assessor.SemanticAssessmentGroundedRange {
+	startRef, startOK := assessor.SemanticAssessmentBoundaryRef(evidence, start)
+	endRef, endOK := assessor.SemanticAssessmentBoundaryRef(evidence, end)
 	if !startOK || !endOK {
 		panic("submission assessment test boundary is missing")
 	}
-	return verifier.SemanticAssessmentGroundedRange{
+	return assessor.SemanticAssessmentGroundedRange{
 		EvidenceID: evidence.EvidenceID,
 		StartRef:   startRef,
 		EndRef:     endRef,
