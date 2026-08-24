@@ -2,7 +2,6 @@ package memoryservice
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -150,7 +149,8 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 			})
 		}
 		return true, retryAfterError(err, func() error {
-			return s.retryOrFail(ctx, *run, scope, stage, false, false, err)
+			results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
+			return s.retryOrFailWithRelationshipResults(ctx, *run, scope, stage, false, false, results, err)
 		})
 	}
 
@@ -165,9 +165,16 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		refreshRequest,
 	)
 	if err != nil {
+		if errors.Is(err, errSubmissionAssessmentRevisionPersistence) {
+			return true, terminalizeAfterError(err, func() error {
+				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
+				return s.completeTerminalWithRelationshipResults(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_persist", results, err)
+			})
+		}
 		if errors.Is(err, repository.ErrSubmissionAssessorAttemptConsumed) {
 			return true, terminalizeAfterError(err, func() error {
-				return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_attempt_consumed")
+				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
+				return s.completeTerminalWithRelationshipResults(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_attempt_consumed", results, err)
 			})
 		}
 		if providerAttempted && errors.Is(err, verifier.ErrVerifierMalformedResponse) {
@@ -200,7 +207,8 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		}
 		if commitInputErr != nil {
 			return true, terminalizeAfterError(commitInputErr, func() error {
-				return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "deterministic_policy")
+				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
+				return s.completeTerminalWithRelationshipResults(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "deterministic_policy", results, commitInputErr)
 			})
 		}
 		committed, commitErr := s.assessments.CommitSubmissionAssessment(ctx, commitInput)
@@ -212,7 +220,8 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		}
 		if errors.Is(commitErr, repository.ErrSubmissionAssessmentScopeMismatch) {
 			return true, terminalizeAfterError(commitErr, func() error {
-				return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_scope")
+				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
+				return s.completeTerminalWithRelationshipResults(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_scope", results, commitErr)
 			})
 		}
 		if isRepairableRememberCommitRace(commitErr) {
@@ -249,6 +258,14 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 			}
 			assessment, err = s.persistSubmissionAssessmentRevision(ctx, *run, scope, assessment, response, liveSession.request)
 			if err != nil {
+				if errors.Is(err, errSubmissionAssessmentRevisionPersistence) {
+					return true, terminalizeAfterError(err, func() error {
+						results := submissionAssessmentNotStoredRelationshipResults(
+							commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),
+						)
+						return s.completeTerminalWithRelationshipResults(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_persist", results, err)
+					})
+				}
 				return true, retryAfterError(err, func() error {
 					results := submissionAssessmentNotStoredRelationshipResults(
 						commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),
@@ -369,53 +386,6 @@ func rememberCommitRaceRepairMessage(err error) string {
 		return "predicate state changed; use the refreshed compatible predicate options or return not_supported"
 	}
 	return "server-owned semantic state changed; reconcile the complete response against refreshed candidates"
-}
-
-func (s *submissionAssessmentPlacementWorkerService) persistSubmissionAssessmentRevision(
-	ctx context.Context,
-	run repository.PlacementRun,
-	scope repository.SubmissionAssessmentRunScope,
-	assessment *repository.SubmissionAssessment,
-	response verifier.SemanticAssessmentResponse,
-	request verifier.SemanticAssessmentRequest,
-) (*repository.SubmissionAssessment, error) {
-	if assessment == nil {
-		return nil, errors.New("submission assessment revision requires a persisted assessment")
-	}
-	normalizedJSON, err := json.Marshal(response)
-	if err != nil {
-		return nil, err
-	}
-	canonicalJSON, err := verifier.CanonicalJSON(normalizedJSON)
-	if err != nil {
-		return nil, err
-	}
-	inputTokens := response.InputTokens
-	if inputTokens <= 0 {
-		inputTokens = request.InputTokens
-	}
-	persisted, existing, err := s.assessments.AppendSubmissionAssessmentRevision(ctx, repository.AppendSubmissionAssessmentRevisionInput{
-		SubmissionAssessmentRunScope: scope,
-		AssessmentID:                 assessment.AssessmentID,
-		ProviderTurns:                response.ProviderTurns,
-		InputTokens:                  inputTokens,
-		OutputTokens:                 response.OutputTokens,
-		CandidateContextTokens:       request.CandidateContextTokens,
-		CandidateContextTruncated:    request.CandidateContextTruncated,
-		NormalizedResponse:           canonicalJSON,
-		ResponseHash:                 semanticAssessmentHash(canonicalJSON),
-		ValidatedAt:                  s.now().UTC(),
-	})
-	if err != nil {
-		observability.RecordAssessorAssessmentPersistence(s.metrics, "error")
-		return nil, err
-	}
-	outcome := "persisted"
-	if existing {
-		outcome = "reused"
-	}
-	observability.RecordAssessorAssessmentPersistence(s.metrics, outcome)
-	return persisted, nil
 }
 
 func (s *submissionAssessmentPlacementWorkerService) retryProviderFailure(

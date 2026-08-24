@@ -122,6 +122,72 @@ func TestSubmissionAssessmentWorkerPersistsResultsForDeterministicPreflightFailu
 	}
 }
 
+func TestSubmissionAssessmentWorkerPersistsResultsWhenPreflightRetryExhausts(t *testing.T) {
+	ledger, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
+	ledger.run.Attempts = ledger.run.MaxAttempts
+	catalog.entityErr = errors.New("catalog unavailable")
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	assert.True(t, processed)
+	assert.Zero(t, provider.calls)
+	require.Len(t, assessments.completions, 1)
+	completion := assessments.completions[0]
+	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), completion.Status)
+	assert.Equal(t, "candidate_prefetch", completion.Payload["failure_stage"])
+	require.Len(t, completion.RelationshipResults, 3)
+	for _, result := range completion.RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+	}
+}
+
+func TestSubmissionAssessmentWorkerBoundsTurnsAcrossRevisionPersistenceFailure(t *testing.T) {
+	tests := []struct {
+		name         string
+		revisionErrs []error
+		wantTerminal bool
+	}{
+		{name: "retry persists before continuing", revisionErrs: []error{errors.New("temporary revision failure"), nil}},
+		{name: "persistent failure terminalizes", revisionErrs: []error{errors.New("revision unavailable"), errors.New("revision unavailable")}, wantTerminal: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+			assessments.assessment = &repository.SubmissionAssessment{
+				AssessmentID:       "00000000-0000-0000-0000-000000000903",
+				ProviderTurns:      1,
+				NormalizedResponse: json.RawMessage(`{}`),
+				ResponseHash:       semanticAssessmentHash([]byte(`{}`)),
+			}
+			assessments.revisionErrors = append([]error(nil), test.revisionErrs...)
+
+			processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+			require.NoError(t, err)
+			assert.True(t, processed)
+			assert.Equal(t, 1, provider.calls)
+			assert.Len(t, assessments.revisionInputs, len(test.revisionErrs))
+			assert.Empty(t, assessments.requeues)
+			if !test.wantTerminal {
+				assert.Empty(t, assessments.completions)
+				require.Len(t, assessments.commits, 1)
+				return
+			}
+			require.Len(t, assessments.completions, 1)
+			completion := assessments.completions[0]
+			assert.Equal(t, string(domain.SemanticReviewTerminalFailure), completion.Status)
+			assert.Equal(t, "assessment_persist", completion.Payload["failure_stage"])
+			require.Len(t, completion.RelationshipResults, 3)
+			for _, result := range completion.RelationshipResults {
+				assert.Equal(t, "not_stored", result.Disposition)
+				assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+			}
+		})
+	}
+}
+
 func TestSubmissionAssessmentWorkerPersistsDatabaseFailureCode(t *testing.T) {
 	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
 	service := worker.(*submissionAssessmentPlacementWorkerService)

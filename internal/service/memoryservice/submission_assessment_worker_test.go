@@ -442,6 +442,11 @@ func TestSubmissionAssessmentWorkerTerminalizesConsumedAssessmentAttempt(t *test
 	require.Len(t, assessments.completions, 1)
 	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), assessments.completions[0].Status)
 	assert.Equal(t, "assessment_attempt_consumed", assessments.completions[0].Payload["failure_stage"])
+	require.Len(t, assessments.completions[0].RelationshipResults, 3)
+	for _, result := range assessments.completions[0].RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+	}
 }
 
 func TestSubmissionAssessmentWorkerRegeneratesInvalidStoredResponse(t *testing.T) {

@@ -72,6 +72,7 @@ type submissionAssessmentWorkerAssessmentStub struct {
 	persistCalls              int
 	revisionInputs            []repository.AppendSubmissionAssessmentRevisionInput
 	revisionErr               error
+	revisionErrors            []error
 	revisionExisting          bool
 	reserved                  bool
 	commits                   []repository.CommitSubmissionAssessmentInput
@@ -140,6 +141,13 @@ func (s *submissionAssessmentWorkerAssessmentStub) AppendSubmissionAssessmentRev
 	input repository.AppendSubmissionAssessmentRevisionInput,
 ) (*repository.SubmissionAssessment, bool, error) {
 	s.revisionInputs = append(s.revisionInputs, input)
+	if len(s.revisionErrors) > 0 {
+		err := s.revisionErrors[0]
+		s.revisionErrors = s.revisionErrors[1:]
+		if err != nil {
+			return nil, false, err
+		}
+	}
 	if s.revisionErr != nil {
 		return nil, false, s.revisionErr
 	}

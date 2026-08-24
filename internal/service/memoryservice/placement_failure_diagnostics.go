@@ -234,6 +234,8 @@ func placementFailureReasonCode(stage, class string) string {
 		return "security_quarantine"
 	case "semantic_commit":
 		return "semantic_commit_failed"
+	case "assessment_persist":
+		return "assessment_persist_failed"
 	case "placement_load":
 		return "placement_load_failed"
 	}
@@ -251,7 +253,7 @@ func placementFailureReasonCode(stage, class string) string {
 func boundedPlacementFailureStage(value string) string {
 	value = strings.TrimSpace(value)
 	switch value {
-	case "entity_catalog", "candidate_prefetch", "catalog_context", "assessment_input", "catalog_context_validation", "trusted_context_validation", "predicate_options_overflow", "placement_load", "assessment", "assessment_attempt_consumed", "confidence_policy", "policy_validation", "deterministic_policy", "conflict_context_stale", "semantic_commit", "semantic_rejection", "commit_race_exhausted", "contract_superseded", "replacement_conflict", "stale_source", "deterministic_security_scan", "security_signal", "assessment_scope", "placement_item":
+	case "entity_catalog", "candidate_prefetch", "catalog_context", "assessment_input", "catalog_context_validation", "trusted_context_validation", "predicate_options_overflow", "placement_load", "assessment", "assessment_attempt_consumed", "assessment_persist", "confidence_policy", "policy_validation", "deterministic_policy", "conflict_context_stale", "semantic_commit", "semantic_rejection", "commit_race_exhausted", "contract_superseded", "replacement_conflict", "stale_source", "deterministic_security_scan", "security_signal", "assessment_scope", "placement_item":
 		return value
 	default:
 		return "unknown"
