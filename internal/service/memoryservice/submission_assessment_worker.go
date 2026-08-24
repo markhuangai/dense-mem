@@ -201,11 +201,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		}
 		committed, commitErr := s.assessments.CommitSubmissionAssessment(ctx, commitInput)
 		if isRememberStaleInputError(commitErr) {
-			for index := range commitInput.RelationshipResults {
-				commitInput.RelationshipResults[index].Disposition = "not_stored"
-				commitInput.RelationshipResults[index].Reason = string(SubmissionErrorStaleInput)
-				commitInput.RelationshipResults[index].Splits = nil
-			}
+			commitInput.RelationshipResults = submissionAssessmentNotStoredRelationshipResults(
+				commitInput.RelationshipResults, string(SubmissionErrorStaleInput),
+			)
 			return true, s.completeRejected(ctx, scope, SubmissionErrorStaleInput, commitInput.RelationshipResults)
 		}
 		if errors.Is(commitErr, repository.ErrSubmissionAssessmentScopeMismatch) {
@@ -219,9 +217,13 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 			)
 			if err != nil {
 				if errors.Is(err, errRememberAssessorTurnBudgetExhausted) {
+					commitInput.RelationshipResults = submissionAssessmentNotStoredRelationshipResults(
+						commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),
+					)
 					return true, terminalizeAfterError(err, func() error {
-						return s.completeTerminal(
-							ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "commit_race_exhausted", err,
+						return s.completeTerminalWithRelationshipResults(
+							ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "commit_race_exhausted",
+							commitInput.RelationshipResults, err,
 						)
 					})
 				}
@@ -256,7 +258,7 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 			})
 		}
 		s.logLifecycle(scope, "submission_completed", "completed", "semantic_commit", "semantic_commit_succeeded", nil)
-		s.recordFirstDisposition(ctx, *run, committed.FirstDisposition)
+		s.recordFirstDisposition(ctx, run.TeamID, run.OwnerProfileID, committed.FirstDisposition)
 		return true, nil
 	}
 }
@@ -506,11 +508,21 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 	status, category, stage string,
 	failureCause ...error,
 ) error {
+	return s.completeTerminalWithRelationshipResults(ctx, scope, status, category, stage, nil, firstError(failureCause))
+}
+
+func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithRelationshipResults(
+	ctx context.Context,
+	scope repository.SubmissionAssessmentRunScope,
+	status, category, stage string,
+	relationshipResults []repository.SubmissionRelationshipResultInput,
+	failureCause error,
+) error {
 	var payload map[string]any
 	if status == string(domain.SemanticReviewSuperseded) {
 		payload = map[string]any{"assessor_contract": domain.ContractVersion}
 	} else {
-		payload = semanticAssessmentFailurePayload(stage, false, firstError(failureCause))
+		payload = semanticAssessmentFailurePayload(stage, false, failureCause)
 		payload["assessor_contract"] = domain.ContractVersion
 	}
 	failureClass, _ := payload["failure_class"].(string)
@@ -524,6 +536,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminal(
 		Status:                       status,
 		Category:                     category,
 		Payload:                      payload,
+		RelationshipResults:          relationshipResults,
 	})
 	if err == nil && completed == nil {
 		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil terminal result"))
@@ -665,6 +678,18 @@ func submissionAssessmentQuarantineRelationshipResults(
 			Disposition:     "not_stored",
 			Reason:          "security_quarantine",
 		}
+	}
+	return results
+}
+
+func submissionAssessmentNotStoredRelationshipResults(
+	results []repository.SubmissionRelationshipResultInput,
+	reason string,
+) []repository.SubmissionRelationshipResultInput {
+	for index := range results {
+		results[index].Disposition = "not_stored"
+		results[index].Reason = reason
+		results[index].Splits = nil
 	}
 	return results
 }

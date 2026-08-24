@@ -72,11 +72,21 @@ func TestSubmissionWorkerLogsCompletedRetryAndTerminalOutcomesAfterPersistence(t
 	require.Contains(t, retryLog, `"max_attempts":3`)
 
 	logs.Reset()
+	metrics := &submissionLifecycleMetricsStub{DiscoverabilityMetrics: observability.NoopDiscoverabilityMetrics()}
+	service.metrics = metrics
+	assessments.completeFirstDisposition = &repository.PlacementFirstDisposition{
+		Status:      string(domain.PlacementRunRejected),
+		CreatedAt:   time.Date(2026, time.August, 18, 1, 0, 0, 0, time.UTC),
+		CompletedAt: time.Date(2026, time.August, 18, 1, 0, 2, 0, time.UTC),
+		IsRemember:  true,
+	}
 	require.NoError(t, service.completeRejected(context.Background(), scope, SubmissionErrorNoSupportedMemory, nil))
 	failureLog := logs.String()
 	require.Contains(t, failureLog, `"msg":"submission_rejected"`)
 	require.Contains(t, failureLog, `"reason_code":"no_supported_memory"`)
 	require.NotContains(t, failureLog, "resubmission_issues")
+	require.Equal(t, []string{string(domain.PlacementRunRejected)}, metrics.firstDispositionStatuses)
+	require.Equal(t, []float64{2}, metrics.firstDispositionDurations)
 
 	logs.Reset()
 	require.NoError(t, service.completeTerminalWithFailure(context.Background(), scope, "assessment", "timeout", 0, 0))
@@ -144,6 +154,23 @@ type submissionLifecycleAssessmentStub struct {
 	*submissionAssessmentWorkerAssessmentStub
 	requeueErr    error
 	nextAttemptAt *time.Time
+}
+
+type submissionLifecycleMetricsStub struct {
+	observability.DiscoverabilityMetrics
+	firstDispositionStatuses  []string
+	firstDispositionDurations []float64
+}
+
+func (*submissionLifecycleMetricsStub) ObserveAIOperationUsage(context.Context, observability.AIOperationUsage) {
+}
+func (*submissionLifecycleMetricsStub) ObserveAIOperationUnpriced(context.Context, string, string, string) {
+}
+func (*submissionLifecycleMetricsStub) ObserveRememberAcknowledgement(context.Context, float64, string) {
+}
+func (s *submissionLifecycleMetricsStub) ObserveRememberFirstDisposition(_ context.Context, duration float64, status string) {
+	s.firstDispositionDurations = append(s.firstDispositionDurations, duration)
+	s.firstDispositionStatuses = append(s.firstDispositionStatuses, status)
 }
 
 func (s *submissionLifecycleAssessmentStub) RequeueSubmissionAssessment(

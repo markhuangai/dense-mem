@@ -79,6 +79,7 @@ type submissionAssessmentWorkerAssessmentStub struct {
 	requeues                  []repository.RequeueSubmissionAssessmentInput
 	completeNil               bool
 	completeErr               error
+	completeFirstDisposition  *repository.PlacementFirstDisposition
 	requeueNil                bool
 	requeueErr                error
 	commitErr                 error
@@ -183,7 +184,9 @@ func (s *submissionAssessmentWorkerAssessmentStub) CompleteSubmissionAssessment(
 	if s.completeNil {
 		return nil, nil
 	}
-	return &repository.CompleteSubmissionAssessmentResult{Status: input.Status}, nil
+	return &repository.CompleteSubmissionAssessmentResult{
+		Status: input.Status, FirstDisposition: s.completeFirstDisposition,
+	}, nil
 }
 
 func (s *submissionAssessmentWorkerAssessmentStub) RequeueSubmissionAssessment(_ context.Context, input repository.RequeueSubmissionAssessmentInput) (*repository.RequeueSubmissionAssessmentResult, error) {

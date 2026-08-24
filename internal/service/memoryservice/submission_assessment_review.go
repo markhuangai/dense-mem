@@ -65,6 +65,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeRejected(
 		return newPlacementWorkerError(scope.TeamID, scope.IngestID, "semantic_rejection", err)
 	}
 	s.logLifecycle(scope, "submission_rejected", "rejected", "semantic_commit", payload["failure_code"].(string), nil)
+	s.recordFirstDisposition(ctx, scope.TeamID, scope.OwnerProfileID, completed.FirstDisposition)
 	return nil
 }
 

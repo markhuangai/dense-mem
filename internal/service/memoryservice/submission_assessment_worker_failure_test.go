@@ -204,8 +204,15 @@ func TestSubmissionAssessmentWorkerStopsPersistedCommitRepairAtSubmissionTurnBou
 	assert.Zero(t, provider.calls)
 	assert.Empty(t, assessments.revisionInputs)
 	require.Len(t, assessments.completions, 1)
-	assert.Equal(t, string(SubmissionErrorInternalFailure), assessments.completions[0].Payload["failure_code"])
-	assert.Equal(t, "commit_race_exhausted", assessments.completions[0].Payload["failure_stage"])
+	completion := assessments.completions[0]
+	assert.Equal(t, string(SubmissionErrorInternalFailure), completion.Payload["failure_code"])
+	assert.Equal(t, "commit_race_exhausted", completion.Payload["failure_stage"])
+	require.Len(t, completion.RelationshipResults, 3)
+	for _, result := range completion.RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+		assert.Empty(t, result.Splits)
+	}
 }
 
 func TestSubmissionAssessmentWorkerRequeuesRepositoryFailuresByStage(t *testing.T) {

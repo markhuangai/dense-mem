@@ -894,6 +894,7 @@ func TestRememberRelationshipResultsAreOwnerScopedAndAppendOnly(t *testing.T) {
 		}, []SubmissionRelationshipResultInput{
 			{RelationshipRef: "unsupported", Disposition: "not_stored", Reason: "not_supported_by_evidence"},
 			{RelationshipRef: "stale", Disposition: "not_stored", Reason: "stale_input"},
+			{RelationshipRef: "internal", Disposition: "not_stored", Reason: "internal_failure"},
 		}, nil)
 	})
 	require.NoError(t, err)
@@ -914,8 +915,8 @@ func TestRememberRelationshipResultsAreOwnerScopedAndAppendOnly(t *testing.T) {
 		`, teamID, staged.PlacementRunID).Scan(&otherOwnerCount).Error
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), ownerCount)
-	assert.Equal(t, int64(2), emptyArrayCount)
+	assert.Equal(t, int64(3), ownerCount)
+	assert.Equal(t, int64(3), emptyArrayCount)
 	assert.Zero(t, otherOwnerCount)
 
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {

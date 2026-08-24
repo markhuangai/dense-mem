@@ -20,7 +20,7 @@ func TestRememberReliabilityMigrationContainsFinalV26Contract(t *testing.T) {
 		"CREATE POLICY evidence_fragments_remember_source_bind ON evidence_fragments",
 		"CREATE OR REPLACE FUNCTION prevent_evidence_fragment_mutation()",
 		"FOR EACH ROW EXECUTE FUNCTION prevent_evidence_fragment_mutation();",
-		"RETURN result_reason IN ('not_supported_by_evidence', 'stale_input', 'security_quarantine')",
+		"RETURN result_reason IN ('not_supported_by_evidence', 'stale_input', 'security_quarantine', 'internal_failure')",
 		"DROP POLICY IF EXISTS evidence_fragments_remember_source_bind ON evidence_fragments;",
 		"FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation();",
 	} {
