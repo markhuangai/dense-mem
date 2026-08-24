@@ -117,6 +117,7 @@ func TestSubmissionDiagnosticsDetailOrdersAndFiltersOperatorHistory(t *testing.T
 	teamID, ownerID, submissionID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	first := time.Date(2026, time.August, 18, 1, 0, 0, 0, time.UTC)
 	second := first.Add(time.Minute)
+	legacy := second.Add(time.Minute)
 	repo := &submissionDiagnosticsRepoStub{detail: &repository.SubmissionDiagnosticRecord{
 		TeamName: "Staging",
 		Placement: repository.CreateIngestResult{
@@ -130,18 +131,23 @@ func TestSubmissionDiagnosticsDetailOrdersAndFiltersOperatorHistory(t *testing.T
 			{ID: "second", OutcomeKind: "submission_assessment_terminal", Status: "failed", CreatedAt: second, Payload: map[string]any{
 				"failure_reason_code": "provider_response_invalid", "failure_stage": "assessment", "failure_class": "validation_failed",
 			}},
-			{ID: "secret", OutcomeKind: "internal", Status: "failed", CreatedAt: second.Add(time.Minute), Payload: map[string]any{
+			{ID: "legacy", OutcomeKind: "submission_assessment_terminal", Status: "failed", CreatedAt: legacy, Payload: map[string]any{
+				"failure_reason_code": "assessor_response_invalid", "failure_stage": "assessment", "failure_class": "validation_failed",
+			}},
+			{ID: "secret", OutcomeKind: "internal", Status: "failed", CreatedAt: legacy.Add(time.Minute), Payload: map[string]any{
 				"failure_stage": "provider-secret-detail", "failure_class": "provider-secret-detail",
 			}},
 		},
 	}}
 	detail, err := NewSubmissionDiagnosticsService(repo).GetSubmissionDiagnostic(context.Background(), teamID, submissionID)
 	require.NoError(t, err)
-	require.Len(t, detail.OperatorDiagnostics, 2)
+	require.Len(t, detail.OperatorDiagnostics, 3)
 	require.Equal(t, "first", detail.OperatorDiagnostics[0].ID)
 	require.Equal(t, first, detail.OperatorDiagnostics[0].OccurredAt.UTC())
 	require.Equal(t, "second", detail.OperatorDiagnostics[1].ID)
 	require.Equal(t, second, detail.OperatorDiagnostics[1].OccurredAt.UTC())
+	require.Equal(t, "legacy", detail.OperatorDiagnostics[2].ID)
+	require.Equal(t, "assessor_response_invalid", detail.OperatorDiagnostics[2].FailureReasonCode)
 	for _, diagnostic := range detail.OperatorDiagnostics {
 		require.NotContains(t, diagnostic.Message, "provider-secret-detail")
 	}
