@@ -190,6 +190,7 @@ type RequeueSubmissionAssessmentInput struct {
 	Payload                map[string]any
 	RetryAfter             time.Duration
 	ReleaseAssessorAttempt bool
+	AssessorTurnsReserved  int
 }
 
 type RequeueSubmissionAssessmentResult struct {

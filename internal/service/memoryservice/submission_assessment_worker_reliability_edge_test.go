@@ -461,11 +461,11 @@ func TestSubmissionAssessmentWorkerHandlesSessionRefreshAndRetryPersistenceFailu
 
 	scope := submissionAssessmentRunScope(*ledger.run, "submission-assessment-worker")
 	assessments.requeueNil = true
-	err = service.retryProviderFailure(context.Background(), *ledger.run, scope, "assessment", true, verifier.ProviderFailureMetadata{Class: verifier.ProviderFailureClassHTTPServer})
+	err = service.retryProviderFailure(context.Background(), *ledger.run, scope, "assessment", true, 0, verifier.ProviderFailureMetadata{Class: verifier.ProviderFailureClassHTTPServer})
 	require.Error(t, err)
 	assessments.requeueNil = false
 	assessments.requeueErr = errors.New("requeue failed")
-	err = service.retryProviderFailure(context.Background(), *ledger.run, scope, "assessment", true, verifier.ProviderFailureMetadata{Class: verifier.ProviderFailureClassHTTPServer})
+	err = service.retryProviderFailure(context.Background(), *ledger.run, scope, "assessment", true, 0, verifier.ProviderFailureMetadata{Class: verifier.ProviderFailureClassHTTPServer})
 	require.Error(t, err)
 
 	badSpace := repository.PlacementRun{SpaceID: "not-a-uuid"}

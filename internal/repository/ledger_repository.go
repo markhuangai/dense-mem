@@ -138,17 +138,18 @@ type EvidenceFragment struct {
 }
 
 type PlacementRun struct {
-	TeamID          string
-	PlacementRunID  string
-	IngestID        string
-	OwnerProfileID  string
-	SpaceID         string
-	SpaceGeneration int64
-	CorrelationID   string
-	Status          string
-	Attempts        int
-	MaxAttempts     int
-	LeaseUntil      *time.Time
+	TeamID                string
+	PlacementRunID        string
+	IngestID              string
+	OwnerProfileID        string
+	SpaceID               string
+	SpaceGeneration       int64
+	CorrelationID         string
+	Status                string
+	Attempts              int
+	MaxAttempts           int
+	AssessorTurnsReserved int
+	LeaseUntil            *time.Time
 }
 
 type PlacementItem struct {
@@ -415,13 +416,14 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 				  AND `+activeSemanticSpaceGenerationSQL("run")+`
 				RETURNING run.team_id, run.placement_run_id, run.ingest_id,
 				          run.owner_profile_id, run.space_id, run.space_generation,
-				          run.status, run.attempts, run.max_attempts,
+				          run.status, run.attempts, run.max_attempts, run.assessor_turns_reserved,
 				          run.lease_until
 			)
 			SELECT updated.team_id::text, updated.placement_run_id::text, updated.ingest_id::text,
 			       updated.owner_profile_id::text, updated.space_id::text, updated.space_generation,
 			       COALESCE(ingest.metadata #>> '{actor,correlation_id}', ''),
-			       updated.status, updated.attempts, updated.max_attempts, updated.lease_until
+			       updated.status, updated.attempts, updated.max_attempts,
+			       updated.assessor_turns_reserved, updated.lease_until
 			FROM updated
 			JOIN knowledge_ingests AS ingest
 			  ON ingest.team_id = updated.team_id
@@ -436,7 +438,11 @@ func (r *LedgerRepositoryImpl) ClaimNextPlacementRun(ctx context.Context, teamID
 		}
 		loaded := PlacementRun{}
 		var leaseUntil sql.NullTime
-		if err := rows.Scan(&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID, &loaded.SpaceID, &loaded.SpaceGeneration, &loaded.CorrelationID, &loaded.Status, &loaded.Attempts, &loaded.MaxAttempts, &leaseUntil); err != nil {
+		if err := rows.Scan(
+			&loaded.TeamID, &loaded.PlacementRunID, &loaded.IngestID, &loaded.OwnerProfileID,
+			&loaded.SpaceID, &loaded.SpaceGeneration, &loaded.CorrelationID, &loaded.Status,
+			&loaded.Attempts, &loaded.MaxAttempts, &loaded.AssessorTurnsReserved, &leaseUntil,
+		); err != nil {
 			return err
 		}
 		if leaseUntil.Valid {

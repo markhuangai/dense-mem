@@ -21,6 +21,9 @@ func TestRememberReliabilityMigrationContainsFinalV26Contract(t *testing.T) {
 		"CREATE OR REPLACE FUNCTION prevent_evidence_fragment_mutation()",
 		"FOR EACH ROW EXECUTE FUNCTION prevent_evidence_fragment_mutation();",
 		"RETURN result_reason IN ('not_supported_by_evidence', 'stale_input', 'security_quarantine', 'internal_failure')",
+		"ADD COLUMN IF NOT EXISTS assessor_turns_reserved INTEGER NOT NULL DEFAULT 0",
+		"CHECK (assessor_turns_reserved BETWEEN 0 AND 5) NOT VALID",
+		"DROP COLUMN IF EXISTS assessor_turns_reserved",
 		"DROP POLICY IF EXISTS evidence_fragments_remember_source_bind ON evidence_fragments;",
 		"FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation();",
 	} {

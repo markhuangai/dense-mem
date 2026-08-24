@@ -217,6 +217,7 @@ type submissionAssessmentWorkerProviderStub struct {
 	repairSessionID string
 	startErr        error
 	repairErr       error
+	repairErrors    []error
 }
 
 type submissionAssessmentWorkerProviderSession struct {
@@ -244,6 +245,13 @@ func (s *submissionAssessmentWorkerProviderStub) Repair(_ context.Context, sessi
 		return verifier.SemanticAssessmentTurn{}, errors.New("invalid stub assessor session")
 	}
 	s.calls++
+	if len(s.repairErrors) > 0 {
+		err := s.repairErrors[0]
+		s.repairErrors = s.repairErrors[1:]
+		if err != nil {
+			return verifier.SemanticAssessmentTurn{}, err
+		}
+	}
 	if s.repairErr != nil {
 		return verifier.SemanticAssessmentTurn{}, s.repairErr
 	}

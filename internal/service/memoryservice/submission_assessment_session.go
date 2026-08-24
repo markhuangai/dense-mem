@@ -57,6 +57,15 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	if !errors.Is(err, repository.ErrSubmissionAssessmentNotFound) {
 		return nil, verifier.SemanticAssessmentResponse{}, false, false, false, nil, err
 	}
+	if run.AssessorTurnsReserved >= SemanticPlacementMaxAssessorTurns {
+		return nil, verifier.SemanticAssessmentResponse{}, false, true, false, nil, &verifier.MalformedResponseError{
+			Provider:        "semantic_assessor",
+			Message:         "semantic assessor correction budget is exhausted before assessment persistence",
+			FailureClass:    "malformed_exhausted",
+			Attempts:        run.AssessorTurnsReserved,
+			ValidationStage: "response_contract",
+		}
+	}
 	reserved, err := s.assessments.ReserveSubmissionAssessorAttempt(ctx, repository.ReserveSubmissionAssessorAttemptInput{
 		SubmissionAssessmentRunScope: scope,
 	})
@@ -83,7 +92,9 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	providerCtx := observability.WithMetricIdentity(ctx, run.TeamID, run.OwnerProfileID)
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationPlacementAssessment, 1)
 	modelName := s.provider.ModelName()
-	response, session, finalRequest, err := s.assessRememberSession(providerCtx, request, refresh, 0)
+	response, session, finalRequest, err := s.assessRememberSession(
+		providerCtx, request, refresh, run.AssessorTurnsReserved,
+	)
 	if err != nil {
 		outcome := "provider_error"
 		releaseProviderAttempt := true
@@ -137,7 +148,7 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	}
 	observability.RecordAssessorAssessmentPersistence(s.metrics, "persisted")
 	return persisted, normalized, false, true, false, &submissionAssessmentLiveSession{
-		session: session, request: finalRequest,
+		session: session, request: finalRequest, turnOffset: run.AssessorTurnsReserved,
 	}, nil
 }
 

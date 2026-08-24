@@ -165,6 +165,7 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		refreshRequest,
 	)
 	if err != nil {
+		assessorTurnsReserved := submissionAssessmentConsumedProviderTurns(err)
 		if errors.Is(err, errSubmissionAssessmentRevisionPersistence) {
 			return true, terminalizeAfterError(err, func() error {
 				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
@@ -187,7 +188,10 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		if providerAttempted {
 			return true, retryAfterError(err, func() error {
 				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
-				return s.retryProviderFailureWithRelationshipResults(ctx, *run, scope, "assessment", releaseProviderAttempt, results, verifier.ProviderFailureDetails(err))
+				return s.retryProviderFailureWithRelationshipResults(
+					ctx, *run, scope, "assessment", releaseProviderAttempt, assessorTurnsReserved,
+					results, verifier.ProviderFailureDetails(err),
+				)
 			})
 		}
 		return true, retryAfterError(err, func() error {
@@ -229,6 +233,20 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 				ctx, *run, assessment.ProviderTurns, liveSession, refreshRequest, commitErr,
 			)
 			if err != nil {
+				if consumedTurns := submissionAssessmentConsumedProviderTurns(err); consumedTurns > assessment.ProviderTurns {
+					_, reserveErr := s.reserveSubmissionAssessmentProviderTurns(ctx, scope, assessment, consumedTurns)
+					if reserveErr != nil {
+						return true, terminalizeAfterError(reserveErr, func() error {
+							results := submissionAssessmentNotStoredRelationshipResults(
+								commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),
+							)
+							return s.completeTerminalWithRelationshipResults(
+								ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed",
+								"assessment_persist", results, reserveErr,
+							)
+						})
+					}
+				}
 				if errors.Is(err, errRememberAssessorTurnBudgetExhausted) {
 					commitInput.RelationshipResults = submissionAssessmentNotStoredRelationshipResults(
 						commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),
@@ -253,7 +271,9 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 					results := submissionAssessmentNotStoredRelationshipResults(
 						commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),
 					)
-					return s.retryProviderFailureWithRelationshipResults(ctx, *run, scope, "assessment", true, results, verifier.ProviderFailureDetails(err))
+					return s.retryProviderFailureWithRelationshipResults(
+						ctx, *run, scope, "assessment", true, 0, results, verifier.ProviderFailureDetails(err),
+					)
 				})
 			}
 			assessment, err = s.persistSubmissionAssessmentRevision(ctx, *run, scope, assessment, response, liveSession.request)
@@ -394,10 +414,11 @@ func (s *submissionAssessmentPlacementWorkerService) retryProviderFailure(
 	scope repository.SubmissionAssessmentRunScope,
 	stage string,
 	releaseProviderAttempt bool,
+	assessorTurnsReserved int,
 	failure verifier.ProviderFailureMetadata,
 ) error {
 	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
-		return s.completeTerminalWithFailure(ctx, scope, stage, failure.Class, failure.StatusCode, 0)
+		return s.completeTerminalWithFailure(ctx, scope, stage, failure.Class, failure.StatusCode, assessorTurnsReserved)
 	}
 	requeued, err := s.assessments.RequeueSubmissionAssessment(ctx, repository.RequeueSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,
@@ -405,6 +426,7 @@ func (s *submissionAssessmentPlacementWorkerService) retryProviderFailure(
 		Payload:                      semanticAssessmentRetryPayload(stage, true, failure),
 		RetryAfter:                   failure.RetryAfter,
 		ReleaseAssessorAttempt:       releaseProviderAttempt,
+		AssessorTurnsReserved:        assessorTurnsReserved,
 	})
 	if err == nil && requeued == nil {
 		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil retry result"))

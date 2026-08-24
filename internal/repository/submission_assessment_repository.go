@@ -737,6 +737,7 @@ func (r *LedgerRepositoryImpl) RequeueSubmissionAssessment(
 			SET status = `+placementRunGuardedStatusCase+`,
 			    worker_id = '',
 			    lease_until = NULL,
+			    assessor_turns_reserved = GREATEST(assessor_turns_reserved, ?),
 			    assessor_attempt_id = CASE WHEN ? THEN NULL ELSE assessor_attempt_id END,
 			    assessor_attempted_at = CASE WHEN ? THEN NULL ELSE assessor_attempted_at END,
 			    available_at = now() + (? * interval '1 second'),
@@ -750,7 +751,7 @@ func (r *LedgerRepositoryImpl) RequeueSubmissionAssessment(
 			  AND attempts = ?
 			  AND lease_until > clock_timestamp()
 			RETURNING available_at
-		`, input.ReleaseAssessorAttempt, input.ReleaseAssessorAttempt, int(retryDelay/time.Second),
+		`, input.AssessorTurnsReserved, input.ReleaseAssessorAttempt, input.ReleaseAssessorAttempt, int(retryDelay/time.Second),
 			input.TeamID, input.OwnerProfileID, input.IngestID, input.PlacementRunID,
 			input.WorkerID, input.ExpectedAttempts).Row().Scan(&nextAttemptAt)
 		if errors.Is(resultUpdate, sql.ErrNoRows) {
@@ -856,7 +857,13 @@ func normalizeRequeueSubmissionAssessmentInput(input RequeueSubmissionAssessment
 }
 
 func validateRequeueSubmissionAssessmentInput(input RequeueSubmissionAssessmentInput) error {
-	return validateSubmissionAssessmentRunScope(input.SubmissionAssessmentRunScope)
+	if err := validateSubmissionAssessmentRunScope(input.SubmissionAssessmentRunScope); err != nil {
+		return err
+	}
+	if input.AssessorTurnsReserved < 0 || input.AssessorTurnsReserved > 5 {
+		return errors.New("assessor_turns_reserved must be between 0 and 5")
+	}
+	return nil
 }
 
 func submissionTerminalStatuses(status, category string) (string, string, string) {

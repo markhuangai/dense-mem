@@ -66,6 +66,7 @@ func TestRememberReliabilityMigrationDownRejectsQueuedV26RememberIngest(t *testi
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
+	assert.True(t, columnExists(t, ctx, db, "placement_runs", "assessor_turns_reserved"))
 	var verdictNullable, rationaleNullable string
 	require.NoError(t, db.QueryRowContext(ctx, `
 		SELECT
@@ -118,6 +119,7 @@ func TestRememberReliabilityMigrationDownRejectsQueuedV26RememberIngest(t *testi
 	}))
 	require.NoError(t, migrationDownTo(ctx, db, rememberReliabilityMigrationBaseVersion))
 	assert.False(t, tableExists(t, ctx, db, "remember_source_revision_intents"))
+	assert.False(t, columnExists(t, ctx, db, "placement_runs", "assessor_turns_reserved"))
 	var fragmentGuard string
 	require.NoError(t, db.QueryRowContext(ctx, `
 		SELECT function_row.proname

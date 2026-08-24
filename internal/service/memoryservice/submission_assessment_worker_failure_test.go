@@ -215,6 +215,83 @@ func TestSubmissionAssessmentWorkerPersistsInvalidTurnsBeforeRepairFailureRetry(
 	assert.Empty(t, assessments.completions)
 }
 
+func TestSubmissionAssessmentWorkerCarriesInitialSessionTurnsAcrossRetry(t *testing.T) {
+	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	provider.responseForTurn = func(verifier.SemanticAssessmentRequest, int) (verifier.SemanticAssessmentResponse, error) {
+		return verifier.SemanticAssessmentResponse{}, nil
+	}
+	provider.repairErr = &verifier.ProviderError{
+		Provider: "stub", FailureClass: verifier.ProviderFailureClassHTTPServer, StatusCode: 503,
+	}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Equal(t, 2, provider.calls)
+	require.Len(t, assessments.requeues, 1)
+	assert.Equal(t, 1, assessments.requeues[0].AssessorTurnsReserved)
+	assert.Nil(t, assessments.assessment)
+
+	ledger.run.Attempts++
+	ledger.run.AssessorTurnsReserved = assessments.requeues[0].AssessorTurnsReserved
+	assessments.loadCalls = 0
+	assessments.reserved = false
+	assessments.requeues = nil
+	provider.calls = 0
+	provider.responseForTurn = nil
+	provider.repairErr = nil
+
+	processed, err = worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Equal(t, 1, provider.calls)
+	require.NotNil(t, assessments.assessment)
+	assert.Equal(t, 2, assessments.assessment.ProviderTurns)
+	require.Len(t, assessments.commits, 1)
+}
+
+func TestSubmissionAssessmentWorkerStopsBeforeProviderWhenInitialTurnBudgetIsReserved(t *testing.T) {
+	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	ledger.run.AssessorTurnsReserved = SemanticPlacementMaxAssessorTurns
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Zero(t, provider.calls)
+	require.Len(t, assessments.completions, 1)
+	assert.Equal(t, SemanticPlacementMaxAssessorTurns, assessments.completions[0].Payload["assessor_turns"])
+	assert.Equal(t, "malformed_exhausted", assessments.completions[0].Payload["failure_class"])
+}
+
+func TestSubmissionAssessmentWorkerPersistsCommitRepairTurnsBeforeProviderFailureRetry(t *testing.T) {
+	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	provider.responseForTurn = func(req verifier.SemanticAssessmentRequest, turns int) (verifier.SemanticAssessmentResponse, error) {
+		if turns == 1 {
+			return submissionAssessmentValidResponse(req, false), nil
+		}
+		return verifier.SemanticAssessmentResponse{}, nil
+	}
+	provider.repairErrors = []error{nil, &verifier.ProviderError{
+		Provider: "stub", FailureClass: verifier.ProviderFailureClassHTTPServer, StatusCode: 503,
+	}}
+	assessments.commitErrors = []error{repository.ErrSubmissionPredicateRegistrationHeld}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Equal(t, 3, provider.calls)
+	require.Len(t, assessments.revisionInputs, 1)
+	assert.Equal(t, 2, assessments.revisionInputs[0].ProviderTurns)
+	require.NotNil(t, assessments.assessment)
+	assert.Equal(t, 2, assessments.assessment.ProviderTurns)
+	require.Len(t, assessments.requeues, 1)
+	assert.Zero(t, assessments.requeues[0].AssessorTurnsReserved)
+}
+
 func TestSubmissionAssessmentWorkerPersistsDatabaseFailureCode(t *testing.T) {
 	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
 	service := worker.(*submissionAssessmentPlacementWorkerService)

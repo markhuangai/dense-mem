@@ -176,6 +176,16 @@ ALTER TABLE placement_assessments
 ALTER TABLE placement_assessments
     VALIDATE CONSTRAINT placement_assessments_provider_turns_check;
 
+ALTER TABLE placement_runs
+    ADD COLUMN IF NOT EXISTS assessor_turns_reserved INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE placement_runs
+    DROP CONSTRAINT IF EXISTS placement_runs_assessor_turns_reserved_check;
+ALTER TABLE placement_runs
+    ADD CONSTRAINT placement_runs_assessor_turns_reserved_check
+    CHECK (assessor_turns_reserved BETWEEN 0 AND 5) NOT VALID;
+ALTER TABLE placement_runs
+    VALIDATE CONSTRAINT placement_runs_assessor_turns_reserved_check;
+
 CREATE TABLE IF NOT EXISTS remember_source_revision_intents (
     team_id UUID NOT NULL,
     intent_id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -662,6 +672,10 @@ ALTER TABLE verification_events
 ALTER TABLE placement_assessments
     DROP CONSTRAINT IF EXISTS placement_assessments_provider_turns_check,
     DROP COLUMN IF EXISTS provider_turns;
+
+ALTER TABLE placement_runs
+    DROP CONSTRAINT IF EXISTS placement_runs_assessor_turns_reserved_check,
+    DROP COLUMN IF EXISTS assessor_turns_reserved;
 
 ALTER TABLE placement_items
     DROP CONSTRAINT IF EXISTS placement_items_category_check;

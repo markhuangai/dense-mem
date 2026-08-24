@@ -96,13 +96,14 @@ func (s *submissionAssessmentPlacementWorkerService) retryProviderFailureWithRel
 	scope repository.SubmissionAssessmentRunScope,
 	stage string,
 	releaseProviderAttempt bool,
+	assessorTurnsReserved int,
 	relationshipResults []repository.SubmissionRelationshipResultInput,
 	failure verifier.ProviderFailureMetadata,
 ) error {
 	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
 		return s.completeTerminalWithRelationshipResultsFailure(
-			ctx, scope, stage, failure.Class, failure.StatusCode, 0, relationshipResults,
+			ctx, scope, stage, failure.Class, failure.StatusCode, assessorTurnsReserved, relationshipResults,
 		)
 	}
-	return s.retryProviderFailure(ctx, run, scope, stage, releaseProviderAttempt, failure)
+	return s.retryProviderFailure(ctx, run, scope, stage, releaseProviderAttempt, assessorTurnsReserved, failure)
 }
