@@ -208,8 +208,9 @@ Relationship 改为列出支持它的从零开始的 `evidence_indices`，且这
 }
 ```
 
-替换证据被接收入库时，目标会在同一原子动作中退役；即使后续 placement 被拒绝或
-隔离，这个更正决定仍会保留。这样不会让过期证据继续保持有效。
+直接 supersession 会随完整 batch 暂存。只有在语义提交被接受的同一事务中，目标才会
+退役；被拒绝、失败或隔离的提交会让目标继续有效。这样，未成为受支持记忆的替换不会
+使当前证据失效。
 
 Remember 使用一个覆盖完整 batch 的 assessor 会话。assessor 负责 grounding 修复、
 身份选择、predicate 协调、support 决策和可修复的竞态；确定性服务端策略仍负责

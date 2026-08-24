@@ -231,9 +231,10 @@ source revision with `previous_source_revision`; do not combine them.
 }
 ```
 
-The target is retired atomically when the replacement is accepted for intake,
-even if later placement is rejected or quarantined. This preserves the exact
-correction decision instead of silently leaving stale evidence effective.
+Direct supersession is staged with the complete batch. The target is retired
+only inside the accepted semantic transaction; a rejected, failed, or
+quarantined submission leaves it active. This prevents a replacement that never
+becomes supported memory from invalidating current evidence.
 
 Remember uses one assessor conversation for the complete batch. The assessor
 owns grounding repair, identity choice, predicate reconciliation, support
