@@ -235,14 +235,9 @@ func advanceSourceRevisionInTx(
 		return nil, err
 	}
 	if currentToken == input.RevisionToken && currentRevisionID != "" {
-		hash, err := selectSourceRevisionContentHash(ctx, tx, input.TeamID, currentRevisionID)
-		if err != nil {
-			return nil, err
-		}
-		if hash != input.ContentHash {
-			return nil, fmt.Errorf("%w: source revision %q already recorded with a different content hash", ErrSourceRevisionConflict, input.RevisionToken)
-		}
-		supersededRevisionID, err := selectSourceRevisionSupersededRevisionID(ctx, tx, input.TeamID, currentRevisionID)
+		supersededRevisionID, err := selectMatchingSourceRevisionSupersededRevisionID(
+			ctx, tx, input, sourceID, currentRevisionID,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -446,30 +441,47 @@ func resetProfileModeInTx(ctx context.Context, tx *gorm.DB, teamID, profileID st
 	return tx.WithContext(ctx).Exec("SELECT set_config('app.tx_mode', 'profile', true)").Error
 }
 
-func selectSourceRevisionContentHash(ctx context.Context, tx *gorm.DB, teamID, revisionID string) (string, error) {
-	row := tx.WithContext(ctx).Raw(`
-		SELECT content_hash
-		FROM evidence_source_revisions
-		WHERE team_id = ?::uuid
-		  AND source_revision_id = ?::uuid
-		LIMIT 1
-	`, teamID, revisionID).Row()
-	var hash string
-	if err := row.Scan(&hash); err != nil {
+func selectMatchingSourceRevisionSupersededRevisionID(
+	ctx context.Context,
+	tx *gorm.DB,
+	input AdvanceSourceRevisionInput,
+	sourceID string,
+	revisionID string,
+) (string, error) {
+	envelope, err := marshalJSON(input.Envelope)
+	if err != nil {
 		return "", err
 	}
-	return hash, nil
-}
-
-func selectSourceRevisionSupersededRevisionID(ctx context.Context, tx *gorm.DB, teamID, revisionID string) (string, error) {
 	var supersededRevisionID sql.NullString
-	err := tx.WithContext(ctx).Raw(`
-		SELECT supersedes_revision_id::text
-		FROM evidence_source_revisions
-		WHERE team_id = ?::uuid
-		  AND source_revision_id = ?::uuid
+	err = tx.WithContext(ctx).Raw(`
+		SELECT revision.supersedes_revision_id::text
+		FROM evidence_source_revisions AS revision
+		JOIN evidence_sources AS source
+		  ON source.team_id = revision.team_id
+		 AND source.source_id = revision.source_id
+		 AND source.owner_profile_id = revision.owner_profile_id
+		WHERE revision.team_id = ?::uuid
+		  AND revision.source_id = ?::uuid
+		  AND revision.source_revision_id = ?::uuid
+		  AND revision.owner_profile_id = ?::uuid
+		  AND revision.revision_token = ?
+		  AND revision.expected_previous_revision_token = ?
+		  AND revision.content_hash = ?
+		  AND revision.envelope = ?::jsonb
+		  AND source.source_key = ?
+		  AND source.source_kind = ?
+		  AND source.authority = ?
 		LIMIT 1
-	`, teamID, revisionID).Row().Scan(&supersededRevisionID)
+	`, input.TeamID, sourceID, revisionID, input.OwnerProfileID,
+		input.RevisionToken, input.ExpectedPreviousRevisionToken, input.ContentHash, string(envelope),
+		input.SourceKey, input.SourceKind, input.Authority).Row().Scan(&supersededRevisionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf(
+			"%w: source revision %q already recorded with different provenance",
+			ErrSourceRevisionConflict,
+			input.RevisionToken,
+		)
+	}
 	if err != nil {
 		return "", err
 	}

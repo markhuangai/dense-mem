@@ -327,11 +327,12 @@ func validateRememberConflictContext(
 }
 
 type rememberSourcePreflightState struct {
-	found           bool
-	currentToken    string
-	currentHash     string
-	spaceID         string
-	spaceGeneration int64
+	found                    bool
+	currentToken             string
+	currentHash              string
+	currentProvenanceMatches bool
+	spaceID                  string
+	spaceGeneration          int64
 }
 
 func validateRememberSourcePreflight(
@@ -347,9 +348,20 @@ func validateRememberSourcePreflight(
 		}
 		state, loaded := states[item.SourceKey]
 		if !loaded {
-			err := tx.WithContext(ctx).Raw(`
+			envelope, err := marshalJSON(item.SourceRevisionEnvelope)
+			if err != nil {
+				return err
+			}
+			err = tx.WithContext(ctx).Raw(`
 				SELECT source.current_revision_token,
 				       COALESCE(revision.content_hash, ''),
+				       COALESCE(
+				           source.source_kind = ?
+				           AND source.authority = ?
+				           AND revision.expected_previous_revision_token = ?
+				           AND revision.envelope = ?::jsonb,
+				           false
+				       ),
 				       COALESCE(source.space_id::text, ''),
 				       COALESCE(source.space_generation, 0)
 				FROM evidence_sources AS source
@@ -361,8 +373,11 @@ func validateRememberSourcePreflight(
 				  AND source.source_key = ?
 				LIMIT 1
 				FOR SHARE OF source
-			`, input.TeamID, input.OwnerProfileID, item.SourceKey).Row().Scan(
-				&state.currentToken, &state.currentHash, &state.spaceID, &state.spaceGeneration,
+			`, sourceKindForEvidence(item.SourceType), item.Authority,
+				item.ExpectedPreviousRevisionToken, string(envelope),
+				input.TeamID, input.OwnerProfileID, item.SourceKey).Row().Scan(
+				&state.currentToken, &state.currentHash, &state.currentProvenanceMatches,
+				&state.spaceID, &state.spaceGeneration,
 			)
 			if err == nil {
 				state.found = true
@@ -385,6 +400,8 @@ func validateRememberSourcePreflight(
 		if state.currentToken == item.SourceRevisionToken {
 			if state.currentHash != item.SourceRevisionContentHash {
 				collector.add(base+"/source_revision", "conflict", "source_revision already exists with different evidence")
+			} else if !state.currentProvenanceMatches {
+				collector.add(base+"/source_revision", "conflict", "source_revision already exists with different provenance")
 			}
 			continue
 		}
