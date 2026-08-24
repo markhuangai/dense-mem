@@ -266,10 +266,12 @@ func validateRememberCorrectionTarget(
 		WHERE team_id = ?::uuid
 		  AND relationship_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
+		  AND space_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
+		  AND space_generation IS NOT DISTINCT FROM NULLIF(?, 0)::bigint
 		  AND status = 'active'
 		LIMIT 1
 		FOR SHARE
-	`, input.TeamID, target.RelationshipID, input.OwnerProfileID).Row().Scan(&version)
+	`, input.TeamID, target.RelationshipID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration).Row().Scan(&version)
 	if errors.Is(err, sql.ErrNoRows) {
 		collector.add(base+"/relationship_id", "unavailable", "correction target is unavailable")
 		return nil
@@ -305,10 +307,12 @@ func validateRememberConflictContext(
 		FROM relationship_conflict_cases
 		WHERE team_id = ?::uuid
 		  AND conflict_id = ?::uuid
+		  AND space_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
+		  AND space_generation IS NOT DISTINCT FROM NULLIF(?, 0)::bigint
 		  AND status IN ('open', 'overdue')
 		LIMIT 1
 		FOR SHARE
-	`, input.TeamID, conflict.ConflictID).Row().Scan(&version)
+	`, input.TeamID, conflict.ConflictID, input.SpaceID, input.SpaceGeneration).Row().Scan(&version)
 	if errors.Is(err, sql.ErrNoRows) {
 		collector.add(base+"/conflict_id", "unavailable", "conflict context is unavailable")
 		return nil

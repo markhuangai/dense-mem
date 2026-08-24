@@ -489,7 +489,7 @@ func validateSubmissionAssessmentCommitScope(
 	if found != 1 {
 		return ErrSubmissionAssessmentScopeMismatch
 	}
-	return nil
+	return validateSubmissionAssessmentContextSpaces(ctx, tx, input)
 }
 
 func lockSubmissionAssessmentRun(
