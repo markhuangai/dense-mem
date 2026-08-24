@@ -173,6 +173,21 @@ func TestSemanticAssessmentSubmissionContractRepairsChangedExactConstraints(t *t
 	require.Contains(t, joined, "must equal the exact known_predicate_key")
 }
 
+func TestSemanticAssessmentKnownEntityIDDisambiguatesNameMatches(t *testing.T) {
+	req, limits := semanticAssessmentSubmissionContractTestRequest(t)
+	req.SubmissionContract.Entities[0].KnownEntityID = "entity-mark"
+	req.EntityCandidateGroups[0].Candidates = append(req.EntityCandidateGroups[0].Candidates,
+		SemanticAssessmentEntityCandidate{
+			EntityID: "entity-mark-duplicate", CanonicalName: "Mark Huang", Kind: "person",
+		},
+	)
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	require.Empty(t, errs)
+
+	_, errs = PrepareSemanticAssessmentResponse(prepared, semanticAssessmentTestResponse(), limits)
+	require.Empty(t, errs)
+}
+
 func TestSemanticAssessmentSubmissionContractRejectsUntrustedTargets(t *testing.T) {
 	tests := []struct {
 		name   string

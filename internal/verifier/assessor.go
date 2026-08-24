@@ -744,7 +744,21 @@ func validateSemanticAssessmentEntityResults(
 				errs = append(errs, semanticErr(fmt.Sprintf("entity_results[%d].candidate_entity_id", i), "is required for reuse"))
 				continue
 			}
-			if !hasGroup || group.CandidateContextTruncated || len(matching) != 1 || matching[0].EntityID != *result.CandidateEntityID {
+			exactKnownReuse := false
+			if hasGroup && !group.CandidateContextTruncated {
+				knownEntityID := ""
+				if target, ok := entityTargets[result.Ref]; ok {
+					knownEntityID = target.KnownEntityID
+				}
+				for _, candidate := range matching {
+					if candidate.EntityID != *result.CandidateEntityID {
+						continue
+					}
+					exactKnownReuse = len(matching) == 1 || (knownEntityID != "" && knownEntityID == *result.CandidateEntityID)
+					break
+				}
+			}
+			if !exactKnownReuse {
 				errs = append(errs, semanticErr(fmt.Sprintf("entity_results[%d].candidate_entity_id", i), "is not the single reusable exact candidate"))
 			}
 		case string(domain.EntityResolutionCreate):
