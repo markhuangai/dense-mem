@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,8 +11,10 @@ import (
 )
 
 type contractSourceRevision struct {
-	revision string
-	previous string
+	revision  string
+	previous  string
+	authority string
+	envelope  string
 }
 
 func validateSourceRevisionBatch(
@@ -24,9 +27,23 @@ func validateSourceRevisionBatch(
 		return nil
 	}
 	current := contractSourceRevision{
-		revision: stringField(fields, "source_revision"),
-		previous: stringField(fields, "previous_source_revision"),
+		revision:  stringField(fields, "source_revision"),
+		previous:  stringField(fields, "previous_source_revision"),
+		authority: stringField(fields, "authority"),
 	}
+	if current.authority == "" {
+		current.authority = "primary"
+	}
+	envelope, err := json.Marshal(map[string]any{
+		"source_type":  fields["source_type"],
+		"source":       fields["source"],
+		"source_group": fields["source_group"],
+		"metadata":     fields["metadata"],
+	})
+	if err != nil {
+		return fmt.Errorf("evidence[%d].metadata: source revision provenance is invalid", index)
+	}
+	current.envelope = string(envelope)
 	prior, exists := seen[sourceKey]
 	if !exists {
 		seen[sourceKey] = current
@@ -35,9 +52,13 @@ func validateSourceRevisionBatch(
 	if prior != current {
 		field := "source_revision"
 		if prior.revision == current.revision {
-			field = "previous_source_revision"
+			if prior.previous != current.previous {
+				field = "previous_source_revision"
+			} else {
+				field = "source_key"
+			}
 		}
-		return fmt.Errorf("evidence[%d].%s: source_key revision fields must match earlier item in request", index, field)
+		return fmt.Errorf("evidence[%d].%s: source_key revision fields must match earlier item in request, including source provenance", index, field)
 	}
 	return nil
 }

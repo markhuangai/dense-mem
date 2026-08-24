@@ -217,6 +217,38 @@ func TestRememberRejectsMixedSourceRevisionBatch(t *testing.T) {
 	}
 }
 
+func TestRememberRejectsMixedSourceRevisionProvenance(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	require.NoError(t, err)
+	base := []any{
+		map[string]any{
+			"content": "first source fragment", "source_key": "wiki://write-pipeline", "source_revision": "rev-1",
+			"source_type": "document", "authority": "primary", "source": "wiki", "metadata": map[string]any{"section": "one"},
+		},
+		map[string]any{
+			"content": "second source fragment", "source_key": "wiki://write-pipeline", "source_revision": "rev-1",
+			"source_type": "document", "authority": "primary", "source": "wiki", "metadata": map[string]any{"section": "one"},
+		},
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "source type", mutate: func(item map[string]any) { item["source_type"] = "manual" }},
+		{name: "authority", mutate: func(item map[string]any) { item["authority"] = "secondary" }},
+		{name: "metadata", mutate: func(item map[string]any) { item["metadata"] = map[string]any{"section": "two"} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			evidence := []any{cloneMap(base[0].(map[string]any)), cloneMap(base[1].(map[string]any))}
+			test.mutate(evidence[1].(map[string]any))
+
+			err := ValidateContractInput(remember, withRequiredFlatRelationship(map[string]any{"evidence": evidence}), []string{"write"})
+
+			require.ErrorContains(t, err, "including source provenance")
+		})
+	}
+}
+
 func TestFlatRelationshipsRequireExactlyOneObject(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	if err != nil {

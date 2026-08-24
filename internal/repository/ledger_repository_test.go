@@ -137,6 +137,46 @@ func TestLedgerCreateIngestValidationAllowsDirectEvidenceSupersedes(t *testing.T
 	require.NoError(t, err)
 }
 
+func TestLedgerCreateIngestValidationRequiresConsistentSourceRevisionProvenance(t *testing.T) {
+	baseEvidence := []EvidenceInput{
+		{
+			Content: "first source fragment", SourceType: "document", Authority: "primary",
+			SourceKey: "doc://batch", SourceRevisionToken: "rev-1", SourceRevisionContentHash: "sha256:revision",
+			SourceRevisionEnvelope: map[string]any{"source": "docs", "metadata": map[string]any{"section": "one"}},
+		},
+		{
+			Content: "second source fragment", SourceType: "document", Authority: "primary",
+			SourceKey: "doc://batch", SourceRevisionToken: "rev-1", SourceRevisionContentHash: "sha256:revision",
+			SourceRevisionEnvelope: map[string]any{"source": "docs", "metadata": map[string]any{"section": "one"}},
+		},
+	}
+
+	consistent := validCreateIngestInput()
+	consistent.Evidence = append([]EvidenceInput(nil), baseEvidence...)
+	require.NoError(t, validateCreateIngestInput(normalizeCreateIngestInput(consistent)))
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*EvidenceInput)
+	}{
+		{name: "source kind", mutate: func(item *EvidenceInput) { item.SourceType = "manual" }},
+		{name: "authority", mutate: func(item *EvidenceInput) { item.Authority = "secondary" }},
+		{name: "revision envelope", mutate: func(item *EvidenceInput) {
+			item.SourceRevisionEnvelope = map[string]any{"source": "docs", "metadata": map[string]any{"section": "two"}}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := validCreateIngestInput()
+			input.Evidence = append([]EvidenceInput(nil), baseEvidence...)
+			test.mutate(&input.Evidence[1])
+
+			err := validateCreateIngestInput(normalizeCreateIngestInput(input))
+
+			require.ErrorContains(t, err, "including source provenance")
+		})
+	}
+}
+
 func TestLedgerCreateIngestFailsClosedWithoutDependencies(t *testing.T) {
 	_, err := (*LedgerRepositoryImpl)(nil).CreateIngest(context.Background(), validCreateIngestInput())
 	require.Error(t, err)
