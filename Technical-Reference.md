@@ -1,5 +1,9 @@
 # Technical Reference
 
+The only Remember runtime contract is `dense-mem.v2.6`. References to the v2.5
+normalizer or resubmission issues below are historical migration notes, not
+active client requirements or a readable compatibility projection.
+
 This page defines the current public memory contract. MCP discovery is
 the authoritative source for the exact schema visible to an authenticated
 principal:
@@ -57,7 +61,7 @@ role, and scope. Discovery and invocation apply the same checks.
 | eval_run_recall_case | read/write | Evaluation harness | Evaluation image only | Run recall and return ranked/context refs for deterministic scoring. |
 
 Memory-pack candidate discovery, inspection, import, and rollback are not part
-of the v2.5 contract. A destination uses a normal authenticated `remember`
+of the v2.6 contract. A destination uses a normal authenticated `remember`
 submission for any evidence derived from an external artifact.
 
 The release binary is compiled without the `evaluation` build tag. It cannot
@@ -162,8 +166,7 @@ rather than referencing a separate proposal object.
   "evidence": [{
     "content": "Dense-Mem uses PostgreSQL.",
     "source_type": "manual",
-    "source": "architecture-note",
-    "idempotency_key": "architecture-note-20260801"
+    "source": "architecture-note"
   }],
   "relationships": [{
       "ref": "uses-postgresql",
@@ -181,7 +184,6 @@ rather than referencing a separate proposal object.
         "known_entity_id": null
       }},
       "polarity": "+",
-      "modality": "statement",
       "evidence_indices": [0]
   }],
   "idempotency_key": "architecture-submission-20260801"
@@ -196,28 +198,33 @@ typed `value`, never both.
 `remember` rejects caller `span`, `surface`, and Relationship `supports` fields.
 The server finds bounded occurrences of submitted Entity names and active
 aliases in the cited evidence and issues opaque boundary references. The
-assessor selects exact Entity, predicate, Value, and support ranges; deterministic
-validation proves that every selected range is within the Relationship's cited
-evidence before any durable span is committed.
+assessor owns grounding repair, identity choice, predicate reconciliation,
+support decisions, and repairable races. Deterministic validation proves that
+every selected range is within the Relationship's cited evidence before any
+durable span is committed.
 
 The client makes its best effort to provide a matching
 `predicate.proposed_key`, at most 128 Unicode code points. The server rejects
 oversized values rather than truncating them. It forwards the logical proposal
-with bounded same-team candidate and predicate options but does not make the
-suggestion authoritative. The client can provide a same-team `known_entity_id`
-candidate hint, but cannot create an Entity ID, register or activate a
-predicate, name a durable Relationship ID, set confidence, set status, or alter
-durable support.
+with bounded same-team candidate and predicate options but does not make a
+`proposed_key` authoritative. A server-issued `known_entity_id` is an exact
+same-team identity constraint, and `known_predicate_key` is an exact active team
+predicate constraint. Omit the known field when server selection is intended.
+The client cannot fabricate an Entity ID, register or activate a predicate,
+name a durable Relationship ID, set confidence, set status, or alter durable
+support. An Entity hint needs `name` or `known_entity_id`; `entity_kind` is
+optional and non-authoritative. A predicate hint needs `proposed_key` or
+`known_predicate_key`.
 
 ### Relationship fields
 
 | Field | Required | Meaning |
 | --- | --- | --- |
 | ref | yes | Unique client-local proposal reference, at most 128 code points. |
-| subject | yes | Inline Entity with `name`, `entity_kind`, and optional `known_entity_id` hint. |
-| predicate | yes | Object containing only the best-effort `proposed_key`. |
+| subject | yes | Inline Entity with at least one of `name` or exact `known_entity_id`; optional `entity_kind` is non-authoritative. |
+| predicate | yes | Object containing at least one of best-effort `proposed_key` or exact `known_predicate_key`. |
 | object | yes | Exactly one inline `entity` or typed `value`. |
-| polarity / modality | yes | `+` or `-`; modality is `statement`, `question`, `proposal`, `speculation`, or `quoted`. Only statements are eligible for automatic commit. |
+| polarity | yes | `+` or `-`; Remember Relationships are statements. There is no public `modality` field. |
 | evidence_indices | yes | One to twenty unique indexes into this request's `evidence` array. |
 | valid_from / valid_to | no | RFC 3339 evidence-supported validity hints. |
 | correction_target | no | Same-team Relationship ID and expected version supplied from authorized context. |
@@ -241,15 +248,17 @@ optional hints and are grounded by the assessor.
 | source_key / source_revision | no | Stable source identity and opaque current revision. |
 | previous_source_revision | no | Exact compare-and-set revision when advancing a source. |
 | supersedes_evidence_ids | no | One to fifty owned current evidence IDs for a direct replacement. |
-| idempotency_key | no | Evidence retry key. |
 | labels / metadata | no | Bounded source-policy-approved metadata. |
 
 Direct supersession and a source revision advance cannot be combined.
 
-There is no held-submission target or `replaces_submission_id` field. When a
-Remember run fails, correct the evidence and Relationships and send one new
-complete request with a new idempotency key. Evidence-level supersession via
-`supersedes_evidence_ids` remains a separate lifecycle operation.
+There is one required top-level `idempotency_key`. Evidence-level or derived
+keys are not accepted. Its value is excluded from the canonical body hash, so
+same-owner retries replay the original submission while a changed body with
+the same key conflicts immediately. There is no held-submission target or
+`replaces_submission_id` field. When a run needs correction, send one new
+complete batch with a new key. Evidence-level supersession via
+`supersedes_evidence_ids` remains part of the same complete batch when needed.
 
 ### Response
 
@@ -265,14 +274,17 @@ complete request with a new idempotency key. Evidence-level supersession via
 ~~~
 
 This is durable staging acknowledgement only. It does not say the evidence is
-active knowledge or that a vector is current.
+active knowledge or that a vector is current. `check_after_seconds` is only a
+polling hint; it is not an assessor deadline or a client-visible provider
+timeout.
 
-A valid structure response still passes deterministic server policy. If policy,
-normalization, provider availability, or persistence cannot complete the whole
-run, the submission becomes terminal `failed` with zero semantic commit and a
-closed resubmission error. There is no approval, hold, replacement slot, or
-partial semantic state; the caller submits a corrected complete batch with a new
-idempotency key.
+A valid assessor response is checked as one complete batch. A stored result is
+recorded for every submitted `ref`; an unsupported hint is recorded as
+`not_stored` when every evidence item is still covered by at least one stored
+split. Only `no_supported_memory` and `stale_input` are public semantic
+rejections. Provider, configuration, database, and internal faults are typed
+operational failures. All accepted semantic effects commit atomically; there
+is no approval, hold, replacement slot, or partial semantic state.
 
 ## get_submission_status
 
@@ -301,6 +313,11 @@ visibility does not grant access to another profile's submission.
   "started_at": "2026-08-18T01:00:01Z",
   "updated_at": "2026-08-18T01:00:03Z",
   "completed_at": "2026-08-18T01:00:03Z",
+  "relationship_results": [{
+    "ref": "uses-postgresql",
+    "disposition": "stored",
+    "splits": [{"split_index": 0, "relationship_id": "rel_01J...", "relationship_version": 1, "status": "active"}]
+  }],
   "evidence": [{
     "evidence_id": "evidence_01J...",
     "evidence_index": 0,
@@ -324,18 +341,13 @@ awaiting_confirmation.
 | quarantined | A worker-time deterministic or assessor security concern isolated already-staged data. |
 | failed | A required worker, provider, or persistence operation exhausted bounded retry policy. |
 
-There is no `awaiting_review` response or `semantic_hold` projection. Terminal
-normalizer/provider/policy failures expose a deduplicated `errors[]` item with a
-closed next action. `submission_requires_resubmission`,
-`normalization_failed`, `normalizer_unavailable`, `assessor_response_invalid`,
-and `assessor_unavailable` use `resubmit_submission`; send the complete batch
-again after correction. A `submission_requires_resubmission` error also carries
-the bounded `resubmission_issues` list when the server can identify the
-relationship reference and component that need correction. Each issue contains
-only a closed code, optional client-local `relationship_ref`, optional
-`component`, and bounded guidance `message`. If the list was capped or a stored
-issue was malformed, `resubmission_issues_truncated` is true; callers must
-correct the returned issues without treating the list as a complete inventory.
+There is no `awaiting_review` response, `semantic_hold` projection, or
+`resubmission_issues` client repair list. Terminal status exposes a deduplicated
+closed error. For Remember, semantic rejection is limited to
+`no_supported_memory` and `stale_input`; both require a complete new batch with
+a new key. Provider/network/configuration/database/internal faults remain
+typed operational failures, while search or embedding trouble is a degradation
+on an otherwise completed semantic submission.
 
 search_state is not the processing state:
 
@@ -357,7 +369,7 @@ returns raw assessor prompts or responses, placement IDs, review tasks, security
 override controls, credentials, or cross-profile data. Legacy placement and
 review tools are absent from the catalog.
 
-## Deterministic Security Gate and Remember Normalizer
+## Deterministic Security Gate and Remember Assessor
 
 The write-time scanner rejects explicit encoded/obfuscated payloads when their
 bounded decode or shape indicates a threat, along with hidden controls,
@@ -374,32 +386,30 @@ by itself: direct quoted or bracketed directives still reject, while descriptive
 quoted tool/network examples remain eligible. Audit and security-event records
 retain bounded rules and spans without a scanner version or policy hash.
 
-A passed submission receives one logical capability-free normalizer conversation
-for the whole run. It contains the full staged evidence, raw logical client
+A passed submission receives one capability-free assessor conversation for the
+whole run. It contains the full staged evidence, raw logical client
 Relationships, server-generated Entity occurrence groundings and complete
-matching candidate sets, all exact active predicate key/alias matches, and
-bounded evidence-relevant predicate options. A limit-plus-one query proves that
-exact candidate and predicate matches fit their configured bounds; they are
-never silently truncated. `catalog_context_overflow`,
-`predicate_options_overflow`, or `assessment_input_overflow` ends the run before
-a provider call and creates no semantic state. The closed structure-only response contains:
+matching candidate sets, exact active predicate matches, and bounded
+evidence-relevant predicate options. A limit-plus-one query proves that exact
+candidate and predicate matches fit their configured bounds; they are never
+silently truncated. `input_budget_exceeded` ends the run before a provider call
+and creates no semantic state. The closed response contains:
 
 - one security verdict, signals, and bounded justification for each evidence
   item;
-- normalized Entity and Relationship results with selected boundary-reference
+- repaired Entity and Relationship results with selected boundary-reference
   ranges for Entity, predicate, Value, and support grounding; and
 - an allowlisted existing predicate choice or a typed registration-required
   result.
 
-The normalizer cannot clear a deterministic signal, choose an unprovided stored
-ID, access tools or secrets, set durable state, return confidence/rationale or
-review fields, create or activate a predicate, or commit a record. Predicate
-registration is a server-controlled, locked, auditable step inside the atomic
-semantic transaction. A normalizer security concern quarantines a staged
-submission; an invalid or incomplete response is regenerated as one complete
-replacement in the same conversation, bounded to four correction turns. An
-exhausted response or unavailable provider terminalizes the whole submission
-with zero semantic commit and resubmission guidance.
+The assessor cannot clear a deterministic signal, access tools or secrets,
+invent unrelated claims, override exact IDs or keys, choose ownership or
+lifecycle, set durable state, or commit a record. It may repair grounding,
+reuse/create Entities, reconcile predicates, split supported hints, or mark a
+hint `not_stored`. Invalid complete responses are regenerated in the same
+session for at most five semantic turns. An exhausted or unavailable provider
+terminalizes the whole submission with zero semantic commit and a bounded
+operational error.
 
 ## Evidence Lifecycle and Corrections
 
@@ -550,7 +560,8 @@ worker cannot claim its physical purge until the hold is released.
 ## Contract Acceptance
 
 1. tools/list and tools/call share registry, contract, feature, and scope checks;
-2. remember rejects missing Relationships, unknown span/surface/support fields,
+2. remember requires one top-level idempotency key, rejects evidence-level keys,
+   public modality, unknown span/surface/support fields,
    duplicate or out-of-range evidence indexes, and incomplete evidence-index
    coverage;
 3. deterministic security rejection creates no canonical or staged submission;
@@ -573,24 +584,28 @@ least one `errors[]` item. Each item has a closed `code`, bounded `message`,
 boolean `retryable`, closed `next_action`, and bounded `remediation`. The
 allowed actions are `poll_status`, `resubmit_submission`,
 `retry_correction`, `contact_operator`, and `none`.
-Codes are closed and server-authored, including
-`submission_requires_resubmission`, `normalization_failed`,
-`normalizer_unavailable`, `submission_policy_rejected`,
-`assessor_response_invalid`, `assessor_unavailable`,
-`submission_processing_failed`, `submission_quarantined`,
-`contract_superseded`, and
-`search_indexing_delayed`. Item errors and the aggregate list are
+For Remember, semantic rejection codes are only `no_supported_memory` and
+`stale_input`. Operational codes are `provider_unavailable`,
+`provider_response_invalid`, `input_budget_exceeded`,
+`configuration_invalid`, `database_failure`, and
+`internal_failure`; `search_indexing_delayed` is a degradation. Item errors and the aggregate list are
 deterministically deduplicated. Provider output, SQL, prompts, credentials,
 stack traces, and cross-owner existence are never returned.
 
-The remaining closed correction codes are `relationship_version_stale`,
+A submission whose stored contract is not exactly `dense-mem.v2.6` is outside
+the runtime contract and returns the same bounded not-found response as an
+unavailable submission. Its historical migration stage remains internal audit
+data; it is not negotiated, relabeled as v2.6, or exposed as a public error.
+
+The correction-only rejection code is `submission_policy_rejected`. The
+remaining closed correction codes are `relationship_version_stale`,
 `relationship_not_active`, `object_kind_change_forbidden`,
 `support_set_mismatch`, `entity_not_found`, `too_many_entity_candidates`,
 `predicate_not_found`, `predicate_subject_kind_mismatch`,
 `predicate_object_kind_mismatch`, `no_change`, `confirmation_expired`,
 `relationship_changed`, `support_set_changed`, `persistent_ambiguity`, and
 `inactive_relationship_collision`. Unknown persisted reasons map to
-`submission_processing_failed` rather than crossing the public boundary.
+`internal_failure` rather than crossing the public boundary.
 
 The SDK transport accepts `2024-11-05`, `2025-03-26`, `2025-06-18`,
 `2025-11-25`, and `2026-07-28`. The first four use the compatibility

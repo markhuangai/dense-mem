@@ -120,7 +120,7 @@ flowchart LR
 | `entity_resolution_events` | append-only assessor and server decisions for evidence-local mentions |
 | `entity_correction_events` | append-only merge, split, and reassignment decisions |
 | `relationship_observations` | immutable extracted statements tied to exact evidence spans |
-| `placement_assessments` | append-once normalized Remember response for one legacy item claim or one submission-wide run; scope-bound uniqueness makes restart and commit retry reuse it |
+| `placement_assessments` | append-once validated Remember response for one legacy item claim or one submission-wide run; scope-bound uniqueness makes restart and commit retry reuse it |
 | `predicate_registration_events` | append-only provenance for server-controlled predicate creation or reuse during a submission-wide semantic transaction |
 | `verification_events` | append-only Relationship judgments derived from persisted schema-valid assessor results |
 | `relationship_records` | one authored Relationship episode's current status, effective support, validity, author, and version |
@@ -128,7 +128,7 @@ flowchart LR
 | `relationship_support_decision_events` | append-only grant/revoke/reinstate decisions controlling effective support |
 | `relationship_transition_events` | append-only status/validity-bound history |
 | `relationship_cross_references` | append-only same-team confirmation, challenge, correction, and evidence-adoption links between profile-owned Relationships |
-| `review_tasks` | inert historical audit rows for retired placement decisions and older policy/correction records; V2.5 Remember creates no review task or client approval state |
+| `review_tasks` | inert historical audit rows for retired placement decisions and older policy/correction records; v2.6 Remember creates no review task or client approval state |
 | `relationship_conflict_cases` | current team-scoped status, version, deadline, due/lease metadata, effective time, and preferred-position disposition for material cross-profile Relationship conflicts |
 | `relationship_conflict_positions` | current bounded grouping of authored Relationship IDs/versions into equivalent case positions without merging ownership |
 | `relationship_conflict_events` | append-only open, membership, evaluation, resolve, reopen, overdue, and dismiss history |
@@ -143,7 +143,10 @@ flowchart LR
 | `embedding_contracts` | versioned provider/model/dimension/normalization/query meaning shared by compatible query and document vectors |
 | `search_projection_generations` | per-team, per-source-kind text projection convergence and vector activation state |
 | `search_index_generations` | versioned pgvector physical index compatibility, build state, and active pointer |
-| `placement_runs` / `placement_items` | observable Remember processing workflow, stable claim identity, retry, failure state, and terminal resubmission guidance |
+| `placement_runs` / `placement_items` | observable v2.6 Remember workflow, stable claim identity, retry, rejected/failed state, and bounded status guidance |
+| `remember_source_revision_intents` | staged source identity/revision intent applied only by an accepted atomic commit |
+| `remember_supersession_intents` | staged owned evidence-replacement targets applied only by an accepted atomic commit |
+| `submission_relationship_results` | one stored/not_stored disposition per submitted Relationship ref, including canonical split mappings |
 
 Terminal embedding jobs are coordination history, not canonical memory. A
 system-context retention pass deletes only `completed`, `stale`, and
@@ -194,13 +197,14 @@ replacement. `VerificationEvent` and Entity-resolution rows reference the
 persisted assessment so a restart, lease reclaim, or semantic transaction retry
 applies the same decision.
 
-Current writes use `assessment_scope = submission`: one persisted response covers every
+Current v2.6 writes use `assessment_scope = submission`: one persisted response covers every
 evidence item and relationship ref in that run, including multiple
 relationships that cite the same evidence index. Commit verifies that the
 assessment belongs to the exact team/owner/ingest/run before it writes any
-semantic row. The V2.5 worker terminalizes unfinished placements with a
-different stored contract version as `contract_superseded`, so caller-grounded
-V2.4 proposals cannot be reinterpreted by the server-grounded worker.
+semantic row. The v2.6 worker accepts only the current assessor contract;
+unfinished older Remember placements are historical migration rows marked
+with an internal `contract_superseded` stage, so they cannot be reinterpreted by
+the current worker or hydrated by public v2.6 submission status.
 
 V2.4 adds nullable audit fields to `verification_events` for
 `assessment_id`, `assessment_policy_version`, `threshold_used`, and
@@ -209,27 +213,25 @@ V2.4 adds nullable audit fields to `verification_events` for
 
 Historical `review_tasks` rows may contain public-safe questions, bounded
 options, guidance, old task types, and expiry metadata. They are retained only
-for audit and are not a current client workflow: V2.5 has no task expiry worker,
+for audit and are not a current client workflow: v2.6 has no task expiry worker,
 approval action, or Remember writer for this table. Security quarantine,
 caller-owned correction, and cross-profile Conflict cases use their dedicated
-workflows. The V2.5 `remember` path stores the complete normalizer response,
-applies server policy, and either promotes atomically or ends the run as
-`failed` with `submission_requires_resubmission` (or another closed error).
-There is no `submission_holds` table, hold projection, approval state,
-replacement slot, or successor link.
+workflows. The v2.6 `remember` path stores the complete assessor response and
+per-ref dispositions, then either promotes accepted effects atomically or ends
+as `rejected` (`no_supported_memory` or `stale_input`) or a typed operational
+`failed` outcome. There is no `submission_holds` table, hold projection,
+approval state, replacement slot, or successor link.
 
-### Restart and resubmission boundary
+### Historical v2.5 restart and v2.6 staging boundary
 
-Migration `20260821160001_remember_normalizer` is an exclusive restart boundary.
-Unfinished `queued`, `guarded`, `processing`, and historical `awaiting_review`
-Remember placement runs/items identified by the explicit or pre-marker origin
-predicate and their ingest rows are terminalized as `failed`, their claims are
-cleared, and each item records `resubmit_submission` guidance. Unrelated
-non-Remember placement work remains untouched. Only placement-linked legacy
-review tasks attached to discarded Remember runs are canceled; unlinked
-correction/conflict audit rows remain unchanged. Completed canonical state is
-retained. Missing knowledge is intentionally resubmitted as one complete new
-Remember request with a new idempotency key.
+Migration `20260821160001_remember_normalizer` is historical upgrade
+archaeology. It terminalized unfinished old Remember work and preserved
+completed canonical state; v2.6 does not resume those rows. New v2.6 staging
+inserts exact evidence plus source and supersession intent, but does not move a
+source pointer, supersede evidence, create lifecycle events, activate a
+Relationship, write search documents, or enqueue embeddings. Those effects are
+performed together only after stored support covers every evidence item. A
+rejected or failed submission leaves the staged rows non-recallable.
 
 The exact Relationship identity, fields, and lifecycle belong only in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle). Entity
@@ -915,7 +917,7 @@ drills. Runbook commands belong in
 | Mixed-version rollback corrupts search state | old workers interpret new generation fields or new workers run against restored old schema | treat application release and database backup as one rollback unit and prohibit mixed-version operation |
 | Restart causes a second assessor decision | a worker receives a valid response, loses its lease before semantic commit, then calls the model again | persist the first valid normalized response under a unique stable claim key and reload it on every retry |
 | V2.4 migration silently changes existing knowledge | a backfill applies the new threshold to legacy events and demotes active Relationships | keep new audit fields nullable, prohibit rescoring/status/support updates, and reconcile lifecycle counts before opening traffic |
-| Retired review metadata is treated as current approval | an operator or new worker interprets an old expiry field as permission to promote | V2.5 creates no review task or expiry worker; unfinished Remember work fails and requires complete resubmission |
+| Retired review metadata is treated as current approval | an operator or new worker interprets an old expiry field as permission to promote | v2.6 creates no review task or expiry worker; historical unfinished work remains internal audit data and any new work starts as an independent v2.6 submission |
 
 ## Storage Invariants
 

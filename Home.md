@@ -17,9 +17,10 @@ Dense-Mem is suited to:
 - provenance needed to explain a remembered Relationship
 
 Dense-Mem is not a truth oracle. A host LLM chooses when to call it. Dense-Mem
-stores exact evidence, resolves structure/identity/support in one strict
-assessor response, applies a bounded confidence gate plus deterministic
-lifecycle rules, and preserves trace.
+stores exact evidence, lets one bounded assessor session repair
+grounding/identity/predicate/support decisions, applies deterministic lifecycle
+rules, and preserves trace. Unsupported hints can be `not_stored` when every
+evidence item remains covered by stored Relationships.
 
 ## How It Works
 
@@ -76,7 +77,8 @@ profiles disagree       -> preserve each author; use a team Conflict case
 new real identity       -> create one Entity
 new relationship        -> create one Relationship
 actual ambiguity        -> server assessment; no client resolution loop
-uncertain grounding/evidence -> failed complete run; resubmit; no semantic commit/default recall
+unsupported or ungroundable hint -> `not_stored` when other stored splits cover
+the evidence; otherwise `rejected/no_supported_memory`; no partial commit
 dream speculation       -> Hypothesis only; no new node
 ```
 

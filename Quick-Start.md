@@ -66,14 +66,13 @@ gate. Follow
 [Relationship projection upgrade](Operations-Runbook#relationship-projection-upgrade).
 
 Only after that prerequisite is complete, apply the V2.4 secure-submission
-upgrade and then the current V2.5 Remember normalizer restart migration. The
-V2.5 migration is a hard restart boundary: it preserves accepted canonical
-state, terminalizes unfinished queued/guarded/processing and historical
-`awaiting_review` placement work with `submission_requires_resubmission`, and
-cancels only placement-linked review tasks attached to that discarded work. It
-does not create a cutover marker or a new queue/hold table. Callers resubmit
-missing knowledge as one complete batch with a new idempotency key. Do not run
-mixed-version API or workers in the cutover.
+upgrade and then the current v2.6 Remember reliability migration. The v2.6
+migration is a hard restart boundary: it preserves accepted canonical state,
+terminalizes unfinished pre-v2.6 Remember work with an internal
+`contract_superseded` migration stage, and does not create a cutover marker or a
+queue/hold table. Stop every Dense-Mem service before applying it, then start
+only the v2.6 API, workers, and control service. Do not run mixed-version nodes,
+retain a fallback reader, or expose historical submissions through v2.6 status.
 
 ## 2. Configure Required Values
 
@@ -189,10 +188,9 @@ flowchart LR
   Intake --> Poll["get_submission_status"]
   Poll --> State{"processing_state"}
   State -- queued/processing --> Poll
-  State -- failed --> Diagnose["Read closed errors;<br/>resubmit the complete batch"]
+  State -- failed --> Diagnose["Read typed operational error;<br/>retry or contact operator"]
   State -- rejected --> New["Submit new complete evidence-and-Relationships batch if appropriate"]
   State -- quarantined --> Isolated["Do not use content; optional fresh independent batch"]
-  State -- failed --> Diagnose["Use safe error and correlation ID"]
   State -- completed --> Search{"search_state"}
   Search -- pending --> Recall["Recall may use current<br/>full-text/adjacency state"]
   Search -- current --> Recall
@@ -200,14 +198,17 @@ flowchart LR
   Degraded --> Recall
 ```
 
-Valid outcomes:
+Valid v2.6 outcomes:
 
 - completed canonical promotion with active eligible support
-- a failed terminal run with zero semantic commit and bounded
-  `resubmit_submission` guidance
+- a rejected terminal run with zero semantic commit and either
+  `no_supported_memory` or `stale_input`
+- a failed terminal run with zero semantic commit and a typed operational error
 - explicit rejected, quarantined, or failed terminal outcome
 - a separate search state: pending/current/not_required/failed
-- no client approval task, placement selection, or quarantine-release action
+- no client approval task, placement selection, or quarantine-release action;
+  unsupported Relationship hints are reported as `not_stored` when stored
+  splits still cover every evidence item
 
 The authoritative submission contract is in
 [Technical Reference](Technical-Reference#get_submission_status).

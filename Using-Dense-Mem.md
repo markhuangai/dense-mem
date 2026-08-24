@@ -70,8 +70,7 @@ lists must cover every evidence item.
 {
   "evidence": [{
     "content": "Dense-Mem uses PostgreSQL.",
-    "source_type": "manual",
-    "idempotency_key": "architecture-20260801"
+    "source_type": "manual"
   }],
   "relationships": [{
       "ref": "uses-postgresql",
@@ -85,18 +84,19 @@ lists must cover every evidence item.
         "entity_kind": "product"
       }},
       "polarity": "+",
-      "modality": "statement",
       "evidence_indices": [0]
-  }]
+  }],
+  "idempotency_key": "architecture-20260801"
 }
 ~~~
 
-`remember` does not accept caller `span`, `surface`, or Relationship `supports`
-fields. The server finds bounded Entity occurrences and issues boundary
-references; the assessor selects exact Entity, predicate, Value, and support
-ranges under closed-schema validation. A `known_entity_id` remains only a
-same-team candidate hint, and a Relationship object contains exactly one of an
-Entity or a typed Value.
+`remember` does not accept caller `span`, `surface`, Relationship `supports`,
+evidence-level idempotency keys, or public `modality`. The server finds bounded
+Entity occurrences and issues boundary references; the assessor owns grounding
+repair, identity, predicate reconciliation, and support decisions. A
+`known_entity_id` is an exact same-team server-issued identity constraint; omit
+it when the server should choose from a name. A Relationship object contains
+exactly one of an Entity or a typed Value.
 
 Do not:
 
@@ -132,12 +132,16 @@ includes `retryable`, one closed `next_action`, and a concrete `remediation`.
 Clients should execute that guidance instead of inferring recovery from the
 message text.
 
-Status also includes per-evidence search readiness and bounded reason codes.
+Status also includes per-evidence search readiness, one `relationship_results`
+entry for every submitted `ref`, and bounded reason codes. A result is either
+`stored` with canonical split IDs or `not_stored` with a bounded reason; the
+latter is allowed only when all evidence remains covered by stored splits.
 There is no `awaiting_review` state, `semantic_hold` object, replacement slot,
-or approval action. Normalization, policy, provider, and persistence failures
-return closed error guidance; `resubmit_submission` means send one complete
-corrected batch with a new idempotency key. Status does not include placement
-IDs, assessor prompts, raw responses, review tasks, or a control that overrides
+or approval action. Assessor, provider, and persistence failures return closed
+error guidance. Remember semantic rejection is limited to
+`no_supported_memory` and `stale_input`; both mean send one complete corrected
+batch with a new idempotency key. Status does not include placement IDs,
+assessor prompts, raw responses, review tasks, or a control that overrides
 server policy.
 
 quarantined submissions retain an isolated raw payload copy for exactly 24
@@ -159,8 +163,7 @@ The new submission still needs a complete evidence-and-Relationships batch.
   "evidence": [{
     "content": "Dense-Mem uses PostgreSQL as its durable authority.",
     "source_type": "manual",
-    "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"],
-    "idempotency_key": "storage-correction-20260801"
+    "supersedes_evidence_ids": ["<owned-current-evidence-uuid>"]
   }],
   "relationships": [{
       "ref": "uses-postgresql",
@@ -174,9 +177,9 @@ The new submission still needs a complete evidence-and-Relationships batch.
         "entity_kind": "product"
       }},
       "polarity": "+",
-      "modality": "statement",
       "evidence_indices": [0]
-  }]
+  }],
+  "idempotency_key": "storage-correction-20260801"
 }
 ~~~
 
@@ -188,12 +191,16 @@ can still show prior knowledge.
 
 ## Entity Reuse and Predicates
 
-The client can include a known_entity_id only as a same-team candidate hint. The
-Remember normalizer returns only evidence-grounded structure using bounded
-candidates and the team predicate catalog. Complete-response validation and
-bounded same-history regeneration happen before the server adapts the result to
-the atomic commit path. The server, not the model, supplies confidence,
-ownership, lifecycle, and promotion policy.
+The client can include a same-team server-issued `known_entity_id` as an exact
+identity constraint or omit it and provide a name for server-owned selection.
+Likewise, `known_predicate_key` fixes the active team predicate; `proposed_key`
+remains advisory. The Remember assessor returns only evidence-grounded
+structure using bounded candidates and the team predicate catalog.
+Complete-response validation and bounded same-session repair happen before the
+atomic commit path. The server, not the model, owns support disposition,
+ownership, lifecycle, and promotion policy. v2.6 Remember emits no model
+confidence or rationale; Dream and correction workflows retain their separate
+assessment contracts.
 
 A novel predicate candidate can be accepted and registered by the server in the
 same atomic promotion transaction. There is no predicate review task and no

@@ -1,10 +1,11 @@
 # Conflicts And Corrections
 
 Dense-Mem preserves raw evidence and resolves stale authored state with audited
-Relationship lifecycle transitions. Remember normalizes structure before the
-server applies deterministic policy; if that complete run cannot be promoted,
-it fails with bounded resubmission guidance and zero semantic commit. A profile
-cannot mutate another profile's Relationship, but
+Relationship lifecycle transitions. Remember uses one bounded assessor session
+before the server applies deterministic policy; unsupported hints may be
+`not_stored` when stored support covers every evidence item, while
+`no_supported_memory` and `stale_input` are the only semantic rejections. A
+profile cannot mutate another profile's Relationship, but
 the bounded system Conflict reviewer may close a losing team Relationship episode
 after an evidence-backed case resolution. Evidence bytes, observations, support
 links, and author attribution remain immutable.
@@ -29,7 +30,7 @@ sequenceDiagram
   User->>Host: Production now deploys from release
   Host->>DM: remember(new evidence)
   DM->>PG: Preserve evidence, observation, VerificationEvent, and conflict
-  DM-->>Host: failed + resubmit_submission guidance
+  DM-->>Host: completed/rejected status with bounded disposition guidance
   Host->>DM: trace_memory(related relationship_id)
   DM->>PG: Load current state and append-only history
   PG-->>DM: Existing/new evidence, decisions, and transitions

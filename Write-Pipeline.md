@@ -20,13 +20,14 @@ flowchart LR
   Stage --> Status["submission_id"]
   Stage --> Worker["Server placement worker"]
   Worker --> Ground["Server-owned grounding<br/>and bounded catalogs"]
-  Ground --> Assessor["Capability-free Remember normalizer"]
+  Ground --> Assessor["Capability-free Remember assessor"]
   Assessor --> Security{"Security concern?"}
   Security -- yes --> Quarantine["Quarantine for exactly 24 hours"]
   Security -- no --> Validate{"Closed-schema validation"}
-  Validate -- invalid --> Correct["Complete same-history correction<br/>or terminal resubmission failure"]
+  Validate -- invalid --> Correct["Complete same-session repair<br/>or bounded operational failure"]
   Validate -- valid --> Policy["Deterministic server policy"]
-  Policy -- reject --> Failed["Terminal failed;<br/>resubmit complete batch"]
+  Policy -- reject --> RejectMemory["Rejected: no_supported_memory<br/>or stale_input"]
+  Policy -- fault --> Failed["Terminal operational failure"]
   Policy -- accept --> Promote["Atomic canonical promotion"]
   Promote --> Search["Derived search/embedding jobs"]
   Status --> Poll["get_submission_status"]
@@ -61,8 +62,9 @@ evidence item. The server reports all missing indexes together and stages
 nothing.
 
 Each Relationship is self-contained. It contains an inline subject and object
-Entity (or typed Value), a predicate key proposal, polarity, modality, and its
-supporting evidence indexes. `remember` does not accept caller `span`,
+Entity (or typed Value), a predicate key proposal, polarity, and its supporting
+evidence indexes. Remember Relationships are statements; there is no public
+`modality` field. `remember` does not accept caller `span`,
 `surface`, or Relationship `supports` fields.
 
 `relationship.ref` is request-local and unique. Several distinct Relationships
@@ -75,8 +77,7 @@ assessment.
 {
   "evidence": [{
     "content": "Dense-Mem uses PostgreSQL.",
-    "source_type": "manual",
-    "idempotency_key": "storage-architecture-20260801"
+    "source_type": "manual"
   }],
   "relationships": [{
       "ref": "uses-postgresql",
@@ -92,9 +93,9 @@ assessment.
         "entity_kind": "product"
       }},
       "polarity": "+",
-      "modality": "statement",
       "evidence_indices": [0]
-  }]
+  }],
+  "idempotency_key": "storage-architecture-20260801"
 }
 ~~~
 
@@ -105,9 +106,12 @@ with optional display and unit fields. The server and assessor ground the
 selected Entity, predicate, Value, and support ranges in cited evidence before
 commit.
 
-The client may offer a same-team `known_entity_id` inside an inline Entity as a
-candidate hint, but cannot choose canonical IDs, lifecycle state, support,
-predicate registration, or any acceptance outcome.
+The client may provide a same-team server-issued `known_entity_id` as an exact
+identity constraint or omit it for name-based server selection. An exact
+`known_predicate_key` likewise fixes the active team predicate, while
+`proposed_key` is advisory. The client cannot fabricate canonical IDs, choose
+lifecycle state or support, register a predicate directly, or choose an
+acceptance outcome.
 
 The source and lifecycle fields on evidence retain their normal ownership,
 idempotency, and source-revision rules. A direct replacement of owned current
@@ -154,10 +158,10 @@ Passing evidence is stored only in the submission staging boundary:
 ~~~text
 submission_runs
   ├── exact staged evidence
-  ├── client relationships
+  ├── client relationships and server processing intent
   ├── attempts, lease, and bounded error code
-  ├── assessor response and per-item outcomes
-  └── terminal resubmission guidance when required
+  ├── assessor response and per-ref dispositions
+  └── source/supersession intent until accepted commit
 
 canonical knowledge (separate until promotion)
   ├── evidence and observations
@@ -173,23 +177,21 @@ PostgreSQL RLS.
 ### Restart boundary and resubmission lifecycle
 
 Remember has no semantic hold, replacement slot, approval state, or
-`submission_holds` table. A clean structure response still passes through
-deterministic server policy; a policy rejection, exhausted normalizer
-correction, unavailable normalizer, or other required failure ends the complete
-submission as `failed` with a closed error and `resubmit_submission` guidance.
+`submission_holds` table. The assessor receives one complete request and can
+repair grounding, identity, predicate reconciliation, and supported splits in
+the same bounded conversation. A supported subset is committed only when every
+evidence item remains covered; unsupported refs are recorded as `not_stored`.
+Only `no_supported_memory` and `stale_input` are semantic rejections. Provider,
+configuration, database, and internal faults are typed operational failures.
 No Entity, Value, Relationship, lifecycle, search document, or embedding job is
-committed from a failed run. The caller corrects the complete evidence and
-Relationships batch and submits it again with a new idempotency key.
+committed from a rejected or failed run.
 
-The V2.5 restart migration terminalizes unfinished queued, guarded, processing,
-and historical `awaiting_review` placement work whose ingest metadata identifies
-explicit or pre-marker Remember origin. It marks those ingests failed, clears
-claims, and records `submission_requires_resubmission`; unrelated non-Remember
-placement work remains untouched. Review tasks attached to discarded Remember
-runs are canceled while independent correction, Conflict, and Dream tasks remain.
-It does not create a cutover marker or a new queue/hold table. Already completed
-canonical state is retained; incomplete knowledge is intentionally resubmitted
-after restart.
+The historical v2.5 restart migration terminalizes unfinished queued, guarded,
+processing, and `awaiting_review` placement work whose ingest metadata identifies
+the old Remember origin. It marks those rows with a contract-superseded failure,
+clears claims, and preserves completed canonical state. This is upgrade
+archaeology only; v2.6 runtime never accepts the old normalizer contract or
+resumes those rows. Unrelated non-Remember placement work remains untouched.
 
 ## Server-Owned Normalization and Assessment
 
@@ -199,8 +201,8 @@ name and active candidate aliases only within the Relationship's cited evidence.
 It assigns opaque grounding and boundary references, loads complete same-team
 candidate sets, resolves each proposed predicate key or alias exactly, and adds
 bounded active predicate options ranked by the submitted keys and evidence
-wording. It sends that context in one capability-free Remember-normalizer
-conversation. The normalizer returns structure only; it never decides truth,
+wording. It sends that context in one capability-free Remember-assessor
+conversation. The assessor returns structure and support selections only; it never decides truth,
 confidence, ownership, lifecycle, review, or promotion policy, and it never
 assesses or commits an evidence item independently. Submitted `valid_from` and
 `valid_to` values are preserved exactly; a non-null bound is accepted only when
@@ -230,16 +232,16 @@ overflow remains `catalog_context_overflow`; if the exact evidence and contract
 cannot fit the input budget, it ends as `assessment_input_overflow`. An omitted
 exact predicate must never become a false registration decision.
 
-One placement-run attempt has one logical normalizer conversation whose initial
+One placement-run attempt has one logical assessor conversation whose initial
 request contains every evidence item and relationship ref. A malformed complete
-response can receive at most four same-history complete-regeneration turns after
-the initial response. Timeout/transport failures receive bounded in-claim
-transport retries; an exhausted provider failure requeues through the durable
+response can receive at most four same-session complete-repair turns after the
+initial response. Timeout/transport failures receive bounded in-claim transport
+retries; an exhausted provider failure requeues through the durable
 placement-attempt budget. Once a valid run-scoped response is persisted,
 restart, lease reclaim, and commit retry reuse it and make no further provider
 call.
 
-The response is a closed structure-only schema. It must contain complete
+The response is a closed structural-assessment schema. It must contain complete
 security signals plus normalized Entity and Relationship results. Entity results
 select an allowlisted grounding reference; Relationship results select
 boundary-reference ranges for predicates, typed Values, and supports. A
@@ -258,16 +260,17 @@ A registration-required result follows a controlled, auditable predicate
 workflow. In the same semantic transaction, the server takes a team/key advisory
 lock, rechecks the latest definition, reuses a compatible active definition, or
 creates a restricted definition with append-only registration provenance. It
-does not make a raw client or normalizer predicate durable by itself. If server
-policy cannot promote a valid complete result, every item is terminalized with
-zero semantic commit. Public status exposes a bounded closed error and tells
-the caller to resubmit the complete batch; it never exposes a review task or
-approval action.
+does not make a raw client or assessor predicate durable by itself. If the
+assessor cannot safely support a hint, the server records `not_stored` when all
+evidence remains covered by stored splits. Otherwise the complete batch is
+`rejected/no_supported_memory`; exact client-owned races are
+`rejected/stale_input`. Provider, configuration, database, and internal faults
+are `failed`. Public status never exposes a review task or approval action.
 
 Malformed, incomplete, duplicate, out-of-allowlist, or otherwise invalid
 responses do not produce a partial semantic commit. Malformed content uses the
-same-history complete-regeneration budget; provider failures use durable fresh
-attempts. Required exhaustion remains visible as a terminal failed submission.
+same-session complete-repair budget; provider failures use durable fresh
+attempts. Required exhaustion remains visible as a typed operational failure.
 
 ## Promotion, Rejection, and Quarantine
 
@@ -316,17 +319,22 @@ The status is owner-scoped and contains safe, bounded state only:
 | quarantined | Security concern; the isolated raw payload copy expires after 24 hours while immutable source history remains restricted and non-recallable. | Do not use it; optionally submit a replacement. |
 | failed | Required worker/provider/persistence work exhausted its bounded retry policy. | Diagnose using the safe terminal stage in `errors` and correlation context, then submit anew if appropriate. |
 
-Status reports per-evidence search readiness, bounded error codes,
+Status reports per-evidence search readiness, one relationship disposition for
+each submitted ref, bounded error codes,
 quarantine_expires_at when applicable, and search state.
-Terminal placement failures use closed codes such as
-`submission_requires_resubmission`, `normalization_failed`,
-`normalizer_unavailable`, `submission_policy_rejected`,
-`assessor_response_invalid`, `assessor_unavailable`, or
-`submission_processing_failed`; the internal stage is never exposed. Raw
+Terminal v2.6 Remember status uses `no_supported_memory` or `stale_input` for
+semantic rejection and `provider_unavailable`, `provider_response_invalid`,
+`input_budget_exceeded`, `configuration_invalid`, `database_failure`,
+or `internal_failure` for operational failure; the
+internal stage is never exposed. Raw
 provider, database, prompt, and credential details never appear in status.
 search_state=pending means canonical promotion may be complete while a derived
 embedding is still being built. current and not_required are ready for the
 evaluation/recall freshness gate; failed is a visible degradation.
+
+Historical non-v2.6 submissions retain their internal migration stage but are
+not projected through this contract. Polling one returns the same bounded
+not-found response as an unavailable submission.
 
 Failed embedding is an asynchronous search degradation, not a rollback of
 accepted evidence or canonical Relationships. The aggregate and affected
@@ -351,11 +359,11 @@ There is deliberately no client-facing placement/review tool, review task,
 client confidence value, or follow-up-evidence action in this contract.
 
 There is no `awaiting_review` state or `semantic_hold` projection. Every
-terminal normalization/provider/policy failure carries a closed error with one
-next action. For `submission_requires_resubmission`,
-`normalization_failed`, `normalizer_unavailable`, `assessor_response_invalid`,
-or `assessor_unavailable`, the next action is `resubmit_submission`; send one
-complete corrected batch with a new idempotency key.
+terminal rejection or failure carries a closed error with one next action.
+`no_supported_memory` and `stale_input` mean send one complete corrected batch
+with a new top-level idempotency key. Operational failures use their bounded
+retry or operator action; clients must not invent semantic repairs from the
+message text.
 
 ## Recall Safety Boundary
 
@@ -382,17 +390,13 @@ required even when the write-time scanner and assessor have passed.
 
 ## Migration Boundary
 
-The V2.5 contract is a hard switch from caller-owned text ranges to server-owned
-grounding and structure-only normalization. The restart migration terminalizes
-unfinished V2.4 queued, guarded, processing, and historical `awaiting_review`
-Remember submissions identified by the explicit or pre-marker origin predicate.
-It marks their ingest rows failed, cancels linked placement review tasks, clears
-claims, and drops the obsolete hold/replacement projection. Unrelated
-non-Remember placement work and independent correction/Conflict/Dream workflows
-remain unchanged. It creates no cutover marker and no new Remember queue/hold
-table. Already accepted semantic state and durable provenance ranges remain
-unchanged. Normal runtime paths do not accept the old Remember fields or
-reinterpret old proposals.
+The v2.6 contract is a hard switch from caller-owned text ranges to server-owned
+grounding and assessor-owned repair. The historical restart migration
+terminalizes unfinished pre-v2.6 Remember submissions and preserves accepted
+state; v2.6 runtime does not resume or reinterpret them. New staging records
+source/supersession intent, and only an accepted atomic commit activates those
+effects. Already accepted semantic state and durable provenance ranges remain
+unchanged. Normal runtime paths do not accept the old Remember fields.
 
 ## Acceptance Checks
 
@@ -409,13 +413,15 @@ reinterpret old proposals.
    receives every distinct relationship ref in one run-scoped request;
 8. exact predicate, candidate-context, or input overflow makes zero provider
    call and zero semantic write;
-9. a malformed, unavailable, or policy-rejected normalizer run is terminalized
-   with zero semantic subset and bounded resubmission guidance;
-10. status never exposes a review task, semantic hold, or raw assessor/prompt content;
-11. quarantined staging is removed only after its exact 24-hour retention;
-12. a predicate is added or activated only through the controlled validated
+9. a malformed assessor response is repaired in one session, while provider or
+   internal exhaustion is `failed` with zero semantic subset;
+10. mixed stored/`not_stored` refs complete only when stored support covers every
+    evidence item; otherwise the run is `rejected/no_supported_memory`;
+11. status never exposes a review task, semantic hold, or raw assessor/prompt content;
+12. quarantined staging is removed only after its exact 24-hour retention;
+13. a predicate is added or activated only through the controlled validated
    registration workflow; and
-13. recall remains evidence-first and treats returned content as untrusted.
+14. recall remains evidence-first and treats returned content as untrusted.
 
 ## Terminal Status Error Completeness
 

@@ -175,6 +175,12 @@ migration concurrently. Keep migrations compatible with the previous binary for
 rolling deployments. Independent databases do not share that lock; each must be
 started and migrated separately.
 
+The v2.6 Remember migration is a deliberate exception: stop every Dense-Mem API,
+worker, and control service, verify that no worker lease remains, apply the
+ordered migration, and start only v2.6 services. There is no rolling deployment,
+mixed v2.5/v2.6 interval, compatibility window, fallback reader, or public
+projection of historical submissions.
+
 #### Migration rollout and recovery
 
 Use expand/backfill/cutover/contract for changes that cross application
@@ -197,11 +203,12 @@ application only when forward repair cannot preserve the required data or
 contract. Down migrations remain for local tests and controlled recovery
 analysis, including their documented irreversible boundaries.
 
-The release-organized Goose history under `migrations/postgres/v2_4/` and
-`migrations/postgres/v2_5/` is the only schema authority. Verify migration
-versions and checksums with `scripts/check-postgres-migrations.sh`; do not
-maintain a generated schema mirror or treat dumps as a substitute for
-migration and backup evidence.
+The release-organized Goose history under `migrations/postgres/v2_4/`,
+`migrations/postgres/v2_5/`, and `migrations/postgres/v2_6/` is the only schema
+authority. The first two directories are immutable history; new v2.6 work
+belongs only in `v2_6/`. Verify versions and checksums with
+`scripts/check-postgres-migrations.sh`; do not maintain a generated schema
+mirror or treat dumps as a substitute for migration and backup evidence.
 
 Identity migrations `2026081001` and `2026081501` run automatically in order.
 The first installs and backfills the canonical identity model; the second sets
@@ -377,9 +384,10 @@ flowchart TD
   Workers -- Yes --> Lease{"Leases advancing?"}
   Lease -- No --> Locks["Inspect PostgreSQL locks,<br/>clock and lease ownership"]
   Lease -- Yes --> Stage{"Dominant stage?"}
-  Stage -- normalizer --> Provider["Inspect provider limits,<br/>schema failures and cooldown"]
+  Stage -- assessor --> Provider["Inspect provider limits,<br/>schema failures and cooldown"]
   Stage -- commit --> DB["Inspect lock waits, constraints,<br/>deadlocks and pool saturation"]
-  Stage -- failed --> Resubmit["Verify zero semantic commit;<br/>caller resubmits complete batch"]
+  Stage -- rejected --> Reject["Check no_supported_memory or<br/>stale_input and zero semantic commit"]
+  Stage -- failed --> Failed["Classify provider/config/database/internal<br/>failure and verify retry state"]
 ```
 
 Required checks:
@@ -390,8 +398,8 @@ Required checks:
 - `densemem_assessor_terminal_failures_total{stage=...}` and owner-scoped
   submission status `errors`; use the stage to distinguish predicate option
   overflow, input/catalog overflow, provider exhaustion, and commit failures
-- invalid-normalizer count, JSON-pointer classes, provider turns per normalizer
-  conversation, persisted-assessment reuse, and
+- invalid-assessor-response count, JSON-pointer classes, provider turns per
+  assessor conversation, persisted-assessment reuse, and
   `densemem_assessor_validation_failures_total` /
   `densemem_assessor_validation_field_failures_total` by bounded stage and
   field family (including input/output budgets, JSON/schema, contract, and
@@ -399,48 +407,44 @@ Required checks:
 - provider 429/cooldown/concurrency
 - database deadlocks, lock timeouts, serialization failures, and constraint
   errors
-- restart-terminalized count and `submission_requires_resubmission` guidance
-  separately from the live worker backlog
+- historical v2.5 restart-terminalized count separately from the live worker
+  backlog; it is not a v2.6 status code
 
 Retryable provider failures use deterministic exponential backoff with bounded
 jitter. The first four retry releases wait about 15s, 30s, 60s, and 120s. A
 valid `Retry-After` hint may extend that delay; the effective delay remains
 capped at 300s. Attempts are not reset by ordinary retries. A schema-invalid
-HTTP 200 response does not release the placement item: the normalizer receives
+HTTP 200 response does not release the placement item: the assessor receives
 the bounded validation errors in the same message history and may return a
 complete replacement, for at most five provider turns total in that
 conversation. Transport failures use bounded in-claim retries; exhausted
 normalization/provider failures use the durable attempt budget.
 
-Public submission status projects only closed safe error codes such as
-`submission_requires_resubmission`, `normalization_failed`,
-`normalizer_unavailable`, `submission_policy_rejected`,
-`assessor_response_invalid`, `assessor_unavailable`, or
-`submission_processing_failed`; internal stages such as
-`predicate_options_overflow` remain operator-only. Never use provider/database
-error text from logs or SQL as a client diagnostic. If the operator stage is `unknown`, inspect
+Public v2.6 Remember status projects `no_supported_memory` and `stale_input`
+for semantic rejection, and `provider_unavailable`,
+`provider_response_invalid`, `input_budget_exceeded`, `configuration_invalid`,
+`database_failure`, or `internal_failure` for
+operational failure. Search/embedding trouble is a degradation on a completed
+submission. A non-v2.6 submission ID returns the same bounded not-found result
+as an unavailable submission. Historical failure stages remain control-plane
+audit data and are never live worker outcomes or public status codes. Never use
+provider/database error text from logs or SQL as a client diagnostic. If the operator stage is `unknown`, inspect
 the authenticated correlation window, worker lease/attempt row, and PostgreSQL
 transaction/constraint state without exporting raw payloads.
 
-The Remember normalizer restart is an explicit migration boundary, not a
-resumable legacy queue handoff. The migration terminalizes unfinished queued,
-guarded, processing, and historical `awaiting_review` Remember runs/items
-identified by explicit or pre-marker origin metadata, marks their ingests failed,
-clears claims, and records `submission_requires_resubmission`. Unrelated
-non-Remember placement work remains untouched. Only placement-linked review
-tasks attached to discarded Remember runs are canceled; unrelated correction,
-Conflict, and Dream tasks remain available. Do not requeue those rows, create
-review rows, inspect a `submission_holds` table, or manually reset attempts.
-Operators should ask the caller to submit the complete batch again with a new
-idempotency key. Already completed canonical state is retained.
+The historical v2.5 Remember-normalizer restart is an explicit migration
+boundary, not a resumable v2.6 queue handoff. It terminalizes unfinished old
+Remember runs/items and preserves completed canonical state. Do not requeue
+those rows or present their migration error as current v2.6 client behavior.
 
 Do not mark jobs complete, delete queue rows, reset attempts, or extend leases
 with direct SQL. Repair the root cause, use the supported pause/resume repair
 path, and let stable idempotency converge retries.
 
-## Invalid Remember-Normalizer Responses
+## Invalid Remember-Assessor Responses
 
-The application never repairs or splices provider output.
+The application never coerces or splices provider output. It may ask the same
+assessor session for a complete replacement after bounded validation feedback.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -465,9 +469,9 @@ raw response payloads, or provider error bodies.
 
 No `VerificationEvent` or semantic subset exists for an invalid intermediate
 turn. The full history is transient and sent only back to the same provider.
-After five malformed responses, the claim reaches a visible terminal malformed
-outcome with zero partial semantic commit. Do not delete the claim, clear its
-attempt history, or manually invoke the provider.
+After five total semantic turns, the submission reaches a visible typed
+operational failure with zero partial semantic commit. Do not delete the claim,
+clear its attempt history, or manually invoke the provider.
 
 A timeout, 429, 4xx, 5xx, transport failure, or invalid provider envelope ends
 the current conversation immediately. The placement item requeues through its
@@ -997,7 +1001,7 @@ Never restore another data store over newer PostgreSQL state.
 | --- | --- |
 | PostgreSQL | backup verification, vacuum/analyze, bloat, locks, slow plans, WAL/disk, replica/PITR checks |
 | `pgvector` | index size/build health, Recall@K, iterative-scan cost, reindex planning |
-| placement | queue age, lease churn, restart-resubmission failures, normalizer schema failures, turns per conversation, durable provider retries, persisted-result reuse |
+| placement | queue age, lease churn, assessor schema/repair failures, turns per conversation, durable provider retries, persisted-result reuse, rejected-versus-failed counts |
 | embeddings | pending/failed age, provider quota, version mismatch, rebuild progress |
 | Conflict review | run/due/overdue age, lease recovery, policy parity, resolved/reopened/dismissed events, three-profile recall smoke |
 | security | key/session cleanup, audit retention, RLS tests |

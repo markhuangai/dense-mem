@@ -14,8 +14,9 @@ RelationshipObservation -> VerificationEvent -> RelationshipRecord -> SemanticEd
 ```
 
 - a `RelationshipObservation` records what one evidence submission expressed
-- a `VerificationEvent` records the first schema-valid assessor judgment used
-  for the placement claim
+- a `VerificationEvent` records the first schema-valid assessor result and
+  provenance used for the placement claim; legacy verdict fields are nullable
+  historical metadata, not part of the v2.6 Remember response
 - a `RelationshipRecord` owns one profile's canonical
   subject-predicate-object lifecycle
 - a `SemanticEdge` is the graph-shaped read view of an eligible Relationship
@@ -24,11 +25,11 @@ RelationshipObservation -> VerificationEvent -> RelationshipRecord -> SemanticEd
   mutating it
 - a `Hypothesis` is dream-generated speculation outside active knowledge
 
-The semantic layer is the deterministic normalization and lifecycle boundary:
-it resolves verified observations to registered predicates and canonical
-endpoints, computes Relationship identity, applies support/source policy, and
-updates status and effective-support state. It is not a derived-knowledge logic
-engine and does not turn stored Relationships into new evidence.
+The semantic layer is the server-owned assessment and lifecycle boundary: it
+resolves staged observations to registered predicates and canonical endpoints,
+computes Relationship identity, applies support/source policy, and updates
+status and effective-support state. It is not a derived-knowledge logic engine
+and does not turn stored Relationships into new evidence.
 
 PostgreSQL stores every durable record and serves the SemanticEdge view.
 `pgvector` and PostgreSQL full-text indexes provide retrieval seeds. A graph
@@ -50,7 +51,7 @@ are defined in
 | Relationship kind | Predicate behavior: a continuing `state` or an occurrence `event`. |
 | Current cardinality | Whether one or many current objects may coexist for a subject, predicate, and scope. |
 | Relationship observation | One source-specific extracted statement with exact evidence spans; its Relationship link is nullable until endpoints and predicate resolve. |
-| Verification event | Append-only persisted assessor verdict for one observation. Provider failures and transport retries are operational telemetry. |
+| Verification event | Append-only persisted assessor result and provider provenance for one observation. v2.6 Remember stores structural acceptance and exact support lineage; legacy verdict/confidence fields remain nullable historical metadata. Provider failures and transport retries are operational telemetry. |
 | Relationship record | Durable authored semantic episode, lifecycle, and current status for one Relationship. |
 | Semantic edge | Read representation of one `active` Relationship with effective accepted support. |
 | Semantic group key | Server-derived key that groups equivalent Relationship meaning across profiles without merging ownership or lifecycle. |
@@ -391,7 +392,7 @@ flowchart TD
   Selected -- resolved --> Recheck["Server rechecks current registry<br/>under transaction lock"]
   Recheck --> Use["Use canonical definition and version"]
   Selected -- registration --> Register["Server reuses or creates a restricted<br/>definition under the same lock"]
-  Selected -- unresolved --> Review["Remember run fails;<br/>resubmit complete batch"]
+  Selected -- unresolved --> Omit["Not stored when evidence<br/>coverage remains complete"]
 ```
 
 The assessor cannot define a durable version, endpoint allowlist, Relationship
@@ -399,9 +400,10 @@ behavior, lifecycle status, or truth. Exact keys and aliases are rechecked under
 a team/key transaction lock. An existing compatible definition wins; otherwise
 server policy may register only a restricted definition with append-only
 provenance in the atomic semantic transaction. Exact-match overflow fails before
-the provider call. Key/alias collisions, ambiguous aliases, incompatible
-endpoint kinds, or incompatible Relationship kinds fail the complete submission
-with zero semantic commit and resubmission guidance.
+the provider call as `input_budget_exceeded`. Key/alias collisions, ambiguous
+aliases, and incompatible endpoint kinds are repaired in the same assessor
+session or recorded as `not_stored`; if stored support cannot cover all
+evidence, the complete submission is `rejected/no_supported_memory`.
 
 ## Observation And Evidence
 
@@ -435,15 +437,19 @@ Once both endpoints and the predicate resolve, an insufficient but
 schema-valid observation may link to a RelationshipRecord with
 `status=pending_evidence`.
 
-An observation is not current truth. It can be entailed, contradicted,
-insufficient, quarantined, awaiting assessment, or held for review without
-creating a SemanticEdge.
+An observation is not current truth. A v2.6 Remember observation either gains
+server-accepted exact support and can produce an active Relationship, or remains
+staged/not-stored; quarantined and failed submissions create no Relationship.
+Legacy Dream and correction workflows may retain pending or review-oriented
+observations without creating a SemanticEdge.
 
-Evidence support is granted only after a schema-valid assessor result,
-`evidence_verdict=entailed`, positive-support confidence at or above the
-effective team threshold, and deterministic server policy accept the exact
-span. Repeated spans and source groups are deduplicated. The immutable support
-link receives an initial `grant` event.
+Evidence support is granted only after a schema-valid Remember assessor result
+selects an exact cited span and deterministic server policy accepts it. The
+Remember assessor does not emit a verdict, confidence, rationale, modality, or
+scope decision; the server owns support disposition and lifecycle. Repeated
+spans and source groups are deduplicated. The immutable support link receives
+an initial `grant` event. Legacy Dream/correction verification may retain its
+older verdict and confidence metadata.
 
 Support is effective only while its latest decision is `grant` or `reinstate`,
 its evidence is not quarantined, and its source revision remains current. If a
@@ -466,12 +472,11 @@ budget with fresh history. The closed response schema, persisted-response rule,
 and no-coercion rule are defined in
 [Memory Write Pipeline](Write-Pipeline#server-owned-assessment).
 
-For each observation, the assessor returns bounded semantic judgments:
-
-| Dimension | Values | Purpose |
-| --- | --- | --- |
-| Evidence verdict | `entailed`, `contradicted`, `insufficient` | Whether submitted evidence supports the observation. |
-| Temporal verdict | `entailed`, `absent`, `ambiguous`, `contradicted` | Whether submitted evidence supports the assessor-extracted validity bounds. |
+For Remember, the assessor returns bounded structural selections: one grounded
+Entity result per submitted endpoint, one predicate status and cited range per
+Relationship, exact object/value ranges, one or more support ranges, and the
+submitted validity bounds unchanged. It emits no confidence, rationale,
+evidence verdict, temporal verdict, scope status, or public modality.
 
 The assessor also returns a separate bounded `security_signals` control array.
 A non-empty valid array quarantines the complete submission and creates no
@@ -495,23 +500,17 @@ never changes the referenced owner's record.
 VerificationEvent
   verification_event_id
   observation_id
-  evidence_verdict
-  temporal_verdict
-  normalized_valid_from
-  normalized_valid_to
-  confidence
-  rationale
   model
-  prompt_revision
-  assessment_policy_version
-  threshold_used
-  gate_result: meets_write_threshold | below_write_threshold | not_applicable
+  response_hash
+  assessment_id
+  structural_support_accepted
   verified_at
 ```
 
-Raw confidence, the exact threshold, provider rationale, and `gate_result` are
-internal audit data. Public submission status returns only bounded processing,
-search, error, and semantic-hold guidance fields.
+Legacy verdict, confidence, rationale, temporal, and policy columns remain
+internal nullable audit data for older Dream/correction records. Public
+submission status returns only bounded processing, search, error, and
+disposition fields.
 
 Transport, rate-limit, HTTP-status, and provider-protocol failures remain
 operational telemetry and consume durable placement attempts. A malformed HTTP
@@ -534,8 +533,9 @@ superseded | disputed | retracted | rejected
 
 An EvidenceSupport is effective only when its latest decision is `grant` or
 `reinstate`, the referenced evidence is usable, the source revision is current,
-and its accepted assessment both entails the Relationship and passed the
-positive-support confidence gate when first committed.
+and its accepted structural assessor result satisfies the server's
+stored-support policy. Remember v2.6 does not expose or manufacture model
+confidence; legacy audit values are not used to gate Remember support.
 
 The ordinary support-recomputation invariant is:
 
@@ -551,20 +551,17 @@ support and does not deactivate an existing Relationship that still has
 effective support.
 
 The assessor does not assign status. Deterministic application policy combines
-the evidence verdict, positive-support confidence gate, support usability,
-identity resolution, predicate resolution, conflicts, temporal rules, and
-explicit user/system decisions.
+support usability, identity/predicate resolution, conflicts, temporal rules, and
+explicit user/system decisions. Remember's unsupported hints are recorded as
+`not_stored` when every evidence item remains covered; otherwise the complete
+submission is `rejected/no_supported_memory`.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  Observation["Valid whole-submission assessment"] --> Structure{"Endpoints, predicate, and required<br/>scope/time resolved?"}
-  Structure -- No --> Hold["Terminal failed;<br/>zero semantic commit + resubmit"]
-  Structure -- Yes --> Verdict{"Evidence verdict"}
-  Verdict -- contradicted/insufficient --> Hold
-  Verdict -- entailed --> Gate{"Confidence >= effective<br/>team threshold?"}
-  Gate -- No --> Hold
-  Gate -- Yes --> OwnerConflict{"Same-owner conflict unresolved?"}
+  Observation["Valid whole-submission structural assessment"] --> Structure{"Endpoints, predicate, and cited support resolved?"}
+  Structure -- No --> Omit["Not stored or<br/>no_supported_memory"]
+  Structure -- Yes --> OwnerConflict{"Same-owner conflict unresolved?"}
   OwnerConflict -- Yes --> Hold
   OwnerConflict -- No --> Cross{"Cross-profile conflict?"}
   Cross -- Yes --> Reference["Append challenge/correction<br/>cross-reference"]
@@ -583,25 +580,18 @@ both authored positions remain active and traceable while the case is open.
 Nightly Conflict resolution may later supersede losing stale episodes and
 controls which support paths enter primary current recall.
 
-The global bootstrap threshold is `0.7`. A manager may override it per team at
-`teams.config.memory_write.auto_write_confidence_threshold`; the allowed range
-is `0` through `1`, and the comparison is inclusive. The effective value is
-loaded immediately before semantic commit and recorded with the event.
-Threshold changes apply to future or in-flight commits only. They do not
-rescore completed or failed assessments.
-
-The gate applies only to positive Relationship support. It cannot resolve
-Entity identity, approve an unknown predicate, repair scope or time, clear a
-security signal, override conflict policy, or turn `insufficient` into
-`entailed`. The default is a bootstrap policy, not a calibrated accuracy
-guarantee.
+Legacy Dream and correction verification may use a team confidence threshold
+for their own review policy. That setting is not loaded by the v2.6 Remember
+worker, is not a Remember request field, and never creates a client repair
+obligation. Remember support depends on exact assessor-selected spans and
+deterministic server policy instead.
 
 ## Source Independence And Support Policy
 
-One accepted entailed EvidenceSupport is sufficient for ordinary active
-eligibility. Additional independent sources improve provenance, traceability,
-conflict analysis, and evaluation coverage, but do not change lifecycle class
-or add a recall-ranking boost.
+One accepted EvidenceSupport is sufficient for ordinary active eligibility.
+Additional independent sources improve provenance, traceability, conflict
+analysis, and evaluation coverage, but do not change lifecycle class or add a
+recall-ranking boost.
 
 `Authority` classifies an allowed source and actor, not the AI assessor. The
 assessor decides whether exact submitted evidence entails the observation; it
@@ -625,11 +615,11 @@ policy. Authority is a separate actor-and-source authorization decision; a
 manual entry remains non-authoritative unless that separate policy allows it.
 
 For example, one accepted commit authored by Mark may make Mark's
-`works_on Dense-Mem` Relationship active when the assessor finds the exact
-evidence entailed and its positive-support confidence passes team policy. A
-second genuinely independent accepted source adds another
-support path and remains visible in trace, but it does not change the
-Relationship's status or rank merely because the source count increased.
+`works_on Dense-Mem` Relationship active when the assessor selects exact
+support spans and server policy accepts them. A second genuinely independent
+accepted source adds another support path and remains visible in trace, but it
+does not change the Relationship's status or rank merely because the source
+count increased.
 
 Two fragments are not independent merely because they are separate rows.
 Mirrors, repeated conversation turns, summaries of the same document,
@@ -817,15 +807,15 @@ flowchart TD
 
 A legacy insufficient pending Relationship may remain in PostgreSQL so its
 context is not lost. It is excluded from default recall and the SemanticEdge
-view. A failed V2.5 Remember submission creates no Relationship and is never
-Dream input; the caller must resubmit the complete batch.
+view. A rejected or failed v2.6 Remember submission creates no Relationship and
+is never Dream input; the caller follows its bounded status error.
 
 Dreaming may use a bounded pending Relationship only when:
 
 - its endpoints resolve to existing same-team Entity/Value records
 - its predicate is registered
-- its final valid assessment is `insufficient`, or it is `entailed` below the
-  positive-support threshold
+  - its final legacy verification assessment is `insufficient`, or it is
+    `entailed` below the legacy positive-support threshold
 - its retained review policy allows pending-input eligibility without treating
   a failed Remember submission as a pending Relationship
 - it is not contradicted, quarantined, rejected, disputed, or identity-ambiguous
@@ -855,8 +845,9 @@ Retained legacy review rows are audit history, not evidence, and never activate
 a Relationship or promote it directly to a Hypothesis. A structurally complete
 legacy Relationship remains `pending_evidence` and may become bounded Dream
 input only under the existing pending-input policy.
-Unresolved identity, predicate, scope, or time remains Evidence plus Observation
-only and is not Dream input.
+Unresolved identity, predicate, or legacy scope/time review remains Evidence plus
+Observation only and is not Dream input. v2.6 Remember repairs server-owned
+identity and predicate state in-session and preserves submitted validity bounds.
 
 ## Forget And Retraction
 
@@ -881,11 +872,11 @@ referential and audit integrity.
 | --- | --- |
 | Evidence transaction fails | Create no ingest or semantic state. |
 | Assessor response is unavailable or invalid | Preserve staged evidence; expose failure; create no support, VerificationEvent, or SemanticEdge. |
-| Entity endpoint is ambiguous | Preserve the staged evidence and fail the complete Remember run; create no semantic subset or SemanticEdge. |
-| Predicate cannot be resolved or registered safely | Fail the complete run with resubmission guidance; create no Relationship or SemanticEdge. |
-| Predicate key/alias is ambiguous, colliding, or kind-incompatible | Fail the complete run; create no Relationship or SemanticEdge. |
-| Verdict is insufficient | Preserve the staged evidence and fail the complete run; create no semantic subset or SemanticEdge. |
-| Entity, predicate, Value, support, or Relationship grounding confidence is below the effective threshold | Preserve the staged evidence and fail the complete run with bounded resubmission guidance; grant no support or SemanticEdge. |
+| Entity endpoint is ambiguous | Repair identity in-session; create a new grounded Entity when reuse is unsafe or mark the dependent hint `not_stored`. |
+| Predicate cannot be resolved or registered safely | Mark that ref `not_stored`; reject the complete run only when stored support cannot cover every evidence item. |
+| Predicate key/alias is ambiguous, colliding, or kind-incompatible | Reconcile under the server catalog lock or use `not_stored`; never expose a client repair code. |
+| Remember assessor cannot support a hint | Record that ref as `not_stored`; reject only when stored support cannot cover every evidence item. |
+| Entity, predicate, Value, support, or Relationship grounding cannot be proven | Preserve staged evidence and use `not_stored` or `rejected/no_supported_memory`; model confidence is not a public input. |
 | Search embedding fails | Preserve authoritative Relationship; expose degraded search state and retry the derived embedding job. |
 | Same-owner knowledge conflicts with new evidence | Hold review or apply owner-authorized supersession; never use stored knowledge as self-supporting evidence. |
 | Another profile's knowledge conflicts with new evidence | Preserve both eligible authored records during placement, append a challenge/correction cross-reference, and create/update the team Conflict case in the same transaction. |
@@ -912,8 +903,8 @@ referential and audit integrity.
 | Predicate synonyms fragment knowledge | Normalize through the versioned registry before Relationship identity is computed. |
 | Registry edit rewrites history | Predicate meaning is immutable per key; behavior changes use a new key or reviewed migration, while records retain the applied version. |
 | Single-current behavior removes parallel truth | Explicit `relationship_kind` and `current_cardinality` plus scope-aware review. |
-| The bootstrap `0.7` threshold is poorly calibrated for a team or model | Record model/prompt/policy versions, measure reliability by confidence bucket, permit a bounded team override, and change policy only for future commits. |
-| Retired review metadata is mistaken for evidence or approval | V2.5 has no review-task expiry or approval path; failed Remember work is resubmitted as a complete batch. |
+| Legacy verification metadata is mistaken for Remember policy | Keep verdict/confidence/policy columns nullable and internal; v2.6 Remember uses exact structural support and server lifecycle policy. |
+| Retired review metadata is mistaken for evidence or approval | v2.6 has no Remember review-task expiry or approval path; rejected/failed work follows its bounded status error. |
 
 ## Acceptance Invariants
 
@@ -933,8 +924,8 @@ The refactor is incomplete until tests prove:
 9. trace reconstructs evidence, verification, and lifecycle lineage
 10. exact existing keys or aliases reuse canonical definitions; a missing key
     can enter only through server-controlled locked registration with append-only
-    provenance, while ambiguous, colliding, or kind-incompatible wording holds
-    the complete submission with no semantic subset
+    provenance, while unsupported wording becomes `not_stored` unless it would
+    leave an evidence item uncovered
 11. a Hypothesis cannot create a node or edge
 12. forget removes the active SemanticEdge while preserving nodes and history
 13. one profile-owned Relationship has at most one graph-shaped SemanticEdge
@@ -949,9 +940,9 @@ The refactor is incomplete until tests prove:
     visible to conflict-aware recall
 18. adopting another profile's evidence preserves the original fragment,
     author, provenance, and source-group identity
-19. an assessor result contains extraction and evidence judgment but no
-    stored-knowledge
-    alignment or stored Relationship selection
+19. a Remember assessor result contains only grounded extraction, predicate,
+    range, and support selections; it contains no stored-knowledge alignment,
+    lifecycle, confidence, verdict, rationale, or stored Relationship ID
 20. every revision of one stable source counts as one source group
 21. an exact prior-revision mismatch changes no current state
 22. advancing a source revision makes the prior revision ineffective team-wide
@@ -976,9 +967,11 @@ The refactor is incomplete until tests prove:
     same-history malformed-response turns; provider failures use durable
     attempts, while restart, lease reclaim, or commit retry reuses the first
     valid persisted assessment
-31. only `entailed` Relationship support at or above the commit-time effective
-    team threshold may grant support; the gate cannot override any structural,
-    temporal, security, or conflict hold
-32. changing the team threshold does not rescore completed or failed assessments
+31. only exact support selected by a schema-valid Remember assessor result and
+    accepted by deterministic server policy may grant support; no model
+    confidence or verdict gate can override structural, security, or conflict
+    policy
+32. legacy Dream/correction verification metadata never becomes a Remember
+    client field or a client repair obligation
 33. retained legacy review rows never activate knowledge; only structurally
     complete pending Relationships may later enter Dream under policy

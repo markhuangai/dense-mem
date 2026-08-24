@@ -510,18 +510,20 @@ reject; valid bidirectional prose and descriptive quotations remain eligible.
 Safe audit metadata contains bounded decisions, rules, sources, and spans, not a
 scanner version or policy hash.
 
-The Remember normalizer receives the full staged submission plus bounded
+The Remember assessor receives the full staged submission plus bounded
 candidate/predicate context in one capability-free structured request. It has no
 tools, credentials, environment data, request headers, cross-team records, or
 prior raw evidence history. It returns structure only: complete security
 signals, allowlisted groundings, predicate/range selections, and submitted
 endpoints. It cannot return confidence, rationale, ownership, lifecycle,
-review, or promotion fields. The server validates the complete response and
-applies all durable policy before the atomic commit.
+review, or promotion fields. It may repair grounding, identity, predicate
+selection, and supported splits, or mark a hint `not_stored`. The server
+validates the complete response and applies all durable policy before the atomic
+commit.
 
 A `hidden_control_markup` output must cite an exact span with a covered hidden
-control or active markup. Otherwise the closed normalizer response is invalid
-and cannot create a quarantine.
+control or active markup. Otherwise the closed assessor response is invalid and
+cannot create a quarantine.
 
 A worker-time deterministic or model security concern quarantines the staged
 submission. For a deterministic worker hit, PostgreSQL atomically records the
@@ -531,10 +533,10 @@ hard-deletes that copy. Append-only evidence, identifiers, hashes, security
 events, and lineage remain restricted audit history and are never recallable or
 provider input. A client can only submit a new independent complete batch; it
 cannot negotiate, release, or append evidence to quarantined data. Complete
-closed-schema normalizer validation is required before one atomic canonical
-promotion; no partial semantic commit is allowed. Normalizer correction is
-bounded to the same conversation, and exhaustion returns terminal resubmission
-guidance.
+closed-schema assessor validation is required before one atomic canonical
+promotion; no partial semantic commit is allowed. Assessor repair is bounded to
+the same session. Exhaustion is a typed operational failure; semantic rejection
+is limited to `no_supported_memory` and `stale_input`.
 
 ## Audit
 
@@ -605,7 +607,7 @@ audit ledger.
 15. semantic memory tools are visible and executable through MCP only; generic
     HTTP discovery and execution routes cannot expose them
 16. deterministic security rejection happens before staging, and every
-    Remember-normalizer response contains complete, exact security signals for
+    Remember-assessor response contains complete, exact security signals for
     the staged evidence boundary
 17. the quarantined raw payload copy is isolated for exactly 24 hours and then
     hard-deleted; immutable source evidence and lineage remain restricted audit

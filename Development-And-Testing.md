@@ -171,11 +171,12 @@ For each implementation change:
 7. inspect migration/query plans and the diff
 8. record schema/config/API/migration implications
 
-If the change may affect retrieval quality, ranking, placement accuracy,
-assessor behavior, embeddings, search documents, or performance, run
-the deterministic 1k evaluation/comparison and put the result in the PR. Reuse
-a prior successful import only when import logic, schema, seed identity,
-placement terminality, and search/vector freshness are unchanged.
+For this v2.6 Remember reliability change, the deterministic 1k
+evaluation/comparison is explicitly deferred because the data structure is
+unchanged. The acceptance gate is the complete no-skip Compose/UAT matrix and
+the focused real-PostgreSQL/service tests below. Restore the 1k evaluation gate
+for later changes that alter retrieval quality, ranking, placement accuracy,
+assessor behavior, embeddings, search documents, or performance.
 
 For build/catalog/lifecycle changes that do not alter retrieval logic, run the
 `local_eval_100_v2` smoke through
@@ -282,7 +283,8 @@ real PostgreSQL/`pgvector` instance and actual service logic.
 
 - repeated mention and alias reuse one Entity
 - exactly one plausible same-name candidate is reused without contradiction
-- several plausible same-name candidates create review
+- several plausible same-name candidates remain unsupported or become `not_stored`
+  in v2.6 Remember; no client review task is created
 - later conflict produces an impact preview and selected-observation split
 - caller-owned split/merge leaves other profiles' observations unchanged
 - concurrent equivalent creates converge
@@ -293,14 +295,14 @@ real PostgreSQL/`pgvector` instance and actual service logic.
 - repeated same-owner evidence attaches to one Relationship
 - another profile's equivalent/correcting evidence creates its own Relationship
   and cross-reference
-- `insufficient` fails the complete V2.5 submission with no semantic write or
-  SemanticEdge and bounded resubmission guidance
-- one accepted entailed support at or above the effective team threshold
-  activates the Relationship
-- entailed support or grounding below the threshold fails the complete V2.5
-  submission without a review task; confidence equal to the threshold passes
-- a threshold change affects future/in-flight commits and never rescores a
-  completed or failed assessment
+- `no_supported_memory` is the only unsupported-evidence rejection for a v2.6
+  Remember submission; it has no semantic write and bounded resubmission guidance
+- one accepted exact support span activates the Relationship without a model
+  confidence or verdict gate
+- assessor repair owns grounding and support decisions; client remediation is
+  limited to deterministic validation, `no_supported_memory`, or `stale_input`
+- legacy Dream/correction threshold settings never become Remember fields or
+  resubmission instructions
 - additional independent accepted sources improve provenance but do not change
   lifecycle class or correlation rank
 - two stored Relationships do not automatically prove a third Relationship
@@ -313,9 +315,9 @@ real PostgreSQL/`pgvector` instance and actual service logic.
 - an incomplete Entity candidate set, Entity grounding overflow, or exact
   predicate-match overflow fails before a provider call and creates no semantic
   state
-- unmatched predicate wording uses server-controlled registration; alias/key
-  ambiguity, endpoint-kind mismatch, and Relationship-kind collision hold the
-  complete submission with no semantic subset
+- unmatched predicate wording uses assessor/server-controlled reconciliation;
+  unsupported hints may be recorded as `not_stored` when evidence coverage is
+  preserved
 - assessor output never creates or edits a predicate definition
 - forget retracts the edge while preserving nodes/history
 
@@ -338,8 +340,8 @@ ambiguous predicate alias
 novel predicate candidate outside the submitted set
 removed knowledge_alignment or related_relationship_ids field
 security signal with unknown evidence ID or invalid span
-out-of-range confidence
-oversized rationale/array/response
+unknown Remember confidence/verdict/rationale/temporal/scope fields
+oversized array/response
 cross-array unresolved endpoint
 valid complete response
 ```
@@ -347,12 +349,13 @@ valid complete response
 Assert that every malformed-content case appends the invalid assistant response
 and exact validation errors to the same in-memory history, requests a complete
 replacement, and causes zero semantic commit until a valid whole response
-exists. Assert five total turns at most, terminal failure after the fifth
-malformed response, and token-budget failure before an oversized next turn.
+exists. Assert five total semantic turns at most, typed operational failure
+after the fifth malformed response, and token-budget failure before an
+oversized next turn.
 
 Separately assert that every HTTP status, timeout, transport error, invalid
 provider envelope, missing choice, or empty assistant message makes no
-same-history correction. It must release the reservation transactionally,
+same-session semantic repair. It must release the reservation transactionally,
 persist only bounded failure class/status, and requeue through placement
 `max_attempts`; 429 honors bounded `Retry-After`. A valid non-empty
 security-signal array quarantines the complete submission and creates no
@@ -372,9 +375,10 @@ workers from persisting different valid responses.
 - two or more evidence items and every distinct relationship ref are sent in
   one logical assessor conversation, including two relationships that cite the
   same evidence index
-- one invalid, unresolved, or incompatible result leaves every sibling without
-  semantic state and terminalizes the complete Remember run with bounded
-  `resubmit_submission` guidance; it creates no review task or partial state
+- one invalid result is repaired as a complete response; an unsupported hint is
+  `not_stored` when stored support covers every evidence item, otherwise the
+  complete run is `rejected/no_supported_memory`; it creates no review task or
+  partial state
 - repeated names, active aliases, Unicode boundaries, and overlapping
   Relationships prove that the server issues bounded grounding choices and the
   assessor cannot select a range outside each Relationship's cited evidence
@@ -388,9 +392,9 @@ workers from persisting different valid responses.
 - real PostgreSQL tests cover the restart boundary, terminalization of every
   unfinished run/item state, cleared claims, zero semantic writes, and absence
   of the obsolete hold table/columns
-- status and control-diagnostic tests verify bounded `resubmission_issues`
-  survive storage hydration and are merged into the closed resubmission error
-  without exposing provider or database details
+- status tests verify one persisted `relationship_results` disposition for
+  every submitted ref, with canonical split IDs for `stored` and bounded
+  reasons for `not_stored`
 - a live Compose MCP E2E uses an actual credential and proves one request over
   multiple evidence/relationships promotes atomically
 
@@ -399,12 +403,13 @@ workers from persisting different valid responses.
 - the migration terminalizes queued, guarded, processing, and historical
   `awaiting_review` Remember work in one transaction and cancels only linked
   placement review rows
-- terminalized items expose `submission_requires_resubmission` and
-  `resubmit_submission`, with no semantic/search writes
+- historical v2.5 terminalized items retain their migration marker and have no
+  semantic/search writes; new v2.6 Remember failures use the reduced status
+  vocabulary
 - no Remember code or schema path creates a hold, replacement slot, or approval
   action
-- a complete resubmission uses a new idempotency key and follows the same
-  scanner, normalizer, policy, and atomic commit path
+- a complete resubmission uses a new top-level idempotency key and follows the
+  same scanner, assessor, policy, and atomic commit path
 - accept/correct with exact new evidence creates one new placement claim and
   one bounded assessor conversation
 - security quarantine and cross-profile Conflict cases are unaffected
@@ -566,10 +571,10 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 
 - domain term has one canonical owner in the wiki
 - no active pending Relationship or Hypothesis path
-- Remember-normalizer response remains closed and atomic; malformed correction
-  stays in one history for at most five turns, while provider failures use
+- Remember-assessor response remains closed and atomic; malformed responses are
+  repaired in one history for at most five turns, while provider failures use
   durable retry
-- the first valid normalizer response is persisted and reused before semantic
+- the first valid assessor response is persisted and reused before semantic
   policy/commit
 - server policy gates promotion and cannot override identity, predicate, scope,
   time, security, or conflict decisions
@@ -608,8 +613,8 @@ The implementation is release-ready only when:
 
 1. every target domain/storage/API acceptance invariant passes
 2. PostgreSQL and `pgvector` integration tests run in CI
-3. strict normalizer fixtures prove zero partial commits, exact same-history
-   correction with five-turn exhaustion, and separate durable provider retry
+3. strict assessor fixtures prove zero partial commits, same-session complete
+   repair with five-turn exhaustion, and separate durable provider retry
 4. exact-vs-ANN recall and concurrent load meet release gates
 5. server, Compose, configuration, readiness, documentation, and dependencies
    contain no secondary durable knowledge-store path
@@ -627,10 +632,37 @@ The implementation is release-ready only when:
     quality, confidence reliability, call/token/latency savings, and review
     burden
 
-## v2.5 Foundation Release Gate
+## v2.6 Remember Reliability Release Gate
 
-Run the focused suites and real PostgreSQL identity migration tests before a
-release:
+The v2.6 gate is the complete no-skip Compose/UAT matrix. `all` runs the
+disposable PostgreSQL prechecks once, then schedules scenarios with bounded
+parallelism: `DENSE_MEM_E2E_PARALLELISM=4` by default and accepts 1–16. Every
+child receives unique ports, run/project/file/image/container identifiers, and
+an ignored per-scenario log. The first failure terminates active process groups,
+marks pending work canceled, and prints a pass/fail/canceled summary.
+
+Run with prechecks and Playwright explicitly enabled; do not run the
+deterministic 1k evaluation for this change. The matrix covers the current
+Remember contract, assessor repair, relationship dispositions, idempotency,
+source/supersession intent, status projection, isolation, and the surrounding
+MCP/portal/runtime paths.
+
+```bash
+DENSE_MEM_E2E_MODE=standard \
+  DENSE_MEM_E2E_SCENARIO=all \
+  DENSE_MEM_E2E_SKIP_PRECHECKS=0 \
+  DENSE_MEM_E2E_SKIP_PLAYWRIGHT=0 \
+  ./scripts/e2e-compose.sh
+```
+
+Historical v2.5 restart and normalizer migration notes remain below for
+upgrade archaeology. They are neither a supported release gate nor public v2.6
+client behavior.
+
+## Historical v2.5 Foundation Verification
+
+The following commands record the former v2.5 foundation evidence. They are not
+the current release gate; current releases use the v2.6 gate above.
 
 ```bash
 go test ./internal/service/memoryservice ./internal/tools/registry ./internal/mcp ./internal/http -count=1

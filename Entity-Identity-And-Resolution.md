@@ -1,7 +1,8 @@
 # Entity Identity And Resolution
 
-This page is the single source of truth for deciding whether a mention reuses
-an Entity, creates an Entity, or requires client resolution.
+This page is the single source of truth for how the v2.6 assessor decides
+whether a mention reuses an Entity or creates a grounded Entity. Remember does
+not ask the client to choose between same-team candidates during intake.
 
 The stage order and strict assessor response are defined in
 [Memory Write Pipeline](Write-Pipeline). Storage is defined in
@@ -158,7 +159,7 @@ Relationship identity can be computed.
 | --- | --- | --- |
 | `reuse` | exactly one supplied Entity is materially plausible and no evidence discriminator contradicts it | map the ref to that candidate and append the resolution event |
 | `create` | no plausible candidate exists and the evidence sufficiently introduces a distinct identity | allocate one opaque ID and append the new Entity, names, and resolution event |
-| `ambiguous` | multiple candidates remain plausible, or evidence conflicts with reuse but does not prove a distinct identity | create no Entity; preserve context, create review work, and block dependent Relationship activation |
+| `ambiguous` | an intermediate assessor response cannot safely choose among candidates | server repairs it in-session; without an exact client constraint it creates a new grounded Entity or marks the dependent hint `not_stored`; no client review task is created |
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -169,18 +170,22 @@ flowchart TD
   Contrary -- Yes --> Distinct{"Enough evidence for a<br/>distinct new identity?"}
   Contrary -- No --> Plausible{"How many candidates remain<br/>materially plausible?"}
   Plausible -- one --> Reuse
-  Plausible -- several --> Ambiguous["ambiguous"]
+  Plausible -- several --> Repair["repair in same assessor session"]
   Plausible -- none --> Distinct
   Distinct -- Yes --> Create["create"]
-  Distinct -- No --> Ambiguous
+  Distinct -- No --> Repair
 ```
 
-This intentionally prefers reuse over speculative duplication when only one
-plausible existing identity is known. It does not claim certainty. Later
-contradictory context can surface a split for client confirmation.
+This intentionally prefers reuse only when one compatible identity is grounded.
+When reuse is unsafe, v2.6 prefers a traceable new grounded Entity over a false
+merge. If the endpoint cannot be grounded at all, the hint is `not_stored`
+provided every evidence item remains covered by another stored Relationship.
+Later contradictory context can still surface a split through the correction
+workflow.
 
-A confidence score is diagnostic only. It cannot make an unknown candidate
-valid or turn several plausible candidates into one.
+Remember has no candidate confidence field. Candidate compatibility and
+evidence grounding are deterministic server inputs; they cannot make an
+unknown candidate valid or turn several plausible candidates into one.
 
 Entity kind is a classification aid, not identity. Calling Dense-Mem a
 project, product, or system does not create parallel Entities when the referent
@@ -205,38 +210,39 @@ Later evidence says:
 "Mark from the finance team approved the budget."
 ```
 
-If `ent_mark_1` is known not to be that person, the assessor returns
-`ambiguous` or proposes `create` only when the evidence sufficiently
-distinguishes the finance-team Mark. Dense-Mem exposes the ambiguity and impact
-to the client. It does not silently split or overwrite the first Entity.
+If `ent_mark_1` is known not to be that person, the assessor repairs toward a
+new grounded Entity when the evidence distinguishes the finance-team Mark. It
+does not silently merge the two people or overwrite the first Entity. If no
+grounded endpoint can be established, that Relationship is `not_stored` and
+the other supported evidence can still complete atomically.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
   First["Only one plausible Mark"] --> Reuse["Reuse ent_mark_1"]
-  Later["Later contradictory context"] --> Flag["Assessor flags ambiguity"]
-  Flag --> Client{"Client decision"}
-  Client -- same person --> Keep["Keep ent_mark_1"]
-  Client -- distinct person --> New["Create ent_mark_2"]
+  Later["Later contradictory context"] --> Assess["Assessor repairs identity"]
+  Assess --> Keep["Reuse ent_mark_1 when grounded"]
+  Assess --> New["Create ent_mark_2 when reuse is unsafe"]
   New --> Select["Select observations belonging<br/>to ent_mark_2"]
   Select --> Rebuild["Recompute only affected<br/>Relationships"]
 ```
 
 ## Candidate Prefetch And Integrated Assessment
 
-Candidate prefetch occurs before the only model call. The server revalidates
-client `known_entity_id` hints and uses the current-name index to find exact
-canonical/alias candidates for each submitted Entity name. Within only the
-Relationship's cited evidence, it locates whole-token occurrences of the
-submitted name and active candidate aliases, then assigns opaque grounding and
-boundary references. It does not send all team Entities and does not use vector
-similarity in the automatic write allowlist.
+Candidate prefetch occurs before the only model call. The server revalidates an
+exact client `known_entity_id` under the authenticated team; when no ID is
+supplied, it uses the current-name index to find exact canonical/alias
+candidates for the submitted Entity name. Within only the Relationship's cited
+evidence, it locates whole-token occurrences of the submitted name and active
+candidate aliases, then assigns opaque grounding and boundary references. It
+does not send all team Entities and does not use vector similarity in the
+automatic write allowlist.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
   Evidence["Verbatim evidence, logical Entity names,<br/>and evidence_indices"] --> Scope["Authenticated team only"]
-  Scope --> Hint["Revalidate server-issued ID hints"]
+  Scope --> Hint["Revalidate exact server-issued ID constraints"]
   Scope --> Name["Exact current canonical/alias lookup"]
   Name --> Ground["Locate submitted names and active aliases<br/>in cited evidence"]
   Hint --> Context["Deduplicate candidate IDs;<br/>attach kind and identity context"]
@@ -257,12 +263,13 @@ flowchart TD
 | vector similarity outside placement | surface possible duplicates for a separate review | enter the assessor allowlist or authorize reuse |
 
 One revalidated known ID or one unique compatible exact match may be reused.
-Multiple/conflicting matches remain `ambiguous`; more than 20 exact candidates
-or groundings fails preflight rather than silently truncating the allowlist. An
-empty candidate list does not automatically authorize `create`, and a submitted
-name with no eligible grounding terminalizes the complete Remember run with
-zero semantic commit and resubmission guidance. A retrieval error is not an
-empty result and fails placement visibly.
+Multiple/conflicting matches are repaired in the same assessor session; more
+than 20 exact candidates or groundings fails preflight as
+`input_budget_exceeded` rather than silently truncating the allowlist. An empty
+candidate list permits `create` only when the submitted evidence grounds the
+mention. A name with no eligible grounding makes that hint `not_stored`; it is
+not a client-facing `entity_grounding_missing` rejection. A retrieval error is
+an operational failure, not an empty result.
 
 ## One Assessor Conversation
 
@@ -275,10 +282,12 @@ and no-coercion rule belong only in
 For identity, the server enforces:
 
 - exactly one result for every submitted Entity ref
-- every non-ambiguous result selects one server-issued grounding ref
+- every stored result selects one server-issued grounding ref
 - `reuse` names exactly one active candidate supplied for that ref
 - `create` contains no pre-existing `entity_id`
-- `ambiguous` contains no Entity ID
+- an assessor `ambiguous` result is a bounded “not safely groundable” outcome;
+  the server never invents a grounding or durable Entity from it, and dependent
+  Relationships become `not_stored` rather than a client-review state
 - no result crosses the authenticated team
 - names, aliases, kinds, and context are bounded and evidence-supported
 - every dependent Relationship remains non-active until its endpoints and
@@ -286,10 +295,10 @@ For identity, the server enforces:
 
 Malformed or incomplete assistant content is returned in the same transient
 history with exact validation errors for at most five total turns. A fifth
-malformed response fails the current placement claim terminally. Provider
-failures instead use durable placement retry and a later claim starts one fresh
-conversation only when no valid assessment was persisted. No subset commits and
-application code does not repair provider JSON.
+malformed response is a typed operational failure. Provider failures instead
+use durable placement retry and a later claim starts one fresh conversation
+only when no valid assessment was persisted. No subset commits and application
+code does not coerce provider JSON.
 
 ## Build Relationships After Resolution
 
@@ -299,11 +308,11 @@ flowchart TD
   Refs["Submitted Entity refs and<br/>server-issued groundings"] --> Results["One Entity result per ref"]
   Results --> Map["Map refs to Entity IDs<br/>or typed Value IDs"]
   Map --> Ready{"All required endpoints resolved?"}
-  Ready -- No --> Hold["Terminal failed;<br/>zero semantic commit + resubmit"]
+  Ready -- No --> Omit["Mark dependent hint not_stored<br/>or return no_supported_memory"]
   Ready -- Yes --> Predicate{"Predicate resolved or<br/>safe to register?"}
-  Predicate -- No --> Hold
+  Predicate -- No --> Omit
   Predicate -- Yes --> Identity["Compute Relationship identity"]
-  Identity --> Policy["Apply confidence gate and lifecycle policy"]
+  Identity --> Policy["Apply stored-support coverage and lifecycle policy"]
   Policy --> Commit["Commit PostgreSQL ledger<br/>and current state"]
 ```
 
@@ -319,14 +328,14 @@ for _, result := range assessment.EntityResults {
 	grounding := allowedGrounding(result.GroundingRef)
 	resolved[result.Ref] = validateResolution(teamID, grounding, result)
 	if resolved[result.Ref].Ambiguous {
-		return wholeSubmissionSemanticHold(result.Ref)
+		markDependentRelationshipsNotStored(result.Ref)
 	}
 }
 
 for _, result := range assessment.RelationshipResults {
 	subject, object := resolveEndpoints(result, resolved)
 	if err := validateGroundedRanges(result); err != nil {
-		return wholeSubmissionSemanticHold(result.Ref)
+		return notSupportedOrStaleInput(result.Ref)
 	}
 	stageRelationshipObservation(subject.EntityID, result, object)
 }
@@ -347,7 +356,7 @@ globally safe name key.
 flowchart TD
   Idempotency["Ingest idempotency"] --> Candidates["Server-owned occurrence grounding<br/>and exact candidate prefetch"]
   Candidates --> Assess["One integrated assessment"]
-  Assess --> Validate["Validate reuse / create / ambiguous<br/>against frozen allowlists"]
+  Assess --> Validate["Validate reuse / create and repair<br/>against frozen allowlists"]
   Validate --> Lock["Ordered team-scoped<br/>name and identifier locks"]
   Lock --> Recheck["Requery inside transaction"]
   Recheck --> Write["Reuse or create once"]
@@ -360,7 +369,8 @@ Before `create`, the PostgreSQL transaction:
    stable identifiers
 2. reruns candidate lookup against committed records
 3. invalidates `create` if a new plausible candidate appeared
-4. reuses a now-unique exact candidate or holds review without another AI call
+4. reuses a now-unique exact candidate or creates a new grounded Entity;
+   an ungroundable hint becomes `not_stored` without another client round trip
 5. inserts the Entity and names once
 
 A uniqueness constraint can protect a stable external identifier within its
@@ -459,14 +469,14 @@ cannot alter the schema, candidate allowlist, tenant, or decision rules.
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| False merge | the first known Mark absorbs statements about a different Mark | reuse only without contrary context; flag later conflict; require client-confirmed observation-level split |
+| False merge | the first known Mark absorbs statements about a different Mark | reuse only without contrary context; create a grounded Entity when reuse is unsafe; use correction for later split |
 | False split | `Dense-Mem` and an evidence-present `DM` alias become parallel Entities | exact canonical/alias prefetch, prefer the one plausible candidate, and recheck before create |
 | Bad bulk correction | resolving one finance-team Mark moves all historical Mark observations | preview immutable observation IDs and move only caller-owned, client-selected evidence |
 | Concurrent duplicate | two workers create the same new Entity | ingest idempotency, ordered locks, in-transaction recheck, and stable-ID constraints |
 | Retrieval outage | a backend error looks like no candidates and authorizes create | treat errors distinctly and fail placement visibly |
 | Cross-team reuse | provider returns an ID from another team | per-ref candidate allowlists, RLS, and team validation before commit |
 | Similarity merge | a high vector score collapses valid homonyms | vector similarity is excluded from the placement allowlist; exact candidates and client decisions authorize identity changes |
-| Truncated homonym set | the correct Mark is the 21st exact candidate and the assessor selects from an incomplete list | persist the truncation flag and prohibit automatic reuse for that surface |
+| Truncated homonym set | the correct Mark is the 21st exact candidate and the assessor selects from an incomplete list | stop before provider call with `input_budget_exceeded`; never silently truncate |
 | Merge evidence loss | duplicate Relationships are combined but one source disappears | dry-run mapping, one transaction, append-only support/history, and post-change count checks |
 | Cross-profile identity rewrite | profile B's split moves profile A's observations | owner predicate on selected observations and integration tests with three writable profiles |
 | Duplicate/scalar collapse | `42`, `42.0`, or case-varied codes become wrong duplicate/equal Value nodes | exact type-specific versioned canonicalization; conservative string rules and normalized-unit registry |
@@ -480,8 +490,9 @@ The identity refactor is incomplete until tests prove:
 3. an evidence-supported alias reuses its Entity
 4. coarse Entity-kind drift does not split one identity
 5. different same-name identities with distinguishing context remain separate
-6. several plausible homonyms create review work and no active dependent edge
-7. a later client-confirmed split moves only selected caller-owned observations
+6. several plausible homonyms do not force client repair; unsafe reuse creates a
+   grounded Entity or marks only the unsupported hint `not_stored`
+7. a later caller-owned correction moves only selected observations
 8. a non-candidate or cross-team ID invalidates the entire assessor response
 9. missing, extra, or duplicate results never cause a partial write
 10. simultaneous equivalent creates converge after the transactional recheck

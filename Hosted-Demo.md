@@ -65,9 +65,10 @@ https://demo-dense-mem.markhuang.ai/mcp
 ```
 
 Run tool discovery. Verify that the current closed schema is returned, that
-`remember` requires logical Relationships with `evidence_indices`, and that
-`get_submission_status` is present while the retired placement/review tools are
-absent.
+`remember` requires logical Relationships with `evidence_indices`, one
+top-level `idempotency_key`, and no evidence-level key or public `modality`; the
+server/assessor own grounding and repair. `get_submission_status` is present
+while the retired placement/review tools are absent.
 
 ## Step 3: Test Shared Memory
 

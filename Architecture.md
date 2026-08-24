@@ -47,7 +47,7 @@ contains memory truth.
 | Access | listener separation, authentication, authorization, tenant/profile scope, request limits, deterministic injection scanning, and safe errors |
 | Application | remember, recall, trace, correction, dreaming, and control orchestration |
 | Domain | Entity identity, predicate vocabulary, Relationship identity/lifecycle, evidence acceptance, and Hypothesis rules |
-| PostgreSQL | durable ledger, current state, queues, review, audit, SemanticEdge queries, full-text, and `pgvector` |
+| PostgreSQL | durable ledger, current state, queues, assessor assessments, dispositions, audit, SemanticEdge queries, full-text, and `pgvector` |
 | Model providers | one integrated structure/support assessor conversation, embeddings, and optional dream generation; no write authority |
 | Coordination | rate limits, leases/signals, and SSE concurrency; Redis when distributed, process memory when safely single-instance |
 
@@ -81,11 +81,12 @@ port. The port returns only staged submission/status values; it does not expose
 provider, placement, search, or PostgreSQL types.
 
 The composition root adapts the existing PostgreSQL ledger and audit writer to
-that port. The adapter returns only after the existing transaction has durably
-created the exact evidence, source-revision state, placement work, and initial
-security events. A compatibility forwarding seam remains for serial callers
-until the later placement, recall, and final-convergence issues remove the
-legacy memory-service package edges.
+that port. The adapter returns only after the v2.6 transaction has durably
+created exact evidence, source/supersession intent, placement work, and initial
+security events. The worker then owns one bounded assessor session and persists
+one disposition for every submitted Relationship ref. A compatibility
+forwarding seam remains internal to composition; it is not a second public
+Remember contract.
 
 ## Request Paths
 
@@ -93,7 +94,7 @@ legacy memory-service package edges.
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
   Request["Authenticated request"] --> Kind{"Operation"}
-  Kind -- remember --> Write["Stage evidence and queue placement"]
+  Kind -- remember --> Write["Stage evidence/intents and queue assessor work"]
   Kind -- recall --> Read["Search and bounded adjacency"]
   Kind -- trace --> Trace["Read provenance and current graph"]
   Kind -- review/correct --> Correct["Append decision and recompute"]
@@ -112,8 +113,8 @@ runs. A request never chooses its tenant or semantic owner.
 
 Remember submissions are assessed by one canonical submission-wide worker. The
 retired standalone semantic-placement and retry-verifier implementations are
-not runtime paths; provider calls and durable promotion remain separated by
-the append-once assessment boundary.
+not runtime paths; provider calls, per-ref dispositions, and durable promotion
+remain separated by the append-once assessment boundary.
 
 ## Runtime Composition
 
@@ -129,7 +130,8 @@ are static bundles served by that process, not separate services or binaries:
   server                 release executable
   migrations/postgres/
     v2_4/                immutable historical startup inputs
-    v2_5/                ordered current-release startup inputs
+    v2_5/                immutable historical startup inputs
+    v2_6/                ordered current-release startup inputs
   web/dist/              private control-portal bundle
   web/user-dist/         user-portal bundle
 ```
@@ -340,10 +342,10 @@ path. A clean worker builds server-owned Entity occurrence groundings,
 prefetches complete matching candidates and structured predicate options, starts
 one strict assessor conversation containing bounded `security_signals`,
 `entity_results`, and `relationship_results`, validates and persists the first
-complete valid response, applies the positive-support confidence gate plus
-deterministic policy, and commits all material outcomes in PostgreSQL.
-Malformed content is corrected with full same-provider message history for at
-most five turns; provider failures use durable placement retry.
+complete valid response, verifies stored support coverage and deterministic
+policy, and commits all material outcomes in PostgreSQL. Malformed content is
+repaired with full same-provider message history for at most five semantic
+turns; provider failures use durable placement retry.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -359,7 +361,7 @@ flowchart LR
   Validate --> Signal{"Model security signal?"}
   Signal -- Yes --> Quarantine
   Signal -- No --> Persist["Persist first valid assessment"]
-  Persist --> Gate["Positive-support confidence gate"]
+  Persist --> Gate["Verify stored support covers every evidence item"]
   Gate --> Policy["Deterministic lifecycle"]
   Policy --> Commit["One PostgreSQL transaction"]
   Commit --> Immediate["Current rows, SemanticEdges,<br/>and full-text available"]
@@ -367,10 +369,14 @@ flowchart LR
 ```
 
 Malformed assessor output is returned to the same provider with bounded
-validation errors and full message history for at most five turns. The
+validation errors and full message history for at most five semantic turns. The
 application does not coerce it or commit a valid subset. Provider failures end
 the conversation and consume a durable placement attempt with fresh history;
-restart and commit retries reuse the first valid result. Full details belong in
+restart and commit retries reuse the first valid result. Unsupported hints are
+recorded as `not_stored` only when stored support covers every evidence item;
+otherwise the complete submission is `rejected/no_supported_memory`. Exact
+client-owned races are `rejected/stale_input`; infrastructure faults are
+`failed`. Full details belong in
 [Memory Write Pipeline](Write-Pipeline#server-owned-assessment).
 
 ## Read Boundary
@@ -443,7 +449,8 @@ change relies on it.
 | ANN tenant filter loses recall | shared approximate search omits relevant team rows before hydration | enforce the team-shaped execution/topology gates in [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec) |
 | Provider controls truth | assessor returns lifecycle status, an unknown predicate, or an arbitrary ID and it reaches storage | closed schema excludes writes; exact candidate allowlists, structured predicate catalog, and deterministic lifecycle |
 | Retry makes a second write-time decision | a worker restarts after receiving a valid response and calls the assessor again | persist the first valid assessment under a stable claim key and reload it before any provider call |
-| Confidence gate becomes a universal override | a high score clears identity ambiguity or a security hold | apply it only to positive Relationship support after all structural/security checks |
+| Assessor repair changes submitted meaning | a repair silently changes polarity or an exact Entity/predicate constraint | preserve submitted endpoints/polarity/bounds, enforce exact constraints, and repair only grounding/catalog state |
+| Unsupported subset activates a source | a stored Relationship covers one evidence item while another is omitted | require stored support for every evidence item before source activation or supersession |
 | Big-bang refactor stalls | every package changes before one end-to-end path works | small vertical changes and passing acceptance invariants per change |
 | Redis becomes a hidden database | replicas lose identity or review state after Redis restart | coordination-only ports and restart tests proving PostgreSQL is complete |
 | Conflict workflow becomes a truth edge | a team preference appears as a semantic predicate or closes an unrelated A Relationship | separate non-semantic case/event records, locked case membership, system reviewer transitions, and support-path-only recall disposition |
@@ -462,16 +469,19 @@ change relies on it.
 8. Stored knowledge and search context can inform comparison but never count as
    submitted evidence.
 9. Only deterministic policy after a valid complete persisted assessor response
-   changes lifecycle status or effective support.
-10. Required recall failures are visible; optional degradation is reported.
-11. Embedding and search-index versions form explicit linked deployment
+   changes lifecycle status or effective support; the assessor never writes
+   active state.
+10. Every submitted Relationship ref receives one stored/not_stored disposition,
+    and accepted support covers every evidence item before source activation.
+11. Required recall failures are visible; optional degradation is reported.
+12. Embedding and search-index versions form explicit linked deployment
     contracts with separate rebuild lifecycles.
-12. Runtime has no secondary durable knowledge-store dependency.
-13. Same-team visibility never permits one profile to mutate another profile's
+13. Runtime has no secondary durable knowledge-store dependency.
+14. Same-team visibility never permits one profile to mutate another profile's
     knowledge.
-14. A team Conflict case never owns evidence or changes a member Relationship's
+15. A team Conflict case never owns evidence or changes a member Relationship's
     owner, author attribution, support, Entity resolution, or source history.
-15. Nightly Conflict review may close losing stale Relationship episodes with
+16. Nightly Conflict review may close losing stale Relationship episodes with
     audited `status=superseded` and `valid_to` transitions.
 16. Relationship projection version is separate from the numerical embedding
     and physical search-index contracts; its migration cannot re-embed Evidence.
@@ -479,18 +489,20 @@ change relies on it.
     generation is current.
 18. One placement claim reserves one assessor conversation with at most five
     malformed-response turns; every retry after a valid persisted assessment
-    makes zero provider calls.
-19. The confidence threshold gates only positive entailed Relationship support
-    and never resolves structure, time, security, or conflict.
+makes zero provider calls.
+19. Stored support must cover every submitted evidence item before source or
+    supersession activation; unsupported hints are not client errors when this
+    coverage remains true.
 20. Retained legacy review rows are audit-only; they never activate knowledge or
     directly create a Hypothesis.
-21. V2.4 changes no search projection or embedding input and therefore requires
-    no re-embedding.
+21. Historical v2.4/v2.5 migrations and rows are audit/upgrade input only. They
+    do not change v2.6 Remember behavior, re-enter the worker, or appear through
+    the public v2.6 submission-status projection.
 22. MCP has one current closed schema per running server; clients do not select
     a Dense-Mem schema/server contract version. Older wire revisions negotiate
     through `initialize`; the `2026-07-28` revision uses `server/discover`.
 
-## v2.5 Transport And Identity Foundations
+## Historical v2.5 Transport And Identity Foundations
 
 MCP Streamable HTTP is composed through the official Go SDK v1.7.0 at the
 transport edge. The existing registry, authenticated context, schemas, and

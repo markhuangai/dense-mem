@@ -227,7 +227,7 @@ flowchart TD
 | `AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS` | `50000` | Entity/predicate context budget inside the complete request budget |
 | `AI_VERIFIER_MAX_PREDICATE_OPTIONS` | `100` | exact-match plus evidence-relevant active predicate option capacity; 1 through 2,000, and exact-match overflow is a preflight failure rather than truncation |
 | `AI_VERIFIER_TOKENIZER` | `o200k_base` | tokenizer for all assessor budget checks; supported overrides are validated at startup |
-| `MEMORY_AUTO_WRITE_CONFIDENCE_THRESHOLD` | `0.7` | global bootstrap gate for positive Relationship support |
+| `MEMORY_AUTO_WRITE_CONFIDENCE_THRESHOLD` | `0.7` | legacy Dream/correction gate for positive Relationship support; v2.6 Remember does not read it |
 | `RELATIONSHIP_MATCH_MAX_CANDIDATES` | `100` | post-assessment server-side identity/conflict comparison cap |
 
 Entity candidates remain capped at 20 per submitted name, and each Entity target
@@ -268,12 +268,14 @@ The server may fingerprint that local contract for deployment and telemetry,
 but no schema-version field is sent to or accepted from the model.
 
 `MEMORY_AUTO_WRITE_CONFIDENCE_THRESHOLD` accepts `0..1` and comparison is
-inclusive. A manager may override it at
+inclusive. It is retained for legacy Dream and caller-owned correction
+workflows; v2.6 Remember uses assessor-validated structural support and never
+loads this setting. A manager may override it at
 `teams.config.memory_write.auto_write_confidence_threshold`. The update is
-audited and applies at commit time to in-flight/future assessments only; it
-never re-scores completed or failed knowledge. It gates only positive
-Relationship support and cannot resolve identity, predicate, scope, time,
-security, or Conflict state.
+audited and applies at commit time to in-flight/future legacy assessments only;
+it never re-scores completed or failed knowledge. It gates only positive
+Relationship support in those workflows and cannot resolve identity,
+predicate, scope, time, security, or Conflict state.
 
 ## Entity Resolution
 

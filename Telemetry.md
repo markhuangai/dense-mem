@@ -1,10 +1,12 @@
 # Telemetry
 
 Dense-Mem exports a small, active Prometheus inventory for authenticated HTTP,
-provider work, recall, feedback, conflict-review timing, and the bounded
-community snapshot/summary/recall outcomes. It does not export placement-stage,
-retired evidence/Relationship state, promotion, advisory-lock, or generic graph
-metric families.
+Remember acknowledgement and first disposition, assessor repair/validation,
+provider work, recall, feedback, conflict-review timing, and bounded community
+snapshot/summary/recall outcomes. Per-ref `stored`/`not_stored` results and
+closed rejection codes remain owner-scoped submission status, not metric
+labels. It does not export raw evidence, retired evidence/Relationship state,
+promotion, advisory-lock, or generic graph metric families.
 
 The scrape endpoint is private. Browser telemetry is first-party only through
 `/ui/api/telemetry` and `/control/api/telemetry`; it is not a public memory
@@ -46,7 +48,7 @@ records, not Prometheus.
 | `densemem_verify_verdict_total` | `model`, `outcome` | Compatibility collector for server-recorded verifier verdict outcomes; it is not a dashboard catalog item. |
 | `densemem_remember_acknowledgements_total` | `outcome` | Remember requests acknowledged after durable evidence staging. |
 | `densemem_remember_acknowledgement_duration_seconds` | `outcome` | Time from remember request receipt to durable acknowledgement. |
-| `densemem_remember_first_disposition_total` | `status` | First durable placement disposition: `completed`, `failed`, or `quarantined`. |
+| `densemem_remember_first_disposition_total` | `status` | First durable placement disposition: `completed`, `rejected`, `failed`, or `quarantined`. |
 | `densemem_remember_first_disposition_duration_seconds` | `status` | Time from durable staging to the first placement disposition. |
 | `densemem_ai_operation_tokens_total` | `operation`, `component`, `model`, `kind`, `source` | Tokens used by a cost-accounted verifier or embedding operation. |
 | `densemem_ai_operation_cost_usd_total` | `operation`, `component`, `model`, `source` | Estimated USD cost using the current operator rate card. |
@@ -64,6 +66,10 @@ records, not Prometheus.
 | `densemem_assessor_duration_seconds` | `outcome` | Integrated-assessor conversation duration; system-only. |
 | `densemem_assessor_tokens_total` | `kind` | Server-accounted integrated-assessor tokens; system-only. |
 | `densemem_assessor_validation_failures_total` | `stage` | Integrated-assessor validation failures; system-only. |
+| `densemem_assessor_validation_field_failures_total` | `stage`, `family` | Bounded invalid-response field families; system-only. |
+| `densemem_assessor_candidate_truncations_total` | none | Candidate-context budget events; system-only. |
+| `densemem_assessor_assessment_persistence_total` | `outcome` | First-assessment persistence versus reload/reuse; system-only. |
+| `densemem_assessor_duplicate_request_prevented_total` | `stage` | Provider calls prevented by durable assessment/idempotency state; system-only. |
 | `densemem_community_runs_total` | `status` | Team/profile-scoped community snapshot outcomes such as `completed`, `skipped`, `too_large`, or `failed`. |
 | `densemem_community_summaries_total` | `outcome` | Team/profile-scoped summary-provider outcomes. |
 | `densemem_community_recall_total` | `outcome` | Team/profile-scoped community recall outcomes. |
@@ -71,8 +77,11 @@ records, not Prometheus.
 The conflict-review histogram uses second buckets of `0.1`, `1`, `5`, `15`,
 `30`, `60`, `300`, and `900`.
 
-Reconciliation counters are operator health signals, not evidence or team
-content. Failure labels are the closed provider/input contract only. Query the
+Reconciliation and assessor counters are operator health signals, not evidence
+or team content. Failure labels are the closed provider/input contract only.
+Use submission status to distinguish `no_supported_memory`/`stale_input`
+rejections from `failed` operational errors and to inspect every relationship
+disposition. Query the
 control Search convergence projection for current queue counts, affected teams,
 guidance, job-derived failure groups, and run state; do not infer current state
 from counter values alone. Bounded `embedding_failure_recorded` and
@@ -136,7 +145,9 @@ Windowed cards cover HTTP requests/errors, embedding and verifier requests and
 tokens, Remember acknowledgement and first-disposition latency, recall
 volume/results/latency, recall-feedback quality rates, dream feedback, average
 HTTP/provider/conflict-review latencies, assessor requests/failures/validation/
-tokens/duration, and exact Relationship transition/correction ledger counts.
+tokens/duration, repair/persistence counters, and exact Relationship
+transition/correction ledger counts. Submission status remains the source for
+per-ref `stored`/`not_stored` results and semantic rejection reasons.
 Current cards show all eight Relationship statuses. The control dashboard also
 shows estimated USD costs and system-only assessor cards. User dashboards never
 receive cost or assessor cards. The raw verifier-verdict collector remains for
@@ -189,7 +200,8 @@ sum(rate(densemem_embedding_errors_total{team_id="<team-uuid>"}[15m]))
   lifecycle actions.
 - Investigate elevated conflict-review duration through authorized audit and
   trace data; the histogram does not identify a Relationship or evidence item.
-- For a failed placement, query
+- For a rejected placement, inspect the owner-scoped status and its
+  `relationship_results`; for a failed placement, query
   `densemem_assessor_terminal_failures_total` by `stage` and correlate the
   bounded stage with owner-scoped submission status. This metric is system-only
   and cannot identify a team, profile, evidence item, or prompt.

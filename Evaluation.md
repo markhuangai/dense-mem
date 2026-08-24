@@ -6,6 +6,17 @@ credentials, and full run outputs are local-only ignored artifacts. The
 generator, source locks, validation, scoring, and compact baseline evidence are
 reviewed with code.
 
+## v2.6 Remember Reliability Exception
+
+This change intentionally does not run the deterministic 1k retrieval
+evaluation, the 100-row smoke, or publish an accuracy comparison. The semantic
+node model is unchanged, and the acceptance evidence is the complete no-skip
+Compose/UAT matrix plus focused real-PostgreSQL/service tests. Those checks prove
+the v2.6 request contract, assessor repair, atomic staging/activation,
+idempotency, isolation, and rejected-versus-failed status behavior. They do not
+measure duplicate-Entity or dropped-hint rates. Later retrieval-quality or
+ranking changes restore the normal 1k gate.
+
 ## Image Boundary And Tool Surface
 
 The release Docker target is `production`; its binary is compiled without the
@@ -114,7 +125,7 @@ If a historical ledger term is no longer present in its recorded support window
 in the frozen V1 evidence, the generator records that source ID and uses a
 sentence-bounded best-effort logical proposal instead. This changes only the
 non-authoritative proposal; it never changes the evidence, and the live server
-still owns exact grounding and terminal resubmission policy.
+ still owns exact grounding, repair, and terminal disposition policy.
 
 Before release use, every row is checked by the same Go code as production:
 
@@ -253,6 +264,11 @@ ephemeral credential to prove the public integration path:
 This is a real PostgreSQL/service test, not a mocked method-call test.
 
 ## PR Evaluation Rule
+
+The v2.6 Remember reliability branch is the documented exception above: do not
+require a 1k score artifact for it. Record the complete no-skip Compose/UAT
+commands and outcomes instead. The normal rule below resumes for subsequent
+changes outside that exception.
 
 A pull request that can affect retrieval quality, ranking, submission
 assessment, deterministic security scanning, embedding/search documents,
