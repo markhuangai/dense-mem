@@ -11,28 +11,46 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: read
   packages: read
   pull-requests: read
+  statuses: read
 
 concurrency:
   group: dense-mem-staging-deployment
   cancel-in-progress: false
 
 jobs:
-  authorize:
-    name: Authorize staging deployment
+  deploy-staging:
+    name: Synchronize and deploy staging
+    if: >-
+      ${{
+        github.actor == 'Z-M-Huang' &&
+        github.triggering_actor == 'Z-M-Huang' &&
+        github.ref == 'refs/heads/main'
+      }}
     permissions:
+      actions: read
       contents: read
+      packages: read
       pull-requests: read
-    runs-on: docker-runner
-    outputs:
-      expected_revision: ${{ steps.authorize.outputs.expected_revision }}
-      tag: ${{ steps.authorize.outputs.tag }}
+      statuses: read
+    runs-on: [home-server, bash, non-root]
+    timeout-minutes: 90
+    environment: staging
 
     steps:
-      - name: Authorize actor and resolve image source
-        id: authorize
+      - name: Checkout trusted image policy
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/scripts
+
+      - name: Validate current image source and staging contract
+        id: source
         uses: actions/github-script@v9
         env:
           DISPATCH_REF: ${{ github.ref }}
@@ -41,6 +59,7 @@ jobs:
         with:
           script: |
             const actor = "Z-M-Huang";
+            const policy = require("./.github/scripts/image-release-policy.cjs");
             const tag = process.env.IMAGE_TAG;
             if (context.actor !== actor || process.env.TRIGGERING_ACTOR !== actor) {
               throw new Error("Only Z-M-Huang may deploy staging.");
@@ -63,20 +82,55 @@ jobs:
                 pull_number: pullNumber,
               });
               const repository = `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+              const hasPreviewLabel = pull.labels.some(
+                (label) => label.name === policy.PREVIEW_LABEL,
+              );
               if (
                 pull.state !== "open" ||
                 pull.base.ref !== "main" ||
-                pull.head.repo?.full_name.toLowerCase() !== repository ||
-                !pull.labels.some((label) => label.name === "deploy-test-image")
+                pull.head.repo?.full_name.toLowerCase() !== repository
               ) {
                 throw new Error(`PR #${pullNumber} is not an eligible staging source.`);
+              }
+
+              const statuses = await github.paginate(
+                github.rest.repos.listCommitStatusesForRef,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: pull.head.sha,
+                  per_page: 100,
+                },
+              );
+              const receipt = policy.parseSuccessfulPolicyStatus({
+                statuses,
+                pullNumber,
+                serverUrl: context.serverUrl,
+                repository: `${context.repo.owner}/${context.repo.repo}`,
+              });
+              let workflowRun = null;
+              if (receipt.status) {
+                ({ data: workflowRun } = await github.rest.actions.getWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: Number(receipt.status.runId),
+                }));
+              }
+              const eligibility = policy.decideRcPreview({
+                pull,
+                hasPreviewLabel,
+                policyStatus: receipt.status,
+                workflowRun,
+              });
+              if (!eligibility.eligible) {
+                throw new Error(`PR #${pullNumber} is not deployable: ${eligibility.reason}.`);
               }
               revision = pull.head.sha;
             } else {
               const { data: commit } = await github.rest.repos.getCommit({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                ref: tag,
+                ref: `tags/${tag}`,
               });
               revision = commit.sha;
             }
@@ -84,26 +138,31 @@ jobs:
             if (!/^[0-9a-f]{40}$/.test(revision)) {
               throw new Error("The image source did not resolve to a commit SHA.");
             }
+
+            const expectedImage = `ghcr.io/markhuangai/dense-mem:${tag}`;
+            const configResult = await exec.getExecOutput(
+              "docker",
+              ["compose", "config", "--format", "json", "--no-env-resolution"],
+              {
+                cwd: `${process.env.HOME}/dense-mem-stage`,
+                env: { ...process.env, DENSE_MEM_IMAGE_TAG: tag },
+                silent: true,
+              },
+            );
+            const compose = JSON.parse(configResult.stdout);
+            if (compose.services?.server?.image !== expectedImage) {
+              throw new Error(`The staging server image must resolve to ${expectedImage}.`);
+            }
+
             core.setOutput("expected_revision", revision);
             core.setOutput("tag", tag);
 
-  deploy-staging:
-    name: Synchronize and deploy staging
-    needs: authorize
-    permissions:
-      contents: read
-      packages: read
-    runs-on: [home-server, bash, non-root]
-    timeout-minutes: 90
-    environment: staging
-
-    steps:
       - name: Synchronize production copy and deploy image
         shell: bash
         env:
-          EXPECTED_REVISION: ${{ needs.authorize.outputs.expected_revision }}
+          EXPECTED_REVISION: ${{ steps.source.outputs.expected_revision }}
           GHCR_TOKEN: ${{ github.token }}
-          IMAGE_TAG: ${{ needs.authorize.outputs.tag }}
+          IMAGE_TAG: ${{ steps.source.outputs.tag }}
         run: |
           set -euo pipefail
 
@@ -113,29 +172,7 @@ jobs:
             echo "::error::The staging directory or executable sync.sh is missing"
             exit 1
           fi
-
           cd "${stage_dir}"
-          probe_images="$(
-            DENSE_MEM_IMAGE_TAG=stage-contract-probe \
-              docker compose config --images
-          )"
-          if ! grep -Fxq \
-            'ghcr.io/markhuangai/dense-mem:stage-contract-probe' \
-            <<< "${probe_images}"; then
-            echo "::error::The server image must interpolate DENSE_MEM_IMAGE_TAG"
-            exit 1
-          fi
-          if ! DENSE_MEM_IMAGE_TAG="${IMAGE_TAG}" docker compose config --quiet; then
-            echo "::error::The staging Compose configuration is invalid"
-            exit 1
-          fi
-          compose_services="$(
-            DENSE_MEM_IMAGE_TAG="${IMAGE_TAG}" docker compose config --services
-          )"
-          if ! grep -Fxq server <<< "${compose_services}"; then
-            echo "::error::The staging Compose configuration is missing server"
-            exit 1
-          fi
 
           docker_config="${RUNNER_TEMP}/dense-mem-staging-docker"
           mkdir -p "${docker_config}"

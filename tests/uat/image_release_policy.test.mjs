@@ -149,7 +149,6 @@ test("staging deployment is owner-gated and manual-only", async () => {
     new URL("../../.github/workflows/deploy-stage.yml", import.meta.url),
     "utf8",
   );
-  const authorize = workflowJob(workflow, "authorize");
   const deploy = workflowJob(workflow, "deploy-staging");
 
   assert.match(workflow, /^  workflow_dispatch:\n    inputs:/m);
@@ -161,14 +160,16 @@ test("staging deployment is owner-gated and manual-only", async () => {
     workflow,
     /^  (?:pull_request|pull_request_target|push|workflow_call|workflow_run):/m,
   );
-  assert.match(authorize, /^    runs-on: docker-runner$/m);
-  assert.match(authorize, /Z-M-Huang/);
-  assert.match(authorize, /github\.triggering_actor/);
-  assert.match(authorize, /refs\/heads\/main/);
-  assert.match(deploy, /^    needs: authorize$/m);
+  assert.doesNotMatch(workflow, /^  authorize:/m);
+  assert.match(deploy, /github\.actor == 'Z-M-Huang'/);
+  assert.match(deploy, /github\.triggering_actor == 'Z-M-Huang'/);
+  assert.match(deploy, /github\.ref == 'refs\/heads\/main'/);
   assert.match(deploy, /^    runs-on: \[home-server, bash, non-root\]$/m);
   assert.match(deploy, /^    environment: staging$/m);
-  assert.doesNotMatch(deploy, /actions\/checkout/);
+  assert.match(deploy, /uses: actions\/checkout@v7/);
+  assert.match(deploy, /ref: \$\{\{ github\.sha \}\}/);
+  assert.match(deploy, /persist-credentials: false/);
+  assert.match(deploy, /sparse-checkout: \.github\/scripts/);
 });
 
 test("staging deployment synchronizes before an always-pull healthy startup", async () => {
@@ -177,10 +178,19 @@ test("staging deployment synchronizes before an always-pull healthy startup", as
     "utf8",
   );
   const deploy = workflowJob(workflow, "deploy-staging");
+  const sourceValidation = "policy.parseSuccessfulPolicyStatus";
   const sync = 'timeout --signal=TERM --kill-after=30s 10m "${sync_script}"';
   const up = "docker compose up -d";
 
+  assert.match(workflow, /^  actions: read$/m);
   assert.match(workflow, /^  packages: read$/m);
+  assert.match(workflow, /^  statuses: read$/m);
+  assert.match(deploy, /policy\.parseSuccessfulPolicyStatus/);
+  assert.match(deploy, /policy\.decideRcPreview/);
+  assert.match(deploy, /ref: `tags\/\$\{tag\}`/);
+  assert.match(deploy, /compose\.services\?\.server\?\.image/);
+  assert.match(deploy, /silent: true/);
+  assert.doesNotMatch(deploy, /docker compose config --images/);
   assert.match(deploy, /"\$\{HOME\}\/dense-mem-stage\/sync\.sh"/);
   assert.match(deploy, /migration-rehearsal\.lock/);
   assert.match(deploy, /flock --wait 600 9/);
@@ -192,6 +202,10 @@ test("staging deployment synchronizes before an always-pull healthy startup", as
   assert.match(deploy, /EXPECTED_REVISION/);
   assert.doesNotMatch(deploy, /docker (?:image )?pull|docker compose pull|--pull never/);
   assert.doesNotMatch(deploy, /docker compose logs/);
+  assert.ok(
+    deploy.indexOf(sourceValidation) < deploy.indexOf(sync),
+    "preview eligibility and the exact server image must be checked after the job wait",
+  );
   assert.ok(
     deploy.indexOf(sync) < deploy.indexOf(up),
     "the production copy must finish restoring before Compose pulls and starts the image",
