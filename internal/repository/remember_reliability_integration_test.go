@@ -672,17 +672,53 @@ func TestRememberSourceIntentCommitsWithSemanticPlacementAtomically(t *testing.T
 	assert.Equal(t, sourceRevisionID, fragmentSourceRevisionID)
 	assert.Equal(t, int64(1), resultCount)
 	assert.Equal(t, int64(1), sourceSupportCount)
+	for _, update := range []struct {
+		name  string
+		query string
+		args  []any
+	}{
+		{
+			name: "unrelated evidence field",
+			query: `UPDATE evidence_fragments SET content = content || ' forbidden'
+				WHERE team_id = ?::uuid AND fragment_id = ?::uuid`,
+			args: []any{teamID, staged.Evidence[0].FragmentID},
+		},
+		{
+			name: "second source binding",
+			query: `UPDATE evidence_fragments SET source_id = ?::uuid, source_revision_id = ?::uuid
+				WHERE team_id = ?::uuid AND fragment_id = ?::uuid`,
+			args: []any{uuid.NewString(), uuid.NewString(), teamID, staged.Evidence[0].FragmentID},
+		},
+		{
+			name: "source unbinding",
+			query: `UPDATE evidence_fragments SET source_id = NULL, source_revision_id = NULL
+				WHERE team_id = ?::uuid AND fragment_id = ?::uuid`,
+			args: []any{teamID, staged.Evidence[0].FragmentID},
+		},
+	} {
+		t.Run(update.name, func(t *testing.T) {
+			err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+				result := tx.Exec(update.query, update.args...)
+				require.NoError(t, result.Error)
+				assert.Zero(t, result.RowsAffected)
+				return nil
+			})
+			require.NoError(t, err)
+		})
+	}
+
+	var finalContent, finalSourceID, finalSourceRevisionID string
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
-		result := tx.Exec(`
-			UPDATE evidence_fragments
-			SET source_id = NULL, source_revision_id = NULL
+		return tx.Raw(`
+			SELECT content, source_id::text, source_revision_id::text
+			FROM evidence_fragments
 			WHERE team_id = ?::uuid AND fragment_id = ?::uuid
-		`, teamID, staged.Evidence[0].FragmentID)
-		require.NoError(t, result.Error)
-		assert.Zero(t, result.RowsAffected)
-		return nil
+		`, teamID, staged.Evidence[0].FragmentID).Row().Scan(&finalContent, &finalSourceID, &finalSourceRevisionID)
 	})
 	require.NoError(t, err)
+	assert.Equal(t, content, finalContent)
+	assert.Equal(t, sourceID.String, finalSourceID)
+	assert.Equal(t, sourceRevisionID.String, finalSourceRevisionID)
 }
 
 func TestRememberRejectedSubmissionDoesNotActivateSourceOrSupersession(t *testing.T) {

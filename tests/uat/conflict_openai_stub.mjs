@@ -89,6 +89,7 @@ function semanticAssessmentResponse(input, repairTurn) {
   const partialCoverage = evidenceContains(input, "[remember-partial-coverage]");
   const allUnsupported = evidenceContains(input, "[remember-all-unsupported]");
   const multiSplit = evidenceContains(input, "[remember-multi-split]");
+  const providerQuarantine = evidenceContains(input, "[remember-provider-quarantine]");
 
   const entityResults = submittedEntities.map((entity, index) => {
     const grounding = Array.isArray(entity.groundings) ? entity.groundings[0] : undefined;
@@ -137,9 +138,18 @@ function semanticAssessmentResponse(input, repairTurn) {
     };
   });
 
+  const securitySignals = [];
+  if (providerQuarantine) {
+    const evidence = (input.evidence ?? []).find((item) => String(item?.content ?? "").includes("[remember-provider-quarantine]"));
+    securitySignals.push({
+      kind: "instruction_override",
+      ...groundedTextRange(evidence, "[remember-provider-quarantine]"),
+    });
+  }
+
   return {
     request_id: input.request_id,
-    security_signals: [],
+    security_signals: securitySignals,
     entity_results: entityResults,
     relationship_results: relationshipResults,
   };

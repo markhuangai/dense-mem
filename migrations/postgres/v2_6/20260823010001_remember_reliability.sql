@@ -329,7 +329,7 @@ BEGIN
             RETURN false;
         END IF;
     ELSIF result_disposition = 'not_stored' THEN
-        RETURN result_reason IN ('not_supported_by_evidence', 'stale_input') AND split_count = 0;
+        RETURN result_reason IN ('not_supported_by_evidence', 'stale_input', 'security_quarantine') AND split_count = 0;
     ELSE
         RETURN false;
     END IF;

@@ -96,11 +96,24 @@ if (!submissionID) {
 
 const completedStatus = await waitForCompletedPlacement(submissionID, "baseline");
 const completedRelationshipResults = Array.isArray(completedStatus.relationship_results) ? completedStatus.relationship_results : [];
+const baselineRelationshipID = stringValue(relationshipResult(completedStatus, "r:uses-ledger").splits[0]?.relationship_id);
 if (completedStatus.contract_version !== contractVersion || remember.contract_version !== contractVersion) {
   throw new Error("baseline Remember receipt or status did not expose dense-mem.v2.6");
 }
+if (!baselineRelationshipID) {
+  throw new Error("baseline Remember did not return its uses-ledger Relationship ID");
+}
 if (completedRelationshipResults.length !== 3 || completedRelationshipResults.some((result) => result.disposition !== "stored")) {
   throw new Error("baseline status did not expose one stored result for every submitted relationship ref");
+}
+const baselineAttempts = positiveCount(postgresRow(`
+  SELECT attempts
+  FROM placement_runs
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND ingest_id = ${sqlLiteral(submissionID)}::uuid
+`)[0]);
+if (baselineAttempts !== 1) {
+  throw new Error(`source-key baseline completed after ${baselineAttempts} placement attempts instead of one`);
 }
 const verifierAfter = await waitForStableVerifierRequests(verifierBefore + 1);
 const summary = submissionSummary(submissionID);
@@ -146,6 +159,57 @@ const baselineBoundFragments = positiveCount(postgresRow(`
 if (baselineBoundFragments !== evidence.length) {
   throw new Error("accepted baseline did not bind every fragment to its activated source revision");
 }
+
+await waitForRecalledRelationship("Project Aurora uses LedgerDB", baselineRelationshipID);
+const baselineTrace = await mcpTool("trace_memory", {
+  relationship_id: baselineRelationshipID,
+  include_evidence_content: true,
+});
+if (stringValue(baselineTrace.relationship?.relationship_id) !== baselineRelationshipID ||
+    !(baselineTrace.evidence ?? []).some((item) => item.submission_id === submissionID)) {
+  throw new Error("baseline trace did not preserve the source-bound Remember lineage");
+}
+
+const quarantineContent = "[remember-provider-quarantine] Quarantine Source uses Quarantine Target.";
+const quarantineRemember = await submitRemember("provider security quarantine", {
+  idempotency_key: `${runID}:provider-quarantine`,
+  evidence: [{
+    content: quarantineContent,
+    source_type: "document",
+    source: `${runID}:provider-quarantine`,
+    source_group: `${runID}:provider-quarantine`,
+    source_key: `${runID}:provider-quarantine-source`,
+    source_revision: "revision-1",
+  }],
+  relationships: [relationshipForContent(
+    quarantineContent,
+    "provider-quarantine",
+    0,
+    "Quarantine Source",
+    "uses",
+    "Quarantine Target",
+    "uses",
+    "project",
+    "product",
+    "Quarantine Source uses Quarantine Target",
+  )],
+});
+const quarantineStatus = await waitForSubmissionState(quarantineRemember.submission_id, "quarantined", "provider security quarantine");
+assertOnlyStatusError(quarantineStatus, "submission_quarantined", "provider security quarantine");
+const quarantineResult = relationshipResult(quarantineStatus, "provider-quarantine");
+if (quarantineResult.disposition !== "not_stored" || quarantineResult.reason !== "security_quarantine" || quarantineResult.splits.length !== 0) {
+  throw new Error("provider security quarantine did not persist not_stored/security_quarantine");
+}
+const quarantineAttempts = positiveCount(postgresRow(`
+  SELECT attempts
+  FROM placement_runs
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND ingest_id = ${sqlLiteral(quarantineRemember.submission_id)}::uuid
+`)[0]);
+if (quarantineAttempts !== 1) {
+  throw new Error(`provider security quarantine completed after ${quarantineAttempts} placement attempts instead of one`);
+}
+assertNoCommittedSemanticEffects(quarantineRemember.submission_id, "provider security quarantine", 1);
 
 const mixedContent = "[remember-mixed] Aurora Mixed uses Atlas Mixed. Aurora Mixed imagines Phantom Mixed.";
 const mixedRemember = await submitRemember("mixed dispositions", {
@@ -501,8 +565,11 @@ console.log(JSON.stringify({
   completed_items: summary.completedItems,
   relationship_observations: summary.relationshipObservations,
   predicate_registration_events: summary.registrationEvents,
+  baseline_attempts: baselineAttempts,
   baseline_source_activations: baselineSourceActivations,
   baseline_bound_fragments: baselineBoundFragments,
+  provider_quarantine_state: quarantineStatus.processing_state,
+  provider_quarantine_attempts: quarantineAttempts,
   stale_source_fragments: staleSourceFragments,
   current_source_fragments: currentSourceFragments,
 }, null, 2));
@@ -825,6 +892,17 @@ function assertNoCommittedSemanticEffects(submissionID, label, expectedRelations
   if (semanticCounts.some((count) => count !== 0) || relationshipResults !== expectedRelationshipResults) {
     throw new Error(`${label} committed unexpected semantic, source, result, search, or embedding effects`);
   }
+}
+
+async function waitForRecalledRelationship(query, relationshipID) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const recall = await mcpTool("recall_memory", { query, limit: 10, relationship_limit: 10 });
+    if ((recall.related_relationships ?? []).some((item) => item.relationship_id === relationshipID)) {
+      return recall;
+    }
+    await delay(500);
+  }
+  throw new Error(`recall did not return source-bound Relationship ${relationshipID}`);
 }
 
 async function waitForStableVerifierRequests(minimum) {
