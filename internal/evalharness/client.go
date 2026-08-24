@@ -405,6 +405,12 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 	if err != nil {
 		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
 	}
+	if processing := submissionProcessingState(status); processing != "completed" {
+		if cause := submissionErrorMessage(status); cause != "" {
+			return mapping, fmt.Errorf("import %s: submission status %s: %s", item.SourceDocID, processing, cause)
+		}
+		return mapping, fmt.Errorf("import %s: submission status %s", item.SourceDocID, processing)
+	}
 	fragmentID := evidenceIDFromSubmission(status)
 	if fragmentID == "" {
 		return mapping, fmt.Errorf("import %s: submission status missing evidence id", item.SourceDocID)
