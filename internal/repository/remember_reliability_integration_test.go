@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -360,7 +361,8 @@ func TestRememberSupersessionIntentIsRemovedByPrivateMemoryErasure(t *testing.T)
 		SpaceID: credential.MemorySpaceID.String(), SpaceGeneration: generation,
 		IdempotencyKey: "remember-private-supersession-replacement", RequestHash: "remember-private-supersession-replacement-hash", TelemetryRemember: true,
 		Evidence: []EvidenceInput{{
-			Content: "Private replacement evidence.", SupersedesEvidenceIDs: []string{target.Evidence[0].FragmentID},
+			Content: "Private replacement evidence.", SourceKey: "doc://private-replacement", SourceRevisionToken: "rev-1",
+			SupersedesEvidenceIDs: []string{target.Evidence[0].FragmentID},
 		}},
 	})
 	require.NoError(t, err)
@@ -376,6 +378,31 @@ func TestRememberSupersessionIntentIsRemovedByPrivateMemoryErasure(t *testing.T)
 	}))
 	require.Equal(t, credential.MemorySpaceID.String(), intentSpaceID)
 	require.Equal(t, generation, intentGeneration)
+	assessmentPayload := json.RawMessage(`{"request_id":"private-erasure-assessment","security_signals":[],"entity_results":[],"relationship_results":[]}`)
+	assessment, existing, err := ledger.PersistSubmissionAssessment(privateCtx, PersistSubmissionAssessmentInput{
+		TeamID: teamID.String(), OwnerProfileID: credential.ID.String(), IngestID: replacement.IngestID,
+		PlacementRunID: replacement.PlacementRunID, RequestID: "private-erasure-assessment",
+		AssessorContractVersion: domain.ContractVersion, Model: "private-erasure-model", Tokenizer: "o200k_base",
+		ProviderTurns: 1, NormalizedResponse: assessmentPayload, ResponseHash: sha256Hex(string(assessmentPayload)),
+		ValidatedAt: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	require.False(t, existing)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO submission_assessment_response_revisions (
+			    team_id, assessment_id, ingest_id, placement_run_id, owner_profile_id,
+			    revision_number, provider_turns, input_tokens, output_tokens, candidate_context_tokens,
+			    candidate_context_truncated, normalized_response, response_hash, validated_at,
+			    space_id, space_generation
+			) VALUES (?, ?, ?, ?, ?, 1, 2, 0, 0, 0, false, ?::jsonb, ?, now(), ?, ?)
+		`, teamID, assessment.AssessmentID, replacement.IngestID, replacement.PlacementRunID, credential.ID,
+			string(assessmentPayload), sha256Hex("private-erasure-assessment-revision"), credential.MemorySpaceID, generation).Error
+	}))
+	err = rls.WithTeamProfileTx(privateCtx, appDB, teamID.String(), credential.ID.String(), func(tx *gorm.DB) error {
+		return tx.Exec(`DELETE FROM remember_source_revision_intents WHERE team_id = ? AND ingest_id = ?`, teamID, replacement.IngestID).Error
+	})
+	require.Error(t, err)
 
 	privateRepo := NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, privateRepo.Prepare(ctx))
@@ -393,7 +420,9 @@ func TestRememberSupersessionIntentIsRemovedByPrivateMemoryErasure(t *testing.T)
 	completed, err := privateRepo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
 	require.NoError(t, err)
 	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
+	require.Equal(t, int64(1), completed.DeletedCounts["remember_source_revision_intents"])
 	require.Equal(t, int64(1), completed.DeletedCounts["remember_supersession_intents"])
+	require.Equal(t, int64(1), completed.DeletedCounts["submission_assessment_response_revisions"])
 	var remaining int64
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Raw(`

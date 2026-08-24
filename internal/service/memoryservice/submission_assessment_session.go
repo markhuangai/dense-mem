@@ -25,14 +25,7 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 		PlacementRunID: run.PlacementRunID,
 	})
 	if err == nil {
-		response, decodeErr := decodeStoredSubmissionAssessment(stored, request, s.limits)
-		if decodeErr != nil {
-			observability.RecordAssessorValidationFailure(s.metrics, "stored_response")
-		} else {
-			observability.RecordAssessorAssessmentPersistence(s.metrics, "reused")
-			observability.RecordAssessorDuplicateRequestPrevention(s.metrics, "post_persist")
-		}
-		return stored, response, true, false, false, nil, decodeErr
+		return s.reuseOrRegenerateStoredAssessment(ctx, run, scope, stored, request, refresh)
 	}
 	if !errors.Is(err, repository.ErrSubmissionAssessmentNotFound) {
 		return nil, verifier.SemanticAssessmentResponse{}, false, false, false, nil, err
@@ -50,14 +43,7 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 			PlacementRunID: run.PlacementRunID,
 		})
 		if err == nil {
-			response, decodeErr := decodeStoredSubmissionAssessment(stored, request, s.limits)
-			if decodeErr != nil {
-				observability.RecordAssessorValidationFailure(s.metrics, "stored_response")
-			} else {
-				observability.RecordAssessorAssessmentPersistence(s.metrics, "reused")
-				observability.RecordAssessorDuplicateRequestPrevention(s.metrics, "post_persist")
-			}
-			return stored, response, true, false, false, nil, decodeErr
+			return s.reuseOrRegenerateStoredAssessment(ctx, run, scope, stored, request, refresh)
 		}
 		if !errors.Is(err, repository.ErrSubmissionAssessmentNotFound) {
 			return nil, verifier.SemanticAssessmentResponse{}, false, false, false, nil, err
@@ -118,17 +104,70 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 		return nil, verifier.SemanticAssessmentResponse{}, false, true, false, nil, err
 	}
 	if existing {
-		observability.RecordAssessorAssessmentPersistence(s.metrics, "reused")
-		storedResponse, decodeErr := decodeStoredSubmissionAssessment(persisted, request, s.limits)
-		if decodeErr != nil {
-			observability.RecordAssessorValidationFailure(s.metrics, "stored_response")
-		}
-		return persisted, storedResponse, true, true, false, nil, decodeErr
+		storedAssessment, storedResponse, reused, _, releaseProviderAttempt, storedSession, storedErr :=
+			s.reuseOrRegenerateStoredAssessment(ctx, run, scope, persisted, request, refresh)
+		return storedAssessment, storedResponse, reused, true, releaseProviderAttempt, storedSession, storedErr
 	}
 	observability.RecordAssessorAssessmentPersistence(s.metrics, "persisted")
 	return persisted, normalized, false, true, false, &submissionAssessmentLiveSession{
 		session: session, request: finalRequest,
 	}, nil
+}
+
+func (s *submissionAssessmentPlacementWorkerService) reuseOrRegenerateStoredAssessment(
+	ctx context.Context,
+	run repository.PlacementRun,
+	scope repository.SubmissionAssessmentRunScope,
+	stored *repository.SubmissionAssessment,
+	request verifier.SemanticAssessmentRequest,
+	refresh func(context.Context) (verifier.SemanticAssessmentRequest, error),
+) (*repository.SubmissionAssessment, verifier.SemanticAssessmentResponse, bool, bool, bool, *submissionAssessmentLiveSession, error) {
+	response, decodeErr := decodeStoredSubmissionAssessment(stored, request, s.limits)
+	if decodeErr == nil {
+		observability.RecordAssessorAssessmentPersistence(s.metrics, "reused")
+		observability.RecordAssessorDuplicateRequestPrevention(s.metrics, "post_persist")
+		return stored, response, true, false, false, nil, nil
+	}
+	observability.RecordAssessorValidationFailure(s.metrics, "stored_response")
+	if stored.ProviderTurns >= SemanticPlacementMaxAssessorTurns {
+		return stored, verifier.SemanticAssessmentResponse{}, true, true, false, nil, &verifier.MalformedResponseError{
+			Provider:        "semantic_assessor",
+			Message:         "stored semantic assessor response is invalid and the correction budget is exhausted",
+			FailureClass:    "malformed_exhausted",
+			Attempts:        stored.ProviderTurns,
+			ValidationStage: "stored_response",
+		}
+	}
+
+	started := time.Now()
+	providerCtx := observability.WithMetricIdentity(ctx, run.TeamID, run.OwnerProfileID)
+	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationPlacementAssessment, 1)
+	regenerated, session, finalRequest, err := s.assessRememberSession(
+		providerCtx, request, refresh, stored.ProviderTurns,
+	)
+	if err != nil {
+		outcome := "provider_error"
+		if errors.Is(err, verifier.ErrVerifierMalformedResponse) {
+			outcome = "malformed_exhausted"
+		}
+		observability.RecordAssessorCall(s.metrics, request.InputTokens, 0, time.Since(started).Seconds(), outcome)
+		return stored, verifier.SemanticAssessmentResponse{}, true, true, false, nil, err
+	}
+	inputTokens := regenerated.InputTokens
+	if inputTokens <= 0 {
+		inputTokens = finalRequest.InputTokens
+	}
+	observability.RecordAssessorCall(
+		s.metrics, inputTokens, regenerated.OutputTokens, time.Since(started).Seconds(), "ok",
+	)
+	live := &submissionAssessmentLiveSession{
+		session: session, request: finalRequest, turnOffset: stored.ProviderTurns,
+	}
+	persisted, err := s.persistSubmissionAssessmentRevision(ctx, run, scope, stored, regenerated, finalRequest)
+	if err != nil {
+		return stored, verifier.SemanticAssessmentResponse{}, true, true, false, nil, err
+	}
+	return persisted, regenerated, false, true, false, live, nil
 }
 
 func (s *submissionAssessmentPlacementWorkerService) assessRememberSession(

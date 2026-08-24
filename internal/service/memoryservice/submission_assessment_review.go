@@ -13,7 +13,9 @@ import (
 
 var errSubmissionAssessmentStaleInput = errors.New("submission assessment exact input is stale")
 
-type submissionAssessmentNoSupportedMemoryError struct{}
+type submissionAssessmentNoSupportedMemoryError struct {
+	RelationshipResults []repository.SubmissionRelationshipResultInput
+}
 
 func (e *submissionAssessmentNoSupportedMemoryError) Error() string {
 	return "submission assessment contains no supported memory"
@@ -33,6 +35,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeRejected(
 	ctx context.Context,
 	scope repository.SubmissionAssessmentRunScope,
 	code SubmissionErrorCode,
+	relationshipResults []repository.SubmissionRelationshipResultInput,
 ) error {
 	if code != SubmissionErrorStaleInput {
 		code = SubmissionErrorNoSupportedMemory
@@ -53,6 +56,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeRejected(
 		Status:                       string(domain.SemanticReviewRejected),
 		Category:                     "rejected",
 		Payload:                      payload,
+		RelationshipResults:          relationshipResults,
 	})
 	if err == nil && completed == nil {
 		return newPlacementWorkerError(scope.TeamID, scope.IngestID, "semantic_rejection", errors.New("submission assessment worker: nil rejection result"))

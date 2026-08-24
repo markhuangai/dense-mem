@@ -72,7 +72,7 @@ func TestSubmissionWorkerLogsCompletedRetryAndTerminalOutcomesAfterPersistence(t
 	require.Contains(t, retryLog, `"max_attempts":3`)
 
 	logs.Reset()
-	require.NoError(t, service.completeRejected(context.Background(), scope, SubmissionErrorNoSupportedMemory))
+	require.NoError(t, service.completeRejected(context.Background(), scope, SubmissionErrorNoSupportedMemory, nil))
 	failureLog := logs.String()
 	require.Contains(t, failureLog, `"msg":"submission_rejected"`)
 	require.Contains(t, failureLog, `"reason_code":"no_supported_memory"`)

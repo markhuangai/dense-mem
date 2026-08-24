@@ -198,6 +198,34 @@ func TestSubmissionAssessmentWorkerRejectsWithoutProvisionalStoredResults(t *tes
 	require.Empty(t, completion.RelationshipResults)
 }
 
+func TestSubmissionAssessmentWorkerPersistsAllUnsupportedRelationshipResults(t *testing.T) {
+	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+		response := submissionAssessmentValidResponse(req, false)
+		for index := range response.RelationshipResults {
+			reason := "not_supported_by_evidence"
+			response.RelationshipResults[index].Disposition = "not_supported"
+			response.RelationshipResults[index].Reason = &reason
+			response.RelationshipResults[index].Splits = nil
+		}
+		return response, nil
+	}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Empty(t, assessments.commits)
+	require.Len(t, assessments.completions, 1)
+	results := assessments.completions[0].RelationshipResults
+	require.Len(t, results, 3)
+	for _, result := range results {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, "not_supported_by_evidence", result.Reason)
+		assert.Empty(t, result.Splits)
+	}
+}
+
 func TestSubmissionAssessmentWorkerReusesPersistedAssessmentWithoutAnotherProviderCall(t *testing.T) {
 	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
 
@@ -389,7 +417,7 @@ func TestSubmissionAssessmentWorkerTerminalizesConsumedAssessmentAttempt(t *test
 	assert.Equal(t, "assessment_attempt_consumed", assessments.completions[0].Payload["failure_stage"])
 }
 
-func TestSubmissionAssessmentWorkerRequeuesInvalidStoredResponse(t *testing.T) {
+func TestSubmissionAssessmentWorkerRegeneratesInvalidStoredResponse(t *testing.T) {
 	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
 	assessments.assessment = &repository.SubmissionAssessment{
 		AssessmentID: uuid.NewString(), NormalizedResponse: json.RawMessage(`not-json`), ResponseHash: "sha256:invalid",
@@ -399,10 +427,11 @@ func TestSubmissionAssessmentWorkerRequeuesInvalidStoredResponse(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, processed)
-	assert.Zero(t, provider.calls)
-	require.Len(t, assessments.requeues, 1)
-	assert.Equal(t, "assessment", assessments.requeues[0].Payload["failure_stage"])
-	assert.NotEmpty(t, assessments.requeues[0].Payload["failure_reason_code"])
+	assert.Equal(t, 1, provider.calls)
+	require.Len(t, assessments.revisionInputs, 1)
+	assert.Equal(t, 1, assessments.revisionInputs[0].ProviderTurns)
+	assert.Empty(t, assessments.requeues)
+	assert.Len(t, assessments.commits, 1)
 }
 
 func TestSubmissionAssessmentDeterministicQuarantineUsesSignalEvidenceIndex(t *testing.T) {

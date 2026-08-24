@@ -10,6 +10,7 @@ import (
 
 type submissionAssessmentWorkerCatalogStub struct {
 	entityInputs           []repository.SubmissionAssessmentEntityCatalogInput
+	entityCandidates       map[string][]repository.SemanticReviewEntityCandidate
 	predicateInputs        []repository.SemanticReviewPredicateResolutionInput
 	predicateOptionInputs  []repository.SemanticAssessmentPredicateOptionsInput
 	predicateOptions       []repository.SemanticReviewPredicateCandidate
@@ -27,7 +28,9 @@ func (s *submissionAssessmentWorkerCatalogStub) ListSubmissionAssessmentEntityCa
 	}
 	groups := make([]repository.SubmissionAssessmentEntityCatalogGroup, 0, len(input.Entities))
 	for _, entity := range input.Entities {
-		groups = append(groups, repository.SubmissionAssessmentEntityCatalogGroup{Ref: entity.Ref, Candidates: []repository.SemanticReviewEntityCandidate{}, Complete: true})
+		groups = append(groups, repository.SubmissionAssessmentEntityCatalogGroup{
+			Ref: entity.Ref, Candidates: append([]repository.SemanticReviewEntityCandidate(nil), s.entityCandidates[entity.Ref]...), Complete: true,
+		})
 	}
 	return repository.SubmissionAssessmentEntityCatalogResult{Groups: groups, Complete: s.entityComplete}, nil
 }

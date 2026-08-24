@@ -192,7 +192,7 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		commitInput, commitInputErr := submissionAssessmentCommitInput(*run, scope, plan, response, assessment, reused)
 		var noSupported *submissionAssessmentNoSupportedMemoryError
 		if errors.As(commitInputErr, &noSupported) {
-			return true, s.completeRejected(ctx, scope, SubmissionErrorNoSupportedMemory)
+			return true, s.completeRejected(ctx, scope, SubmissionErrorNoSupportedMemory, noSupported.RelationshipResults)
 		}
 		if commitInputErr != nil {
 			return true, terminalizeAfterError(commitInputErr, func() error {
@@ -201,7 +201,7 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		}
 		committed, commitErr := s.assessments.CommitSubmissionAssessment(ctx, commitInput)
 		if isRememberStaleInputError(commitErr) {
-			return true, s.completeRejected(ctx, scope, SubmissionErrorStaleInput)
+			return true, s.completeRejected(ctx, scope, SubmissionErrorStaleInput, nil)
 		}
 		if errors.Is(commitErr, repository.ErrSubmissionAssessmentScopeMismatch) {
 			return true, terminalizeAfterError(commitErr, func() error {
@@ -917,10 +917,12 @@ func submissionAssessmentCommitInput(
 			coveredEvidence[support.FragmentID] = struct{}{}
 		}
 	}
-	if len(coveredEvidence) < len(plan.Items) {
-		return repository.CommitSubmissionAssessmentInput{}, &submissionAssessmentNoSupportedMemoryError{}
-	}
 	if len(observations) == 0 {
+		return repository.CommitSubmissionAssessmentInput{}, &submissionAssessmentNoSupportedMemoryError{
+			RelationshipResults: relationshipResults,
+		}
+	}
+	if len(coveredEvidence) < len(plan.Items) {
 		return repository.CommitSubmissionAssessmentInput{}, &submissionAssessmentNoSupportedMemoryError{}
 	}
 	return repository.CommitSubmissionAssessmentInput{

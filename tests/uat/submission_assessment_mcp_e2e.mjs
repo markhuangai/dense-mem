@@ -150,6 +150,26 @@ if (mixedNotStored.disposition !== "not_stored" || mixedNotStored.reason !== "no
   throw new Error("mixed submission did not expose its explicit not_stored relationship result");
 }
 
+const allUnsupportedContent = "[remember-all-unsupported] Aurora Unsupported imagines Phantom Unsupported and predicts Mirage Unsupported.";
+const allUnsupportedRemember = await submitRemember("all unsupported", {
+  idempotency_key: `${runID}:all-unsupported`,
+  evidence: [{ content: allUnsupportedContent, source_type: "document", source: `${runID}:all-unsupported`, source_group: `${runID}:all-unsupported` }],
+  relationships: [
+    relationshipForContent(allUnsupportedContent, "all-unsupported-imagines", 0, "Aurora Unsupported", "imagines", "Phantom Unsupported", "imagines", "project", "product", "Aurora Unsupported imagines Phantom Unsupported"),
+    relationshipForContent(allUnsupportedContent, "all-unsupported-predicts", 0, "Aurora Unsupported", "predicts", "Mirage Unsupported", "predicts", "project", "product", "Aurora Unsupported imagines Phantom Unsupported and predicts Mirage Unsupported"),
+  ],
+});
+const allUnsupportedStatus = await waitForSubmissionState(allUnsupportedRemember.submission_id, "rejected", "all unsupported");
+assertOnlyStatusError(allUnsupportedStatus, "no_supported_memory", "all unsupported");
+const allUnsupportedResults = [
+  relationshipResult(allUnsupportedStatus, "all-unsupported-imagines"),
+  relationshipResult(allUnsupportedStatus, "all-unsupported-predicts"),
+];
+if (allUnsupportedResults.some((result) => result.disposition !== "not_stored" || result.reason !== "not_supported_by_evidence" || result.splits.length !== 0)) {
+  throw new Error("all-unsupported rejection did not preserve every not_stored relationship result");
+}
+assertNoCommittedSemanticEffects(allUnsupportedRemember.submission_id, "all unsupported", allUnsupportedResults.length);
+
 const multiSplitContent = "[remember-multi-split] Aurora Multi uses and works on Atlas Multi.";
 const multiSplitRemember = await submitRemember("multi split", {
   idempotency_key: `${runID}:multi-split`,
@@ -327,6 +347,7 @@ console.log(JSON.stringify({
   overflow_assessor_attempts: overflowAttempts,
   overflow_assessments: overflowAssessments,
   mixed_dispositions: [mixedStored.disposition, mixedNotStored.disposition],
+  all_unsupported_dispositions: allUnsupportedResults.map((result) => result.disposition),
   multi_split_count: multiSplitResult.splits.length,
   grounding_repair_turns: groundingTurns,
   stale_input_state: staleStatus.processing_state,
@@ -584,7 +605,7 @@ function dropDatabaseFailureTrigger() {
   `);
 }
 
-function assertNoCommittedSemanticEffects(submissionID, label) {
+function assertNoCommittedSemanticEffects(submissionID, label, expectedRelationshipResults = 0) {
   const summary = submissionSummary(submissionID);
   const row = postgresRow(`
     WITH documents AS (
@@ -608,7 +629,7 @@ function assertNoCommittedSemanticEffects(submissionID, label) {
        WHERE team_id = ${sqlLiteral(teamID)}::uuid
          AND ingest_id = ${sqlLiteral(submissionID)}::uuid)
   `);
-  const counts = [
+  const semanticCounts = [
     summary.completedItems,
     summary.commitOutcomes,
     summary.entityResolutions,
@@ -617,10 +638,10 @@ function assertNoCommittedSemanticEffects(submissionID, label) {
     summary.searchDocuments,
     positiveCount(row[0]),
     positiveCount(row[1]),
-    positiveCount(row[2]),
   ];
-  if (counts.some((count) => count !== 0)) {
-    throw new Error(`${label} committed semantic, source, result, search, or embedding effects`);
+  const relationshipResults = positiveCount(row[2]);
+  if (semanticCounts.some((count) => count !== 0) || relationshipResults !== expectedRelationshipResults) {
+    throw new Error(`${label} committed unexpected semantic, source, result, search, or embedding effects`);
   }
 }
 

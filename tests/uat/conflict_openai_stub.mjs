@@ -85,6 +85,7 @@ function semanticAssessmentResponse(input, repairTurn) {
   const submittedRelationships = Array.isArray(input.submitted_relationships) ? input.submitted_relationships : [];
   const groundingRepair = evidenceContains(input, "[remember-grounding-repair]");
   const mixed = evidenceContains(input, "[remember-mixed]");
+  const allUnsupported = evidenceContains(input, "[remember-all-unsupported]");
   const multiSplit = evidenceContains(input, "[remember-multi-split]");
 
   const entityResults = submittedEntities.map((entity, index) => {
@@ -103,7 +104,7 @@ function semanticAssessmentResponse(input, repairTurn) {
   });
 
   const relationshipResults = submittedRelationships.map((relationship) => {
-    if (mixed && String(relationship.ref).includes("not-supported")) {
+    if (allUnsupported || (mixed && String(relationship.ref).includes("not-supported"))) {
       return {
         ref: relationship.ref,
         disposition: "not_supported",

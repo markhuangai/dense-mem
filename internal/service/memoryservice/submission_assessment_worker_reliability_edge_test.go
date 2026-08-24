@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -272,7 +273,7 @@ func TestSubmissionAssessmentWorkerHandlesSessionAndPersistenceRaces(t *testing.
 		assert.True(t, assessments.commits[0].Payload["assessment_reused"].(bool))
 	})
 
-	t.Run("reservation race with invalid stored assessment retries", func(t *testing.T) {
+	t.Run("reservation race with invalid stored assessment regenerates", func(t *testing.T) {
 		ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
 		processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 		require.NoError(t, err)
@@ -286,22 +287,91 @@ func TestSubmissionAssessmentWorkerHandlesSessionAndPersistenceRaces(t *testing.
 		processed, err = worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 		require.NoError(t, err)
 		assert.True(t, processed)
-		assert.Equal(t, 1, provider.calls)
-		require.Len(t, assessments.requeues, 1)
-		assert.Equal(t, "assessment", assessments.requeues[0].Payload["failure_stage"])
+		assert.Equal(t, 2, provider.calls)
+		require.Len(t, assessments.revisionInputs, 1)
+		assert.Equal(t, 2, assessments.revisionInputs[0].ProviderTurns)
+		assert.Empty(t, assessments.requeues)
+		assert.Len(t, assessments.commits, 2)
 		_ = ledger
 	})
 
-	t.Run("persist race with invalid stored assessment retries", func(t *testing.T) {
-		_, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
+	t.Run("persist race with invalid stored assessment regenerates", func(t *testing.T) {
+		_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
 		assessments.persistExisting = true
 		assessments.persistNormalizedResponse = []byte("not-json")
 
 		processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
 		require.NoError(t, err)
 		assert.True(t, processed)
-		require.Len(t, assessments.requeues, 1)
-		assert.Equal(t, "assessment", assessments.requeues[0].Payload["failure_stage"])
+		assert.Equal(t, 2, provider.calls)
+		require.Len(t, assessments.revisionInputs, 1)
+		assert.Equal(t, 2, assessments.revisionInputs[0].ProviderTurns)
+		assert.Empty(t, assessments.requeues)
+		assert.Len(t, assessments.commits, 1)
+	})
+
+	t.Run("candidate drift regenerates an invalid stored assessment", func(t *testing.T) {
+		_, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
+		provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+			response := submissionAssessmentValidResponse(req, false)
+			for index := range response.EntityResults {
+				groundingRef := response.EntityResults[index].GroundingRef
+				if groundingRef == nil {
+					continue
+				}
+				for _, group := range req.EntityCandidateGroups {
+					if group.GroundingRef != *groundingRef || len(group.Candidates) != 1 {
+						continue
+					}
+					candidateID := group.Candidates[0].EntityID
+					response.EntityResults[index].Action = string(domain.EntityResolutionReuse)
+					response.EntityResults[index].CandidateEntityID = &candidateID
+				}
+			}
+			return response, nil
+		}
+
+		processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+		require.NoError(t, err)
+		require.True(t, processed)
+		require.NotEmpty(t, catalog.entityInputs)
+		firstTarget := catalog.entityInputs[0].Entities[0]
+		catalog.entityCandidates = map[string][]repository.SemanticReviewEntityCandidate{
+			firstTarget.Ref: {{
+				EntityID: uuid.NewString(), EntityKind: firstTarget.EntityKind, CanonicalName: firstTarget.Surface,
+				ActiveNames: []string{firstTarget.Surface}, IdentityContext: map[string]any{}, Status: "active",
+			}},
+		}
+
+		processed, err = worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+		require.NoError(t, err)
+		require.True(t, processed)
+		assert.Equal(t, 2, provider.calls)
+		require.Len(t, assessments.revisionInputs, 1)
+		assert.Equal(t, 2, assessments.revisionInputs[0].ProviderTurns)
+		assert.Empty(t, assessments.requeues)
+		require.Len(t, assessments.commits, 2)
+		assert.Equal(t, false, assessments.commits[1].Payload["assessment_reused"])
+	})
+
+	t.Run("invalid stored assessment respects the total turn bound", func(t *testing.T) {
+		_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+		processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+		require.NoError(t, err)
+		require.True(t, processed)
+		require.NotNil(t, assessments.assessment)
+		assessments.assessment.ProviderTurns = SemanticPlacementMaxAssessorTurns
+		assessments.assessment.NormalizedResponse = []byte("not-json")
+
+		processed, err = worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+		require.NoError(t, err)
+		require.True(t, processed)
+		assert.Equal(t, 1, provider.calls)
+		assert.Empty(t, assessments.revisionInputs)
+		assert.Empty(t, assessments.requeues)
+		require.Len(t, assessments.completions, 1)
+		assert.Equal(t, "malformed_exhausted", assessments.completions[0].Payload["failure_class"])
+		assert.Equal(t, string(SubmissionErrorProviderResponseInvalid), assessments.completions[0].Payload["failure_code"])
 	})
 }
 

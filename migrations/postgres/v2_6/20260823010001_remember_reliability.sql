@@ -9,7 +9,10 @@
 -- RLS impact: intent rows are readable by the owning team, writable only by
 -- the owning profile, and updatable only for the one-time source activation.
 -- Result rows are append-only and use the same team/profile boundary as the
--- placement assessment that produced them.
+-- placement assessment that produced them. Delete attempts retain their
+-- owner/system visibility so append-only guards return explicit errors; those
+-- guards permit deletion only for the system private-erasure transaction and
+-- its exact row space.
 -- Backfill: unfinished v2.5 Remember work is terminalized as failed with the
 -- contract_superseded failure code. Accepted history is never rewritten. The
 -- v2.6 worker only consumes new intent rows and persists v2.6 results.
@@ -439,15 +442,6 @@ BEGIN
                 )',
                 table_name || '_update', table_name
             );
-            EXECUTE format(
-                'CREATE POLICY %I ON %I FOR DELETE USING (
-                    current_setting(''app.tx_mode'', true) IN (''system'', ''migration'')
-                    OR (current_setting(''app.tx_mode'', true) = ''profile''
-                        AND team_id = NULLIF(current_setting(''app.current_team_id'', true), '''')::uuid
-                        AND owner_profile_id = NULLIF(current_setting(''app.current_profile_id'', true), '''')::uuid)
-                )',
-                table_name || '_delete', table_name
-            );
         ELSIF table_name = 'remember_source_revision_intents' THEN
             EXECUTE format(
                 'CREATE POLICY %I ON %I FOR UPDATE USING (
@@ -464,6 +458,15 @@ BEGIN
                 table_name || '_update', table_name
             );
         END IF;
+        EXECUTE format(
+            'CREATE POLICY %I ON %I FOR DELETE USING (
+                current_setting(''app.tx_mode'', true) IN (''system'', ''migration'')
+                OR (current_setting(''app.tx_mode'', true) = ''profile''
+                    AND team_id = NULLIF(current_setting(''app.current_team_id'', true), '''')::uuid
+                    AND owner_profile_id = NULLIF(current_setting(''app.current_profile_id'', true), '''')::uuid)
+            )',
+            table_name || '_delete', table_name
+        );
     END LOOP;
 END;
 $dense_mem_remember_reliability_rls$;
@@ -471,6 +474,13 @@ $dense_mem_remember_reliability_rls$;
 CREATE OR REPLACE FUNCTION prevent_remember_source_intent_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF current_setting('app.tx_mode', true) = 'system'
+           AND NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid = OLD.space_id THEN
+            RETURN OLD;
+        END IF;
+        RAISE EXCEPTION 'remember source revision intents are activation-only';
+    END IF;
     IF OLD.source_id IS NOT NULL OR OLD.source_revision_id IS NOT NULL
        OR NEW.team_id IS DISTINCT FROM OLD.team_id
        OR NEW.intent_id IS DISTINCT FROM OLD.intent_id
@@ -496,7 +506,7 @@ $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS remember_source_revision_intents_activation_guard ON remember_source_revision_intents;
 CREATE TRIGGER remember_source_revision_intents_activation_guard
-    BEFORE UPDATE ON remember_source_revision_intents
+    BEFORE UPDATE OR DELETE ON remember_source_revision_intents
     FOR EACH ROW EXECUTE FUNCTION prevent_remember_source_intent_mutation();
 
 DROP TRIGGER IF EXISTS remember_supersession_intents_append_only ON remember_supersession_intents;
