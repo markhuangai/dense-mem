@@ -12,6 +12,33 @@ import (
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
+type submissionAssessmentConsumedTurnsError struct {
+	cause         error
+	providerTurns int
+}
+
+func (err *submissionAssessmentConsumedTurnsError) Error() string {
+	if err == nil || err.cause == nil {
+		return "submission assessment session failed after consuming provider turns"
+	}
+	return err.cause.Error()
+}
+
+func (err *submissionAssessmentConsumedTurnsError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.cause
+}
+
+func submissionAssessmentConsumedProviderTurns(err error) int {
+	var consumed *submissionAssessmentConsumedTurnsError
+	if !errors.As(err, &consumed) || consumed == nil {
+		return 0
+	}
+	return consumed.providerTurns
+}
+
 func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	ctx context.Context,
 	run repository.PlacementRun,
@@ -146,6 +173,14 @@ func (s *submissionAssessmentPlacementWorkerService) reuseOrRegenerateStoredAsse
 		providerCtx, request, refresh, stored.ProviderTurns,
 	)
 	if err != nil {
+		if consumedTurns := submissionAssessmentConsumedProviderTurns(err); consumedTurns > stored.ProviderTurns {
+			reserved, reserveErr := s.reserveSubmissionAssessmentProviderTurns(ctx, scope, stored, consumedTurns)
+			if reserveErr != nil {
+				err = errors.Join(err, reserveErr)
+			} else {
+				stored = reserved
+			}
+		}
 		outcome := "provider_error"
 		if errors.Is(err, verifier.ErrVerifierMalformedResponse) {
 			outcome = "malformed_exhausted"
@@ -226,14 +261,18 @@ func (s *submissionAssessmentPlacementWorkerService) completeRememberSessionTurn
 		}
 		nextRequest, err := refresh(ctx)
 		if err != nil {
-			return verifier.SemanticAssessmentResponse{}, request, err
+			return verifier.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{
+				cause: err, providerTurns: totalTurns,
+			}
 		}
 		turn, err = s.provider.Repair(ctx, session, verifier.SemanticAssessmentRepairRequest{
 			Request:          nextRequest,
 			ValidationErrors: validationErrors,
 		})
 		if err != nil {
-			return verifier.SemanticAssessmentResponse{}, request, err
+			return verifier.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{
+				cause: err, providerTurns: totalTurns,
+			}
 		}
 		request = nextRequest
 	}

@@ -49,6 +49,40 @@ func (s *submissionAssessmentPlacementWorkerService) persistSubmissionAssessment
 		ResponseHash:                 semanticAssessmentHash(canonicalJSON),
 		ValidatedAt:                  s.now().UTC(),
 	}
+	return s.appendSubmissionAssessmentRevision(ctx, input)
+}
+
+func (s *submissionAssessmentPlacementWorkerService) reserveSubmissionAssessmentProviderTurns(
+	ctx context.Context,
+	scope repository.SubmissionAssessmentRunScope,
+	assessment *repository.SubmissionAssessment,
+	providerTurns int,
+) (*repository.SubmissionAssessment, error) {
+	if assessment == nil || providerTurns <= assessment.ProviderTurns {
+		return assessment, nil
+	}
+	canonicalJSON, err := verifier.CanonicalJSON(assessment.NormalizedResponse)
+	if err != nil {
+		return nil, errors.Join(errSubmissionAssessmentRevisionPersistence, err)
+	}
+	return s.appendSubmissionAssessmentRevision(ctx, repository.AppendSubmissionAssessmentRevisionInput{
+		SubmissionAssessmentRunScope: scope,
+		AssessmentID:                 assessment.AssessmentID,
+		ProviderTurns:                providerTurns,
+		InputTokens:                  assessment.InputTokens,
+		OutputTokens:                 assessment.OutputTokens,
+		CandidateContextTokens:       assessment.CandidateContextTokens,
+		CandidateContextTruncated:    assessment.CandidateContextTruncated,
+		NormalizedResponse:           canonicalJSON,
+		ResponseHash:                 semanticAssessmentHash(canonicalJSON),
+		ValidatedAt:                  s.now().UTC(),
+	})
+}
+
+func (s *submissionAssessmentPlacementWorkerService) appendSubmissionAssessmentRevision(
+	ctx context.Context,
+	input repository.AppendSubmissionAssessmentRevisionInput,
+) (*repository.SubmissionAssessment, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxSubmissionAssessmentRevisionPersistenceAttempts; attempt++ {
 		persisted, existing, err := s.assessments.AppendSubmissionAssessmentRevision(ctx, input)

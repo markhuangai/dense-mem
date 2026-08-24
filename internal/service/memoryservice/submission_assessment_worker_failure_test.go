@@ -188,6 +188,33 @@ func TestSubmissionAssessmentWorkerBoundsTurnsAcrossRevisionPersistenceFailure(t
 	}
 }
 
+func TestSubmissionAssessmentWorkerPersistsInvalidTurnsBeforeRepairFailureRetry(t *testing.T) {
+	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	assessments.assessment = &repository.SubmissionAssessment{
+		AssessmentID:       "00000000-0000-0000-0000-000000000904",
+		ProviderTurns:      1,
+		NormalizedResponse: json.RawMessage(`{}`),
+		ResponseHash:       semanticAssessmentHash([]byte(`{}`)),
+	}
+	provider.responseForTurn = func(verifier.SemanticAssessmentRequest, int) (verifier.SemanticAssessmentResponse, error) {
+		return verifier.SemanticAssessmentResponse{}, nil
+	}
+	provider.repairErr = &verifier.ProviderError{
+		Provider: "stub", FailureClass: verifier.ProviderFailureClassHTTPServer, StatusCode: 503,
+	}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	assert.True(t, processed)
+	assert.Equal(t, 2, provider.calls)
+	require.Len(t, assessments.revisionInputs, 1)
+	assert.Equal(t, 2, assessments.revisionInputs[0].ProviderTurns)
+	assert.Equal(t, 2, assessments.assessment.ProviderTurns)
+	require.Len(t, assessments.requeues, 1)
+	assert.Empty(t, assessments.completions)
+}
+
 func TestSubmissionAssessmentWorkerPersistsDatabaseFailureCode(t *testing.T) {
 	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
 	service := worker.(*submissionAssessmentPlacementWorkerService)
