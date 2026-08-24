@@ -1,0 +1,119 @@
+name: Deploy staging
+
+run-name: Deploy staging · ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Dense-Mem image tag to deploy."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: dense-mem-staging-deployment
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Authorize staging deployment
+    permissions:
+      contents: read
+    runs-on: docker-runner
+    outputs:
+      revision: ${{ steps.authorize.outputs.revision }}
+      tag: ${{ steps.authorize.outputs.tag }}
+
+    steps:
+      - name: Authorize actor and resolve rehearsal revision
+        id: authorize
+        uses: actions/github-script@v9
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+          IMAGE_TAG: ${{ inputs.tag }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const actor = "Z-M-Huang";
+            const tag = process.env.IMAGE_TAG;
+            if (context.actor !== actor || process.env.TRIGGERING_ACTOR !== actor) {
+              throw new Error("Only Z-M-Huang may deploy staging.");
+            }
+            if (process.env.DISPATCH_REF !== "refs/heads/main") {
+              throw new Error("Staging deployments must be dispatched from main.");
+            }
+
+            const preview = /^test-([1-9][0-9]*)$/.exec(tag);
+            const revision = preview ? `refs/pull/${preview[1]}/head` : tag;
+            core.setOutput("revision", revision);
+            core.setOutput("tag", tag);
+
+  staging-migration-rehearsal:
+    name: Restore production copy and rehearse migrations
+    needs: authorize
+    uses: ./.github/workflows/staging-migration-rehearsal.yml
+    with:
+      revision: ${{ needs.authorize.outputs.revision }}
+    secrets: inherit
+
+  deploy-staging:
+    name: Deploy staging image
+    needs: [authorize, staging-migration-rehearsal]
+    if: >-
+      ${{
+        needs.authorize.result == 'success' &&
+        needs.staging-migration-rehearsal.result == 'success'
+      }}
+    permissions:
+      contents: read
+      packages: read
+    runs-on: [home-server, bash, non-root]
+    timeout-minutes: 60
+    environment: staging
+
+    steps:
+      - name: Pull and deploy requested image
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          IMAGE_TAG: ${{ needs.authorize.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          stage_dir="${HOME}/dense-mem-stage"
+          if [[ ! -d "${stage_dir}" ]]; then
+            echo "::error::The staging directory is missing"
+            exit 1
+          fi
+          cd "${stage_dir}"
+
+          docker_config="${RUNNER_TEMP}/dense-mem-staging-docker"
+          mkdir -p "${docker_config}"
+          export DOCKER_CONFIG="${docker_config}"
+          printf '%s' "${GHCR_TOKEN}" |
+            docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          unset GHCR_TOKEN
+
+          exec 9>"${HOME}/dense-mem-stage/migration-rehearsal.lock"
+          if ! flock --wait 600 9; then
+            echo "::error::Timed out waiting for the staging migration lock"
+            exit 1
+          fi
+
+          DENSE_MEM_IMAGE_TAG="${IMAGE_TAG}" \
+            docker compose up -d \
+            --pull always \
+            --no-deps \
+            --wait \
+            --wait-timeout 3000 \
+            server
+
+          {
+            echo "## Staging deployment"
+            echo
+            echo "- Tag: \`${IMAGE_TAG}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

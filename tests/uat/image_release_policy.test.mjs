@@ -144,6 +144,78 @@ test("staging migration rehearsal supports manual and reusable execution", async
   );
 });
 
+test("staging deployment is owner-gated and manual-only", async () => {
+  const workflow = await readFile(
+    new URL("../../.github/workflows/deploy-stage.yml", import.meta.url),
+    "utf8",
+  );
+  const authorize = workflowJob(workflow, "authorize");
+  const rehearsal = workflowJob(workflow, "staging-migration-rehearsal");
+  const deploy = workflowJob(workflow, "deploy-staging");
+
+  assert.match(workflow, /^  workflow_dispatch:\n    inputs:/m);
+  assert.match(
+    workflow,
+    /^      tag:\n        description: "Dense-Mem image tag to deploy\."\n        required: true\n        type: string$/m,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /^  (?:pull_request|pull_request_target|push|workflow_call|workflow_run):/m,
+  );
+  assert.match(authorize, /^    runs-on: docker-runner$/m);
+  assert.match(authorize, /const actor = "Z-M-Huang"/);
+  assert.match(authorize, /context\.actor !== actor/);
+  assert.match(authorize, /process\.env\.TRIGGERING_ACTOR !== actor/);
+  assert.match(authorize, /refs\/heads\/main/);
+  assert.match(authorize, /refs\/pull\/\$\{preview\[1\]\}\/head/);
+  assert.match(authorize, /core\.setOutput\("revision", revision\)/);
+  assert.match(authorize, /core\.setOutput\("tag", tag\)/);
+  assert.doesNotMatch(workflow, /actions\/checkout|image-release-policy/);
+  assert.match(rehearsal, /^    needs: authorize$/m);
+  assert.match(
+    rehearsal,
+    /^    uses: \.\/\.github\/workflows\/staging-migration-rehearsal\.yml$/m,
+  );
+  assert.match(
+    rehearsal,
+    /^      revision: \$\{\{ needs\.authorize\.outputs\.revision \}\}$/m,
+  );
+  assert.match(rehearsal, /^    secrets: inherit$/m);
+  assert.match(
+    deploy,
+    /^    needs: \[authorize, staging-migration-rehearsal\]$/m,
+  );
+  assert.match(deploy, /^    runs-on: \[home-server, bash, non-root\]$/m);
+  assert.match(deploy, /^    environment: staging$/m);
+});
+
+test("staging deployment rehearses before an always-pull healthy startup", async () => {
+  const workflow = await readFile(
+    new URL("../../.github/workflows/deploy-stage.yml", import.meta.url),
+    "utf8",
+  );
+  const rehearsal = workflowJob(workflow, "staging-migration-rehearsal");
+  const deploy = workflowJob(workflow, "deploy-staging");
+
+  assert.match(workflow, /^  packages: read$/m);
+  assert.doesNotMatch(workflow, /^  (?:actions|pull-requests|statuses): read$/m);
+  assert.match(rehearsal, /^    needs: authorize$/m);
+  assert.match(deploy, /needs\.staging-migration-rehearsal\.result == 'success'/);
+  assert.doesNotMatch(workflow, /sync_script|sync\.sh|go test/);
+  assert.match(deploy, /migration-rehearsal\.lock/);
+  assert.match(deploy, /flock --wait 600 9/);
+  assert.match(
+    deploy,
+    /IMAGE_TAG: \$\{\{ needs\.authorize\.outputs\.tag \}\}/,
+  );
+  assert.match(deploy, /docker compose up -d[\s\\]*--pull always/);
+  assert.match(deploy, /--pull always[\s\\]*--no-deps/);
+  assert.match(deploy, /--wait[\s\\]*--wait-timeout 3000/);
+  assert.doesNotMatch(deploy, /EXPECTED_REVISION|org\.opencontainers\.image\.revision/);
+  assert.doesNotMatch(deploy, /docker (?:image )?pull|docker compose pull|--pull never/);
+  assert.doesNotMatch(deploy, /docker compose logs/);
+});
+
 test("same-repository pushes rebuild while the preview label remains", () => {
   assert.deepEqual(decidePreviewEvent(baseEvent), {
     mode: "attempt",
