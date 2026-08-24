@@ -68,7 +68,16 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 				      AND (? = '' OR rec.entity_kind = ?)
 				      AND (
 				          rec.entity_id = NULLIF(?, '')::uuid
-				          OR (? <> '' AND name.normalized_name = ?)
+				          OR (
+				              name.normalized_name = ?
+				              AND NOT EXISTS (
+				                  SELECT 1
+				                  FROM entity_records AS exact
+				                  WHERE exact.team_id = rec.team_id
+				                    AND exact.entity_id = NULLIF(?, '')::uuid
+				                    AND exact.status = 'active'
+				              )
+				          )
 				      )
 				    ORDER BY rec.entity_id, known_rank, name_rank, name.created_at DESC
 				)
@@ -77,7 +86,7 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 				ORDER BY known_rank, name_rank, entity_id
 				LIMIT ?
 			`, target.KnownEntityID, normalizedSurface, input.TeamID, target.EntityKind, target.EntityKind,
-				target.KnownEntityID, normalizedSurface, normalizedSurface, input.CandidateLimit+1).Rows()
+				target.KnownEntityID, normalizedSurface, target.KnownEntityID, input.CandidateLimit+1).Rows()
 			if err != nil {
 				return err
 			}

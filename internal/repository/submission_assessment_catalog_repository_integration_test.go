@@ -85,6 +85,23 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 	require.Len(t, knownOnlyCatalog.Groups[0].Candidates, 1)
 	assert.Equal(t, teamAEntity.EntityID, knownOnlyCatalog.Groups[0].Candidates[0].EntityID)
 
+	exactEntity := createSemanticEntity(t, ctx, repo, teamA, ownerA, "person", "Duplicate Exact Name")
+	for range 21 {
+		createSemanticEntity(t, ctx, repo, teamA, ownerA, "person", "Duplicate Exact Name")
+	}
+	exactDuplicateCatalog, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
+		TeamID: teamA, OwnerProfileID: ownerB,
+		Entities: []SubmissionAssessmentEntityCatalogTarget{{
+			Ref: "exact-duplicate", Surface: "Duplicate Exact Name", EntityKind: "person", KnownEntityID: exactEntity.EntityID,
+		}},
+		CandidateLimit: 20,
+	})
+	require.NoError(t, err)
+	require.True(t, exactDuplicateCatalog.Complete)
+	require.Len(t, exactDuplicateCatalog.Groups, 1)
+	require.Len(t, exactDuplicateCatalog.Groups[0].Candidates, 1)
+	assert.Equal(t, exactEntity.EntityID, exactDuplicateCatalog.Groups[0].Candidates[0].EntityID)
+
 	inactiveCatalog, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
 		TeamID: teamA, OwnerProfileID: ownerB,
 		Entities: []SubmissionAssessmentEntityCatalogTarget{{
