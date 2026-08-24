@@ -339,7 +339,11 @@ const staleRemember = await submitRemember("post-ack stale input", {
 bumpRelationshipVersion(baselineTarget.relationship_id, baselineTarget.relationship_version);
 const staleStatus = await waitForSubmissionState(staleRemember.submission_id, "rejected", "post-ack stale input");
 assertOnlyStatusError(staleStatus, "stale_input", "post-ack stale input");
-assertNoCommittedSemanticEffects(staleRemember.submission_id, "post-ack stale input");
+const staleResult = relationshipResult(staleStatus, "post-ack-stale");
+if (staleResult.disposition !== "not_stored" || staleResult.reason !== "stale_input" || staleResult.splits.length !== 0) {
+  throw new Error("post-ack stale input did not persist its not_stored relationship disposition");
+}
+assertNoCommittedSemanticEffects(staleRemember.submission_id, "post-ack stale input", 1);
 
 const sourceRevisionContent = "[remember-source-revision-2] Project Aurora uses LedgerDB Next.";
 const sourceRevisionRemember = await submitRemember("source revision advancement", {

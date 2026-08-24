@@ -46,6 +46,11 @@ describe("SubmissionsPanel", () => {
     await waitFor(() => expect(listSubmissionDiagnostics).toHaveBeenLastCalledWith({
       team_id: "team-1", processing_state: "failed", limit: 50, offset: 0,
     }));
+
+    await userEvent.selectOptions(screen.getByLabelText("Processing state"), "rejected");
+    await waitFor(() => expect(listSubmissionDiagnostics).toHaveBeenLastCalledWith({
+      team_id: "team-1", processing_state: "rejected", limit: 50, offset: 0,
+    }));
   });
 
   it("keeps authoritative detail visible when supplemental logs are unavailable", async () => {

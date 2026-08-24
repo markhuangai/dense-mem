@@ -189,6 +189,7 @@ func TestRememberReliabilityMigrationEnforcesRelationshipResultShape(t *testing.
 	validRelationshipID := uuid.NewString()
 	require.NoError(t, insertResult("stored-valid", "stored", "", `[{"split_index":0,"relationship_id":"`+validRelationshipID+`","relationship_version":1,"status":"active"}]`))
 	require.NoError(t, insertResult("not-stored-valid", "not_stored", "not_supported_by_evidence", `[]`))
+	require.NoError(t, insertResult("stale-input-valid", "not_stored", "stale_input", `[]`))
 
 	tests := []struct {
 		name        string

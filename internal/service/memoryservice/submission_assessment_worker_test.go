@@ -167,6 +167,12 @@ func TestSubmissionAssessmentWorkerMarksStaleSourceRejected(t *testing.T) {
 	require.Len(t, assessments.completions, 1)
 	assert.Equal(t, string(domain.SemanticReviewRejected), assessments.completions[0].Status)
 	assert.Equal(t, string(SubmissionErrorStaleInput), assessments.completions[0].Payload["failure_code"])
+	require.Len(t, assessments.completions[0].RelationshipResults, 3)
+	for _, result := range assessments.completions[0].RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorStaleInput), result.Reason)
+		assert.Empty(t, result.Splits)
+	}
 }
 
 func TestSubmissionAssessmentWorkerPersistsNotStoredResultsForPartialCoverageRejection(t *testing.T) {

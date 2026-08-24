@@ -159,6 +159,7 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 		return result
 	}
 	failed := create(teamA, ownerA, "failed", "private failed evidence", "document")
+	rejected := create(teamA, ownerA, "rejected", "private rejected evidence", "document")
 	queued := create(teamA, ownerB, "queued", "private queued evidence", "manual", "conversation", "manual")
 	foreign := create(teamC, ownerC, "foreign", "private foreign evidence", "observation")
 	hostileSourceSummary := `{"password":"supersecret","access_token":"opaque-secret"}`
@@ -183,12 +184,27 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 		`, teamA, failed.IngestID).Error; err != nil {
 			return err
 		}
-		return tx.Exec(`
+		if err := tx.Exec(`
 			UPDATE placement_runs
 			SET status = 'failed', attempts = max_attempts,
 			    completed_at = now(), updated_at = now(), lease_until = NULL
 			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
-		`, teamA, failed.IngestID).Error
+		`, teamA, failed.IngestID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			UPDATE placement_items
+			SET status = 'rejected', category = 'rejected',
+			    result = jsonb_build_object('failure_code', 'no_supported_memory')
+			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
+		`, teamA, rejected.IngestID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE placement_runs
+			SET status = 'rejected', completed_at = now(), updated_at = now(), lease_until = NULL
+			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
+		`, teamA, rejected.IngestID).Error
 	}))
 	duplicateAt := time.Date(2026, time.August, 18, 1, 0, 0, 0, time.UTC)
 	terminalAt := duplicateAt.Add(10 * time.Minute)
@@ -230,12 +246,12 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 
 	all, err := repo.ListSubmissionDiagnostics(ctx, SubmissionDiagnosticFilter{Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, int64(3), all.Total)
-	require.Len(t, all.Records, 3)
+	assert.Equal(t, int64(4), all.Total)
+	require.Len(t, all.Records, 4)
 
 	teamOnly, err := repo.ListSubmissionDiagnostics(ctx, SubmissionDiagnosticFilter{TeamID: teamA, Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), teamOnly.Total)
+	assert.Equal(t, int64(3), teamOnly.Total)
 	for _, record := range teamOnly.Records {
 		assert.Equal(t, teamA, record.Placement.TeamID)
 	}
@@ -254,6 +270,15 @@ func TestSubmissionDiagnosticsUseSystemScopeButHonorExactTeamFilter(t *testing.T
 	assert.NotContains(t, string(listJSON), "supersecret")
 	assert.NotContains(t, string(listJSON), "opaque-secret")
 	assert.Equal(t, "normalizer_unavailable", failedOnly.Records[0].Placement.Items[0].Result["failure_code"])
+
+	rejectedOnly, err := repo.ListSubmissionDiagnostics(ctx, SubmissionDiagnosticFilter{
+		TeamID: teamA, ProcessingState: "rejected", Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), rejectedOnly.Total)
+	require.Len(t, rejectedOnly.Records, 1)
+	assert.Equal(t, rejected.IngestID, rejectedOnly.Records[0].Placement.IngestID)
+	assert.Equal(t, string(domain.PlacementRunRejected), rejectedOnly.Records[0].Placement.Status)
 
 	detail, err := repo.GetSubmissionDiagnostic(ctx, teamA, failed.IngestID)
 	require.NoError(t, err)

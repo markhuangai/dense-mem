@@ -148,17 +148,19 @@ func TestSubmissionDiagnosticsDetailOrdersAndFiltersOperatorHistory(t *testing.T
 }
 
 func TestSubmissionDiagnosticsValidatesScopeAndBoundsRepositoryErrors(t *testing.T) {
-	svc := NewSubmissionDiagnosticsService(&submissionDiagnosticsRepoStub{})
+	repo := &submissionDiagnosticsRepoStub{}
+	svc := NewSubmissionDiagnosticsService(repo)
 	_, err := svc.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{TeamID: "bad"})
 	require.ErrorContains(t, err, "team_id")
 	_, err = svc.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{ProcessingState: "unknown"})
 	require.ErrorContains(t, err, "processing_state")
 	_, err = svc.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{ProcessingState: "rejected"})
-	require.ErrorContains(t, err, "processing_state")
+	require.NoError(t, err)
+	require.Equal(t, "rejected", repo.listFilter.ProcessingState)
 	_, err = svc.GetSubmissionDiagnostic(context.Background(), "bad", uuid.NewString())
 	require.ErrorContains(t, err, "team_id")
 
-	repo := &submissionDiagnosticsRepoStub{err: errors.New("database detail")}
+	repo = &submissionDiagnosticsRepoStub{err: errors.New("database detail")}
 	svc = NewSubmissionDiagnosticsService(repo)
 	_, err = svc.GetSubmissionDiagnostic(context.Background(), uuid.NewString(), uuid.NewString())
 	require.ErrorIs(t, err, ErrSubmissionDiagnosticsUnavailable)

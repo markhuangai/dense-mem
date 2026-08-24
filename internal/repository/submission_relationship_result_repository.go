@@ -94,8 +94,9 @@ func insertSubmissionRelationshipResults(
 		if result.Disposition == "not_stored" && len(result.Splits) != 0 {
 			return fmt.Errorf("submission relationship result %q has not_stored splits", result.RelationshipRef)
 		}
-		if result.Disposition == "not_stored" && strings.TrimSpace(result.Reason) != "not_supported_by_evidence" {
-			return fmt.Errorf("submission relationship result %q requires reason not_supported_by_evidence", result.RelationshipRef)
+		reason := strings.TrimSpace(result.Reason)
+		if result.Disposition == "not_stored" && reason != "not_supported_by_evidence" && reason != "stale_input" {
+			return fmt.Errorf("submission relationship result %q has unsupported not_stored reason", result.RelationshipRef)
 		}
 		ordered = append(ordered, result)
 	}

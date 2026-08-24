@@ -57,9 +57,15 @@ func TestControlPortalSubmissionRoutes(t *testing.T) {
 func TestControlPortalSubmissionValidationAndNotFound(t *testing.T) {
 	e := echo.New()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/control/api/submissions?processing_state=unknown", nil)
+	req := httptest.NewRequest(http.MethodGet, "/control/api/submissions?processing_state=rejected", nil)
 	c := e.NewContext(req, rec)
-	_, err := controlSubmissionDiagnosticFilter(c)
+	filter, err := controlSubmissionDiagnosticFilter(c)
+	require.NoError(t, err)
+	require.Equal(t, "rejected", filter.ProcessingState)
+
+	req = httptest.NewRequest(http.MethodGet, "/control/api/submissions?processing_state=unknown", nil)
+	c = e.NewContext(req, rec)
+	_, err = controlSubmissionDiagnosticFilter(c)
 	require.ErrorContains(t, err, "processing_state")
 
 	h := &controlPortalHandler{submissions: &controlSubmissionDiagnosticsStub{err: service.ErrSubmissionDiagnosticNotFound}}

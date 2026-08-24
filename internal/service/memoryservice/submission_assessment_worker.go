@@ -201,7 +201,12 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		}
 		committed, commitErr := s.assessments.CommitSubmissionAssessment(ctx, commitInput)
 		if isRememberStaleInputError(commitErr) {
-			return true, s.completeRejected(ctx, scope, SubmissionErrorStaleInput, nil)
+			for index := range commitInput.RelationshipResults {
+				commitInput.RelationshipResults[index].Disposition = "not_stored"
+				commitInput.RelationshipResults[index].Reason = string(SubmissionErrorStaleInput)
+				commitInput.RelationshipResults[index].Splits = nil
+			}
+			return true, s.completeRejected(ctx, scope, SubmissionErrorStaleInput, commitInput.RelationshipResults)
 		}
 		if errors.Is(commitErr, repository.ErrSubmissionAssessmentScopeMismatch) {
 			return true, terminalizeAfterError(commitErr, func() error {

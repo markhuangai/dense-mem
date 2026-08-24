@@ -471,7 +471,7 @@ func normalizeSubmissionDiagnosticServiceFilter(filter SubmissionDiagnosticFilte
 		}
 	}
 	switch filter.ProcessingState {
-	case "", "queued", "processing", "completed", "quarantined", "failed":
+	case "", "queued", "processing", "completed", "rejected", "quarantined", "failed":
 	default:
 		return SubmissionDiagnosticFilter{}, fmt.Errorf("processing_state is unsupported")
 	}

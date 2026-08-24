@@ -11,7 +11,7 @@ import {
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
 
-const PROCESSING_STATES = ["", "queued", "processing", "completed", "quarantined", "failed"];
+const PROCESSING_STATES = ["", "queued", "processing", "completed", "rejected", "quarantined", "failed"];
 const PAGE_SIZE = 50;
 
 export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team }) {
