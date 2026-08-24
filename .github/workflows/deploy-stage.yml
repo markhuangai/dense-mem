@@ -1,0 +1,197 @@
+name: Deploy staging
+
+run-name: Deploy staging · ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Dense-Mem image tag to deploy."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+  pull-requests: read
+
+concurrency:
+  group: dense-mem-staging-deployment
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Authorize staging deployment
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: docker-runner
+    outputs:
+      expected_revision: ${{ steps.authorize.outputs.expected_revision }}
+      tag: ${{ steps.authorize.outputs.tag }}
+
+    steps:
+      - name: Authorize actor and resolve image source
+        id: authorize
+        uses: actions/github-script@v9
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+          IMAGE_TAG: ${{ inputs.tag }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const actor = "Z-M-Huang";
+            const tag = process.env.IMAGE_TAG;
+            if (context.actor !== actor || process.env.TRIGGERING_ACTOR !== actor) {
+              throw new Error("Only Z-M-Huang may deploy staging.");
+            }
+            if (process.env.DISPATCH_REF !== "refs/heads/main") {
+              throw new Error("Staging deployments must be dispatched from main.");
+            }
+
+            const preview = /^test-([1-9][0-9]*)$/.exec(tag);
+            if (!preview && !/^v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$/.test(tag)) {
+              throw new Error("tag must be test-N, vX.Y.Z-rc.N, or vX.Y.Z");
+            }
+
+            let revision;
+            if (preview) {
+              const pullNumber = Number(preview[1]);
+              const { data: pull } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pullNumber,
+              });
+              const repository = `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+              if (
+                pull.state !== "open" ||
+                pull.base.ref !== "main" ||
+                pull.head.repo?.full_name.toLowerCase() !== repository ||
+                !pull.labels.some((label) => label.name === "deploy-test-image")
+              ) {
+                throw new Error(`PR #${pullNumber} is not an eligible staging source.`);
+              }
+              revision = pull.head.sha;
+            } else {
+              const { data: commit } = await github.rest.repos.getCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: tag,
+              });
+              revision = commit.sha;
+            }
+
+            if (!/^[0-9a-f]{40}$/.test(revision)) {
+              throw new Error("The image source did not resolve to a commit SHA.");
+            }
+            core.setOutput("expected_revision", revision);
+            core.setOutput("tag", tag);
+
+  deploy-staging:
+    name: Synchronize and deploy staging
+    needs: authorize
+    permissions:
+      contents: read
+      packages: read
+    runs-on: [home-server, bash, non-root]
+    timeout-minutes: 90
+    environment: staging
+
+    steps:
+      - name: Synchronize production copy and deploy image
+        shell: bash
+        env:
+          EXPECTED_REVISION: ${{ needs.authorize.outputs.expected_revision }}
+          GHCR_TOKEN: ${{ github.token }}
+          IMAGE_TAG: ${{ needs.authorize.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          stage_dir="${HOME}/dense-mem-stage"
+          sync_script="${HOME}/dense-mem-stage/sync.sh"
+          if [[ ! -d "${stage_dir}" || ! -x "${sync_script}" ]]; then
+            echo "::error::The staging directory or executable sync.sh is missing"
+            exit 1
+          fi
+
+          cd "${stage_dir}"
+          probe_images="$(
+            DENSE_MEM_IMAGE_TAG=stage-contract-probe \
+              docker compose config --images
+          )"
+          if ! grep -Fxq \
+            'ghcr.io/markhuangai/dense-mem:stage-contract-probe' \
+            <<< "${probe_images}"; then
+            echo "::error::The server image must interpolate DENSE_MEM_IMAGE_TAG"
+            exit 1
+          fi
+          if ! DENSE_MEM_IMAGE_TAG="${IMAGE_TAG}" docker compose config --quiet; then
+            echo "::error::The staging Compose configuration is invalid"
+            exit 1
+          fi
+          compose_services="$(
+            DENSE_MEM_IMAGE_TAG="${IMAGE_TAG}" docker compose config --services
+          )"
+          if ! grep -Fxq server <<< "${compose_services}"; then
+            echo "::error::The staging Compose configuration is missing server"
+            exit 1
+          fi
+
+          docker_config="${RUNNER_TEMP}/dense-mem-staging-docker"
+          mkdir -p "${docker_config}"
+          export DOCKER_CONFIG="${docker_config}"
+          printf '%s' "${GHCR_TOKEN}" |
+            docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          unset GHCR_TOKEN
+
+          exec 9>"${HOME}/dense-mem-stage/migration-rehearsal.lock"
+          if ! flock --wait 600 9; then
+            echo "::error::Timed out waiting for the staging migration lock"
+            exit 1
+          fi
+
+          timeout --signal=TERM --kill-after=30s 10m "${sync_script}"
+          DENSE_MEM_IMAGE_TAG="${IMAGE_TAG}" \
+            docker compose up -d \
+            --pull always \
+            --no-deps \
+            --wait \
+            --wait-timeout 3000 \
+            server
+
+          container_id="$(
+            DENSE_MEM_IMAGE_TAG="${IMAGE_TAG}" docker compose ps -q server
+          )"
+          revision="$(
+            docker inspect \
+              --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+              "${container_id}"
+          )"
+          health="$(docker inspect --format '{{.State.Health.Status}}' "${container_id}")"
+          image_id="$(docker inspect --format '{{.Image}}' "${container_id}")"
+          digest="$(
+            docker image inspect --format '{{index .RepoDigests 0}}' "${image_id}"
+          )"
+
+          if [[ "${revision}" != "${EXPECTED_REVISION}" ]]; then
+            echo "::error::Deployed revision ${revision} does not match ${EXPECTED_REVISION}"
+            DENSE_MEM_IMAGE_TAG="${IMAGE_TAG}" docker compose stop --timeout 30 server
+            exit 1
+          fi
+          if [[ "${health}" != "healthy" ]]; then
+            echo "::error::The staging server health is ${health}"
+            exit 1
+          fi
+          if [[ ! "${digest}" =~ ^ghcr\.io/markhuangai/dense-mem@sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::The deployed GHCR digest is invalid"
+            exit 1
+          fi
+
+          {
+            echo "## Staging deployment"
+            echo
+            echo "- Tag: \`${IMAGE_TAG}\`"
+            echo "- Digest: \`${digest}\`"
+            echo "- Revision: \`${revision}\`"
+            echo "- Health: ${health}"
+          } >> "${GITHUB_STEP_SUMMARY}"

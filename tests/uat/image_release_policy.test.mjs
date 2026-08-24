@@ -144,6 +144,60 @@ test("staging migration rehearsal supports manual and reusable execution", async
   );
 });
 
+test("staging deployment is owner-gated and manual-only", async () => {
+  const workflow = await readFile(
+    new URL("../../.github/workflows/deploy-stage.yml", import.meta.url),
+    "utf8",
+  );
+  const authorize = workflowJob(workflow, "authorize");
+  const deploy = workflowJob(workflow, "deploy-staging");
+
+  assert.match(workflow, /^  workflow_dispatch:\n    inputs:/m);
+  assert.match(
+    workflow,
+    /^      tag:\n        description: "Dense-Mem image tag to deploy\."\n        required: true\n        type: string$/m,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /^  (?:pull_request|pull_request_target|push|workflow_call|workflow_run):/m,
+  );
+  assert.match(authorize, /^    runs-on: docker-runner$/m);
+  assert.match(authorize, /Z-M-Huang/);
+  assert.match(authorize, /github\.triggering_actor/);
+  assert.match(authorize, /refs\/heads\/main/);
+  assert.match(deploy, /^    needs: authorize$/m);
+  assert.match(deploy, /^    runs-on: \[home-server, bash, non-root\]$/m);
+  assert.match(deploy, /^    environment: staging$/m);
+  assert.doesNotMatch(deploy, /actions\/checkout/);
+});
+
+test("staging deployment synchronizes before an always-pull healthy startup", async () => {
+  const workflow = await readFile(
+    new URL("../../.github/workflows/deploy-stage.yml", import.meta.url),
+    "utf8",
+  );
+  const deploy = workflowJob(workflow, "deploy-staging");
+  const sync = 'timeout --signal=TERM --kill-after=30s 10m "${sync_script}"';
+  const up = "docker compose up -d";
+
+  assert.match(workflow, /^  packages: read$/m);
+  assert.match(deploy, /"\$\{HOME\}\/dense-mem-stage\/sync\.sh"/);
+  assert.match(deploy, /migration-rehearsal\.lock/);
+  assert.match(deploy, /flock --wait 600 9/);
+  assert.match(deploy, /DENSE_MEM_IMAGE_TAG/);
+  assert.match(deploy, /docker compose up -d[\s\\]*--pull always/);
+  assert.match(deploy, /--pull always[\s\\]*--no-deps/);
+  assert.match(deploy, /--wait[\s\\]*--wait-timeout 3000/);
+  assert.match(deploy, /org\.opencontainers\.image\.revision/);
+  assert.match(deploy, /EXPECTED_REVISION/);
+  assert.doesNotMatch(deploy, /docker (?:image )?pull|docker compose pull|--pull never/);
+  assert.doesNotMatch(deploy, /docker compose logs/);
+  assert.ok(
+    deploy.indexOf(sync) < deploy.indexOf(up),
+    "the production copy must finish restoring before Compose pulls and starts the image",
+  );
+});
+
 test("same-repository pushes rebuild while the preview label remains", () => {
   assert.deepEqual(decidePreviewEvent(baseEvent), {
     mode: "attempt",
