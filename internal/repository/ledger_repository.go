@@ -208,7 +208,7 @@ func (r *LedgerRepositoryImpl) CreateIngest(ctx context.Context, input CreateIng
 			return nil
 		}
 		if input.TelemetryRemember {
-			if err := validateRememberSubmissionPreflight(ctx, tx, input); err != nil {
+			if err := validateRememberSubmissionPreflight(ctx, tx, input, ingestID); err != nil {
 				return err
 			}
 		}

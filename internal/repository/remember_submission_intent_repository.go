@@ -107,7 +107,7 @@ type rememberPreflightConflictContext struct {
 	ExpectedVersion int    `json:"expected_version"`
 }
 
-func validateRememberSubmissionPreflight(ctx context.Context, tx *gorm.DB, input CreateIngestInput) error {
+func validateRememberSubmissionPreflight(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string) error {
 	proposalJSON, err := json.Marshal(input.Proposal)
 	if err != nil {
 		return err
@@ -120,12 +120,12 @@ func validateRememberSubmissionPreflight(ctx context.Context, tx *gorm.DB, input
 	entityStates := map[string]bool{}
 	predicateStates := map[string]bool{}
 	for index, relationship := range proposal.RelationshipHints {
-		if err := validateRememberExactEntity(ctx, tx, input.TeamID, input.OwnerProfileID, relationship.Subject.KnownEntityID,
+		if err := validateRememberExactEntity(ctx, tx, input.TeamID, input.OwnerProfileID, ingestID, relationship.Subject.KnownEntityID,
 			fmt.Sprintf("/relationships/%d/subject/known_entity_id", index), entityStates, collector); err != nil {
 			return err
 		}
 		if relationship.Object.Entity != nil {
-			if err := validateRememberExactEntity(ctx, tx, input.TeamID, input.OwnerProfileID, relationship.Object.Entity.KnownEntityID,
+			if err := validateRememberExactEntity(ctx, tx, input.TeamID, input.OwnerProfileID, ingestID, relationship.Object.Entity.KnownEntityID,
 				fmt.Sprintf("/relationships/%d/object/entity/known_entity_id", index), entityStates, collector); err != nil {
 				return err
 			}
@@ -155,6 +155,7 @@ func validateRememberExactEntity(
 	tx *gorm.DB,
 	teamID string,
 	ownerProfileID string,
+	ingestID string,
 	entityID string,
 	path string,
 	states map[string]bool,
@@ -173,12 +174,19 @@ func validateRememberExactEntity(
 		var status string
 		err := withSystemModeInTx(ctx, tx, teamID, ownerProfileID, func(systemTx *gorm.DB) error {
 			return systemTx.WithContext(ctx).Raw(`
-				SELECT status
-				FROM entity_records
-				WHERE team_id = ?::uuid AND entity_id = ?::uuid
+				SELECT entity.status
+				FROM entity_records AS entity
+				JOIN knowledge_ingests AS ingest
+				  ON ingest.team_id = entity.team_id
+				 AND ingest.space_id = entity.space_id
+				 AND ingest.space_generation = entity.space_generation
+				WHERE ingest.team_id = ?::uuid
+				  AND ingest.owner_profile_id = ?::uuid
+				  AND ingest.ingest_id = ?::uuid
+				  AND entity.entity_id = ?::uuid
 				LIMIT 1
-				FOR SHARE
-			`, teamID, entityID).Row().Scan(&status)
+				FOR SHARE OF entity
+			`, teamID, ownerProfileID, ingestID, entityID).Row().Scan(&status)
 		})
 		active = err == nil && status == "active"
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -491,12 +499,23 @@ func insertRememberSubmissionIntents(
 		}
 	}
 	for _, targetID := range item.SupersedesEvidenceIDs {
-		if err := tx.WithContext(ctx).Exec(`
+		inserted := tx.WithContext(ctx).Exec(`
 			INSERT INTO remember_supersession_intents (
-			    team_id, ingest_id, owner_profile_id, fragment_id, target_fragment_id
-			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid)
-		`, input.TeamID, ingestID, input.OwnerProfileID, fragmentID, targetID).Error; err != nil {
-			return err
+			    team_id, ingest_id, owner_profile_id, fragment_id, target_fragment_id,
+			    space_id, space_generation
+			)
+			SELECT ingest.team_id, ingest.ingest_id, ingest.owner_profile_id, ?::uuid, ?::uuid,
+			       ingest.space_id, ingest.space_generation
+			FROM knowledge_ingests AS ingest
+			WHERE ingest.team_id = ?::uuid
+			  AND ingest.ingest_id = ?::uuid
+			  AND ingest.owner_profile_id = ?::uuid
+		`, fragmentID, targetID, input.TeamID, ingestID, input.OwnerProfileID)
+		if inserted.Error != nil {
+			return inserted.Error
+		}
+		if inserted.RowsAffected != 1 {
+			return errors.New("remember supersession intent does not match its staged ingest")
 		}
 	}
 	return nil

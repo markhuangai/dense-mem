@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 func TestRememberPreflightAggregatesExactReferenceIssuesBeforeStaging(t *testing.T) {
@@ -258,6 +259,148 @@ func TestRememberPreflightAppliesTeamVisibilityAndOwnerMutationAuthorityABC(t *t
 	}
 	require.Contains(t, paths, "/relationships/0/subject/known_entity_id")
 	require.Contains(t, paths, "/relationships/0/predicate/known_predicate_key")
+}
+
+func TestRememberPreflightFencesExactEntitiesToTheIngestSpace(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "remember-preflight-private-space"))
+	identityID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	credentialA := createOwnedCredential(t, credentialRepo, teamID, identityID, "remember-private-a", domain.CredentialBindingCredentialPrivate)
+	credentialB := createOwnedCredential(t, credentialRepo, teamID, identityID, "remember-private-b", domain.CredentialBindingCredentialPrivate)
+	entityA, entityB := uuid.New(), uuid.New()
+	var generationA, generationB int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT generation FROM memory_spaces WHERE id = ?`, credentialA.MemorySpaceID).Row().Scan(&generationA); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT generation FROM memory_spaces WHERE id = ?`, credentialB.MemorySpaceID).Row().Scan(&generationB); err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO entity_records (team_id, entity_id, entity_kind, space_id, space_generation)
+			VALUES (?, ?, 'project', ?, ?), (?, ?, 'project', ?, ?)
+		`, teamID, entityA, credentialA.MemorySpaceID, generationA,
+			teamID, entityB, credentialB.MemorySpaceID, generationB).Error
+	}))
+	privateCtx := requestctx.WithActor(ctx, requestctx.Actor{
+		TeamID: teamID, OwnerID: credentialA.ID,
+		AllowedSpaces: []domain.MemorySpaceAccess{{
+			ID: credentialA.MemorySpaceID, Kind: domain.MemorySpaceCredentialPrivate, Generation: generationA,
+		}},
+	})
+	ledger := NewLedgerRepository(appDB, rls)
+	valid, err := ledger.CreateIngest(privateCtx, CreateIngestInput{
+		TeamID: teamID.String(), OwnerProfileID: credentialA.ID.String(),
+		SpaceID: credentialA.MemorySpaceID.String(), SpaceGeneration: generationA,
+		IdempotencyKey: "remember-private-same-space", RequestHash: "remember-private-same-space-hash", TelemetryRemember: true,
+		Proposal: map[string]any{"relationship_hints": []map[string]any{{
+			"subject": map[string]any{"known_entity_id": entityA.String()},
+		}}},
+		Evidence: []EvidenceInput{{Content: "A same-space exact Entity remains available."}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, valid)
+
+	_, err = ledger.CreateIngest(privateCtx, CreateIngestInput{
+		TeamID: teamID.String(), OwnerProfileID: credentialA.ID.String(),
+		SpaceID: credentialA.MemorySpaceID.String(), SpaceGeneration: generationA,
+		IdempotencyKey: "remember-private-cross-space", RequestHash: "remember-private-cross-space-hash", TelemetryRemember: true,
+		Proposal: map[string]any{"relationship_hints": []map[string]any{{
+			"subject": map[string]any{"known_entity_id": entityB.String()},
+		}}},
+		Evidence: []EvidenceInput{{Content: "A cross-space exact Entity must remain unavailable."}},
+	})
+	var preflight *RememberPreflightError
+	require.True(t, errors.As(err, &preflight), "err=%v", err)
+	require.Contains(t, preflight.Issues, RememberPreflightIssue{
+		Path: "/relationships/0/subject/known_entity_id", Code: "unavailable", Message: "known_entity_id is unavailable",
+	})
+	var staged int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT COUNT(*) FROM knowledge_ingests
+			WHERE team_id = ? AND owner_profile_id = ? AND idempotency_key = 'remember-private-cross-space'
+		`, teamID, credentialA.ID).Scan(&staged).Error
+	}))
+	require.Zero(t, staged)
+}
+
+func TestRememberSupersessionIntentIsRemovedByPrivateMemoryErasure(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "remember-private-supersession-erasure"))
+	identityID := createLedgerSSOIdentity(t, adminDB, rls, teamID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	credential := createOwnedCredential(t, credentialRepo, teamID, identityID, "remember-private-supersession", domain.CredentialBindingCredentialPrivate)
+	var generation int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT generation FROM memory_spaces WHERE id = ?`, credential.MemorySpaceID).Row().Scan(&generation)
+	}))
+	privateCtx := requestctx.WithActor(ctx, requestctx.Actor{
+		TeamID: teamID, OwnerID: credential.ID,
+		AllowedSpaces: []domain.MemorySpaceAccess{{
+			ID: credential.MemorySpaceID, Kind: domain.MemorySpaceCredentialPrivate, Generation: generation,
+		}},
+	})
+	ledger := NewLedgerRepository(appDB, rls)
+	target, err := ledger.CreateIngest(privateCtx, CreateIngestInput{
+		TeamID: teamID.String(), OwnerProfileID: credential.ID.String(),
+		SpaceID: credential.MemorySpaceID.String(), SpaceGeneration: generation,
+		IdempotencyKey: "remember-private-supersession-target", RequestHash: "remember-private-supersession-target-hash",
+		Evidence: []EvidenceInput{{Content: "Private evidence to replace."}},
+	})
+	require.NoError(t, err)
+	require.Len(t, target.Evidence, 1)
+	replacement, err := ledger.CreateIngest(privateCtx, CreateIngestInput{
+		TeamID: teamID.String(), OwnerProfileID: credential.ID.String(),
+		SpaceID: credential.MemorySpaceID.String(), SpaceGeneration: generation,
+		IdempotencyKey: "remember-private-supersession-replacement", RequestHash: "remember-private-supersession-replacement-hash", TelemetryRemember: true,
+		Evidence: []EvidenceInput{{
+			Content: "Private replacement evidence.", SupersedesEvidenceIDs: []string{target.Evidence[0].FragmentID},
+		}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, replacement)
+	var intentSpaceID string
+	var intentGeneration int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT space_id::text, space_generation
+			FROM remember_supersession_intents
+			WHERE team_id = ? AND ingest_id = ?
+		`, teamID, replacement.IngestID).Row().Scan(&intentSpaceID, &intentGeneration)
+	}))
+	require.Equal(t, credential.MemorySpaceID.String(), intentSpaceID)
+	require.Equal(t, generation, intentGeneration)
+
+	privateRepo := NewPrivateMemoryRepository(appDB, rls)
+	require.NoError(t, privateRepo.Prepare(ctx))
+	operation, created, err := privateRepo.RequestCredentialErasure(ctx, PrivateMemoryErasureRequest{
+		TeamID: teamID, OwnerID: credential.ID, CredentialID: credential.ID,
+		IdempotencyScopeHash: privateMemoryHash("remember-private-supersession", credential.ID.String()),
+		RequestHash:          privateMemoryHash("erase-remember-private-supersession", credential.ID.String()),
+		ReasonCode:           "owner_request",
+	})
+	require.NoError(t, err)
+	require.True(t, created)
+	claim, err := privateRepo.ClaimNext(ctx, "remember-private-supersession-worker", time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, operation.ID, claim.ID)
+	completed, err := privateRepo.ExecuteClaim(ctx, claim.ID, claim.WorkerID, claim.Fence)
+	require.NoError(t, err)
+	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
+	require.Equal(t, int64(1), completed.DeletedCounts["remember_supersession_intents"])
+	var remaining int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT COUNT(*) FROM remember_supersession_intents WHERE space_id = ?
+		`, credential.MemorySpaceID).Scan(&remaining).Error
+	}))
+	require.Zero(t, remaining)
 }
 
 func TestCompletePlacementRunUsesPlacementRunScope(t *testing.T) {
