@@ -170,12 +170,13 @@ type SubmissionAssessmentSecurityQuarantineInput struct {
 
 type CompleteSubmissionAssessmentInput struct {
 	SubmissionAssessmentRunScope
-	OutcomeKind         string
-	Status              string
-	Category            string
-	Payload             map[string]any
-	SecurityQuarantines []SubmissionAssessmentSecurityQuarantineInput
-	RelationshipResults []SubmissionRelationshipResultInput
+	OutcomeKind                     string
+	Status                          string
+	Category                        string
+	Payload                         map[string]any
+	SecurityQuarantines             []SubmissionAssessmentSecurityQuarantineInput
+	RelationshipResults             []SubmissionRelationshipResultInput
+	DefaultRelationshipResultReason string
 }
 
 type CompleteSubmissionAssessmentResult struct {

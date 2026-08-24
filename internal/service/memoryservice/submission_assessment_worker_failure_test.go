@@ -143,6 +143,23 @@ func TestSubmissionAssessmentWorkerPersistsResultsWhenPreflightRetryExhausts(t *
 	}
 }
 
+func TestSubmissionAssessmentWorkerRequestsFallbackResultsWhenPlacementLoadRetryExhausts(t *testing.T) {
+	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	ledger.run.Attempts = ledger.run.MaxAttempts
+	ledger.getErr = errors.New("placement unavailable")
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Zero(t, provider.calls)
+	require.Len(t, assessments.completions, 1)
+	completion := assessments.completions[0]
+	assert.Equal(t, "placement_load", completion.Payload["failure_stage"])
+	assert.Empty(t, completion.RelationshipResults)
+	assert.Equal(t, string(SubmissionErrorInternalFailure), completion.DefaultRelationshipResultReason)
+}
+
 func TestSubmissionAssessmentWorkerBoundsTurnsAcrossRevisionPersistenceFailure(t *testing.T) {
 	tests := []struct {
 		name         string

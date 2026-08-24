@@ -559,7 +559,16 @@ func (r *LedgerRepositoryImpl) CompleteSubmissionAssessment(
 			}
 			result.OutcomeIDs = append(result.OutcomeIDs, outcomeID)
 		}
-		if err := insertSubmissionRelationshipResults(ctx, tx, input.SubmissionAssessmentRunScope, input.RelationshipResults, nil); err != nil {
+		relationshipResults := input.RelationshipResults
+		if len(relationshipResults) == 0 && input.DefaultRelationshipResultReason != "" {
+			relationshipResults, err = defaultSubmissionRelationshipResults(
+				ctx, tx, input.SubmissionAssessmentRunScope, input.DefaultRelationshipResultReason,
+			)
+			if err != nil {
+				return err
+			}
+		}
+		if err := insertSubmissionRelationshipResults(ctx, tx, input.SubmissionAssessmentRunScope, relationshipResults, nil); err != nil {
 			return err
 		}
 		firstDisposition, err := completeSubmissionPlacementRun(ctx, tx, input.SubmissionAssessmentRunScope, runStatus, "")
@@ -797,6 +806,7 @@ func normalizeCompleteSubmissionAssessmentInput(input CompleteSubmissionAssessme
 	input.OutcomeKind = strings.TrimSpace(input.OutcomeKind)
 	input.Status = strings.TrimSpace(input.Status)
 	input.Category = strings.TrimSpace(input.Category)
+	input.DefaultRelationshipResultReason = strings.TrimSpace(input.DefaultRelationshipResultReason)
 	if input.OutcomeKind == "" {
 		input.OutcomeKind = "submission_assessment_terminal"
 	}
@@ -822,6 +832,17 @@ func validateCompleteSubmissionAssessmentInput(input CompleteSubmissionAssessmen
 	}
 	if input.Status != string(domain.SemanticReviewQuarantined) && len(input.SecurityQuarantines) > 0 {
 		return errors.New("submission security events require quarantined terminal status")
+	}
+	if input.DefaultRelationshipResultReason != "" {
+		if input.Status != string(domain.SemanticReviewTerminalFailure) {
+			return errors.New("default relationship result reason requires terminal failure status")
+		}
+		if len(input.RelationshipResults) > 0 {
+			return errors.New("default relationship result reason cannot accompany explicit results")
+		}
+		if !submissionRelationshipNotStoredReasonAllowed(input.DefaultRelationshipResultReason) {
+			return errors.New("default relationship result reason is unsupported")
+		}
 	}
 	for _, quarantine := range input.SecurityQuarantines {
 		securityInput := SecurityEventInput{

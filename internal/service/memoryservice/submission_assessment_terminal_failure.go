@@ -42,6 +42,9 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithRelatio
 		Category:                     "failed",
 		Payload:                      payload,
 		RelationshipResults:          relationshipResults,
+		DefaultRelationshipResultReason: terminalRelationshipResultFallback(
+			string(domain.SemanticReviewTerminalFailure), relationshipResults,
+		),
 	})
 	if err == nil && completed == nil {
 		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil terminal result"))

@@ -511,12 +511,13 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithRelatio
 		payload["failure_code"] = string(failureCode)
 	}
 	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
-		SubmissionAssessmentRunScope: scope,
-		OutcomeKind:                  "submission_assessment_terminal",
-		Status:                       status,
-		Category:                     category,
-		Payload:                      payload,
-		RelationshipResults:          relationshipResults,
+		SubmissionAssessmentRunScope:    scope,
+		OutcomeKind:                     "submission_assessment_terminal",
+		Status:                          status,
+		Category:                        category,
+		Payload:                         payload,
+		RelationshipResults:             relationshipResults,
+		DefaultRelationshipResultReason: terminalRelationshipResultFallback(status, relationshipResults),
 	})
 	if err == nil && completed == nil {
 		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil terminal result"))
@@ -538,6 +539,16 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithRelatio
 		s.logLifecycle(scope, event, destination, stage, reasonCode, nil)
 	}
 	return err
+}
+
+func terminalRelationshipResultFallback(
+	status string,
+	results []repository.SubmissionRelationshipResultInput,
+) string {
+	if status == string(domain.SemanticReviewTerminalFailure) && len(results) == 0 {
+		return string(SubmissionErrorInternalFailure)
+	}
+	return ""
 }
 
 func (s *submissionAssessmentPlacementWorkerService) completeDeterministicSecurityQuarantine(

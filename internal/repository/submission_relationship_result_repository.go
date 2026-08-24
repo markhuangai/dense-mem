@@ -17,6 +17,59 @@ type submissionRelationshipAppliedSplit struct {
 	Result          RelationshipDecisionResult
 }
 
+func defaultSubmissionRelationshipResults(
+	ctx context.Context,
+	tx *gorm.DB,
+	scope SubmissionAssessmentRunScope,
+	reason string,
+) ([]SubmissionRelationshipResultInput, error) {
+	reason = strings.TrimSpace(reason)
+	if !submissionRelationshipNotStoredReasonAllowed(reason) {
+		return nil, errors.New("default submission relationship result reason is unsupported")
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT COALESCE(relationship.value ->> 'ref', '')
+		FROM knowledge_ingests AS ingest
+		CROSS JOIN LATERAL jsonb_array_elements(
+			CASE
+				WHEN jsonb_typeof(ingest.proposal -> 'relationship_hints') = 'array'
+					THEN ingest.proposal -> 'relationship_hints'
+				ELSE '[]'::jsonb
+			END
+		) WITH ORDINALITY AS relationship(value, ordinal)
+		WHERE ingest.team_id = ?::uuid
+		  AND ingest.ingest_id = ?::uuid
+		  AND ingest.owner_profile_id = ?::uuid
+		ORDER BY relationship.ordinal
+	`, scope.TeamID, scope.IngestID, scope.OwnerProfileID).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	results := []SubmissionRelationshipResultInput{}
+	seen := map[string]struct{}{}
+	for rows.Next() {
+		var ref string
+		if err := rows.Scan(&ref); err != nil {
+			return nil, err
+		}
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return nil, errors.New("staged submission relationship ref is required")
+		}
+		if _, exists := seen[ref]; exists {
+			return nil, fmt.Errorf("staged submission relationship ref %q is duplicated", ref)
+		}
+		seen[ref] = struct{}{}
+		results = append(results, SubmissionRelationshipResultInput{
+			RelationshipRef: ref,
+			Disposition:     "not_stored",
+			Reason:          reason,
+		})
+	}
+	return results, rows.Err()
+}
+
 func insertSubmissionRelationshipResults(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -95,9 +148,7 @@ func insertSubmissionRelationshipResults(
 			return fmt.Errorf("submission relationship result %q has not_stored splits", result.RelationshipRef)
 		}
 		reason := strings.TrimSpace(result.Reason)
-		if result.Disposition == "not_stored" &&
-			reason != "not_supported_by_evidence" && reason != "stale_input" &&
-			reason != "security_quarantine" && reason != "internal_failure" {
+		if result.Disposition == "not_stored" && !submissionRelationshipNotStoredReasonAllowed(reason) {
 			return fmt.Errorf("submission relationship result %q has unsupported not_stored reason", result.RelationshipRef)
 		}
 		ordered = append(ordered, result)
@@ -131,6 +182,15 @@ func insertSubmissionRelationshipResults(
 		}
 	}
 	return nil
+}
+
+func submissionRelationshipNotStoredReasonAllowed(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case "not_supported_by_evidence", "stale_input", "security_quarantine", "internal_failure":
+		return true
+	default:
+		return false
+	}
 }
 
 func sortSubmissionRelationshipSplits(splits []SubmissionRelationshipSplitInput) {
