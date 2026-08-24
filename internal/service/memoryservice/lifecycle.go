@@ -240,6 +240,9 @@ func (s *lifecycleService) RetractEvidence(
 	}, nil
 }
 
+// Retract's unchanged request contract must replay hashes written before v2.6.
+const retractEvidenceRequestHashContractVersion = "dense-mem.v2.4"
+
 func retractEvidenceRequestHash(req RetractEvidenceRequest) (string, error) {
 	evidenceIDs := make([]string, len(req.EvidenceIDs))
 	for index, evidenceID := range req.EvidenceIDs {
@@ -247,7 +250,7 @@ func retractEvidenceRequestHash(req RetractEvidenceRequest) (string, error) {
 	}
 	sort.Strings(evidenceIDs)
 	payload, err := json.Marshal(map[string]any{
-		"contract_version": requestHashContractVersion,
+		"contract_version": retractEvidenceRequestHashContractVersion,
 		"evidence_ids":     evidenceIDs,
 		"reason":           strings.TrimSpace(req.Reason),
 		"idempotency_key":  strings.TrimSpace(req.IdempotencyKey),

@@ -472,7 +472,8 @@ func validateSemanticAssessmentSubmissionResponse(
 			}
 		}
 		if result.GroundingRef == nil {
-			if result.Action != string(domain.EntityResolutionAmbiguous) {
+			if result.Action != string(domain.EntityResolutionAmbiguous) &&
+				!semanticAssessmentAllowsUngroundedExactReuse(contract, response.RelationshipResults, result) {
 				errs = append(errs, semanticErr(fmt.Sprintf("entity_results[%d].grounding_ref", i), "is required unless action is ambiguous"))
 			}
 			if result.CandidateEntityID != nil && result.Action != string(domain.EntityResolutionReuse) {
@@ -568,6 +569,49 @@ func validateSemanticAssessmentSubmissionResponse(
 		}
 	}
 	return errs
+}
+
+func semanticAssessmentAllowsUngroundedExactReuse(
+	contract *SemanticAssessmentSubmissionContract,
+	relationshipResults []SemanticAssessmentRelationshipResult,
+	entityResult SemanticAssessmentEntityResult,
+) bool {
+	if contract == nil || entityResult.GroundingRef != nil ||
+		entityResult.Action != string(domain.EntityResolutionReuse) || entityResult.CandidateEntityID == nil {
+		return false
+	}
+	knownEntityID := ""
+	for _, target := range contract.Entities {
+		if target.Ref == entityResult.Ref {
+			knownEntityID = target.KnownEntityID
+			break
+		}
+	}
+	if knownEntityID == "" || strings.TrimSpace(*entityResult.CandidateEntityID) != knownEntityID {
+		return false
+	}
+	dependent := false
+	for _, target := range contract.Relationships {
+		usesEntity := target.SubjectRef == entityResult.Ref ||
+			(target.ObjectRef != nil && *target.ObjectRef == entityResult.Ref)
+		if !usesEntity {
+			continue
+		}
+		dependent = true
+		matches := 0
+		for _, result := range relationshipResults {
+			if result.Ref == target.ProposalID {
+				matches++
+				if result.Disposition != "not_supported" {
+					return false
+				}
+			}
+		}
+		if matches != 1 {
+			return false
+		}
+	}
+	return dependent
 }
 
 func semanticAssessmentRangeCovered(value SemanticAssessmentGroundedRange, supports []SemanticAssessmentGroundedRange) bool {

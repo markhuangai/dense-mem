@@ -245,7 +245,7 @@ func PrepareSemanticAssessmentResponse(
 	errs = append(errs, resolveSemanticAssessmentSecuritySignals(evidenceByID, response.SecuritySignals)...)
 	errs = append(errs, resolveSemanticAssessmentSubmissionResponse(req, &response)...)
 	errs = append(errs, validateSemanticAssessmentSecuritySignals(response.SecuritySignals, evidenceByID)...)
-	errs = append(errs, validateSemanticAssessmentEntityResults(req, response.EntityResults, evidenceByID)...)
+	errs = append(errs, validateSemanticAssessmentEntityResults(req, response.EntityResults, response.RelationshipResults, evidenceByID)...)
 	errs = append(errs, validateSemanticAssessmentRelationshipResults(req, response.EntityResults, response.RelationshipResults, evidenceByID)...)
 	errs = append(errs, ValidateSemanticAssessmentRequiredRelationshipRefs(req.RequiredRelationshipRefs, response.RelationshipResults)...)
 	errs = append(errs, validateSemanticAssessmentSubmissionResponse(req.SubmissionContract, response)...)
@@ -675,6 +675,7 @@ func validateSemanticAssessmentSecuritySignals(signals []SemanticAssessmentSecur
 func validateSemanticAssessmentEntityResults(
 	req SemanticAssessmentRequest,
 	results []SemanticAssessmentEntityResult,
+	relationshipResults []SemanticAssessmentRelationshipResult,
 	evidenceByID map[string]SemanticReviewEvidence,
 ) []SemanticValidationError {
 	groups := assessmentCandidateGroupsBySpan(req.EntityCandidateGroups)
@@ -698,10 +699,9 @@ func validateSemanticAssessmentEntityResults(
 		}
 		seen[result.Ref] = struct{}{}
 		if result.GroundingRef == nil {
-			// An explicitly ambiguous result is the assessor's bounded way to say
-			// that no safe grounding exists. Every other action must be repaired in
-			// the same assessor conversation before it can reach semantic commit.
-			if result.Action != string(domain.EntityResolutionAmbiguous) {
+			// Exact reuse may remain ungrounded only when every dependent Relationship is not_supported.
+			if result.Action != string(domain.EntityResolutionAmbiguous) &&
+				!semanticAssessmentAllowsUngroundedExactReuse(req.SubmissionContract, relationshipResults, *result) {
 				errs = append(errs, semanticErr(fmt.Sprintf("entity_results[%d].grounding_ref", i), "is required unless action is ambiguous"))
 			}
 			if result.CandidateEntityID != nil && result.Action != string(domain.EntityResolutionReuse) {

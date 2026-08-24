@@ -227,6 +227,34 @@ func TestSemanticAssessmentRelationshipDispositionsAndSplits(t *testing.T) {
 		require.Empty(t, validationErrors)
 	})
 
+	t.Run("not supported permits an ungrounded exact known entity", func(t *testing.T) {
+		exactRequest, exactLimits := semanticAssessmentSubmissionContractTestRequest(t)
+		knownEntityID := "entity-mark"
+		exactRequest.SubmissionContract.Entities[0].Name = "Mark Huang"
+		exactRequest.SubmissionContract.Entities[0].KnownEntityID = knownEntityID
+		exactRequest.SubmissionContract.Entities[0].Groundings = nil
+		exactRequest.EntityCandidateGroups = exactRequest.EntityCandidateGroups[1:]
+		exactPrepared, requestErrors := PrepareSemanticAssessmentRequest(exactRequest, exactLimits)
+		require.Empty(t, requestErrors)
+
+		response := semanticAssessmentTestResponse()
+		response.EntityResults[0].GroundingRef = nil
+		response.EntityResults[0].Action = "reuse"
+		response.EntityResults[0].CandidateEntityID = &knownEntityID
+		reason := "not_supported_by_evidence"
+		response.RelationshipResults[0] = SemanticAssessmentRelationshipResult{
+			Ref: response.RelationshipResults[0].Ref, Disposition: "not_supported", Reason: &reason,
+			Splits: []SemanticAssessmentRelationshipSplit{},
+		}
+
+		_, validationErrors := PrepareSemanticAssessmentResponse(exactPrepared, response, exactLimits)
+		require.Empty(t, validationErrors)
+
+		response.RelationshipResults = semanticAssessmentTestResponse().RelationshipResults
+		_, validationErrors = PrepareSemanticAssessmentResponse(exactPrepared, response, exactLimits)
+		require.Contains(t, semanticAssessmentJoinedErrors(validationErrors), "grounding_ref: is required unless action is ambiguous")
+	})
+
 	t.Run("stored split requires grounded entities", func(t *testing.T) {
 		response := semanticAssessmentTestResponse()
 		response.EntityResults[0].GroundingRef = nil
