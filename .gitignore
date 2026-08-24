@@ -61,4 +61,5 @@ temp/
 telemetry-scrape-token
 prometheus.yml
 densemem-e2e-prometheus-*/
-.codex
+# Codex local state and credentials; only the staging-test workflow is shared.
+.codex/*
