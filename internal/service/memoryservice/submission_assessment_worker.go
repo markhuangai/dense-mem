@@ -230,7 +230,10 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 				if errors.Is(err, verifier.ErrVerifierMalformedResponse) {
 					failureClass, providerTurns := semanticAssessmentMalformedFailure(err)
 					return true, terminalizeAfterError(err, func() error {
-						return s.completeTerminalWithFailure(ctx, scope, "assessment", failureClass, 0, providerTurns, err)
+						results := submissionAssessmentNotStoredRelationshipResults(
+							commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),
+						)
+						return s.completeTerminalWithRelationshipResultsFailure(ctx, scope, "assessment", failureClass, 0, providerTurns, results, err)
 					})
 				}
 				return true, retryAfterError(err, func() error {
@@ -468,38 +471,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithFailure
 	providerTurns int,
 	failureCause ...error,
 ) error {
-	failureCode := submissionFailureCode(stage, failureClass)
-	payload := semanticAssessmentFailurePayload(stage, true, firstError(failureCause))
-	payload["failure_code"] = string(failureCode)
-	if failureClass = strings.TrimSpace(failureClass); failureClass != "" {
-		failureClass = boundedPlacementFailureClass(failureClass)
-		payload["failure_class"] = failureClass
-		payload["failure_reason_code"] = placementFailureReasonCode(stage, failureClass)
-	}
-	if providerStatus > 0 {
-		payload["provider_status"] = providerStatus
-	}
-	if providerTurns > 0 {
-		payload["assessor_turns"] = providerTurns
-	}
-	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
-		SubmissionAssessmentRunScope: scope,
-		OutcomeKind:                  "submission_assessment_terminal",
-		Status:                       string(domain.SemanticReviewTerminalFailure),
-		Category:                     "failed",
-		Payload:                      payload,
-	})
-	if err == nil && completed == nil {
-		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, errors.New("submission assessment worker: nil terminal result"))
-	}
-	if err != nil {
-		return newPlacementWorkerError(scope.TeamID, scope.IngestID, stage, err)
-	}
-	if err == nil && completed != nil {
-		observability.RecordAssessorTerminalFailure(s.metrics, stage)
-		s.logLifecycle(scope, "submission_failed", "failed", stage, string(failureCode), nil)
-	}
-	return err
+	return s.completeTerminalWithRelationshipResultsFailure(ctx, scope, stage, failureClass, providerStatus, providerTurns, nil, failureCause...)
 }
 
 func (s *submissionAssessmentPlacementWorkerService) completeTerminal(

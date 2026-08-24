@@ -215,6 +215,34 @@ func TestSubmissionAssessmentWorkerStopsPersistedCommitRepairAtSubmissionTurnBou
 	}
 }
 
+func TestSubmissionAssessmentWorkerPreservesResultsWhenCommitRepairTurnsMalformed(t *testing.T) {
+	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	provider.responseForTurn = func(req verifier.SemanticAssessmentRequest, turns int) (verifier.SemanticAssessmentResponse, error) {
+		if turns == 1 {
+			return submissionAssessmentValidResponse(req, false), nil
+		}
+		return verifier.SemanticAssessmentResponse{}, nil
+	}
+	assessments.commitErrors = []error{repository.ErrSubmissionPredicateRegistrationHeld}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	assert.Equal(t, SemanticPlacementMaxAssessorTurns, provider.calls)
+	require.Len(t, assessments.completions, 1)
+	completion := assessments.completions[0]
+	assert.Equal(t, string(SubmissionErrorProviderResponseInvalid), completion.Payload["failure_code"])
+	assert.Equal(t, "assessment", completion.Payload["failure_stage"])
+	assert.Equal(t, "malformed_exhausted", completion.Payload["failure_class"])
+	require.Len(t, completion.RelationshipResults, 3)
+	for _, result := range completion.RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+		assert.Empty(t, result.Splits)
+	}
+}
+
 func TestSubmissionAssessmentWorkerRequeuesRepositoryFailuresByStage(t *testing.T) {
 	tests := []struct {
 		name    string
