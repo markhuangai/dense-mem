@@ -101,6 +101,27 @@ func TestSubmissionAssessmentWorkerClassifiesCommitOutcomes(t *testing.T) {
 	}
 }
 
+func TestSubmissionAssessmentWorkerPersistsResultsForDeterministicPreflightFailure(t *testing.T) {
+	_, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
+	catalog.entityComplete = false
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	assert.True(t, processed)
+	assert.Zero(t, provider.calls)
+	require.Len(t, assessments.completions, 1)
+	completion := assessments.completions[0]
+	assert.Equal(t, string(domain.SemanticReviewTerminalFailure), completion.Status)
+	assert.Equal(t, "entity_catalog", completion.Payload["failure_stage"])
+	require.Len(t, completion.RelationshipResults, 3)
+	for _, result := range completion.RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+		assert.Empty(t, result.Splits)
+	}
+}
+
 func TestSubmissionAssessmentWorkerPersistsDatabaseFailureCode(t *testing.T) {
 	ledger, assessments, _, _, worker := submissionAssessmentWorkerFixture(t)
 	service := worker.(*submissionAssessmentPlacementWorkerService)

@@ -145,7 +145,8 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		stage, terminal := semanticAssessmentPreflightFailure(err)
 		if terminal {
 			return true, terminalizeAfterError(err, func() error {
-				return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage, err)
+				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
+				return s.completeTerminalWithRelationshipResults(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage, results, err)
 			})
 		}
 		return true, retryAfterError(err, func() error {
