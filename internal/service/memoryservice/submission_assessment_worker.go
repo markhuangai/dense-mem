@@ -172,16 +172,19 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		if providerAttempted && errors.Is(err, verifier.ErrVerifierMalformedResponse) {
 			failureClass, providerTurns := semanticAssessmentMalformedFailure(err)
 			return true, terminalizeAfterError(err, func() error {
-				return s.completeTerminalWithFailure(ctx, scope, "assessment", failureClass, 0, providerTurns, err)
+				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
+				return s.completeTerminalWithRelationshipResultsFailure(ctx, scope, "assessment", failureClass, 0, providerTurns, results, err)
 			})
 		}
 		if providerAttempted {
 			return true, retryAfterError(err, func() error {
-				return s.retryProviderFailure(ctx, *run, scope, "assessment", releaseProviderAttempt, verifier.ProviderFailureDetails(err))
+				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
+				return s.retryProviderFailureWithRelationshipResults(ctx, *run, scope, "assessment", releaseProviderAttempt, results, verifier.ProviderFailureDetails(err))
 			})
 		}
 		return true, retryAfterError(err, func() error {
-			return s.retryOrFail(ctx, *run, scope, "assessment", providerAttempted, releaseProviderAttempt, err)
+			results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
+			return s.retryOrFailWithRelationshipResults(ctx, *run, scope, "assessment", providerAttempted, releaseProviderAttempt, results, err)
 		})
 	}
 	for {
@@ -237,13 +240,19 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 					})
 				}
 				return true, retryAfterError(err, func() error {
-					return s.retryProviderFailure(ctx, *run, scope, "assessment", true, verifier.ProviderFailureDetails(err))
+					results := submissionAssessmentNotStoredRelationshipResults(
+						commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),
+					)
+					return s.retryProviderFailureWithRelationshipResults(ctx, *run, scope, "assessment", true, results, verifier.ProviderFailureDetails(err))
 				})
 			}
 			assessment, err = s.persistSubmissionAssessmentRevision(ctx, *run, scope, assessment, response, liveSession.request)
 			if err != nil {
 				return true, retryAfterError(err, func() error {
-					return s.retryOrFail(ctx, *run, scope, "assessment_persist", false, false, err)
+					results := submissionAssessmentNotStoredRelationshipResults(
+						commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),
+					)
+					return s.retryOrFailWithRelationshipResults(ctx, *run, scope, "assessment_persist", false, false, results, err)
 				})
 			}
 			reused = false
@@ -251,13 +260,19 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		}
 		if commitErr != nil {
 			return true, retryAfterError(commitErr, func() error {
-				return s.retryOrFail(ctx, *run, scope, "semantic_commit", false, false, commitErr)
+				results := submissionAssessmentNotStoredRelationshipResults(
+					commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),
+				)
+				return s.retryOrFailWithRelationshipResults(ctx, *run, scope, "semantic_commit", false, false, results, commitErr)
 			})
 		}
 		if committed == nil {
 			cause := errors.New("submission assessment worker: nil semantic commit result")
 			return true, retryAfterError(cause, func() error {
-				return s.retryOrFail(ctx, *run, scope, "semantic_commit", false, false, cause)
+				results := submissionAssessmentNotStoredRelationshipResults(
+					commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),
+				)
+				return s.retryOrFailWithRelationshipResults(ctx, *run, scope, "semantic_commit", false, false, results, cause)
 			})
 		}
 		s.logLifecycle(scope, "submission_completed", "completed", "semantic_commit", "semantic_commit_succeeded", nil)

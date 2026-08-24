@@ -372,6 +372,11 @@ func TestSubmissionAssessmentWorkerHandlesSessionAndPersistenceRaces(t *testing.
 		require.Len(t, assessments.completions, 1)
 		assert.Equal(t, "malformed_exhausted", assessments.completions[0].Payload["failure_class"])
 		assert.Equal(t, string(SubmissionErrorProviderResponseInvalid), assessments.completions[0].Payload["failure_code"])
+		require.Len(t, assessments.completions[0].RelationshipResults, 3)
+		for _, result := range assessments.completions[0].RelationshipResults {
+			assert.Equal(t, "not_stored", result.Disposition)
+			assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+		}
 	})
 }
 

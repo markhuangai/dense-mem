@@ -8,6 +8,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithRelationshipResultsFailure(
@@ -53,4 +54,55 @@ func (s *submissionAssessmentPlacementWorkerService) completeTerminalWithRelatio
 		s.logLifecycle(scope, "submission_failed", "failed", stage, string(failureCode), nil)
 	}
 	return err
+}
+
+func submissionAssessmentNotStoredRelationshipResultsForPlan(
+	plan submissionAssessmentPlan,
+	reason string,
+) []repository.SubmissionRelationshipResultInput {
+	results := make([]repository.SubmissionRelationshipResultInput, 0, len(plan.RelationshipTargets))
+	for _, target := range plan.RelationshipTargets {
+		results = append(results, repository.SubmissionRelationshipResultInput{
+			RelationshipRef: target.Target.ProposalID,
+			Disposition:     "not_stored",
+			Reason:          reason,
+		})
+	}
+	return results
+}
+
+func (s *submissionAssessmentPlacementWorkerService) retryOrFailWithRelationshipResults(
+	ctx context.Context,
+	run repository.PlacementRun,
+	scope repository.SubmissionAssessmentRunScope,
+	stage string,
+	providerAttempted bool,
+	releaseProviderAttempt bool,
+	relationshipResults []repository.SubmissionRelationshipResultInput,
+	failureCause ...error,
+) error {
+	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
+		return s.completeTerminalWithRelationshipResults(
+			ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage,
+			relationshipResults, firstError(failureCause),
+		)
+	}
+	return s.retryOrFail(ctx, run, scope, stage, providerAttempted, releaseProviderAttempt, failureCause...)
+}
+
+func (s *submissionAssessmentPlacementWorkerService) retryProviderFailureWithRelationshipResults(
+	ctx context.Context,
+	run repository.PlacementRun,
+	scope repository.SubmissionAssessmentRunScope,
+	stage string,
+	releaseProviderAttempt bool,
+	relationshipResults []repository.SubmissionRelationshipResultInput,
+	failure verifier.ProviderFailureMetadata,
+) error {
+	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
+		return s.completeTerminalWithRelationshipResultsFailure(
+			ctx, scope, stage, failure.Class, failure.StatusCode, 0, relationshipResults,
+		)
+	}
+	return s.retryProviderFailure(ctx, run, scope, stage, releaseProviderAttempt, failure)
 }

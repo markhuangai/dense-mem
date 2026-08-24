@@ -243,6 +243,26 @@ func TestSubmissionAssessmentWorkerPreservesResultsWhenCommitRepairTurnsMalforme
 	}
 }
 
+func TestSubmissionAssessmentWorkerPersistsResultsWhenProviderRetriesExhausted(t *testing.T) {
+	ledger, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
+	ledger.run.Attempts = ledger.run.MaxAttempts
+	provider.startErr = &verifier.ProviderError{
+		Provider: "stub", FailureClass: verifier.ProviderFailureClassHTTPServer, StatusCode: 503,
+	}
+
+	processed, err := worker.ProcessNextSubmissionAssessmentPlacement(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, processed)
+	require.Len(t, assessments.completions, 1)
+	completion := assessments.completions[0]
+	require.Len(t, completion.RelationshipResults, 3)
+	for _, result := range completion.RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, string(SubmissionErrorInternalFailure), result.Reason)
+	}
+}
+
 func TestSubmissionAssessmentWorkerRequeuesRepositoryFailuresByStage(t *testing.T) {
 	tests := []struct {
 		name    string
