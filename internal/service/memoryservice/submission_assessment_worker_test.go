@@ -169,7 +169,7 @@ func TestSubmissionAssessmentWorkerMarksStaleSourceRejected(t *testing.T) {
 	assert.Equal(t, string(SubmissionErrorStaleInput), assessments.completions[0].Payload["failure_code"])
 }
 
-func TestSubmissionAssessmentWorkerRejectsWithoutProvisionalStoredResults(t *testing.T) {
+func TestSubmissionAssessmentWorkerPersistsNotStoredResultsForPartialCoverageRejection(t *testing.T) {
 	_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
 	provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
 		response := submissionAssessmentValidResponse(req, false)
@@ -195,7 +195,12 @@ func TestSubmissionAssessmentWorkerRejectsWithoutProvisionalStoredResults(t *tes
 	completion := assessments.completions[0]
 	require.Equal(t, string(domain.SemanticReviewRejected), completion.Status)
 	require.Equal(t, string(SubmissionErrorNoSupportedMemory), completion.Payload["failure_code"])
-	require.Empty(t, completion.RelationshipResults)
+	require.Len(t, completion.RelationshipResults, 3)
+	for _, result := range completion.RelationshipResults {
+		assert.Equal(t, "not_stored", result.Disposition)
+		assert.Equal(t, "not_supported_by_evidence", result.Reason)
+		assert.Empty(t, result.Splits)
+	}
 }
 
 func TestSubmissionAssessmentWorkerPersistsAllUnsupportedRelationshipResults(t *testing.T) {

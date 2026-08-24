@@ -170,6 +170,34 @@ if (allUnsupportedResults.some((result) => result.disposition !== "not_stored" |
 }
 assertNoCommittedSemanticEffects(allUnsupportedRemember.submission_id, "all unsupported", allUnsupportedResults.length);
 
+const partialCoverageEvidence = [
+  "[remember-partial-coverage] Aurora Coverage uses Atlas Coverage.",
+  "Aurora Coverage imagines Phantom Coverage.",
+];
+const partialCoverageRemember = await submitRemember("partial coverage rejection", {
+  idempotency_key: `${runID}:partial-coverage`,
+  evidence: partialCoverageEvidence.map((content, index) => ({
+    content,
+    source_type: "document",
+    source: `${runID}:partial-coverage:${index}`,
+    source_group: `${runID}:partial-coverage`,
+  })),
+  relationships: [
+    relationshipForContent(partialCoverageEvidence[0], "partial-coverage-stored", 0, "Aurora Coverage", "uses", "Atlas Coverage", "uses", "project", "product", "Aurora Coverage uses Atlas Coverage"),
+    relationshipForContent(partialCoverageEvidence[1], "partial-coverage-not-supported", 1, "Aurora Coverage", "imagines", "Phantom Coverage", "imagines", "project", "product", "Aurora Coverage imagines Phantom Coverage"),
+  ],
+});
+const partialCoverageStatus = await waitForSubmissionState(partialCoverageRemember.submission_id, "rejected", "partial coverage rejection");
+assertOnlyStatusError(partialCoverageStatus, "no_supported_memory", "partial coverage rejection");
+const partialCoverageResults = [
+  relationshipResult(partialCoverageStatus, "partial-coverage-stored"),
+  relationshipResult(partialCoverageStatus, "partial-coverage-not-supported"),
+];
+if (partialCoverageResults.some((result) => result.disposition !== "not_stored" || result.reason !== "not_supported_by_evidence" || result.splits.length !== 0)) {
+  throw new Error("partial-coverage rejection did not persist an all-not_stored relationship result set");
+}
+assertNoCommittedSemanticEffects(partialCoverageRemember.submission_id, "partial coverage rejection", partialCoverageResults.length);
+
 const multiSplitContent = "[remember-multi-split] Aurora Multi uses and works on Atlas Multi.";
 const multiSplitRemember = await submitRemember("multi split", {
   idempotency_key: `${runID}:multi-split`,
@@ -220,6 +248,48 @@ const groundingTurns = positiveCount(postgresRow(`
 if (groundingTurns !== 2) {
   throw new Error(`issue-261 grounding repair used ${groundingTurns} provider turns instead of one same-session repair`);
 }
+
+const ambiguousEntityName = `AmbiguousDB-${Date.now()}`;
+seedAmbiguousEntities(ambiguousEntityName, "product", submissionID);
+const ambiguityContent = `[remember-ambiguous-repair] ${ambiguousEntityName} uses Ambiguity Target.`;
+const ambiguityRemember = await submitRemember("duplicate entity ambiguity repair", {
+  idempotency_key: `${runID}:ambiguity-repair`,
+  evidence: [{
+    content: ambiguityContent,
+    source_type: "document",
+    source: `${runID}:ambiguity-repair`,
+    source_group: `${runID}:ambiguity-repair`,
+  }],
+  relationships: [relationshipForContent(
+    ambiguityContent,
+    "ambiguity-repair",
+    0,
+    ambiguousEntityName,
+    "uses",
+    "Ambiguity Target",
+    "uses",
+    "product",
+    "product",
+    `${ambiguousEntityName} uses Ambiguity Target`,
+  )],
+});
+const ambiguityStatus = await waitForSubmissionState(ambiguityRemember.submission_id, "rejected", "duplicate entity ambiguity repair");
+assertOnlyStatusError(ambiguityStatus, "no_supported_memory", "duplicate entity ambiguity repair");
+const ambiguityResult = relationshipResult(ambiguityStatus, "ambiguity-repair");
+if (ambiguityResult.disposition !== "not_stored" || ambiguityResult.reason !== "not_supported_by_evidence" || ambiguityResult.splits.length !== 0) {
+  throw new Error("duplicate-entity ambiguity repair did not reject the dependent relationship as not_stored");
+}
+const ambiguityTurns = positiveCount(postgresRow(`
+  SELECT provider_turns
+  FROM placement_assessments
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND ingest_id = ${sqlLiteral(ambiguityRemember.submission_id)}::uuid
+    AND assessment_scope = 'submission'
+`)[0]);
+if (ambiguityTurns !== 2) {
+  throw new Error(`duplicate-entity ambiguity repair used ${ambiguityTurns} provider turns instead of one same-session repair`);
+}
+assertNoCommittedSemanticEffects(ambiguityRemember.submission_id, "duplicate entity ambiguity repair", 1);
 
 const baselineTarget = relationshipResult(completedStatus, "r:uses-ledger").splits[0];
 const staleContent = "[remember-post-ack-stale] Project Aurora uses LedgerDB Next.";
@@ -348,8 +418,10 @@ console.log(JSON.stringify({
   overflow_assessments: overflowAssessments,
   mixed_dispositions: [mixedStored.disposition, mixedNotStored.disposition],
   all_unsupported_dispositions: allUnsupportedResults.map((result) => result.disposition),
+  partial_coverage_dispositions: partialCoverageResults.map((result) => result.disposition),
   multi_split_count: multiSplitResult.splits.length,
   grounding_repair_turns: groundingTurns,
+  ambiguity_repair_turns: ambiguityTurns,
   stale_input_state: staleStatus.processing_state,
   provider_failure_state: providerFailureStatus.processing_state,
   database_failure_state: databaseFailureStatus.processing_state,
@@ -419,6 +491,41 @@ function seedPredicates(prefix, count, keyPrefix = `${runID}:${prefix}`) {
     WHERE team_id = ${sqlLiteral(teamID)}::uuid
       AND predicate_key LIKE ${sqlLiteral(`${keyPrefix}_%`)};
   `);
+}
+
+function seedAmbiguousEntities(name, kind, ownerSubmissionID) {
+  postgresRow(`
+    BEGIN;
+    SET LOCAL app.tx_mode = 'system';
+    WITH owner AS (
+      SELECT owner_profile_id
+      FROM knowledge_ingests
+      WHERE team_id = ${sqlLiteral(teamID)}::uuid
+        AND ingest_id = ${sqlLiteral(ownerSubmissionID)}::uuid
+    ), created AS (
+      INSERT INTO entity_records (team_id, entity_id, entity_kind)
+      SELECT ${sqlLiteral(teamID)}::uuid, gen_random_uuid(), ${sqlLiteral(kind)}
+      FROM generate_series(1, 2)
+      RETURNING entity_id
+    )
+    INSERT INTO entity_names (
+      team_id, entity_id, owner_profile_id, display_name, normalized_name, name_kind
+    )
+    SELECT ${sqlLiteral(teamID)}::uuid, created.entity_id, owner.owner_profile_id,
+           ${sqlLiteral(name)}, lower(${sqlLiteral(name)}), 'canonical'
+    FROM created CROSS JOIN owner;
+    COMMIT;
+  `);
+  const count = positiveCount(postgresRow(`
+    SELECT count(*)
+    FROM entity_names
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND normalized_name = lower(${sqlLiteral(name)})
+      AND valid_to IS NULL;
+  `)[0]);
+  if (count !== 2) {
+    throw new Error(`ambiguous Entity fixture created ${count} candidates instead of two`);
+  }
 }
 
 function overflowFixture() {

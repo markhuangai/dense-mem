@@ -155,6 +155,53 @@ func TestOpenAIVerifierRememberSessionRepairsWithRefreshedCandidates(t *testing.
 	assert.Contains(t, requests[1].Messages[3].Content, "refreshed-catalog")
 }
 
+func TestOpenAIVerifierRememberSessionRepairsMultipleCandidatesAsAmbiguous(t *testing.T) {
+	var requests []openAIVerifierRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request openAIVerifierRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		requests = append(requests, request)
+
+		response := semanticAssessmentTestResponse()
+		if len(requests) > 1 {
+			response.EntityResults[0].Action = "ambiguous"
+			response.EntityResults[0].CandidateEntityID = nil
+			reason := "not_supported_by_evidence"
+			response.RelationshipResults[0].Disposition = "not_supported"
+			response.RelationshipResults[0].Reason = &reason
+			response.RelationshipResults[0].Splits = []SemanticAssessmentRelationshipSplit{}
+		}
+		content, err := json.Marshal(response)
+		require.NoError(t, err)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
+		}))
+	}))
+	defer srv.Close()
+
+	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
+	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	request.EntityCandidateGroups[0].Candidates = append(request.EntityCandidateGroups[0].Candidates, SemanticAssessmentEntityCandidate{
+		EntityID:      "entity-other-mark",
+		CanonicalName: "Mark Other",
+		Kind:          "person",
+	})
+	response, err := runSemanticAssessmentSessionForTest(context.Background(), v, request)
+	require.NoError(t, err)
+	require.Len(t, requests, 2)
+	assert.Equal(t, 2, response.ProviderTurns)
+	assert.Equal(t, "ambiguous", response.EntityResults[0].Action)
+	assert.Nil(t, response.EntityResults[0].CandidateEntityID)
+	assert.Equal(t, "not_supported", response.RelationshipResults[0].Disposition)
+
+	var correction semanticAssessmentSessionRepair
+	require.NoError(t, json.Unmarshal([]byte(requests[1].Messages[3].Content), &correction))
+	require.True(t, semanticAssessmentTestHasValidationField(correction.ValidationErrors, "entity_results[0].candidate_entity_id"))
+	assert.Contains(t, correction.Instruction, "without known_entity_id")
+	assert.Contains(t, correction.Instruction, "multiple compatible candidates")
+	assert.Contains(t, correction.Instruction, "mark every dependent Relationship not_supported")
+}
+
 func TestOpenAIVerifierRememberSessionRejectsInvalidRepairState(t *testing.T) {
 	var nilSession *openAISemanticAssessmentSession
 	assert.Empty(t, nilSession.SessionID())

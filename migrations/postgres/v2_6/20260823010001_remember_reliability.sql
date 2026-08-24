@@ -19,8 +19,8 @@
 -- Backward compatibility: none at runtime. Historical placement rows remain
 -- intact, while only the v2.6 binary may resume intake after this coordinated
 -- stopped-service cutover.
--- Rollback: down is allowed only before v2.6 intent or result rows exist;
--- after that append-only workflow history is the irreversible boundary.
+-- Rollback: down is allowed only before any v2.6 Remember ingest, intent, or
+-- result row exists; after that workflow history is the irreversible boundary.
 
 SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
@@ -552,17 +552,10 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM knowledge_ingests AS ingest
-        JOIN placement_runs AS run
-          ON run.team_id = ingest.team_id
-         AND run.ingest_id = ingest.ingest_id
         WHERE ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
           AND ingest.metadata ->> 'contract_version' = 'dense-mem.v2.6'
-          AND (
-              ingest.status IN ('completed', 'rejected', 'failed', 'quarantined')
-              OR run.status IN ('completed', 'rejected', 'failed', 'quarantined')
-          )
     ) THEN
-        RAISE EXCEPTION 'cannot roll back 2026082301: v2.6 Remember terminal history exists';
+        RAISE EXCEPTION 'cannot roll back 2026082301: v2.6 Remember ingest history exists';
     END IF;
 END;
 $dense_mem_remember_reliability_down$;

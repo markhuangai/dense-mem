@@ -84,7 +84,9 @@ function semanticAssessmentResponse(input, repairTurn) {
   const submittedEntities = Array.isArray(input.submitted_entities) ? input.submitted_entities : [];
   const submittedRelationships = Array.isArray(input.submitted_relationships) ? input.submitted_relationships : [];
   const groundingRepair = evidenceContains(input, "[remember-grounding-repair]");
+  const ambiguityRepair = evidenceContains(input, "[remember-ambiguous-repair]");
   const mixed = evidenceContains(input, "[remember-mixed]");
+  const partialCoverage = evidenceContains(input, "[remember-partial-coverage]");
   const allUnsupported = evidenceContains(input, "[remember-all-unsupported]");
   const multiSplit = evidenceContains(input, "[remember-multi-split]");
 
@@ -95,16 +97,19 @@ function semanticAssessmentResponse(input, repairTurn) {
     const reusable = compatible.length === 1 && !group?.candidate_context_truncated;
     const knownEntityID = String(entity.known_entity_id ?? "");
     const exact = knownEntityID !== "";
+    const invalidAmbiguousReuse = ambiguityRepair && !repairTurn && compatible.length > 1;
     return {
       ref: entity.ref,
       grounding_ref: groundingRepair && !repairTurn && index === 0 ? "stale-grounding-ref" : grounding?.grounding_ref ?? null,
-      action: grounding ? (exact || reusable ? "reuse" : compatible.length === 0 ? "create" : "ambiguous") : "ambiguous",
-      candidate_entity_id: exact ? knownEntityID : reusable ? compatible[0].entity_id : null,
+      action: grounding ? (exact || reusable || invalidAmbiguousReuse ? "reuse" : compatible.length === 0 ? "create" : "ambiguous") : "ambiguous",
+      candidate_entity_id: exact ? knownEntityID : reusable || invalidAmbiguousReuse ? compatible[0].entity_id : null,
     };
   });
+  const ambiguousEntityRefs = new Set(entityResults.filter((entity) => entity.action === "ambiguous").map((entity) => entity.ref));
 
   const relationshipResults = submittedRelationships.map((relationship) => {
-    if (allUnsupported || (mixed && String(relationship.ref).includes("not-supported"))) {
+    const hasAmbiguousEntity = ambiguousEntityRefs.has(relationship.subject_ref) || ambiguousEntityRefs.has(relationship.object_ref);
+    if (allUnsupported || hasAmbiguousEntity || ((mixed || partialCoverage) && String(relationship.ref).includes("not-supported"))) {
       return {
         ref: relationship.ref,
         disposition: "not_supported",

@@ -923,7 +923,14 @@ func submissionAssessmentCommitInput(
 		}
 	}
 	if len(coveredEvidence) < len(plan.Items) {
-		return repository.CommitSubmissionAssessmentInput{}, &submissionAssessmentNoSupportedMemoryError{}
+		for index := range relationshipResults {
+			relationshipResults[index].Disposition = "not_stored"
+			relationshipResults[index].Reason = "not_supported_by_evidence"
+			relationshipResults[index].Splits = nil
+		}
+		return repository.CommitSubmissionAssessmentInput{}, &submissionAssessmentNoSupportedMemoryError{
+			RelationshipResults: relationshipResults,
+		}
 	}
 	return repository.CommitSubmissionAssessmentInput{
 		SubmissionAssessmentRunScope: scope,

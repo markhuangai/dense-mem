@@ -61,7 +61,7 @@ func TestRememberReliabilityMigrationTerminalizesOnlyUnfinishedLegacyRememberRun
 	assert.Equal(t, "v2.6 Remember contract superseded; resubmit the complete submission", runError)
 }
 
-func TestRememberReliabilityMigrationDownRejectsV26TerminalHistory(t *testing.T) {
+func TestRememberReliabilityMigrationDownRejectsQueuedV26RememberIngest(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
@@ -83,9 +83,9 @@ func TestRememberReliabilityMigrationDownRejectsV26TerminalHistory(t *testing.T)
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO knowledge_ingests (
 				team_id, ingest_id, owner_profile_id, idempotency_key,
-				request_hash, status, completed_at, metadata
-			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'v26-terminal',
-				        'v26-terminal-request', 'rejected', now(),
+				request_hash, status, metadata
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'v26-queued',
+				        'v26-queued-request', 'queued',
 				        '{"_dense_mem_telemetry_origin":"remember","contract_version":"dense-mem.v2.6"}'::jsonb)
 		`, teamID, ingestID, profileID); err != nil {
 			return err
@@ -93,15 +93,15 @@ func TestRememberReliabilityMigrationDownRejectsV26TerminalHistory(t *testing.T)
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO placement_runs (
 				team_id, placement_run_id, ingest_id, owner_profile_id,
-				status, attempts, max_attempts, completed_at
-			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'rejected', 1, 5, now())
+				status, attempts, max_attempts
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'queued', 0, 5)
 		`, teamID, runID, ingestID, profileID)
 		return err
 	}))
 
 	err := migrationDownTo(ctx, db, rememberReliabilityMigrationBaseVersion)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "v2.6 Remember terminal history exists")
+	assert.Contains(t, err.Error(), "v2.6 Remember ingest history exists")
 	assert.True(t, tableExists(t, ctx, db, "remember_source_revision_intents"))
 }
 
