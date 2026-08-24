@@ -196,7 +196,7 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	}
 	proposedPredicate := strings.TrimSpace(submissionAssessmentRawString(predicateRaw, "proposed_key"))
 	knownPredicateKey := strings.TrimSpace(submissionAssessmentRawString(predicateRaw, "known_predicate_key"))
-	if proposedPredicate == "" {
+	if knownPredicateKey != "" {
 		proposedPredicate = knownPredicateKey
 	}
 	if proposedPredicate == "" || len([]rune(proposedPredicate)) > 128 {
