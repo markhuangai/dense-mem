@@ -104,7 +104,7 @@ jobs:
             exit 1
           fi
 
-          DENSE_MEM_IMAGE_TAG="${IMAGE_TAG}" \
+          DENSE_MEM_IMAGE="ghcr.io/markhuangai/dense-mem:${IMAGE_TAG}" \
             docker compose up -d \
             --pull always \
             --no-deps \

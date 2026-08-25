@@ -156,7 +156,7 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   assert.match(ciCheck, /node --test tests\/uat\/ai_pr_review_policy\.test\.mjs/);
 });
 
-test("automatic AI review starts with PR CI while Dependabot keeps its secret-safe fallback", async () => {
+test("same-repository AI review starts with PR CI while untrusted heads use the CI fallback", async () => {
   const [reviewWorkflow, ciWorkflow] = await Promise.all([
     readFile(reviewWorkflowURL, "utf8"),
     readFile(prCIWorkflowURL, "utf8"),
@@ -177,7 +177,7 @@ test("automatic AI review starts with PR CI while Dependabot keeps its secret-sa
   );
   assert.match(
     normalizedReviewWorkflow,
-    /workflows: - CI Pull Request branches: - dependabot\/\*\* types: \[completed\]/,
+    /workflows: - CI Pull Request types: \[completed\]/,
   );
   assert.match(reviewWorkflow, /github\.event_name == 'pull_request_target'/);
   assert.match(reviewWorkflow, /eventName === "pull_request_target"/);
@@ -185,6 +185,12 @@ test("automatic AI review starts with PR CI while Dependabot keeps its secret-sa
   assert.match(
     reviewWorkflow,
     /eventPull\.user\?\.login\?\.toLowerCase\(\) === "dependabot\[bot\]"/,
+  );
+  assert.match(reviewWorkflow, /const eventHeadRepositoryId = eventPull\.head\?\.repo\?\.id/);
+  assert.match(reviewWorkflow, /const eventBaseRepositoryId = eventPull\.base\?\.repo\?\.id/);
+  assert.match(
+    normalizedReviewWorkflow,
+    /Number\.isSafeInteger\(eventHeadRepositoryId\) && eventHeadRepositoryId === eventBaseRepositoryId/,
   );
   assert.match(reviewWorkflow, /pullNumber = eventPull\.number/);
   assert.match(reviewWorkflow, /triggerHeadSha = eventPull\.head\?\.sha/);
@@ -203,7 +209,7 @@ test("automatic AI review starts with PR CI while Dependabot keeps its secret-sa
   );
   assert.match(
     normalizedReviewWorkflow,
-    /eventName === "workflow_run" && pull\.user\?\.login\?\.toLowerCase\(\) !== "dependabot\[bot\]"/,
+    /eventName === "workflow_run" && !pullIsDependabot && pullIsSameRepository/,
   );
   assert.match(reviewWorkflow, /pull\.head\.sha !== triggerHeadSha/);
 });

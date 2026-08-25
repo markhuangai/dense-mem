@@ -8,8 +8,6 @@ on:
   workflow_run:
     workflows:
       - CI Pull Request
-    branches:
-      - dependabot/**
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -89,7 +87,14 @@ jobs:
               if (!eventPull) {
                 throw new Error("The pull_request_target payload has no pull request.");
               }
-              if (eventPull.user?.login?.toLowerCase() === "dependabot[bot]") {
+              const eventPullIsDependabot =
+                eventPull.user?.login?.toLowerCase() === "dependabot[bot]";
+              const eventHeadRepositoryId = eventPull.head?.repo?.id;
+              const eventBaseRepositoryId = eventPull.base?.repo?.id;
+              const eventPullIsSameRepository =
+                Number.isSafeInteger(eventHeadRepositoryId) &&
+                eventHeadRepositoryId === eventBaseRepositoryId;
+              if (eventPullIsDependabot || !eventPullIsSameRepository) {
                 skip(`Pull request #${eventPull.number} will use the trusted CI completion path.`);
                 return;
               }
@@ -189,9 +194,17 @@ jobs:
               );
               return;
             }
+            const pullIsDependabot =
+              pull.user?.login?.toLowerCase() === "dependabot[bot]";
+            const pullHeadRepositoryId = pull.head.repo?.id;
+            const pullBaseRepositoryId = pull.base.repo?.id;
+            const pullIsSameRepository =
+              Number.isSafeInteger(pullHeadRepositoryId) &&
+              pullHeadRepositoryId === pullBaseRepositoryId;
             if (
               eventName === "workflow_run" &&
-              pull.user?.login?.toLowerCase() !== "dependabot[bot]"
+              !pullIsDependabot &&
+              pullIsSameRepository
             ) {
               skip(`Pull request #${pullNumber} uses the direct pull request review path.`);
               return;
