@@ -27,6 +27,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -250,9 +251,11 @@ func RunActiveServer(
 	retryEmbedder := embedding.NewRetryEmbeddingProviderWithKey(openaiProvider, logger, cfg.GetAIAPIKey())
 	retryEmbedder.SetMetrics(discoverabilityMetrics)
 	assessmentLimits := assessorprovider.SemanticAssessmentLimitsForConfig(&cfg)
-	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, verifier.SemanticAssessmentLimits(assessmentLimits))
+	aiHTTPClient := &nethttp.Client{Timeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second}
+	aiConcurrencyGate := modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(&cfg))
+	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate(&cfg, aiHTTPClient, verifier.SemanticAssessmentLimits(assessmentLimits), aiConcurrencyGate)
 	verifierProvider.SetMetrics(discoverabilityMetrics)
-	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimits(&cfg, nil, assessmentLimits)
+	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
 	conflictReviewRunner, err := conflictreview.NewRunner(ledgerRepo, legacyConflictProvider{provider: verifierProvider}, cfg.GetAppTimezone(), conflictassessment.SemanticAssessmentLimits(assessmentLimits), discoverabilityMetrics)
 	if err != nil {

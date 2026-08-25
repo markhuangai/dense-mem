@@ -11,12 +11,18 @@ type Message struct {
 // StructuredRequest describes a provider-owned JSON-schema request without
 // exposing application policy or durable identifiers.
 type StructuredRequest struct {
-	Model           string
-	Messages        []Message
-	SchemaName      string
-	Schema          map[string]any
-	Temperature     *float64
-	MaxInputTokens  int
+	Model      string
+	Messages   []Message
+	SchemaName string
+	Schema     map[string]any
+	// Temperature is an optional transport hint; a capability adapter may
+	// apply or ignore it according to its provider contract.
+	Temperature *float64
+	// MaxInputTokens is a semantic budget enforced by the capability adapter;
+	// a shared transport may not enforce it.
+	MaxInputTokens int
+	// MaxOutputTokens is a semantic budget enforced by the capability adapter;
+	// a shared transport may not enforce it.
 	MaxOutputTokens int
 }
 

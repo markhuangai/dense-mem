@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 )
 
 func validateSemanticAssessmentResponseRaw(raw []byte) []SemanticValidationError {
@@ -85,6 +87,9 @@ func assessmentRawArrayObjects(raw json.RawMessage, path string, fields []string
 }
 
 func assessmentRawObject(raw json.RawMessage, path string, fields []string, nullable map[string]bool) (map[string]json.RawMessage, []SemanticValidationError) {
+	if err := jsonstrict.RejectDuplicateFields(raw); err != nil {
+		return nil, []SemanticValidationError{semanticErr(assessmentRawField(path, ""), err.Error())}
+	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
 		return nil, []SemanticValidationError{semanticErr(assessmentRawField(path, ""), "must be an object")}

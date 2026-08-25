@@ -2,7 +2,6 @@ package assessor
 
 import (
 	"fmt"
-	"reflect"
 
 	"testing"
 )
@@ -81,28 +80,4 @@ func schemaPropertiesForTest(t *testing.T, schema map[string]any) map[string]any
 		t.Fatalf("schema has no properties: %#v", schema)
 	}
 	return props
-}
-
-func itemSchemaForTest(t *testing.T, schema any) map[string]any {
-	t.Helper()
-	field, ok := schema.(map[string]any)
-	if !ok {
-		t.Fatalf("field is not a schema: %#v", schema)
-	}
-	items, ok := field["items"].(map[string]any)
-	if !ok {
-		t.Fatalf("field has no item schema: %#v", field)
-	}
-	return items
-}
-
-func assertEnumForTest(t *testing.T, schema any, want []string) {
-	t.Helper()
-	field, ok := schema.(map[string]any)
-	if !ok {
-		t.Fatalf("enum field is not a schema: %#v", schema)
-	}
-	if got := field["enum"]; !reflect.DeepEqual(got, want) {
-		t.Fatalf("enum = %#v, want %#v", got, want)
-	}
 }

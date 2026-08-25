@@ -53,35 +53,12 @@ func (p legacyConflictProvider) AssessRelationshipConflict(
 	ctx context.Context,
 	request conflictassessment.ConflictAssessmentRequest,
 ) (conflictassessment.ConflictAssessmentResponse, error) {
-	legacy := verifier.ConflictAssessmentRequest{
-		RequestID: request.RequestID,
-		CaseID:    request.CaseID,
-		Version:   request.Version,
-		Question:  request.Question,
-		Positions: make([]verifier.ConflictAssessmentPosition, 0, len(request.Positions)),
-		Evidence:  make([]verifier.ConflictAssessmentEvidence, 0, len(request.Evidence)),
-	}
-	for _, position := range request.Positions {
-		legacy.Positions = append(legacy.Positions, verifier.ConflictAssessmentPosition{
-			PositionID: position.PositionID, PositionKey: position.PositionKey, SupporterCount: position.SupporterCount,
-		})
-	}
-	for _, evidence := range request.Evidence {
-		legacy.Evidence = append(legacy.Evidence, verifier.ConflictAssessmentEvidence{
-			EvidenceID: evidence.EvidenceID, PositionID: evidence.PositionID, SupportID: evidence.SupportID,
-			SupporterRef: evidence.SupporterRef, Authority: evidence.Authority, AcceptedAt: evidence.AcceptedAt,
-			EffectiveAt: evidence.EffectiveAt, Content: evidence.Content,
-		})
-	}
+	legacy := verifier.ConflictAssessmentRequest(request)
 	response, err := p.provider.AssessRelationshipConflict(ctx, legacy)
 	if err != nil {
 		return conflictassessment.ConflictAssessmentResponse{}, err
 	}
-	return conflictassessment.ConflictAssessmentResponse{
-		Decision: response.Decision, PositionID: response.PositionID, Confidence: response.Confidence,
-		Rationale: response.Rationale, InputTokens: response.InputTokens, OutputTokens: response.OutputTokens,
-		ProviderTurns: response.ProviderTurns,
-	}, nil
+	return conflictassessment.ConflictAssessmentResponse(response), nil
 }
 
 func main() {

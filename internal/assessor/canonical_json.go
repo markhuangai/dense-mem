@@ -5,11 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 )
 
 // CanonicalJSON preserves JSON values while serializing object keys in the
 // deterministic order used for durable response hashes.
 func CanonicalJSON(raw []byte) ([]byte, error) {
+	if err := jsonstrict.RejectDuplicateFields(raw); err != nil {
+		return nil, err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var value any

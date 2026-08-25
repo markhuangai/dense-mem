@@ -55,6 +55,12 @@ func TestSemanticAssessmentWireRejectsObsoleteAssessorFields(t *testing.T) {
 	}
 }
 
+func TestSemanticAssessmentWireRejectsDuplicateFields(t *testing.T) {
+	_, limits := semanticAssessmentTestRequest(t)
+	_, err := DecodeSemanticAssessmentResponseJSON([]byte(`{"request_id":"a","security_signals":[],"entity_results":[],"relationship_results":[],"request_id":"b"}`), limits)
+	require.ErrorContains(t, err, "duplicate JSON field")
+}
+
 func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 	display := " 42 ms "
 	unit := " ms "

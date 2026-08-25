@@ -22,35 +22,7 @@ const (
 	openAIVerifierMaxTotalChars    = 32000
 	openAIVerifierMaxResponseBytes = 16 << 20
 	openAIVerifierDefaultTimeout   = 60 * time.Second
-
-	// openAIVerifierSystemPrompt is the fixed system instruction for all verification calls.
-	// Temperature is set to 0 when included, and a strict JSON schema is enforced.
-	openAIVerifierSystemPrompt = `You are a fact-verification assistant. Given a claim, optional temporal validity bounds, and a list of evidence items, determine whether the evidence supports ("entailed"), contradicts ("contradicted"), or is insufficient to assess ("insufficient") the claim within the stated temporal scope.
-
-If valid_from or valid_to is provided, evaluate the claim for that time-bounded scope. Later or earlier evidence outside that scope should not contradict the claim unless it directly says the claim was false inside the scope.
-
-Respond ONLY with a JSON object conforming to the required schema:
-- "verdict": exactly one of "entailed", "contradicted", or "insufficient"
-- "confidence": a float in [0.0, 1.0] expressing your confidence in the verdict
-- "rationale": a concise, non-empty explanation of your reasoning`
-
-	openAISemanticProposalPrompt = `You are Dense-Mem's structure extraction assistant. Use only the submitted evidence and optional client hints. Return a complete JSON object matching the required schema.
-
-Extract evidence-grounded entity_proposals and relationship_proposals with exact evidence spans. Prefer a predicate_options label when it accurately expresses the relationship. When none fits, propose one concise, reusable predicate label in predicate_candidates; the server will canonicalize and approve it. Do not invent durable IDs, tiers, statuses, truth, ownership, support counts, or policy decisions. If no supported semantic relationship is present, return empty proposal arrays.`
 )
-
-// verifierResponseSchema is the strict JSON schema enforced via response_format.
-// It is declared as a package-level variable so it is parsed once and reused.
-var verifierResponseSchema = json.RawMessage(`{
-	"type": "object",
-	"properties": {
-		"verdict":    {"type": "string", "enum": ["entailed", "contradicted", "insufficient"]},
-		"confidence": {"type": "number"},
-		"rationale":  {"type": "string"}
-	},
-	"required": ["verdict", "confidence", "rationale"],
-	"additionalProperties": false
-}`)
 
 // openAIVerifierMessage is a single chat message.
 type openAIVerifierMessage struct {
@@ -114,13 +86,6 @@ func decodeOpenAIVerifierAPIResponse(body io.Reader) (openAIVerifierAPIResponse,
 	return response, nil
 }
 
-// openAIVerifierResult is the structured payload the LLM returns inside the content field.
-type openAIVerifierResult struct {
-	Verdict    string  `json:"verdict"`
-	Confidence float64 `json:"confidence"`
-	Rationale  string  `json:"rationale"`
-}
-
 // OpenAIAssessor implements Verifier for OpenAI-compatible chat APIs.
 // It is safe for concurrent use: all fields are set during construction and
 // never mutated thereafter.
@@ -164,21 +129,30 @@ func (v *OpenAIAssessor) Complete(
 	return structured, nil
 }
 
-// Compile-time assertion that OpenAIAssessor implements Verifier.
-
-// NewOpenAIVerifier creates a new OpenAI-compatible verifier using the supplied
+// NewOpenAIAssessor creates a new OpenAI-compatible assessor using the supplied
 // configuration. If httpClient is nil a default client with a 60-second timeout
 // is used.
 func NewOpenAIAssessor(cfg config.ConfigProvider, httpClient *http.Client) *OpenAIAssessor {
 	return NewOpenAIAssessorWithAssessmentLimits(cfg, httpClient, SemanticAssessmentLimitsForConfig(cfg))
 }
 
-// NewOpenAIVerifierWithAssessmentLimits creates a verifier with the supplied
+// NewOpenAIAssessorWithAssessmentLimits creates an assessor with the supplied
 // shared assessor limits.
 func NewOpenAIAssessorWithAssessmentLimits(
 	cfg config.ConfigProvider,
 	httpClient *http.Client,
 	assessmentLimits assessor.SemanticAssessmentLimits,
+) *OpenAIAssessor {
+	return NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(cfg, httpClient, assessmentLimits, nil)
+}
+
+// NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate creates an assessor
+// using the supplied process-wide outbound request gate.
+func NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(
+	cfg config.ConfigProvider,
+	httpClient *http.Client,
+	assessmentLimits assessor.SemanticAssessmentLimits,
+	gate modelprovider.ConcurrencyGate,
 ) *OpenAIAssessor {
 	client := httpClient
 	if client == nil {
@@ -189,13 +163,16 @@ func NewOpenAIAssessorWithAssessmentLimits(
 		client = &http.Client{Timeout: timeout}
 	}
 
+	if gate == nil {
+		gate = modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(cfg))
+	}
 	return &OpenAIAssessor{
 		baseURL:            cfg.GetAIVerifierAPIURL(),
 		apiKey:             cfg.GetAIVerifierAPIKey(),
 		model:              cfg.GetAIVerifierModel(),
 		disableTemperature: config.AIVerifierTemperatureDisabled(cfg),
 		httpClient:         client,
-		sem:                make(chan struct{}, config.AIVerifierMaxConcurrency(cfg)),
+		sem:                gate,
 		metrics:            observability.NoopDiscoverabilityMetrics(),
 		assessmentLimits:   assessor.NormalizeSemanticAssessmentLimits(assessmentLimits),
 	}
@@ -219,15 +196,13 @@ func DefaultSemanticAssessmentLimits() assessor.SemanticAssessmentLimits {
 }
 
 func (v *OpenAIAssessor) acquire(ctx context.Context) error {
-	select {
-	case v.sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
+	if err := modelprovider.AcquireConcurrency(ctx, v.sem); err != nil {
 		return &TimeoutError{
 			Provider: openAIVerifierProvider,
-			Message:  ctx.Err().Error(),
+			Message:  err.Error(),
 		}
 	}
+	return nil
 }
 
 // SetMetrics attaches a DiscoverabilityMetrics recorder. A nil value is
@@ -329,7 +304,7 @@ func (v *OpenAIAssessor) openAIStructuredChatJSON(
 			Cause:    err,
 		}
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	apiResp, err := decodeOpenAIVerifierAPIResponse(httpResp.Body)
 	if err != nil {
@@ -343,24 +318,18 @@ func (v *OpenAIAssessor) openAIStructuredChatJSON(
 		}
 	}
 	if httpResp.StatusCode == http.StatusTooManyRequests {
-		msg := "rate limited"
-		if apiResp.Error != nil && apiResp.Error.Message != "" {
-			msg = apiResp.Error.Message
-		}
 		latencyOutcome = "rate_limited"
 		return "", &RateLimitError{
 			Provider: openAIVerifierProvider,
-			Message:  msg,
+			Message:  "provider returned HTTP 429",
 		}
 	}
 	if httpResp.StatusCode != http.StatusOK {
-		msg := fmt.Sprintf("unexpected status %d", httpResp.StatusCode)
-		if apiResp.Error != nil && apiResp.Error.Message != "" {
-			msg = apiResp.Error.Message
-		}
 		return "", &ProviderError{
-			Provider: openAIVerifierProvider,
-			Message:  msg,
+			Provider:     openAIVerifierProvider,
+			Message:      fmt.Sprintf("provider returned HTTP %d", httpResp.StatusCode),
+			FailureClass: openAIHTTPFailureClass(httpResp.StatusCode),
+			StatusCode:   httpResp.StatusCode,
 		}
 	}
 	v.recordVerifierProviderUsage(ctx, model, apiResp.Usage)
@@ -491,7 +460,7 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 			FailureClass: ProviderFailureClassTransport,
 		}
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	if httpResp.StatusCode == http.StatusTooManyRequests {
 		latencyOutcome = "rate_limited"
@@ -570,11 +539,6 @@ func openAIVerifierTemperature(disabled bool) *float64 {
 	temperature := 0.0
 	return &temperature
 }
-
-// prepareEvidence converts a single evidence string into the list format
-// expected by the LLM payload. It strips control characters, enforces a
-// per-item cap (openAIVerifierMaxItemChars) and a total-payload cap
-// (openAIVerifierMaxTotalChars) via deterministic byte-level truncation.
 
 const providerFailureMaxRetryAfter = 5 * time.Minute
 

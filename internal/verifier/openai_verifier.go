@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
@@ -151,6 +152,17 @@ func NewOpenAIVerifierWithAssessmentLimits(
 	httpClient *http.Client,
 	assessmentLimits SemanticAssessmentLimits,
 ) *OpenAIVerifier {
+	return NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate(cfg, httpClient, assessmentLimits, nil)
+}
+
+// NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate creates a verifier
+// using the supplied process-wide outbound request gate.
+func NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate(
+	cfg config.ConfigProvider,
+	httpClient *http.Client,
+	assessmentLimits SemanticAssessmentLimits,
+	gate modelprovider.ConcurrencyGate,
+) *OpenAIVerifier {
 	client := httpClient
 	if client == nil {
 		timeout := time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second
@@ -160,13 +172,16 @@ func NewOpenAIVerifierWithAssessmentLimits(
 		client = &http.Client{Timeout: timeout}
 	}
 
+	if gate == nil {
+		gate = modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(cfg))
+	}
 	return &OpenAIVerifier{
 		baseURL:            cfg.GetAIVerifierAPIURL(),
 		apiKey:             cfg.GetAIVerifierAPIKey(),
 		model:              cfg.GetAIVerifierModel(),
 		disableTemperature: config.AIVerifierTemperatureDisabled(cfg),
 		httpClient:         client,
-		sem:                make(chan struct{}, config.AIVerifierMaxConcurrency(cfg)),
+		sem:                gate,
 		metrics:            observability.NoopDiscoverabilityMetrics(),
 		assessmentLimits:   normalizeSemanticAssessmentLimits(assessmentLimits),
 	}
@@ -186,15 +201,13 @@ func SemanticAssessmentLimitsForConfig(cfg config.ConfigProvider) SemanticAssess
 }
 
 func (v *OpenAIVerifier) acquire(ctx context.Context) error {
-	select {
-	case v.sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
+	if err := modelprovider.AcquireConcurrency(ctx, v.sem); err != nil {
 		return &TimeoutError{
 			Provider: openAIVerifierProvider,
-			Message:  ctx.Err().Error(),
+			Message:  err.Error(),
 		}
 	}
+	return nil
 }
 
 // SetMetrics attaches a DiscoverabilityMetrics recorder. A nil value is

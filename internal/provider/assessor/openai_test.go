@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -19,9 +19,7 @@ func TestOpenAIAssessorUsesClosedRememberContract(t *testing.T) {
 	requestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requestCount++
-		if got := request.Header.Get("Authorization"); got != "Bearer test-key" {
-			t.Fatalf("authorization = %q", got)
-		}
+		assert.Equal(t, "Bearer test-key", request.Header.Get("Authorization"))
 		var body struct {
 			Model    string `json:"model"`
 			Messages []struct {
@@ -34,16 +32,14 @@ func TestOpenAIAssessorUsesClosedRememberContract(t *testing.T) {
 				} `json:"json_schema"`
 			} `json:"response_format"`
 		}
-		require.NoError(t, json.NewDecoder(request.Body).Decode(&body))
-		if body.Model != "assessor-model" || len(body.Messages) != 2 {
-			t.Fatalf("request envelope = %#v", body)
+		if !assert.NoError(t, json.NewDecoder(request.Body).Decode(&body)) {
+			http.Error(writer, "invalid request", http.StatusBadRequest)
+			return
 		}
-		if !strings.Contains(body.Messages[0].Content, "integrated structure and support assessor") {
-			t.Fatalf("system prompt does not identify Remember assessor")
-		}
-		if body.ResponseFormat.JSONSchema.Name != assessor.SemanticAssessmentSchemaName {
-			t.Fatalf("schema name = %q", body.ResponseFormat.JSONSchema.Name)
-		}
+		assert.Equal(t, "assessor-model", body.Model)
+		assert.Len(t, body.Messages, 2)
+		assert.Contains(t, body.Messages[0].Content, "integrated structure and support assessor")
+		assert.Equal(t, assessor.SemanticAssessmentSchemaName, body.ResponseFormat.JSONSchema.Name)
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"choices": []any{map[string]any{"message": map[string]string{
@@ -115,6 +111,14 @@ func TestOpenAIAssessorCompleteAndStructuredJSONCompatibility(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, `{"ok":true}`, content)
+}
+
+func TestOpenAIAssessorUsesProvidedConcurrencyGate(t *testing.T) {
+	gate := modelprovider.NewConcurrencyGate(2)
+	provider := NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(
+		&config.Config{AIVerifierModel: "assessor-model"}, nil, assessor.DefaultSemanticAssessmentLimits(), gate,
+	)
+	require.Equal(t, gate, provider.sem)
 }
 
 func TestOpenAIAssessorStructuredJSONReportsLocalMarshalAndRequestErrors(t *testing.T) {

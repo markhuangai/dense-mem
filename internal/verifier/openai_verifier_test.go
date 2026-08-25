@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,6 +54,15 @@ func TestOpenAIVerifierUsesSharedSemanticAssessmentLimits(t *testing.T) {
 	provider := NewOpenAIVerifierWithAssessmentLimits(cfg, nil, limits)
 	assert.Equal(t, limits, provider.assessmentLimits)
 	assert.Equal(t, limits, NewOpenAIVerifier(cfg, nil).assessmentLimits)
+}
+
+func TestOpenAIVerifierUsesProvidedConcurrencyGate(t *testing.T) {
+	gate := modelprovider.NewConcurrencyGate(2)
+	provider := NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate(
+		newTestVerifierConfig("https://example.com/v1", "sk-test", "model"), nil,
+		DefaultSemanticAssessmentLimits(), gate,
+	)
+	assert.Equal(t, gate, provider.sem)
 }
 
 func TestOpenAIVerifierAdapterHelpers(t *testing.T) {

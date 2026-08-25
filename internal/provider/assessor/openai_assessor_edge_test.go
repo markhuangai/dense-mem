@@ -148,7 +148,7 @@ func TestOpenAIAssessorRememberSessionRepairsWithRefreshedCandidates(t *testing.
 	require.NoError(t, err)
 	assert.Empty(t, second.ValidationErrors)
 	assert.Equal(t, 2, second.Turn)
-	assert.Equal(t, session.SessionID(), session.(*openAISemanticAssessmentSession).SessionID())
+	assert.NotEmpty(t, session.SessionID())
 	require.Len(t, requests, 2)
 	assert.Equal(t, []string{"system", "user", "assistant", "user"}, assessmentMessageRoles(requests[1].Messages))
 	assert.Contains(t, requests[1].Messages[3].Content, "refreshed_candidate_context")
@@ -286,7 +286,7 @@ func TestOpenAIStructuredChatRecordsProviderUsageBeforeRejectingContent(t *testi
 	require.ErrorIs(t, err, ErrVerifierProvider)
 
 	recorder := httptest.NewRecorder()
-	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequestWithContext(ctx, http.MethodGet, "/metrics", nil))
 	body := recorder.Body.String()
 	for _, line := range strings.Split(body, "\n") {
 		if !strings.HasPrefix(line, "densemem_ai_operation_cost_usd_total{") {
@@ -315,7 +315,7 @@ func TestOpenAIStructuredChatMarksMissingUsageBeforeRejectingContent(t *testing.
 	require.ErrorIs(t, err, ErrVerifierProvider)
 
 	recorder := httptest.NewRecorder()
-	metrics.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	metrics.Handler().ServeHTTP(recorder, httptest.NewRequestWithContext(ctx, http.MethodGet, "/metrics", nil))
 	for _, line := range strings.Split(recorder.Body.String(), "\n") {
 		if !strings.HasPrefix(line, "densemem_ai_operation_unpriced_total{") {
 			continue

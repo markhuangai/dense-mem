@@ -11,7 +11,7 @@ func TestCanonicalJSON(t *testing.T) {
 		t.Fatalf("CanonicalJSON() = %s, want %s", got, want)
 	}
 
-	for _, raw := range []string{`{`, `{} {}`} {
+	for _, raw := range []string{`{`, `{} {}`, `{"value":1,"value":2}`, `{"items":[{"value":1,"value":2}]}`} {
 		if _, err := CanonicalJSON([]byte(raw)); err == nil {
 			t.Fatalf("CanonicalJSON(%q) error = nil", raw)
 		}
