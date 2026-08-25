@@ -210,8 +210,9 @@ test("staging deployment rehearses before an always-pull healthy startup", async
   );
   assert.match(
     deploy,
-    /DENSE_MEM_IMAGE="ghcr\.io\/markhuangai\/dense-mem:\$\{IMAGE_TAG\}"[\s\\]*docker compose up -d/,
+    /DENSE_MEM_IMAGE="\$\{IMAGE_TAG\}"[\s\\]*docker compose up -d/,
   );
+  assert.doesNotMatch(deploy, /DENSE_MEM_IMAGE="ghcr\.io\/markhuangai\/dense-mem:/);
   assert.doesNotMatch(deploy, /DENSE_MEM_IMAGE_TAG/);
   assert.match(deploy, /docker compose up -d[\s\\]*--pull always/);
   assert.match(deploy, /--pull always[\s\\]*--no-deps/);

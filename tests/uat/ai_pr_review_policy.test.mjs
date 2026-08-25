@@ -156,7 +156,7 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   assert.match(ciCheck, /node --test tests\/uat\/ai_pr_review_policy\.test\.mjs/);
 });
 
-test("same-repository AI review starts with PR CI while untrusted heads use the CI fallback", async () => {
+test("owner-controlled AI review starts with PR CI while untrusted heads use the CI fallback", async () => {
   const [reviewWorkflow, ciWorkflow] = await Promise.all([
     readFile(reviewWorkflowURL, "utf8"),
     readFile(prCIWorkflowURL, "utf8"),
@@ -180,11 +180,16 @@ test("same-repository AI review starts with PR CI while untrusted heads use the 
     /workflows: - CI Pull Request types: \[completed\]/,
   );
   assert.match(reviewWorkflow, /github\.event_name == 'pull_request_target'/);
+  assert.match(
+    reviewWorkflow,
+    /TRIGGERING_ACTOR: \$\{\{ github\.triggering_actor \}\}/,
+  );
+  assert.match(reviewWorkflow, /const trustedActor = "Z-M-Huang"/);
   assert.match(reviewWorkflow, /eventName === "pull_request_target"/);
   assert.match(reviewWorkflow, /const eventPull = context\.payload\.pull_request/);
   assert.match(
-    reviewWorkflow,
-    /eventPull\.user\?\.login\?\.toLowerCase\(\) === "dependabot\[bot\]"/,
+    normalizedReviewWorkflow,
+    /eventPull\.user\?\.login === trustedActor && context\.actor === trustedActor && process\.env\.TRIGGERING_ACTOR === trustedActor/,
   );
   assert.match(reviewWorkflow, /const eventHeadRepositoryId = eventPull\.head\?\.repo\?\.id/);
   assert.match(reviewWorkflow, /const eventBaseRepositoryId = eventPull\.base\?\.repo\?\.id/);
@@ -196,6 +201,11 @@ test("same-repository AI review starts with PR CI while untrusted heads use the 
   assert.match(reviewWorkflow, /triggerHeadSha = eventPull\.head\?\.sha/);
   assert.match(reviewWorkflow, /typeof triggerHeadSha !== "string"/);
   assert.match(reviewWorkflow, /workflowRun\.conclusion !== "success"/);
+  assert.match(reviewWorkflow, /workflowRunActor = workflowRun\.actor\?\.login/);
+  assert.match(
+    reviewWorkflow,
+    /workflowRunTriggeringActor = workflowRun\.triggering_actor\?\.login/,
+  );
   assert.match(reviewWorkflow, /const triggerHeadRef = workflowRun\.head_branch/);
   assert.match(
     reviewWorkflow,
@@ -209,7 +219,11 @@ test("same-repository AI review starts with PR CI while untrusted heads use the 
   );
   assert.match(
     normalizedReviewWorkflow,
-    /eventName === "workflow_run" && !pullIsDependabot && pullIsSameRepository/,
+    /pull\.user\?\.login === trustedActor && pullIsSameRepository && workflowRunActor === trustedActor && workflowRunTriggeringActor === trustedActor/,
+  );
+  assert.match(
+    normalizedReviewWorkflow,
+    /eventName === "workflow_run" && pullUsesDirectReview/,
   );
   assert.match(reviewWorkflow, /pull\.head\.sha !== triggerHeadSha/);
 });

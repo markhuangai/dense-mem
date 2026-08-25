@@ -70,6 +70,8 @@ jobs:
       - name: Resolve and fence pull request head
         id: resolve
         uses: actions/github-script@v9
+        env:
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           github-token: ${{ github.token }}
           script: |
@@ -78,23 +80,28 @@ jobs:
               core.setOutput("should_run", "false");
             };
 
+            const trustedActor = "Z-M-Huang";
             const eventName = context.eventName;
             let pullNumber;
             let triggerHeadSha;
+            let workflowRunActor;
+            let workflowRunTriggeringActor;
 
             if (eventName === "pull_request_target") {
               const eventPull = context.payload.pull_request;
               if (!eventPull) {
                 throw new Error("The pull_request_target payload has no pull request.");
               }
-              const eventPullIsDependabot =
-                eventPull.user?.login?.toLowerCase() === "dependabot[bot]";
+              const eventPullIsTrusted =
+                eventPull.user?.login === trustedActor &&
+                context.actor === trustedActor &&
+                process.env.TRIGGERING_ACTOR === trustedActor;
               const eventHeadRepositoryId = eventPull.head?.repo?.id;
               const eventBaseRepositoryId = eventPull.base?.repo?.id;
               const eventPullIsSameRepository =
                 Number.isSafeInteger(eventHeadRepositoryId) &&
                 eventHeadRepositoryId === eventBaseRepositoryId;
-              if (eventPullIsDependabot || !eventPullIsSameRepository) {
+              if (!eventPullIsTrusted || !eventPullIsSameRepository) {
                 skip(`Pull request #${eventPull.number} will use the trusted CI completion path.`);
                 return;
               }
@@ -118,6 +125,8 @@ jobs:
                 );
                 return;
               }
+              workflowRunActor = workflowRun.actor?.login;
+              workflowRunTriggeringActor = workflowRun.triggering_actor?.login;
               triggerHeadSha = workflowRun.head_sha;
               const triggerHeadRef = workflowRun.head_branch;
               const triggerHeadRepositoryId = workflowRun.head_repository?.id;
@@ -194,17 +203,19 @@ jobs:
               );
               return;
             }
-            const pullIsDependabot =
-              pull.user?.login?.toLowerCase() === "dependabot[bot]";
             const pullHeadRepositoryId = pull.head.repo?.id;
             const pullBaseRepositoryId = pull.base.repo?.id;
             const pullIsSameRepository =
               Number.isSafeInteger(pullHeadRepositoryId) &&
               pullHeadRepositoryId === pullBaseRepositoryId;
+            const pullUsesDirectReview =
+              pull.user?.login === trustedActor &&
+              pullIsSameRepository &&
+              workflowRunActor === trustedActor &&
+              workflowRunTriggeringActor === trustedActor;
             if (
               eventName === "workflow_run" &&
-              !pullIsDependabot &&
-              pullIsSameRepository
+              pullUsesDirectReview
             ) {
               skip(`Pull request #${pullNumber} uses the direct pull request review path.`);
               return;
