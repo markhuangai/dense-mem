@@ -10,20 +10,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 // SemanticPlacementMaxAssessorTurns covers the initial assessor response and
 // bounded complete-response corrections in the same provider conversation.
-const SemanticPlacementMaxAssessorTurns = verifier.SemanticAssessmentMaxProviderTurns
+const SemanticPlacementMaxAssessorTurns = assessor.SemanticAssessmentMaxProviderTurns
 
 type semanticAssessmentPreflightError struct {
 	stage        string
 	reasonCode   string
 	failureClass string
-	measurement  *verifier.FailureMeasurement
+	measurement  *assessor.FailureMeasurement
 	err          error
 }
 
@@ -53,7 +53,7 @@ func deterministicSemanticAssessmentPreflightError(stage, message string) error 
 func deterministicSemanticAssessmentPreflightErrorWithMeasurement(
 	stage string,
 	message string,
-	measurement verifier.FailureMeasurement,
+	measurement assessor.FailureMeasurement,
 ) error {
 	result := deterministicSemanticAssessmentPreflightError(stage, message).(*semanticAssessmentPreflightError)
 	result.measurement = &measurement
@@ -75,11 +75,11 @@ func terminalizeAfterError(original error, complete func() error) error {
 	return nil
 }
 
-func assessmentTokenizer(limits verifier.SemanticAssessmentLimits) string {
+func assessmentTokenizer(limits assessor.SemanticAssessmentLimits) string {
 	if tokenizer := strings.TrimSpace(limits.Tokenizer); tokenizer != "" {
 		return tokenizer
 	}
-	return verifier.DefaultSemanticAssessmentLimits().Tokenizer
+	return assessor.DefaultSemanticAssessmentLimits().Tokenizer
 }
 
 func semanticAssessmentHash(raw []byte) string {
@@ -112,7 +112,7 @@ func assessmentClientProposalWithoutTrustedContext(proposal map[string]any) map[
 }
 
 func semanticAssessmentMalformedFailure(err error) (string, int) {
-	var malformed *verifier.MalformedResponseError
+	var malformed *assessor.MalformedResponseError
 	if !errors.As(err, &malformed) {
 		return "malformed_response", 0
 	}
@@ -126,7 +126,7 @@ func semanticAssessmentMalformedFailure(err error) (string, int) {
 func semanticAssessmentRetryPayload(
 	stage string,
 	providerAttempted bool,
-	failure ...verifier.ProviderFailureMetadata,
+	failure ...assessor.ProviderFailureMetadata,
 ) map[string]any {
 	diagnostic := placementFailureDiagnosticFor(stage, nil)
 	if len(failure) > 0 {
@@ -141,7 +141,7 @@ func semanticAssessmentFailurePayload(
 	stage string,
 	providerAttempted bool,
 	cause error,
-	failure ...verifier.ProviderFailureMetadata,
+	failure ...assessor.ProviderFailureMetadata,
 ) map[string]any {
 	diagnostic := placementFailureDiagnosticFor(stage, cause)
 	if len(failure) > 0 {
@@ -163,8 +163,8 @@ func assessmentCandidateGroupKey(evidenceID string, start, end int) string {
 	return evidenceID + ":" + strconv.Itoa(start) + ":" + strconv.Itoa(end)
 }
 
-func assessmentGroupsBySpan(groups []verifier.SemanticAssessmentEntityCandidateGroup) map[string]*verifier.SemanticAssessmentEntityCandidateGroup {
-	result := make(map[string]*verifier.SemanticAssessmentEntityCandidateGroup, len(groups))
+func assessmentGroupsBySpan(groups []assessor.SemanticAssessmentEntityCandidateGroup) map[string]*assessor.SemanticAssessmentEntityCandidateGroup {
+	result := make(map[string]*assessor.SemanticAssessmentEntityCandidateGroup, len(groups))
 	for index := range groups {
 		group := &groups[index]
 		result[assessmentCandidateGroupKey(group.EvidenceID, group.Start, group.End)] = group
@@ -172,8 +172,8 @@ func assessmentGroupsBySpan(groups []verifier.SemanticAssessmentEntityCandidateG
 	return result
 }
 
-func semanticAssessmentEvidence(fragment repository.EvidenceFragment, evidenceID string) verifier.SemanticReviewEvidence {
-	return verifier.SemanticReviewEvidence{
+func semanticAssessmentEvidence(fragment repository.EvidenceFragment, evidenceID string) assessor.SemanticReviewEvidence {
+	return assessor.SemanticReviewEvidence{
 		EvidenceID:              evidenceID,
 		FragmentID:              fragment.FragmentID,
 		EvidenceIndex:           fragment.EvidenceIndex,
@@ -271,33 +271,33 @@ func proposalOptionalTime(fields map[string]any, key string) (*time.Time, error)
 	}
 }
 
-func placementProposalCorrectionTarget(raw map[string]any) (verifier.RelationshipCorrectionTarget, bool) {
+func placementProposalCorrectionTarget(raw map[string]any) (assessor.RelationshipCorrectionTarget, bool) {
 	target, ok := proposalMap(raw["correction_target"])
 	if !ok {
-		return verifier.RelationshipCorrectionTarget{}, false
+		return assessor.RelationshipCorrectionTarget{}, false
 	}
 	relationshipID := proposalString(target, "relationship_id")
 	expectedVersion, ok := proposalInt(target, "expected_version")
 	if relationshipID == "" || !ok {
-		return verifier.RelationshipCorrectionTarget{}, false
+		return assessor.RelationshipCorrectionTarget{}, false
 	}
-	return verifier.RelationshipCorrectionTarget{
+	return assessor.RelationshipCorrectionTarget{
 		RelationshipID:  relationshipID,
 		ExpectedVersion: expectedVersion,
 	}, true
 }
 
-func placementProposalConflictContext(raw map[string]any) (verifier.RelationshipConflictContext, bool) {
+func placementProposalConflictContext(raw map[string]any) (assessor.RelationshipConflictContext, bool) {
 	conflictContext, ok := proposalMap(raw["conflict_context"])
 	if !ok {
-		return verifier.RelationshipConflictContext{}, false
+		return assessor.RelationshipConflictContext{}, false
 	}
 	conflictID := proposalString(conflictContext, "conflict_id")
 	expectedVersion, ok := proposalInt(conflictContext, "expected_version")
 	if conflictID == "" || !ok {
-		return verifier.RelationshipConflictContext{}, false
+		return assessor.RelationshipConflictContext{}, false
 	}
-	return verifier.RelationshipConflictContext{
+	return assessor.RelationshipConflictContext{
 		ConflictID:      conflictID,
 		ExpectedVersion: expectedVersion,
 	}, true

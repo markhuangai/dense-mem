@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 type submissionAssessmentWorkerCatalogStub struct {
@@ -41,8 +41,8 @@ func (s *submissionAssessmentWorkerCatalogStub) ResolveSemanticReviewPredicateCa
 		return nil, s.predicateResolutionErr
 	}
 	if !s.predicateComplete {
-		resolutions := make([]repository.SemanticReviewPredicateResolution, 0, verifier.SemanticAssessmentMaxPredicateOptions+1)
-		for index := 0; index <= verifier.SemanticAssessmentMaxPredicateOptions; index++ {
+		resolutions := make([]repository.SemanticReviewPredicateResolution, 0, assessor.SemanticAssessmentMaxPredicateOptions+1)
+		for index := 0; index <= assessor.SemanticAssessmentMaxPredicateOptions; index++ {
 			resolutions = append(resolutions, repository.SemanticReviewPredicateResolution{
 				RequestedPredicate: "overflow",
 				MatchKind:          "key",

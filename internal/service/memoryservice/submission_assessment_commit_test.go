@@ -8,16 +8,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 type submissionAssessmentCommitFixture struct {
 	run        repository.PlacementRun
 	scope      repository.SubmissionAssessmentRunScope
 	plan       submissionAssessmentPlan
-	request    verifier.SemanticAssessmentRequest
-	response   verifier.SemanticAssessmentResponse
+	request    assessor.SemanticAssessmentRequest
+	response   assessor.SemanticAssessmentResponse
 	assessment *repository.SubmissionAssessment
 }
 
@@ -90,7 +90,7 @@ func TestSubmissionAssessmentCommitInputFailsClosedForUnsafeResults(t *testing.T
 
 func TestSubmissionAssessmentCommitInputCanonicalizesRelationshipRefsAfterEntityGroundingDeduplication(t *testing.T) {
 	fixture := submissionAssessmentCommitInputFixture(t)
-	var canonical, duplicate *verifier.SemanticAssessmentEntityResult
+	var canonical, duplicate *assessor.SemanticAssessmentEntityResult
 	for index := range fixture.response.EntityResults {
 		result := &fixture.response.EntityResults[index]
 		switch result.Ref {
@@ -227,7 +227,7 @@ func TestSubmissionAssessmentCommitInputRejectsStoredUngroundedRelationship(t *t
 
 func TestSubmissionAssessmentCommitInputPreservesMultipleSplits(t *testing.T) {
 	fixture := submissionAssessmentCommitInputFixture(t)
-	var target *verifier.SemanticAssessmentRelationshipResult
+	var target *assessor.SemanticAssessmentRelationshipResult
 	for index := range fixture.response.RelationshipResults {
 		if fixture.response.RelationshipResults[index].Ref == "r:uses" {
 			target = &fixture.response.RelationshipResults[index]
@@ -264,7 +264,7 @@ func TestSubmissionAssessmentCommitInputPreservesMultipleSplits(t *testing.T) {
 func TestSubmissionAssessmentSupportsFailClosedForInvalidProvenance(t *testing.T) {
 	fixture := submissionAssessmentCommitInputFixture(t)
 
-	for _, spans := range [][]verifier.SemanticAssessmentEvidenceSpan{
+	for _, spans := range [][]assessor.SemanticAssessmentEvidenceSpan{
 		nil,
 		{{EvidenceID: "evidence:unknown", Start: 0, End: 1}},
 		{{EvidenceID: fixture.plan.Items[0].EvidenceID, Start: 0, End: 999}},
@@ -275,7 +275,7 @@ func TestSubmissionAssessmentSupportsFailClosedForInvalidProvenance(t *testing.T
 
 	fixture.plan.Items[0].Fragment.Authority = "unsupported"
 	fixture.plan.itemsByEvidenceID[fixture.plan.Items[0].EvidenceID] = fixture.plan.Items[0]
-	_, err := submissionAssessmentSupports(fixture.plan, fixture.assessment.AssessmentID, []verifier.SemanticAssessmentEvidenceSpan{{
+	_, err := submissionAssessmentSupports(fixture.plan, fixture.assessment.AssessmentID, []assessor.SemanticAssessmentEvidenceSpan{{
 		EvidenceID: fixture.plan.Items[0].EvidenceID, Start: 0, End: 5,
 	}})
 	require.Error(t, err)
@@ -289,7 +289,7 @@ func submissionAssessmentCommitInputFixture(t *testing.T) submissionAssessmentCo
 	require.NoError(t, err)
 	request, err := service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
 	require.NoError(t, err)
-	response, validationErrors := verifier.PrepareSemanticAssessmentResponse(request, submissionAssessmentValidResponse(request, false), service.limits)
+	response, validationErrors := assessor.PrepareSemanticAssessmentResponse(request, submissionAssessmentValidResponse(request, false), service.limits)
 	require.Empty(t, validationErrors)
 	return submissionAssessmentCommitFixture{
 		run:      *ledger.run,

@@ -6,12 +6,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 func TestSubmissionAssessmentGroundsActiveAliasWithFlexibleWhitespace(t *testing.T) {
-	evidence := verifier.PrepareSemanticAssessmentEvidence(verifier.SemanticReviewEvidence{
+	evidence := assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
 		EvidenceID: "evidence:0",
 		Content:    "DENSE \t Memory protects PostgreSQL.",
 	})
@@ -26,7 +26,7 @@ func TestSubmissionAssessmentGroundsActiveAliasWithFlexibleWhitespace(t *testing
 		Groups: []repository.SubmissionAssessmentEntityCatalogGroup{{
 			Ref: "entity:subject", Candidates: []repository.SemanticReviewEntityCandidate{candidate}, Complete: true,
 		}},
-	}, []verifier.SemanticReviewEvidence{evidence})
+	}, []assessor.SemanticReviewEvidence{evidence})
 
 	require.NoError(t, err)
 	require.Len(t, entities, 1)
@@ -48,7 +48,7 @@ func TestSubmissionAssessmentRejectsPronounAndPartialWordGrounding(t *testing.T)
 		{name: "identifier continuation", content: "C++20 uses Redis.", entity: "C++"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			evidence := verifier.PrepareSemanticAssessmentEvidence(verifier.SemanticReviewEvidence{
+			evidence := assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
 				EvidenceID: "evidence:0",
 				Content:    test.content,
 			})
@@ -57,7 +57,7 @@ func TestSubmissionAssessmentRejectsPronounAndPartialWordGrounding(t *testing.T)
 			entities, groups, err := submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{
 				Complete: true,
 				Groups:   []repository.SubmissionAssessmentEntityCatalogGroup{{Ref: "entity:subject", Complete: true}},
-			}, []verifier.SemanticReviewEvidence{evidence})
+			}, []assessor.SemanticReviewEvidence{evidence})
 
 			require.NoError(t, err)
 			require.Len(t, entities, 1)
@@ -68,7 +68,7 @@ func TestSubmissionAssessmentRejectsPronounAndPartialWordGrounding(t *testing.T)
 }
 
 func TestSubmissionAssessmentChoosesKindWhenHintIsOmitted(t *testing.T) {
-	evidence := verifier.PrepareSemanticAssessmentEvidence(verifier.SemanticReviewEvidence{
+	evidence := assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
 		EvidenceID: "evidence:0",
 		Content:    "Dense-Mem protects PostgreSQL.",
 	})
@@ -83,7 +83,7 @@ func TestSubmissionAssessmentChoosesKindWhenHintIsOmitted(t *testing.T) {
 		Groups: []repository.SubmissionAssessmentEntityCatalogGroup{{
 			Ref: "entity:subject", Candidates: []repository.SemanticReviewEntityCandidate{candidate}, Complete: true,
 		}},
-	}, []verifier.SemanticReviewEvidence{evidence})
+	}, []assessor.SemanticReviewEvidence{evidence})
 
 	require.NoError(t, err)
 	require.Len(t, entities, 1)
@@ -92,7 +92,7 @@ func TestSubmissionAssessmentChoosesKindWhenHintIsOmitted(t *testing.T) {
 }
 
 func TestSubmissionAssessmentDefaultsNewEntityKindWhenHintIsOmitted(t *testing.T) {
-	evidence := verifier.PrepareSemanticAssessmentEvidence(verifier.SemanticReviewEvidence{
+	evidence := assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
 		EvidenceID: "evidence:0",
 		Content:    "Dense-Mem protects PostgreSQL.",
 	})
@@ -101,7 +101,7 @@ func TestSubmissionAssessmentDefaultsNewEntityKindWhenHintIsOmitted(t *testing.T
 	entities, _, err := submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{
 		Complete: true,
 		Groups:   []repository.SubmissionAssessmentEntityCatalogGroup{{Ref: "entity:subject", Complete: true}},
-	}, []verifier.SemanticReviewEvidence{evidence})
+	}, []assessor.SemanticReviewEvidence{evidence})
 
 	require.NoError(t, err)
 	require.Len(t, entities, 1)
@@ -109,7 +109,7 @@ func TestSubmissionAssessmentDefaultsNewEntityKindWhenHintIsOmitted(t *testing.T
 }
 
 func submissionAssessmentGroundingTestPlan(name, kind string) submissionAssessmentPlan {
-	target := submissionAssessmentEntityTarget{Target: verifier.SemanticAssessmentRequiredEntityRef{
+	target := submissionAssessmentEntityTarget{Target: assessor.SemanticAssessmentRequiredEntityRef{
 		Ref: "entity:subject", Name: name, Kind: kind, EvidenceIDs: []string{"evidence:0"},
 	}}
 	return submissionAssessmentPlan{EntityTargets: []submissionAssessmentEntityTarget{target}}

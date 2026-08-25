@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 const maxSubmissionAssessmentRevisionPersistenceAttempts = 2
@@ -19,8 +19,8 @@ func (s *submissionAssessmentPlacementWorkerService) persistSubmissionAssessment
 	run repository.PlacementRun,
 	scope repository.SubmissionAssessmentRunScope,
 	assessment *repository.SubmissionAssessment,
-	response verifier.SemanticAssessmentResponse,
-	request verifier.SemanticAssessmentRequest,
+	response assessor.SemanticAssessmentResponse,
+	request assessor.SemanticAssessmentRequest,
 ) (*repository.SubmissionAssessment, error) {
 	if assessment == nil {
 		return nil, errors.New("submission assessment revision requires a persisted assessment")
@@ -29,7 +29,7 @@ func (s *submissionAssessmentPlacementWorkerService) persistSubmissionAssessment
 	if err != nil {
 		return nil, err
 	}
-	canonicalJSON, err := verifier.CanonicalJSON(normalizedJSON)
+	canonicalJSON, err := assessor.CanonicalJSON(normalizedJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func (s *submissionAssessmentPlacementWorkerService) reserveSubmissionAssessment
 	if assessment == nil || providerTurns <= assessment.ProviderTurns {
 		return assessment, nil
 	}
-	canonicalJSON, err := verifier.CanonicalJSON(assessment.NormalizedResponse)
+	canonicalJSON, err := assessor.CanonicalJSON(assessment.NormalizedResponse)
 	if err != nil {
 		return nil, errors.Join(errSubmissionAssessmentRevisionPersistence, err)
 	}

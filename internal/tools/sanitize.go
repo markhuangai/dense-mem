@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/verifier"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 )
 
 // redactedPlaceholder replaces sensitive values in error messages exposed at
@@ -50,9 +50,9 @@ func SanitizeError(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "request timed out"
 	}
-	if errors.Is(err, verifier.ErrVerifierTimeout) ||
-		errors.Is(err, verifier.ErrVerifierRateLimit) ||
-		errors.Is(err, verifier.ErrVerifierMalformedResponse) {
+	if errors.Is(err, modelprovider.ErrVerifierTimeout) ||
+		errors.Is(err, modelprovider.ErrVerifierRateLimit) ||
+		errors.Is(err, modelprovider.ErrVerifierMalformedResponse) {
 		return "tool execution failed; contact an operator"
 	}
 	message := scrubAndBound(err.Error())

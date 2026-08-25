@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
+	"github.com/markhuangai/dense-mem/internal/conflictassessment"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 type RunLedger interface {
@@ -25,7 +25,7 @@ func NewRunner(
 	ledger RunLedger,
 	provider Provider,
 	timezone string,
-	limits verifier.SemanticAssessmentLimits,
+	limits conflictassessment.SemanticAssessmentLimits,
 	metrics observability.DiscoverabilityMetrics,
 ) (*Runner, error) {
 	if ledger == nil {

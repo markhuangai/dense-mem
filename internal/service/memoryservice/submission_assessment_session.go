@@ -6,10 +6,10 @@ import (
 	"errors"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 type submissionAssessmentConsumedTurnsError struct {
@@ -43,9 +43,9 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	ctx context.Context,
 	run repository.PlacementRun,
 	scope repository.SubmissionAssessmentRunScope,
-	request verifier.SemanticAssessmentRequest,
-	refresh func(context.Context) (verifier.SemanticAssessmentRequest, error),
-) (*repository.SubmissionAssessment, verifier.SemanticAssessmentResponse, bool, bool, bool, *submissionAssessmentLiveSession, error) {
+	request assessor.SemanticAssessmentRequest,
+	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
+) (*repository.SubmissionAssessment, assessor.SemanticAssessmentResponse, bool, bool, bool, *submissionAssessmentLiveSession, error) {
 	stored, err := s.assessments.LoadSubmissionAssessment(ctx, repository.LoadSubmissionAssessmentInput{
 		TeamID:         run.TeamID,
 		OwnerProfileID: run.OwnerProfileID,
@@ -55,10 +55,10 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 		return s.reuseOrRegenerateStoredAssessment(ctx, run, scope, stored, request, refresh)
 	}
 	if !errors.Is(err, repository.ErrSubmissionAssessmentNotFound) {
-		return nil, verifier.SemanticAssessmentResponse{}, false, false, false, nil, err
+		return nil, assessor.SemanticAssessmentResponse{}, false, false, false, nil, err
 	}
 	if run.AssessorTurnsReserved >= SemanticPlacementMaxAssessorTurns {
-		return nil, verifier.SemanticAssessmentResponse{}, false, true, false, nil, &verifier.MalformedResponseError{
+		return nil, assessor.SemanticAssessmentResponse{}, false, true, false, nil, &assessor.MalformedResponseError{
 			Provider:        "semantic_assessor",
 			Message:         "semantic assessor correction budget is exhausted before assessment persistence",
 			FailureClass:    "malformed_exhausted",
@@ -70,7 +70,7 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 		SubmissionAssessmentRunScope: scope,
 	})
 	if err != nil {
-		return nil, verifier.SemanticAssessmentResponse{}, false, false, false, nil, err
+		return nil, assessor.SemanticAssessmentResponse{}, false, false, false, nil, err
 	}
 	if !reserved {
 		stored, err := s.assessments.LoadSubmissionAssessment(ctx, repository.LoadSubmissionAssessmentInput{
@@ -82,10 +82,10 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 			return s.reuseOrRegenerateStoredAssessment(ctx, run, scope, stored, request, refresh)
 		}
 		if !errors.Is(err, repository.ErrSubmissionAssessmentNotFound) {
-			return nil, verifier.SemanticAssessmentResponse{}, false, false, false, nil, err
+			return nil, assessor.SemanticAssessmentResponse{}, false, false, false, nil, err
 		}
 		observability.RecordAssessorDuplicateRequestPrevention(s.metrics, "reservation")
-		return nil, verifier.SemanticAssessmentResponse{}, false, false, false, nil, repository.ErrSubmissionAssessorAttemptConsumed
+		return nil, assessor.SemanticAssessmentResponse{}, false, false, false, nil, repository.ErrSubmissionAssessorAttemptConsumed
 	}
 
 	started := time.Now()
@@ -98,12 +98,12 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	if err != nil {
 		outcome := "provider_error"
 		releaseProviderAttempt := true
-		if errors.Is(err, verifier.ErrVerifierMalformedResponse) {
+		if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
 			outcome = "malformed_exhausted"
 			releaseProviderAttempt = false
 		}
 		observability.RecordAssessorCall(s.metrics, request.InputTokens, 0, time.Since(started).Seconds(), outcome)
-		return nil, verifier.SemanticAssessmentResponse{}, false, true, releaseProviderAttempt, nil, err
+		return nil, assessor.SemanticAssessmentResponse{}, false, true, releaseProviderAttempt, nil, err
 	}
 	normalized := response
 	inputTokens := normalized.InputTokens
@@ -113,11 +113,11 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	observability.RecordAssessorCall(s.metrics, inputTokens, normalized.OutputTokens, time.Since(started).Seconds(), "ok")
 	normalizedJSON, err := json.Marshal(normalized)
 	if err != nil {
-		return nil, verifier.SemanticAssessmentResponse{}, false, true, false, nil, err
+		return nil, assessor.SemanticAssessmentResponse{}, false, true, false, nil, err
 	}
-	canonicalJSON, err := verifier.CanonicalJSON(normalizedJSON)
+	canonicalJSON, err := assessor.CanonicalJSON(normalizedJSON)
 	if err != nil {
-		return nil, verifier.SemanticAssessmentResponse{}, false, true, false, nil, err
+		return nil, assessor.SemanticAssessmentResponse{}, false, true, false, nil, err
 	}
 	persisted, existing, err := s.assessments.PersistSubmissionAssessment(ctx, repository.PersistSubmissionAssessmentInput{
 		TeamID:                    run.TeamID,
@@ -139,7 +139,7 @@ func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	})
 	if err != nil {
 		observability.RecordAssessorAssessmentPersistence(s.metrics, "error")
-		return nil, verifier.SemanticAssessmentResponse{}, false, true, false, nil, err
+		return nil, assessor.SemanticAssessmentResponse{}, false, true, false, nil, err
 	}
 	if existing {
 		storedAssessment, storedResponse, reused, _, releaseProviderAttempt, storedSession, storedErr :=
@@ -157,9 +157,9 @@ func (s *submissionAssessmentPlacementWorkerService) reuseOrRegenerateStoredAsse
 	run repository.PlacementRun,
 	scope repository.SubmissionAssessmentRunScope,
 	stored *repository.SubmissionAssessment,
-	request verifier.SemanticAssessmentRequest,
-	refresh func(context.Context) (verifier.SemanticAssessmentRequest, error),
-) (*repository.SubmissionAssessment, verifier.SemanticAssessmentResponse, bool, bool, bool, *submissionAssessmentLiveSession, error) {
+	request assessor.SemanticAssessmentRequest,
+	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
+) (*repository.SubmissionAssessment, assessor.SemanticAssessmentResponse, bool, bool, bool, *submissionAssessmentLiveSession, error) {
 	response, decodeErr := decodeStoredSubmissionAssessment(stored, request, s.limits)
 	if decodeErr == nil {
 		observability.RecordAssessorAssessmentPersistence(s.metrics, "reused")
@@ -168,7 +168,7 @@ func (s *submissionAssessmentPlacementWorkerService) reuseOrRegenerateStoredAsse
 	}
 	observability.RecordAssessorValidationFailure(s.metrics, "stored_response")
 	if stored.ProviderTurns >= SemanticPlacementMaxAssessorTurns {
-		return stored, verifier.SemanticAssessmentResponse{}, true, true, false, nil, &verifier.MalformedResponseError{
+		return stored, assessor.SemanticAssessmentResponse{}, true, true, false, nil, &assessor.MalformedResponseError{
 			Provider:        "semantic_assessor",
 			Message:         "stored semantic assessor response is invalid and the correction budget is exhausted",
 			FailureClass:    "malformed_exhausted",
@@ -193,11 +193,11 @@ func (s *submissionAssessmentPlacementWorkerService) reuseOrRegenerateStoredAsse
 			}
 		}
 		outcome := "provider_error"
-		if errors.Is(err, verifier.ErrVerifierMalformedResponse) {
+		if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
 			outcome = "malformed_exhausted"
 		}
 		observability.RecordAssessorCall(s.metrics, request.InputTokens, 0, time.Since(started).Seconds(), outcome)
-		return stored, verifier.SemanticAssessmentResponse{}, true, true, false, nil, err
+		return stored, assessor.SemanticAssessmentResponse{}, true, true, false, nil, err
 	}
 	inputTokens := regenerated.InputTokens
 	if inputTokens <= 0 {
@@ -211,23 +211,23 @@ func (s *submissionAssessmentPlacementWorkerService) reuseOrRegenerateStoredAsse
 	}
 	persisted, err := s.persistSubmissionAssessmentRevision(ctx, run, scope, stored, regenerated, finalRequest)
 	if err != nil {
-		return stored, verifier.SemanticAssessmentResponse{}, true, true, false, nil, err
+		return stored, assessor.SemanticAssessmentResponse{}, true, true, false, nil, err
 	}
 	return persisted, regenerated, false, true, false, live, nil
 }
 
 func (s *submissionAssessmentPlacementWorkerService) assessRememberSession(
 	ctx context.Context,
-	request verifier.SemanticAssessmentRequest,
-	refresh func(context.Context) (verifier.SemanticAssessmentRequest, error),
+	request assessor.SemanticAssessmentRequest,
+	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
 	turnOffset int,
-) (verifier.SemanticAssessmentResponse, verifier.SemanticAssessmentSession, verifier.SemanticAssessmentRequest, error) {
+) (assessor.SemanticAssessmentResponse, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRequest, error) {
 	if refresh == nil {
-		return verifier.SemanticAssessmentResponse{}, nil, request, errors.New("submission assessment worker: assessment refresh is required")
+		return assessor.SemanticAssessmentResponse{}, nil, request, errors.New("submission assessment worker: assessment refresh is required")
 	}
 	session, turn, err := s.provider.Assess(ctx, request)
 	if err != nil {
-		return verifier.SemanticAssessmentResponse{}, session, request, err
+		return assessor.SemanticAssessmentResponse{}, session, request, err
 	}
 	response, finalRequest, err := s.completeRememberSessionTurns(ctx, session, turn, request, refresh, turnOffset)
 	return response, session, finalRequest, err
@@ -235,12 +235,12 @@ func (s *submissionAssessmentPlacementWorkerService) assessRememberSession(
 
 func (s *submissionAssessmentPlacementWorkerService) completeRememberSessionTurns(
 	ctx context.Context,
-	session verifier.SemanticAssessmentSession,
-	turn verifier.SemanticAssessmentTurn,
-	request verifier.SemanticAssessmentRequest,
-	refresh func(context.Context) (verifier.SemanticAssessmentRequest, error),
+	session assessor.SemanticAssessmentSession,
+	turn assessor.SemanticAssessmentTurn,
+	request assessor.SemanticAssessmentRequest,
+	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
 	turnOffset int,
-) (verifier.SemanticAssessmentResponse, verifier.SemanticAssessmentRequest, error) {
+) (assessor.SemanticAssessmentResponse, assessor.SemanticAssessmentRequest, error) {
 	for {
 		turnNumber := turn.Turn
 		if turnNumber <= 0 {
@@ -248,9 +248,9 @@ func (s *submissionAssessmentPlacementWorkerService) completeRememberSessionTurn
 		}
 		totalTurns := turnOffset + turnNumber
 		response := turn.Response
-		validationErrors := append([]verifier.SemanticValidationError(nil), turn.ValidationErrors...)
+		validationErrors := append([]assessor.SemanticValidationError(nil), turn.ValidationErrors...)
 		if len(validationErrors) == 0 {
-			response, validationErrors = verifier.PrepareSemanticAssessmentResponse(request, response, s.limits)
+			response, validationErrors = assessor.PrepareSemanticAssessmentResponse(request, response, s.limits)
 		}
 		if len(validationErrors) == 0 {
 			response.ProviderTurns = totalTurns
@@ -261,7 +261,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeRememberSessionTurn
 			observability.RecordAssessorValidationFieldFailure(s.metrics, assessmentValidationStage(turn.ValidationStage), family)
 		}
 		if totalTurns >= SemanticPlacementMaxAssessorTurns {
-			return verifier.SemanticAssessmentResponse{}, request, &verifier.MalformedResponseError{
+			return assessor.SemanticAssessmentResponse{}, request, &assessor.MalformedResponseError{
 				Provider:                "semantic_assessor",
 				Message:                 "semantic assessor response remained invalid after bounded correction",
 				FailureClass:            "malformed_exhausted",
@@ -272,16 +272,16 @@ func (s *submissionAssessmentPlacementWorkerService) completeRememberSessionTurn
 		}
 		nextRequest, err := refresh(ctx)
 		if err != nil {
-			return verifier.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{
+			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{
 				cause: err, providerTurns: totalTurns,
 			}
 		}
-		turn, err = s.provider.Repair(ctx, session, verifier.SemanticAssessmentRepairRequest{
+		turn, err = s.provider.Repair(ctx, session, assessor.SemanticAssessmentRepairRequest{
 			Request:          nextRequest,
 			ValidationErrors: validationErrors,
 		})
 		if err != nil {
-			return verifier.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{
+			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{
 				cause: err, providerTurns: totalTurns,
 			}
 		}

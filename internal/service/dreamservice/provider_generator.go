@@ -8,13 +8,13 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/markhuangai/dense-mem/internal/verifier"
+	"github.com/markhuangai/dense-mem/internal/dreamgeneration"
 )
 
 var ErrDreamProviderUnavailable = errors.New("dream generation provider is required")
 
 type dreamGenerationProvider interface {
-	GenerateDreams(context.Context, verifier.DreamGenerationRequest) (verifier.DreamGenerationResponse, error)
+	GenerateDreams(context.Context, dreamgeneration.DreamGenerationRequest) (dreamgeneration.DreamGenerationResponse, error)
 	ModelName() string
 }
 
@@ -75,24 +75,24 @@ func (g *ProviderGenerator) GenerateWithDiagnostics(ctx context.Context, _ strin
 	}, nil
 }
 
-func providerDreamGenerationRequest(req GenerateRequest) (verifier.DreamGenerationRequest, error) {
-	paths := make([]verifier.DreamGenerationPath, 0, len(req.Paths))
+func providerDreamGenerationRequest(req GenerateRequest) (dreamgeneration.DreamGenerationRequest, error) {
+	paths := make([]dreamgeneration.DreamGenerationPath, 0, len(req.Paths))
 	for _, path := range req.Paths {
 		if len(path.Premises) != 2 {
-			return verifier.DreamGenerationRequest{}, fmt.Errorf("dream generation path %q must have two premises", path.PathRef)
+			return dreamgeneration.DreamGenerationRequest{}, fmt.Errorf("dream generation path %q must have two premises", path.PathRef)
 		}
-		premises := make([]verifier.DreamGenerationPremise, 0, len(path.Premises))
+		premises := make([]dreamgeneration.DreamGenerationPremise, 0, len(path.Premises))
 		for _, premise := range path.Premises {
-			evidence := make([]verifier.DreamGenerationEvidence, 0, len(premise.Input.Evidence))
+			evidence := make([]dreamgeneration.DreamGenerationEvidence, 0, len(premise.Input.Evidence))
 			for _, excerpt := range premise.Input.Evidence {
-				evidence = append(evidence, verifier.DreamGenerationEvidence{
+				evidence = append(evidence, dreamgeneration.DreamGenerationEvidence{
 					EvidenceRef:    excerpt.EvidenceRef,
 					Content:        excerpt.Content,
 					SourceGroupKey: excerpt.SourceGroupKey,
 					Authority:      excerpt.Authority,
 				})
 			}
-			premises = append(premises, verifier.DreamGenerationPremise{
+			premises = append(premises, dreamgeneration.DreamGenerationPremise{
 				PremiseRef:          premise.PremiseRef,
 				RelationshipRef:     premise.RelationshipRef,
 				PredicateLabel:      premise.Input.PredicateKey,
@@ -103,24 +103,24 @@ func providerDreamGenerationRequest(req GenerateRequest) (verifier.DreamGenerati
 				Evidence:            evidence,
 			})
 		}
-		predicates := make([]verifier.DreamGenerationPredicate, 0, len(path.AllowedPredicates))
+		predicates := make([]dreamgeneration.DreamGenerationPredicate, 0, len(path.AllowedPredicates))
 		for _, predicate := range path.AllowedPredicates {
-			predicates = append(predicates, verifier.DreamGenerationPredicate{
+			predicates = append(predicates, dreamgeneration.DreamGenerationPredicate{
 				PredicateRef:       predicate.PredicateRef,
 				Label:              predicate.PredicateKey,
 				RelationshipKind:   predicate.RelationshipKind,
 				CurrentCardinality: predicate.CurrentCardinality,
 			})
 		}
-		paths = append(paths, verifier.DreamGenerationPath{
+		paths = append(paths, dreamgeneration.DreamGenerationPath{
 			PathRef: path.PathRef,
-			Subject: verifier.DreamGenerationNode{
+			Subject: dreamgeneration.DreamGenerationNode{
 				Ref: path.Subject.Ref, Display: path.Subject.Display, Kind: path.Subject.Kind,
 			},
-			Middle: verifier.DreamGenerationNode{
+			Middle: dreamgeneration.DreamGenerationNode{
 				Ref: path.Middle.Ref, Display: path.Middle.Display, Kind: path.Middle.Kind,
 			},
-			Object: verifier.DreamGenerationNode{
+			Object: dreamgeneration.DreamGenerationNode{
 				Ref: path.Object.Ref, Display: path.Object.Display, Kind: path.Object.Kind,
 			},
 			Premises:          premises,
@@ -131,7 +131,7 @@ func providerDreamGenerationRequest(req GenerateRequest) (verifier.DreamGenerati
 	if maxOutputs <= 0 {
 		maxOutputs = DefaultMaxOutputs
 	}
-	return verifier.DreamGenerationRequest{
+	return dreamgeneration.DreamGenerationRequest{
 		RequestID:  "dream_request_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
 		MaxOutputs: maxOutputs,
 		Paths:      paths,

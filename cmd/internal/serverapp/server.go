@@ -18,14 +18,18 @@ import (
 	"github.com/labstack/echo/v4"
 	"gorm.io/gorm"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/conflictassessment"
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/http"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
@@ -246,10 +250,14 @@ func RunActiveServer(
 	openaiProvider.SetMetrics(discoverabilityMetrics)
 	retryEmbedder := embedding.NewRetryEmbeddingProviderWithKey(openaiProvider, logger, cfg.GetAIAPIKey())
 	retryEmbedder.SetMetrics(discoverabilityMetrics)
-	assessmentLimits := verifier.SemanticAssessmentLimitsForConfig(&cfg)
-	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, assessmentLimits)
+	assessmentLimits := assessorprovider.SemanticAssessmentLimitsForConfig(&cfg)
+	aiHTTPClient := &nethttp.Client{Timeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second}
+	aiConcurrencyGate := modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(&cfg))
+	verifierProvider := verifier.NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate(&cfg, aiHTTPClient, verifier.SemanticAssessmentLimits(assessmentLimits), aiConcurrencyGate)
 	verifierProvider.SetMetrics(discoverabilityMetrics)
-	conflictReviewRunner, err := conflictreview.NewRunner(ledgerRepo, verifierProvider, cfg.GetAppTimezone(), assessmentLimits, discoverabilityMetrics)
+	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate)
+	assessorProvider.SetMetrics(discoverabilityMetrics)
+	conflictReviewRunner, err := conflictreview.NewRunner(ledgerRepo, legacyConflictProvider{provider: verifierProvider}, cfg.GetAppTimezone(), conflictassessment.SemanticAssessmentLimits(assessmentLimits), discoverabilityMetrics)
 	if err != nil {
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
@@ -287,7 +295,7 @@ func RunActiveServer(
 		Teams:          teamService,
 		Locker:         dreamservice.NewPostgresCycleLocker(),
 		Postgres:       pgDB.GetDB(),
-		Generator:      dreamservice.NewProviderGenerator(verifierProvider),
+		Generator:      dreamservice.NewProviderGenerator(legacyDreamProvider{provider: verifierProvider}),
 		Metrics:        discoverabilityMetrics,
 		ProviderCycleLease: time.Duration(cfg.GetAIVerifierTimeoutSeconds())*
 			time.Second*time.Duration(verifier.SemanticAssessmentMaxProviderTurns) + time.Minute,
@@ -517,7 +525,7 @@ func RunActiveServer(
 		searchRepo,
 		semanticRepo,
 		retryEmbedder,
-		verifierProvider,
+		assessorProvider,
 		discoverabilityMetrics,
 		assessmentLimits,
 		activePlacementLease(cfg.GetAIVerifierTimeoutSeconds(), cfg.GetPromoteTxTimeoutSeconds()),
@@ -909,9 +917,9 @@ func startActiveWorkers(
 	search repository.SearchRepository,
 	semantic *repository.SemanticRepositoryImpl,
 	embedder *embedding.RetryEmbeddingProvider,
-	assessor *verifier.OpenAIVerifier,
+	assessorPort assessor.Provider,
 	metrics observability.DiscoverabilityMetrics,
-	assessmentLimits verifier.SemanticAssessmentLimits,
+	assessmentLimits assessor.SemanticAssessmentLimits,
 	placementLease time.Duration,
 	placementWorkerCount int,
 	placementPollInterval time.Duration,
@@ -935,7 +943,7 @@ func startActiveWorkers(
 				Ledger:      ledger,
 				Assessments: ledger,
 				Catalog:     semantic,
-				Provider:    assessor,
+				Provider:    assessorPort,
 				Limits:      assessmentLimits,
 				Metrics:     metrics,
 				Logger:      logger,

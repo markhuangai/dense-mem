@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
-func assessmentCompatibleCandidateExists(group *verifier.SemanticAssessmentEntityCandidateGroup, kind string) bool {
+func assessmentCompatibleCandidateExists(group *assessor.SemanticAssessmentEntityCandidateGroup, kind string) bool {
 	if group == nil {
 		return false
 	}
@@ -44,7 +44,7 @@ func semanticAssessmentPrimarySupport(supports []repository.EvidenceSupportInput
 
 func semanticAssessmentObject(
 	ref string,
-	result verifier.SemanticAssessmentRelationshipSplit,
+	result assessor.SemanticAssessmentRelationshipSplit,
 ) (string, *repository.PlacementValueInput, error) {
 	if result.ObjectRef != nil {
 		return *result.ObjectRef, nil, nil
@@ -69,7 +69,7 @@ func semanticAssessmentObject(
 	}, nil
 }
 
-func semanticAssessmentValidity(result verifier.SemanticAssessmentRelationshipSplit) (*time.Time, *time.Time, error) {
+func semanticAssessmentValidity(result assessor.SemanticAssessmentRelationshipSplit) (*time.Time, *time.Time, error) {
 	parse := func(value *string) (*time.Time, error) {
 		if value == nil {
 			return nil, nil

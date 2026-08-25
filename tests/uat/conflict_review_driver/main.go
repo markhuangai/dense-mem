@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/conflictassessment"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	postgresstorage "github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -35,6 +36,29 @@ type output struct {
 	AssessmentAttemptID  string   `json:"assessment_attempt_id"`
 	UpdatedRelationships []string `json:"updated_relationship_ids"`
 	RetractedEvidenceIDs []string `json:"retracted_evidence_ids"`
+}
+
+type legacyConflictProvider struct {
+	provider *verifier.OpenAIVerifier
+}
+
+func (p legacyConflictProvider) ModelName() string {
+	if p.provider == nil {
+		return ""
+	}
+	return p.provider.ModelName()
+}
+
+func (p legacyConflictProvider) AssessRelationshipConflict(
+	ctx context.Context,
+	request conflictassessment.ConflictAssessmentRequest,
+) (conflictassessment.ConflictAssessmentResponse, error) {
+	legacy := verifier.ConflictAssessmentRequest(request)
+	response, err := p.provider.AssessRelationshipConflict(ctx, legacy)
+	if err != nil {
+		return conflictassessment.ConflictAssessmentResponse{}, err
+	}
+	return conflictassessment.ConflictAssessmentResponse(response), nil
 }
 
 func main() {
@@ -66,11 +90,11 @@ func main() {
 
 	rls := postgresstorage.NewRLS()
 	ledger := repository.NewLedgerRepository(db, rls)
-	limits := verifier.DefaultSemanticAssessmentLimits()
-	provider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, limits)
+	limits := conflictassessment.DefaultSemanticAssessmentLimits()
+	provider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, verifier.SemanticAssessmentLimits(limits))
 	reviewer, err := conflictreview.New(conflictreview.Dependencies{
 		Repository: ledger,
-		Provider:   provider,
+		Provider:   legacyConflictProvider{provider: provider},
 		Timezone:   "UTC",
 		Limits:     limits,
 	})
@@ -208,7 +232,7 @@ func completeFailedRun(
 
 func driverConfig() config.Config {
 	if strings.TrimSpace(os.Getenv("DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE")) == "1" {
-		limits := verifier.DefaultSemanticAssessmentLimits()
+		limits := conflictassessment.DefaultSemanticAssessmentLimits()
 		return config.Config{
 			PostgresDSN:                         postgresDSN(),
 			AIVerifierAPIURL:                    requiredEnv("AI_VERIFIER_API_URL"),
@@ -224,6 +248,7 @@ func driverConfig() config.Config {
 			AIVerifierTokenizer:                 limits.Tokenizer,
 		}
 	}
+	limits := conflictassessment.DefaultSemanticAssessmentLimits()
 	return config.Config{
 		PostgresDSN:                         postgresDSN(),
 		AIVerifierAPIURL:                    requiredEnv("DENSE_MEM_E2E_CONFLICT_PROVIDER_URL"),
@@ -232,11 +257,11 @@ func driverConfig() config.Config {
 		AIVerifierDisableTemperature:        true,
 		AIVerifierTimeoutSeconds:            10,
 		AIVerifierMaxConcurrency:            1,
-		AIVerifierMaxInputTokens:            verifier.DefaultSemanticAssessmentLimits().MaxInputTokens,
-		AIVerifierMaxOutputTokens:           verifier.DefaultSemanticAssessmentLimits().MaxOutputTokens,
-		AIVerifierMaxCandidateContextTokens: verifier.DefaultSemanticAssessmentLimits().MaxCandidateContextTokens,
-		AIVerifierMaxPredicateOptions:       verifier.DefaultSemanticAssessmentLimits().MaxPredicateOptions,
-		AIVerifierTokenizer:                 verifier.DefaultSemanticAssessmentLimits().Tokenizer,
+		AIVerifierMaxInputTokens:            limits.MaxInputTokens,
+		AIVerifierMaxOutputTokens:           limits.MaxOutputTokens,
+		AIVerifierMaxCandidateContextTokens: limits.MaxCandidateContextTokens,
+		AIVerifierMaxPredicateOptions:       limits.MaxPredicateOptions,
+		AIVerifierTokenizer:                 limits.Tokenizer,
 	}
 }
 

@@ -8,9 +8,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 type submissionAssessmentWorkerLedgerStub struct {
@@ -210,9 +210,9 @@ func (s *submissionAssessmentWorkerAssessmentStub) RequeueSubmissionAssessment(_
 
 type submissionAssessmentWorkerProviderStub struct {
 	calls           int
-	request         *verifier.SemanticAssessmentRequest
-	response        func(verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error)
-	responseForTurn func(verifier.SemanticAssessmentRequest, int) (verifier.SemanticAssessmentResponse, error)
+	request         *assessor.SemanticAssessmentRequest
+	response        func(assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentResponse, error)
+	responseForTurn func(assessor.SemanticAssessmentRequest, int) (assessor.SemanticAssessmentResponse, error)
 	startSessionID  string
 	repairSessionID string
 	startErr        error
@@ -227,10 +227,10 @@ type submissionAssessmentWorkerProviderSession struct {
 
 func (s *submissionAssessmentWorkerProviderSession) SessionID() string { return s.id }
 
-func (s *submissionAssessmentWorkerProviderStub) Assess(_ context.Context, req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentSession, verifier.SemanticAssessmentTurn, error) {
+func (s *submissionAssessmentWorkerProviderStub) Assess(_ context.Context, req assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
 	s.calls++
 	if s.startErr != nil {
-		return nil, verifier.SemanticAssessmentTurn{}, s.startErr
+		return nil, assessor.SemanticAssessmentTurn{}, s.startErr
 	}
 	s.request = &req
 	session := &submissionAssessmentWorkerProviderSession{id: "stub-session", turns: 1}
@@ -239,21 +239,21 @@ func (s *submissionAssessmentWorkerProviderStub) Assess(_ context.Context, req v
 	return session, turn, err
 }
 
-func (s *submissionAssessmentWorkerProviderStub) Repair(_ context.Context, sessionRef verifier.SemanticAssessmentSession, repair verifier.SemanticAssessmentRepairRequest) (verifier.SemanticAssessmentTurn, error) {
+func (s *submissionAssessmentWorkerProviderStub) Repair(_ context.Context, sessionRef assessor.SemanticAssessmentSession, repair assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
 	session, ok := sessionRef.(*submissionAssessmentWorkerProviderSession)
 	if !ok || session == nil {
-		return verifier.SemanticAssessmentTurn{}, errors.New("invalid stub assessor session")
+		return assessor.SemanticAssessmentTurn{}, errors.New("invalid stub assessor session")
 	}
 	s.calls++
 	if len(s.repairErrors) > 0 {
 		err := s.repairErrors[0]
 		s.repairErrors = s.repairErrors[1:]
 		if err != nil {
-			return verifier.SemanticAssessmentTurn{}, err
+			return assessor.SemanticAssessmentTurn{}, err
 		}
 	}
 	if s.repairErr != nil {
-		return verifier.SemanticAssessmentTurn{}, s.repairErr
+		return assessor.SemanticAssessmentTurn{}, s.repairErr
 	}
 	s.request = &repair.Request
 	s.repairSessionID = session.SessionID()
@@ -261,23 +261,23 @@ func (s *submissionAssessmentWorkerProviderStub) Repair(_ context.Context, sessi
 	return s.turn(repair.Request, session.turns)
 }
 
-func (s *submissionAssessmentWorkerProviderStub) turn(req verifier.SemanticAssessmentRequest, turns int) (verifier.SemanticAssessmentTurn, error) {
+func (s *submissionAssessmentWorkerProviderStub) turn(req assessor.SemanticAssessmentRequest, turns int) (assessor.SemanticAssessmentTurn, error) {
 	response := submissionAssessmentValidResponse(req, false)
 	if s.responseForTurn != nil {
 		var err error
 		response, err = s.responseForTurn(req, turns)
 		if err != nil {
-			return verifier.SemanticAssessmentTurn{}, err
+			return assessor.SemanticAssessmentTurn{}, err
 		}
 	} else if s.response != nil {
 		var err error
 		response, err = s.response(req)
 		if err != nil {
-			return verifier.SemanticAssessmentTurn{}, err
+			return assessor.SemanticAssessmentTurn{}, err
 		}
 	}
-	normalized, validationErrors := verifier.PrepareSemanticAssessmentResponse(req, response, verifier.DefaultSemanticAssessmentLimits())
-	return verifier.SemanticAssessmentTurn{
+	normalized, validationErrors := assessor.PrepareSemanticAssessmentResponse(req, response, assessor.DefaultSemanticAssessmentLimits())
+	return assessor.SemanticAssessmentTurn{
 		Response:         normalized,
 		ValidationErrors: validationErrors,
 		ValidationStage:  "response_contract",

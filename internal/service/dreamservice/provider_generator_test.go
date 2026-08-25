@@ -10,18 +10,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/dreamgeneration"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 func TestProviderGeneratorBuildsBoundedRequestAndMapsProviderResponse(t *testing.T) {
 	provider := &providerGeneratorStub{
 		model: " dream-model ",
-		response: verifier.DreamGenerationResponse{
+		response: dreamgeneration.DreamGenerationResponse{
 			ProviderTurns: 2,
 			InputTokens:   31,
 			OutputTokens:  17,
-			Proposals: []verifier.DreamGenerationProposal{{
+			Proposals: []dreamgeneration.DreamGenerationProposal{{
 				PathRef:         "path_1",
 				PredicateRef:    "predicate_1",
 				Statement:       "Dense-Mem may use PostgreSQL.",
@@ -145,12 +145,12 @@ func providerGeneratorRequest() GenerateRequest {
 
 type providerGeneratorStub struct {
 	model    string
-	response verifier.DreamGenerationResponse
+	response dreamgeneration.DreamGenerationResponse
 	err      error
-	requests []verifier.DreamGenerationRequest
+	requests []dreamgeneration.DreamGenerationRequest
 }
 
-func (s *providerGeneratorStub) GenerateDreams(_ context.Context, request verifier.DreamGenerationRequest) (verifier.DreamGenerationResponse, error) {
+func (s *providerGeneratorStub) GenerateDreams(_ context.Context, request dreamgeneration.DreamGenerationRequest) (dreamgeneration.DreamGenerationResponse, error) {
 	s.requests = append(s.requests, request)
 	return s.response, s.err
 }

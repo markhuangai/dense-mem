@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 func TestSubmissionAssessmentWorkerConstructorUsesSafeDefaults(t *testing.T) {
@@ -31,18 +31,18 @@ func TestSubmissionAssessmentWorkerConstructorUsesSafeDefaults(t *testing.T) {
 }
 
 func TestSubmissionAssessmentTrustedProposalParsingIsStrict(t *testing.T) {
-	require.Equal(t, verifier.DefaultSemanticAssessmentLimits().Tokenizer, assessmentTokenizer(verifier.SemanticAssessmentLimits{}))
+	require.Equal(t, assessor.DefaultSemanticAssessmentLimits().Tokenizer, assessmentTokenizer(assessor.SemanticAssessmentLimits{}))
 	require.Empty(t, cloneAssessmentProposal(nil))
 	require.Empty(t, cloneAssessmentProposal(map[string]any{"invalid": make(chan int)}))
 
 	failureClass, attempts := semanticAssessmentMalformedFailure(errors.New("provider failed"))
 	require.Equal(t, "malformed_response", failureClass)
 	require.Zero(t, attempts)
-	failureClass, attempts = semanticAssessmentMalformedFailure(&verifier.MalformedResponseError{Attempts: 3})
+	failureClass, attempts = semanticAssessmentMalformedFailure(&assessor.MalformedResponseError{Attempts: 3})
 	require.Equal(t, "malformed_response", failureClass)
 	require.Equal(t, 3, attempts)
 
-	groups := []verifier.SemanticAssessmentEntityCandidateGroup{
+	groups := []assessor.SemanticAssessmentEntityCandidateGroup{
 		{EvidenceID: "evidence-a", Start: 1, End: 4},
 		{EvidenceID: "evidence-b", Start: 5, End: 9},
 	}
@@ -229,7 +229,7 @@ func TestSubmissionAssessmentWorkerHandlesSessionAndPersistenceRaces(t *testing.
 
 	t.Run("repair error is retryable in the same session", func(t *testing.T) {
 		_, assessments, _, provider, worker := submissionAssessmentWorkerFixture(t)
-		provider.responseForTurn = func(req verifier.SemanticAssessmentRequest, _ int) (verifier.SemanticAssessmentResponse, error) {
+		provider.responseForTurn = func(req assessor.SemanticAssessmentRequest, _ int) (assessor.SemanticAssessmentResponse, error) {
 			response := submissionAssessmentValidResponse(req, false)
 			response.EntityResults[0].GroundingRef = nil
 			return response, nil
@@ -312,7 +312,7 @@ func TestSubmissionAssessmentWorkerHandlesSessionAndPersistenceRaces(t *testing.
 
 	t.Run("candidate drift regenerates an invalid stored assessment", func(t *testing.T) {
 		_, assessments, catalog, provider, worker := submissionAssessmentWorkerFixture(t)
-		provider.response = func(req verifier.SemanticAssessmentRequest) (verifier.SemanticAssessmentResponse, error) {
+		provider.response = func(req assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentResponse, error) {
 			response := submissionAssessmentValidResponse(req, false)
 			for index := range response.EntityResults {
 				groundingRef := response.EntityResults[index].GroundingRef
@@ -421,18 +421,18 @@ func TestSubmissionAssessmentWorkerHandlesProviderSecurityFailures(t *testing.T)
 	plan, err := buildSubmissionAssessmentPlan(ledger.placement)
 	require.NoError(t, err)
 
-	err = service.completeProviderSecurityQuarantine(context.Background(), scope, plan, verifier.SemanticAssessmentResponse{
-		SecuritySignals: []verifier.SemanticAssessmentSecuritySignal{{EvidenceID: "missing", Start: 0, End: 1}},
+	err = service.completeProviderSecurityQuarantine(context.Background(), scope, plan, assessor.SemanticAssessmentResponse{
+		SecuritySignals: []assessor.SemanticAssessmentSecuritySignal{{EvidenceID: "missing", Start: 0, End: 1}},
 	}, "security_signal")
 	require.Error(t, err)
-	err = service.completeProviderSecurityQuarantine(context.Background(), scope, plan, verifier.SemanticAssessmentResponse{
-		SecuritySignals: []verifier.SemanticAssessmentSecuritySignal{{EvidenceID: "evidence:0", Start: -1, End: 1}},
+	err = service.completeProviderSecurityQuarantine(context.Background(), scope, plan, assessor.SemanticAssessmentResponse{
+		SecuritySignals: []assessor.SemanticAssessmentSecuritySignal{{EvidenceID: "evidence:0", Start: -1, End: 1}},
 	}, "security_signal")
 	require.Error(t, err)
-	err = service.completeProviderSecurityQuarantine(context.Background(), scope, plan, verifier.SemanticAssessmentResponse{}, "security_signal")
+	err = service.completeProviderSecurityQuarantine(context.Background(), scope, plan, assessor.SemanticAssessmentResponse{}, "security_signal")
 	require.Error(t, err)
 
-	valid := verifier.SemanticAssessmentResponse{SecuritySignals: []verifier.SemanticAssessmentSecuritySignal{{EvidenceID: "evidence:0", Kind: "instruction_override", Start: 0, End: 5}}}
+	valid := assessor.SemanticAssessmentResponse{SecuritySignals: []assessor.SemanticAssessmentSecuritySignal{{EvidenceID: "evidence:0", Kind: "instruction_override", Start: 0, End: 5}}}
 	assessments.completeNil = true
 	err = service.completeProviderSecurityQuarantine(context.Background(), scope, plan, valid, "security_signal")
 	require.Error(t, err)
@@ -449,23 +449,23 @@ func TestSubmissionAssessmentWorkerHandlesSessionRefreshAndRetryPersistenceFailu
 	require.NoError(t, err)
 	request, err := service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
 	require.NoError(t, err)
-	provider.responseForTurn = func(req verifier.SemanticAssessmentRequest, _ int) (verifier.SemanticAssessmentResponse, error) {
+	provider.responseForTurn = func(req assessor.SemanticAssessmentRequest, _ int) (assessor.SemanticAssessmentResponse, error) {
 		response := submissionAssessmentValidResponse(req, false)
 		response.EntityResults[0].GroundingRef = nil
 		return response, nil
 	}
-	_, _, _, err = service.assessRememberSession(context.Background(), request, func(context.Context) (verifier.SemanticAssessmentRequest, error) {
-		return verifier.SemanticAssessmentRequest{}, errors.New("candidate refresh failed")
+	_, _, _, err = service.assessRememberSession(context.Background(), request, func(context.Context) (assessor.SemanticAssessmentRequest, error) {
+		return assessor.SemanticAssessmentRequest{}, errors.New("candidate refresh failed")
 	}, 0)
 	require.Error(t, err)
 
 	scope := submissionAssessmentRunScope(*ledger.run, "submission-assessment-worker")
 	assessments.requeueNil = true
-	err = service.retryProviderFailure(context.Background(), *ledger.run, scope, "assessment", true, 0, verifier.ProviderFailureMetadata{Class: verifier.ProviderFailureClassHTTPServer})
+	err = service.retryProviderFailure(context.Background(), *ledger.run, scope, "assessment", true, 0, assessor.ProviderFailureMetadata{Class: assessor.ProviderFailureClassHTTPServer})
 	require.Error(t, err)
 	assessments.requeueNil = false
 	assessments.requeueErr = errors.New("requeue failed")
-	err = service.retryProviderFailure(context.Background(), *ledger.run, scope, "assessment", true, 0, verifier.ProviderFailureMetadata{Class: verifier.ProviderFailureClassHTTPServer})
+	err = service.retryProviderFailure(context.Background(), *ledger.run, scope, "assessment", true, 0, assessor.ProviderFailureMetadata{Class: assessor.ProviderFailureClassHTTPServer})
 	require.Error(t, err)
 
 	badSpace := repository.PlacementRun{SpaceID: "not-a-uuid"}
@@ -474,8 +474,8 @@ func TestSubmissionAssessmentWorkerHandlesSessionRefreshAndRetryPersistenceFailu
 
 func TestSubmissionAssessmentWorkerHelperDefaults(t *testing.T) {
 	assert.Equal(t, "response_contract", assessmentValidationStage(""))
-	assert.Equal(t, []string{"other"}, semanticAssessmentValidationFieldFamiliesForService([]verifier.SemanticValidationError{{}}))
-	assert.Equal(t, "fallback", relationshipObjectKind(verifier.SemanticAssessmentRelationshipSplit{}, map[string]string{}, "fallback"))
+	assert.Equal(t, []string{"other"}, semanticAssessmentValidationFieldFamiliesForService([]assessor.SemanticValidationError{{}}))
+	assert.Equal(t, "fallback", relationshipObjectKind(assessor.SemanticAssessmentRelationshipSplit{}, map[string]string{}, "fallback"))
 }
 
 func TestSubmissionAssessmentCommitInputRejectsOutOfContractResults(t *testing.T) {
@@ -486,24 +486,24 @@ func TestSubmissionAssessmentCommitInputRejectsOutOfContractResults(t *testing.T
 	request, err := service.buildRequest(context.Background(), *ledger.run, plan, ledger.placement.Proposal)
 	require.NoError(t, err)
 	base := submissionAssessmentValidResponse(request, false)
-	base, validationErrors := verifier.PrepareSemanticAssessmentResponse(request, base, service.limits)
+	base, validationErrors := assessor.PrepareSemanticAssessmentResponse(request, base, service.limits)
 	require.Empty(t, validationErrors)
 	assessment := &repository.SubmissionAssessment{AssessmentID: "assessment", Model: "model", ResponseHash: "hash", RequestID: request.RequestID}
 	scope := submissionAssessmentRunScope(*ledger.run, "submission-assessment-worker")
-	clone := func() verifier.SemanticAssessmentResponse {
+	clone := func() assessor.SemanticAssessmentResponse {
 		response := base
-		response.EntityResults = append([]verifier.SemanticAssessmentEntityResult(nil), base.EntityResults...)
-		response.RelationshipResults = append([]verifier.SemanticAssessmentRelationshipResult(nil), base.RelationshipResults...)
+		response.EntityResults = append([]assessor.SemanticAssessmentEntityResult(nil), base.EntityResults...)
+		response.RelationshipResults = append([]assessor.SemanticAssessmentRelationshipResult(nil), base.RelationshipResults...)
 		return response
 	}
-	assertError := func(response verifier.SemanticAssessmentResponse) {
+	assertError := func(response assessor.SemanticAssessmentResponse) {
 		_, commitErr := submissionAssessmentCommitInput(*ledger.run, scope, plan, response, assessment, false)
 		require.Error(t, commitErr)
 	}
 
 	t.Run("unknown entity result", func(t *testing.T) {
 		response := clone()
-		response.EntityResults = append(response.EntityResults, verifier.SemanticAssessmentEntityResult{Ref: "unknown"})
+		response.EntityResults = append(response.EntityResults, assessor.SemanticAssessmentEntityResult{Ref: "unknown"})
 		assertError(response)
 	})
 	t.Run("entity result outside evidence", func(t *testing.T) {
@@ -531,7 +531,7 @@ func TestSubmissionAssessmentCommitInputRejectsOutOfContractResults(t *testing.T
 	})
 	t.Run("unknown relationship result", func(t *testing.T) {
 		response := clone()
-		response.RelationshipResults = append(response.RelationshipResults, verifier.SemanticAssessmentRelationshipResult{Ref: "unknown"})
+		response.RelationshipResults = append(response.RelationshipResults, assessor.SemanticAssessmentRelationshipResult{Ref: "unknown"})
 		assertError(response)
 	})
 	t.Run("duplicate relationship result", func(t *testing.T) {
