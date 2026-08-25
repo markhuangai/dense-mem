@@ -1,6 +1,10 @@
 name: AI Pull Request Review
 
 on:
+  pull_request_target:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_run:
     workflows:
       - CI Pull Request
@@ -51,6 +55,7 @@ jobs:
     name: Resolve pull request
     runs-on: docker-runner
     if: >-
+      github.event_name == 'pull_request_target' ||
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success')
@@ -65,6 +70,8 @@ jobs:
       - name: Resolve and fence pull request head
         id: resolve
         uses: actions/github-script@v9
+        env:
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           github-token: ${{ github.token }}
           script: |
@@ -73,11 +80,40 @@ jobs:
               core.setOutput("should_run", "false");
             };
 
+            const trustedActor = "Z-M-Huang";
             const eventName = context.eventName;
             let pullNumber;
             let triggerHeadSha;
+            let workflowRunActor;
+            let workflowRunTriggeringActor;
 
-            if (eventName === "workflow_run") {
+            if (eventName === "pull_request_target") {
+              const eventPull = context.payload.pull_request;
+              if (!eventPull) {
+                throw new Error("The pull_request_target payload has no pull request.");
+              }
+              const eventPullIsTrusted =
+                eventPull.user?.login === trustedActor &&
+                context.actor === trustedActor &&
+                process.env.TRIGGERING_ACTOR === trustedActor;
+              const eventHeadRepositoryId = eventPull.head?.repo?.id;
+              const eventBaseRepositoryId = eventPull.base?.repo?.id;
+              const eventPullIsSameRepository =
+                Number.isSafeInteger(eventHeadRepositoryId) &&
+                eventHeadRepositoryId === eventBaseRepositoryId;
+              if (!eventPullIsTrusted || !eventPullIsSameRepository) {
+                skip(`Pull request #${eventPull.number} will use the trusted CI completion path.`);
+                return;
+              }
+              pullNumber = eventPull.number;
+              triggerHeadSha = eventPull.head?.sha;
+              if (
+                typeof triggerHeadSha !== "string" ||
+                !/^[0-9a-f]{40}$/.test(triggerHeadSha)
+              ) {
+                throw new Error("The pull_request_target payload has no valid head SHA.");
+              }
+            } else if (eventName === "workflow_run") {
               const workflowRun = context.payload.workflow_run;
               if (!workflowRun || workflowRun.event !== "pull_request") {
                 skip("The completed CI run was not triggered by a pull request.");
@@ -89,6 +125,8 @@ jobs:
                 );
                 return;
               }
+              workflowRunActor = workflowRun.actor?.login;
+              workflowRunTriggeringActor = workflowRun.triggering_actor?.login;
               triggerHeadSha = workflowRun.head_sha;
               const triggerHeadRef = workflowRun.head_branch;
               const triggerHeadRepositoryId = workflowRun.head_repository?.id;
@@ -165,10 +203,27 @@ jobs:
               );
               return;
             }
+            const pullHeadRepositoryId = pull.head.repo?.id;
+            const pullBaseRepositoryId = pull.base.repo?.id;
+            const pullIsSameRepository =
+              Number.isSafeInteger(pullHeadRepositoryId) &&
+              pullHeadRepositoryId === pullBaseRepositoryId;
+            const pullUsesDirectReview =
+              pull.user?.login === trustedActor &&
+              pullIsSameRepository &&
+              workflowRunActor === trustedActor &&
+              workflowRunTriggeringActor === trustedActor;
+            if (
+              eventName === "workflow_run" &&
+              pullUsesDirectReview
+            ) {
+              skip(`Pull request #${pullNumber} uses the direct pull request review path.`);
+              return;
+            }
 
             const reviewStatusContext =
               `${process.env.REVIEW_STATUS_CONTEXT_PREFIX} / PR #${pull.number}`;
-            if (eventName === "workflow_run") {
+            if (eventName !== "workflow_dispatch") {
               const statuses = await github.paginate(
                 github.rest.repos.listCommitStatusesForRef,
                 {

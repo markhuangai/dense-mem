@@ -208,6 +208,12 @@ test("staging deployment rehearses before an always-pull healthy startup", async
     deploy,
     /IMAGE_TAG: \$\{\{ needs\.authorize\.outputs\.tag \}\}/,
   );
+  assert.match(
+    deploy,
+    /DENSE_MEM_IMAGE="\$\{IMAGE_TAG\}"[\s\\]*docker compose up -d/,
+  );
+  assert.doesNotMatch(deploy, /DENSE_MEM_IMAGE="ghcr\.io\/markhuangai\/dense-mem:/);
+  assert.doesNotMatch(deploy, /DENSE_MEM_IMAGE_TAG/);
   assert.match(deploy, /docker compose up -d[\s\\]*--pull always/);
   assert.match(deploy, /--pull always[\s\\]*--no-deps/);
   assert.match(deploy, /--wait[\s\\]*--wait-timeout 3000/);
