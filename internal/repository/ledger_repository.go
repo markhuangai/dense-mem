@@ -42,18 +42,19 @@ type CreateIngestInput struct {
 	// IngestID and PlacementRunID are optional request-owned identifiers. The
 	// synchronous Remember path allocates them before provider work so the
 	// prepared assessor result can be committed against the exact same IDs.
-	IngestID          string
-	PlacementRunID    string
-	SpaceID           string
-	SpaceGeneration   int64
-	IdempotencyKey    string
-	RequestHash       string
-	SourceSummary     string
-	Status            string
-	TelemetryRemember bool
-	Proposal          map[string]any
-	Metadata          map[string]any
-	Evidence          []EvidenceInput
+	IngestID                string
+	PlacementRunID          string
+	SpaceID                 string
+	SpaceGeneration         int64
+	IdempotencyKey          string
+	RequestHash             string
+	CompatibleRequestHashes []string
+	SourceSummary           string
+	Status                  string
+	TelemetryRemember       bool
+	Proposal                map[string]any
+	Metadata                map[string]any
+	Evidence                []EvidenceInput
 }
 
 type GetPlacementRunInput struct {
@@ -604,7 +605,7 @@ func validateExistingIngestHash(ctx context.Context, tx *gorm.DB, input CreateIn
 	if err := row.Scan(&existingHash); err != nil {
 		return err
 	}
-	if existingHash != input.RequestHash {
+	if !requestHashMatches(input, existingHash) {
 		return fmt.Errorf("%w: idempotency key %q already recorded with a different request", ErrIdempotencyConflict, input.IdempotencyKey)
 	}
 	return nil
@@ -662,7 +663,7 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 				return "", false, err
 			}
 			ingestID, requestHash, err := selectKnowledgeIngestByIdempotency(ctx, tx, input)
-			if err == nil && requestHash != input.RequestHash {
+			if err == nil && !requestHashMatches(input, requestHash) {
 				err = fmt.Errorf("%w: idempotency key reused with different request hash", ErrIdempotencyConflict)
 			}
 			return ingestID, false, err
@@ -674,7 +675,7 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 			_ = rows.Close()
 			return "", false, err
 		}
-		if !created && requestHash != input.RequestHash {
+		if !created && !requestHashMatches(input, requestHash) {
 			_ = rows.Close()
 			return "", false, fmt.Errorf("%w: idempotency key reused with different request hash", ErrIdempotencyConflict)
 		}

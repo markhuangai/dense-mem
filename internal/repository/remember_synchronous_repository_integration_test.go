@@ -64,6 +64,27 @@ func TestClaimPlacementRunEnforcesOwnerLeaseAttemptsAndSingleWinner(t *testing.T
 	require.NoError(t, err)
 	require.Nil(t, exhaustedClaim)
 
+	stale := createRun("remember-claim-stale-age")
+	staleClaim, err := ledger.ClaimPlacementRun(ctx, ClaimPlacementRunInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: stale.IngestID, WorkerID: "claim-stale-too-early",
+		Lease: time.Minute, StaleAfter: 30 * time.Second,
+	})
+	require.NoError(t, err)
+	require.Nil(t, staleClaim)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE placement_runs
+			SET available_at = now() - interval '31 seconds', updated_at = now()
+			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
+		`, teamID, stale.IngestID).Error
+	}))
+	staleClaim, err = ledger.ClaimPlacementRun(ctx, ClaimPlacementRunInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: stale.IngestID, WorkerID: "claim-stale-recovered",
+		Lease: time.Minute, StaleAfter: 30 * time.Second,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, staleClaim)
+
 	race := createRun("remember-claim-race")
 	start := make(chan struct{})
 	results := make(chan *PlacementRun, 2)
@@ -126,4 +147,28 @@ func TestTerminalizedRememberFailureAllowsSameKeyRetry(t *testing.T) {
 	require.NotNil(t, retry)
 	require.False(t, retry.Existing)
 	require.NotEqual(t, first.IngestID, retry.IngestID)
+}
+
+func TestCreateIngestAcceptsLegacyCompatibleRequestHash(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-legacy-hash-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-legacy-hash-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+
+	first, err := ledger.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "remember-legacy-hash",
+		RequestHash: "dense-mem.v2.6-hash", Evidence: []EvidenceInput{{Content: "Legacy hash remains replayable."}},
+	})
+	require.NoError(t, err)
+
+	replay, err := ledger.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "remember-legacy-hash",
+		RequestHash: "dense-mem.v2.6.1-hash", CompatibleRequestHashes: []string{"dense-mem.v2.6-hash"},
+		Evidence: []EvidenceInput{{Content: "Legacy hash remains replayable."}},
+	})
+	require.NoError(t, err)
+	require.True(t, replay.Existing)
+	require.Equal(t, first.IngestID, replay.IngestID)
 }

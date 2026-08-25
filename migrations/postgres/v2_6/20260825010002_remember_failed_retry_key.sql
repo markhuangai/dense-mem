@@ -20,6 +20,7 @@
 SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
+SELECT set_config('lock_timeout', '30s', true);
 
 UPDATE knowledge_ingests AS ingest
 SET status = 'failed',

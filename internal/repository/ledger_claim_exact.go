@@ -18,6 +18,10 @@ type ClaimPlacementRunInput struct {
 	IngestID       string
 	WorkerID       string
 	Lease          time.Duration
+	// StaleAfter delays queued/guarded claims until the run has remained
+	// available for this duration. Normal workers leave this at zero; bounded
+	// recovery uses it to avoid stealing a just-staged run from a live caller.
+	StaleAfter time.Duration
 }
 
 // ClaimPlacementRun claims one exact submission for request-scoped Remember
@@ -43,6 +47,9 @@ func (r *LedgerRepositoryImpl) ClaimPlacementRun(ctx context.Context, input Clai
 	if input.Lease < time.Second {
 		return nil, errors.New("lease must be at least one second")
 	}
+	if input.StaleAfter < 0 {
+		return nil, errors.New("stale_after cannot be negative")
+	}
 	var run *PlacementRun
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
@@ -55,13 +62,13 @@ func (r *LedgerRepositoryImpl) ClaimPlacementRun(ctx context.Context, input Clai
 			  AND run.ingest_id = ?::uuid
 			  AND `+activeSemanticSpaceGenerationSQL("run")+`
 			  AND run.attempts < run.max_attempts
-			  AND ((run.status IN ('queued', 'guarded') AND run.available_at <= now())
+			  AND ((run.status IN ('queued', 'guarded') AND run.available_at <= now() - (? * interval '1 second'))
 			       OR (run.status = 'processing' AND run.lease_until < now()))
 			RETURNING run.team_id::text, run.placement_run_id::text, run.ingest_id::text,
 			          run.owner_profile_id::text, run.space_id::text, run.space_generation,
 			          run.status, run.attempts, run.max_attempts, run.assessor_turns_reserved,
 			          run.lease_until
-		`, int(input.Lease.Seconds()), input.WorkerID, input.TeamID, input.OwnerProfileID, input.IngestID).Rows()
+		`, int(input.Lease.Seconds()), input.WorkerID, int(input.StaleAfter.Seconds()), input.TeamID, input.OwnerProfileID, input.IngestID).Rows()
 		if err != nil {
 			return err
 		}

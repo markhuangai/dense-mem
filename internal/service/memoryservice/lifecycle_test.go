@@ -69,6 +69,9 @@ func TestLifecycleInlineRelationshipEmbeddingBatchValidatesProviderOutput(t *tes
 	provider.err = context.DeadlineExceeded
 	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, ErrLifecycleEmbeddingTimeout)
+	provider.err = context.Canceled
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	require.ErrorIs(t, err, ErrLifecycleEmbeddingCancelled)
 }
 
 func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
@@ -83,6 +86,10 @@ func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
 	_, err = svc.CorrectRelationship(ctx, CorrectRelationshipRequest{Action: unsafeAction})
 	require.ErrorContains(t, err, "action must be submit or confirm")
 	require.NotContains(t, err.Error(), unsafeAction)
+}
+
+func TestLifecycleCancellationErrorRemainsTyped(t *testing.T) {
+	require.ErrorIs(t, translateRelationshipCorrectionError(ErrLifecycleEmbeddingCancelled), ErrLifecycleEmbeddingCancelled)
 }
 
 func TestLifecycleCorrectRelationshipRequiresAuthAndRepository(t *testing.T) {

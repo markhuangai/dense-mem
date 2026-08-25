@@ -20,6 +20,7 @@ func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
 	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.RequestHash = strings.TrimSpace(input.RequestHash)
+	input.CompatibleRequestHashes = normalizeRequestHashes(input.RequestHash, input.CompatibleRequestHashes)
 	input.SourceSummary = strings.TrimSpace(input.SourceSummary)
 	input.Status = strings.TrimSpace(input.Status)
 	if input.Status == "" {
@@ -50,6 +51,35 @@ func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
 		input.Evidence[i].SupersedesEvidenceIDs = normalizeUUIDStrings(input.Evidence[i].SupersedesEvidenceIDs)
 	}
 	return input
+}
+
+func normalizeRequestHashes(primary string, alternatives []string) []string {
+	seen := map[string]struct{}{strings.TrimSpace(primary): {}}
+	result := make([]string, 0, len(alternatives))
+	for _, value := range alternatives {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func requestHashMatches(input CreateIngestInput, existing string) bool {
+	if strings.TrimSpace(existing) == input.RequestHash {
+		return true
+	}
+	for _, candidate := range input.CompatibleRequestHashes {
+		if strings.TrimSpace(existing) == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func validateCreateIngestInput(input CreateIngestInput) error {

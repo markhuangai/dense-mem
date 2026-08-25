@@ -80,6 +80,7 @@ func TestClaimPlacementRunRejectsInvalidInput(t *testing.T) {
 		{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString(), IngestID: "bad", WorkerID: "w", Lease: time.Second},
 		{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString(), IngestID: uuid.NewString(), Lease: time.Second},
 		{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString(), IngestID: uuid.NewString(), WorkerID: "w", Lease: time.Millisecond},
+		{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString(), IngestID: uuid.NewString(), WorkerID: "w", Lease: time.Second, StaleAfter: -time.Second},
 	}
 	for _, input := range tests {
 		_, err := repo.ClaimPlacementRun(context.Background(), input)

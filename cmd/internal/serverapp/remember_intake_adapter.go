@@ -30,7 +30,8 @@ func (a *rememberLedgerAdapter) Stage(ctx context.Context, input rememberapp.Sta
 	created, err := a.ledger.CreateIngest(ctx, repository.CreateIngestInput{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, SpaceID: input.SpaceID,
 		SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
-		RequestHash: input.RequestHash, SourceSummary: input.SourceSummary, Status: input.Status,
+		RequestHash: input.RequestHash, CompatibleRequestHashes: input.CompatibleRequestHashes,
+		SourceSummary: input.SourceSummary, Status: input.Status,
 		TelemetryRemember: input.TelemetryRemember, Proposal: input.Proposal, Metadata: input.Metadata,
 		Evidence: rememberEvidenceInputs(input.Evidence),
 	})

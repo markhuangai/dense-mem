@@ -69,7 +69,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
 	})
 	if lookupErr == nil && attempt != nil {
-		if attempt.RequestHash != input.RequestHash {
+		if !rememberRequestHashMatches(input, attempt.RequestHash) {
 			return nil, rememberapp.ErrRememberConflict
 		}
 		if attempt.Outcome == "completed" || attempt.Outcome == "rejected" || attempt.Outcome == "quarantined" || attempt.Outcome == "replayed" {
@@ -100,7 +100,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	created, err := p.ledger.CreateIngest(ctx, repository.CreateIngestInput{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID, PlacementRunID: placementRunID,
 		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
-		RequestHash: input.RequestHash, SourceSummary: input.SourceSummary,
+		RequestHash: input.RequestHash, CompatibleRequestHashes: input.CompatibleRequestHashes, SourceSummary: input.SourceSummary,
 		Status: string(domain.PlacementRunQueued), TelemetryRemember: true,
 		Proposal: input.Proposal, Metadata: input.Metadata, Evidence: rememberEvidenceInputs(input.Evidence),
 	})
@@ -115,6 +115,11 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		// terminal placement instead of starting a second assessor/commit.
 		status, waitErr := p.waitForExistingRemember(ctx, input.TeamID, input.OwnerProfileID, created.IngestID)
 		if waitErr != nil {
+			if recovered, recoveryErr := p.recoverStaleRemember(ctx, input.TeamID, input.OwnerProfileID, created.IngestID); recoveryErr != nil {
+				return nil, recoveryErr
+			} else if recovered != nil {
+				return recovered, &rememberapp.RememberProcessError{Status: recovered, Err: rememberapp.ErrRememberRequestTimeout}
+			}
 			return nil, waitErr
 		}
 		if status != nil && status.ProcessingState == "failed" {
@@ -203,6 +208,38 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		return status, &rememberapp.RememberProcessError{Status: status, Err: processErr}
 	}
 	return status, nil
+}
+
+func (p *rememberSynchronousProcessor) recoverStaleRemember(
+	ctx context.Context,
+	teamID, ownerID, ingestID string,
+) (*rememberapp.SubmissionStatusResult, error) {
+	if !errors.Is(ctx.Err(), context.Canceled) && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, nil
+	}
+	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	run, err := p.ledger.ClaimPlacementRun(recoveryCtx, repository.ClaimPlacementRunInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID,
+		WorkerID: "remember-recovery-" + uuid.NewString(), Lease: 30 * time.Second, StaleAfter: 30 * time.Second,
+	})
+	if err != nil || run == nil {
+		return nil, err
+	}
+	if err := p.ledger.TerminalizeRememberFailure(recoveryCtx, repository.RememberTerminalizeFailureInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID,
+		FailedPhase: "execution", ErrorCode: string(rememberapp.SubmissionErrorRequestTimeout),
+		Message: "staged Remember run remained unclaimed past the recovery window",
+	}); err != nil {
+		return nil, err
+	}
+	placement, err := p.ledger.GetPlacementRun(recoveryCtx, repository.GetPlacementRunInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rememberapp.ProjectSubmissionStatus(rememberStageResult(placement)), nil
 }
 
 func (p *rememberSynchronousProcessor) waitForExistingRemember(
@@ -441,6 +478,18 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func rememberRequestHashMatches(input rememberapp.RememberProcessRequest, candidate string) bool {
+	if strings.TrimSpace(candidate) == strings.TrimSpace(input.RequestHash) {
+		return true
+	}
+	for _, compatible := range input.CompatibleRequestHashes {
+		if strings.TrimSpace(candidate) == strings.TrimSpace(compatible) {
+			return true
+		}
+	}
+	return false
 }
 
 func lenMapSlice(metadata map[string]any, key string) int {

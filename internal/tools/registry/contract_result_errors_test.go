@@ -59,6 +59,7 @@ func TestRememberToolResultErrorQuarantinesSecurityRejection(t *testing.T) {
 	item := items[0].(map[string]any)
 	require.Equal(t, "submission_quarantined", item["code"])
 	require.Equal(t, "quarantined", structured.Result["processing_state"])
+	require.Equal(t, []any{}, structured.Result["degradations"])
 }
 
 func TestRememberToolResultErrorFallsBackToInternalFailure(t *testing.T) {
@@ -103,6 +104,7 @@ func TestCorrectionToolResultErrorPreservesEmbeddingFailureCodes(t *testing.T) {
 		{memoryservice.ErrLifecycleEmbeddingUnavailable, "embedding_unavailable"},
 		{memoryservice.ErrLifecycleEmbeddingInvalid, "embedding_response_invalid"},
 		{memoryservice.ErrLifecycleEmbeddingTimeout, "request_timeout"},
+		{memoryservice.ErrLifecycleEmbeddingCancelled, "request_cancelled"},
 	} {
 		structured, ok := ToolResultFromError(correctionToolResultError(context.Background(), test.err))
 		require.True(t, ok)

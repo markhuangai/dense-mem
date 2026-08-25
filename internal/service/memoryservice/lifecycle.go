@@ -28,6 +28,7 @@ var (
 	ErrLifecycleEmbeddingUnavailable = errors.New("memory lifecycle: embedding provider unavailable")
 	ErrLifecycleEmbeddingInvalid     = errors.New("memory lifecycle: embedding response invalid")
 	ErrLifecycleEmbeddingTimeout     = errors.New("memory lifecycle: embedding request timed out")
+	ErrLifecycleEmbeddingCancelled   = errors.New("memory lifecycle: embedding request cancelled")
 )
 
 type LifecycleService interface {
@@ -224,6 +225,9 @@ func (s *lifecycleService) embedRelationshipDocumentBatch(
 	defer cancel()
 	vectors, model, err := s.embedder.EmbedBatch(embedCtx, texts)
 	if err != nil {
+		if errors.Is(embedCtx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+			return nil, ErrLifecycleEmbeddingCancelled
+		}
 		if errors.Is(embedCtx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, ErrLifecycleEmbeddingTimeout
 		}
@@ -257,7 +261,8 @@ func (s *lifecycleService) embedRelationshipDocumentBatch(
 func translateRelationshipCorrectionError(err error) error {
 	if errors.Is(err, ErrLifecycleEmbeddingUnavailable) ||
 		errors.Is(err, ErrLifecycleEmbeddingInvalid) ||
-		errors.Is(err, ErrLifecycleEmbeddingTimeout) {
+		errors.Is(err, ErrLifecycleEmbeddingTimeout) ||
+		errors.Is(err, ErrLifecycleEmbeddingCancelled) {
 		return err
 	}
 	if errors.Is(err, repository.ErrSemanticOwnerMismatch) || errors.Is(err, repository.ErrRelationshipCorrectionNotFound) {

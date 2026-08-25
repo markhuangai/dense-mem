@@ -164,6 +164,30 @@ func TestCanonicalRequestHashPreservesEvidenceAndValueBytesAndEvidenceOrder(t *t
 	}
 }
 
+func TestCanonicalRequestHashKeepsLegacyContractCompatibility(t *testing.T) {
+	req := canonicalHashRequestFixture()
+	current, err := canonicalRequestHash(req)
+	require.NoError(t, err)
+	legacy, err := canonicalRequestHashForVersion(req, legacyRequestHashContractVersion)
+	require.NoError(t, err)
+	require.NotEqual(t, current, legacy)
+
+	ctx := rememberTestContext(uuid.New(), uuid.New())
+	processor := &synchronousProcessorStub{result: &SubmissionStatusResult{
+		ContractVersion: domain.ContractVersion, SubmissionID: uuid.NewString(), SubmissionKind: "remember",
+		ProcessingState: "completed", SearchState: "not_required", Evidence: []SubmissionEvidenceStatus{},
+		RelationshipResults: []SubmissionRelationshipResult{}, Errors: []SubmissionStatusError{}, Degradations: []SubmissionStatusDegradation{},
+	}}
+	service := NewService(Dependencies{Synchronous: processor})
+	req.IdempotencyKey = "legacy-hash-compat"
+	_, err = service.Remember(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, current, processor.last.RequestHash)
+	require.Equal(t, []string{legacy}, processor.last.CompatibleRequestHashes)
+	_, err = canonicalRequestHashForVersion(RememberRequest{Evidence: []RememberEvidenceInput{{Content: "bad", Metadata: map[string]any{"invalid": make(chan int)}}}}, legacyRequestHashContractVersion)
+	require.Error(t, err)
+}
+
 func TestCanonicalRequestBodyHashRejectsNonJSONAndNormalizesOptionalContractFields(t *testing.T) {
 	tests := []struct {
 		name          string

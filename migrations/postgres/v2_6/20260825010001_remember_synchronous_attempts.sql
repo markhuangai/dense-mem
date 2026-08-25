@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS remember_attempts (
 CREATE UNIQUE INDEX IF NOT EXISTS remember_attempts_canonical_key_idx
     ON remember_attempts(team_id, owner_profile_id, idempotency_key)
     WHERE outcome IN ('completed', 'rejected', 'quarantined');
+CREATE INDEX IF NOT EXISTS remember_attempts_idempotency_key_idx
+    ON remember_attempts(team_id, owner_profile_id, idempotency_key, created_at DESC, attempt_id DESC);
 CREATE INDEX IF NOT EXISTS remember_attempts_owner_created_idx
     ON remember_attempts(team_id, owner_profile_id, created_at DESC, attempt_id DESC);
 CREATE INDEX IF NOT EXISTS remember_attempts_expiry_idx
@@ -115,7 +117,9 @@ CREATE TABLE IF NOT EXISTS semantic_assessments (
     UNIQUE (team_id, attempt_id),
     CONSTRAINT semantic_assessments_history_check CHECK (jsonb_typeof(response_history) = 'array'),
     CONSTRAINT semantic_assessments_revision_check CHECK (accepted_revision IS NULL OR accepted_revision >= 1),
-    CONSTRAINT semantic_assessments_turn_check CHECK (provider_turns BETWEEN 0 AND 3)
+    -- Historical placement assessments may contain up to five provider turns;
+    -- new application responses remain bounded to three turns by validation.
+    CONSTRAINT semantic_assessments_turn_check CHECK (provider_turns BETWEEN 0 AND 5)
 );
 
 ALTER TABLE remember_attempts ENABLE ROW LEVEL SECURITY;

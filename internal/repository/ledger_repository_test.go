@@ -37,6 +37,16 @@ func TestLedgerCreateIngestValidationRequiresRequestHashWithIdempotencyKey(t *te
 	assert.Contains(t, err.Error(), "request_hash is required")
 }
 
+func TestLedgerRequestHashCompatibilityAcceptsOnlyConfiguredAlternative(t *testing.T) {
+	input := validCreateIngestInput()
+	input.RequestHash = "dense-mem.v2.6.1-hash"
+	input.CompatibleRequestHashes = []string{"dense-mem.v2.6-hash"}
+	input = normalizeCreateIngestInput(input)
+	require.True(t, requestHashMatches(input, "dense-mem.v2.6.1-hash"))
+	require.True(t, requestHashMatches(input, "dense-mem.v2.6-hash"))
+	require.False(t, requestHashMatches(input, "different-hash"))
+}
+
 func TestLedgerCreateIngestValidationAllowsCompletedInternalIngest(t *testing.T) {
 	input := validCreateIngestInput()
 	input.Status = string(domain.PlacementRunCompleted)

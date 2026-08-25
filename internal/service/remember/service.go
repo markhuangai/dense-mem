@@ -21,7 +21,8 @@ import (
 )
 
 const (
-	requestHashContractVersion = "dense-mem.v2.6.1"
+	requestHashContractVersion       = "dense-mem.v2.6.1"
+	legacyRequestHashContractVersion = "dense-mem.v2.6"
 	// Retained only for internal compatibility projections; it is never serialized
 	// or advertised by the v2.6.1 contract.
 	rememberCheckAfterSeconds = 60
@@ -230,6 +231,10 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if err != nil {
 		return nil, err
 	}
+	legacyRequestHash, err := canonicalRequestHashForVersion(req, legacyRequestHashContractVersion)
+	if err != nil {
+		return nil, err
+	}
 	correlationID := correlation.FromContext(ctx)
 	actorMetadata := map[string]any{
 		"team_id":        actor.TeamID.String(),
@@ -245,7 +250,8 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	processInput := RememberProcessRequest{
 		TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
 		SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash,
-		SourceSummary: sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata,
+		CompatibleRequestHashes: []string{legacyRequestHash},
+		SourceSummary:           sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata,
 		Evidence: repositoryEvidenceInputs(req.Evidence),
 	}
 	if s.synchronous != nil {
@@ -270,18 +276,19 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		return nil, errors.New("remember: intake port is required")
 	}
 	created, err := s.intake.Stage(ctx, StageRequest{
-		TeamID:            actor.TeamID.String(),
-		OwnerProfileID:    actor.OwnerID.String(),
-		SpaceID:           rememberSpaceID(space),
-		SpaceGeneration:   space.Generation,
-		IdempotencyKey:    strings.TrimSpace(req.IdempotencyKey),
-		RequestHash:       requestHash,
-		SourceSummary:     sourceSummary(req.Evidence),
-		Status:            string(domain.PlacementRunQueued),
-		TelemetryRemember: true,
-		Proposal:          proposal,
-		Metadata:          metadata,
-		Evidence:          processInput.Evidence,
+		TeamID:                  actor.TeamID.String(),
+		OwnerProfileID:          actor.OwnerID.String(),
+		SpaceID:                 rememberSpaceID(space),
+		SpaceGeneration:         space.Generation,
+		IdempotencyKey:          strings.TrimSpace(req.IdempotencyKey),
+		RequestHash:             requestHash,
+		CompatibleRequestHashes: []string{legacyRequestHash},
+		SourceSummary:           sourceSummary(req.Evidence),
+		Status:                  string(domain.PlacementRunQueued),
+		TelemetryRemember:       true,
+		Proposal:                proposal,
+		Metadata:                metadata,
+		Evidence:                processInput.Evidence,
 	})
 	if err != nil {
 		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
@@ -510,6 +517,14 @@ func sourceRevisionBatchHash(contents []string) string {
 
 func canonicalRequestHash(req RememberRequest) (string, error) {
 	hash, err := CanonicalRequestBodyHash(req.Evidence, req.EntityHints, req.RelationshipHints)
+	if err != nil {
+		return "", fmt.Errorf("remember: canonical request hash: %w", err)
+	}
+	return hash, nil
+}
+
+func canonicalRequestHashForVersion(req RememberRequest, version string) (string, error) {
+	hash, err := CanonicalRequestBodyHashForVersion(version, req.Evidence, req.EntityHints, req.RelationshipHints)
 	if err != nil {
 		return "", fmt.Errorf("remember: canonical request hash: %w", err)
 	}
