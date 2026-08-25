@@ -116,12 +116,11 @@ func (r *LedgerRepositoryImpl) PlanSubmissionAssessmentEmbeddings(
 			}
 			valueType, value, unit := "", "", ""
 			if observation.ObjectValue != nil {
-				valueType = observation.ObjectValue.ValueType
-				value = observation.ObjectValue.Display
-				if value == "" {
-					value = observation.ObjectValue.CanonicalValue
+				persisted, valueErr := loadInlineEmbeddingValueProjection(ctx, tx, input.TeamID, *observation.ObjectValue)
+				if valueErr != nil {
+					return valueErr
 				}
-				unit = observation.ObjectValue.Unit
+				valueType, value, unit = persisted.ValueType, persisted.Display, persisted.Unit
 				objectName = value
 			}
 			text := relationshipProjectionText(&RelationshipRecord{
@@ -186,6 +185,39 @@ func loadInlineEmbeddingEntityNames(
 		names[ref] = name
 	}
 	return names, nil
+}
+
+func loadInlineEmbeddingValueProjection(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	input PlacementValueInput,
+) (PlacementValueInput, error) {
+	input = normalizePlacementValueInput(input)
+	var persisted PlacementValueInput
+	err := tx.WithContext(ctx).Raw(`
+		SELECT value_type, canonical_value, COALESCE(unit, ''), COALESCE(display, '')
+		FROM value_records
+		WHERE team_id = ?::uuid
+		  AND value_type = ?
+		  AND canonical_value = ?
+		  AND unit IS NOT DISTINCT FROM NULLIF(?, '')
+		  AND normalization_version = ?
+		ORDER BY value_id
+		LIMIT 1
+	`, teamID, input.ValueType, input.CanonicalValue, input.Unit, input.NormalizationVersion).Row().Scan(
+		&persisted.ValueType, &persisted.CanonicalValue, &persisted.Unit, &persisted.Display,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return input, nil
+	}
+	if err != nil {
+		return PlacementValueInput{}, err
+	}
+	if strings.TrimSpace(persisted.Display) == "" {
+		persisted.Display = persisted.CanonicalValue
+	}
+	return persisted, nil
 }
 
 func searchDocumentHash(text string) string {

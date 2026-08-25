@@ -396,9 +396,10 @@ func rememberOutputSchema() map[string]any {
 		"evidence":             array(rememberEvidenceStatusSchema(), 0, 100),
 		"relationship_results": submissionRelationshipResultsSchema(),
 		"errors":               submissionStatusErrorArraySchema(),
+		"degradations":         submissionStatusDegradationArraySchema(),
 	}
 	terminal := closedObject(
-		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"},
+		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors", "degradations"},
 		properties,
 	)
 	operationalErrors := submissionStatusErrorArraySchema()
@@ -413,7 +414,7 @@ func rememberOutputSchema() map[string]any {
 			"errors":           operationalErrors,
 		},
 	)
-	return map[string]any{"oneOf": []any{terminal, operational}}
+	return map[string]any{"oneOf": []any{terminal, operational}, "x-enforce-one-of": true}
 }
 
 func rememberEvidenceStatusSchema() map[string]any {
@@ -512,7 +513,7 @@ func correctRelationshipOutputSchema() map[string]any {
 			"errors":           operationalErrors,
 		},
 	)
-	return map[string]any{"oneOf": []any{terminal, operational}}
+	return map[string]any{"oneOf": []any{terminal, operational}, "x-enforce-one-of": true}
 }
 
 func recallMemoryOutputSchema() map[string]any {

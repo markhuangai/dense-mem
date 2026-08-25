@@ -430,12 +430,14 @@ func TestRememberResultOmitsPollingFieldsAndNotStoredIDs(t *testing.T) {
 	require.NoError(t, err)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(encoded, &body))
-	for _, field := range []string{"check_after_seconds", "attempts", "max_attempts", "submitted_at", "next_attempt_at", "started_at", "updated_at", "completed_at", "degradations"} {
+	for _, field := range []string{"check_after_seconds", "attempts", "max_attempts", "submitted_at", "next_attempt_at", "started_at", "updated_at", "completed_at"} {
 		_, present := body[field]
 		require.False(t, present, field)
 	}
+	_, present := body["degradations"]
+	require.True(t, present)
 	evidence := body["evidence"].([]any)[0].(map[string]any)
-	_, present := evidence["evidence_id"]
+	_, present = evidence["evidence_id"]
 	require.False(t, present)
 	require.Equal(t, "not_stored", evidence["disposition"])
 }

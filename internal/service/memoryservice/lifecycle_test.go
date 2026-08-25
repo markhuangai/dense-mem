@@ -60,11 +60,15 @@ func TestLifecycleInlineRelationshipEmbeddingBatchValidatesProviderOutput(t *tes
 
 	provider.available = false
 	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
-	require.ErrorContains(t, err, "unavailable")
+	require.ErrorIs(t, err, ErrLifecycleEmbeddingUnavailable)
 	provider.available = true
 	provider.vectors = [][]float32{{1, 2}}
 	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
-	require.ErrorContains(t, err, "dimensions")
+	require.ErrorIs(t, err, ErrLifecycleEmbeddingInvalid)
+	provider.vectors = [][]float32{{1, 2, 3}}
+	provider.err = context.DeadlineExceeded
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	require.ErrorIs(t, err, ErrLifecycleEmbeddingTimeout)
 }
 
 func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
@@ -201,6 +205,7 @@ type lifecycleEmbeddingStub struct {
 	available bool
 	model     string
 	vectors   [][]float32
+	err       error
 }
 
 func (s *lifecycleEmbeddingStub) Embed(context.Context, string) ([]float32, string, error) {
@@ -208,7 +213,7 @@ func (s *lifecycleEmbeddingStub) Embed(context.Context, string) ([]float32, stri
 }
 
 func (s *lifecycleEmbeddingStub) EmbedBatch(context.Context, []string) ([][]float32, string, error) {
-	return s.vectors, s.model, nil
+	return s.vectors, s.model, s.err
 }
 
 func (s *lifecycleEmbeddingStub) ModelName() string { return s.model }

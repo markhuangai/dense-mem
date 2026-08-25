@@ -3,6 +3,7 @@ package remember
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -50,6 +51,31 @@ type Processor interface {
 // result; they own any private persistence orchestration needed to execute it.
 type SynchronousProcessor interface {
 	ProcessRemember(context.Context, RememberProcessRequest) (*SubmissionStatusResult, error)
+}
+
+// RememberProcessError carries the durable terminal status alongside the
+// bounded operational cause so transports can correlate an error result with
+// the persisted attempt instead of inventing a new submission ID.
+type RememberProcessError struct {
+	Status *SubmissionStatusResult
+	Err    error
+}
+
+func (e *RememberProcessError) Error() string {
+	if e == nil {
+		return "remember: processor failed"
+	}
+	if e.Err == nil {
+		return "remember: processor failed"
+	}
+	return fmt.Sprintf("remember: processor failed: %v", e.Err)
+}
+
+func (e *RememberProcessError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
 }
 
 type ProcessRequest struct {

@@ -68,6 +68,21 @@ func TestRememberToolResultErrorFallsBackToInternalFailure(t *testing.T) {
 	require.Equal(t, "internal_failure", item["code"])
 }
 
+func TestRememberToolResultErrorUsesDurableFailureStatus(t *testing.T) {
+	status := &rememberapp.SubmissionStatusResult{
+		SubmissionID:    "durable-submission",
+		ProcessingState: "failed",
+		Errors:          []rememberapp.SubmissionStatusError{rememberapp.StatusError(rememberapp.SubmissionErrorEmbeddingUnavailable)},
+	}
+	structured, ok := ToolResultFromError(rememberToolResultError(context.Background(), &rememberapp.RememberProcessError{
+		Status: status, Err: rememberapp.ErrRememberPersistence,
+	}))
+	require.True(t, ok)
+	require.Equal(t, "durable-submission", structured.Result["submission_id"])
+	item := structured.Result["errors"].([]any)[0].(map[string]any)
+	require.Equal(t, "embedding_unavailable", item["code"])
+}
+
 func TestCorrectionToolResultErrorIsBoundedAndRetryable(t *testing.T) {
 	structured, ok := ToolResultFromError(correctionToolResultError(context.Background(), errors.New("raw correction failure")))
 	require.True(t, ok)
@@ -78,4 +93,20 @@ func TestCorrectionToolResultErrorIsBoundedAndRetryable(t *testing.T) {
 	require.Equal(t, true, item["retryable"])
 	require.Equal(t, "retry_correction", item["next_action"])
 	require.NotContains(t, item["remediation"], "raw correction failure")
+}
+
+func TestCorrectionToolResultErrorPreservesEmbeddingFailureCodes(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		code string
+	}{
+		{memoryservice.ErrLifecycleEmbeddingUnavailable, "embedding_unavailable"},
+		{memoryservice.ErrLifecycleEmbeddingInvalid, "embedding_response_invalid"},
+		{memoryservice.ErrLifecycleEmbeddingTimeout, "request_timeout"},
+	} {
+		structured, ok := ToolResultFromError(correctionToolResultError(context.Background(), test.err))
+		require.True(t, ok)
+		item := structured.Result["errors"].([]any)[0].(map[string]any)
+		require.Equal(t, test.code, item["code"])
+	}
 }

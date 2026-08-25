@@ -251,9 +251,22 @@ FROM (
            placement.assessment_id, placement.normalized_response,
            placement.response_hash, placement.provider_turns, placement.validated_at
     FROM knowledge_ingests AS legacy
-    JOIN placement_runs AS run ON run.team_id = legacy.team_id AND run.ingest_id = legacy.ingest_id
-    JOIN placement_items AS item ON item.team_id = run.team_id AND item.placement_run_id = run.placement_run_id
-    JOIN placement_assessments AS placement ON placement.team_id = item.team_id AND placement.placement_item_id = item.placement_item_id
+    JOIN placement_runs AS run
+      ON run.team_id = legacy.team_id
+     AND run.ingest_id = legacy.ingest_id
+    LEFT JOIN placement_items AS item
+      ON item.team_id = run.team_id
+     AND item.placement_run_id = run.placement_run_id
+    JOIN placement_assessments AS placement
+      ON placement.team_id = legacy.team_id
+     AND (
+         (placement.assessment_scope = 'submission'
+          AND placement.placement_run_id = run.placement_run_id
+          AND placement.ingest_id = legacy.ingest_id)
+         OR
+         (placement.assessment_scope = 'item'
+          AND placement.placement_item_id = item.placement_item_id)
+     )
     WHERE legacy.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
     ORDER BY legacy.team_id, legacy.ingest_id, legacy.owner_profile_id, placement.assessment_id, placement.validated_at DESC
 ) AS assessment

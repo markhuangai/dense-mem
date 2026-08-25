@@ -64,6 +64,26 @@ func TestRememberProcessorHelpersBoundValues(t *testing.T) {
 	require.Zero(t, lenMapSlice(nil, "values"))
 }
 
+func TestRememberFailureClassificationPreservesPhaseAndCode(t *testing.T) {
+	phase, code, message := classifyRememberFailure(rememberapp.ErrRememberEmbeddingUnavailable, nil)
+	require.Equal(t, "embedding", phase)
+	require.Equal(t, "embedding_unavailable", code)
+	require.NotEmpty(t, message)
+
+	status := &rememberapp.SubmissionStatusResult{
+		ProcessingState: "failed",
+		Errors:          []rememberapp.SubmissionStatusError{rememberapp.StatusError(rememberapp.SubmissionErrorCommitConflict)},
+	}
+	phase, code, _ = classifyRememberFailure(rememberapp.ErrRememberPersistence, status)
+	require.Equal(t, "semantic_commit", phase)
+	require.Equal(t, "commit_conflict", code)
+
+	failed := rememberFailureStatus("submission-id", code, "safe message")
+	require.Equal(t, "submission-id", failed.SubmissionID)
+	require.Equal(t, "failed", failed.ProcessingState)
+	require.Equal(t, "commit_conflict", failed.Errors[0].Code)
+}
+
 func TestRememberProcessorEmbedsDeduplicatedDocumentsAndMapsProviderBoundaries(t *testing.T) {
 	teamID, ownerID := uuid.NewString(), uuid.NewString()
 	documentID := uuid.NewString()

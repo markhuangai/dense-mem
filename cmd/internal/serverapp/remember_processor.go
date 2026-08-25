@@ -73,16 +73,11 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 			return nil, rememberapp.ErrRememberConflict
 		}
 		if attempt.Outcome == "completed" || attempt.Outcome == "rejected" || attempt.Outcome == "quarantined" || attempt.Outcome == "replayed" {
-			encoded, marshalErr := json.Marshal(attempt.PublicResult)
-			if marshalErr != nil {
-				return nil, marshalErr
+			replay, replayErr := rememberAttemptStatus(attempt)
+			if replayErr != nil {
+				return nil, replayErr
 			}
-			var replay rememberapp.SubmissionStatusResult
-			if unmarshalErr := json.Unmarshal(encoded, &replay); unmarshalErr != nil {
-				return nil, unmarshalErr
-			}
-			replay.SubmissionID = firstNonEmptyString(replay.SubmissionID, attempt.AttemptID)
-			return &replay, nil
+			return replay, nil
 		}
 	} else if lookupErr != nil && !errors.Is(lookupErr, repository.ErrRememberAttemptNotFound) {
 		return nil, lookupErr
@@ -122,6 +117,9 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		if waitErr != nil {
 			return nil, waitErr
 		}
+		if status != nil && status.ProcessingState == "failed" {
+			return status, &rememberapp.RememberProcessError{Status: status, Err: rememberFailureCause(status)}
+		}
 		return status, nil
 	}
 	started := time.Now()
@@ -133,14 +131,16 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	}
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cleanupCancel()
+	failedPhase, failedCode, failedMessage := classifyRememberFailure(processErr, status)
 	if processErr != nil || status == nil || status.ProcessingState == "queued" || status.ProcessingState == "processing" {
+		if processErr == nil {
+			processErr = rememberapp.ErrRememberPersistence
+			failedPhase, failedCode, failedMessage = classifyRememberFailure(processErr, status)
+		}
 		terminalizeErr := p.ledger.TerminalizeRememberFailure(cleanupCtx, repository.RememberTerminalizeFailureInput{
 			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: created.IngestID,
-			FailedPhase: "execution", ErrorCode: "internal_failure",
+			FailedPhase: failedPhase, ErrorCode: failedCode, Message: failedMessage,
 		})
-		if terminalizeErr != nil && processErr == nil {
-			processErr = terminalizeErr
-		}
 		if terminalizeErr == nil {
 			if placement, loadErr := p.ledger.GetPlacementRun(cleanupCtx, repository.GetPlacementRunInput{
 				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: created.IngestID,
@@ -150,7 +150,11 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		}
 	}
 	if processErr == nil && status != nil && status.ProcessingState == "failed" {
-		processErr = rememberapp.ErrRememberPersistence
+		processErr = rememberFailureCause(status)
+		failedPhase, failedCode, failedMessage = classifyRememberFailure(processErr, status)
+	}
+	if status == nil || status.ProcessingState == "queued" || status.ProcessingState == "processing" {
+		status = rememberFailureStatus(created.IngestID, failedCode, failedMessage)
 	}
 	outcome := "failed"
 	if status != nil {
@@ -171,13 +175,13 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
 		Outcome: outcome, FailedPhase: func() string {
 			if processErr != nil {
-				return "execution"
+				return failedPhase
 			}
 			return ""
 		}(),
 		ErrorCode: func() string {
 			if processErr != nil {
-				return "internal_failure"
+				return failedCode
 			}
 			return ""
 		}(),
@@ -185,9 +189,20 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		EvidenceCount: len(input.Evidence), RelationshipCount: lenMapSlice(input.Proposal, "relationship_hints"),
 		Duration: time.Since(started),
 	}); err != nil && processErr == nil {
-		processErr = err
+		// Canonical semantic state is already terminal. Do not turn a successful
+		// Remember into an operational failure merely because its replay index
+		// could not be recorded; the next call can still read the placement.
+		if status == nil || status.ProcessingState == "failed" {
+			processErr = err
+		}
 	}
-	return status, processErr
+	if processErr != nil {
+		if status == nil {
+			status = rememberFailureStatus(created.IngestID, failedCode, failedMessage)
+		}
+		return status, &rememberapp.RememberProcessError{Status: status, Err: processErr}
+	}
+	return status, nil
 }
 
 func (p *rememberSynchronousProcessor) waitForExistingRemember(
@@ -218,6 +233,138 @@ func (p *rememberSynchronousProcessor) waitForExistingRemember(
 			return nil, ctx.Err()
 		case <-ticker.C:
 		}
+	}
+}
+
+func rememberAttemptStatus(attempt *repository.RememberAttempt) (*rememberapp.SubmissionStatusResult, error) {
+	if attempt == nil {
+		return nil, errors.New("remember processor: attempt is required")
+	}
+	encoded, err := json.Marshal(attempt.PublicResult)
+	if err != nil {
+		return nil, err
+	}
+	var replay rememberapp.SubmissionStatusResult
+	if err := json.Unmarshal(encoded, &replay); err != nil {
+		return nil, err
+	}
+	replay.SubmissionID = firstNonEmptyString(replay.SubmissionID, attempt.AttemptID)
+	if replay.ContractVersion == "" {
+		replay.ContractVersion = domain.ContractVersion
+	}
+	if replay.SubmissionKind == "" {
+		replay.SubmissionKind = "remember"
+	}
+	if replay.Evidence == nil {
+		replay.Evidence = []rememberapp.SubmissionEvidenceStatus{}
+	}
+	if replay.RelationshipResults == nil {
+		replay.RelationshipResults = []rememberapp.SubmissionRelationshipResult{}
+	}
+	if replay.Errors == nil {
+		replay.Errors = []rememberapp.SubmissionStatusError{}
+	}
+	if replay.Degradations == nil {
+		replay.Degradations = []rememberapp.SubmissionStatusDegradation{}
+	}
+	return &replay, nil
+}
+
+func rememberFailureCause(status *rememberapp.SubmissionStatusResult) error {
+	if status != nil {
+		for _, item := range status.Errors {
+			switch rememberapp.SubmissionErrorCode(item.Code) {
+			case rememberapp.SubmissionErrorProviderUnavailable:
+				return rememberapp.ErrRememberProviderUnavailable
+			case rememberapp.SubmissionErrorProviderResponseInvalid:
+				return rememberapp.ErrRememberProviderResponseInvalid
+			case rememberapp.SubmissionErrorInputBudgetExceeded:
+				return rememberapp.ErrRememberInputBudgetExceeded
+			case rememberapp.SubmissionErrorEmbeddingUnavailable:
+				return rememberapp.ErrRememberEmbeddingUnavailable
+			case rememberapp.SubmissionErrorEmbeddingResponseInvalid:
+				return rememberapp.ErrRememberEmbeddingInvalid
+			case rememberapp.SubmissionErrorCommitConflict:
+				return rememberapp.ErrRememberCommitConflict
+			case rememberapp.SubmissionErrorRequestTimeout:
+				return rememberapp.ErrRememberRequestTimeout
+			case rememberapp.SubmissionErrorRequestCancelled:
+				return rememberapp.ErrRememberRequestCancelled
+			case rememberapp.SubmissionErrorStaleInput:
+				return rememberapp.ErrRememberStaleInput
+			case rememberapp.SubmissionErrorDatabaseFailure:
+				return rememberapp.ErrRememberPersistence
+			}
+		}
+	}
+	return rememberapp.ErrRememberPersistence
+}
+
+func classifyRememberFailure(err error, status *rememberapp.SubmissionStatusResult) (string, string, string) {
+	if status != nil && status.ProcessingState == "failed" && len(status.Errors) > 0 {
+		code := rememberapp.SubmissionErrorCode(status.Errors[0].Code)
+		value := rememberapp.StatusError(code)
+		return rememberFailurePhase(code), string(value.Code), value.Message
+	}
+	code := rememberapp.SubmissionErrorInternalFailure
+	switch {
+	case errors.Is(err, rememberapp.ErrRememberProviderUnavailable):
+		code = rememberapp.SubmissionErrorProviderUnavailable
+	case errors.Is(err, rememberapp.ErrRememberProviderResponseInvalid):
+		code = rememberapp.SubmissionErrorProviderResponseInvalid
+	case errors.Is(err, rememberapp.ErrRememberInputBudgetExceeded):
+		code = rememberapp.SubmissionErrorInputBudgetExceeded
+	case errors.Is(err, rememberapp.ErrRememberEmbeddingUnavailable):
+		code = rememberapp.SubmissionErrorEmbeddingUnavailable
+	case errors.Is(err, rememberapp.ErrRememberEmbeddingInvalid):
+		code = rememberapp.SubmissionErrorEmbeddingResponseInvalid
+	case errors.Is(err, rememberapp.ErrRememberCommitConflict), errors.Is(err, repository.ErrSearchStaleVersion):
+		code = rememberapp.SubmissionErrorCommitConflict
+	case errors.Is(err, rememberapp.ErrRememberRequestTimeout), errors.Is(err, context.DeadlineExceeded):
+		code = rememberapp.SubmissionErrorRequestTimeout
+	case errors.Is(err, rememberapp.ErrRememberRequestCancelled), errors.Is(err, context.Canceled):
+		code = rememberapp.SubmissionErrorRequestCancelled
+	case errors.Is(err, rememberapp.ErrRememberStaleInput), errors.Is(err, repository.ErrPlacementStaleSource):
+		code = rememberapp.SubmissionErrorStaleInput
+	case errors.Is(err, rememberapp.ErrRememberPersistence):
+		code = rememberapp.SubmissionErrorDatabaseFailure
+	}
+	value := rememberapp.StatusError(code)
+	return rememberFailurePhase(code), string(value.Code), value.Message
+}
+
+func rememberFailurePhase(code rememberapp.SubmissionErrorCode) string {
+	switch code {
+	case rememberapp.SubmissionErrorProviderUnavailable,
+		rememberapp.SubmissionErrorProviderResponseInvalid,
+		rememberapp.SubmissionErrorInputBudgetExceeded,
+		rememberapp.SubmissionErrorConfigurationInvalid:
+		return "assessment"
+	case rememberapp.SubmissionErrorEmbeddingUnavailable,
+		rememberapp.SubmissionErrorEmbeddingResponseInvalid:
+		return "embedding"
+	case rememberapp.SubmissionErrorCommitConflict,
+		rememberapp.SubmissionErrorDatabaseFailure:
+		return "semantic_commit"
+	default:
+		return "execution"
+	}
+}
+
+func rememberFailureStatus(submissionID, code, message string) *rememberapp.SubmissionStatusResult {
+	statusCode := rememberapp.SubmissionErrorCode(code)
+	if statusCode == "" {
+		statusCode = rememberapp.SubmissionErrorInternalFailure
+	}
+	value := rememberapp.StatusError(statusCode)
+	if message != "" {
+		value.Message = message
+	}
+	return &rememberapp.SubmissionStatusResult{
+		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
+		ProcessingState: "failed", SearchState: string(domain.SearchProjectionNotRequired),
+		Evidence: []rememberapp.SubmissionEvidenceStatus{}, RelationshipResults: []rememberapp.SubmissionRelationshipResult{},
+		Errors: []rememberapp.SubmissionStatusError{value}, Degradations: []rememberapp.SubmissionStatusDegradation{},
 	}
 }
 

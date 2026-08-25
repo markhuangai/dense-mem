@@ -17,6 +17,10 @@
 -- idempotency key. Keep successful domain outcomes canonical while allowing a
 -- new ingest/run to replace an older failed attempt without rewriting its
 -- append-only history.
+SELECT set_config('app.tx_mode', 'migration', true);
+SELECT set_config('app.current_team_id', '', true);
+SELECT set_config('app.current_profile_id', '', true);
+
 UPDATE knowledge_ingests AS ingest
 SET status = 'failed',
     error = COALESCE(NULLIF(run.error, ''), ingest.error),

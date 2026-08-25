@@ -14,14 +14,8 @@ func (s *submissionAssessmentPlacementWorkerService) commitSubmissionAssessment(
 	ctx context.Context,
 	input repository.CommitSubmissionAssessmentInput,
 ) (*repository.CommitSubmissionAssessmentResult, error) {
-	commitCtx := ctx
-	if s.inlineEmbedder != nil {
-		var cancel context.CancelFunc
-		commitCtx, cancel = context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-	}
 	if s.inlineEmbedder == nil {
-		return s.assessments.CommitSubmissionAssessment(commitCtx, input)
+		return s.assessments.CommitSubmissionAssessment(ctx, input)
 	}
 	inlineCommitter, ok := s.assessments.(repository.InlineSubmissionAssessmentCommitter)
 	if !ok {
@@ -42,6 +36,8 @@ func (s *submissionAssessmentPlacementWorkerService) commitSubmissionAssessment(
 					Embedding:    append([]float32(nil), embedding.Embedding...),
 				})
 			}
+			commitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
 			committed, commitErr := inlineCommitter.CommitSubmissionAssessmentWithEmbeddings(commitCtx, input, results)
 			if errors.Is(commitErr, repository.ErrInlineEmbeddingPlanTooLarge) {
 				commitErr = fmt.Errorf("%w: synchronous embedding plan exceeds 256 documents", rememberapp.ErrRememberInputBudgetExceeded)

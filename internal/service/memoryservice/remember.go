@@ -104,7 +104,7 @@ type RememberResult struct {
 	SearchState          string                                   `json:"search_state"`
 	Evidence             []SubmissionEvidenceStatus               `json:"evidence"`
 	Errors               []SubmissionStatusError                  `json:"errors"`
-	Degradations         []SubmissionStatusDegradation            `json:"-"`
+	Degradations         []SubmissionStatusDegradation            `json:"degradations"`
 	RelationshipResults  []SubmissionRelationshipResult           `json:"relationship_results"`
 	QuarantineExpiresAt  *time.Time                               `json:"quarantine_expires_at,omitempty"`
 	AwaitingConfirmation *SubmissionAwaitingConfirmation          `json:"awaiting_confirmation,omitempty"`

@@ -32,6 +32,7 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 	plan := &RelationshipCorrectionEmbeddingPlan{Documents: []SearchDocumentForEmbedding{}}
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		effective := input
+		var pendingConfirmation *relationshipCorrectionSubmissionRow
 		if input.Action == "submit" {
 			requestHash, err := relationshipCorrectionRequestHash(input)
 			if err != nil {
@@ -60,6 +61,7 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 			if row.ProcessingState != "awaiting_confirmation" {
 				return nil
 			}
+			pendingConfirmation = row
 			effective.RelationshipID = row.RelationshipID
 			effective.ExpectedVersion = row.ExpectedVersion
 			effective.Patch = row.Patch
@@ -76,6 +78,29 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 		}
 		if source.OwnerProfileID != input.OwnerProfileID || source.Status != string(domain.RelationshipStatusActive) || source.SupportCount == 0 || source.IdentityAliasOfID != "" {
 			return nil
+		}
+
+		resolution, err := resolveRelationshipCorrectionPatch(ctx, tx, effective, source)
+		if err != nil {
+			return err
+		}
+		if resolution.RejectionCode != "" {
+			return nil
+		}
+		if input.Action == "submit" && len(resolution.Candidates) > 0 {
+			return nil
+		}
+		if pendingConfirmation != nil {
+			if _, err := validateRelationshipCorrectionSelection(pendingConfirmation, effective.Selection); err != nil {
+				return nil
+			}
+			resolution.Selection = mergeRelationshipCorrectionSelection(resolution.Selection, effective.Selection)
+			if err := validateSelectedCorrectionEntities(ctx, tx, input.TeamID, pendingConfirmation.Candidates, resolution.Selection); err != nil {
+				if errors.Is(err, errRelationshipCorrectionSelectionUnavailable) {
+					return nil
+				}
+				return err
+			}
 		}
 
 		projectionNames, err := loadCorrectionProjectionNames(ctx, tx, input.TeamID, source)
@@ -98,13 +123,14 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 		if err != nil {
 			return err
 		}
-		predicateKey := source.PredicateKey
-		if effective.Patch.Predicate != nil {
-			predicate, err := loadLatestActivePredicateDefinition(ctx, tx, input.TeamID, effective.Patch.Predicate.Key)
-			if err != nil {
-				return nil
-			}
-			predicateKey = predicate.Key
+		if resolution.Predicate == nil {
+			return nil
+		}
+		predicateKey := resolution.Predicate.Key
+		if subjectID == source.SubjectEntityID && objectID == source.ObjectEntityID &&
+			objectValueID == source.ObjectValueID && predicateKey == source.PredicateKey &&
+			resolution.SubjectCreate == nil && resolution.ObjectCreate == nil {
+			return nil
 		}
 		contract, err := loadActiveSearchContractInTx(ctx, tx)
 		if err != nil {

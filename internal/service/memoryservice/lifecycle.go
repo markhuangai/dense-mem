@@ -23,8 +23,11 @@ import (
 )
 
 var (
-	ErrLifecycleAuthContext = errors.New("memory lifecycle: authenticated actor context is required")
-	ErrLifecyclePersistence = errors.New("memory lifecycle: persistence failed")
+	ErrLifecycleAuthContext          = errors.New("memory lifecycle: authenticated actor context is required")
+	ErrLifecyclePersistence          = errors.New("memory lifecycle: persistence failed")
+	ErrLifecycleEmbeddingUnavailable = errors.New("memory lifecycle: embedding provider unavailable")
+	ErrLifecycleEmbeddingInvalid     = errors.New("memory lifecycle: embedding response invalid")
+	ErrLifecycleEmbeddingTimeout     = errors.New("memory lifecycle: embedding request timed out")
 )
 
 type LifecycleService interface {
@@ -208,10 +211,10 @@ func (s *lifecycleService) embedRelationshipDocumentBatch(
 		return []repository.SearchDocumentEmbedding{}, nil
 	}
 	if len(documents) > 256 {
-		return nil, errors.New("relationship correction embedding document limit exceeded")
+		return nil, fmt.Errorf("%w: document limit exceeded", ErrLifecycleEmbeddingInvalid)
 	}
 	if s.embedder == nil || !s.embedder.IsAvailable() {
-		return nil, errors.New("relationship correction embedding provider is unavailable")
+		return nil, ErrLifecycleEmbeddingUnavailable
 	}
 	texts := make([]string, len(documents))
 	for index := range documents {
@@ -221,19 +224,22 @@ func (s *lifecycleService) embedRelationshipDocumentBatch(
 	defer cancel()
 	vectors, model, err := s.embedder.EmbedBatch(embedCtx, texts)
 	if err != nil {
-		return nil, errors.New("relationship correction embedding failed")
+		if errors.Is(embedCtx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, ErrLifecycleEmbeddingTimeout
+		}
+		return nil, fmt.Errorf("%w: provider request failed", ErrLifecycleEmbeddingUnavailable)
 	}
 	if len(vectors) != len(documents) || strings.TrimSpace(model) == "" || model != strings.TrimSpace(s.embedder.ModelName()) {
-		return nil, errors.New("relationship correction embedding response is invalid")
+		return nil, ErrLifecycleEmbeddingInvalid
 	}
 	completed := make([]repository.SearchDocumentEmbedding, len(documents))
 	for index, document := range documents {
 		if len(vectors[index]) != document.EmbeddingDimensions {
-			return nil, errors.New("relationship correction embedding dimensions are invalid")
+			return nil, ErrLifecycleEmbeddingInvalid
 		}
 		for _, value := range vectors[index] {
 			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
-				return nil, errors.New("relationship correction embedding contains a non-finite value")
+				return nil, ErrLifecycleEmbeddingInvalid
 			}
 		}
 		completed[index] = repository.SearchDocumentEmbedding{
@@ -249,6 +255,11 @@ func (s *lifecycleService) embedRelationshipDocumentBatch(
 }
 
 func translateRelationshipCorrectionError(err error) error {
+	if errors.Is(err, ErrLifecycleEmbeddingUnavailable) ||
+		errors.Is(err, ErrLifecycleEmbeddingInvalid) ||
+		errors.Is(err, ErrLifecycleEmbeddingTimeout) {
+		return err
+	}
 	if errors.Is(err, repository.ErrSemanticOwnerMismatch) || errors.Is(err, repository.ErrRelationshipCorrectionNotFound) {
 		return httperr.New(httperr.NOT_FOUND, "submission not found")
 	}

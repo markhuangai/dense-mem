@@ -18,6 +18,10 @@ func rememberToolResultError(ctx context.Context, err error) error {
 		return nil
 	}
 	submissionID := uuid.NewString()
+	var processErr *rememberapp.RememberProcessError
+	if errors.As(err, &processErr) && processErr.Status != nil {
+		submissionID = processErr.Status.SubmissionID
+	}
 	if errors.Is(err, rememberapp.ErrEvidenceSecurityRejected) {
 		value := rememberapp.StatusError(rememberapp.SubmissionErrorQuarantined)
 		return NewToolResultError(map[string]any{
@@ -38,7 +42,11 @@ func rememberToolResultError(ctx context.Context, err error) error {
 			}},
 		})
 	}
-	value := rememberapp.StatusError(rememberErrorCode(err))
+	code := rememberErrorCode(err)
+	if processErr != nil && processErr.Status != nil && len(processErr.Status.Errors) > 0 {
+		code = rememberapp.SubmissionErrorCode(rememberapp.StatusErrorForCode(processErr.Status.Errors[0].Code, processErr.Status.ProcessingState).Code)
+	}
+	value := rememberapp.StatusError(code)
 	return NewToolResultError(map[string]any{
 		"contract_version": domainContractVersion(),
 		"submission_id":    submissionID,
@@ -82,6 +90,14 @@ func rememberErrorCode(err error) rememberapp.SubmissionErrorCode {
 
 func correctionToolResultError(ctx context.Context, err error) error {
 	code := rememberapp.SubmissionErrorDatabaseFailure
+	switch {
+	case errors.Is(err, memoryservice.ErrLifecycleEmbeddingUnavailable):
+		code = rememberapp.SubmissionErrorEmbeddingUnavailable
+	case errors.Is(err, memoryservice.ErrLifecycleEmbeddingInvalid):
+		code = rememberapp.SubmissionErrorEmbeddingResponseInvalid
+	case errors.Is(err, memoryservice.ErrLifecycleEmbeddingTimeout):
+		code = rememberapp.SubmissionErrorRequestTimeout
+	}
 	var apiErr *httperr.APIError
 	if errors.As(err, &apiErr) {
 		switch apiErr.Code {

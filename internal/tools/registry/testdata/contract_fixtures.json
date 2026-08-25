@@ -46,6 +46,7 @@
       "search_state": "current",
       "evidence": [
         {
+          "disposition": "stored",
           "evidence_id": "ev-1",
           "evidence_index": 0,
           "superseded_evidence_ids": [],

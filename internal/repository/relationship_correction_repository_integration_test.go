@@ -254,6 +254,15 @@ func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.
 		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: wrongObject.EntityID,
 		Support: &EvidenceSupportInput{FragmentID: fragmentID, SourceGroupKey: "conversation:ambiguous", SpanStart: 0, SpanEnd: spanEnd, Authority: "primary"},
 	}).Relationship
+	plan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "submit",
+		RelationshipID: original.RelationshipID, ExpectedVersion: original.Version,
+		Patch:    RelationshipCorrectionPatch{ObjectEntity: &RelationshipCorrectionEntityPatch{Name: "Atlas", EntityKind: "project"}},
+		Supports: []RelationshipCorrectionSupport{{EvidenceID: fragmentID, Start: 0, End: spanEnd}},
+		Reason:   "the object Entity was resolved incorrectly", IdempotencyKey: "ambiguous-plan",
+	})
+	require.NoError(t, err)
+	require.Empty(t, plan.Documents, "ambiguous submit must not invoke inline embedding")
 
 	submitted, err := semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
 		TeamID: teamID, OwnerProfileID: ownerID, Action: "submit",

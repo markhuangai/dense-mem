@@ -137,7 +137,7 @@ type SubmissionStatusResult struct {
 	CompletedAt          *time.Time                      `json:"-"`
 	Evidence             []SubmissionEvidenceStatus      `json:"evidence"`
 	Errors               []SubmissionStatusError         `json:"errors"`
-	Degradations         []SubmissionStatusDegradation   `json:"-"`
+	Degradations         []SubmissionStatusDegradation   `json:"degradations"`
 	RelationshipResults  []SubmissionRelationshipResult  `json:"relationship_results"`
 	QuarantineExpiresAt  *time.Time                      `json:"-"`
 	AwaitingConfirmation *SubmissionAwaitingConfirmation `json:"awaiting_confirmation,omitempty"`
@@ -538,6 +538,7 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 	copyStatus.Evidence = append([]SubmissionEvidenceStatus(nil), status.Evidence...)
 	copyStatus.RelationshipResults = append([]SubmissionRelationshipResult(nil), status.RelationshipResults...)
 	copyStatus.Errors = append([]SubmissionStatusError(nil), status.Errors...)
+	copyStatus.Degradations = append([]SubmissionStatusDegradation(nil), status.Degradations...)
 	if copyStatus.Evidence == nil {
 		copyStatus.Evidence = []SubmissionEvidenceStatus{}
 	}
@@ -546,6 +547,9 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 	}
 	if copyStatus.Errors == nil {
 		copyStatus.Errors = []SubmissionStatusError{}
+	}
+	if copyStatus.Degradations == nil {
+		copyStatus.Degradations = []SubmissionStatusDegradation{}
 	}
 	for index := range copyStatus.Evidence {
 		if copyStatus.Evidence[index].Disposition == "not_stored" {
