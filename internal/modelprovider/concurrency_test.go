@@ -24,3 +24,9 @@ func TestConcurrencyGateAllowsNilGate(t *testing.T) {
 	require.NoError(t, AcquireConcurrency(context.Background(), nil))
 	ReleaseConcurrency(nil)
 }
+
+func TestConcurrencyGateNormalizesNonPositiveLimits(t *testing.T) {
+	gate := NewConcurrencyGate(0)
+	require.NoError(t, AcquireConcurrency(context.Background(), gate))
+	ReleaseConcurrency(gate)
+}
