@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,6 +34,10 @@ func TestConflictAssessmentResponseSchemaIsClosed(t *testing.T) {
 	schema, err := json.Marshal(ConflictAssessmentResponseSchema())
 	require.NoError(t, err)
 	assert.Contains(t, string(schema), `"additionalProperties":false`)
+}
+
+func TestNormalizeLimitsUsesCanonicalAssessorDefaults(t *testing.T) {
+	assert.Equal(t, assessor.DefaultSemanticAssessmentLimits(), normalizeLimits(assessor.SemanticAssessmentLimits{}))
 }
 
 func TestPrepareConflictAssessmentRequestNormalizesAndBoundsDossier(t *testing.T) {

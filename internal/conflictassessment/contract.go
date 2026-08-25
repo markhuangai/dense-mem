@@ -349,17 +349,7 @@ const (
 )
 
 func normalizeLimits(limits assessor.SemanticAssessmentLimits) assessor.SemanticAssessmentLimits {
-	defaults := assessor.DefaultSemanticAssessmentLimits()
-	if limits.Tokenizer == "" {
-		limits.Tokenizer = defaults.Tokenizer
-	}
-	if limits.MaxInputTokens <= 0 {
-		limits.MaxInputTokens = defaults.MaxInputTokens
-	}
-	if limits.MaxOutputTokens <= 0 {
-		limits.MaxOutputTokens = defaults.MaxOutputTokens
-	}
-	return limits
+	return assessor.NormalizeSemanticAssessmentLimits(limits)
 }
 
 func joinedErrors(errs []assessor.SemanticValidationError) string {

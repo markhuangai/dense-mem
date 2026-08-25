@@ -232,7 +232,7 @@ func completeFailedRun(
 
 func driverConfig() config.Config {
 	if strings.TrimSpace(os.Getenv("DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE")) == "1" {
-		limits := verifier.DefaultSemanticAssessmentLimits()
+		limits := conflictassessment.DefaultSemanticAssessmentLimits()
 		return config.Config{
 			PostgresDSN:                         postgresDSN(),
 			AIVerifierAPIURL:                    requiredEnv("AI_VERIFIER_API_URL"),
@@ -248,6 +248,7 @@ func driverConfig() config.Config {
 			AIVerifierTokenizer:                 limits.Tokenizer,
 		}
 	}
+	limits := conflictassessment.DefaultSemanticAssessmentLimits()
 	return config.Config{
 		PostgresDSN:                         postgresDSN(),
 		AIVerifierAPIURL:                    requiredEnv("DENSE_MEM_E2E_CONFLICT_PROVIDER_URL"),
@@ -256,11 +257,11 @@ func driverConfig() config.Config {
 		AIVerifierDisableTemperature:        true,
 		AIVerifierTimeoutSeconds:            10,
 		AIVerifierMaxConcurrency:            1,
-		AIVerifierMaxInputTokens:            verifier.DefaultSemanticAssessmentLimits().MaxInputTokens,
-		AIVerifierMaxOutputTokens:           verifier.DefaultSemanticAssessmentLimits().MaxOutputTokens,
-		AIVerifierMaxCandidateContextTokens: verifier.DefaultSemanticAssessmentLimits().MaxCandidateContextTokens,
-		AIVerifierMaxPredicateOptions:       verifier.DefaultSemanticAssessmentLimits().MaxPredicateOptions,
-		AIVerifierTokenizer:                 verifier.DefaultSemanticAssessmentLimits().Tokenizer,
+		AIVerifierMaxInputTokens:            limits.MaxInputTokens,
+		AIVerifierMaxOutputTokens:           limits.MaxOutputTokens,
+		AIVerifierMaxCandidateContextTokens: limits.MaxCandidateContextTokens,
+		AIVerifierMaxPredicateOptions:       limits.MaxPredicateOptions,
+		AIVerifierTokenizer:                 limits.Tokenizer,
 	}
 }
 
