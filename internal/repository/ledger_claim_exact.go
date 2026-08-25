@@ -68,7 +68,7 @@ func (r *LedgerRepositoryImpl) ClaimPlacementRun(ctx context.Context, input Clai
 			          run.owner_profile_id::text, run.space_id::text, run.space_generation,
 			          run.status, run.attempts, run.max_attempts, run.assessor_turns_reserved,
 			          run.lease_until
-		`, int(input.Lease.Seconds()), input.WorkerID, int(input.StaleAfter.Seconds()), input.TeamID, input.OwnerProfileID, input.IngestID).Rows()
+		`, int(input.Lease.Seconds()), input.WorkerID, input.TeamID, input.OwnerProfileID, input.IngestID, int(input.StaleAfter.Seconds())).Rows()
 		if err != nil {
 			return err
 		}

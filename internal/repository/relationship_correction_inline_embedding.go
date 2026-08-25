@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -91,6 +93,12 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 			return nil
 		}
 		if pendingConfirmation != nil {
+			if pendingConfirmation.ConfirmationExpiresAt == nil || !time.Now().UTC().Before(*pendingConfirmation.ConfirmationExpiresAt) {
+				return nil
+			}
+			if subtle.ConstantTimeCompare([]byte(pendingConfirmation.ConfirmationToken), []byte(input.ConfirmationToken)) != 1 {
+				return nil
+			}
 			if _, err := validateRelationshipCorrectionSelection(pendingConfirmation, effective.Selection); err != nil {
 				return nil
 			}

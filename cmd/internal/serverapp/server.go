@@ -37,6 +37,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
@@ -511,8 +512,33 @@ func RunActiveServer(
 	}
 	ledgerRepo.StartSubmissionQuarantinePurger(workerCtx, time.Minute, slog.Default(), quarantinePurgeMetrics)
 	// Remember assessment and required write embeddings run in the originating
-	// request. Legacy placement and embedding worker loops, queue retention, and
-	// job-centric reconciliation are intentionally not started.
+	// request. Keep the embedding-job consumer for non-Remember producers such
+	// as scheduled conflict review relationship projections.
+	hostname, _ := os.Hostname()
+	baseWorkerID := fmt.Sprintf("active-%s-%d", hostname, os.Getpid())
+	startActiveTeamWorkerPool(workerCtx, activeTeamWorkerPoolConfig{
+		name:         "embedding",
+		baseWorkerID: baseWorkerID,
+		count:        cfg.GetEmbeddingWorkerCount(),
+		pollInterval: time.Duration(cfg.GetEmbeddingJobPollSeconds()) * time.Second,
+		teams:        teamService,
+		logger:       logger,
+		workerError:  errEmbeddingWorkerFailed,
+		work: func(ctx context.Context, teamID string, workerID string) (bool, error) {
+			worker := embeddingservice.NewEmbeddingWorkerService(embeddingservice.EmbeddingWorkerDependencies{
+				Search:    searchRepo,
+				Provider:  retryEmbedder,
+				Metrics:   discoverabilityMetrics,
+				Logger:    logger,
+				TeamID:    teamID,
+				WorkerID:  workerID,
+				BatchSize: cfg.GetEmbeddingBatchSize(),
+				Lease:     activeEmbeddingLease(cfg.GetAIEmbeddingTimeoutSeconds()),
+			})
+			result, err := worker.ProcessNextBatch(ctx)
+			return result.Claimed > 0, err
+		},
+	})
 	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
 	defer dreamSchedulerCancel()
 	go dreamservice.NewScheduler(dreamSvc, teamService, slog.Default()).Start(dreamSchedulerCtx)

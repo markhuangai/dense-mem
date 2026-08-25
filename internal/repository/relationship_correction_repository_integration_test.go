@@ -275,6 +275,13 @@ func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.
 	require.Equal(t, "awaiting_confirmation", submitted.ProcessingState)
 	require.NotNil(t, submitted.Confirmation)
 	require.Len(t, submitted.Confirmation.Candidates, 2)
+	invalidPlan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "confirm", SubmissionID: submitted.SubmissionID,
+		ConfirmationToken: uuid.NewString(), Selection: RelationshipCorrectionSelection{ObjectEntityID: firstAtlas.EntityID},
+		IdempotencyKey: "invalid-confirmation-plan",
+	})
+	require.NoError(t, err)
+	require.Empty(t, invalidPlan.Documents, "invalid confirmation credentials must not invoke inline embedding")
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		canceledCtx, cancel := context.WithCancel(ctx)
 		cancel()

@@ -55,7 +55,9 @@ func TestClaimPlacementRunValidatesAndClaimsExactRun(t *testing.T) {
 	defer cleanup()
 	teamID, ownerID, ingestID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	expectActiveTeam(mock, teamID)
-	mock.ExpectQuery("UPDATE placement_runs AS run").WillReturnRows(sqlmock.NewRows([]string{
+	mock.ExpectQuery("UPDATE placement_runs AS run").WithArgs(
+		int(time.Minute.Seconds()), "remember-sync", teamID, ownerID, ingestID, 0,
+	).WillReturnRows(sqlmock.NewRows([]string{
 		"team_id", "placement_run_id", "ingest_id", "owner_profile_id", "space_id", "space_generation",
 		"status", "attempts", "max_attempts", "assessor_turns_reserved", "lease_until",
 	}).AddRow(teamID, uuid.NewString(), ingestID, ownerID, uuid.NewString(), int64(1), "processing", 1, 3, 0, time.Now().UTC()))
