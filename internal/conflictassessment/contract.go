@@ -388,9 +388,6 @@ func rawObject(raw json.RawMessage, path string, fields []string, nullable map[s
 	for _, field := range fields {
 		value, ok := object[field]
 		if !ok {
-			if nullable != nil && nullable[field] {
-				continue
-			}
 			errs = append(errs, assessor.SemanticValidationError{Field: path + "." + field, Message: "is required"})
 			continue
 		}

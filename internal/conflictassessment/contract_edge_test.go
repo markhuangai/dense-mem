@@ -180,6 +180,15 @@ func TestDecodeConflictAssessmentResponseJSONRejectsInvalidPayloads(t *testing.T
 	_, err := DecodeConflictAssessmentResponseJSON([]byte(`{"decision":"abstain","position_id":null,"confidence":0,"rationale":"over budget"}`), limits)
 	require.ErrorContains(t, err, "token limit")
 }
+
+func TestDecodeConflictAssessmentResponseRequiresPresentNullableFields(t *testing.T) {
+	_, err := DecodeConflictAssessmentResponseJSON(
+		[]byte(`{"decision":"abstain","confidence":0,"rationale":"position omitted"}`),
+		DefaultSemanticAssessmentLimits(),
+	)
+	require.ErrorContains(t, err, "position_id: is required")
+}
+
 func conflictAssessmentTestRequest(t *testing.T) ConflictAssessmentRequest {
 	t.Helper()
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
