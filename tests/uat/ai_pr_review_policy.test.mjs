@@ -33,41 +33,76 @@ test("repository guidance requires cross-boundary review and falsification", asy
   assert.match(normalizedAgents, /semantic verifier\/reviewer behavior/);
 });
 
-test("AI review uses seven method-driven goals and one shared protocol", async () => {
+test("AI review uses six ownership-driven goals and one memory-first protocol", async () => {
   const workflow = await readFile(reviewWorkflowURL, "utf8");
   const normalizedWorkflow = workflow.replace(/\s+/g, " ");
   const promptEntries = workflow.match(/"prompt": \$\{\{ toJSON\(format\(/g) ?? [];
 
-  assert.equal(promptEntries.length, 7);
+  assert.equal(promptEntries.length, 6);
   assert.match(workflow, /REVIEW_PROTOCOL: >-/);
   assert.doesNotMatch(workflow, /REVIEW_MEMORY_PROTOCOL/);
-  assert.match(normalizedWorkflow, /inventory each materially changed behavior/);
-  assert.match(normalizedWorkflow, /trace every affected supported path/);
+  assert.match(normalizedWorkflow, /focused query for this goal/);
+  assert.match(normalizedWorkflow, /active release and version decisions/);
+  assert.match(normalizedWorkflow, /prior accepted or rejected review findings/);
+  assert.match(normalizedWorkflow, /known false-positive patterns/);
+  assert.match(normalizedWorkflow, /project context, not sole proof/);
   assert.match(
     normalizedWorkflow,
-    /concrete trigger, reachable path, incorrect outcome/,
+    /memory is unavailable, stale, degraded, or has no relevant result/,
   );
-  assert.match(normalizedWorkflow, /Before returning an empty findings list/);
-  assert.match(normalizedWorkflow, /one independently fixable root cause/);
   assert.match(
     normalizedWorkflow,
-    /earliest changed line that introduced the cause/,
+    /Confirm every reported defect against changed code on a supported reachable path/,
   );
-  assert.doesNotMatch(workflow, /Review proportionality, single responsibility/);
+  assert.match(normalizedWorkflow, /Report only root causes owned by this goal/);
+  assert.match(
+    normalizedWorkflow,
+    /For behavior owned by this goal, inspect the applicable real-logic tests and required evaluation evidence/,
+  );
+  assert.doesNotMatch(workflow, /Before returning an empty findings list/);
+  assert.doesNotMatch(workflow, /construct at least one concrete failure scenario/);
+  assert.doesNotMatch(workflow, /Review whether tests prove the changed behavior/);
+  assert.doesNotMatch(workflow, /dormant[- ]V2/);
   assert.doesNotMatch(workflow, /Collect workflow analyzer context/);
   assert.doesNotMatch(workflow, /workflow_analysis/);
+  assert.match(
+    normalizedWorkflow,
+    /PostgreSQL must remain the only durable authority, Neo4j must remain migration input only/,
+  );
 
   for (const goal of [
-    "Review scope, architecture, release sequencing, and semantic invariants",
-    "Review end-to-end state lifecycle and changed-value propagation",
-    "Review authentication, authorization, isolation, RLS, and trust boundaries",
-    "Review persistence, migrations, transactions, concurrency, retries, and failure visibility",
-    "Review HTTP and MCP contracts, downstream callers, and frontend behavior",
-    "Review CI/CD, dependencies, operations, performance, and observability",
-    "Review whether tests prove the changed behavior and its failure cases",
+    "Review functional and semantic correctness, including model-provider boundaries",
+    "Review authentication, authorization, isolation, privacy, and trust boundaries",
+    "Review durable-state integrity and distributed reliability",
+    "Review HTTP and MCP contracts plus user-facing behavior",
+    "Review scope, release compatibility, performance, and operational readiness",
+    "Review design integrity, semantic duplication, and single responsibility",
   ]) {
     assert.match(workflow, new RegExp(goal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+});
+
+test("maintainability review is preventive, bounded, and impact-scored", async () => {
+  const workflow = await readFile(reviewWorkflowURL, "utf8");
+  const normalizedWorkflow = workflow.replace(/\s+/g, " ");
+
+  assert.match(normalizedWorkflow, /duplication of the same authoritative rule/);
+  assert.match(normalizedWorkflow, /supported sites change for the same reason/);
+  assert.match(normalizedWorkflow, /narrower dependency-safe boundary/);
+  assert.match(
+    normalizedWorkflow,
+    /responsibilities A and B with independent change triggers/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /similar syntax that implements different boundary-specific policy/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /an extraction that broadens an API or creates cross-layer coupling/,
+  );
+  assert.match(normalizedWorkflow, /leave it to that functional goal rather than duplicating it/);
+  assert.match(normalizedWorkflow, /Use Low severity by default/);
 });
 
 test("review safety controls and CI policy coverage remain enabled", async () => {
@@ -93,7 +128,7 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   assert.match(workflow, /EXPECTED_HEAD_SHA: \$\{\{ needs\.resolve\.outputs\.head_sha \}\}/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /effort: high/);
-  assert.match(workflow, /parallel-count: "7"/);
+  assert.match(workflow, /parallel-count: "6"/);
   assert.match(workflow, /max-turns: "100"/);
   assert.match(workflow, /auto-approve: "false"/);
   assert.match(workflow, /permission_policy: always_allow/);
