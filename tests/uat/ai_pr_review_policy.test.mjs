@@ -54,6 +54,18 @@ test("AI review uses six ownership-driven goals and one memory-first protocol", 
     normalizedWorkflow,
     /Confirm every reported defect against changed code on a supported reachable path/,
   );
+  assert.match(
+    normalizedWorkflow,
+    /For each changed field, state, identifier, configuration value, or contract owned by this goal/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /trace all supported inputs and writers through validation, persistence or serialization, asynchronous work, and every reader or consumer/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /drops, defaults, overwrites, mis-scopes, or retains a stale authoritative value/,
+  );
   assert.match(normalizedWorkflow, /Report only root causes owned by this goal/);
   assert.match(
     normalizedWorkflow,

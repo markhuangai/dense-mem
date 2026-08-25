@@ -32,14 +32,19 @@ env:
     memory-only claims. When sources conflict, explicit user direction,
     AGENTS.md, the linked issue, and the current PR head, diff, callers,
     migrations, docs, and real tests govern. Confirm every reported defect
-    against changed code on a supported reachable path. Report only root causes
-    owned by this goal, combine their downstream symptoms, and leave other
-    finding classes to their designated goal. For behavior owned by this goal,
-    inspect the applicable real-logic tests and required evaluation evidence;
-    report missing or vacuous proof only when the changed invariant remains
-    unverified at its required layer. Never report waived requirements,
-    unrelated pre-existing defects, speculative hardening, style preferences,
-    or memory and reviewer assertions not confirmed by the checkout.
+    against changed code on a supported reachable path. For each changed field,
+    state, identifier, configuration value, or contract owned by this goal,
+    trace all supported inputs and writers through validation, persistence or
+    serialization, asynchronous work, and every reader or consumer. Flag any
+    path that drops, defaults, overwrites, mis-scopes, or retains a stale
+    authoritative value. Report only root causes owned by this goal, combine
+    their downstream symptoms, and leave other finding classes to their
+    designated goal. For behavior owned by this goal, inspect the applicable
+    real-logic tests and required evaluation evidence; report missing or vacuous
+    proof only when the changed invariant remains unverified at its required
+    layer. Never report waived requirements, unrelated pre-existing defects,
+    speculative hardening, style preferences, or memory and reviewer assertions
+    not confirmed by the checkout.
 
 jobs:
   resolve:
