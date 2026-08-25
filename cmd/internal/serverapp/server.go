@@ -18,7 +18,6 @@ import (
 	"github.com/labstack/echo/v4"
 	"gorm.io/gorm"
 
-	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/conflictassessment"
 	"github.com/markhuangai/dense-mem/internal/crypto"
@@ -38,7 +37,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
-	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
@@ -261,11 +259,13 @@ func RunActiveServer(
 	if err != nil {
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
+	rememberProcessor := newRememberSynchronousProcessor(ledgerRepo, semanticRepo, assessorProvider, searchRepo, openaiProvider, assessmentLimits, discoverabilityMetrics, logger)
 	rememberCore := rememberapp.NewService(rememberapp.Dependencies{
-		Intake:  newRememberLedgerAdapter(ledgerRepo),
-		Auditor: newRememberSecurityRejectionAuditAdapter(auditService),
-		Metrics: discoverabilityMetrics,
-		Logger:  logger,
+		Processor:   rememberProcessor,
+		Synchronous: rememberProcessor,
+		Auditor:     newRememberSecurityRejectionAuditAdapter(auditService),
+		Metrics:     discoverabilityMetrics,
+		Logger:      logger,
 	})
 	rememberSvc := newRememberServiceCompat(rememberCore)
 	recallSvc := memoryservice.NewRecallService(memoryservice.RecallDependencies{
@@ -285,6 +285,8 @@ func RunActiveServer(
 	lifecycleSvc := memoryservice.NewLifecycleService(memoryservice.LifecycleDependencies{
 		Semantic: semanticRepo,
 		Evidence: ledgerRepo,
+		Search:   searchRepo,
+		Embedder: openaiProvider,
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
@@ -320,7 +322,6 @@ func RunActiveServer(
 		EvaluationAudit:      auditService,
 		Context:              contextSvc,
 		Remember:             rememberSvc,
-		SubmissionStatus:     rememberSvc,
 		Recall:               recallSvc,
 		Lifecycle:            lifecycleSvc,
 		Evaluation:           semanticRepo,
@@ -504,38 +505,14 @@ func RunActiveServer(
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 	privateMemoryService.Start(workerCtx)
-	reconciliationSvc := newEmbeddingReconciliationService(
-		searchRepo, openaiProvider, appConfigService, logger, discoverabilityMetrics,
-		time.Duration(cfg.GetAIEmbeddingTimeoutSeconds())*time.Second,
-		cfg.GetDistributedCoordinationRequired(),
-	)
-	reconciliationSvc.Start(workerCtx)
-	defer reconciliationSvc.Stop()
 	var quarantinePurgeMetrics repository.SubmissionQuarantinePurgeMetrics
 	if metrics, ok := discoverabilityMetrics.(repository.SubmissionQuarantinePurgeMetrics); ok {
 		quarantinePurgeMetrics = metrics
 	}
 	ledgerRepo.StartSubmissionQuarantinePurger(workerCtx, time.Minute, slog.Default(), quarantinePurgeMetrics)
-	searchRepo.StartTerminalEmbeddingJobRetention(workerCtx, time.Hour, slog.Default())
-	startActiveWorkers(
-		workerCtx,
-		logger,
-		teamService,
-		ledgerRepo,
-		searchRepo,
-		semanticRepo,
-		retryEmbedder,
-		assessorProvider,
-		discoverabilityMetrics,
-		assessmentLimits,
-		activePlacementLease(cfg.GetAIVerifierTimeoutSeconds(), cfg.GetPromoteTxTimeoutSeconds()),
-		cfg.GetMemoryPlacementWorkerCount(),
-		time.Duration(cfg.GetMemoryPlacementPollSeconds())*time.Second,
-		cfg.GetEmbeddingWorkerCount(),
-		cfg.GetEmbeddingBatchSize(),
-		activeEmbeddingLease(cfg.GetAIEmbeddingTimeoutSeconds()),
-		time.Duration(cfg.GetEmbeddingJobPollSeconds())*time.Second,
-	)
+	// Remember assessment and required write embeddings run in the originating
+	// request. Legacy placement and embedding worker loops, queue retention, and
+	// job-centric reconciliation are intentionally not started.
 	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
 	defer dreamSchedulerCancel()
 	go dreamservice.NewScheduler(dreamSvc, teamService, slog.Default()).Start(dreamSchedulerCtx)
@@ -907,76 +884,6 @@ func checkActiveAuthority(authority authorityBootstrap) error {
 		return fmt.Errorf("%w: compatible authority marker is required", errAuthorityBlocked)
 	}
 	return nil
-}
-
-func startActiveWorkers(
-	ctx context.Context,
-	logger observability.LogProvider,
-	teams service.TeamService,
-	ledger *repository.LedgerRepositoryImpl,
-	search repository.SearchRepository,
-	semantic *repository.SemanticRepositoryImpl,
-	embedder *embedding.RetryEmbeddingProvider,
-	assessorPort assessor.Provider,
-	metrics observability.DiscoverabilityMetrics,
-	assessmentLimits assessor.SemanticAssessmentLimits,
-	placementLease time.Duration,
-	placementWorkerCount int,
-	placementPollInterval time.Duration,
-	embeddingWorkerCount int,
-	embeddingBatchSize int,
-	embeddingLease time.Duration,
-	embeddingPollInterval time.Duration,
-) {
-	hostname, _ := os.Hostname()
-	baseWorkerID := fmt.Sprintf("active-%s-%d", hostname, os.Getpid())
-	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
-		name:         "placement",
-		baseWorkerID: baseWorkerID,
-		count:        placementWorkerCount,
-		pollInterval: placementPollInterval,
-		teams:        teams,
-		logger:       logger,
-		workerError:  errSemanticPlacementWorkerFailed,
-		work: func(ctx context.Context, teamID string, workerID string) (bool, error) {
-			worker := memoryservice.NewSubmissionAssessmentPlacementWorkerService(memoryservice.SubmissionAssessmentPlacementWorkerDependencies{
-				Ledger:      ledger,
-				Assessments: ledger,
-				Catalog:     semantic,
-				Provider:    assessorPort,
-				Limits:      assessmentLimits,
-				Metrics:     metrics,
-				Logger:      logger,
-				TeamID:      teamID,
-				WorkerID:    workerID,
-				Lease:       placementLease,
-			})
-			return worker.ProcessNextSubmissionAssessmentPlacement(ctx)
-		},
-	})
-	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
-		name:         "embedding",
-		baseWorkerID: baseWorkerID,
-		count:        embeddingWorkerCount,
-		pollInterval: embeddingPollInterval,
-		teams:        teams,
-		logger:       logger,
-		workerError:  errEmbeddingWorkerFailed,
-		work: func(ctx context.Context, teamID string, workerID string) (bool, error) {
-			worker := embeddingservice.NewEmbeddingWorkerService(embeddingservice.EmbeddingWorkerDependencies{
-				Search:    search,
-				Provider:  embedder,
-				Metrics:   metrics,
-				Logger:    logger,
-				TeamID:    teamID,
-				WorkerID:  workerID,
-				BatchSize: embeddingBatchSize,
-				Lease:     embeddingLease,
-			})
-			result, err := worker.ProcessNextBatch(ctx)
-			return result.Claimed > 0, err
-		},
-	})
 }
 
 func logServerStartError(logger observability.LogProvider, message string, err error) {

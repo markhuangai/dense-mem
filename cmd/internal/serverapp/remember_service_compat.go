@@ -29,12 +29,62 @@ func (a *rememberServiceCompat) Remember(ctx context.Context, req memoryservice.
 	if err != nil || result == nil {
 		return nil, err
 	}
-	return &memoryservice.RememberResult{
+	converted := &memoryservice.RememberResult{
 		ContractVersion: result.ContractVersion,
 		IngestID:        result.IngestID, SubmissionID: result.SubmissionID, SubmissionKind: result.SubmissionKind,
 		ProcessingState: result.ProcessingState, CheckAfterSeconds: result.CheckAfterSeconds,
-		StatusTool: result.StatusTool, CorrelationID: result.CorrelationID,
-	}, nil
+		StatusTool: "", CorrelationID: result.CorrelationID,
+		SearchState:  result.SearchState,
+		Evidence:     make([]memoryservice.SubmissionEvidenceStatus, 0, len(result.Evidence)),
+		Errors:       make([]memoryservice.SubmissionStatusError, 0, len(result.Errors)),
+		Degradations: make([]memoryservice.SubmissionStatusDegradation, 0, len(result.Degradations)),
+	}
+	for _, item := range result.Evidence {
+		converted.Evidence = append(converted.Evidence, memoryservice.SubmissionEvidenceStatus{
+			Disposition: item.Disposition, EvidenceID: item.EvidenceID, EvidenceIndex: item.EvidenceIndex,
+			SupersededEvidenceIDs: append([]string(nil), item.SupersededEvidenceIDs...),
+			SearchState:           item.SearchState, Reason: item.Reason, Error: rememberStatusErrorCompat(item.Error),
+		})
+	}
+	converted.Errors = append(converted.Errors, result.Errors...)
+	converted.Degradations = append(converted.Degradations, result.Degradations...)
+	for _, item := range result.RelationshipResults {
+		converted.RelationshipResults = append(converted.RelationshipResults, memoryservice.SubmissionRelationshipResult{
+			RelationshipRef: item.RelationshipRef, Disposition: item.Disposition, Reason: item.Reason,
+			Splits: func() []memoryservice.SubmissionRelationshipSplit {
+				out := make([]memoryservice.SubmissionRelationshipSplit, 0, len(item.Splits))
+				for _, split := range item.Splits {
+					out = append(out, memoryservice.SubmissionRelationshipSplit{SplitIndex: split.SplitIndex, RelationshipID: split.RelationshipID, RelationshipVersion: split.RelationshipVersion, Status: split.Status})
+				}
+				return out
+			}(),
+		})
+	}
+	if result.QuarantineExpiresAt != nil {
+		value := *result.QuarantineExpiresAt
+		converted.QuarantineExpiresAt = &value
+	}
+	if result.AwaitingConfirmation != nil {
+		converted.AwaitingConfirmation = &memoryservice.SubmissionAwaitingConfirmation{
+			ConfirmationToken: result.AwaitingConfirmation.ConfirmationToken,
+			ExpiresAt:         result.AwaitingConfirmation.ExpiresAt,
+		}
+		for _, candidate := range result.AwaitingConfirmation.Candidates {
+			converted.AwaitingConfirmation.Candidates = append(converted.AwaitingConfirmation.Candidates, repository.RelationshipCorrectionCandidate{
+				Endpoint: candidate.Endpoint, EntityID: candidate.EntityID, EntityKind: candidate.EntityKind, CanonicalName: candidate.CanonicalName,
+			})
+		}
+	}
+	if result.CorrectionResult != nil {
+		converted.CorrectionResult = &repository.RelationshipCorrectionResult{
+			OriginalRelationshipID:  result.CorrectionResult.OriginalRelationshipID,
+			OriginalVersion:         result.CorrectionResult.OriginalVersion,
+			SuccessorRelationshipID: result.CorrectionResult.SuccessorRelationshipID,
+			SuccessorVersion:        result.CorrectionResult.SuccessorVersion,
+			ReusedSuccessor:         result.CorrectionResult.ReusedSuccessor,
+		}
+	}
+	return converted, nil
 }
 
 func rememberEvidenceRequestCompat(values []memoryservice.RememberEvidenceInput) []rememberapp.RememberEvidenceInput {
@@ -54,7 +104,11 @@ func rememberEvidenceRequestCompat(values []memoryservice.RememberEvidenceInput)
 }
 
 func (a *rememberServiceCompat) GetSubmissionStatus(ctx context.Context, req memoryservice.GetSubmissionStatusRequest) (*memoryservice.SubmissionStatusResult, error) {
-	result, err := a.service.GetSubmissionStatus(ctx, rememberapp.GetSubmissionStatusRequest{SubmissionID: req.SubmissionID})
+	statusService, ok := a.service.(rememberapp.SubmissionStatusService)
+	if !ok {
+		return nil, rememberapp.ErrRememberPersistence
+	}
+	result, err := statusService.GetSubmissionStatus(ctx, rememberapp.GetSubmissionStatusRequest{SubmissionID: req.SubmissionID})
 	if err != nil || result == nil {
 		return nil, err
 	}

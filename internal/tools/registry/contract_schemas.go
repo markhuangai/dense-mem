@@ -177,12 +177,6 @@ func relationshipConflictContextSchema() map[string]any {
 	}
 }
 
-func getSubmissionStatusInputSchema() map[string]any {
-	return contractInput([]string{"submission_id"}, map[string]any{
-		"submission_id": schemaString("Submission ID returned by remember or correct_relationship.", 128),
-	})
-}
-
 func retractEvidenceInputSchema() map[string]any {
 	evidenceIDs := stringArraySchema("Caller-owned evidence ID to retract.", 50, 128)
 	evidenceIDs["minItems"] = 1
@@ -392,54 +386,47 @@ func exportMemoryPackInputSchema() map[string]any {
 }
 
 func rememberOutputSchema() map[string]any {
-	return closedObject(
-		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"},
+	properties := map[string]any{
+		"contract_version":     schemaEnum([]string{domain.ContractVersion}),
+		"submission_id":        schemaString("Submission ID.", 128),
+		"submission_kind":      schemaEnum([]string{"remember"}),
+		"processing_state":     schemaEnum([]string{"completed", "rejected", "quarantined"}),
+		"search_state":         schemaEnum([]string{"current", "not_required"}),
+		"correlation_id":       schemaString("Request correlation ID.", 128),
+		"evidence":             array(rememberEvidenceStatusSchema(), 0, 100),
+		"relationship_results": submissionRelationshipResultsSchema(),
+		"errors":               submissionStatusErrorArraySchema(),
+	}
+	terminal := closedObject(
+		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"},
+		properties,
+	)
+	operationalErrors := submissionStatusErrorArraySchema()
+	operationalErrors["minItems"] = 1
+	operational := closedObject(
+		[]string{"contract_version", "submission_id", "submission_kind", "correlation_id", "errors"},
 		map[string]any{
-			"contract_version":    schemaEnum([]string{domain.ContractVersion}),
-			"submission_id":       schemaString("Submission ID.", 128),
-			"submission_kind":     schemaEnum([]string{"remember"}),
-			"processing_state":    schemaEnum([]string{"queued", "processing", "completed", "rejected", "quarantined", "failed"}),
-			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
-			"status_tool":         schemaEnum([]string{ToolGetSubmissionStatus}),
-			"correlation_id":      schemaString("Request correlation ID.", 128),
+			"contract_version": schemaEnum([]string{domain.ContractVersion}),
+			"submission_id":    schemaString("Submission ID.", 128),
+			"submission_kind":  schemaEnum([]string{"remember"}),
+			"correlation_id":   schemaString("Request correlation ID.", 128),
+			"errors":           operationalErrors,
 		},
 	)
+	return map[string]any{"oneOf": []any{terminal, operational}}
 }
 
-func submissionStatusOutputSchema() map[string]any {
+func rememberEvidenceStatusSchema() map[string]any {
 	return closedObject(
-		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "check_after_seconds", "evidence", "errors", "degradations"},
+		[]string{"disposition", "evidence_index", "superseded_evidence_ids", "search_state"},
 		map[string]any{
-			"contract_version":    schemaEnum([]string{domain.ContractVersion}),
-			"submission_id":       schemaString("Submission ID.", 128),
-			"submission_kind":     schemaEnum([]string{"remember", "relationship_correction"}),
-			"processing_state":    schemaEnum([]string{"queued", "processing", "awaiting_confirmation", "completed", "rejected", "quarantined", "failed"}),
-			"search_state":        schemaEnum(domain.SearchProjectionStates()),
-			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
-			"correlation_id":      schemaString("Request correlation ID for operator diagnostics.", 128),
-			"attempts":            map[string]any{"type": "integer", "minimum": 0},
-			"max_attempts":        map[string]any{"type": "integer", "minimum": 1},
-			"submitted_at":        schemaString("Submission time in RFC3339 format.", 64),
-			"next_attempt_at":     schemaString("Scheduled retry time in RFC3339 format.", 64),
-			"started_at":          schemaString("First processing start time in RFC3339 format.", 64),
-			"updated_at":          schemaString("Last placement state update in RFC3339 format.", 64),
-			"completed_at":        schemaString("Terminal completion time in RFC3339 format.", 64),
-			"evidence": array(closedObject(
-				[]string{"evidence_id", "evidence_index", "superseded_evidence_ids", "search_state"},
-				map[string]any{
-					"evidence_id":             schemaString("Durable evidence ID.", 128),
-					"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
-					"superseded_evidence_ids": stringArraySchema("Evidence ID superseded by this evidence.", 50, 128),
-					"search_state":            schemaEnum(domain.SearchProjectionStates()),
-					"error":                   map[string]any{"oneOf": []any{map[string]any{"type": "null"}, submissionStatusErrorSchema()}},
-				},
-			), 0, 100),
-			"errors":                submissionStatusErrorArraySchema(),
-			"degradations":          submissionStatusDegradationArraySchema(),
-			"relationship_results":  submissionRelationshipResultsSchema(),
-			"quarantine_expires_at": nullableString("Fixed quarantine expiry.", 64),
-			"awaiting_confirmation": relationshipCorrectionConfirmationSchema(),
-			"correction_result":     relationshipCorrectionResultSchema(),
+			"disposition":             schemaEnum([]string{"stored", "not_stored"}),
+			"evidence_id":             schemaString("Durable evidence ID when stored.", 128),
+			"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
+			"superseded_evidence_ids": stringArraySchema("Evidence ID superseded by this evidence.", 50, 128),
+			"search_state":            schemaEnum([]string{"current", "not_required"}),
+			"reason":                  schemaString("Bounded reason when not stored.", 256),
+			"error":                   map[string]any{"oneOf": []any{map[string]any{"type": "null"}, submissionStatusErrorSchema()}},
 		},
 	)
 }
@@ -498,18 +485,34 @@ func retractEvidenceOutputSchema() map[string]any {
 }
 
 func correctRelationshipOutputSchema() map[string]any {
-	return closedObject(
-		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"},
+	properties := map[string]any{
+		"contract_version":      schemaEnum([]string{domain.ContractVersion}),
+		"submission_id":         schemaString("Correction submission ID.", 128),
+		"submission_kind":       schemaEnum([]string{"relationship_correction"}),
+		"processing_state":      schemaEnum([]string{"awaiting_confirmation", "completed", "rejected"}),
+		"search_state":          schemaEnum([]string{"current", "not_required"}),
+		"correlation_id":        schemaString("Request correlation ID.", 128),
+		"awaiting_confirmation": relationshipCorrectionConfirmationSchema(),
+		"correction_result":     relationshipCorrectionResultSchema(),
+		"errors":                submissionStatusErrorArraySchema(),
+	}
+	terminal := closedObject(
+		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "errors"},
+		properties,
+	)
+	operationalErrors := submissionStatusErrorArraySchema()
+	operationalErrors["minItems"] = 1
+	operational := closedObject(
+		[]string{"contract_version", "submission_id", "submission_kind", "correlation_id", "errors"},
 		map[string]any{
-			"contract_version":    schemaEnum([]string{domain.ContractVersion}),
-			"submission_id":       schemaString("Correction submission ID.", 128),
-			"submission_kind":     schemaEnum([]string{"relationship_correction"}),
-			"processing_state":    schemaEnum([]string{"awaiting_confirmation", "completed", "rejected", "failed"}),
-			"check_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 3600},
-			"status_tool":         schemaEnum([]string{ToolGetSubmissionStatus}),
-			"correlation_id":      schemaString("Request correlation ID.", 128),
+			"contract_version": schemaEnum([]string{domain.ContractVersion}),
+			"submission_id":    schemaString("Correction submission ID.", 128),
+			"submission_kind":  schemaEnum([]string{"relationship_correction"}),
+			"correlation_id":   schemaString("Request correlation ID.", 128),
+			"errors":           operationalErrors,
 		},
 	)
+	return map[string]any{"oneOf": []any{terminal, operational}}
 }
 
 func recallMemoryOutputSchema() map[string]any {

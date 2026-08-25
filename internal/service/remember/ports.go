@@ -38,6 +38,39 @@ type IntakePort interface {
 	Status(context.Context, StatusRequest) (*StageResult, error)
 }
 
+// Processor runs one staged submission to a terminal, owner-scoped result.
+// The composition layer owns the concrete assessment and commit engine; the
+// Remember application service only depends on this narrow operation.
+type Processor interface {
+	Process(context.Context, ProcessRequest) (*SubmissionStatusResult, error)
+}
+
+// SynchronousProcessor is the v2.6.1 request-owned boundary. Implementations
+// receive the fully validated request and return only a terminal structured
+// result; they own any private persistence orchestration needed to execute it.
+type SynchronousProcessor interface {
+	ProcessRemember(context.Context, RememberProcessRequest) (*SubmissionStatusResult, error)
+}
+
+type ProcessRequest struct {
+	TeamID         string
+	OwnerProfileID string
+	SubmissionID   string
+}
+
+type RememberProcessRequest struct {
+	TeamID          string
+	OwnerProfileID  string
+	SpaceID         string
+	SpaceGeneration int64
+	IdempotencyKey  string
+	RequestHash     string
+	SourceSummary   string
+	Proposal        map[string]any
+	Metadata        map[string]any
+	Evidence        []EvidenceInput
+}
+
 type StageRequest struct {
 	TeamID            string
 	OwnerProfileID    string

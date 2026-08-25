@@ -24,8 +24,8 @@ if (listed.error || !listed.result?.tools?.some((tool) => tool.name === "remembe
   throw new Error("live SDK tools/list did not expose the shared registry");
 }
 const bounded = await rpc("tools/call", {
-  name: "get_submission_status",
-  arguments: { submission_id: "00000000-0000-0000-0000-000000000000" },
+  name: "remember",
+  arguments: {},
 }, { "MCP-Protocol-Version": "2025-11-25" });
 if (!bounded.error || typeof bounded.error.message !== "string" || bounded.error.message.length > 512) {
   throw new Error("live SDK error mapping was not bounded");

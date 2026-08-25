@@ -37,8 +37,13 @@ type LedgerRepository interface {
 }
 
 type CreateIngestInput struct {
-	TeamID            string
-	OwnerProfileID    string
+	TeamID         string
+	OwnerProfileID string
+	// IngestID and PlacementRunID are optional request-owned identifiers. The
+	// synchronous Remember path allocates them before provider work so the
+	// prepared assessor result can be committed against the exact same IDs.
+	IngestID          string
+	PlacementRunID    string
 	SpaceID           string
 	SpaceGeneration   int64
 	IdempotencyKey    string
@@ -618,10 +623,11 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH inserted AS (
 				INSERT INTO knowledge_ingests (
-				    team_id, owner_profile_id, space_id, space_generation,
+				    ingest_id, team_id, owner_profile_id, space_id, space_generation,
 				    idempotency_key, request_hash,
 				    source_summary, status, proposal, metadata
 				) VALUES (
+				    COALESCE(NULLIF(?, '')::uuid, gen_random_uuid()),
 				    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
 				    ?, ?, ?, ?, ?::jsonb, ?::jsonb
 				)
@@ -638,7 +644,7 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 			  AND owner_profile_id = ?::uuid
 			  AND idempotency_key = ?
 			LIMIT 1
-		`, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
+		`, input.IngestID, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
 			input.IdempotencyKey, input.RequestHash,
 			input.SourceSummary, input.Status, string(proposal), string(metadata),
 			input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Rows()
@@ -679,14 +685,15 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO knowledge_ingests (
-		    team_id, owner_profile_id, space_id, space_generation,
+		    ingest_id, team_id, owner_profile_id, space_id, space_generation,
 		    request_hash, source_summary, status, proposal, metadata
 		) VALUES (
+		    COALESCE(NULLIF(?, '')::uuid, gen_random_uuid()),
 		    ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
 		    ?, ?, ?, ?::jsonb, ?::jsonb
 		)
 		RETURNING ingest_id::text
-	`, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
+	`, input.IngestID, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
 		input.RequestHash, input.SourceSummary,
 		input.Status, string(proposal), string(metadata)).Rows()
 	if err != nil {
@@ -746,15 +753,16 @@ func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInpu
 	}
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
 		INSERT INTO placement_runs (
-		    team_id, ingest_id, owner_profile_id, space_id, space_generation,
+		    placement_run_id, team_id, ingest_id, owner_profile_id, space_id, space_generation,
 		    status, completed_at, quarantine_expires_at
 		) VALUES (
+		    COALESCE(NULLIF(?, '')::uuid, gen_random_uuid()),
 		    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?::bigint, 0),
 		    ?, %s,
 		    CASE WHEN ? = 'quarantined' THEN now() + interval '24 hours' ELSE NULL END
 		)
 		RETURNING placement_run_id::text, created_at, completed_at
-	`, completedExpr), input.TeamID, ingestID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
+	`, completedExpr), input.PlacementRunID, input.TeamID, ingestID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
 		input.Status, input.Status).Rows()
 	if err != nil {
 		return "", time.Time{}, nil, err

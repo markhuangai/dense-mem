@@ -24,7 +24,7 @@ await updateDreaming(true, false);
 await updateTeamDreaming(false);
 
 let names = await listedToolNames();
-for (const required of ["remember", "get_submission_status", "retract_evidence", "correct_relationship", "recall_memory", "trace_memory", "export_memory_pack"]) {
+for (const required of ["remember", "retract_evidence", "correct_relationship", "recall_memory", "trace_memory", "export_memory_pack"]) {
   assertHas(names, required, "production core tool");
 }
 for (const absent of [feedbackTool, ...dreamTools, ...activeEvalTools, ...removedTools]) {
@@ -33,6 +33,7 @@ for (const absent of [feedbackTool, ...dreamTools, ...activeEvalTools, ...remove
 for (const hidden of [feedbackTool, ...dreamTools, ...activeEvalTools, ...removedTools]) {
   await assertToolNotFound(hidden, {});
 }
+await assertToolNotFound("get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
 
 await updateRecallFeedback(true);
 names = await listedToolNames();

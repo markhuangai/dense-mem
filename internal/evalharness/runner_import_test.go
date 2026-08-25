@@ -17,7 +17,6 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 		"eval:doc-beta":  "evidence-beta",
 	}
 	var rememberCalls int
-	var statusPolls int
 	var recallCalls int
 	exportCalls := map[string]int{}
 
@@ -49,20 +48,9 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 			rememberCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"submission_id":    strings.TrimPrefix(idempotencyKey, "eval:"),
-				"processing_state": "queued",
-			})
-		case "tool:get_submission_status":
-			var input map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				t.Fatalf("decode status body: %v", err)
-			}
-			submissionID := input["submission_id"].(string)
-			statusPolls++
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    submissionID,
 				"processing_state": "completed",
 				"search_state":     "current",
-				"evidence":         []map[string]any{{"evidence_id": rememberIDs["eval:"+submissionID]}},
+				"evidence":         []map[string]any{{"evidence_id": rememberIDs[idempotencyKey], "search_state": "current"}},
 			})
 		case "tool:eval_list_knowledge_refs":
 			var input map[string]any
@@ -110,8 +98,8 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 	if summary.Mode != "import" || summary.CaseCount != 2 || summary.ScoredCaseCount != 0 {
 		t.Fatalf("summary = %+v", summary)
 	}
-	if rememberCalls != 2 || statusPolls != 2 || recallCalls != 0 {
-		t.Fatalf("remember/status/recall calls = %d/%d/%d", rememberCalls, statusPolls, recallCalls)
+	if rememberCalls != 2 || recallCalls != 0 {
+		t.Fatalf("remember/recall calls = %d/%d", rememberCalls, recallCalls)
 	}
 	for _, kind := range []string{"evidence", "entity", "value", "relationship", "hypothesis"} {
 		if exportCalls[kind] != 1 {
@@ -160,18 +148,9 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T
 			}
 			sourceDocID := strings.TrimPrefix(input["idempotency_key"].(string), "eval:")
 			remembered = append(remembered, sourceDocID)
-			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-" + sourceDocID})
-		case "tool:get_submission_status":
-			var input map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				t.Fatalf("decode status body: %v", err)
-			}
-			submissionID := input["submission_id"].(string)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    submissionID,
-				"processing_state": "completed",
-				"search_state":     "current",
-				"evidence":         []map[string]any{{"evidence_id": "evidence-" + strings.TrimPrefix(strings.TrimPrefix(submissionID, "submission-"), "doc-")}},
+				"submission_id": "submission-" + sourceDocID, "processing_state": "completed", "search_state": "current",
+				"evidence": []map[string]any{{"evidence_id": "evidence-" + strings.TrimPrefix(sourceDocID, "doc-"), "search_state": "current"}},
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)

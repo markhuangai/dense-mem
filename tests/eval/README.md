@@ -7,15 +7,14 @@ dedicated local Dense-Mem stack. Corpus ingestion uses the same public
 ```text
 corpus row
   -> POST /mcp, JSON-RPC tools/call remember
-  -> asynchronous processing
-  -> POST /mcp, JSON-RPC tools/call get_submission_status
+  -> synchronous assessment, embedding, and commit
   -> recall suite
   -> qrel-based retrieval metrics
 ```
 
 The evaluation harness does not use legacy memory-pack import tools or an
-answer-judge model. It measures retrieval against deterministic qrels and waits
-for the bounded submission status projection before scoring.
+answer-judge model. It measures retrieval against deterministic qrels after the
+terminal Remember result has been returned.
 
 The normal release image contains no evaluation MCP tools. The committed
 `examples/docker-compose.evaluation.yml` builds the separate `evaluation`
@@ -294,7 +293,7 @@ stack or import work begins.
 The long-running monitor is local and on-demand; nothing starts it
 automatically or from remote CI. It builds the current runner, validates the
 selected seed against the policy, imports through MCP `tools/call` `remember`,
-waits for terminal placement, and then runs the baseline recall suite:
+and then runs the baseline recall suite:
 
 ```bash
 SEED="${SEED}" \
@@ -305,12 +304,11 @@ PLACEMENT_TIMEOUT=10m \
 tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 ```
 
-The runner and monitor default to 10 concurrent import requests and reject a
-higher value. The eval-only Compose overlay also limits embedding requests and
-embedding workers to 10.
+The runner defaults to 10 concurrent import requests and rejects a higher
+value. Write embeddings are request-scoped; there is no normal embedding worker.
 
-The monitor polls every 60 seconds by default. `SLEEP_SECONDS` changes only
-the monitor cadence; it does not cap graph relationships or placement work.
+`SLEEP_SECONDS` changes only the monitor cadence for the recall/evaluation pass;
+it does not control Remember processing.
 
 Resume behavior is based on the latest placement attempt for each
 `eval:<source_doc_id>`:
@@ -318,9 +316,9 @@ Resume behavior is based on the latest placement attempt for each
 | Latest state | Resume action |
 | --- | --- |
 | `completed` and live fragment exists | Skip the corpus row. |
-| `failed` | Stop the monitor; investigate the failed placement before using a fresh isolated team/runtime. |
+| `failed` | Stop the monitor; investigate the failed Remember result before using a fresh isolated team/runtime. |
 | No attempt | Import the corpus row. |
-| `queued` or `processing` | Wait for the placement worker; do not duplicate it. |
+| `queued` or `processing` | Invalid v2.6.1 result; the originating Remember call must be terminal. |
 | Completed checkpoint but fragment is missing | Retry the corpus row. |
 | `quarantined` | Skip the corpus row and report it as comparison-only input. |
 

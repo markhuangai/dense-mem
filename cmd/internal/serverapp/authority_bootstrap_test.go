@@ -13,7 +13,7 @@ import (
 
 func TestClassifyAuthorityActivatesWhenCompatibleMarkerPresent(t *testing.T) {
 	store := &authorityStoreStub{marker: &domain.CompatibilityMarker{
-		Status: domain.MigrationMarkerCompatible,
+		Version: cutoverMarkerVersion, Status: domain.MigrationMarkerCompatible,
 	}}
 
 	bootstrap, err := ClassifyAuthority(context.Background(), store)
@@ -61,30 +61,13 @@ func TestClassifyAuthorityFailsClosedForUnknownMarkerStatus(t *testing.T) {
 	require.ErrorContains(t, err, "unknown compatibility marker status pending")
 }
 
-func TestEnsureAuthorityCreatesFreshMarkerWhenNoneExists(t *testing.T) {
-	store := &authorityStoreStub{
-		freshMarker: &domain.CompatibilityMarker{
-			Status:   domain.MigrationMarkerCompatible,
-			Metadata: map[string]any{"fresh_install": true},
-		},
-	}
-
-	bootstrap, err := EnsureAuthority(context.Background(), store)
-
-	require.NoError(t, err)
-	require.Equal(t, authorityActive, bootstrap.Mode)
-	require.Equal(t, store.freshMarker, bootstrap.Marker)
-	require.Equal(t, 1, store.freshCommits)
-}
-
-func TestEnsureAuthorityFailsWhenFreshMarkerCreationBlocked(t *testing.T) {
-	_, err := EnsureAuthority(context.Background(), &authorityStoreStub{
-		freshErr: repository.ErrFreshAuthorityBlocked,
-	})
+func TestEnsureAuthorityFailsClosedWhenMarkerIsAbsent(t *testing.T) {
+	store := &authorityStoreStub{}
+	_, err := EnsureAuthority(context.Background(), store)
 
 	require.ErrorIs(t, err, errAuthorityBlocked)
-	require.ErrorIs(t, err, repository.ErrFreshAuthorityBlocked)
-	require.ErrorContains(t, err, "create fresh authority marker")
+	require.ErrorContains(t, err, "compatible cutover marker")
+	require.Zero(t, store.freshCommits)
 }
 
 type authorityStoreStub struct {

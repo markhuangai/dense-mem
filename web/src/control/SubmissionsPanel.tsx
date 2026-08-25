@@ -130,7 +130,7 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
     <div className="team-embedded-panel submission-diagnostics">
       <section className="overview-panel">
         <SectionHeading
-          title="Memory Submissions"
+          title="Remember Attempts"
           meta={total}
           actions={(
             <button className="icon-button" type="button" aria-label="Refresh submissions" onClick={() => void loadSubmissions()}>
@@ -138,7 +138,7 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
             </button>
           )}
         />
-        <p className="panel-intro">Durable placement state is authoritative. The event timeline below is supplemental operational history.</p>
+        <p className="panel-intro">Terminal Remember attempts are authoritative. The event timeline below records the bounded execution phases.</p>
         {error && <div className="banner error" role="alert">{error}</div>}
         <div className="metrics-toolbar submission-toolbar">
           <label>
@@ -168,7 +168,7 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
           </label>
         </div>
         {loading && items.length === 0 ? (
-          <LoadingState label="Loading submissions" />
+          <LoadingState label="Loading Remember attempts" />
         ) : items.length === 0 ? (
           <div className="table-placeholder">No submissions match this state.</div>
         ) : (
@@ -243,7 +243,7 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
         </div>
       </section>
 
-      {detailLoading && !detail ? <LoadingState label="Loading submission details" /> : detail && (
+      {detailLoading && !detail ? <LoadingState label="Loading Remember attempt details" /> : detail && (
         <SubmissionDetail detail={detail} timeline={timeline} timelineUnavailable={timelineUnavailable} />
       )}
     </div>
@@ -296,7 +296,7 @@ function SubmissionDetail({
 
       {operatorDiagnostics.length > 0 && (
         <section className="submission-operator-diagnostics" aria-label="Operator diagnostics">
-          <h3>Placement diagnostics</h3>
+          <h3>Remember diagnostics</h3>
           <ol className="operator-diagnostic-list">
             {operatorDiagnostics.map((diagnostic, index) => (
               <li key={diagnostic.id ?? `${diagnostic.occurred_at ?? "diagnostic"}-${index}`}>
@@ -308,7 +308,7 @@ function SubmissionDetail({
       )}
       <div className="submission-detail-grid">
         <section>
-          <h3>Evidence placement</h3>
+          <h3>Evidence results</h3>
           <div className="mini-table">
             <div className="mini-table-row heading" style={{ "--mini-cols": 4 } as CSSProperties}>
               <span>Index</span><span>Search</span><span>Evidence ID</span><span>Error guidance</span>

@@ -134,12 +134,11 @@ const crossTeam = await createCredential(otherTeam.id, `${runID}-cross-team`);
 
 const receipt = await mcpSuccess(apiKey, "remember", rememberInput());
 const submissionID = requiredString(receipt.submission_id, "submission_id");
-const ownerStatus = await mcpSuccess(apiKey, "get_submission_status", { submission_id: submissionID });
-if (ownerStatus.submission_id !== submissionID) throw new Error("owner could not read its staged submission");
+if (receipt.processing_state !== "completed" || !["current", "not_required"].includes(receipt.search_state)) throw new Error("owner did not receive a terminal Remember result");
 for (const [label, key] of [["same-team other owner", sameTeam.apiKey], ["cross-team owner", crossTeam.apiKey]]) {
   const isolated = await mcpRaw(key, "get_submission_status", { submission_id: submissionID });
-  if (!isolated.error || isolated.result !== undefined || JSON.stringify(isolated).includes(submissionID)) {
-    throw new Error(`${label} crossed submission ownership boundary`);
+  if (isolated.error?.code !== -32601 || isolated.result !== undefined) {
+    throw new Error(`${label} could call the removed submission status tool`);
   }
 }
 

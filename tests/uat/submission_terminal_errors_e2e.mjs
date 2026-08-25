@@ -15,14 +15,12 @@ let rpcID = 0;
 seedOverflowPredicates();
 const receipt = await mcpSuccess("remember", overflowFixture());
 const submissionID = requiredString(receipt.submission_id, "submission_id");
-const terminal = await waitForTerminal(submissionID);
-const repeated = await mcpSuccess("get_submission_status", { submission_id: submissionID });
-if (stableJSON(terminal) !== stableJSON(repeated)) throw new Error("terminal status changed between polls");
+const terminal = receipt;
 assertTerminalErrors(terminal);
 
-const missing = await mcpRaw("get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
-if (!missing.error || missing.result !== undefined || typeof missing.error.message !== "string" || missing.error.message.length > 512) {
-  throw new Error("missing submission did not return a bounded error");
+const removed = await mcpRaw("get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
+if (removed.error?.code !== -32601 || removed.result !== undefined) {
+  throw new Error("removed get_submission_status remained callable");
 }
 console.log(JSON.stringify({
   status: "ok",
@@ -32,18 +30,9 @@ console.log(JSON.stringify({
   processing_state: terminal.processing_state,
   terminal_errors_nonempty: true,
   closed_codes: true,
-  stable_polling: true,
+  synchronous_result: true,
   missing_owner_bounded: true,
 }, null, 2));
-
-async function waitForTerminal(id) {
-  for (let attempt = 0; attempt < 360; attempt += 1) {
-    const status = await mcpSuccess("get_submission_status", { submission_id: id });
-    if (["completed", "rejected", "failed", "quarantined"].includes(status.processing_state)) return status;
-    await delay(2_000);
-  }
-  throw new Error("submission did not reach a terminal state");
-}
 
 function assertTerminalErrors(status) {
   if (!["rejected", "failed", "quarantined"].includes(status.processing_state) || !Array.isArray(status.errors) || status.errors.length === 0) {
@@ -88,7 +77,7 @@ function assertTerminalErrors(status) {
     "Semantic search indexing is delayed; check the control portal for recovery guidance.",
   ]);
   const allowedActions = new Set([
-    "poll_status", "resubmit_submission", "retry_correction", "contact_operator", "none",
+    "retry_same_request", "resubmit_remember", "retry_correction", "contact_operator", "none",
   ]);
   const seen = new Set();
   for (const item of status.errors) {

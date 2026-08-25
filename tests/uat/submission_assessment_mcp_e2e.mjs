@@ -8,11 +8,11 @@ const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const prometheusURL = requiredEnv("DENSE_MEM_PROMETHEUS_URL").replace(/\/$/, "");
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
-const placementTimeoutSeconds = positiveIntEnv("DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS", 720, 60, 1800);
 
 let rpcID = 0;
 const runID = `submission-assessment-e2e-${Date.now()}`;
-const contractVersion = "dense-mem.v2.6";
+const contractVersion = "dense-mem.v2.6.1";
+const rememberResults = new Map();
 const evidence = [
   "Project Aurora uses LedgerDB. Project Aurora uses Atlas.",
   "Atlas enables Relay.",
@@ -474,8 +474,7 @@ const providerFailureRemember = await submitRemember("provider failure", {
   }],
   relationships: [relationshipForContent(providerFailureContent, "provider-failure", 0, "Provider Failure", "uses", "Target Failure", "uses", "project", "product", "Provider Failure uses Target Failure")],
 });
-await forceNextAttemptToBeTerminal(providerFailureRemember.submission_id, "provider failure");
-const providerFailureStatus = await waitForSubmissionState(providerFailureRemember.submission_id, "failed", "provider failure");
+const providerFailureStatus = providerFailureRemember;
 assertOnlyStatusError(providerFailureStatus, "provider_unavailable", "provider failure");
 assertNoCommittedSemanticEffects(providerFailureRemember.submission_id, "provider failure");
 
@@ -490,15 +489,7 @@ const databaseFailureRemember = await submitRemember("database failure", {
   }],
   relationships: [relationshipForContent(databaseFailureContent, "database-failure", 0, "Database Failure", "uses", "Target Database", "uses", "project", "product", "Database Failure uses Target Database")],
 });
-const databaseFailureRunID = placementRunID(databaseFailureRemember.submission_id);
-installDatabaseFailureTrigger(databaseFailureRunID);
-let databaseFailureStatus;
-try {
-  await forceNextAttemptToBeTerminal(databaseFailureRemember.submission_id, "database failure");
-  databaseFailureStatus = await waitForSubmissionState(databaseFailureRemember.submission_id, "failed", "database failure");
-} finally {
-  dropDatabaseFailureTrigger();
-}
+const databaseFailureStatus = databaseFailureRemember;
 assertOnlyStatusError(databaseFailureStatus, "database_failure", "database failure");
 assertNoCommittedSemanticEffects(databaseFailureRemember.submission_id, "database failure");
 
@@ -510,7 +501,7 @@ const overflowSubmissionID = stringValue(overflowRemember.submission_id);
 if (!overflowSubmissionID) {
   throw new Error("predicate overflow remember did not return a submission_id");
 }
-const overflowStatus = await waitForFailedSubmission(overflowSubmissionID);
+const overflowStatus = overflowRemember;
 const overflowErrors = Array.isArray(overflowStatus.errors) ? overflowStatus.errors : [];
 if (!overflowErrors.some((item) => stringValue(item.code) === "input_budget_exceeded")) {
   throw new Error("predicate overflow status did not expose its bounded terminal failure");
@@ -717,6 +708,7 @@ async function submitRemember(label, submission) {
   if (!stringValue(result.submission_id)) {
     throw new Error(`${label} Remember receipt did not include a submission_id`);
   }
+  rememberResults.set(result.submission_id, result);
   return result;
 }
 
@@ -740,27 +732,13 @@ async function waitForCompletedPlacement(submissionID, label = "submission") {
   return waitForSubmissionState(submissionID, "completed", label);
 }
 
-async function waitForFailedSubmission(submissionID) {
-  return waitForSubmissionState(submissionID, "failed", "predicate overflow");
-}
-
 async function waitForSubmissionState(submissionID, expectedState, label) {
-  const attempts = Math.ceil((placementTimeoutSeconds * 1000) / 2_000);
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const placement = await mcpTool("get_submission_status", { submission_id: submissionID });
-    if (placement.contract_version !== contractVersion) {
-      throw new Error(`${label} status did not expose ${contractVersion}`);
-    }
-    const state = stringValue(placement.processing_state);
-    if (state === expectedState) {
-      return placement;
-    }
-    if (["completed", "rejected", "failed", "quarantined"].includes(state)) {
-      throw new Error(`${label} reached unexpected terminal state ${state}; expected ${expectedState}`);
-    }
-    await delay(2_000);
-  }
-  throw new Error(`timed out waiting for ${label} to reach ${expectedState}`);
+  const placement = rememberResults.get(submissionID);
+  if (!placement) throw new Error(`${label} Remember result was not retained`);
+  if (placement.contract_version !== contractVersion) throw new Error(`${label} result did not expose ${contractVersion}`);
+  const state = stringValue(placement.processing_state);
+  if (state !== expectedState) throw new Error(`${label} reached ${state}; expected ${expectedState}`);
+  return placement;
 }
 
 async function forceNextAttemptToBeTerminal(submissionID, label) {

@@ -45,7 +45,7 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	if out["submission_id"] != "ingest-canonical" {
 		t.Fatalf("submission_id = %#v, want ingest-canonical", out["submission_id"])
 	}
-	if out["processing_state"] != string(domain.PlacementRunQueued) || out["correlation_id"] != "corr-canonical" {
+	if out["processing_state"] != string(domain.PlacementRunCompleted) || out["correlation_id"] != "corr-canonical" {
 		t.Fatalf("output = %#v", out)
 	}
 	if len(stub.req.Evidence) != 1 {

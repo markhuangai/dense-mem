@@ -17,6 +17,16 @@ type SearchRepository interface {
 	SearchExactVector(ctx context.Context, input ExactVectorSearchInput) ([]SearchHit, error)
 }
 
+// InlineEmbeddingRepository is the optional write-path capability used by
+// synchronous semantic writers. Keeping it separate from SearchRepository
+// avoids forcing legacy read/reconciliation test doubles to implement a
+// request-scoped write concern.
+type InlineEmbeddingRepository interface {
+	LoadSearchDocumentsForEmbedding(ctx context.Context, input LoadSearchDocumentsForEmbeddingInput) ([]SearchDocumentForEmbedding, error)
+	LoadSearchDocumentsForSources(ctx context.Context, input LoadSearchDocumentsForSourcesInput) ([]SearchDocumentForEmbedding, error)
+	CompleteSearchDocumentsWithEmbeddings(ctx context.Context, input CompleteSearchDocumentsWithEmbeddingsInput) error
+}
+
 // EmbeddingJobLeaseRenewer is implemented by repositories that can extend a
 // claimed embedding job while an external provider call is in flight. It is
 // intentionally separate from SearchRepository so lightweight service fakes
@@ -127,6 +137,56 @@ type SearchDocumentResult struct {
 	EmbeddingDimensions    int
 	SearchState            string
 	QueuedJobID            string
+	SpaceID                string
+	SpaceGeneration        int64
+}
+
+// LoadSearchDocumentsForEmbeddingInput identifies one owner-scoped batch of
+// documents whose text and version fences are needed before an inline write
+// embedding call.
+type LoadSearchDocumentsForEmbeddingInput struct {
+	TeamID            string
+	OwnerProfileID    string
+	SearchDocumentIDs []string
+}
+
+type LoadSearchDocumentsForSourcesInput struct {
+	TeamID         string
+	OwnerProfileID string
+	SourceKind     string
+	SourceIDs      []string
+}
+
+type SearchDocumentForEmbedding struct {
+	SearchDocumentResult
+	DocumentText string
+	DocumentHash string
+}
+
+// InlineEmbeddingBatch is the request-owned provider boundary used by a
+// synchronous semantic commit. The repository invokes it only after it has
+// rendered and fenced the complete document set; returning an error aborts
+// the surrounding transaction.
+type InlineEmbeddingBatch func(context.Context, []SearchDocumentForEmbedding) ([]SearchDocumentEmbedding, error)
+
+// CompleteSearchDocumentsWithEmbeddingsInput carries the provider output back
+// across the fenced storage boundary. Every document is checked against the
+// source/document/contract/space versions loaded before the provider call.
+type CompleteSearchDocumentsWithEmbeddingsInput struct {
+	TeamID         string
+	OwnerProfileID string
+	Documents      []SearchDocumentEmbedding
+}
+
+type SearchDocumentEmbedding struct {
+	SearchDocumentID       string
+	SourceVersion          int64
+	ProjectionFormat       int
+	ProjectionGenerationID string
+	DocumentVersion        int64
+	EmbeddingContractID    string
+	EmbeddingDimensions    int
+	Embedding              []float32
 	SpaceID                string
 	SpaceGeneration        int64
 }

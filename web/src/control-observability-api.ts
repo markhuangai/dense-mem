@@ -30,7 +30,7 @@ export type SubmissionStatusError = {
   code: string;
   message: string;
   retryable: boolean;
-  next_action: "poll_status" | "resubmit_submission" | "retry_correction" | "contact_operator" | "none";
+  next_action: "retry_same_request" | "resubmit_remember" | "retry_correction" | "contact_operator" | "none";
   remediation: string;
 };
 
@@ -95,7 +95,6 @@ export type SubmissionDiagnosticDetail = {
   submission_kind: "remember";
   processing_state: string;
   search_state: string;
-  check_after_seconds: number;
   correlation_id?: string;
   source_summary: string;
   source_summary_truncated: boolean;

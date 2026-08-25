@@ -62,7 +62,7 @@ func TestStatusProjectionCoversStatesAndBoundedFailures(t *testing.T) {
 	})
 	require.Len(t, failed.Errors, 1)
 	require.Equal(t, string(SubmissionErrorAssessorUnavailable), failed.Errors[0].Code)
-	require.Equal(t, string(SubmissionNextActionContactOperator), failed.Errors[0].NextAction)
+	require.Equal(t, string(SubmissionNextActionRetrySameRequest), failed.Errors[0].NextAction)
 	require.Equal(t, failed.Errors[0].Code, failed.Evidence[1].Error.Code)
 
 	rejected := ProjectSubmissionStatus(&StageResult{
@@ -100,6 +100,11 @@ func TestStatusProjectionCoversStatesAndBoundedFailures(t *testing.T) {
 	require.Equal(t, []string{"evidence-old"}, rich.Evidence[0].SupersededEvidenceIDs)
 	require.Equal(t, "stored", rich.RelationshipResults[0].Disposition)
 	require.Equal(t, 4, rich.RelationshipResults[0].Splits[0].RelationshipVersion)
+	completed := ProjectSubmissionStatus(&StageResult{Status: string(domain.PlacementRunCompleted), Items: []PlacementItem{{
+		Status: string(domain.PlacementRunCompleted), Result: map[string]any{"embedding_job_ids": []string{"job-1"}},
+	}}})
+	require.Equal(t, "stored", completed.Evidence[0].Disposition)
+	require.Equal(t, string(domain.SearchProjectionPending), completed.SearchState)
 
 	rejectedWithoutItems := ProjectSubmissionStatus(&StageResult{Status: string(domain.PlacementRunRejected)})
 	require.Equal(t, string(SubmissionErrorNoSupportedMemory), rejectedWithoutItems.Errors[0].Code)
@@ -110,6 +115,8 @@ func TestStatusProjectionCoversStatesAndBoundedFailures(t *testing.T) {
 }
 
 func TestStatusPolicyAdaptersAndSearchHelpers(t *testing.T) {
+	unknown := StatusError(SubmissionErrorCode("unknown"))
+	require.Equal(t, string(SubmissionErrorInternalFailure), unknown.Code)
 	require.Contains(t, SubmissionErrorCodes(), string(SubmissionErrorProcessingFailed))
 	require.Contains(t, SubmissionErrorCodes(), string(SubmissionErrorQuarantined))
 	require.Contains(t, SubmissionErrorCodes(), string(SubmissionErrorPolicyRejected))
@@ -150,6 +157,10 @@ func TestStatusPolicyAdaptersAndSearchHelpers(t *testing.T) {
 	} {
 		require.Equal(t, test.want, FailureCode(test.stage, test.class))
 	}
+	require.Equal(t, SubmissionErrorInputBudgetExceeded, FailureCode("input_budget", ""))
+	require.Equal(t, SubmissionErrorConfigurationInvalid, FailureCode("configuration", ""))
+	require.Equal(t, SubmissionErrorDatabaseFailure, FailureCode("database", ""))
+	require.Nil(t, ItemFailureError(PlacementItem{Status: "rejected", Result: map[string]any{}}, "rejected"))
 
 	for _, state := range []string{"current", "pending", "failed", "ignored"} {
 		result := placementSearchStateFromStates([]any{state})
@@ -171,6 +182,7 @@ func TestStatusPolicyAdaptersAndSearchHelpers(t *testing.T) {
 			require.Len(t, result, 1)
 		}
 	}
+	require.Nil(t, resultArray(nil, "values"))
 }
 
 func TestRememberConversionAndValidationBranches(t *testing.T) {

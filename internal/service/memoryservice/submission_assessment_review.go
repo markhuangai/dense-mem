@@ -45,7 +45,7 @@ func (s *submissionAssessmentPlacementWorkerService) completeRejected(
 		"failure_stage":     "semantic_commit",
 		"failure_code":      string(code),
 		"retryable":         true,
-		"next_action":       string(SubmissionNextActionResubmitSubmission),
+		"next_action":       string(SubmissionNextActionResubmitRemember),
 	}
 	if code == SubmissionErrorStaleInput {
 		payload["failure_stage"] = "exact_reference_preflight"

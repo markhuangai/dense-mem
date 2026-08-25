@@ -175,16 +175,16 @@ startup validation requires a complete provider configuration.
 - Set `AI_VERIFIER_MODEL` to a model that exists on the selected chat endpoint.
   Startup validates the model configuration before the service accepts memory
   writes. A 7B-8B class model works for local smoke tests; larger models can
-  exceed the default 60-second timeout while they load. Retryable processing
-  stays within the durable placement-attempt budget and becomes terminal after
-  that budget is exhausted.
+  exceed the default 60-second timeout while they load. The originating
+  Remember call returns a bounded provider/configuration error when the
+  assessor cannot complete; it does not leave polling work for a worker.
 
 ## Evidence Lifecycle
 
-`remember` durably stages exact evidence and returns a `submission_id`; provider
-calls and processing happen after acknowledgement. Poll `get_submission_status`
-with that ID for the owner-scoped processing and search state. The status
-projection omits placement questions, provider output, and internal run IDs.
+`remember` runs assessment, deterministic semantic planning, required embeddings,
+and the fenced PostgreSQL commit before returning. Its response contains the
+terminal processing/search state, every evidence disposition, every relationship
+result, and bounded errors; there is no polling or `get_submission_status` tool.
 
 Callers submit logical Entity, predicate, and Value proposals rather than text
 offsets. `remember` does not accept `span`, `surface`, or relationship `supports`
@@ -328,7 +328,6 @@ visibility checks to `tools/call`.
 | Tool | Used by | Registration | Use case and capability |
 |------|---------|--------------|-------------------------|
 | `remember` | Both | Production and evaluation images | Production evidence intake; the harness also imports corpus rows through this real intake path. |
-| `get_submission_status` | Both | Production and evaluation images | Poll owner-scoped `remember` and `correct_relationship` processing; the harness waits for imported corpus placement. |
 | `retract_evidence` | Production | Production and evaluation images | Retire caller-owned evidence while preserving append-only provenance. |
 | `correct_relationship` | Production | Production and evaluation images | Owner-only replacement of an active supported Relationship; supersedes the original and preserves support lineage. |
 | `recall_memory` | Production | Production and evaluation images | Recall active evidence contexts and Relationship handles. When enabled features produce an actionable follow-up, the result includes `suggested_actions`. |

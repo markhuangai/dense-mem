@@ -29,6 +29,28 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 	ctx context.Context,
 	input CommitSubmissionAssessmentInput,
 ) (*CommitSubmissionAssessmentResult, error) {
+	return r.commitSubmissionAssessment(ctx, input, nil)
+}
+
+// CommitSubmissionAssessmentWithInlineEmbeddings is the synchronous Remember
+// path. The callback runs after document rendering but before the transaction
+// commits; a provider or fence error therefore rolls back all semantic state.
+func (r *LedgerRepositoryImpl) CommitSubmissionAssessmentWithInlineEmbeddings(
+	ctx context.Context,
+	input CommitSubmissionAssessmentInput,
+	embedder InlineEmbeddingBatch,
+) (*CommitSubmissionAssessmentResult, error) {
+	if embedder == nil {
+		return nil, errors.New("inline embedding callback is required")
+	}
+	return r.commitSubmissionAssessment(ctx, input, embedder)
+}
+
+func (r *LedgerRepositoryImpl) commitSubmissionAssessment(
+	ctx context.Context,
+	input CommitSubmissionAssessmentInput,
+	inlineEmbedder InlineEmbeddingBatch,
+) (*CommitSubmissionAssessmentResult, error) {
 	input = normalizeCommitSubmissionAssessmentInput(input)
 	if err := validateCommitSubmissionAssessmentInput(input); err != nil {
 		return nil, err
@@ -210,6 +232,48 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 					return err
 				}
 				appendPlacementSearchDocument(semanticResult, document)
+			}
+		}
+		if inlineEmbedder != nil {
+			searchDocumentIDs := make([]string, 0, len(semanticResult.SearchDocuments))
+			for _, document := range semanticResult.SearchDocuments {
+				if document.SearchState == string(domain.SearchProjectionPending) || document.SearchState == string(domain.SearchProjectionFailed) {
+					searchDocumentIDs = append(searchDocumentIDs, document.SearchDocumentID)
+				}
+			}
+			if len(searchDocumentIDs) > 0 {
+				documents, err := loadSearchDocumentsForEmbeddingTx(ctx, tx, LoadSearchDocumentsForEmbeddingInput{
+					TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, SearchDocumentIDs: searchDocumentIDs,
+				})
+				if err != nil {
+					return err
+				}
+				embeddings, err := inlineEmbedder(ctx, documents)
+				if err != nil {
+					return err
+				}
+				if len(embeddings) != len(documents) {
+					return fmt.Errorf("inline embedding response count mismatch: got %d, want %d", len(embeddings), len(documents))
+				}
+				for index := range documents {
+					if embeddings[index].SearchDocumentID != documents[index].SearchDocumentID {
+						return fmt.Errorf("inline embedding response order mismatch at index %d", index)
+					}
+				}
+				if err := completeSearchDocumentsWithEmbeddingsInTx(ctx, tx, CompleteSearchDocumentsWithEmbeddingsInput{
+					TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, Documents: embeddings,
+				}); err != nil {
+					return err
+				}
+				completedIDs := make(map[string]struct{}, len(embeddings))
+				for _, embedding := range embeddings {
+					completedIDs[embedding.SearchDocumentID] = struct{}{}
+				}
+				for index := range semanticResult.SearchDocuments {
+					if _, ok := completedIDs[semanticResult.SearchDocuments[index].SearchDocumentID]; ok {
+						semanticResult.SearchDocuments[index].SearchState = string(domain.SearchProjectionCurrent)
+					}
+				}
 			}
 		}
 

@@ -22,7 +22,7 @@ func TestSubmissionAssessmentWorkerConstructorUsesSafeDefaults(t *testing.T) {
 		WorkerID: " worker ",
 	})
 
-	worker := service.(*submissionAssessmentPlacementWorkerService)
+	worker := service
 	assert.Equal(t, time.Minute, worker.lease)
 	assert.NotNil(t, worker.now)
 	assert.NotNil(t, worker.metrics)

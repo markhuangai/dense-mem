@@ -54,6 +54,16 @@ func (s *submissionAssessmentWorkerLedgerStub) ClaimNextPlacementRun(context.Con
 	return s.run, nil
 }
 
+func (s *submissionAssessmentWorkerLedgerStub) ClaimPlacementRun(context.Context, repository.ClaimPlacementRunInput) (*repository.PlacementRun, error) {
+	if s.claimErr != nil {
+		return nil, s.claimErr
+	}
+	if s.claimNil {
+		return nil, nil
+	}
+	return s.run, nil
+}
+
 func (*submissionAssessmentWorkerLedgerStub) FinishPlacementRun(context.Context, string, string, string, string, string) (*repository.PlacementFirstDisposition, error) {
 	return nil, errors.New("unexpected FinishPlacementRun")
 }

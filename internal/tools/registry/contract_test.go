@@ -155,7 +155,6 @@ func TestContractCatalogMetadata(t *testing.T) {
 	}
 	for _, name := range []string{
 		ToolRemember,
-		ToolGetSubmissionStatus,
 		ToolCorrectRelationship,
 		ToolRecallMemory,
 		ToolTraceMemory,
@@ -483,7 +482,6 @@ func TestCanonicalInputFieldNames(t *testing.T) {
 		forbidden      []string
 	}{
 		{ToolRemember, []string{"evidence", "relationships"}, nil, []string{"contract_version", "entity_hints", "relationship_hints", "proposal"}},
-		{ToolGetSubmissionStatus, []string{"submission_id"}, []string{"submission_id"}, []string{"ingest_id", "placement_item_id", "items", "review_tasks"}},
 		{ToolCorrectRelationship, []string{"action", "relationship_id", "expected_version", "patch", "supports", "reason", "submission_id", "confirmation_token", "selection"}, []string{"action", "idempotency_key"}, []string{"operation", "source_entity_id", "target_entity_id", "owned_observation_ids", "dry_run", "impact_token", "evidence"}},
 		{ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, nil, []string{"include_evidence", "use_communities"}},
 		{ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, nil, []string{"max_chars"}},
@@ -641,8 +639,8 @@ func TestOutputSchemasAreClosed(t *testing.T) {
 	}
 }
 
-func TestSubmissionStatusEvidenceErrorsUseTheClosedCodeEnum(t *testing.T) {
-	schema := submissionStatusOutputSchema()
+func TestRememberEvidenceErrorsUseTheClosedCodeEnum(t *testing.T) {
+	schema := rememberOutputSchema()["oneOf"].([]any)[0].(map[string]any)
 	expectedCodes := append([]string(nil), memoryservice.SubmissionErrorCodes()...)
 	slices.Sort(expectedCodes)
 	assertExactCodeEnum := func(label string, codeSchema map[string]any) {

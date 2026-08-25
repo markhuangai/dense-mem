@@ -195,6 +195,9 @@ func upsertSearchDocumentInTx(
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	if inlineEmbeddingWrites(ctx) {
+		return &loaded, nil
+	}
 	if err := retireSupersededEmbeddingJobs(ctx, tx, loaded); err != nil {
 		return nil, err
 	}

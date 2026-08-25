@@ -242,9 +242,8 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
       relationships: [securityRelationship(originalContent, `${runID}:original-relationship`)],
     },
   }));
-  expect(original.processing_state).toBe("queued");
-  const originalSubmissionID = requiredString(original, "submission_id");
-  const originalItem = await waitForSubmissionEvidence(request, originalSubmissionID);
+  expect(original.processing_state).toBe("completed");
+  const originalItem = firstEvidenceResult(original);
   const originalEvidenceID = requiredString(originalItem, "evidence_id");
 
   const replacement = mcpToolPayload(await mcpCall(request, "tools/call", {
@@ -259,8 +258,8 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
       relationships: [securityRelationship(replacementContent, `${runID}:replacement-relationship`)],
     },
   }));
-  expect(replacement.processing_state).toBe("queued");
-  const replacementItem = await waitForSubmissionEvidence(request, requiredString(replacement, "submission_id"));
+  expect(replacement.processing_state).toBe("completed");
+  const replacementItem = firstEvidenceResult(replacement);
   const replacementEvidenceID = requiredString(replacementItem, "evidence_id");
   expect(replacementItem.superseded_evidence_ids).toEqual([originalEvidenceID]);
 
@@ -726,23 +725,12 @@ function mcpToolPayload(response: Record<string, unknown>) {
   return JSON.parse(first.text) as Record<string, unknown>;
 }
 
-async function waitForSubmissionEvidence(request: APIRequestContext, submissionID: string): Promise<Record<string, unknown>> {
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    const status = mcpToolPayload(await mcpCall(request, "tools/call", {
-      name: "get_submission_status",
-      arguments: { submission_id: submissionID },
-    }));
-    const processingState = typeof status.processing_state === "string" ? status.processing_state : "";
-    if (["failed", "rejected", "quarantined"].includes(processingState)) {
-      throw new Error(`submission ${submissionID} reached ${processingState}: ${JSON.stringify(status.errors ?? [])}`);
-    }
-    const first = Array.isArray(status.evidence) ? status.evidence[0] : undefined;
-    if (processingState === "completed" && isRecord(first) && typeof first.evidence_id === "string" && first.evidence_id !== "") {
-      return first;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
+function firstEvidenceResult(result: Record<string, unknown>): Record<string, unknown> {
+  const first = Array.isArray(result.evidence) ? result.evidence[0] : undefined;
+  if (!isRecord(first) || typeof first.evidence_id !== "string" || first.evidence_id === "") {
+    throw new Error(`remember response did not return stored evidence: ${JSON.stringify(result.errors ?? [])}`);
   }
-  throw new Error(`submission status did not return evidence for ${submissionID}`);
+  return first;
 }
 
 function requiredString(value: Record<string, unknown>, field: string) {

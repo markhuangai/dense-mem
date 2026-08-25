@@ -211,7 +211,7 @@ func TestRememberUsesAuthenticatedContextAndPreservesExactEvidence(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, submissionID, result.SubmissionID)
 	require.Equal(t, string(domain.PlacementRunQueued), result.ProcessingState)
-	require.Equal(t, "get_submission_status", result.StatusTool)
+	require.Empty(t, result.StatusTool)
 	require.Equal(t, "corr-canonical", result.CorrelationID)
 	encoded, err := json.Marshal(result)
 	require.NoError(t, err)
@@ -479,25 +479,10 @@ func TestTerminalSubmissionErrorsAreClosedAndDeduplicated(t *testing.T) {
 	require.Equal(t, string(SubmissionErrorProviderUnavailable), failed.Evidence[0].Error.Code)
 	require.Equal(t, string(SubmissionErrorProviderUnavailable), failed.Evidence[1].Error.Code)
 	require.NotEmpty(t, failed.Errors[0].Message)
-	require.False(t, failed.Errors[0].Retryable)
-	require.Equal(t, string(SubmissionNextActionContactOperator), failed.Errors[0].NextAction)
+	require.True(t, failed.Errors[0].Retryable)
+	require.Equal(t, string(SubmissionNextActionRetrySameRequest), failed.Errors[0].NextAction)
 	require.NotEmpty(t, failed.Errors[0].Remediation)
 
-	rejected := relationshipCorrectionSubmissionStatus(&repository.RelationshipCorrectionStatus{
-		SubmissionID: "submission-2", ProcessingState: "rejected",
-	})
-	require.Len(t, rejected.Errors, 1)
-	require.Equal(t, string(SubmissionErrorPolicyRejected), rejected.Errors[0].Code)
-
-	unknown := relationshipCorrectionSubmissionStatus(&repository.RelationshipCorrectionStatus{
-		SubmissionID: "submission-3", ProcessingState: "failed", ErrorCode: "provider-secret-details",
-		ErrorMessage: "raw provider output must not cross the status boundary",
-	})
-	require.Len(t, unknown.Errors, 1)
-	require.Equal(t, string(SubmissionErrorProcessingFailed), unknown.Errors[0].Code)
-	require.False(t, unknown.Errors[0].Retryable)
-	require.Equal(t, string(SubmissionNextActionContactOperator), unknown.Errors[0].NextAction)
-	require.NotContains(t, unknown.Errors[0].Message, "provider-secret-details")
 }
 
 func TestSubmissionErrorGuidanceAndQuarantineAreActionable(t *testing.T) {
@@ -506,15 +491,15 @@ func TestSubmissionErrorGuidanceAndQuarantineAreActionable(t *testing.T) {
 		retryable  bool
 		nextAction SubmissionNextAction
 	}{
-		{SubmissionErrorSearchIndexingDelayed, true, SubmissionNextActionPollStatus},
-		{SubmissionErrorNoSupportedMemory, true, SubmissionNextActionResubmitSubmission},
-		{SubmissionErrorStaleInput, true, SubmissionNextActionResubmitSubmission},
-		{SubmissionErrorProviderUnavailable, false, SubmissionNextActionContactOperator},
-		{SubmissionErrorProviderResponseInvalid, false, SubmissionNextActionContactOperator},
+		{SubmissionErrorSearchIndexingDelayed, false, SubmissionNextActionContactOperator},
+		{SubmissionErrorNoSupportedMemory, true, SubmissionNextActionResubmitRemember},
+		{SubmissionErrorStaleInput, true, SubmissionNextActionResubmitRemember},
+		{SubmissionErrorProviderUnavailable, true, SubmissionNextActionRetrySameRequest},
+		{SubmissionErrorProviderResponseInvalid, true, SubmissionNextActionRetrySameRequest},
 		{SubmissionErrorInputBudgetExceeded, false, SubmissionNextActionContactOperator},
 		{SubmissionErrorConfigurationInvalid, false, SubmissionNextActionContactOperator},
-		{SubmissionErrorDatabaseFailure, false, SubmissionNextActionContactOperator},
-		{SubmissionErrorInternalFailure, false, SubmissionNextActionContactOperator},
+		{SubmissionErrorDatabaseFailure, true, SubmissionNextActionRetrySameRequest},
+		{SubmissionErrorInternalFailure, true, SubmissionNextActionRetrySameRequest},
 		{SubmissionErrorRelationshipVersionStale, true, SubmissionNextActionRetryCorrection},
 		{SubmissionErrorNoChange, false, SubmissionNextActionNone},
 		{SubmissionErrorQuarantined, false, SubmissionNextActionContactOperator},

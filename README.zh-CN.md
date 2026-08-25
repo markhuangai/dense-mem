@@ -156,14 +156,14 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 
 - `AI_VERIFIER_MODEL` 要设为 chat endpoint 上真实存在的模型。启动校验会在开始
   写入 memory 前发现缺失或错误配置。7B-8B 级别模型适合本地 smoke test；更大的
-模型在加载期间可能超过默认 60 秒超时。可重试处理受持久化的 placement 尝试预算限制，
-预算耗尽后会进入终态。
+模型在加载期间可能超过默认 60 秒超时。assessor 无法完成时，原始 Remember 调用会
+直接返回有界的 provider/configuration 错误，不会把工作留给轮询 worker。
 
 ## 证据生命周期
 
-`remember` 会先持久化精确证据并返回 `submission_id`；provider 调用和处理在确认
-后继续执行。使用 `get_submission_status` 查询按所有者隔离的处理与搜索状态。
-该状态投影不会暴露 placement 问题、provider 输出或内部 run ID。
+`remember` 会在返回前完成 assessor、确定性的语义规划、必需的 embedding 以及
+带版本围栏的 PostgreSQL 提交。响应直接包含终态处理/搜索状态、每条证据和
+Relationship 的结果以及有界错误；没有轮询，也没有 `get_submission_status` 工具。
 
 调用方提交逻辑层的 Entity、predicate 和 Value 提议，不提交文本 offset。
 `remember` 不接受 `span`、`surface` 或 Relationship 的 `supports` 字段。每条
@@ -291,7 +291,6 @@ remember 证据（可选 Entity/Relationship 提议）
 | 工具 | 使用方 | 注册方式 | 用途与能力 |
 |------|--------|----------|------------|
 | `remember` | 两者 | 正式与评估镜像 | 正式证据写入；评估 harness 也通过真实 intake 导入 corpus。 |
-| `get_submission_status` | 两者 | 正式与评估镜像 | 查询 `remember` 与 `correct_relationship` 的所有者隔离状态；harness 用它等待导入 placement。 |
 | `retract_evidence` | 正式 | 正式与评估镜像 | 退役调用者拥有的证据，同时保留只追加来源。 |
 | `correct_relationship` | 正式 | 正式与评估镜像 | 仅作者可替换活跃且有支持的 Relationship；supersede 原记录并保留支持链路。 |
 | `recall_memory` | 正式 | 正式与评估镜像 | 检索活跃证据上下文和 Relationship；有可执行后续动作时返回 `suggested_actions`。 |

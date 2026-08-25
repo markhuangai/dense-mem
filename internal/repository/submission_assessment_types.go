@@ -19,6 +19,17 @@ type SubmissionAssessmentRepository interface {
 	RequeueSubmissionAssessment(ctx context.Context, input RequeueSubmissionAssessmentInput) (*RequeueSubmissionAssessmentResult, error)
 }
 
+// InlineSubmissionAssessmentCommitter is the synchronous Remember extension
+// of SubmissionAssessmentRepository. It keeps the provider callback generic
+// so the repository does not depend on a concrete embedding client.
+type InlineSubmissionAssessmentCommitter interface {
+	CommitSubmissionAssessmentWithInlineEmbeddings(
+		context.Context,
+		CommitSubmissionAssessmentInput,
+		InlineEmbeddingBatch,
+	) (*CommitSubmissionAssessmentResult, error)
+}
+
 type SubmissionAssessmentRunScope struct {
 	TeamID           string
 	OwnerProfileID   string

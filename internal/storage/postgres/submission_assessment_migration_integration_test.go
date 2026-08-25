@@ -534,7 +534,7 @@ func TestRememberNormalizerMigrationFailsLegacyWorkAndPreservesIndependentWorkfl
 				WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
 			`, teamID, item.itemID).Scan(&failureCode, &nextAction))
 			assert.Equal(t, "submission_requires_resubmission", failureCode)
-			assert.Equal(t, "resubmit_submission", nextAction)
+			assert.Equal(t, "resubmit_remember", nextAction)
 		}
 	}
 	assertPlacementItemState(t, ctx, sqlDB, teamID, stable.items[0].itemID, "completed", "validated_claim")

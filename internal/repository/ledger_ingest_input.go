@@ -15,6 +15,8 @@ const maxEvidenceItems = 100
 func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.IngestID = strings.TrimSpace(input.IngestID)
+	input.PlacementRunID = strings.TrimSpace(input.PlacementRunID)
 	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.RequestHash = strings.TrimSpace(input.RequestHash)
@@ -56,6 +58,16 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 	}
 	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
 		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	if input.IngestID != "" {
+		if _, err := uuid.Parse(input.IngestID); err != nil {
+			return fmt.Errorf("ingest_id is invalid: %w", err)
+		}
+	}
+	if input.PlacementRunID != "" {
+		if _, err := uuid.Parse(input.PlacementRunID); err != nil {
+			return fmt.Errorf("placement_run_id is invalid: %w", err)
+		}
 	}
 	if input.SpaceID == "" && input.SpaceGeneration != 0 {
 		return errors.New("space_id is required when space_generation is set")

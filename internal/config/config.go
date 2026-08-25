@@ -352,6 +352,18 @@ func (e *ValidationError) Error() string {
 // server process. This is intentionally stricter than Load() so auxiliary
 // binaries such as migrations can still reuse the shared loader.
 func (c *Config) ValidateServerStartup() error {
+	for _, field := range []string{
+		"MEMORY_PLACEMENT_WORKER_COUNT",
+		"MEMORY_PLACEMENT_POLL_SECONDS",
+		"EMBEDDING_WORKER_COUNT",
+		"EMBEDDING_BATCH_SIZE",
+		"EMBEDDING_JOB_POLL_SECONDS",
+		"EMBEDDING_JOB_MAX_ATTEMPTS",
+	} {
+		if strings.TrimSpace(os.Getenv(field)) != "" {
+			return &ValidationError{Field: field, Message: "retired by synchronous Remember; unset this setting"}
+		}
+	}
 	required := []struct {
 		field string
 		value string

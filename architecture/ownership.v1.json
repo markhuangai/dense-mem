@@ -170,7 +170,6 @@
     {"path":"cmd/internal/serverapp/server.go","function":"RunActiveServer","kind":"goroutine","ordinal":5,"role":"worker","owner_issue":277},
     {"path":"cmd/internal/serverapp/server.go","function":"RunActiveServer","kind":"start","ordinal":11,"role":"worker","owner_issue":277},
     {"path":"cmd/internal/serverapp/server.go","function":"RunActiveServer","kind":"goroutine","ordinal":6,"role":"worker","owner_issue":277},
-    {"path":"cmd/internal/serverapp/server.go","function":"RunActiveServer","kind":"start","ordinal":12,"role":"worker","owner_issue":277},
     {"path":"cmd/internal/serverapp/server.go","function":"startConflictReviewWorkers","kind":"goroutine","ordinal":1,"role":"worker","owner_issue":277},
     {"path":"cmd/oauth-compat-harness/main.go","function":"run","kind":"goroutine","ordinal":1,"role":"worker","owner_issue":277},
     {"path":"internal/evalharness/client.go","function":"importCorpusFileConcurrent","kind":"goroutine","ordinal":1,"role":"worker","owner_issue":277},

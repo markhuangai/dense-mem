@@ -19,7 +19,7 @@ const listedResponse = await mcpJSON("tools/list", {});
 if (listedResponse.error || !listedResponse.result) throw new Error("tools/list returned a bounded error");
 const listed = listedResponse.result;
 const toolNames = new Set((listed.tools ?? []).map((tool) => tool.name));
-for (const name of ["remember", "get_submission_status", "recall_memory"]) {
+for (const name of ["remember", "recall_memory"]) {
   if (!toolNames.has(name)) throw new Error(`tools/list is missing ${name}`);
 }
 
@@ -30,8 +30,7 @@ const writeFailureProxy = await proxyJSON("/stats");
 if (writeFailureProxy.mode !== "quota" || writeFailureProxy.requests !== 1 || writeFailureProxy.quota_failures !== 1) {
   throw new Error(`quota proxy did not prove one non-amplified write request: ${JSON.stringify(writeFailureProxy)}`);
 }
-const failedStatus = await mcpTool("get_submission_status", { submission_id: submissionID });
-assertPublicDelayedStatus(failedStatus, submissionID);
+assertPublicInlineFailure(remember, submissionID);
 const failedRecall = await mcpTool("recall_memory", { query: `Embedding reconciliation ${runID}`, limit: 10 });
 const lexicalFailureVisible = (failedRecall.results ?? []).some((item) => String(item.context ?? "").includes(runID));
 if (!lexicalFailureVisible) {
@@ -221,22 +220,9 @@ async function waitForConvergedProjection() {
   throw new Error("timed out waiting for search convergence");
 }
 
-async function waitForCurrentSubmission(id) {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    const status = await mcpTool("get_submission_status", { submission_id: id });
-    if (["current", "not_required"].includes(status.search_state) && ["completed", "processing"].includes(status.processing_state)) return status;
-    await delay(2_000);
-  }
-  throw new Error("timed out waiting for current public submission status");
-}
-
-function assertPublicDelayedStatus(status, id) {
-  if (status.submission_id !== id || status.search_state !== "failed") throw new Error(`failed submission status is not bounded: ${JSON.stringify(status)}`);
-  if (!Array.isArray(status.errors) || status.errors.length !== 0) throw new Error(`indexing degradation became a terminal submission error: ${JSON.stringify(status)}`);
-  if (!status.degradations?.some((item) => item.frontier === "search" && item.optional === true && item.code === "search_indexing_delayed")) {
-    throw new Error(`submission status omitted the search_indexing_delayed degradation: ${JSON.stringify(status)}`);
-  }
-  if (JSON.stringify(status).includes("insufficient_quota")) throw new Error("public status exposed provider failure details");
+function assertPublicInlineFailure(status, id) {
+  if (status.submission_id !== id || !Array.isArray(status.errors) || status.errors.length === 0) throw new Error(`inline Remember failure is not bounded: ${JSON.stringify(status)}`);
+  if (JSON.stringify(status).includes("insufficient_quota")) throw new Error("Remember result exposed provider failure details");
 }
 
 function assertAttentionProjection(projection) {

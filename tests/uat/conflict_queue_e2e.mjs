@@ -142,7 +142,7 @@ async function submitRelationship(apiKey, teamID, input) {
   });
   const submissionID = String(receipt.submission_id ?? "");
   assert(submissionID, `remember ${input.label} omitted submission ID`);
-  const status = await waitForSubmission(apiKey, submissionID);
+  const status = receipt;
   assert(status.processing_state === "completed", `submission ${input.label} was ${status.processing_state}`);
   const evidenceID = String(status.evidence?.[0]?.evidence_id ?? "");
   assert(evidenceID, `submission ${input.label} omitted evidence lineage`);
@@ -189,16 +189,6 @@ async function currentConflict(apiKey, relationshipID, status) {
     await delay(250);
   }
   throw new Error(`timed out waiting for ${status} conflict`);
-}
-
-async function waitForSubmission(apiKey, submissionID) {
-  const attempts = Math.ceil((submissionTimeoutSeconds * 1_000) / 250);
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const status = await mcpSuccess(apiKey, "get_submission_status", { submission_id: submissionID });
-    if (["completed", "rejected", "failed", "quarantined"].includes(status.processing_state)) return status;
-    await delay(250);
-  }
-  throw new Error(`timed out waiting for submission ${submissionID}`);
 }
 
 async function waitForPrometheusMetric(query, predicate, timeoutMs) {

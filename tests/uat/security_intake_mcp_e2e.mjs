@@ -106,7 +106,10 @@ for (const testCase of acceptedCases) {
   }
   assertAcceptedIngest(submissionID, input.evidence[0].content);
   verifierAfterAccepted = await waitForExactlyOneVerifierRequest(verifierAfterAccepted, teamID);
-  const placement = await waitForTerminalPlacement(submissionID, testCase.allowProviderQuarantine);
+  const placement = accepted;
+  if (!["completed", "rejected", "quarantined"].includes(placement.processing_state)) {
+    throw new Error(`${testCase.name} remember did not return a terminal result`);
+  }
   assertTerminalRelationshipDisposition(placement, testCase.name);
   acceptedResults.push({
     name: testCase.name,
@@ -239,22 +242,6 @@ function relationshipRememberInput(payload, idempotencyKey, source, clientCommen
     }],
     relationships: [relationship],
   };
-}
-
-async function waitForTerminalPlacement(submissionID, allowProviderQuarantine = false) {
-  let lastStatus = "";
-  for (let attempt = 0; attempt < 180; attempt += 1) {
-    const placement = await mcpSuccess(apiKey, "get_submission_status", { submission_id: submissionID });
-    lastStatus = stringValue(placement.processing_state);
-    if (["completed", "rejected", "failed", "quarantined"].includes(lastStatus)) {
-      if (lastStatus === "failed" || (lastStatus === "quarantined" && !allowProviderQuarantine)) {
-        throw new Error(`accepted remember reached unexpected ${lastStatus}`);
-      }
-      return placement;
-    }
-    await delay(2_000);
-  }
-  throw new Error(`timed out waiting for accepted placement (last status: ${lastStatus || "unknown"})`);
 }
 
 async function waitForExactlyOneVerifierRequest(before, targetTeamID) {

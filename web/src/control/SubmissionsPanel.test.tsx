@@ -11,7 +11,7 @@ describe("SubmissionsPanel", () => {
         team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1",
         submission_id: "submission-1", processing_state: "failed", correlation_id: "corr-1",
         attempts: 5, max_attempts: 5, evidence_count: 1, submitted_at: "2026-08-18T01:00:00Z",
-        error: { code: "no_supported_memory", message: "no supported memory could be stored from this submission", retryable: true, next_action: "resubmit_submission", remediation: "Submit the complete batch again with remember and a new idempotency_key after correcting the input." },
+		error: { code: "no_supported_memory", message: "no supported memory could be stored from this submission", retryable: true, next_action: "resubmit_remember", remediation: "Submit the complete batch again with remember and a new idempotency_key after correcting the input." },
       }],
       pagination: { limit: 50, offset: 0, total: 1 },
     });
@@ -21,7 +21,7 @@ describe("SubmissionsPanel", () => {
       check_after_seconds: 60, correlation_id: "corr-1", attempts: 5, max_attempts: 5,
       submitted_at: "2026-08-18T01:00:00Z", updated_at: "2026-08-18T01:05:00Z",
       evidence: [{ evidence_id: "evidence-1", evidence_index: 0, superseded_evidence_ids: [], search_state: "not_required" }],
-      errors: [{ code: "no_supported_memory", message: "no supported memory could be stored from this submission", retryable: true, next_action: "resubmit_submission", remediation: "Submit the complete batch again with remember and a new idempotency_key after correcting the input." }],
+		errors: [{ code: "no_supported_memory", message: "no supported memory could be stored from this submission", retryable: true, next_action: "resubmit_remember", remediation: "Submit the complete batch again with remember and a new idempotency_key after correcting the input." }],
     });
     const listOperationLogs = vi.fn().mockResolvedValue({
       data: [{ id: "log-1", timestamp: "2026-08-18T01:05:00Z", severity: "WARN", severity_rank: 30, message: "submission_failed", source: "worker", team_id: "team-1", profile_id: "owner-1", correlation_id: "corr-1", error: "", attrs: { from: "processing", to: "failed", stage: "assessment", reason_code: "terminal_failure" } }],
@@ -33,7 +33,7 @@ describe("SubmissionsPanel", () => {
 
     expect(await screen.findByText("no_supported_memory")).toBeInTheDocument();
     expect(screen.getByText("Submit the complete batch again with remember and a new idempotency_key after correcting the input.")).toBeInTheDocument();
-    expect(screen.getByText("Resubmit Submission")).toBeInTheDocument();
+    expect(screen.getByText("Resubmit Remember")).toBeInTheDocument();
     expect(screen.getAllByText("Failed").length).toBeGreaterThan(0);
     expect(screen.getByText(/Processing → Failed/)).toBeInTheDocument();
     expect(screen.queryByText(/private evidence/i)).not.toBeInTheDocument();
@@ -238,7 +238,7 @@ describe("SubmissionsPanel", () => {
           code: "no_supported_memory",
           message: "no supported memory could be stored from this submission",
           retryable: true,
-          next_action: "resubmit_submission",
+		  next_action: "resubmit_remember",
           remediation: "Submit the complete batch again with remember and a new idempotency_key after correcting the input.",
         }],
       }),

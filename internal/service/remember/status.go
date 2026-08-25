@@ -43,8 +43,15 @@ func submissionStatusResultFromLedger(placement *StageResult) *SubmissionStatusR
 			superseded = []string{}
 		}
 		var itemError *SubmissionStatusError
+		disposition := "not_stored"
+		reason := "not_supported_by_evidence"
+		if item.Status == string(domain.PlacementRunCompleted) || item.Status == "completed" {
+			disposition = "stored"
+			reason = ""
+		}
 		if semanticError := submissionItemFailureError(item, processing); semanticError != nil {
 			itemError = semanticError
+			reason = semanticError.Code
 			appendStatusError(*semanticError)
 		} else if itemSearchState == string(domain.SearchProjectionFailed) {
 			if len(degradations) == 0 {
@@ -56,7 +63,7 @@ func submissionStatusResultFromLedger(placement *StageResult) *SubmissionStatusR
 				})
 			}
 		}
-		items = append(items, SubmissionEvidenceStatus{EvidenceID: item.FragmentID, EvidenceIndex: item.EvidenceIndex, SupersededEvidenceIDs: superseded, SearchState: itemSearchState, Error: itemError})
+		items = append(items, SubmissionEvidenceStatus{Disposition: disposition, EvidenceID: item.FragmentID, EvidenceIndex: item.EvidenceIndex, SupersededEvidenceIDs: superseded, SearchState: itemSearchState, Reason: reason, Error: itemError})
 	}
 	if processing == "rejected" && len(statusErrors) == 0 {
 		appendStatusError(submissionStatusError(SubmissionErrorNoSupportedMemory))

@@ -368,8 +368,8 @@ async function submitRelationship(apiKey, input) {
   const evidence = relationshipEvidence(input);
   const receipt = await mcpSuccess(apiKey, "remember", rememberRequest(input, evidence));
   const submissionID = String(receipt.submission_id ?? "");
-  assert(submissionID && receipt.status_tool === "get_submission_status", `remember receipt is invalid: ${JSON.stringify(receipt)}`);
-  const status = await waitForSubmission(apiKey, submissionID);
+  assert(submissionID && ["completed", "rejected", "quarantined"].includes(receipt.processing_state), `remember result is not terminal: ${JSON.stringify(receipt)}`);
+  const status = receipt;
   const expectedState = input.expectedState ?? "completed";
   assert(status.processing_state === expectedState, `submission ${input.label} state = ${status.processing_state}, want ${expectedState}: ${JSON.stringify(status)}`);
   const evidenceID = String(status.evidence?.[0]?.evidence_id ?? "");
@@ -444,16 +444,6 @@ function relationshipHint(input, evidence) {
     ...(input.conflictContext ? { conflict_context: input.conflictContext } : {}),
     evidence_indices: [0],
   };
-}
-
-async function waitForSubmission(apiKey, submissionID) {
-  const attempts = Math.ceil((submissionTimeoutSeconds * 1_000) / 250);
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const status = await mcpSuccess(apiKey, "get_submission_status", { submission_id: submissionID });
-    if (["completed", "rejected", "failed", "quarantined"].includes(status.processing_state)) return status;
-    await delay(250);
-  }
-  throw new Error(`timed out waiting for submission ${submissionID} after ${submissionTimeoutSeconds}s`);
 }
 
 async function currentConflict(apiKey, relationshipID, status) {

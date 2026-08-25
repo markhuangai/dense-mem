@@ -24,7 +24,6 @@ import (
 
 const (
 	rememberCheckAfterSeconds = 60
-	rememberStatusTool        = "get_submission_status"
 )
 
 var (
@@ -76,7 +75,7 @@ type GetSubmissionStatusRequest struct {
 	SubmissionID string `json:"submission_id"`
 }
 
-const requestHashContractVersion = "dense-mem.v2.6"
+const requestHashContractVersion = "dense-mem.v2.6.1"
 
 type RememberEvidenceInput struct {
 	Content                string         `json:"content"`
@@ -94,14 +93,22 @@ type RememberEvidenceInput struct {
 
 type RememberResult struct {
 	// IngestID is retained for internal compatibility and is never serialized.
-	ContractVersion   string `json:"contract_version"`
-	IngestID          string `json:"-"`
-	SubmissionID      string `json:"submission_id"`
-	SubmissionKind    string `json:"submission_kind"`
-	ProcessingState   string `json:"processing_state"`
-	CheckAfterSeconds int    `json:"check_after_seconds"`
-	StatusTool        string `json:"status_tool"`
-	CorrelationID     string `json:"correlation_id"`
+	ContractVersion      string                                   `json:"contract_version"`
+	IngestID             string                                   `json:"-"`
+	SubmissionID         string                                   `json:"submission_id"`
+	SubmissionKind       string                                   `json:"submission_kind"`
+	ProcessingState      string                                   `json:"processing_state"`
+	CheckAfterSeconds    int                                      `json:"-"`
+	StatusTool           string                                   `json:"-"`
+	CorrelationID        string                                   `json:"correlation_id"`
+	SearchState          string                                   `json:"search_state"`
+	Evidence             []SubmissionEvidenceStatus               `json:"evidence"`
+	Errors               []SubmissionStatusError                  `json:"errors"`
+	Degradations         []SubmissionStatusDegradation            `json:"-"`
+	RelationshipResults  []SubmissionRelationshipResult           `json:"relationship_results"`
+	QuarantineExpiresAt  *time.Time                               `json:"quarantine_expires_at,omitempty"`
+	AwaitingConfirmation *SubmissionAwaitingConfirmation          `json:"awaiting_confirmation,omitempty"`
+	CorrectionResult     *repository.RelationshipCorrectionResult `json:"correction_result,omitempty"`
 }
 
 type SubmissionStatusResult struct {
@@ -149,10 +156,12 @@ type SubmissionAwaitingConfirmation struct {
 }
 
 type SubmissionEvidenceStatus struct {
-	EvidenceID            string                 `json:"evidence_id"`
+	Disposition           string                 `json:"disposition"`
+	EvidenceID            string                 `json:"evidence_id,omitempty"`
 	EvidenceIndex         int                    `json:"evidence_index"`
 	SupersededEvidenceIDs []string               `json:"superseded_evidence_ids"`
 	SearchState           string                 `json:"search_state"`
+	Reason                string                 `json:"reason,omitempty"`
 	Error                 *SubmissionStatusError `json:"error,omitempty"`
 }
 
@@ -460,7 +469,7 @@ func rememberResultFromLedger(created *repository.CreateIngestResult, correlatio
 		SubmissionKind:    "remember",
 		ProcessingState:   publicSubmissionProcessingState(created.Status),
 		CheckAfterSeconds: rememberCheckAfterSeconds,
-		StatusTool:        rememberStatusTool,
+		StatusTool:        "",
 		CorrelationID:     correlationID,
 	}
 }

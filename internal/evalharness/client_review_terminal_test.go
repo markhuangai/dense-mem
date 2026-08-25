@@ -12,15 +12,9 @@ func TestHTTPClientImportCorpusRejectsSemanticRejectionEvenWithEvidence(t *testi
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "tool:remember":
-			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-review-terminal"})
-		case "tool:get_submission_status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    "submission-review-terminal",
-				"processing_state": "rejected",
-				"search_state":     "not_required",
-				"evidence": []map[string]any{{
-					"evidence_id": "evidence-review-terminal",
-				}},
+				"submission_id": "submission-review-terminal", "processing_state": "rejected", "search_state": "not_required",
+				"evidence": []map[string]any{{"disposition": "not_stored", "evidence_index": 0, "search_state": "not_required"}},
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -30,7 +24,7 @@ func TestHTTPClientImportCorpusRejectsSemanticRejectionEvenWithEvidence(t *testi
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-review-terminal", Content: "content"}})
-	if err == nil || !strings.Contains(err.Error(), "import doc-review-terminal: submission status rejected") {
+	if err == nil || !strings.Contains(err.Error(), "import doc-review-terminal: remember processing_state rejected") {
 		t.Fatalf("ImportCorpus err = %v", err)
 	}
 }
@@ -39,14 +33,9 @@ func TestHTTPClientImportCorpusRejectsQuarantinedSubmissionEvenWithEvidence(t *t
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "tool:remember":
-			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-quarantined"})
-		case "tool:get_submission_status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    "submission-quarantined",
-				"processing_state": "quarantined",
-				"evidence": []map[string]any{{
-					"evidence_id": "evidence-quarantined",
-				}},
+				"submission_id": "submission-quarantined", "processing_state": "quarantined", "search_state": "not_required",
+				"evidence": []map[string]any{{"disposition": "not_stored", "evidence_index": 0, "search_state": "not_required"}},
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -56,7 +45,7 @@ func TestHTTPClientImportCorpusRejectsQuarantinedSubmissionEvenWithEvidence(t *t
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-quarantined", Content: "content"}})
-	if err == nil || !strings.Contains(err.Error(), "submission submission-quarantined quarantined") {
+	if err == nil || !strings.Contains(err.Error(), "remember processing_state quarantined") {
 		t.Fatalf("ImportCorpus err = %v", err)
 	}
 }
@@ -65,15 +54,7 @@ func TestHTTPClientImportCorpusRejectsUnknownProcessingStateWithEvidence(t *test
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "tool:remember":
-			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-unknown-state"})
-		case "tool:get_submission_status":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    "submission-unknown-state",
-				"processing_state": "unknown_state",
-				"evidence": []map[string]any{{
-					"evidence_id": "evidence-unknown-state",
-				}},
-			})
+			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-unknown-state", "processing_state": "unknown_state"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -82,7 +63,7 @@ func TestHTTPClientImportCorpusRejectsUnknownProcessingStateWithEvidence(t *test
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-awaiting-review", Content: "content"}})
-	if err == nil || !strings.Contains(err.Error(), `returned unknown processing_state "unknown_state"`) {
+	if err == nil || !strings.Contains(err.Error(), "remember processing_state unknown_state") {
 		t.Fatalf("ImportCorpus err = %v", err)
 	}
 }

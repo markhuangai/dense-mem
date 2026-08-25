@@ -71,7 +71,10 @@ if (!submissionID) {
   throw new Error("remember did not return a submission_id");
 }
 
-const placementStatus = await waitForFirstDisposition(submissionID);
+const placementStatus = String(remember.processing_state ?? "");
+if (!["completed", "rejected", "quarantined"].includes(placementStatus)) {
+  throw new Error(`remember did not return a terminal result: ${JSON.stringify(remember)}`);
+}
 await mcpTool("recall_memory", {
   query: `Telemetry E2E ${runID} exact evidence`,
   limit: 5,
@@ -305,19 +308,6 @@ async function mcpTool(name, args) {
     throw new Error(`MCP ${name} result missing text`);
   }
   return JSON.parse(text);
-}
-
-async function waitForFirstDisposition(submissionID) {
-  let lastStatus = "";
-  for (let attempt = 0; attempt < 150; attempt += 1) {
-    const placement = await mcpTool("get_submission_status", { submission_id: submissionID });
-    lastStatus = String(placement.processing_state ?? "");
-    if (["completed", "rejected", "failed", "quarantined"].includes(lastStatus)) {
-      return lastStatus;
-    }
-    await delay(2_000);
-  }
-  throw new Error(`timed out waiting for first disposition (last status: ${lastStatus || "unknown"})`);
 }
 
 async function waitForTelemetrySignals() {

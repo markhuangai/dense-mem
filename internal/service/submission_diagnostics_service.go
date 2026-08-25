@@ -178,6 +178,13 @@ func submissionDiagnosticSummary(record repository.SubmissionDiagnosticRecord) S
 	var statusError *memoryservice.SubmissionStatusError
 	if len(status.Errors) > 0 {
 		value := status.Errors[0]
+		// Control diagnostics describe an already terminal attempt. A provider
+		// failure is actionable for the originating caller, but the portal must
+		// not present it as an in-flight retry or polling state.
+		if record.OperatorDiagnostic != nil {
+			value.Retryable = false
+			value.NextAction = string(memoryservice.SubmissionNextActionContactOperator)
+		}
 		statusError = &value
 	}
 	submittedAt := time.Time{}

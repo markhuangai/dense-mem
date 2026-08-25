@@ -21,12 +21,18 @@ const (
 	SubmissionErrorNoSupportedMemory = rememberapp.SubmissionErrorNoSupportedMemory
 	SubmissionErrorStaleInput        = rememberapp.SubmissionErrorStaleInput
 
-	SubmissionErrorProviderUnavailable     = rememberapp.SubmissionErrorProviderUnavailable
-	SubmissionErrorProviderResponseInvalid = rememberapp.SubmissionErrorProviderResponseInvalid
-	SubmissionErrorInputBudgetExceeded     = rememberapp.SubmissionErrorInputBudgetExceeded
-	SubmissionErrorConfigurationInvalid    = rememberapp.SubmissionErrorConfigurationInvalid
-	SubmissionErrorDatabaseFailure         = rememberapp.SubmissionErrorDatabaseFailure
-	SubmissionErrorInternalFailure         = rememberapp.SubmissionErrorInternalFailure
+	SubmissionErrorProviderUnavailable      = rememberapp.SubmissionErrorProviderUnavailable
+	SubmissionErrorProviderResponseInvalid  = rememberapp.SubmissionErrorProviderResponseInvalid
+	SubmissionErrorInputBudgetExceeded      = rememberapp.SubmissionErrorInputBudgetExceeded
+	SubmissionErrorConfigurationInvalid     = rememberapp.SubmissionErrorConfigurationInvalid
+	SubmissionErrorIdempotencyConflict      = rememberapp.SubmissionErrorIdempotencyConflict
+	SubmissionErrorEmbeddingUnavailable     = rememberapp.SubmissionErrorEmbeddingUnavailable
+	SubmissionErrorEmbeddingResponseInvalid = rememberapp.SubmissionErrorEmbeddingResponseInvalid
+	SubmissionErrorCommitConflict           = rememberapp.SubmissionErrorCommitConflict
+	SubmissionErrorDatabaseFailure          = rememberapp.SubmissionErrorDatabaseFailure
+	SubmissionErrorRequestTimeout           = rememberapp.SubmissionErrorRequestTimeout
+	SubmissionErrorRequestCancelled         = rememberapp.SubmissionErrorRequestCancelled
+	SubmissionErrorInternalFailure          = rememberapp.SubmissionErrorInternalFailure
 
 	SubmissionErrorPolicyRejected        = rememberapp.SubmissionErrorPolicyRejected
 	SubmissionErrorAssessorInvalid       = rememberapp.SubmissionErrorAssessorInvalid
@@ -51,11 +57,11 @@ const (
 	SubmissionErrorPersistentAmbiguity           = rememberapp.SubmissionErrorPersistentAmbiguity
 	SubmissionErrorInactiveRelationshipCollision = rememberapp.SubmissionErrorInactiveRelationshipCollision
 
-	SubmissionNextActionPollStatus         = rememberapp.SubmissionNextActionPollStatus
-	SubmissionNextActionResubmitSubmission = rememberapp.SubmissionNextActionResubmitSubmission
-	SubmissionNextActionRetryCorrection    = rememberapp.SubmissionNextActionRetryCorrection
-	SubmissionNextActionContactOperator    = rememberapp.SubmissionNextActionContactOperator
-	SubmissionNextActionNone               = rememberapp.SubmissionNextActionNone
+	SubmissionNextActionRetrySameRequest = rememberapp.SubmissionNextActionRetrySameRequest
+	SubmissionNextActionResubmitRemember = rememberapp.SubmissionNextActionResubmitRemember
+	SubmissionNextActionRetryCorrection  = rememberapp.SubmissionNextActionRetryCorrection
+	SubmissionNextActionContactOperator  = rememberapp.SubmissionNextActionContactOperator
+	SubmissionNextActionNone             = rememberapp.SubmissionNextActionNone
 )
 
 func SubmissionErrorCodes() []string {

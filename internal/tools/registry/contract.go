@@ -2,12 +2,10 @@ package registry
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -16,7 +14,6 @@ import (
 
 const (
 	ToolRemember                    = "remember"
-	ToolGetSubmissionStatus         = "get_submission_status"
 	ToolRetractEvidence             = "retract_evidence"
 	ToolCorrectRelationship         = "correct_relationship"
 	ToolRecallMemory                = "recall_memory"
@@ -32,7 +29,6 @@ const (
 // portal data; it is intentionally absent from the public MCP catalog.
 var contractToolNames = []string{
 	ToolRemember,
-	ToolGetSubmissionStatus,
 	ToolRetractEvidence,
 	ToolCorrectRelationship,
 	ToolRecallMemory,
@@ -54,13 +50,6 @@ func ContractTools() []Tool {
 			[]string{"write"},
 			rememberInputSchema(),
 			rememberOutputSchema(),
-		),
-		contractTool(
-			ToolGetSubmissionStatus,
-			"Poll the bounded status of a submitted evidence batch.",
-			[]string{"read"},
-			getSubmissionStatusInputSchema(),
-			submissionStatusOutputSchema(),
 		),
 		contractTool(
 			ToolRetractEvidence,
@@ -148,43 +137,21 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				res, err := deps.Remember.Remember(ctx, req)
 				if err != nil {
-					return nil, wrapRememberValidationError(err)
-				}
-				return structToMap(res)
-			}
-		case ToolGetSubmissionStatus:
-			tool := tools[i]
-			tools[i].Invoke = func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-				statusService := deps.SubmissionStatus
-				if statusService == nil {
-					if candidate, ok := deps.Remember.(memoryservice.SubmissionStatusService); ok {
-						statusService = candidate
+					validation := wrapRememberValidationError(err)
+					if _, ok := ContractValidationResultFromError(validation); ok {
+						return nil, validation
 					}
+					return nil, rememberToolResultError(ctx, err)
 				}
-				if statusService == nil && deps.Lifecycle == nil {
-					return nil, ErrToolUnavailable
-				}
-				if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
-					return nil, fmt.Errorf("get_submission_status: invalid input: %w", err)
-				}
-				var req memoryservice.GetSubmissionStatusRequest
-				if err := remapInput(input, &req); err != nil {
-					return nil, fmt.Errorf("get_submission_status: invalid input: %w", err)
-				}
-				if statusService != nil {
-					res, err := statusService.GetSubmissionStatus(ctx, req)
-					if err == nil {
-						return structToMap(res)
-					}
-					if !isSubmissionNotFound(err) || deps.Lifecycle == nil {
-						return nil, err
-					}
-				}
-				res, err := deps.Lifecycle.GetRelationshipCorrectionStatus(ctx, req)
+				result, err := structToMap(res)
 				if err != nil {
 					return nil, err
 				}
-				return structToMap(res)
+				state := strings.TrimSpace(fmt.Sprint(result["processing_state"]))
+				if state == "rejected" || state == "quarantined" {
+					return nil, NewToolResultError(result)
+				}
+				return result, nil
 			}
 		case ToolRetractEvidence:
 			tool := tools[i]
@@ -220,9 +187,16 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				res, err := deps.Lifecycle.CorrectRelationship(ctx, req)
 				if err != nil {
+					return nil, correctionToolResultError(ctx, err)
+				}
+				result, err := structToMap(res)
+				if err != nil {
 					return nil, err
 				}
-				return structToMap(res)
+				if state := strings.TrimSpace(fmt.Sprint(result["processing_state"])); state == "rejected" {
+					return nil, NewToolResultError(result)
+				}
+				return result, nil
 			}
 		case ToolRecallMemory:
 			tool := tools[i]
@@ -361,11 +335,6 @@ func contractTools(deps Dependencies) []Tool {
 		}
 	}
 	return tools
-}
-
-func isSubmissionNotFound(err error) bool {
-	var apiErr *httperr.APIError
-	return errors.As(err, &apiErr) && apiErr.Code == httperr.NOT_FOUND
 }
 
 func objectArray(value any) []map[string]any {

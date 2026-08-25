@@ -60,14 +60,17 @@ func (s *stubRememberService) Remember(_ context.Context, req memoryservice.Reme
 		return nil, s.err
 	}
 	return &memoryservice.RememberResult{
-		ContractVersion:   domain.ContractVersion,
-		IngestID:          "ingest-canonical",
-		SubmissionID:      "ingest-canonical",
-		SubmissionKind:    "remember",
-		ProcessingState:   string(domain.PlacementRunQueued),
-		CheckAfterSeconds: 60,
-		StatusTool:        ToolGetSubmissionStatus,
-		CorrelationID:     "corr-canonical",
+		ContractVersion:     domain.ContractVersion,
+		IngestID:            "ingest-canonical",
+		SubmissionID:        "ingest-canonical",
+		SubmissionKind:      "remember",
+		ProcessingState:     string(domain.PlacementRunCompleted),
+		SearchState:         string(domain.SearchProjectionCurrent),
+		Evidence:            []memoryservice.SubmissionEvidenceStatus{},
+		Errors:              []memoryservice.SubmissionStatusError{},
+		Degradations:        []memoryservice.SubmissionStatusDegradation{},
+		RelationshipResults: []memoryservice.SubmissionRelationshipResult{},
+		CorrelationID:       "corr-canonical",
 	}, nil
 }
 

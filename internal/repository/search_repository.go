@@ -18,6 +18,40 @@ const (
 	defaultEmbeddingJobMaxAttempts       = 20
 )
 
+type inlineEmbeddingWritesContextKey struct{}
+type inlineEmbeddingBatchContextKey struct{}
+
+// WithInlineEmbeddingWrites marks a semantic write as request-scoped. Search
+// documents are still version-fenced, but no legacy embedding job is enqueued;
+// the caller must complete the loaded documents with one validated batch before
+// returning the terminal result.
+func WithInlineEmbeddingWrites(ctx context.Context) context.Context {
+	return context.WithValue(ctx, inlineEmbeddingWritesContextKey{}, true)
+}
+
+// InlineEmbeddingWrite reports whether the request-scoped no-queue write
+// boundary is active.
+func InlineEmbeddingWrite(ctx context.Context) bool {
+	return inlineEmbeddingWrites(ctx)
+}
+
+// WithInlineEmbeddingBatch attaches the request-owned provider callback used
+// by correction commits. The callback is invoked only inside the repository's
+// transaction after all final search documents have been rendered.
+func WithInlineEmbeddingBatch(ctx context.Context, batch InlineEmbeddingBatch) context.Context {
+	return context.WithValue(ctx, inlineEmbeddingBatchContextKey{}, batch)
+}
+
+func inlineEmbeddingBatch(ctx context.Context) InlineEmbeddingBatch {
+	value, _ := ctx.Value(inlineEmbeddingBatchContextKey{}).(InlineEmbeddingBatch)
+	return value
+}
+
+func inlineEmbeddingWrites(ctx context.Context) bool {
+	value, _ := ctx.Value(inlineEmbeddingWritesContextKey{}).(bool)
+	return value
+}
+
 var (
 	ErrSearchStaleVersion                   = errors.New("search stale source or document version")
 	ErrSearchContractMismatch               = errors.New("search contract mismatch")

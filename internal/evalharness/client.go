@@ -78,6 +78,13 @@ func (c *HTTPClient) callMCPTool(ctx context.Context, name string, input any, ou
 	if out == nil {
 		return nil
 	}
+	if rpc.Result.IsError && len(rpc.Result.StructuredContent) > 0 {
+		encoded, err := json.Marshal(rpc.Result.StructuredContent)
+		if err == nil {
+			_ = json.Unmarshal(encoded, out)
+		}
+		return fmt.Errorf("mcp tools/call %s returned a structured tool error", name)
+	}
 	for _, content := range rpc.Result.Content {
 		if content.Type != "text" || strings.TrimSpace(content.Text) == "" {
 			continue
@@ -99,7 +106,9 @@ type mcpToolResponse struct {
 }
 
 type mcpToolResult struct {
-	Content []mcpToolContent `json:"content"`
+	Content           []mcpToolContent `json:"content"`
+	StructuredContent map[string]any   `json:"structuredContent,omitempty"`
+	IsError           bool             `json:"isError,omitempty"`
 }
 
 type mcpToolContent struct {
@@ -397,23 +406,22 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 	if err := c.callToolWithRetry(ctx, "remember", input, &out); err != nil {
 		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
 	}
-	submissionID := stringValue(out["submission_id"])
-	if submissionID == "" {
+	if stringValue(out["submission_id"]) == "" {
 		return mapping, fmt.Errorf("import %s: remember response missing submission_id", item.SourceDocID)
 	}
-	status, err := c.WaitForSubmissionStatusResult(ctx, submissionID, c.placementTimeout())
-	if err != nil {
-		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
+	processing := submissionProcessingState(out)
+	if processing == "" {
+		return mapping, fmt.Errorf("import %s: remember response missing terminal processing_state", item.SourceDocID)
 	}
-	if processing := submissionProcessingState(status); processing != "completed" {
-		if cause := submissionErrorMessage(status); cause != "" {
-			return mapping, fmt.Errorf("import %s: submission status %s: %s", item.SourceDocID, processing, cause)
+	if processing := submissionProcessingState(out); processing != "completed" {
+		if cause := submissionErrorMessage(out); cause != "" {
+			return mapping, fmt.Errorf("import %s: remember processing_state %s: %s", item.SourceDocID, processing, cause)
 		}
-		return mapping, fmt.Errorf("import %s: submission status %s", item.SourceDocID, processing)
+		return mapping, fmt.Errorf("import %s: remember processing_state %s", item.SourceDocID, processing)
 	}
-	fragmentID := evidenceIDFromSubmission(status)
+	fragmentID := evidenceIDFromSubmission(out)
 	if fragmentID == "" {
-		return mapping, fmt.Errorf("import %s: submission status missing evidence id", item.SourceDocID)
+		return mapping, fmt.Errorf("import %s: remember response missing evidence id", item.SourceDocID)
 	}
 	addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
 	return mapping, nil
@@ -446,84 +454,6 @@ func corpusImportGroupKey(item CorpusItem) string {
 		return "item:" + item.Content
 	}
 	return "item:" + sourceDocID
-}
-
-func (c *HTTPClient) WaitForSubmissionStatus(ctx context.Context, submissionID string, timeout time.Duration) error {
-	_, err := c.WaitForSubmissionStatusResult(ctx, submissionID, timeout)
-	return err
-}
-
-func (c *HTTPClient) WaitForSubmissionStatusResult(ctx context.Context, submissionID string, timeout time.Duration) (map[string]any, error) {
-	if strings.TrimSpace(submissionID) == "" {
-		return nil, nil
-	}
-	if timeout <= 0 {
-		timeout = 2 * time.Minute
-	}
-	waitCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	for {
-		var out map[string]any
-		if err := c.callToolWithRetry(waitCtx, "get_submission_status", map[string]any{"submission_id": submissionID}, &out); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				return nil, fmt.Errorf("submission %s did not complete within %s", submissionID, timeout)
-			}
-			return nil, err
-		}
-		status := submissionProcessingState(out)
-		switch status {
-		case "completed":
-			searchState := submissionSearchState(out)
-			switch searchState {
-			case "", "current", "not_required":
-				return out, nil
-			case "pending":
-			case "failed":
-				if cause := submissionErrorMessage(out); cause != "" {
-					return nil, fmt.Errorf("submission %s search_state failed: %s", submissionID, cause)
-				}
-				return nil, fmt.Errorf("submission %s search_state failed", submissionID)
-			default:
-				return nil, fmt.Errorf("submission %s returned unknown search_state %q", submissionID, searchState)
-			}
-		case "queued", "processing":
-		case "rejected":
-			if evidenceIDFromSubmission(out) != "" {
-				return out, nil
-			}
-			if cause := submissionErrorMessage(out); cause != "" {
-				return nil, fmt.Errorf("submission %s %s: %s", submissionID, status, cause)
-			}
-			return nil, fmt.Errorf("submission %s %s", submissionID, status)
-		case "quarantined":
-			if cause := submissionErrorMessage(out); cause != "" {
-				return nil, fmt.Errorf("submission %s quarantined: %s", submissionID, cause)
-			}
-			return nil, fmt.Errorf("submission %s quarantined", submissionID)
-		case "failed":
-			if cause := submissionErrorMessage(out); cause != "" {
-				return nil, fmt.Errorf("submission %s %s: %s", submissionID, status, cause)
-			}
-			return nil, fmt.Errorf("submission %s %s", submissionID, status)
-		default:
-			return nil, fmt.Errorf("submission %s returned unknown processing_state %q", submissionID, status)
-		}
-		select {
-		case <-waitCtx.Done():
-			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-				return nil, fmt.Errorf("submission %s did not complete within %s", submissionID, timeout)
-			}
-			return nil, waitCtx.Err()
-		case <-time.After(time.Second):
-		}
-	}
-}
-
-func (c *HTTPClient) placementTimeout() time.Duration {
-	if c.PlacementTimeout > 0 {
-		return c.PlacementTimeout
-	}
-	return 2 * time.Minute
 }
 
 func (c *HTTPClient) ExportEvidenceMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {

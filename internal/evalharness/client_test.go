@@ -15,7 +15,6 @@ import (
 
 func TestHTTPClientEvaluationFlow(t *testing.T) {
 	var rememberCalls int
-	var statusPolls int
 	var exportCursors []string
 	flatRelationships := []any{map[string]any{
 		"ref": "relationship_1",
@@ -70,20 +69,6 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 				metadata["source_doc_id"] != "doc-alpha" ||
 				metadata["eval_seed"] != true {
 				t.Fatalf("remember input = %#v", input)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    "submission-alpha",
-				"processing_state": "queued",
-				"status_tool":      "get_submission_status",
-			})
-		case "tool:get_submission_status":
-			statusPolls++
-			var input map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				t.Fatalf("decode submission status body: %v", err)
-			}
-			if input["submission_id"] != "submission-alpha" {
-				t.Fatalf("status input = %#v", input)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"submission_id":    "submission-alpha",
@@ -168,8 +153,8 @@ func TestHTTPClientEvaluationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportCorpus: %v", err)
 	}
-	if mapping.BySourceDocID["doc-alpha"].ID != "fragment-alpha" || rememberCalls != 1 || statusPolls != 1 {
-		t.Fatalf("import mapping/calls/polls = %+v/%d/%d", mapping, rememberCalls, statusPolls)
+	if mapping.BySourceDocID["doc-alpha"].ID != "fragment-alpha" || rememberCalls != 1 {
+		t.Fatalf("import mapping/calls = %+v/%d", mapping, rememberCalls)
 	}
 
 	exported, err := client.ExportEvidenceMapping(context.Background(), 1)
@@ -500,15 +485,9 @@ func TestHTTPClientImportCorpusMapsSubmissionEvidenceID(t *testing.T) {
 		case "tool:remember":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"submission_id":    "submission-canonical",
-				"processing_state": "queued",
-			})
-		case "tool:get_submission_status":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    "submission-canonical",
 				"processing_state": "completed",
-				"evidence": []map[string]any{{
-					"evidence_id": "evidence-canonical",
-				}},
+				"search_state":     "current",
+				"evidence":         []map[string]any{{"evidence_id": "evidence-canonical", "search_state": "current"}},
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -534,12 +513,8 @@ func TestHTTPClientImportCorpusReportsSubmissionErrorCause(t *testing.T) {
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "tool:remember":
-			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-failed"})
-		case "tool:get_submission_status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    "submission-failed",
-				"processing_state": "failed",
-				"errors":           []map[string]any{{"message": "verifier unavailable"}},
+				"submission_id": "submission-failed", "processing_state": "failed", "errors": []map[string]any{{"message": "verifier unavailable"}},
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -549,7 +524,7 @@ func TestHTTPClientImportCorpusReportsSubmissionErrorCause(t *testing.T) {
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-failed", Content: "content"}})
-	if err == nil || !strings.Contains(err.Error(), "submission submission-failed failed: verifier unavailable") {
+	if err == nil || !strings.Contains(err.Error(), "remember processing_state failed: verifier unavailable") {
 		t.Fatalf("ImportCorpus err = %v", err)
 	}
 }
@@ -558,15 +533,9 @@ func TestHTTPClientImportCorpusAllowsCompletedSubmission(t *testing.T) {
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "tool:remember":
-			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-review"})
-		case "tool:get_submission_status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    "submission-review",
-				"processing_state": "completed",
-				"evidence": []map[string]any{{
-					"evidence_id":  "evidence-review",
-					"search_state": "current",
-				}},
+				"submission_id": "submission-review", "processing_state": "completed", "search_state": "current",
+				"evidence": []map[string]any{{"evidence_id": "evidence-review", "search_state": "current"}},
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -592,14 +561,9 @@ func TestHTTPClientImportCorpusReportsSubmissionFailureCause(t *testing.T) {
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "tool:remember":
-			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-canonical-failed", "processing_state": "queued"})
-		case "tool:get_submission_status":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    "submission-canonical-failed",
-				"processing_state": "failed",
-				"errors": []map[string]any{{
-					"message": "verifier unavailable",
-				}},
+				"submission_id": "submission-canonical-failed", "processing_state": "failed",
+				"errors": []map[string]any{{"message": "verifier unavailable"}},
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -609,108 +573,25 @@ func TestHTTPClientImportCorpusReportsSubmissionFailureCause(t *testing.T) {
 
 	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-canonical-failed", Content: "content"}})
-	if err == nil || !strings.Contains(err.Error(), "submission submission-canonical-failed failed: verifier unavailable") {
+	if err == nil || !strings.Contains(err.Error(), "remember processing_state failed: verifier unavailable") {
 		t.Fatalf("ImportCorpus err = %v", err)
 	}
 }
 
-func TestHTTPClientWaitForSubmissionStatusResultWaitsForSearchProjection(t *testing.T) {
-	var calls int32
-	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "tool:get_submission_status" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-		call := atomic.AddInt32(&calls, 1)
-		searchState := "pending"
-		if call > 1 {
-			searchState = "current"
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"submission_id":    "submission-search",
-			"processing_state": "completed",
-			"search_state":     searchState,
-		})
-	}))
-	defer server.Close()
-
-	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
-	out, err := client.WaitForSubmissionStatusResult(context.Background(), "submission-search", 2*time.Second)
-	if err != nil {
-		t.Fatalf("WaitForSubmissionStatusResult: %v", err)
-	}
-	if atomic.LoadInt32(&calls) != 2 || out["search_state"] != "current" {
-		t.Fatalf("calls/out = %d/%#v", calls, out)
-	}
-}
-
-func TestHTTPClientWaitForSubmissionStatusResultReportsSearchFailure(t *testing.T) {
-	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "tool:get_submission_status" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"submission_id":    "submission-search-failed",
-			"processing_state": "completed",
-			"evidence": []map[string]any{{
-				"evidence_id":  "evidence-canonical",
-				"search_state": "failed",
-				"errors":       []map[string]any{{"message": "embedding failed"}},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
-	_, err := client.WaitForSubmissionStatusResult(context.Background(), "submission-search-failed", time.Second)
-	if err == nil || !strings.Contains(err.Error(), "submission submission-search-failed search_state failed: embedding failed") {
-		t.Fatalf("WaitForSubmissionStatusResult err = %v", err)
-	}
-}
-
-func TestHTTPClientWaitForSubmissionStatusResultRejectsUnknownProcessingState(t *testing.T) {
-	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "tool:get_submission_status" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"submission_id":    "submission-unknown-state",
-			"processing_state": "mystery",
-		})
-	}))
-	defer server.Close()
-
-	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
-	_, err := client.WaitForSubmissionStatusResult(context.Background(), "submission-unknown-state", time.Second)
-	if err == nil || !strings.Contains(err.Error(), `unknown processing_state "mystery"`) {
-		t.Fatalf("WaitForSubmissionStatusResult err = %v", err)
-	}
-}
-
-func TestHTTPClientImportCorpusHonorsSubmissionStatusTimeout(t *testing.T) {
+func TestHTTPClientImportCorpusRejectsNonTerminalRemember(t *testing.T) {
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "tool:remember":
-			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-slow"})
-		case "tool:get_submission_status":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    "submission-slow",
-				"processing_state": "processing",
-			})
+			_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-slow", "processing_state": "processing"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 	}))
 	defer server.Close()
 
-	timeout := 10 * time.Millisecond
-	client := &HTTPClient{
-		BaseURL:          server.URL,
-		APIKey:           "api-key",
-		PlacementTimeout: timeout,
-		Client:           server.Client(),
-	}
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-slow", Content: "content"}})
-	if err == nil || !strings.Contains(err.Error(), "submission submission-slow did not complete within "+timeout.String()) {
+	if err == nil || !strings.Contains(err.Error(), "remember processing_state processing") {
 		t.Fatalf("ImportCorpus err = %v", err)
 	}
 }
@@ -719,20 +600,6 @@ func TestHTTPClientImportCorpusWithConcurrency(t *testing.T) {
 	var active int32
 	var maxActive int32
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "tool:get_submission_status" {
-			var statusInput map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&statusInput); err != nil {
-				t.Fatalf("decode status body: %v", err)
-			}
-			submissionID := statusInput["submission_id"].(string)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    submissionID,
-				"processing_state": "completed",
-				"search_state":     "current",
-				"evidence":         []map[string]any{{"evidence_id": "fragment-" + strings.TrimPrefix(submissionID, "submission-")}},
-			})
-			return
-		}
 		if r.URL.Path != "tool:remember" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -751,7 +618,10 @@ func TestHTTPClientImportCorpusWithConcurrency(t *testing.T) {
 			t.Fatalf("decode body: %v", err)
 		}
 		sourceDocID := strings.TrimPrefix(input["idempotency_key"].(string), "eval:")
-		_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-" + sourceDocID})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"submission_id": "submission-" + sourceDocID, "processing_state": "completed", "search_state": "current",
+			"evidence": []map[string]any{{"evidence_id": "fragment-" + sourceDocID, "search_state": "current"}},
+		})
 	}))
 	defer server.Close()
 
@@ -783,14 +653,6 @@ func TestHTTPClientConcurrentFileImportDrainsActiveRequestsAfterError(t *testing
 	var started int32
 	var docTwoCanceled int32
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "tool:get_submission_status" {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"processing_state": "completed",
-				"search_state":     "current",
-				"evidence":         []map[string]any{{"evidence_id": "fragment-doc-2"}},
-			})
-			return
-		}
 		if r.URL.Path != "tool:remember" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -818,7 +680,10 @@ func TestHTTPClientConcurrentFileImportDrainsActiveRequestsAfterError(t *testing
 			return
 		case <-time.After(40 * time.Millisecond):
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"submission_id": "submission-doc-2"})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"submission_id": "submission-doc-2", "processing_state": "completed", "search_state": "current",
+			"evidence": []map[string]any{{"evidence_id": "fragment-doc-2", "search_state": "current"}},
+		})
 		close(docTwoCompleted)
 	}))
 	defer server.Close()

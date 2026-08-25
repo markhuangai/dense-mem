@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -35,36 +34,37 @@ func TestLifecycleCorrectRelationshipUsesAuthenticatedOwner(t *testing.T) {
 	require.Equal(t, semantic.correctResult.SubmissionID, result.SubmissionID)
 	require.Equal(t, "relationship_correction", result.SubmissionKind)
 	require.Equal(t, "completed", result.ProcessingState)
-	require.Equal(t, rememberStatusTool, result.StatusTool)
+	require.Equal(t, string(domain.SearchProjectionNotRequired), result.SearchState)
 	require.Equal(t, teamID.String(), semantic.correctInput.TeamID)
 	require.Equal(t, profileID.String(), semantic.correctInput.OwnerProfileID)
 	require.Equal(t, relationshipID, semantic.correctInput.RelationshipID)
 	require.Equal(t, 3, semantic.correctInput.ExpectedVersion)
 }
 
-func TestLifecycleRelationshipCorrectionStatusPreservesConfirmationWorkflow(t *testing.T) {
-	teamID := uuid.New()
-	profileID := uuid.New()
-	submissionID := uuid.NewString()
-	expiresAt := time.Now().UTC().Add(time.Hour)
-	semantic := &lifecycleSemanticStub{statusResult: &repository.RelationshipCorrectionStatus{
-		SubmissionID: submissionID, ProcessingState: "awaiting_confirmation", SearchState: string(domain.SearchProjectionPending),
-		Confirmation: &repository.RelationshipCorrectionConfirmation{Token: uuid.NewString(), ExpiresAt: expiresAt},
-	}}
-	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic})
-
-	result, err := svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{SubmissionID: submissionID})
+func TestLifecycleInlineRelationshipEmbeddingBatchValidatesProviderOutput(t *testing.T) {
+	document := repository.SearchDocumentForEmbedding{
+		SearchDocumentResult: repository.SearchDocumentResult{
+			SearchDocumentID: uuid.NewString(), SourceVersion: 1, ProjectionFormat: 2,
+			DocumentVersion: 1, EmbeddingContractID: uuid.NewString(), EmbeddingDimensions: 3,
+			SpaceID: uuid.NewString(), SpaceGeneration: 1,
+		},
+		DocumentText: "relationship text",
+	}
+	provider := &lifecycleEmbeddingStub{available: true, model: "embed-model", vectors: [][]float32{{1, 2, 3}}}
+	svc := &lifecycleService{embedder: provider}
+	embeddings, err := svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
 	require.NoError(t, err)
-	require.Equal(t, "awaiting_confirmation", result.ProcessingState)
-	require.Equal(t, string(domain.SearchProjectionPending), result.SearchState)
-	require.NotNil(t, result.AwaitingConfirmation)
-	require.Equal(t, teamID.String(), semantic.statusInput.TeamID)
-	require.Equal(t, profileID.String(), semantic.statusInput.OwnerProfileID)
+	require.Len(t, embeddings, 1)
+	require.Equal(t, document.SearchDocumentID, embeddings[0].SearchDocumentID)
+	require.Equal(t, []float32{1, 2, 3}, embeddings[0].Embedding)
 
-	_, err = svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{SubmissionID: "not-a-uuid"})
-	var publicErr *httperr.APIError
-	require.ErrorAs(t, err, &publicErr)
-	require.Equal(t, httperr.NOT_FOUND, publicErr.Code)
+	provider.available = false
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	require.ErrorContains(t, err, "unavailable")
+	provider.available = true
+	provider.vectors = [][]float32{{1, 2}}
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	require.ErrorContains(t, err, "dimensions")
 }
 
 func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
@@ -196,6 +196,26 @@ type lifecycleEvidenceStub struct {
 	result *repository.EvidenceLifecycleResult
 	err    error
 }
+
+type lifecycleEmbeddingStub struct {
+	available bool
+	model     string
+	vectors   [][]float32
+}
+
+func (s *lifecycleEmbeddingStub) Embed(context.Context, string) ([]float32, string, error) {
+	return nil, s.model, nil
+}
+
+func (s *lifecycleEmbeddingStub) EmbedBatch(context.Context, []string) ([][]float32, string, error) {
+	return s.vectors, s.model, nil
+}
+
+func (s *lifecycleEmbeddingStub) ModelName() string { return s.model }
+
+func (s *lifecycleEmbeddingStub) Dimensions() int { return 3 }
+
+func (s *lifecycleEmbeddingStub) IsAvailable() bool { return s.available }
 
 func (s *lifecycleEvidenceStub) RetractEvidence(_ context.Context, input repository.RetractEvidenceInput) (*repository.EvidenceLifecycleResult, error) {
 	s.input = input

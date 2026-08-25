@@ -39,7 +39,7 @@ function TeamWorkspaceHeader({
 }) {
   const tabs: Array<{ id: TeamWorkspaceTab; label: string }> = [
     { id: "overview", label: "Overview" },
-    { id: "submissions", label: "Submissions" },
+    { id: "submissions", label: "Remember Attempts" },
     { id: "credentials", label: "Credentials" },
     { id: "dreams", label: "Dreams" },
     { id: "conflicts", label: "Conflicts" },

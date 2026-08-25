@@ -26,34 +26,41 @@ type SubmissionAssessmentCatalog interface {
 
 type SubmissionAssessmentPlacementWorkerService interface {
 	ProcessNextSubmissionAssessmentPlacement(ctx context.Context) (bool, error)
+	ProcessSubmissionAssessmentPlacement(ctx context.Context, submissionID string) (bool, error)
 }
 
 type SubmissionAssessmentPlacementWorkerDependencies struct {
-	Ledger      repository.LedgerRepository
-	Assessments repository.SubmissionAssessmentRepository
-	Catalog     SubmissionAssessmentCatalog
-	Provider    assessor.Provider
-	Limits      assessor.SemanticAssessmentLimits
-	TeamID      string
-	WorkerID    string
-	Lease       time.Duration
-	Now         func() time.Time
-	Metrics     observability.DiscoverabilityMetrics
-	Logger      observability.LogProvider
+	Ledger         repository.LedgerRepository
+	Assessments    repository.SubmissionAssessmentRepository
+	Catalog        SubmissionAssessmentCatalog
+	Provider       assessor.Provider
+	Limits         assessor.SemanticAssessmentLimits
+	TeamID         string
+	WorkerID       string
+	Lease          time.Duration
+	OwnerProfileID string
+	Now            func() time.Time
+	Metrics        observability.DiscoverabilityMetrics
+	Logger         observability.LogProvider
+	InlineEmbedder repository.InlineEmbeddingBatch
 }
 
 type submissionAssessmentPlacementWorkerService struct {
-	ledger      repository.LedgerRepository
-	assessments repository.SubmissionAssessmentRepository
-	catalog     SubmissionAssessmentCatalog
-	provider    assessor.Provider
-	limits      assessor.SemanticAssessmentLimits
-	teamID      string
-	workerID    string
-	lease       time.Duration
-	now         func() time.Time
-	metrics     observability.DiscoverabilityMetrics
-	logger      observability.LogProvider
+	ledger         repository.LedgerRepository
+	assessments    repository.SubmissionAssessmentRepository
+	catalog        SubmissionAssessmentCatalog
+	provider       assessor.Provider
+	limits         assessor.SemanticAssessmentLimits
+	teamID         string
+	workerID       string
+	lease          time.Duration
+	ownerProfileID string
+	now            func() time.Time
+	metrics        observability.DiscoverabilityMetrics
+	logger         observability.LogProvider
+	inlineEmbedder repository.InlineEmbeddingBatch
+	targetID       string
+	prepared       *SynchronousAssessmentResult
 }
 
 type submissionAssessmentLiveSession struct {
@@ -66,7 +73,7 @@ var errRememberAssessorTurnBudgetExhausted = errors.New("remember assessor turn 
 
 func NewSubmissionAssessmentPlacementWorkerService(
 	deps SubmissionAssessmentPlacementWorkerDependencies,
-) SubmissionAssessmentPlacementWorkerService {
+) *submissionAssessmentPlacementWorkerService {
 	lease := deps.Lease
 	if lease <= 0 {
 		lease = time.Minute
@@ -80,17 +87,19 @@ func NewSubmissionAssessmentPlacementWorkerService(
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
 	return &submissionAssessmentPlacementWorkerService{
-		ledger:      deps.Ledger,
-		assessments: deps.Assessments,
-		catalog:     deps.Catalog,
-		provider:    deps.Provider,
-		limits:      deps.Limits,
-		teamID:      strings.TrimSpace(deps.TeamID),
-		workerID:    strings.TrimSpace(deps.WorkerID),
-		lease:       lease,
-		now:         now,
-		metrics:     metrics,
-		logger:      deps.Logger,
+		ledger:         deps.Ledger,
+		assessments:    deps.Assessments,
+		catalog:        deps.Catalog,
+		provider:       deps.Provider,
+		limits:         deps.Limits,
+		teamID:         strings.TrimSpace(deps.TeamID),
+		workerID:       strings.TrimSpace(deps.WorkerID),
+		lease:          lease,
+		ownerProfileID: strings.TrimSpace(deps.OwnerProfileID),
+		now:            now,
+		metrics:        metrics,
+		logger:         deps.Logger,
+		inlineEmbedder: deps.InlineEmbedder,
 	}
 }
 
@@ -98,7 +107,21 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 	if err := s.validateDependencies(); err != nil {
 		return false, err
 	}
-	run, err := s.ledger.ClaimNextPlacementRun(ctx, s.teamID, s.workerID, s.lease)
+	var run *repository.PlacementRun
+	var err error
+	if s.targetID != "" {
+		claimer, ok := s.ledger.(interface {
+			ClaimPlacementRun(context.Context, repository.ClaimPlacementRunInput) (*repository.PlacementRun, error)
+		})
+		if !ok {
+			return false, errors.New("submission assessment worker: targeted claim is unavailable")
+		}
+		run, err = claimer.ClaimPlacementRun(ctx, repository.ClaimPlacementRunInput{
+			TeamID: s.teamID, OwnerProfileID: s.ownerProfileID, IngestID: s.targetID, WorkerID: s.workerID, Lease: s.lease,
+		})
+	} else {
+		run, err = s.ledger.ClaimNextPlacementRun(ctx, s.teamID, s.workerID, s.lease)
+	}
 	if err != nil {
 		return false, err
 	}
@@ -139,31 +162,53 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 		return true, s.completeDeterministicSecurityQuarantine(ctx, scope, plan, scan, "deterministic_security_scan")
 	}
 
-	request, err := s.buildRequest(ctx, *run, plan, placement.Proposal)
-	if err != nil {
-		stage, terminal := semanticAssessmentPreflightFailure(err)
-		if terminal {
-			return true, terminalizeAfterError(err, func() error {
+	var request assessor.SemanticAssessmentRequest
+	if s.prepared != nil {
+		request = s.prepared.Request
+	} else {
+		request, err = s.buildRequest(ctx, *run, plan, placement.Proposal)
+		if err != nil {
+			stage, terminal := semanticAssessmentPreflightFailure(err)
+			if terminal {
+				return true, terminalizeAfterError(err, func() error {
+					results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
+					return s.completeTerminalWithRelationshipResults(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage, results, err)
+				})
+			}
+			return true, retryAfterError(err, func() error {
 				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
-				return s.completeTerminalWithRelationshipResults(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage, results, err)
+				return s.retryOrFailWithRelationshipResults(ctx, *run, scope, stage, false, false, results, err)
 			})
 		}
-		return true, retryAfterError(err, func() error {
-			results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
-			return s.retryOrFailWithRelationshipResults(ctx, *run, scope, stage, false, false, results, err)
-		})
 	}
 
 	refreshRequest := func(refreshCtx context.Context) (assessor.SemanticAssessmentRequest, error) {
 		return s.buildRequest(refreshCtx, *run, plan, placement.Proposal)
 	}
-	assessment, response, reused, providerAttempted, releaseProviderAttempt, liveSession, err := s.loadOrAssess(
-		ctx,
-		*run,
-		scope,
-		request,
-		refreshRequest,
-	)
+	var assessment *repository.SubmissionAssessment
+	var response assessor.SemanticAssessmentResponse
+	var reused, providerAttempted, releaseProviderAttempt bool
+	var liveSession *submissionAssessmentLiveSession
+	if s.prepared != nil {
+		response = s.prepared.Response
+		request = s.prepared.Request
+		providerAttempted = true
+		assessment, err = s.persistPreparedAssessment(ctx, *run, request, response)
+		if err != nil {
+			return true, terminalizeAfterError(err, func() error {
+				results := submissionAssessmentNotStoredRelationshipResultsForPlan(plan, string(SubmissionErrorInternalFailure))
+				return s.completeTerminalWithRelationshipResults(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "assessment_persist", results, err)
+			})
+		}
+	} else {
+		assessment, response, reused, providerAttempted, releaseProviderAttempt, liveSession, err = s.loadOrAssess(
+			ctx,
+			*run,
+			scope,
+			request,
+			refreshRequest,
+		)
+	}
 	if err != nil {
 		assessorTurnsReserved := submissionAssessmentConsumedProviderTurns(err)
 		if errors.Is(err, errSubmissionAssessmentRevisionPersistence) {
@@ -214,7 +259,26 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 				return s.completeTerminalWithRelationshipResults(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "deterministic_policy", results, commitInputErr)
 			})
 		}
-		committed, commitErr := s.assessments.CommitSubmissionAssessment(ctx, commitInput)
+		commitCtx := ctx
+		var cancelCommit context.CancelFunc
+		if repository.InlineEmbeddingWrite(ctx) {
+			commitCtx, cancelCommit = context.WithTimeout(ctx, 10*time.Second)
+		}
+		var committed *repository.CommitSubmissionAssessmentResult
+		var commitErr error
+		if s.inlineEmbedder != nil {
+			inlineCommitter, ok := s.assessments.(repository.InlineSubmissionAssessmentCommitter)
+			if !ok {
+				commitErr = errors.New("submission assessment worker: inline semantic committer is unavailable")
+			} else {
+				committed, commitErr = inlineCommitter.CommitSubmissionAssessmentWithInlineEmbeddings(commitCtx, commitInput, s.inlineEmbedder)
+			}
+		} else {
+			committed, commitErr = s.assessments.CommitSubmissionAssessment(commitCtx, commitInput)
+		}
+		if cancelCommit != nil {
+			cancelCommit()
+		}
 		if isRememberStaleInputError(commitErr) {
 			commitInput.RelationshipResults = submissionAssessmentNotStoredRelationshipResults(
 				commitInput.RelationshipResults, string(SubmissionErrorStaleInput),
@@ -293,6 +357,13 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 			continue
 		}
 		if commitErr != nil {
+			// The synchronous path must surface the embedding/commit failure in
+			// the originating call. Do not requeue or let a background worker
+			// observe a partially prepared attempt; the caller terminalizes the
+			// request after this transaction has rolled back.
+			if s.inlineEmbedder != nil {
+				return true, commitErr
+			}
 			return true, retryAfterError(commitErr, func() error {
 				results := submissionAssessmentNotStoredRelationshipResults(
 					commitInput.RelationshipResults, string(SubmissionErrorInternalFailure),

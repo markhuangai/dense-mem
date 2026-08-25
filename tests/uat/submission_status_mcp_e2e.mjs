@@ -17,7 +17,7 @@ const runID = `submission-status-e2e-${Date.now()}`;
 const listed = await toolsList();
 const listedTools = listed.tools ?? [];
 const listedNames = new Set(listedTools.map((tool) => tool.name));
-for (const required of ["remember", "get_submission_status", "correct_relationship", "trace_memory", "export_memory_pack"]) {
+for (const required of ["remember", "correct_relationship", "trace_memory", "export_memory_pack"]) {
   if (!listedNames.has(required)) {
     throw new Error(`tools/list is missing ${required}`);
   }
@@ -34,45 +34,30 @@ const submissionID = stringValue(remember.submission_id);
 if (!submissionID || Object.hasOwn(remember, "ingest_id") || Object.hasOwn(remember, "placement")) {
   throw new Error(`remember returned a removed or missing identifier: ${JSON.stringify(remember)}`);
 }
-assertKeys(remember, ["contract_version", "submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"]);
-if (remember.contract_version !== "dense-mem.v2.6") {
+assertKeys(remember, ["contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"]);
+if (remember.contract_version !== "dense-mem.v2.6.1") {
   throw new Error(`remember contract_version = ${remember.contract_version}`);
 }
 if (remember.submission_kind !== "remember") {
   throw new Error(`remember submission_kind = ${remember.submission_kind}`);
 }
-if (remember.status_tool !== "get_submission_status") {
-  throw new Error("remember did not advertise get_submission_status");
-}
 if (!stringValue(remember.correlation_id)) {
   throw new Error("remember did not return a correlation_id");
 }
 
-const initial = await mcpSuccess("get_submission_status", { submission_id: submissionID });
-assertStatusShape(initial, submissionID);
-assertRememberStatusMetadata(initial, remember);
-const terminal = await waitForTerminal(submissionID);
-assertRememberStatusMetadata(terminal, remember, true);
-const repeated = await mcpSuccess("get_submission_status", { submission_id: submissionID });
-assertStatusShape(repeated, submissionID);
-if (stableJSON(terminal) !== stableJSON(repeated)) {
-  throw new Error("repeated submission status changed unexpectedly");
-}
+const terminal = remember;
+assertRememberTerminal(terminal, submissionID);
 const diagnostics = await waitForControlSubmission(submissionID);
 assertSubmissionDiagnostics(diagnostics, terminal, rememberInput().evidence[0].content);
 const timeline = await waitForSubmissionTimeline(submissionID);
 assertSubmissionTimeline(timeline, submissionID, remember.correlation_id);
 
-const missing = await mcpRaw(apiKey, "get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
-if (!missing.error || missing.result !== undefined || typeof missing.error.message !== "string") {
-  throw new Error("missing submission status did not fail with a bounded MCP error");
+const removedStatus = await mcpRaw(apiKey, "get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
+if (removedStatus.error?.code !== -32601 || removedStatus.result !== undefined) {
+  throw new Error("removed get_submission_status remained callable");
 }
 
 const otherProfile = await createCredential(teamID, `${runID}-other-profile`);
-const crossProfile = await mcpRaw(otherProfile.apiKey, "get_submission_status", { submission_id: submissionID });
-if (!crossProfile.error || crossProfile.result !== undefined || crossProfile.error.message.includes(submissionID)) {
-  throw new Error("submission status leaked across profile ownership boundary");
-}
 
 const relationshipID = postgresQuery(`
   SELECT relationship_id::text
@@ -179,25 +164,16 @@ if (!nonOwnerCorrection.error || nonOwnerCorrection.result !== undefined || JSON
 }
 
 const correction = await mcpSuccess("correct_relationship", correctionInput);
-assertKeys(correction, ["contract_version", "submission_id", "submission_kind", "processing_state", "check_after_seconds", "status_tool", "correlation_id"]);
-if (correction.contract_version !== "dense-mem.v2.6") {
+assertKeys(correction, ["contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "errors"]);
+if (correction.contract_version !== "dense-mem.v2.6.1") {
   throw new Error(`correction contract_version = ${correction.contract_version}`);
 }
-if (correction.submission_kind !== "relationship_correction" || correction.status_tool !== "get_submission_status") {
+if (correction.submission_kind !== "relationship_correction" || correction.processing_state !== "completed") {
   throw new Error(`correction receipt is invalid: ${JSON.stringify(correction)}`);
 }
-const correctionStatus = await mcpSuccess("get_submission_status", { submission_id: correction.submission_id });
-assertStatusShape(correctionStatus, correction.submission_id);
-if (correctionStatus.submission_kind !== "relationship_correction" || correctionStatus.processing_state !== "completed") {
-  throw new Error(`correction status is not completed: ${JSON.stringify(correctionStatus)}`);
-}
-const successorID = stringValue(correctionStatus.correction_result?.successor_relationship_id);
+const successorID = stringValue(correction.correction_result?.successor_relationship_id);
 if (!successorID || successorID === relationshipID) {
   throw new Error(`correction did not create a successor: ${JSON.stringify(correctionStatus.correction_result)}`);
-}
-const crossProfileCorrectionStatus = await mcpRaw(otherProfile.apiKey, "get_submission_status", { submission_id: correction.submission_id });
-if (!crossProfileCorrectionStatus.error || crossProfileCorrectionStatus.result !== undefined || JSON.stringify(crossProfileCorrectionStatus).includes(correction.submission_id)) {
-  throw new Error("correction status leaked across profile ownership boundary");
 }
 const correctionState = postgresQuery(`
   SELECT concat(
@@ -326,75 +302,19 @@ function rememberInput() {
   };
 }
 
-async function waitForTerminal(id) {
-  const attempts = Math.ceil((timeoutSeconds * 1000) / 2000);
-  let last = "";
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const status = await mcpSuccess("get_submission_status", { submission_id: id });
-    assertStatusShape(status, id);
-    last = stringValue(status.processing_state);
-    const searchTerminal = ["current", "not_required", "failed"].includes(status.search_state);
-    if (["completed", "rejected", "failed", "quarantined"].includes(last) && searchTerminal) {
-      if (last !== "completed") {
-        throw new Error(`status scenario submission reached ${last}`);
-      }
-      if (status.search_state === "failed") {
-        throw new Error("status scenario search projection failed");
-      }
-      return status;
-    }
-    await delay(2000);
+function assertRememberTerminal(status, id) {
+  assertKeys(status, ["contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"]);
+  if (status.contract_version !== "dense-mem.v2.6.1" || status.submission_id !== id || status.submission_kind !== "remember" || status.processing_state !== "completed" || !["current", "not_required"].includes(status.search_state)) {
+    throw new Error(`remember did not return a terminal v2.6.1 result: ${JSON.stringify(status)}`);
   }
-  throw new Error(`timed out waiting for terminal submission status (last ${last || "unknown"})`);
-}
-
-function assertStatusShape(status, id) {
-  assertKeys(status, ["contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "check_after_seconds", "evidence", "errors", "degradations"]);
-  if (status.contract_version !== "dense-mem.v2.6") {
-    throw new Error(`submission status contract_version = ${status.contract_version}`);
-  }
-  if (status.submission_id !== id || Object.hasOwn(status, "ingest_id") || Object.hasOwn(status, "placement_run_id") || Object.hasOwn(status, "items") || Object.hasOwn(status, "review_tasks")) {
-    throw new Error("submission status exposed a removed internal field");
-  }
-  if (!Array.isArray(status.evidence) || !Array.isArray(status.errors)) {
-    throw new Error("submission status did not return bounded evidence/errors arrays");
+  if (!Array.isArray(status.evidence) || !Array.isArray(status.relationship_results) || !Array.isArray(status.errors)) {
+    throw new Error("remember did not return closed result arrays");
   }
   for (const item of status.evidence) {
-    assertKeys(item, ["evidence_id", "evidence_index", "superseded_evidence_ids", "search_state"]);
+    assertKeys(item, ["disposition", "evidence_index", "superseded_evidence_ids", "search_state"]);
     if (Object.hasOwn(item, "content") || Object.hasOwn(item, "placement_item_id") || Object.hasOwn(item, "provider_response")) {
-      throw new Error("submission status exposed raw or placement evidence details");
+      throw new Error("remember exposed raw or placement evidence details");
     }
-  }
-  for (const item of status.errors) {
-    if (!isRecord(item) || typeof item.code !== "string" || typeof item.message !== "string" ||
-        typeof item.retryable !== "boolean" || typeof item.next_action !== "string" ||
-        typeof item.remediation !== "string") {
-      throw new Error("submission status returned incomplete error guidance");
-    }
-    if (!["poll_status", "resubmit_submission", "retry_correction", "contact_operator", "none"].includes(item.next_action)) {
-      throw new Error(`submission status returned unknown next_action ${item.next_action}`);
-    }
-  }
-}
-
-function assertRememberStatusMetadata(status, receipt, terminal = false) {
-  if (status.submission_kind !== "remember" || status.correlation_id !== receipt.correlation_id) {
-    throw new Error("remember status lost its submission kind or correlation_id");
-  }
-  if (!Number.isInteger(status.attempts) || !Number.isInteger(status.max_attempts) ||
-      status.attempts < 0 || status.max_attempts < 1 || status.attempts > status.max_attempts) {
-    throw new Error("remember status returned invalid attempt metadata");
-  }
-  const submittedAt = requiredTimestamp(status.submitted_at, "submitted_at");
-  const updatedAt = requiredTimestamp(status.updated_at, "updated_at");
-  if (updatedAt < submittedAt) {
-    throw new Error("remember status updated_at precedes submitted_at");
-  }
-  for (const field of ["next_attempt_at", "started_at", "completed_at"]) {
-    if (status[field] !== undefined) requiredTimestamp(status[field], field);
-  }
-  if (terminal && status.processing_state === "completed" && status.completed_at === undefined) {
-    throw new Error("completed remember status omitted completed_at");
   }
 }
 
@@ -445,11 +365,10 @@ function assertSubmissionDiagnostics({ list, summary, detail }, terminal, eviden
     throw new Error("control submission list ignored the exact team filter");
   }
   if (summary.processing_state !== terminal.processing_state || summary.correlation_id !== terminal.correlation_id ||
-      summary.attempts !== terminal.attempts || summary.max_attempts !== terminal.max_attempts || summary.evidence_count !== terminal.evidence.length) {
+      summary.evidence_count !== terminal.evidence.length) {
     throw new Error("control submission summary diverged from authoritative status");
   }
-  assertStatusShape(detail, terminal.submission_id);
-  assertRememberStatusMetadata(detail, terminal, true);
+  assertRememberTerminal(detail, terminal.submission_id);
   if (detail.team_id !== teamID || detail.processing_state !== terminal.processing_state || detail.evidence_count !== terminal.evidence.length) {
     throw new Error("control submission detail diverged from authoritative status");
   }

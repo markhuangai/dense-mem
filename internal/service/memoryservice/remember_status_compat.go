@@ -102,9 +102,9 @@ func rememberStatusCompat(result *rememberapp.SubmissionStatusResult) *Submissio
 			superseded = []string{}
 		}
 		converted.Evidence = append(converted.Evidence, SubmissionEvidenceStatus{
-			EvidenceID: item.EvidenceID, EvidenceIndex: item.EvidenceIndex,
+			Disposition: item.Disposition, EvidenceID: item.EvidenceID, EvidenceIndex: item.EvidenceIndex,
 			SupersededEvidenceIDs: superseded, SearchState: item.SearchState,
-			Error: item.Error,
+			Reason: item.Reason, Error: item.Error,
 		})
 	}
 	converted.Errors = append(converted.Errors, result.Errors...)

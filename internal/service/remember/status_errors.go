@@ -16,12 +16,18 @@ const (
 	SubmissionErrorNoSupportedMemory SubmissionErrorCode = "no_supported_memory"
 	SubmissionErrorStaleInput        SubmissionErrorCode = "stale_input"
 
-	SubmissionErrorProviderUnavailable     SubmissionErrorCode = "provider_unavailable"
-	SubmissionErrorProviderResponseInvalid SubmissionErrorCode = "provider_response_invalid"
-	SubmissionErrorInputBudgetExceeded     SubmissionErrorCode = "input_budget_exceeded"
-	SubmissionErrorConfigurationInvalid    SubmissionErrorCode = "configuration_invalid"
-	SubmissionErrorDatabaseFailure         SubmissionErrorCode = "database_failure"
-	SubmissionErrorInternalFailure         SubmissionErrorCode = "internal_failure"
+	SubmissionErrorProviderUnavailable      SubmissionErrorCode = "provider_unavailable"
+	SubmissionErrorProviderResponseInvalid  SubmissionErrorCode = "provider_response_invalid"
+	SubmissionErrorInputBudgetExceeded      SubmissionErrorCode = "input_budget_exceeded"
+	SubmissionErrorConfigurationInvalid     SubmissionErrorCode = "configuration_invalid"
+	SubmissionErrorIdempotencyConflict      SubmissionErrorCode = "idempotency_conflict"
+	SubmissionErrorEmbeddingUnavailable     SubmissionErrorCode = "embedding_unavailable"
+	SubmissionErrorEmbeddingResponseInvalid SubmissionErrorCode = "embedding_response_invalid"
+	SubmissionErrorCommitConflict           SubmissionErrorCode = "commit_conflict"
+	SubmissionErrorDatabaseFailure          SubmissionErrorCode = "database_failure"
+	SubmissionErrorRequestTimeout           SubmissionErrorCode = "request_timeout"
+	SubmissionErrorRequestCancelled         SubmissionErrorCode = "request_cancelled"
+	SubmissionErrorInternalFailure          SubmissionErrorCode = "internal_failure"
 
 	// These aliases are retained for correction and internal call sites; the
 	// v2.6 Remember status projection emits the canonical codes above.
@@ -56,7 +62,13 @@ var submissionErrorCodes = []SubmissionErrorCode{
 	SubmissionErrorProviderResponseInvalid,
 	SubmissionErrorInputBudgetExceeded,
 	SubmissionErrorConfigurationInvalid,
+	SubmissionErrorIdempotencyConflict,
+	SubmissionErrorEmbeddingUnavailable,
+	SubmissionErrorEmbeddingResponseInvalid,
+	SubmissionErrorCommitConflict,
 	SubmissionErrorDatabaseFailure,
+	SubmissionErrorRequestTimeout,
+	SubmissionErrorRequestCancelled,
 	SubmissionErrorInternalFailure,
 	SubmissionErrorSearchIndexingDelayed,
 	SubmissionErrorQuarantined,
@@ -98,16 +110,16 @@ type SubmissionStatusError struct {
 type SubmissionNextAction string
 
 const (
-	SubmissionNextActionPollStatus         SubmissionNextAction = "poll_status"
-	SubmissionNextActionResubmitSubmission SubmissionNextAction = "resubmit_submission"
-	SubmissionNextActionRetryCorrection    SubmissionNextAction = "retry_correction"
-	SubmissionNextActionContactOperator    SubmissionNextAction = "contact_operator"
-	SubmissionNextActionNone               SubmissionNextAction = "none"
+	SubmissionNextActionRetrySameRequest SubmissionNextAction = "retry_same_request"
+	SubmissionNextActionResubmitRemember SubmissionNextAction = "resubmit_remember"
+	SubmissionNextActionRetryCorrection  SubmissionNextAction = "retry_correction"
+	SubmissionNextActionContactOperator  SubmissionNextAction = "contact_operator"
+	SubmissionNextActionNone             SubmissionNextAction = "none"
 )
 
 var submissionNextActions = []SubmissionNextAction{
-	SubmissionNextActionPollStatus,
-	SubmissionNextActionResubmitSubmission,
+	SubmissionNextActionRetrySameRequest,
+	SubmissionNextActionResubmitRemember,
 	SubmissionNextActionRetryCorrection,
 	SubmissionNextActionContactOperator,
 	SubmissionNextActionNone,
@@ -122,17 +134,23 @@ func SubmissionNextActions() []string {
 }
 
 var submissionErrorMessages = map[SubmissionErrorCode]string{
-	SubmissionErrorNoSupportedMemory:       "no supported memory could be stored from this submission",
-	SubmissionErrorStaleInput:              "an exact client-owned input changed before commit",
-	SubmissionErrorProviderUnavailable:     "the semantic assessor was unavailable",
-	SubmissionErrorProviderResponseInvalid: "the semantic assessor returned an invalid response",
-	SubmissionErrorInputBudgetExceeded:     "the semantic assessor input exceeded the configured budget",
-	SubmissionErrorConfigurationInvalid:    "Dense-Mem is missing valid semantic-assessor configuration",
-	SubmissionErrorDatabaseFailure:         "Dense-Mem could not persist the submission",
-	SubmissionErrorInternalFailure:         "Dense-Mem could not complete the submission",
-	SubmissionErrorPolicyRejected:          "submission was rejected by semantic placement policy",
-	SubmissionErrorSearchIndexingDelayed:   "search indexing is delayed",
-	SubmissionErrorQuarantined:             "submission was quarantined by security policy",
+	SubmissionErrorNoSupportedMemory:        "no supported memory could be stored from this submission",
+	SubmissionErrorStaleInput:               "an exact client-owned input changed before commit",
+	SubmissionErrorProviderUnavailable:      "the semantic assessor was unavailable",
+	SubmissionErrorProviderResponseInvalid:  "the semantic assessor returned an invalid response",
+	SubmissionErrorInputBudgetExceeded:      "the semantic assessor input exceeded the configured budget",
+	SubmissionErrorConfigurationInvalid:     "Dense-Mem is missing valid semantic-assessor configuration",
+	SubmissionErrorIdempotencyConflict:      "the idempotency key is already bound to a different request",
+	SubmissionErrorEmbeddingUnavailable:     "the embedding provider was unavailable",
+	SubmissionErrorEmbeddingResponseInvalid: "the embedding provider returned an invalid response",
+	SubmissionErrorCommitConflict:           "server-owned state changed before commit",
+	SubmissionErrorDatabaseFailure:          "Dense-Mem could not persist the submission",
+	SubmissionErrorRequestTimeout:           "the bounded Remember request deadline was reached",
+	SubmissionErrorRequestCancelled:         "the Remember request was cancelled before commit",
+	SubmissionErrorInternalFailure:          "Dense-Mem could not complete the submission",
+	SubmissionErrorPolicyRejected:           "submission was rejected by semantic placement policy",
+	SubmissionErrorSearchIndexingDelayed:    "search indexing is delayed",
+	SubmissionErrorQuarantined:              "submission was quarantined by security policy",
 
 	SubmissionErrorRelationshipVersionStale:      "relationship version is stale",
 	SubmissionErrorRelationshipNotActive:         "relationship must be active, supported, and canonical",
@@ -186,10 +204,15 @@ func StatusErrorWithMessage(code SubmissionErrorCode, message string) Submission
 
 func submissionErrorGuidance(code SubmissionErrorCode) (bool, SubmissionNextAction) {
 	switch code {
-	case SubmissionErrorSearchIndexingDelayed:
-		return true, SubmissionNextActionPollStatus
-	case SubmissionErrorNoSupportedMemory, SubmissionErrorStaleInput:
-		return true, SubmissionNextActionResubmitSubmission
+	case SubmissionErrorProviderUnavailable, SubmissionErrorProviderResponseInvalid,
+		SubmissionErrorEmbeddingUnavailable, SubmissionErrorEmbeddingResponseInvalid,
+		SubmissionErrorCommitConflict, SubmissionErrorDatabaseFailure,
+		SubmissionErrorRequestTimeout, SubmissionErrorRequestCancelled,
+		SubmissionErrorInternalFailure:
+		return true, SubmissionNextActionRetrySameRequest
+	case SubmissionErrorNoSupportedMemory, SubmissionErrorStaleInput,
+		SubmissionErrorIdempotencyConflict:
+		return true, SubmissionNextActionResubmitRemember
 	case SubmissionErrorNoChange:
 		return false, SubmissionNextActionNone
 	case SubmissionErrorRelationshipVersionStale, SubmissionErrorRelationshipNotActive,
@@ -207,9 +230,9 @@ func submissionErrorGuidance(code SubmissionErrorCode) (bool, SubmissionNextActi
 
 func submissionErrorRemediation(action SubmissionNextAction) string {
 	switch action {
-	case SubmissionNextActionPollStatus:
-		return "Poll get_submission_status after check_after_seconds."
-	case SubmissionNextActionResubmitSubmission:
+	case SubmissionNextActionRetrySameRequest:
+		return "Retry the same request with the same idempotency_key after the transient failure clears."
+	case SubmissionNextActionResubmitRemember:
 		return "Submit the complete batch again with remember and a new idempotency_key after correcting the input."
 	case SubmissionNextActionRetryCorrection:
 		return "Retry correct_relationship with current relationship state and a new idempotency_key."
