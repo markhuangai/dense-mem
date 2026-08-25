@@ -184,6 +184,54 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	require.ErrorIs(t, err, ErrRelationshipCorrectionNotFound)
 }
 
+func TestRelationshipCorrectionEmbedsOutsideTransactionAndFencesSuccessor(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	insertSearchTestContract(t, adminDB, rls, "relationship-correction-inline", 3, "exact", "")
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "relationship-correction-inline-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "relationship-correction-inline-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Mark Huang")
+	wrongObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Wrong Project")
+	correctObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Dense-Mem")
+	ingest := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "relationship-correction-inline-source", "Mark Huang works on Dense-Mem.")
+	original := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: wrongObject.EntityID,
+		Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: "correction-inline", SpanStart: 0, SpanEnd: len(ingest.Evidence[0].Content), Authority: "primary"},
+	}).Relationship
+	require.NotNil(t, original)
+	input := CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "submit", RelationshipID: original.RelationshipID,
+		ExpectedVersion: original.Version, Patch: RelationshipCorrectionPatch{
+			ObjectEntity: &RelationshipCorrectionEntityPatch{EntityID: correctObject.EntityID},
+		}, Supports: []RelationshipCorrectionSupport{{EvidenceID: ingest.Evidence[0].FragmentID, Start: 0, End: len(ingest.Evidence[0].Content)}},
+		Reason: "the object Entity was resolved incorrectly", IdempotencyKey: "relationship-correction-inline-key",
+	}
+	plan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, input)
+	require.NoError(t, err)
+	require.Len(t, plan.Documents, 1)
+	result, err := semantic.CorrectRelationshipWithEmbeddings(ctx, input, []InlineEmbeddingResult{{
+		DocumentHash: plan.Documents[0].DocumentHash, Embedding: []float32{1, 0, 0},
+	}})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "completed", result.ProcessingState)
+	require.Equal(t, string(domain.SearchProjectionCurrent), result.SearchState)
+
+	var searchState string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT search_state FROM search_documents
+			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ?::uuid
+			ORDER BY updated_at DESC LIMIT 1
+		`, teamID, result.Correction.SuccessorRelationshipID).Row().Scan(&searchState)
+	}))
+	assert.Equal(t, string(domain.SearchProjectionCurrent), searchState)
+}
+
 func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

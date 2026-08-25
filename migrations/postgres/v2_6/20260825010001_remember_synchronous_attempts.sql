@@ -4,16 +4,17 @@
 -- v2.6.1 request-scoped Remember terminal history. The legacy placement and
 -- embedding tables remain readable during this additive migration; the
 -- destructive retirement is a separate stopped-service release boundary.
--- Lock/rewrite impact: new tables and indexes are additive; the marker insert
--- takes a short system-table lock and aborts on lock timeout.
+-- Lock/rewrite impact: new tables and indexes are additive and abort on lock
+-- timeout.
 -- RLS impact: attempts, events, artifacts, and assessments are owner-scoped;
 -- system and migration modes are the only administrative access paths.
 -- Backfill: existing placement history is not rewritten by this additive
 -- migration; the stopped-service retirement must copy and hash it first.
--- Backward compatibility: the v2.6.1 binary requires the new marker while
--- legacy placement rows remain readable for migration verification only.
--- Rollback: the Down section is intentionally irreversible after marker
--- creation; restore a verified snapshot and boot the previous binary.
+-- Backward compatibility: legacy placement rows remain readable for migration
+-- verification only. Authority cutover remains owned by the release migration.
+-- Rollback: the Down section is intentionally irreversible after these
+-- append-only histories exist; restore a verified snapshot and boot the
+-- previous binary.
 SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
@@ -151,40 +152,6 @@ CREATE POLICY semantic_assessments_scope ON semantic_assessments
     USING (current_setting('app.tx_mode', true) IN ('system', 'migration') OR (team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid AND owner_profile_id = NULLIF(current_setting('app.current_profile_id', true), '')::uuid))
     WITH CHECK (current_setting('app.tx_mode', true) IN ('system', 'migration') OR (team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid AND owner_profile_id = NULLIF(current_setting('app.current_profile_id', true), '')::uuid));
 
--- The cutover is stopped-service and fail-closed. Do not write a marker while
--- legacy placement work could still mutate or while an active-contract search
--- document lacks its required current vector.
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM placement_runs
-        WHERE status IN ('queued', 'guarded', 'processing')
-    ) OR EXISTS (
-        SELECT 1 FROM placement_items
-        WHERE status IN ('queued', 'processing')
-    ) THEN
-        RAISE EXCEPTION 'v2.6.1 cutover blocked: active placement work remains';
-    END IF;
-    IF EXISTS (
-        SELECT 1
-        FROM search_documents AS document
-        JOIN search_index_generations AS generation
-          ON generation.embedding_contract_id = document.embedding_contract_id
-         AND generation.embedding_dimensions = document.embedding_dimensions
-         AND generation.activation_state = 'active'
-        JOIN embedding_contracts AS contract
-          ON contract.embedding_contract_id = document.embedding_contract_id
-         AND contract.lifecycle_state = 'active'
-         AND contract.distance_metric = 'cosine'
-        WHERE document.search_state <> 'current'
-           OR document.embedding IS NULL
-           OR document.embedding_dimensions <> contract.dimensions
-    ) THEN
-        RAISE EXCEPTION 'v2.6.1 cutover blocked: active-contract search document lacks a current valid vector';
-    END IF;
-END;
-$$;
-
 -- Copy Remember-origin history into the terminal-attempt and chronological
 -- event projections before the legacy placement tables are retired. The
 -- source rows remain untouched until the final stopped-service release step.
@@ -195,7 +162,7 @@ WITH legacy AS MATERIALIZED (
            COALESCE(run.status, ingest.status) AS run_status,
            COALESCE(run.attempts, 0) AS attempts,
            COALESCE(run.max_attempts, 0) AS max_attempts,
-           COALESCE(run.correlation_id, '') AS correlation_id,
+           COALESCE(ingest.metadata #>> '{actor,correlation_id}', '') AS correlation_id,
            (SELECT count(*) FROM evidence_fragments AS fragment
             WHERE fragment.team_id = ingest.team_id AND fragment.ingest_id = ingest.ingest_id) AS evidence_count,
            (SELECT count(*) FROM relationship_observations AS observation
@@ -292,19 +259,6 @@ FROM (
 ) AS assessment
 GROUP BY assessment.team_id, assessment.ingest_id, assessment.owner_profile_id
 ON CONFLICT (team_id, attempt_id) DO NOTHING;
-
-INSERT INTO v2_compatibility_markers (marker_id, marker_kind, version, status, corpus_hash, gate_report_hash, metadata, created_at)
-VALUES (
-    gen_random_uuid(), 'v2_cutover', 'dense-mem.v2.6.1.cutover.v1', 'compatible', '', '',
-    jsonb_build_object(
-        'release', 'v2.6.1', 'remember_mode', 'synchronous', 'status_tool', 'removed',
-        'evaluation_1k', 'waived_by_maintainer',
-        'remember_attempt_count', (SELECT count(*) FROM remember_attempts),
-        'remember_attempt_event_count', (SELECT count(*) FROM remember_attempt_events),
-        'semantic_assessment_count', (SELECT count(*) FROM semantic_assessments)
-    ), now()
-)
-ON CONFLICT (marker_kind, version) DO NOTHING;
 
 -- +goose StatementEnd
 

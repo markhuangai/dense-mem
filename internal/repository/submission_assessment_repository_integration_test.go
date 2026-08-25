@@ -149,6 +149,83 @@ func TestSubmissionAssessmentPersistsOneRunAndAtomicallyCommitsEveryItem(t *test
 	assert.Contains(t, err.Error(), "append-only")
 }
 
+func TestSubmissionAssessmentEmbedsOutsideTransactionAndFencesCommit(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "submission-assessment-inline-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "submission-assessment-inline-owner")
+	insertSearchTestContract(t, adminDB, rls, "submission-assessment-inline-search", 3, "exact", "")
+	repo := NewLedgerRepository(appDB, rls)
+	ingest := createSubmissionAssessmentIngest(t, ctx, repo, teamID, ownerID, "submission-assessment-inline")
+	claimed, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assessment := persistSubmissionAssessment(t, ctx, repo, *claimed)
+	input := submissionAssessmentCommitFixture(*claimed, ingest, assessment.AssessmentID, false)
+
+	plan, err := repo.PlanSubmissionAssessmentEmbeddings(ctx, input)
+	require.NoError(t, err)
+	require.Len(t, plan.Documents, 4)
+	embeddings := make([]InlineEmbeddingResult, 0, len(plan.Documents))
+	for _, document := range plan.Documents {
+		embeddings = append(embeddings, InlineEmbeddingResult{
+			DocumentHash: document.DocumentHash,
+			Embedding:    []float32{1, 0, 0},
+		})
+	}
+	committed, err := repo.CommitSubmissionAssessmentWithEmbeddings(ctx, input, embeddings)
+	require.NoError(t, err)
+	require.NotNil(t, committed)
+
+	var pending, current, queuedJobs int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT COUNT(*) FILTER (WHERE search_state IN ('pending', 'failed')),
+			       COUNT(*) FILTER (WHERE search_state = 'current')
+			FROM search_documents
+			WHERE team_id = ?::uuid
+		`, teamID).Row().Scan(&pending, &current); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT COUNT(*) FROM embedding_jobs
+			WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid
+		`, teamID, ownerID).Row().Scan(&queuedJobs)
+	}))
+	assert.Zero(t, pending)
+	assert.Equal(t, int64(4), current)
+	assert.Zero(t, queuedJobs)
+
+	rollbackIngest := createSubmissionAssessmentIngest(t, ctx, repo, teamID, ownerID, "submission-assessment-inline-rollback")
+	rollbackClaim, err := repo.ClaimNextPlacementRun(ctx, teamID, "submission-worker", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, rollbackClaim)
+	rollbackAssessment := persistSubmissionAssessment(t, ctx, repo, *rollbackClaim)
+	rollbackInput := submissionAssessmentCommitFixture(*rollbackClaim, rollbackIngest, rollbackAssessment.AssessmentID, false)
+	rollbackPlan, err := repo.PlanSubmissionAssessmentEmbeddings(ctx, rollbackInput)
+	require.NoError(t, err)
+	rollbackVectors := make([]InlineEmbeddingResult, 0, len(rollbackPlan.Documents))
+	for index, document := range rollbackPlan.Documents {
+		hash := document.DocumentHash
+		if index == len(rollbackPlan.Documents)-1 {
+			hash = "wrong-document-hash"
+		}
+		rollbackVectors = append(rollbackVectors, InlineEmbeddingResult{DocumentHash: hash, Embedding: []float32{1, 0, 0}})
+	}
+	var relationshipsBeforeRollback int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT COUNT(*) FROM relationship_records WHERE team_id = ?::uuid`, teamID).Row().Scan(&relationshipsBeforeRollback)
+	}))
+	_, err = repo.CommitSubmissionAssessmentWithEmbeddings(ctx, rollbackInput, rollbackVectors)
+	require.ErrorIs(t, err, ErrInlineEmbeddingPlanMismatch)
+	var relationshipCount int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT COUNT(*) FROM relationship_records WHERE team_id = ?::uuid`, teamID).Row().Scan(&relationshipCount)
+	}))
+	assert.Equal(t, relationshipsBeforeRollback, relationshipCount)
+}
+
 func TestSubmissionAssessmentCommitPersistsContiguousRelationshipSplits(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -177,7 +254,16 @@ func TestSubmissionAssessmentCommitPersistsContiguousRelationshipSplits(t *testi
 		SubjectKind: "concept", ObjectKind: "concept", RelationshipKind: "state", CurrentCardinality: "many",
 	})
 
-	committed, err := repo.CommitSubmissionAssessment(ctx, input)
+	plan, err := repo.PlanSubmissionAssessmentEmbeddings(ctx, input)
+	require.NoError(t, err)
+	inlineEmbeddings := make([]InlineEmbeddingResult, 0, len(plan.Documents))
+	for _, document := range plan.Documents {
+		inlineEmbeddings = append(inlineEmbeddings, InlineEmbeddingResult{
+			DocumentHash: document.DocumentHash,
+			Embedding:    []float32{1, 0, 0},
+		})
+	}
+	committed, err := repo.CommitSubmissionAssessmentWithEmbeddings(ctx, input, inlineEmbeddings)
 	require.NoError(t, err)
 	require.Len(t, committed.RelationshipResults, 3)
 	status, err := repo.GetPlacementRun(ctx, GetPlacementRunInput{

@@ -108,6 +108,26 @@ func (r *SemanticRepositoryImpl) CorrectRelationship(
 	ctx context.Context,
 	input CorrectRelationshipInput,
 ) (*CorrectRelationshipResult, error) {
+	return r.correctRelationship(ctx, input)
+}
+
+// CorrectRelationshipWithEmbeddings applies a provider result produced before
+// the correction transaction. The transaction only performs hash- and
+// version-fenced vector completion.
+func (r *SemanticRepositoryImpl) CorrectRelationshipWithEmbeddings(
+	ctx context.Context,
+	input CorrectRelationshipInput,
+	embeddings []InlineEmbeddingResult,
+) (*CorrectRelationshipResult, error) {
+	ctx = WithInlineEmbeddingWrites(ctx)
+	ctx = WithInlineEmbeddingResults(ctx, embeddings)
+	return r.correctRelationship(ctx, input)
+}
+
+func (r *SemanticRepositoryImpl) correctRelationship(
+	ctx context.Context,
+	input CorrectRelationshipInput,
+) (*CorrectRelationshipResult, error) {
 	input = normalizeCorrectRelationshipInput(input)
 	if err := validateCorrectRelationshipInput(input); err != nil {
 		return nil, err

@@ -76,7 +76,7 @@ describe("SubmissionsPanel", () => {
     render(<SubmissionsPanel api={api} team={team()} />);
 
     expect(await screen.findByRole("region", { name: "Submission details" })).toHaveTextContent("Completed");
-    expect(screen.getByText("Operational timeline unavailable. Durable placement state remains authoritative.")).toBeInTheDocument();
+    expect(screen.getByText("Operational timeline unavailable. Terminal Remember attempts remain authoritative.")).toBeInTheDocument();
     expect(screen.queryByText(/database detail/i)).not.toBeInTheDocument();
   });
 

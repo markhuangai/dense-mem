@@ -79,10 +79,12 @@ export type SubmissionOperatorDiagnostic = {
 };
 
 export type SubmissionEvidenceStatus = {
-  evidence_id: string;
+  disposition: "stored" | "not_stored";
+  evidence_id?: string;
   evidence_index: number;
   superseded_evidence_ids: string[];
-  search_state: string;
+  search_state: "current" | "not_required";
+  reason?: string;
   error?: SubmissionStatusError | null;
 };
 

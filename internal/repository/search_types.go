@@ -163,6 +163,22 @@ type SearchDocumentForEmbedding struct {
 	DocumentHash string
 }
 
+// InlineEmbeddingPlan is the provider-independent render result for one
+// synchronous semantic write. Search document IDs are provisional plan keys;
+// the commit phase maps returned vectors to the final version-fenced rows by
+// document hash.
+type InlineEmbeddingPlan struct {
+	Documents []SearchDocumentForEmbedding
+}
+
+// InlineEmbeddingResult carries one validated provider vector back to the
+// fenced semantic commit. DocumentHash is the stable render identity; the
+// final search_document_id is assigned or loaded by PostgreSQL.
+type InlineEmbeddingResult struct {
+	DocumentHash string
+	Embedding    []float32
+}
+
 // InlineEmbeddingBatch is the request-owned provider boundary used by a
 // synchronous semantic commit. The repository invokes it only after it has
 // rendered and fenced the complete document set; returning an error aborts
@@ -180,6 +196,7 @@ type CompleteSearchDocumentsWithEmbeddingsInput struct {
 
 type SearchDocumentEmbedding struct {
 	SearchDocumentID       string
+	DocumentHash           string
 	SourceVersion          int64
 	ProjectionFormat       int
 	ProjectionGenerationID string

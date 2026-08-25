@@ -20,13 +20,18 @@ type SubmissionAssessmentRepository interface {
 }
 
 // InlineSubmissionAssessmentCommitter is the synchronous Remember extension
-// of SubmissionAssessmentRepository. It keeps the provider callback generic
-// so the repository does not depend on a concrete embedding client.
+// of SubmissionAssessmentRepository. Rendering and provider execution are
+// deliberately separate: the provider never runs inside the repository
+// transaction.
 type InlineSubmissionAssessmentCommitter interface {
-	CommitSubmissionAssessmentWithInlineEmbeddings(
+	PlanSubmissionAssessmentEmbeddings(
 		context.Context,
 		CommitSubmissionAssessmentInput,
-		InlineEmbeddingBatch,
+	) (*InlineEmbeddingPlan, error)
+	CommitSubmissionAssessmentWithEmbeddings(
+		context.Context,
+		CommitSubmissionAssessmentInput,
+		[]InlineEmbeddingResult,
 	) (*CommitSubmissionAssessmentResult, error)
 }
 

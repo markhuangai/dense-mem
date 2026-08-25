@@ -39,6 +39,7 @@ func (r *LedgerRepositoryImpl) StageConflictDerivedEvidence(
 		IdempotencyKey:  "conflict-derived:" + target.ConflictID + ":" + target.TargetFragmentID,
 		RequestHash:     requestHash,
 		SourceSummary:   conflictResolutionDeletionOnlySourceSummary,
+		Status:          string(domain.PlacementRunCompleted),
 		Metadata: map[string]any{
 			"contract_version":                   domain.ContractVersion,
 			"conflict_id":                        target.ConflictID,

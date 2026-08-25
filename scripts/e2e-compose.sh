@@ -231,9 +231,7 @@ prepare_e2e_environment() {
       "AI_API_KEY=dense-mem-e2e-ai-key" \
       "AI_API_EMBEDDING_MODEL=dense-mem-e2e-embedding" \
       "AI_API_EMBEDDING_DIMENSIONS=1536" \
-      "AI_VERIFIER_MODEL=dense-mem-e2e-verifier" \
-      "EMBEDDING_WORKER_COUNT=1" \
-      "MEMORY_PLACEMENT_WORKER_COUNT=1" >> "$E2E_ENV_FILE"
+      "AI_VERIFIER_MODEL=dense-mem-e2e-verifier" >> "$E2E_ENV_FILE"
   else
     if [[ ! -f "$ROOT_ENV_SOURCE_FILE" ]]; then
       echo "Missing environment source at ${ROOT_ENV_SOURCE_FILE}; compose e2e uses the supplied local environment file." >&2

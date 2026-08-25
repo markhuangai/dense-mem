@@ -632,7 +632,7 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 				    ?, ?, ?, ?, ?::jsonb, ?::jsonb
 				)
 				ON CONFLICT (team_id, owner_profile_id, idempotency_key)
-				WHERE idempotency_key <> ''
+				WHERE idempotency_key <> '' AND status <> 'failed'
 				DO NOTHING
 				RETURNING ingest_id::text, request_hash, true AS created
 			)
@@ -640,10 +640,11 @@ func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestI
 			UNION ALL
 			SELECT ingest_id::text, request_hash, false AS created
 			FROM knowledge_ingests
-			WHERE team_id = ?::uuid
-			  AND owner_profile_id = ?::uuid
-			  AND idempotency_key = ?
-			LIMIT 1
+				WHERE team_id = ?::uuid
+				  AND owner_profile_id = ?::uuid
+				  AND idempotency_key = ?
+				  AND status <> 'failed'
+				LIMIT 1
 		`, input.IngestID, input.TeamID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
 			input.IdempotencyKey, input.RequestHash,
 			input.SourceSummary, input.Status, string(proposal), string(metadata),
@@ -736,6 +737,8 @@ func selectKnowledgeIngestByIdempotency(ctx context.Context, tx *gorm.DB, input 
 		WHERE team_id = ?::uuid
 		  AND owner_profile_id = ?::uuid
 		  AND idempotency_key = ?
+		  AND status <> 'failed'
+		ORDER BY created_at DESC, ingest_id DESC
 		LIMIT 1
 	`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Row()
 	var ingestID string
@@ -748,7 +751,7 @@ func selectKnowledgeIngestByIdempotency(ctx context.Context, tx *gorm.DB, input 
 
 func insertPlacementRun(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string) (string, time.Time, *time.Time, error) {
 	completedExpr := "NULL"
-	if input.Status == string(domain.PlacementRunQuarantined) {
+	if input.Status == string(domain.PlacementRunCompleted) || input.Status == string(domain.PlacementRunQuarantined) {
 		completedExpr = "now()"
 	}
 	rows, err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
@@ -837,7 +840,10 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 func insertPlacementItem(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string, placementRunID string, fragment EvidenceFragment, item EvidenceInput) (PlacementItem, error) {
 	status := string(domain.PlacementRunQueued)
 	category := "pending"
-	if input.Status == string(domain.PlacementRunQuarantined) || (item.InitialEvent != nil && item.InitialEvent.Decision == "quarantine") {
+	if input.Status == string(domain.PlacementRunCompleted) {
+		status = string(domain.PlacementRunCompleted)
+		category = "candidate"
+	} else if input.Status == string(domain.PlacementRunQuarantined) || (item.InitialEvent != nil && item.InitialEvent.Decision == "quarantine") {
 		status = string(domain.PlacementRunQuarantined)
 		category = "quarantined"
 	}

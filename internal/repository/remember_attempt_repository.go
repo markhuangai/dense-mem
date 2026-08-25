@@ -154,6 +154,9 @@ func (r *LedgerRepositoryImpl) RecordRememberAttempt(ctx context.Context, input 
 		if result.Error != nil {
 			return result.Error
 		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
 		if err := tx.WithContext(ctx).Exec(`
 			INSERT INTO remember_attempt_events (
 			    team_id, event_id, attempt_id, owner_profile_id, sequence_no,

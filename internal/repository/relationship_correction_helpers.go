@@ -771,7 +771,26 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 	if _, err := upsertPlacementRelationshipSearchDocument(ctx, tx, commit, successor, defaultEmbeddingJobMaxAttempts); err != nil {
 		return nil, err
 	}
-	if batch := inlineEmbeddingBatch(ctx); batch != nil {
+	if results := inlineEmbeddingResults(ctx); results != nil {
+		documents, err := loadSearchDocumentsForSourcesTx(ctx, tx, LoadSearchDocumentsForSourcesInput{
+			TeamID: row.TeamID, OwnerProfileID: row.OwnerProfileID, SourceKind: "relationship",
+			SourceIDs: []string{original.RelationshipID, successor.RelationshipID},
+		})
+		if err != nil {
+			return nil, err
+		}
+		searchDocumentIDs := make([]string, 0, len(documents))
+		for _, document := range documents {
+			if document.SearchState == string(domain.SearchProjectionPending) || document.SearchState == string(domain.SearchProjectionFailed) {
+				searchDocumentIDs = append(searchDocumentIDs, document.SearchDocumentID)
+			}
+		}
+		if len(searchDocumentIDs) > 0 {
+			if _, err := completeInlineEmbeddingResultsInTx(ctx, tx, row.TeamID, row.OwnerProfileID, searchDocumentIDs, results); err != nil {
+				return nil, err
+			}
+		}
+	} else if batch := inlineEmbeddingBatch(ctx); batch != nil {
 		documents, err := loadSearchDocumentsForSourcesTx(ctx, tx, LoadSearchDocumentsForSourcesInput{
 			TeamID: row.TeamID, OwnerProfileID: row.OwnerProfileID, SourceKind: "relationship",
 			SourceIDs: []string{original.RelationshipID, successor.RelationshipID},

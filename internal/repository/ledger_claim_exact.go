@@ -78,6 +78,12 @@ func (r *LedgerRepositoryImpl) ClaimPlacementRun(ctx context.Context, input Clai
 		); err != nil {
 			return err
 		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
 		if leaseUntil.Valid {
 			loaded.LeaseUntil = &leaseUntil.Time
 		}
@@ -89,7 +95,7 @@ func (r *LedgerRepositoryImpl) ClaimPlacementRun(ctx context.Context, input Clai
 			return err
 		}
 		run = &loaded
-		return rows.Err()
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ledger: claim placement run: %w", err)

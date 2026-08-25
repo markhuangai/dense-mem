@@ -259,26 +259,7 @@ func (s *submissionAssessmentPlacementWorkerService) ProcessNextSubmissionAssess
 				return s.completeTerminalWithRelationshipResults(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", "deterministic_policy", results, commitInputErr)
 			})
 		}
-		commitCtx := ctx
-		var cancelCommit context.CancelFunc
-		if repository.InlineEmbeddingWrite(ctx) {
-			commitCtx, cancelCommit = context.WithTimeout(ctx, 10*time.Second)
-		}
-		var committed *repository.CommitSubmissionAssessmentResult
-		var commitErr error
-		if s.inlineEmbedder != nil {
-			inlineCommitter, ok := s.assessments.(repository.InlineSubmissionAssessmentCommitter)
-			if !ok {
-				commitErr = errors.New("submission assessment worker: inline semantic committer is unavailable")
-			} else {
-				committed, commitErr = inlineCommitter.CommitSubmissionAssessmentWithInlineEmbeddings(commitCtx, commitInput, s.inlineEmbedder)
-			}
-		} else {
-			committed, commitErr = s.assessments.CommitSubmissionAssessment(commitCtx, commitInput)
-		}
-		if cancelCommit != nil {
-			cancelCommit()
-		}
+		committed, commitErr := s.commitSubmissionAssessment(ctx, commitInput)
 		if isRememberStaleInputError(commitErr) {
 			commitInput.RelationshipResults = submissionAssessmentNotStoredRelationshipResults(
 				commitInput.RelationshipResults, string(SubmissionErrorStaleInput),

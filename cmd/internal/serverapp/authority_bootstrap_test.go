@@ -13,7 +13,7 @@ import (
 
 func TestClassifyAuthorityActivatesWhenCompatibleMarkerPresent(t *testing.T) {
 	store := &authorityStoreStub{marker: &domain.CompatibilityMarker{
-		Version: cutoverMarkerVersion, Status: domain.MigrationMarkerCompatible,
+		Status: domain.MigrationMarkerCompatible,
 	}}
 
 	bootstrap, err := ClassifyAuthority(context.Background(), store)
@@ -61,13 +61,20 @@ func TestClassifyAuthorityFailsClosedForUnknownMarkerStatus(t *testing.T) {
 	require.ErrorContains(t, err, "unknown compatibility marker status pending")
 }
 
-func TestEnsureAuthorityFailsClosedWhenMarkerIsAbsent(t *testing.T) {
-	store := &authorityStoreStub{}
-	_, err := EnsureAuthority(context.Background(), store)
+func TestEnsureAuthorityCreatesFreshMarkerWhenNoneExists(t *testing.T) {
+	store := &authorityStoreStub{
+		freshMarker: &domain.CompatibilityMarker{
+			Status:   domain.MigrationMarkerCompatible,
+			Metadata: map[string]any{"fresh_install": true},
+		},
+	}
 
-	require.ErrorIs(t, err, errAuthorityBlocked)
-	require.ErrorContains(t, err, "compatible cutover marker")
-	require.Zero(t, store.freshCommits)
+	bootstrap, err := EnsureAuthority(context.Background(), store)
+
+	require.NoError(t, err)
+	require.Equal(t, authorityActive, bootstrap.Mode)
+	require.Equal(t, store.freshMarker, bootstrap.Marker)
+	require.Equal(t, 1, store.freshCommits)
 }
 
 type authorityStoreStub struct {

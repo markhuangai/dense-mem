@@ -65,29 +65,27 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	if p == nil || p.ledger == nil {
 		return nil, errors.New("remember processor: ledger is required")
 	}
-	if lookup, ok := any(p.ledger).(repository.RememberAttemptLookup); ok {
-		attempt, lookupErr := lookup.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{
-			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
-		})
-		if lookupErr == nil && attempt != nil {
-			if attempt.RequestHash != input.RequestHash {
-				return nil, rememberapp.ErrRememberConflict
-			}
-			if attempt.Outcome == "completed" || attempt.Outcome == "rejected" || attempt.Outcome == "quarantined" || attempt.Outcome == "replayed" {
-				encoded, marshalErr := json.Marshal(attempt.PublicResult)
-				if marshalErr != nil {
-					return nil, marshalErr
-				}
-				var replay rememberapp.SubmissionStatusResult
-				if unmarshalErr := json.Unmarshal(encoded, &replay); unmarshalErr != nil {
-					return nil, unmarshalErr
-				}
-				replay.SubmissionID = firstNonEmptyString(replay.SubmissionID, attempt.AttemptID)
-				return &replay, nil
-			}
-		} else if lookupErr != nil && !errors.Is(lookupErr, repository.ErrRememberAttemptNotFound) {
-			return nil, lookupErr
+	attempt, lookupErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{
+		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
+	})
+	if lookupErr == nil && attempt != nil {
+		if attempt.RequestHash != input.RequestHash {
+			return nil, rememberapp.ErrRememberConflict
 		}
+		if attempt.Outcome == "completed" || attempt.Outcome == "rejected" || attempt.Outcome == "quarantined" || attempt.Outcome == "replayed" {
+			encoded, marshalErr := json.Marshal(attempt.PublicResult)
+			if marshalErr != nil {
+				return nil, marshalErr
+			}
+			var replay rememberapp.SubmissionStatusResult
+			if unmarshalErr := json.Unmarshal(encoded, &replay); unmarshalErr != nil {
+				return nil, unmarshalErr
+			}
+			replay.SubmissionID = firstNonEmptyString(replay.SubmissionID, attempt.AttemptID)
+			return &replay, nil
+		}
+	} else if lookupErr != nil && !errors.Is(lookupErr, repository.ErrRememberAttemptNotFound) {
+		return nil, lookupErr
 	}
 	ingestID := uuid.NewString()
 	placementRunID := uuid.NewString()
@@ -133,65 +131,61 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	if errors.Is(processErr, repository.ErrSearchStaleVersion) {
 		processErr = fmt.Errorf("%w: search document fence changed", rememberapp.ErrRememberCommitConflict)
 	}
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cleanupCancel()
 	if processErr != nil || status == nil || status.ProcessingState == "queued" || status.ProcessingState == "processing" {
-		if terminalizer, ok := any(p.ledger).(interface {
-			TerminalizeRememberFailure(context.Context, repository.RememberTerminalizeFailureInput) error
-		}); ok {
-			terminalizeErr := terminalizer.TerminalizeRememberFailure(ctx, repository.RememberTerminalizeFailureInput{
+		terminalizeErr := p.ledger.TerminalizeRememberFailure(cleanupCtx, repository.RememberTerminalizeFailureInput{
+			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: created.IngestID,
+			FailedPhase: "execution", ErrorCode: "internal_failure",
+		})
+		if terminalizeErr != nil && processErr == nil {
+			processErr = terminalizeErr
+		}
+		if terminalizeErr == nil {
+			if placement, loadErr := p.ledger.GetPlacementRun(cleanupCtx, repository.GetPlacementRunInput{
 				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: created.IngestID,
-				FailedPhase: "execution", ErrorCode: "internal_failure",
-			})
-			if terminalizeErr != nil && processErr == nil {
-				processErr = terminalizeErr
-			}
-			if terminalizeErr == nil {
-				if placement, loadErr := p.ledger.GetPlacementRun(ctx, repository.GetPlacementRunInput{
-					TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: created.IngestID,
-				}); loadErr == nil {
-					status = rememberapp.ProjectSubmissionStatus(rememberStageResult(placement))
-				}
+			}); loadErr == nil {
+				status = rememberapp.ProjectSubmissionStatus(rememberStageResult(placement))
 			}
 		}
 	}
 	if processErr == nil && status != nil && status.ProcessingState == "failed" {
 		processErr = rememberapp.ErrRememberPersistence
 	}
-	if recorder, ok := any(p.ledger).(repository.RememberAttemptRecorder); ok {
-		outcome := "failed"
-		if status != nil {
-			switch status.ProcessingState {
-			case "completed", "rejected", "quarantined":
-				outcome = status.ProcessingState
+	outcome := "failed"
+	if status != nil {
+		switch status.ProcessingState {
+		case "completed", "rejected", "quarantined":
+			outcome = status.ProcessingState
+		}
+	}
+	publicResult := map[string]any{}
+	if status != nil {
+		if encoded, marshalErr := json.Marshal(status); marshalErr == nil {
+			_ = json.Unmarshal(encoded, &publicResult)
+		}
+	}
+	if err := p.ledger.RecordRememberAttempt(cleanupCtx, repository.RememberAttemptRecordInput{
+		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, AttemptID: created.IngestID,
+		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
+		RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
+		Outcome: outcome, FailedPhase: func() string {
+			if processErr != nil {
+				return "execution"
 			}
-		}
-		publicResult := map[string]any{}
-		if status != nil {
-			if encoded, marshalErr := json.Marshal(status); marshalErr == nil {
-				_ = json.Unmarshal(encoded, &publicResult)
+			return ""
+		}(),
+		ErrorCode: func() string {
+			if processErr != nil {
+				return "internal_failure"
 			}
-		}
-		if err := recorder.RecordRememberAttempt(ctx, repository.RememberAttemptRecordInput{
-			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, AttemptID: created.IngestID,
-			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
-			RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
-			Outcome: outcome, FailedPhase: func() string {
-				if processErr != nil {
-					return "execution"
-				}
-				return ""
-			}(),
-			ErrorCode: func() string {
-				if processErr != nil {
-					return "internal_failure"
-				}
-				return ""
-			}(),
-			CorrelationID: stringValueFromMetadata(input.Metadata, "correlation_id"), PublicResult: publicResult,
-			EvidenceCount: len(input.Evidence), RelationshipCount: lenMapSlice(input.Proposal, "relationship_hints"),
-			Duration: time.Since(started),
-		}); err != nil && processErr == nil {
-			processErr = err
-		}
+			return ""
+		}(),
+		CorrelationID: stringValueFromMetadata(input.Metadata, "correlation_id"), PublicResult: publicResult,
+		EvidenceCount: len(input.Evidence), RelationshipCount: lenMapSlice(input.Proposal, "relationship_hints"),
+		Duration: time.Since(started),
+	}); err != nil && processErr == nil {
+		processErr = err
 	}
 	return status, processErr
 }
@@ -475,6 +469,7 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 		}
 		completed[i] = repository.SearchDocumentEmbedding{
 			SearchDocumentID: document.SearchDocumentID, SourceVersion: document.SourceVersion,
+			DocumentHash:     document.DocumentHash,
 			ProjectionFormat: document.ProjectionFormat, ProjectionGenerationID: document.ProjectionGenerationID,
 			DocumentVersion: document.DocumentVersion, EmbeddingContractID: document.EmbeddingContractID,
 			EmbeddingDimensions: document.EmbeddingDimensions, Embedding: vectors[i], SpaceID: document.SpaceID,

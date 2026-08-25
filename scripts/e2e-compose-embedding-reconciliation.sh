@@ -11,8 +11,6 @@ append_embedding_reconciliation_environment() {
   printf '%s\n' \
     "AI_API_URL=http://embedding-fault-proxy:8081/v1" \
     "AI_API_KEY=dense-mem-embedding-proxy-key" \
-    "EMBEDDING_BATCH_SIZE=256" \
-    "EMBEDDING_JOB_POLL_SECONDS=5" \
     "EMBEDDING_PROXY_UPSTREAM_URL=${live_api_url}" \
     "EMBEDDING_PROXY_UPSTREAM_KEY=${live_api_key}" >> "$E2E_ENV_FILE"
 }

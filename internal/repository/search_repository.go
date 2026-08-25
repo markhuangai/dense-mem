@@ -20,6 +20,7 @@ const (
 
 type inlineEmbeddingWritesContextKey struct{}
 type inlineEmbeddingBatchContextKey struct{}
+type inlineEmbeddingResultsContextKey struct{}
 
 // WithInlineEmbeddingWrites marks a semantic write as request-scoped. Search
 // documents are still version-fenced, but no legacy embedding job is enqueued;
@@ -42,8 +43,26 @@ func WithInlineEmbeddingBatch(ctx context.Context, batch InlineEmbeddingBatch) c
 	return context.WithValue(ctx, inlineEmbeddingBatchContextKey{}, batch)
 }
 
+// WithInlineEmbeddingResults carries provider vectors into a fenced semantic
+// transaction. The provider must have completed before this context is used.
+func WithInlineEmbeddingResults(ctx context.Context, results []InlineEmbeddingResult) context.Context {
+	copyResults := make([]InlineEmbeddingResult, len(results))
+	for index, result := range results {
+		copyResults[index] = InlineEmbeddingResult{
+			DocumentHash: result.DocumentHash,
+			Embedding:    append([]float32(nil), result.Embedding...),
+		}
+	}
+	return context.WithValue(ctx, inlineEmbeddingResultsContextKey{}, copyResults)
+}
+
 func inlineEmbeddingBatch(ctx context.Context) InlineEmbeddingBatch {
 	value, _ := ctx.Value(inlineEmbeddingBatchContextKey{}).(InlineEmbeddingBatch)
+	return value
+}
+
+func inlineEmbeddingResults(ctx context.Context) []InlineEmbeddingResult {
+	value, _ := ctx.Value(inlineEmbeddingResultsContextKey{}).([]InlineEmbeddingResult)
 	return value
 }
 
@@ -56,6 +75,8 @@ var (
 	ErrSearchStaleVersion                   = errors.New("search stale source or document version")
 	ErrSearchContractMismatch               = errors.New("search contract mismatch")
 	ErrSearchConvergenceAttentionRequired   = errors.New("search convergence is attention_required")
+	ErrInlineEmbeddingPlanMismatch          = errors.New("inline embedding plan does not match rendered search documents")
+	ErrInlineEmbeddingPlanTooLarge          = errors.New("inline embedding plan exceeds the document bound")
 	ErrEmbeddingLeaseLost                   = errors.New("embedding lease lost")
 	ErrEmbeddingReconciliationCanarySkipped = errors.New("embedding reconciliation canary was no longer claimable")
 )

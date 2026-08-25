@@ -590,39 +590,11 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 	})
 	require.NoError(t, err)
 	require.Len(t, derivedIngest.Items, 1)
+	assert.Equal(t, string(domain.PlacementRunCompleted), derivedIngest.Status)
+	assert.Equal(t, string(domain.PlacementRunCompleted), derivedIngest.Items[0].Status)
 	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "worker-overdue-derived", time.Minute)
 	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	require.Equal(t, derivedIngest.PlacementRunID, claimed.PlacementRunID)
-	derivedCommit, err := commitAcceptedSubmissionFixture(t, ctx, ledgerRepo, CommitPlacementSemanticInput{
-		TeamID:           teamID,
-		OwnerProfileID:   systemProfileID,
-		IngestID:         derivedIngest.IngestID,
-		PlacementRunID:   derivedIngest.PlacementRunID,
-		PlacementItemID:  derivedIngest.Items[0].PlacementItemID,
-		WorkerID:         "worker-overdue-derived",
-		ExpectedAttempts: claimed.Attempts,
-		EntityResolutions: []PlacementEntityResolutionInput{
-			{MentionRef: "subject", Action: "reuse", EntityID: subject.EntityID},
-			{MentionRef: "object", Action: "reuse", EntityID: postgres.EntityID},
-		},
-		RelationshipObservations: []PlacementRelationshipDecisionInput{{
-			Ref:          "derived-must-not-project",
-			SubjectRef:   "subject",
-			PredicateKey: "primary_database",
-			ObjectRef:    "object",
-			Support: &EvidenceSupportInput{
-				FragmentID:     derived.ReplacementFragment,
-				SourceGroupKey: "source-group-overdue-loser",
-				SpanStart:      0,
-				SpanEnd:        len(derivedIngest.Evidence[0].Content),
-				Quote:          derivedIngest.Evidence[0].Content,
-				Authority:      "inferred",
-			},
-		}},
-	})
-	require.NoError(t, err)
-	assert.Empty(t, derivedCommit.RelationshipResults)
+	assert.Nil(t, claimed)
 
 	var relationshipCountAfterDerived, derivedSearchDocuments int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {

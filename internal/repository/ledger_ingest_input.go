@@ -82,7 +82,8 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 	}
 	if input.Status != string(domain.PlacementRunQueued) &&
 		input.Status != string(domain.PlacementRunGuarded) &&
-		input.Status != string(domain.PlacementRunQuarantined) {
+		input.Status != string(domain.PlacementRunQuarantined) &&
+		input.Status != string(domain.PlacementRunCompleted) {
 		return fmt.Errorf("unsupported ingest status %q", input.Status)
 	}
 	if input.IdempotencyKey != "" && input.RequestHash == "" {

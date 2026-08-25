@@ -310,14 +310,15 @@ function SubmissionDetail({
         <section>
           <h3>Evidence results</h3>
           <div className="mini-table">
-            <div className="mini-table-row heading" style={{ "--mini-cols": 4 } as CSSProperties}>
-              <span>Index</span><span>Search</span><span>Evidence ID</span><span>Error guidance</span>
+            <div className="mini-table-row heading" style={{ "--mini-cols": 5 } as CSSProperties}>
+              <span>Index</span><span>Disposition</span><span>Search</span><span>Evidence ID</span><span>Reason / error</span>
             </div>
             {detail.evidence.map((evidence) => (
-              <div className="mini-table-row" style={{ "--mini-cols": 4 } as CSSProperties} key={evidence.evidence_id}>
+              <div className="mini-table-row" style={{ "--mini-cols": 5 } as CSSProperties} key={`evidence-${evidence.evidence_index}`}>
                 <span>{evidence.evidence_index}</span>
+                <span>{evidence.disposition === "stored" ? "Stored" : "Not stored"}</span>
                 <span>{stateLabel(evidence.search_state)}</span>
-                <code>{shortId(evidence.evidence_id)}</code>
+                <code>{evidence.evidence_id ? shortId(evidence.evidence_id) : "—"}</code>
                 <span className="submission-evidence-error">
                   {evidence.error ? (
                     <>
@@ -325,7 +326,7 @@ function SubmissionDetail({
                       <small>{evidence.error.message}</small>
                       <strong>{evidence.error.remediation}</strong>
                     </>
-                  ) : "—"}
+                  ) : evidence.reason || "—"}
                 </span>
               </div>
             ))}
@@ -334,7 +335,7 @@ function SubmissionDetail({
         <section>
           <h3>Operational timeline</h3>
           {timelineUnavailable ? (
-            <div className="table-placeholder compact">Operational timeline unavailable. Durable placement state remains authoritative.</div>
+            <div className="table-placeholder compact">Operational timeline unavailable. Terminal Remember attempts remain authoritative.</div>
           ) : timeline.length === 0 ? (
             <div className="table-placeholder compact">No retained lifecycle events.</div>
           ) : (

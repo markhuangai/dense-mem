@@ -37,6 +37,13 @@ func TestLedgerCreateIngestValidationRequiresRequestHashWithIdempotencyKey(t *te
 	assert.Contains(t, err.Error(), "request_hash is required")
 }
 
+func TestLedgerCreateIngestValidationAllowsCompletedInternalIngest(t *testing.T) {
+	input := validCreateIngestInput()
+	input.Status = string(domain.PlacementRunCompleted)
+
+	require.NoError(t, validateCreateIngestInput(normalizeCreateIngestInput(input)))
+}
+
 func TestLedgerCreateIngestValidationRequiresCompleteSpaceFence(t *testing.T) {
 	t.Run("generation without space", func(t *testing.T) {
 		input := validCreateIngestInput()

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 type RememberTerminalizeFailureInput struct {
@@ -45,7 +48,7 @@ func (r *LedgerRepositoryImpl) TerminalizeRememberFailure(ctx context.Context, i
 		input.Message = "synchronous Remember execution did not reach a terminal state"
 	}
 	resultJSON, err := json.Marshal(map[string]any{
-		"contract_version": "dense-mem.v2.6.1", "failure_stage": input.FailedPhase,
+		"contract_version": domain.ContractVersion, "failure_stage": input.FailedPhase,
 		"failure_code": input.ErrorCode, "retryable": true,
 		"next_action": "retry_same_request", "reason": input.Message,
 	})
@@ -73,23 +76,36 @@ func (r *LedgerRepositoryImpl) TerminalizeRememberFailure(ctx context.Context, i
 		if updated.Error != nil {
 			return updated.Error
 		}
+		markIngestFailed := func() error {
+			return tx.WithContext(ctx).Exec(`
+				UPDATE knowledge_ingests
+				SET status = 'failed', error = ?, completed_at = COALESCE(completed_at, now()), updated_at = now()
+				WHERE team_id = ?::uuid
+				  AND ingest_id = ?::uuid
+				  AND owner_profile_id = ?::uuid
+				  AND status IN ('queued', 'guarded', 'processing')
+			`, input.Message, input.TeamID, input.IngestID, input.OwnerProfileID).Error
+		}
 		if updated.RowsAffected == 0 {
 			var status string
 			err := tx.WithContext(ctx).Raw(`
 				SELECT status FROM placement_runs
 				WHERE team_id = ?::uuid AND ingest_id = ?::uuid AND owner_profile_id = ?::uuid
 			`, input.TeamID, input.IngestID, input.OwnerProfileID).Row().Scan(&status)
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrPlacementNotFound
 			}
 			if err != nil {
 				return err
 			}
 			if status == "failed" || status == "completed" || status == "rejected" || status == "quarantined" {
+				if status == "failed" {
+					return markIngestFailed()
+				}
 				return nil
 			}
 			return errors.New("remember terminalize: placement state changed")
 		}
-		return nil
+		return markIngestFailed()
 	})
 }
