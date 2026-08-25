@@ -7,6 +7,10 @@ const reviewWorkflowURL = new URL(
   "../../.github/workflows/ai-pr-review.yml",
   import.meta.url,
 );
+const prCIWorkflowURL = new URL(
+  "../../.github/workflows/ci-pr.yml",
+  import.meta.url,
+);
 const sharedWorkflowURL = new URL(
   "../../.github/workflows/ci-shared.yml",
   import.meta.url,
@@ -152,35 +156,56 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   assert.match(ciCheck, /node --test tests\/uat\/ai_pr_review_policy\.test\.mjs/);
 });
 
-test("automatic AI review waits for successful current-head PR CI", async () => {
-  const workflow = await readFile(reviewWorkflowURL, "utf8");
-  const normalizedWorkflow = workflow.replace(/\s+/g, " ");
+test("automatic AI review starts with PR CI while Dependabot keeps its secret-safe fallback", async () => {
+  const [reviewWorkflow, ciWorkflow] = await Promise.all([
+    readFile(reviewWorkflowURL, "utf8"),
+    readFile(prCIWorkflowURL, "utf8"),
+  ]);
+  const normalizedReviewWorkflow = reviewWorkflow.replace(/\s+/g, " ");
+  const normalizedCIWorkflow = ciWorkflow.replace(/\s+/g, " ");
 
-  assert.doesNotMatch(workflow, /^\s+pull_request_target:/m);
-  assert.match(workflow, /^\s+workflow_run:/m);
-  assert.match(workflow, /^\s+workflow_dispatch:/m);
-  assert.match(normalizedWorkflow, /workflows: - CI Pull Request types: \[completed\]/);
+  assert.match(reviewWorkflow, /^\s+pull_request_target:/m);
+  assert.match(reviewWorkflow, /^\s+workflow_run:/m);
+  assert.match(reviewWorkflow, /^\s+workflow_dispatch:/m);
   assert.match(
-    normalizedWorkflow,
-    /github\.event_name == 'workflow_dispatch' \|\| \(github\.event\.workflow_run\.event == 'pull_request' && github\.event\.workflow_run\.conclusion == 'success'\)/,
+    normalizedReviewWorkflow,
+    /pull_request_target: branches: - main types: \[opened, synchronize, reopened, ready_for_review\]/,
   );
-  assert.match(workflow, /workflowRun\.event !== "pull_request"/);
-  assert.match(workflow, /workflowRun\.conclusion !== "success"/);
-  assert.match(workflow, /const triggerHeadRef = workflowRun\.head_branch/);
   assert.match(
-    workflow,
+    normalizedCIWorkflow,
+    /pull_request: branches: - main types: \[opened, synchronize, reopened, ready_for_review\]/,
+  );
+  assert.match(
+    normalizedReviewWorkflow,
+    /workflows: - CI Pull Request branches: - dependabot\/\*\* types: \[completed\]/,
+  );
+  assert.match(reviewWorkflow, /github\.event_name == 'pull_request_target'/);
+  assert.match(reviewWorkflow, /eventName === "pull_request_target"/);
+  assert.match(reviewWorkflow, /const eventPull = context\.payload\.pull_request/);
+  assert.match(
+    reviewWorkflow,
+    /eventPull\.user\?\.login\?\.toLowerCase\(\) === "dependabot\[bot\]"/,
+  );
+  assert.match(reviewWorkflow, /pullNumber = eventPull\.number/);
+  assert.match(reviewWorkflow, /triggerHeadSha = eventPull\.head\?\.sha/);
+  assert.match(reviewWorkflow, /typeof triggerHeadSha !== "string"/);
+  assert.match(reviewWorkflow, /workflowRun\.conclusion !== "success"/);
+  assert.match(reviewWorkflow, /const triggerHeadRef = workflowRun\.head_branch/);
+  assert.match(
+    reviewWorkflow,
     /const triggerHeadRepositoryId = workflowRun\.head_repository\?\.id/,
   );
-  assert.match(workflow, /typeof triggerHeadRef !== "string"/);
-  assert.match(workflow, /!Number\.isSafeInteger\(triggerHeadRepositoryId\)/);
+  assert.match(reviewWorkflow, /typeof triggerHeadRef !== "string"/);
+  assert.match(reviewWorkflow, /!Number\.isSafeInteger\(triggerHeadRepositoryId\)/);
   assert.match(
-    normalizedWorkflow,
+    normalizedReviewWorkflow,
     /pull\.head\.sha === triggerHeadSha && pull\.head\.ref === triggerHeadRef && pull\.head\.repo\?\.id === triggerHeadRepositoryId/,
   );
   assert.match(
-    workflow,
-    /pull\.head\.sha !== triggerHeadSha/,
+    normalizedReviewWorkflow,
+    /eventName === "workflow_run" && pull\.user\?\.login\?\.toLowerCase\(\) !== "dependabot\[bot\]"/,
   );
+  assert.match(reviewWorkflow, /pull\.head\.sha !== triggerHeadSha/);
 });
 
 test("AI review status identity remains scoped to the resolved pull request", async () => {
