@@ -198,10 +198,10 @@ typed `value`, never both.
 `remember` rejects caller `span`, `surface`, and Relationship `supports` fields.
 The server finds bounded occurrences of submitted Entity names and active
 aliases in the cited evidence and issues opaque boundary references. The
-assessor owns grounding repair, identity choice, predicate reconciliation,
-support decisions, and repairable races. Deterministic validation proves that
-every selected range is within the Relationship's cited evidence before any
-durable span is committed.
+provider proposes grounding, identity, predicate, Value, and support ranges;
+the application validates each complete response and owns support disposition,
+deterministic policy, and repairable races. Every selected range must be within
+the Relationship's cited evidence before any durable span is committed.
 
 The client makes its best effort to provide a matching
 `predicate.proposed_key`, at most 128 Unicode code points. The server rejects

@@ -102,9 +102,9 @@ assessment.
 The client makes its best effort to set `predicate.proposed_key` to a matching
 team predicate. It is a suggestion, not authority. `object` contains exactly
 one of `entity` or `value`; a typed Value includes its type and canonical value,
-with optional display and unit fields. The server and assessor ground the
-selected Entity, predicate, Value, and support ranges in cited evidence before
-commit.
+with optional display and unit fields. The provider proposes Entity, predicate,
+Value, and support ranges; the server validates the complete response and owns
+support disposition and deterministic policy before commit.
 
 The client may provide a same-team server-issued `known_entity_id` as an exact
 identity constraint or omit it for name-based server selection. An exact
