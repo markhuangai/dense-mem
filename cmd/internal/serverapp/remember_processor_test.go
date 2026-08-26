@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -62,6 +63,19 @@ func TestRememberProcessorRejectsInvalidEmbeddingResponsesBeforeCommit(t *testin
 			require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingInvalid)
 		})
 	}
+}
+
+func TestRememberFailureRecoveryContextSurvivesRequestCancellation(t *testing.T) {
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	cancelRequest()
+
+	recoveryCtx, cancelRecovery := rememberFailureRecoveryContext(requestCtx)
+	defer cancelRecovery()
+
+	require.NoError(t, recoveryCtx.Err())
+	deadline, ok := recoveryCtx.Deadline()
+	require.True(t, ok)
+	require.WithinDuration(t, time.Now().Add(10*time.Second), deadline, time.Second)
 }
 
 var _ embedding.EmbeddingProviderInterface = (*rememberProcessorEmbedderStub)(nil)

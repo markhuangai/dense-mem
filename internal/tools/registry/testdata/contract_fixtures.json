@@ -55,7 +55,6 @@
       ],
 	      "relationship_results": [],
 	      "errors": [],
-	      "degradations": [],
 	      "correlation_id": "req-1"
     }
   },

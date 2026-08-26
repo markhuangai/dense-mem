@@ -282,7 +282,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 			artifacts = append(artifacts, repository.RememberFailureArtifactInput{ArtifactKind: "request", ContentType: "application/json", Content: encoded})
 		}
 	}
-	recoveryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	recoveryCtx, cancel := rememberFailureRecoveryContext(ctx)
 	defer cancel()
 	if err := p.ledger.RecordRememberFailure(recoveryCtx, repository.RememberFailureRecordInput{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, AttemptID: attemptID,
@@ -306,6 +306,10 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		return nil, failure
 	}
 	return nil, &rememberapp.RememberProcessError{Status: status, Err: failure}
+}
+
+func rememberFailureRecoveryContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 }
 
 func rememberFailureCode(phase string, err error) rememberapp.SubmissionErrorCode {
