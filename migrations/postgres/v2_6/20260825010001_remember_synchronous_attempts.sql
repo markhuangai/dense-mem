@@ -1723,6 +1723,19 @@ BEGIN
             DROP COLUMN IF EXISTS canary_outcome,
             DROP COLUMN IF EXISTS canary_failure_class,
             DROP COLUMN IF EXISTS canary_failure_code;
+        -- These worker-era states have no synchronous equivalent; preserve
+        -- their history as terminal maintenance failures before adding the
+        -- document-centric status constraint.
+        UPDATE search_reconciliation_runs
+        SET status = 'failed',
+            last_error = CASE
+                WHEN btrim(COALESCE(last_error, '')) = ''
+                THEN 'legacy reconciliation status retired during v2.6.1 cutover'
+                ELSE last_error
+            END,
+            completed_at = COALESCE(completed_at, clock_timestamp()),
+            updated_at = clock_timestamp()
+        WHERE status IN ('reserved', 'deferred', 'ambiguous');
         DO $dense_mem_search_reconciliation_constraints$
         DECLARE
             unique_constraint TEXT;

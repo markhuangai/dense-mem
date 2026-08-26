@@ -12,6 +12,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRememberSynchronousCutoverNormalizesLegacyReconciliationStatuses(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
+	contractID := uuid.New()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO embedding_contracts (
+				embedding_contract_id, contract_key, version, provider, model,
+				dimensions, distance_metric, vector_normalization,
+				document_format_version, query_format_version, lifecycle_state
+			) VALUES ($1::uuid, $2, 1, 'test', 'legacy-reconciliation', 3,
+			          'cosine', 'provider', 1, 1, 'active')
+		`, contractID, "legacy-reconciliation-"+contractID.String()); err != nil {
+			return err
+		}
+		for index, status := range []string{"reserved", "deferred", "ambiguous"} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO embedding_reconciliation_runs (
+					embedding_contract_id, embedding_dimensions, local_run_date, status
+				) VALUES ($1::uuid, 3, CURRENT_DATE - ($2::int * INTERVAL '1 day'), $3)
+			`, contractID, index, status); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	runGooseUpTo(t, ctx, db, 20260825010001)
+	rows, err := db.QueryContext(ctx, `
+		SELECT status, last_error, completed_at IS NOT NULL
+		FROM search_reconciliation_runs
+		ORDER BY local_run_date DESC
+	`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var count int
+	for rows.Next() {
+		var status, lastError string
+		var completed bool
+		require.NoError(t, rows.Scan(&status, &lastError, &completed))
+		require.Equal(t, "failed", status)
+		require.Contains(t, lastError, "legacy reconciliation status retired")
+		require.True(t, completed)
+		count++
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, 3, count)
+}
+
 func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)

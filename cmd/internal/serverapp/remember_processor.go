@@ -85,7 +85,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID,
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 			RequestHash: input.RequestHash, SourceSummary: input.SourceSummary, Proposal: input.Proposal,
-			Metadata: input.Metadata, Evidence: rememberEvidenceInputsForCommit(input, snapshot), Duration: time.Since(started),
+			Metadata: input.Metadata, Evidence: rememberEvidenceInputsForCommit(input, snapshot), StartedAt: started, Duration: time.Since(started),
 		}
 		if err := ctx.Err(); err != nil {
 			return fail(err, "commit")
@@ -122,6 +122,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		Metadata: input.Metadata, Evidence: rememberEvidenceInputsForCommit(input, snapshot), Assessment: prepared,
 		Duration: time.Since(started),
 	})
+	commitInput.StartedAt = started
 	if buildErr != nil {
 		var noSupported *memoryservice.NoSupportedMemoryError
 		if !errors.As(buildErr, &noSupported) {

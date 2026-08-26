@@ -113,9 +113,11 @@ type SynchronousRememberCommitInput struct {
 	OutputTokens    int
 	AssessorTurns   int
 	Duration        time.Duration
-	CorrelationID   string
-	PublicResult    map[string]any
-	Commit          CommitSubmissionAssessmentInput
+	// StartedAt lets the terminal repository write the complete request duration.
+	StartedAt     time.Time
+	CorrelationID string
+	PublicResult  map[string]any
+	Commit        CommitSubmissionAssessmentInput
 }
 
 type CommitSubmissionAssessmentResult struct {

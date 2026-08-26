@@ -32,6 +32,15 @@ func normalizeSynchronousRememberCommitInput(input SynchronousRememberCommitInpu
 	return input
 }
 
+func rememberAttemptDuration(input SynchronousRememberCommitInput) time.Duration {
+	if !input.StartedAt.IsZero() {
+		if elapsed := time.Since(input.StartedAt); elapsed >= 0 {
+			return elapsed
+		}
+	}
+	return input.Duration
+}
+
 func validateSynchronousRememberCommitInput(input SynchronousRememberCommitInput) error {
 	for label, value := range map[string]string{"team_id": input.TeamID, "owner_profile_id": input.OwnerProfileID, "ingest_id": input.IngestID} {
 		if _, err := uuid.Parse(value); err != nil {

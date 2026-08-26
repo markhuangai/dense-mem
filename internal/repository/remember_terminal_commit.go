@@ -90,7 +90,7 @@ func (r *LedgerRepositoryImpl) CommitRememberTerminal(
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 			RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
 			Outcome: outcome, ErrorCode: errorCode, CorrelationID: rememberCorrelationID(input.Metadata), PublicResult: publicResult,
-			EvidenceCount: len(evidence), RelationshipCount: len(input.Commit.RelationshipResults), AssessorTurns: input.AssessorTurns, Duration: input.Duration,
+			EvidenceCount: len(evidence), RelationshipCount: len(input.Commit.RelationshipResults), AssessorTurns: input.AssessorTurns, Duration: rememberAttemptDuration(input),
 		}); err != nil {
 			return err
 		}
@@ -145,7 +145,7 @@ func (r *LedgerRepositoryImpl) CommitRememberPreflightQuarantine(
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 			RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
 			Outcome: "quarantined", ErrorCode: errorCode, CorrelationID: rememberCorrelationID(input.Metadata), PublicResult: publicResult,
-			EvidenceCount: len(input.Evidence), RelationshipCount: len(input.Commit.RelationshipResults), AssessorTurns: input.AssessorTurns, Duration: input.Duration,
+			EvidenceCount: len(input.Evidence), RelationshipCount: len(input.Commit.RelationshipResults), AssessorTurns: input.AssessorTurns, Duration: rememberAttemptDuration(input),
 		}); err != nil {
 			return err
 		}

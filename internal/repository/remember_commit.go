@@ -223,7 +223,7 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 			RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
 			Outcome: "completed", CorrelationID: rememberCorrelationID(input.Metadata), PublicResult: publicResult,
 			EvidenceCount: len(evidence), RelationshipCount: len(input.Commit.RelationshipResults),
-			DocumentCount: len(semanticResult.SearchDocuments), AssessorTurns: input.AssessorTurns, Duration: input.Duration,
+			DocumentCount: len(semanticResult.SearchDocuments), AssessorTurns: input.AssessorTurns, Duration: rememberAttemptDuration(input),
 		}); err != nil {
 			return err
 		}

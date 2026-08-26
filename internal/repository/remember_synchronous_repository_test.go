@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
@@ -139,4 +140,13 @@ func TestRememberPublicRelationshipResultsUseOnlyContractReference(t *testing.T)
 	_, hasLegacyReference := relationships[0]["relationship_ref"]
 	require.False(t, hasLegacyReference)
 	require.Equal(t, "r:one", relationships[0]["ref"])
+}
+
+func TestRememberAttemptDurationUsesRequestStart(t *testing.T) {
+	started := time.Now().Add(-time.Second)
+	duration := rememberAttemptDuration(SynchronousRememberCommitInput{
+		StartedAt: started,
+		Duration:  time.Millisecond,
+	})
+	require.Greater(t, duration, 500*time.Millisecond)
 }
