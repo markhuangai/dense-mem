@@ -284,6 +284,35 @@ jobs:
                 `/actions/runs/${context.runId}`,
             });
 
+      - name: Validate AI reviewer configuration
+        shell: bash
+        env:
+          AI_REVIEWER_SDK: ${{ vars.AI_REVIEWER_SDK }}
+          LOCAL_AI_ENDPOINT: ${{ secrets.LOCAL_AI_ENDPOINT }}
+          LOCAL_OPENAI_AI_ENDPOINT: ${{ secrets.LOCAL_OPENAI_AI_ENDPOINT }}
+        run: |
+          set -euo pipefail
+
+          case "${AI_REVIEWER_SDK}" in
+            codex)
+              endpoint="${LOCAL_OPENAI_AI_ENDPOINT}"
+              endpoint_name="LOCAL_OPENAI_AI_ENDPOINT"
+              ;;
+            claude)
+              endpoint="${LOCAL_AI_ENDPOINT}"
+              endpoint_name="LOCAL_AI_ENDPOINT"
+              ;;
+            *)
+              echo "::error::AI_REVIEWER_SDK must be exactly 'codex' or 'claude'"
+              exit 1
+              ;;
+          esac
+
+          if [[ -z "${endpoint}" ]]; then
+            echo "::error::${endpoint_name} must be configured for ${AI_REVIEWER_SDK}"
+            exit 1
+          fi
+
       - name: Checkout pull request head
         uses: actions/checkout@v7
         with:
@@ -313,7 +342,8 @@ jobs:
         with:
           pull-request-url: ${{ format('{0}/{1}/pull/{2}', github.server_url, github.repository, needs.resolve.outputs.pr_number) }}
           github-pat: ${{ secrets.PR_REVIEW_PAT }}
-          ai-base-url: ${{ secrets.LOCAL_OPENAI_AI_ENDPOINT }}
+          executor: ${{ vars.AI_REVIEWER_SDK }}
+          ai-base-url: ${{ vars.AI_REVIEWER_SDK == 'codex' && secrets.LOCAL_OPENAI_AI_ENDPOINT || secrets.LOCAL_AI_ENDPOINT }}
           ai-secret: ${{ secrets.LOCAL_AI_SECRET }}
           model: auto
           effort: high
