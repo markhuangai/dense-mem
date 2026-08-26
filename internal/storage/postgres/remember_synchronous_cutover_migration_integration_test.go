@@ -437,6 +437,171 @@ func TestRememberSynchronousCutoverRejectsUnknownPlacementOrigin(t *testing.T) {
 	require.True(t, tableExists(t, ctx, db, "embedding_jobs"))
 }
 
+func TestRememberSynchronousCutoverMapsPredicateRegistrationThroughAssessment(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
+	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
+	ingestID := uuid.New()
+	staleRunID, assessmentID := uuid.New(), uuid.New()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id, idempotency_key,
+				request_hash, status, proposal, metadata, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'predicate-assessment-map',
+			          'predicate-assessment-map-request', 'completed', '{}'::jsonb,
+			          '{"_dense_mem_telemetry_origin":"remember"}'::jsonb, now())
+		`, teamID, ingestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DO $drop_legacy_run_fks$
+			DECLARE
+				target_table REGCLASS;
+				foreign_key RECORD;
+			BEGIN
+				FOREACH target_table IN ARRAY ARRAY[
+					'placement_assessments'::regclass,
+					'predicate_registration_events'::regclass
+				] LOOP
+					FOR foreign_key IN
+						SELECT constraint_row.conname
+						FROM pg_constraint AS constraint_row
+						WHERE constraint_row.conrelid = target_table
+						  AND constraint_row.confrelid = 'placement_runs'::regclass
+						  AND constraint_row.contype = 'f'
+					LOOP
+						EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', target_table, foreign_key.conname);
+					END LOOP;
+				END LOOP;
+			END
+			$drop_legacy_run_fks$;
+		`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_assessments (
+				team_id, assessment_id, owner_profile_id, request_id,
+				assessor_contract_version, model, tokenizer,
+				input_tokens, output_tokens, candidate_context_tokens,
+				normalized_response, response_hash, validated_at, provider_turns,
+				assessment_scope, placement_run_id, ingest_id
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'predicate-assessment-request',
+			          'dense-mem.v2.6', 'legacy-model', 'legacy-tokenizer',
+			          10, 5, 3, '{"accepted":true}'::jsonb,
+			          'sha256:predicate-assessment', now(), 1,
+			          'submission', $4::uuid, $5::uuid)
+		`, teamID, assessmentID, profileID, staleRunID, ingestID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO predicate_registration_events (
+				team_id, placement_run_id, assessment_id, owner_profile_id,
+				relationship_ref, registration_action, predicate_key,
+				predicate_version, metadata
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          'legacy-stale-run-ref', 'created', 'legacy_stale_run_predicate',
+			          1, '{"legacy_note":"preserve"}'::jsonb)
+		`, teamID, staleRunID, assessmentID, profileID)
+		return err
+	}))
+
+	runGooseUpTo(t, ctx, db, 20260825010001)
+
+	var mappedIngest, mappedAssessment string
+	var legacyRunID, legacyAssessmentID, legacyNote string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT ingest_id::text, assessment_id::text,
+		       metadata ->> 'legacy_placement_run_id',
+		       metadata ->> 'legacy_assessment_id',
+		       metadata ->> 'legacy_note'
+		FROM predicate_registration_events
+		WHERE team_id = $1::uuid AND relationship_ref = 'legacy-stale-run-ref'
+	`, teamID).Scan(&mappedIngest, &mappedAssessment, &legacyRunID, &legacyAssessmentID, &legacyNote))
+	require.Equal(t, ingestID.String(), mappedIngest)
+	require.Equal(t, staleRunID.String(), legacyRunID)
+	require.Equal(t, assessmentID.String(), legacyAssessmentID)
+	require.Equal(t, "preserve", legacyNote)
+
+	var semanticAttempt, semanticOwner string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT attempt_id::text, owner_profile_id::text
+		FROM semantic_assessments
+		WHERE team_id = $1::uuid AND semantic_assessment_id = $2::uuid
+	`, teamID, mappedAssessment).Scan(&semanticAttempt, &semanticOwner))
+	require.Equal(t, ingestID.String(), semanticAttempt)
+	require.Equal(t, profileID, semanticOwner)
+}
+
+func TestRememberSynchronousCutoverRejectsConflictingPredicateRegistrationMapping(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
+	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
+	firstIngestID, secondIngestID := uuid.New(), uuid.New()
+	firstRunID, secondRunID, assessmentID := uuid.New(), uuid.New(), uuid.New()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id, idempotency_key,
+				request_hash, status, proposal, metadata, completed_at
+			) VALUES
+				($1::uuid, $2::uuid, $3::uuid, 'predicate-conflict-a',
+				 'predicate-conflict-request-a', 'completed', '{}'::jsonb,
+				 '{"_dense_mem_telemetry_origin":"remember"}'::jsonb, now()),
+				($1::uuid, $4::uuid, $3::uuid, 'predicate-conflict-b',
+				 'predicate-conflict-request-b', 'completed', '{}'::jsonb,
+				 '{"_dense_mem_telemetry_origin":"remember"}'::jsonb, now())
+		`, teamID, firstIngestID, profileID, secondIngestID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_runs (
+				team_id, placement_run_id, ingest_id, owner_profile_id,
+				status, attempts, max_attempts, completed_at
+			) VALUES
+				($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'completed', 1, 5, now()),
+				($1::uuid, $5::uuid, $6::uuid, $4::uuid, 'completed', 1, 5, now())
+		`, teamID, firstRunID, firstIngestID, profileID, secondRunID, secondIngestID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_assessments (
+				team_id, assessment_id, owner_profile_id, request_id,
+				assessor_contract_version, model, tokenizer,
+				input_tokens, output_tokens, candidate_context_tokens,
+				normalized_response, response_hash, validated_at, provider_turns,
+				assessment_scope, placement_run_id, ingest_id
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'predicate-conflict-assessment',
+			          'dense-mem.v2.6', 'legacy-model', 'legacy-tokenizer',
+			          10, 5, 3, '{"accepted":true}'::jsonb,
+			          'sha256:predicate-conflict-assessment', now(), 1,
+			          'submission', $4::uuid, $5::uuid)
+		`, teamID, assessmentID, profileID, secondRunID, secondIngestID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO predicate_registration_events (
+				team_id, placement_run_id, assessment_id, owner_profile_id,
+				relationship_ref, registration_action, predicate_key, predicate_version
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          'legacy-conflicting-ref', 'created', 'legacy_conflicting_predicate', 1)
+		`, teamID, firstRunID, assessmentID, profileID)
+		return err
+	}))
+
+	err := migrationUpTo(ctx, db, 20260825010001)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "predicate registration event mappings disagree with assessment history")
+	require.True(t, tableExists(t, ctx, db, "placement_runs"))
+	require.True(t, tableExists(t, ctx, db, "predicate_registration_events"))
+}
+
 func TestRememberSynchronousCutoverTerminalizesPendingCorrections(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)

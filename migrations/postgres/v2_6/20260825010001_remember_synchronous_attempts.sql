@@ -491,27 +491,30 @@ WITH assessment_rows AS (
            placement.input_tokens, placement.output_tokens,
            placement.candidate_context_tokens, placement.candidate_context_truncated,
            placement.validated_at
-    FROM knowledge_ingests AS legacy
-    JOIN placement_runs AS run
-      ON run.team_id = legacy.team_id
-     AND run.ingest_id = legacy.ingest_id
-     AND run.owner_profile_id = legacy.owner_profile_id
-    LEFT JOIN placement_items AS item
-      ON item.team_id = run.team_id
-     AND item.placement_run_id = run.placement_run_id
-     AND item.owner_profile_id = run.owner_profile_id
-    JOIN placement_assessments AS placement
-      ON placement.team_id = legacy.team_id
-     AND (
-         (placement.assessment_scope = 'submission'
-          AND placement.placement_run_id = run.placement_run_id
-          AND placement.ingest_id = legacy.ingest_id
-          AND placement.owner_profile_id = legacy.owner_profile_id)
-         OR
-         (placement.assessment_scope = 'item'
-          AND placement.placement_item_id = item.placement_item_id
-          AND placement.owner_profile_id = item.owner_profile_id)
-     )
+    FROM placement_assessments AS placement
+    JOIN knowledge_ingests AS legacy
+      ON legacy.team_id = placement.team_id
+     AND legacy.ingest_id = placement.ingest_id
+     AND legacy.owner_profile_id = placement.owner_profile_id
+    WHERE placement.assessment_scope = 'submission'
+    UNION ALL
+    SELECT legacy.team_id, legacy.ingest_id, legacy.owner_profile_id,
+           placement.assessment_id, 0 AS revision_number,
+           placement.normalized_response, placement.response_hash,
+           placement.provider_turns, placement.model, placement.tokenizer,
+           placement.input_tokens, placement.output_tokens,
+           placement.candidate_context_tokens, placement.candidate_context_truncated,
+           placement.validated_at
+    FROM placement_assessments AS placement
+    JOIN placement_items AS item
+      ON item.team_id = placement.team_id
+     AND item.placement_item_id = placement.placement_item_id
+     AND item.owner_profile_id = placement.owner_profile_id
+    JOIN knowledge_ingests AS legacy
+      ON legacy.team_id = item.team_id
+     AND legacy.ingest_id = item.ingest_id
+     AND legacy.owner_profile_id = item.owner_profile_id
+    WHERE placement.assessment_scope = 'item'
     UNION ALL
     SELECT revision.team_id, revision.ingest_id, revision.owner_profile_id,
            revision.assessment_id, revision.revision_number,
@@ -864,6 +867,16 @@ ALTER TABLE predicate_registration_events
     DROP CONSTRAINT IF EXISTS predicate_registration_events_assessment_id_fkey,
     DROP CONSTRAINT IF EXISTS predicate_registration_events_assessment_ref;
 
+-- A legacy predicate-registration event can outlive its placement-run link
+-- while its assessment history still identifies one authoritative ingest.
+-- Preserve both legacy identifiers and recover that mapping without deleting
+-- the append-only event.
+UPDATE predicate_registration_events AS event
+SET metadata = event.metadata || jsonb_build_object(
+    'legacy_placement_run_id', event.placement_run_id,
+    'legacy_assessment_id', event.assessment_id
+);
+
 UPDATE predicate_registration_events AS event
 SET ingest_id = run.ingest_id
 FROM placement_runs AS run
@@ -872,33 +885,56 @@ WHERE run.team_id = event.team_id
   AND run.owner_profile_id = event.owner_profile_id
   AND event.ingest_id IS NULL;
 
+UPDATE predicate_registration_events AS event
+SET ingest_id = assessment_map.ingest_id
+FROM dense_mem_semantic_assessment_map AS assessment_map,
+     semantic_assessments AS assessment
+WHERE assessment_map.team_id = event.team_id
+  AND assessment_map.old_assessment_id = event.assessment_id
+  AND assessment.team_id = assessment_map.team_id
+  AND assessment.semantic_assessment_id = assessment_map.semantic_assessment_id
+  AND assessment.owner_profile_id = event.owner_profile_id
+  AND event.ingest_id IS NULL;
+
 DO $$
 DECLARE
     missing_ingest BIGINT;
     missing_assessments BIGINT;
     unknown_origins BIGINT;
+    conflicting_mappings BIGINT;
 BEGIN
-    SELECT count(*) INTO unknown_origins
-    FROM predicate_registration_events AS event
-    JOIN placement_runs AS run
-      ON run.team_id = event.team_id
-     AND run.placement_run_id = event.placement_run_id
-     AND run.owner_profile_id = event.owner_profile_id
-    LEFT JOIN knowledge_ingests AS ingest
-      ON ingest.team_id = run.team_id
-     AND ingest.ingest_id = run.ingest_id
-     AND ingest.owner_profile_id = run.owner_profile_id
-    WHERE ingest.ingest_id IS NULL
-       OR ingest.metadata ->> '_dense_mem_telemetry_origin' IS DISTINCT FROM 'remember';
-    IF unknown_origins <> 0 THEN
-        RAISE EXCEPTION 'synchronous Remember cutover blocked: % predicate registrations have an unknown origin', unknown_origins;
-    END IF;
-
     SELECT count(*) INTO missing_ingest
     FROM predicate_registration_events
     WHERE ingest_id IS NULL;
     IF missing_ingest <> 0 THEN
         RAISE EXCEPTION 'synchronous Remember cutover blocked: % predicate registration events have no ingest mapping', missing_ingest;
+    END IF;
+
+    SELECT count(*) INTO conflicting_mappings
+    FROM predicate_registration_events AS event
+    LEFT JOIN dense_mem_semantic_assessment_map AS assessment_map
+      ON assessment_map.team_id = event.team_id
+     AND assessment_map.old_assessment_id = event.assessment_id
+    LEFT JOIN semantic_assessments AS assessment
+      ON assessment.team_id = assessment_map.team_id
+     AND assessment.semantic_assessment_id = assessment_map.semantic_assessment_id
+    WHERE assessment_map.semantic_assessment_id IS NULL
+       OR assessment.owner_profile_id IS DISTINCT FROM event.owner_profile_id
+       OR assessment_map.ingest_id IS DISTINCT FROM event.ingest_id;
+    IF conflicting_mappings <> 0 THEN
+        RAISE EXCEPTION 'synchronous Remember cutover blocked: % predicate registration event mappings disagree with assessment history', conflicting_mappings;
+    END IF;
+
+    SELECT count(*) INTO unknown_origins
+    FROM predicate_registration_events AS event
+    LEFT JOIN knowledge_ingests AS ingest
+      ON ingest.team_id = event.team_id
+     AND ingest.ingest_id = event.ingest_id
+     AND ingest.owner_profile_id = event.owner_profile_id
+    WHERE ingest.ingest_id IS NULL
+       OR ingest.metadata ->> '_dense_mem_telemetry_origin' IS DISTINCT FROM 'remember';
+    IF unknown_origins <> 0 THEN
+        RAISE EXCEPTION 'synchronous Remember cutover blocked: % predicate registrations have an unknown origin', unknown_origins;
     END IF;
 
     SELECT count(*) INTO missing_assessments
