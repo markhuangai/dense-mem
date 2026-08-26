@@ -109,6 +109,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		Catalog: p.catalog, Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
 	}, memoryservice.SynchronousAssessmentInput{Scope: scope, Snapshot: snapshot})
 	if err != nil {
+		assessorTurns = memoryservice.SynchronousAssessmentProviderTurns(err)
 		return fail(err, "assessment")
 	}
 	assessorTurns = prepared.Assessment.ProviderTurns

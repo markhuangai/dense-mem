@@ -246,16 +246,21 @@ func AssessSynchronousRemember(
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationSemanticAssessment, 1)
 	response, _, finalRequest, err := concrete.assessRememberSession(providerCtx, request, refresh, 0)
 	if err != nil {
+		providerTurns := SynchronousAssessmentProviderTurns(err)
+		var mapped error
 		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("%w: assessor phase exceeded 160 seconds", rememberapp.ErrRememberRequestTimeout)
+			mapped = fmt.Errorf("%w: assessor phase exceeded 160 seconds", rememberapp.ErrRememberRequestTimeout)
+		} else if errors.Is(err, context.Canceled) {
+			mapped = context.Canceled
+		} else if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
+			mapped = fmt.Errorf("%w: complete assessor response remained invalid", rememberapp.ErrRememberProviderResponseInvalid)
+		} else {
+			mapped = fmt.Errorf("%w: assessor provider request failed", rememberapp.ErrRememberProviderUnavailable)
 		}
-		if errors.Is(err, context.Canceled) {
-			return nil, context.Canceled
+		if providerTurns > 0 {
+			mapped = &submissionAssessmentConsumedTurnsError{cause: mapped, providerTurns: providerTurns}
 		}
-		if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
-			return nil, fmt.Errorf("%w: complete assessor response remained invalid", rememberapp.ErrRememberProviderResponseInvalid)
-		}
-		return nil, fmt.Errorf("%w: assessor provider request failed", rememberapp.ErrRememberProviderUnavailable)
+		return nil, mapped
 	}
 	encoded, err := json.Marshal(response)
 	if err != nil {

@@ -428,8 +428,11 @@ func TestAssessSynchronousRememberRejectsPreflightAndRepairFailures(t *testing.T
 	}
 	_, err = AssessSynchronousRemember(context.Background(), SynchronousAssessmentDependencies{Catalog: validCatalog(), Provider: &boundedAssessmentProvider{}}, input)
 	require.ErrorIs(t, err, rememberapp.ErrRememberProviderResponseInvalid)
+	require.Equal(t, 3, SynchronousAssessmentProviderTurns(err))
 	_, err = AssessSynchronousRemember(context.Background(), SynchronousAssessmentDependencies{Catalog: validCatalog(), Provider: &repairFailureAssessmentProvider{}}, input)
 	require.ErrorIs(t, err, rememberapp.ErrRememberProviderUnavailable)
+	require.Equal(t, 1, SynchronousAssessmentProviderTurns(err))
+	require.NotContains(t, err.Error(), "repair failed")
 }
 
 func TestSubmissionAssessmentGroundingRejectsIncompleteCatalogs(t *testing.T) {

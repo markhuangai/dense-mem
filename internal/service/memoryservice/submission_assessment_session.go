@@ -35,6 +35,23 @@ func submissionAssessmentConsumedProviderTurns(err error) int {
 	return consumed.providerTurns
 }
 
+// SynchronousAssessmentProviderTurns returns the bounded provider-turn count
+// retained by a failed synchronous assessment without exposing provider text.
+func SynchronousAssessmentProviderTurns(err error) int {
+	turns := submissionAssessmentConsumedProviderTurns(err)
+	var malformed *assessor.MalformedResponseError
+	if errors.As(err, &malformed) && malformed != nil && malformed.Attempts > turns {
+		turns = malformed.Attempts
+	}
+	if turns < 0 {
+		return 0
+	}
+	if turns > SemanticMaxAssessorTurns {
+		return SemanticMaxAssessorTurns
+	}
+	return turns
+}
+
 func (s *assessmentEngine) assessRememberSession(
 	ctx context.Context,
 	request assessor.SemanticAssessmentRequest,
