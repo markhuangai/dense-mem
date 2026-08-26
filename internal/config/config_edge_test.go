@@ -117,24 +117,6 @@ func TestProviderConcurrencyHelpersUseSafeDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsRetiredAsyncEnvironment(t *testing.T) {
-	for _, name := range retiredAsyncEnvVars {
-		t.Run(name, func(t *testing.T) {
-			clearEnv()
-			setRequiredEnv()
-			t.Setenv(name, "1")
-			_, err := Load()
-			if err == nil {
-				t.Fatalf("Load() accepted retired setting %s", name)
-			}
-			validationErr, ok := err.(*ValidationError)
-			if !ok || validationErr.Field != name {
-				t.Fatalf("Load() error = %T %v, want ValidationError.Field=%s", err, err, name)
-			}
-		})
-	}
-}
-
 func TestLoadAcceptsMaximumEmbeddingDimensions(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()

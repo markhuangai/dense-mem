@@ -44,20 +44,6 @@ var obsoleteAssessorEnvVars = []string{
 	"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_BYTES",
 }
 
-var retiredAsyncEnvVars = []string{
-	"MEMORY_PLACEMENT_WORKER_COUNT",
-	"MEMORY_PLACEMENT_POLL_SECONDS",
-	"MEMORY_PLACEMENT_MAX_ATTEMPTS",
-	"EMBEDDING_WORKER_COUNT",
-	"EMBEDDING_BATCH_SIZE",
-	"EMBEDDING_JOB_POLL_SECONDS",
-	"EMBEDDING_JOB_MAX_ATTEMPTS",
-	"EMBEDDING_JOB_LEASE_SECONDS",
-	"EMBEDDING_JOB_RETRY_MAX_SECONDS",
-	"EMBEDDING_PENDING_STALE_SECONDS",
-	"PROMOTE_TX_TIMEOUT_SECONDS",
-}
-
 // ConfigProvider is the companion interface for Config.
 // Consumers and tests depend on this abstraction rather than the concrete struct.
 type ConfigProvider interface {
@@ -439,9 +425,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	cfg := Config{}
 	var err error
 	if err := rejectObsoleteAssessorConfig(); err != nil {
-		return cfg, err
-	}
-	if err := rejectRetiredAsyncConfig(); err != nil {
 		return cfg, err
 	}
 
@@ -838,18 +821,6 @@ func rejectObsoleteAssessorConfig() *ValidationError {
 			return &ValidationError{
 				Field:   name,
 				Message: "byte budgets are unsupported; use the corresponding AI_VERIFIER_*_TOKENS setting",
-			}
-		}
-	}
-	return nil
-}
-
-func rejectRetiredAsyncConfig() *ValidationError {
-	for _, name := range retiredAsyncEnvVars {
-		if strings.TrimSpace(os.Getenv(name)) != "" {
-			return &ValidationError{
-				Field:   name,
-				Message: "placement and embedding worker configuration is retired; remove this setting for the synchronous v2.6.1 contract",
 			}
 		}
 	}
