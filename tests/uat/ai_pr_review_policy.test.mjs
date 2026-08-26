@@ -156,6 +156,36 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   assert.match(ciCheck, /node --test tests\/uat\/ai_pr_review_policy\.test\.mjs/);
 });
 
+test("AI review selects the configured executor and matching endpoint", async () => {
+  const workflow = await readFile(reviewWorkflowURL, "utf8");
+  const validationStart = workflow.indexOf(
+    "      - name: Validate AI reviewer configuration",
+  );
+  const validationEnd = workflow.indexOf(
+    "      - name: Checkout pull request head",
+    validationStart,
+  );
+
+  assert.notEqual(validationStart, -1);
+  assert.notEqual(validationEnd, -1);
+
+  const validationStep = workflow.slice(validationStart, validationEnd);
+  assert.match(validationStep, /AI_REVIEWER_SDK: \$\{\{ vars\.AI_REVIEWER_SDK \}\}/);
+  assert.match(
+    validationStep,
+    /codex\)\s+endpoint="\$\{LOCAL_OPENAI_AI_ENDPOINT\}"/,
+  );
+  assert.match(validationStep, /claude\)\s+endpoint="\$\{LOCAL_AI_ENDPOINT\}"/);
+  assert.match(validationStep, /AI_REVIEWER_SDK must be exactly 'codex' or 'claude'/);
+  assert.match(validationStep, /\[\[ -z "\$\{endpoint\}" \]\]/);
+  assert.ok(workflow.includes("executor: ${{ vars.AI_REVIEWER_SDK }}"));
+  assert.ok(
+    workflow.includes(
+      "ai-base-url: ${{ vars.AI_REVIEWER_SDK == 'codex' && secrets.LOCAL_OPENAI_AI_ENDPOINT || secrets.LOCAL_AI_ENDPOINT }}",
+    ),
+  );
+});
+
 test("owner-controlled AI review starts with PR CI while untrusted heads use the CI fallback", async () => {
   const [reviewWorkflow, ciWorkflow] = await Promise.all([
     readFile(reviewWorkflowURL, "utf8"),
