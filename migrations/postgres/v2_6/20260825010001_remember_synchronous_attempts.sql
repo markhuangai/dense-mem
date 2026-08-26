@@ -214,6 +214,13 @@ CREATE POLICY remember_failure_artifacts_insert ON remember_failure_artifacts
         OR (team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
             AND owner_profile_id = NULLIF(current_setting('app.current_profile_id', true), '')::uuid)
     );
+-- The purge worker locks candidate rows before deleting them. PostgreSQL
+-- applies the UPDATE policy to SELECT ... FOR UPDATE, while the append-only
+-- trigger below still rejects every update operation.
+DROP POLICY IF EXISTS remember_failure_artifacts_lock ON remember_failure_artifacts;
+CREATE POLICY remember_failure_artifacts_lock ON remember_failure_artifacts
+    FOR UPDATE USING (current_setting('app.tx_mode', true) IN ('system', 'migration'))
+    WITH CHECK (current_setting('app.tx_mode', true) IN ('system', 'migration'));
 CREATE POLICY remember_failure_artifacts_delete ON remember_failure_artifacts
     FOR DELETE USING (
         current_setting('app.tx_mode', true) IN ('system', 'migration')

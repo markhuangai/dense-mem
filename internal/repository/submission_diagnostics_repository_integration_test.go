@@ -151,7 +151,7 @@ func TestPurgeExpiredRememberFailureArtifactsUsesAuditedSystemPath(t *testing.T)
 		PublicResult: map[string]any{"submission_id": attemptID},
 		Artifacts: []RememberFailureArtifactInput{{
 			ArtifactKind: "failure", ContentType: "application/json", Content: []byte(`{"expired":true}`),
-			CapturedAt: now.Add(-8 * 24 * time.Hour), ExpiresAt: now.Add(-time.Hour),
+			CapturedAt: now.Add(-7 * 24 * time.Hour), ExpiresAt: now.Add(-time.Hour),
 		}},
 	}))
 
@@ -164,4 +164,35 @@ func TestPurgeExpiredRememberFailureArtifactsUsesAuditedSystemPath(t *testing.T)
 		return tx.Raw(`SELECT count(*) FROM remember_failure_artifacts WHERE team_id = ?::uuid AND attempt_id = ?::uuid`, teamID, attemptID).Scan(&remaining).Error
 	}))
 	require.Zero(t, remaining)
+}
+
+func TestPurgeExpiredRememberFailureArtifactsDrainsBatches(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-artifact-purge-drain-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-artifact-purge-drain-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	artifacts := make([]RememberFailureArtifactInput, rememberFailureArtifactPurgeBatchSize+1)
+	for index := range artifacts {
+		artifacts[index] = RememberFailureArtifactInput{
+			ArtifactID:   uuid.NewString(),
+			ArtifactKind: "failure",
+			ContentType:  "application/json",
+			Content:      []byte(`{"expired":true}`),
+			CapturedAt:   now.Add(-7 * 24 * time.Hour),
+			ExpiresAt:    now.Add(-time.Hour),
+		}
+	}
+	require.NoError(t, ledger.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		TeamID: teamID, OwnerProfileID: ownerID, AttemptID: uuid.NewString(),
+		IdempotencyKey: "purge-drain-key", RequestHash: "purge-drain-hash",
+		ContractVersion: "dense-mem.v2.6.1", SubmissionKind: "remember",
+		FailedPhase: "embedding", ErrorCode: "embedding_unavailable", Artifacts: artifacts,
+	}))
+
+	deleted, err := ledger.purgeExpiredRememberFailureArtifactsUntilDrained(ctx, now)
+	require.NoError(t, err)
+	require.Equal(t, len(artifacts), deleted)
 }

@@ -63,12 +63,42 @@ type RememberAttemptLookupInput struct {
 
 const maxRememberFailureArtifactBytes = 256 * 1024
 const maxRememberFailureArtifactRetention = 7 * 24 * time.Hour
+const rememberFailureArtifactPurgeBatchSize = 1000
 
 func lockRememberIdempotencyKeyInTx(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, idempotencyKey string) error {
 	digest := sha256.Sum256([]byte(teamID + "\x00" + ownerProfileID + "\x00" + idempotencyKey))
 	first := int32(binary.BigEndian.Uint32(digest[:4]))
 	second := int32(binary.BigEndian.Uint32(digest[4:8]))
 	return tx.WithContext(ctx).Exec(`SELECT pg_advisory_xact_lock(?, ?)`, first, second).Error
+}
+
+func checkRememberFailureIdempotencyInTx(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, idempotencyKey, requestHash string) error {
+	var hasFailure, hasHashMismatch bool
+	if err := tx.WithContext(ctx).Raw(`
+		SELECT
+			EXISTS (
+				SELECT 1
+				FROM remember_attempts
+				WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid
+				  AND idempotency_key = ? AND outcome = 'failed'
+			),
+			EXISTS (
+				SELECT 1
+				FROM remember_attempts
+				WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid
+				  AND idempotency_key = ? AND outcome = 'failed'
+				  AND request_hash <> ?
+			)
+	`, teamID, ownerProfileID, idempotencyKey, teamID, ownerProfileID, idempotencyKey, requestHash).Row().Scan(&hasFailure, &hasHashMismatch); err != nil {
+		return err
+	}
+	if hasHashMismatch {
+		return fmt.Errorf("%w: idempotency key reused with a different request hash", ErrIdempotencyConflict)
+	}
+	if hasFailure {
+		return ErrRememberReplay
+	}
+	return nil
 }
 
 // RememberFailureArtifactInput is a bounded, failure-only diagnostic payload.
@@ -198,6 +228,9 @@ func (r *LedgerRepositoryImpl) RecordRememberFailure(ctx context.Context, input 
 		if err := lockRememberIdempotencyKeyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey); err != nil {
 			return err
 		}
+		if err := checkRememberFailureIdempotencyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash); err != nil {
+			return err
+		}
 		if existing, err := loadCanonicalRememberAttemptByKeyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey); err != nil {
 			return err
 		} else if existing != nil {
@@ -283,8 +316,8 @@ func (r *LedgerRepositoryImpl) GetRememberFailureArtifact(ctx context.Context, t
 }
 
 func (r *LedgerRepositoryImpl) PurgeExpiredRememberFailureArtifacts(ctx context.Context, now time.Time, limit int) (int, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 1000
+	if limit <= 0 || limit > rememberFailureArtifactPurgeBatchSize {
+		limit = rememberFailureArtifactPurgeBatchSize
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -316,6 +349,23 @@ func (r *LedgerRepositoryImpl) PurgeExpiredRememberFailureArtifacts(ctx context.
 	return int(deleted), err
 }
 
+func (r *LedgerRepositoryImpl) purgeExpiredRememberFailureArtifactsUntilDrained(ctx context.Context, now time.Time) (int, error) {
+	deletedTotal := 0
+	for {
+		deleted, err := r.PurgeExpiredRememberFailureArtifacts(ctx, now, rememberFailureArtifactPurgeBatchSize)
+		deletedTotal += deleted
+		if err != nil {
+			return deletedTotal, err
+		}
+		if deleted < rememberFailureArtifactPurgeBatchSize {
+			return deletedTotal, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return deletedTotal, err
+		}
+	}
+}
+
 // StartRememberFailureArtifactPurger removes expired failure bytes while
 // preserving attempt/event metadata and hashes.
 func (r *LedgerRepositoryImpl) StartRememberFailureArtifactPurger(ctx context.Context, interval time.Duration, logger *slog.Logger) {
@@ -333,7 +383,7 @@ func (r *LedgerRepositoryImpl) StartRememberFailureArtifactPurger(ctx context.Co
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				deleted, err := r.PurgeExpiredRememberFailureArtifacts(ctx, time.Now().UTC(), 1000)
+				deleted, err := r.purgeExpiredRememberFailureArtifactsUntilDrained(ctx, time.Now().UTC())
 				if err != nil {
 					logger.Warn("remember failure artifact purge failed", "error_code", "artifact_purge_failed")
 				} else if deleted > 0 {

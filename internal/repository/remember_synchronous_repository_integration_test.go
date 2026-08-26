@@ -145,6 +145,22 @@ func TestRememberFailureCannotFollowCanonicalTerminalAttempt(t *testing.T) {
 		FailedPhase: "embedding", ErrorCode: "embedding_unavailable",
 		PublicResult: map[string]any{"processing_state": "failed"},
 	}))
+	err = ledger.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		TeamID: teamID, OwnerProfileID: ownerID, AttemptID: uuid.NewString(),
+		IdempotencyKey: "failed-before-canonical", RequestHash: "failed-before-canonical-hash",
+		ContractVersion: "dense-mem.v2.6.1", SubmissionKind: "remember",
+		FailedPhase: "assessment", ErrorCode: "provider_unavailable",
+		PublicResult: map[string]any{"processing_state": "failed"},
+	})
+	require.ErrorIs(t, err, ErrRememberReplay)
+	err = ledger.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		TeamID: teamID, OwnerProfileID: ownerID, AttemptID: uuid.NewString(),
+		IdempotencyKey: "failed-before-canonical", RequestHash: "different-failed-request-hash",
+		ContractVersion: "dense-mem.v2.6.1", SubmissionKind: "remember",
+		FailedPhase: "assessment", ErrorCode: "provider_unavailable",
+		PublicResult: map[string]any{"processing_state": "failed"},
+	})
+	require.ErrorIs(t, err, ErrIdempotencyConflict)
 	secondInput := input
 	secondInput.IngestID = uuid.NewString()
 	secondInput.IdempotencyKey = "failed-before-canonical"
