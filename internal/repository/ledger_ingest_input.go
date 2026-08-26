@@ -79,7 +79,7 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 			return errors.New("space_generation is required when space_id is set")
 		}
 	}
-	if input.Status != "completed" && input.Status != "quarantined" {
+	if input.Status != "completed" && input.Status != "rejected" && input.Status != "quarantined" {
 		return fmt.Errorf("unsupported ingest status %q", input.Status)
 	}
 	if input.IdempotencyKey != "" && input.RequestHash == "" {

@@ -325,6 +325,69 @@ func TestSearchReconciliationExcludesDeletionOnlyAndLifecycleRetiredEvidence(t *
 	require.Zero(t, convergence.DriftedDocuments)
 }
 
+func TestSearchReconciliationExcludesRejectedRememberEvidence(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-rejected")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-rejected-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-rejected", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	ingestID := uuid.NewString()
+	fragmentID := uuid.NewString()
+	_, err := ledger.CommitRememberTerminal(ctx, SynchronousRememberCommitInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID,
+		IdempotencyKey: "search-reconciliation-rejected", RequestHash: "search-reconciliation-rejected-hash",
+		Proposal: map[string]any{"relationship_hints": []any{}},
+		Evidence: []EvidenceInput{{
+			FragmentID: fragmentID, Content: "unsupported evidence must remain unsearchable",
+			ContentHash: sha256Hex("unsupported evidence must remain unsearchable"),
+		}},
+		Commit: CommitSubmissionAssessmentInput{RelationshipResults: []SubmissionRelationshipResultInput{}},
+	}, "rejected", "no_supported_memory", nil)
+	require.NoError(t, err)
+	var ingestStatus string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT status FROM knowledge_ingests WHERE team_id = ?::uuid AND ingest_id = ?::uuid`, teamID, ingestID).Row().Scan(&ingestStatus)
+	}))
+	require.Equal(t, "rejected", ingestStatus)
+
+	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 256,
+	})
+	require.NoError(t, err)
+	require.Empty(t, selected)
+
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+	})
+	require.NoError(t, err)
+	require.Zero(t, convergence.ExpectedDocuments)
+	require.Zero(t, convergence.DriftedDocuments)
+
+	document, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence",
+		SourceID: fragmentID, SourceVersion: 1, DocumentText: "unsupported evidence must remain unsearchable",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, document)
+
+	selected, err = repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 256,
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	require.True(t, selected[0].Retired)
+
+	convergence, err = repo.GetSearchConvergence(ctx, SearchConvergenceInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+	})
+	require.NoError(t, err)
+	require.Zero(t, convergence.ExpectedDocuments)
+	require.EqualValues(t, 1, convergence.DriftedDocuments)
+}
+
 func TestSearchConvergenceProjectsRelationshipsSetwise(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

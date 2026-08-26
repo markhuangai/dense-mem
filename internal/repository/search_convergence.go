@@ -363,6 +363,7 @@ func selectSearchConvergenceDocumentsPage(
 		       document.source_kind IN ('evidence', 'relationship'),
 		       document.source_kind = 'evidence'
 		         AND fragment.fragment_id IS NOT NULL
+		         AND evidence_ingest.status = 'completed'
 		         AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 		         AND NOT EXISTS (
 		             SELECT 1 FROM evidence_quarantines AS quarantine
@@ -415,6 +416,10 @@ func selectSearchConvergenceDocumentsPage(
 		 AND fragment.team_id = document.team_id
 		 AND fragment.fragment_id = document.source_id
 		 AND fragment.owner_profile_id = document.owner_profile_id
+		LEFT JOIN knowledge_ingests AS evidence_ingest
+		  ON document.source_kind = 'evidence'
+		 AND evidence_ingest.team_id = fragment.team_id
+		 AND evidence_ingest.ingest_id = fragment.ingest_id
 		LEFT JOIN relationship_records AS relationship
 		  ON document.source_kind = 'relationship'
 		 AND relationship.team_id = document.team_id
@@ -558,6 +563,10 @@ func addMissingCanonicalSearchStats(
 			SELECT fragment.team_id, fragment.fragment_id AS source_id,
 			       'evidence'::text AS source_kind, fragment.created_at
 			FROM evidence_fragments AS fragment
+			JOIN knowledge_ingests AS ingest
+			  ON ingest.team_id = fragment.team_id
+			 AND ingest.ingest_id = fragment.ingest_id
+			 AND ingest.status = 'completed'
 			JOIN teams AS team
 			  ON team.id = fragment.team_id
 			 AND team.status = 'active'

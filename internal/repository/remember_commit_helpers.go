@@ -82,10 +82,12 @@ func rememberCreateIngestInput(input SynchronousRememberCommitInput) CreateInges
 }
 
 func rememberIngestStatus(outcome string) string {
-	if outcome == "quarantined" {
-		return "quarantined"
+	switch outcome {
+	case "rejected", "quarantined":
+		return outcome
+	default:
+		return "completed"
 	}
-	return "completed"
 }
 
 func insertRememberKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestInput) (bool, error) {

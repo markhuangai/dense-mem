@@ -26,10 +26,10 @@ func (r *LedgerRepositoryImpl) CommitRememberTerminal(
 		return nil, fmt.Errorf("unsupported Remember terminal outcome %q", outcome)
 	}
 	createInput := rememberCreateIngestInput(input)
+	createInput.Status = rememberIngestStatus(outcome)
 	if err := validateCreateIngestInput(createInput); err != nil {
 		return nil, err
 	}
-	createInput.Status = rememberIngestStatus(outcome)
 	result := &SynchronousRememberCommitResult{IngestID: input.IngestID, AssessmentID: input.AssessmentID, Outcome: outcome}
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		if err := lockRememberIdempotencyKeyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey); err != nil {
