@@ -112,9 +112,6 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		return fail(err, "assessment")
 	}
 	assessorTurns = prepared.Assessment.ProviderTurns
-	if p.embedder == nil || !p.embedder.IsAvailable() {
-		return fail(fmt.Errorf("%w: inline embedding is not configured", rememberapp.ErrRememberEmbeddingUnavailable), "embedding")
-	}
 	commitInput, buildErr := memoryservice.BuildSynchronousRememberCommitInput(memoryservice.SynchronousRememberCommitRequest{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID,
 		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
@@ -123,37 +120,17 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		Duration: time.Since(started),
 	})
 	commitInput.StartedAt = started
+	var noSupported *memoryservice.NoSupportedMemoryError
 	if buildErr != nil {
-		var noSupported *memoryservice.NoSupportedMemoryError
 		if !errors.As(buildErr, &noSupported) {
 			if memoryservice.IsRememberStaleInputError(buildErr) {
 				return fail(fmt.Errorf("%w: %v", rememberapp.ErrRememberStaleInput, buildErr), "assessment")
 			}
 			return fail(buildErr, "assessment")
 		}
-		if err := ctx.Err(); err != nil {
-			return fail(err, "commit")
-		}
-		commitCtx, commitCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseCommit)
-		if err := commitCtx.Err(); err != nil {
-			commitCancel()
-			return fail(err, "commit")
-		}
-		terminal, terminalErr := p.ledger.CommitRememberTerminal(commitCtx, commitInput, "rejected", string(rememberapp.SubmissionErrorNoSupportedMemory), nil)
-		commitCancel()
-		if errors.Is(terminalErr, repository.ErrRememberReplay) {
-			replayed, loadErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
-			if loadErr != nil {
-				return nil, loadErr
-			}
-			return rememberAttemptStatus(replayed)
-		}
-		if terminalErr != nil {
-			return fail(terminalErr, "commit")
-		}
-		return rememberAttemptStatus(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult})
 	}
-	if len(prepared.Response.SecuritySignals) > 0 {
+	terminalOutcome := rememberAssessmentTerminalOutcome(prepared, noSupported != nil)
+	if terminalOutcome == "quarantined" {
 		quarantines, quarantineErr := memoryservice.BuildSynchronousRememberSecurityQuarantines(prepared)
 		if quarantineErr != nil {
 			return fail(quarantineErr, "assessment")
@@ -167,6 +144,29 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 			return fail(err, "commit")
 		}
 		terminal, terminalErr := p.ledger.CommitRememberTerminal(commitCtx, commitInput, "quarantined", string(rememberapp.SubmissionErrorQuarantined), quarantines)
+		commitCancel()
+		if errors.Is(terminalErr, repository.ErrRememberReplay) {
+			replayed, loadErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			return rememberAttemptStatus(replayed)
+		}
+		if terminalErr != nil {
+			return fail(terminalErr, "commit")
+		}
+		return rememberAttemptStatus(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult})
+	}
+	if terminalOutcome == "rejected" {
+		if err := ctx.Err(); err != nil {
+			return fail(err, "commit")
+		}
+		commitCtx, commitCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseCommit)
+		if err := commitCtx.Err(); err != nil {
+			commitCancel()
+			return fail(err, "commit")
+		}
+		terminal, terminalErr := p.ledger.CommitRememberTerminal(commitCtx, commitInput, "rejected", string(rememberapp.SubmissionErrorNoSupportedMemory), nil)
 		commitCancel()
 		if errors.Is(terminalErr, repository.ErrRememberReplay) {
 			replayed, loadErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
@@ -228,6 +228,16 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		return nil, errors.New("remember processor: nil Remember commit result")
 	}
 	return rememberAttemptStatus(&repository.RememberAttempt{AttemptID: committed.IngestID, Outcome: committed.Outcome, PublicResult: committed.PublicResult})
+}
+
+func rememberAssessmentTerminalOutcome(prepared *memoryservice.SynchronousAssessmentResult, noSupported bool) string {
+	if prepared != nil && len(prepared.Response.SecuritySignals) > 0 {
+		return "quarantined"
+	}
+	if noSupported {
+		return "rejected"
+	}
+	return ""
 }
 
 func (p *rememberSynchronousProcessor) recordRememberFailure(
@@ -489,7 +499,7 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 	}
 	embedCtx, cancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
 	defer cancel()
-	if !p.embedder.IsAvailable() {
+	if p.embedder == nil || !p.embedder.IsAvailable() {
 		return nil, fmt.Errorf("%w: provider is unavailable", rememberapp.ErrRememberEmbeddingUnavailable)
 	}
 	vectors, model, err := p.embedder.EmbedBatch(embedCtx, texts)

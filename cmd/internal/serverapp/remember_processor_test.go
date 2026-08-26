@@ -9,8 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
@@ -45,6 +47,31 @@ func TestRememberProcessorEmbedsOneValidatedBatch(t *testing.T) {
 	require.Len(t, result, 2)
 	require.Equal(t, []float32{1, 2, 3}, result[0].Embedding)
 	require.Equal(t, []string{"first", "second"}, processor.embedder.(*rememberProcessorEmbedderStub).texts)
+}
+
+func TestRememberAssessmentTerminalOutcomePrioritizesSecurity(t *testing.T) {
+	prepared := &memoryservice.SynchronousAssessmentResult{
+		Response: assessor.SemanticAssessmentResponse{
+			SecuritySignals: []assessor.SemanticAssessmentSecuritySignal{{EvidenceID: "evidence:0"}},
+		},
+	}
+
+	require.Equal(t, "quarantined", rememberAssessmentTerminalOutcome(prepared, true))
+	require.Equal(t, "quarantined", rememberAssessmentTerminalOutcome(prepared, false))
+	require.Equal(t, "rejected", rememberAssessmentTerminalOutcome(&memoryservice.SynchronousAssessmentResult{}, true))
+	require.Empty(t, rememberAssessmentTerminalOutcome(&memoryservice.SynchronousAssessmentResult{}, false))
+}
+
+func TestRememberProcessorRequiresEmbedderOnlyForNonemptyPlan(t *testing.T) {
+	processor := &rememberSynchronousProcessor{}
+	embeddings, err := processor.embedSearchDocumentBatch(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, embeddings)
+
+	_, err = processor.embedSearchDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{{
+		SearchDocumentResult: repository.SearchDocumentResult{EmbeddingDimensions: 2}, DocumentText: "text",
+	}})
+	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingUnavailable)
 }
 
 func TestRememberProcessorRejectsInvalidEmbeddingResponsesBeforeCommit(t *testing.T) {
