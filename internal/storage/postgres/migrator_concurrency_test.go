@@ -180,6 +180,14 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 	}))
 	insertMigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "primary")
 
+	// Validate the embedding-reconciliation backfill while its historical table
+	// still exists; the v2.6.1 hard cutover intentionally drops embedding_jobs.
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026081602))
+	assertMigratedEmbeddingJob(t, ctx, sqlDB, legacyFailure.jobID, migratedEmbeddingJobExpectation{
+		status: "failed", totalAttempts: 20,
+		failureClass: "provider_action_required", failureCode: "provider_quota_exhausted", failedTimestamps: true,
+	})
+
 	require.NoError(t, NewMigratorWithDB(sqlDB).RunUp(ctx))
 	var revisionCount, sharedRevisionCount int
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
@@ -206,10 +214,7 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 		)
 	`).Scan(&temporaryBackfillPolicyCount))
 	require.Zero(t, temporaryBackfillPolicyCount)
-	assertMigratedEmbeddingJob(t, ctx, sqlDB, legacyFailure.jobID, migratedEmbeddingJobExpectation{
-		status: "failed", totalAttempts: 20,
-		failureClass: "provider_action_required", failureCode: "provider_quota_exhausted", failedTimestamps: true,
-	})
+	require.False(t, tableExists(t, ctx, sqlDB, "embedding_jobs"))
 
 	var cleanupApplied, temporaryCleanupPolicyExists bool
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `

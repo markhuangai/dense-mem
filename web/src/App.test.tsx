@@ -199,13 +199,14 @@ const operationLogsSnapshot: OperationLog[] = [
   {
     id: "55555555-5555-4555-8555-555555555555",
     timestamp: "2026-06-15T10:29:30Z", severity: "WARN", severity_rank: 30,
-    message: "submission_failed", source: "submission_assessment_worker",
+    message: "conflict_review_retry_scheduled", source: "conflict-review",
     team_id: profileA.id, profile_id: keyA().id,
     correlation_id: "corr-submission-1", error: "",
     attrs: {
-      reference_type: "submission", reference_id: "submission-1",
-      from: "processing", to: "failed", attempts: 5, max_attempts: 5,
-		stage: "assessment", reason_code: "provider_unavailable",
+      reference_type: "conflict", reference_id: "conflict-1",
+      from: "processing", to: "queued", worker_kind: "conflict-review",
+      attempts: 2, max_attempts: 5, reason_code: "provider_unavailable",
+      next_attempt_at: "2026-06-15T10:30:00Z",
     },
   },
 ];
@@ -534,9 +535,9 @@ describe("App", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Default/ });
 
-    expect(await screen.findByLabelText("Team overview")).toHaveTextContent("Metrics unavailable");
-    expect(screen.getByLabelText("Team activity")).toHaveTextContent("unavailable");
-    expect(screen.getByLabelText("Top signals")).toHaveTextContent("n/a");
+    await waitFor(() => expect(screen.getByLabelText("Team overview")).toHaveTextContent("Recall healthn/a"));
+    expect(screen.getByLabelText("Top signals")).toHaveTextContent("Dependency checksn/a");
+    expect(screen.getByLabelText("Recent alerts")).toHaveTextContent("Metrics unavailable");
   });
 
   it("keeps dependency diagnostics in a dedicated wrapping metric row", async () => {
@@ -574,9 +575,9 @@ describe("App", () => {
     expect(screen.getByText("event=control_http_request")).toBeInTheDocument();
     expect(screen.getByText("sso login oidc claims read")).toBeInTheDocument();
     expect(screen.getByText("provider_kind=generic_oidc")).toBeInTheDocument();
-    expect(screen.getByText("submission failed")).toBeInTheDocument();
-    expect(screen.getByText("reference_type=submission")).toBeInTheDocument();
-	expect(screen.getByText("reason_code=provider_unavailable")).toBeInTheDocument();
+    expect(screen.getByText("conflict review retry scheduled")).toBeInTheDocument();
+    expect(screen.getByText("reference_type=conflict")).toBeInTheDocument();
+    expect(screen.getByText("reason_code=provider_unavailable")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /view raw log GET \/control\/api\/logs status 200/i }));
     expect(await screen.findByLabelText(/Raw log body GET \/control\/api\/logs status 200/i)).toHaveTextContent('"msg": "control_http_request"');

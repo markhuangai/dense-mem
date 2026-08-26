@@ -460,7 +460,6 @@ func TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph(t *testing.T) {
 	require.NotEmpty(t, trace.CrossProfileReferences)
 	require.NotEmpty(t, trace.IdentityCorrections)
 	require.NotEmpty(t, trace.SearchDocuments)
-	require.NotEmpty(t, trace.EmbeddingJobs)
 	require.NotEmpty(t, trace.EvidenceFragments)
 	assert.True(t, trace.EvidenceFragments[0].ContentTruncated)
 	assert.Equal(t, "Mark Huang w", trace.EvidenceFragments[0].Content)

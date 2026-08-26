@@ -272,9 +272,9 @@ func createSemanticSourceIngest(
 	content string,
 	sourceKey string,
 	sourceRevisionContentHash string,
-) *CreateIngestResult {
+) *EvidenceIngestResult {
 	t.Helper()
-	result, err := repo.CreateIngest(ctx, CreateIngestInput{
+	result, err := createTestIngest(ctx, repo, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		Evidence: []EvidenceInput{{

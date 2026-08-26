@@ -103,12 +103,11 @@ func PublicErrorSchema() map[string]any {
 	return closedObject(
 		[]string{"code", "message", "retryable", "correlation_id"},
 		map[string]any{
-			"code":                schemaEnum(publicErrorCodes()),
-			"message":             schemaString("Bounded public error message.", 512),
-			"retryable":           map[string]any{"type": "boolean"},
-			"retry_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 86400},
-			"correlation_id":      schemaString("Request correlation ID.", 128),
-			"details":             boundedMap("Code-specific bounded safe metadata."),
+			"code":           schemaEnum(publicErrorCodes()),
+			"message":        schemaString("Bounded public error message.", 512),
+			"retryable":      map[string]any{"type": "boolean"},
+			"correlation_id": schemaString("Request correlation ID.", 128),
+			"details":        boundedMap("Code-specific bounded safe metadata."),
 		},
 	)
 }
@@ -127,18 +126,6 @@ func publicErrorCodes() []string {
 
 func submissionStatusErrorArraySchema() map[string]any {
 	return array(submissionStatusErrorSchema(), 0, 50)
-}
-
-func submissionStatusDegradationArraySchema() map[string]any {
-	return array(closedObject(
-		[]string{"frontier", "optional", "code", "message"},
-		map[string]any{
-			"frontier": schemaEnum([]string{"search"}),
-			"optional": map[string]any{"type": "boolean"},
-			"code":     schemaEnum([]string{string(memoryservice.SubmissionErrorSearchIndexingDelayed)}),
-			"message":  schemaString("Bounded optional submission degradation.", 512),
-		},
-	), 0, 10)
 }
 
 func submissionRelationshipResultsSchema() map[string]any {

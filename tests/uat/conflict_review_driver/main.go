@@ -38,29 +38,6 @@ type output struct {
 	RetractedEvidenceIDs []string `json:"retracted_evidence_ids"`
 }
 
-type legacyConflictProvider struct {
-	provider *verifier.OpenAIVerifier
-}
-
-func (p legacyConflictProvider) ModelName() string {
-	if p.provider == nil {
-		return ""
-	}
-	return p.provider.ModelName()
-}
-
-func (p legacyConflictProvider) AssessRelationshipConflict(
-	ctx context.Context,
-	request conflictassessment.ConflictAssessmentRequest,
-) (conflictassessment.ConflictAssessmentResponse, error) {
-	legacy := verifier.ConflictAssessmentRequest(request)
-	response, err := p.provider.AssessRelationshipConflict(ctx, legacy)
-	if err != nil {
-		return conflictassessment.ConflictAssessmentResponse{}, err
-	}
-	return conflictassessment.ConflictAssessmentResponse(response), nil
-}
-
 func main() {
 	teamID := flag.String("team-id", "", "team containing the conflict")
 	conflictID := flag.String("conflict-id", "", "conflict to review")
@@ -94,7 +71,7 @@ func main() {
 	provider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, verifier.SemanticAssessmentLimits(limits))
 	reviewer, err := conflictreview.New(conflictreview.Dependencies{
 		Repository: ledger,
-		Provider:   legacyConflictProvider{provider: provider},
+		Provider:   provider,
 		Timezone:   "UTC",
 		Limits:     limits,
 	})

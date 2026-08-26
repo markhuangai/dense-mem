@@ -41,41 +41,15 @@ export type SubmissionDiagnosticSummary = {
   submission_id: string;
   processing_state: string;
   correlation_id?: string;
-  source_summary: string;
-  source_summary_truncated: boolean;
-  attempts: number;
-  max_attempts: number;
+  failed_phase?: string;
+  error_code?: string;
   evidence_count: number;
-  submitted_at: string;
-  next_attempt_at?: string | null;
-  started_at?: string | null;
-  updated_at?: string | null;
+  relationship_count: number;
+  document_count: number;
+  assessor_turns: number;
+  duration_ms: number;
+  created_at: string;
   completed_at?: string | null;
-  error?: SubmissionStatusError | null;
-  operator_diagnostic?: SubmissionOperatorDiagnostic | null;
-};
-
-export type SubmissionOperatorDiagnostic = {
-  id?: string;
-  placement_item_id?: string;
-  outcome_kind?: string;
-  status?: string;
-  occurred_at?: string | null;
-  failure_reason_code?: string;
-  failure_stage?: string;
-  failure_class?: string;
-  validation_stage?: string;
-  validation_field_families?: string[];
-  failure_measurement?: {
-    unit: string;
-    observed?: number;
-    observed_at_least?: number;
-    limit: number;
-  } | null;
-  provider_status?: number;
-  assessor_turns?: number;
-  assessor_provider_attempted?: boolean;
-  message?: string;
 };
 
 export type SubmissionEvidenceStatus = {
@@ -88,30 +62,55 @@ export type SubmissionEvidenceStatus = {
   error?: SubmissionStatusError | null;
 };
 
+export type SubmissionRelationshipResult = {
+  ref: string;
+  disposition: string;
+  reason?: string;
+  splits?: Array<{ split_index: number; relationship_id: string; relationship_version: number; status: string }>;
+};
+
+export type SubmissionDiagnosticEvent = {
+  sequence_no: number;
+  phase: string;
+  event_kind: string;
+  outcome: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+};
+
 export type SubmissionDiagnosticDetail = {
   team_id: string;
   team_name: string;
   owner_profile_id: string;
-  evidence_count: number;
   submission_id: string;
   submission_kind: "remember";
   processing_state: string;
   search_state: string;
   correlation_id?: string;
-  source_summary: string;
-  source_summary_truncated: boolean;
-  attempts?: number;
-  max_attempts?: number;
-  submitted_at?: string;
-  next_attempt_at?: string | null;
-  started_at?: string | null;
-  updated_at?: string | null;
+  failed_phase?: string;
+  error_code?: string;
+  evidence_count: number;
+  relationship_count: number;
+  document_count: number;
+  assessor_turns: number;
+  duration_ms: number;
+  created_at: string;
   completed_at?: string | null;
   evidence: SubmissionEvidenceStatus[];
+  relationship_results: SubmissionRelationshipResult[];
   errors: SubmissionStatusError[];
-  quarantine_expires_at?: string | null;
-	operator_diagnostic?: SubmissionOperatorDiagnostic | null;
-	operator_diagnostics: SubmissionOperatorDiagnostic[];
+  events: SubmissionDiagnosticEvent[];
+  failure_artifacts: RememberFailureArtifactDescriptor[];
+};
+
+export type RememberFailureArtifactDescriptor = {
+  artifact_id: string;
+  artifact_kind: string;
+  content_type: string;
+  byte_count: number;
+  content_sha256: string;
+  captured_at: string;
+  expires_at: string;
 };
 
 export type SubmissionDiagnosticQuery = {
@@ -143,11 +142,30 @@ export function buildSubmissionDiagnosticsPath(query: SubmissionDiagnosticQuery)
   appendParam(params, "processing_state", query.processing_state);
   appendParam(params, "limit", query.limit);
   appendParam(params, "offset", query.offset);
-  return pathWithQuery("/submissions", params);
+  return pathWithQuery("/remember-attempts", params);
 }
 
 export function buildSubmissionDiagnosticPath(teamId: string, submissionId: string): string {
-  return `/teams/${encodeURIComponent(teamId)}/submissions/${encodeURIComponent(submissionId)}`;
+  return "/teams/" + encodeURIComponent(teamId) + "/remember-attempts/" + encodeURIComponent(submissionId);
+}
+
+export function buildRememberFailureArtifactPath(teamId: string, submissionId: string, artifactId: string): string {
+  return "/teams/" + encodeURIComponent(teamId) + "/remember-attempts/"
+    + encodeURIComponent(submissionId) + "/artifacts/" + encodeURIComponent(artifactId);
+}
+
+export async function fetchRememberFailureArtifact(baseUrl: string, token: string, teamId: string, submissionId: string, artifactId: string): Promise<string> {
+  const response = await fetch(`${baseUrl}${buildRememberFailureArtifactPath(teamId, submissionId, artifactId)}`, {
+    method: "GET",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    credentials: token ? undefined : "include",
+    cache: "no-store",
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(text || response.statusText || "Request failed");
+  }
+  return text;
 }
 
 function appendParam(params: URLSearchParams, key: string, value: string | number | undefined): void {
@@ -158,5 +176,5 @@ function appendParam(params: URLSearchParams, key: string, value: string | numbe
 
 function pathWithQuery(path: string, params: URLSearchParams): string {
   const query = params.toString();
-  return query ? `${path}?${query}` : path;
+  return query ? path + "?" + query : path;
 }

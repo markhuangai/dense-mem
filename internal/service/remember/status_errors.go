@@ -2,8 +2,6 @@ package remember
 
 import (
 	"strings"
-
-	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 // SubmissionErrorCode is the closed public vocabulary for terminal submission
@@ -31,12 +29,11 @@ const (
 
 	// These aliases are retained for correction and internal call sites; the
 	// v2.6 Remember status projection emits the canonical codes above.
-	SubmissionErrorPolicyRejected        SubmissionErrorCode = "submission_policy_rejected"
-	SubmissionErrorAssessorInvalid       SubmissionErrorCode = SubmissionErrorProviderResponseInvalid
-	SubmissionErrorAssessorUnavailable   SubmissionErrorCode = SubmissionErrorProviderUnavailable
-	SubmissionErrorProcessingFailed      SubmissionErrorCode = SubmissionErrorInternalFailure
-	SubmissionErrorSearchIndexingDelayed SubmissionErrorCode = "search_indexing_delayed"
-	SubmissionErrorQuarantined           SubmissionErrorCode = "submission_quarantined"
+	SubmissionErrorPolicyRejected      SubmissionErrorCode = "submission_policy_rejected"
+	SubmissionErrorAssessorInvalid     SubmissionErrorCode = SubmissionErrorProviderResponseInvalid
+	SubmissionErrorAssessorUnavailable SubmissionErrorCode = SubmissionErrorProviderUnavailable
+	SubmissionErrorProcessingFailed    SubmissionErrorCode = SubmissionErrorInternalFailure
+	SubmissionErrorQuarantined         SubmissionErrorCode = "submission_quarantined"
 
 	SubmissionErrorRelationshipVersionStale      SubmissionErrorCode = "relationship_version_stale"
 	SubmissionErrorRelationshipNotActive         SubmissionErrorCode = "relationship_not_active"
@@ -70,7 +67,6 @@ var submissionErrorCodes = []SubmissionErrorCode{
 	SubmissionErrorRequestTimeout,
 	SubmissionErrorRequestCancelled,
 	SubmissionErrorInternalFailure,
-	SubmissionErrorSearchIndexingDelayed,
 	SubmissionErrorQuarantined,
 	SubmissionErrorPolicyRejected,
 	SubmissionErrorRelationshipVersionStale,
@@ -148,8 +144,7 @@ var submissionErrorMessages = map[SubmissionErrorCode]string{
 	SubmissionErrorRequestTimeout:           "the bounded Remember request deadline was reached",
 	SubmissionErrorRequestCancelled:         "the Remember request was cancelled before commit",
 	SubmissionErrorInternalFailure:          "Dense-Mem could not complete the submission",
-	SubmissionErrorPolicyRejected:           "submission was rejected by semantic placement policy",
-	SubmissionErrorSearchIndexingDelayed:    "search indexing is delayed",
+	SubmissionErrorPolicyRejected:           "submission was rejected by semantic policy",
 	SubmissionErrorQuarantined:              "submission was quarantined by security policy",
 
 	SubmissionErrorRelationshipVersionStale:      "relationship version is stale",
@@ -292,28 +287,4 @@ func submissionFailureCode(stage, class string) SubmissionErrorCode {
 // status code.
 func FailureCode(stage, class string) SubmissionErrorCode {
 	return submissionFailureCode(stage, class)
-}
-
-func submissionItemFailureError(item PlacementItem, processing string) *SubmissionStatusError {
-	if item.Status != string(domain.PlacementRunFailed) && item.Status != "failed" && item.Status != "rejected" {
-		return nil
-	}
-	stage, _ := item.Result["failure_stage"].(string)
-	class, _ := item.Result["failure_class"].(string)
-	code, _ := item.Result["failure_code"].(string)
-	if item.Status == "rejected" && strings.TrimSpace(stage) == "" && strings.TrimSpace(class) == "" && strings.TrimSpace(code) == "" {
-		return nil
-	}
-	if strings.TrimSpace(code) != "" {
-		errorValue := submissionStatusErrorForCode(code, processing)
-		return &errorValue
-	}
-	errorValue := submissionStatusError(submissionFailureCode(stage, class))
-	return &errorValue
-}
-
-// ItemFailureError projects one stored placement item into a bounded public
-// status error.
-func ItemFailureError(item PlacementItem, processing string) *SubmissionStatusError {
-	return submissionItemFailureError(item, processing)
 }

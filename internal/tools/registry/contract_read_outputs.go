@@ -251,12 +251,11 @@ func traceRelationshipSchema() map[string]any {
 
 func traceObservationSchema() map[string]any {
 	return closedObject(
-		[]string{"observation_id", "submission_id", "placement_item_id"},
+		[]string{"observation_id", "submission_id"},
 		map[string]any{
 			"observation_id":     schemaString("Observation ID.", 128),
 			"relationship_id":    nullableString("Relationship ID when resolved.", 128),
 			"submission_id":      schemaString("Submission ID.", 128),
-			"placement_item_id":  schemaString("Placement item ID.", 128),
 			"subject_ref":        schemaString("Submitted subject ref.", 128),
 			"original_predicate": schemaString("Original predicate wording.", 128),
 			"object_ref":         schemaString("Submitted object ref.", 128),

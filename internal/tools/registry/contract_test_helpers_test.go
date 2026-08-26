@@ -49,9 +49,8 @@ func contractInvokeContext(scopes ...string) context.Context {
 }
 
 type stubRememberService struct {
-	req       memoryservice.RememberRequest
-	statusReq memoryservice.GetSubmissionStatusRequest
-	err       error
+	req memoryservice.RememberRequest
+	err error
 }
 
 func (s *stubRememberService) Remember(_ context.Context, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
@@ -60,40 +59,18 @@ func (s *stubRememberService) Remember(_ context.Context, req memoryservice.Reme
 		return nil, s.err
 	}
 	return &memoryservice.RememberResult{
-		ContractVersion:     domain.ContractVersion,
-		IngestID:            "ingest-canonical",
-		SubmissionID:        "ingest-canonical",
-		SubmissionKind:      "remember",
-		ProcessingState:     string(domain.PlacementRunCompleted),
-		SearchState:         string(domain.SearchProjectionCurrent),
-		Evidence:            []memoryservice.SubmissionEvidenceStatus{},
-		Errors:              []memoryservice.SubmissionStatusError{},
-		Degradations:        []memoryservice.SubmissionStatusDegradation{},
-		RelationshipResults: []memoryservice.SubmissionRelationshipResult{},
-		CorrelationID:       "corr-canonical",
-	}, nil
-}
-
-func (s *stubRememberService) GetSubmissionStatus(
-	_ context.Context,
-	req memoryservice.GetSubmissionStatusRequest,
-) (*memoryservice.SubmissionStatusResult, error) {
-	s.statusReq = req
-	return &memoryservice.SubmissionStatusResult{
-		ContractVersion:   domain.ContractVersion,
-		SubmissionID:      req.SubmissionID,
-		SubmissionKind:    "remember",
-		ProcessingState:   string(domain.PlacementRunCompleted),
-		SearchState:       string(domain.SearchProjectionCurrent),
-		CheckAfterSeconds: 60,
-		Evidence: []memoryservice.SubmissionEvidenceStatus{{
-			EvidenceID:            "evidence-canonical",
-			EvidenceIndex:         0,
-			SupersededEvidenceIDs: []string{},
-			SearchState:           string(domain.SearchProjectionCurrent),
-		}},
-		Errors:       []memoryservice.SubmissionStatusError{},
-		Degradations: []memoryservice.SubmissionStatusDegradation{},
+		SubmissionStatusResult: memoryservice.SubmissionStatusResult{
+			ContractVersion:     domain.ContractVersion,
+			SubmissionID:        "ingest-canonical",
+			SubmissionKind:      "remember",
+			ProcessingState:     "completed",
+			SearchState:         string(domain.SearchProjectionCurrent),
+			Evidence:            []memoryservice.SubmissionEvidenceStatus{},
+			Errors:              []memoryservice.SubmissionStatusError{},
+			RelationshipResults: []memoryservice.SubmissionRelationshipResult{},
+			CorrelationID:       "corr-canonical",
+		},
+		IngestID: "ingest-canonical",
 	}, nil
 }
 
@@ -144,9 +121,6 @@ func (s *stubTraceContext) Trace(_ context.Context, _ string, req contextservice
 			}},
 			SearchDocuments: []repository.TraceSearchDocument{{
 				SearchDocumentID: "search-doc-canonical",
-			}},
-			EmbeddingJobs: []repository.TraceEmbeddingJob{{
-				EmbeddingJobID: "embedding-job-canonical",
 			}},
 			StoppedReason: "max_edges",
 			Truncated:     true,

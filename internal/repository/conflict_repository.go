@@ -185,7 +185,7 @@ func relationshipEligibleForConflictPlacement(record *RelationshipRecord) bool {
 func applyRelationshipConflictPlacement(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
+	commit CommitSemanticInput,
 	applied *RelationshipDecisionResult,
 	config ConflictRuntimeConfig,
 ) error {

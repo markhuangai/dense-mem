@@ -16,10 +16,9 @@ import (
 )
 
 type HTTPClient struct {
-	BaseURL          string
-	APIKey           string
-	PlacementTimeout time.Duration
-	Client           *http.Client
+	BaseURL string
+	APIKey  string
+	Client  *http.Client
 }
 
 type HTTPStatusError struct {

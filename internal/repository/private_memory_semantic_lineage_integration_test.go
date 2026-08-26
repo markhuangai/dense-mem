@@ -55,6 +55,27 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 			) VALUES (?, ?, ?, ?, 0, ?, ?, 'conversation', 'primary', ARRAY[]::text[], '{}'::jsonb, ?)
 		`, teamID, fragmentID, ingestID, ownerID, content, "hash-"+fragmentID.String(), target.MemorySpaceID).Error
 	}))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO remember_attempts (
+				team_id, attempt_id, owner_profile_id, space_id, space_generation,
+				idempotency_key, request_hash, contract_version, submission_kind,
+				outcome, public_result, completed_at
+			) VALUES (
+				?, ?, ?, ?, (SELECT generation FROM memory_spaces WHERE id = ?),
+				'private-semantic-attempt', 'private-semantic-request', 'dense-mem.v2.6.1', 'remember',
+				'completed', '{}'::jsonb, now()
+			)
+		`, teamID, ingestID, ownerID, target.MemorySpaceID, target.MemorySpaceID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO semantic_assessments (
+				team_id, attempt_id, owner_profile_id, response_history,
+				accepted_revision, provider_turns, model, response_hash, validated_at
+			) VALUES (?, ?, ?, '[]'::jsonb, 1, 1, 'test-model', 'sha256:private-assessment', now())
+		`, teamID, ingestID, ownerID).Error
+	}))
 
 	semantic := NewSemanticRepository(appDB, rls)
 	semanticCtx := requestctx.WithActor(ctx, requestctx.Actor{
@@ -187,13 +208,18 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		for _, table := range []string{
+			"remember_attempts", "remember_attempt_events", "remember_failure_artifacts", "semantic_assessments",
 			"relationship_records", "relationship_observations", "verification_events",
 			"relationship_evidence_supports", "relationship_support_decision_events",
 			"relationship_transition_events", "relationship_correction_submissions",
 			"relationship_correction_events", "relationship_cross_references",
 		} {
 			var count int64
-			if err := tx.Raw("SELECT COUNT(*) FROM "+table+" WHERE space_id = ?", target.MemorySpaceID).Scan(&count).Error; err != nil {
+			query := "SELECT COUNT(*) FROM " + table + " WHERE space_id = ?"
+			if table == "remember_attempt_events" || table == "remember_failure_artifacts" || table == "semantic_assessments" {
+				query = "SELECT COUNT(*) FROM " + table + " AS child JOIN remember_attempts AS attempt ON child.team_id = attempt.team_id AND child.attempt_id = attempt.attempt_id AND child.owner_profile_id = attempt.owner_profile_id WHERE attempt.space_id = ?"
+			}
+			if err := tx.Raw(query, target.MemorySpaceID).Scan(&count).Error; err != nil {
 				return err
 			}
 			require.Zero(t, count, table+" rows remain after private erasure")

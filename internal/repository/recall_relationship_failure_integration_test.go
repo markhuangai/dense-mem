@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -67,18 +66,13 @@ func TestRecallRelationshipsReportsFailedCurrentGenerationWithoutCandidateHit(t 
 		DocumentText:           "relationship\nsubject: Mika\npredicate: works on\nobject: Dense Mem\npolarity: positive",
 	})
 	require.NoError(t, err)
-	claimed, err := searchRepo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{
-		TeamID: teamID, WorkerID: "recall-rel-failed-worker", Limit: 1, Lease: time.Minute,
-	})
-	require.NoError(t, err)
-	require.Len(t, claimed, 1)
-	_, err = searchRepo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
-		TeamID: teamID, EmbeddingJobID: claimed[0].EmbeddingJobID,
-		WorkerID: "recall-rel-failed-worker", ExpectedAttempts: claimed[0].Attempts,
-		FailureClass: string(domain.EmbeddingFailureTransient),
-		FailureCode:  string(domain.EmbeddingFailureProviderTimeout), Terminal: true,
-	})
-	require.NoError(t, err)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'failed', embedding = NULL, embedding_error = 'provider timeout'
+			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ?::uuid
+		`, teamID, decision.Relationship.RelationshipID).Error
+	}))
 
 	recall, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
 		TeamID:         teamID,

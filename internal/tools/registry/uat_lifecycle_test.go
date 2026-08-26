@@ -168,18 +168,6 @@ func (s *stubLifecycleService) CorrectRelationship(
 	}, nil
 }
 
-func (s *stubLifecycleService) GetRelationshipCorrectionStatus(
-	_ context.Context,
-	req memoryservice.GetSubmissionStatusRequest,
-) (*memoryservice.SubmissionStatusResult, error) {
-	return &memoryservice.SubmissionStatusResult{
-		ContractVersion: domain.ContractVersion,
-		SubmissionID:    req.SubmissionID, SubmissionKind: "relationship_correction",
-		ProcessingState: "completed", SearchState: "not_required", Evidence: []memoryservice.SubmissionEvidenceStatus{},
-		Errors: []memoryservice.SubmissionStatusError{}, Degradations: []memoryservice.SubmissionStatusDegradation{},
-	}, nil
-}
-
 func (s *stubLifecycleService) RetractEvidence(
 	_ context.Context,
 	req memoryservice.RetractEvidenceRequest,

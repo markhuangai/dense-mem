@@ -179,7 +179,7 @@ func NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(
 }
 
 // SemanticAssessmentLimitsForConfig maps the configured assessor budget into the
-// single limits value shared by the provider and placement worker.
+// one limits value shared by the assessor and verifier adapters.
 func SemanticAssessmentLimitsForConfig(cfg config.ConfigProvider) assessor.SemanticAssessmentLimits {
 	budget := config.AIVerifierAssessmentBudgetFor(cfg)
 	limits := DefaultSemanticAssessmentLimits()

@@ -19,12 +19,6 @@ const (
 	DefaultPostgresMigrationTimeoutSeconds     = 1800
 	MaxPostgresMigrationTimeoutSeconds         = 86400
 	DefaultAIEmbeddingMaxConcurrency           = 8
-	DefaultEmbeddingWorkerCount                = 2
-	DefaultEmbeddingBatchSize                  = 64
-	MaxEmbeddingBatchSize                      = 256
-	DefaultEmbeddingJobPollSeconds             = 1
-	DefaultEmbeddingJobMaxAttempts             = 20
-	MaxEmbeddingJobMaxAttempts                 = 100
 	DefaultAIVerifierMaxConcurrency            = 5
 	DefaultAIVerifierMaxInputTokens            = 200000
 	DefaultAIVerifierMaxOutputTokens           = 65536
@@ -33,8 +27,6 @@ const (
 	MaxAIVerifierMaxPredicateOptions           = 2000
 	DefaultAIVerifierTokenizer                 = "o200k_base"
 	DefaultMemoryAutoWriteConfidenceThreshold  = 0.7
-	DefaultMemoryPlacementWorkerCount          = 1
-	DefaultMemoryPlacementPollSeconds          = 5
 	DefaultConflictReviewTTLDays               = 7
 	DefaultConflictReviewStartTime             = "04:00"
 )
@@ -50,6 +42,19 @@ var obsoleteAssessorEnvVars = []string{
 	"AI_VERIFIER_MAX_INPUT_BYTES",
 	"AI_VERIFIER_MAX_OUTPUT_BYTES",
 	"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_BYTES",
+}
+
+var retiredAsyncEnvVars = []string{
+	"MEMORY_PLACEMENT_WORKER_COUNT",
+	"MEMORY_PLACEMENT_POLL_SECONDS",
+	"MEMORY_PLACEMENT_MAX_ATTEMPTS",
+	"EMBEDDING_WORKER_COUNT",
+	"EMBEDDING_BATCH_SIZE",
+	"EMBEDDING_JOB_POLL_SECONDS",
+	"EMBEDDING_JOB_MAX_ATTEMPTS",
+	"EMBEDDING_JOB_LEASE_SECONDS",
+	"EMBEDDING_JOB_RETRY_MAX_SECONDS",
+	"EMBEDDING_PENDING_STALE_SECONDS",
 }
 
 // ConfigProvider is the companion interface for Config.
@@ -76,7 +81,6 @@ type ConfigProvider interface {
 	GetAIVerifierModel() string
 	GetAIVerifierTimeoutSeconds() int
 	GetAIVerifierMaxConcurrency() int
-	GetPromoteTxTimeoutSeconds() int
 	GetControlHTTPAddr() string
 	GetControlPortalToken() string
 }
@@ -145,10 +149,6 @@ type Config struct {
 	AIEmbeddingDimensions           int
 	AIEmbeddingTimeoutSeconds       int
 	AIEmbeddingMaxConcurrency       int
-	EmbeddingWorkerCount            int
-	EmbeddingBatchSize              int
-	EmbeddingJobPollSeconds         int
-	EmbeddingJobMaxAttempts         int
 	// Knowledge-pipeline knobs (AC-X3)
 	AIVerifierAPIURL                      string
 	AIVerifierAPIKey                      string `json:"-"`
@@ -163,9 +163,6 @@ type Config struct {
 	AIVerifierTokenizer                   string
 	MemoryAutoWriteConfidenceThreshold    float64
 	memoryAutoWriteConfidenceThresholdSet bool
-	MemoryPlacementWorkerCount            int
-	MemoryPlacementPollSeconds            int
-	PromoteTxTimeoutSeconds               int
 	ControlHTTPAddr                       string
 	ControlPortalToken                    string `json:"-"`
 	TelemetryEnabled                      bool
@@ -217,25 +214,6 @@ func (c *Config) GetAIEmbeddingMaxConcurrency() int {
 	}
 	return c.AIEmbeddingMaxConcurrency
 }
-func (c *Config) GetEmbeddingWorkerCount() int {
-	if c.EmbeddingWorkerCount <= 0 {
-		return DefaultEmbeddingWorkerCount
-	}
-	return c.EmbeddingWorkerCount
-}
-func (c *Config) GetEmbeddingBatchSize() int {
-	if c.EmbeddingBatchSize <= 0 {
-		return DefaultEmbeddingBatchSize
-	}
-	return c.EmbeddingBatchSize
-}
-func (c *Config) GetEmbeddingJobPollSeconds() int {
-	if c.EmbeddingJobPollSeconds <= 0 {
-		return DefaultEmbeddingJobPollSeconds
-	}
-	return c.EmbeddingJobPollSeconds
-}
-func (c *Config) GetEmbeddingJobMaxAttempts() int { return c.EmbeddingJobMaxAttempts }
 func (c *Config) IsEmbeddingConfigured() bool {
 	return c.AIAPIURL != "" && c.AIAPIKey != "" && c.AIEmbeddingModel != "" && c.AIEmbeddingDimensions > 0
 }
@@ -263,20 +241,7 @@ func (c *Config) GetAIVerifierTimeoutSeconds() int {
 	}
 	return 60
 }
-func (c *Config) GetAIVerifierMaxConcurrency() int { return c.AIVerifierMaxConcurrency }
-func (c *Config) GetMemoryPlacementWorkerCount() int {
-	if c.MemoryPlacementWorkerCount <= 0 {
-		return DefaultMemoryPlacementWorkerCount
-	}
-	return c.MemoryPlacementWorkerCount
-}
-func (c *Config) GetMemoryPlacementPollSeconds() int {
-	if c.MemoryPlacementPollSeconds <= 0 {
-		return DefaultMemoryPlacementPollSeconds
-	}
-	return c.MemoryPlacementPollSeconds
-}
-func (c *Config) GetPromoteTxTimeoutSeconds() int   { return c.PromoteTxTimeoutSeconds }
+func (c *Config) GetAIVerifierMaxConcurrency() int  { return c.AIVerifierMaxConcurrency }
 func (c *Config) GetControlHTTPAddr() string        { return c.ControlHTTPAddr }
 func (c *Config) GetControlPortalToken() string     { return c.ControlPortalToken }
 func (c *Config) GetTelemetryEnabled() bool         { return c.TelemetryEnabled }
@@ -352,18 +317,6 @@ func (e *ValidationError) Error() string {
 // server process. This is intentionally stricter than Load() so auxiliary
 // binaries such as migrations can still reuse the shared loader.
 func (c *Config) ValidateServerStartup() error {
-	for _, field := range []string{
-		"MEMORY_PLACEMENT_WORKER_COUNT",
-		"MEMORY_PLACEMENT_POLL_SECONDS",
-		"EMBEDDING_WORKER_COUNT",
-		"EMBEDDING_BATCH_SIZE",
-		"EMBEDDING_JOB_POLL_SECONDS",
-		"EMBEDDING_JOB_MAX_ATTEMPTS",
-	} {
-		if strings.TrimSpace(os.Getenv(field)) != "" {
-			return &ValidationError{Field: field, Message: "retired by synchronous Remember; unset this setting"}
-		}
-	}
 	required := []struct {
 		field string
 		value string
@@ -487,6 +440,9 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 	if err := rejectObsoleteAssessorConfig(); err != nil {
 		return cfg, err
 	}
+	if err := rejectRetiredAsyncConfig(); err != nil {
+		return cfg, err
+	}
 
 	// String fields with defaults
 	cfg.PostgresDSN = postgresDSN
@@ -524,10 +480,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"AI_API_EMBEDDING_DIMENSIONS", 0, func(c *Config, value int) { c.AIEmbeddingDimensions = value }},
 		{"AI_API_EMBEDDING_TIMEOUT_SECONDS", 30, func(c *Config, value int) { c.AIEmbeddingTimeoutSeconds = value }},
 		{"AI_API_EMBEDDING_MAX_CONCURRENCY", DefaultAIEmbeddingMaxConcurrency, func(c *Config, value int) { c.AIEmbeddingMaxConcurrency = value }},
-		{"EMBEDDING_WORKER_COUNT", DefaultEmbeddingWorkerCount, func(c *Config, value int) { c.EmbeddingWorkerCount = value }},
-		{"EMBEDDING_BATCH_SIZE", DefaultEmbeddingBatchSize, func(c *Config, value int) { c.EmbeddingBatchSize = value }},
-		{"EMBEDDING_JOB_POLL_SECONDS", DefaultEmbeddingJobPollSeconds, func(c *Config, value int) { c.EmbeddingJobPollSeconds = value }},
-		{"EMBEDDING_JOB_MAX_ATTEMPTS", DefaultEmbeddingJobMaxAttempts, func(c *Config, value int) { c.EmbeddingJobMaxAttempts = value }},
 	}); err != nil {
 		return cfg, err
 	}
@@ -575,8 +527,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"AI_VERIFIER_MAX_OUTPUT_TOKENS", DefaultAIVerifierMaxOutputTokens, func(c *Config, value int) { c.AIVerifierMaxOutputTokens = value }},
 		{"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", DefaultAIVerifierMaxCandidateContextTokens, func(c *Config, value int) { c.AIVerifierMaxCandidateContextTokens = value }},
 		{"AI_VERIFIER_MAX_PREDICATE_OPTIONS", DefaultAIVerifierMaxPredicateOptions, func(c *Config, value int) { c.AIVerifierMaxPredicateOptions = value }},
-		{"MEMORY_PLACEMENT_WORKER_COUNT", DefaultMemoryPlacementWorkerCount, func(c *Config, value int) { c.MemoryPlacementWorkerCount = value }},
-		{"MEMORY_PLACEMENT_POLL_SECONDS", DefaultMemoryPlacementPollSeconds, func(c *Config, value int) { c.MemoryPlacementPollSeconds = value }},
 	}); err != nil {
 		return cfg, err
 	}
@@ -587,11 +537,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		return cfg, err
 	}
 	cfg.memoryAutoWriteConfidenceThresholdSet = true
-	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
-		{"PROMOTE_TX_TIMEOUT_SECONDS", 10, func(c *Config, value int) { c.PromoteTxTimeoutSeconds = value }},
-	}); err != nil {
-		return cfg, err
-	}
 	cfg.AppTimezone = getEnvOrDefault("APP_TIMEZONE", "Local")
 	cfg.ConflictReviewStartTimeLocal = getEnvOrDefault("CONFLICT_REVIEW_START_TIME_LOCAL", DefaultConflictReviewStartTime)
 	if err := applyIntEnvSpecs(&cfg, []intEnvSpec{
@@ -661,19 +606,12 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"SSE_MAX_DURATION_SECONDS", cfg.SSEMaxDurationSeconds},
 		{"SSE_MAX_CONCURRENT_STREAMS", cfg.SSEMaxConcurrentStreams},
 		{"AI_API_EMBEDDING_MAX_CONCURRENCY", cfg.AIEmbeddingMaxConcurrency},
-		{"EMBEDDING_WORKER_COUNT", cfg.EmbeddingWorkerCount},
-		{"EMBEDDING_BATCH_SIZE", cfg.EmbeddingBatchSize},
-		{"EMBEDDING_JOB_POLL_SECONDS", cfg.EmbeddingJobPollSeconds},
-		{"EMBEDDING_JOB_MAX_ATTEMPTS", cfg.EmbeddingJobMaxAttempts},
 		{"AI_VERIFIER_TIMEOUT_SECONDS", cfg.AIVerifierTimeoutSeconds},
 		{"AI_VERIFIER_MAX_CONCURRENCY", cfg.AIVerifierMaxConcurrency},
 		{"AI_VERIFIER_MAX_INPUT_TOKENS", cfg.AIVerifierMaxInputTokens},
 		{"AI_VERIFIER_MAX_OUTPUT_TOKENS", cfg.AIVerifierMaxOutputTokens},
 		{"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", cfg.AIVerifierMaxCandidateContextTokens},
 		{"AI_VERIFIER_MAX_PREDICATE_OPTIONS", cfg.AIVerifierMaxPredicateOptions},
-		{"MEMORY_PLACEMENT_WORKER_COUNT", cfg.MemoryPlacementWorkerCount},
-		{"MEMORY_PLACEMENT_POLL_SECONDS", cfg.MemoryPlacementPollSeconds},
-		{"PROMOTE_TX_TIMEOUT_SECONDS", cfg.PromoteTxTimeoutSeconds},
 		{"CONFLICT_REVIEW_TTL_DAYS", cfg.ConflictReviewTTLDays},
 		{"CONFLICT_REVIEW_MAX_CONCURRENCY", cfg.ConflictReviewMaxConcurrency},
 		{"CONFLICT_REVIEW_BATCH_SIZE", cfg.ConflictReviewBatchSize},
@@ -688,30 +626,6 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 				Field:   field.name,
 				Message: fmt.Sprintf("must be greater than 0, got %d", field.value),
 			}
-		}
-	}
-	if cfg.EmbeddingJobMaxAttempts > MaxEmbeddingJobMaxAttempts {
-		return cfg, &ValidationError{
-			Field:   "EMBEDDING_JOB_MAX_ATTEMPTS",
-			Message: fmt.Sprintf("must be less than or equal to %d, got %d", MaxEmbeddingJobMaxAttempts, cfg.EmbeddingJobMaxAttempts),
-		}
-	}
-	if cfg.EmbeddingBatchSize > MaxEmbeddingBatchSize {
-		return cfg, &ValidationError{
-			Field:   "EMBEDDING_BATCH_SIZE",
-			Message: fmt.Sprintf("must be less than or equal to %d, got %d", MaxEmbeddingBatchSize, cfg.EmbeddingBatchSize),
-		}
-	}
-	if cfg.EmbeddingWorkerCount > cfg.AIEmbeddingMaxConcurrency {
-		return cfg, &ValidationError{
-			Field:   "EMBEDDING_WORKER_COUNT",
-			Message: fmt.Sprintf("must be less than or equal to AI_API_EMBEDDING_MAX_CONCURRENCY, got %d > %d", cfg.EmbeddingWorkerCount, cfg.AIEmbeddingMaxConcurrency),
-		}
-	}
-	if cfg.MemoryPlacementWorkerCount > cfg.AIVerifierMaxConcurrency {
-		return cfg, &ValidationError{
-			Field:   "MEMORY_PLACEMENT_WORKER_COUNT",
-			Message: fmt.Sprintf("must be less than or equal to AI_VERIFIER_MAX_CONCURRENCY, got %d > %d", cfg.MemoryPlacementWorkerCount, cfg.AIVerifierMaxConcurrency),
 		}
 	}
 	if cfg.AIVerifierMaxCandidateContextTokens > cfg.AIVerifierMaxInputTokens {
@@ -923,6 +837,18 @@ func rejectObsoleteAssessorConfig() *ValidationError {
 			return &ValidationError{
 				Field:   name,
 				Message: "byte budgets are unsupported; use the corresponding AI_VERIFIER_*_TOKENS setting",
+			}
+		}
+	}
+	return nil
+}
+
+func rejectRetiredAsyncConfig() *ValidationError {
+	for _, name := range retiredAsyncEnvVars {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return &ValidationError{
+				Field:   name,
+				Message: "placement and embedding worker configuration is retired; remove this setting for the synchronous v2.6.1 contract",
 			}
 		}
 	}

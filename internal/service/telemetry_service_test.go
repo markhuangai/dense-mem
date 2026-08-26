@@ -96,7 +96,7 @@ func TestTelemetryCostCardsAreOperatorOnly(t *testing.T) {
 	}
 	require.Contains(t, operatorIDs, "assessor_terminal_failures")
 	require.NotContains(t, userIDs, "assessor_terminal_failures")
-	for _, id := range []string{"recall_embedding_cost_usd", "background_embedding_cost_usd", "ai_unpriced_operations"} {
+	for _, id := range []string{"recall_embedding_cost_usd", "semantic_assessment_cost_usd", "ai_unpriced_operations"} {
 		require.NotContains(t, operatorIDs, id)
 		require.NotContains(t, userIDs, id)
 	}
@@ -132,7 +132,7 @@ func TestTelemetryCostCardsAreOperatorOnly(t *testing.T) {
 	require.NotNil(t, profileEmbeddingCost)
 	require.Contains(t, profileEmbeddingCost.Query, `team_id="11111111-1111-4111-8111-111111111111"`)
 	require.Contains(t, profileEmbeddingCost.Query, `profile_id="22222222-2222-4222-8222-222222222222"`)
-	require.NotContains(t, profileEmbeddingCost.Query, `operation="background_embedding"`)
+	require.NotContains(t, profileEmbeddingCost.Query, `operation="semantic_assessment"`)
 }
 
 func TestTelemetryTerminalFailureSeriesIsOperatorSystemOnly(t *testing.T) {

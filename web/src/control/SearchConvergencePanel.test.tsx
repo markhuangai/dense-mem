@@ -5,43 +5,39 @@ import { ControlApi, SearchConvergence } from "../api";
 import { SearchConvergencePanel } from "./SearchConvergencePanel";
 
 describe("SearchConvergencePanel", () => {
-  it("renders bounded job-derived failure groups and refreshes read-only state", async () => {
-    const getSearchConvergence = vi.fn().mockResolvedValue(failureSnapshot());
+  it("renders document drift and refreshes read-only state", async () => {
+    const getSearchConvergence = vi.fn().mockResolvedValue(driftSnapshot());
     const api = { getSearchConvergence } as unknown as ControlApi;
 
     render(<SearchConvergencePanel api={api} />);
 
-    expect(await screen.findByText("Payments")).toBeInTheDocument();
-    expect(screen.getByText("provider_quota_exhausted")).toBeInTheDocument();
-    expect(screen.getByText("2 / 1")).toBeInTheDocument();
-    expect(screen.getByText("Add provider credit or repair billing before the next daily canary.")).toBeInTheDocument();
-    expect(screen.getByText("Showing the most recent 1 of 101 failure groups.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /retry|resolve|delete|requeue/i })).not.toBeInTheDocument();
+    expect(await screen.findByText("vector missing")).toBeInTheDocument();
+    expect(screen.getAllByText("2").length).toBeGreaterThan(0);
+    expect(screen.getByText("1 affected teams")).toBeInTheDocument();
+    expect(screen.getByText(/no queue or background embedding worker/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /requeue|retry|resolve/i })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Refresh search convergence" }));
     await waitFor(() => expect(getSearchConvergence).toHaveBeenCalledTimes(2));
   });
 
-  it("shows convergence without retaining resolved failure state", async () => {
-    const snapshot = failureSnapshot();
+  it("shows a converged document projection without drift", async () => {
+    const snapshot = driftSnapshot();
     snapshot.status = "converged";
-    snapshot.queue.failed = 0;
-    snapshot.queue.affected_team_count = 0;
-    snapshot.failures = [];
-    snapshot.failure_groups = [];
-    snapshot.failure_group_count = 0;
-    snapshot.failure_groups_truncated = false;
+    snapshot.current_documents = snapshot.expected_documents;
+    snapshot.drifted_documents = 0;
+    snapshot.affected_team_count = 0;
+    snapshot.drift_classes = [];
     const api = { getSearchConvergence: vi.fn().mockResolvedValue(snapshot) } as unknown as ControlApi;
 
     render(<SearchConvergencePanel api={api} />);
 
-    expect(await screen.findByText("No unresolved failure groups.")).toBeInTheDocument();
-    expect(screen.queryByText("Payments")).not.toBeInTheDocument();
-    expect(screen.queryByText("provider_quota_exhausted")).not.toBeInTheDocument();
+    expect(await screen.findByText("No unresolved document drift.")).toBeInTheDocument();
+    expect(screen.queryByText("vector missing")).not.toBeInTheDocument();
   });
 });
 
-function failureSnapshot(): SearchConvergence {
+function driftSnapshot(): SearchConvergence {
   return {
     observed_at: "2026-08-11T04:30:00Z",
     status: "attention_required",
@@ -52,48 +48,20 @@ function failureSnapshot(): SearchConvergence {
       index_generation: 2,
       index_strategy: "exact",
     },
-    queue: {
-      queued: 1,
-      processing: 0,
-      failed: 2,
-      expired_leases: 0,
-      affected_team_count: 1,
-      oldest_pending_age_seconds: 60,
-      oldest_failure_age_seconds: 120,
-    },
-    failures: [{
-      source_kind: "evidence",
-      failure_class: "provider_action_required",
-      failure_code: "provider_quota_exhausted",
-      count: 2,
-    }],
-    failure_groups: [{
-      team_id: "11111111-1111-4111-8111-111111111111",
-      team_name: "Payments",
-      source_kind: "evidence",
-      failure_class: "provider_action_required",
-      failure_code: "provider_quota_exhausted",
-      status: "attention_required",
-      failed_job_count: 2,
-      queued_job_count: 1,
-      processing_job_count: 0,
-      affected_job_count: 3,
-      first_failed_at: "2026-08-11T04:28:00Z",
-      last_failed_at: "2026-08-11T04:29:00Z",
-      age_seconds: 60,
-      guidance: "Add provider credit or repair billing before the next daily canary.",
-    }],
-    failure_group_count: 101,
-    failure_groups_truncated: true,
+    expected_documents: 5,
+    current_documents: 3,
+    drifted_documents: 2,
+    affected_team_count: 1,
+    oldest_drift_age_seconds: 120,
+    drift_classes: [{ class: "vector_missing", count: 2 }],
     latest_run: {
       run_id: "22222222-2222-4222-8222-222222222222",
       local_run_date: "2026-08-11",
-      status: "deferred",
-      canary_outcome: "failed",
-      canary_failure_class: "provider_action_required",
-      canary_failure_code: "provider_quota_exhausted",
-      requeued_count: 0,
-      recovered_count: 0,
+      status: "completed",
+      selected_count: 2,
+      embedded_count: 2,
+      updated_count: 2,
+      drifted_count: 0,
       updated_at: "2026-08-11T04:30:00Z",
     },
   };

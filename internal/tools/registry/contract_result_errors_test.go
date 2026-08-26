@@ -59,7 +59,8 @@ func TestRememberToolResultErrorQuarantinesSecurityRejection(t *testing.T) {
 	item := items[0].(map[string]any)
 	require.Equal(t, "submission_quarantined", item["code"])
 	require.Equal(t, "quarantined", structured.Result["processing_state"])
-	require.Equal(t, []any{}, structured.Result["degradations"])
+	_, present := structured.Result["degradations"]
+	require.False(t, present)
 }
 
 func TestRememberToolResultErrorFallsBackToInternalFailure(t *testing.T) {

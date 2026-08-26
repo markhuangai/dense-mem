@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"testing"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
@@ -50,46 +49,6 @@ func expectActiveTeam(mock sqlmock.Sqlmock, teamID string) {
 	)
 }
 
-func TestClaimPlacementRunValidatesAndClaimsExactRun(t *testing.T) {
-	repo, mock, cleanup := newSynchronousRepositorySQLMock(t)
-	defer cleanup()
-	teamID, ownerID, ingestID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	expectActiveTeam(mock, teamID)
-	mock.ExpectQuery("UPDATE placement_runs AS run").WithArgs(
-		int(time.Minute.Seconds()), "remember-sync", teamID, ownerID, ingestID, 0,
-	).WillReturnRows(sqlmock.NewRows([]string{
-		"team_id", "placement_run_id", "ingest_id", "owner_profile_id", "space_id", "space_generation",
-		"status", "attempts", "max_attempts", "assessor_turns_reserved", "lease_until",
-	}).AddRow(teamID, uuid.NewString(), ingestID, ownerID, uuid.NewString(), int64(1), "processing", 1, 3, 0, time.Now().UTC()))
-	mock.ExpectQuery(`SELECT COALESCE\(metadata`).WithArgs(teamID, ingestID).WillReturnRows(
-		sqlmock.NewRows([]string{"correlation_id"}).AddRow("corr-1"),
-	)
-	run, err := repo.ClaimPlacementRun(context.Background(), ClaimPlacementRunInput{
-		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID, WorkerID: "remember-sync", Lease: time.Minute,
-	})
-	require.NoError(t, err)
-	require.Equal(t, ingestID, run.IngestID)
-	require.Equal(t, "processing", run.Status)
-	require.Equal(t, "corr-1", run.CorrelationID)
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestClaimPlacementRunRejectsInvalidInput(t *testing.T) {
-	repo := &LedgerRepositoryImpl{}
-	tests := []ClaimPlacementRunInput{
-		{TeamID: "bad", OwnerProfileID: uuid.NewString(), IngestID: uuid.NewString(), WorkerID: "w", Lease: time.Second},
-		{TeamID: uuid.NewString(), OwnerProfileID: "bad", IngestID: uuid.NewString(), WorkerID: "w", Lease: time.Second},
-		{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString(), IngestID: "bad", WorkerID: "w", Lease: time.Second},
-		{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString(), IngestID: uuid.NewString(), Lease: time.Second},
-		{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString(), IngestID: uuid.NewString(), WorkerID: "w", Lease: time.Millisecond},
-		{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString(), IngestID: uuid.NewString(), WorkerID: "w", Lease: time.Second, StaleAfter: -time.Second},
-	}
-	for _, input := range tests {
-		_, err := repo.ClaimPlacementRun(context.Background(), input)
-		require.Error(t, err)
-	}
-}
-
 func TestLoadRememberAttemptReturnsSafeReplayResult(t *testing.T) {
 	repo, mock, cleanup := newSynchronousRepositorySQLMock(t)
 	defer cleanup()
@@ -131,8 +90,53 @@ func TestLoadRememberAttemptValidatesInputAndMissingRows(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestInlineEmbeddingWriteContext(t *testing.T) {
-	ctx := context.Background()
-	require.False(t, InlineEmbeddingWrite(ctx))
-	require.True(t, InlineEmbeddingWrite(WithInlineEmbeddingWrites(ctx)))
+func TestRememberTerminalRelationshipResultsFromProposalPreservesEveryRef(t *testing.T) {
+	results, err := rememberTerminalRelationshipResultsFromProposal(map[string]any{
+		"relationship_hints": []any{
+			map[string]any{"ref": "first"},
+			map[string]any{"ref": "second"},
+		},
+	}, "security_quarantine")
+	require.NoError(t, err)
+	require.Equal(t, []SubmissionRelationshipResultInput{
+		{RelationshipRef: "first", Disposition: "not_stored", Reason: "security_quarantine"},
+		{RelationshipRef: "second", Disposition: "not_stored", Reason: "security_quarantine"},
+	}, results)
+}
+
+func TestRememberTerminalRelationshipResultsFromProposalRejectsDuplicateRefs(t *testing.T) {
+	_, err := rememberTerminalRelationshipResultsFromProposal(map[string]any{
+		"relationship_hints": []any{
+			map[string]any{"ref": "duplicate"},
+			map[string]any{"ref": "duplicate"},
+		},
+	}, "security_quarantine")
+	require.ErrorContains(t, err, "duplicated")
+}
+
+func TestRememberPublicResultsHaveNoPollingOrDegradationFields(t *testing.T) {
+	input := SynchronousRememberCommitInput{IngestID: uuid.NewString()}
+	completed := rememberPublicResult(input, nil, &submissionSemanticCommitState{}, nil)
+	terminal := rememberTerminalPublicResult(input, nil, "rejected", "no_supported_memory")
+	for name, result := range map[string]map[string]any{"completed": completed, "terminal": terminal} {
+		_, hasDegradations := result["degradations"]
+		require.False(t, hasDegradations, name)
+		_, hasPolling := result["check_after_seconds"]
+		require.False(t, hasPolling, name)
+	}
+}
+
+func TestRememberPublicRelationshipResultsUseOnlyContractReference(t *testing.T) {
+	input := SynchronousRememberCommitInput{
+		IngestID: uuid.NewString(),
+		Commit: CommitSubmissionAssessmentInput{RelationshipResults: []SubmissionRelationshipResultInput{{
+			RelationshipRef: "r:one", Disposition: "not_stored", Reason: "not_supported_by_evidence",
+		}}},
+	}
+	result := rememberTerminalPublicResult(input, nil, "rejected", "no_supported_memory")
+	relationships := result["relationship_results"].([]map[string]any)
+	require.Len(t, relationships, 1)
+	_, hasLegacyReference := relationships[0]["relationship_ref"]
+	require.False(t, hasLegacyReference)
+	require.Equal(t, "r:one", relationships[0]["ref"])
 }

@@ -10,7 +10,6 @@ const (
 )
 
 type IngestID string
-type PlacementItemID string
 type EvidenceID string
 type ObservationID string
 type EntityID string
@@ -170,18 +169,6 @@ const (
 	HypothesisSubmitted  HypothesisStatus = "submitted"
 )
 
-type PlacementRunStatus string
-
-const (
-	PlacementRunQueued      PlacementRunStatus = "queued"
-	PlacementRunGuarded     PlacementRunStatus = "guarded"
-	PlacementRunQuarantined PlacementRunStatus = "quarantined"
-	PlacementRunProcessing  PlacementRunStatus = "processing"
-	PlacementRunCompleted   PlacementRunStatus = "completed"
-	PlacementRunRejected    PlacementRunStatus = "rejected"
-	PlacementRunFailed      PlacementRunStatus = "failed"
-)
-
 type SearchProjectionState string
 
 const (
@@ -237,17 +224,6 @@ const (
 	VectorIndexVectorHNSW  VectorIndexStrategy = "vector_hnsw"
 	VectorIndexHalfvecHNSW VectorIndexStrategy = "halfvec_hnsw"
 	VectorIndexBinaryHNSW  VectorIndexStrategy = "binary_hnsw"
-)
-
-type EmbeddingJobStatus string
-
-const (
-	EmbeddingJobQueued     EmbeddingJobStatus = "queued"
-	EmbeddingJobProcessing EmbeddingJobStatus = "processing"
-	EmbeddingJobCompleted  EmbeddingJobStatus = "completed"
-	EmbeddingJobFailed     EmbeddingJobStatus = "failed"
-	EmbeddingJobStale      EmbeddingJobStatus = "stale"
-	EmbeddingJobCancelled  EmbeddingJobStatus = "cancelled"
 )
 
 type EvidenceItemCategory string
@@ -465,18 +441,6 @@ func ValueTypes() []string {
 	}
 }
 
-func PlacementRunStatuses() []string {
-	return []string{
-		string(PlacementRunQueued),
-		string(PlacementRunGuarded),
-		string(PlacementRunQuarantined),
-		string(PlacementRunProcessing),
-		string(PlacementRunCompleted),
-		string(PlacementRunRejected),
-		string(PlacementRunFailed),
-	}
-}
-
 func SearchProjectionStates() []string {
 	return []string{
 		string(SearchProjectionNotRequired),
@@ -508,17 +472,6 @@ func VectorIndexStrategies() []string {
 		string(VectorIndexVectorHNSW),
 		string(VectorIndexHalfvecHNSW),
 		string(VectorIndexBinaryHNSW),
-	}
-}
-
-func EmbeddingJobStatuses() []string {
-	return []string{
-		string(EmbeddingJobQueued),
-		string(EmbeddingJobProcessing),
-		string(EmbeddingJobCompleted),
-		string(EmbeddingJobFailed),
-		string(EmbeddingJobStale),
-		string(EmbeddingJobCancelled),
 	}
 }
 
@@ -634,17 +587,6 @@ func EmbeddingFailureMessage(code string) string {
 		return "embedding processing failed"
 	}
 }
-
-type EmbeddingReconciliationRunStatus string
-
-const (
-	EmbeddingReconciliationReserved  EmbeddingReconciliationRunStatus = "reserved"
-	EmbeddingReconciliationRunning   EmbeddingReconciliationRunStatus = "running"
-	EmbeddingReconciliationCompleted EmbeddingReconciliationRunStatus = "completed"
-	EmbeddingReconciliationDeferred  EmbeddingReconciliationRunStatus = "deferred"
-	EmbeddingReconciliationFailed    EmbeddingReconciliationRunStatus = "failed"
-	EmbeddingReconciliationAmbiguous EmbeddingReconciliationRunStatus = "ambiguous"
-)
 
 func RelationshipConflictStatuses() []string {
 	return []string{

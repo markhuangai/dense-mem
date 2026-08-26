@@ -111,10 +111,12 @@ curl -fsS -X POST http://127.0.0.1:8090/control/api/teams/<team-id>/credentials 
 
 正式镜像只包含一个项目可执行文件 `/app/server`。它会在开始提供服务前，借助数据库
 session lock 自动执行待处理的 PostgreSQL migration，因此 Compose 不需要单独的
-migration 容器。共享同一个可写 primary 的多个 server replica 会串行执行该启动步骤。
-滚动发布期间，migration 必须与上一版应用保持向后兼容；彼此独立的数据库仍需分别由
-连接到该数据库的 server 完成 migration。管理操作通过私有控制门户/API 完成；dreaming
-和自动 conflict review 仍由 server 后台 worker 执行。
+migration 容器。v2.6.1 是停止服务后执行的一次性、不可逆 Remember 切换：停止所有
+实例、创建并验证 PostgreSQL 快照、执行 migration、验证兼容 marker，再部署匹配的
+binary 后恢复流量。不得运行混合版本，也不依赖滚动发布兼容窗口。共享同一个可写
+primary 的多个 server replica 会串行执行启动步骤；彼此独立的数据库仍需分别由连接到
+该数据库的 server 完成 migration。管理操作通过私有控制门户/API 完成；dreaming 和
+自动 conflict review 仍由 server 后台 worker 执行。
 
 镜像 healthcheck 为默认的 30 分钟 migration 窗口保留启动宽限期，并在首次检查成功后
 进入正常检测。若将 `POSTGRES_MIGRATION_TIMEOUT_SECONDS` 设为大于 1800，应把部署的
@@ -218,7 +220,7 @@ Remember 使用一个覆盖完整 batch 的 assessor 会话。assessor 负责 gr
 `not_stored` disposition。当已存储的 support 仍覆盖每条 evidence 时，不支持的 hint
 不是客户端错误；否则提交会以 `no_supported_memory` 拒绝。暂存后发生的客户端自有
 约束变化会以 `stale_input` 拒绝。provider、配置、数据库和内部故障使用有界的运维
-错误码。所有接受的语义效果原子提交，不提供部分替换或交互式 placement review。
+错误码。所有接受的语义效果原子提交，不提供部分替换或交互式 review 队列。
 
 Remember 只接受一个顶层 `idempotency_key`，不接受 evidence 级或派生 key。若完整
 batch 需要修正，请使用新的 key 重新提交整个 batch。
@@ -275,12 +277,10 @@ owner 可以读取团队可见记忆，但不能更正作者的 Relationship。�
 remember 证据（可选 Entity/Relationship 提议）
         |
         v
-持久化暂存 -> 校验后的 placement -> 活跃且有效的 Relationships
-        |                                      |
-        +-- 生命周期事件 -----------------------+
-                                               |
-                                               v
-                          按支持路径约束的证据检索与追踪链路
+校验与 assessor -> 确定性语义/搜索计划 -> 一次 embedding batch -> 围栏事务
+                                                                  |
+                                                                  v
+                                      活跃且有效的 Relationships 与追踪链路
 ```
 
 ## MCP 工具目录
@@ -330,8 +330,8 @@ go run ./cmd/eval-seedgen \
 ```
 
 `local_eval_100_v2` 包含 100 条 corpus 与 25 个评分 case。它只用于检查评估镜像和
-harness plumbing，不能替代已批准的确定性 1k release gate。此 smoke 建议使用
-`IMPORT_CONCURRENCY=5`；完整评估仍可在 harness 的上限 10 内配置。
+harness plumbing。issue #291 已明确豁免确定性 1k comparison，且本次未运行。此
+smoke 建议使用 `IMPORT_CONCURRENCY=5`；完整评估仍可在 harness 的上限 10 内配置。
 
 memory-pack 仅导出当前的 `dense-mem.memory-pack.v2.4` artifact。导入和候选发现
 流程不属于公共契约。

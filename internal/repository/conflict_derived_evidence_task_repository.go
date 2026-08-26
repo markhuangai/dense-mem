@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -31,41 +32,7 @@ func (r *LedgerRepositoryImpl) StageConflictDerivedEvidence(
 		fmt.Sprint(target.EvidenceIndex),
 		content,
 	}, "\x00"))
-	ingest, err := r.CreateIngest(ctx, CreateIngestInput{
-		TeamID:          target.TeamID,
-		OwnerProfileID:  target.SystemProfileID,
-		SpaceID:         target.SpaceID,
-		SpaceGeneration: target.SpaceGeneration,
-		IdempotencyKey:  "conflict-derived:" + target.ConflictID + ":" + target.TargetFragmentID,
-		RequestHash:     requestHash,
-		SourceSummary:   conflictResolutionDeletionOnlySourceSummary,
-		Status:          string(domain.PlacementRunCompleted),
-		Metadata: map[string]any{
-			"contract_version":                   domain.ContractVersion,
-			"conflict_id":                        target.ConflictID,
-			"target_fragment_id":                 target.TargetFragmentID,
-			"target_owner_profile_id":            target.TargetOwnerProfileID,
-			"selected_position_id":               target.SelectedPositionID,
-			"conflict_resolution_deletion_only":  true,
-			"conflict_resolution_policy_version": domain.ConflictOverduePolicyVersion,
-		},
-		Evidence: []EvidenceInput{{
-			Content:    content,
-			SourceType: "observation",
-			Authority:  string(domain.AuthorityInferred),
-			SourceRef:  "conflict:" + target.ConflictID,
-			Metadata: map[string]any{
-				"conflict_id":                       target.ConflictID,
-				"target_fragment_id":                target.TargetFragmentID,
-				"target_owner_profile_id":           target.TargetOwnerProfileID,
-				"selected_position_id":              target.SelectedPositionID,
-				"contract_source_group":             target.SourceGroupKey,
-				"origin_evidence_index":             target.EvidenceIndex,
-				"conflict_resolution_deletion_only": true,
-				"derived_authority":                 string(domain.AuthorityInferred),
-			},
-		}},
-	})
+	ingest, err := r.commitDerivedEvidenceIngest(ctx, target, content, requestHash)
 	if err != nil {
 		return nil, fmt.Errorf("conflict review: stage derived evidence: %w", err)
 	}
@@ -156,6 +123,60 @@ func (r *LedgerRepositoryImpl) StageConflictDerivedEvidence(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("conflict review: record derived evidence: %w", err)
+	}
+	return result, nil
+}
+
+// commitDerivedEvidenceIngest writes deletion-only conflict evidence without
+// entering the retired placement ledger. The derivation is audit input, not a
+// semantic claim, and therefore does not require a vector document.
+func (r *LedgerRepositoryImpl) commitDerivedEvidenceIngest(ctx context.Context, target ConflictDerivedEvidenceTarget, content, requestHash string) (*EvidenceIngestResult, error) {
+	input := normalizeCreateIngestInput(CreateIngestInput{
+		TeamID: target.TeamID, OwnerProfileID: target.SystemProfileID, IngestID: uuid.NewString(),
+		SpaceID: target.SpaceID, SpaceGeneration: target.SpaceGeneration,
+		IdempotencyKey: "conflict-derived:" + target.ConflictID + ":" + target.TargetFragmentID,
+		RequestHash:    requestHash, SourceSummary: conflictResolutionDeletionOnlySourceSummary,
+		Status: "completed", Metadata: map[string]any{
+			"contract_version": domain.ContractVersion, "conflict_id": target.ConflictID,
+			"target_fragment_id": target.TargetFragmentID, "target_owner_profile_id": target.TargetOwnerProfileID,
+			"selected_position_id": target.SelectedPositionID, "conflict_resolution_deletion_only": true,
+			"conflict_resolution_policy_version": domain.ConflictOverduePolicyVersion,
+		},
+		Evidence: []EvidenceInput{{
+			FragmentID: uuid.NewString(), Content: content, SourceType: "observation", Authority: "derived",
+			SourceRef: "conflict:" + target.ConflictID, Metadata: map[string]any{
+				"conflict_id": target.ConflictID, "target_fragment_id": target.TargetFragmentID,
+				"target_owner_profile_id": target.TargetOwnerProfileID, "selected_position_id": target.SelectedPositionID,
+				"contract_source_group": target.SourceGroupKey, "origin_evidence_index": target.EvidenceIndex,
+				"conflict_resolution_deletion_only": true, "derived_authority": string(domain.AuthorityInferred),
+			},
+		}},
+	})
+	var result *EvidenceIngestResult
+	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		if err := setConflictSystemTeamContext(ctx, tx, target.TeamID); err != nil {
+			return err
+		}
+		if err := ensureActiveTeamForMutation(ctx, tx, target.TeamID); err != nil {
+			return err
+		}
+		ingestID, created, err := insertKnowledgeIngest(ctx, tx, input)
+		if err != nil {
+			return err
+		}
+		fragmentID := input.Evidence[0].FragmentID
+		if !created {
+			if err := tx.WithContext(ctx).Raw(`SELECT fragment_id::text FROM evidence_fragments WHERE team_id = ?::uuid AND ingest_id = ?::uuid ORDER BY evidence_index LIMIT 1`, target.TeamID, ingestID).Row().Scan(&fragmentID); err != nil {
+				return err
+			}
+		} else if _, err := insertEvidenceFragment(ctx, tx, input, ingestID, 0, input.Evidence[0], nil); err != nil {
+			return err
+		}
+		result = &EvidenceIngestResult{TeamID: target.TeamID, OwnerProfileID: target.SystemProfileID, IngestID: ingestID, Existing: !created, Evidence: []EvidenceFragment{{FragmentID: fragmentID, EvidenceIndex: 0, Content: content, ContentHash: sha256Hex(content), Authority: "derived"}}}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return result, nil
 }

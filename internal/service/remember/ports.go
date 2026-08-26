@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 )
 
 // The intake boundary owns these values. Adapters translate their storage
@@ -32,18 +31,6 @@ func (e *RememberValidationError) Error() string {
 		return "remember validation failed"
 	}
 	return e.Issues[0].Message
-}
-
-type IntakePort interface {
-	Stage(context.Context, StageRequest) (*StageResult, error)
-	Status(context.Context, StatusRequest) (*StageResult, error)
-}
-
-// Processor runs one staged submission to a terminal, owner-scoped result.
-// The composition layer owns the concrete assessment and commit engine; the
-// Remember application service only depends on this narrow operation.
-type Processor interface {
-	Process(context.Context, ProcessRequest) (*SubmissionStatusResult, error)
 }
 
 // SynchronousProcessor is the v2.6.1 request-owned boundary. Implementations
@@ -78,46 +65,20 @@ func (e *RememberProcessError) Unwrap() error {
 	return e.Err
 }
 
-type ProcessRequest struct {
-	TeamID         string
-	OwnerProfileID string
-	SubmissionID   string
-}
-
 type RememberProcessRequest struct {
-	TeamID                  string
-	OwnerProfileID          string
-	SpaceID                 string
-	SpaceGeneration         int64
-	IdempotencyKey          string
-	RequestHash             string
-	CompatibleRequestHashes []string
-	SourceSummary           string
-	Proposal                map[string]any
-	Metadata                map[string]any
-	Evidence                []EvidenceInput
-}
-
-type StageRequest struct {
-	TeamID                  string
-	OwnerProfileID          string
-	SpaceID                 string
-	SpaceGeneration         int64
-	IdempotencyKey          string
-	RequestHash             string
-	CompatibleRequestHashes []string
-	SourceSummary           string
-	Status                  string
-	TelemetryRemember       bool
-	Proposal                map[string]any
-	Metadata                map[string]any
-	Evidence                []EvidenceInput
-}
-
-type StatusRequest struct {
-	TeamID         string
-	OwnerProfileID string
-	SubmissionID   string
+	TeamID                   string
+	OwnerProfileID           string
+	SpaceID                  string
+	SpaceGeneration          int64
+	IdempotencyKey           string
+	RequestHash              string
+	SourceSummary            string
+	Proposal                 map[string]any
+	Metadata                 map[string]any
+	Evidence                 []EvidenceInput
+	SecuritySignals          []SubmissionSecurityBatchSignal
+	SecuritySignalsTruncated bool
+	SecurityRejected         bool
 }
 
 type EvidenceInput struct {
@@ -164,17 +125,6 @@ type EvidenceFragment struct {
 	SupersededEvidenceIDs []string
 }
 
-type PlacementItem struct {
-	PlacementItemID string
-	FragmentID      string
-	ClaimKey        string
-	EvidenceIndex   int
-	Status          string
-	Category        string
-	Version         int
-	Result          map[string]any
-}
-
 type SubmissionRelationshipSplit struct {
 	SplitIndex          int    `json:"split_index"`
 	RelationshipID      string `json:"relationship_id"`
@@ -187,36 +137,6 @@ type SubmissionRelationshipResult struct {
 	Disposition     string                        `json:"disposition"`
 	Reason          string                        `json:"reason,omitempty"`
 	Splits          []SubmissionRelationshipSplit `json:"splits"`
-}
-
-type FirstDisposition struct {
-	Status      string
-	CreatedAt   time.Time
-	CompletedAt time.Time
-	IsRemember  bool
-}
-
-type StageResult struct {
-	TeamID              string
-	OwnerProfileID      string
-	SubmissionID        string
-	PlacementRunID      string
-	Status              string
-	CorrelationID       string
-	Attempts            int
-	MaxAttempts         int
-	Existing            bool
-	Proposal            map[string]any
-	Evidence            []EvidenceFragment
-	Items               []PlacementItem
-	RelationshipResults []SubmissionRelationshipResult
-	FirstDisposition    *FirstDisposition
-	SubmittedAt         *time.Time
-	NextAttemptAt       *time.Time
-	StartedAt           *time.Time
-	UpdatedAt           *time.Time
-	CompletedAt         *time.Time
-	QuarantineExpiresAt *time.Time
 }
 
 // SecurityRejectionAuditor receives only bounded scanner metadata. Evidence,

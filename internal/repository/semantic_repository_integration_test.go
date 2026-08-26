@@ -548,7 +548,7 @@ func TestSemanticSupportSourceRevisionMustMatchSource(t *testing.T) {
 
 	denseMem := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense-Mem")
 	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
-	ingest, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+	ingest, err := createTestIngest(ctx, ledgerRepo, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		Evidence: []EvidenceInput{{

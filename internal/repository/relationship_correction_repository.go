@@ -119,7 +119,6 @@ func (r *SemanticRepositoryImpl) CorrectRelationshipWithEmbeddings(
 	input CorrectRelationshipInput,
 	embeddings []InlineEmbeddingResult,
 ) (*CorrectRelationshipResult, error) {
-	ctx = WithInlineEmbeddingWrites(ctx)
 	ctx = WithInlineEmbeddingResults(ctx, embeddings)
 	return r.correctRelationship(ctx, input)
 }
@@ -155,46 +154,6 @@ func (r *SemanticRepositoryImpl) correctRelationship(
 	}
 	if committedErr != nil {
 		return nil, fmt.Errorf("semantic: correct relationship: %w", committedErr)
-	}
-	return result, nil
-}
-
-func (r *SemanticRepositoryImpl) GetRelationshipCorrection(
-	ctx context.Context,
-	input GetRelationshipCorrectionInput,
-) (*RelationshipCorrectionStatus, error) {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
-	input.SubmissionID = strings.TrimSpace(input.SubmissionID)
-	for label, value := range map[string]string{
-		"team_id":          input.TeamID,
-		"owner_profile_id": input.OwnerProfileID,
-		"submission_id":    input.SubmissionID,
-	} {
-		if _, err := uuid.Parse(value); err != nil {
-			return nil, fmt.Errorf("%s is required: %w", label, err)
-		}
-	}
-	if r == nil || r.db == nil {
-		return nil, errors.New("semantic: database is required")
-	}
-	if r.rls == nil {
-		return nil, errors.New("semantic: rls helper is required")
-	}
-	var result *CorrectRelationshipResult
-	err := r.rls.WithTeamProfileTx(ctx, r.db, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		row, err := loadRelationshipCorrectionSubmission(ctx, tx, input.TeamID, input.OwnerProfileID, input.SubmissionID, false)
-		if err != nil {
-			return err
-		}
-		result = relationshipCorrectionResultFromRow(row)
-		return nil
-	})
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, ErrRelationshipCorrectionNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("semantic: get relationship correction: %w", err)
 	}
 	return result, nil
 }

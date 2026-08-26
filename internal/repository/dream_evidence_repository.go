@@ -238,11 +238,6 @@ func listPendingDreamEvidence(ctx context.Context, tx *gorm.DB, teamID, relation
 			 AND verification.observation_id = observation.observation_id
 			 AND verification.space_id = observation.space_id
 			 AND verification.space_generation = observation.space_generation
-			JOIN placement_assessments assessment
-			  ON assessment.team_id = verification.team_id
-			 AND assessment.assessment_id = verification.assessment_id
-			 AND assessment.space_id = verification.space_id
-			 AND assessment.space_generation = verification.space_generation
 			WHERE observation.team_id = ?::uuid
 			  AND observation.space_id = dense_mem_team_shared_space(observation.team_id)
 			  AND observation.space_generation = dense_mem_team_shared_generation(observation.team_id)
@@ -329,11 +324,6 @@ func listPendingDreamEvidenceBatch(
 			 AND verification.observation_id = observation.observation_id
 			 AND verification.space_id = observation.space_id
 			 AND verification.space_generation = observation.space_generation
-			JOIN placement_assessments assessment
-			  ON assessment.team_id = verification.team_id
-			 AND assessment.assessment_id = verification.assessment_id
-			 AND assessment.space_id = verification.space_id
-			 AND assessment.space_generation = verification.space_generation
 			WHERE observation.team_id = ?::uuid
 			  AND observation.space_id = dense_mem_team_shared_space(observation.team_id)
 			  AND observation.space_generation = dense_mem_team_shared_generation(observation.team_id)

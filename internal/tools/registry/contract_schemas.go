@@ -396,10 +396,9 @@ func rememberOutputSchema() map[string]any {
 		"evidence":             array(rememberEvidenceStatusSchema(), 0, 100),
 		"relationship_results": submissionRelationshipResultsSchema(),
 		"errors":               submissionStatusErrorArraySchema(),
-		"degradations":         submissionStatusDegradationArraySchema(),
 	}
 	terminal := closedObject(
-		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors", "degradations"},
+		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"},
 		properties,
 	)
 	operationalErrors := submissionStatusErrorArraySchema()

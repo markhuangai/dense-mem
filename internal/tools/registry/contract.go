@@ -46,7 +46,7 @@ func ContractTools() []Tool {
 	return []Tool{
 		contractTool(
 			ToolRemember,
-			"Submit exact evidence and relationship proposals for server-owned placement; every submitted evidence item must be cited by evidence_index. The server and assessor own exact grounding. Use exactly one object shape: {\"object\":{\"entity\":{\"name\":\"PostgreSQL\",\"entity_kind\":\"product\"}}} or {\"object\":{\"value\":{\"type\":\"string\",\"value\":\"PostgreSQL\"}}}.",
+			"Submit exact evidence and relationship proposals for one synchronous atomic semantic commit; every submitted evidence item must be cited by evidence_index. The server and assessor own exact grounding. Use exactly one object shape: {\"object\":{\"entity\":{\"name\":\"PostgreSQL\",\"entity_kind\":\"product\"}}} or {\"object\":{\"value\":{\"type\":\"string\",\"value\":\"PostgreSQL\"}}}.",
 			[]string{"write"},
 			rememberInputSchema(),
 			rememberOutputSchema(),

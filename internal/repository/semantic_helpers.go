@@ -166,7 +166,6 @@ func normalizeApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInpu
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
 	input.IngestID = strings.TrimSpace(input.IngestID)
-	input.PlacementItemID = strings.TrimSpace(input.PlacementItemID)
 	input.ProposalRef = strings.TrimSpace(input.ProposalRef)
 	input.SubjectRef = strings.TrimSpace(input.SubjectRef)
 	input.SubjectEntityID = strings.TrimSpace(input.SubjectEntityID)
@@ -270,11 +269,6 @@ func validateApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInput
 	} {
 		if _, err := uuid.Parse(value); err != nil {
 			return fmt.Errorf("%s is required: %w", label, err)
-		}
-	}
-	if input.PlacementItemID != "" {
-		if _, err := uuid.Parse(input.PlacementItemID); err != nil {
-			return fmt.Errorf("placement_item_id is invalid: %w", err)
 		}
 	}
 	if input.PredicateKey == "" {

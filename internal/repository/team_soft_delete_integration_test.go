@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -28,7 +27,7 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	secondaryProfileID := createLedgerProfile(t, adminDB, rls, teamID, "secondary-delete-tombstone")
 	ledger := NewLedgerRepository(appDB, rls)
 
-	created, err := ledger.CreateIngest(ctx, CreateIngestInput{
+	created, err := createTestIngest(ctx, ledger, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IdempotencyKey: "team-delete-preserve",
@@ -134,7 +133,7 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 	})
 	require.NoError(t, err)
 
-	_, err = ledger.CreateIngest(ctx, CreateIngestInput{
+	_, err = createTestIngest(ctx, ledger, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IdempotencyKey: "team-delete-rejected",
@@ -144,10 +143,6 @@ func TestTeamSoftDeletePreservesSemanticLedgerAndRejectsFutureWork(t *testing.T)
 		}},
 	})
 	require.ErrorIs(t, err, ErrTeamInactive)
-
-	claimed, err := ledger.ClaimNextPlacementRun(ctx, teamID, "worker-deleted-team", time.Minute)
-	require.ErrorIs(t, err, ErrTeamInactive)
-	require.Nil(t, claimed)
 
 	apiRows, err = apiKeyRepo.UpdateScopesForTeam(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID), []string{"read"})
 	require.ErrorIs(t, err, ErrTeamInactive)
@@ -188,7 +183,7 @@ func TestTeamHardDeleteRemovesEmptyTeamMemorySpaceCatalog(t *testing.T) {
 	}))
 }
 
-func TestTeamSoftDeleteLeavesSealedGenerationEmbeddingJobUntouched(t *testing.T) {
+func TestTeamSoftDeleteLeavesSealedGenerationSearchDocumentUntouched(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -219,17 +214,17 @@ func TestTeamSoftDeleteLeavesSealedGenerationEmbeddingJobUntouched(t *testing.T)
 
 	require.NoError(t, NewTeamRepository(appDB, rls).SoftDelete(ctx, uuid.MustParse(teamID)))
 
-	var status, jobError, workerID string
+	var status, documentText, embeddingError string
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Raw(`
-			SELECT status, error, worker_id
-			FROM embedding_jobs
+			SELECT search_state, document_text, embedding_error
+			FROM search_documents
 			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
-		`, teamID, searchDocument.SearchDocumentID).Row().Scan(&status, &jobError, &workerID)
+		`, teamID, searchDocument.SearchDocumentID).Row().Scan(&status, &documentText, &embeddingError)
 	}))
-	assert.Equal(t, "queued", status)
-	assert.Empty(t, jobError)
-	assert.Empty(t, workerID)
+	assert.Equal(t, "pending", status)
+	assert.Equal(t, "sealed private embedding job", documentText)
+	assert.Empty(t, embeddingError)
 }
 
 func TestTeamHardDeletePreservesAuditRowWhenMemorySpaceIsRemoved(t *testing.T) {
@@ -476,13 +471,6 @@ func TestActiveTeamMutationGuardsAllowConcurrentTransactions(t *testing.T) {
 		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
 			return err
 		}
-		active, err := embeddingJobFinalizationTeamActive(ctx, tx, teamID)
-		if err != nil {
-			return err
-		}
-		if !active {
-			return errors.New("active team reported inactive")
-		}
 		return nil
 	})
 	require.NoError(t, err)
@@ -490,7 +478,7 @@ func TestActiveTeamMutationGuardsAllowConcurrentTransactions(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
-func TestTombstonedTeamTerminalizesEmbeddingJobsWithoutUpdatingDocuments(t *testing.T) {
+func TestTeamSoftDeleteLeavesPendingSearchDocumentsUntouched(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -511,71 +499,21 @@ func TestTombstonedTeamTerminalizesEmbeddingJobsWithoutUpdatingDocuments(t *test
 		require.NoError(t, err)
 	}
 
-	const workerID = "worker-delete-terminal-embedding"
-	jobs, err := searchRepo.ClaimEmbeddingJobs(ctx, ClaimEmbeddingJobsInput{
-		TeamID:   teamID,
-		WorkerID: workerID,
-		Limit:    2,
-		Lease:    time.Minute,
-	})
-	require.NoError(t, err)
-	require.Len(t, jobs, 2)
-
 	profileRepo := NewTeamRepository(appDB, rls)
 	require.NoError(t, profileRepo.SoftDelete(ctx, uuid.MustParse(teamID)))
 
-	err = searchRepo.CompleteEmbeddingJob(ctx, CompleteEmbeddingJobInput{
-		TeamID:           teamID,
-		EmbeddingJobID:   jobs[0].EmbeddingJobID,
-		WorkerID:         workerID,
-		ExpectedAttempts: jobs[0].Attempts,
-		Embedding:        []float32{1, 0, 0},
-	})
-	require.ErrorIs(t, err, ErrTeamInactive)
-
-	failed, err := searchRepo.FailEmbeddingJob(ctx, FailEmbeddingJobInput{
-		TeamID:           teamID,
-		EmbeddingJobID:   jobs[1].EmbeddingJobID,
-		WorkerID:         workerID,
-		ExpectedAttempts: jobs[1].Attempts,
-		Error:            "team deleted",
-		Terminal:         true,
-	})
-	require.Nil(t, failed)
-	require.ErrorIs(t, err, ErrTeamInactive)
-
-	err = rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		var terminalJobs, pendingJobs, unchangedDocuments int64
-		if err := tx.Raw(`
-			SELECT COUNT(*)
-			FROM embedding_jobs
-			WHERE team_id = ?::uuid
-			  AND status = 'stale'
-			  AND completed_at IS NOT NULL
-			  AND lease_until IS NULL
-		`, teamID).Scan(&terminalJobs).Error; err != nil {
-			return err
-		}
-		if err := tx.Raw(`
-			SELECT COUNT(*)
-			FROM embedding_jobs
-			WHERE team_id = ?::uuid
-			  AND status IN ('queued', 'processing')
-		`, teamID).Scan(&pendingJobs).Error; err != nil {
-			return err
-		}
+	err := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		var pendingDocuments int64
 		if err := tx.Raw(`
 			SELECT COUNT(*)
 			FROM search_documents
 			WHERE team_id = ?::uuid
 			  AND search_state = 'pending'
 			  AND embedding IS NULL
-		`, teamID).Scan(&unchangedDocuments).Error; err != nil {
+		`, teamID).Scan(&pendingDocuments).Error; err != nil {
 			return err
 		}
-		assert.Equal(t, int64(3), terminalJobs)
-		assert.Zero(t, pendingJobs)
-		assert.Equal(t, int64(3), unchangedDocuments)
+		assert.Equal(t, int64(3), pendingDocuments)
 		return nil
 	})
 	require.NoError(t, err)

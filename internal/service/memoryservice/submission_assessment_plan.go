@@ -15,9 +15,9 @@ import (
 )
 
 type submissionAssessmentItem struct {
-	PlacementItem repository.PlacementItem
-	Fragment      repository.EvidenceFragment
-	EvidenceID    string
+	ItemID     string
+	Fragment   repository.EvidenceFragment
+	EvidenceID string
 }
 
 type submissionAssessmentEntityTarget struct {
@@ -31,8 +31,8 @@ type submissionAssessmentRelationshipTarget struct {
 	KnownPredicateKey string
 	SubjectKind       string
 	ObjectKind        string
-	CorrectionTarget  *repository.PlacementCorrectionTargetInput
-	ConflictContext   *repository.PlacementConflictContextInput
+	CorrectionTarget  *repository.SemanticCorrectionTargetInput
+	ConflictContext   *repository.SemanticConflictContextInput
 }
 
 type submissionAssessmentPlan struct {
@@ -44,12 +44,9 @@ type submissionAssessmentPlan struct {
 	relationshipsByRef  map[string]submissionAssessmentRelationshipTarget
 }
 
-func buildSubmissionAssessmentPlan(placement *repository.CreateIngestResult) (submissionAssessmentPlan, error) {
-	if placement == nil {
-		return submissionAssessmentPlan{}, errors.New("submission assessment placement is required")
-	}
-	fragmentsByIndex := make(map[int]repository.EvidenceFragment, len(placement.Evidence))
-	for _, fragment := range placement.Evidence {
+func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submissionAssessmentPlan, error) {
+	fragmentsByIndex := make(map[int]repository.EvidenceFragment, len(snapshot.Evidence))
+	for _, fragment := range snapshot.Evidence {
 		if strings.TrimSpace(fragment.FragmentID) == "" || strings.TrimSpace(fragment.Content) == "" {
 			return submissionAssessmentPlan{}, errors.New("submission assessment evidence is incomplete")
 		}
@@ -62,21 +59,18 @@ func buildSubmissionAssessmentPlan(placement *repository.CreateIngestResult) (su
 		return submissionAssessmentPlan{}, errors.New("submission assessment evidence is required")
 	}
 
-	items := make([]submissionAssessmentItem, 0, len(placement.Items))
-	itemsByEvidenceID := make(map[string]submissionAssessmentItem, len(placement.Items))
-	for _, item := range placement.Items {
-		if item.Status != string(domain.PlacementRunQueued) && item.Status != string(domain.PlacementRunProcessing) {
-			return submissionAssessmentPlan{}, errors.New("submission assessment placement item is not claimable")
+	items := make([]submissionAssessmentItem, 0, len(snapshot.Items))
+	itemsByEvidenceID := make(map[string]submissionAssessmentItem, len(snapshot.Items))
+	for _, item := range snapshot.Items {
+		fragment, ok := fragmentsByIndex[item.Fragment.EvidenceIndex]
+		if !ok || item.Fragment.FragmentID != fragment.FragmentID || strings.TrimSpace(item.ItemID) == "" {
+			return submissionAssessmentPlan{}, errors.New("submission assessment evidence item does not match evidence")
 		}
-		fragment, ok := fragmentsByIndex[item.EvidenceIndex]
-		if !ok || item.FragmentID != fragment.FragmentID || strings.TrimSpace(item.PlacementItemID) == "" {
-			return submissionAssessmentPlan{}, errors.New("submission assessment placement item does not match evidence")
-		}
-		evidenceID := submissionAssessmentEvidenceID(item.EvidenceIndex)
+		evidenceID := submissionAssessmentEvidenceID(item.Fragment.EvidenceIndex)
 		if _, exists := itemsByEvidenceID[evidenceID]; exists {
-			return submissionAssessmentPlan{}, errors.New("submission assessment placement item evidence index is duplicated")
+			return submissionAssessmentPlan{}, errors.New("submission assessment evidence index is duplicated")
 		}
-		entry := submissionAssessmentItem{PlacementItem: item, Fragment: fragment, EvidenceID: evidenceID}
+		entry := submissionAssessmentItem{ItemID: item.ItemID, Fragment: fragment, EvidenceID: evidenceID}
 		items = append(items, entry)
 		itemsByEvidenceID[evidenceID] = entry
 	}
@@ -84,7 +78,7 @@ func buildSubmissionAssessmentPlan(placement *repository.CreateIngestResult) (su
 		return submissionAssessmentPlan{}, errors.New("submission assessment must include every staged evidence item")
 	}
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].PlacementItem.EvidenceIndex < items[j].PlacementItem.EvidenceIndex
+		return items[i].Fragment.EvidenceIndex < items[j].Fragment.EvidenceIndex
 	})
 
 	plan := submissionAssessmentPlan{
@@ -93,7 +87,7 @@ func buildSubmissionAssessmentPlan(placement *repository.CreateIngestResult) (su
 		entityTargetsByRef: map[string]submissionAssessmentEntityTarget{},
 		relationshipsByRef: map[string]submissionAssessmentRelationshipTarget{},
 	}
-	rawRelationships, err := submissionAssessmentObjectArray(placement.Proposal, "relationship_hints", "relationships")
+	rawRelationships, err := submissionAssessmentObjectArray(snapshot.Proposal, "relationship_hints", "relationships")
 	if err != nil {
 		return submissionAssessmentPlan{}, err
 	}
@@ -268,21 +262,21 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		ObjectKind:        objectKind,
 	}
 	if _, exists := raw["correction_target"]; exists {
-		correction, ok := placementProposalCorrectionTarget(raw)
+		correction, ok := semanticProposalCorrectionTarget(raw)
 		if !ok {
 			return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment correction target is invalid")
 		}
-		entry.CorrectionTarget = &repository.PlacementCorrectionTargetInput{
+		entry.CorrectionTarget = &repository.SemanticCorrectionTargetInput{
 			RelationshipID:  correction.RelationshipID,
 			ExpectedVersion: correction.ExpectedVersion,
 		}
 	}
 	if _, exists := raw["conflict_context"]; exists {
-		conflict, ok := placementProposalConflictContext(raw)
+		conflict, ok := semanticProposalConflictContext(raw)
 		if !ok {
 			return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment conflict context is invalid")
 		}
-		entry.ConflictContext = &repository.PlacementConflictContextInput{
+		entry.ConflictContext = &repository.SemanticConflictContextInput{
 			ConflictID:      conflict.ConflictID,
 			ExpectedVersion: conflict.ExpectedVersion,
 		}

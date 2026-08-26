@@ -3,16 +3,13 @@ package memoryservice
 import (
 	"strings"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 // Status projection policy lives in the Remember application boundary. These
-// aliases and adapters preserve the legacy package's public and worker-facing
-// names during the capability migration.
+// aliases keep the broader memory-service package wired to the same contract.
 type SubmissionErrorCode = rememberapp.SubmissionErrorCode
 type SubmissionStatusError = rememberapp.SubmissionStatusError
-type SubmissionStatusDegradation = rememberapp.SubmissionStatusDegradation
 type SubmissionNextAction = rememberapp.SubmissionNextAction
 
 const submissionStatusMaxIssueMessageLength = 512
@@ -34,12 +31,11 @@ const (
 	SubmissionErrorRequestCancelled         = rememberapp.SubmissionErrorRequestCancelled
 	SubmissionErrorInternalFailure          = rememberapp.SubmissionErrorInternalFailure
 
-	SubmissionErrorPolicyRejected        = rememberapp.SubmissionErrorPolicyRejected
-	SubmissionErrorAssessorInvalid       = rememberapp.SubmissionErrorAssessorInvalid
-	SubmissionErrorAssessorUnavailable   = rememberapp.SubmissionErrorAssessorUnavailable
-	SubmissionErrorProcessingFailed      = rememberapp.SubmissionErrorProcessingFailed
-	SubmissionErrorSearchIndexingDelayed = rememberapp.SubmissionErrorSearchIndexingDelayed
-	SubmissionErrorQuarantined           = rememberapp.SubmissionErrorQuarantined
+	SubmissionErrorPolicyRejected      = rememberapp.SubmissionErrorPolicyRejected
+	SubmissionErrorAssessorInvalid     = rememberapp.SubmissionErrorAssessorInvalid
+	SubmissionErrorAssessorUnavailable = rememberapp.SubmissionErrorAssessorUnavailable
+	SubmissionErrorProcessingFailed    = rememberapp.SubmissionErrorProcessingFailed
+	SubmissionErrorQuarantined         = rememberapp.SubmissionErrorQuarantined
 
 	SubmissionErrorRelationshipVersionStale      = rememberapp.SubmissionErrorRelationshipVersionStale
 	SubmissionErrorRelationshipNotActive         = rememberapp.SubmissionErrorRelationshipNotActive
@@ -90,10 +86,4 @@ func correctionStatusErrorForCode(rawCode string, fallbackState string) Submissi
 
 func submissionFailureCode(stage, class string) SubmissionErrorCode {
 	return rememberapp.FailureCode(stage, class)
-}
-
-func submissionItemFailureError(item repository.PlacementItem, processing string) *SubmissionStatusError {
-	return rememberapp.ItemFailureError(rememberapp.PlacementItem{
-		FragmentID: item.FragmentID, EvidenceIndex: item.EvidenceIndex, Status: item.Status, Result: item.Result,
-	}, processing)
 }

@@ -204,11 +204,6 @@ const hypothesisExactDerivationIneligiblePredicateSQL = `(hypotheses.generator_k
 						 AND verification.observation_id = observation.observation_id
 						 AND verification.space_id = observation.space_id
 						 AND verification.space_generation = observation.space_generation
-						JOIN placement_assessments assessment
-						  ON assessment.team_id = verification.team_id
-						 AND assessment.assessment_id = verification.assessment_id
-						 AND assessment.space_id = verification.space_id
-						 AND assessment.space_generation = verification.space_generation
 						JOIN LATERAL jsonb_array_elements(observation.evidence) evidence(value) ON true
 						JOIN evidence_fragments fragment
 						  ON fragment.team_id = observation.team_id
@@ -330,9 +325,6 @@ func (r *SemanticRepositoryImpl) ListDreamInputs(ctx context.Context, input Drea
 				JOIN verification_events verification
 				  ON verification.team_id = observation.team_id
 				 AND verification.observation_id = observation.observation_id
-				JOIN placement_assessments assessment
-				  ON assessment.team_id = verification.team_id
-				 AND assessment.assessment_id = verification.assessment_id
 				WHERE observation.team_id = ?::uuid
 				  AND observation.space_id = dense_mem_team_shared_space(observation.team_id)
 				  AND observation.space_generation = dense_mem_team_shared_generation(observation.team_id)

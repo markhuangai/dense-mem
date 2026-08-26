@@ -36,7 +36,6 @@ type effectiveRelationshipCorrectionSupport struct {
 	Authority        string
 	Metadata         map[string]any
 	IngestID         string
-	PlacementItemID  string
 	SpaceID          string
 }
 
@@ -142,7 +141,6 @@ func loadEffectiveRelationshipCorrectionSupports(
 		       COALESCE(support.source_revision_id::text, ''),
 		       support.quote, support.authority, support.metadata,
 		       fragment.ingest_id::text,
-		       COALESCE(observation.placement_item_id::text, ''),
 		       support.space_id::text
 		FROM relationship_evidence_supports AS support
 		JOIN latest ON latest.support_id = support.support_id
@@ -182,7 +180,7 @@ func loadEffectiveRelationshipCorrectionSupports(
 			&support.SupportID, &support.EvidenceID, &support.Start, &support.End,
 			&support.SourceGroupKey, &support.SourceID, &support.SourceRevisionID,
 			&support.Quote, &support.Authority, &metadataJSON,
-			&support.IngestID, &support.PlacementItemID, &support.SpaceID,
+			&support.IngestID, &support.SpaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -672,7 +670,6 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 		}
 		copyDecision := decision
 		copyDecision.IngestID = support.IngestID
-		copyDecision.PlacementItemID = support.PlacementItemID
 		copyDecision.SubjectRef = subjectEntityID
 		copyDecision.OriginalPredicate = resolution.Predicate.Key
 		copyDecision.ObjectRef = objectEntityID
@@ -764,65 +761,33 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 		reused, string(patchJSON), string(supportsJSON), row.Reason, sourceSpaceID).Error; err != nil {
 		return nil, err
 	}
-	commit := CommitPlacementSemanticInput{TeamID: row.TeamID, OwnerProfileID: row.OwnerProfileID}
-	if _, err := upsertPlacementRelationshipSearchDocument(ctx, tx, commit, original, defaultEmbeddingJobMaxAttempts); err != nil {
+	commit := CommitSemanticInput{TeamID: row.TeamID, OwnerProfileID: row.OwnerProfileID}
+	if _, err := upsertRelationshipSearchDocument(ctx, tx, commit, original); err != nil {
 		return nil, err
 	}
-	if _, err := upsertPlacementRelationshipSearchDocument(ctx, tx, commit, successor, defaultEmbeddingJobMaxAttempts); err != nil {
+	if _, err := upsertRelationshipSearchDocument(ctx, tx, commit, successor); err != nil {
 		return nil, err
 	}
-	if results := inlineEmbeddingResults(ctx); results != nil {
-		documents, err := loadSearchDocumentsForSourcesTx(ctx, tx, LoadSearchDocumentsForSourcesInput{
-			TeamID: row.TeamID, OwnerProfileID: row.OwnerProfileID, SourceKind: "relationship",
-			SourceIDs: []string{original.RelationshipID, successor.RelationshipID},
-		})
-		if err != nil {
+	documents, err := loadSearchDocumentsForSourcesTx(ctx, tx, LoadSearchDocumentsForSourcesInput{
+		TeamID: row.TeamID, OwnerProfileID: row.OwnerProfileID, SourceKind: "relationship",
+		SourceIDs: []string{original.RelationshipID, successor.RelationshipID},
+	})
+	if err != nil {
+		return nil, err
+	}
+	searchDocumentIDs := make([]string, 0, len(documents))
+	for _, document := range documents {
+		if document.SearchState == string(domain.SearchProjectionPending) || document.SearchState == string(domain.SearchProjectionFailed) {
+			searchDocumentIDs = append(searchDocumentIDs, document.SearchDocumentID)
+		}
+	}
+	if len(searchDocumentIDs) > 0 {
+		results := inlineEmbeddingResults(ctx)
+		if results == nil {
+			return nil, ErrSearchEmbeddingRequired
+		}
+		if _, err := completeInlineEmbeddingResultsInTx(ctx, tx, row.TeamID, row.OwnerProfileID, searchDocumentIDs, results); err != nil {
 			return nil, err
-		}
-		searchDocumentIDs := make([]string, 0, len(documents))
-		for _, document := range documents {
-			if document.SearchState == string(domain.SearchProjectionPending) || document.SearchState == string(domain.SearchProjectionFailed) {
-				searchDocumentIDs = append(searchDocumentIDs, document.SearchDocumentID)
-			}
-		}
-		if len(searchDocumentIDs) > 0 {
-			if _, err := completeInlineEmbeddingResultsInTx(ctx, tx, row.TeamID, row.OwnerProfileID, searchDocumentIDs, results); err != nil {
-				return nil, err
-			}
-		}
-	} else if batch := inlineEmbeddingBatch(ctx); batch != nil {
-		documents, err := loadSearchDocumentsForSourcesTx(ctx, tx, LoadSearchDocumentsForSourcesInput{
-			TeamID: row.TeamID, OwnerProfileID: row.OwnerProfileID, SourceKind: "relationship",
-			SourceIDs: []string{original.RelationshipID, successor.RelationshipID},
-		})
-		if err != nil {
-			return nil, err
-		}
-		pending := documents[:0]
-		for _, document := range documents {
-			if document.SearchState == string(domain.SearchProjectionPending) || document.SearchState == string(domain.SearchProjectionFailed) {
-				pending = append(pending, document)
-			}
-		}
-		documents = pending
-		if len(documents) > 0 {
-			embeddings, err := batch(ctx, documents)
-			if err != nil {
-				return nil, err
-			}
-			if len(embeddings) != len(documents) {
-				return nil, fmt.Errorf("inline correction embedding response count mismatch: got %d, want %d", len(embeddings), len(documents))
-			}
-			for index := range documents {
-				if embeddings[index].SearchDocumentID != documents[index].SearchDocumentID {
-					return nil, fmt.Errorf("inline correction embedding response order mismatch at index %d", index)
-				}
-			}
-			if err := completeSearchDocumentsWithEmbeddingsInTx(ctx, tx, CompleteSearchDocumentsWithEmbeddingsInput{
-				TeamID: row.TeamID, OwnerProfileID: row.OwnerProfileID, Documents: embeddings,
-			}); err != nil {
-				return nil, err
-			}
 		}
 	}
 	selectionJSON, err := json.Marshal(resolution.Selection)

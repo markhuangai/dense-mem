@@ -1,7 +1,9 @@
 package http
 
 import (
+	"context"
 	"errors"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -10,12 +12,13 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 func (h *controlPortalHandler) listSubmissionDiagnostics(c echo.Context) error {
 	if h.submissions == nil {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "submission diagnostics unavailable")
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember attempts unavailable")
 	}
 	filter, err := controlSubmissionDiagnosticFilter(c)
 	if err != nil {
@@ -23,7 +26,7 @@ func (h *controlPortalHandler) listSubmissionDiagnostics(c echo.Context) error {
 	}
 	page, err := h.submissions.ListSubmissionDiagnostics(c.Request().Context(), filter)
 	if errors.Is(err, service.ErrSubmissionDiagnosticsUnavailable) {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "submission diagnostics unavailable")
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember attempts unavailable")
 	}
 	if err != nil {
 		return err
@@ -35,7 +38,7 @@ func (h *controlPortalHandler) listSubmissionDiagnostics(c echo.Context) error {
 
 func (h *controlPortalHandler) getSubmissionDiagnostic(c echo.Context) error {
 	if h.submissions == nil {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "submission diagnostics unavailable")
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember attempts unavailable")
 	}
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
@@ -47,15 +50,48 @@ func (h *controlPortalHandler) getSubmissionDiagnostic(c echo.Context) error {
 	}
 	detail, err := h.submissions.GetSubmissionDiagnostic(c.Request().Context(), teamID.String(), submissionID.String())
 	if errors.Is(err, service.ErrSubmissionDiagnosticNotFound) {
-		return httperr.New(httperr.NOT_FOUND, "submission not found")
+		return httperr.New(httperr.NOT_FOUND, "remember attempt not found")
 	}
 	if errors.Is(err, service.ErrSubmissionDiagnosticsUnavailable) {
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "submission diagnostics unavailable")
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember attempts unavailable")
 	}
 	if err != nil {
 		return err
 	}
 	return response.SuccessOK(c, detail)
+}
+
+func (h *controlPortalHandler) getRememberFailureArtifact(c echo.Context) error {
+	reader, ok := h.submissions.(interface {
+		GetRememberFailureArtifact(context.Context, string, string, string) (*repository.RememberFailureArtifact, error)
+	})
+	if !ok {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember failure artifacts unavailable")
+	}
+	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
+	if err != nil {
+		return err
+	}
+	attemptID, err := parseControlUUID(c.Param("submissionId"), "submission ID")
+	if err != nil {
+		return err
+	}
+	artifactID, err := parseControlUUID(c.Param("artifactId"), "artifact ID")
+	if err != nil {
+		return err
+	}
+	artifact, err := reader.GetRememberFailureArtifact(c.Request().Context(), teamID.String(), attemptID.String(), artifactID.String())
+	if errors.Is(err, service.ErrSubmissionDiagnosticNotFound) {
+		return httperr.New(httperr.NOT_FOUND, "remember failure artifact not found or expired")
+	}
+	if errors.Is(err, service.ErrSubmissionDiagnosticsUnavailable) {
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember failure artifacts unavailable")
+	}
+	if err != nil {
+		return err
+	}
+	c.Response().Header().Set("Cache-Control", "no-store")
+	return c.Blob(http.StatusOK, artifact.ContentType, artifact.Content)
 }
 
 func controlSubmissionDiagnosticFilter(c echo.Context) (service.SubmissionDiagnosticFilter, error) {
@@ -77,7 +113,7 @@ func controlSubmissionDiagnosticFilter(c echo.Context) (service.SubmissionDiagno
 	}
 	state := strings.TrimSpace(c.QueryParam("processing_state"))
 	switch state {
-	case "", "queued", "processing", "completed", "rejected", "quarantined", "failed":
+	case "", "completed", "rejected", "quarantined", "failed", "replayed":
 	default:
 		return service.SubmissionDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "processing_state is unsupported")
 	}

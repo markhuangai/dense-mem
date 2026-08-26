@@ -486,8 +486,8 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 		},
 	}
 	remember := &rememberServiceStub{result: &memoryservice.RememberResult{
-		IngestID:        ingestID,
-		ProcessingState: string(domain.PlacementRunQueued),
+		SubmissionStatusResult: memoryservice.SubmissionStatusResult{ProcessingState: "completed"},
+		IngestID:               ingestID,
 	}}
 	svc := New(Dependencies{
 		Store:     repo,
@@ -628,8 +628,8 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &dreamRepositoryStub{getRecord: baseRecord}
 			remember := &rememberServiceStub{result: &memoryservice.RememberResult{
-				IngestID:        uuid.NewString(),
-				ProcessingState: string(domain.PlacementRunQueued),
+				SubmissionStatusResult: memoryservice.SubmissionStatusResult{ProcessingState: "completed"},
+				IngestID:               uuid.NewString(),
 			}}
 			svc := New(Dependencies{
 				Store:     repo,
@@ -651,6 +651,36 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveFeedbackDoesNotSubmitWhenRememberIsNotCompleted(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	repo := &dreamRepositoryStub{getRecord: repository.HypothesisRecord{
+		TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(),
+		Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
+	}}
+	remember := &rememberServiceStub{result: &memoryservice.RememberResult{
+		SubmissionStatusResult: memoryservice.SubmissionStatusResult{ProcessingState: "rejected"},
+		IngestID:               uuid.NewString(),
+	}}
+	svc := New(Dependencies{
+		Store: repo, Remember: remember,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
+	})
+
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true",
+		Evidence: []memoryservice.RememberEvidenceInput{{Content: "A bounded confirmation note."}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Memory)
+	require.Equal(t, "rejected", result.Memory.ProcessingState)
+	require.Equal(t, domain.DreamStatusProposed, result.Dream.Status)
+	require.Empty(t, repo.submitInput)
 }
 
 func TestRunCycleControlAndErrorBranches(t *testing.T) {

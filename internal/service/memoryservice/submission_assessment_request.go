@@ -13,9 +13,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-func (s *submissionAssessmentPlacementWorkerService) buildRequest(
+func (s *assessmentEngine) buildRequest(
 	ctx context.Context,
-	run repository.PlacementRun,
+	scope RememberAssessmentScope,
 	plan submissionAssessmentPlan,
 	proposal map[string]any,
 ) (assessor.SemanticAssessmentRequest, error) {
@@ -33,8 +33,8 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 		})
 	}
 	entityCatalog, err := s.catalog.ListSubmissionAssessmentEntityCatalog(ctx, repository.SubmissionAssessmentEntityCatalogInput{
-		TeamID:         run.TeamID,
-		OwnerProfileID: run.OwnerProfileID,
+		TeamID:         scope.TeamID,
+		OwnerProfileID: scope.OwnerProfileID,
 		Entities:       entityInputs,
 		CandidateLimit: candidateLimit,
 	})
@@ -80,14 +80,18 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 		}
 		contract.Relationships = append(contract.Relationships, target)
 	}
-	predicateOptions, err := s.submissionAssessmentPredicateOptions(ctx, run, plan)
+	predicateOptions, err := s.submissionAssessmentPredicateOptions(ctx, scope, plan)
 	if err != nil {
 		return assessor.SemanticAssessmentRequest{}, err
 	}
+	requestID := strings.TrimSpace(scope.IngestID)
+	if requestID == "" {
+		requestID = "request"
+	}
 	req := assessor.SemanticAssessmentRequest{
-		RequestID:                "submission-assessment:" + run.PlacementRunID,
-		TeamID:                   run.TeamID,
-		OwnerProfileID:           run.OwnerProfileID,
+		RequestID:                "synchronous-remember:" + requestID,
+		TeamID:                   scope.TeamID,
+		OwnerProfileID:           scope.OwnerProfileID,
 		Evidence:                 evidence,
 		ClientProposal:           assessmentClientProposalWithoutTrustedContext(proposal),
 		EntityCandidateGroups:    entityGroups,
@@ -126,9 +130,9 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 	return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("trusted_context_validation", "submission assessment contract is invalid")
 }
 
-func (s *submissionAssessmentPlacementWorkerService) submissionAssessmentPredicateOptions(
+func (s *assessmentEngine) submissionAssessmentPredicateOptions(
 	ctx context.Context,
-	run repository.PlacementRun,
+	scope RememberAssessmentScope,
 	plan submissionAssessmentPlan,
 ) ([]assessor.SemanticAssessmentPredicateOption, error) {
 	limit := s.limits.MaxPredicateOptions
@@ -159,8 +163,8 @@ func (s *submissionAssessmentPlacementWorkerService) submissionAssessmentPredica
 	}
 
 	resolved, err := s.catalog.ResolveSemanticReviewPredicateCandidates(ctx, repository.SemanticReviewPredicateResolutionInput{
-		TeamID:         run.TeamID,
-		OwnerProfileID: run.OwnerProfileID,
+		TeamID:         scope.TeamID,
+		OwnerProfileID: scope.OwnerProfileID,
 		Predicates:     proposedKeys,
 		Limit:          limit + 1,
 	})
@@ -193,8 +197,8 @@ func (s *submissionAssessmentPlacementWorkerService) submissionAssessmentPredica
 	}
 
 	ranked, err := s.catalog.ListSemanticAssessmentPredicateOptions(ctx, repository.SemanticAssessmentPredicateOptionsInput{
-		TeamID:         run.TeamID,
-		OwnerProfileID: run.OwnerProfileID,
+		TeamID:         scope.TeamID,
+		OwnerProfileID: scope.OwnerProfileID,
 		QueryText:      strings.Join(queryParts, "\n"),
 		ProposedKeys:   proposedKeys,
 		Limit:          limit,

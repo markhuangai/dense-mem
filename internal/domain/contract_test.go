@@ -101,17 +101,9 @@ func TestContractEnums(t *testing.T) {
 			t.Fatalf("RelationshipConflictPositionDispositions missing %s", disposition)
 		}
 	}
-	if slices.Contains(PlacementRunStatuses(), "stale") {
-		t.Fatal("PlacementRunStatuses contains non-canonical stale state")
-	}
 	for _, state := range []string{"not_required", "pending", "current", "failed"} {
 		if !slices.Contains(SearchProjectionStates(), state) {
 			t.Fatalf("SearchProjectionStates missing %s", state)
-		}
-	}
-	for _, status := range []string{"queued", "guarded", "quarantined", "processing", "completed", "failed"} {
-		if !slices.Contains(PlacementRunStatuses(), status) {
-			t.Fatalf("PlacementRunStatuses missing %s", status)
 		}
 	}
 	if slices.Contains(SearchProjectionStates(), "stale") {
@@ -138,11 +130,6 @@ func TestContractEnums(t *testing.T) {
 	for _, valueType := range []string{"string", "number", "boolean", "date", "date_time"} {
 		if !slices.Contains(ValueTypes(), valueType) {
 			t.Fatalf("ValueTypes missing %s", valueType)
-		}
-	}
-	for _, status := range []string{"queued", "processing", "completed", "failed", "stale", "cancelled"} {
-		if !slices.Contains(EmbeddingJobStatuses(), status) {
-			t.Fatalf("EmbeddingJobStatuses missing %s", status)
 		}
 	}
 	for _, category := range []string{"evidence_processed", "evidence_quarantined", "processing_failed"} {
@@ -252,7 +239,6 @@ func TestHypothesisStatusesAreCanonical(t *testing.T) {
 func TestContractUsesTypedPublicIDs(t *testing.T) {
 	ids := []any{
 		IngestID("ing-1"),
-		PlacementItemID("item-1"),
 		EvidenceID("ev-1"),
 		ObservationID("obs-1"),
 		EntityID("ent-1"),
@@ -262,7 +248,7 @@ func TestContractUsesTypedPublicIDs(t *testing.T) {
 		CommunityID("community-1"),
 		MemoryPackID("pack-1"),
 	}
-	if len(ids) != 10 {
+	if len(ids) != 9 {
 		t.Fatalf("typed ID count = %d", len(ids))
 	}
 }

@@ -7,15 +7,12 @@ E2E_ALL_SCENARIOS=(
   private_memory_erasure
   security_runtime
   infrastructure_credentials
-  submission_status
   submission_terminal_errors
   security_intake
-  submission_assessment
   identity_cleanup
   community
   conflict
   conflict_queue
-  embedding_reconciliation
   embedding_resilience
   memory_space_backfill
   memory_space_isolation

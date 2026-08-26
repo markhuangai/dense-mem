@@ -44,7 +44,7 @@ func TestLedgerCreateIngestConcurrentIdempotencyConflictRollsBackLoser(t *testin
 		go func() {
 			defer wg.Done()
 			<-start
-			result, err := repo.CreateIngest(ctx, input)
+			result, err := createTestIngest(ctx, repo, input)
 			outcomes <- createIngestOutcome{result: result, err: err}
 		}()
 	}
@@ -149,7 +149,7 @@ func TestLedgerCreateIngestConcurrentSourceCASConflictRollsBackLoser(t *testing.
 		go func() {
 			defer wg.Done()
 			<-start
-			result, err := repo.CreateIngest(ctx, input)
+			result, err := createTestIngest(ctx, repo, input)
 			outcomes <- createIngestOutcome{result: result, err: err}
 		}()
 	}
@@ -229,6 +229,6 @@ func TestLedgerCreateIngestConcurrentSourceCASConflictRollsBackLoser(t *testing.
 }
 
 type createIngestOutcome struct {
-	result *CreateIngestResult
+	result *EvidenceIngestResult
 	err    error
 }

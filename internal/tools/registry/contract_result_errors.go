@@ -33,7 +33,6 @@ func rememberToolResultError(ctx context.Context, err error) error {
 			"correlation_id":       correlation.FromContext(ctx),
 			"evidence":             []any{},
 			"relationship_results": []any{},
-			"degradations":         []any{},
 			"errors": []any{map[string]any{
 				"code":        value.Code,
 				"message":     value.Message,

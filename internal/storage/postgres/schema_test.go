@@ -5,7 +5,6 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -151,40 +150,22 @@ func TestCoreSchemaIndexes(t *testing.T) {
 		"idx_credentials_key_prefix_unique",
 		"idx_audit_log_team_timestamp",
 		"idx_audit_log_timestamp",
-		"placement_runs_team_expired_claim_idx",
+		"remember_attempts_canonical_key_idx",
+		"remember_attempt_events_attempt_idx",
+		"remember_failure_artifacts_attempt_idx",
+		"search_reconciliation_runs_updated_idx",
 	} {
 		assert.True(t, indexExists(t, ctx, sqlDB, idxName), "index %s should exist", idxName)
 	}
 
-	conn, err := sqlDB.Conn(ctx)
-	require.NoError(t, err)
-	defer conn.Close()
-	_, err = conn.ExecContext(ctx, `SET enable_seqscan = off`)
-	require.NoError(t, err)
-	rows, err := conn.QueryContext(ctx, `
-		EXPLAIN (COSTS OFF)
-		SELECT run.placement_run_id
-		FROM placement_runs AS run
-		WHERE run.team_id = '00000000-0000-0000-0000-000000000001'::uuid
-		  AND run.attempts < run.max_attempts
-		  AND run.status = 'processing'
-		  AND run.lease_until IS NOT NULL
-		  AND run.lease_until < now()
-		ORDER BY run.lease_until ASC, run.created_at ASC, run.placement_run_id ASC
-		LIMIT 1
-		FOR UPDATE SKIP LOCKED
-	`)
-	require.NoError(t, err)
-	defer rows.Close()
-	var plan strings.Builder
-	for rows.Next() {
-		var line string
-		require.NoError(t, rows.Scan(&line))
-		plan.WriteString(line)
-		plan.WriteByte('\n')
+	for _, retiredTable := range []string{
+		"placement_runs", "placement_items", "placement_outcomes", "placement_assessments", "embedding_jobs",
+		"remember_source_revision_intents", "remember_supersession_intents",
+		"submission_assessment_response_revisions", "submission_quarantine_payloads",
+		"submission_quarantine_tombstones",
+	} {
+		assert.False(t, tableExists(t, ctx, sqlDB, retiredTable), "%s should be retired", retiredTable)
 	}
-	require.NoError(t, rows.Err())
-	assert.Contains(t, plan.String(), "placement_runs_team_expired_claim_idx")
 
 	var isUnique bool
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
@@ -194,6 +175,12 @@ func TestCoreSchemaIndexes(t *testing.T) {
 		  AND indpred IS NOT NULL
 	`).Scan(&isUnique))
 	assert.True(t, isUnique)
+	for _, column := range []string{"selected_count", "embedded_count", "updated_count", "drifted_count"} {
+		assert.True(t, columnExists(t, ctx, sqlDB, "search_reconciliation_runs", column), "search_reconciliation_runs.%s should exist", column)
+	}
+	for _, column := range []string{"candidate_cutoff", "worker_id", "lease_token", "lease_until", "canary_job_id", "canary_attempted_at", "canary_outcome", "canary_failure_class", "canary_failure_code"} {
+		assert.False(t, columnExists(t, ctx, sqlDB, "search_reconciliation_runs", column), "search_reconciliation_runs.%s should be retired", column)
+	}
 }
 
 func migratedSQLDB(t *testing.T, ctx context.Context) (*sql.DB, func()) {

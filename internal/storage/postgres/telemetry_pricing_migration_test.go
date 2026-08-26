@@ -20,9 +20,8 @@ func TestTelemetryPricingMigrationsCreateRatesAndMarkerUniqueness(t *testing.T) 
 
 	runGooseUpTo(t, ctx, sqlDB, 2026073102)
 
-	m := NewMigratorWithDB(sqlDB)
-	require.NoError(t, m.RunUp(ctx))
-	require.NoError(t, m.RunUp(ctx), "repeat migration run should remain idempotent")
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026073106))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026073106), "repeat migration run should remain idempotent")
 
 	var pricingCount int
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
@@ -87,8 +86,7 @@ func TestTelemetryFirstDispositionMigrationRebuildsInvalidConcurrentIndex(t *tes
 	runGooseUpTo(t, ctx, sqlDB, 2026073105)
 	insertDuplicateTelemetryFirstDispositionMarkers(t, ctx, sqlDB)
 
-	m := NewMigratorWithDB(sqlDB)
-	require.Error(t, m.RunUp(ctx), "duplicate marker rows must fail the first unique-index build")
+	require.Error(t, migrationUpTo(ctx, sqlDB, 2026073106), "duplicate marker rows must fail the first unique-index build")
 
 	var indexValid bool
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
@@ -103,7 +101,7 @@ func TestTelemetryFirstDispositionMigrationRebuildsInvalidConcurrentIndex(t *tes
 		_, err := tx.ExecContext(ctx, `TRUNCATE TABLE placement_outcomes`)
 		return err
 	}))
-	require.NoError(t, m.RunUp(ctx), "retry must replace the invalid index before rebuilding it")
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026073106), "retry must replace the invalid index before rebuilding it")
 
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `
 		SELECT index_meta.indisvalid
@@ -129,8 +127,7 @@ func TestTelemetryFirstDispositionMigrationPreservesValidConcurrentIndex(t *test
 	require.NoError(t, err)
 
 	beforeOID := telemetryFirstDispositionIndexOID(t, ctx, sqlDB)
-	m := NewMigratorWithDB(sqlDB)
-	require.NoError(t, m.RunUp(ctx))
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026073106))
 
 	assert.Equal(t, beforeOID, telemetryFirstDispositionIndexOID(t, ctx, sqlDB))
 }

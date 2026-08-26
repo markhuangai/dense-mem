@@ -1,7 +1,6 @@
 package memoryservice
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,56 +16,24 @@ type submissionAssessmentNoSupportedMemoryError struct {
 	RelationshipResults []repository.SubmissionRelationshipResultInput
 }
 
+// NoSupportedMemoryError lets the synchronous application boundary persist a
+// terminal rejected attempt without entering the accepted semantic commit.
+type NoSupportedMemoryError = submissionAssessmentNoSupportedMemoryError
+
 func (e *submissionAssessmentNoSupportedMemoryError) Error() string {
 	return "submission assessment contains no supported memory"
 }
 
-func isRememberStaleInputError(err error) bool {
+// IsRememberStaleInputError identifies caller-owned fence drift that must be
+// returned as stale_input rather than a provider or database failure.
+func IsRememberStaleInputError(err error) bool {
 	return errors.Is(err, errSubmissionAssessmentStaleInput) ||
 		errors.Is(err, repository.ErrSourceRevisionConflict) ||
 		errors.Is(err, repository.ErrEvidenceLifecycleConflict) ||
 		errors.Is(err, repository.ErrConflictContextStale) ||
 		errors.Is(err, repository.ErrRememberExactReferenceStale) ||
 		errors.Is(err, repository.ErrCorrectionTargetStale) ||
-		errors.Is(err, repository.ErrPlacementStaleSource)
-}
-
-func (s *submissionAssessmentPlacementWorkerService) completeRejected(
-	ctx context.Context,
-	scope repository.SubmissionAssessmentRunScope,
-	code SubmissionErrorCode,
-	relationshipResults []repository.SubmissionRelationshipResultInput,
-) error {
-	if code != SubmissionErrorStaleInput {
-		code = SubmissionErrorNoSupportedMemory
-	}
-	payload := map[string]any{
-		"assessor_contract": domain.ContractVersion,
-		"failure_stage":     "semantic_commit",
-		"failure_code":      string(code),
-		"retryable":         true,
-		"next_action":       string(SubmissionNextActionResubmitRemember),
-	}
-	if code == SubmissionErrorStaleInput {
-		payload["failure_stage"] = "exact_reference_preflight"
-	}
-	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
-		SubmissionAssessmentRunScope: scope,
-		OutcomeKind:                  "submission_assessment_rejected",
-		Status:                       string(domain.SemanticReviewRejected),
-		Category:                     "rejected",
-		Payload:                      payload,
-		RelationshipResults:          relationshipResults,
-	})
-	if err == nil && completed == nil {
-		return newPlacementWorkerError(scope.TeamID, scope.IngestID, "semantic_rejection", errors.New("submission assessment worker: nil rejection result"))
-	}
-	if err != nil {
-		return newPlacementWorkerError(scope.TeamID, scope.IngestID, "semantic_rejection", err)
-	}
-	s.logLifecycle(scope, "submission_rejected", "rejected", "semantic_commit", payload["failure_code"].(string), nil)
-	s.recordFirstDisposition(ctx, scope.TeamID, scope.OwnerProfileID, completed.FirstDisposition)
-	return nil
+		errors.Is(err, repository.ErrSemanticStaleSource)
 }
 
 func submissionAssessmentSupports(

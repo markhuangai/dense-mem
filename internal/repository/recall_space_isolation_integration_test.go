@@ -60,7 +60,7 @@ func TestRecallEvidenceIsolatesCredentialPrivateSpacesWithinTeam(t *testing.T) {
 			AllowedSpaces: []domain.MemorySpaceAccess{{ID: shared.ID, Kind: domain.MemorySpaceTeamShared}, {ID: privateSpace, Kind: domain.MemorySpaceCredentialPrivate}},
 		})
 		content := fmt.Sprintf("credential %c %s", rune('a'+i), query)
-		ingest, err := ledgerRepo.CreateIngest(actorCtx, CreateIngestInput{
+		ingest, err := createTestIngest(actorCtx, ledgerRepo, CreateIngestInput{
 			TeamID:         teamID.String(),
 			OwnerProfileID: credential.OwnerID.String(),
 			IdempotencyKey: "private-isolation-" + credential.ID.String(),

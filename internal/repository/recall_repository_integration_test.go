@@ -87,7 +87,7 @@ func TestRecallEvidenceHydratesEvidenceProvenance(t *testing.T) {
 	searchRepo := NewSearchRepository(appDB, rls)
 	content := "Dense Mem records recall provenance for evidence hits."
 
-	ingest, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+	ingest, err := createTestIngest(ctx, ledgerRepo, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IdempotencyKey: "recall-provenance",
@@ -190,7 +190,7 @@ func TestRecallRelationshipsUsesNullGenerationVectorsForPostCutoverTeam(t *testi
 		DocumentText:   "relationship\nsubject: Sibling Kai\npredicate: works on\nobject: Sibling Project\npolarity: positive",
 	})
 	require.NoError(t, err)
-	completeSearchJobsForTest(t, searchRepo, siblingTeamID, map[string][]float32{
+	completeSearchDocumentsForTest(t, searchRepo, siblingTeamID, map[string][]float32{
 		siblingDoc.SearchDocumentID: {1, 0, 0},
 	})
 
@@ -217,7 +217,7 @@ func TestRecallRelationshipsUsesNullGenerationVectorsForPostCutoverTeam(t *testi
 	require.Equal(t, string(domain.SearchProjectionPending), pendingRecall.SearchState)
 	require.Empty(t, pendingRecall.Results)
 
-	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+	completeSearchDocumentsForTest(t, searchRepo, teamID, map[string][]float32{
 		doc.SearchDocumentID: {1, 0, 0},
 	})
 
@@ -279,7 +279,7 @@ func TestRecallRelationshipsOmitsVectorWhenOnlyStaleContractDocumentsAreCurrent(
 		DocumentText:   "relationship\nsubject: Noa\npredicate: works on\nobject: Dense Mem\npolarity: positive",
 	})
 	require.NoError(t, err)
-	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+	completeSearchDocumentsForTest(t, searchRepo, teamID, map[string][]float32{
 		doc.SearchDocumentID: {1, 0, 0},
 	})
 	insertSearchTestContract(t, adminDB, rls, "recall-rel-stale-contract-new", 3, "exact", "")
@@ -351,7 +351,7 @@ func TestRecallRelationshipsUsesCurrentGenerationVectors(t *testing.T) {
 		DocumentText:           "relationship\nsubject: Mika\npredicate: works on\nobject: Dense Mem\npolarity: positive",
 	})
 	require.NoError(t, err)
-	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+	completeSearchDocumentsForTest(t, searchRepo, teamID, map[string][]float32{
 		doc.SearchDocumentID: {1, 0, 0},
 	})
 
@@ -440,7 +440,7 @@ func TestRecallRelationshipsReturnsEquivalentRelationshipIDs(t *testing.T) {
 		DocumentText:   "relationship\nsubject: Morgan\npredicate: works on\nobject: Dense Mem\npolarity: positive",
 	})
 	require.NoError(t, err)
-	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+	completeSearchDocumentsForTest(t, searchRepo, teamID, map[string][]float32{
 		firstDoc.SearchDocumentID:  {1, 0, 0},
 		secondDoc.SearchDocumentID: {1, 0, 0},
 	})
@@ -507,7 +507,7 @@ func TestRecallRelationshipsHydratesHistoricallySupersededAtKnownAt(t *testing.T
 		DocumentText:   "relationship\nsubject: Riley\npredicate: works on\nobject: Dense Mem\npolarity: positive",
 	})
 	require.NoError(t, err)
-	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+	completeSearchDocumentsForTest(t, searchRepo, teamID, map[string][]float32{
 		doc.SearchDocumentID: {1, 0, 0},
 	})
 	knownAt := time.Now().UTC().Add(time.Minute)
@@ -576,7 +576,7 @@ func TestRecallRelationshipsHydratesHistoricallySupportedAtKnownAt(t *testing.T)
 		DocumentText:   "relationship\nsubject: Sam\npredicate: works on\nobject: Dense Mem\npolarity: positive",
 	})
 	require.NoError(t, err)
-	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+	completeSearchDocumentsForTest(t, searchRepo, teamID, map[string][]float32{
 		doc.SearchDocumentID: {1, 0, 0},
 	})
 	knownAt := databaseNowForTest(t, adminDB, rls)
@@ -639,7 +639,7 @@ func TestRecallEvidenceExcludesStaleSupportSourceRevision(t *testing.T) {
 	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Taylor")
 	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Dense Mem")
 	content := "Taylor works on the Dense Mem search path."
-	ingest, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+	ingest, err := createTestIngest(ctx, ledgerRepo, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IdempotencyKey: "recall stale support source",

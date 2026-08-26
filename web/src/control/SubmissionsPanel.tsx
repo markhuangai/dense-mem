@@ -1,17 +1,16 @@
-import { CSSProperties, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, Clock3, RefreshCw } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowRight, Clock3, RefreshCw } from "lucide-react";
 import {
   ControlApi,
-  OperationLog,
+  RememberFailureArtifactDescriptor,
   SubmissionDiagnosticDetail,
-  SubmissionOperatorDiagnostic,
   SubmissionDiagnosticSummary,
   Team,
 } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
 
-const PROCESSING_STATES = ["", "queued", "processing", "completed", "rejected", "quarantined", "failed"];
+const PROCESSING_STATES = ["", "completed", "rejected", "quarantined", "failed", "replayed"];
 const PAGE_SIZE = 50;
 
 export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team }) {
@@ -21,88 +20,44 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
   const [offset, setOffset] = useState(0);
   const [selectedID, setSelectedID] = useState("");
   const [detail, setDetail] = useState<SubmissionDiagnosticDetail | null>(null);
-  const [timeline, setTimeline] = useState<OperationLog[]>([]);
-  const [timelineUnavailable, setTimelineUnavailable] = useState(false);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
   const listRequestRef = useRef(0);
-  const detailRequestRef = useRef(0);
 
-  async function loadSubmissions(nextState = state, nextOffset = offset) {
+  async function loadAttempts(nextState = state, nextOffset = offset) {
     const requestID = ++listRequestRef.current;
     setLoading(true);
     setError("");
     try {
       const page = await api.listSubmissionDiagnostics({
-        team_id: team.id,
-        processing_state: nextState,
-        limit: PAGE_SIZE,
-        offset: nextOffset,
+        team_id: team.id, processing_state: nextState, limit: PAGE_SIZE, offset: nextOffset,
       });
-      if (requestID !== listRequestRef.current) {
-        return;
-      }
+      if (requestID !== listRequestRef.current) return;
       setItems(page.data);
       setTotal(page.pagination.total);
       setOffset(page.pagination.offset);
       const nextSelected = page.data.some((item) => item.submission_id === selectedID)
-        ? selectedID
-        : page.data[0]?.submission_id ?? "";
+        ? selectedID : page.data[0]?.submission_id ?? "";
       setSelectedID(nextSelected);
-      if (nextSelected) {
-        void loadDetail(nextSelected);
-      } else {
-        detailRequestRef.current += 1;
-        setDetail(null);
-        setTimeline([]);
-        setTimelineUnavailable(false);
-      }
+      if (nextSelected) void loadDetail(nextSelected);
+      else setDetail(null);
     } catch (caught) {
-      if (requestID === listRequestRef.current) {
-        setError(readError(caught));
-      }
+      if (requestID === listRequestRef.current) setError(readError(caught));
     } finally {
-      if (requestID === listRequestRef.current) {
-        setLoading(false);
-      }
+      if (requestID === listRequestRef.current) setLoading(false);
     }
   }
 
   async function loadDetail(submissionID: string) {
-    const requestID = ++detailRequestRef.current;
     setDetailLoading(true);
     setError("");
-    setDetail(null);
-    setTimeline([]);
-    setTimelineUnavailable(false);
     try {
-      const [nextDetail, logResult] = await Promise.all([
-        api.getSubmissionDiagnostic(team.id, submissionID),
-        api.listOperationLogs({
-          team_id: team.id,
-          reference_type: "submission",
-          reference_id: submissionID,
-          limit: 100,
-          offset: 0,
-          sort: "timestamp",
-          direction: "asc",
-        }).then((page) => ({ page })).catch(() => ({ page: null })),
-      ]);
-      if (requestID !== detailRequestRef.current) {
-        return;
-      }
-      setDetail(nextDetail);
-      setTimeline(logResult.page?.data ?? []);
-      setTimelineUnavailable(logResult.page === null);
+      setDetail(await api.getSubmissionDiagnostic(team.id, submissionID));
     } catch (caught) {
-      if (requestID === detailRequestRef.current) {
-        setError(readError(caught));
-      }
+      setError(readError(caught));
     } finally {
-      if (requestID === detailRequestRef.current) {
-        setDetailLoading(false);
-      }
+      setDetailLoading(false);
     }
   }
 
@@ -113,14 +68,8 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
     setOffset(0);
     setSelectedID("");
     setDetail(null);
-    setTimeline([]);
-    setTimelineUnavailable(false);
-    setDetailLoading(false);
-    void loadSubmissions("", 0);
-    return () => {
-      listRequestRef.current += 1;
-      detailRequestRef.current += 1;
-    };
+    void loadAttempts("", 0);
+    return () => { listRequestRef.current += 1; };
   }, [api, team.id]);
 
   const rangeStart = total === 0 ? 0 : offset + 1;
@@ -132,308 +81,110 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
         <SectionHeading
           title="Remember Attempts"
           meta={total}
-          actions={(
-            <button className="icon-button" type="button" aria-label="Refresh submissions" onClick={() => void loadSubmissions()}>
-              <RefreshCw size={16} aria-hidden="true" />
-            </button>
-          )}
+          actions={<button className="icon-button" type="button" aria-label="Refresh Remember attempts" onClick={() => void loadAttempts()}><RefreshCw size={16} aria-hidden="true" /></button>}
         />
-        <p className="panel-intro">Terminal Remember attempts are authoritative. The event timeline below records the bounded execution phases.</p>
+        <p className="panel-intro">Terminal attempts and their chronological events are the authoritative Remember diagnostic record.</p>
         {error && <div className="banner error" role="alert">{error}</div>}
         <div className="metrics-toolbar submission-toolbar">
-          <label>
-            Processing state
-            <select
-              aria-label="Processing state"
-              value={state}
-              onChange={(event) => {
-                const next = event.target.value;
-                setState(next);
-                setOffset(0);
-                setItems([]);
-                setTotal(0);
-                setSelectedID("");
-                detailRequestRef.current += 1;
-                setDetail(null);
-                setTimeline([]);
-                setTimelineUnavailable(false);
-                setDetailLoading(false);
-                void loadSubmissions(next, 0);
-              }}
-            >
-              {PROCESSING_STATES.map((value) => (
-                <option value={value} key={value}>{value ? stateLabel(value) : "All states"}</option>
-              ))}
+          <label>Outcome
+            <select aria-label="Processing state" value={state} onChange={(event) => {
+              const next = event.target.value;
+              setState(next); setOffset(0); setItems([]); setSelectedID(""); setDetail(null);
+              void loadAttempts(next, 0);
+            }}>
+              {PROCESSING_STATES.map((value) => <option value={value} key={value}>{value ? stateLabel(value) : "All outcomes"}</option>)}
             </select>
           </label>
         </div>
-        {loading && items.length === 0 ? (
-          <LoadingState label="Loading Remember attempts" />
-        ) : items.length === 0 ? (
-          <div className="table-placeholder">No submissions match this state.</div>
+        {loading && items.length === 0 ? <LoadingState label="Loading Remember attempts" /> : items.length === 0 ? (
+          <div className="table-placeholder">No Remember attempts match this outcome.</div>
         ) : (
-          <div className="table-wrap">
-            <table className="data-table submissions-table">
-              <thead>
-                <tr>
-                  <th>Submitted</th>
-                  <th>About</th>
-                  <th>State</th>
-                  <th>Attempts</th>
-                  <th>Evidence</th>
-                  <th>Correlation</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.submission_id} className={item.submission_id === selectedID ? "selected-row" : undefined}>
-                    <td>
-                      <strong>{formatDate(item.submitted_at)}</strong>
-                      <small className="table-subline">{shortId(item.submission_id)}</small>
-                    </td>
-                    <td>
-                      <span className="submission-source-summary">{item.source_summary || "Unlabelled submission"}</span>
-                      {item.source_summary_truncated && <small className="table-subline">Summary truncated</small>}
-                    </td>
-                    <td>
-                      <span className={submissionStateClass(item.processing_state)}>{stateLabel(item.processing_state)}</span>
-                      {item.next_attempt_at && <small className="table-subline">Retry {formatDate(item.next_attempt_at)}</small>}
-                    </td>
-                    <td>{item.attempts} / {item.max_attempts}</td>
-                    <td>{item.evidence_count}</td>
-                    <td><code>{item.correlation_id ? shortId(item.correlation_id) : "—"}</code></td>
-                    <td>
-                      <button
-                        className="text-button"
-                        type="button"
-                        aria-label={`Inspect submission ${item.submission_id}`}
-                        onClick={() => {
-                          setSelectedID(item.submission_id);
-                          void loadDetail(item.submission_id);
-                        }}
-                      >
-                        Inspect <ArrowRight size={14} aria-hidden="true" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <div className="table-wrap"><table className="data-table submissions-table">
+            <thead><tr><th>Handled</th><th>Outcome</th><th>Failed phase</th><th>Evidence</th><th>Documents</th><th>Duration</th><th>Action</th></tr></thead>
+            <tbody>{items.map((item) => (
+              <tr key={item.submission_id} className={item.submission_id === selectedID ? "selected-row" : undefined}>
+                <td><strong>{formatDate(item.completed_at ?? item.created_at)}</strong><small className="table-subline">{shortId(item.submission_id)}</small></td>
+                <td><span className={submissionStateClass(item.processing_state)}>{stateLabel(item.processing_state)}</span></td>
+                <td>{item.failed_phase || item.error_code || "—"}</td>
+                <td>{item.evidence_count}</td><td>{item.document_count}</td><td>{item.duration_ms} ms</td>
+                <td><button className="text-button" type="button" aria-label={"Inspect Remember attempt " + item.submission_id} onClick={() => { setSelectedID(item.submission_id); void loadDetail(item.submission_id); }}>Inspect <ArrowRight size={14} aria-hidden="true" /></button></td>
+              </tr>
+            ))}</tbody>
+          </table></div>
         )}
         <div className="table-actions">
           <span className="form-meta">{rangeStart}-{rangeEnd} of {total}</span>
-          <button
-            className="ghost-button"
-            type="button"
-            disabled={loading || offset === 0}
-            onClick={() => void loadSubmissions(state, Math.max(0, offset - PAGE_SIZE))}
-          >
-            Previous
-          </button>
-          <button
-            className="ghost-button"
-            type="button"
-            disabled={loading || offset + PAGE_SIZE >= total}
-            onClick={() => void loadSubmissions(state, offset + PAGE_SIZE)}
-          >
-            Next
-          </button>
+          <button className="ghost-button" type="button" disabled={loading || offset === 0} onClick={() => void loadAttempts(state, Math.max(0, offset - PAGE_SIZE))}>Previous</button>
+          <button className="ghost-button" type="button" disabled={loading || offset + PAGE_SIZE >= total} onClick={() => void loadAttempts(state, offset + PAGE_SIZE)}>Next</button>
         </div>
       </section>
-
-      {detailLoading && !detail ? <LoadingState label="Loading Remember attempt details" /> : detail && (
-        <SubmissionDetail detail={detail} timeline={timeline} timelineUnavailable={timelineUnavailable} />
-      )}
+      {detailLoading && !detail ? <LoadingState label="Loading Remember attempt details" /> : detail && <AttemptDetail api={api} detail={detail} />}
     </div>
   );
 }
 
-function SubmissionDetail({
-  detail,
-  timeline,
-  timelineUnavailable,
-}: {
-  detail: SubmissionDiagnosticDetail;
-  timeline: OperationLog[];
-  timelineUnavailable: boolean;
-}) {
-  const operatorDiagnostics = detail.operator_diagnostics ?? [];
+function AttemptDetail({ api, detail }: { api: ControlApi; detail: SubmissionDiagnosticDetail }) {
+  const [artifactContents, setArtifactContents] = useState<Record<string, string>>({});
+  const [artifactLoading, setArtifactLoading] = useState<Record<string, boolean>>({});
+  const [artifactErrors, setArtifactErrors] = useState<Record<string, string>>({});
+  const artifacts = detail.failure_artifacts ?? [];
+
+  async function loadArtifact(artifact: RememberFailureArtifactDescriptor) {
+    if (artifactContents[artifact.artifact_id] !== undefined || artifactLoading[artifact.artifact_id]) return;
+    setArtifactLoading((current) => ({ ...current, [artifact.artifact_id]: true }));
+    setArtifactErrors((current) => ({ ...current, [artifact.artifact_id]: "" }));
+    try {
+      const content = await api.getRememberFailureArtifact(detail.team_id, detail.submission_id, artifact.artifact_id);
+      setArtifactContents((current) => ({ ...current, [artifact.artifact_id]: content }));
+    } catch {
+      setArtifactErrors((current) => ({ ...current, [artifact.artifact_id]: "Payload expired or is unavailable." }));
+    } finally {
+      setArtifactLoading((current) => ({ ...current, [artifact.artifact_id]: false }));
+    }
+  }
+
   return (
-    <section className="overview-panel submission-detail" aria-label="Submission details">
-      <SectionHeading
-        title="Submission Detail"
-        actions={<span className={submissionStateClass(detail.processing_state)}>{stateLabel(detail.processing_state)}</span>}
-      />
+    <section className="overview-panel submission-detail" aria-label="Remember attempt details">
+      <SectionHeading title="Remember Attempt Detail" actions={<span className={submissionStateClass(detail.processing_state)}>{stateLabel(detail.processing_state)}</span>} />
       <div className="submission-facts">
-        <Fact label="Submission" value={detail.submission_id} code />
+        <Fact label="Attempt" value={detail.submission_id} code />
         <Fact label="Correlation" value={detail.correlation_id || "Not recorded"} code={Boolean(detail.correlation_id)} />
-        <Fact label="About" value={detail.source_summary || "Unlabelled submission"} />
-        <Fact label="Attempts" value={`${detail.attempts ?? 0} / ${detail.max_attempts ?? "—"}`} />
-        <Fact label="Search" value={stateLabel(detail.search_state)} />
-        <Fact label="Submitted" value={detail.submitted_at ? formatDate(detail.submitted_at) : "Not recorded"} />
-        <Fact label="Updated" value={detail.updated_at ? formatDate(detail.updated_at) : "Not recorded"} />
+        <Fact label="Handled" value={formatDate(detail.completed_at ?? detail.created_at)} />
+        <Fact label="Duration" value={detail.duration_ms + " ms"} />
+        <Fact label="Evidence / documents" value={detail.evidence_count + " / " + detail.document_count} />
+        <Fact label="Assessor turns" value={String(detail.assessor_turns)} />
+        {detail.failed_phase && <Fact label="Failed phase" value={detail.failed_phase} />}
       </div>
-
-      {detail.errors.map((statusError) => (
-        <article className="submission-guidance" key={`${statusError.code}:${statusError.message}`}>
-          <span className="submission-guidance-icon"><AlertTriangle size={18} aria-hidden="true" /></span>
-          <div>
-            <strong>{statusError.code}</strong>
-            <p>{statusError.message}</p>
-            <p className="submission-remediation">{statusError.remediation}</p>
-          </div>
-          <span className={statusError.retryable ? "status-pill warning" : "status-pill error"}>
-            {actionLabel(statusError.next_action)}
-          </span>
-        </article>
-      ))}
-
-      {detail.operator_diagnostic && operatorDiagnostics.length === 0 && (
-        <OperatorDiagnosticBlock diagnostic={detail.operator_diagnostic} />
-      )}
-
-      {operatorDiagnostics.length > 0 && (
-        <section className="submission-operator-diagnostics" aria-label="Operator diagnostics">
-          <h3>Remember diagnostics</h3>
-          <ol className="operator-diagnostic-list">
-            {operatorDiagnostics.map((diagnostic, index) => (
-              <li key={diagnostic.id ?? `${diagnostic.occurred_at ?? "diagnostic"}-${index}`}>
-                <OperatorDiagnosticBlock diagnostic={diagnostic} compact />
-              </li>
-            ))}
-          </ol>
-      </section>
-      )}
+      {detail.errors.map((item) => <article className="submission-guidance" key={item.code}><strong>{item.code}</strong><p>{item.message}</p><p className="submission-remediation">{item.remediation}</p></article>)}
       <div className="submission-detail-grid">
-        <section>
-          <h3>Evidence results</h3>
-          <div className="mini-table">
-            <div className="mini-table-row heading" style={{ "--mini-cols": 5 } as CSSProperties}>
-              <span>Index</span><span>Disposition</span><span>Search</span><span>Evidence ID</span><span>Reason / error</span>
-            </div>
-            {detail.evidence.map((evidence) => (
-              <div className="mini-table-row" style={{ "--mini-cols": 5 } as CSSProperties} key={`evidence-${evidence.evidence_index}`}>
-                <span>{evidence.evidence_index}</span>
-                <span>{evidence.disposition === "stored" ? "Stored" : "Not stored"}</span>
-                <span>{stateLabel(evidence.search_state)}</span>
-                <code>{evidence.evidence_id ? shortId(evidence.evidence_id) : "—"}</code>
-                <span className="submission-evidence-error">
-                  {evidence.error ? (
-                    <>
-                      <code>{evidence.error.code}</code>
-                      <small>{evidence.error.message}</small>
-                      <strong>{evidence.error.remediation}</strong>
-                    </>
-                  ) : evidence.reason || "—"}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-        <section>
-          <h3>Operational timeline</h3>
-          {timelineUnavailable ? (
-            <div className="table-placeholder compact">Operational timeline unavailable. Terminal Remember attempts remain authoritative.</div>
-          ) : timeline.length === 0 ? (
-            <div className="table-placeholder compact">No retained lifecycle events.</div>
-          ) : (
-            <ol className="submission-timeline">
-              {timeline.map((event) => (
-                <li key={event.id}>
-                  <span className="timeline-marker" aria-hidden="true"><Clock3 size={13} /></span>
-                  <div>
-                    <strong>{eventLabel(event.message)}</strong>
-                    <small>{formatDate(event.timestamp)}</small>
-                    <TimelineDetails event={event} />
-                  </div>
-                </li>
-              ))}
-            </ol>
+        <section><h3>Evidence results</h3><div className="mini-table">
+          {detail.evidence.map((item) => <div className="mini-table-row" key={item.evidence_index}><span>{item.evidence_index}</span><span>{item.disposition}</span><span>{item.reason || item.search_state}</span></div>)}
+        </div></section>
+        <section><h3>Chronological events</h3>
+          {detail.events.length === 0 ? <div className="table-placeholder compact">Event history unavailable for this attempt.</div> : (
+            <ol className="submission-timeline">{detail.events.map((event) => <li key={event.sequence_no}><span className="timeline-marker" aria-hidden="true"><Clock3 size={13} /></span><div><strong>{stateLabel(event.event_kind)}</strong><small>{formatDate(event.created_at)}</small><p>{event.phase}{event.outcome ? " · " + event.outcome : ""}</p></div></li>)}</ol>
           )}
         </section>
       </div>
+      {artifacts.length > 0 && <section className="submission-artifacts"><h3>Failure payloads</h3>
+        {artifacts.map((artifact) => <article key={artifact.artifact_id} className="submission-artifact">
+          <div className="submission-artifact-heading"><strong>{artifact.artifact_kind}</strong><small>{artifact.byte_count} bytes · expires {formatDate(artifact.expires_at)}</small></div>
+          {artifactContents[artifact.artifact_id] !== undefined ? <pre>{artifactContents[artifact.artifact_id]}</pre> : <button className="ghost-button" type="button" onClick={() => void loadArtifact(artifact)} disabled={artifactLoading[artifact.artifact_id]}>{artifactLoading[artifact.artifact_id] ? "Loading payload…" : "Load payload"}</button>}
+          {artifactErrors[artifact.artifact_id] && <p className="form-meta error-text">{artifactErrors[artifact.artifact_id]}</p>}
+        </article>)}
+      </section>}
     </section>
   );
-}
-
-function OperatorDiagnosticBlock({ diagnostic, compact = false }: { diagnostic: SubmissionOperatorDiagnostic; compact?: boolean }) {
-  const labels = [diagnostic.failure_stage, diagnostic.failure_class].filter(Boolean).join(" · ");
-  const measurement = diagnostic.failure_measurement;
-  return (
-    <article className={compact ? "operator-diagnostic compact" : "operator-diagnostic"}>
-      <div>
-        <strong>{diagnostic.failure_reason_code || "placement_failure"}</strong>
-        {labels && <small>{labels}</small>}
-        {diagnostic.message && <p>{diagnostic.message}</p>}
-        {diagnostic.validation_stage && <small>Validation: {diagnostic.validation_stage}</small>}
-        {diagnostic.validation_field_families && diagnostic.validation_field_families.length > 0 && (
-          <small>Fields: {diagnostic.validation_field_families.join(", ")}</small>
-        )}
-        {measurement && (
-          <small>
-            Measured {measurement.observed_at_least !== undefined
-              ? `at least ${measurement.observed_at_least}`
-              : measurement.observed ?? 0} {measurement.unit}; limit {measurement.limit}
-          </small>
-        )}
-      </div>
-      {diagnostic.occurred_at && (
-        <time dateTime={diagnostic.occurred_at}>{formatDate(diagnostic.occurred_at)}</time>
-      )}
-    </article>
-  );
-}
-
-function TimelineDetails({ event }: { event: OperationLog }) {
-  const attrs = event.attrs ?? {};
-  const values = [
-    transitionValue(attrs.from, attrs.to),
-    typeof attrs.stage === "string" ? `stage ${attrs.stage}` : "",
-    typeof attrs.reason_code === "string" ? attrs.reason_code : "",
-    typeof attrs.failure_stage === "string" ? `failure stage ${attrs.failure_stage}` : "",
-    typeof attrs.failure_reason_code === "string" ? attrs.failure_reason_code : "",
-    typeof attrs.failure_class === "string" ? `failure class ${attrs.failure_class}` : "",
-    typeof attrs.validation_stage === "string" ? `validation ${attrs.validation_stage}` : "",
-    typeof attrs.provider_status === "number" ? `provider status ${attrs.provider_status}` : "",
-    typeof attrs.assessor_turns === "number" ? `assessor turns ${attrs.assessor_turns}` : "",
-    typeof attrs.next_attempt_at === "string" ? `next ${formatDate(attrs.next_attempt_at)}` : "",
-  ].filter(Boolean);
-  return values.length > 0 ? <p>{values.join(" · ")}</p> : null;
 }
 
 function Fact({ label, value, code = false }: { label: string; value: string; code?: boolean }) {
   return <div><span>{label}</span>{code ? <code>{value}</code> : <strong>{value}</strong>}</div>;
 }
 
-function transitionValue(from: unknown, to: unknown): string {
-  return typeof from === "string" && typeof to === "string" ? `${stateLabel(from)} → ${stateLabel(to)}` : "";
-}
-
-function eventLabel(value: string): string {
-  return stateLabel(value.replace(/^submission_/, ""));
-}
-
 function stateLabel(value: string): string {
-  if (!value) {
-    return "Unknown";
-  }
-  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function actionLabel(value: string): string {
-  return value === "none" ? "No action" : stateLabel(value);
+  return value ? value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Unknown";
 }
 
 function submissionStateClass(state: string): string {
-  switch (state) {
-    case "completed":
-      return "status-pill success";
-    case "queued":
-    case "processing":
-      return "status-pill";
-    default:
-      return "status-pill error";
-  }
+  return state === "completed" || state === "replayed" ? "status-pill success" : state === "rejected" || state === "quarantined" || state === "failed" ? "status-pill error" : "status-pill";
 }

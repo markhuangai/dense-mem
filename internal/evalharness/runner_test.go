@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestRunValidateWritesArtifacts(t *testing.T) {
@@ -286,12 +285,6 @@ func TestRunRejectsInvalidOptionsAndSuite(t *testing.T) {
 		{name: "bad mode", opts: RunOptions{Mode: "smoke"}},
 		{name: "missing seed", opts: RunOptions{Mode: "validate", SuitePath: filepath.Join(dir, "suite.jsonl")}},
 		{name: "missing suite", opts: RunOptions{Mode: "validate", SeedManifestPath: filepath.Join(dir, "seed_manifest.json")}},
-		{name: "negative placement timeout", opts: RunOptions{
-			Mode:             "validate",
-			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
-			SuitePath:        filepath.Join(dir, "suite.jsonl"),
-			PlacementTimeout: -time.Second,
-		}},
 		{name: "import concurrency over provider cap", opts: RunOptions{
 			Mode:              "validate",
 			SeedManifestPath:  filepath.Join(dir, "seed_manifest.json"),

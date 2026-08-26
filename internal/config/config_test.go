@@ -42,10 +42,6 @@ func clearEnv() {
 		"AI_API_EMBEDDING_DIMENSIONS",
 		"AI_API_EMBEDDING_TIMEOUT_SECONDS",
 		"AI_API_EMBEDDING_MAX_CONCURRENCY",
-		"EMBEDDING_WORKER_COUNT",
-		"EMBEDDING_BATCH_SIZE",
-		"EMBEDDING_JOB_POLL_SECONDS",
-		"EMBEDDING_JOB_MAX_ATTEMPTS",
 		// Knowledge-pipeline knobs
 		"AI_VERIFIER_API_URL",
 		"AI_VERIFIER_API_KEY",
@@ -63,9 +59,6 @@ func clearEnv() {
 		"AI_VERIFIER_MAX_CANDIDATE_CONTEXT_BYTES",
 		"AI_ASSESSOR_MODEL",
 		"AI_ASSESSOR_MAX_INPUT_TOKENS",
-		"MEMORY_PLACEMENT_WORKER_COUNT",
-		"MEMORY_PLACEMENT_POLL_SECONDS",
-		"PROMOTE_TX_TIMEOUT_SECONDS",
 		"CONTROL_HTTP_ADDR",
 		"CONTROL_PORTAL_TOKEN",
 		"MCP_TRANSPORT",
@@ -82,6 +75,16 @@ func clearEnv() {
 		"CONFLICT_REVIEW_LEASE_SECONDS",
 		"CONFLICT_REVIEW_MAX_ATTEMPTS",
 		"CONFLICT_REVIEW_JITTER_SECONDS",
+		"MEMORY_PLACEMENT_WORKER_COUNT",
+		"MEMORY_PLACEMENT_POLL_SECONDS",
+		"MEMORY_PLACEMENT_MAX_ATTEMPTS",
+		"EMBEDDING_WORKER_COUNT",
+		"EMBEDDING_BATCH_SIZE",
+		"EMBEDDING_JOB_POLL_SECONDS",
+		"EMBEDDING_JOB_MAX_ATTEMPTS",
+		"EMBEDDING_JOB_LEASE_SECONDS",
+		"EMBEDDING_JOB_RETRY_MAX_SECONDS",
+		"EMBEDDING_PENDING_STALE_SECONDS",
 		"SSO_PUBLIC_BASE_URL",
 		"SSO_ENTITLEMENT_CACHE_TTL_SECONDS",
 		"SSO_SESSION_TTL_SECONDS",
@@ -149,30 +152,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.EmbeddingDimensions != 3072 {
 		t.Errorf("EmbeddingDimensions default = %d, want %d", cfg.EmbeddingDimensions, 3072)
 	}
-	if cfg.GetEmbeddingJobMaxAttempts() != DefaultEmbeddingJobMaxAttempts {
-		t.Errorf(
-			"EmbeddingJobMaxAttempts default = %d, want %d",
-			cfg.GetEmbeddingJobMaxAttempts(),
-			DefaultEmbeddingJobMaxAttempts,
-		)
-	}
 	if cfg.GetAIEmbeddingMaxConcurrency() != DefaultAIEmbeddingMaxConcurrency {
 		t.Errorf("AIEmbeddingMaxConcurrency default = %d, want %d", cfg.GetAIEmbeddingMaxConcurrency(), DefaultAIEmbeddingMaxConcurrency)
-	}
-	if cfg.GetEmbeddingWorkerCount() != DefaultEmbeddingWorkerCount {
-		t.Errorf("EmbeddingWorkerCount default = %d, want %d", cfg.GetEmbeddingWorkerCount(), DefaultEmbeddingWorkerCount)
-	}
-	if cfg.GetEmbeddingBatchSize() != DefaultEmbeddingBatchSize {
-		t.Errorf("EmbeddingBatchSize default = %d, want %d", cfg.GetEmbeddingBatchSize(), DefaultEmbeddingBatchSize)
-	}
-	if cfg.GetEmbeddingJobPollSeconds() != DefaultEmbeddingJobPollSeconds {
-		t.Errorf("EmbeddingJobPollSeconds default = %d, want %d", cfg.GetEmbeddingJobPollSeconds(), DefaultEmbeddingJobPollSeconds)
-	}
-	if cfg.GetMemoryPlacementWorkerCount() != DefaultMemoryPlacementWorkerCount {
-		t.Errorf("MemoryPlacementWorkerCount default = %d, want %d", cfg.GetMemoryPlacementWorkerCount(), DefaultMemoryPlacementWorkerCount)
-	}
-	if cfg.GetMemoryPlacementPollSeconds() != DefaultMemoryPlacementPollSeconds {
-		t.Errorf("MemoryPlacementPollSeconds default = %d, want %d", cfg.GetMemoryPlacementPollSeconds(), DefaultMemoryPlacementPollSeconds)
 	}
 	budget := AIVerifierAssessmentBudgetFor(&cfg)
 	if budget.MaxInputTokens != DefaultAIVerifierMaxInputTokens ||
@@ -233,20 +214,6 @@ func TestLoadRejectsRemovedMCPTransportsAndAcceptsSDKNoop(t *testing.T) {
 	t.Setenv("MCP_TRANSPORT", "unsupported")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MCP_TRANSPORT") {
 		t.Fatalf("Load() error = %v, want MCP_TRANSPORT validation", err)
-	}
-}
-
-func TestLoadEmbeddingJobMaxAttempts(t *testing.T) {
-	clearEnv()
-	setRequiredEnv()
-	os.Setenv("EMBEDDING_JOB_MAX_ATTEMPTS", "37")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() returned unexpected error: %v", err)
-	}
-	if got := cfg.GetEmbeddingJobMaxAttempts(); got != 37 {
-		t.Fatalf("GetEmbeddingJobMaxAttempts() = %d, want 37", got)
 	}
 }
 
@@ -535,7 +502,6 @@ func TestConfigProviderInterface(t *testing.T) {
 	_ = provider.GetAIVerifierModel()
 	_ = provider.GetAIVerifierTimeoutSeconds()
 	_ = provider.GetAIVerifierMaxConcurrency()
-	_ = provider.GetPromoteTxTimeoutSeconds()
 	_ = provider.GetControlHTTPAddr()
 	_ = provider.GetControlPortalToken()
 }
@@ -853,9 +819,6 @@ func TestLoadKnowledgeConfigDefaults(t *testing.T) {
 	}
 	if got := cfg.GetAIVerifierMaxConcurrency(); got != 5 {
 		t.Errorf("GetAIVerifierMaxConcurrency() = %d, want %d", got, 5)
-	}
-	if got := cfg.GetPromoteTxTimeoutSeconds(); got != 10 {
-		t.Errorf("GetPromoteTxTimeoutSeconds() = %d, want %d", got, 10)
 	}
 }
 

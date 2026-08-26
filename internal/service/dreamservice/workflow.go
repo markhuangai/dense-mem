@@ -586,6 +586,12 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
+		// A terminal Remember rejection or quarantine is visible to the caller,
+		// but it does not prove the Hypothesis and must not mark it submitted.
+		if remember == nil || remember.ProcessingState != "completed" {
+			s.recordDreamFeedback(ctx, decision, dream, "memory_not_completed")
+			return &ResolveFeedbackResult{Dream: dream, Memory: remember}, nil
+		}
 		updated, err := s.deps.Store.SubmitHypothesis(ctx, repository.SubmitHypothesisInput{
 			TeamID:            teamID,
 			ActorProfileID:    actorProfileID,

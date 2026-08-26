@@ -39,15 +39,15 @@ const catalog = postgresRow(`
       WHERE version_id = 2026081602 AND is_applied
     ), '|',
     (
-      SELECT count(*) = 36
+      SELECT count(*) = 32
       FROM pg_constraint AS constraint_state
       WHERE constraint_state.contype = 'f'
         AND constraint_state.conrelid::regclass::text = ANY(ARRAY[
-          'dream_cycle_runs', 'embedding_jobs', 'entity_correction_events', 'entity_correction_plans',
+          'dream_cycle_runs', 'entity_correction_events', 'entity_correction_plans',
           'entity_names', 'entity_resolution_events', 'evidence_fragments', 'evidence_lifecycle_operations',
           'evidence_quarantines', 'evidence_security_events', 'evidence_security_signals',
           'evidence_source_revisions', 'evidence_sources', 'hypotheses', 'hypothesis_feedback_events',
-          'knowledge_ingests', 'placement_items', 'placement_outcomes', 'placement_runs',
+          'knowledge_ingests',
           'relationship_conflict_derived_evidence_tasks', 'relationship_conflict_events',
           'relationship_conflict_evidence_derivations', 'relationship_correction_submissions',
           'relationship_cross_references', 'relationship_evidence_supports', 'relationship_observations',
@@ -133,14 +133,8 @@ const otherTeam = await createTeam(`${runID}-other-team`);
 const crossTeam = await createCredential(otherTeam.id, `${runID}-cross-team`);
 
 const receipt = await mcpSuccess(apiKey, "remember", rememberInput());
-const submissionID = requiredString(receipt.submission_id, "submission_id");
+requiredString(receipt.submission_id, "submission_id");
 if (receipt.processing_state !== "completed" || !["current", "not_required"].includes(receipt.search_state)) throw new Error("owner did not receive a terminal Remember result");
-for (const [label, key] of [["same-team other owner", sameTeam.apiKey], ["cross-team owner", crossTeam.apiKey]]) {
-  const isolated = await mcpRaw(key, "get_submission_status", { submission_id: submissionID });
-  if (isolated.error?.code !== -32601 || isolated.result !== undefined) {
-    throw new Error(`${label} could call the removed submission status tool`);
-  }
-}
 
 const rotated = await controlJSON(`/control/api/teams/${teamID}/credentials/${sameTeam.id}/rotate`, {
   method: "POST",

@@ -143,8 +143,9 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		api.GET("/logs", control.listOperationLogs)
 	}
 	if telemetry.Submissions != nil {
-		api.GET("/submissions", control.listSubmissionDiagnostics)
-		api.GET("/teams/:teamId/submissions/:submissionId", control.getSubmissionDiagnostic)
+		api.GET("/remember-attempts", control.listSubmissionDiagnostics)
+		api.GET("/teams/:teamId/remember-attempts/:submissionId", control.getSubmissionDiagnostic)
+		api.GET("/teams/:teamId/remember-attempts/:submissionId/artifacts/:artifactId", control.getRememberFailureArtifact)
 	}
 	if telemetry.RecallFeedback != nil {
 		api.GET("/recall-feedback-events", control.listRecallFeedbackEvents)

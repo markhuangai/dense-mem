@@ -42,7 +42,6 @@ func main() {
 	flag.StringVar(&opts.APIKey, "api-key", env("DENSE_MEM_API_KEY", ""), "read/write API key")
 	flag.BoolVar(&opts.ImportSeed, "import-seed", false, "import corpus through remember before running cases")
 	flag.IntVar(&opts.ImportConcurrency, "import-concurrency", importConcurrencyDefault(), fmt.Sprintf("maximum concurrent seed import requests (1-%d)", evalharness.MaxImportConcurrency))
-	flag.DurationVar(&opts.PlacementTimeout, "placement-timeout", envDuration("DENSE_MEM_EVAL_PLACEMENT_TIMEOUT", 2*time.Minute), "maximum time to wait for each memory placement")
 	flag.StringVar(&opts.ResumeSourceDocIDsPath, "resume-source-doc-ids", env("DENSE_MEM_EVAL_RESUME_SOURCE_DOC_IDS", ""), "newline-delimited source document IDs with completed placements")
 	flag.StringVar(&opts.TracesPath, "traces", "", "offline recall_traces.jsonl path to score instead of running live")
 	flag.StringVar(&opts.MappingPath, "mapping", "", "offline knowledge_mapping.json path to use with --traces")
@@ -300,18 +299,6 @@ func envInt(key string, fallback int) int {
 
 func importConcurrencyDefault() int {
 	return envInt("DENSE_MEM_EVAL_IMPORT_CONCURRENCY", evalharness.DefaultImportConcurrency)
-}
-
-func envDuration(key string, fallback time.Duration) time.Duration {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	parsed, err := time.ParseDuration(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
 }
 
 func exitf(format string, args ...any) {

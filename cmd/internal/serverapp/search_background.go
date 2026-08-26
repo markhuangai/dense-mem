@@ -3,15 +3,11 @@ package serverapp
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
 	"time"
 
-	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
 )
 
 var errSearchConvergenceQueryFailed = errors.New("search convergence query failed")
@@ -36,20 +32,40 @@ func searchConvergenceHealthCheck(search searchConvergenceHealthReader, logger o
 	}
 }
 
-func newEmbeddingReconciliationService(
-	search *repository.SearchRepositoryImpl,
-	provider embedding.EmbeddingProviderInterface,
-	appConfig service.AppConfigService,
-	logger observability.LogProvider,
-	metrics observability.DiscoverabilityMetrics,
-	providerTimeout time.Duration,
-	distributedCoordinationRequired bool,
-) embeddingservice.EmbeddingReconciliationService {
-	hostname, _ := os.Hostname()
-	return embeddingservice.NewEmbeddingReconciliationService(embeddingservice.EmbeddingReconciliationDependencies{
-		Search: search, Reconciliation: search, Provider: provider, AppConfig: appConfig,
-		Logger: logger, Metrics: metrics, WorkerID: fmt.Sprintf("embedding-reconciliation-%s-%d", hostname, os.Getpid()),
-		ProviderTimeout:                 providerTimeout,
-		DistributedCoordinationRequired: distributedCoordinationRequired,
-	})
+type searchReconciliationRunner interface {
+	Run(context.Context) (service.SearchReconciliationResult, error)
+}
+
+const searchReconciliationInterval = time.Hour
+
+// startSearchReconciliation performs bounded document repair on a maintenance
+// interval. It never creates a queue or changes the request-scoped Remember
+// path; each pass is one provider batch followed by one fenced SQL transaction.
+func startSearchReconciliation(ctx context.Context, runner searchReconciliationRunner, logger observability.LogProvider) {
+	if runner == nil {
+		return
+	}
+	run := func() {
+		result, err := runner.Run(ctx)
+		if err != nil {
+			if logger != nil {
+				logger.Warn("search_reconciliation_failed", observability.String("error_code", result.ErrorCode))
+			}
+			return
+		}
+		if result.Skipped && logger != nil {
+			logger.Debug("search_reconciliation_skipped")
+		}
+	}
+	run()
+	ticker := time.NewTicker(searchReconciliationInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
 }

@@ -359,11 +359,9 @@ func telemetryWindowedCardSpecsForAudience(scope TelemetryScope, baseLabels map[
 		{ID: "avg_embedding_latency", Label: "Avg embedding latency", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_embedding_duration_seconds", scope, baseLabels, nil, window, 1000)},
 		{ID: "avg_verifier_latency", Label: "Avg verifier latency", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_verifier_duration_seconds", scope, baseLabels, nil, window, 1000)},
 		{ID: "avg_conflict_review_duration", Label: "Avg conflict review", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_conflict_review_duration_seconds", scope, baseLabels, nil, window, 1000)},
-		{ID: "remember_acknowledgements", Label: "Remember acknowledgements", Unit: "requests", Query: telemetrySparseCounterIncrease("densemem_remember_acknowledgements_total", scope, baseLabels, nil, window)},
-		{ID: "avg_remember_acknowledgement_latency", Label: "Avg remember acknowledgement", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_remember_acknowledgement_duration_seconds", scope, baseLabels, nil, window, 1000)},
-		{ID: "p95_remember_acknowledgement_latency", Label: "P95 remember acknowledgement", Unit: "ms", Query: telemetryHistogramQuantile("densemem_remember_acknowledgement_duration_seconds", scope, baseLabels, nil, window, 0.95, 1000)},
-		{ID: "remember_first_dispositions", Label: "First remember dispositions", Unit: "requests", Query: telemetrySparseCounterIncrease("densemem_remember_first_disposition_total", scope, baseLabels, nil, window)},
-		{ID: "p95_remember_first_disposition_latency", Label: "P95 first disposition", Unit: "ms", Query: telemetryHistogramQuantile("densemem_remember_first_disposition_duration_seconds", scope, baseLabels, nil, window, 0.95, 1000)},
+		{ID: "remember_requests", Label: "Remember calls", Unit: "requests", Query: telemetrySparseCounterIncrease("densemem_remember_acknowledgements_total", scope, baseLabels, nil, window)},
+		{ID: "avg_remember_duration", Label: "Avg Remember duration", Unit: "ms", Query: telemetrySparseHistogramAverage("densemem_remember_acknowledgement_duration_seconds", scope, baseLabels, nil, window, 1000)},
+		{ID: "p95_remember_duration", Label: "P95 Remember duration", Unit: "ms", Query: telemetryHistogramQuantile("densemem_remember_acknowledgement_duration_seconds", scope, baseLabels, nil, window, 0.95, 1000)},
 		{ID: telemetryRecallFeedbackActivityID, Query: telemetrySparseCounterIncrease("densemem_recall_feedback_total", scope, baseLabels, nil, window), Internal: true},
 	}
 	specs = append(specs, telemetryLifecycleWindowedCardSpecs()...)

@@ -11,3 +11,4 @@ tests/eval/seeds/**
 tests/eval/suites/**
 tests/eval/seeds/local_train_100k_v1/**
 tests/eval/snapshots/**
+migrations/postgres/v2_6/20260825010001_remember_synchronous_attempts.sql

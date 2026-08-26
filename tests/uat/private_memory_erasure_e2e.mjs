@@ -704,12 +704,11 @@ function seedSingleIngest(teamID, ownerID, spaceID, sentinel) {
 
 function seedSpaceContent({ teamID, ownerID, keyID, spaceID, label, rich = false }) {
   const ids = {
-    ingestID: randomUUID(), fragmentID: randomUUID(), securityEventID: randomUUID(), placementRunID: randomUUID(),
-    placementItemID: randomUUID(), placementOutcomeID: randomUUID(), subjectID: randomUUID(), objectID: randomUUID(),
+    ingestID: randomUUID(), fragmentID: randomUUID(), securityEventID: randomUUID(), subjectID: randomUUID(), objectID: randomUUID(),
     relationshipID: randomUUID(), observationID: randomUUID(), verificationID: randomUUID(), supportID: randomUUID(),
     conflictID: randomUUID(), positionID: randomUUID(), dreamRunID: randomUUID(), hypothesisID: randomUUID(),
     communityRunID: randomUUID(), communityID: randomUUID(), logicalCommunityID: randomUUID(), searchDocumentID: randomUUID(),
-    evidenceSearchDocumentID: randomUUID(), embeddingJobID: randomUUID(), recallID: `${runID}-${label}-${randomUUID()}`,
+    evidenceSearchDocumentID: randomUUID(), recallID: `${runID}-${label}-${randomUUID()}`,
   };
   const sentinel = `${runID}-${label}-private-content`;
   if (label !== "team-shared") privateSentinels.add(sentinel);
@@ -757,21 +756,6 @@ function richSpaceStatements(ids) {
        team_id, security_event_id, signal_index, owner_profile_id, kind, severity, span_start, span_end, quote, metadata, space_id
      ) VALUES (${q.teamID}::uuid, ${q.securityEventID}::uuid, 0, ${q.ownerID}::uuid,
        'instruction_override', 'low', 0, char_length(${q.sentinel}), ${q.sentinel}, '{}'::jsonb, ${q.spaceID}::uuid)`,
-    `INSERT INTO placement_runs (
-       team_id, placement_run_id, ingest_id, owner_profile_id, status, attempts, max_attempts,
-       lease_until, worker_id, completed_at, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.placementRunID}::uuid, ${q.ingestID}::uuid, ${q.ownerID}::uuid,
-       'completed', 1, 5, NULL, '', now(), ${q.spaceID}::uuid)`,
-    `INSERT INTO placement_items (
-       team_id, placement_item_id, placement_run_id, ingest_id, owner_profile_id, fragment_id,
-       evidence_index, status, category, result, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.placementItemID}::uuid, ${q.placementRunID}::uuid, ${q.ingestID}::uuid,
-       ${q.ownerID}::uuid, ${q.fragmentID}::uuid, 0, 'completed', 'fact',
-       jsonb_build_object('content', ${q.sentinel}), ${q.spaceID}::uuid)`,
-    `INSERT INTO placement_outcomes (
-       team_id, outcome_id, placement_run_id, placement_item_id, owner_profile_id, outcome_kind, status, payload, space_id
-     ) VALUES (${q.teamID}::uuid, ${q.placementOutcomeID}::uuid, ${q.placementRunID}::uuid, ${q.placementItemID}::uuid,
-       ${q.ownerID}::uuid, 'fixture', 'completed', jsonb_build_object('content', ${q.sentinel}), ${q.spaceID}::uuid)`,
     `INSERT INTO team_predicate_definitions (
        team_id, predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,
        relationship_kind, current_cardinality, lifecycle_state, origin, metadata, created_at
@@ -879,14 +863,6 @@ function richSpaceStatements(ids) {
        ${q.fragmentID}::uuid, 1, 1, embedding_contract_id, dimensions, 'current', ${q.sentinel},
        ${sqlLiteral(`sha256:${ids.evidenceSearchDocumentID}`)}, jsonb_build_object('content', ${q.sentinel}), ${q.spaceID}::uuid
        FROM embedding_contracts ORDER BY created_at DESC LIMIT 1`,
-    `INSERT INTO embedding_jobs (
-       team_id, embedding_job_id, search_document_id, owner_profile_id, source_kind, source_id,
-       source_version, document_version, embedding_contract_id, embedding_dimensions, status,
-       attempts, total_attempts, max_attempts, lease_until, worker_id, error, space_id
-     ) SELECT ${q.teamID}::uuid, ${q.embeddingJobID}::uuid, ${q.searchDocumentID}::uuid, ${q.ownerID}::uuid,
-       'relationship', ${q.relationshipID}::uuid, 1, 1, embedding_contract_id, embedding_dimensions,
-       'processing', 1, 1, 5, now() + interval '1 hour', 'private-erasure-fixture', ${q.sentinel}, ${q.spaceID}::uuid
-       FROM search_documents WHERE team_id = ${q.teamID}::uuid AND search_document_id = ${q.searchDocumentID}::uuid`,
     `INSERT INTO recall_feedback_events (
        recall_id, team_id, profile_id, key_id, auth_method, query, tool_args,
        result_refs, result_count, snapshot_state, space_id

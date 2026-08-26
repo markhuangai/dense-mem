@@ -15,7 +15,31 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
+
+func loadCorrectionResultForTest(
+	t *testing.T,
+	ctx context.Context,
+	rls *storagepostgres.RLS,
+	db *gorm.DB,
+	teamID, ownerProfileID, submissionID string,
+) (*CorrectRelationshipResult, error) {
+	t.Helper()
+	var result *CorrectRelationshipResult
+	err := rls.WithTeamProfileTx(ctx, db, teamID, ownerProfileID, func(tx *gorm.DB) error {
+		row, err := loadRelationshipCorrectionSubmission(ctx, tx, teamID, ownerProfileID, submissionID, false)
+		if err != nil {
+			return err
+		}
+		result = relationshipCorrectionResultFromRow(row)
+		return nil
+	})
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrRelationshipCorrectionNotFound
+	}
+	return result, err
+}
 
 func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
@@ -96,13 +120,6 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	require.Equal(t, result.SubmissionID, replayed.SubmissionID)
 	require.Equal(t, result.Correction.SuccessorRelationshipID, replayed.Correction.SuccessorRelationshipID)
 
-	status, err := semantic.GetRelationshipCorrection(ctx, GetRelationshipCorrectionInput{
-		TeamID: teamA, OwnerProfileID: ownerA, SubmissionID: result.SubmissionID,
-	})
-	require.NoError(t, err)
-	require.Equal(t, "completed", status.ProcessingState)
-	require.Equal(t, "pending", status.SearchState)
-
 	err = rls.WithTeamProfileTx(ctx, appDB, teamA, ownerA, func(tx *gorm.DB) error {
 		var originalStatus, successorStatus string
 		var originalSupportCount, successorSupportCount int
@@ -130,7 +147,7 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 		`, teamA, result.Correction.SuccessorRelationshipID).Row().Scan(&searchState); err != nil {
 			return err
 		}
-		assert.Equal(t, searchState, status.SearchState)
+		assert.Equal(t, searchState, result.SearchState)
 
 		var crossReferences, correctionEvents int64
 		if err := tx.Raw(`
@@ -178,9 +195,7 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	assert.NotContains(t, semanticGraphEdgeIDs(sharedGraph.Edges), original.RelationshipID)
 	assertGraphHasNode(t, sharedGraph.Nodes, "entity", wrongObject.EntityID, "Wrong Project")
 
-	_, err = semantic.GetRelationshipCorrection(ctx, GetRelationshipCorrectionInput{
-		TeamID: teamA, OwnerProfileID: ownerB, SubmissionID: result.SubmissionID,
-	})
+	_, err = loadCorrectionResultForTest(t, ctx, rls, appDB, teamA, ownerB, result.SubmissionID)
 	require.ErrorIs(t, err, ErrRelationshipCorrectionNotFound)
 }
 
@@ -212,9 +227,17 @@ func TestRelationshipCorrectionEmbedsOutsideTransactionAndFencesSuccessor(t *tes
 	}
 	plan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, input)
 	require.NoError(t, err)
-	require.Len(t, plan.Documents, 1)
+	require.Len(t, plan.Documents, 2)
+	require.NotEmpty(t, plan.EmbeddingContractID)
+	require.NotEmpty(t, plan.SearchIndexGenerationID)
 	result, err := semantic.CorrectRelationshipWithEmbeddings(ctx, input, []InlineEmbeddingResult{{
 		DocumentHash: plan.Documents[0].DocumentHash, Embedding: []float32{1, 0, 0},
+		EmbeddingContractID: plan.EmbeddingContractID, EmbeddingDimensions: plan.EmbeddingDimensions,
+		EmbeddingModel: plan.EmbeddingModel, SearchIndexGenerationID: plan.SearchIndexGenerationID, IndexGeneration: plan.IndexGeneration,
+	}, {
+		DocumentHash: plan.Documents[1].DocumentHash, Embedding: []float32{0, 1, 0},
+		EmbeddingContractID: plan.EmbeddingContractID, EmbeddingDimensions: plan.EmbeddingDimensions,
+		EmbeddingModel: plan.EmbeddingModel, SearchIndexGenerationID: plan.SearchIndexGenerationID, IndexGeneration: plan.IndexGeneration,
 	}})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -230,6 +253,64 @@ func TestRelationshipCorrectionEmbedsOutsideTransactionAndFencesSuccessor(t *tes
 		`, teamID, result.Correction.SuccessorRelationshipID).Row().Scan(&searchState)
 	}))
 	assert.Equal(t, string(domain.SearchProjectionCurrent), searchState)
+}
+
+func TestRelationshipCorrectionRejectsSearchContractRotationAfterPlanning(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	oldContractID := insertSearchTestContract(t, adminDB, rls, "relationship-correction-rotation-old", 3, "exact", "")
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "relationship-correction-rotation-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "relationship-correction-rotation-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Mark Huang")
+	oldObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Old Project")
+	newObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "New Project")
+	ingest := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "relationship-correction-rotation-source", "Mark Huang works on New Project.")
+	original := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: oldObject.EntityID,
+		Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: "correction-rotation", SpanStart: 0, SpanEnd: len(ingest.Evidence[0].Content), Authority: "primary"},
+	}).Relationship
+	require.NotNil(t, original)
+	input := CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "submit", RelationshipID: original.RelationshipID,
+		ExpectedVersion: original.Version, Patch: RelationshipCorrectionPatch{ObjectEntity: &RelationshipCorrectionEntityPatch{EntityID: newObject.EntityID}},
+		Supports: []RelationshipCorrectionSupport{{EvidenceID: ingest.Evidence[0].FragmentID, Start: 0, End: len(ingest.Evidence[0].Content)}},
+		Reason:   "rotate the search contract after planning", IdempotencyKey: "relationship-correction-rotation-key",
+	}
+	plan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, input)
+	require.NoError(t, err)
+	require.Len(t, plan.Documents, 2)
+
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`UPDATE search_index_generations SET activation_state = 'retired' WHERE embedding_contract_id = ?::uuid AND activation_state = 'active'`, oldContractID).Error; err != nil {
+			return err
+		}
+		return nil
+	}))
+	insertSearchTestContract(t, adminDB, rls, "relationship-correction-rotation-new", 3, "exact", "")
+	embeddings := make([]InlineEmbeddingResult, 0, len(plan.Documents))
+	for index, document := range plan.Documents {
+		vector := []float32{1, 0, 0}
+		if index == 1 {
+			vector = []float32{0, 1, 0}
+		}
+		embeddings = append(embeddings, InlineEmbeddingResult{
+			DocumentHash: document.DocumentHash, Embedding: vector,
+			EmbeddingContractID: plan.EmbeddingContractID, EmbeddingDimensions: plan.EmbeddingDimensions,
+			EmbeddingModel: plan.EmbeddingModel, SearchIndexGenerationID: plan.SearchIndexGenerationID, IndexGeneration: plan.IndexGeneration,
+		})
+	}
+	_, err = semantic.CorrectRelationshipWithEmbeddings(ctx, input, embeddings)
+	require.ErrorIs(t, err, ErrSearchContractMismatch)
+
+	var status string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT status FROM relationship_records WHERE team_id = ?::uuid AND relationship_id = ?::uuid`, teamID, original.RelationshipID).Row().Scan(&status)
+	}))
+	require.Equal(t, string(domain.RelationshipStatusActive), status)
 }
 
 func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.T) {
@@ -346,9 +427,7 @@ func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.
 		Selection: RelationshipCorrectionSelection{ObjectEntityID: firstAtlas.EntityID}, IdempotencyKey: "expired-confirm",
 	})
 	require.ErrorIs(t, err, ErrRelationshipCorrectionConfirmationExpired)
-	expiredStatus, err := semantic.GetRelationshipCorrection(ctx, GetRelationshipCorrectionInput{
-		TeamID: teamID, OwnerProfileID: ownerID, SubmissionID: expired.SubmissionID,
-	})
+	expiredStatus, err := loadCorrectionResultForTest(t, ctx, rls, appDB, teamID, ownerID, expired.SubmissionID)
 	require.NoError(t, err)
 	require.Equal(t, "rejected", expiredStatus.ProcessingState)
 	require.Equal(t, "confirmation_expired", expiredStatus.ErrorCode)
@@ -508,9 +587,7 @@ func TestPrivateMemoryCorrectionStatusHidesSealedGeneration(t *testing.T) {
 	require.NotNil(t, submitted.Confirmation)
 	require.Len(t, submitted.Confirmation.Candidates, 2)
 
-	status, err := semantic.GetRelationshipCorrection(semanticCtx, GetRelationshipCorrectionInput{
-		TeamID: teamID.String(), OwnerProfileID: target.ID.String(), SubmissionID: submitted.SubmissionID,
-	})
+	status, err := loadCorrectionResultForTest(t, semanticCtx, rls, appDB, teamID.String(), target.ID.String(), submitted.SubmissionID)
 	require.NoError(t, err)
 	require.Equal(t, submitted.Confirmation.Token, status.Confirmation.Token)
 
@@ -540,9 +617,7 @@ func TestPrivateMemoryCorrectionStatusHidesSealedGeneration(t *testing.T) {
 		return nil
 	}))
 
-	_, err = semantic.GetRelationshipCorrection(semanticCtx, GetRelationshipCorrectionInput{
-		TeamID: teamID.String(), OwnerProfileID: target.ID.String(), SubmissionID: submitted.SubmissionID,
-	})
+	_, err = loadCorrectionResultForTest(t, semanticCtx, rls, appDB, teamID.String(), target.ID.String(), submitted.SubmissionID)
 	require.ErrorIs(t, err, ErrRelationshipCorrectionNotFound)
 }
 

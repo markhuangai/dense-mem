@@ -75,12 +75,10 @@ func TestAppConfigServiceGeneralSettingsDefaultsAndUpdate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, now.Format(time.RFC3339Nano), settings.UpdateTime)
 	assert.Equal(t, "Local", generalConfigItemForTest(settings, domain.AppConfigTimezone).EffectiveValue)
-	assert.Equal(t, DefaultEmbeddingReconciliationStartTimeLocal, generalConfigItemForTest(settings, domain.AppConfigEmbeddingReconciliationStartTimeLocal).EffectiveValue)
 
 	runtime, err := svc.GeneralRuntimeConfig(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "Local", runtime.Timezone)
-	assert.Equal(t, DefaultEmbeddingReconciliationStartTimeLocal, runtime.EmbeddingReconciliationStartTimeLocal)
 
 	dreaming, err := svc.DreamingRuntimeConfig(ctx)
 	require.NoError(t, err)
@@ -92,16 +90,13 @@ func TestAppConfigServiceGeneralSettingsDefaultsAndUpdate(t *testing.T) {
 
 	now = now.Add(time.Minute)
 	updated, err := svc.UpdateGeneralSettings(ctx, map[string]string{
-		domain.AppConfigTimezone:                              "America/New_York",
-		domain.AppConfigEmbeddingReconciliationStartTimeLocal: "23:59",
+		domain.AppConfigTimezone: "America/New_York",
 	}, "control", "127.0.0.1", "corr")
 	require.NoError(t, err)
 	assert.Equal(t, "America/New_York", generalConfigItemForTest(updated, domain.AppConfigTimezone).EffectiveValue)
-	assert.Equal(t, "23:59", generalConfigItemForTest(updated, domain.AppConfigEmbeddingReconciliationStartTimeLocal).EffectiveValue)
 
 	runtime, err = svc.GeneralRuntimeConfig(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, "23:59", runtime.EmbeddingReconciliationStartTimeLocal)
 
 	dreaming, err = svc.DreamingRuntimeConfig(ctx)
 	require.NoError(t, err)
@@ -110,25 +105,6 @@ func TestAppConfigServiceGeneralSettingsDefaultsAndUpdate(t *testing.T) {
 	community, err = svc.CommunityDetectionRuntimeConfig(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, "America/New_York", community.Timezone)
-}
-
-func TestAppConfigServiceReadsLegacySingleDigitSchedule(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 6, 16, 9, 0, 0, 0, time.UTC)
-	repo := newAppConfigRepoStub(now, map[string]string{
-		domain.AppConfigUpdateTimeKey:                         now.Format(time.RFC3339Nano),
-		domain.AppConfigTimezone:                              "UTC",
-		domain.AppConfigEmbeddingReconciliationStartTimeLocal: "4:30",
-	})
-	svc := NewAppConfigService(repo, nil)
-
-	settings, err := svc.GetGeneralSettings(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "04:30", generalConfigItemForTest(settings, domain.AppConfigEmbeddingReconciliationStartTimeLocal).EffectiveValue)
-
-	runtime, err := svc.GeneralRuntimeConfig(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "04:30", runtime.EmbeddingReconciliationStartTimeLocal)
 }
 
 func TestAppConfigServiceDreamingSettingsDefaultsAndUpdate(t *testing.T) {
@@ -568,12 +544,6 @@ func TestAppConfigServiceValidation(t *testing.T) {
 	_, err = svc.UpdateGeneralSettings(ctx, map[string]string{domain.AppConfigTimezone: "Nope/Zone"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 	require.ErrorContains(t, err, "APP_TIMEZONE must be a valid IANA timezone or Local")
-
-	updated, err := svc.UpdateGeneralSettings(ctx, map[string]string{domain.AppConfigEmbeddingReconciliationStartTimeLocal: "4:30"}, "control", "", "")
-	require.NoError(t, err)
-	assert.Equal(t, "04:30", generalConfigItemForTest(updated, domain.AppConfigEmbeddingReconciliationStartTimeLocal).EffectiveValue)
-	_, err = svc.UpdateGeneralSettings(ctx, map[string]string{domain.AppConfigEmbeddingReconciliationStartTimeLocal: "25:99"}, "control", "", "")
-	require.ErrorIs(t, err, ErrInvalidAppConfig)
 
 	_, err = svc.UpdateSSOSettings(ctx, map[string]string{domain.AppConfigUpdateTimeKey: "canonical"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)

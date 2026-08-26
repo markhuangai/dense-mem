@@ -354,6 +354,7 @@ func (r *SearchRepositoryImpl) CompleteSearchDocumentsWithEmbeddings(
 				  AND projection_format_version = ?
 				  AND projection_generation_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
 				  AND document_version = ?
+				  AND document_hash = ?
 				  AND embedding_contract_id = ?::uuid
 				  AND embedding_dimensions = ?
 				  AND space_id = COALESCE(NULLIF(?, '')::uuid, space_id)
@@ -361,7 +362,7 @@ func (r *SearchRepositoryImpl) CompleteSearchDocumentsWithEmbeddings(
 				  AND search_state IN ('pending', 'failed')
 			`, vector, input.TeamID, document.SearchDocumentID, input.OwnerProfileID,
 				document.SourceVersion, document.ProjectionFormat, document.ProjectionGenerationID,
-				document.DocumentVersion, document.EmbeddingContractID, document.EmbeddingDimensions,
+				document.DocumentVersion, document.DocumentHash, document.EmbeddingContractID, document.EmbeddingDimensions,
 				document.SpaceID, document.SpaceGeneration)
 			if result.Error != nil {
 				return result.Error
@@ -441,6 +442,7 @@ func completeSearchDocumentsWithEmbeddingsInTx(
 			  AND projection_format_version = ?
 			  AND projection_generation_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
 			  AND document_version = ?
+			  AND document_hash = ?
 			  AND embedding_contract_id = ?::uuid
 			  AND embedding_dimensions = ?
 			  AND space_id = COALESCE(NULLIF(?, '')::uuid, space_id)
@@ -448,7 +450,7 @@ func completeSearchDocumentsWithEmbeddingsInTx(
 			  AND search_state IN ('pending', 'failed')
 		`, vector, input.TeamID, document.SearchDocumentID, input.OwnerProfileID,
 			document.SourceVersion, document.ProjectionFormat, document.ProjectionGenerationID,
-			document.DocumentVersion, document.EmbeddingContractID, document.EmbeddingDimensions,
+			document.DocumentVersion, document.DocumentHash, document.EmbeddingContractID, document.EmbeddingDimensions,
 			document.SpaceID, document.SpaceGeneration)
 		if result.Error != nil {
 			return result.Error

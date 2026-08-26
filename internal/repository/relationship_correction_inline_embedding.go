@@ -18,7 +18,12 @@ import (
 // return an empty plan; the caller can then execute the deterministic result
 // without a provider call.
 type RelationshipCorrectionEmbeddingPlan struct {
-	Documents []SearchDocumentForEmbedding
+	Documents               []SearchDocumentForEmbedding
+	EmbeddingContractID     string
+	EmbeddingDimensions     int
+	EmbeddingModel          string
+	SearchIndexGenerationID string
+	IndexGeneration         int
 }
 
 // PlanRelationshipCorrectionEmbeddings renders the successor Relationship
@@ -144,6 +149,11 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 		if err != nil {
 			return err
 		}
+		plan.EmbeddingContractID = contract.EmbeddingContractID
+		plan.EmbeddingDimensions = contract.EmbeddingDimensions
+		plan.EmbeddingModel = contract.EmbeddingModel
+		plan.SearchIndexGenerationID = contract.SearchIndexGenerationID
+		plan.IndexGeneration = contract.IndexGeneration
 		successor := &RelationshipRecord{
 			SubjectEntityID: subjectID, PredicateKey: predicateKey, ObjectEntityID: objectID,
 			ObjectValueID: objectValueID, Polarity: source.Polarity, ScopeKey: source.ScopeKey,
@@ -152,12 +162,22 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 		text := relationshipProjectionText(successor, relationshipProjectionNames{
 			SubjectName: subjectName, ObjectName: objectName, ObjectValue: objectValue, ObjectUnit: objectUnit,
 		})
+		originalText := relationshipProjectionText(source, projectionNames)
+		plan.Documents = append(plan.Documents, SearchDocumentForEmbedding{
+			SearchDocumentResult: SearchDocumentResult{
+				TeamID: input.TeamID, SearchDocumentID: "plan:correction:original", OwnerProfileID: input.OwnerProfileID,
+				SourceKind: "relationship", SourceID: source.RelationshipID, SourceVersion: int64(source.Version),
+				ProjectionFormat: 2, EmbeddingContractID: contract.EmbeddingContractID,
+				EmbeddingDimensions: contract.EmbeddingDimensions, SpaceID: source.SpaceID, SpaceGeneration: source.SpaceGeneration,
+			},
+			DocumentText: originalText, DocumentHash: searchDocumentHash(originalText),
+		})
 		plan.Documents = append(plan.Documents, SearchDocumentForEmbedding{
 			SearchDocumentResult: SearchDocumentResult{
 				TeamID: input.TeamID, SearchDocumentID: "plan:correction", OwnerProfileID: input.OwnerProfileID,
 				SourceKind: "relationship", SourceID: uuid.NewString(), SourceVersion: int64(source.Version + 1),
 				ProjectionFormat: 2, EmbeddingContractID: contract.EmbeddingContractID,
-				EmbeddingDimensions: contract.EmbeddingDimensions,
+				EmbeddingDimensions: contract.EmbeddingDimensions, SpaceID: source.SpaceID, SpaceGeneration: source.SpaceGeneration,
 			},
 			DocumentText: text, DocumentHash: searchDocumentHash(text),
 		})

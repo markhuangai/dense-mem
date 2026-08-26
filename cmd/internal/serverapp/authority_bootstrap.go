@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -12,7 +11,7 @@ import (
 
 var errAuthorityBlocked = errors.New("authority bootstrap blocked")
 
-const cutoverMarkerVersion = "dense-mem.v2.1.cutover.v1"
+const cutoverMarkerVersion = "dense-mem.v2.6.1.cutover.v1"
 
 type authorityMode string
 
@@ -51,14 +50,7 @@ func EnsureAuthority(ctx context.Context, store authorityBootstrapStore) (author
 		return authorityBootstrap{}, fmt.Errorf("%w: read compatibility marker: %w", errAuthorityBlocked, err)
 	}
 	if marker == nil {
-		marker, err = store.CommitFreshAuthority(ctx, repository.CommitFreshAuthorityInput{
-			MarkerVersion: cutoverMarkerVersion,
-			Now:           time.Now().UTC(),
-			Metadata:      map[string]any{"created_by": "server_boot"},
-		})
-		if err != nil {
-			return authorityBootstrap{}, fmt.Errorf("%w: create fresh authority marker: %w", errAuthorityBlocked, err)
-		}
+		return authorityBootstrap{}, fmt.Errorf("%w: stopped-service v2.6.1 cutover marker is required before startup", errAuthorityBlocked)
 	}
 	return classifyAuthorityMarker(marker)
 }
@@ -66,6 +58,9 @@ func EnsureAuthority(ctx context.Context, store authorityBootstrapStore) (author
 func classifyAuthorityMarker(marker *domain.CompatibilityMarker) (authorityBootstrap, error) {
 	if marker == nil {
 		return authorityBootstrap{}, fmt.Errorf("%w: compatible cutover marker is required before startup", errAuthorityBlocked)
+	}
+	if marker.Version != cutoverMarkerVersion {
+		return authorityBootstrap{}, fmt.Errorf("%w: unsupported compatibility marker version %s", errAuthorityBlocked, marker.Version)
 	}
 	switch marker.Status {
 	case domain.MigrationMarkerCompatible:

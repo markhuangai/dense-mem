@@ -6,17 +6,20 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-// SearchConvergenceReader is the operator-facing projection of asynchronous
-// embedding progress. It is intentionally separate from structural readiness.
+// SearchConvergenceReader is the operator-facing projection of document drift.
 type SearchConvergenceReader interface {
 	GetSearchConvergence(context.Context) (*repository.SearchConvergence, error)
 }
 
 type searchConvergenceService struct {
-	repo repository.EmbeddingReconciliationRepository
+	repo interface {
+		GetSearchConvergence(context.Context, repository.SearchConvergenceInput) (*repository.SearchConvergence, error)
+	}
 }
 
-func NewSearchConvergenceService(repo repository.EmbeddingReconciliationRepository) SearchConvergenceReader {
+func NewSearchConvergenceService(repo interface {
+	GetSearchConvergence(context.Context, repository.SearchConvergenceInput) (*repository.SearchConvergence, error)
+}) SearchConvergenceReader {
 	return &searchConvergenceService{repo: repo}
 }
 

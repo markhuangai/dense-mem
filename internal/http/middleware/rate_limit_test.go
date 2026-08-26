@@ -65,7 +65,6 @@ func (c *testRateLimitConfig) GetAIVerifierAPIKey() string         { return "" }
 func (c *testRateLimitConfig) GetAIVerifierModel() string          { return "gpt-4o-mini" }
 func (c *testRateLimitConfig) GetAIVerifierTimeoutSeconds() int    { return 60 }
 func (c *testRateLimitConfig) GetAIVerifierMaxConcurrency() int    { return 5 }
-func (c *testRateLimitConfig) GetPromoteTxTimeoutSeconds() int     { return 10 }
 func (c *testRateLimitConfig) GetMemoryPackImportHistoryDays() int { return 30 }
 func (c *testRateLimitConfig) GetControlHTTPAddr() string          { return "127.0.0.1:8090" }
 func (c *testRateLimitConfig) GetControlPortalToken() string       { return "" }
@@ -168,7 +167,6 @@ func (c *redisRateLimitConfig) GetAIVerifierAPIKey() string         { return "" 
 func (c *redisRateLimitConfig) GetAIVerifierModel() string          { return "gpt-4o-mini" }
 func (c *redisRateLimitConfig) GetAIVerifierTimeoutSeconds() int    { return 60 }
 func (c *redisRateLimitConfig) GetAIVerifierMaxConcurrency() int    { return 5 }
-func (c *redisRateLimitConfig) GetPromoteTxTimeoutSeconds() int     { return 10 }
 func (c *redisRateLimitConfig) GetMemoryPackImportHistoryDays() int { return 30 }
 func (c *redisRateLimitConfig) GetControlHTTPAddr() string          { return "127.0.0.1:8090" }
 func (c *redisRateLimitConfig) GetControlPortalToken() string       { return "" }

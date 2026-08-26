@@ -525,11 +525,12 @@ func TestPostCutoverCleanupMigrationFreshUpgradeSucceeds(t *testing.T) {
 	assert.False(t, columnExists(t, ctx, sqlDB, "placement_runs", "migration_claim_epoch"))
 
 	var markerCount int
-	require.NoError(t, sqlDB.QueryRowContext(ctx, `
-		SELECT count(*)::int
-		FROM v2_compatibility_markers
-	`).Scan(&markerCount))
-	assert.Zero(t, markerCount, "fresh authority marker is created by server bootstrap after migrations")
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*)::int FROM v2_compatibility_markers`).Scan(&markerCount))
+	assert.Equal(t, 1, markerCount, "the synchronous cutover migration writes the compatible authority marker")
+	var markerVersion, markerStatus string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT version, status FROM v2_compatibility_markers WHERE marker_kind = 'v2_cutover' ORDER BY created_at DESC, marker_id DESC LIMIT 1`).Scan(&markerVersion, &markerStatus))
+	assert.Equal(t, "dense-mem.v2.6.1.cutover.v1", markerVersion)
+	assert.Equal(t, "compatible", markerStatus)
 }
 
 func TestPostCutoverCleanupMigrationWithCompatibleMarkerDropsLegacyTables(t *testing.T) {

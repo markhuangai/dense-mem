@@ -20,7 +20,7 @@ func TestTraceContractOutputPreservesPublicSubmissionAndLineageIDs(t *testing.T)
 			ValidFrom: &validFrom, ValidTo: &validTo, CreatedAt: now, UpdatedAt: now,
 		},
 		Observations: []repository.RelationshipObservationRecord{{
-			ObservationID: "observation-1", IngestID: "submission-1", PlacementItemID: "internal-item", RelationshipID: "relationship-1",
+			ObservationID: "observation-1", IngestID: "submission-1", RelationshipID: "relationship-1",
 			SubjectRef: "subject", OriginalPredicate: "uses", ObjectRef: "object", Polarity: "+", CreatedAt: now,
 		}},
 		EvidenceSupports: []repository.RelationshipEvidenceSupportRecord{{

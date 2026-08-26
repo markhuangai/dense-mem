@@ -17,17 +17,7 @@ func CanonicalRequestBodyHash(
 	entityHints []map[string]any,
 	relationshipHints []map[string]any,
 ) (string, error) {
-	return CanonicalRequestBodyHashForVersion(requestHashContractVersion, evidence, entityHints, relationshipHints)
-}
-
-// CanonicalRequestBodyHashForVersion computes the same normalized body hash
-// under an explicitly selected contract version for migration compatibility.
-func CanonicalRequestBodyHashForVersion(
-	contractVersion string,
-	evidence any,
-	entityHints []map[string]any,
-	relationshipHints []map[string]any,
-) (string, error) {
+	contractVersion := requestHashContractVersion
 	canonicalEvidence, err := canonicalRememberObjects(evidence)
 	if err != nil {
 		return "", err

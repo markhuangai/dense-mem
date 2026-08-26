@@ -51,9 +51,8 @@ var privateMemoryErasureManifest = []string{
 	"knowledge_ingests", "evidence_sources", "evidence_source_revisions",
 	"evidence_fragments", "evidence_security_events", "evidence_security_signals",
 	"evidence_quarantines", "evidence_lifecycle_operations", "evidence_lifecycle_events",
-	"remember_source_revision_intents", "remember_supersession_intents", "submission_assessment_response_revisions",
 	"submission_relationship_results",
-	"placement_runs", "placement_items", "placement_outcomes", "placement_assessments", "predicate_registration_events",
+	"predicate_registration_events",
 	"entity_records", "entity_names", "entity_resolution_events",
 	"entity_correction_plans", "entity_correction_events", "value_records",
 	"relationship_records", "relationship_observations", "relationship_evidence_supports",
@@ -61,12 +60,12 @@ var privateMemoryErasureManifest = []string{
 	"relationship_cross_references", "relationship_correction_submissions",
 	"relationship_correction_events", "verification_events", "review_tasks",
 	"hypotheses", "hypothesis_derivation_sources", "hypothesis_feedback_events",
-	"submission_quarantine_payloads", "submission_quarantine_tombstones", "relationship_conflict_cases",
+	"remember_attempts", "remember_attempt_events", "remember_failure_artifacts", "semantic_assessments", "relationship_conflict_cases",
 	"relationship_conflict_positions", "relationship_conflict_position_members",
 	"relationship_conflict_events", "relationship_conflict_review_runs",
 	"relationship_conflict_derived_evidence_tasks", "relationship_conflict_evidence_derivations",
 	"relationship_conflict_resolution_plans", "relationship_conflict_ai_assessment_attempts",
-	"relationship_conflict_ai_assessment_events", "search_documents", "embedding_jobs",
+	"relationship_conflict_ai_assessment_events", "search_documents",
 	"community_snapshot_runs", "community_records", "community_memberships",
 	"community_sources", "community_summary_attempts", "dream_cycle_runs",
 	"dream_path_evaluations", "recall_feedback_events",
@@ -83,9 +82,6 @@ var privateMemoryExternalDependencies = map[string]struct {
 }{
 	"v2_migration_corpus_items_team_id_ingest_id_fkey": {
 		child: "v2_migration_corpus_items", parent: "knowledge_ingests",
-	},
-	"v2_migration_corpus_items_team_id_placement_item_id_fkey": {
-		child: "v2_migration_corpus_items", parent: "placement_items",
 	},
 }
 
@@ -180,18 +176,20 @@ func (r *PrivateMemoryRepositoryImpl) Prepare(ctx context.Context) error {
 }
 
 func validatePrivateMemoryManifestTx(ctx context.Context, tx *gorm.DB) ([]string, error) {
+	expected := PrivateMemoryErasureManifest()
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT DISTINCT columns.table_name
-		FROM information_schema.columns AS columns
-		JOIN information_schema.tables AS tables
-		  ON tables.table_schema = columns.table_schema
-		 AND tables.table_name = columns.table_name
-		WHERE columns.table_schema = 'public'
-		  AND columns.column_name = 'space_id'
+		SELECT tables.table_name
+		FROM information_schema.tables AS tables
+		LEFT JOIN information_schema.columns AS space_column
+		  ON space_column.table_schema = tables.table_schema
+		 AND space_column.table_name = tables.table_name
+		 AND space_column.column_name = 'space_id'
+		WHERE tables.table_schema = 'public'
 		  AND tables.table_type = 'BASE TABLE'
-		  AND NOT (columns.table_name = ANY($1::text[]))
-		ORDER BY columns.table_name
-	`, pq.Array(privateMemoryCatalogExclusions)).Rows()
+		  AND NOT (tables.table_name = ANY($1::text[]))
+		  AND (space_column.table_name IS NOT NULL OR tables.table_name = ANY($2::text[]))
+		ORDER BY tables.table_name
+	`, pq.Array(privateMemoryCatalogExclusions), pq.Array(expected)).Rows()
 	if err != nil {
 		return nil, fmt.Errorf("%w: read catalog: %v", ErrPrivateMemoryManifest, err)
 	}
@@ -207,7 +205,6 @@ func validatePrivateMemoryManifestTx(ctx context.Context, tx *gorm.DB) ([]string
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("%w: read catalog rows: %v", ErrPrivateMemoryManifest, err)
 	}
-	expected := PrivateMemoryErasureManifest()
 	if missing, unknown := stringSetDifference(expected, catalog), stringSetDifference(catalog, expected); len(missing) > 0 || len(unknown) > 0 {
 		return nil, fmt.Errorf("%w: missing=%v unknown=%v", ErrPrivateMemoryManifest, missing, unknown)
 	}

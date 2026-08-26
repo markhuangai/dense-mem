@@ -9,198 +9,150 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
-func TestSubmissionDiagnosticsProjectsBoundedActionableState(t *testing.T) {
-	now := time.Date(2026, time.August, 18, 1, 0, 0, 0, time.UTC)
-	teamID, ownerID, submissionID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	repo := &submissionDiagnosticsRepoStub{page: &repository.SubmissionDiagnosticRecordPage{
-		Records: []repository.SubmissionDiagnosticRecord{{
-			TeamName: "Staging",
-			SourceTypes: []string{
-				"document",
-				`{"password":"supersecret"}`,
-				"https://operator:secret@example.test/notes?token=opaque",
-			},
-			OperatorDiagnostic: map[string]any{
-				"failure_reason_code": "assessor_provider_failed",
-				"failure_stage":       "assessment",
-				"failure_class":       "timeout",
-				"failure_measurement": map[string]any{"unit": "tokens", "observed": 99, "limit": 10},
-			},
-			EvidenceCount: 1,
-			Placement: repository.CreateIngestResult{
-				TeamID: teamID, OwnerProfileID: ownerID, IngestID: submissionID,
-				Status: string(domain.PlacementRunFailed), CorrelationID: "corr-diagnostics",
-				Attempts: 5, MaxAttempts: 5, SubmittedAt: &now, UpdatedAt: &now, CompletedAt: &now,
-				Items: []repository.PlacementItem{{Status: "failed", Result: map[string]any{
-					"failure_code":        string(memoryservice.SubmissionErrorProviderUnavailable),
-					"failure_reason_code": "assessor_provider_failed",
-					"failure_stage":       "assessment",
-					"failure_class":       "timeout",
-					"failure_measurement": map[string]any{"unit": "tokens", "observed": 99, "limit": 10},
-					"provider_response":   "must not cross diagnostics boundary",
-				}}},
-			},
-		}},
-		Total: 1,
-	}}
-	svc := NewSubmissionDiagnosticsService(repo)
+type submissionDiagnosticsServiceRepoStub struct {
+	page         *repository.SubmissionDiagnosticRecordPage
+	detail       *repository.SubmissionDiagnosticRecord
+	listErr      error
+	detailErr    error
+	artifact     *repository.RememberFailureArtifact
+	artifactErr  error
+	listFilter   repository.SubmissionDiagnosticFilter
+	artifactArgs []string
+}
 
-	page, err := svc.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{
-		TeamID: teamID, ProcessingState: "failed", Limit: 25,
+type submissionDiagnosticsNoArtifactRepo struct{}
+
+func (submissionDiagnosticsNoArtifactRepo) ListSubmissionDiagnostics(context.Context, repository.SubmissionDiagnosticFilter) (*repository.SubmissionDiagnosticRecordPage, error) {
+	return nil, nil
+}
+
+func (submissionDiagnosticsNoArtifactRepo) GetSubmissionDiagnostic(context.Context, string, string) (*repository.SubmissionDiagnosticRecord, error) {
+	return nil, nil
+}
+
+func (s *submissionDiagnosticsServiceRepoStub) ListSubmissionDiagnostics(_ context.Context, filter repository.SubmissionDiagnosticFilter) (*repository.SubmissionDiagnosticRecordPage, error) {
+	s.listFilter = filter
+	return s.page, s.listErr
+}
+
+func (s *submissionDiagnosticsServiceRepoStub) GetSubmissionDiagnostic(context.Context, string, string) (*repository.SubmissionDiagnosticRecord, error) {
+	return s.detail, s.detailErr
+}
+
+func (s *submissionDiagnosticsServiceRepoStub) GetRememberFailureArtifact(_ context.Context, teamID, attemptID, artifactID string) (*repository.RememberFailureArtifact, error) {
+	s.artifactArgs = []string{teamID, attemptID, artifactID}
+	return s.artifact, s.artifactErr
+}
+
+func (s *submissionDiagnosticsServiceRepoStub) PurgeExpiredRememberFailureArtifacts(context.Context, time.Time, int) (int, error) {
+	return 0, nil
+}
+
+func TestSubmissionDiagnosticsServiceListsAndNormalizesAttempts(t *testing.T) {
+	teamID := uuid.NewString()
+	now := time.Date(2026, time.August, 26, 8, 0, 0, 0, time.UTC)
+	repo := &submissionDiagnosticsServiceRepoStub{page: &repository.SubmissionDiagnosticRecordPage{
+		Total: 1,
+		Records: []repository.SubmissionDiagnosticRecord{{
+			TeamID: teamID, TeamName: "team", OwnerProfileID: uuid.NewString(), SubmissionID: uuid.NewString(),
+			ProcessingState: "completed", CorrelationID: "corr", EvidenceCount: 2, RelationshipCount: 3,
+			DocumentCount: 4, AssessorTurns: 2, Duration: 1500 * time.Millisecond, CreatedAt: now, CompletedAt: &now,
+		}},
+	}}
+	page, err := NewSubmissionDiagnosticsService(repo).ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{
+		TeamID: "  " + teamID + "  ", ProcessingState: " completed ", Limit: 1000, Offset: -4,
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), page.Total)
 	require.Len(t, page.Items, 1)
-	item := page.Items[0]
-	require.Equal(t, "failed", item.ProcessingState)
-	require.Equal(t, "corr-diagnostics", item.CorrelationID)
-	require.Equal(t, 5, item.Attempts)
-	require.NotNil(t, item.Error)
-	require.Equal(t, "provider_unavailable", item.Error.Code)
-	require.False(t, item.Error.Retryable)
-	require.Equal(t, "contact_operator", item.Error.NextAction)
-	require.NotContains(t, item.Error.Message, "timeout")
-	require.NotContains(t, item.Error.Message, "must not cross")
-	require.Equal(t, "document evidence", item.SourceSummary)
-	require.False(t, item.SourceSummaryTruncated)
-	require.NotContains(t, item.SourceSummary, "supersecret")
-	require.NotContains(t, item.SourceSummary, "opaque")
-	require.NotNil(t, item.OperatorDiagnostic)
-	require.Equal(t, "assessor_provider_failed", item.OperatorDiagnostic.FailureReasonCode)
-	require.Equal(t, "tokens", item.OperatorDiagnostic.FailureMeasurement.Unit)
-	require.NotEmpty(t, item.OperatorDiagnostic.Message, "the list projection should synthesize a bounded message")
-	require.NotContains(t, item.OperatorDiagnostic.Message, "must not cross")
-	require.Equal(t, repository.SubmissionDiagnosticFilter{
-		TeamID: teamID, ProcessingState: "failed", Limit: 25,
-	}, repo.listFilter)
+	require.Equal(t, teamID, page.Items[0].TeamID)
+	require.Equal(t, int64(1500), page.Items[0].DurationMS)
+	require.Equal(t, repository.SubmissionDiagnosticFilter{TeamID: teamID, ProcessingState: "completed", Limit: 100, Offset: 0}, repo.listFilter)
 }
 
-func TestSubmissionDiagnosticsDetailNeverReturnsEvidenceContentOrRawFailure(t *testing.T) {
-	teamID, ownerID, submissionID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	evidenceID := uuid.NewString()
-	repo := &submissionDiagnosticsRepoStub{detail: &repository.SubmissionDiagnosticRecord{
-		TeamName:      "Staging",
-		SourceTypes:   []string{"observation", `{"access_token":"opaque-secret"}`},
-		EvidenceCount: 1,
-		Placement: repository.CreateIngestResult{
-			TeamID: teamID, OwnerProfileID: ownerID, IngestID: submissionID,
-			Status:   string(domain.PlacementRunFailed),
-			Evidence: []repository.EvidenceFragment{{FragmentID: evidenceID, EvidenceIndex: 0, Content: "must not cross diagnostics boundary"}},
-			Items: []repository.PlacementItem{{FragmentID: evidenceID, Status: "failed", Result: map[string]any{
-				"failure_stage": "unknown-provider-detail", "failure_class": "secret-provider-response",
-			}}},
-		},
-	}}
-	svc := NewSubmissionDiagnosticsService(repo)
-
-	detail, err := svc.GetSubmissionDiagnostic(context.Background(), teamID, submissionID)
+func TestSubmissionDiagnosticsServiceListHandlesNilAndErrors(t *testing.T) {
+	repo := &submissionDiagnosticsServiceRepoStub{}
+	page, err := NewSubmissionDiagnosticsService(repo).ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{})
 	require.NoError(t, err)
-	require.Equal(t, teamID, detail.TeamID)
-	require.Equal(t, ownerID, detail.OwnerProfileID)
-	require.Equal(t, "observation evidence", detail.SourceSummary)
-	require.NotContains(t, detail.SourceSummary, "opaque-secret")
-	require.Len(t, detail.Evidence, 1)
-	require.Equal(t, repo.detail.Placement.Evidence[0].FragmentID, detail.Evidence[0].EvidenceID)
-	require.Len(t, detail.Errors, 1)
-	require.Equal(t, "internal_failure", detail.Errors[0].Code)
-	require.NotContains(t, detail.Errors[0].Message, "secret-provider-response")
-	require.NotContains(t, detail.Errors[0].Message, "unknown-provider-detail")
-	require.Nil(t, detail.OperatorDiagnostic, "unknown diagnostic tokens must not cross the control boundary")
-}
+	require.Empty(t, page.Items)
 
-func TestSubmissionDiagnosticsDetailOrdersAndFiltersOperatorHistory(t *testing.T) {
-	teamID, ownerID, submissionID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	first := time.Date(2026, time.August, 18, 1, 0, 0, 0, time.UTC)
-	second := first.Add(time.Minute)
-	legacy := second.Add(time.Minute)
-	repo := &submissionDiagnosticsRepoStub{detail: &repository.SubmissionDiagnosticRecord{
-		TeamName: "Staging",
-		Placement: repository.CreateIngestResult{
-			TeamID: teamID, OwnerProfileID: ownerID, IngestID: submissionID,
-			Status: string(domain.PlacementRunFailed),
-		},
-		OperatorDiagnostics: []repository.SubmissionDiagnosticOperatorDiagnostic{
-			{ID: "first", OutcomeKind: "semantic_assessment_attempt", Status: "queued", CreatedAt: first, Payload: map[string]any{
-				"failure_reason_code": "assessor_provider_failed", "failure_stage": "assessment", "failure_class": "timeout",
-			}},
-			{ID: "second", OutcomeKind: "submission_assessment_terminal", Status: "failed", CreatedAt: second, Payload: map[string]any{
-				"failure_reason_code": "provider_response_invalid", "failure_stage": "assessment", "failure_class": "validation_failed",
-			}},
-			{ID: "legacy", OutcomeKind: "submission_assessment_terminal", Status: "failed", CreatedAt: legacy, Payload: map[string]any{
-				"failure_reason_code": "assessor_response_invalid", "failure_stage": "assessment", "failure_class": "validation_failed",
-			}},
-			{ID: "secret", OutcomeKind: "internal", Status: "failed", CreatedAt: legacy.Add(time.Minute), Payload: map[string]any{
-				"failure_stage": "provider-secret-detail", "failure_class": "provider-secret-detail",
-			}},
-		},
-	}}
-	detail, err := NewSubmissionDiagnosticsService(repo).GetSubmissionDiagnostic(context.Background(), teamID, submissionID)
-	require.NoError(t, err)
-	require.Len(t, detail.OperatorDiagnostics, 3)
-	require.Equal(t, "first", detail.OperatorDiagnostics[0].ID)
-	require.Equal(t, first, detail.OperatorDiagnostics[0].OccurredAt.UTC())
-	require.Equal(t, "second", detail.OperatorDiagnostics[1].ID)
-	require.Equal(t, second, detail.OperatorDiagnostics[1].OccurredAt.UTC())
-	require.Equal(t, "legacy", detail.OperatorDiagnostics[2].ID)
-	require.Equal(t, "assessor_response_invalid", detail.OperatorDiagnostics[2].FailureReasonCode)
-	for _, diagnostic := range detail.OperatorDiagnostics {
-		require.NotContains(t, diagnostic.Message, "provider-secret-detail")
-	}
-}
-
-func TestSubmissionDiagnosticsProjectsCommitRaceExhaustionStage(t *testing.T) {
-	diagnostic := projectSubmissionOperatorDiagnostic(map[string]any{
-		"failure_reason_code": "unknown_internal_failure",
-		"failure_stage":       "commit_race_exhausted",
-		"failure_class":       "internal",
-	})
-
-	require.NotNil(t, diagnostic)
-	require.Equal(t, "commit_race_exhausted", diagnostic.FailureStage)
-	require.Equal(t, "unknown_internal_failure", diagnostic.FailureReasonCode)
-}
-
-func TestSubmissionDiagnosticsValidatesScopeAndBoundsRepositoryErrors(t *testing.T) {
-	repo := &submissionDiagnosticsRepoStub{}
-	svc := NewSubmissionDiagnosticsService(repo)
-	_, err := svc.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{TeamID: "bad"})
-	require.ErrorContains(t, err, "team_id")
-	_, err = svc.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{ProcessingState: "unknown"})
-	require.ErrorContains(t, err, "processing_state")
-	_, err = svc.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{ProcessingState: "rejected"})
-	require.NoError(t, err)
-	require.Equal(t, "rejected", repo.listFilter.ProcessingState)
-	_, err = svc.GetSubmissionDiagnostic(context.Background(), "bad", uuid.NewString())
-	require.ErrorContains(t, err, "team_id")
-
-	repo = &submissionDiagnosticsRepoStub{err: errors.New("database detail")}
-	svc = NewSubmissionDiagnosticsService(repo)
-	_, err = svc.GetSubmissionDiagnostic(context.Background(), uuid.NewString(), uuid.NewString())
+	repo.listErr = errors.New("database details must stay private")
+	page, err = NewSubmissionDiagnosticsService(repo).ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{})
 	require.ErrorIs(t, err, ErrSubmissionDiagnosticsUnavailable)
-	require.NotContains(t, err.Error(), "database detail")
+	require.Nil(t, page)
 
-	repo.err = repository.ErrSubmissionDiagnosticNotFound
-	_, err = svc.GetSubmissionDiagnostic(context.Background(), uuid.NewString(), uuid.NewString())
+	for _, filter := range []SubmissionDiagnosticFilter{
+		{TeamID: "not-a-uuid"}, {ProcessingState: "processing"},
+	} {
+		_, err = NewSubmissionDiagnosticsService(&submissionDiagnosticsServiceRepoStub{}).ListSubmissionDiagnostics(context.Background(), filter)
+		require.Error(t, err)
+	}
+	_, err = (*SubmissionDiagnosticsService)(nil).ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{})
+	require.ErrorIs(t, err, ErrSubmissionDiagnosticsUnavailable)
+}
+
+func TestSubmissionDiagnosticsServiceGetsDetailAndMapsPublicResult(t *testing.T) {
+	teamID, attemptID := uuid.NewString(), uuid.NewString()
+	repo := &submissionDiagnosticsServiceRepoStub{detail: &repository.SubmissionDiagnosticRecord{
+		TeamID: teamID, TeamName: "team", OwnerProfileID: uuid.NewString(), SubmissionID: attemptID,
+		ProcessingState: "failed", FailedPhase: "embedding", ErrorCode: "embedding_unavailable",
+		EvidenceCount: 1, RelationshipCount: 2, DocumentCount: 3, AssessorTurns: 1,
+		Duration: 2 * time.Second, PublicResult: map[string]any{
+			"contract_version": "dense-mem.v2.6.1", "submission_id": attemptID,
+			"submission_kind": "remember", "processing_state": "failed", "search_state": "not_required",
+			"evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+		},
+	}}
+	detail, err := NewSubmissionDiagnosticsService(repo).GetSubmissionDiagnostic(context.Background(), "  "+teamID, attemptID)
+	require.NoError(t, err)
+	require.Equal(t, "team", detail.TeamName)
+	require.Equal(t, "embedding", detail.FailedPhase)
+	require.Equal(t, int64(2000), detail.DurationMS)
+	require.Equal(t, "dense-mem.v2.6.1", detail.ContractVersion)
+	require.Empty(t, detail.Errors)
+
+	for _, ids := range [][2]string{{"bad", attemptID}, {teamID, "bad"}} {
+		_, err = NewSubmissionDiagnosticsService(repo).GetSubmissionDiagnostic(context.Background(), ids[0], ids[1])
+		require.Error(t, err)
+	}
+	repo.detailErr = repository.ErrSubmissionDiagnosticNotFound
+	_, err = NewSubmissionDiagnosticsService(repo).GetSubmissionDiagnostic(context.Background(), teamID, attemptID)
 	require.ErrorIs(t, err, ErrSubmissionDiagnosticNotFound)
+	repo.detailErr = errors.New("database details")
+	_, err = NewSubmissionDiagnosticsService(repo).GetSubmissionDiagnostic(context.Background(), teamID, attemptID)
+	require.ErrorIs(t, err, ErrSubmissionDiagnosticsUnavailable)
+	_, err = (*SubmissionDiagnosticsService)(nil).GetSubmissionDiagnostic(context.Background(), teamID, attemptID)
+	require.ErrorIs(t, err, ErrSubmissionDiagnosticsUnavailable)
 }
 
-type submissionDiagnosticsRepoStub struct {
-	page       *repository.SubmissionDiagnosticRecordPage
-	detail     *repository.SubmissionDiagnosticRecord
-	listFilter repository.SubmissionDiagnosticFilter
-	err        error
-}
+func TestSubmissionDiagnosticsServiceReadsOnlyLiveArtifacts(t *testing.T) {
+	teamID, attemptID, artifactID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	now := time.Now().UTC()
+	repo := &submissionDiagnosticsServiceRepoStub{artifact: &repository.RememberFailureArtifact{
+		TeamID: teamID, AttemptID: attemptID, ArtifactID: artifactID, ContentType: "application/json",
+		Content: []byte(`{"safe":true}`), ExpiresAt: now.Add(time.Hour),
+	}}
+	artifact, err := NewSubmissionDiagnosticsService(repo).GetRememberFailureArtifact(context.Background(), " "+teamID, attemptID, artifactID)
+	require.NoError(t, err)
+	require.Equal(t, []string{teamID, attemptID, artifactID}, repo.artifactArgs)
+	require.Equal(t, []byte(`{"safe":true}`), artifact.Content)
 
-func (s *submissionDiagnosticsRepoStub) ListSubmissionDiagnostics(_ context.Context, filter repository.SubmissionDiagnosticFilter) (*repository.SubmissionDiagnosticRecordPage, error) {
-	s.listFilter = filter
-	return s.page, s.err
-}
+	repo.artifactErr = repository.ErrRememberFailureArtifactNotFound
+	_, err = NewSubmissionDiagnosticsService(repo).GetRememberFailureArtifact(context.Background(), teamID, attemptID, artifactID)
+	require.ErrorIs(t, err, ErrSubmissionDiagnosticNotFound)
+	repo.artifactErr = errors.New("database details")
+	_, err = NewSubmissionDiagnosticsService(repo).GetRememberFailureArtifact(context.Background(), teamID, attemptID, artifactID)
+	require.ErrorIs(t, err, ErrSubmissionDiagnosticsUnavailable)
+	repo.artifactErr = nil
+	repo.artifact.ExpiresAt = now.Add(-time.Second)
+	_, err = NewSubmissionDiagnosticsService(repo).GetRememberFailureArtifact(context.Background(), teamID, attemptID, artifactID)
+	require.ErrorIs(t, err, ErrSubmissionDiagnosticNotFound)
 
-func (s *submissionDiagnosticsRepoStub) GetSubmissionDiagnostic(context.Context, string, string) (*repository.SubmissionDiagnosticRecord, error) {
-	return s.detail, s.err
+	_, err = NewSubmissionDiagnosticsService(submissionDiagnosticsNoArtifactRepo{}).GetRememberFailureArtifact(context.Background(), teamID, attemptID, artifactID)
+	require.ErrorIs(t, err, ErrSubmissionDiagnosticsUnavailable)
+	_, err = (*SubmissionDiagnosticsService)(nil).GetRememberFailureArtifact(context.Background(), teamID, attemptID, artifactID)
+	require.ErrorIs(t, err, ErrSubmissionDiagnosticsUnavailable)
 }

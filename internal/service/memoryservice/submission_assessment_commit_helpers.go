@@ -45,7 +45,7 @@ func semanticAssessmentPrimarySupport(supports []repository.EvidenceSupportInput
 func semanticAssessmentObject(
 	ref string,
 	result assessor.SemanticAssessmentRelationshipSplit,
-) (string, *repository.PlacementValueInput, error) {
+) (string, *repository.SemanticValueInput, error) {
 	if result.ObjectRef != nil {
 		return *result.ObjectRef, nil, nil
 	}
@@ -60,7 +60,7 @@ func semanticAssessmentObject(
 	if result.ObjectValue.Unit != nil {
 		unit = *result.ObjectValue.Unit
 	}
-	return "", &repository.PlacementValueInput{
+	return "", &repository.SemanticValueInput{
 		Ref:            "value:" + ref,
 		ValueType:      result.ObjectValue.ValueType,
 		CanonicalValue: result.ObjectValue.CanonicalValue,

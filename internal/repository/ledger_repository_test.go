@@ -1,17 +1,14 @@
 package repository
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -37,19 +34,18 @@ func TestLedgerCreateIngestValidationRequiresRequestHashWithIdempotencyKey(t *te
 	assert.Contains(t, err.Error(), "request_hash is required")
 }
 
-func TestLedgerRequestHashCompatibilityAcceptsOnlyConfiguredAlternative(t *testing.T) {
+func TestLedgerRequestHashRequiresExactContractHash(t *testing.T) {
 	input := validCreateIngestInput()
 	input.RequestHash = "dense-mem.v2.6.1-hash"
-	input.CompatibleRequestHashes = []string{"dense-mem.v2.6-hash"}
 	input = normalizeCreateIngestInput(input)
 	require.True(t, requestHashMatches(input, "dense-mem.v2.6.1-hash"))
-	require.True(t, requestHashMatches(input, "dense-mem.v2.6-hash"))
+	require.False(t, requestHashMatches(input, "dense-mem.v2.6-hash"))
 	require.False(t, requestHashMatches(input, "different-hash"))
 }
 
 func TestLedgerCreateIngestValidationAllowsCompletedInternalIngest(t *testing.T) {
 	input := validCreateIngestInput()
-	input.Status = string(domain.PlacementRunCompleted)
+	input.Status = "completed"
 
 	require.NoError(t, validateCreateIngestInput(normalizeCreateIngestInput(input)))
 }
@@ -192,27 +188,6 @@ func TestLedgerCreateIngestValidationRequiresConsistentSourceRevisionProvenance(
 			require.ErrorContains(t, err, "including source provenance")
 		})
 	}
-}
-
-func TestLedgerCreateIngestFailsClosedWithoutDependencies(t *testing.T) {
-	_, err := (*LedgerRepositoryImpl)(nil).CreateIngest(context.Background(), validCreateIngestInput())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "database is required")
-
-	repo := &LedgerRepositoryImpl{db: &gorm.DB{}}
-	_, err = repo.CreateIngest(context.Background(), validCreateIngestInput())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "rls helper is required")
-}
-
-func TestLedgerClaimNextPlacementRunRejectsSubSecondLease(t *testing.T) {
-	repo := &LedgerRepositoryImpl{}
-
-	run, err := repo.ClaimNextPlacementRun(context.Background(), uuid.NewString(), "worker-a", 500*time.Millisecond)
-
-	require.Error(t, err)
-	assert.Nil(t, run)
-	assert.Contains(t, err.Error(), "lease must be at least one second")
 }
 
 func TestLedgerSourceCreateUniqueViolationBecomesRevisionConflict(t *testing.T) {

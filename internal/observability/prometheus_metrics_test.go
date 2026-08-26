@@ -38,11 +38,6 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 	metrics.ObserveDreamFeedbackFor(ctx, DreamFeedback{Decision: "confirm_true", Outcome: "ok", FromStatus: "proposed"})
 	metrics.ObserveConflictReviewDurationFor(ctx, 2.5, "completed")
 	metrics.IncSubmissionQuarantinePurgeFailure()
-	metrics.ObserveEmbeddingReconciliationRun("completed")
-	metrics.ObserveEmbeddingReconciliationCanary("succeeded")
-	metrics.ObserveEmbeddingReconciliationJobs("requeued", "evidence", "transient", "provider_timeout", 2)
-	metrics.ObserveEmbeddingReconciliationJobs("ignored", "evidence", "transient", "provider_timeout", 0)
-	metrics.ObserveEmbeddingReconciliationDuration(1.25, "completed")
 
 	body := scrapePrometheusMetrics(t, metrics)
 	for _, want := range []string{
@@ -70,10 +65,6 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 		`densemem_conflict_review_duration_seconds_bucket{`,
 		`outcome="completed"`,
 		`densemem_submission_quarantine_purge_failures_total 1`,
-		`densemem_embedding_reconciliation_runs_total{outcome="completed"}`,
-		`densemem_embedding_reconciliation_canaries_total{outcome="succeeded"}`,
-		`densemem_embedding_reconciliation_jobs_total{action="requeued",failure_class="transient",failure_code="provider_timeout",source_kind="evidence"}`,
-		`densemem_embedding_reconciliation_duration_seconds_bucket{outcome="completed",le=`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scraped metrics missing %q\n%s", want, body)
@@ -92,9 +83,6 @@ func TestPrometheusMetricsRecordsActiveScopedSignals(t *testing.T) {
 		if strings.Contains(body, retired) {
 			t.Fatalf("scraped metrics still contain retired metric %q\n%s", retired, body)
 		}
-	}
-	if strings.Contains(body, `densemem_embedding_reconciliation_jobs_total{action="ignored"`) {
-		t.Fatalf("scraped metrics recorded zero-count reconciliation jobs\n%s", body)
 	}
 	for _, blocked := range []string{"team_name=", "profile_name=", "Research", "Profile A"} {
 		if strings.Contains(body, blocked) {
@@ -164,9 +152,8 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: teamID, OwnerID: profileID})
 
 	RecordRememberAcknowledgement(ctx, metrics, 120*time.Millisecond, "ok")
-	RecordRememberFirstDisposition(ctx, metrics, 3*time.Second, "completed")
 	RecordAIOperationUsage(
-		WithAIOperation(ctx, AIOperationPlacementAssessment, 1),
+		WithAIOperation(ctx, AIOperationSemanticAssessment, 1),
 		metrics,
 		AIOperationUsage{
 			Component:    AIComponentVerifier,
@@ -193,21 +180,17 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 	if got := prometheusCounterValue(t, body, "densemem_remember_acknowledgements_total", append(identity, "outcome=\"ok\"")...); got != 1 {
 		t.Fatalf("remember acknowledgements = %v; want 1", got)
 	}
-	if got := prometheusCounterValue(t, body, "densemem_remember_first_disposition_total", append(identity, "status=\"completed\"")...); got != 1 {
-		t.Fatalf("first dispositions = %v; want 1", got)
-	}
-	if got := prometheusCounterValue(t, body, "densemem_ai_operation_cost_usd_total", append(identity, "operation=\"placement_assessment\"", "component=\"verifier\"", "model=\"configured-verifier\"", "source=\"provider\"")...); got != 4 {
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_cost_usd_total", append(identity, "operation=\"semantic_assessment\"", "component=\"verifier\"", "model=\"configured-verifier\"", "source=\"provider\"")...); got != 4 {
 		t.Fatalf("verifier cost = %v; want 4", got)
 	}
 	if got := prometheusCounterValue(t, body, "densemem_ai_operation_cost_usd_total", append(identity, "operation=\"recall_embedding\"", "component=\"embedding\"", "model=\"configured-embedding\"", "source=\"tokenizer\"")...); got != 3 {
 		t.Fatalf("embedding cost = %v; want 3", got)
 	}
-	if got := prometheusCounterValue(t, body, "densemem_ai_operation_items_total", append(identity, "operation=\"placement_assessment\"", "component=\"verifier\"", "model=\"configured-verifier\"", "source=\"provider\"")...); got != 2 {
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_items_total", append(identity, "operation=\"semantic_assessment\"", "component=\"verifier\"", "model=\"configured-verifier\"", "source=\"provider\"")...); got != 2 {
 		t.Fatalf("verifier item count = %v; want 2", got)
 	}
 
 	requirePrometheusMetricLabels(t, body, "densemem_remember_acknowledgement_duration_seconds_bucket", `outcome="ok"`)
-	requirePrometheusMetricLabels(t, body, "densemem_remember_first_disposition_duration_seconds_bucket", `status="completed"`)
 }
 
 func TestPrometheusMetricsMarksUnpricedAndKeepsWorkerIdentity(t *testing.T) {
@@ -215,7 +198,7 @@ func TestPrometheusMetricsMarksUnpricedAndKeepsWorkerIdentity(t *testing.T) {
 	teamID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
 	profileID := uuid.MustParse("44444444-4444-4444-8444-444444444444")
 	ctx := WithMetricIdentity(context.Background(), teamID.String(), profileID.String())
-	operationCtx := WithAIOperation(ctx, AIOperationBackgroundEmbedding, 3)
+	operationCtx := WithAIOperation(ctx, AIOperationSemanticAssessment, 3)
 
 	RecordAIOperationUsage(operationCtx, metrics, AIOperationUsage{
 		Component:   AIComponentEmbedding,
@@ -239,13 +222,13 @@ func TestPrometheusMetricsMarksUnpricedAndKeepsWorkerIdentity(t *testing.T) {
 
 	identity := []string{teamID.String(), profileID.String()}
 	body := scrapePrometheusMetrics(t, metrics)
-	if got := prometheusCounterValue(t, body, "densemem_ai_operation_unpriced_total", append(identity, "operation=\"background_embedding\"", "component=\"embedding\"", "model=\"configured-embedding\"", "reason=\"pricing_unavailable\"")...); got != 1 {
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_unpriced_total", append(identity, "operation=\"semantic_assessment\"", "component=\"embedding\"", "model=\"configured-embedding\"", "reason=\"pricing_unavailable\"")...); got != 1 {
 		t.Fatalf("pricing-unavailable count = %v; want 1", got)
 	}
-	if got := prometheusCounterValue(t, body, "densemem_ai_operation_unpriced_total", append(identity, "operation=\"background_embedding\"", "component=\"embedding\"", "model=\"configured-embedding\"", "reason=\"invalid_usage\"")...); got != 1 {
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_unpriced_total", append(identity, "operation=\"semantic_assessment\"", "component=\"embedding\"", "model=\"configured-embedding\"", "reason=\"invalid_usage\"")...); got != 1 {
 		t.Fatalf("invalid-usage count = %v; want 1", got)
 	}
-	if got := prometheusCounterValue(t, body, "densemem_ai_operation_items_total", append(identity, "operation=\"background_embedding\"", "component=\"embedding\"", "model=\"configured-embedding\"", "source=\"provider\"")...); got != 3 {
+	if got := prometheusCounterValue(t, body, "densemem_ai_operation_items_total", append(identity, "operation=\"semantic_assessment\"", "component=\"embedding\"", "model=\"configured-embedding\"", "source=\"provider\"")...); got != 3 {
 		t.Fatalf("background item count = %v; want 3", got)
 	}
 	if strings.Contains(body, "untagged") {
@@ -389,6 +372,11 @@ func TestAssessorMetricHelpersRecordInMemorySamples(t *testing.T) {
 	for _, stage := range []string{"predicate_catalog", "extraction", "preflight"} {
 		if got := NormalizeAssessorTerminalFailureStage(stage); got != stage {
 			t.Fatalf("NormalizeAssessorTerminalFailureStage(%q) = %q, want %q", stage, got, stage)
+		}
+	}
+	for _, retired := range []string{"placement_load", "placement_item"} {
+		if got := NormalizeAssessorTerminalFailureStage(retired); got != "unknown" {
+			t.Fatalf("NormalizeAssessorTerminalFailureStage(%q) = %q, want unknown", retired, got)
 		}
 	}
 

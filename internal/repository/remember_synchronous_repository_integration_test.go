@@ -2,154 +2,219 @@ package repository
 
 import (
 	"context"
-	"sync"
+	"errors"
 	"testing"
-	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-func TestClaimPlacementRunEnforcesOwnerLeaseAttemptsAndSingleWinner(t *testing.T) {
+func TestRememberTerminalCommitHasNoRetiredWorkflowTables(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
-	teamID := createLedgerTeam(t, adminDB, rls, "remember-claim-team")
-	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-claim-owner")
-	foreignOwnerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-claim-foreign-owner")
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-direct-terminal-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-direct-terminal-owner")
 	ledger := NewLedgerRepository(appDB, rls)
-
-	createRun := func(key string) *CreateIngestResult {
-		t.Helper()
-		result, err := ledger.CreateIngest(ctx, CreateIngestInput{
-			TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: key, RequestHash: key + "-hash",
-			Evidence: []EvidenceInput{{Content: "Claim exact Remember work."}},
-		})
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		return result
+	input := SynchronousRememberCommitInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: uuid.NewString(),
+		SpaceID: "", SpaceGeneration: 0, IdempotencyKey: "direct-terminal-key", RequestHash: "direct-terminal-hash",
+		SourceSummary: "direct terminal test", Proposal: map[string]any{"relationship_hints": []any{}},
+		Evidence: []EvidenceInput{{FragmentID: uuid.NewString(), Content: "The direct Remember request was rejected.", ContentHash: sha256Hex("The direct Remember request was rejected.")}},
+		Commit:   CommitSubmissionAssessmentInput{RelationshipResults: []SubmissionRelationshipResultInput{{RelationshipRef: "ref-1", Disposition: "not_stored", Reason: "not_supported_by_evidence"}}},
 	}
-
-	first := createRun("remember-claim-owner")
-	claimed, err := ledger.ClaimPlacementRun(ctx, ClaimPlacementRunInput{
-		TeamID: teamID, OwnerProfileID: ownerID, IngestID: first.IngestID, WorkerID: "claim-owner", Lease: time.Minute,
-	})
+	result, err := ledger.CommitRememberTerminal(ctx, input, "rejected", "no_supported_memory", nil)
 	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	require.Equal(t, "processing", claimed.Status)
+	require.NotNil(t, result)
+	require.Equal(t, "rejected", result.Outcome)
 
-	foreignClaim, err := ledger.ClaimPlacementRun(ctx, ClaimPlacementRunInput{
-		TeamID: teamID, OwnerProfileID: foreignOwnerID, IngestID: first.IngestID, WorkerID: "claim-foreign", Lease: time.Minute,
-	})
-	require.NoError(t, err)
-	require.Nil(t, foreignClaim)
-
-	unexpiredClaim, err := ledger.ClaimPlacementRun(ctx, ClaimPlacementRunInput{
-		TeamID: teamID, OwnerProfileID: ownerID, IngestID: first.IngestID, WorkerID: "claim-second", Lease: time.Minute,
-	})
-	require.NoError(t, err)
-	require.Nil(t, unexpiredClaim)
-
-	exhausted := createRun("remember-claim-exhausted")
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			UPDATE placement_runs
-			SET attempts = max_attempts, status = 'queued', available_at = now(), updated_at = now()
-			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
-		`, teamID, exhausted.IngestID).Error
+	var retiredTables int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT COUNT(*) FROM pg_class WHERE relname IN ('placement_runs', 'placement_items')`).Scan(&retiredTables).Error
 	}))
-	exhaustedClaim, err := ledger.ClaimPlacementRun(ctx, ClaimPlacementRunInput{
-		TeamID: teamID, OwnerProfileID: ownerID, IngestID: exhausted.IngestID, WorkerID: "claim-exhausted", Lease: time.Minute,
-	})
-	require.NoError(t, err)
-	require.Nil(t, exhaustedClaim)
-
-	stale := createRun("remember-claim-stale-age")
-	staleClaim, err := ledger.ClaimPlacementRun(ctx, ClaimPlacementRunInput{
-		TeamID: teamID, OwnerProfileID: ownerID, IngestID: stale.IngestID, WorkerID: "claim-stale-too-early",
-		Lease: time.Minute, StaleAfter: 30 * time.Second,
-	})
-	require.NoError(t, err)
-	require.Nil(t, staleClaim)
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			UPDATE placement_runs
-			SET available_at = now() - interval '31 seconds', updated_at = now()
-			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
-		`, teamID, stale.IngestID).Error
+	require.Zero(t, retiredTables)
+	var outcome string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT outcome FROM remember_attempts WHERE team_id = ?::uuid AND attempt_id = ?::uuid`, teamID, input.IngestID).Scan(&outcome).Error
 	}))
-	staleClaim, err = ledger.ClaimPlacementRun(ctx, ClaimPlacementRunInput{
-		TeamID: teamID, OwnerProfileID: ownerID, IngestID: stale.IngestID, WorkerID: "claim-stale-recovered",
-		Lease: time.Minute, StaleAfter: 30 * time.Second,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, staleClaim)
-
-	race := createRun("remember-claim-race")
-	start := make(chan struct{})
-	results := make(chan *PlacementRun, 2)
-	errors := make(chan error, 2)
-	var group sync.WaitGroup
-	for index := 0; index < 2; index++ {
-		group.Add(1)
-		go func(index int) {
-			defer group.Done()
-			<-start
-			result, claimErr := ledger.ClaimPlacementRun(ctx, ClaimPlacementRunInput{
-				TeamID: teamID, OwnerProfileID: ownerID, IngestID: race.IngestID,
-				WorkerID: "claim-race-" + string(rune('a'+index)), Lease: time.Minute,
-			})
-			results <- result
-			errors <- claimErr
-		}(index)
-	}
-	close(start)
-	group.Wait()
-	close(results)
-	close(errors)
-
-	winners := 0
-	for result := range results {
-		if result != nil {
-			winners++
-			require.Equal(t, "processing", result.Status)
-		}
-	}
-	for claimErr := range errors {
-		require.NoError(t, claimErr)
-	}
-	require.Equal(t, 1, winners)
+	require.Equal(t, "rejected", outcome)
 }
 
-func TestTerminalizedRememberFailureAllowsSameKeyRetry(t *testing.T) {
+func TestRememberPreflightQuarantineWritesOnlyTerminalAttempt(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
-	teamID := createLedgerTeam(t, adminDB, rls, "remember-failed-retry-team")
-	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-failed-retry-owner")
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-preflight-quarantine-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-preflight-quarantine-owner")
 	ledger := NewLedgerRepository(appDB, rls)
-
-	input := CreateIngestInput{
-		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "remember-failed-retry",
-		RequestHash: "remember-failed-retry-hash", Evidence: []EvidenceInput{{Content: "Retryable Remember failure."}},
+	input := SynchronousRememberCommitInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: uuid.NewString(),
+		IdempotencyKey: "preflight-quarantine-key", RequestHash: "preflight-quarantine-hash",
+		Evidence: []EvidenceInput{{
+			FragmentID: uuid.NewString(), Content: "rejected hostile input",
+			ContentHash: sha256Hex("rejected hostile input"),
+		}},
+		Proposal: map[string]any{"relationship_hints": []any{
+			map[string]any{"ref": "hostile-first"},
+			map[string]any{"ref": "hostile-second"},
+		}},
+		Commit: CommitSubmissionAssessmentInput{RelationshipResults: []SubmissionRelationshipResultInput{}},
 	}
-	first, err := ledger.CreateIngest(ctx, input)
+	result, err := ledger.CommitRememberPreflightQuarantine(ctx, input, "submission_quarantined")
 	require.NoError(t, err)
-	require.NotNil(t, first)
+	require.NotNil(t, result)
+	require.Equal(t, "quarantined", result.Outcome)
+	require.Len(t, result.PublicResult["relationship_results"], 2)
 
-	require.NoError(t, ledger.TerminalizeRememberFailure(ctx, RememberTerminalizeFailureInput{
-		TeamID: teamID, OwnerProfileID: ownerID, IngestID: first.IngestID,
+	var canonicalRows int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT
+				(SELECT count(*) FROM knowledge_ingests WHERE team_id = ?::uuid) +
+				(SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid) +
+				(SELECT count(*) FROM semantic_assessments WHERE team_id = ?::uuid) +
+				(SELECT count(*) FROM search_documents WHERE team_id = ?::uuid)
+		`, teamID, teamID, teamID, teamID).Scan(&canonicalRows).Error
+	}))
+	require.Zero(t, canonicalRows)
+
+	var outcome string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT outcome FROM remember_attempts
+			WHERE team_id = ?::uuid AND attempt_id = ?::uuid
+		`, teamID, input.IngestID).Scan(&outcome).Error
+	}))
+	require.Equal(t, "quarantined", outcome)
+}
+
+func TestRememberFailureCannotFollowCanonicalTerminalAttempt(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-canonical-winner-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-canonical-winner-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	attemptID := uuid.NewString()
+	input := SynchronousRememberCommitInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: attemptID,
+		IdempotencyKey: "canonical-winner-key", RequestHash: "canonical-winner-hash",
+		Proposal: map[string]any{"relationship_hints": []any{}},
+		Evidence: []EvidenceInput{{
+			FragmentID: uuid.NewString(), Content: "canonical terminal result wins",
+			ContentHash: sha256Hex("canonical terminal result wins"),
+		}},
+		Commit: CommitSubmissionAssessmentInput{RelationshipResults: []SubmissionRelationshipResultInput{}},
+	}
+	_, err := ledger.CommitRememberTerminal(ctx, input, "rejected", "no_supported_memory", nil)
+	require.NoError(t, err)
+
+	err = ledger.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		TeamID: teamID, OwnerProfileID: ownerID, AttemptID: uuid.NewString(),
+		IdempotencyKey: input.IdempotencyKey, RequestHash: input.RequestHash,
+		ContractVersion: "dense-mem.v2.6.1", SubmissionKind: "remember",
 		FailedPhase: "embedding", ErrorCode: "embedding_unavailable",
-	}))
+		PublicResult: map[string]any{"processing_state": "failed"},
+	})
+	require.ErrorIs(t, err, ErrRememberReplay)
+	err = ledger.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		TeamID: teamID, OwnerProfileID: ownerID, AttemptID: uuid.NewString(),
+		IdempotencyKey: input.IdempotencyKey, RequestHash: "different-request-hash",
+		ContractVersion: "dense-mem.v2.6.1", SubmissionKind: "remember",
+		FailedPhase: "assessment", ErrorCode: "provider_unavailable",
+		PublicResult: map[string]any{"processing_state": "failed"},
+	})
+	require.ErrorIs(t, err, ErrIdempotencyConflict)
 
-	retry, err := ledger.CreateIngest(ctx, input)
+	var failedRows int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*) FROM remember_attempts
+			WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid
+			  AND idempotency_key = ? AND outcome = 'failed'
+		`, teamID, ownerID, input.IdempotencyKey).Scan(&failedRows).Error
+	}))
+	require.Zero(t, failedRows)
+
+	firstFailureID := uuid.NewString()
+	require.NoError(t, ledger.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		TeamID: teamID, OwnerProfileID: ownerID, AttemptID: firstFailureID,
+		IdempotencyKey: "failed-before-canonical", RequestHash: "failed-before-canonical-hash",
+		ContractVersion: "dense-mem.v2.6.1", SubmissionKind: "remember",
+		FailedPhase: "embedding", ErrorCode: "embedding_unavailable",
+		PublicResult: map[string]any{"processing_state": "failed"},
+	}))
+	secondInput := input
+	secondInput.IngestID = uuid.NewString()
+	secondInput.IdempotencyKey = "failed-before-canonical"
+	secondInput.RequestHash = "failed-before-canonical-hash"
+	secondInput.Evidence = []EvidenceInput{{
+		FragmentID: uuid.NewString(), Content: "canonical terminal result wins",
+		ContentHash: sha256Hex("canonical terminal result wins"),
+	}}
+	_, err = ledger.CommitRememberTerminal(ctx, secondInput, "rejected", "no_supported_memory", nil)
 	require.NoError(t, err)
-	require.NotNil(t, retry)
-	require.False(t, retry.Existing)
-	require.NotEqual(t, first.IngestID, retry.IngestID)
+	winner, err := ledger.LoadRememberAttempt(ctx, RememberAttemptLookupInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: secondInput.IdempotencyKey,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "rejected", winner.Outcome)
+	require.Equal(t, secondInput.IngestID, winner.AttemptID)
 }
 
-func TestCreateIngestAcceptsLegacyCompatibleRequestHash(t *testing.T) {
+func TestRememberTerminalCommitMapsStaleSourceRevisionWithoutCanonicalRows(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-stale-source-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-stale-source-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+
+	_, err := ledger.AdvanceSourceRevision(ctx, AdvanceSourceRevisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKey: "doc://remember-stale",
+		SourceKind: "document", Authority: "primary", RevisionToken: "rev-2",
+		ContentHash: "sha256:current",
+	})
+	require.NoError(t, err)
+	var sharedSpaceID string
+	var sharedGeneration int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT id::text, generation
+			FROM memory_spaces
+			WHERE team_id = ?::uuid AND kind = 'team_shared'
+		`, teamID).Row().Scan(&sharedSpaceID, &sharedGeneration)
+	}))
+
+	input := SynchronousRememberCommitInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: uuid.NewString(),
+		SpaceID: sharedSpaceID, SpaceGeneration: sharedGeneration,
+		IdempotencyKey: "remember-stale-source", RequestHash: "remember-stale-source-hash",
+		Proposal: map[string]any{"relationship_hints": []any{}},
+		Evidence: []EvidenceInput{{
+			FragmentID: uuid.NewString(), Content: "stale source evidence",
+			ContentHash: sha256Hex("stale source evidence"), SourceType: "document", Authority: "primary",
+			SourceKey: "doc://remember-stale", SourceRevisionToken: "rev-3",
+			ExpectedPreviousRevisionToken: "rev-1", SourceRevisionContentHash: "sha256:stale",
+		}},
+		Commit: CommitSubmissionAssessmentInput{RelationshipResults: []SubmissionRelationshipResultInput{}},
+	}
+	_, err = ledger.CommitRememberTerminal(ctx, input, "rejected", "no_supported_memory", nil)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, ErrSourceRevisionConflict), "err=%v", err)
+
+	var canonicalRows int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*) FROM knowledge_ingests
+			WHERE team_id = ?::uuid AND idempotency_key = ?
+		`, teamID, input.IdempotencyKey).Scan(&canonicalRows).Error
+	}))
+	require.Zero(t, canonicalRows)
+}
+
+func TestTestIngestRejectsMismatchedRequestHash(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -157,18 +222,17 @@ func TestCreateIngestAcceptsLegacyCompatibleRequestHash(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-legacy-hash-owner")
 	ledger := NewLedgerRepository(appDB, rls)
 
-	first, err := ledger.CreateIngest(ctx, CreateIngestInput{
+	first, err := createTestIngest(ctx, ledger, CreateIngestInput{
 		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "remember-legacy-hash",
 		RequestHash: "dense-mem.v2.6-hash", Evidence: []EvidenceInput{{Content: "Legacy hash remains replayable."}},
 	})
 	require.NoError(t, err)
 
-	replay, err := ledger.CreateIngest(ctx, CreateIngestInput{
+	_, err = createTestIngest(ctx, ledger, CreateIngestInput{
 		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "remember-legacy-hash",
-		RequestHash: "dense-mem.v2.6.1-hash", CompatibleRequestHashes: []string{"dense-mem.v2.6-hash"},
-		Evidence: []EvidenceInput{{Content: "Legacy hash remains replayable."}},
+		RequestHash: "dense-mem.v2.6.1-hash",
+		Evidence:    []EvidenceInput{{Content: "Legacy hash remains replayable."}},
 	})
-	require.NoError(t, err)
-	require.True(t, replay.Existing)
-	require.Equal(t, first.IngestID, replay.IngestID)
+	require.ErrorIs(t, err, ErrIdempotencyConflict)
+	require.NotNil(t, first)
 }

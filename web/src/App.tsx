@@ -278,7 +278,7 @@ function Portal({
         },
         {
           id: "submissions",
-          label: "Submissions",
+          label: "Remember Attempts",
           icon: <Inbox size={17} aria-hidden="true" />,
           active: activeTab === "teams" && teamWorkspaceTab === "submissions",
           disabled: !selectedTeam,
@@ -580,7 +580,7 @@ function TeamWorkspace({
       {activeTab === "overview" && <TeamOverviewPanel api={api} team={team} onOpenMetrics={onOpenMetrics} />}
       {activeTab === "credentials" && <TeamCredentialsPanel api={api} team={team} embedded />}
       {activeTab === "submissions" && (
-        <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading submissions" /></div>}>
+        <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading Remember attempts" /></div>}>
           <SubmissionsPanel api={api} team={team} />
         </Suspense>
       )}

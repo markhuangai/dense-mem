@@ -5,14 +5,15 @@ import type { SearchConvergence } from "./search-convergence-types";
 import { requestJson } from "./http";
 import {
   buildOperationLogsPath,
+  fetchRememberFailureArtifact,
   buildSubmissionDiagnosticPath,
   buildSubmissionDiagnosticsPath,
   type OperationLog,
   type OperationLogQuery,
   type SubmissionDiagnosticDetail,
-  type SubmissionDiagnosticQuery,
-  type SubmissionDiagnosticSummary,
-  type SubmissionOperatorDiagnostic,
+	type RememberFailureArtifactDescriptor,
+	type SubmissionDiagnosticQuery,
+	type SubmissionDiagnosticSummary,
 } from "./control-observability-api";
 export { ApiError } from "./http";
 export { listControlIdentityProviders, type ControlIdentityProvider } from "./control-auth-api";
@@ -20,10 +21,10 @@ export type {
   OperationLog,
   OperationLogQuery,
   SubmissionDiagnosticDetail,
-  SubmissionDiagnosticQuery,
+	SubmissionDiagnosticQuery,
   SubmissionDiagnosticSummary,
-  SubmissionOperatorDiagnostic,
-  SubmissionEvidenceStatus,
+  RememberFailureArtifactDescriptor,
+	SubmissionEvidenceStatus,
   SubmissionStatusError,
 } from "./control-observability-api";
 export type {
@@ -335,7 +336,6 @@ export type SSOConfig = {
 
 export type GeneralRuntimeConfig = {
   timezone: string;
-  embedding_reconciliation_start_time_local?: string;
 };
 
 export type GeneralConfigItem = SSOConfigItem;
@@ -900,6 +900,10 @@ export class ControlApi {
     return this.requestEnvelope<SubmissionDiagnosticDetail>(buildSubmissionDiagnosticPath(teamId, submissionId));
   }
 
+  getRememberFailureArtifact(teamId: string, submissionId: string, artifactId: string): Promise<string> {
+    return fetchRememberFailureArtifact(this.baseUrl, this.token, teamId, submissionId, artifactId);
+  }
+
   listRecallFeedbackEvents(query: RecallFeedbackEventQuery = {}): Promise<Page<RecallFeedbackEvent>> {
     const params = new URLSearchParams();
     if (query.limit !== undefined) {
@@ -988,4 +992,5 @@ export class ControlApi {
       csrf: this.token ? undefined : { cookieName: "dense_mem_control_csrf", headerName: "X-Dense-Mem-Control-CSRF" },
     });
   }
+
 }

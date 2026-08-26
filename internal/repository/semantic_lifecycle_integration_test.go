@@ -175,7 +175,7 @@ func TestSourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships(t 
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	semanticRepo := NewSemanticRepository(appDB, rls)
 
-	sourceIngest, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+	sourceIngest, err := createTestIngest(ctx, ledgerRepo, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: sourceOwner,
 		IdempotencyKey: "source-policy-rev-1",
@@ -216,7 +216,7 @@ func TestSourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships(t 
 	assert.Equal(t, "active", decision.Relationship.Status)
 	assert.Equal(t, 1, decision.Relationship.SupportCount)
 
-	_, err = ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+	_, err = createTestIngest(ctx, ledgerRepo, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: sourceOwner,
 		IdempotencyKey: "source-policy-stale-rev",
@@ -241,7 +241,7 @@ func TestSourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships(t 
 	assert.Equal(t, "active", trace.Relationship.Status)
 	assert.Len(t, trace.SupportDecisionEvents, 1)
 
-	_, err = ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+	_, err = createTestIngest(ctx, ledgerRepo, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: sourceOwner,
 		IdempotencyKey: "source-policy-rev-2",

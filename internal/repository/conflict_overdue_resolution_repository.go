@@ -141,7 +141,7 @@ func (r *LedgerRepositoryImpl) ApplyOverdueConflictResolution(
 			ReviewRunID: input.ReviewRunID,
 			ConflictID:  input.ConflictID,
 			Now:         input.Now,
-		}, &records[0], evaluation, r.embeddingJobMaxAttempts)
+		}, &records[0], evaluation)
 		if err != nil {
 			return err
 		}

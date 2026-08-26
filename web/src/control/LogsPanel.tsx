@@ -11,6 +11,7 @@ const DETAIL_KEYS = [
   "remote_ip",
   "request_id",
   "correlation_id",
+  "conflict_id",
   "worker_kind",
   "submission_id",
   "reference_type",

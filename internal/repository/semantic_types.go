@@ -13,7 +13,6 @@ type SemanticRepository interface {
 	RetractRelationship(ctx context.Context, input RetractRelationshipInput) (*RelationshipTransitionResult, error)
 	ApplyRelationshipSupportDecision(ctx context.Context, input ApplyRelationshipSupportDecisionInput) (*RelationshipSupportDecisionResult, error)
 	CorrectRelationship(ctx context.Context, input CorrectRelationshipInput) (*CorrectRelationshipResult, error)
-	GetRelationshipCorrection(ctx context.Context, input GetRelationshipCorrectionInput) (*RelationshipCorrectionStatus, error)
 	AppendCrossReference(ctx context.Context, input AppendCrossReferenceInput) (string, error)
 	CreateHypothesis(ctx context.Context, input CreateHypothesisInput) (string, error)
 	ListSemanticEdges(ctx context.Context, teamID string, limit int) ([]SemanticEdge, error)
@@ -218,7 +217,6 @@ type ApplyRelationshipDecisionInput struct {
 	TeamID                  string
 	OwnerProfileID          string
 	IngestID                string
-	PlacementItemID         string
 	ProposalRef             string
 	SubjectRef              string
 	SubjectEntityID         string
@@ -381,14 +379,6 @@ type CorrectRelationshipResult struct {
 	ErrorMessage    string
 }
 
-type GetRelationshipCorrectionInput struct {
-	TeamID         string
-	OwnerProfileID string
-	SubmissionID   string
-}
-
-type RelationshipCorrectionStatus = CorrectRelationshipResult
-
 type AppendCrossReferenceInput struct {
 	TeamID                    string
 	AuthorProfileID           string
@@ -457,7 +447,6 @@ type RelationshipTraceResult struct {
 	IdentityCorrections     []EntityCorrectionEventRecord
 	SupersessionLineage     []RelationshipTraceRecord
 	SearchDocuments         []TraceSearchDocument
-	EmbeddingJobs           []TraceEmbeddingJob
 	SemanticNodes           []SemanticGraphNode
 	SemanticEdges           []SemanticGraphEdge
 	VisitedEntityIDs        []string
@@ -502,7 +491,6 @@ type RelationshipObservationRecord struct {
 	ObservationID     string         `json:"observation_id,omitempty"`
 	RelationshipID    string         `json:"relationship_id,omitempty"`
 	IngestID          string         `json:"ingest_id,omitempty"`
-	PlacementItemID   string         `json:"placement_item_id,omitempty"`
 	OwnerProfileID    string         `json:"owner_profile_id,omitempty"`
 	SubjectRef        string         `json:"subject_ref,omitempty"`
 	OriginalPredicate string         `json:"original_predicate,omitempty"`
@@ -672,24 +660,6 @@ type TraceSearchDocument struct {
 	DocumentHash        string    `json:"document_hash,omitempty"`
 	CreatedAt           time.Time `json:"created_at,omitempty"`
 	UpdatedAt           time.Time `json:"updated_at,omitempty"`
-}
-
-type TraceEmbeddingJob struct {
-	EmbeddingJobID      string     `json:"embedding_job_id,omitempty"`
-	SearchDocumentID    string     `json:"search_document_id,omitempty"`
-	OwnerProfileID      string     `json:"owner_profile_id,omitempty"`
-	SourceKind          string     `json:"source_kind,omitempty"`
-	SourceID            string     `json:"source_id,omitempty"`
-	SourceVersion       int64      `json:"source_version,omitempty"`
-	DocumentVersion     int64      `json:"document_version,omitempty"`
-	EmbeddingContractID string     `json:"embedding_contract_id,omitempty"`
-	EmbeddingDimensions int        `json:"embedding_dimensions,omitempty"`
-	Status              string     `json:"status,omitempty"`
-	Attempts            int        `json:"attempts,omitempty"`
-	Error               string     `json:"error,omitempty"`
-	CreatedAt           time.Time  `json:"created_at,omitempty"`
-	UpdatedAt           time.Time  `json:"updated_at,omitempty"`
-	CompletedAt         *time.Time `json:"completed_at,omitempty"`
 }
 
 type SemanticGraphQuery struct {

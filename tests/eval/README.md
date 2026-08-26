@@ -61,9 +61,10 @@ tests/eval/
 | `qasper` | QASPER train/dev v0.3 | Paper QA evidence retrieval. |
 | `longmem_oracle` | LongMemEval-S cleaned | Long-memory chat recall over non-abstention oracle rows. |
 
-The post-cutover evaluation flow uses `public_6axis_1k_v1` as the hard deterministic
-release gate. `public_6axis_5k_v1` is diagnostic only unless a later roadmap
-issue promotes it.
+The post-cutover release procedure historically used `public_6axis_1k_v1` as a
+deterministic gate. Issue #291 explicitly waives that comparison; it was not run
+for this synchronous cutover. `public_6axis_5k_v1` remains diagnostic only unless
+a later roadmap issue promotes it.
 
 The approved gate policy is committed at:
 
@@ -75,7 +76,7 @@ A seed corpus row is plain evidence: `source_doc_id`, `content`, and optional
 source metadata. Content is split rather than truncated, and the Go harness
 rejects any corpus row above 999 Unicode code points. Legacy `claims` and
 `auto_promote` fields are rejected because they bypass production extraction
-and placement.
+and synchronous Remember.
 
 ## Issue #149 V2 relationship derivation
 
@@ -149,11 +150,13 @@ comparison run must set `ALLOW_UNGATED_EVALUATION=1` and omit
 `RELEASE_GATE_POLICY`; this records ordinary candidate metrics without
 presenting the result as a release-gate decision.
 
-## Use the approved local seed
+## Historical release-gate seed (not run for issue #291)
 
-The hard gate consumes the existing approved `public_6axis_1k_v1` seed and
-suite. It does not generate, download, or replace them. Their required identity
-is pinned by the committed policy: 206 cases and seed hash
+The historical release gate consumed the existing approved `public_6axis_1k_v1`
+seed and suite. Issue #291 explicitly waives and does not run that comparison.
+The artifacts remain documented for reproducibility of the historical release
+procedure; they are not a current synchronous-cutover acceptance gate. Their
+historical identity is pinned by the committed policy: 206 cases and seed hash
 `sha256:eb09124331228e59898a93740104ab978b9974e3ebf7f7fc2e09728ef95b3d78`.
 
 Because these artifacts are ignored, a new worktree does not contain them.
@@ -167,7 +170,7 @@ RELEASE_GATE=tests/eval/baselines/v2.1.1_public_6axis_1k_baseline.json
 ```
 
 The preparation script refuses `--size 1000` so it cannot overwrite the
-approved gate artifact. It may generate the optional diagnostic 5k seed:
+historical gate artifact. It may generate the optional diagnostic 5k seed:
 
 ```bash
 python3 tests/eval/scripts/prepare_public_6axis_eval.py \
@@ -176,7 +179,8 @@ python3 tests/eval/scripts/prepare_public_6axis_eval.py \
 ```
 
 The runner has no default seed or suite. This prevents an invocation from
-silently evaluating the wrong corpus.
+silently evaluating the wrong corpus. No 1k comparison is required or run for
+issue #291.
 
 The old relational seed presets depended on typed claims and preloaded facts,
 so they are retired. `cmd/eval-seedgen` retains the content-only
@@ -209,10 +213,10 @@ export MAX_UNMAPPED_SOURCE_REFS=0
 tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 ```
 
-These retrieval floors mirror the existing public gate only to catch smoke
-regressions. This run is not release evidence and does not replace the approved
-1k comparison. The monitor requires all 100 latest placements and fragments to
-be terminal with no failed/pending/quarantined rows before passing. Its ignored
+These retrieval floors mirror the historical public gate only to catch smoke
+regressions. This run is not release evidence and does not replace the waived
+1k comparison. The monitor requires all 100 latest Remember attempts and
+fragments to be terminal with no failed/pending/quarantined rows before passing. Its ignored
 `dataset_identity.json` binds the seed/suite hashes, runner hash, server image
 ID, team, and model configuration; `gate_result.json` records the smoke
 thresholds and metrics.
@@ -300,7 +304,6 @@ SEED="${SEED}" \
 SUITE="${SUITE}" \
 RELEASE_GATE_POLICY="${RELEASE_GATE}" \
 IMPORT_CONCURRENCY=10 \
-PLACEMENT_TIMEOUT=10m \
 tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 ```
 
@@ -310,7 +313,7 @@ value. Write embeddings are request-scoped; there is no normal embedding worker.
 `SLEEP_SECONDS` changes only the monitor cadence for the recall/evaluation pass;
 it does not control Remember processing.
 
-Resume behavior is based on the latest placement attempt for each
+Resume behavior is based on the latest Remember attempt for each
 `eval:<source_doc_id>`:
 
 | Latest state | Resume action |
@@ -325,7 +328,8 @@ Resume behavior is based on the latest placement attempt for each
 One failed concurrent request stops scheduling new rows but allows already
 active requests to finish. The monitor then fails instead of retrying the
 stable idempotency key. After correcting the cause, use a fresh isolated
-team/runtime; non-failed interruptions still resume from the latest placements.
+team/runtime; non-failed interruptions still resume from the latest Remember
+attempts.
 
 The runtime identity contains the seed and suite hashes, release-policy hash,
 MCP contract, runner binary hash, local server image ID, reviewer/verifier and
@@ -334,7 +338,8 @@ artifacts also contain a canonical mapping hash. Any mismatch is a hard error.
 If data exists without an identity file, the monitor refuses to adopt or erase
 it.
 
-Progress and placement analysis are written to:
+Progress and Remember-import analysis are written to (the historical
+`placement_summary.json` filename is retained for tooling compatibility):
 
 ```text
 tests/eval/runtime/v1/monitor/status.json
@@ -345,12 +350,12 @@ tests/eval/runtime/v1/runs/import/knowledge_mapping.json
 tests/eval/runtime/v1/runs/baseline/summary.json
 ```
 
-`placement_summary.json` reports latest completed/awaiting-review/failed/pending
-counts, category and item-status counts, promotion rate, rejection rate, review
-burden, and historical retry attempts. Recall starts only when all latest
-placements are terminal (`completed` or `quarantined` with a live fragment),
-there are no failed or pending latest attempts, the team-scoped eval fragment
-count equals `counts.corpus`, and the remember-only import artifacts exist.
+`placement_summary.json` reports the latest Remember attempt counts and the
+historical category/item fields emitted by the runner. Recall starts only when
+all latest Remember attempts are terminal (`completed` or `quarantined` with a
+live fragment), there are no failed or pending attempts, the team-scoped eval
+fragment count equals `counts.corpus`, and the Remember-only import artifacts
+exist.
 
 ## Run recall again without reimporting
 

@@ -324,7 +324,7 @@ func (s *rememberServiceStub) Remember(_ context.Context, req memoryservice.Reme
 		return s.result, nil
 	}
 	return &memoryservice.RememberResult{
-		IngestID:        uuid.NewString(),
-		ProcessingState: string(domain.PlacementRunQueued),
+		SubmissionStatusResult: memoryservice.SubmissionStatusResult{ProcessingState: "queued"},
+		IngestID:               uuid.NewString(),
 	}, nil
 }

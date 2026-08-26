@@ -15,8 +15,9 @@ import (
 
 var ErrSecurityAuditPersistence = errors.New("memory security: audit persistence failed")
 
-// SecurityRejectionAuditor records a pre-staging rejection without accepting
-// or retaining the rejected evidence in the knowledge ledger.
+// SecurityRejectionAuditor records the bounded admission decision without
+// exposing submitted content. The synchronous Remember boundary persists the
+// matching quarantined terminal result separately.
 // SecurityRejectionAuditInput intentionally excludes evidence, decoded text,
 // content hashes, provider data, and credential material.
 func recordSubmissionSecurityRejection(

@@ -5,8 +5,8 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
-// The scanner now belongs to Remember intake. These aliases keep the legacy
-// worker and lifecycle packages source-compatible while they are migrated.
+// The scanner belongs to the request-scoped Remember intake. These adapters
+// keep memory-service assessment code on the same security contract.
 const (
 	SubmissionSecurityErrorEncodedEvidence = rememberapp.SubmissionSecurityErrorEncodedEvidence
 	SubmissionSecurityErrorRejected        = rememberapp.SubmissionSecurityErrorRejected

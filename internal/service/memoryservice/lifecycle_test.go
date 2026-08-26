@@ -5,11 +5,14 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
@@ -39,6 +42,68 @@ func TestLifecycleCorrectRelationshipUsesAuthenticatedOwner(t *testing.T) {
 	require.Equal(t, profileID.String(), semantic.correctInput.OwnerProfileID)
 	require.Equal(t, relationshipID, semantic.correctInput.RelationshipID)
 	require.Equal(t, 3, semantic.correctInput.ExpectedVersion)
+}
+
+func TestLifecycleCorrectRelationshipEmbedsBeforeReturningConfirmation(t *testing.T) {
+	document := repository.SearchDocumentForEmbedding{
+		SearchDocumentResult: repository.SearchDocumentResult{
+			SearchDocumentID: uuid.NewString(), SourceVersion: 1, ProjectionFormat: 2,
+			DocumentVersion: 1, EmbeddingContractID: uuid.NewString(), EmbeddingDimensions: 3,
+			SpaceID: uuid.NewString(), SpaceGeneration: 1,
+		},
+		DocumentText: "relationship text", DocumentHash: "document-hash",
+	}
+	plan := &repository.RelationshipCorrectionEmbeddingPlan{
+		Documents:               []repository.SearchDocumentForEmbedding{document},
+		EmbeddingContractID:     document.EmbeddingContractID,
+		EmbeddingDimensions:     document.EmbeddingDimensions,
+		EmbeddingModel:          "embed-model",
+		SearchIndexGenerationID: uuid.NewString(),
+		IndexGeneration:         1,
+	}
+	expires := time.Now().UTC().Add(time.Hour)
+	semantic := &lifecycleSemanticStub{
+		plan: plan,
+		correctResult: &repository.CorrectRelationshipResult{
+			SubmissionID: "correction-submission", ProcessingState: "awaiting_confirmation", SearchState: "current",
+			ErrorCode: "relationship_changed",
+			Confirmation: &repository.RelationshipCorrectionConfirmation{
+				Token: "confirmation-token", ExpiresAt: expires,
+				Candidates: []repository.RelationshipCorrectionCandidate{{Endpoint: "subject", EntityID: "entity-1", EntityKind: "project", CanonicalName: "Dense-Mem"}},
+			},
+		},
+	}
+	provider := &lifecycleEmbeddingStub{available: true, model: "embed-model", vectors: [][]float32{{1, 2, 3}}}
+	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, Embedder: provider})
+	receipt, err := svc.CorrectRelationship(authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New()), CorrectRelationshipRequest{Action: "submit", IdempotencyKey: "correction-confirmation"})
+	require.NoError(t, err)
+	require.Len(t, semantic.embeddings, 1)
+	assert.Equal(t, []float32{1, 2, 3}, semantic.embeddings[0].Embedding)
+	assert.Equal(t, "awaiting_confirmation", receipt.ProcessingState)
+	assert.Equal(t, "confirmation-token", receipt.AwaitingConfirmation.ConfirmationToken)
+	assert.Equal(t, "entity-1", receipt.AwaitingConfirmation.Candidates[0].EntityID)
+	assert.Equal(t, "relationship_changed", receipt.Errors[0].Code)
+}
+
+func TestLifecycleCorrectRelationshipMapsPlanAndCommitFailures(t *testing.T) {
+	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
+	for _, test := range []struct {
+		name      string
+		semantic  *lifecycleSemanticStub
+		embedder  embedding.EmbeddingProviderInterface
+		wantError error
+	}{
+		{name: "plan failure", semantic: &lifecycleSemanticStub{planErr: errors.New("plan failed")}, wantError: ErrLifecyclePersistence},
+		{name: "missing embedder", semantic: &lifecycleSemanticStub{plan: &repository.RelationshipCorrectionEmbeddingPlan{Documents: []repository.SearchDocumentForEmbedding{{}}}}, wantError: ErrLifecycleEmbeddingUnavailable},
+		{name: "nil commit result", semantic: &lifecycleSemanticStub{plan: &repository.RelationshipCorrectionEmbeddingPlan{}}, wantError: ErrLifecyclePersistence},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			svc := NewLifecycleService(LifecycleDependencies{Semantic: test.semantic, Embedder: test.embedder})
+			_, err := svc.CorrectRelationship(ctx, CorrectRelationshipRequest{Action: "submit", IdempotencyKey: test.name})
+			require.Error(t, err)
+			assert.ErrorIs(t, err, test.wantError)
+		})
+	}
 }
 
 func TestLifecycleInlineRelationshipEmbeddingBatchValidatesProviderOutput(t *testing.T) {
@@ -104,6 +169,15 @@ func TestLifecycleCorrectRelationshipRequiresAuthAndRepository(t *testing.T) {
 	require.ErrorContains(t, err, "semantic repository is required")
 	_, err = NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{}}).CorrectRelationship(context.Background(), req)
 	require.ErrorIs(t, err, ErrLifecycleAuthContext)
+}
+
+func TestLifecycleRejectsSemanticRepositoriesWithoutSynchronousEmbeddingCommit(t *testing.T) {
+	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
+	_, err := NewLifecycleService(LifecycleDependencies{Semantic: &legacyLifecycleSemanticStub{}}).CorrectRelationship(ctx, CorrectRelationshipRequest{
+		Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1,
+		IdempotencyKey: "synchronous-only-correction",
+	})
+	require.ErrorIs(t, err, ErrLifecycleEmbeddingUnavailable)
 }
 
 func TestLifecycleRetractEvidenceUsesAuthenticatedOwner(t *testing.T) {
@@ -174,10 +248,17 @@ func TestLifecycleRetractEvidenceMapsRepositoryErrors(t *testing.T) {
 
 type lifecycleSemanticStub struct {
 	correctInput  repository.CorrectRelationshipInput
-	statusInput   repository.GetRelationshipCorrectionInput
 	correctResult *repository.CorrectRelationshipResult
-	statusResult  *repository.RelationshipCorrectionStatus
+	plan          *repository.RelationshipCorrectionEmbeddingPlan
+	planErr       error
+	embeddings    []repository.InlineEmbeddingResult
 	err           error
+}
+
+type legacyLifecycleSemanticStub struct{}
+
+func (*legacyLifecycleSemanticStub) CorrectRelationship(context.Context, repository.CorrectRelationshipInput) (*repository.CorrectRelationshipResult, error) {
+	return &repository.CorrectRelationshipResult{ProcessingState: "completed"}, nil
 }
 
 func (s *lifecycleSemanticStub) CorrectRelationship(_ context.Context, input repository.CorrectRelationshipInput) (*repository.CorrectRelationshipResult, error) {
@@ -191,15 +272,19 @@ func (s *lifecycleSemanticStub) CorrectRelationship(_ context.Context, input rep
 	return s.correctResult, nil
 }
 
-func (s *lifecycleSemanticStub) GetRelationshipCorrection(_ context.Context, input repository.GetRelationshipCorrectionInput) (*repository.RelationshipCorrectionStatus, error) {
-	s.statusInput = input
-	if s.err != nil {
-		return nil, s.err
+func (s *lifecycleSemanticStub) PlanRelationshipCorrectionEmbeddings(context.Context, repository.CorrectRelationshipInput) (*repository.RelationshipCorrectionEmbeddingPlan, error) {
+	if s.planErr != nil {
+		return nil, s.planErr
 	}
-	if s.statusResult == nil {
-		return nil, repository.ErrRelationshipCorrectionNotFound
+	if s.plan == nil {
+		return &repository.RelationshipCorrectionEmbeddingPlan{}, nil
 	}
-	return s.statusResult, nil
+	return s.plan, nil
+}
+
+func (s *lifecycleSemanticStub) CorrectRelationshipWithEmbeddings(ctx context.Context, input repository.CorrectRelationshipInput, embeddings []repository.InlineEmbeddingResult) (*repository.CorrectRelationshipResult, error) {
+	s.embeddings = append([]repository.InlineEmbeddingResult(nil), embeddings...)
+	return s.CorrectRelationship(ctx, input)
 }
 
 type lifecycleEvidenceStub struct {

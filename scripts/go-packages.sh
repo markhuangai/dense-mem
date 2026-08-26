@@ -71,7 +71,14 @@ is_excluded() {
 
 mapfile -t tracked_files < <(
 	if git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		git -C "${ROOT_DIR}" ls-files '*.go'
+		# During an uncommitted hard-cutover diff, deleted tracked files are still
+		# returned by ls-files; package discovery must follow the working tree.
+		git -C "${ROOT_DIR}" ls-files '*.go' |
+			while IFS= read -r file; do
+				if [[ -f "${ROOT_DIR}/${file}" ]]; then
+					printf '%s\n' "${file}"
+				fi
+			done
 	else
 		find "${ROOT_DIR}" -type f -name '*.go' -print | sed "s#^${ROOT_DIR}/##"
 	fi

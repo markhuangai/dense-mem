@@ -229,6 +229,26 @@ func TestSubmissionSecurityScannerDecodesOneLayerWithExactSourceSpans(t *testing
 	require.False(t, ok)
 }
 
+func TestSubmissionSecurityEventWrappersRemainBounded(t *testing.T) {
+	pass := SubmissionSecurityPassEvent()
+	require.Equal(t, "deterministic_scan", pass.EventKind)
+	require.Equal(t, "pass", pass.Decision)
+	signals := []SubmissionSecuritySignal{{Kind: "prompt_injection", RuleID: "rule", Severity: "high", Start: 1, End: 3}}
+	event := SubmissionSecurityQuarantineEventForSignals(signals, true, []string{"proposal"})
+	require.Equal(t, "quarantine", event.Decision)
+	require.True(t, event.Metadata["signals_truncated"].(bool))
+	require.Equal(t, "proposal", event.Signals[0].Metadata["source"])
+	batch := SubmissionSecurityBatchQuarantineEvent(SubmissionSecurityBatchScan{Signals: []SubmissionSecurityBatchSignal{{Source: submissionSecuritySourceEvidence, SubmissionSecuritySignal: signals[0]}}})
+	require.Equal(t, "evidence", batch.Signals[0].Metadata["source"])
+	legacy := submissionSecurityQuarantineEvent(SubmissionSecurityScan{Signals: signals})
+	require.Equal(t, "quarantine", legacy.Decision)
+	require.False(t, legacy.Metadata["signals_truncated"].(bool))
+	require.NoError(t, func() error {
+		_, err := ScanSubmissionWithProviderProposal([]string{"safe"}, map[string]any{})
+		return err
+	}())
+}
+
 func TestSubmissionSecurityScannerBase64AndSignalBoundaries(t *testing.T) {
 	printable := base64.RawStdEncoding.EncodeToString([]byte("plain text payload"))
 	binary := base64.RawStdEncoding.EncodeToString([]byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})

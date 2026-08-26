@@ -40,7 +40,6 @@ function assertTerminalErrors(status) {
   }
   const allowedCodes = new Set([
     "provider_unavailable", "provider_response_invalid", "input_budget_exceeded", "configuration_invalid", "database_failure", "internal_failure",
-    "search_indexing_delayed",
     "submission_quarantined", "submission_policy_rejected",
     "relationship_version_stale", "relationship_not_active", "object_kind_change_forbidden",
     "support_set_mismatch", "entity_not_found", "too_many_entity_candidates",
@@ -55,7 +54,6 @@ function assertTerminalErrors(status) {
     "Dense-Mem is missing valid semantic-assessor configuration",
     "Dense-Mem could not persist the submission",
     "Dense-Mem could not complete the submission",
-    "search indexing is delayed",
     "submission was quarantined by security policy",
     "submission was rejected by semantic placement policy",
     "relationship version is stale",
@@ -73,8 +71,6 @@ function assertTerminalErrors(status) {
     "relationship supports changed while confirmation was pending",
     "selected Entity candidate is no longer available",
     "corrected Relationship collides with inactive or unsupported history",
-    "Semantic search indexing is delayed.",
-    "Semantic search indexing is delayed; check the control portal for recovery guidance.",
   ]);
   const allowedActions = new Set([
     "retry_same_request", "resubmit_remember", "retry_correction", "contact_operator", "none",

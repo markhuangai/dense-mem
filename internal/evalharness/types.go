@@ -320,7 +320,6 @@ type RunConfig struct {
 	ImportSeed             bool   `json:"import_seed"`
 	ImportRoute            string `json:"import_route,omitempty"`
 	ImportConcurrency      int    `json:"import_concurrency,omitempty"`
-	PlacementTimeout       string `json:"placement_timeout,omitempty"`
 	ResumeSourceDocIDsPath string `json:"resume_source_doc_ids_path,omitempty"`
 	TracesPath             string `json:"traces_path,omitempty"`
 	MappingPath            string `json:"mapping_path,omitempty"`

@@ -28,7 +28,7 @@ func TestRecallEvidenceHistoricalIncludesNonCurrentSearchDocuments(t *testing.T)
 			ledgerRepo := NewLedgerRepository(appDB, rls)
 			searchRepo := NewSearchRepository(appDB, rls)
 			content := tc.token + " PostgreSQL evidence was current before projection state changed."
-			ingest, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+			ingest, err := createTestIngest(ctx, ledgerRepo, CreateIngestInput{
 				TeamID:         teamID,
 				OwnerProfileID: ownerID,
 				Evidence: []EvidenceInput{{
@@ -95,7 +95,7 @@ func TestRecallEvidenceHistoricalExcludesEvidenceRetractedAtKnownAt(t *testing.T
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	searchRepo := NewSearchRepository(appDB, rls)
 	content := "lifecyclehistory PostgreSQL evidence was current before it was retracted."
-	ingest, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+	ingest, err := createTestIngest(ctx, ledgerRepo, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		Evidence: []EvidenceInput{{

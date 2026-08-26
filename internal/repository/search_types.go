@@ -8,47 +8,28 @@ import (
 type SearchRepository interface {
 	GetActiveSearchContract(ctx context.Context) (*ActiveSearchContract, error)
 	CheckSearchReadiness(ctx context.Context) (*SearchReadiness, error)
-	UpsertSearchDocument(ctx context.Context, input UpsertSearchDocumentInput) (*SearchDocumentResult, error)
-	ClaimEmbeddingJobs(ctx context.Context, input ClaimEmbeddingJobsInput) ([]EmbeddingJob, error)
-	CompleteEmbeddingJob(ctx context.Context, input CompleteEmbeddingJobInput) error
-	FailEmbeddingJob(ctx context.Context, input FailEmbeddingJobInput) (*EmbeddingJobFailureResult, error)
-	GetEmbeddingQueueStats(ctx context.Context, input EmbeddingQueueStatsInput) (*EmbeddingQueueStats, error)
 	SearchFullText(ctx context.Context, input FullTextSearchInput) ([]SearchHit, error)
 	SearchExactVector(ctx context.Context, input ExactVectorSearchInput) ([]SearchHit, error)
 }
 
+// SearchReconciliationRepository owns the document-centric drift repair
+// boundary. It deliberately exposes no queue, lease, worker, or job concepts.
+type SearchReconciliationRepository interface {
+	SearchRepository
+	ReserveSearchReconciliationRun(ctx context.Context, input SearchReconciliationRunInput) (*SearchReconciliationRun, bool, error)
+	SelectSearchReconciliationDocuments(ctx context.Context, input SearchReconciliationSelectionInput) ([]SearchDocumentForEmbedding, error)
+	CompleteSearchReconciliationDocuments(ctx context.Context, input ApplySearchReconciliationInput) (*SearchReconciliationApplyResult, error)
+	FinishSearchReconciliationRun(ctx context.Context, input FinishSearchReconciliationRunInput) error
+}
+
 // InlineEmbeddingRepository is the optional write-path capability used by
 // synchronous semantic writers. Keeping it separate from SearchRepository
-// avoids forcing legacy read/reconciliation test doubles to implement a
-// request-scoped write concern.
+// avoids forcing read-only test doubles to implement a request-scoped write
+// concern.
 type InlineEmbeddingRepository interface {
 	LoadSearchDocumentsForEmbedding(ctx context.Context, input LoadSearchDocumentsForEmbeddingInput) ([]SearchDocumentForEmbedding, error)
 	LoadSearchDocumentsForSources(ctx context.Context, input LoadSearchDocumentsForSourcesInput) ([]SearchDocumentForEmbedding, error)
 	CompleteSearchDocumentsWithEmbeddings(ctx context.Context, input CompleteSearchDocumentsWithEmbeddingsInput) error
-}
-
-// EmbeddingJobLeaseRenewer is implemented by repositories that can extend a
-// claimed embedding job while an external provider call is in flight. It is
-// intentionally separate from SearchRepository so lightweight service fakes
-// and read-only adapters do not acquire a lease-management obligation.
-type EmbeddingJobLeaseRenewer interface {
-	RenewEmbeddingJobLease(ctx context.Context, input RenewEmbeddingJobLeaseInput) error
-}
-
-// EmbeddingReconciliationRepository is the durable control-plane surface for
-// the always-on daily failed-embedding recovery loop. It is separate from the
-// tenant-scoped search interface because run leases and operator projections
-// are system-coordinated concerns.
-type EmbeddingReconciliationRepository interface {
-	GetEmbeddingReconciliationTime(ctx context.Context) (time.Time, error)
-	GetSearchConvergence(ctx context.Context, input SearchConvergenceInput) (*SearchConvergence, error)
-	ReserveEmbeddingReconciliationRun(ctx context.Context, input ReserveEmbeddingReconciliationRunInput) (*EmbeddingReconciliationRun, bool, error)
-	SelectEmbeddingReconciliationCanary(ctx context.Context, input SelectEmbeddingReconciliationCanaryInput) (*EmbeddingJob, error)
-	MarkEmbeddingReconciliationCanaryAttempt(ctx context.Context, input MarkEmbeddingReconciliationCanaryAttemptInput) error
-	CompleteEmbeddingReconciliationCanary(ctx context.Context, input CompleteEmbeddingReconciliationCanaryInput) error
-	ResetEmbeddingReconciliationCanary(ctx context.Context, input ResetEmbeddingReconciliationCanaryInput) error
-	RequeueEmbeddingReconciliationJobs(ctx context.Context, input RequeueEmbeddingReconciliationJobsInput) (int64, error)
-	CompleteEmbeddingReconciliationRun(ctx context.Context, input CompleteEmbeddingReconciliationRunInput) error
 }
 
 type RecallRepository interface {
@@ -136,7 +117,6 @@ type SearchDocumentResult struct {
 	EmbeddingContractID    string
 	EmbeddingDimensions    int
 	SearchState            string
-	QueuedJobID            string
 	SpaceID                string
 	SpaceGeneration        int64
 }
@@ -159,8 +139,12 @@ type LoadSearchDocumentsForSourcesInput struct {
 
 type SearchDocumentForEmbedding struct {
 	SearchDocumentResult
-	DocumentText string
-	DocumentHash string
+	DocumentText       string
+	DocumentHash       string
+	StoredDocumentHash string
+	// Retired marks a stored projection whose canonical source no longer
+	// exists. It is finalized without a provider call after successful repair.
+	Retired bool
 }
 
 // InlineEmbeddingPlan is the provider-independent render result for one
@@ -168,22 +152,26 @@ type SearchDocumentForEmbedding struct {
 // the commit phase maps returned vectors to the final version-fenced rows by
 // document hash.
 type InlineEmbeddingPlan struct {
-	Documents []SearchDocumentForEmbedding
+	Documents               []SearchDocumentForEmbedding
+	EmbeddingContractID     string
+	EmbeddingDimensions     int
+	EmbeddingModel          string
+	SearchIndexGenerationID string
+	IndexGeneration         int
 }
 
 // InlineEmbeddingResult carries one validated provider vector back to the
 // fenced semantic commit. DocumentHash is the stable render identity; the
 // final search_document_id is assigned or loaded by PostgreSQL.
 type InlineEmbeddingResult struct {
-	DocumentHash string
-	Embedding    []float32
+	DocumentHash            string
+	Embedding               []float32
+	EmbeddingContractID     string
+	EmbeddingDimensions     int
+	EmbeddingModel          string
+	SearchIndexGenerationID string
+	IndexGeneration         int
 }
-
-// InlineEmbeddingBatch is the request-owned provider boundary used by a
-// synchronous semantic commit. The repository invokes it only after it has
-// rendered and fenced the complete document set; returning an error aborts
-// the surrounding transaction.
-type InlineEmbeddingBatch func(context.Context, []SearchDocumentForEmbedding) ([]SearchDocumentEmbedding, error)
 
 // CompleteSearchDocumentsWithEmbeddingsInput carries the provider output back
 // across the fenced storage boundary. Every document is checked against the
@@ -194,9 +182,21 @@ type CompleteSearchDocumentsWithEmbeddingsInput struct {
 	Documents      []SearchDocumentEmbedding
 }
 
+type ApplySearchReconciliationInput struct {
+	EmbeddingContractID string
+	EmbeddingDimensions int
+	Documents           []SearchDocumentEmbedding
+}
+
 type SearchDocumentEmbedding struct {
+	TeamID                 string
 	SearchDocumentID       string
+	OwnerProfileID         string
+	SourceKind             string
+	SourceID               string
+	DocumentText           string
 	DocumentHash           string
+	StoredDocumentHash     string
 	SourceVersion          int64
 	ProjectionFormat       int
 	ProjectionGenerationID string
@@ -206,83 +206,7 @@ type SearchDocumentEmbedding struct {
 	Embedding              []float32
 	SpaceID                string
 	SpaceGeneration        int64
-}
-
-type ClaimEmbeddingJobsInput struct {
-	TeamID   string
-	WorkerID string
-	Limit    int
-	Lease    time.Duration
-	SpaceID  string
-}
-
-type EmbeddingJob struct {
-	TeamID                 string
-	EmbeddingJobID         string
-	SearchDocumentID       string
-	OwnerProfileID         string
-	SpaceID                string
-	SpaceGeneration        int64
-	SourceKind             string
-	SourceID               string
-	SourceVersion          int64
-	ProjectionFormat       int
-	ProjectionGenerationID string
-	DocumentVersion        int64
-	EmbeddingContractID    string
-	EmbeddingDimensions    int
-	Status                 string
-	Attempts               int
-	TotalAttempts          int
-	RecoveryCount          int
-	FailureClass           string
-	FailureCode            string
-	FirstFailedAt          *time.Time
-	LastFailedAt           *time.Time
-	LeaseUntil             *time.Time
-	DocumentText           string
-}
-
-type CompleteEmbeddingJobInput struct {
-	TeamID           string
-	EmbeddingJobID   string
-	WorkerID         string
-	ExpectedAttempts int
-	Embedding        []float32
-	SpaceID          string
-}
-
-type RenewEmbeddingJobLeaseInput struct {
-	TeamID           string
-	EmbeddingJobID   string
-	WorkerID         string
-	ExpectedAttempts int
-	Lease            time.Duration
-	SpaceID          string
-}
-
-type FailEmbeddingJobInput struct {
-	TeamID           string
-	EmbeddingJobID   string
-	WorkerID         string
-	ExpectedAttempts int
-	Error            string
-	FailureClass     string
-	FailureCode      string
-	RetryAfter       time.Duration
-	Terminal         bool
-	SpaceID          string
-}
-
-type EmbeddingJobFailureResult struct {
-	Status       string
-	RetryAfter   time.Duration
-	Terminal     bool
-	Stale        bool
-	Attempts     int
-	MaxAttempts  int
-	FailureClass string
-	FailureCode  string
+	Retired                bool
 }
 
 type SearchConvergenceInput struct {
@@ -290,163 +214,76 @@ type SearchConvergenceInput struct {
 	EmbeddingDimensions int
 }
 
+// SearchConvergence is an operator-facing document drift projection. A
+// document is current only when its active-contract vector is present and its
+// source/document version and hash still match the canonical projection.
 type SearchConvergence struct {
-	ObservedAt             time.Time
-	Status                 string
-	Contract               *ActiveSearchContract
-	Queued                 int64
-	Processing             int64
-	Failed                 int64
-	ExpiredLeases          int64
-	OldestPendingAge       time.Duration
-	OldestFailureAge       time.Duration
-	AffectedTeamCount      int64
-	Failures               []EmbeddingFailureCount
-	FailureGroups          []EmbeddingFailureGroup
-	FailureGroupCount      int64
-	FailureGroupsTruncated bool
-	LatestRun              *EmbeddingReconciliationRun
+	ObservedAt        time.Time
+	Status            string
+	Contract          *ActiveSearchContract
+	ExpectedDocuments int64
+	CurrentDocuments  int64
+	DriftedDocuments  int64
+	AffectedTeamCount int64
+	OldestDriftAge    time.Duration
+	DriftClasses      []SearchDocumentDriftCount
+	LatestRun         *SearchReconciliationRun
 }
 
-type EmbeddingFailureCount struct {
-	SourceKind   string
-	FailureClass string
-	FailureCode  string
-	Count        int64
+type SearchDocumentDriftCount struct {
+	Class string
+	Count int64
 }
 
-type EmbeddingFailureGroup struct {
-	TeamID              string
-	TeamName            string
+// SearchReconciliationRun is the durable run summary retained for the
+// document-centric reconciliation pass. It deliberately has no worker,
+// lease, canary, or queue identifiers.
+type SearchReconciliationRun struct {
+	RunID         string
+	LocalRunDate  time.Time
+	Status        string
+	SelectedCount int64
+	EmbeddedCount int64
+	UpdatedCount  int64
+	DriftedCount  int64
+	LastError     string
+	StartedAt     *time.Time
+	CompletedAt   *time.Time
+	UpdatedAt     time.Time
+}
+
+// SearchReconciliationSelectionInput bounds one document-centric repair
+// snapshot to the active embedding contract.
+type SearchReconciliationSelectionInput struct {
 	EmbeddingContractID string
 	EmbeddingDimensions int
-	SourceKind          string
-	FailureClass        string
-	FailureCode         string
-	Status              string
-	FailedJobCount      int64
-	QueuedJobCount      int64
-	ProcessingJobCount  int64
-	AffectedJobCount    int64
-	FirstFailedAt       time.Time
-	LastFailedAt        time.Time
-	Age                 time.Duration
-	Guidance            string
+	Limit               int
 }
 
-type EmbeddingReconciliationRun struct {
-	RunID               string
+// SearchReconciliationRunInput starts one bounded repair pass. The
+// reservation is short-lived; provider work happens after its transaction
+// closes.
+type SearchReconciliationRunInput struct {
 	EmbeddingContractID string
 	EmbeddingDimensions int
-	LocalRunDate        time.Time
-	Status              string
-	CandidateCutoff     time.Time
-	WorkerID            string
-	LeaseToken          string
-	LeaseUntil          *time.Time
-	CanaryJobID         string
-	CanaryAttemptedAt   *time.Time
-	CanaryOutcome       string
-	CanaryFailureClass  string
-	CanaryFailureCode   string
-	RequeuedCount       int64
-	RecoveredCount      int64
-	LastError           string
-	StartedAt           *time.Time
-	CompletedAt         *time.Time
-	UpdatedAt           time.Time
+	Now                 time.Time
+	StaleAfter          time.Duration
 }
 
-type ReserveEmbeddingReconciliationRunInput struct {
-	EmbeddingContractID string
-	EmbeddingDimensions int
-	LocalRunDate        time.Time
-	CreateIfMissing     bool
-	WorkerID            string
-	Lease               time.Duration
+type FinishSearchReconciliationRunInput struct {
+	RunID         string
+	Status        string
+	SelectedCount int64
+	EmbeddedCount int64
+	UpdatedCount  int64
+	DriftedCount  int64
+	LastError     string
 }
 
-type SelectEmbeddingReconciliationCanaryInput struct {
-	RunID               string
-	EmbeddingContractID string
-	EmbeddingDimensions int
-	CandidateCutoff     time.Time
-}
-
-type MarkEmbeddingReconciliationCanaryAttemptInput struct {
-	TeamID      string
-	RunID       string
-	CanaryJobID string
-	WorkerID    string
-	LeaseToken  string
-	AttemptedAt time.Time
-	Lease       time.Duration
-}
-
-type CompleteEmbeddingReconciliationCanaryInput struct {
-	RunID          string
-	CanaryJobID    string
-	WorkerID       string
-	LeaseToken     string
-	Succeeded      bool
-	RecoveredCount int64
-	FailureClass   string
-	FailureCode    string
-}
-
-type ResetEmbeddingReconciliationCanaryInput struct {
-	RunID       string
-	CanaryJobID string
-	WorkerID    string
-	LeaseToken  string
-}
-
-type RequeueEmbeddingReconciliationJobsInput struct {
-	RunID               string
-	WorkerID            string
-	LeaseToken          string
-	EmbeddingContractID string
-	EmbeddingDimensions int
-	CandidateCutoff     time.Time
-	BatchSize           int
-	Lease               time.Duration
-}
-
-type CompleteEmbeddingReconciliationRunInput struct {
-	RunID          string
-	WorkerID       string
-	LeaseToken     string
-	Status         string
-	CanaryOutcome  string
-	FailureClass   string
-	FailureCode    string
-	RequeuedCount  int64
-	RecoveredCount int64
-	LastError      string
-}
-
-type EmbeddingQueueStatsInput struct {
-	TeamID              string
-	EmbeddingContractID string
-	EmbeddingDimensions int
-	ActiveTeamsOnly     bool
-}
-
-type EmbeddingQueueStats struct {
-	TeamID              string
-	EmbeddingContractID string
-	EmbeddingDimensions int
-	Queued              int64
-	Processing          int64
-	Completed           int64
-	Failed              int64
-	Stale               int64
-	Cancelled           int64
-	ExpiredLeases       int64
-	OldestPendingAge    time.Duration
-	OldestLeaseAge      time.Duration
-	TerminalFailures    int64
-	CutoverBlocking     bool
+type SearchReconciliationApplyResult struct {
+	UpdatedCount          int64
+	SkippedCount          int64
+	RemainingDriftedCount int64
 }
 
 type FullTextSearchInput struct {

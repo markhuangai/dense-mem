@@ -20,6 +20,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 var (
@@ -45,7 +46,6 @@ type LifecycleDependencies struct {
 
 type LifecycleSemanticRepository interface {
 	CorrectRelationship(ctx context.Context, input repository.CorrectRelationshipInput) (*repository.CorrectRelationshipResult, error)
-	GetRelationshipCorrection(ctx context.Context, input repository.GetRelationshipCorrectionInput) (*repository.RelationshipCorrectionStatus, error)
 }
 
 type synchronousCorrectionSemanticRepository interface {
@@ -87,8 +87,6 @@ type CorrectRelationshipReceipt struct {
 	SubmissionKind       string                                   `json:"submission_kind"`
 	ProcessingState      string                                   `json:"processing_state"`
 	SearchState          string                                   `json:"search_state"`
-	CheckAfterSeconds    int                                      `json:"-"`
-	StatusTool           string                                   `json:"-"`
 	CorrelationID        string                                   `json:"correlation_id"`
 	AwaitingConfirmation *SubmissionAwaitingConfirmation          `json:"awaiting_confirmation,omitempty"`
 	CorrectionResult     *repository.RelationshipCorrectionResult `json:"correction_result,omitempty"`
@@ -138,36 +136,40 @@ func (s *lifecycleService) CorrectRelationship(
 		Selection:         req.Selection,
 		IdempotencyKey:    req.IdempotencyKey,
 	}
-	var result *repository.CorrectRelationshipResult
-	var err error
-	if synchronous, ok := s.semantic.(synchronousCorrectionSemanticRepository); ok && s.embedder != nil {
-		var plan *repository.RelationshipCorrectionEmbeddingPlan
-		plan, err = synchronous.PlanRelationshipCorrectionEmbeddings(ctx, semanticInput)
-		if err == nil && plan == nil {
-			err = errors.New("memory lifecycle: nil relationship correction embedding plan")
-		}
-		if err == nil && len(plan.Documents) > 0 {
+	synchronous, ok := s.semantic.(synchronousCorrectionSemanticRepository)
+	if !ok {
+		return nil, ErrLifecycleEmbeddingUnavailable
+	}
+	plan, err := synchronous.PlanRelationshipCorrectionEmbeddings(ctx, semanticInput)
+	if err == nil && plan == nil {
+		err = errors.New("memory lifecycle: nil relationship correction embedding plan")
+	}
+	var results []repository.InlineEmbeddingResult
+	if err == nil && len(plan.Documents) > 0 {
+		if s.embedder == nil {
+			err = ErrLifecycleEmbeddingUnavailable
+		} else {
 			var embedded []repository.SearchDocumentEmbedding
 			embedded, err = s.embedRelationshipDocumentBatch(ctx, plan.Documents)
 			if err == nil {
-				results := make([]repository.InlineEmbeddingResult, 0, len(embedded))
+				results = make([]repository.InlineEmbeddingResult, 0, len(embedded))
 				for _, embedding := range embedded {
 					results = append(results, repository.InlineEmbeddingResult{
-						DocumentHash: embedding.DocumentHash,
-						Embedding:    append([]float32(nil), embedding.Embedding...),
+						DocumentHash:            embedding.DocumentHash,
+						Embedding:               append([]float32(nil), embedding.Embedding...),
+						EmbeddingContractID:     plan.EmbeddingContractID,
+						EmbeddingDimensions:     plan.EmbeddingDimensions,
+						EmbeddingModel:          plan.EmbeddingModel,
+						SearchIndexGenerationID: plan.SearchIndexGenerationID,
+						IndexGeneration:         plan.IndexGeneration,
 					})
 				}
-				result, err = synchronous.CorrectRelationshipWithEmbeddings(ctx, semanticInput, results)
 			}
-		} else if err == nil {
-			result, err = s.semantic.CorrectRelationship(ctx, semanticInput)
 		}
-	} else {
-		semanticCtx := repository.WithInlineEmbeddingWrites(ctx)
-		if s.embedder != nil {
-			semanticCtx = repository.WithInlineEmbeddingBatch(semanticCtx, s.embedRelationshipDocumentBatch)
-		}
-		result, err = s.semantic.CorrectRelationship(semanticCtx, semanticInput)
+	}
+	var result *repository.CorrectRelationshipResult
+	if err == nil {
+		result, err = synchronous.CorrectRelationshipWithEmbeddings(ctx, semanticInput, results)
 	}
 	if err != nil {
 		return nil, translateRelationshipCorrectionError(err)
@@ -192,7 +194,11 @@ func (s *lifecycleService) CorrectRelationship(
 		receipt.AwaitingConfirmation = &SubmissionAwaitingConfirmation{
 			ConfirmationToken: result.Confirmation.Token,
 			ExpiresAt:         result.Confirmation.ExpiresAt,
-			Candidates:        append([]repository.RelationshipCorrectionCandidate(nil), result.Confirmation.Candidates...),
+		}
+		for _, candidate := range result.Confirmation.Candidates {
+			receipt.AwaitingConfirmation.Candidates = append(receipt.AwaitingConfirmation.Candidates, rememberapp.RelationshipCorrectionCandidate{
+				Endpoint: candidate.Endpoint, EntityID: candidate.EntityID, EntityKind: candidate.EntityKind, CanonicalName: candidate.CanonicalName,
+			})
 		}
 	}
 	if result.ErrorCode != "" {
@@ -247,6 +253,7 @@ func (s *lifecycleService) embedRelationshipDocumentBatch(
 			}
 		}
 		completed[index] = repository.SearchDocumentEmbedding{
+			TeamID: document.TeamID, OwnerProfileID: document.OwnerProfileID,
 			SearchDocumentID: document.SearchDocumentID, SourceVersion: document.SourceVersion,
 			DocumentHash:     document.DocumentHash,
 			ProjectionFormat: document.ProjectionFormat, ProjectionGenerationID: document.ProjectionGenerationID,

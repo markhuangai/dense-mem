@@ -64,9 +64,9 @@ func createSemanticIngest(
 	ownerID string,
 	idempotencyKey string,
 	content string,
-) *CreateIngestResult {
+) *EvidenceIngestResult {
 	t.Helper()
-	result, err := repo.CreateIngest(ctx, CreateIngestInput{
+	result, err := createTestIngest(ctx, repo, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IdempotencyKey: idempotencyKey,
@@ -80,6 +80,84 @@ func createSemanticIngest(
 	return result
 }
 
+func createTestIngest(ctx context.Context, repo *LedgerRepositoryImpl, raw CreateIngestInput) (*EvidenceIngestResult, error) {
+	input := normalizeCreateIngestInput(raw)
+	if err := validateCreateIngestInput(input); err != nil {
+		return nil, err
+	}
+	result := &EvidenceIngestResult{
+		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
+		Status: input.Status, Proposal: input.Proposal,
+	}
+	err := repo.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
+			return err
+		}
+		ingestID, created, err := insertKnowledgeIngest(ctx, tx, input)
+		if err != nil {
+			return err
+		}
+		result.IngestID, result.Existing = ingestID, !created
+		if !created {
+			rows, err := tx.WithContext(ctx).Raw(`
+				SELECT fragment_id::text, evidence_index, content, content_hash, authority,
+				       COALESCE(source_id::text, ''), COALESCE(source_revision_id::text, '')
+				FROM evidence_fragments
+				WHERE team_id = ?::uuid AND ingest_id = ?::uuid AND owner_profile_id = ?::uuid
+				ORDER BY evidence_index
+			`, input.TeamID, ingestID, input.OwnerProfileID).Rows()
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var fragment EvidenceFragment
+				if err := rows.Scan(&fragment.FragmentID, &fragment.EvidenceIndex, &fragment.Content, &fragment.ContentHash, &fragment.Authority, &fragment.SourceID, &fragment.SourceRevisionID); err != nil {
+					return err
+				}
+				result.Evidence = append(result.Evidence, fragment)
+			}
+			return rows.Err()
+		}
+		sources := make(map[string]SourceRevisionResult, len(input.Evidence))
+		for index, item := range input.Evidence {
+			var source *SourceRevisionResult
+			if item.SourceKey != "" {
+				advanced, err := advanceSourceRevisionInTx(ctx, tx, AdvanceSourceRevisionInput{
+					TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID,
+					SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
+					SourceKey: item.SourceKey, SourceKind: sourceKindForEvidence(item.SourceType),
+					Authority: item.Authority, RevisionToken: item.SourceRevisionToken,
+					ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
+					ContentHash:                   item.SourceRevisionContentHash, Envelope: item.SourceRevisionEnvelope,
+				}, sources)
+				if err != nil {
+					return err
+				}
+				source = advanced
+			}
+			fragment, err := insertEvidenceFragment(ctx, tx, input, ingestID, index, item, source)
+			if err != nil {
+				return err
+			}
+			result.Evidence = append(result.Evidence, fragment)
+			if item.InitialEvent != nil {
+				eventInput := SecurityEventInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID, FragmentID: fragment.FragmentID, SecurityEventDraft: *item.InitialEvent}
+				if _, err := insertSecurityEvent(ctx, tx, eventInput); err != nil {
+					return err
+				}
+				if item.InitialEvent.Decision == "quarantine" {
+					if err := insertEvidenceQuarantine(ctx, tx, input, ingestID, fragment.FragmentID, item.InitialEvent.Reason); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return applyEvidenceSupersessions(ctx, tx, input, ingestID, result.Evidence)
+	})
+	return result, err
+}
+
 func applySemanticDecision(
 	t *testing.T,
 	ctx context.Context,
@@ -90,96 +168,6 @@ func applySemanticDecision(
 	result, err := repo.ApplyRelationshipDecision(ctx, input)
 	require.NoError(t, err)
 	return result
-}
-
-func commitAcceptedSubmissionFixture(
-	t *testing.T,
-	ctx context.Context,
-	repo *LedgerRepositoryImpl,
-	input CommitPlacementSemanticInput,
-) (*CommitSubmissionAssessmentResult, error) {
-	t.Helper()
-	status, err := repo.GetPlacementRun(ctx, GetPlacementRunInput{
-		TeamID:         input.TeamID,
-		OwnerProfileID: input.OwnerProfileID,
-		IngestID:       input.IngestID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	assessment := persistSubmissionAssessment(t, ctx, repo, PlacementRun{
-		TeamID:         input.TeamID,
-		OwnerProfileID: input.OwnerProfileID,
-		IngestID:       input.IngestID,
-		PlacementRunID: input.PlacementRunID,
-		Attempts:       input.ExpectedAttempts,
-	})
-	fragmentByItemID := make(map[string]EvidenceFragment, len(status.Items))
-	for index, item := range status.Items {
-		if index < len(status.Evidence) {
-			fragmentByItemID[item.PlacementItemID] = status.Evidence[index]
-		}
-	}
-	itemID := input.PlacementItemID
-	fragment, ok := fragmentByItemID[itemID]
-	if !ok {
-		return nil, ErrPlacementLeaseLost
-	}
-	entityResolutions := make([]SubmissionAssessmentEntityResolutionInput, 0, len(input.EntityResolutions))
-	for _, resolution := range input.EntityResolutions {
-		if resolution.FragmentID == "" {
-			resolution.FragmentID = fragment.FragmentID
-		}
-		resolution.AssessmentID = assessment.AssessmentID
-		entityResolutions = append(entityResolutions, SubmissionAssessmentEntityResolutionInput{
-			PlacementItemID: itemID,
-			Resolution:      resolution,
-		})
-	}
-	relationships := make([]SubmissionAssessmentRelationshipObservationInput, 0, len(input.RelationshipObservations))
-	for _, observation := range input.RelationshipObservations {
-		observation = normalizePlacementRelationshipDecisionInput(observation)
-		observation.AssessorAccepted = true
-		observation.EvidenceVerdict = ""
-		observation.Confidence = nil
-		observation.Rationale = ""
-		observation.AssessmentID = assessment.AssessmentID
-		observation.AssessmentPolicyVersion = ""
-		observation.ThresholdUsed = nil
-		observation.GateResult = ""
-		relationships = append(relationships, SubmissionAssessmentRelationshipObservationInput{
-			PlacementItemID: itemID,
-			RelationshipRef: observation.Ref,
-			SplitIndex:      0,
-			Observation:     observation,
-		})
-	}
-	relationshipResults := make([]SubmissionRelationshipResultInput, 0, len(relationships))
-	for _, relationship := range relationships {
-		relationshipResults = append(relationshipResults, SubmissionRelationshipResultInput{
-			RelationshipRef: relationship.Observation.Ref,
-			Disposition:     "stored",
-		})
-	}
-	return repo.CommitSubmissionAssessment(ctx, CommitSubmissionAssessmentInput{
-		SubmissionAssessmentRunScope: SubmissionAssessmentRunScope{
-			TeamID:           input.TeamID,
-			OwnerProfileID:   input.OwnerProfileID,
-			IngestID:         input.IngestID,
-			PlacementRunID:   input.PlacementRunID,
-			WorkerID:         input.WorkerID,
-			ExpectedAttempts: input.ExpectedAttempts,
-		},
-		AssessmentID: assessment.AssessmentID,
-		Items: []SubmissionAssessmentItemInput{{
-			PlacementItemID: itemID,
-			FragmentID:      fragment.FragmentID,
-		}},
-		EntityResolutions:        entityResolutions,
-		RelationshipObservations: relationships,
-		RelationshipResults:      relationshipResults,
-		Payload:                  input.Payload,
-	})
 }
 
 func assertSameTeamCanReadSemanticEdge(

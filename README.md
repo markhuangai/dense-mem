@@ -124,12 +124,15 @@ curl -fsS -X POST http://127.0.0.1:8090/control/api/teams/<team-id>/credentials 
 
 The release image contains one project executable, `/app/server`. It applies
 pending PostgreSQL migrations under a database session lock before serving, so
-the Compose stack does not need a separate migration container. Multiple server
-replicas that share one writable primary serialize this startup step. Keep
-rolling-deployment migrations backward compatible with the previous app version;
-independent databases must each be migrated by a server connected to that
-database. Administration stays on the private control portal/API, while dreaming
-and automatic conflict review run as server background workers.
+the Compose stack does not need a separate migration container. v2.6.1 is a
+stopped-service, irreversible Remember cutover: stop every application instance,
+take and verify a PostgreSQL snapshot, apply the migration, verify the compatible
+marker, and deploy the matching binary before reopening traffic. Do not run mixed
+versions or rely on rolling-migration compatibility. Multiple replicas that share
+one writable primary serialize startup; independent databases must each be
+migrated by a server connected to that database. Administration stays on the
+private control portal/API, while dreaming and automatic conflict review run as
+server background workers.
 
 The image healthcheck allows the default 30-minute migration window and becomes
 active after its first success. If `POSTGRES_MIGRATION_TIMEOUT_SECONDS` is set
@@ -231,8 +234,8 @@ source revision with `previous_source_revision`; do not combine them.
 }
 ```
 
-Direct supersession is staged with the complete batch. The target is retired
-only inside the accepted semantic transaction; a rejected, failed, or
+Supersession is carried with the complete batch. The target is retired only
+inside the accepted semantic transaction; a rejected, failed, or
 quarantined submission leaves it active. This prevents a replacement that never
 becomes supported memory from invalidating current evidence.
 
@@ -243,10 +246,10 @@ authorization, lifecycle, and durable state. Every submitted Relationship ref
 gets a `stored` or `not_stored` disposition. Unsupported hints are not client
 errors when stored support still covers every evidence item; otherwise the
 submission is rejected with `no_supported_memory`. Exact client-owned changes
-after staging are rejected with `stale_input`. Provider, configuration,
+after the snapshot are rejected with `stale_input`. Provider, configuration,
 database, and internal faults are typed operational failures. All accepted
 semantic effects commit atomically, with no partial replacement or interactive
-placement review.
+review queue.
 
 Remember requires one top-level `idempotency_key`; evidence-level and derived
 keys are not accepted. If a complete batch needs correction, submit the entire
@@ -311,9 +314,11 @@ default memory results.
 remember evidence (+ optional Entity/Relationship proposals)
         |
         v
-durable staging -> validated placement -> active eligible Relationships
-        |                                      |
-        +-- lifecycle event -------------------+
+assess -> deterministic plan -> vectors + canonical commit
+                                           |
+                         active eligible Relationships
+                                           |
+                         lifecycle event + evidence lineage
                                                |
                                                v
                          support-gated evidence recall and trace lineage
@@ -371,9 +376,10 @@ go run ./cmd/eval-seedgen \
 
 The `local_eval_100` CLI preset emits the versioned `local_eval_100_v2` seed
 identity with 100 corpus rows and 25 scored cases. It is a smoke check for the
-evaluation image and harness plumbing, not a replacement for the approved
-deterministic 1k release gate. Use `IMPORT_CONCURRENCY=5` for this smoke; the
-full evaluation remains configurable up to the harness limit of 10.
+evaluation image and harness plumbing. The deterministic 1k comparison was
+explicitly waived for issue #291 and was not run. Use `IMPORT_CONCURRENCY=5` for
+this smoke; the full evaluation remains configurable up to the harness limit of
+10.
 
 Memory-pack export emits the current `dense-mem.memory-pack.v2.4` artifact. Import
 and candidate-discovery workflows are not part of the public contract.
@@ -423,7 +429,7 @@ semantics.
 
 | Area | Dense-Mem owns | Host LLM owns |
 |------|----------------|---------------|
-| Evidence | Exact staging, provenance, lifecycle, and owner checks | Choosing what source material to submit |
+| Evidence | Exact request-scoped provenance, lifecycle, and owner checks | Choosing what source material to submit |
 | Semantic state | Validation, deterministic policy, support eligibility | Proposing optional Entity/Relationship hints |
 | Recall | Active evidence contexts and Relationship handles | Selecting what to cite or ask in the conversation |
 | Corrections | Authorized supersession, retraction, and append-only lineage | Deciding whether a correction is warranted |

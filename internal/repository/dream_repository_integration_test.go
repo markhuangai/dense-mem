@@ -33,24 +33,17 @@ func TestDreamInputsIncludeExpiredPendingEvidence(t *testing.T) {
 	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
 	content := "Dense-Mem may use PostgreSQL after independent review."
 	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID, "dream-pending-input", content)
-	claimed, err := ledgerRepo.ClaimNextPlacementRun(ctx, teamID, "dream-pending-input-worker", time.Minute)
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	assessment := persistSubmissionAssessment(t, ctx, ledgerRepo, *claimed)
 	threshold := 0.8
 	pending := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
-		TeamID:                  teamID,
-		OwnerProfileID:          ownerID,
-		IngestID:                ingest.IngestID,
-		PlacementItemID:         ingest.Items[0].PlacementItemID,
-		SubjectEntityID:         denseMem.EntityID,
-		PredicateKey:            "uses",
-		ObjectEntityID:          postgres.EntityID,
-		EvidenceVerdict:         "insufficient",
-		AssessmentID:            assessment.AssessmentID,
-		AssessmentPolicyVersion: AssessmentPolicyVersion,
-		ThresholdUsed:           &threshold,
-		GateResult:              "below_write_threshold",
+		TeamID:          teamID,
+		OwnerProfileID:  ownerID,
+		IngestID:        ingest.IngestID,
+		SubjectEntityID: denseMem.EntityID,
+		PredicateKey:    "uses",
+		ObjectEntityID:  postgres.EntityID,
+		EvidenceVerdict: "insufficient",
+		ThresholdUsed:   &threshold,
+		GateResult:      "below_write_threshold",
 		Support: &EvidenceSupportInput{
 			FragmentID:     ingest.Evidence[0].FragmentID,
 			SourceGroupKey: "pending_observation",
@@ -63,16 +56,16 @@ func TestDreamInputsIncludeExpiredPendingEvidence(t *testing.T) {
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO review_tasks (
-			    team_id, owner_profile_id, ingest_id, placement_item_id,
+			    team_id, owner_profile_id, ingest_id,
 			    relationship_id, observation_id, task_type, status, reason,
-			    payload, dedupe_key, assessment_id
+			    payload
 			) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, ?::uuid,
-			    ?::uuid, ?::uuid, 'relationship_needs_review', 'open', 'legacy_placement_review',
-			    '{}'::jsonb, '', ?::uuid
+			    ?::uuid, ?::uuid, ?::uuid,
+			    ?::uuid, ?::uuid, 'relationship_needs_review', 'open', 'pending_semantic_review',
+			    '{}'::jsonb
 			)
-		`, teamID, ownerID, ingest.IngestID, ingest.Items[0].PlacementItemID,
-			pending.Relationship.RelationshipID, pending.ObservationID, assessment.AssessmentID).Error
+		`, teamID, ownerID, ingest.IngestID,
+			pending.Relationship.RelationshipID, pending.ObservationID).Error
 	}))
 
 	inputs, err := semanticRepo.ListDreamInputs(ctx, DreamInputListInput{TeamID: teamID, Limit: 10})

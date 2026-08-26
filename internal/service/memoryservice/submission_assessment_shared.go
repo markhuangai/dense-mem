@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-// SemanticPlacementMaxAssessorTurns covers the initial assessor response and
-// bounded complete-response corrections in the same provider conversation.
-const SemanticPlacementMaxAssessorTurns = assessor.SemanticAssessmentMaxProviderTurns
+// SemanticMaxAssessorTurns covers the initial Remember assessor response and
+// at most two complete-response corrections in the same provider conversation.
+// Other assessor workflows retain their own broader historical limits.
+const SemanticMaxAssessorTurns = 3
 
 type semanticAssessmentPreflightError struct {
 	stage        string
@@ -44,7 +44,7 @@ func (err *semanticAssessmentPreflightError) Unwrap() error {
 func deterministicSemanticAssessmentPreflightError(stage, message string) error {
 	return &semanticAssessmentPreflightError{
 		stage:        strings.TrimSpace(stage),
-		reasonCode:   placementFailureReasonCode(strings.TrimSpace(stage), "validation_failed"),
+		reasonCode:   strings.TrimSpace(stage),
 		failureClass: "validation_failed",
 		err:          errors.New(message),
 	}
@@ -104,7 +104,7 @@ func cloneAssessmentProposal(proposal map[string]any) map[string]any {
 
 func assessmentClientProposalWithoutTrustedContext(proposal map[string]any) map[string]any {
 	cloned := cloneAssessmentProposal(proposal)
-	for _, relationship := range placementProposalObjectArray(cloned, "relationship_hints", "relationships") {
+	for _, relationship := range semanticProposalObjectArray(cloned, "relationship_hints", "relationships") {
 		delete(relationship, "correction_target")
 		delete(relationship, "conflict_context")
 	}
@@ -121,42 +121,6 @@ func semanticAssessmentMalformedFailure(err error) (string, int) {
 		failureClass = "malformed_response"
 	}
 	return failureClass, malformed.Attempts
-}
-
-func semanticAssessmentRetryPayload(
-	stage string,
-	providerAttempted bool,
-	failure ...assessor.ProviderFailureMetadata,
-) map[string]any {
-	diagnostic := placementFailureDiagnosticFor(stage, nil)
-	if len(failure) > 0 {
-		diagnostic = placementFailureDiagnosticForProvider(stage, failure[0])
-	}
-	payload := diagnostic.payload(providerAttempted)
-	payload["assessor_contract"] = domain.ContractVersion
-	return payload
-}
-
-func semanticAssessmentFailurePayload(
-	stage string,
-	providerAttempted bool,
-	cause error,
-	failure ...assessor.ProviderFailureMetadata,
-) map[string]any {
-	diagnostic := placementFailureDiagnosticFor(stage, cause)
-	if len(failure) > 0 {
-		diagnostic = placementFailureDiagnosticForProvider(stage, failure[0])
-		if cause != nil {
-			fromCause := placementFailureDiagnosticFor(stage, cause)
-			diagnostic.ValidationStage = fromCause.ValidationStage
-			diagnostic.ValidationFieldFamilies = fromCause.ValidationFieldFamilies
-			diagnostic.Measurement = fromCause.Measurement
-			diagnostic.AssessorTurns = fromCause.AssessorTurns
-		}
-	}
-	payload := diagnostic.payload(providerAttempted)
-	payload["assessor_contract"] = domain.ContractVersion
-	return payload
 }
 
 func assessmentCandidateGroupKey(evidenceID string, start, end int) string {
@@ -190,7 +154,7 @@ func proposalMap(raw any) (map[string]any, bool) {
 	return fields, ok
 }
 
-func placementProposalObjectArray(raw map[string]any, keys ...string) []map[string]any {
+func semanticProposalObjectArray(raw map[string]any, keys ...string) []map[string]any {
 	for _, key := range keys {
 		values, ok := raw[key]
 		if !ok {
@@ -271,7 +235,7 @@ func proposalOptionalTime(fields map[string]any, key string) (*time.Time, error)
 	}
 }
 
-func placementProposalCorrectionTarget(raw map[string]any) (assessor.RelationshipCorrectionTarget, bool) {
+func semanticProposalCorrectionTarget(raw map[string]any) (assessor.RelationshipCorrectionTarget, bool) {
 	target, ok := proposalMap(raw["correction_target"])
 	if !ok {
 		return assessor.RelationshipCorrectionTarget{}, false
@@ -287,7 +251,7 @@ func placementProposalCorrectionTarget(raw map[string]any) (assessor.Relationshi
 	}, true
 }
 
-func placementProposalConflictContext(raw map[string]any) (assessor.RelationshipConflictContext, bool) {
+func semanticProposalConflictContext(raw map[string]any) (assessor.RelationshipConflictContext, bool) {
 	conflictContext, ok := proposalMap(raw["conflict_context"])
 	if !ok {
 		return assessor.RelationshipConflictContext{}, false

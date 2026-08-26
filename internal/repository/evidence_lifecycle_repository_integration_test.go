@@ -118,7 +118,7 @@ func TestLedgerDirectEvidenceSupersessionRejectsCrossSpaceReplacement(t *testing
 	}))
 
 	err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
-		return applyDirectEvidenceSupersessions(ctx, tx, CreateIngestInput{
+		return applyEvidenceSupersessions(ctx, tx, CreateIngestInput{
 			TeamID:         teamID,
 			OwnerProfileID: ownerID,
 			RequestHash:    "cross-space-request",
@@ -161,7 +161,7 @@ func TestLedgerDirectEvidenceSupersessionRejectsSameTeamCrossOwnerReplacement(t 
 	replacement := createSemanticIngest(t, ctx, ledger, teamID, ownerB, "cross-owner-replacement", "Owner B replacement evidence.")
 
 	err := rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
-		return applyDirectEvidenceSupersessions(ctx, tx, CreateIngestInput{
+		return applyEvidenceSupersessions(ctx, tx, CreateIngestInput{
 			TeamID:         teamID,
 			OwnerProfileID: ownerA,
 			RequestHash:    "cross-owner-request",
@@ -345,18 +345,9 @@ func TestLedgerDirectEvidenceSupersessionRetiresTargetWhenReplacementIsQuarantin
 			},
 		}},
 	}
-	replacement, err := ledger.CreateIngest(ctx, replacementInput)
+	replacement, err := createTestIngest(ctx, ledger, replacementInput)
 	require.NoError(t, err)
 	require.Len(t, replacement.Evidence, 1)
-	loaded, err := ledger.GetPlacementRun(ctx, GetPlacementRunInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		IngestID:       replacement.IngestID,
-	})
-	require.NoError(t, err)
-	require.Len(t, loaded.Evidence, 1)
-	assert.Equal(t, []string{original.Evidence[0].FragmentID}, loaded.Evidence[0].SupersededEvidenceIDs)
-
 	trace, err := semantic.TraceRelationship(ctx, TraceRelationshipInput{
 		TeamID:         teamID,
 		RelationshipID: decision.Relationship.RelationshipID,
@@ -393,7 +384,7 @@ func TestLedgerDirectEvidenceSupersessionRetiresTargetWhenReplacementIsQuarantin
 	assert.Equal(t, 1, eventCount)
 	assert.Equal(t, 1, quarantineCount)
 
-	replay, err := ledger.CreateIngest(ctx, replacementInput)
+	replay, err := createTestIngest(ctx, ledger, replacementInput)
 	require.NoError(t, err)
 	assert.True(t, replay.Existing)
 	assert.Equal(t, replacement.IngestID, replay.IngestID)
@@ -417,7 +408,7 @@ func TestTraceRelationshipMarksLifecycleEventLimitAsTruncated(t *testing.T) {
 		target := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "trace-lifecycle-target-"+string(rune('a'+index)), content)
 		targetEvidenceIDs = append(targetEvidenceIDs, target.Evidence[0].FragmentID)
 	}
-	replacement, err := ledger.CreateIngest(ctx, CreateIngestInput{
+	replacement, err := createTestIngest(ctx, ledger, CreateIngestInput{
 		TeamID:         teamID,
 		OwnerProfileID: ownerID,
 		IdempotencyKey: "trace-lifecycle-replacement-ingest",

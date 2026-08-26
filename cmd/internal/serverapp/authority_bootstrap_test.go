@@ -13,7 +13,8 @@ import (
 
 func TestClassifyAuthorityActivatesWhenCompatibleMarkerPresent(t *testing.T) {
 	store := &authorityStoreStub{marker: &domain.CompatibilityMarker{
-		Status: domain.MigrationMarkerCompatible,
+		Version: cutoverMarkerVersion,
+		Status:  domain.MigrationMarkerCompatible,
 	}}
 
 	bootstrap, err := ClassifyAuthority(context.Background(), store)
@@ -25,13 +26,13 @@ func TestClassifyAuthorityActivatesWhenCompatibleMarkerPresent(t *testing.T) {
 
 func TestClassifyAuthorityFailsClosedForIncompatibleMarker(t *testing.T) {
 	_, err := ClassifyAuthority(context.Background(), &authorityStoreStub{
-		marker: &domain.CompatibilityMarker{Status: domain.MigrationMarkerCorrupt},
+		marker: &domain.CompatibilityMarker{Version: cutoverMarkerVersion, Status: domain.MigrationMarkerCorrupt},
 	})
 	require.ErrorIs(t, err, errAuthorityBlocked)
 	require.ErrorContains(t, err, "corrupt")
 
 	_, err = ClassifyAuthority(context.Background(), &authorityStoreStub{
-		marker: &domain.CompatibilityMarker{Status: domain.MigrationMarkerIncompatible},
+		marker: &domain.CompatibilityMarker{Version: cutoverMarkerVersion, Status: domain.MigrationMarkerIncompatible},
 	})
 	require.ErrorIs(t, err, errAuthorityBlocked)
 	require.ErrorContains(t, err, "incompatible")
@@ -54,27 +55,18 @@ func TestClassifyAuthorityFailsClosedWhenMarkerReadFails(t *testing.T) {
 
 func TestClassifyAuthorityFailsClosedForUnknownMarkerStatus(t *testing.T) {
 	_, err := ClassifyAuthority(context.Background(), &authorityStoreStub{
-		marker: &domain.CompatibilityMarker{Status: "pending"},
+		marker: &domain.CompatibilityMarker{Version: cutoverMarkerVersion, Status: "pending"},
 	})
 
 	require.ErrorIs(t, err, errAuthorityBlocked)
 	require.ErrorContains(t, err, "unknown compatibility marker status pending")
 }
 
-func TestEnsureAuthorityCreatesFreshMarkerWhenNoneExists(t *testing.T) {
-	store := &authorityStoreStub{
-		freshMarker: &domain.CompatibilityMarker{
-			Status:   domain.MigrationMarkerCompatible,
-			Metadata: map[string]any{"fresh_install": true},
-		},
-	}
+func TestEnsureAuthorityFailsClosedWithoutCutoverMarker(t *testing.T) {
+	_, err := EnsureAuthority(context.Background(), &authorityStoreStub{})
 
-	bootstrap, err := EnsureAuthority(context.Background(), store)
-
-	require.NoError(t, err)
-	require.Equal(t, authorityActive, bootstrap.Mode)
-	require.Equal(t, store.freshMarker, bootstrap.Marker)
-	require.Equal(t, 1, store.freshCommits)
+	require.ErrorIs(t, err, errAuthorityBlocked)
+	require.ErrorContains(t, err, "stopped-service v2.6.1 cutover marker")
 }
 
 type authorityStoreStub struct {
