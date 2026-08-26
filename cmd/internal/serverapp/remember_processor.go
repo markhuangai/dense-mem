@@ -299,7 +299,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 			if loadErr != nil {
 				return nil, loadErr
 			}
-			return rememberAttemptStatus(winner)
+			return rememberAttemptReplay(winner)
 		}
 		if errors.Is(err, repository.ErrIdempotencyConflict) {
 			return nil, rememberapp.ErrRememberConflict
@@ -381,6 +381,17 @@ func rememberAttemptStatus(attempt *repository.RememberAttempt) (*rememberapp.Su
 		replay.Errors = []rememberapp.SubmissionStatusError{}
 	}
 	return &replay, nil
+}
+
+func rememberAttemptReplay(attempt *repository.RememberAttempt) (*rememberapp.SubmissionStatusResult, error) {
+	status, err := rememberAttemptStatus(attempt)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(attempt.Outcome) != "failed" && strings.TrimSpace(status.ProcessingState) != "failed" {
+		return status, nil
+	}
+	return nil, &rememberapp.RememberProcessError{Status: status, Err: rememberapp.ErrRememberPersistence}
 }
 
 func rememberAssessmentSnapshot(

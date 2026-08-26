@@ -78,6 +78,31 @@ func TestRememberFailureRecoveryContextSurvivesRequestCancellation(t *testing.T)
 	require.WithinDuration(t, time.Now().Add(10*time.Second), deadline, time.Second)
 }
 
+func TestRememberAttemptReplayKeepsFailedStatusOnErrorPath(t *testing.T) {
+	attemptID := uuid.NewString()
+	status, err := rememberAttemptReplay(&repository.RememberAttempt{
+		AttemptID: attemptID, Outcome: "failed",
+		PublicResult: map[string]any{
+			"submission_id":    attemptID,
+			"processing_state": "failed",
+			"errors": []any{map[string]any{
+				"code": "provider_unavailable", "message": "the semantic assessor was unavailable",
+				"retryable": true, "next_action": "retry_same_request",
+				"remediation": "Retry the same request with the same idempotency_key after the transient failure clears.",
+			}},
+		},
+	})
+
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
+	require.Nil(t, status)
+	require.NotNil(t, processErr.Status)
+	require.Equal(t, attemptID, processErr.Status.SubmissionID)
+	require.Equal(t, "failed", processErr.Status.ProcessingState)
+	require.Equal(t, "provider_unavailable", processErr.Status.Errors[0].Code)
+}
+
 var _ embedding.EmbeddingProviderInterface = (*rememberProcessorEmbedderStub)(nil)
 
 type rememberProcessorEmbedderStub struct {
