@@ -65,6 +65,19 @@ func TestRememberProcessorRejectsInvalidEmbeddingResponsesBeforeCommit(t *testin
 	}
 }
 
+func TestRememberProcessorPreservesEmbeddingCancellation(t *testing.T) {
+	processor := &rememberSynchronousProcessor{embedder: &rememberProcessorEmbedderStub{
+		model: "embed-model", vectors: [][]float32{{1, 2}}, err: context.Canceled,
+	}}
+
+	_, err := processor.embedSearchDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{{
+		SearchDocumentResult: repository.SearchDocumentResult{SearchDocumentID: "document", EmbeddingDimensions: 2}, DocumentText: "text",
+	}})
+
+	require.ErrorIs(t, err, rememberapp.ErrRememberRequestCancelled)
+	require.NotErrorIs(t, err, rememberapp.ErrRememberEmbeddingUnavailable)
+}
+
 func TestRememberFailureRecoveryContextSurvivesRequestCancellation(t *testing.T) {
 	requestCtx, cancelRequest := context.WithCancel(context.Background())
 	cancelRequest()
@@ -109,6 +122,7 @@ type rememberProcessorEmbedderStub struct {
 	model       string
 	vectors     [][]float32
 	texts       []string
+	err         error
 	unavailable bool
 }
 
@@ -118,7 +132,7 @@ func (s *rememberProcessorEmbedderStub) Embed(context.Context, string) ([]float3
 
 func (s *rememberProcessorEmbedderStub) EmbedBatch(_ context.Context, texts []string) ([][]float32, string, error) {
 	s.texts = append([]string(nil), texts...)
-	return s.vectors, s.model, nil
+	return s.vectors, s.model, s.err
 }
 
 func (s *rememberProcessorEmbedderStub) ModelName() string { return s.model }

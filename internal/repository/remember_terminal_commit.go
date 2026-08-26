@@ -35,6 +35,9 @@ func (r *LedgerRepositoryImpl) CommitRememberTerminal(
 		if err := lockRememberIdempotencyKeyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey); err != nil {
 			return err
 		}
+		if err := checkRememberFailureIdempotencyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash); err != nil && !errors.Is(err, ErrRememberReplay) {
+			return err
+		}
 		if replay, err := loadRememberAttemptInTx(ctx, tx, input); err != nil {
 			return err
 		} else if replay != nil {
@@ -131,6 +134,9 @@ func (r *LedgerRepositoryImpl) CommitRememberPreflightQuarantine(
 	}
 	err = r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		if err := lockRememberIdempotencyKeyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey); err != nil {
+			return err
+		}
+		if err := checkRememberFailureIdempotencyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash); err != nil && !errors.Is(err, ErrRememberReplay) {
 			return err
 		}
 		if replay, err := loadRememberAttemptInTx(ctx, tx, input); err != nil {

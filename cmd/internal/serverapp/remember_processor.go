@@ -494,6 +494,9 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 	}
 	vectors, model, err := p.embedder.EmbedBatch(embedCtx, texts)
 	if err != nil {
+		if errors.Is(embedCtx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+			return nil, fmt.Errorf("%w: embedding phase canceled", rememberapp.ErrRememberRequestCancelled)
+		}
 		if errors.Is(embedCtx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("%w: embedding phase exceeded 10 seconds", rememberapp.ErrRememberRequestTimeout)
 		}

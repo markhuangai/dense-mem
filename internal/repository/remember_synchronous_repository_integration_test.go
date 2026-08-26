@@ -169,6 +169,11 @@ func TestRememberFailureCannotFollowCanonicalTerminalAttempt(t *testing.T) {
 		FragmentID: uuid.NewString(), Content: "canonical terminal result wins",
 		ContentHash: sha256Hex("canonical terminal result wins"),
 	}}
+	differentTerminal := secondInput
+	differentTerminal.IngestID = uuid.NewString()
+	differentTerminal.RequestHash = "different-terminal-request-hash"
+	_, err = ledger.CommitRememberTerminal(ctx, differentTerminal, "rejected", "no_supported_memory", nil)
+	require.ErrorIs(t, err, ErrIdempotencyConflict)
 	_, err = ledger.CommitRememberTerminal(ctx, secondInput, "rejected", "no_supported_memory", nil)
 	require.NoError(t, err)
 	winner, err := ledger.LoadRememberAttempt(ctx, RememberAttemptLookupInput{
