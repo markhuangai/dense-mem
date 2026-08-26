@@ -55,6 +55,7 @@ var retiredAsyncEnvVars = []string{
 	"EMBEDDING_JOB_LEASE_SECONDS",
 	"EMBEDDING_JOB_RETRY_MAX_SECONDS",
 	"EMBEDDING_PENDING_STALE_SECONDS",
+	"PROMOTE_TX_TIMEOUT_SECONDS",
 }
 
 // ConfigProvider is the companion interface for Config.

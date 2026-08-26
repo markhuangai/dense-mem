@@ -255,6 +255,56 @@ func TestRelationshipCorrectionEmbedsOutsideTransactionAndFencesSuccessor(t *tes
 	assert.Equal(t, string(domain.SearchProjectionCurrent), searchState)
 }
 
+func TestRelationshipCorrectionDeduplicatesSameHashEmbeddings(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	insertSearchTestContract(t, adminDB, rls, "relationship-correction-same-hash", 3, "exact", "")
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "relationship-correction-same-hash-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "relationship-correction-same-hash-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Same Hash Owner")
+	originalObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Same Name")
+	successorObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Same Name")
+	ingest := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "relationship-correction-same-hash-source", "Same Hash Owner works on Same Name.")
+	original := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: originalObject.EntityID,
+		Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: "correction:same-hash", SpanStart: 0, SpanEnd: len(ingest.Evidence[0].Content), Authority: "primary"},
+	}).Relationship
+	require.NotNil(t, original)
+	input := CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "submit", RelationshipID: original.RelationshipID,
+		ExpectedVersion: original.Version,
+		Patch:           RelationshipCorrectionPatch{ObjectEntity: &RelationshipCorrectionEntityPatch{EntityID: successorObject.EntityID}},
+		Supports:        []RelationshipCorrectionSupport{{EvidenceID: ingest.Evidence[0].FragmentID, Start: 0, End: len(ingest.Evidence[0].Content)}},
+		Reason:          "replace with the distinct same-named Entity", IdempotencyKey: "relationship-correction-same-hash-key",
+	}
+	plan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, input)
+	require.NoError(t, err)
+	require.Len(t, plan.Documents, 1)
+
+	result, err := semantic.CorrectRelationshipWithEmbeddings(ctx, input, []InlineEmbeddingResult{{
+		DocumentHash: plan.Documents[0].DocumentHash, Embedding: []float32{1, 0, 0},
+		EmbeddingContractID: plan.EmbeddingContractID, EmbeddingDimensions: plan.EmbeddingDimensions,
+		EmbeddingModel: plan.EmbeddingModel, SearchIndexGenerationID: plan.SearchIndexGenerationID, IndexGeneration: plan.IndexGeneration,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.ProcessingState)
+	require.Equal(t, string(domain.SearchProjectionCurrent), result.SearchState)
+
+	var currentDocuments int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT COUNT(*) FROM search_documents
+			WHERE team_id = ?::uuid AND source_kind = 'relationship'
+			  AND source_id = ?::uuid AND search_state = 'current'
+		`, teamID, result.Correction.SuccessorRelationshipID).Scan(&currentDocuments).Error
+	}))
+	assert.Equal(t, int64(1), currentDocuments)
+}
+
 func TestRelationshipCorrectionPlannerRejectsStaleVersionBeforeEmbedding(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

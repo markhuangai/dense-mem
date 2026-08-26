@@ -166,7 +166,15 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 			SubjectName: subjectName, ObjectName: objectName, ObjectValue: objectValue, ObjectUnit: objectUnit,
 		})
 		originalText := relationshipProjectionText(source, projectionNames)
-		plan.Documents = append(plan.Documents, SearchDocumentForEmbedding{
+		seenHashes := make(map[string]struct{}, 2)
+		appendDocument := func(document SearchDocumentForEmbedding) {
+			if _, exists := seenHashes[document.DocumentHash]; exists {
+				return
+			}
+			seenHashes[document.DocumentHash] = struct{}{}
+			plan.Documents = append(plan.Documents, document)
+		}
+		appendDocument(SearchDocumentForEmbedding{
 			SearchDocumentResult: SearchDocumentResult{
 				TeamID: input.TeamID, SearchDocumentID: "plan:correction:original", OwnerProfileID: input.OwnerProfileID,
 				SourceKind: "relationship", SourceID: source.RelationshipID, SourceVersion: int64(source.Version),
@@ -175,7 +183,7 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 			},
 			DocumentText: originalText, DocumentHash: searchDocumentHash(originalText),
 		})
-		plan.Documents = append(plan.Documents, SearchDocumentForEmbedding{
+		appendDocument(SearchDocumentForEmbedding{
 			SearchDocumentResult: SearchDocumentResult{
 				TeamID: input.TeamID, SearchDocumentID: "plan:correction", OwnerProfileID: input.OwnerProfileID,
 				SourceKind: "relationship", SourceID: uuid.NewString(), SourceVersion: int64(source.Version + 1),
