@@ -86,6 +86,9 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 		if source.OwnerProfileID != input.OwnerProfileID || source.Status != string(domain.RelationshipStatusActive) || source.SupportCount == 0 || source.IdentityAliasOfID != "" {
 			return nil
 		}
+		if source.Version != effective.ExpectedVersion {
+			return nil
+		}
 
 		resolution, err := resolveRelationshipCorrectionPatch(ctx, tx, effective, source)
 		if err != nil {

@@ -255,6 +255,58 @@ func TestRelationshipCorrectionEmbedsOutsideTransactionAndFencesSuccessor(t *tes
 	assert.Equal(t, string(domain.SearchProjectionCurrent), searchState)
 }
 
+func TestRelationshipCorrectionPlannerRejectsStaleVersionBeforeEmbedding(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	insertSearchTestContract(t, adminDB, rls, "relationship-correction-stale-plan", 3, "exact", "")
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "relationship-correction-stale-plan-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "relationship-correction-stale-plan-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Stale Plan Owner")
+	oldObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Old Project")
+	newObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "New Project")
+	ingest := createSemanticIngest(t, ctx, ledger, teamID, ownerID,
+		"relationship-correction-stale-plan-source", "Stale Plan Owner works on Old Project.")
+	original := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: oldObject.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: "correction:stale-plan",
+			SpanStart: 0, SpanEnd: len(ingest.Evidence[0].Content), Authority: "primary",
+		},
+	}).Relationship
+	require.NotNil(t, original)
+	var rowsUpdated int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			UPDATE relationship_records
+			SET version = version + 1, updated_at = now()
+			WHERE team_id = ?::uuid AND relationship_id = ?::uuid
+		`, teamID, original.RelationshipID)
+		rowsUpdated = result.RowsAffected
+		return result.Error
+	}))
+	require.Equal(t, int64(1), rowsUpdated)
+
+	input := CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "submit",
+		RelationshipID: original.RelationshipID, ExpectedVersion: original.Version,
+		Patch:    RelationshipCorrectionPatch{ObjectEntity: &RelationshipCorrectionEntityPatch{EntityID: newObject.EntityID}},
+		Supports: []RelationshipCorrectionSupport{{EvidenceID: ingest.Evidence[0].FragmentID, Start: 0, End: len(ingest.Evidence[0].Content)}},
+		Reason:   "the relationship version is stale", IdempotencyKey: "relationship-correction-stale-plan-key",
+	}
+	plan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, input)
+	require.NoError(t, err)
+	require.Empty(t, plan.Documents)
+
+	result, err := semantic.CorrectRelationshipWithEmbeddings(ctx, input, nil)
+	require.NoError(t, err)
+	require.Equal(t, "rejected", result.ProcessingState)
+	require.Equal(t, "relationship_version_stale", result.ErrorCode)
+}
+
 func TestRelationshipCorrectionRejectsSearchContractRotationAfterPlanning(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
