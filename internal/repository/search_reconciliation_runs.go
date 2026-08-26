@@ -142,86 +142,119 @@ func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(
 	}
 	result := make([]SearchDocumentForEmbedding, 0, limit)
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT document.team_id::text, document.search_document_id::text,
-			       document.owner_profile_id::text, document.source_kind,
-			       document.source_id::text, document.source_version,
-			       document.projection_format_version,
-			       COALESCE(document.projection_generation_id::text, ''),
-			       document.document_version, document.embedding_contract_id::text,
-			       document.embedding_dimensions, document.search_state,
-			       document.space_id::text, document.space_generation,
-			       document.document_text, document.document_hash,
-			       document.embedding IS NOT NULL
-			         AND vector_dims(document.embedding) = document.embedding_dimensions
-			FROM search_documents AS document
-			JOIN teams AS team
-			  ON team.id = document.team_id
-			 AND team.status = 'active'
-			 AND team.deleted_at IS NULL
-			JOIN embedding_contracts AS contract
-			  ON contract.embedding_contract_id = document.embedding_contract_id
-			 AND contract.dimensions = document.embedding_dimensions
-			 AND contract.lifecycle_state = 'active'
-			WHERE document.embedding_contract_id = ?::uuid
-			  AND document.embedding_dimensions = ?
-			  AND EXISTS (
-			      SELECT 1
-			      FROM search_index_generations AS generation
-			      WHERE generation.embedding_contract_id = document.embedding_contract_id
-			        AND generation.embedding_dimensions = document.embedding_dimensions
-			        AND generation.activation_state = 'active'
-			  )
-			ORDER BY document.updated_at ASC, document.team_id, document.search_document_id
-		`, input.EmbeddingContractID, input.EmbeddingDimensions).Rows()
-		if err != nil {
-			return err
+		type candidate struct {
+			item          SearchDocumentForEmbedding
+			vectorCurrent bool
+			updatedAt     time.Time
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var item SearchDocumentForEmbedding
-			var vectorCurrent bool
-			if err := rows.Scan(
-				&item.TeamID, &item.SearchDocumentID, &item.OwnerProfileID,
-				&item.SourceKind, &item.SourceID, &item.SourceVersion,
-				&item.ProjectionFormat, &item.ProjectionGenerationID,
-				&item.DocumentVersion, &item.EmbeddingContractID,
-				&item.EmbeddingDimensions, &item.SearchState, &item.SpaceID,
-				&item.SpaceGeneration, &item.DocumentText, &item.DocumentHash, &vectorCurrent,
-			); err != nil {
-				return err
+		const pageSize = searchReconciliationBatchLimit
+		var lastUpdatedAt time.Time
+		var lastTeamID, lastDocumentID string
+		for len(result) < limit {
+			query := `
+				SELECT document.team_id::text, document.search_document_id::text,
+				       document.owner_profile_id::text, document.source_kind,
+				       document.source_id::text, document.source_version,
+				       document.projection_format_version,
+				       COALESCE(document.projection_generation_id::text, ''),
+				       document.document_version, document.embedding_contract_id::text,
+				       document.embedding_dimensions, document.search_state,
+				       document.space_id::text, document.space_generation,
+				       document.document_text, document.document_hash,
+				       document.embedding IS NOT NULL
+				         AND vector_dims(document.embedding) = document.embedding_dimensions,
+				       document.updated_at
+				FROM search_documents AS document
+				JOIN teams AS team
+				  ON team.id = document.team_id
+				 AND team.status = 'active'
+				 AND team.deleted_at IS NULL
+				JOIN embedding_contracts AS contract
+				  ON contract.embedding_contract_id = document.embedding_contract_id
+				 AND contract.dimensions = document.embedding_dimensions
+				 AND contract.lifecycle_state = 'active'
+				WHERE document.embedding_contract_id = ?::uuid
+				  AND document.embedding_dimensions = ?
+				  AND EXISTS (
+				      SELECT 1
+				      FROM search_index_generations AS generation
+				      WHERE generation.embedding_contract_id = document.embedding_contract_id
+				        AND generation.embedding_dimensions = document.embedding_dimensions
+				        AND generation.activation_state = 'active'
+				  )`
+			args := []any{input.EmbeddingContractID, input.EmbeddingDimensions}
+			if !lastUpdatedAt.IsZero() {
+				query += `
+				  AND (document.updated_at, document.team_id, document.search_document_id) > (?, ?::uuid, ?::uuid)`
+				args = append(args, lastUpdatedAt, lastTeamID, lastDocumentID)
 			}
-			item.StoredDocumentHash = item.DocumentHash
-			expected, known, err := canonicalSearchDocument(ctx, tx, item)
+			query += `
+				ORDER BY document.updated_at ASC, document.team_id, document.search_document_id
+				LIMIT ?`
+			args = append(args, pageSize)
+			rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
 			if err != nil {
 				return err
 			}
-			if known && expected == nil {
-				item.Retired = true
-				result = append(result, item)
+			candidates := make([]candidate, 0, pageSize)
+			for rows.Next() {
+				var item SearchDocumentForEmbedding
+				var vectorCurrent bool
+				var updatedAt time.Time
+				if err := rows.Scan(
+					&item.TeamID, &item.SearchDocumentID, &item.OwnerProfileID,
+					&item.SourceKind, &item.SourceID, &item.SourceVersion,
+					&item.ProjectionFormat, &item.ProjectionGenerationID,
+					&item.DocumentVersion, &item.EmbeddingContractID,
+					&item.EmbeddingDimensions, &item.SearchState, &item.SpaceID,
+					&item.SpaceGeneration, &item.DocumentText, &item.DocumentHash, &vectorCurrent,
+					&updatedAt,
+				); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				item.StoredDocumentHash = item.DocumentHash
+				candidates = append(candidates, candidate{item: item, vectorCurrent: vectorCurrent, updatedAt: updatedAt})
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+			if len(candidates) == 0 {
+				break
+			}
+			last := candidates[len(candidates)-1]
+			lastUpdatedAt, lastTeamID, lastDocumentID = last.updatedAt, last.item.TeamID, last.item.SearchDocumentID
+			for _, candidate := range candidates {
 				if len(result) >= limit {
 					break
 				}
-				continue
-			}
-			if known && expected != nil {
-				if searchDocumentMatchesCanonical(item, *expected) && item.SearchState == string(domain.SearchProjectionCurrent) && vectorCurrent {
+				item := candidate.item
+				expected, known, err := canonicalSearchDocument(ctx, tx, item)
+				if err != nil {
+					return err
+				}
+				if known && expected == nil {
+					item.Retired = true
+					result = append(result, item)
 					continue
 				}
-				item = *expected
-			} else if item.SearchState == string(domain.SearchProjectionCurrent) && vectorCurrent {
-				continue
+				if known && expected != nil {
+					if searchDocumentMatchesCanonical(item, *expected) && item.SearchState == string(domain.SearchProjectionCurrent) && candidate.vectorCurrent {
+						continue
+					}
+					item = *expected
+				} else if item.SearchState == string(domain.SearchProjectionCurrent) && candidate.vectorCurrent {
+					continue
+				}
+				result = append(result, item)
 			}
-			result = append(result, item)
-			if len(result) >= limit {
+			if len(candidates) < pageSize {
 				break
 			}
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		if err := rows.Close(); err != nil {
-			return err
 		}
 		if len(result) < limit {
 			contract := &ActiveSearchContract{
@@ -347,7 +380,8 @@ func (r *SearchRepositoryImpl) CompleteSearchReconciliationDocuments(
 				  AND document.embedding_contract_id = ?::uuid
 				  AND document.embedding_dimensions = ?
 				FOR UPDATE
-			`).Row().Scan(
+			`, document.TeamID, document.SearchDocumentID, document.OwnerProfileID,
+				input.EmbeddingContractID, document.EmbeddingDimensions).Row().Scan(
 				&current.TeamID, &current.SearchDocumentID, &current.OwnerProfileID,
 				&current.SourceKind, &current.SourceID, &current.SourceVersion,
 				&current.ProjectionFormat, &current.ProjectionGenerationID,
@@ -403,29 +437,29 @@ func (r *SearchRepositoryImpl) CompleteSearchReconciliationDocuments(
 				UPDATE search_documents
 				SET source_version = ?,
 				    projection_format_version = ?,
-				    projection_generation_id = NULLIF(?, '')::uuid,
-				    space_id = NULLIF(?, '')::uuid,
-				    space_generation = NULLIF(?, 0)::bigint,
+			    projection_generation_id = NULLIF(?, '')::uuid,
+			    space_id = NULLIF(?, '')::uuid,
+			    space_generation = NULLIF(?, 0)::bigint,
 				    document_text = ?,
 				    document_hash = ?,
 				    document_version = document_version + CASE
 				        WHEN document_hash IS DISTINCT FROM ?
 				          OR projection_format_version IS DISTINCT FROM ?
-				          OR projection_generation_id IS DISTINCT FROM NULLIF(?, '')::uuid
-				          OR space_id IS DISTINCT FROM NULLIF(?, '')::uuid
-				          OR space_generation IS DISTINCT FROM NULLIF(?, 0)::bigint
+			          OR projection_generation_id IS DISTINCT FROM NULLIF(?, '')::uuid
+			          OR space_id IS DISTINCT FROM NULLIF(?, '')::uuid
+			          OR space_generation IS DISTINCT FROM NULLIF(?, 0)::bigint
 				        THEN 1 ELSE 0 END,
-				    embedding = ?::vector,
+			    embedding = ?::vector,
 				    search_state = 'current',
 				    embedding_updated_at = clock_timestamp(),
 				    embedding_error = '',
 				    updated_at = clock_timestamp()
-				WHERE team_id = ?::uuid
-				  AND search_document_id = ?::uuid
-				  AND owner_profile_id = ?::uuid
+			  WHERE team_id = ?::uuid
+			    AND search_document_id = ?::uuid
+			    AND owner_profile_id = ?::uuid
 				  AND document_version = ?
 				  AND document_hash = ?
-				  AND embedding_contract_id = ?::uuid
+			    AND embedding_contract_id = ?::uuid
 				  AND embedding_dimensions = ?
 				  AND search_state <> 'not_required'
 				  AND (
@@ -434,9 +468,9 @@ func (r *SearchRepositoryImpl) CompleteSearchReconciliationDocuments(
 				      OR vector_dims(embedding) <> embedding_dimensions
 				      OR source_version IS DISTINCT FROM ?
 				      OR projection_format_version IS DISTINCT FROM ?
-				      OR projection_generation_id IS DISTINCT FROM NULLIF(?, '')::uuid
-				      OR space_id IS DISTINCT FROM NULLIF(?, '')::uuid
-				      OR space_generation IS DISTINCT FROM NULLIF(?, 0)::bigint
+			      OR projection_generation_id IS DISTINCT FROM NULLIF(?, '')::uuid
+			      OR space_id IS DISTINCT FROM NULLIF(?, '')::uuid
+			      OR space_generation IS DISTINCT FROM NULLIF(?, 0)::bigint
 				      OR document_hash IS DISTINCT FROM ?
 				  )
 			`, target.SourceVersion, target.ProjectionFormat, target.ProjectionGenerationID,

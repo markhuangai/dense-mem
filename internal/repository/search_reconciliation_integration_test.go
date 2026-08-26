@@ -140,7 +140,9 @@ func TestSearchReconciliationCanonicalSourceSetAndSpaceFence(t *testing.T) {
 		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
 		Documents: []SearchDocumentEmbedding{{
 			TeamID: selected[0].TeamID, SearchDocumentID: selected[0].SearchDocumentID,
-			OwnerProfileID: selected[0].OwnerProfileID, DocumentText: selected[0].DocumentText,
+			OwnerProfileID: selected[0].OwnerProfileID, SourceKind: selected[0].SourceKind,
+			SourceID:     selected[0].SourceID,
+			DocumentText: selected[0].DocumentText,
 			DocumentHash: selected[0].DocumentHash, StoredDocumentHash: selected[0].StoredDocumentHash,
 			SourceVersion: selected[0].SourceVersion, ProjectionFormat: selected[0].ProjectionFormat,
 			ProjectionGenerationID: selected[0].ProjectionGenerationID, DocumentVersion: selected[0].DocumentVersion,
@@ -231,4 +233,83 @@ func TestSearchReconciliationCanonicalSourceSetAndSpaceFence(t *testing.T) {
 		return tx.Raw(`SELECT search_state FROM search_documents WHERE team_id = ?::uuid AND search_document_id = ?::uuid`, teamID, selected[0].SearchDocumentID).Row().Scan(&state)
 	}))
 	require.Equal(t, "not_required", state)
+}
+
+func TestSearchReconciliationExcludesDeletionOnlyAndLifecycleRetiredEvidence(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-ineligible")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-ineligible-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-ineligible", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+
+	deletionOnly, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-deletion-only",
+		RequestHash: sha256Hex("deletion-only reconciliation evidence"),
+		Metadata:    map[string]any{"conflict_resolution_deletion_only": true},
+		Evidence: []EvidenceInput{{
+			Content:  "deletion-only reconciliation evidence",
+			Metadata: map[string]any{"conflict_resolution_deletion_only": true},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, deletionOnly.Evidence, 1)
+
+	lifecycleTarget := createSemanticIngest(t, ctx, ledger, teamID, ownerID,
+		"search-reconciliation-lifecycle", "lifecycle-retired reconciliation evidence")
+	_, err = ledger.RetractEvidence(ctx, RetractEvidenceInput{
+		TeamID: teamID, OwnerProfileID: ownerID,
+		EvidenceIDs: []string{lifecycleTarget.Evidence[0].FragmentID},
+		Reason:      "reconciliation eligibility test", IdempotencyKey: "search-reconciliation-lifecycle-retract",
+		RequestHash: "sha256:search-reconciliation-lifecycle-retract",
+	})
+	require.NoError(t, err)
+
+	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 256,
+	})
+	require.NoError(t, err)
+	require.Empty(t, selected)
+
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+	})
+	require.NoError(t, err)
+	require.Zero(t, convergence.ExpectedDocuments)
+	require.Zero(t, convergence.DriftedDocuments)
+}
+
+func TestSearchConvergenceProjectsRelationshipsSetwise(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-convergence-relationship")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-convergence-relationship-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "convergence-relationship", 2, "exact", "")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	repo := NewSearchRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Convergence Owner")
+	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Dense-Mem")
+	ingest := createSemanticIngest(t, ctx, ledger, teamID, ownerID,
+		"search-convergence-relationship-source", "Convergence Owner works on Dense-Mem.")
+	decision := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: "convergence:relationship",
+			SpanStart: 0, SpanEnd: len("Convergence Owner works on Dense-Mem."), Authority: "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, convergence.ExpectedDocuments)
+	require.EqualValues(t, 2, convergence.DriftedDocuments)
 }

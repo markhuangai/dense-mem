@@ -34,6 +34,12 @@ func canonicalSearchDocument(ctx context.Context, tx *gorm.DB, document SearchDo
 			        AND quarantine.fragment_id = fragment.fragment_id
 			        AND quarantine.status = 'active'
 			  )
+			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+			  AND NOT EXISTS (
+			      SELECT 1 FROM evidence_lifecycle_events AS lifecycle
+			      WHERE lifecycle.team_id = fragment.team_id
+			        AND lifecycle.target_fragment_id = fragment.fragment_id
+			  )
 		`, document.TeamID, document.OwnerProfileID, document.SourceID).Row().Scan(&content, &spaceID, &spaceGeneration)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, true, nil
@@ -119,6 +125,13 @@ func selectMissingCanonicalSearchDocuments(
 		            AND quarantine.fragment_id = fragment.fragment_id
 		            AND quarantine.status = 'active'
 		      )
+		  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+		  AND NOT EXISTS (
+		          SELECT 1
+		          FROM evidence_lifecycle_events AS lifecycle
+		          WHERE lifecycle.team_id = fragment.team_id
+		            AND lifecycle.target_fragment_id = fragment.fragment_id
+		      )
 		  AND NOT EXISTS (
 		          SELECT 1
 		          FROM search_documents AS document
@@ -192,6 +205,7 @@ func selectMissingCanonicalSearchDocuments(
 		return err
 	}
 	defer rows.Close()
+	relationshipCandidates := make([]SearchDocumentForEmbedding, 0, remaining)
 	for rows.Next() {
 		var item SearchDocumentForEmbedding
 		if err := rows.Scan(&item.TeamID, &item.OwnerProfileID, &item.SourceID); err != nil {
@@ -203,6 +217,15 @@ func selectMissingCanonicalSearchDocuments(
 		item.EmbeddingContractID = contract.EmbeddingContractID
 		item.EmbeddingDimensions = contract.EmbeddingDimensions
 		item.DocumentVersion = 1
+		relationshipCandidates = append(relationshipCandidates, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range relationshipCandidates {
 		expected, known, err := canonicalSearchDocument(ctx, tx, item)
 		if err != nil {
 			return err
@@ -216,7 +239,7 @@ func selectMissingCanonicalSearchDocuments(
 			return nil
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 func markSearchDocumentNotRequired(ctx context.Context, tx *gorm.DB, document SearchDocumentForEmbedding) (bool, error) {

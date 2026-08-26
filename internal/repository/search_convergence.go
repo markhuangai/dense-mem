@@ -183,50 +183,20 @@ func (r *SearchRepositoryImpl) canonicalSearchConvergence(ctx context.Context, c
 	teams := map[string]struct{}{}
 	now := time.Now().UTC()
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(`
-			SELECT document.team_id::text, document.search_document_id::text,
-			       document.owner_profile_id::text, document.source_kind,
-			       document.source_id::text, document.source_version,
-			       document.projection_format_version,
-			       COALESCE(document.projection_generation_id::text, ''),
-			       document.document_version, document.embedding_contract_id::text,
-			       document.embedding_dimensions, document.search_state,
-			       COALESCE(document.space_id::text, ''), COALESCE(document.space_generation, 0),
-			       document.document_text, document.document_hash,
-			       document.embedding IS NOT NULL
-			         AND vector_dims(document.embedding) = document.embedding_dimensions,
-			       document.updated_at
-			FROM search_documents AS document
-			JOIN teams AS team
-			  ON team.id = document.team_id
-			 AND team.status = 'active'
-			 AND team.deleted_at IS NULL
-			WHERE document.embedding_contract_id = ?::uuid
-			  AND document.embedding_dimensions = ?
-		`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Rows()
+		rows, err := selectSearchConvergenceDocuments(ctx, tx, contract)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var item SearchDocumentForEmbedding
-			var vectorCurrent bool
-			var updatedAt time.Time
-			if err := rows.Scan(
-				&item.TeamID, &item.SearchDocumentID, &item.OwnerProfileID,
-				&item.SourceKind, &item.SourceID, &item.SourceVersion,
-				&item.ProjectionFormat, &item.ProjectionGenerationID,
-				&item.DocumentVersion, &item.EmbeddingContractID,
-				&item.EmbeddingDimensions, &item.SearchState, &item.SpaceID,
-				&item.SpaceGeneration, &item.DocumentText, &item.DocumentHash,
-				&vectorCurrent, &updatedAt,
-			); err != nil {
-				return err
-			}
-			expected, known, err := canonicalSearchDocument(ctx, tx, item)
+			projection, err := scanSearchConvergenceProjection(rows)
 			if err != nil {
 				return err
 			}
+			item := projection.item
+			vectorCurrent := projection.vectorCurrent
+			updatedAt := projection.updatedAt
+			expected, known := projection.canonical()
 			if !known {
 				expected = &item
 			}
@@ -281,6 +251,253 @@ func (r *SearchRepositoryImpl) canonicalSearchConvergence(ctx context.Context, c
 	return result, nil
 }
 
+// searchConvergenceProjection carries a search document and the canonical
+// source data needed to compare it. The source joins are performed in one
+// PostgreSQL query so convergence does not issue one canonical lookup per
+// document.
+type searchConvergenceProjection struct {
+	item           SearchDocumentForEmbedding
+	vectorCurrent  bool
+	updatedAt      time.Time
+	canonicalKnown bool
+	evidence       convergenceEvidenceProjection
+	relationship   convergenceRelationshipProjection
+}
+
+type convergenceEvidenceProjection struct {
+	eligible        bool
+	content         string
+	spaceID         string
+	spaceGeneration int64
+}
+
+type convergenceRelationshipProjection struct {
+	eligible             bool
+	subjectEntityID      string
+	predicateKey         string
+	predicateVersion     int
+	objectEntityID       string
+	objectValueID        string
+	relationshipKind     string
+	currentCardinality   string
+	status               string
+	polarity             string
+	scopeKey             string
+	validFrom            *time.Time
+	validTo              *time.Time
+	identityAliasOfID    string
+	supportCount         int
+	sourceGroupCount     int
+	version              int
+	spaceID              string
+	spaceGeneration      int64
+	names                relationshipProjectionNames
+	foregroundGeneration string
+}
+
+func selectSearchConvergenceDocuments(ctx context.Context, tx *gorm.DB, contract *ActiveSearchContract) (*sql.Rows, error) {
+	return tx.WithContext(ctx).Raw(`
+		WITH activated_generations AS (
+			SELECT DISTINCT ON (generation.team_id)
+			       generation.team_id,
+			       generation.projection_generation_id::text AS projection_generation_id
+			FROM search_projection_generations AS generation
+			WHERE generation.source_kind = 'relationship'
+			  AND generation.projection_format_version = 2
+			  AND generation.state = 'current'
+			  AND generation.activated_at IS NOT NULL
+			ORDER BY generation.team_id, generation.generation DESC, generation.created_at DESC
+		), fallback_generations AS (
+			SELECT DISTINCT ON (generation.team_id)
+			       generation.team_id,
+			       generation.projection_generation_id::text AS projection_generation_id
+			FROM search_projection_generations AS generation
+			WHERE generation.source_kind = 'relationship'
+			  AND generation.projection_format_version = 2
+			ORDER BY generation.team_id, generation.generation DESC, generation.created_at DESC
+		), foreground_generations AS (
+			SELECT fallback.team_id,
+			       COALESCE(activated.projection_generation_id, fallback.projection_generation_id) AS projection_generation_id
+			FROM fallback_generations AS fallback
+			LEFT JOIN activated_generations AS activated ON activated.team_id = fallback.team_id
+			UNION ALL
+			SELECT activated.team_id, activated.projection_generation_id
+			FROM activated_generations AS activated
+			WHERE NOT EXISTS (
+				SELECT 1 FROM fallback_generations AS fallback
+				WHERE fallback.team_id = activated.team_id
+			)
+		)
+		SELECT document.team_id::text, document.search_document_id::text,
+		       document.owner_profile_id::text, document.source_kind,
+		       document.source_id::text, document.source_version,
+		       document.projection_format_version,
+		       COALESCE(document.projection_generation_id::text, ''),
+		       document.document_version, document.embedding_contract_id::text,
+		       document.embedding_dimensions, document.search_state,
+		       COALESCE(document.space_id::text, ''), COALESCE(document.space_generation, 0),
+		       document.document_text, document.document_hash,
+		       document.embedding IS NOT NULL
+		         AND vector_dims(document.embedding) = document.embedding_dimensions,
+		       document.updated_at,
+		       document.source_kind IN ('evidence', 'relationship'),
+		       document.source_kind = 'evidence'
+		         AND fragment.fragment_id IS NOT NULL
+		         AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+		         AND NOT EXISTS (
+		             SELECT 1 FROM evidence_quarantines AS quarantine
+		             WHERE quarantine.team_id = fragment.team_id
+		               AND quarantine.fragment_id = fragment.fragment_id
+		               AND quarantine.status = 'active'
+		         )
+		         AND NOT EXISTS (
+		             SELECT 1 FROM evidence_lifecycle_events AS lifecycle
+		             WHERE lifecycle.team_id = fragment.team_id
+		               AND lifecycle.target_fragment_id = fragment.fragment_id
+		         ),
+		       COALESCE(fragment.content, ''),
+		       COALESCE(fragment.space_id::text, ''), COALESCE(fragment.space_generation, 0),
+		       document.source_kind = 'relationship'
+		         AND relationship.relationship_id IS NOT NULL
+		         AND relationship.status = 'active'
+		         AND relationship.support_count > 0
+		         AND relationship.identity_alias_of_relationship_id IS NULL,
+		       COALESCE(relationship.subject_entity_id::text, ''),
+		       COALESCE(relationship.predicate_key, ''), COALESCE(relationship.predicate_version, 0),
+		       COALESCE(relationship.object_entity_id::text, ''),
+		       COALESCE(relationship.object_value_id::text, ''),
+		       COALESCE(relationship.relationship_kind, ''),
+		       COALESCE(relationship.current_cardinality, ''), COALESCE(relationship.status, ''),
+		       COALESCE(relationship.polarity, ''), COALESCE(relationship.scope_key, ''),
+		       relationship.valid_from, relationship.valid_to,
+		       COALESCE(relationship.identity_alias_of_relationship_id::text, ''),
+		       COALESCE(relationship.support_count, 0), COALESCE(relationship.source_group_count, 0),
+		       COALESCE(relationship.version, 0),
+		       COALESCE(relationship.space_id::text, ''), COALESCE(relationship.space_generation, 0),
+		       COALESCE(subject_name.display_name, ''),
+		       COALESCE(object_name.display_name, NULLIF(value_record.display, ''),
+		                NULLIF(value_record.canonical_value, ''),
+		                relationship.object_entity_id::text, relationship.object_value_id::text, ''),
+		       COALESCE(value_record.value_type, ''), COALESCE(value_record.canonical_value, ''),
+		       COALESCE(value_record.unit, ''),
+		       COALESCE(foreground.projection_generation_id, '')
+		FROM search_documents AS document
+		JOIN teams AS team
+		  ON team.id = document.team_id
+		 AND team.status = 'active'
+		 AND team.deleted_at IS NULL
+		LEFT JOIN evidence_fragments AS fragment
+		  ON document.source_kind = 'evidence'
+		 AND fragment.team_id = document.team_id
+		 AND fragment.fragment_id = document.source_id
+		 AND fragment.owner_profile_id = document.owner_profile_id
+		LEFT JOIN relationship_records AS relationship
+		  ON document.source_kind = 'relationship'
+		 AND relationship.team_id = document.team_id
+		 AND relationship.relationship_id = document.source_id
+		LEFT JOIN entity_names AS subject_name
+		  ON document.source_kind = 'relationship'
+		 AND subject_name.team_id = relationship.team_id
+		 AND subject_name.entity_id = relationship.subject_entity_id
+		 AND subject_name.name_kind = 'canonical'
+		 AND subject_name.valid_to IS NULL
+		LEFT JOIN entity_names AS object_name
+		  ON document.source_kind = 'relationship'
+		 AND object_name.team_id = relationship.team_id
+		 AND object_name.entity_id = relationship.object_entity_id
+		 AND object_name.name_kind = 'canonical'
+		 AND object_name.valid_to IS NULL
+		LEFT JOIN value_records AS value_record
+		  ON document.source_kind = 'relationship'
+		 AND value_record.team_id = relationship.team_id
+		 AND value_record.value_id = relationship.object_value_id
+		LEFT JOIN foreground_generations AS foreground ON foreground.team_id = document.team_id
+		WHERE document.embedding_contract_id = ?::uuid
+		  AND document.embedding_dimensions = ?
+	`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Rows()
+}
+
+func scanSearchConvergenceProjection(rows *sql.Rows) (*searchConvergenceProjection, error) {
+	projection := &searchConvergenceProjection{}
+	item := &projection.item
+	relationship := &projection.relationship
+	return projection, rows.Scan(
+		&item.TeamID, &item.SearchDocumentID, &item.OwnerProfileID,
+		&item.SourceKind, &item.SourceID, &item.SourceVersion,
+		&item.ProjectionFormat, &item.ProjectionGenerationID,
+		&item.DocumentVersion, &item.EmbeddingContractID,
+		&item.EmbeddingDimensions, &item.SearchState, &item.SpaceID,
+		&item.SpaceGeneration, &item.DocumentText, &item.DocumentHash,
+		&projection.vectorCurrent, &projection.updatedAt,
+		&projection.canonicalKnown, &projection.evidence.eligible,
+		&projection.evidence.content, &projection.evidence.spaceID,
+		&projection.evidence.spaceGeneration,
+		&relationship.eligible, &relationship.subjectEntityID,
+		&relationship.predicateKey, &relationship.predicateVersion,
+		&relationship.objectEntityID, &relationship.objectValueID,
+		&relationship.relationshipKind, &relationship.currentCardinality,
+		&relationship.status, &relationship.polarity, &relationship.scopeKey,
+		&relationship.validFrom, &relationship.validTo,
+		&relationship.identityAliasOfID, &relationship.supportCount,
+		&relationship.sourceGroupCount, &relationship.version,
+		&relationship.spaceID, &relationship.spaceGeneration,
+		&relationship.names.SubjectName, &relationship.names.ObjectName,
+		&relationship.names.ObjectValueType, &relationship.names.ObjectValue,
+		&relationship.names.ObjectUnit,
+		&relationship.foregroundGeneration,
+	)
+}
+
+func (p *searchConvergenceProjection) canonical() (*SearchDocumentForEmbedding, bool) {
+	if !p.canonicalKnown {
+		return nil, false
+	}
+	switch p.item.SourceKind {
+	case "evidence":
+		if !p.evidence.eligible {
+			return nil, true
+		}
+		expected := p.item
+		expected.SourceVersion = 1
+		expected.ProjectionFormat = defaultProjectionFormat("evidence")
+		expected.ProjectionGenerationID = ""
+		expected.DocumentText = strings.TrimSpace(p.evidence.content)
+		expected.DocumentHash = searchDocumentHash(expected.DocumentText)
+		expected.SpaceID = strings.TrimSpace(p.evidence.spaceID)
+		expected.SpaceGeneration = p.evidence.spaceGeneration
+		return &expected, true
+	case "relationship":
+		if !p.relationship.eligible {
+			return nil, true
+		}
+		relationship := &RelationshipRecord{
+			TeamID: p.item.TeamID, RelationshipID: p.item.SourceID,
+			SpaceID: p.relationship.spaceID, SpaceGeneration: p.relationship.spaceGeneration,
+			SubjectEntityID: p.relationship.subjectEntityID,
+			PredicateKey:    p.relationship.predicateKey, PredicateVersion: p.relationship.predicateVersion,
+			ObjectEntityID: p.relationship.objectEntityID, ObjectValueID: p.relationship.objectValueID,
+			RelationshipKind: p.relationship.relationshipKind, CurrentCardinality: p.relationship.currentCardinality,
+			Status: p.relationship.status, Polarity: p.relationship.polarity,
+			ScopeKey: p.relationship.scopeKey, ValidFrom: p.relationship.validFrom, ValidTo: p.relationship.validTo,
+			IdentityAliasOfID: p.relationship.identityAliasOfID,
+			SupportCount:      p.relationship.supportCount, SourceGroupCount: p.relationship.sourceGroupCount,
+			Version: p.relationship.version,
+		}
+		text := relationshipProjectionText(relationship, p.relationship.names)
+		expected := p.item
+		expected.SourceVersion = int64(relationship.Version)
+		expected.ProjectionFormat = 2
+		expected.ProjectionGenerationID = p.relationship.foregroundGeneration
+		expected.DocumentText = strings.TrimSpace(text)
+		expected.DocumentHash = searchDocumentHash(expected.DocumentText)
+		expected.SpaceID = relationship.SpaceID
+		expected.SpaceGeneration = relationship.SpaceGeneration
+		return &expected, true
+	default:
+		return nil, false
+	}
+}
+
 func addMissingCanonicalSearchStats(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -305,6 +522,13 @@ func addMissingCanonicalSearchStats(
 			          WHERE quarantine.team_id = fragment.team_id
 			            AND quarantine.fragment_id = fragment.fragment_id
 			            AND quarantine.status = 'active'
+			      )
+			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+			  AND NOT EXISTS (
+			          SELECT 1
+			          FROM evidence_lifecycle_events AS lifecycle
+			          WHERE lifecycle.team_id = fragment.team_id
+			            AND lifecycle.target_fragment_id = fragment.fragment_id
 			      )
 			UNION ALL
 			SELECT relationship.team_id, relationship.relationship_id AS source_id,
