@@ -321,6 +321,7 @@ CREATE TRIGGER remember_attempt_events_append_only
 -- source rows remain untouched until the final stopped-service release step.
 WITH legacy AS MATERIALIZED (
     SELECT ingest.team_id, ingest.ingest_id, ingest.owner_profile_id,
+           ingest.space_id, ingest.space_generation,
            ingest.idempotency_key, ingest.request_hash, ingest.created_at,
            ingest.completed_at, ingest.status,
            COALESCE(run.status, ingest.status) AS run_status,
@@ -352,7 +353,7 @@ INSERT INTO remember_attempts (
     evidence_count, relationship_count, created_at, completed_at
 )
 SELECT normalized.team_id, normalized.ingest_id, normalized.owner_profile_id,
-       NULL, NULL,
+       normalized.space_id, normalized.space_generation,
        COALESCE(NULLIF(normalized.idempotency_key, ''), 'legacy:' || normalized.ingest_id::text),
        COALESCE(NULLIF(normalized.request_hash, ''), 'legacy:' || normalized.ingest_id::text),
        'dense-mem.v2.6.1', 'remember', normalized.outcome,

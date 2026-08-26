@@ -63,6 +63,45 @@ func TestRememberSynchronousCutoverNormalizesLegacyReconciliationStatuses(t *tes
 	require.Equal(t, 3, count)
 }
 
+func TestRememberSynchronousCutoverPreservesMigratedAttemptSpace(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
+	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
+	spaceID, ingestID := uuid.New(), uuid.New()
+	const generation int64 = 7
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO memory_spaces (id, team_id, kind, owner_profile_id, generation)
+			VALUES ($1::uuid, $2::uuid, 'profile_private', $3::uuid, $4)
+		`, spaceID, teamID, profileID, generation); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id, space_id, space_generation,
+				idempotency_key, request_hash, status, proposal, metadata, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5,
+			          'private-space-ingest', 'private-space-request', 'completed',
+			          '{}'::jsonb, '{"_dense_mem_telemetry_origin":"remember"}'::jsonb, now())
+		`, teamID, ingestID, profileID, spaceID, generation)
+		return err
+	}))
+
+	runGooseUpTo(t, ctx, db, 20260825010001)
+	var migratedSpaceID string
+	var migratedGeneration int64
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT space_id::text, space_generation
+		FROM remember_attempts
+		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+	`, teamID, ingestID).Scan(&migratedSpaceID, &migratedGeneration))
+	require.Equal(t, spaceID.String(), migratedSpaceID)
+	require.Equal(t, generation, migratedGeneration)
+}
+
 func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)

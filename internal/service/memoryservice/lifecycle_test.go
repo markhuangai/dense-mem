@@ -3,6 +3,7 @@ package memoryservice
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +107,27 @@ func TestLifecycleCorrectRelationshipMapsPlanAndCommitFailures(t *testing.T) {
 	}
 }
 
+func TestLifecycleCorrectRelationshipRejectsNilPlanAndResult(t *testing.T) {
+	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
+	_, err := NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{planNil: true}}).CorrectRelationship(ctx, CorrectRelationshipRequest{Action: "submit"})
+	require.ErrorIs(t, err, ErrLifecyclePersistence)
+	_, err = NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{
+		plan:      &repository.RelationshipCorrectionEmbeddingPlan{},
+		returnNil: true,
+	}}).CorrectRelationship(ctx, CorrectRelationshipRequest{Action: "submit"})
+	require.ErrorIs(t, err, ErrLifecyclePersistence)
+}
+
+func TestLifecycleCorrectRelationshipAddsFallbackErrorForRejectedResult(t *testing.T) {
+	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
+	receipt, err := NewLifecycleService(LifecycleDependencies{Semantic: &lifecycleSemanticStub{
+		correctResult: &repository.CorrectRelationshipResult{ProcessingState: "rejected"},
+	}}).CorrectRelationship(ctx, CorrectRelationshipRequest{Action: "submit"})
+	require.NoError(t, err)
+	require.Len(t, receipt.Errors, 1)
+	require.Equal(t, "submission_policy_rejected", receipt.Errors[0].Code)
+}
+
 func TestLifecycleInlineRelationshipEmbeddingBatchValidatesProviderOutput(t *testing.T) {
 	document := repository.SearchDocumentForEmbedding{
 		SearchDocumentResult: repository.SearchDocumentResult{
@@ -122,6 +144,24 @@ func TestLifecycleInlineRelationshipEmbeddingBatchValidatesProviderOutput(t *tes
 	require.Len(t, embeddings, 1)
 	require.Equal(t, document.SearchDocumentID, embeddings[0].SearchDocumentID)
 	require.Equal(t, []float32{1, 2, 3}, embeddings[0].Embedding)
+
+	empty, err := svc.embedRelationshipDocumentBatch(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, empty)
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), make([]repository.SearchDocumentForEmbedding, 257))
+	require.ErrorIs(t, err, ErrLifecycleEmbeddingInvalid)
+	provider.vectors = [][]float32{}
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	require.ErrorIs(t, err, ErrLifecycleEmbeddingInvalid)
+	provider.vectors = [][]float32{{1, 2, 3}}
+	provider.returnedModel = "different-model"
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	require.ErrorIs(t, err, ErrLifecycleEmbeddingInvalid)
+	provider.returnedModel = ""
+	provider.vectors = [][]float32{{float32(math.NaN()), 2, 3}}
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	require.ErrorIs(t, err, ErrLifecycleEmbeddingInvalid)
+	provider.vectors = [][]float32{{1, 2, 3}}
 
 	provider.available = false
 	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
@@ -155,6 +195,36 @@ func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
 
 func TestLifecycleCancellationErrorRemainsTyped(t *testing.T) {
 	require.ErrorIs(t, translateRelationshipCorrectionError(ErrLifecycleEmbeddingCancelled), ErrLifecycleEmbeddingCancelled)
+}
+
+func TestTranslateRelationshipCorrectionErrors(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		err     error
+		wantErr error
+		code    httperr.ErrorCode
+	}{
+		{name: "embedding unavailable", err: ErrLifecycleEmbeddingUnavailable, wantErr: ErrLifecycleEmbeddingUnavailable},
+		{name: "embedding invalid", err: ErrLifecycleEmbeddingInvalid, wantErr: ErrLifecycleEmbeddingInvalid},
+		{name: "embedding timeout", err: ErrLifecycleEmbeddingTimeout, wantErr: ErrLifecycleEmbeddingTimeout},
+		{name: "not found", err: repository.ErrRelationshipCorrectionNotFound, code: httperr.NOT_FOUND},
+		{name: "idempotency conflict", err: repository.ErrSemanticIdempotencyConflict, code: httperr.CONFLICT},
+		{name: "confirmation conflict", err: repository.ErrRelationshipCorrectionConfirmation, code: httperr.CONFLICT},
+		{name: "expired confirmation", err: repository.ErrRelationshipCorrectionConfirmationExpired, code: httperr.CONFLICT},
+		{name: "state conflict", err: repository.ErrRelationshipCorrectionStateConflict, code: httperr.CONFLICT},
+		{name: "persistence", err: errors.New("persistence failure"), wantErr: ErrLifecyclePersistence},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := translateRelationshipCorrectionError(test.err)
+			if test.code == "" {
+				require.ErrorIs(t, got, test.wantErr)
+				return
+			}
+			var apiErr *httperr.APIError
+			require.ErrorAs(t, got, &apiErr)
+			require.Equal(t, test.code, apiErr.Code)
+		})
+	}
 }
 
 func TestLifecycleCorrectRelationshipRequiresAuthAndRepository(t *testing.T) {
@@ -244,6 +314,8 @@ func TestLifecycleRetractEvidenceMapsRepositoryErrors(t *testing.T) {
 		require.ErrorAs(t, err, &apiErr)
 		require.Equal(t, test.code, apiErr.Code)
 	}
+	_, err = NewLifecycleService(LifecycleDependencies{Evidence: &lifecycleEvidenceStub{err: errors.New("storage failure")}}).RetractEvidence(ctx, req)
+	require.ErrorContains(t, err, "storage failure")
 }
 
 type lifecycleSemanticStub struct {
@@ -251,6 +323,8 @@ type lifecycleSemanticStub struct {
 	correctResult *repository.CorrectRelationshipResult
 	plan          *repository.RelationshipCorrectionEmbeddingPlan
 	planErr       error
+	planNil       bool
+	returnNil     bool
 	embeddings    []repository.InlineEmbeddingResult
 	err           error
 }
@@ -266,6 +340,9 @@ func (s *lifecycleSemanticStub) CorrectRelationship(_ context.Context, input rep
 	if s.err != nil {
 		return nil, s.err
 	}
+	if s.returnNil {
+		return nil, nil
+	}
 	if s.correctResult == nil {
 		return nil, errors.New("missing correct result")
 	}
@@ -275,6 +352,9 @@ func (s *lifecycleSemanticStub) CorrectRelationship(_ context.Context, input rep
 func (s *lifecycleSemanticStub) PlanRelationshipCorrectionEmbeddings(context.Context, repository.CorrectRelationshipInput) (*repository.RelationshipCorrectionEmbeddingPlan, error) {
 	if s.planErr != nil {
 		return nil, s.planErr
+	}
+	if s.planNil {
+		return nil, nil
 	}
 	if s.plan == nil {
 		return &repository.RelationshipCorrectionEmbeddingPlan{}, nil
@@ -294,10 +374,11 @@ type lifecycleEvidenceStub struct {
 }
 
 type lifecycleEmbeddingStub struct {
-	available bool
-	model     string
-	vectors   [][]float32
-	err       error
+	available     bool
+	model         string
+	returnedModel string
+	vectors       [][]float32
+	err           error
 }
 
 func (s *lifecycleEmbeddingStub) Embed(context.Context, string) ([]float32, string, error) {
@@ -305,7 +386,11 @@ func (s *lifecycleEmbeddingStub) Embed(context.Context, string) ([]float32, stri
 }
 
 func (s *lifecycleEmbeddingStub) EmbedBatch(context.Context, []string) ([][]float32, string, error) {
-	return s.vectors, s.model, s.err
+	model := s.model
+	if s.returnedModel != "" {
+		model = s.returnedModel
+	}
+	return s.vectors, model, s.err
 }
 
 func (s *lifecycleEmbeddingStub) ModelName() string { return s.model }

@@ -44,6 +44,8 @@ func TestSubmissionAssessmentPlanSupportsTypedValuesAndLifecycleFences(t *testin
 }
 
 func TestSubmissionAssessmentSharedHelpers(t *testing.T) {
+	assert.Empty(t, cloneAssessmentProposal(nil))
+	assert.Empty(t, cloneAssessmentProposal(map[string]any{"unsupported": make(chan int)}))
 	proposal := map[string]any{
 		"relationship_hints": []any{map[string]any{
 			"ref": "r:one", "correction_target": map[string]any{"relationship_id": "old"},
@@ -169,6 +171,10 @@ func TestSubmissionAssessmentDeterministicQuarantineConvertsEvidenceAndProposalS
 	scan.Signals[0].EvidenceIndex = 99
 	_, err = submissionAssessmentDeterministicQuarantines(plan, scan)
 	assert.Error(t, err)
+	scan.Signals[0].EvidenceIndex = 0
+	scan.Signals[0].Source = "unsupported"
+	_, err = submissionAssessmentDeterministicQuarantines(plan, scan)
+	assert.Error(t, err)
 	scan.Signals = nil
 	quarantines, err = submissionAssessmentDeterministicQuarantines(plan, scan)
 	require.NoError(t, err)
@@ -194,6 +200,10 @@ func TestSubmissionAssessmentStatusAndStaleInputHelpers(t *testing.T) {
 	assert.Equal(t, "other", relationshipObjectKind(assessor.SemanticAssessmentRelationshipSplit{}, map[string]string{}, "other"))
 	assert.Equal(t, "r#split:1", submissionAssessmentObservationRef("r", 1, 2))
 	assert.Equal(t, "r", submissionAssessmentObservationRef("r", 0, 1))
+	longRef := string(make([]rune, 129))
+	longObservationRef := submissionAssessmentObservationRef(longRef, 1, 2)
+	assert.Contains(t, longObservationRef, "split:")
+	assert.LessOrEqual(t, len([]rune(longObservationRef)), 128)
 
 	var completionCalled bool
 	assert.NoError(t, terminalizeAfterError(nil, func() error { completionCalled = true; return nil }))
@@ -211,6 +221,10 @@ func TestSubmissionSecurityAdaptersAndAudit(t *testing.T) {
 	require.NoError(t, err)
 	pass := submissionSecurityPassEvent()
 	assert.Equal(t, "deterministic_scan", pass.EventKind)
+	singleQuarantine := submissionSecurityQuarantineEvent(SubmissionSecurityScan{
+		Signals: []SubmissionSecuritySignal{{Kind: "prompt_injection", Severity: "high", Start: 0, End: 1}},
+	})
+	assert.Equal(t, "quarantine", singleQuarantine.Decision)
 	quarantine := submissionSecurityBatchQuarantineEvent(SubmissionSecurityBatchScan{
 		Signals: []SubmissionSecurityBatchSignal{{Source: submissionSecuritySourceEvidence, SubmissionSecuritySignal: SubmissionSecuritySignal{Kind: "prompt_injection", Severity: "high", Start: 0, End: 1}}},
 	})
@@ -243,6 +257,7 @@ func TestSubmissionAssessmentErrorWrappers(t *testing.T) {
 	assert.Equal(t, 2, submissionAssessmentConsumedProviderTurns(consumed))
 	assert.Equal(t, 0, submissionAssessmentConsumedProviderTurns(errors.New("other")))
 	assert.EqualError(t, (&submissionAssessmentConsumedTurnsError{}), "submission assessment session failed after consuming provider turns")
+	assert.Nil(t, (&submissionAssessmentConsumedTurnsError{}).Unwrap())
 	assert.Equal(t, 0, submissionAssessmentConsumedProviderTurns(nil))
 
 	assert.NotNil(t, newSynchronousAssessmentEngine(SynchronousAssessmentDependencies{}, "team", "owner"))

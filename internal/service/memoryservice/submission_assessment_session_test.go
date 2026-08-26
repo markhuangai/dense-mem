@@ -58,6 +58,51 @@ func TestCompleteRememberSessionStopsAfterThreeProviderTurns(t *testing.T) {
 	require.Equal(t, 2, provider.repairs)
 }
 
+func TestAssessRememberSessionRequiresProviderAndRefresh(t *testing.T) {
+	request := assessor.SemanticAssessmentRequest{RequestID: "request"}
+	var nilEngine *assessmentEngine
+	_, _, _, err := nilEngine.assessRememberSession(context.Background(), request, func(context.Context) (assessor.SemanticAssessmentRequest, error) {
+		return request, nil
+	}, 0)
+	require.ErrorContains(t, err, "provider is required")
+
+	engine := &assessmentEngine{provider: &boundedAssessmentProvider{}}
+	_, _, _, err = engine.assessRememberSession(context.Background(), request, nil, 0)
+	require.ErrorContains(t, err, "refresh is required")
+}
+
+func TestCompleteRememberSessionReportsRefreshAndRepairErrors(t *testing.T) {
+	request := assessor.SemanticAssessmentRequest{RequestID: "request"}
+	engine := &assessmentEngine{
+		provider: &boundedAssessmentProvider{},
+		limits:   assessor.DefaultSemanticAssessmentLimits(),
+		metrics:  observability.NoopDiscoverabilityMetrics(),
+	}
+	_, _, err := engine.completeRememberSessionTurns(
+		context.Background(), boundedAssessmentSession{}, providerTurn(0), request,
+		func(context.Context) (assessor.SemanticAssessmentRequest, error) {
+			return assessor.SemanticAssessmentRequest{}, errors.New("refresh failed")
+		}, 0,
+	)
+	require.ErrorContains(t, err, "refresh failed")
+
+	_, _, err = (&assessmentEngine{
+		provider: &repairFailureAssessmentProvider{},
+		limits:   assessor.DefaultSemanticAssessmentLimits(),
+		metrics:  observability.NoopDiscoverabilityMetrics(),
+	}).completeRememberSessionTurns(
+		context.Background(), boundedAssessmentSession{}, providerTurn(1), request,
+		func(context.Context) (assessor.SemanticAssessmentRequest, error) { return request, nil }, 0,
+	)
+	require.ErrorContains(t, err, "repair failed")
+
+	var nilEngine *assessmentEngine
+	_, _, err = nilEngine.completeRememberSessionTurns(context.Background(), boundedAssessmentSession{}, providerTurn(1), request, func(context.Context) (assessor.SemanticAssessmentRequest, error) {
+		return request, nil
+	}, 0)
+	require.ErrorContains(t, err, "provider is required")
+}
+
 func providerTurn(turn int) assessor.SemanticAssessmentTurn {
 	return assessor.SemanticAssessmentTurn{
 		Turn:             turn,
