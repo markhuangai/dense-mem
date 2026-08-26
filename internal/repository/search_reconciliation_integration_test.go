@@ -105,6 +105,50 @@ func TestSearchReconciliationSelectionAndHashFence(t *testing.T) {
 	}))
 }
 
+func TestSearchReconciliationFillsMissingCapacityAfterStoredDrift(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-capacity")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-capacity-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-capacity", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	stored, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-capacity-stored",
+		RequestHash: sha256Hex("capacity stored canonical"), Evidence: []EvidenceInput{{Content: "capacity stored canonical"}},
+	})
+	require.NoError(t, err)
+	missingA, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-capacity-missing-a",
+		RequestHash: sha256Hex("capacity missing a"), Evidence: []EvidenceInput{{Content: "capacity missing a"}},
+	})
+	require.NoError(t, err)
+	missingB, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-capacity-missing-b",
+		RequestHash: sha256Hex("capacity missing b"), Evidence: []EvidenceInput{{Content: "capacity missing b"}},
+	})
+	require.NoError(t, err)
+	_, err = repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence",
+		SourceID: stored.Evidence[0].FragmentID, SourceVersion: 1, DocumentText: "stale capacity document",
+	})
+	require.NoError(t, err)
+
+	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 3,
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 3)
+	selectedSources := map[string]bool{}
+	for _, item := range selected {
+		selectedSources[item.SourceID] = true
+	}
+	require.True(t, selectedSources[stored.Evidence[0].FragmentID])
+	require.True(t, selectedSources[missingA.Evidence[0].FragmentID])
+	require.True(t, selectedSources[missingB.Evidence[0].FragmentID])
+}
+
 func TestSearchReconciliationCanonicalSourceSetAndSpaceFence(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

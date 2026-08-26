@@ -24,9 +24,11 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
   const listRequestRef = useRef(0);
+  const detailRequestRef = useRef(0);
 
   async function loadAttempts(nextState = state, nextOffset = offset) {
     const requestID = ++listRequestRef.current;
+    detailRequestRef.current += 1;
     setLoading(true);
     setError("");
     try {
@@ -50,14 +52,18 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
   }
 
   async function loadDetail(submissionID: string) {
+    const requestID = ++detailRequestRef.current;
+    const requestTeamID = team.id;
     setDetailLoading(true);
     setError("");
     try {
-      setDetail(await api.getSubmissionDiagnostic(team.id, submissionID));
+      const nextDetail = await api.getSubmissionDiagnostic(requestTeamID, submissionID);
+      if (requestID !== detailRequestRef.current || requestTeamID !== team.id) return;
+      setDetail(nextDetail);
     } catch (caught) {
-      setError(readError(caught));
+      if (requestID === detailRequestRef.current && requestTeamID === team.id) setError(readError(caught));
     } finally {
-      setDetailLoading(false);
+      if (requestID === detailRequestRef.current && requestTeamID === team.id) setDetailLoading(false);
     }
   }
 
@@ -69,7 +75,10 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
     setSelectedID("");
     setDetail(null);
     void loadAttempts("", 0);
-    return () => { listRequestRef.current += 1; };
+    return () => {
+      listRequestRef.current += 1;
+      detailRequestRef.current += 1;
+    };
   }, [api, team.id]);
 
   const rangeStart = total === 0 ? 0 : offset + 1;

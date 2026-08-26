@@ -106,7 +106,7 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(ctx context.Context, fi
 			SELECT count(*)
 			FROM remember_attempts AS attempt
 			JOIN teams AS team ON team.id = attempt.team_id
-			WHERE (? = '' OR attempt.team_id = ?::uuid)
+			WHERE (? = '' OR attempt.team_id = NULLIF(?, '')::uuid)
 			  AND (? = '' OR attempt.outcome = ?)
 		`, filter.TeamID, filter.TeamID, filter.ProcessingState, filter.ProcessingState).Scan(&page.Total).Error; err != nil {
 			return err
@@ -121,7 +121,7 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(ctx context.Context, fi
 			       attempt.public_result
 			FROM remember_attempts AS attempt
 			JOIN teams AS team ON team.id = attempt.team_id
-			WHERE (? = '' OR attempt.team_id = ?::uuid)
+			WHERE (? = '' OR attempt.team_id = NULLIF(?, '')::uuid)
 			  AND (? = '' OR attempt.outcome = ?)
 			ORDER BY attempt.created_at DESC, attempt.attempt_id DESC
 			LIMIT ? OFFSET ?

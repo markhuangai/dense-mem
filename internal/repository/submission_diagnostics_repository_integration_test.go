@@ -50,6 +50,28 @@ func TestSubmissionDiagnosticsLoadsEventsAndArtifactsAfterClosingAttemptRows(t *
 	require.Equal(t, "request", detail.Artifacts[0].ArtifactKind)
 }
 
+func TestSubmissionDiagnosticsAllowsAllTeamFilter(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-diagnostics-all-teams")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-diagnostics-all-teams-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	attemptID := uuid.NewString()
+	require.NoError(t, ledger.RecordRememberFailure(context.Background(), RememberFailureRecordInput{
+		TeamID: teamID, OwnerProfileID: ownerID, AttemptID: attemptID,
+		IdempotencyKey: "diagnostics-all-teams-key", RequestHash: "diagnostics-all-teams-hash",
+		ContractVersion: "dense-mem.v2.6.1", SubmissionKind: "remember",
+		FailedPhase: "assessment", ErrorCode: "provider_unavailable",
+		PublicResult: map[string]any{"submission_id": attemptID, "processing_state": "failed"},
+	}))
+
+	page, err := ledger.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{Limit: 100})
+	require.NoError(t, err)
+	require.Len(t, page.Records, 1)
+	require.Equal(t, attemptID, page.Records[0].SubmissionID)
+}
+
 func TestRememberAttemptAndArtifactPoliciesAreOwnerAndControlScoped(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

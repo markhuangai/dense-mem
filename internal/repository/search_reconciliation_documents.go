@@ -109,6 +109,7 @@ func selectMissingCanonicalSearchDocuments(
 	if limit <= 0 {
 		return nil
 	}
+	initialCount := len(*result)
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT fragment.team_id::text, fragment.owner_profile_id::text,
 		       fragment.fragment_id::text, fragment.content,
@@ -165,7 +166,7 @@ func selectMissingCanonicalSearchDocuments(
 		item.DocumentHash = searchDocumentHash(item.DocumentText)
 		item.StoredDocumentHash = ""
 		*result = append(*result, item)
-		if len(*result) >= limit {
+		if len(*result)-initialCount >= limit {
 			return nil
 		}
 	}
@@ -175,7 +176,7 @@ func selectMissingCanonicalSearchDocuments(
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	remaining := limit - len(*result)
+	remaining := limit - (len(*result) - initialCount)
 	if remaining <= 0 {
 		return nil
 	}
@@ -235,7 +236,7 @@ func selectMissingCanonicalSearchDocuments(
 		}
 		expected.StoredDocumentHash = ""
 		*result = append(*result, *expected)
-		if len(*result) >= limit {
+		if len(*result)-initialCount >= limit {
 			return nil
 		}
 	}
