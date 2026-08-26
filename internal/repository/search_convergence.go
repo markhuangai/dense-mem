@@ -296,7 +296,27 @@ type convergenceRelationshipProjection struct {
 }
 
 func selectSearchConvergenceDocuments(ctx context.Context, tx *gorm.DB, contract *ActiveSearchContract) (*sql.Rows, error) {
-	return tx.WithContext(ctx).Raw(`
+	return selectSearchConvergenceDocumentsPage(ctx, tx, contract, nil, 0)
+}
+
+// searchConvergenceCursor keeps reconciliation pages keyset-ordered without
+// buffering the full search-document table in memory.
+type searchConvergenceCursor struct {
+	UpdatedAt  time.Time
+	TeamID     string
+	DocumentID string
+}
+
+// selectSearchConvergenceDocumentsPage joins canonical source projections for
+// one bounded page, so reconciliation does not issue one lookup per document.
+func selectSearchConvergenceDocumentsPage(
+	ctx context.Context,
+	tx *gorm.DB,
+	contract *ActiveSearchContract,
+	cursor *searchConvergenceCursor,
+	limit int,
+) (*sql.Rows, error) {
+	query := `
 		WITH activated_generations AS (
 			SELECT DISTINCT ON (generation.team_id)
 			       generation.team_id,
@@ -386,6 +406,10 @@ func selectSearchConvergenceDocuments(ctx context.Context, tx *gorm.DB, contract
 		  ON team.id = document.team_id
 		 AND team.status = 'active'
 		 AND team.deleted_at IS NULL
+		JOIN embedding_contracts AS active_contract
+		  ON active_contract.embedding_contract_id = document.embedding_contract_id
+		 AND active_contract.dimensions = document.embedding_dimensions
+		 AND active_contract.lifecycle_state = 'active'
 		LEFT JOIN evidence_fragments AS fragment
 		  ON document.source_kind = 'evidence'
 		 AND fragment.team_id = document.team_id
@@ -414,7 +438,29 @@ func selectSearchConvergenceDocuments(ctx context.Context, tx *gorm.DB, contract
 		LEFT JOIN foreground_generations AS foreground ON foreground.team_id = document.team_id
 		WHERE document.embedding_contract_id = ?::uuid
 		  AND document.embedding_dimensions = ?
-	`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Rows()
+		  AND EXISTS (
+		      SELECT 1
+		      FROM search_index_generations AS generation
+		      WHERE generation.embedding_contract_id = document.embedding_contract_id
+		        AND generation.embedding_dimensions = document.embedding_dimensions
+		        AND generation.activation_state = 'active'
+		  )
+	`
+	args := []any{contract.EmbeddingContractID, contract.EmbeddingDimensions}
+	if cursor != nil && !cursor.UpdatedAt.IsZero() {
+		query += `
+		  AND (document.updated_at, document.team_id, document.search_document_id) > (?, ?::uuid, ?::uuid)
+		`
+		args = append(args, cursor.UpdatedAt, cursor.TeamID, cursor.DocumentID)
+	}
+	query += `
+		ORDER BY document.updated_at ASC, document.team_id, document.search_document_id
+	`
+	if limit > 0 {
+		query += "\n\t\tLIMIT ?\n"
+		args = append(args, limit)
+	}
+	return tx.WithContext(ctx).Raw(query, args...).Rows()
 }
 
 func scanSearchConvergenceProjection(rows *sql.Rows) (*searchConvergenceProjection, error) {

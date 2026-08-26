@@ -28,6 +28,13 @@ type HTTPStatusError struct {
 	Body       string
 }
 
+// StructuredToolError carries the bounded terminal payload returned by an MCP
+// tool when the protocol succeeds but the tool reports isError=true.
+type StructuredToolError struct {
+	Tool   string
+	Result map[string]any
+}
+
 type DreamCycleSeed struct {
 	Hypothesis string `json:"hypothesis"`
 	SourceRefs []Ref  `json:"source_refs"`
@@ -35,6 +42,19 @@ type DreamCycleSeed struct {
 
 func (e *HTTPStatusError) Error() string {
 	return fmt.Sprintf("%s %s returned %d: %s", e.Method, e.URL, e.StatusCode, e.Body)
+}
+
+func (e *StructuredToolError) Error() string {
+	if e == nil {
+		return "mcp tool returned a structured error"
+	}
+	if cause := submissionErrorMessage(e.Result); cause != "" {
+		return fmt.Sprintf("mcp tools/call %s returned a structured tool error: %s", e.Tool, cause)
+	}
+	if processing := submissionProcessingState(e.Result); processing != "" {
+		return fmt.Sprintf("mcp tools/call %s returned a structured tool error: processing_state %s", e.Tool, processing)
+	}
+	return fmt.Sprintf("mcp tools/call %s returned a structured tool error", e.Tool)
 }
 
 func (c *HTTPClient) CallTool(ctx context.Context, name string, input any, out any) error {
@@ -74,20 +94,27 @@ func (c *HTTPClient) callMCPTool(ctx context.Context, name string, input any, ou
 	if rpc.Error != nil {
 		return fmt.Errorf("mcp tools/call %s returned %d: %s", name, rpc.Error.Code, rpc.Error.Message)
 	}
-	if out == nil {
-		return nil
-	}
 	if rpc.Result.IsError && len(rpc.Result.StructuredContent) > 0 {
 		encoded, err := json.Marshal(rpc.Result.StructuredContent)
-		if err == nil {
-			_ = json.Unmarshal(encoded, out)
+		if err != nil {
+			return fmt.Errorf("decode mcp tools/call %s structured error: %w", name, err)
 		}
-		return fmt.Errorf("mcp tools/call %s returned a structured tool error", name)
+		if out != nil {
+			resetToolOutput(out)
+			if err := json.Unmarshal(encoded, out); err != nil {
+				return fmt.Errorf("decode mcp tools/call %s structured error: %w", name, err)
+			}
+		}
+		return &StructuredToolError{Tool: name, Result: rpc.Result.StructuredContent}
+	}
+	if out == nil {
+		return nil
 	}
 	for _, content := range rpc.Result.Content {
 		if content.Type != "text" || strings.TrimSpace(content.Text) == "" {
 			continue
 		}
+		resetToolOutput(out)
 		decoder := json.NewDecoder(strings.NewReader(content.Text))
 		decoder.UseNumber()
 		if err := decoder.Decode(out); err != nil {
@@ -96,6 +123,12 @@ func (c *HTTPClient) callMCPTool(ctx context.Context, name string, input any, ou
 		return nil
 	}
 	return fmt.Errorf("mcp tools/call %s returned no JSON text content", name)
+}
+
+func resetToolOutput(out any) {
+	if target, ok := out.(*map[string]any); ok && target != nil {
+		*target = nil
+	}
 }
 
 type mcpToolResponse struct {
@@ -565,7 +598,7 @@ func (c *HTTPClient) callToolWithRetry(ctx context.Context, name string, input a
 			return nil
 		}
 		lastErr = err
-		if !isTransientHTTPError(err) || attempt == maxAttempts {
+		if !isTransientCallToolError(err) || attempt == maxAttempts {
 			return err
 		}
 		delay := time.Duration(attempt) * 750 * time.Millisecond
@@ -576,6 +609,32 @@ func (c *HTTPClient) callToolWithRetry(ctx context.Context, name string, input a
 		}
 	}
 	return lastErr
+}
+
+func isTransientCallToolError(err error) bool {
+	if isTransientHTTPError(err) {
+		return true
+	}
+	var structuredErr *StructuredToolError
+	if !errors.As(err, &structuredErr) || structuredErr == nil {
+		return false
+	}
+	return structuredToolErrorRetryable(structuredErr.Result)
+}
+
+func structuredToolErrorRetryable(result map[string]any) bool {
+	if retryable, _ := result["retryable"].(bool); retryable && stringValue(result["next_action"]) == "retry_same_request" {
+		return true
+	}
+	errorsValue, _ := result["errors"].([]any)
+	for _, raw := range errorsValue {
+		item, _ := raw.(map[string]any)
+		retryable, _ := item["retryable"].(bool)
+		if retryable && stringValue(item["next_action"]) == "retry_same_request" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *HTTPClient) doJSON(ctx context.Context, method, url, bearer string, input any, out any) error {

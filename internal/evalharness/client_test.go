@@ -3,6 +3,7 @@ package evalharness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -526,6 +527,106 @@ func TestHTTPClientImportCorpusReportsSubmissionErrorCause(t *testing.T) {
 	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-failed", Content: "content"}})
 	if err == nil || !strings.Contains(err.Error(), "remember processing_state failed: verifier unavailable") {
 		t.Fatalf("ImportCorpus err = %v", err)
+	}
+}
+
+func TestHTTPClientImportRetriesRetryableStructuredRememberError(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/mcp" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		var request struct {
+			JSONRPC string `json:"jsonrpc"`
+			ID      any    `json:"id"`
+			Method  string `json:"method"`
+			Params  struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if request.Method != "tools/call" || request.Params.Name != "remember" {
+			t.Fatalf("request = %+v", request)
+		}
+		attempt := atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if attempt == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": request.JSONRPC,
+				"id":      request.ID,
+				"result": map[string]any{
+					"isError": true,
+					"structuredContent": map[string]any{
+						"submission_id":    "submission-retry",
+						"processing_state": "failed",
+						"search_state":     "not_required",
+						"errors": []map[string]any{{
+							"code": "embedding_unavailable", "message": "embedding provider unavailable",
+							"retryable": true, "next_action": "retry_same_request",
+						}},
+					},
+				},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": request.JSONRPC,
+			"id":      request.ID,
+			"result": map[string]any{
+				"content": []map[string]string{{"type": "text", "text": `{"submission_id":"submission-retry","processing_state":"completed","search_state":"current","evidence":[{"evidence_id":"evidence-retry"}]}`}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	mapping, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-retry", Content: "content"}})
+	if err != nil {
+		t.Fatalf("ImportCorpus: %v", err)
+	}
+	if atomic.LoadInt32(&calls) != 2 {
+		t.Fatalf("calls = %d; want 2", calls)
+	}
+	if ref := mapping.BySourceDocID["doc-retry"]; ref.ID != "evidence-retry" {
+		t.Fatalf("mapping = %+v", ref)
+	}
+}
+
+func TestHTTPClientStructuredToolErrorPreservesTerminalDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result": map[string]any{
+				"isError": true,
+				"structuredContent": map[string]any{
+					"submission_id":    "submission-failed",
+					"processing_state": "failed",
+					"search_state":     "not_required",
+					"errors": []map[string]any{{
+						"code": "provider_unavailable", "message": "semantic assessor unavailable",
+						"retryable": false, "next_action": "contact_operator",
+					}},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	_, err := client.ImportCorpus(context.Background(), []CorpusItem{{SourceDocID: "doc-failed", Content: "content"}})
+	if err == nil || !strings.Contains(err.Error(), "semantic assessor unavailable") {
+		t.Fatalf("ImportCorpus err = %v", err)
+	}
+	var structuredErr *StructuredToolError
+	if !errors.As(err, &structuredErr) {
+		t.Fatalf("ImportCorpus err type = %T; want StructuredToolError", err)
+	}
+	if structuredErr.Result["submission_id"] != "submission-failed" || structuredErr.Result["processing_state"] != "failed" {
+		t.Fatalf("structured result = %#v", structuredErr.Result)
 	}
 }
 

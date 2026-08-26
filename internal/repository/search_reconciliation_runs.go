@@ -142,79 +142,51 @@ func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(
 	}
 	result := make([]SearchDocumentForEmbedding, 0, limit)
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		type candidate struct {
-			item          SearchDocumentForEmbedding
-			vectorCurrent bool
-			updatedAt     time.Time
-		}
 		const pageSize = searchReconciliationBatchLimit
-		var lastUpdatedAt time.Time
-		var lastTeamID, lastDocumentID string
+		var cursor *searchConvergenceCursor
 		for len(result) < limit {
-			query := `
-				SELECT document.team_id::text, document.search_document_id::text,
-				       document.owner_profile_id::text, document.source_kind,
-				       document.source_id::text, document.source_version,
-				       document.projection_format_version,
-				       COALESCE(document.projection_generation_id::text, ''),
-				       document.document_version, document.embedding_contract_id::text,
-				       document.embedding_dimensions, document.search_state,
-				       document.space_id::text, document.space_generation,
-				       document.document_text, document.document_hash,
-				       document.embedding IS NOT NULL
-				         AND vector_dims(document.embedding) = document.embedding_dimensions,
-				       document.updated_at
-				FROM search_documents AS document
-				JOIN teams AS team
-				  ON team.id = document.team_id
-				 AND team.status = 'active'
-				 AND team.deleted_at IS NULL
-				JOIN embedding_contracts AS contract
-				  ON contract.embedding_contract_id = document.embedding_contract_id
-				 AND contract.dimensions = document.embedding_dimensions
-				 AND contract.lifecycle_state = 'active'
-				WHERE document.embedding_contract_id = ?::uuid
-				  AND document.embedding_dimensions = ?
-				  AND EXISTS (
-				      SELECT 1
-				      FROM search_index_generations AS generation
-				      WHERE generation.embedding_contract_id = document.embedding_contract_id
-				        AND generation.embedding_dimensions = document.embedding_dimensions
-				        AND generation.activation_state = 'active'
-				  )`
-			args := []any{input.EmbeddingContractID, input.EmbeddingDimensions}
-			if !lastUpdatedAt.IsZero() {
-				query += `
-				  AND (document.updated_at, document.team_id, document.search_document_id) > (?, ?::uuid, ?::uuid)`
-				args = append(args, lastUpdatedAt, lastTeamID, lastDocumentID)
-			}
-			query += `
-				ORDER BY document.updated_at ASC, document.team_id, document.search_document_id
-				LIMIT ?`
-			args = append(args, pageSize)
-			rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
+			rows, err := selectSearchConvergenceDocumentsPage(ctx, tx, &ActiveSearchContract{
+				EmbeddingContractID: input.EmbeddingContractID,
+				EmbeddingDimensions: input.EmbeddingDimensions,
+			}, cursor, pageSize)
 			if err != nil {
 				return err
 			}
-			candidates := make([]candidate, 0, pageSize)
+			pageCount := 0
+			var lastCursor searchConvergenceCursor
 			for rows.Next() {
-				var item SearchDocumentForEmbedding
-				var vectorCurrent bool
-				var updatedAt time.Time
-				if err := rows.Scan(
-					&item.TeamID, &item.SearchDocumentID, &item.OwnerProfileID,
-					&item.SourceKind, &item.SourceID, &item.SourceVersion,
-					&item.ProjectionFormat, &item.ProjectionGenerationID,
-					&item.DocumentVersion, &item.EmbeddingContractID,
-					&item.EmbeddingDimensions, &item.SearchState, &item.SpaceID,
-					&item.SpaceGeneration, &item.DocumentText, &item.DocumentHash, &vectorCurrent,
-					&updatedAt,
-				); err != nil {
+				if len(result) >= limit {
+					break
+				}
+				projection, err := scanSearchConvergenceProjection(rows)
+				if err != nil {
 					_ = rows.Close()
 					return err
 				}
-				item.StoredDocumentHash = item.DocumentHash
-				candidates = append(candidates, candidate{item: item, vectorCurrent: vectorCurrent, updatedAt: updatedAt})
+				pageCount++
+				lastCursor = searchConvergenceCursor{
+					UpdatedAt: projection.updatedAt, TeamID: projection.item.TeamID, DocumentID: projection.item.SearchDocumentID,
+				}
+				projection.item.StoredDocumentHash = projection.item.DocumentHash
+				item := projection.item
+				expected, known := projection.canonical()
+				if known && expected == nil {
+					item.Retired = true
+					result = append(result, item)
+					continue
+				}
+				if known && expected != nil {
+					if searchDocumentMatchesCanonical(item, *expected) && item.SearchState == string(domain.SearchProjectionCurrent) && projection.vectorCurrent {
+						continue
+					}
+					item = *expected
+				} else if item.SearchState == string(domain.SearchProjectionCurrent) && projection.vectorCurrent {
+					continue
+				}
+				result = append(result, item)
+				if len(result) >= limit {
+					break
+				}
 			}
 			if err := rows.Err(); err != nil {
 				_ = rows.Close()
@@ -223,38 +195,13 @@ func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(
 			if err := rows.Close(); err != nil {
 				return err
 			}
-			if len(candidates) == 0 {
+			if pageCount == 0 {
 				break
 			}
-			last := candidates[len(candidates)-1]
-			lastUpdatedAt, lastTeamID, lastDocumentID = last.updatedAt, last.item.TeamID, last.item.SearchDocumentID
-			for _, candidate := range candidates {
-				if len(result) >= limit {
-					break
-				}
-				item := candidate.item
-				expected, known, err := canonicalSearchDocument(ctx, tx, item)
-				if err != nil {
-					return err
-				}
-				if known && expected == nil {
-					item.Retired = true
-					result = append(result, item)
-					continue
-				}
-				if known && expected != nil {
-					if searchDocumentMatchesCanonical(item, *expected) && item.SearchState == string(domain.SearchProjectionCurrent) && candidate.vectorCurrent {
-						continue
-					}
-					item = *expected
-				} else if item.SearchState == string(domain.SearchProjectionCurrent) && candidate.vectorCurrent {
-					continue
-				}
-				result = append(result, item)
-			}
-			if len(candidates) < pageSize {
+			if pageCount < pageSize {
 				break
 			}
+			cursor = &lastCursor
 		}
 		if len(result) < limit {
 			contract := &ActiveSearchContract{
