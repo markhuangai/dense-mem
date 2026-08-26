@@ -315,7 +315,6 @@ jobs:
           github-pat: ${{ secrets.PR_REVIEW_PAT }}
           ai-base-url: ${{ secrets.LOCAL_AI_ENDPOINT }}
           ai-secret: ${{ secrets.LOCAL_AI_SECRET }}
-          ai-auth-mode: auth-token
           model: auto
           effort: high
           parallel-count: "6"
