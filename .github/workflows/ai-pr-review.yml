@@ -313,7 +313,7 @@ jobs:
         with:
           pull-request-url: ${{ format('{0}/{1}/pull/{2}', github.server_url, github.repository, needs.resolve.outputs.pr_number) }}
           github-pat: ${{ secrets.PR_REVIEW_PAT }}
-          ai-base-url: ${{ secrets.LOCAL_AI_ENDPOINT }}
+          ai-base-url: ${{ secrets.LOCAL_OPENAI_AI_ENDPOINT }}
           ai-secret: ${{ secrets.LOCAL_AI_SECRET }}
           model: auto
           effort: high
