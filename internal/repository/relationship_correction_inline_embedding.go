@@ -89,6 +89,18 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 		if source.Version != effective.ExpectedVersion {
 			return nil
 		}
+		effectiveSupports, err := loadEffectiveRelationshipCorrectionSupports(ctx, tx, input.TeamID, source.RelationshipID)
+		if err != nil {
+			return err
+		}
+		if !relationshipCorrectionSupportsEqual(effective.Supports, effectiveSupports) {
+			return nil
+		}
+		for _, support := range effectiveSupports {
+			if err := requireSemanticSpaceMatch(source.SpaceID, support.SpaceID); err != nil {
+				return nil
+			}
+		}
 
 		resolution, err := resolveRelationshipCorrectionPatch(ctx, tx, effective, source)
 		if err != nil {
@@ -145,6 +157,7 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 		predicateKey := resolution.Predicate.Key
 		if subjectID == source.SubjectEntityID && objectID == source.ObjectEntityID &&
 			objectValueID == source.ObjectValueID && predicateKey == source.PredicateKey &&
+			resolution.Predicate.Version == source.PredicateVersion &&
 			resolution.SubjectCreate == nil && resolution.ObjectCreate == nil {
 			return nil
 		}

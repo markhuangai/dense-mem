@@ -305,6 +305,94 @@ func TestRelationshipCorrectionDeduplicatesSameHashEmbeddings(t *testing.T) {
 	assert.Equal(t, int64(1), currentDocuments)
 }
 
+func TestRelationshipCorrectionPlannerIncludesPredicateVersionChanges(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	insertSearchTestContract(t, adminDB, rls, "relationship-correction-predicate-version", 3, "exact", "")
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "relationship-correction-predicate-version-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "relationship-correction-predicate-version-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Predicate Version Owner")
+	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Predicate Version Project")
+	content := "Predicate Version Owner works on Predicate Version Project."
+	ingest := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "relationship-correction-predicate-version-source", content)
+	original := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: object.EntityID,
+		Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: "correction:predicate-version", SpanStart: 0, SpanEnd: len(content), Authority: "primary"},
+	}).Relationship
+	require.NotNil(t, original)
+	require.Equal(t, 1, original.PredicateVersion)
+
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO team_predicate_definitions (
+			    team_id, predicate_key, version, aliases, allowed_subject_kinds,
+			    allowed_object_kinds, relationship_kind, current_cardinality,
+			    lifecycle_state, origin, metadata
+			)
+			SELECT team_id, predicate_key, version + 1, aliases, allowed_subject_kinds,
+			       allowed_object_kinds, relationship_kind, current_cardinality,
+			       'active', 'operator', '{"test":"predicate version rotation"}'::jsonb
+			FROM team_predicate_definitions
+			WHERE team_id = ?::uuid
+			  AND predicate_key = 'works_on'
+			  AND version = 1
+		`, teamID).Error
+	}))
+
+	input := CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "submit",
+		RelationshipID: original.RelationshipID, ExpectedVersion: original.Version,
+		Patch:    RelationshipCorrectionPatch{Predicate: &RelationshipCorrectionPredicatePatch{Key: "works_on"}},
+		Supports: []RelationshipCorrectionSupport{{EvidenceID: ingest.Evidence[0].FragmentID, Start: 0, End: len(content)}},
+		Reason:   "refresh the relationship to the active predicate version", IdempotencyKey: "relationship-correction-predicate-version-key",
+	}
+	plan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, input)
+	require.NoError(t, err)
+	require.Len(t, plan.Documents, 1, "a predicate version change must not be treated as a no-op")
+}
+
+func TestRelationshipCorrectionPlannerRejectsSupportMismatchBeforeEmbedding(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	insertSearchTestContract(t, adminDB, rls, "relationship-correction-support-mismatch", 3, "exact", "")
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "relationship-correction-support-mismatch-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "relationship-correction-support-mismatch-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Support Mismatch Owner")
+	wrongObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Support Mismatch Wrong Project")
+	correctObject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Support Mismatch Correct Project")
+	content := "Support Mismatch Owner works on Support Mismatch Correct Project."
+	ingest := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "relationship-correction-support-mismatch-source", content)
+	original := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: wrongObject.EntityID,
+		Support: &EvidenceSupportInput{FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: "correction:support-mismatch", SpanStart: 0, SpanEnd: len(content), Authority: "primary"},
+	}).Relationship
+	require.NotNil(t, original)
+
+	input := CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "submit",
+		RelationshipID: original.RelationshipID, ExpectedVersion: original.Version,
+		Patch:    RelationshipCorrectionPatch{ObjectEntity: &RelationshipCorrectionEntityPatch{EntityID: correctObject.EntityID}},
+		Supports: []RelationshipCorrectionSupport{{EvidenceID: ingest.Evidence[0].FragmentID, Start: 0, End: len(content) - 1}},
+		Reason:   "the submitted support span is stale", IdempotencyKey: "relationship-correction-support-mismatch-key",
+	}
+	plan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, input)
+	require.NoError(t, err)
+	require.Empty(t, plan.Documents, "support mismatches must not invoke inline embedding")
+
+	result, err := semantic.CorrectRelationshipWithEmbeddings(ctx, input, nil)
+	require.NoError(t, err)
+	require.Equal(t, "rejected", result.ProcessingState)
+	require.Equal(t, "support_set_mismatch", result.ErrorCode)
+}
+
 func TestRelationshipCorrectionPlannerRejectsStaleVersionBeforeEmbedding(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
