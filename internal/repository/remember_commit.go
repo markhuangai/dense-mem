@@ -55,7 +55,7 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 		if err := lockRememberIdempotencyKeyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey); err != nil {
 			return err
 		}
-		if err := checkRememberFailureIdempotencyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash); err != nil && !errors.Is(err, ErrRememberReplay) {
+		if err := checkRememberFailureIdempotencyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash, input.MigratedRequestHash); err != nil && !errors.Is(err, ErrRememberReplay) {
 			return err
 		}
 		if replay, err := loadRememberAttemptInTx(ctx, tx, input); err != nil {

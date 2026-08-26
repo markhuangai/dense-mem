@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -171,6 +172,20 @@ func TestRememberAttemptReplayKeepsFailedStatusOnErrorPath(t *testing.T) {
 	require.Equal(t, attemptID, processErr.Status.SubmissionID)
 	require.Equal(t, "failed", processErr.Status.ProcessingState)
 	require.Equal(t, "provider_unavailable", processErr.Status.Errors[0].Code)
+}
+
+func TestRememberAttemptMatchesMigratedRequestHash(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{RequestHash: "v2.6.1-hash", MigratedRequestHash: "v2.6-hash"}
+
+	require.True(t, rememberAttemptMatchesRequest(&repository.RememberAttempt{
+		RequestHash: "v2.6-hash", ContractVersion: domain.MigratedRememberRequestHashVersion,
+	}, input))
+	require.False(t, rememberAttemptMatchesRequest(&repository.RememberAttempt{
+		RequestHash: "v2.6-hash", ContractVersion: domain.ContractVersion,
+	}, input))
+	require.False(t, rememberAttemptMatchesRequest(&repository.RememberAttempt{
+		RequestHash: "different", ContractVersion: domain.MigratedRememberRequestHashVersion,
+	}, input))
 }
 
 var _ embedding.EmbeddingProviderInterface = (*rememberProcessorEmbedderStub)(nil)

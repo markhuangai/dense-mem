@@ -72,6 +72,7 @@ type RememberProcessRequest struct {
 	SpaceGeneration          int64
 	IdempotencyKey           string
 	RequestHash              string
+	MigratedRequestHash      string
 	SourceSummary            string
 	Proposal                 map[string]any
 	Metadata                 map[string]any

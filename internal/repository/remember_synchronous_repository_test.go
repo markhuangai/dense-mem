@@ -57,8 +57,8 @@ func TestLoadRememberAttemptReturnsSafeReplayResult(t *testing.T) {
 	expectActiveTeam(mock, teamID)
 	attemptID := uuid.NewString()
 	mock.ExpectQuery("SELECT attempt_id::text").WithArgs(teamID, ownerID, "remember-key").WillReturnRows(
-		sqlmock.NewRows([]string{"attempt_id", "request_hash", "outcome", "public_result"}).AddRow(
-			attemptID, "hash-1", "completed", []byte(`{"submission_id":"`+attemptID+`","processing_state":"completed"}`),
+		sqlmock.NewRows([]string{"attempt_id", "request_hash", "contract_version", "outcome", "public_result"}).AddRow(
+			attemptID, "hash-1", "dense-mem.v2.6.1", "completed", []byte(`{"submission_id":"`+attemptID+`","processing_state":"completed"}`),
 		),
 	)
 	attempt, err := repo.LoadRememberAttempt(context.Background(), RememberAttemptLookupInput{
@@ -67,6 +67,7 @@ func TestLoadRememberAttemptReturnsSafeReplayResult(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, attemptID, attempt.AttemptID)
 	require.Equal(t, "hash-1", attempt.RequestHash)
+	require.Equal(t, "dense-mem.v2.6.1", attempt.ContractVersion)
 	require.Equal(t, "completed", attempt.Outcome)
 	require.Equal(t, "completed", attempt.PublicResult["processing_state"])
 	require.NoError(t, mock.ExpectationsWereMet())

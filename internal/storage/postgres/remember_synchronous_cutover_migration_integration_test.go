@@ -206,9 +206,12 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO submission_quarantine_payloads (
 				team_id, placement_run_id, ingest_id, owner_profile_id,
-				proposal, evidence, assessor_response, expires_at
+				proposal, evidence, assessor_response, payload_sha256, expires_at
 			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
-			          '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, now() + interval '24 hours')
+			          '{"token":"credential=secret-token"}'::jsonb,
+			          '[{"content":"prompt-secret"}]'::jsonb,
+			          '{"response":"provider-secret"}'::jsonb,
+			          'sha256:legacy-quarantine-payload', now() + interval '24 hours')
 		`, teamID, runID, ingestID, profileID); err != nil {
 			return err
 		}
@@ -252,12 +255,13 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 
 	runGooseUpTo(t, ctx, db, 20260825010001)
 
-	var outcome string
+	var outcome, contractVersion string
 	require.NoError(t, db.QueryRowContext(ctx, `
-		SELECT outcome FROM remember_attempts
+		SELECT outcome, contract_version FROM remember_attempts
 		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
-	`, teamID, ingestID).Scan(&outcome))
+	`, teamID, ingestID).Scan(&outcome, &contractVersion))
 	require.Equal(t, "completed", outcome)
+	require.Equal(t, "dense-mem.v2.6", contractVersion)
 
 	var eventCount, itemEvents, outcomeEvents int
 	require.NoError(t, db.QueryRowContext(ctx, `
@@ -284,17 +288,22 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	require.Equal(t, 1, quarantinePayloadEvents)
 	require.Equal(t, 1, quarantineTombstoneEvents)
 
-	var artifactKind, artifactContentType, artifactPayloadHash string
+	var artifactKind, artifactContentType, artifactPayloadHash, artifactStatus, artifactContent string
 	var artifactRetentionBounded bool
 	require.NoError(t, db.QueryRowContext(ctx, `
 		SELECT artifact_kind, content_type, convert_from(content_bytes, 'UTF8')::jsonb ->> 'payload_sha256',
+		       convert_from(content_bytes, 'UTF8')::jsonb ->> 'payload_status', convert_from(content_bytes, 'UTF8'),
 		       expires_at = captured_at + interval '7 days'
 		FROM remember_failure_artifacts
 		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
-	`, teamID, ingestID).Scan(&artifactKind, &artifactContentType, &artifactPayloadHash, &artifactRetentionBounded))
-	require.Equal(t, "legacy_submission_quarantine_payload", artifactKind)
+	`, teamID, ingestID).Scan(&artifactKind, &artifactContentType, &artifactPayloadHash, &artifactStatus, &artifactContent, &artifactRetentionBounded))
+	require.Equal(t, "legacy_submission_quarantine_metadata", artifactKind)
 	require.Equal(t, "application/json", artifactContentType)
-	require.Empty(t, artifactPayloadHash)
+	require.Equal(t, "sha256:legacy-quarantine-payload", artifactPayloadHash)
+	require.Equal(t, "redacted_on_cutover", artifactStatus)
+	require.NotContains(t, artifactContent, "credential=secret-token")
+	require.NotContains(t, artifactContent, "prompt-secret")
+	require.NotContains(t, artifactContent, "provider-secret")
 	require.True(t, artifactRetentionBounded)
 
 	var expiredArtifacts, expiredPayloadEvents int

@@ -77,6 +77,8 @@ func TestRememberPassesValidatedRequestToSynchronousProcessor(t *testing.T) {
 	require.Equal(t, "sync-boundary", processor.last.IdempotencyKey)
 	require.Equal(t, "exact evidence", processor.last.Evidence[0].Content)
 	require.NotEmpty(t, processor.last.RequestHash)
+	require.NotEmpty(t, processor.last.MigratedRequestHash)
+	require.NotEqual(t, processor.last.RequestHash, processor.last.MigratedRequestHash)
 }
 
 func TestRememberMapsSynchronousCancellationAndNilResults(t *testing.T) {

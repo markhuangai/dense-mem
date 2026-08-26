@@ -17,7 +17,19 @@ func CanonicalRequestBodyHash(
 	entityHints []map[string]any,
 	relationshipHints []map[string]any,
 ) (string, error) {
-	contractVersion := requestHashContractVersion
+	return canonicalRequestBodyHashForContract(requestHashContractVersion, evidence, entityHints, relationshipHints)
+}
+
+func canonicalRequestBodyHashForContract(
+	contractVersion string,
+	evidence any,
+	entityHints []map[string]any,
+	relationshipHints []map[string]any,
+) (string, error) {
+	contractVersion = strings.TrimSpace(contractVersion)
+	if contractVersion == "" {
+		return "", fmt.Errorf("remember request hash contract version is required")
+	}
 	canonicalEvidence, err := canonicalRememberObjects(evidence)
 	if err != nil {
 		return "", err

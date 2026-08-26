@@ -363,7 +363,7 @@ SELECT normalized.team_id, normalized.ingest_id, normalized.owner_profile_id,
        normalized.space_id, normalized.space_generation,
        COALESCE(NULLIF(normalized.idempotency_key, ''), 'legacy:' || normalized.ingest_id::text),
        COALESCE(NULLIF(normalized.request_hash, ''), 'legacy:' || normalized.ingest_id::text),
-       'dense-mem.v2.6.1', 'remember', normalized.outcome,
+       'dense-mem.v2.6', 'remember', normalized.outcome,
        CASE WHEN normalized.outcome = 'failed' THEN 'internal_failure' ELSE '' END,
        normalized.correlation_id,
        jsonb_build_object(
@@ -400,8 +400,7 @@ WITH legacy_events AS (
       ON ingest.team_id = attempt.team_id
      AND ingest.ingest_id = attempt.attempt_id
      AND ingest.owner_profile_id = attempt.owner_profile_id
-    WHERE attempt.contract_version = 'dense-mem.v2.6.1'
-      AND attempt.submission_kind = 'remember'
+    WHERE attempt.submission_kind = 'remember'
       AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
 
     UNION ALL
@@ -427,8 +426,7 @@ WITH legacy_events AS (
       ON item.team_id = attempt.team_id
      AND item.ingest_id = attempt.attempt_id
      AND item.owner_profile_id = attempt.owner_profile_id
-    WHERE attempt.contract_version = 'dense-mem.v2.6.1'
-      AND attempt.submission_kind = 'remember'
+    WHERE attempt.submission_kind = 'remember'
       AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
 
     UNION ALL
@@ -455,8 +453,7 @@ WITH legacy_events AS (
       ON outcome.team_id = run.team_id
      AND outcome.placement_run_id = run.placement_run_id
      AND outcome.owner_profile_id = run.owner_profile_id
-    WHERE attempt.contract_version = 'dense-mem.v2.6.1'
-      AND attempt.submission_kind = 'remember'
+    WHERE attempt.submission_kind = 'remember'
       AND ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
 ), numbered AS (
     SELECT legacy_events.*,
@@ -659,35 +656,8 @@ WHERE NOT EXISTS (
       AND existing.metadata ->> 'legacy_intent_id' = numbered.metadata ->> 'legacy_intent_id'
 );
 
--- Raw quarantined payloads are retained as bounded system-only failure
--- artifacts. The original payload hash and source identifier are included in
--- the artifact bytes and the terminal event so expiry does not erase lineage.
-DO $$
-DECLARE
-    oversized_payloads BIGINT;
-BEGIN
-    SELECT count(*) INTO oversized_payloads
-    FROM submission_quarantine_payloads AS payload
-    JOIN knowledge_ingests AS ingest
-      ON ingest.team_id = payload.team_id
-     AND ingest.ingest_id = payload.ingest_id
-     AND ingest.owner_profile_id = payload.owner_profile_id
-    WHERE ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
-      AND payload.quarantined_at >= transaction_timestamp() - interval '7 days'
-      AND octet_length(convert_to(jsonb_build_object(
-          'source_quarantine_payload_id', payload.quarantine_payload_id,
-          'placement_run_id', payload.placement_run_id,
-          'ingest_id', payload.ingest_id,
-          'proposal', payload.proposal,
-          'evidence', payload.evidence,
-          'assessor_response', payload.assessor_response,
-          'payload_sha256', payload.payload_sha256
-      )::text, 'UTF8')) > 1048576;
-    IF oversized_payloads <> 0 THEN
-        RAISE EXCEPTION 'synchronous Remember cutover blocked: % quarantine payloads exceed the 1 MiB retained artifact limit', oversized_payloads;
-    END IF;
-END;
-$$;
+-- Do not copy raw request or assessor payloads into the new control-readable
+-- artifact store; the source ID and hash preserve cutover lineage.
 
 WITH payloads AS (
     SELECT payload.team_id, payload.quarantine_payload_id,
@@ -696,12 +666,9 @@ WITH payloads AS (
            payload.quarantined_at + interval '7 days' AS retention_expires_at,
            convert_to(jsonb_build_object(
                'source_quarantine_payload_id', payload.quarantine_payload_id,
-               'placement_run_id', payload.placement_run_id,
                'ingest_id', payload.ingest_id,
-               'proposal', payload.proposal,
-               'evidence', payload.evidence,
-               'assessor_response', payload.assessor_response,
-               'payload_sha256', payload.payload_sha256
+               'payload_sha256', payload.payload_sha256,
+               'payload_status', 'redacted_on_cutover'
            )::text, 'UTF8') AS content_bytes
     FROM submission_quarantine_payloads AS payload
     JOIN knowledge_ingests AS ingest
@@ -721,7 +688,7 @@ INSERT INTO remember_failure_artifacts (
     content_type, content_bytes, byte_count, content_sha256, captured_at, expires_at
 )
 SELECT payloads.team_id, payloads.quarantine_payload_id, payloads.attempt_id,
-       payloads.owner_profile_id, 'legacy_submission_quarantine_payload',
+       payloads.owner_profile_id, 'legacy_submission_quarantine_metadata',
        'application/json', payloads.content_bytes, octet_length(payloads.content_bytes),
        'sha256:' || encode(digest(payloads.content_bytes, 'sha256'), 'hex'),
        payloads.quarantined_at, payloads.retention_expires_at
@@ -738,12 +705,9 @@ WITH payload_events AS (
                'payload_sha256', payload.payload_sha256,
                'artifact_sha256', 'sha256:' || encode(digest(convert_to(jsonb_build_object(
                    'source_quarantine_payload_id', payload.quarantine_payload_id,
-                   'placement_run_id', payload.placement_run_id,
                    'ingest_id', payload.ingest_id,
-                   'proposal', payload.proposal,
-                   'evidence', payload.evidence,
-                   'assessor_response', payload.assessor_response,
-                   'payload_sha256', payload.payload_sha256
+                   'payload_sha256', payload.payload_sha256,
+                   'payload_status', 'redacted_on_cutover'
                )::text, 'UTF8'), 'sha256'), 'hex'),
                'expires_at', payload.quarantined_at + interval '7 days'
            ) AS metadata
@@ -1555,12 +1519,9 @@ BEGIN
                payload.payload_sha256 || ':' ||
                ('sha256:' || encode(digest(convert_to(jsonb_build_object(
                    'source_quarantine_payload_id', payload.quarantine_payload_id,
-                   'placement_run_id', payload.placement_run_id,
                    'ingest_id', payload.ingest_id,
-                   'proposal', payload.proposal,
-                   'evidence', payload.evidence,
-                   'assessor_response', payload.assessor_response,
-                   'payload_sha256', payload.payload_sha256
+                   'payload_sha256', payload.payload_sha256,
+                   'payload_status', 'redacted_on_cutover'
                )::text, 'UTF8'), 'sha256'), 'hex')),
                '|' ORDER BY payload.team_id, payload.quarantine_payload_id), ''), 'sha256'), 'hex')
       INTO quarantine_payload_count, quarantine_payload_hash
@@ -1580,7 +1541,7 @@ BEGIN
                '|' ORDER BY artifact.team_id, artifact.artifact_id), ''), 'sha256'), 'hex')
       INTO quarantine_artifact_count, quarantine_artifact_hash
     FROM remember_failure_artifacts AS artifact
-    WHERE artifact.artifact_kind = 'legacy_submission_quarantine_payload';
+    WHERE artifact.artifact_kind = 'legacy_submission_quarantine_metadata';
     IF quarantine_payload_count <> quarantine_artifact_count OR quarantine_payload_hash IS DISTINCT FROM quarantine_artifact_hash THEN
         RAISE EXCEPTION 'synchronous Remember quarantine payload history mismatch: source count/hash %/% artifacts %/%',
             quarantine_payload_count, quarantine_payload_hash, quarantine_artifact_count, quarantine_artifact_hash;
@@ -1592,12 +1553,9 @@ BEGIN
                payload.payload_sha256 || ':' ||
                ('sha256:' || encode(digest(convert_to(jsonb_build_object(
                    'source_quarantine_payload_id', payload.quarantine_payload_id,
-                   'placement_run_id', payload.placement_run_id,
                    'ingest_id', payload.ingest_id,
-                   'proposal', payload.proposal,
-                   'evidence', payload.evidence,
-                   'assessor_response', payload.assessor_response,
-                   'payload_sha256', payload.payload_sha256
+                   'payload_sha256', payload.payload_sha256,
+                   'payload_status', 'redacted_on_cutover'
                )::text, 'UTF8'), 'sha256'), 'hex')),
                '|' ORDER BY payload.team_id, payload.quarantine_payload_id), ''), 'sha256'), 'hex')
       INTO quarantine_payload_source_count, quarantine_payload_source_hash

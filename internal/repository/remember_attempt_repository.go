@@ -14,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 type RememberAttemptRecordInput struct {
@@ -45,10 +47,11 @@ type RememberAttemptRecorder interface {
 var ErrRememberAttemptNotFound = errors.New("remember attempt not found")
 
 type RememberAttempt struct {
-	AttemptID    string
-	RequestHash  string
-	Outcome      string
-	PublicResult map[string]any
+	AttemptID       string
+	RequestHash     string
+	ContractVersion string
+	Outcome         string
+	PublicResult    map[string]any
 }
 
 type RememberAttemptLookup interface {
@@ -72,7 +75,16 @@ func lockRememberIdempotencyKeyInTx(ctx context.Context, tx *gorm.DB, teamID, ow
 	return tx.WithContext(ctx).Exec(`SELECT pg_advisory_xact_lock(?, ?)`, first, second).Error
 }
 
-func checkRememberFailureIdempotencyInTx(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, idempotencyKey, requestHash string) error {
+func rememberAttemptHashMatches(storedHash, storedContractVersion, requestHash, migratedRequestHash string) bool {
+	if strings.TrimSpace(storedHash) == strings.TrimSpace(requestHash) {
+		return true
+	}
+	return strings.TrimSpace(storedContractVersion) == domain.MigratedRememberRequestHashVersion &&
+		strings.TrimSpace(migratedRequestHash) != "" &&
+		strings.TrimSpace(storedHash) == strings.TrimSpace(migratedRequestHash)
+}
+
+func checkRememberFailureIdempotencyInTx(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, idempotencyKey, requestHash, migratedRequestHash string) error {
 	var hasFailure, hasHashMismatch bool
 	if err := tx.WithContext(ctx).Raw(`
 		SELECT
@@ -87,9 +99,13 @@ func checkRememberFailureIdempotencyInTx(ctx context.Context, tx *gorm.DB, teamI
 				FROM remember_attempts
 				WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid
 				  AND idempotency_key = ? AND outcome = 'failed'
-				  AND request_hash <> ?
-			)
-	`, teamID, ownerProfileID, idempotencyKey, teamID, ownerProfileID, idempotencyKey, requestHash).Row().Scan(&hasFailure, &hasHashMismatch); err != nil {
+				  AND NOT (
+					  request_hash = ?
+					  OR (contract_version = ? AND ? <> '' AND request_hash = ?)
+				  )
+		)
+	`, teamID, ownerProfileID, idempotencyKey, teamID, ownerProfileID, idempotencyKey,
+		requestHash, domain.MigratedRememberRequestHashVersion, migratedRequestHash, migratedRequestHash).Row().Scan(&hasFailure, &hasHashMismatch); err != nil {
 		return err
 	}
 	if hasHashMismatch {
@@ -137,25 +153,26 @@ type RememberFailureArtifactDescriptor struct {
 }
 
 type RememberFailureRecordInput struct {
-	TeamID            string
-	OwnerProfileID    string
-	AttemptID         string
-	SpaceID           string
-	SpaceGeneration   int64
-	IdempotencyKey    string
-	RequestHash       string
-	ContractVersion   string
-	SubmissionKind    string
-	FailedPhase       string
-	ErrorCode         string
-	CorrelationID     string
-	PublicResult      map[string]any
-	EvidenceCount     int
-	RelationshipCount int
-	DocumentCount     int
-	AssessorTurns     int
-	Duration          time.Duration
-	Artifacts         []RememberFailureArtifactInput
+	TeamID              string
+	OwnerProfileID      string
+	AttemptID           string
+	SpaceID             string
+	SpaceGeneration     int64
+	IdempotencyKey      string
+	RequestHash         string
+	MigratedRequestHash string
+	ContractVersion     string
+	SubmissionKind      string
+	FailedPhase         string
+	ErrorCode           string
+	CorrelationID       string
+	PublicResult        map[string]any
+	EvidenceCount       int
+	RelationshipCount   int
+	DocumentCount       int
+	AssessorTurns       int
+	Duration            time.Duration
+	Artifacts           []RememberFailureArtifactInput
 }
 
 type RememberFailureArtifactReader interface {
@@ -173,6 +190,7 @@ func (r *LedgerRepositoryImpl) RecordRememberFailure(ctx context.Context, input 
 	input.AttemptID = strings.TrimSpace(input.AttemptID)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.RequestHash = strings.TrimSpace(input.RequestHash)
+	input.MigratedRequestHash = strings.TrimSpace(input.MigratedRequestHash)
 	input.ContractVersion = strings.TrimSpace(input.ContractVersion)
 	input.SubmissionKind = strings.TrimSpace(input.SubmissionKind)
 	input.FailedPhase = strings.TrimSpace(input.FailedPhase)
@@ -228,13 +246,13 @@ func (r *LedgerRepositoryImpl) RecordRememberFailure(ctx context.Context, input 
 		if err := lockRememberIdempotencyKeyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey); err != nil {
 			return err
 		}
-		if err := checkRememberFailureIdempotencyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash); err != nil {
+		if err := checkRememberFailureIdempotencyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash, input.MigratedRequestHash); err != nil {
 			return err
 		}
 		if existing, err := loadCanonicalRememberAttemptByKeyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey); err != nil {
 			return err
 		} else if existing != nil {
-			if strings.TrimSpace(existing.RequestHash) != input.RequestHash {
+			if !rememberAttemptHashMatches(existing.RequestHash, existing.ContractVersion, input.RequestHash, input.MigratedRequestHash) {
 				return fmt.Errorf("%w: idempotency key reused with a different request hash", ErrIdempotencyConflict)
 			}
 			return ErrRememberReplay
@@ -258,7 +276,7 @@ func (r *LedgerRepositoryImpl) RecordRememberFailure(ctx context.Context, input 
 					return lookupErr
 				}
 				if existing != nil {
-					if strings.TrimSpace(existing.RequestHash) != input.RequestHash {
+					if !rememberAttemptHashMatches(existing.RequestHash, existing.ContractVersion, input.RequestHash, input.MigratedRequestHash) {
 						return fmt.Errorf("%w: idempotency key reused with a different request hash", ErrIdempotencyConflict)
 					}
 					return ErrRememberReplay
@@ -411,7 +429,7 @@ func (r *LedgerRepositoryImpl) LoadRememberAttempt(ctx context.Context, input Re
 	var publicJSON []byte
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		return tx.WithContext(ctx).Raw(`
-			SELECT attempt_id::text, request_hash, outcome, public_result
+			SELECT attempt_id::text, request_hash, contract_version, outcome, public_result
 			FROM remember_attempts
 			WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid
 			  AND idempotency_key = ?
@@ -419,7 +437,7 @@ func (r *LedgerRepositoryImpl) LoadRememberAttempt(ctx context.Context, input Re
 			         created_at DESC, attempt_id DESC
 			LIMIT 1
 		`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Row().Scan(
-			&attempt.AttemptID, &attempt.RequestHash, &attempt.Outcome, &publicJSON,
+			&attempt.AttemptID, &attempt.RequestHash, &attempt.ContractVersion, &attempt.Outcome, &publicJSON,
 		)
 	})
 	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, sql.ErrNoRows) {
@@ -442,14 +460,14 @@ func loadCanonicalRememberAttemptByKeyInTx(ctx context.Context, tx *gorm.DB, tea
 	var attempt RememberAttempt
 	var publicJSON []byte
 	err := tx.WithContext(ctx).Raw(`
-		SELECT attempt_id::text, request_hash, outcome, public_result
+		SELECT attempt_id::text, request_hash, contract_version, outcome, public_result
 		FROM remember_attempts
 		WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
 		  AND outcome IN ('completed', 'rejected', 'quarantined', 'replayed')
 		ORDER BY created_at DESC, attempt_id DESC
 		LIMIT 1
 	`, teamID, ownerProfileID, idempotencyKey).Row().Scan(
-		&attempt.AttemptID, &attempt.RequestHash, &attempt.Outcome, &publicJSON,
+		&attempt.AttemptID, &attempt.RequestHash, &attempt.ContractVersion, &attempt.Outcome, &publicJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

@@ -106,7 +106,7 @@ func rememberTerminalErrorGuidance(code string) (string, string) {
 		return "resubmit_remember", "Submit the complete batch again with remember and a new idempotency_key after correcting the input."
 	}
 	if code == "quarantined" {
-		return "retry_same_request", "Retry the same request only after the security policy condition clears."
+		return "resubmit_remember", "Use a new idempotency_key for any later Remember submission."
 	}
 	return "retry_same_request", "Retry the same request with the same idempotency_key after the transient failure clears."
 }

@@ -1,12 +1,13 @@
 package domain
 
 const (
-	ContractVersion              = "dense-mem.v2.6.1"
-	PredicatePolicyVersion       = "open_vocabulary_v1"
-	ConflictPolicyVersion        = "cross_profile_supporter_majority_after_ttl"
-	ConflictOverduePolicyVersion = "overdue_conflict_ai_supporter_voting"
-	FeatureGate                  = "memory"
-	ToolVisibility               = "dormant"
+	ContractVersion                    = "dense-mem.v2.6.1"
+	MigratedRememberRequestHashVersion = "dense-mem.v2.6"
+	PredicatePolicyVersion             = "open_vocabulary_v1"
+	ConflictPolicyVersion              = "cross_profile_supporter_majority_after_ttl"
+	ConflictOverduePolicyVersion       = "overdue_conflict_ai_supporter_voting"
+	FeatureGate                        = "memory"
+	ToolVisibility                     = "dormant"
 )
 
 type IngestID string

@@ -61,7 +61,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
 	})
 	if lookupErr == nil && attempt != nil {
-		if strings.TrimSpace(attempt.RequestHash) != strings.TrimSpace(input.RequestHash) {
+		if !rememberAttemptMatchesRequest(attempt, input) {
 			return nil, rememberapp.ErrRememberConflict
 		}
 		if attempt.Outcome == "completed" || attempt.Outcome == "rejected" || attempt.Outcome == "quarantined" || attempt.Outcome == "replayed" {
@@ -85,7 +85,8 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		commitInput := repository.SynchronousRememberCommitInput{
 			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID,
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
-			RequestHash: input.RequestHash, SourceSummary: input.SourceSummary, Proposal: input.Proposal,
+			RequestHash: input.RequestHash, MigratedRequestHash: input.MigratedRequestHash,
+			SourceSummary: input.SourceSummary, Proposal: input.Proposal,
 			Metadata: input.Metadata, Evidence: rememberEvidenceInputsForCommit(input, snapshot), StartedAt: started, Duration: time.Since(started),
 		}
 		if err := ctx.Err(); err != nil {
@@ -117,7 +118,8 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	commitInput, buildErr := memoryservice.BuildSynchronousRememberCommitInput(memoryservice.SynchronousRememberCommitRequest{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID,
 		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
-		RequestHash: input.RequestHash, SourceSummary: input.SourceSummary, Proposal: input.Proposal,
+		RequestHash: input.RequestHash, MigratedRequestHash: input.MigratedRequestHash,
+		SourceSummary: input.SourceSummary, Proposal: input.Proposal,
 		Metadata: input.Metadata, Evidence: rememberEvidenceInputsForCommit(input, snapshot), Assessment: prepared,
 		Duration: time.Since(started),
 	})
@@ -242,6 +244,18 @@ func rememberAssessmentTerminalOutcome(prepared *memoryservice.SynchronousAssess
 	return ""
 }
 
+func rememberAttemptMatchesRequest(attempt *repository.RememberAttempt, input rememberapp.RememberProcessRequest) bool {
+	if attempt == nil {
+		return false
+	}
+	if strings.TrimSpace(attempt.RequestHash) == strings.TrimSpace(input.RequestHash) {
+		return true
+	}
+	return attempt.ContractVersion == domain.MigratedRememberRequestHashVersion &&
+		strings.TrimSpace(input.MigratedRequestHash) != "" &&
+		strings.TrimSpace(attempt.RequestHash) == strings.TrimSpace(input.MigratedRequestHash)
+}
+
 func (p *rememberSynchronousProcessor) recordRememberFailure(
 	ctx context.Context,
 	input rememberapp.RememberProcessRequest,
@@ -294,7 +308,8 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	if err := p.ledger.RecordRememberFailure(recoveryCtx, repository.RememberFailureRecordInput{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, AttemptID: attemptID,
 		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
-		RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
+		RequestHash: input.RequestHash, MigratedRequestHash: input.MigratedRequestHash,
+		ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
 		FailedPhase: phase, ErrorCode: publicError.Code, CorrelationID: correlationID, PublicResult: publicResult,
 		EvidenceCount: len(input.Evidence), AssessorTurns: assessorTurns, Duration: time.Since(started), Artifacts: artifacts,
 	}); err != nil {

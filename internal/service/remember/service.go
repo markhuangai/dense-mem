@@ -192,6 +192,10 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if err != nil {
 		return nil, err
 	}
+	migratedRequestHash, err := canonicalRequestHashForContract(req, domain.MigratedRememberRequestHashVersion)
+	if err != nil {
+		return nil, err
+	}
 	correlationID := correlation.FromContext(ctx)
 	actorMetadata := map[string]any{
 		"team_id":        actor.TeamID.String(),
@@ -207,7 +211,8 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	processInput := RememberProcessRequest{
 		TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
 		SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash,
-		SourceSummary: sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata,
+		MigratedRequestHash: migratedRequestHash,
+		SourceSummary:       sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata,
 		Evidence: repositoryEvidenceInputs(req.Evidence),
 	}
 	if scanErr != nil {
@@ -381,6 +386,14 @@ func sourceRevisionBatchHash(contents []string) string {
 
 func canonicalRequestHash(req RememberRequest) (string, error) {
 	hash, err := CanonicalRequestBodyHash(req.Evidence, req.EntityHints, req.RelationshipHints)
+	if err != nil {
+		return "", fmt.Errorf("remember: canonical request hash: %w", err)
+	}
+	return hash, nil
+}
+
+func canonicalRequestHashForContract(req RememberRequest, contractVersion string) (string, error) {
+	hash, err := canonicalRequestBodyHashForContract(contractVersion, req.Evidence, req.EntityHints, req.RelationshipHints)
 	if err != nil {
 		return "", fmt.Errorf("remember: canonical request hash: %w", err)
 	}

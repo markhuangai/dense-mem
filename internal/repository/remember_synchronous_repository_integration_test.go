@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestRememberTerminalCommitHasNoRetiredWorkflowTables(t *testing.T) {
@@ -66,6 +68,11 @@ func TestRememberPreflightQuarantineWritesOnlyTerminalAttempt(t *testing.T) {
 	require.NotNil(t, result)
 	require.Equal(t, "quarantined", result.Outcome)
 	require.Len(t, result.PublicResult["relationship_results"], 2)
+	errors, ok := result.PublicResult["errors"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, errors, 1)
+	require.Equal(t, "resubmit_remember", errors[0]["next_action"])
+	require.Equal(t, "Use a new idempotency_key for any later Remember submission.", errors[0]["remediation"])
 
 	var canonicalRows int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
@@ -182,6 +189,49 @@ func TestRememberFailureCannotFollowCanonicalTerminalAttempt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "rejected", winner.Outcome)
 	require.Equal(t, secondInput.IngestID, winner.AttemptID)
+}
+
+func TestRememberMigratedFailureHashAcceptsOnlyTheEquivalentRequest(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-migrated-hash-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-migrated-hash-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+
+	const migratedHash = "v2.6-request-hash"
+	const currentHash = "v2.6.1-request-hash"
+	require.NoError(t, ledger.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		TeamID: teamID, OwnerProfileID: ownerID, AttemptID: uuid.NewString(),
+		IdempotencyKey: "migrated-failed-request", RequestHash: migratedHash,
+		ContractVersion: domain.MigratedRememberRequestHashVersion, SubmissionKind: "remember",
+		FailedPhase: "assessment", ErrorCode: "provider_unavailable",
+		PublicResult: map[string]any{"processing_state": "failed"},
+	}))
+
+	input := SynchronousRememberCommitInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: uuid.NewString(),
+		IdempotencyKey: "migrated-failed-request", RequestHash: currentHash, MigratedRequestHash: migratedHash,
+		Proposal: map[string]any{"relationship_hints": []any{}},
+		Evidence: []EvidenceInput{{
+			FragmentID: uuid.NewString(), Content: "the migrated request was retried",
+			ContentHash: sha256Hex("the migrated request was retried"),
+		}},
+		Commit: CommitSubmissionAssessmentInput{RelationshipResults: []SubmissionRelationshipResultInput{}},
+	}
+	_, err := ledger.CommitRememberTerminal(ctx, input, "rejected", "no_supported_memory", nil)
+	require.NoError(t, err)
+
+	conflict := input
+	conflict.IngestID = uuid.NewString()
+	conflict.RequestHash = "different-v2.6.1-request-hash"
+	conflict.MigratedRequestHash = "different-v2.6-request-hash"
+	conflict.Evidence = []EvidenceInput{{
+		FragmentID: uuid.NewString(), Content: "a different request",
+		ContentHash: sha256Hex("a different request"),
+	}}
+	_, err = ledger.CommitRememberTerminal(ctx, conflict, "rejected", "no_supported_memory", nil)
+	require.ErrorIs(t, err, ErrIdempotencyConflict)
 }
 
 func TestRememberTerminalCommitPreservesAcceptedSourceAndSupersessionTargets(t *testing.T) {

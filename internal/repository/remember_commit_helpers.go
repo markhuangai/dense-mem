@@ -20,6 +20,7 @@ func normalizeSynchronousRememberCommitInput(input SynchronousRememberCommitInpu
 	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.RequestHash = strings.TrimSpace(input.RequestHash)
+	input.MigratedRequestHash = strings.TrimSpace(input.MigratedRequestHash)
 	input.SourceSummary = strings.TrimSpace(input.SourceSummary)
 	input.AssessmentID = strings.TrimSpace(input.AssessmentID)
 	input.Commit.RememberCommitScope = normalizeRememberCommitScope(input.Commit.RememberCommitScope)
@@ -158,14 +159,14 @@ func loadRememberAttemptInTx(ctx context.Context, tx *gorm.DB, input Synchronous
 	var attempt RememberAttempt
 	var publicJSON []byte
 	err := tx.WithContext(ctx).Raw(`
-		SELECT attempt_id::text, request_hash, outcome, public_result
+		SELECT attempt_id::text, request_hash, contract_version, outcome, public_result
 		FROM remember_attempts
 		WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
 		  AND outcome IN ('completed', 'rejected', 'quarantined', 'replayed')
 		ORDER BY created_at DESC, attempt_id DESC
 		LIMIT 1
 	`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Row().Scan(
-		&attempt.AttemptID, &attempt.RequestHash, &attempt.Outcome, &publicJSON,
+		&attempt.AttemptID, &attempt.RequestHash, &attempt.ContractVersion, &attempt.Outcome, &publicJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -173,7 +174,7 @@ func loadRememberAttemptInTx(ctx context.Context, tx *gorm.DB, input Synchronous
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(attempt.RequestHash) != strings.TrimSpace(input.RequestHash) {
+	if !rememberAttemptHashMatches(attempt.RequestHash, attempt.ContractVersion, input.RequestHash, input.MigratedRequestHash) {
 		return nil, fmt.Errorf("%w: idempotency key reused with a different request hash", ErrIdempotencyConflict)
 	}
 	if len(publicJSON) == 0 {
