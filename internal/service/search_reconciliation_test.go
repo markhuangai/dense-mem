@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/stretchr/testify/require"
 )
@@ -25,8 +26,9 @@ func TestSearchReconciliationRunsOneBatchAndFencesEveryDocument(t *testing.T) {
 	}
 	provider := &searchReconciliationProviderStub{
 		model: "model", dimensions: 2,
-		embedBatch: func(_ context.Context, texts []string) ([][]float32, string, error) {
+		embedBatch: func(ctx context.Context, texts []string) ([][]float32, string, error) {
 			require.Equal(t, []string{"same"}, texts)
+			require.True(t, observability.HasAIOperation(ctx))
 			return [][]float32{{0.25, 0.75}}, "model", nil
 		},
 	}

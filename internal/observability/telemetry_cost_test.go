@@ -30,6 +30,11 @@ func TestAIOperationContextUsesBoundedLabels(t *testing.T) {
 	if HasAIOperation(WithAIOperation(ctx, "unbounded-operation", 2)) {
 		t.Fatal("unknown operation unexpectedly has an AI operation")
 	}
+	writeCtx := WithAIOperation(ctx, AIOperationSearchDocumentEmbedding, 3)
+	writeOperation, ok := aiOperationFromContext(writeCtx)
+	if !ok || writeOperation.operation != AIOperationSearchDocumentEmbedding || writeOperation.itemCount != 3 {
+		t.Fatalf("operation = %#v; want search-document embedding with three items", writeOperation)
+	}
 
 	profileID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
 	identityCtx := WithMetricIdentity(ctx, "not-a-uuid", profileID.String())

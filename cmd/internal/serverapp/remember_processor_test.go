@@ -11,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
@@ -42,11 +43,12 @@ func TestRememberProcessorEmbedsOneValidatedBatch(t *testing.T) {
 		{SearchDocumentResult: repository.SearchDocumentResult{SearchDocumentID: "document-b", EmbeddingDimensions: 3}, DocumentText: "second"},
 	}
 
-	result, err := processor.embedSearchDocumentBatch(context.Background(), documents)
+	result, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), documents)
 	require.NoError(t, err)
 	require.Len(t, result, 2)
 	require.Equal(t, []float32{1, 2, 3}, result[0].Embedding)
 	require.Equal(t, []string{"first", "second"}, processor.embedder.(*rememberProcessorEmbedderStub).texts)
+	require.True(t, processor.embedder.(*rememberProcessorEmbedderStub).hasOperation)
 }
 
 func TestRememberAssessmentTerminalOutcomePrioritizesSecurity(t *testing.T) {
@@ -64,11 +66,11 @@ func TestRememberAssessmentTerminalOutcomePrioritizesSecurity(t *testing.T) {
 
 func TestRememberProcessorRequiresEmbedderOnlyForNonemptyPlan(t *testing.T) {
 	processor := &rememberSynchronousProcessor{}
-	embeddings, err := processor.embedSearchDocumentBatch(context.Background(), nil)
+	embeddings, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), nil)
 	require.NoError(t, err)
 	require.Empty(t, embeddings)
 
-	_, err = processor.embedSearchDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{{
+	_, err = processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), []repository.SearchDocumentForEmbedding{{
 		SearchDocumentResult: repository.SearchDocumentResult{EmbeddingDimensions: 2}, DocumentText: "text",
 	}})
 	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingUnavailable)
@@ -84,7 +86,7 @@ func TestRememberProcessorRejectsInvalidEmbeddingResponsesBeforeCommit(t *testin
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			processor := &rememberSynchronousProcessor{embedder: &rememberProcessorEmbedderStub{model: "embed-model", vectors: test.vectors}}
-			_, err := processor.embedSearchDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{{
+			_, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), []repository.SearchDocumentForEmbedding{{
 				SearchDocumentResult: repository.SearchDocumentResult{SearchDocumentID: "document", EmbeddingDimensions: 2}, DocumentText: "text",
 			}})
 			require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingInvalid)
@@ -97,7 +99,7 @@ func TestRememberProcessorPreservesEmbeddingCancellation(t *testing.T) {
 		model: "embed-model", vectors: [][]float32{{1, 2}}, err: context.Canceled,
 	}}
 
-	_, err := processor.embedSearchDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{{
+	_, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), []repository.SearchDocumentForEmbedding{{
 		SearchDocumentResult: repository.SearchDocumentResult{SearchDocumentID: "document", EmbeddingDimensions: 2}, DocumentText: "text",
 	}})
 
@@ -146,19 +148,21 @@ func TestRememberAttemptReplayKeepsFailedStatusOnErrorPath(t *testing.T) {
 var _ embedding.EmbeddingProviderInterface = (*rememberProcessorEmbedderStub)(nil)
 
 type rememberProcessorEmbedderStub struct {
-	model       string
-	vectors     [][]float32
-	texts       []string
-	err         error
-	unavailable bool
+	model        string
+	vectors      [][]float32
+	texts        []string
+	err          error
+	unavailable  bool
+	hasOperation bool
 }
 
 func (s *rememberProcessorEmbedderStub) Embed(context.Context, string) ([]float32, string, error) {
 	return nil, s.model, nil
 }
 
-func (s *rememberProcessorEmbedderStub) EmbedBatch(_ context.Context, texts []string) ([][]float32, string, error) {
+func (s *rememberProcessorEmbedderStub) EmbedBatch(ctx context.Context, texts []string) ([][]float32, string, error) {
 	s.texts = append([]string(nil), texts...)
+	s.hasOperation = observability.HasAIOperation(ctx)
 	return s.vectors, s.model, s.err
 }
 

@@ -186,7 +186,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	if err != nil {
 		return fail(err, "embedding")
 	}
-	plannedEmbeddings, err := p.embedSearchDocumentBatch(embeddingCtx, plan.Documents)
+	plannedEmbeddings, err := p.embedSearchDocumentBatch(embeddingCtx, input.TeamID, input.OwnerProfileID, plan.Documents)
 	if err != nil {
 		return fail(err, "embedding")
 	}
@@ -485,6 +485,8 @@ func firstNonEmptyString(values ...string) string {
 
 func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 	ctx context.Context,
+	teamID string,
+	ownerProfileID string,
 	documents []repository.SearchDocumentForEmbedding,
 ) ([]repository.SearchDocumentEmbedding, error) {
 	if len(documents) == 0 {
@@ -499,6 +501,8 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 	}
 	embedCtx, cancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
 	defer cancel()
+	embedCtx = observability.WithMetricIdentity(embedCtx, teamID, ownerProfileID)
+	embedCtx = observability.WithAIOperation(embedCtx, observability.AIOperationSearchDocumentEmbedding, len(texts))
 	if p.embedder == nil || !p.embedder.IsAvailable() {
 		return nil, fmt.Errorf("%w: provider is unavailable", rememberapp.ErrRememberEmbeddingUnavailable)
 	}

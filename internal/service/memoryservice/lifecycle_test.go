@@ -15,6 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
@@ -80,6 +81,7 @@ func TestLifecycleCorrectRelationshipEmbedsBeforeReturningConfirmation(t *testin
 	require.NoError(t, err)
 	require.Len(t, semantic.embeddings, 1)
 	assert.Equal(t, []float32{1, 2, 3}, semantic.embeddings[0].Embedding)
+	assert.True(t, provider.hasOperation)
 	assert.Equal(t, "awaiting_confirmation", receipt.ProcessingState)
 	assert.Equal(t, "confirmation-token", receipt.AwaitingConfirmation.ConfirmationToken)
 	assert.Equal(t, "entity-1", receipt.AwaitingConfirmation.Candidates[0].EntityID)
@@ -379,13 +381,15 @@ type lifecycleEmbeddingStub struct {
 	returnedModel string
 	vectors       [][]float32
 	err           error
+	hasOperation  bool
 }
 
 func (s *lifecycleEmbeddingStub) Embed(context.Context, string) ([]float32, string, error) {
 	return nil, s.model, nil
 }
 
-func (s *lifecycleEmbeddingStub) EmbedBatch(context.Context, []string) ([][]float32, string, error) {
+func (s *lifecycleEmbeddingStub) EmbedBatch(ctx context.Context, _ []string) ([][]float32, string, error) {
+	s.hasOperation = observability.HasAIOperation(ctx)
 	model := s.model
 	if s.returnedModel != "" {
 		model = s.returnedModel

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
@@ -129,6 +130,9 @@ func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconcilia
 		}
 
 		embedCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
+		// One reconciliation batch can span teams, so it must not inherit a document's tenant identity.
+		embedCtx = observability.WithMetricIdentity(embedCtx, "", "")
+		embedCtx = observability.WithAIOperation(embedCtx, observability.AIOperationSearchDocumentEmbedding, len(texts))
 		var model string
 		var providerErr error
 		vectors, model, providerErr = s.provider.EmbedBatch(embedCtx, texts)

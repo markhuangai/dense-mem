@@ -18,6 +18,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
@@ -150,7 +151,9 @@ func (s *lifecycleService) CorrectRelationship(
 			err = ErrLifecycleEmbeddingUnavailable
 		} else {
 			var embedded []repository.SearchDocumentEmbedding
-			embedded, err = s.embedRelationshipDocumentBatch(ctx, plan.Documents)
+			embedCtx := observability.WithMetricIdentity(ctx, semanticInput.TeamID, semanticInput.OwnerProfileID)
+			embedCtx = observability.WithAIOperation(embedCtx, observability.AIOperationSearchDocumentEmbedding, len(plan.Documents))
+			embedded, err = s.embedRelationshipDocumentBatch(embedCtx, plan.Documents)
 			if err == nil {
 				results = make([]repository.InlineEmbeddingResult, 0, len(embedded))
 				for _, embedding := range embedded {
