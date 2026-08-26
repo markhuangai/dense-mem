@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestSubmissionDiagnosticsLoadsEventsAndArtifactsAfterClosingAttemptRows(t *testing.T) {
+func TestSubmissionDiagnosticsLoadsEventsAndArtifactsOnlyForDetail(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
@@ -40,8 +40,8 @@ func TestSubmissionDiagnosticsLoadsEventsAndArtifactsAfterClosingAttemptRows(t *
 	page, err := ledger.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{TeamID: teamID})
 	require.NoError(t, err)
 	require.Len(t, page.Records, 1)
-	require.Len(t, page.Records[0].Events, 1)
-	require.Len(t, page.Records[0].Artifacts, 1)
+	require.Empty(t, page.Records[0].Events)
+	require.Empty(t, page.Records[0].Artifacts)
 
 	detail, err := ledger.GetSubmissionDiagnostic(context.Background(), teamID, attemptID)
 	require.NoError(t, err)

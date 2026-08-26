@@ -143,7 +143,7 @@ func (r *LedgerRepositoryImpl) commitDerivedEvidenceIngest(ctx context.Context, 
 			"conflict_resolution_policy_version": domain.ConflictOverduePolicyVersion,
 		},
 		Evidence: []EvidenceInput{{
-			FragmentID: uuid.NewString(), Content: content, SourceType: "observation", Authority: "derived",
+			FragmentID: uuid.NewString(), Content: content, SourceType: "observation", Authority: string(domain.AuthorityInferred),
 			SourceRef: "conflict:" + target.ConflictID, Metadata: map[string]any{
 				"conflict_id": target.ConflictID, "target_fragment_id": target.TargetFragmentID,
 				"target_owner_profile_id": target.TargetOwnerProfileID, "selected_position_id": target.SelectedPositionID,
@@ -172,7 +172,7 @@ func (r *LedgerRepositoryImpl) commitDerivedEvidenceIngest(ctx context.Context, 
 		} else if _, err := insertEvidenceFragment(ctx, tx, input, ingestID, 0, input.Evidence[0], nil); err != nil {
 			return err
 		}
-		result = &EvidenceIngestResult{TeamID: target.TeamID, OwnerProfileID: target.SystemProfileID, IngestID: ingestID, Existing: !created, Evidence: []EvidenceFragment{{FragmentID: fragmentID, EvidenceIndex: 0, Content: content, ContentHash: sha256Hex(content), Authority: "derived"}}}
+		result = &EvidenceIngestResult{TeamID: target.TeamID, OwnerProfileID: target.SystemProfileID, IngestID: ingestID, Existing: !created, Evidence: []EvidenceFragment{{FragmentID: fragmentID, EvidenceIndex: 0, Content: content, ContentHash: sha256Hex(content), Authority: string(domain.AuthorityInferred)}}}
 		return nil
 	})
 	if err != nil {

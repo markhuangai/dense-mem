@@ -162,3 +162,43 @@ func TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpac
 		return nil
 	}))
 }
+
+func TestConflictDerivedEvidenceUsesInferredAuthority(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-derived-inferred-authority")
+	systemProfileID := createLedgerProfile(t, adminDB, rls, teamID, "conflict-derived-system-profile")
+	ledger := NewLedgerRepository(appDB, rls)
+
+	var spaceID string
+	var spaceGeneration int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, systemProfileID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT id::text, generation
+			FROM memory_spaces
+			WHERE team_id = ?::uuid AND kind = 'team_shared'
+		`, teamID).Row().Scan(&spaceID, &spaceGeneration)
+	}))
+
+	target := ConflictDerivedEvidenceTarget{
+		TaskID: uuid.NewString(), TeamID: teamID, SpaceID: spaceID, SpaceGeneration: spaceGeneration,
+		ConflictID: uuid.NewString(), SystemProfileID: systemProfileID, TargetFragmentID: uuid.NewString(),
+		TargetOwnerProfileID: systemProfileID, SelectedPositionID: uuid.NewString(), SourceGroupKey: "derived-authority",
+	}
+	content := "Deletion-only conflict evidence remains non-semantic."
+	result, err := ledger.commitDerivedEvidenceIngest(ctx, target, content, sha256Hex(content))
+	require.NoError(t, err)
+	require.Len(t, result.Evidence, 1)
+	require.Equal(t, string(domain.AuthorityInferred), result.Evidence[0].Authority)
+
+	var authority string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT authority
+			FROM evidence_fragments
+			WHERE team_id = ?::uuid AND fragment_id = ?::uuid
+		`, teamID, result.Evidence[0].FragmentID).Row().Scan(&authority)
+	}))
+	require.Equal(t, string(domain.AuthorityInferred), authority)
+}

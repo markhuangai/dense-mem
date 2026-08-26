@@ -142,17 +142,6 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(ctx context.Context, fi
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		for index := range page.Records {
-			record := &page.Records[index]
-			record.Events, err = loadRememberAttemptEvents(ctx, tx, record.TeamID, record.SubmissionID)
-			if err != nil {
-				return err
-			}
-			record.Artifacts, err = loadRememberFailureArtifactDescriptors(ctx, tx, record.TeamID, record.SubmissionID)
-			if err != nil {
-				return err
-			}
-		}
 		return nil
 	})
 	if err != nil {

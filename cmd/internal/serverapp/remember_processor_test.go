@@ -2,6 +2,7 @@ package serverapp
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"testing"
 	"time"
@@ -118,6 +119,33 @@ func TestRememberFailureRecoveryContextSurvivesRequestCancellation(t *testing.T)
 	deadline, ok := recoveryCtx.Deadline()
 	require.True(t, ok)
 	require.WithinDuration(t, time.Now().Add(10*time.Second), deadline, time.Second)
+}
+
+func TestRememberFailureRequestArtifactRedactsEvidence(t *testing.T) {
+	rawEvidence := "credential=secret-token and prompt=do not retain this"
+	attemptID := uuid.NewString()
+	artifact, ok := rememberFailureRequestArtifact(attemptID, []repository.EvidenceFragment{{
+		EvidenceIndex: 3,
+		Content:       rawEvidence,
+	}})
+
+	require.True(t, ok)
+	require.Equal(t, "request", artifact.ArtifactKind)
+	require.NotContains(t, string(artifact.Content), rawEvidence)
+
+	var payload struct {
+		SubmissionID string `json:"submission_id"`
+		Evidence     []struct {
+			Index       int    `json:"index"`
+			ContentHash string `json:"content_hash"`
+		} `json:"evidence"`
+	}
+	require.NoError(t, json.Unmarshal(artifact.Content, &payload))
+	require.Equal(t, attemptID, payload.SubmissionID)
+	require.Equal(t, []struct {
+		Index       int    `json:"index"`
+		ContentHash string `json:"content_hash"`
+	}{{Index: 3, ContentHash: "sha256:49308a379e8f21d308f3186e2f2ba80cf4b7981a96d7354d9069889fffba4796"}}, payload.Evidence)
 }
 
 func TestRememberAttemptReplayKeepsFailedStatusOnErrorPath(t *testing.T) {

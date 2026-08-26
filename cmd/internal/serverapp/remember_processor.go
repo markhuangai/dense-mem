@@ -2,6 +2,7 @@ package serverapp
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -285,14 +286,8 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	artifacts := []repository.RememberFailureArtifactInput{
 		{ArtifactKind: "failure", ContentType: "application/json", Content: []byte(fmt.Sprintf(`{"phase":%q,"code":%q}`, phase, publicError.Code))},
 	}
-	if len(snapshot.Evidence) > 0 {
-		requestPayload := map[string]any{"submission_id": attemptID, "idempotency_key": input.IdempotencyKey, "evidence": make([]map[string]any, 0, len(snapshot.Evidence))}
-		for _, evidence := range snapshot.Evidence {
-			requestPayload["evidence"] = append(requestPayload["evidence"].([]map[string]any), map[string]any{"index": evidence.EvidenceIndex, "content": evidence.Content})
-		}
-		if encoded, err := json.Marshal(requestPayload); err == nil && len(encoded) <= 256*1024 {
-			artifacts = append(artifacts, repository.RememberFailureArtifactInput{ArtifactKind: "request", ContentType: "application/json", Content: encoded})
-		}
+	if artifact, ok := rememberFailureRequestArtifact(attemptID, snapshot.Evidence); ok {
+		artifacts = append(artifacts, artifact)
 	}
 	recoveryCtx, cancel := rememberFailureRecoveryContext(ctx)
 	defer cancel()
@@ -318,6 +313,26 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		return nil, failure
 	}
 	return nil, &rememberapp.RememberProcessError{Status: status, Err: failure}
+}
+
+func rememberFailureRequestArtifact(attemptID string, evidence []repository.EvidenceFragment) (repository.RememberFailureArtifactInput, bool) {
+	if len(evidence) == 0 {
+		return repository.RememberFailureArtifactInput{}, false
+	}
+	evidencePayload := make([]map[string]any, 0, len(evidence))
+	for _, item := range evidence {
+		digest := sha256.Sum256([]byte(item.Content))
+		evidencePayload = append(evidencePayload, map[string]any{
+			"index":        item.EvidenceIndex,
+			"content_hash": fmt.Sprintf("sha256:%x", digest[:]),
+		})
+	}
+	requestPayload := map[string]any{"submission_id": attemptID, "evidence": evidencePayload}
+	encoded, err := json.Marshal(requestPayload)
+	if err != nil || len(encoded) > 256*1024 {
+		return repository.RememberFailureArtifactInput{}, false
+	}
+	return repository.RememberFailureArtifactInput{ArtifactKind: "request", ContentType: "application/json", Content: encoded}, true
 }
 
 func rememberFailureRecoveryContext(ctx context.Context) (context.Context, context.CancelFunc) {
