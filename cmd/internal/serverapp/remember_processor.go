@@ -101,7 +101,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 			return rememberAttemptStatus(replayed)
 		}
 		if terminalErr != nil {
-			return nil, terminalErr
+			return nil, fmt.Errorf("%w: preflight quarantine commit: %v", rememberapp.ErrRememberPersistence, terminalErr)
 		}
 		return rememberAttemptStatus(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult})
 	}
@@ -304,7 +304,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		EvidenceCount: len(input.Evidence), AssessorTurns: assessorTurns, Duration: time.Since(started), Artifacts: artifacts,
 	}); err != nil {
 		if errors.Is(err, repository.ErrRememberReplay) {
-			winner, loadErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{
+			winner, loadErr := p.ledger.LoadRememberAttempt(recoveryCtx, repository.RememberAttemptLookupInput{
 				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
 			})
 			if loadErr != nil {

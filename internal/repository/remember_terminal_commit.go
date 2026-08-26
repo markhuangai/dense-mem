@@ -54,14 +54,11 @@ func (r *LedgerRepositoryImpl) CommitRememberTerminal(
 		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
-		evidence, err := insertRememberEvidence(ctx, tx, input, createInput)
+		if err := validateRememberTerminalSourceRevisions(ctx, tx, input, createInput); err != nil {
+			return err
+		}
+		evidence, err := insertRememberTerminalEvidence(ctx, tx, input, createInput)
 		if err != nil {
-			return err
-		}
-		if err := validateRememberSubmissionSupersessionTargets(ctx, tx, createInput, input.IngestID); err != nil {
-			return err
-		}
-		if err := applyEvidenceSupersessions(ctx, tx, createInput, input.IngestID, evidence); err != nil {
 			return err
 		}
 		if input.AssessmentID != "" && len(input.AssessmentJSON) > 0 {

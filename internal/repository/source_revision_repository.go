@@ -114,14 +114,18 @@ func validateAdvanceSourceRevisionInput(input AdvanceSourceRevisionInput) error 
 	return nil
 }
 
-func getOrCreateEvidenceSource(ctx context.Context, tx *gorm.DB, input AdvanceSourceRevisionInput) (string, string, string, error) {
-	var sourceID string
-	var currentRevisionID sql.NullString
-	var currentToken string
-	var currentSpaceID string
-	var currentSpaceGeneration int64
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT source_id::text, current_revision_id::text, current_revision_token,
+type evidenceSourceCurrentState struct {
+	SourceID          string
+	CurrentRevisionID string
+	CurrentToken      string
+	SpaceID           string
+	SpaceGeneration   int64
+}
+
+func loadEvidenceSourceForUpdate(ctx context.Context, tx *gorm.DB, input AdvanceSourceRevisionInput) (*evidenceSourceCurrentState, error) {
+	state := evidenceSourceCurrentState{}
+	err := tx.WithContext(ctx).Raw(`
+		SELECT source_id::text, COALESCE(current_revision_id::text, ''), current_revision_token,
 		       space_id::text, space_generation
 		FROM evidence_sources
 		WHERE team_id = ?::uuid
@@ -129,29 +133,32 @@ func getOrCreateEvidenceSource(ctx context.Context, tx *gorm.DB, input AdvanceSo
 		  AND source_key = ?
 		LIMIT 1
 		FOR UPDATE
-	`, input.TeamID, input.OwnerProfileID, input.SourceKey).Rows()
+	`, input.TeamID, input.OwnerProfileID, input.SourceKey).Row().Scan(
+		&state.SourceID,
+		&state.CurrentRevisionID,
+		&state.CurrentToken,
+		&state.SpaceID,
+		&state.SpaceGeneration,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+func getOrCreateEvidenceSource(ctx context.Context, tx *gorm.DB, input AdvanceSourceRevisionInput) (string, string, string, error) {
+	current, err := loadEvidenceSourceForUpdate(ctx, tx, input)
 	if err != nil {
 		return "", "", "", err
 	}
-	if rows.Next() {
-		if err := rows.Scan(&sourceID, &currentRevisionID, &currentToken, &currentSpaceID, &currentSpaceGeneration); err != nil {
-			_ = rows.Close()
-			return "", "", "", err
-		}
-		if err := rows.Close(); err != nil {
-			return "", "", "", err
-		}
-		if currentSpaceID != input.SpaceID || currentSpaceGeneration != input.SpaceGeneration {
+	if current != nil {
+		if current.SpaceID != input.SpaceID || current.SpaceGeneration != input.SpaceGeneration {
 			return "", "", "", errors.New("evidence source memory space does not match ingest")
 		}
-		return sourceID, currentRevisionID.String, currentToken, nil
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return "", "", "", err
-	}
-	if err := rows.Close(); err != nil {
-		return "", "", "", err
+		return current.SourceID, current.CurrentRevisionID, current.CurrentToken, nil
 	}
 	if input.ExpectedPreviousRevisionToken != "" {
 		return "", "", "", fmt.Errorf("%w: source does not exist", ErrSourceRevisionConflict)
@@ -160,6 +167,7 @@ func getOrCreateEvidenceSource(ctx context.Context, tx *gorm.DB, input AdvanceSo
 	if err != nil {
 		return "", "", "", err
 	}
+	var sourceID string
 	insertRows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_sources (
 		    team_id, owner_profile_id, source_key, source_kind, authority, metadata,
@@ -183,6 +191,45 @@ func getOrCreateEvidenceSource(ctx context.Context, tx *gorm.DB, input AdvanceSo
 		return "", "", "", err
 	}
 	return sourceID, "", "", translateSourceCreateError(insertRows.Err())
+}
+
+// validateTerminalSourceRevisionInTx preserves source CAS fencing for a
+// terminal Remember without activating a source revision or its supports.
+func validateTerminalSourceRevisionInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	input AdvanceSourceRevisionInput,
+) error {
+	input = normalizeAdvanceSourceRevisionInput(input)
+	if err := validateAdvanceSourceRevisionInput(input); err != nil {
+		return err
+	}
+	var err error
+	input, err = resolveAdvanceSourceRevisionSpace(ctx, tx, input)
+	if err != nil {
+		return err
+	}
+	current, err := loadEvidenceSourceForUpdate(ctx, tx, input)
+	if err != nil {
+		return err
+	}
+	if current == nil {
+		if input.ExpectedPreviousRevisionToken != "" {
+			return fmt.Errorf("%w: source does not exist", ErrSourceRevisionConflict)
+		}
+		return nil
+	}
+	if current.SpaceID != input.SpaceID || current.SpaceGeneration != input.SpaceGeneration {
+		return errors.New("evidence source memory space does not match ingest")
+	}
+	if current.CurrentToken == input.RevisionToken && current.CurrentRevisionID != "" {
+		_, err := selectMatchingSourceRevisionSupersededRevisionID(ctx, tx, input, current.SourceID, current.CurrentRevisionID)
+		return err
+	}
+	if current.CurrentToken != input.ExpectedPreviousRevisionToken {
+		return fmt.Errorf("%w: expected %q, got %q", ErrSourceRevisionConflict, input.ExpectedPreviousRevisionToken, current.CurrentToken)
+	}
+	return nil
 }
 
 func resolveAdvanceSourceRevisionSpace(ctx context.Context, tx *gorm.DB, input AdvanceSourceRevisionInput) (AdvanceSourceRevisionInput, error) {

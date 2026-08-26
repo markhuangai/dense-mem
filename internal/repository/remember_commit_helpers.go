@@ -210,25 +210,28 @@ func insertRememberSemanticAssessment(ctx context.Context, tx *gorm.DB, input Sy
 		strings.TrimSpace(fmt.Sprint(input.Commit.Payload["response_hash"])), time.Now().UTC()).Error
 }
 
-func insertRememberEvidence(ctx context.Context, tx *gorm.DB, input SynchronousRememberCommitInput, createInput CreateIngestInput) ([]EvidenceFragment, error) {
-	sources := make(map[string]SourceRevisionResult, len(createInput.Evidence))
+func validateRememberTerminalSourceRevisions(ctx context.Context, tx *gorm.DB, input SynchronousRememberCommitInput, createInput CreateIngestInput) error {
+	for _, item := range createInput.Evidence {
+		if item.SourceKey == "" {
+			continue
+		}
+		if err := validateTerminalSourceRevisionInTx(ctx, tx, AdvanceSourceRevisionInput{
+			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
+			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, SourceKey: item.SourceKey,
+			SourceKind: sourceKindForEvidence(item.SourceType), Authority: item.Authority,
+			RevisionToken: item.SourceRevisionToken, ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
+			ContentHash: item.SourceRevisionContentHash, Envelope: item.SourceRevisionEnvelope,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func insertRememberTerminalEvidence(ctx context.Context, tx *gorm.DB, input SynchronousRememberCommitInput, createInput CreateIngestInput) ([]EvidenceFragment, error) {
 	evidence := make([]EvidenceFragment, 0, len(createInput.Evidence))
 	for index, item := range createInput.Evidence {
-		var source *SourceRevisionResult
-		if item.SourceKey != "" {
-			advanced, err := advanceSourceRevisionInTx(ctx, tx, AdvanceSourceRevisionInput{
-				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
-				SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, SourceKey: item.SourceKey,
-				SourceKind: sourceKindForEvidence(item.SourceType), Authority: item.Authority,
-				RevisionToken: item.SourceRevisionToken, ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
-				ContentHash: item.SourceRevisionContentHash, Envelope: item.SourceRevisionEnvelope,
-			}, sources)
-			if err != nil {
-				return nil, err
-			}
-			source = advanced
-		}
-		fragment, err := insertEvidenceFragment(ctx, tx, createInput, input.IngestID, index, item, source)
+		fragment, err := insertEvidenceFragment(ctx, tx, createInput, input.IngestID, index, item, nil)
 		if err != nil {
 			return nil, err
 		}
