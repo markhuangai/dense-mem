@@ -188,7 +188,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	defer embeddingCancel()
 	plan, err := p.ledger.PlanRememberEmbeddings(embeddingCtx, commitInput)
 	if err != nil {
-		return fail(err, "embedding")
+		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
 	}
 	plannedEmbeddings, err := p.embedSearchDocumentBatch(embeddingCtx, input.TeamID, input.OwnerProfileID, plan.Documents)
 	if err != nil {
@@ -350,11 +350,30 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 	logError := errors.New("remember processing failed")
 	attrs := rememberFailureLogAttrs(input, attemptID, phase, errorCode, correlationID)
 	attrs = append(attrs, observability.Int("duration_ms", int(time.Since(started)/time.Millisecond)))
+	var planFailure *rememberEmbeddingPlanFailure
+	var configurationFailure *rememberEmbeddingConfigurationFailure
 	var providerFailure *rememberEmbeddingProviderFailure
-	if errors.As(failure, &providerFailure) && providerFailure.cause != nil {
+	switch {
+	case errors.As(failure, &planFailure):
+		logError = errors.New("remember embedding plan failed")
+		failureClass, failureCode := rememberEmbeddingPlanFailureMetadata(planFailure.cause)
+		attrs = append(attrs,
+			observability.String("failure_source", "embedding_plan"),
+			observability.String("failure_class", failureClass),
+			observability.String("failure_code", failureCode),
+		)
+	case errors.As(failure, &configurationFailure):
+		logError = errors.New("remember embedding provider configuration is invalid")
+		attrs = append(attrs,
+			observability.String("failure_source", "provider_configuration"),
+			observability.String("failure_class", "configuration"),
+			observability.String("failure_code", "embedding_provider_not_configured"),
+		)
+	case errors.As(failure, &providerFailure) && providerFailure.cause != nil:
 		logError = providerFailure.cause
 		metadata := embedding.ClassifyFailure(providerFailure.cause)
 		attrs = append(attrs,
+			observability.String("failure_source", "provider_call"),
 			observability.String("failure_class", metadata.Class),
 			observability.String("failure_code", metadata.Code),
 		)
@@ -363,6 +382,23 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 		}
 	}
 	p.logger.Error("remember_processing_failed", logError, attrs...)
+}
+
+func rememberEmbeddingPlanFailureMetadata(err error) (string, string) {
+	switch {
+	case errors.Is(err, repository.ErrSearchContractMismatch):
+		return "configuration", "search_contract_mismatch"
+	case errors.Is(err, repository.ErrInlineEmbeddingPlanMismatch):
+		return "data_contract", "embedding_plan_mismatch"
+	case errors.Is(err, repository.ErrInlineEmbeddingPlanTooLarge):
+		return "input_budget", "embedding_plan_too_large"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout", "embedding_plan_timeout"
+	case errors.Is(err, context.Canceled):
+		return "cancelled", "embedding_plan_cancelled"
+	default:
+		return "internal", "embedding_plan_failed"
+	}
 }
 
 func (p *rememberSynchronousProcessor) logRememberFailureRecordError(
@@ -450,6 +486,23 @@ func rememberFailureCode(phase string, err error) rememberapp.SubmissionErrorCod
 	if errors.Is(err, rememberapp.ErrRememberRequestCancelled) || errors.Is(err, context.Canceled) {
 		return rememberapp.SubmissionErrorRequestCancelled
 	}
+	var planFailure *rememberEmbeddingPlanFailure
+	if errors.As(err, &planFailure) {
+		switch {
+		case errors.Is(planFailure.cause, repository.ErrInlineEmbeddingPlanTooLarge):
+			return rememberapp.SubmissionErrorInputBudgetExceeded
+		case errors.Is(planFailure.cause, repository.ErrSearchContractMismatch):
+			return rememberapp.SubmissionErrorConfigurationInvalid
+		case errors.Is(planFailure.cause, repository.ErrInlineEmbeddingPlanMismatch):
+			return rememberapp.SubmissionErrorInternalFailure
+		default:
+			return rememberapp.SubmissionErrorDatabaseFailure
+		}
+	}
+	var configurationFailure *rememberEmbeddingConfigurationFailure
+	if errors.As(err, &configurationFailure) {
+		return rememberapp.SubmissionErrorConfigurationInvalid
+	}
 	if errors.Is(err, rememberapp.ErrRememberEmbeddingUnavailable) {
 		return rememberapp.SubmissionErrorEmbeddingUnavailable
 	}
@@ -535,7 +588,6 @@ func rememberAssessmentSnapshot(
 		evidence = append(evidence, repository.EvidenceFragment{
 			FragmentID: fragmentID, EvidenceIndex: index, Content: item.Content,
 			ContentHash: item.ContentHash, Authority: item.Authority,
-			SourceID: item.SourceKey, SourceRevisionID: item.SourceRevisionToken,
 		})
 		items = append(items, memoryservice.RememberAssessmentItem{
 			ItemID: uuid.NewString(), Fragment: evidence[len(evidence)-1],
@@ -624,7 +676,7 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 	embedCtx = observability.WithMetricIdentity(embedCtx, teamID, ownerProfileID)
 	embedCtx = observability.WithAIOperation(embedCtx, observability.AIOperationSearchDocumentEmbedding, len(texts))
 	if p.embedder == nil || !p.embedder.IsAvailable() {
-		return nil, fmt.Errorf("%w: provider is unavailable", rememberapp.ErrRememberEmbeddingUnavailable)
+		return nil, &rememberEmbeddingConfigurationFailure{}
 	}
 	vectors, model, err := p.embedder.EmbedBatch(embedCtx, texts)
 	if err != nil {
@@ -660,6 +712,31 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 		}
 	}
 	return completed, nil
+}
+
+type rememberEmbeddingPlanFailure struct {
+	cause error
+}
+
+func (e *rememberEmbeddingPlanFailure) Error() string {
+	return "remember embedding plan failed"
+}
+
+func (e *rememberEmbeddingPlanFailure) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+type rememberEmbeddingConfigurationFailure struct{}
+
+func (*rememberEmbeddingConfigurationFailure) Error() string {
+	return rememberapp.ErrRememberEmbeddingUnavailable.Error()
+}
+
+func (*rememberEmbeddingConfigurationFailure) Unwrap() error {
+	return rememberapp.ErrRememberEmbeddingUnavailable
 }
 
 type rememberEmbeddingProviderFailure struct {

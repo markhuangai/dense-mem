@@ -358,7 +358,7 @@ WITH legacy AS MATERIALIZED (
     LEFT JOIN placement_runs AS run
       ON run.team_id = ingest.team_id AND run.ingest_id = ingest.ingest_id
     WHERE ingest.metadata ->> '_dense_mem_telemetry_origin' = 'remember'
-), normalized AS (
+), normalized AS MATERIALIZED (
     SELECT legacy.*,
            CASE
              WHEN legacy.run_status IN ('completed') OR legacy.status = 'completed' THEN 'completed'
@@ -367,6 +367,62 @@ WITH legacy AS MATERIALIZED (
              ELSE 'failed'
            END AS outcome
     FROM legacy
+), evidence_replay AS MATERIALIZED (
+    SELECT normalized.team_id, normalized.ingest_id, normalized.owner_profile_id,
+           jsonb_agg(
+               jsonb_build_object(
+                   'disposition', CASE WHEN normalized.outcome = 'completed' THEN 'stored' ELSE 'not_stored' END,
+                   'evidence_index', fragment.evidence_index,
+                   'superseded_evidence_ids', CASE
+                       WHEN normalized.outcome = 'completed' THEN COALESCE((
+                           SELECT jsonb_agg(event.target_fragment_id::TEXT ORDER BY event.target_fragment_id)
+                           FROM evidence_lifecycle_events AS event
+                           WHERE event.team_id = fragment.team_id
+                             AND event.replacement_fragment_id = fragment.fragment_id
+                             AND event.action = 'supersede'
+                       ), '[]'::JSONB)
+                       ELSE '[]'::JSONB
+                   END,
+                   'search_state', CASE WHEN normalized.outcome = 'completed' THEN 'current' ELSE 'not_required' END
+               ) || CASE
+                   WHEN normalized.outcome = 'completed' THEN
+                       jsonb_build_object('evidence_id', fragment.fragment_id::TEXT)
+                   ELSE jsonb_build_object(
+                       'reason', CASE
+                           WHEN normalized.outcome = 'quarantined' THEN 'security_quarantine'
+                           ELSE 'not_supported_by_evidence'
+                       END
+                   )
+               END
+               ORDER BY fragment.evidence_index, fragment.fragment_id
+           ) AS evidence
+    FROM normalized
+    JOIN evidence_fragments AS fragment
+      ON fragment.team_id = normalized.team_id
+     AND fragment.ingest_id = normalized.ingest_id
+     AND fragment.owner_profile_id = normalized.owner_profile_id
+    WHERE normalized.outcome <> 'failed'
+    GROUP BY normalized.team_id, normalized.ingest_id, normalized.owner_profile_id
+), relationship_replay AS MATERIALIZED (
+    SELECT normalized.team_id, normalized.ingest_id, normalized.owner_profile_id,
+           jsonb_agg(
+               jsonb_build_object(
+                   'ref', result.relationship_ref,
+                   'disposition', result.disposition,
+                   'splits', result.splits
+               ) || CASE
+                   WHEN btrim(result.reason) <> '' THEN jsonb_build_object('reason', result.reason)
+                   ELSE '{}'::JSONB
+               END
+               ORDER BY result.relationship_ref
+           ) AS relationship_results
+    FROM normalized
+    JOIN submission_relationship_results AS result
+      ON result.team_id = normalized.team_id
+     AND result.ingest_id = normalized.ingest_id
+     AND result.owner_profile_id = normalized.owner_profile_id
+    WHERE normalized.outcome <> 'failed'
+    GROUP BY normalized.team_id, normalized.ingest_id, normalized.owner_profile_id
 )
 INSERT INTO remember_attempts (
     team_id, attempt_id, owner_profile_id, space_id, space_generation,
@@ -388,8 +444,8 @@ SELECT normalized.team_id, normalized.ingest_id, normalized.owner_profile_id,
            'processing_state', normalized.outcome,
            'search_state', CASE WHEN normalized.outcome = 'completed' THEN 'current' ELSE 'not_required' END,
            'correlation_id', normalized.correlation_id,
-           'evidence', '[]'::jsonb,
-           'relationship_results', '[]'::jsonb,
+           'evidence', COALESCE(evidence_replay.evidence, '[]'::JSONB),
+           'relationship_results', COALESCE(relationship_replay.relationship_results, '[]'::JSONB),
            'errors', CASE WHEN normalized.outcome = 'failed' THEN jsonb_build_array(jsonb_build_object(
                'code', 'internal_failure', 'message', 'legacy Remember result was migrated during the v2.6.1 cutover',
                'retryable', true, 'next_action', 'retry_same_request', 'remediation', 'Retry the complete request with the same idempotency key.'
@@ -398,6 +454,14 @@ SELECT normalized.team_id, normalized.ingest_id, normalized.owner_profile_id,
        normalized.ingest_id, normalized.evidence_count, normalized.relationship_count,
        normalized.created_at, COALESCE(normalized.completed_at, now())
 FROM normalized
+LEFT JOIN evidence_replay
+  ON evidence_replay.team_id = normalized.team_id
+ AND evidence_replay.ingest_id = normalized.ingest_id
+ AND evidence_replay.owner_profile_id = normalized.owner_profile_id
+LEFT JOIN relationship_replay
+  ON relationship_replay.team_id = normalized.team_id
+ AND relationship_replay.ingest_id = normalized.ingest_id
+ AND relationship_replay.owner_profile_id = normalized.owner_profile_id
 ON CONFLICT DO NOTHING;
 
 WITH legacy_events AS (

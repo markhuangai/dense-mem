@@ -67,7 +67,7 @@ func rememberTerminalPublicResult(input SynchronousRememberCommitInput, evidence
 	for _, item := range evidence {
 		evidenceResults = append(evidenceResults, map[string]any{
 			"disposition": disposition, "evidence_index": item.EvidenceIndex,
-			"superseded_evidence_ids": append([]string(nil), item.SupersededEvidenceIDs...),
+			"superseded_evidence_ids": []string{},
 			"search_state":            string(domain.SearchProjectionNotRequired), "reason": reason,
 		})
 	}

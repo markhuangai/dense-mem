@@ -134,6 +134,17 @@ func TestRememberTerminalErrorGuidanceQuarantineRequiresNewKey(t *testing.T) {
 	require.Equal(t, "Use a new idempotency_key for any later Remember submission.", remediation)
 }
 
+func TestRememberTerminalPublicResultDoesNotReportUnappliedSupersessions(t *testing.T) {
+	input := SynchronousRememberCommitInput{IngestID: uuid.NewString()}
+	evidence := []EvidenceFragment{{EvidenceIndex: 0, SupersededEvidenceIDs: []string{uuid.NewString()}}}
+	for _, outcome := range []string{"rejected", "quarantined"} {
+		result := rememberTerminalPublicResult(input, evidence, outcome, "")
+		items := result["evidence"].([]map[string]any)
+		require.Len(t, items, 1)
+		require.Empty(t, items[0]["superseded_evidence_ids"], outcome)
+	}
+}
+
 func TestRememberPublicRelationshipResultsUseOnlyContractReference(t *testing.T) {
 	input := SynchronousRememberCommitInput{
 		IngestID: uuid.NewString(),

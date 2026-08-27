@@ -35,6 +35,14 @@ func TestRememberAssessmentSnapshotAllocatesRequestOwnedIDs(t *testing.T) {
 	require.NotEmpty(t, snapshot.Evidence[0].FragmentID)
 	require.Equal(t, snapshot.Evidence[0].FragmentID, snapshot.Items[0].Fragment.FragmentID)
 	require.NotEqual(t, snapshot.Items[0].ItemID, snapshot.Items[1].ItemID)
+	require.Empty(t, snapshot.Evidence[0].SourceID)
+	require.Empty(t, snapshot.Evidence[0].SourceRevisionID)
+	commitEvidence := rememberEvidenceInputsForCommit(rememberapp.RememberProcessRequest{
+		IdempotencyKey: "remember-source-lineage",
+		Evidence:       []rememberapp.EvidenceInput{{SourceKey: "source-1", SourceRevisionToken: "rev-1"}},
+	}, snapshot)
+	require.Equal(t, "source-1", commitEvidence[0].SourceKey)
+	require.Equal(t, "rev-1", commitEvidence[0].SourceRevisionToken)
 }
 
 func TestRememberProcessorEmbedsOneValidatedBatch(t *testing.T) {
@@ -148,9 +156,64 @@ func TestRememberFailureLogIncludesCorrelationAndBoundedProviderTrace(t *testing
 	require.Equal(t, "corr-remember-failure", logger.attrs["correlation_id"])
 	require.Equal(t, attemptID, logger.attrs["reference_id"])
 	require.Equal(t, "embedding", logger.attrs["failed_phase"])
+	require.Equal(t, "provider_call", logger.attrs["failure_source"])
 	require.Equal(t, "provider_action_required", logger.attrs["failure_class"])
 	require.Equal(t, "provider_authentication_failed", logger.attrs["failure_code"])
 	require.Equal(t, 401, logger.attrs["provider_status_code"])
+}
+
+func TestRememberFailureLogClassifiesEmbeddingPlanWithoutExposingCause(t *testing.T) {
+	logger := &rememberProcessorLoggerStub{}
+	processor := &rememberSynchronousProcessor{logger: logger}
+	rawDatabaseError := errors.New("postgres password=do-not-log")
+
+	processor.logRememberFailure(
+		rememberapp.RememberProcessRequest{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString()},
+		uuid.NewString(), time.Now(), "embedding", string(rememberapp.SubmissionErrorEmbeddingUnavailable), "corr-plan",
+		&rememberEmbeddingPlanFailure{cause: rawDatabaseError},
+	)
+
+	require.Equal(t, "embedding_plan", logger.attrs["failure_source"])
+	require.Equal(t, "internal", logger.attrs["failure_class"])
+	require.Equal(t, "embedding_plan_failed", logger.attrs["failure_code"])
+	require.EqualError(t, logger.err, "remember embedding plan failed")
+	require.NotContains(t, logger.err.Error(), rawDatabaseError.Error())
+}
+
+func TestRememberFailureLogClassifiesProviderConfiguration(t *testing.T) {
+	logger := &rememberProcessorLoggerStub{}
+	processor := &rememberSynchronousProcessor{logger: logger}
+
+	processor.logRememberFailure(
+		rememberapp.RememberProcessRequest{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString()},
+		uuid.NewString(), time.Now(), "embedding", string(rememberapp.SubmissionErrorEmbeddingUnavailable), "corr-config",
+		&rememberEmbeddingConfigurationFailure{},
+	)
+
+	require.Equal(t, "provider_configuration", logger.attrs["failure_source"])
+	require.Equal(t, "configuration", logger.attrs["failure_class"])
+	require.Equal(t, "embedding_provider_not_configured", logger.attrs["failure_code"])
+	require.EqualError(t, logger.err, "remember embedding provider configuration is invalid")
+}
+
+func TestRememberFailureCodeDistinguishesEmbeddingBoundaries(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want rememberapp.SubmissionErrorCode
+	}{
+		{name: "plan mismatch", err: &rememberEmbeddingPlanFailure{cause: repository.ErrInlineEmbeddingPlanMismatch}, want: rememberapp.SubmissionErrorInternalFailure},
+		{name: "search contract", err: &rememberEmbeddingPlanFailure{cause: repository.ErrSearchContractMismatch}, want: rememberapp.SubmissionErrorConfigurationInvalid},
+		{name: "plan database", err: &rememberEmbeddingPlanFailure{cause: errors.New("database query failed")}, want: rememberapp.SubmissionErrorDatabaseFailure},
+		{name: "plan bound", err: &rememberEmbeddingPlanFailure{cause: repository.ErrInlineEmbeddingPlanTooLarge}, want: rememberapp.SubmissionErrorInputBudgetExceeded},
+		{name: "provider configuration", err: &rememberEmbeddingConfigurationFailure{}, want: rememberapp.SubmissionErrorConfigurationInvalid},
+		{name: "provider call", err: &rememberEmbeddingProviderFailure{cause: errors.New("provider failed")}, want: rememberapp.SubmissionErrorEmbeddingUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, rememberFailureCode("embedding", test.err))
+		})
+	}
 }
 
 func TestRememberFailureRecordLogDoesNotExposeDatabaseError(t *testing.T) {

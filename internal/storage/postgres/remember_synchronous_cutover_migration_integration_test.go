@@ -110,6 +110,7 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
 	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
 	ingestID, runID, itemID, fragmentID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	relationshipID := uuid.New()
 	expiredIngestID, expiredRunID := uuid.New(), uuid.New()
 	assessmentID, revisionID, outcomeID := uuid.New(), uuid.New(), uuid.New()
 	claimKey := uuid.New()
@@ -123,7 +124,7 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 				request_hash, status, proposal, metadata, completed_at
 			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'cutover-history',
 				        'cutover-history-request', 'completed',
-				        '{"relationship_hints":[]}'::jsonb,
+					        '{"relationship_hints":[{"ref":"ref-a"},{"ref":"ref-b"}]}'::jsonb,
 				        '{"_dense_mem_telemetry_origin":"remember","contract_version":"dense-mem.v2.5"}'::jsonb,
 				        now())
 		`, teamID, ingestID, profileID); err != nil {
@@ -164,7 +165,22 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 				owner_profile_id, outcome_kind, status, payload
 			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			          $5::uuid, 'relationship_result', 'completed', '{"stored":true}'::jsonb)
-		`, teamID, outcomeID, runID, itemID, profileID); err != nil {
+			`, teamID, outcomeID, runID, itemID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+				INSERT INTO submission_relationship_results (
+					team_id, placement_run_id, ingest_id, owner_profile_id,
+					relationship_ref, disposition, reason, splits
+				) VALUES
+					($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+					 'ref-a', 'stored', '', jsonb_build_array(jsonb_build_object(
+					     'split_index', 0, 'relationship_id', $5::text,
+					     'relationship_version', 1, 'status', 'active'
+					 ))),
+					($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+					 'ref-b', 'not_stored', 'not_supported_by_evidence', '[]'::jsonb)
+			`, teamID, runID, ingestID, profileID, relationshipID.String()); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -262,6 +278,21 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	`, teamID, ingestID).Scan(&outcome, &contractVersion))
 	require.Equal(t, "completed", outcome)
 	require.Equal(t, "dense-mem.v2.6", contractVersion)
+	var publicEvidence, publicRelationships []byte
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT public_result -> 'evidence', public_result -> 'relationship_results'
+		FROM remember_attempts
+		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+	`, teamID, ingestID).Scan(&publicEvidence, &publicRelationships))
+	require.JSONEq(t, fmt.Sprintf(`[
+		{"disposition":"stored","evidence_id":%q,"evidence_index":0,
+		 "superseded_evidence_ids":[],"search_state":"current"}
+	]`, fragmentID.String()), string(publicEvidence))
+	require.JSONEq(t, fmt.Sprintf(`[
+		{"ref":"ref-a","disposition":"stored","splits":[{
+		 "split_index":0,"relationship_id":%q,"relationship_version":1,"status":"active"}]},
+		{"ref":"ref-b","disposition":"not_stored","reason":"not_supported_by_evidence","splits":[]}
+	]`, relationshipID.String()), string(publicRelationships))
 
 	var eventCount, itemEvents, outcomeEvents int
 	require.NoError(t, db.QueryRowContext(ctx, `

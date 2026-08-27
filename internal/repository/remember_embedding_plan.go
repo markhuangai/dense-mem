@@ -19,7 +19,7 @@ func (r *LedgerRepositoryImpl) PlanRememberEmbeddings(
 ) (*InlineEmbeddingPlan, error) {
 	input = normalizeSynchronousRememberCommitInput(input)
 	if err := validateSynchronousRememberCommitInput(input); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: invalid synchronous Remember input: %w", ErrInlineEmbeddingPlanMismatch, err)
 	}
 	plan := &InlineEmbeddingPlan{Documents: []SearchDocumentForEmbedding{}}
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {

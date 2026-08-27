@@ -306,3 +306,12 @@ func (workerType) serve() {}
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });
+
+test("keeps the synchronous Remember compose e2e reachable", () => {
+  const matrix = fs.readFileSync(path.join(root, "scripts/e2e-compose-all.sh"), "utf8");
+  const runner = fs.readFileSync(path.join(root, "scripts/e2e-compose.sh"), "utf8");
+
+  assert.match(matrix, /^\s+submission_assessment$/m);
+  assert.match(runner, /E2E_SCENARIO" == "submission_assessment"/);
+  assert.match(runner, /tests\/uat\/submission_assessment_mcp_e2e\.mjs/);
+});

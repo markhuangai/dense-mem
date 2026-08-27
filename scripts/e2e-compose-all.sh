@@ -9,6 +9,7 @@ E2E_ALL_SCENARIOS=(
   infrastructure_credentials
   submission_terminal_errors
   security_intake
+  submission_assessment
   identity_cleanup
   community
   conflict

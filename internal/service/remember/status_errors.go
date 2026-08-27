@@ -135,7 +135,7 @@ var submissionErrorMessages = map[SubmissionErrorCode]string{
 	SubmissionErrorProviderUnavailable:      "the semantic assessor was unavailable",
 	SubmissionErrorProviderResponseInvalid:  "the semantic assessor returned an invalid response",
 	SubmissionErrorInputBudgetExceeded:      "the semantic assessor input exceeded the configured budget",
-	SubmissionErrorConfigurationInvalid:     "Dense-Mem is missing valid semantic-assessor configuration",
+	SubmissionErrorConfigurationInvalid:     "Dense-Mem provider or search configuration is invalid",
 	SubmissionErrorIdempotencyConflict:      "the idempotency key is already bound to a different request",
 	SubmissionErrorEmbeddingUnavailable:     "the embedding provider was unavailable",
 	SubmissionErrorEmbeddingResponseInvalid: "the embedding provider returned an invalid response",
