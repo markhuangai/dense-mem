@@ -2,7 +2,9 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -83,6 +85,23 @@ func TestRememberToolResultErrorUsesDurableFailureStatus(t *testing.T) {
 	require.Equal(t, "durable-submission", structured.Result["submission_id"])
 	item := structured.Result["errors"].([]any)[0].(map[string]any)
 	require.Equal(t, "embedding_unavailable", item["code"])
+}
+
+func TestRememberToolResultErrorDoesNotExposeOperatorCause(t *testing.T) {
+	status := &rememberapp.SubmissionStatusResult{
+		SubmissionID:    "durable-submission",
+		ProcessingState: "failed",
+		Errors:          []rememberapp.SubmissionStatusError{rememberapp.StatusError(rememberapp.SubmissionErrorEmbeddingUnavailable)},
+	}
+	structured, ok := ToolResultFromError(rememberToolResultError(context.Background(), &rememberapp.RememberProcessError{
+		Status: status,
+		Err:    fmt.Errorf("%w: raw-provider-diagnostic", rememberapp.ErrRememberEmbeddingUnavailable),
+	}))
+	require.True(t, ok)
+	encoded, err := json.Marshal(structured.Result)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "raw-provider-diagnostic")
+	require.Contains(t, string(encoded), "embedding_unavailable")
 }
 
 func TestCorrectionToolResultErrorIsBoundedAndRetryable(t *testing.T) {

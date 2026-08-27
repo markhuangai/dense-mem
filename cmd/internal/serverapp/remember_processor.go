@@ -277,12 +277,8 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	}
 	code := rememberFailureCode(phase, failure)
 	publicError := rememberapp.StatusError(code)
-	correlationID := ""
-	if input.Metadata != nil {
-		if actor, ok := input.Metadata["actor"].(map[string]any); ok {
-			correlationID, _ = actor["correlation_id"].(string)
-		}
-	}
+	correlationID := rememberProcessCorrelationID(input.Metadata)
+	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
 	status := &rememberapp.SubmissionStatusResult{
 		ContractVersion: domain.ContractVersion, SubmissionID: attemptID, SubmissionKind: "remember",
 		ProcessingState: "failed", SearchState: "not_required", CorrelationID: correlationID,
@@ -325,9 +321,94 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		if errors.Is(err, repository.ErrIdempotencyConflict) {
 			return nil, rememberapp.ErrRememberConflict
 		}
+		p.logRememberFailureRecordError(input, attemptID, phase, publicError.Code, correlationID, err)
 		return nil, failure
 	}
 	return nil, &rememberapp.RememberProcessError{Status: status, Err: failure}
+}
+
+func (p *rememberSynchronousProcessor) logRememberFailure(
+	input rememberapp.RememberProcessRequest,
+	attemptID string,
+	started time.Time,
+	phase string,
+	errorCode string,
+	correlationID string,
+	failure error,
+) {
+	if p == nil || p.logger == nil {
+		return
+	}
+	logError := errors.New("remember processing failed")
+	attrs := rememberFailureLogAttrs(input, attemptID, phase, errorCode, correlationID)
+	attrs = append(attrs, observability.Int("duration_ms", int(time.Since(started)/time.Millisecond)))
+	var providerFailure *rememberEmbeddingProviderFailure
+	if errors.As(failure, &providerFailure) && providerFailure.cause != nil {
+		logError = providerFailure.cause
+		metadata := embedding.ClassifyFailure(providerFailure.cause)
+		attrs = append(attrs,
+			observability.String("failure_class", metadata.Class),
+			observability.String("failure_code", metadata.Code),
+		)
+		if metadata.StatusCode > 0 {
+			attrs = append(attrs, observability.Int("provider_status_code", metadata.StatusCode))
+		}
+	}
+	p.logger.Error("remember_processing_failed", logError, attrs...)
+}
+
+func (p *rememberSynchronousProcessor) logRememberFailureRecordError(
+	input rememberapp.RememberProcessRequest,
+	attemptID string,
+	phase string,
+	errorCode string,
+	correlationID string,
+	failure error,
+) {
+	if p == nil || p.logger == nil {
+		return
+	}
+	attrs := rememberFailureLogAttrs(input, attemptID, phase, errorCode, correlationID)
+	attrs = append(attrs, observability.String("recovery_error_code", rememberFailureRecoveryErrorCode(failure)))
+	p.logger.Error("remember_failure_record_failed", errors.New("remember failure record persistence failed"), attrs...)
+}
+
+func rememberFailureLogAttrs(
+	input rememberapp.RememberProcessRequest,
+	attemptID string,
+	phase string,
+	errorCode string,
+	correlationID string,
+) []observability.LogAttr {
+	return []observability.LogAttr{
+		observability.String("team_id", input.TeamID),
+		observability.String("profile_id", input.OwnerProfileID),
+		observability.CorrelationID(correlationID),
+		observability.String("reference_type", "remember_attempt"),
+		observability.String("reference_id", attemptID),
+		observability.String("submission_id", attemptID),
+		observability.String("failed_phase", phase),
+		observability.String("error_code", errorCode),
+	}
+}
+
+func rememberProcessCorrelationID(metadata map[string]any) string {
+	if actor, ok := metadata["actor"].(map[string]any); ok {
+		correlationID, _ := actor["correlation_id"].(string)
+		return strings.TrimSpace(correlationID)
+	}
+	return ""
+}
+
+func rememberFailureRecoveryErrorCode(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		return "request_cancelled"
+	default:
+		return "persistence_failed"
+	}
 }
 
 func rememberFailureRequestArtifact(attemptID string, evidence []repository.EvidenceFragment) (repository.RememberFailureArtifactInput, bool) {
@@ -545,7 +626,7 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 		if errors.Is(embedCtx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("%w: embedding phase exceeded 10 seconds", rememberapp.ErrRememberRequestTimeout)
 		}
-		return nil, fmt.Errorf("%w: %v", rememberapp.ErrRememberEmbeddingUnavailable, safeEmbeddingError(err))
+		return nil, &rememberEmbeddingProviderFailure{cause: err}
 	}
 	if len(vectors) != len(documents) || strings.TrimSpace(model) == "" || model != strings.TrimSpace(p.embedder.ModelName()) {
 		return nil, fmt.Errorf("%w: count or model mismatch", rememberapp.ErrRememberEmbeddingInvalid)
@@ -573,9 +654,20 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 	return completed, nil
 }
 
-func safeEmbeddingError(err error) string {
-	if err == nil {
-		return "provider request failed"
+type rememberEmbeddingProviderFailure struct {
+	cause error
+}
+
+func (e *rememberEmbeddingProviderFailure) Error() string {
+	if e == nil || e.cause == nil {
+		return rememberapp.ErrRememberEmbeddingUnavailable.Error()
 	}
-	return "provider request failed"
+	return fmt.Sprintf("%v: %v", rememberapp.ErrRememberEmbeddingUnavailable, e.cause)
+}
+
+func (e *rememberEmbeddingProviderFailure) Unwrap() []error {
+	if e == nil || e.cause == nil {
+		return []error{rememberapp.ErrRememberEmbeddingUnavailable}
+	}
+	return []error{rememberapp.ErrRememberEmbeddingUnavailable, e.cause}
 }

@@ -3,6 +3,7 @@ package serverapp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -107,6 +108,64 @@ func TestRememberProcessorPreservesEmbeddingCancellation(t *testing.T) {
 
 	require.ErrorIs(t, err, rememberapp.ErrRememberRequestCancelled)
 	require.NotErrorIs(t, err, rememberapp.ErrRememberEmbeddingUnavailable)
+}
+
+func TestRememberProcessorPreservesProviderFailureForOperatorLogging(t *testing.T) {
+	providerErr := &embedding.ProviderHTTPError{Status: 401, Code: "invalid_api_key", Type: "authentication_error"}
+	processor := &rememberSynchronousProcessor{embedder: &rememberProcessorEmbedderStub{
+		model: "embed-model", err: providerErr,
+	}}
+
+	_, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), []repository.SearchDocumentForEmbedding{{
+		SearchDocumentResult: repository.SearchDocumentResult{SearchDocumentID: "document", EmbeddingDimensions: 2}, DocumentText: "text",
+	}})
+
+	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingUnavailable)
+	require.ErrorIs(t, err, providerErr)
+	require.Contains(t, err.Error(), "status=401")
+}
+
+func TestRememberFailureLogIncludesCorrelationAndBoundedProviderTrace(t *testing.T) {
+	logger := &rememberProcessorLoggerStub{}
+	processor := &rememberSynchronousProcessor{logger: logger}
+	teamID, profileID, attemptID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	providerErr := &embedding.ProviderHTTPError{Status: 401, Code: "invalid_api_key", Type: "authentication_error"}
+	failure := &rememberEmbeddingProviderFailure{cause: providerErr}
+	input := rememberapp.RememberProcessRequest{
+		TeamID: teamID, OwnerProfileID: profileID,
+		Metadata: map[string]any{"actor": map[string]any{"correlation_id": "corr-remember-failure"}},
+	}
+
+	processor.logRememberFailure(
+		input, attemptID, time.Now().Add(-25*time.Millisecond), "embedding",
+		string(rememberapp.SubmissionErrorEmbeddingUnavailable), "corr-remember-failure", failure,
+	)
+
+	require.Equal(t, "remember_processing_failed", logger.message)
+	require.ErrorIs(t, logger.err, providerErr)
+	require.Equal(t, teamID, logger.attrs["team_id"])
+	require.Equal(t, profileID, logger.attrs["profile_id"])
+	require.Equal(t, "corr-remember-failure", logger.attrs["correlation_id"])
+	require.Equal(t, attemptID, logger.attrs["reference_id"])
+	require.Equal(t, "embedding", logger.attrs["failed_phase"])
+	require.Equal(t, "provider_action_required", logger.attrs["failure_class"])
+	require.Equal(t, "provider_authentication_failed", logger.attrs["failure_code"])
+	require.Equal(t, 401, logger.attrs["provider_status_code"])
+}
+
+func TestRememberFailureRecordLogDoesNotExposeDatabaseError(t *testing.T) {
+	logger := &rememberProcessorLoggerStub{}
+	processor := &rememberSynchronousProcessor{logger: logger}
+	rawDatabaseError := errors.New("postgres password=do-not-log")
+
+	processor.logRememberFailureRecordError(
+		rememberapp.RememberProcessRequest{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString()},
+		uuid.NewString(), "embedding", string(rememberapp.SubmissionErrorEmbeddingUnavailable), "corr-recovery", rawDatabaseError,
+	)
+
+	require.Equal(t, "remember_failure_record_failed", logger.message)
+	require.NotContains(t, logger.err.Error(), rawDatabaseError.Error())
+	require.Equal(t, "persistence_failed", logger.attrs["recovery_error_code"])
 }
 
 func TestRememberFailureRecoveryContextSurvivesRequestCancellation(t *testing.T) {
@@ -217,3 +276,24 @@ func (s *rememberProcessorEmbedderStub) Dimensions() int {
 	return len(s.vectors[0])
 }
 func (s *rememberProcessorEmbedderStub) IsAvailable() bool { return !s.unavailable && s.model != "" }
+
+type rememberProcessorLoggerStub struct {
+	message string
+	err     error
+	attrs   map[string]any
+}
+
+func (s *rememberProcessorLoggerStub) Info(string, ...observability.LogAttr)  {}
+func (s *rememberProcessorLoggerStub) Warn(string, ...observability.LogAttr)  {}
+func (s *rememberProcessorLoggerStub) Debug(string, ...observability.LogAttr) {}
+func (s *rememberProcessorLoggerStub) With(...observability.LogAttr) observability.LogProvider {
+	return s
+}
+func (s *rememberProcessorLoggerStub) Error(message string, err error, attrs ...observability.LogAttr) {
+	s.message = message
+	s.err = err
+	s.attrs = make(map[string]any, len(attrs))
+	for _, attr := range attrs {
+		s.attrs[attr.Key] = attr.Value
+	}
+}
