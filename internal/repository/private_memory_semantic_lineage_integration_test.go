@@ -116,7 +116,7 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 	relationshipID := decision.Relationship.RelationshipID
 	require.Equal(t, target.MemorySpaceID.String(), decision.Relationship.SpaceID)
 
-	correction, err := semantic.CorrectRelationship(semanticCtx, CorrectRelationshipInput{
+	correctionInput := CorrectRelationshipInput{
 		TeamID:          teamID.String(),
 		OwnerProfileID:  ownerID.String(),
 		Action:          "submit",
@@ -128,7 +128,21 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 		Supports:       []RelationshipCorrectionSupport{{EvidenceID: fragmentID.String(), Start: 0, End: len(content)}},
 		Reason:         "private correction lineage regression",
 		IdempotencyKey: "private-correction-lineage",
-	})
+	}
+	correctionPlan, err := semantic.PlanRelationshipCorrectionEmbeddings(semanticCtx, correctionInput)
+	require.NoError(t, err)
+	require.Len(t, correctionPlan.Documents, 2)
+	correction, err := semantic.CorrectRelationshipWithEmbeddings(semanticCtx, correctionInput, []InlineEmbeddingResult{{
+		DocumentHash: correctionPlan.Documents[0].DocumentHash, Embedding: []float32{1, 0, 0},
+		EmbeddingContractID: correctionPlan.EmbeddingContractID, EmbeddingDimensions: correctionPlan.EmbeddingDimensions,
+		EmbeddingModel: correctionPlan.EmbeddingModel, SearchIndexGenerationID: correctionPlan.SearchIndexGenerationID,
+		IndexGeneration: correctionPlan.IndexGeneration,
+	}, {
+		DocumentHash: correctionPlan.Documents[1].DocumentHash, Embedding: []float32{0, 1, 0},
+		EmbeddingContractID: correctionPlan.EmbeddingContractID, EmbeddingDimensions: correctionPlan.EmbeddingDimensions,
+		EmbeddingModel: correctionPlan.EmbeddingModel, SearchIndexGenerationID: correctionPlan.SearchIndexGenerationID,
+		IndexGeneration: correctionPlan.IndexGeneration,
+	}})
 	require.NoError(t, err)
 	require.Equal(t, "completed", correction.ProcessingState)
 	require.NotNil(t, correction.Correction)

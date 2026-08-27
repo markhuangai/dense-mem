@@ -277,7 +277,7 @@ func validatePrivateMemoryManifestTx(ctx context.Context, tx *gorm.DB) ([]string
 		if fk.child == fk.parent {
 			continue
 		}
-		if fk.deferrable {
+		if fk.deferrable && !privateMemoryDeferredFKRequiresDeleteOrder(fk.child, fk.parent) {
 			continue
 		}
 		if _, exists := edges[fk.child][fk.parent]; exists {
@@ -341,6 +341,10 @@ func validatePrivateMemoryManifestTx(ctx context.Context, tx *gorm.DB) ([]string
 		return nil, fmt.Errorf("%w: restrictive foreign-key cycle=%v", ErrPrivateMemoryManifest, cycleEdges)
 	}
 	return ordered, nil
+}
+
+func privateMemoryDeferredFKRequiresDeleteOrder(child, parent string) bool {
+	return child == "semantic_assessments" && parent == "remember_attempts"
 }
 
 func stringSetDifference(left, right []string) []string {

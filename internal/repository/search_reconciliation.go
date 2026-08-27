@@ -15,12 +15,9 @@ func (r *SearchRepositoryImpl) CheckSearchConvergence(ctx context.Context) error
 	if err != nil {
 		return err
 	}
-	var attentionRequired bool
-	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		return tx.WithContext(ctx).Raw(searchConvergenceHealthSQL,
-			contract.EmbeddingContractID, contract.EmbeddingDimensions,
-		).Scan(&attentionRequired).Error
-	})
+	attentionRequired, err := r.searchConvergenceAttentionRequired(
+		ctx, contract.EmbeddingContractID, contract.EmbeddingDimensions,
+	)
 	if err != nil {
 		return fmt.Errorf("search: convergence health: %w", err)
 	}
@@ -28,6 +25,20 @@ func (r *SearchRepositoryImpl) CheckSearchConvergence(ctx context.Context) error
 		return ErrSearchConvergenceAttentionRequired
 	}
 	return nil
+}
+
+func (r *SearchRepositoryImpl) searchConvergenceAttentionRequired(
+	ctx context.Context,
+	embeddingContractID string,
+	embeddingDimensions int,
+) (bool, error) {
+	var attentionRequired bool
+	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		return tx.WithContext(ctx).Raw(
+			searchConvergenceHealthSQL, embeddingContractID, embeddingDimensions,
+		).Scan(&attentionRequired).Error
+	})
+	return attentionRequired, err
 }
 
 const searchConvergenceHealthSQL = `

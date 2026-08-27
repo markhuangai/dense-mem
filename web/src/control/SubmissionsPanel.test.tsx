@@ -87,4 +87,41 @@ describe("SubmissionsPanel", () => {
     expect(screen.getAllByText("Not recorded").length).toBeGreaterThanOrEqual(4);
     expect(within(detailPanel).getByText("Legacy Terminalized")).toBeInTheDocument();
   });
+
+  it("loads the complete failure artifact without truncating its content", async () => {
+    const longPayload = `{"evidence":[{"content_hash":"sha256:${"a".repeat(64)}","index":0}],"submission_id":"attempt-1"}`;
+    const listSubmissionDiagnostics = vi.fn().mockResolvedValue({
+      data: [{
+        team_id: "team-1", team_name: "Payments", owner_profile_id: "owner-1", historical: false,
+        submission_id: "attempt-1", processing_state: "failed", evidence_count: 1,
+        relationship_count: 0, document_count: 0, assessor_turns: 1, duration_ms: 10,
+        created_at: "2026-08-11T04:30:00Z",
+      }],
+      pagination: { limit: 50, offset: 0, total: 1 },
+    });
+    const getSubmissionDiagnostic = vi.fn().mockResolvedValue({
+      team_id: "team-1", team_name: "Payments", owner_profile_id: "owner-1", historical: false,
+      submission_id: "attempt-1", submission_kind: "remember", processing_state: "failed",
+      search_state: "not_required", evidence_count: 1, relationship_count: 0, document_count: 0,
+      assessor_turns: 1, duration_ms: 10, created_at: "2026-08-11T04:30:00Z",
+      evidence: [], relationship_results: [], errors: [], events: [],
+      failure_artifacts: [{
+        artifact_id: "artifact-1", artifact_kind: "request", content_type: "application/json",
+        byte_count: longPayload.length, content_sha256: "sha256:artifact", captured_at: "2026-08-11T04:30:00Z",
+        expires_at: "2026-08-18T04:30:00Z",
+      }],
+    });
+    const getRememberFailureArtifact = vi.fn().mockResolvedValue(longPayload);
+    const api = { listSubmissionDiagnostics, getSubmissionDiagnostic, getRememberFailureArtifact } as unknown as ControlApi;
+
+    render(<SubmissionsPanel api={api} team={{ id: "team-1", name: "Payments" } as any} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Load payload" }));
+
+    const payload = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>(".submission-artifact pre");
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    expect(payload.textContent).toBe(longPayload);
+  });
 });

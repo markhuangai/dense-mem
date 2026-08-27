@@ -198,6 +198,30 @@ func TestSearchReconciliationFillsMissingCapacityAfterStoredDrift(t *testing.T) 
 	require.True(t, selectedSources[stored.Evidence[0].FragmentID])
 	require.True(t, selectedSources[missingA.Evidence[0].FragmentID])
 	require.True(t, selectedSources[missingB.Evidence[0].FragmentID])
+
+	first := selected[0]
+	apply, err := repo.CompleteSearchReconciliationDocuments(ctx, ApplySearchReconciliationInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+		Documents: []SearchDocumentEmbedding{{
+			TeamID: first.TeamID, SearchDocumentID: first.SearchDocumentID,
+			OwnerProfileID: first.OwnerProfileID, SourceKind: first.SourceKind, SourceID: first.SourceID,
+			DocumentText: first.DocumentText, DocumentHash: first.DocumentHash,
+			StoredDocumentHash: first.StoredDocumentHash, SourceVersion: first.SourceVersion,
+			ProjectionFormat: first.ProjectionFormat, ProjectionGenerationID: first.ProjectionGenerationID,
+			DocumentVersion: first.DocumentVersion, EmbeddingContractID: first.EmbeddingContractID,
+			EmbeddingDimensions: first.EmbeddingDimensions, Embedding: []float32{1, 0},
+			SpaceID: first.SpaceID, SpaceGeneration: first.SpaceGeneration,
+		}},
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, apply.UpdatedCount)
+	require.EqualValues(t, 1, apply.RemainingDriftedCount)
+
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, convergence.DriftedDocuments)
 }
 
 func TestSearchReconciliationCanonicalSourceSetAndSpaceFence(t *testing.T) {

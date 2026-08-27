@@ -231,6 +231,20 @@
   margin: 4px 0 0;
 }
 
+.submission-artifacts,
+.submission-artifact {
+  min-width: 0;
+}
+
+.submission-artifact pre {
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 10px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 900px) {
   .submission-facts,
   .submission-detail-grid {

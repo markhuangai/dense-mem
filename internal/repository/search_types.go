@@ -281,8 +281,9 @@ type FinishSearchReconciliationRunInput struct {
 }
 
 type SearchReconciliationApplyResult struct {
-	UpdatedCount          int64
-	SkippedCount          int64
+	UpdatedCount int64
+	SkippedCount int64
+	// RemainingDriftedCount is a zero-or-one continuation signal; the operator projection owns exact totals.
 	RemainingDriftedCount int64
 }
 

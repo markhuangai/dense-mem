@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +22,11 @@ func TestPrivateMemoryManifestMatchesCatalog(t *testing.T) {
 	repo := NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, repo.Prepare(context.Background()))
 	require.Len(t, repo.ordered, len(PrivateMemoryErasureManifest()))
+	assessmentIndex := slices.Index(repo.ordered, "semantic_assessments")
+	attemptIndex := slices.Index(repo.ordered, "remember_attempts")
+	require.NotEqual(t, -1, assessmentIndex)
+	require.NotEqual(t, -1, attemptIndex)
+	require.Less(t, assessmentIndex, attemptIndex)
 }
 
 func TestPrivateMemoryManifestMismatchBlocksPrepare(t *testing.T) {

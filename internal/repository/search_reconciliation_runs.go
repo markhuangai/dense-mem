@@ -442,14 +442,15 @@ func (r *SearchRepositoryImpl) CompleteSearchReconciliationDocuments(
 	if err != nil {
 		return nil, fmt.Errorf("search: complete reconciliation documents: %w", err)
 	}
-	convergence, err := r.GetSearchConvergence(ctx, SearchConvergenceInput{
-		EmbeddingContractID: input.EmbeddingContractID,
-		EmbeddingDimensions: input.EmbeddingDimensions,
-	})
+	attentionRequired, err := r.searchConvergenceAttentionRequired(
+		ctx, input.EmbeddingContractID, input.EmbeddingDimensions,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("search: complete reconciliation convergence: %w", err)
+		return nil, fmt.Errorf("search: complete reconciliation remaining work: %w", err)
 	}
-	result.RemainingDriftedCount = convergence.DriftedDocuments
+	if attentionRequired {
+		result.RemainingDriftedCount = 1
+	}
 	return result, nil
 }
 
