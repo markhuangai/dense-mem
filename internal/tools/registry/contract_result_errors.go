@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -18,9 +19,13 @@ func rememberToolResultError(ctx context.Context, err error) error {
 		return nil
 	}
 	submissionID := uuid.NewString()
+	correlationID := correlation.FromContext(ctx)
 	var processErr *rememberapp.RememberProcessError
 	if errors.As(err, &processErr) && processErr.Status != nil {
 		submissionID = processErr.Status.SubmissionID
+		if durableCorrelationID := strings.TrimSpace(processErr.Status.CorrelationID); durableCorrelationID != "" {
+			correlationID = durableCorrelationID
+		}
 	}
 	if errors.Is(err, rememberapp.ErrEvidenceSecurityRejected) {
 		value := rememberapp.StatusError(rememberapp.SubmissionErrorQuarantined)
@@ -30,7 +35,7 @@ func rememberToolResultError(ctx context.Context, err error) error {
 			"submission_kind":      "remember",
 			"processing_state":     "quarantined",
 			"search_state":         "not_required",
-			"correlation_id":       correlation.FromContext(ctx),
+			"correlation_id":       correlationID,
 			"evidence":             []any{},
 			"relationship_results": []any{},
 			"errors": []any{map[string]any{
@@ -51,7 +56,7 @@ func rememberToolResultError(ctx context.Context, err error) error {
 		"contract_version": domainContractVersion(),
 		"submission_id":    submissionID,
 		"submission_kind":  "remember",
-		"correlation_id":   correlation.FromContext(ctx),
+		"correlation_id":   correlationID,
 		"errors": []any{map[string]any{
 			"code": value.Code, "message": value.Message, "retryable": value.Retryable,
 			"next_action": value.NextAction, "remediation": value.Remediation,

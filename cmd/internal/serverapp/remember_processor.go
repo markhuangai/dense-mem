@@ -237,10 +237,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		return rememberAttemptStatus(replayed)
 	}
 	if err != nil {
-		if errors.Is(err, repository.ErrSearchStaleVersion) {
-			err = fmt.Errorf("%w: search document fence changed", rememberapp.ErrRememberCommitConflict)
-		}
-		return fail(err, "commit")
+		return fail(normalizeRememberCommitFailure(err), "commit")
 	}
 	if committed == nil {
 		return nil, errors.New("remember processor: nil Remember commit result")
@@ -350,6 +347,13 @@ func normalizeRememberFailure(failure error) error {
 	return failure
 }
 
+func normalizeRememberCommitFailure(failure error) error {
+	if errors.Is(failure, repository.ErrSearchStaleVersion) || errors.Is(failure, repository.ErrSearchContractMismatch) {
+		return fmt.Errorf("%w: search state changed before commit", rememberapp.ErrRememberCommitConflict)
+	}
+	return failure
+}
+
 func rememberFailurePersistenceError(failure error) error {
 	if failure == nil {
 		return rememberapp.ErrRememberPersistence
@@ -433,6 +437,8 @@ func rememberEmbeddingPlanFailureMetadata(err error) (string, string) {
 
 func rememberCommitFailureMetadata(err error) (string, string) {
 	switch {
+	case errors.Is(err, rememberapp.ErrRememberCommitConflict):
+		return "fence_conflict", "search_state_changed"
 	case errors.Is(err, repository.ErrInlineEmbeddingPlanMismatch):
 		return "data_contract", "embedding_plan_mismatch"
 	case errors.Is(err, repository.ErrSearchContractMismatch):

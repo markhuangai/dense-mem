@@ -271,6 +271,20 @@ func TestRememberFailureCodeDistinguishesEmbeddingBoundaries(t *testing.T) {
 	}
 }
 
+func TestNormalizeRememberCommitFailureMapsSearchFences(t *testing.T) {
+	for _, failure := range []error{repository.ErrSearchStaleVersion, repository.ErrSearchContractMismatch} {
+		normalized := normalizeRememberCommitFailure(fmt.Errorf("repository commit: %w", failure))
+		require.ErrorIs(t, normalized, rememberapp.ErrRememberCommitConflict)
+		require.Equal(t, rememberapp.SubmissionErrorCommitConflict, rememberFailureCode("commit", normalized))
+		failureClass, failureCode := rememberCommitFailureMetadata(normalized)
+		require.Equal(t, "fence_conflict", failureClass)
+		require.Equal(t, "search_state_changed", failureCode)
+	}
+
+	unrelated := errors.New("database failed")
+	require.ErrorIs(t, normalizeRememberCommitFailure(unrelated), unrelated)
+}
+
 func TestRememberFailureNormalizationMapsCallerOwnedFences(t *testing.T) {
 	for _, test := range []struct {
 		name string

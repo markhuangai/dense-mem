@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
@@ -74,15 +75,17 @@ func TestRememberToolResultErrorFallsBackToInternalFailure(t *testing.T) {
 
 func TestRememberToolResultErrorUsesDurableFailureStatus(t *testing.T) {
 	status := &rememberapp.SubmissionStatusResult{
-		SubmissionID:    "durable-submission",
+		SubmissionID: "durable-submission", CorrelationID: "durable-correlation",
 		ProcessingState: "failed",
 		Errors:          []rememberapp.SubmissionStatusError{rememberapp.StatusError(rememberapp.SubmissionErrorEmbeddingUnavailable)},
 	}
-	structured, ok := ToolResultFromError(rememberToolResultError(context.Background(), &rememberapp.RememberProcessError{
+	ctx := correlation.WithID(context.Background(), "retry-correlation")
+	structured, ok := ToolResultFromError(rememberToolResultError(ctx, &rememberapp.RememberProcessError{
 		Status: status, Err: rememberapp.ErrRememberPersistence,
 	}))
 	require.True(t, ok)
 	require.Equal(t, "durable-submission", structured.Result["submission_id"])
+	require.Equal(t, "durable-correlation", structured.Result["correlation_id"])
 	item := structured.Result["errors"].([]any)[0].(map[string]any)
 	require.Equal(t, "embedding_unavailable", item["code"])
 }
