@@ -168,6 +168,17 @@ func TestRememberFailureRecordLogDoesNotExposeDatabaseError(t *testing.T) {
 	require.Equal(t, "persistence_failed", logger.attrs["recovery_error_code"])
 }
 
+func TestRememberFailurePersistenceErrorPreservesTypingAndCause(t *testing.T) {
+	providerErr := &embedding.ProviderHTTPError{Status: 503}
+	failure := &rememberEmbeddingProviderFailure{cause: providerErr}
+
+	err := rememberFailurePersistenceError(failure)
+
+	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
+	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingUnavailable)
+	require.ErrorIs(t, err, providerErr)
+}
+
 func TestRememberFailureRecoveryContextSurvivesRequestCancellation(t *testing.T) {
 	requestCtx, cancelRequest := context.WithCancel(context.Background())
 	cancelRequest()

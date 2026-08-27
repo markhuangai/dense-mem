@@ -104,6 +104,17 @@ func TestRememberToolResultErrorDoesNotExposeOperatorCause(t *testing.T) {
 	require.Contains(t, string(encoded), "embedding_unavailable")
 }
 
+func TestRememberToolResultErrorKeepsPersistenceTypingWithoutDurableStatus(t *testing.T) {
+	structured, ok := ToolResultFromError(rememberToolResultError(context.Background(), fmt.Errorf(
+		"%w: postgres raw-diagnostic", rememberapp.ErrRememberPersistence,
+	)))
+	require.True(t, ok)
+	encoded, err := json.Marshal(structured.Result)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "raw-diagnostic")
+	require.Contains(t, string(encoded), "database_failure")
+}
+
 func TestCorrectionToolResultErrorIsBoundedAndRetryable(t *testing.T) {
 	structured, ok := ToolResultFromError(correctionToolResultError(context.Background(), errors.New("raw correction failure")))
 	require.True(t, ok)

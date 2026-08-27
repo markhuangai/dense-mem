@@ -278,7 +278,6 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	code := rememberFailureCode(phase, failure)
 	publicError := rememberapp.StatusError(code)
 	correlationID := rememberProcessCorrelationID(input.Metadata)
-	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
 	status := &rememberapp.SubmissionStatusResult{
 		ContractVersion: domain.ContractVersion, SubmissionID: attemptID, SubmissionKind: "remember",
 		ProcessingState: "failed", SearchState: "not_required", CorrelationID: correlationID,
@@ -321,10 +320,19 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		if errors.Is(err, repository.ErrIdempotencyConflict) {
 			return nil, rememberapp.ErrRememberConflict
 		}
+		p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
 		p.logRememberFailureRecordError(input, attemptID, phase, publicError.Code, correlationID, err)
-		return nil, failure
+		return nil, rememberFailurePersistenceError(failure)
 	}
+	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
 	return nil, &rememberapp.RememberProcessError{Status: status, Err: failure}
+}
+
+func rememberFailurePersistenceError(failure error) error {
+	if failure == nil {
+		return rememberapp.ErrRememberPersistence
+	}
+	return fmt.Errorf("%w: terminal failure record unavailable: %w", rememberapp.ErrRememberPersistence, failure)
 }
 
 func (p *rememberSynchronousProcessor) logRememberFailure(
