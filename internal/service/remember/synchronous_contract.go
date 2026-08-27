@@ -237,11 +237,12 @@ func ValidateTerminalStatusError(value SubmissionStatusError) error {
 	if value.Retryable != retryable || value.NextAction != string(action) {
 		return fmt.Errorf("remember: terminal error guidance for %q is inconsistent", code)
 	}
-	if strings.TrimSpace(value.Message) == "" || len(value.Message) > 256 {
-		return errors.New("remember: terminal error message is missing or too long")
+	canonical := TerminalStatusError(code)
+	if value.Message != canonical.Message {
+		return fmt.Errorf("remember: terminal error message for %q is not canonical", code)
 	}
-	if strings.TrimSpace(value.Remediation) == "" || len(value.Remediation) > 512 {
-		return errors.New("remember: terminal error remediation is missing or too long")
+	if value.Remediation != canonical.Remediation {
+		return fmt.Errorf("remember: terminal error remediation for %q is not canonical", code)
 	}
 	return nil
 }
@@ -328,6 +329,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	}
 	if strings.TrimSpace(result.SubmissionID) == "" || strings.TrimSpace(result.CorrelationID) == "" {
 		return errors.New("remember: terminal result identity fields are required")
+	}
+	if _, err := uuid.Parse(result.SubmissionID); err != nil {
+		return errors.New("remember: terminal result submission_id is invalid")
 	}
 	if result.ProcessingState != string(TerminalProcessingCompleted) &&
 		result.ProcessingState != string(TerminalProcessingRejected) &&
@@ -450,7 +454,7 @@ func TerminalResultWithError(result *TerminalRememberResult, code TerminalErrorC
 		result = &TerminalRememberResult{Kind: ResultKindTerminal}
 	}
 	result.Kind = ResultKindTerminal
-	result.ProcessingState = string(TerminalProcessingFailed)
+	result.ProcessingState = string(terminalProcessingStateForError(code))
 	if result.SearchState != string(TerminalSearchCurrent) && result.SearchState != string(TerminalSearchNotRequired) {
 		result.SearchState = string(TerminalSearchNotRequired)
 	}
@@ -463,4 +467,15 @@ func TerminalResultWithError(result *TerminalRememberResult, code TerminalErrorC
 	status := TerminalStatusError(code)
 	result.Errors = []SubmissionStatusError{status}
 	return &RememberProcessError{Result: result, Err: errors.New(status.Message)}
+}
+
+func terminalProcessingStateForError(code TerminalErrorCode) TerminalProcessingState {
+	switch normalizeTerminalErrorCode(code) {
+	case TerminalErrorQuarantined:
+		return TerminalProcessingQuarantined
+	case TerminalErrorNoSupportedMemory, TerminalErrorStaleInput:
+		return TerminalProcessingRejected
+	default:
+		return TerminalProcessingFailed
+	}
 }

@@ -23,7 +23,7 @@ func TestTerminalStatusErrorUsesOnlyClosedVocabulary(t *testing.T) {
 func TestValidateTerminalRememberResultRejectsUnclosedErrorProjection(t *testing.T) {
 	result := &TerminalRememberResult{
 		ContractVersion: "dense-mem.v2.6",
-		SubmissionID:    "submission",
+		SubmissionID:    "11111111-1111-1111-1111-111111111111",
 		SubmissionKind:  "remember",
 		CorrelationID:   "correlation",
 		Kind:            ResultKindTerminal,
@@ -76,7 +76,7 @@ func TestTerminalNextActionsAreClosedAndCopied(t *testing.T) {
 
 func validTerminalResultForTest() *TerminalRememberResult {
 	return &TerminalRememberResult{
-		ContractVersion: "dense-mem.v2.6", SubmissionID: "submission", SubmissionKind: "remember",
+		ContractVersion: "dense-mem.v2.6", SubmissionID: "11111111-1111-1111-1111-111111111111", SubmissionKind: "remember",
 		ProcessingState: string(TerminalProcessingCompleted), SearchState: string(TerminalSearchCurrent),
 		CorrelationID: "correlation", Kind: ResultKindTerminal,
 		Evidence: []TerminalEvidenceResult{
@@ -103,6 +103,7 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"contract version", func(result *TerminalRememberResult) { result.ContractVersion = "dense-mem.v2.future" }},
 		{"submission kind", func(result *TerminalRememberResult) { result.SubmissionKind = "relationship_correction" }},
 		{"missing identity", func(result *TerminalRememberResult) { result.CorrelationID = "" }},
+		{"submission uuid", func(result *TerminalRememberResult) { result.SubmissionID = "not-a-uuid" }},
 		{"invalid processing state", func(result *TerminalRememberResult) { result.ProcessingState = "processing" }},
 		{"invalid search state", func(result *TerminalRememberResult) { result.SearchState = "queued" }},
 		{"missing errors array", func(result *TerminalRememberResult) { result.Errors = nil }},
@@ -192,8 +193,10 @@ func TestValidateTerminalStatusErrorRejectsMalformedOutput(t *testing.T) {
 		{"inconsistent guidance", func(value *SubmissionStatusError) { value.Retryable = false }},
 		{"empty message", func(value *SubmissionStatusError) { value.Message = " " }},
 		{"long message", func(value *SubmissionStatusError) { value.Message = strings.Repeat("x", 257) }},
+		{"non-canonical message", func(value *SubmissionStatusError) { value.Message = "equivalent bounded message" }},
 		{"empty remediation", func(value *SubmissionStatusError) { value.Remediation = " " }},
 		{"long remediation", func(value *SubmissionStatusError) { value.Remediation = strings.Repeat("x", 513) }},
+		{"non-canonical remediation", func(value *SubmissionStatusError) { value.Remediation = "equivalent bounded remediation" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -201,5 +204,26 @@ func TestValidateTerminalStatusErrorRejectsMalformedOutput(t *testing.T) {
 			test.edit(&value)
 			require.Error(t, ValidateTerminalStatusError(value))
 		})
+	}
+}
+
+func TestTerminalResultWithErrorUsesSemanticProcessingStates(t *testing.T) {
+	for _, test := range []struct {
+		code  TerminalErrorCode
+		state TerminalProcessingState
+	}{
+		{TerminalErrorNoSupportedMemory, TerminalProcessingRejected},
+		{TerminalErrorStaleInput, TerminalProcessingRejected},
+		{TerminalErrorQuarantined, TerminalProcessingQuarantined},
+		{TerminalErrorProviderUnavailable, TerminalProcessingFailed},
+	} {
+		result := &TerminalRememberResult{
+			ContractVersion: "dense-mem.v2.6", SubmissionID: "11111111-1111-1111-1111-111111111111",
+			SubmissionKind: "remember", CorrelationID: "correlation", SearchState: string(TerminalSearchNotRequired),
+		}
+		failure := TerminalResultWithError(result, test.code)
+		require.Equal(t, ResultKindTerminal, failure.Result.Kind)
+		require.Equal(t, string(test.state), failure.Result.ProcessingState)
+		require.NoError(t, ValidateTerminalRememberResult(failure.Result, 0, nil), test.code)
 	}
 }
