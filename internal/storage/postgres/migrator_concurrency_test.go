@@ -183,12 +183,170 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 	// Validate the embedding-reconciliation backfill while its historical table
 	// still exists; the v2.6.1 hard cutover intentionally drops embedding_jobs.
 	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026081602))
+	cutoverIngestID := uuid.NewString()
+	cutoverRunID := uuid.NewString()
+	cutoverAssessmentID := uuid.NewString()
+	cutoverResolutionID := uuid.NewString()
+	cutoverObservationID := uuid.NewString()
+	cutoverVerificationID := uuid.NewString()
+	cutoverReviewTaskID := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id, idempotency_key,
+				request_hash, status, proposal, metadata, completed_at
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, 'runtime-role-cutover',
+				'runtime-role-cutover-request', 'completed', '{}'::jsonb,
+				jsonb_build_object(
+					'contract_version', 'dense-mem.v2.6',
+					'actor', jsonb_build_object(
+						'team_id', $1::uuid,
+						'profile_id', $3::uuid
+					)
+				),
+				now()
+			)
+		`, teamID, cutoverIngestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_runs (
+				team_id, placement_run_id, ingest_id, owner_profile_id,
+				status, attempts, max_attempts, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'completed', 1, 5, now())
+		`, teamID, cutoverRunID, cutoverIngestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_assessments (
+				team_id, assessment_id, owner_profile_id, request_id,
+				assessor_contract_version, model, tokenizer,
+				input_tokens, output_tokens, candidate_context_tokens,
+				normalized_response, response_hash, validated_at,
+				assessment_scope, placement_run_id, ingest_id
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, 'runtime-role-cutover-assessment',
+				'dense-mem.v2.6', 'fixture-model', 'fixture-tokenizer',
+				10, 5, 3, '{"accepted":true}'::jsonb,
+				'sha256:runtime-role-cutover-assessment', now(),
+				'submission', $4::uuid, $5::uuid
+			)
+		`, teamID, cutoverAssessmentID, profileID, cutoverRunID, cutoverIngestID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO entity_resolution_events (
+				team_id, resolution_event_id, ingest_id, owner_profile_id,
+				mention_ref, action, assessment_id
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				'runtime-role-ambiguous-entity', 'ambiguous', $5::uuid
+			)
+		`, teamID, cutoverResolutionID, cutoverIngestID, profileID, cutoverAssessmentID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO relationship_observations (
+				team_id, observation_id, ingest_id, owner_profile_id,
+				subject_ref, original_predicate, object_ref
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				'runtime-role-subject', 'runtime_role_predicate', 'runtime-role-object'
+			)
+		`, teamID, cutoverObservationID, cutoverIngestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO verification_events (
+				team_id, verification_event_id, observation_id, owner_profile_id,
+				evidence_verdict, assessment_id
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'entailed', $5::uuid
+			)
+		`, teamID, cutoverVerificationID, cutoverObservationID, profileID, cutoverAssessmentID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO review_tasks (
+				team_id, review_task_id, owner_profile_id, ingest_id,
+				task_type, status, reason, payload, dedupe_key, assessment_id
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				'identity_needs_review', 'canceled', 'runtime_role_cutover',
+				'{}'::jsonb, $5, $6::uuid
+			)
+		`, teamID, cutoverReviewTaskID, profileID, cutoverIngestID,
+			"runtime-role-cutover:"+cutoverReviewTaskID, cutoverAssessmentID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO predicate_registration_events (
+				team_id, placement_run_id, assessment_id, owner_profile_id,
+				relationship_ref, registration_action, predicate_key, predicate_version
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				'runtime-role-cutover-ref', 'created', 'runtime_role_predicate', 1
+			)
+		`, teamID, cutoverRunID, cutoverAssessmentID, profileID)
+		return err
+	}))
 	assertMigratedEmbeddingJob(t, ctx, sqlDB, legacyFailure.jobID, migratedEmbeddingJobExpectation{
 		status: "failed", totalAttempts: 20,
 		failureClass: "provider_action_required", failureCode: "provider_quota_exhausted", failedTimestamps: true,
 	})
 
 	require.NoError(t, NewMigratorWithDB(sqlDB).RunUp(ctx))
+	var semanticAssessmentID string
+	var migratedOrigin string
+	var predicateIngestID, predicateAssessmentID string
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		require.NoError(t, tx.QueryRowContext(ctx, `
+			SELECT metadata ->> '_dense_mem_telemetry_origin'
+			FROM knowledge_ingests
+			WHERE team_id = $1::uuid AND ingest_id = $2::uuid
+		`, teamID, cutoverIngestID).Scan(&migratedOrigin))
+		require.NoError(t, tx.QueryRowContext(ctx, `
+			SELECT semantic_assessment_id::text
+			FROM semantic_assessments
+			WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+		`, teamID, cutoverIngestID).Scan(&semanticAssessmentID))
+		assessmentReferences := []struct {
+			name  string
+			query string
+			rowID string
+		}{
+			{
+				name:  "entity resolution",
+				query: `SELECT assessment_id::text FROM entity_resolution_events WHERE team_id = $1::uuid AND resolution_event_id = $2::uuid`,
+				rowID: cutoverResolutionID,
+			},
+			{
+				name:  "verification",
+				query: `SELECT assessment_id::text FROM verification_events WHERE team_id = $1::uuid AND verification_event_id = $2::uuid`,
+				rowID: cutoverVerificationID,
+			},
+			{
+				name:  "review task",
+				query: `SELECT assessment_id::text FROM review_tasks WHERE team_id = $1::uuid AND review_task_id = $2::uuid`,
+				rowID: cutoverReviewTaskID,
+			},
+		}
+		for _, reference := range assessmentReferences {
+			var mappedAssessmentID string
+			require.NoError(t, tx.QueryRowContext(ctx, reference.query, teamID, reference.rowID).Scan(&mappedAssessmentID), reference.name)
+			require.Equal(t, semanticAssessmentID, mappedAssessmentID, reference.name)
+		}
+		require.NoError(t, tx.QueryRowContext(ctx, `
+			SELECT ingest_id::text, assessment_id::text
+			FROM predicate_registration_events
+			WHERE team_id = $1::uuid AND relationship_ref = 'runtime-role-cutover-ref'
+		`, teamID).Scan(&predicateIngestID, &predicateAssessmentID))
+		return nil
+	}))
+	require.Equal(t, "remember", migratedOrigin)
+	require.Equal(t, cutoverIngestID, predicateIngestID)
+	require.Equal(t, semanticAssessmentID, predicateAssessmentID)
 	var revisionCount, sharedRevisionCount int
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
@@ -210,10 +368,25 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 		FROM pg_policy
 		WHERE polname IN (
 			'dense_mem_2026081701_backfill_select',
-			'dense_mem_2026081701_backfill_update'
+			'dense_mem_2026081701_backfill_update',
+			'dense_mem_20260825010001_predicate_registration_update',
+			'dense_mem_20260825010001_entity_resolution_update',
+			'dense_mem_20260825010001_verification_update'
 		)
 	`).Scan(&temporaryBackfillPolicyCount))
 	require.Zero(t, temporaryBackfillPolicyCount)
+	var restoredAppendOnlyTriggers int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM pg_trigger
+		WHERE NOT tgisinternal
+		  AND tgname IN (
+			'predicate_registration_events_append_only',
+			'entity_resolution_events_append_only',
+			'verification_events_append_only'
+		  )
+	`).Scan(&restoredAppendOnlyTriggers))
+	require.Equal(t, 3, restoredAppendOnlyTriggers)
 	require.False(t, tableExists(t, ctx, sqlDB, "embedding_jobs"))
 
 	var cleanupApplied, temporaryCleanupPolicyExists bool

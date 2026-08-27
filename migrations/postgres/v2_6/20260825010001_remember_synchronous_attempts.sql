@@ -323,6 +323,21 @@ CREATE TRIGGER remember_attempt_events_append_only
     BEFORE UPDATE OR DELETE ON remember_attempt_events
     FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation();
 
+-- The v2.5 normalizer treats this exact authenticated actor envelope as a
+-- legacy Remember origin. Persist that classification before copying history.
+UPDATE knowledge_ingests
+SET metadata = jsonb_set(
+    metadata,
+    '{_dense_mem_telemetry_origin}',
+    to_jsonb('remember'::TEXT),
+    true
+)
+WHERE NULLIF(metadata ->> '_dense_mem_telemetry_origin', '') IS NULL
+  AND NULLIF(metadata ->> 'contract_version', '') IS NOT NULL
+  AND jsonb_typeof(metadata -> 'actor') = 'object'
+  AND metadata #>> '{actor,team_id}' = team_id::TEXT
+  AND metadata #>> '{actor,profile_id}' = owner_profile_id::TEXT;
+
 -- Copy Remember-origin history into the terminal-attempt and chronological
 -- event projections before the legacy placement tables are retired. The
 -- source rows remain untouched until the final stopped-service release step.
@@ -851,6 +866,27 @@ ALTER TABLE predicate_registration_events
     ADD COLUMN IF NOT EXISTS ingest_id UUID;
 
 DROP TRIGGER IF EXISTS predicate_registration_events_append_only ON predicate_registration_events;
+DROP TRIGGER IF EXISTS entity_resolution_events_append_only ON entity_resolution_events;
+DROP TRIGGER IF EXISTS verification_events_append_only ON verification_events;
+
+-- FORCE RLS applies to the non-superuser table owner used by production
+-- migrations. Open only the bounded update path needed to repoint immutable
+-- assessment history, then remove it before restoring the append-only guards.
+DROP POLICY IF EXISTS dense_mem_20260825010001_predicate_registration_update ON predicate_registration_events;
+CREATE POLICY dense_mem_20260825010001_predicate_registration_update ON predicate_registration_events
+    FOR UPDATE
+    USING (current_setting('app.tx_mode', true) = 'migration')
+    WITH CHECK (current_setting('app.tx_mode', true) = 'migration');
+DROP POLICY IF EXISTS dense_mem_20260825010001_entity_resolution_update ON entity_resolution_events;
+CREATE POLICY dense_mem_20260825010001_entity_resolution_update ON entity_resolution_events
+    FOR UPDATE
+    USING (current_setting('app.tx_mode', true) = 'migration')
+    WITH CHECK (current_setting('app.tx_mode', true) = 'migration');
+DROP POLICY IF EXISTS dense_mem_20260825010001_verification_update ON verification_events;
+CREATE POLICY dense_mem_20260825010001_verification_update ON verification_events
+    FOR UPDATE
+    USING (current_setting('app.tx_mode', true) = 'migration')
+    WITH CHECK (current_setting('app.tx_mode', true) = 'migration');
 
 -- The reassignment below changes the referenced assessment identifiers. Remove
 -- the old placement-assessment foreign keys before updating the identifiers;
@@ -980,6 +1016,17 @@ SET assessment_id = map.semantic_assessment_id
 FROM dense_mem_semantic_assessment_map AS map
 WHERE map.team_id = event.team_id
   AND map.old_assessment_id = event.assessment_id;
+
+DROP POLICY IF EXISTS dense_mem_20260825010001_predicate_registration_update ON predicate_registration_events;
+DROP POLICY IF EXISTS dense_mem_20260825010001_entity_resolution_update ON entity_resolution_events;
+DROP POLICY IF EXISTS dense_mem_20260825010001_verification_update ON verification_events;
+
+CREATE TRIGGER entity_resolution_events_append_only
+    BEFORE UPDATE OR DELETE ON entity_resolution_events
+    FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation();
+CREATE TRIGGER verification_events_append_only
+    BEFORE UPDATE OR DELETE ON verification_events
+    FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation();
 
 DROP INDEX IF EXISTS submission_relationship_results_submission_idx;
 ALTER TABLE submission_relationship_results
