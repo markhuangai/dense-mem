@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
@@ -387,6 +389,23 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 			return fmt.Errorf("remember: non-stored relationship %q has splits", item.RelationshipRef)
 		}
 		if item.Disposition == "stored" {
+			if len(item.Splits) == 0 {
+				return fmt.Errorf("remember: stored relationship %q has no split", item.RelationshipRef)
+			}
+			if strings.TrimSpace(item.Reason) != "" {
+				return fmt.Errorf("remember: stored relationship %q has a reason", item.RelationshipRef)
+			}
+			for splitIndex, split := range item.Splits {
+				if split.SplitIndex != splitIndex {
+					return fmt.Errorf("remember: stored relationship %q split index %d is out of order", item.RelationshipRef, split.SplitIndex)
+				}
+				if _, err := uuid.Parse(split.RelationshipID); err != nil {
+					return fmt.Errorf("remember: stored relationship %q split has invalid relationship_id", item.RelationshipRef)
+				}
+				if split.RelationshipVersion < 1 || split.Status != "active" {
+					return fmt.Errorf("remember: stored relationship %q split is not active and versioned", item.RelationshipRef)
+				}
+			}
 			storedResult = true
 		}
 	}

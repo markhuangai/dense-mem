@@ -84,7 +84,9 @@ func validTerminalResultForTest() *TerminalRememberResult {
 			{Disposition: "not_stored", EvidenceIndex: 1, SearchState: string(TerminalSearchNotRequired)},
 		},
 		RelationshipResults: []SubmissionRelationshipResult{
-			{RelationshipRef: "rel-a", Disposition: "stored"},
+			{RelationshipRef: "rel-a", Disposition: "stored", Splits: []SubmissionRelationshipSplit{{
+				SplitIndex: 0, RelationshipID: "11111111-1111-1111-1111-111111111111", RelationshipVersion: 1, Status: "active",
+			}}},
 			{RelationshipRef: "rel-b", Disposition: "not_stored"},
 		},
 		Errors: []SubmissionStatusError{},
@@ -125,6 +127,18 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"rejected with stored result", func(result *TerminalRememberResult) {
 			result.ProcessingState = string(TerminalProcessingRejected)
 			result.Errors = []SubmissionStatusError{TerminalStatusError(TerminalErrorNoSupportedMemory)}
+		}},
+		{"stored relationship without split", func(result *TerminalRememberResult) {
+			result.RelationshipResults[0].Splits = nil
+		}},
+		{"stored relationship with malformed split", func(result *TerminalRememberResult) {
+			result.RelationshipResults[0].Splits[0].RelationshipID = "not-a-uuid"
+		}},
+		{"stored relationship with non-contiguous split", func(result *TerminalRememberResult) {
+			result.RelationshipResults[0].Splits[0].SplitIndex = 1
+		}},
+		{"stored relationship with inactive split", func(result *TerminalRememberResult) {
+			result.RelationshipResults[0].Splits[0].Status = "superseded"
 		}},
 		{"evidence count", func(result *TerminalRememberResult) { result.Evidence = result.Evidence[:1] }},
 		{"evidence order", func(result *TerminalRememberResult) { result.Evidence[0].EvidenceIndex = 1 }},
