@@ -946,7 +946,7 @@ if [[ "$E2E_SCENARIO" == "submission_assessment" ]]; then
   exit 0
 fi
 if [[ "$E2E_SCENARIO" == "synchronous_write" ]]; then
-  run_synchronous_write_e2e "$team_id"
+  run_synchronous_write_e2e "$team_id" "$api_key"
   exit 0
 fi
 if [[ "$E2E_SCENARIO" == "identity_cleanup" ]]; then run_identity_cleanup_consumer_e2e "$team_id" "$CREATED_CREDENTIAL_ID" "$api_key"; exit 0; fi

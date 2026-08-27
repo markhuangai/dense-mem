@@ -502,13 +502,15 @@ func TestSynchronousWriteFoundationAppendOnlyRowsAndGuardedDown(t *testing.T) {
 		`, teamID, activeArtifactID)
 		return err
 	}))
-	require.Error(t, execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
+	eventDeleteErr := execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			DELETE FROM remember_attempt_events
 			WHERE team_id = $1::uuid AND attempt_id = $2::uuid
 		`, teamID, attemptID)
 		return err
-	}))
+	})
+	require.Error(t, eventDeleteErr)
+	require.Contains(t, eventDeleteErr.Error(), "remember_attempt_events is append-only")
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			DELETE FROM remember_failure_artifacts

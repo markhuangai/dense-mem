@@ -29,6 +29,9 @@ test("provider timeout fault is longer than the pinned E2E request caps", async 
 
 test("compose runner filters the resolved default slice", async () => {
   const overlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");
+  const compose = await readFile(new URL("../../../scripts/e2e-compose.sh", import.meta.url), "utf8");
   assert.match(overlay, /local slice="\$\{DENSE_MEM_E2E_WRITE_SLICE:-legacy\}"/);
+  assert.match(overlay, /local api_key="\$2"/);
   assert.match(overlay, /DENSE_MEM_E2E_WRITE_CASE="\$slice"/);
+  assert.match(compose, /run_synchronous_write_e2e "\$team_id" "\$api_key"/);
 });

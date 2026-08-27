@@ -356,6 +356,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 			return fmt.Errorf("remember: stored evidence %d has no evidence_id", index)
 		}
 		if item.Disposition == "stored" {
+			if _, err := uuid.Parse(item.EvidenceID); err != nil {
+				return fmt.Errorf("remember: stored evidence %d has invalid evidence_id", index)
+			}
 			storedResult = true
 		}
 		if item.Disposition == "not_stored" && item.EvidenceID != "" {
@@ -387,6 +390,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		}
 		if item.Disposition == "not_stored" && len(item.Splits) > 0 {
 			return fmt.Errorf("remember: non-stored relationship %q has splits", item.RelationshipRef)
+		}
+		if item.Disposition == "not_stored" && !terminalRelationshipNotStoredReasonAllowed(item.Reason) {
+			return fmt.Errorf("remember: non-stored relationship %q has unsupported reason", item.RelationshipRef)
 		}
 		if item.Disposition == "stored" {
 			if len(item.Splits) == 0 {
@@ -426,6 +432,15 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		}
 	}
 	return nil
+}
+
+func terminalRelationshipNotStoredReasonAllowed(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case "not_supported_by_evidence", "stale_input", "security_quarantine", "internal_failure":
+		return true
+	default:
+		return false
+	}
 }
 
 // TerminalResultWithError builds a bounded failure projection for transport

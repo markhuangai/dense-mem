@@ -51,6 +51,7 @@ NODE
 
 run_synchronous_write_e2e() {
   local team_id="$1"
+  local api_key="$2"
   local slice="${DENSE_MEM_E2E_WRITE_SLICE:-legacy}"
   echo "Running compose-backed synchronous-write contract cases with slice ${slice}."
   DENSE_MEM_USER_URL="$USER_URL" \
