@@ -170,6 +170,56 @@ BEGIN
 END;
 $dense_mem_synchronous_write_replay_trigger$;
 
+CREATE OR REPLACE FUNCTION validate_synchronous_write_space_generation()
+RETURNS TRIGGER AS $$
+DECLARE
+    tx_mode TEXT := COALESCE(current_setting('app.tx_mode', true), '');
+    current_team TEXT := COALESCE(current_setting('app.current_team_id', true), '');
+    active_generation BIGINT;
+BEGIN
+    IF NEW.space_id IS NULL THEN
+        IF NEW.space_generation IS NOT NULL THEN
+            RAISE EXCEPTION 'space_generation requires space_id';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF tx_mode IN ('team', 'profile')
+       AND (NEW.team_id IS NULL OR NULLIF(current_team, '')::uuid IS DISTINCT FROM NEW.team_id) THEN
+        RAISE EXCEPTION 'memory space write is outside the authenticated team';
+    ELSIF tx_mode NOT IN ('team', 'profile', 'system', 'migration') THEN
+        RAISE EXCEPTION 'memory space write requires an authenticated transaction';
+    END IF;
+
+    active_generation := dense_mem_active_space_generation(NEW.team_id, NEW.space_id);
+    IF active_generation IS NULL THEN
+        RAISE EXCEPTION 'memory space is not active';
+    END IF;
+    IF NEW.space_generation IS NULL OR NEW.space_generation = 0 THEN
+        NEW.space_generation := active_generation;
+    ELSIF NEW.space_generation IS DISTINCT FROM active_generation THEN
+        RAISE EXCEPTION 'memory space generation is stale';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+REVOKE EXECUTE ON FUNCTION validate_synchronous_write_space_generation() FROM PUBLIC;
+
+DO $dense_mem_synchronous_write_space_generation_trigger$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'remember_attempts'::regclass
+          AND tgname = 'remember_attempts_space_generation'
+    ) THEN
+        CREATE TRIGGER remember_attempts_space_generation
+            BEFORE INSERT ON remember_attempts
+            FOR EACH ROW EXECUTE FUNCTION validate_synchronous_write_space_generation();
+    END IF;
+END;
+$dense_mem_synchronous_write_space_generation_trigger$;
+
 CREATE TABLE IF NOT EXISTS remember_attempt_events (
     team_id UUID NOT NULL,
     event_id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -299,6 +349,35 @@ BEGIN
                 EXECUTE format($policy$
                     CREATE POLICY %I ON %I FOR SELECT USING (
                         current_setting('app.tx_mode', true) IN ('system', 'migration')
+                    )
+                $policy$, table_name || '_select', table_name);
+            ELSIF table_name = 'remember_attempts' THEN
+                EXECUTE format($policy$
+                    CREATE POLICY %I ON %I FOR SELECT USING (
+                        current_setting('app.tx_mode', true) IN ('system', 'migration')
+                        OR (
+                            current_setting('app.tx_mode', true) IN ('team', 'profile')
+                            AND team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+                            AND (space_id IS NULL OR dense_mem_space_allowed(space_id))
+                        )
+                    )
+                $policy$, table_name || '_select', table_name);
+            ELSIF table_name = 'remember_attempt_events' THEN
+                EXECUTE format($policy$
+                    CREATE POLICY %I ON %I FOR SELECT USING (
+                        current_setting('app.tx_mode', true) IN ('system', 'migration')
+                        OR (
+                            current_setting('app.tx_mode', true) IN ('team', 'profile')
+                            AND team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+                            AND EXISTS (
+                                SELECT 1
+                                FROM remember_attempts AS attempt
+                                WHERE attempt.team_id = remember_attempt_events.team_id
+                                  AND attempt.attempt_id = remember_attempt_events.attempt_id
+                                  AND attempt.owner_profile_id = remember_attempt_events.owner_profile_id
+                                  AND (attempt.space_id IS NULL OR dense_mem_space_allowed(attempt.space_id))
+                            )
+                        )
                     )
                 $policy$, table_name || '_select', table_name);
             ELSE
@@ -457,6 +536,7 @@ BEGIN
 
     DROP TRIGGER IF EXISTS remember_attempts_append_only ON remember_attempts;
     DROP TRIGGER IF EXISTS remember_attempts_replay_integrity ON remember_attempts;
+    DROP TRIGGER IF EXISTS remember_attempts_space_generation ON remember_attempts;
     DROP TRIGGER IF EXISTS remember_attempt_events_append_only ON remember_attempt_events;
     DROP TRIGGER IF EXISTS remember_failure_artifacts_append_only ON remember_failure_artifacts;
     DROP TRIGGER IF EXISTS semantic_assessments_append_only ON semantic_assessments;
@@ -465,6 +545,7 @@ BEGIN
     DROP TABLE IF EXISTS remember_attempt_events;
     DROP TABLE IF EXISTS remember_attempts;
     DROP FUNCTION IF EXISTS validate_synchronous_write_replay();
+    DROP FUNCTION IF EXISTS validate_synchronous_write_space_generation();
     DROP FUNCTION IF EXISTS prevent_synchronous_write_append_only_mutation();
 
     ALTER TABLE embedding_reconciliation_runs

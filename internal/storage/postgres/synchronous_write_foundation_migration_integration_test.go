@@ -491,8 +491,85 @@ func TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam(t *testing
 		expectProfileInsertDeniedFor(currentTeamID, currentProfileID, "", statement, args...)
 	}
 
-	spaceAttemptID := uuid.NewString()
+	spaceAttemptID, spaceEventID := uuid.NewString(), uuid.NewString()
 	withProfile(teamID, profileA, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.allowed_space_ids', $1, true)`, spaceA); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_attempts (
+				team_id, attempt_id, owner_profile_id, space_id, space_generation,
+				idempotency_key, request_hash, contract_version, outcome
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1,
+			          'rls-space-allowed', 'rls-space-allowed-request', 'dense-mem.v2.6', 'failed')
+		`, teamID, spaceAttemptID, profileA, spaceA); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_attempt_events (
+				team_id, event_id, attempt_id, owner_profile_id, sequence_no, phase, event_kind
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1, 'commit', 'private-space')
+		`, teamID, spaceEventID, spaceAttemptID, profileA)
+		return err
+	})
+	withProfile(teamID, profileA, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.allowed_space_ids', $1, true)`, spaceA); err != nil {
+			return err
+		}
+		for _, query := range []struct {
+			name string
+			sql  string
+			id   string
+		}{
+			{"private attempt", `SELECT count(*) FROM remember_attempts WHERE team_id = $1::uuid AND attempt_id = $2::uuid`, spaceAttemptID},
+			{"private event", `SELECT count(*) FROM remember_attempt_events WHERE team_id = $1::uuid AND event_id = $2::uuid`, spaceEventID},
+		} {
+			var count int
+			if err := tx.QueryRowContext(ctx, query.sql, teamID, query.id).Scan(&count); err != nil {
+				return err
+			}
+			if count != 1 {
+				return fmt.Errorf("profile A cannot read its allowed %s", query.name)
+			}
+		}
+		return nil
+	})
+	withProfile(teamID, profileB, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.allowed_space_ids', $1, true)`, spaceB); err != nil {
+			return err
+		}
+		for _, query := range []struct {
+			name string
+			sql  string
+			id   string
+		}{
+			{"private attempt", `SELECT count(*) FROM remember_attempts WHERE team_id = $1::uuid AND attempt_id = $2::uuid`, spaceAttemptID},
+			{"private event", `SELECT count(*) FROM remember_attempt_events WHERE team_id = $1::uuid AND event_id = $2::uuid`, spaceEventID},
+		} {
+			var count int
+			if err := tx.QueryRowContext(ctx, query.sql, teamID, query.id).Scan(&count); err != nil {
+				return err
+			}
+			if count != 0 {
+				return fmt.Errorf("profile B can read %s from a disallowed space", query.name)
+			}
+		}
+		return nil
+	})
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE memory_spaces SET generation = generation + 1
+			WHERE id = $1::uuid
+		`, spaceA)
+		return err
+	}))
+	staleGenerationErr := execPostgresTxModeRollback(ctx, db, "profile", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_team_id', $1, true)`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_profile_id', $1, true)`, profileA); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.allowed_space_ids', $1, true)`, spaceA); err != nil {
 			return err
 		}
@@ -500,11 +577,12 @@ func TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam(t *testing
 			INSERT INTO remember_attempts (
 				team_id, attempt_id, owner_profile_id, space_id, space_generation,
 				idempotency_key, request_hash, contract_version, outcome
-			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1,
-			          'rls-space-allowed', 'rls-space-allowed-request', 'dense-mem.v2.6', 'failed')
-		`, teamID, spaceAttemptID, profileA, spaceA)
+			) VALUES ($1::uuid, gen_random_uuid(), $2::uuid, $3::uuid, 1,
+			          'rls-space-stale-generation', 'rls-space-stale-generation-request', 'dense-mem.v2.6', 'failed')
+		`, teamID, profileA, spaceA)
 		return err
 	})
+	require.ErrorContains(t, staleGenerationErr, "memory space generation is stale")
 	expectProfileInsertDeniedFor(teamID, profileA, spaceA, `
 		INSERT INTO remember_attempts (
 			team_id, attempt_id, owner_profile_id, space_id, space_generation,

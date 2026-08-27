@@ -40,11 +40,17 @@ func TestContextForPhaseHonorsEarlierCallerDeadline(t *testing.T) {
 	callerCtx, callerCancel := context.WithDeadline(base, callerDeadline)
 	defer callerCancel()
 
-	phaseCtx, phaseCancel := ContextForPhase(callerCtx, RememberPhaseCommit)
-	defer phaseCancel()
-	deadline, ok := phaseCtx.Deadline()
-	require.True(t, ok)
-	require.Equal(t, callerDeadline, deadline)
+	for _, phase := range []RememberPhase{
+		RememberPhaseAssessment,
+		RememberPhaseEmbedding,
+		RememberPhaseCommit,
+	} {
+		phaseCtx, phaseCancel := ContextForPhase(callerCtx, phase)
+		deadline, ok := phaseCtx.Deadline()
+		phaseCancel()
+		require.True(t, ok)
+		require.Equal(t, callerDeadline, deadline, phase)
+	}
 }
 
 func TestContextForPhaseUsesDefaultsWithoutAnchoredDeadlines(t *testing.T) {

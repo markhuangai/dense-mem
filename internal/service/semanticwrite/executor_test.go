@@ -152,7 +152,9 @@ func TestExecutorRejectsProviderAvailabilityAndContractMismatches(t *testing.T) 
 		{"returned model", func(p *providerStub) { p.returned = "other" }, ErrProviderResponseInvalid},
 		{"count", func(p *providerStub) { p.vectors = p.vectors[:1] }, ErrProviderResponseInvalid},
 		{"dimensions", func(p *providerStub) { p.vectors[0].Vector = []float32{1} }, ErrProviderResponseInvalid},
-		{"non-finite", func(p *providerStub) { p.vectors[1].Vector[1] = float32(math.NaN()) }, ErrProviderResponseInvalid},
+		{"NaN", func(p *providerStub) { p.vectors[1].Vector[1] = float32(math.NaN()) }, ErrProviderResponseInvalid},
+		{"positive infinity", func(p *providerStub) { p.vectors[1].Vector[1] = float32(math.Inf(1)) }, ErrProviderResponseInvalid},
+		{"negative infinity", func(p *providerStub) { p.vectors[1].Vector[1] = float32(math.Inf(-1)) }, ErrProviderResponseInvalid},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
