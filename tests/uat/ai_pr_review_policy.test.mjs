@@ -111,6 +111,33 @@ test("AI review uses six ownership-driven goals and one memory-first protocol", 
   }
 });
 
+test("AI review re-audits fixes before an independent cumulative sweep", async () => {
+  const workflow = await readFile(reviewWorkflowURL, "utf8");
+  const normalizedWorkflow = workflow.replace(/\s+/g, " ");
+
+  assert.match(normalizedWorkflow, /First perform a fix-focused pass/);
+  assert.match(
+    normalizedWorkflow,
+    /Do not merely confirm that the original defect is gone/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /construct adjacent counterexamples across the same state machine, decision table, boundary, or authoritative-value path/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /This is not an exact commit-range diff unless a tool supplies one/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /Then independently sweep the full merge-base-to-head change for this goal/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /Prior review silence and resolved threads are not negative evidence/,
+  );
+});
+
 test("maintainability review is preventive, bounded, and impact-scored", async () => {
   const workflow = await readFile(reviewWorkflowURL, "utf8");
   const normalizedWorkflow = normalizedReviewPrompt(
@@ -235,32 +262,16 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   assert.match(ciCheck, /node --test tests\/uat\/ai_pr_review_policy\.test\.mjs/);
 });
 
-test("AI review selects the configured executor and matching endpoint", async () => {
+test("AI review uses the Claude endpoint without obsolete executor routing", async () => {
   const workflow = await readFile(reviewWorkflowURL, "utf8");
-  const validationStart = workflow.indexOf(
-    "      - name: Validate AI reviewer configuration",
-  );
-  const validationEnd = workflow.indexOf(
-    "      - name: Checkout pull request head",
-    validationStart,
-  );
 
-  assert.notEqual(validationStart, -1);
-  assert.notEqual(validationEnd, -1);
-
-  const validationStep = workflow.slice(validationStart, validationEnd);
-  assert.match(validationStep, /AI_REVIEWER_SDK: \$\{\{ vars\.AI_REVIEWER_SDK \}\}/);
-  assert.match(
-    validationStep,
-    /codex\)\s+endpoint="\$\{LOCAL_OPENAI_AI_ENDPOINT\}"/,
-  );
-  assert.match(validationStep, /claude\)\s+endpoint="\$\{LOCAL_AI_ENDPOINT\}"/);
-  assert.match(validationStep, /AI_REVIEWER_SDK must be exactly 'codex' or 'claude'/);
-  assert.match(validationStep, /\[\[ -z "\$\{endpoint\}" \]\]/);
-  assert.ok(workflow.includes("executor: ${{ vars.AI_REVIEWER_SDK }}"));
+  assert.doesNotMatch(workflow, /Validate AI reviewer configuration/);
+  assert.doesNotMatch(workflow, /AI_REVIEWER_SDK/);
+  assert.doesNotMatch(workflow, /LOCAL_OPENAI_AI_ENDPOINT/);
+  assert.doesNotMatch(workflow, /^\s+executor:/m);
   assert.ok(
     workflow.includes(
-      "ai-base-url: ${{ vars.AI_REVIEWER_SDK == 'codex' && secrets.LOCAL_OPENAI_AI_ENDPOINT || secrets.LOCAL_AI_ENDPOINT }}",
+      "ai-base-url: ${{ secrets.LOCAL_AI_ENDPOINT }}",
     ),
   );
 });
