@@ -149,8 +149,15 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"stored evidence reason", func(result *TerminalRememberResult) { result.Evidence[0].Reason = "provider_secret_detail" }},
 		{"non-stored evidence id", func(result *TerminalRememberResult) { result.Evidence[1].EvidenceID = "unexpected" }},
 		{"non-stored evidence reason", func(result *TerminalRememberResult) { result.Evidence[1].Reason = "provider_secret_detail" }},
+		{"non-canonical evidence reason", func(result *TerminalRememberResult) { result.Evidence[1].Reason = " stale_input " }},
 		{"non-stored evidence supersession", func(result *TerminalRememberResult) {
 			result.Evidence[1].SupersededEvidenceIDs = []string{"22222222-2222-2222-2222-222222222222"}
+		}},
+		{"duplicate stored evidence id", func(result *TerminalRememberResult) {
+			result.Evidence[1].Disposition = "stored"
+			result.Evidence[1].EvidenceID = result.Evidence[0].EvidenceID
+			result.Evidence[1].SearchState = string(TerminalSearchCurrent)
+			result.Evidence[1].Reason = ""
 		}},
 		{"superseded evidence uuid", func(result *TerminalRememberResult) {
 			result.Evidence[0].SupersededEvidenceIDs = []string{"not-a-uuid"}
@@ -174,6 +181,9 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		}},
 		{"non-stored relationship reason", func(result *TerminalRememberResult) {
 			result.RelationshipResults[1].Reason = "provider_secret_detail"
+		}},
+		{"non-canonical relationship reason", func(result *TerminalRememberResult) {
+			result.RelationshipResults[1].Reason = " stale_input "
 		}},
 		{"terminal error state", func(result *TerminalRememberResult) {
 			result.ProcessingState = string(TerminalProcessingRejected)

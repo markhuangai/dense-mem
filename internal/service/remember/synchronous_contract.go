@@ -349,6 +349,7 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		return fmt.Errorf("remember: terminal evidence count %d, expected %d", len(result.Evidence), evidenceCount)
 	}
 	storedResult := false
+	seenStoredEvidenceIDs := make(map[uuid.UUID]struct{}, len(result.Evidence))
 	for index, item := range result.Evidence {
 		if item.EvidenceIndex != index {
 			return fmt.Errorf("remember: terminal evidence index %d is out of order", item.EvidenceIndex)
@@ -360,9 +361,14 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 			return fmt.Errorf("remember: stored evidence %d has no evidence_id", index)
 		}
 		if item.Disposition == "stored" {
-			if _, err := uuid.Parse(item.EvidenceID); err != nil {
+			evidenceID, err := uuid.Parse(item.EvidenceID)
+			if err != nil {
 				return fmt.Errorf("remember: stored evidence %d has invalid evidence_id", index)
 			}
+			if _, ok := seenStoredEvidenceIDs[evidenceID]; ok {
+				return fmt.Errorf("remember: stored evidence %d has duplicated evidence_id", index)
+			}
+			seenStoredEvidenceIDs[evidenceID] = struct{}{}
 			if strings.TrimSpace(item.Reason) != "" {
 				return fmt.Errorf("remember: stored evidence %d has a reason", index)
 			}
@@ -474,7 +480,11 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 }
 
 func terminalNotStoredReasonAllowed(reason string) bool {
-	switch strings.TrimSpace(reason) {
+	trimmed := strings.TrimSpace(reason)
+	if reason != trimmed {
+		return false
+	}
+	switch trimmed {
 	case "not_supported_by_evidence", "stale_input", "security_quarantine", "internal_failure":
 		return true
 	default:
