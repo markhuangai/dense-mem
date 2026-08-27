@@ -50,17 +50,24 @@ test("OCI promotion avoids jq 1.6 reserved variable names", async () => {
 });
 
 test("prerelease publication waits for the staging migration rehearsal", async () => {
-  const releaseWorkflow = await readFile(
-    new URL("../../.github/workflows/release-rc.yml", import.meta.url),
-    "utf8",
-  );
-  const rehearsalWorkflow = await readFile(
-    new URL(
-      "../../.github/workflows/staging-migration-rehearsal.yml",
-      import.meta.url,
+  const [releaseWorkflow, rehearsalWorkflow, pushWorkflow] = await Promise.all([
+    readFile(
+      new URL("../../.github/workflows/release-rc.yml", import.meta.url),
+      "utf8",
     ),
-    "utf8",
-  );
+    readFile(
+      new URL(
+        "../../.github/workflows/staging-migration-rehearsal.yml",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../.github/workflows/ci-push.yml", import.meta.url),
+      "utf8",
+    ),
+  ]);
+  const classifier = workflowJob(releaseWorkflow, "classify-release");
   const rehearsalCall = workflowJob(
     releaseWorkflow,
     "staging-migration-rehearsal",
@@ -71,6 +78,22 @@ test("prerelease publication waits for the staging migration rehearsal", async (
   );
   const prepare = workflowJob(releaseWorkflow, "prepare-prerelease");
 
+  assert.doesNotMatch(pushWorkflow, /paths-ignore/);
+  assert.match(classifier, /^    runs-on: docker-runner$/m);
+  assert.match(classifier, /^          fetch-depth: 0$/m);
+  assert.match(classifier, /^          persist-credentials: false$/m);
+  assert.match(
+    classifier,
+    /^          ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}$/m,
+  );
+  assert.match(
+    classifier,
+    /prerelease-version\.sh should-release "\$\{HEAD_SHA\}"/,
+  );
+  assert.match(
+    rehearsalCall,
+    /^    needs: classify-release$[\s\S]*needs\.classify-release\.outputs\.should_release == 'true'/m,
+  );
   assert.match(
     rehearsalCall,
     /^    uses: \.\/\.github\/workflows\/staging-migration-rehearsal\.yml$/m,
@@ -104,7 +127,11 @@ test("prerelease publication waits for the staging migration rehearsal", async (
       rehearsal.indexOf("go test -tags=staging_rehearsal"),
     "the production copy must finish restoring before migrations run",
   );
-  assert.match(prepare, /^    needs: staging-migration-rehearsal$/m);
+  assert.match(
+    prepare,
+    /^    needs:\n      - classify-release\n      - staging-migration-rehearsal$/m,
+  );
+  assert.match(prepare, /needs\.classify-release\.outputs\.should_release == 'true'/);
   assert.match(prepare, /needs\.staging-migration-rehearsal\.result == 'success'/);
 
   for (const jobName of [
