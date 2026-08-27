@@ -13,10 +13,9 @@ const predicatePrefix = runID.replace(/[^A-Za-z0-9]+/g, "_").toLowerCase();
 let rpcID = 0;
 
 seedOverflowPredicates();
-const receipt = await mcpSuccess("remember", overflowFixture());
-const submissionID = requiredString(receipt.submission_id, "submission_id");
-const terminal = receipt;
-assertTerminalErrors(terminal);
+const terminal = await mcpOperationalResult("remember", overflowFixture());
+const submissionID = requiredString(terminal.submission_id, "submission_id");
+assertOperationalError(terminal);
 
 const removed = await mcpRaw("get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
 if (removed.error?.code !== -32601 || removed.result !== undefined) {
@@ -27,81 +26,52 @@ console.log(JSON.stringify({
   scenario: "submission_terminal_errors",
   tested_commit: requiredEnv("DENSE_MEM_E2E_COMMIT_SHA"),
   submission_id: submissionID,
-  processing_state: terminal.processing_state,
+  error_code: terminal.errors[0].code,
   terminal_errors_nonempty: true,
-  closed_codes: true,
-  synchronous_result: true,
-  missing_owner_bounded: true,
+  structured_content_matches_text: true,
+  operational_is_error: true,
+  removed_status_tool: true,
 }, null, 2));
 
-function assertTerminalErrors(status) {
-  if (!["rejected", "failed", "quarantined"].includes(status.processing_state) || !Array.isArray(status.errors) || status.errors.length === 0) {
-    throw new Error("terminal failure returned an empty errors array");
+function assertOperationalError(result) {
+  const expectedKeys = ["contract_version", "correlation_id", "errors", "submission_id", "submission_kind"];
+  const actualKeys = Object.keys(result).sort();
+  if (stableJSON(actualKeys) !== stableJSON(expectedKeys)) {
+    throw new Error(`operational error fields differed: ${JSON.stringify(actualKeys)}`);
   }
-  const allowedCodes = new Set([
-    "provider_unavailable", "provider_response_invalid", "input_budget_exceeded", "configuration_invalid", "database_failure", "internal_failure",
-    "submission_quarantined", "submission_policy_rejected",
-    "relationship_version_stale", "relationship_not_active", "object_kind_change_forbidden",
-    "support_set_mismatch", "entity_not_found", "too_many_entity_candidates",
-    "predicate_not_found", "predicate_subject_kind_mismatch", "predicate_object_kind_mismatch",
-    "no_change", "confirmation_expired", "relationship_changed", "support_set_changed",
-    "persistent_ambiguity", "inactive_relationship_collision",
-  ]);
-  const allowedMessages = new Set([
-    "the semantic assessor was unavailable",
-    "the semantic assessor returned an invalid response",
-    "the semantic assessor input exceeded the configured budget",
-    "Dense-Mem is missing valid semantic-assessor configuration",
-    "Dense-Mem could not persist the submission",
-    "Dense-Mem could not complete the submission",
-    "submission was quarantined by security policy",
-    "submission was rejected by semantic placement policy",
-    "relationship version is stale",
-    "relationship must be active, supported, and canonical",
-    "a Value object cannot be replaced with an Entity",
-    "supports must exactly match the relationship's effective evidence spans",
-    "corrected Entity is not active and available to the team",
-    "corrected Entity name has too many exact candidates",
-    "predicate is not registered and active for the team",
-    "predicate does not allow the corrected subject kind",
-    "predicate does not allow the corrected object kind",
-    "correction does not change the Relationship",
-    "relationship correction confirmation expired",
-    "relationship changed while confirmation was pending",
-    "relationship supports changed while confirmation was pending",
-    "selected Entity candidate is no longer available",
-    "corrected Relationship collides with inactive or unsupported history",
-  ]);
-  const allowedActions = new Set([
-    "retry_same_request", "resubmit_remember", "retry_correction", "contact_operator", "none",
-  ]);
-  const seen = new Set();
-  for (const item of status.errors) {
-    if (item === null || typeof item !== "object" || Array.isArray(item) ||
-        typeof item.code !== "string" || typeof item.message !== "string" ||
-        typeof item.retryable !== "boolean" || typeof item.next_action !== "string" ||
-        typeof item.remediation !== "string") {
-      throw new Error("terminal error fields were incomplete");
-    }
-    const { code, message, next_action: nextAction, remediation } = item;
-    if (!allowedCodes.has(code) || !allowedMessages.has(message) || !allowedActions.has(nextAction) ||
-        message.length === 0 || message.length > 512 || remediation.length === 0 || remediation.length > 512) {
-      throw new Error("terminal error was not bounded and typed");
-    }
-    if (/[\r\n]|api[_-]?key|password|token|stack|provider|cookie|prompt|embedding|database|cross[- ]?team/i.test(`${message} ${remediation}`)) {
-      throw new Error("terminal error leaked prohibited data");
-    }
-    if (seen.has(`${code}\0${message}`)) throw new Error("terminal errors were not deduplicated");
-    seen.add(`${code}\0${message}`);
+  if (result.contract_version !== "dense-mem.v2.6.1" || result.submission_kind !== "remember") {
+    throw new Error(`operational error identity differed: ${JSON.stringify(result)}`);
+  }
+  requiredString(result.correlation_id, "correlation_id");
+  if (!Array.isArray(result.errors) || result.errors.length !== 1) {
+    throw new Error(`operational error count differed: ${JSON.stringify(result.errors)}`);
+  }
+  const expectedError = {
+    code: "input_budget_exceeded",
+    message: "the semantic assessor input exceeded the configured budget",
+    retryable: false,
+    next_action: "contact_operator",
+    remediation: "Contact an operator with submission_id and correlation_id.",
+  };
+  if (stableJSON(result.errors[0]) !== stableJSON(expectedError)) {
+    throw new Error(`operational error guidance differed: ${JSON.stringify(result.errors[0])}`);
+  }
+  if (/[\r\n]|api[_ -]?key|password|cookie|authorization|bearer|system prompt|stack trace|sqlstate|postgres(?:ql)?/i.test(JSON.stringify(result))) {
+    throw new Error("operational error leaked prohibited data");
   }
 }
 
-async function mcpSuccess(name, args) {
+async function mcpOperationalResult(name, args) {
   const response = await mcpRaw(name, args);
-  if (response.error || response.result === undefined) throw new Error(`MCP ${name} failed with a bounded error`);
+  if (response.error || response.result === undefined) throw new Error(`MCP ${name} returned a protocol error`);
+  if (response.result.isError !== true) throw new Error(`MCP ${name} operational failure omitted isError`);
   const text = response.result?.content?.[0]?.text;
   if (typeof text !== "string") throw new Error(`MCP ${name} returned no JSON content`);
-  return JSON.parse(text);
+  const result = JSON.parse(text);
+  if (stableJSON(result) !== stableJSON(response.result.structuredContent)) {
+    throw new Error(`MCP ${name} text and structured content differed`);
+  }
+  return result;
 }
 
 async function mcpRaw(name, args) {
@@ -171,4 +141,3 @@ function predicateKey(index) { return `${predicatePrefix}_predicate_${index}`; }
 function requiredString(value, field) { if (typeof value !== "string" || !value.trim()) throw new Error(`${field} missing`); return value; }
 function requiredEnv(name) { const value = process.env[name]; if (!value) throw new Error(`${name} is required`); return value; }
 function stableJSON(value) { if (Array.isArray(value)) return `[${value.map(stableJSON).join(",")}]`; if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJSON(value[key])}`).join(",")}}`; return JSON.stringify(value); }
-function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }

@@ -99,8 +99,8 @@ console.log(JSON.stringify({
   status: "ok",
   run_id: runID,
   placement_status: placementStatus,
-  remember_acknowledgements: signals.rememberAcknowledgements,
-  first_dispositions: signals.firstDispositions,
+  remember_calls: signals.rememberCalls,
+  remember_duration_samples: signals.rememberDurationSamples,
   recalls: signals.recalls,
   ai_cost_usd: signals.aiCostUSD,
   telemetry_matrix: telemetryMatrix,
@@ -313,17 +313,17 @@ async function mcpTool(name, args) {
 async function waitForTelemetrySignals() {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const signals = {
-      rememberAcknowledgements: await prometheusValue("densemem_remember_acknowledgements_total"),
-      firstDispositions: await prometheusValue("densemem_remember_first_disposition_total"),
+      rememberCalls: await prometheusValue("densemem_remember_acknowledgements_total"),
+      rememberDurationSamples: await prometheusValue("densemem_remember_acknowledgement_duration_seconds_count"),
       recalls: await prometheusValue("densemem_recall_requests_total"),
       aiCostUSD: await prometheusValue("densemem_ai_operation_cost_usd_total"),
     };
-    if (signals.rememberAcknowledgements > 0 && signals.firstDispositions > 0 && signals.recalls > 0 && signals.aiCostUSD > 0) {
+    if (signals.rememberCalls > 0 && signals.rememberDurationSamples > 0 && signals.recalls > 0 && signals.aiCostUSD > 0) {
       return signals;
     }
     await delay(5_000);
   }
-  throw new Error("timed out waiting for remember, first-disposition, recall, and AI-cost telemetry");
+  throw new Error("timed out waiting for synchronous Remember, recall, and AI-cost telemetry");
 }
 
 async function prometheusValue(metric) {

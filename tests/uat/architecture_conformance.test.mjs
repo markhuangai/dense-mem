@@ -315,3 +315,18 @@ test("keeps the synchronous Remember compose e2e reachable", () => {
   assert.match(runner, /E2E_SCENARIO" == "submission_assessment"/);
   assert.match(runner, /tests\/uat\/submission_assessment_mcp_e2e\.mjs/);
 });
+
+test("keeps graph fixtures optional for unrelated Playwright scenarios", () => {
+  const runner = fs.readFileSync(path.join(root, "scripts/e2e-compose.sh"), "utf8");
+  const variables = [
+    "E2E_GRAPH_ANCHOR_ENTITY_ID",
+    "E2E_GRAPH_ORIGINAL_OBJECT_ENTITY_ID",
+    "E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID",
+    "E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID",
+    "E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID",
+  ];
+
+  for (const variable of variables) {
+    assert.ok(runner.includes(`-e "DENSE_MEM_${variable}=\${${variable}:-}"`), variable);
+  }
+});

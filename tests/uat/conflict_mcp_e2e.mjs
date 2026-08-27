@@ -209,7 +209,7 @@ async function provenanceAndIsolationScenario() {
   assert(Number(afterIndependent.version) > observedVersion, "fresh conflict_context support did not advance the conflict version");
 
   const semanticBeforeStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
-  const stale = await submitRelationshipExpectValidationError(profileC.apiKey, {
+  const stale = await submitRelationshipExpectStaleInput(profileC.apiKey, {
     label: "provenance-stale-c",
     subjectName: fixture.subjectName,
     objectName: fixture.objectAName,
@@ -219,8 +219,11 @@ async function provenanceAndIsolationScenario() {
     authority: "primary",
     conflictContext: { conflict_id: fixture.conflictID, expected_version: observedVersion },
   });
-  const staleIssue = (stale.data?.issues ?? []).find((issue) => issue?.path === "/relationships/0/conflict_context/expected_version");
-  assert(stale.code === -32602 && stale.data?.reason === "validation_failed" && staleIssue?.code === "stale", `stale conflict submission did not fail exact preflight: ${JSON.stringify(stale)}`);
+  const staleError = stale.errors?.[0];
+  assert(staleError?.code === "stale_input" && staleError?.retryable === true &&
+    staleError?.next_action === "resubmit_remember" &&
+    staleError?.message === "an exact client-owned input changed before commit",
+  `stale conflict submission did not return stale_input: ${JSON.stringify(stale)}`);
   const semanticAfterStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
   assert(stableJSON(semanticAfterStale) === stableJSON(semanticBeforeStale), `stale conflict submission changed semantic state: before=${JSON.stringify(semanticBeforeStale)} after=${JSON.stringify(semanticAfterStale)}`);
 
@@ -390,17 +393,29 @@ async function submitRelationship(apiKey, input) {
   return { submissionID, relationshipID, evidenceID, status };
 }
 
-async function submitRelationshipExpectValidationError(apiKey, input) {
+async function submitRelationshipExpectStaleInput(apiKey, input) {
   const evidence = relationshipEvidence(input);
   const idempotencyKey = `${runID}:${input.label}`;
   const response = await mcpRaw(apiKey, "remember", rememberRequest(input, evidence));
-  assert(response.error && response.result === undefined, `stale remember unexpectedly staged: ${JSON.stringify(response)}`);
+  assert(!response.error && response.result?.isError === true, `stale remember did not return MCP isError: ${JSON.stringify(response)}`);
+  const text = response.result?.content?.[0]?.text;
+  assert(typeof text === "string", "stale remember omitted JSON text content");
+  const result = JSON.parse(text);
+  assert(stableJSON(result) === stableJSON(response.result.structuredContent), "stale remember text and structured content differed");
+  const expectedKeys = ["contract_version", "correlation_id", "errors", "submission_id", "submission_kind"];
+  assert(stableJSON(Object.keys(result).sort()) === stableJSON(expectedKeys), `stale remember fields differed: ${JSON.stringify(Object.keys(result).sort())}`);
   const staged = Number(postgresQuery(`
     SELECT count(*) FROM knowledge_ingests
     WHERE idempotency_key = ${sqlLiteral(idempotencyKey)}
   `));
   assert(staged === 0, `stale remember created ${staged} ingest rows`);
-  return response.error;
+  const attempt = postgresQuery(`
+    SELECT outcome || '|' || error_code
+    FROM remember_attempts
+    WHERE idempotency_key = ${sqlLiteral(idempotencyKey)}
+  `);
+  assert(attempt === "failed|stale_input", `stale remember attempt = ${attempt || "missing"}`);
+  return result;
 }
 
 function rememberRequest(input, evidence) {

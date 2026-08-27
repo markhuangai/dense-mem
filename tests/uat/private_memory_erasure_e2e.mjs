@@ -608,7 +608,12 @@ async function mcpRaw(apiKey, method, params) {
 function assertErasedSpace(spaceID, operation, fixture, lifecycle) {
   const catalog = privateMemoryManifestTables();
   const counted = Object.keys(operation.deleted_counts ?? {}).filter((table) => table !== "audit_log" && table !== "v2_migration_corpus_items" && table !== "relationship_cross_references_inbound").sort();
-  assert(JSON.stringify(counted) === JSON.stringify(catalog), "erasure deleted-count manifest did not match the live space catalog");
+  const missingTables = catalog.filter((table) => !counted.includes(table));
+  const unexpectedTables = counted.filter((table) => !catalog.includes(table));
+  assert(
+    missingTables.length === 0 && unexpectedTables.length === 0,
+    `erasure deleted-count manifest did not match the live space catalog: missing=${JSON.stringify(missingTables)} unexpected=${JSON.stringify(unexpectedTables)}`,
+  );
   postgresExec(`
     DO $private_erasure_zero$
     DECLARE
@@ -885,6 +890,19 @@ function privateMemoryManifestTables() {
       WHERE columns.table_schema = 'public' AND columns.column_name = 'space_id'
         AND tables.table_type = 'BASE TABLE'
         AND columns.table_name NOT IN ('private_memory_erasure_operations', 'private_memory_legal_holds')
+
+      UNION
+
+      SELECT child.relname
+      FROM pg_constraint AS constraint_row
+      JOIN pg_class AS child ON child.oid = constraint_row.conrelid
+      JOIN pg_namespace AS child_namespace ON child_namespace.oid = child.relnamespace
+      JOIN pg_class AS parent ON parent.oid = constraint_row.confrelid
+      JOIN pg_namespace AS parent_namespace ON parent_namespace.oid = parent.relnamespace
+      WHERE constraint_row.contype = 'f'
+        AND child_namespace.nspname = 'public'
+        AND parent_namespace.nspname = 'public'
+        AND parent.relname = 'remember_attempts'
     ) AS catalog
   `);
   manifestTables = value ? value.split(",") : [];

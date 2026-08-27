@@ -269,11 +269,9 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	if failure == nil {
 		failure = errors.New("remember execution failed")
 	}
+	failure = normalizeRememberFailure(failure)
 	if errors.Is(failure, rememberapp.ErrRememberConflict) || errors.Is(failure, repository.ErrIdempotencyConflict) {
 		return nil, failure
-	}
-	if errors.Is(failure, repository.ErrSourceRevisionConflict) || errors.Is(failure, rememberapp.ErrSourceRevisionConflict) {
-		failure = fmt.Errorf("%w: %v", rememberapp.ErrRememberStaleInput, failure)
 	}
 	code := rememberFailureCode(phase, failure)
 	publicError := rememberapp.StatusError(code)
@@ -326,6 +324,16 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	}
 	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
 	return nil, &rememberapp.RememberProcessError{Status: status, Err: failure}
+}
+
+func normalizeRememberFailure(failure error) error {
+	if failure == nil || errors.Is(failure, rememberapp.ErrRememberStaleInput) {
+		return failure
+	}
+	if errors.Is(failure, rememberapp.ErrSourceRevisionConflict) || memoryservice.IsRememberStaleInputError(failure) {
+		return fmt.Errorf("%w: %v", rememberapp.ErrRememberStaleInput, failure)
+	}
+	return failure
 }
 
 func rememberFailurePersistenceError(failure error) error {

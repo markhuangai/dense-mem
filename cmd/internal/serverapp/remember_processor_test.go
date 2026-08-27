@@ -216,6 +216,27 @@ func TestRememberFailureCodeDistinguishesEmbeddingBoundaries(t *testing.T) {
 	}
 }
 
+func TestRememberFailureNormalizationMapsCallerOwnedFences(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "conflict context", err: repository.ErrConflictContextStale},
+		{name: "correction target", err: repository.ErrCorrectionTargetStale},
+		{name: "exact reference", err: repository.ErrRememberExactReferenceStale},
+		{name: "semantic source", err: repository.ErrSemanticStaleSource},
+		{name: "evidence lifecycle", err: repository.ErrEvidenceLifecycleConflict},
+		{name: "repository source revision", err: repository.ErrSourceRevisionConflict},
+		{name: "service source revision", err: rememberapp.ErrSourceRevisionConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			normalized := normalizeRememberFailure(test.err)
+			require.ErrorIs(t, normalized, rememberapp.ErrRememberStaleInput)
+			require.Equal(t, rememberapp.SubmissionErrorStaleInput, rememberFailureCode("commit", normalized))
+		})
+	}
+}
+
 func TestRememberFailureRecordLogDoesNotExposeDatabaseError(t *testing.T) {
 	logger := &rememberProcessorLoggerStub{}
 	processor := &rememberSynchronousProcessor{logger: logger}
