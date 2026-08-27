@@ -12,6 +12,25 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestSearchConvergenceHealthChecksPersistedDocumentState(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-convergence-health")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-convergence-health-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-convergence-health", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+
+	require.NoError(t, repo.CheckSearchConvergence(ctx))
+	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "health convergence document", 1)
+	require.ErrorIs(t, repo.CheckSearchConvergence(ctx), ErrSearchConvergenceAttentionRequired)
+
+	completeSearchDocumentsForTest(t, repo, teamID, map[string][]float32{
+		document.SearchDocumentID: {1, 0},
+	})
+	require.NoError(t, repo.CheckSearchConvergence(ctx))
+}
+
 func TestSearchReconciliationSelectionAndHashFence(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
