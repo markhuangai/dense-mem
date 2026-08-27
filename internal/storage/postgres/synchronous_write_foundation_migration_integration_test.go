@@ -161,7 +161,7 @@ func TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage(t *testi
 	}))
 
 	canonicalAttemptID, replayAttemptID := uuid.New(), uuid.New()
-	insertAttempt := func(attemptID uuid.UUID, ownerID, key, outcome string, canonicalID *uuid.UUID) error {
+	insertAttempt := func(attemptID uuid.UUID, ownerID, key, requestHash, submissionKind, outcome string, canonicalID *uuid.UUID) error {
 		var canonicalValue any
 		if canonicalID != nil {
 			canonicalValue = canonicalID.String()
@@ -170,15 +170,15 @@ func TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage(t *testi
 			_, err := tx.ExecContext(ctx, `
 				INSERT INTO remember_attempts (
 					team_id, attempt_id, owner_profile_id, idempotency_key,
-					request_hash, contract_version, outcome, canonical_attempt_id
+					request_hash, contract_version, submission_kind, outcome, canonical_attempt_id
 				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5,
-				          'dense-mem.v2.6', $6, $7::uuid)
-			`, teamID, attemptID.String(), ownerID, key, key+"-request", outcome, canonicalValue)
+				          'dense-mem.v2.6', $6, $7, $8::uuid)
+			`, teamID, attemptID.String(), ownerID, key, requestHash, submissionKind, outcome, canonicalValue)
 			return err
 		})
 	}
-	require.NoError(t, insertAttempt(canonicalAttemptID, profileA, "canonical-lineage", "completed", nil))
-	require.NoError(t, insertAttempt(replayAttemptID, profileA, "replay-lineage", "replayed", &canonicalAttemptID))
+	require.NoError(t, insertAttempt(canonicalAttemptID, profileA, "canonical-lineage", "canonical-lineage-request", "remember", "completed", nil))
+	require.NoError(t, insertAttempt(replayAttemptID, profileA, "canonical-lineage", "canonical-lineage-request", "remember", "replayed", &canonicalAttemptID))
 
 	var linkedCanonicalID string
 	require.NoError(t, db.QueryRowContext(ctx, `
@@ -187,14 +187,19 @@ func TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage(t *testi
 	`, teamID, replayAttemptID.String()).Scan(&linkedCanonicalID))
 	require.Equal(t, canonicalAttemptID.String(), linkedCanonicalID)
 
-	require.Error(t, insertAttempt(uuid.New(), profileA, "replay-missing", "replayed", nil))
+	require.Error(t, insertAttempt(uuid.New(), profileA, "replay-missing", "replay-missing-request", "remember", "replayed", nil))
 	nonexistentCanonicalID := uuid.New()
-	require.Error(t, insertAttempt(uuid.New(), profileA, "replay-unknown", "replayed", &nonexistentCanonicalID))
-	require.Error(t, insertAttempt(uuid.New(), profileB, "replay-owner-mismatch", "replayed", &canonicalAttemptID))
-	require.Error(t, insertAttempt(uuid.New(), profileA, "completed-with-link", "completed", &canonicalAttemptID))
+	require.Error(t, insertAttempt(uuid.New(), profileA, "replay-unknown", "replay-unknown-request", "remember", "replayed", &nonexistentCanonicalID))
+	require.Error(t, insertAttempt(uuid.New(), profileB, "canonical-lineage", "canonical-lineage-request", "remember", "replayed", &canonicalAttemptID))
+	require.Error(t, insertAttempt(uuid.New(), profileA, "replay-lineage", "replay-lineage-request", "remember", "replayed", &canonicalAttemptID))
+	require.Error(t, insertAttempt(uuid.New(), profileA, "canonical-lineage", "different-request", "remember", "replayed", &canonicalAttemptID))
+	require.Error(t, insertAttempt(uuid.New(), profileA, "canonical-lineage", "canonical-lineage-request", "relationship_correction", "replayed", &canonicalAttemptID))
+	failedCanonicalID := uuid.New()
+	require.NoError(t, insertAttempt(failedCanonicalID, profileA, "failed-canonical", "failed-canonical-request", "remember", "failed", nil))
+	require.Error(t, insertAttempt(uuid.New(), profileA, "failed-canonical", "failed-canonical-request", "remember", "replayed", &failedCanonicalID))
 
 	assessmentAttemptID := uuid.New()
-	require.NoError(t, insertAttempt(assessmentAttemptID, profileA, "assessment-lineage", "failed", nil))
+	require.NoError(t, insertAttempt(assessmentAttemptID, profileA, "assessment-lineage", "assessment-lineage-request", "remember", "failed", nil))
 	insertAssessment := func(assessmentID uuid.UUID, history string, acceptedRevision string, validatedAt string) error {
 		return execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, `
@@ -266,6 +271,15 @@ func TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam(t *testing
 	}
 	_, err = db.ExecContext(ctx, "GRANT SELECT ON ownership_aliases TO "+quotedRole)
 	require.NoError(t, err)
+	spaceA, spaceB := uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO memory_spaces (id, team_id, kind, owner_credential_id)
+			VALUES ($1::uuid, $3::uuid, 'credential_private', $4::uuid),
+			       ($2::uuid, $3::uuid, 'credential_private', $5::uuid)
+		`, spaceA, spaceB, teamID, uuid.NewString(), uuid.NewString())
+		return err
+	}))
 
 	attemptA, attemptA2, eventA, artifactA, assessmentA := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	// The artifact hash constraint only needs a bounded shape for this RLS test;
@@ -443,7 +457,7 @@ func TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam(t *testing
 		return nil
 	})
 
-	expectProfileInsertDenied := func(currentTeamID, currentProfileID, statement string, args ...any) {
+	expectProfileInsertDeniedFor := func(currentTeamID, currentProfileID, allowedSpaceIDs, statement string, args ...any) {
 		t.Helper()
 		tx, beginErr := db.BeginTx(ctx, nil)
 		require.NoError(t, beginErr)
@@ -459,6 +473,9 @@ func TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam(t *testing
 					return err
 				}
 			}
+			if _, err := tx.ExecContext(ctx, `SELECT set_config('app.allowed_space_ids', $1, true)`, allowedSpaceIDs); err != nil {
+				return err
+			}
 			_, err := tx.ExecContext(ctx, statement, args...)
 			if err == nil {
 				return fmt.Errorf("profile %s inserted a row outside its owner scope", currentProfileID)
@@ -470,6 +487,31 @@ func TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam(t *testing
 			return nil
 		}())
 	}
+	expectProfileInsertDenied := func(currentTeamID, currentProfileID, statement string, args ...any) {
+		expectProfileInsertDeniedFor(currentTeamID, currentProfileID, "", statement, args...)
+	}
+
+	spaceAttemptID := uuid.NewString()
+	withProfile(teamID, profileA, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.allowed_space_ids', $1, true)`, spaceA); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_attempts (
+				team_id, attempt_id, owner_profile_id, space_id, space_generation,
+				idempotency_key, request_hash, contract_version, outcome
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 1,
+			          'rls-space-allowed', 'rls-space-allowed-request', 'dense-mem.v2.6', 'failed')
+		`, teamID, spaceAttemptID, profileA, spaceA)
+		return err
+	})
+	expectProfileInsertDeniedFor(teamID, profileA, spaceA, `
+		INSERT INTO remember_attempts (
+			team_id, attempt_id, owner_profile_id, space_id, space_generation,
+			idempotency_key, request_hash, contract_version, outcome
+		) VALUES ($1::uuid, gen_random_uuid(), $2::uuid, $3::uuid, 1,
+		          'rls-space-forbidden', 'rls-space-forbidden-request', 'dense-mem.v2.6', 'failed')
+	`, teamID, profileA, spaceB)
 
 	expectProfileInsertDenied(teamID, profileB, `
 		INSERT INTO remember_attempts (

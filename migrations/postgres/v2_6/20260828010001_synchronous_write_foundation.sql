@@ -132,6 +132,44 @@ CREATE INDEX IF NOT EXISTS remember_attempts_owner_created_idx
 CREATE INDEX IF NOT EXISTS remember_attempts_expiry_idx
     ON remember_attempts(expires_at) WHERE expires_at IS NOT NULL;
 
+CREATE OR REPLACE FUNCTION validate_synchronous_write_replay()
+RETURNS TRIGGER AS $$
+DECLARE
+    canonical_attempt remember_attempts%ROWTYPE;
+BEGIN
+    IF NEW.outcome <> 'replayed' THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT * INTO canonical_attempt
+    FROM remember_attempts
+    WHERE team_id = NEW.team_id
+      AND attempt_id = NEW.canonical_attempt_id
+      AND owner_profile_id = NEW.owner_profile_id;
+    IF NOT FOUND OR canonical_attempt.outcome NOT IN ('completed', 'rejected', 'quarantined')
+       OR canonical_attempt.idempotency_key IS DISTINCT FROM NEW.idempotency_key
+       OR canonical_attempt.request_hash IS DISTINCT FROM NEW.request_hash
+       OR canonical_attempt.submission_kind IS DISTINCT FROM NEW.submission_kind THEN
+        RAISE EXCEPTION 'replayed attempt must reference a matching canonical terminal attempt';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $dense_mem_synchronous_write_replay_trigger$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'remember_attempts'::regclass
+          AND tgname = 'remember_attempts_replay_integrity'
+    ) THEN
+        CREATE TRIGGER remember_attempts_replay_integrity
+            BEFORE INSERT OR UPDATE ON remember_attempts
+            FOR EACH ROW EXECUTE FUNCTION validate_synchronous_write_replay();
+    END IF;
+END;
+$dense_mem_synchronous_write_replay_trigger$;
+
 CREATE TABLE IF NOT EXISTS remember_attempt_events (
     team_id UUID NOT NULL,
     event_id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -280,16 +318,30 @@ BEGIN
             WHERE schemaname = 'public' AND tablename = table_name
               AND policyname = table_name || '_insert'
         ) THEN
-            EXECUTE format($policy$
-                CREATE POLICY %I ON %I FOR INSERT WITH CHECK (
-                    current_setting('app.tx_mode', true) IN ('system', 'migration')
-                    OR (
-                        current_setting('app.tx_mode', true) = 'profile'
-                        AND team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
-                        AND owner_profile_id = NULLIF(current_setting('app.current_profile_id', true), '')::uuid
+            IF table_name = 'remember_attempts' THEN
+                EXECUTE format($policy$
+                    CREATE POLICY %I ON %I FOR INSERT WITH CHECK (
+                        current_setting('app.tx_mode', true) IN ('system', 'migration')
+                        OR (
+                            current_setting('app.tx_mode', true) = 'profile'
+                            AND team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+                            AND owner_profile_id = NULLIF(current_setting('app.current_profile_id', true), '')::uuid
+                            AND (space_id IS NULL OR dense_mem_space_allowed(space_id))
+                        )
                     )
-                )
-            $policy$, table_name || '_insert', table_name);
+                $policy$, table_name || '_insert', table_name);
+            ELSE
+                EXECUTE format($policy$
+                    CREATE POLICY %I ON %I FOR INSERT WITH CHECK (
+                        current_setting('app.tx_mode', true) IN ('system', 'migration')
+                        OR (
+                            current_setting('app.tx_mode', true) = 'profile'
+                            AND team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+                            AND owner_profile_id = NULLIF(current_setting('app.current_profile_id', true), '')::uuid
+                        )
+                    )
+                $policy$, table_name || '_insert', table_name);
+            END IF;
         END IF;
         IF NOT EXISTS (
             SELECT 1 FROM pg_policies
@@ -404,6 +456,7 @@ BEGIN
     END IF;
 
     DROP TRIGGER IF EXISTS remember_attempts_append_only ON remember_attempts;
+    DROP TRIGGER IF EXISTS remember_attempts_replay_integrity ON remember_attempts;
     DROP TRIGGER IF EXISTS remember_attempt_events_append_only ON remember_attempt_events;
     DROP TRIGGER IF EXISTS remember_failure_artifacts_append_only ON remember_failure_artifacts;
     DROP TRIGGER IF EXISTS semantic_assessments_append_only ON semantic_assessments;
@@ -411,6 +464,7 @@ BEGIN
     DROP TABLE IF EXISTS remember_failure_artifacts;
     DROP TABLE IF EXISTS remember_attempt_events;
     DROP TABLE IF EXISTS remember_attempts;
+    DROP FUNCTION IF EXISTS validate_synchronous_write_replay();
     DROP FUNCTION IF EXISTS prevent_synchronous_write_append_only_mutation();
 
     ALTER TABLE embedding_reconciliation_runs
