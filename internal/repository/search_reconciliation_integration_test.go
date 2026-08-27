@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestSearchConvergenceHealthChecksPersistedDocumentState(t *testing.T) {
+func TestSearchConvergenceHealthChecksCanonicalDocumentState(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -20,15 +20,47 @@ func TestSearchConvergenceHealthChecksPersistedDocumentState(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-convergence-health-owner")
 	insertSearchTestContract(t, adminDB, rls, "search-convergence-health", 2, "exact", "")
 	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	ingest, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-convergence-health",
+		RequestHash: sha256Hex("health convergence document"), Evidence: []EvidenceInput{{Content: "health convergence document"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, ingest.Evidence, 1)
 
-	require.NoError(t, repo.CheckSearchConvergence(ctx))
-	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "health convergence document", 1)
 	require.ErrorIs(t, repo.CheckSearchConvergence(ctx), ErrSearchConvergenceAttentionRequired)
-
+	document, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence",
+		SourceID: ingest.Evidence[0].FragmentID, SourceVersion: 1, DocumentText: "health convergence document",
+	})
+	require.NoError(t, err)
 	completeSearchDocumentsForTest(t, repo, teamID, map[string][]float32{
 		document.SearchDocumentID: {1, 0},
 	})
 	require.NoError(t, repo.CheckSearchConvergence(ctx))
+
+	document, err = repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence",
+		SourceID: ingest.Evidence[0].FragmentID, SourceVersion: 1, DocumentText: "stale health convergence document",
+	})
+	require.NoError(t, err)
+	completeSearchDocumentsForTest(t, repo, teamID, map[string][]float32{
+		document.SearchDocumentID: {0, 1},
+	})
+	require.ErrorIs(t, repo.CheckSearchConvergence(ctx), ErrSearchConvergenceAttentionRequired)
+
+	document, err = repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence",
+		SourceID: ingest.Evidence[0].FragmentID, SourceVersion: 1, DocumentText: "health convergence document",
+	})
+	require.NoError(t, err)
+	completeSearchDocumentsForTest(t, repo, teamID, map[string][]float32{
+		document.SearchDocumentID: {1, 0},
+	})
+	require.NoError(t, repo.CheckSearchConvergence(ctx))
+
+	insertSearchTestContract(t, adminDB, rls, "search-convergence-health-rotation", 2, "exact", "")
+	require.ErrorIs(t, repo.CheckSearchConvergence(ctx), ErrSearchConvergenceAttentionRequired)
 }
 
 func TestSearchReconciliationSelectionAndHashFence(t *testing.T) {
@@ -438,4 +470,34 @@ func TestSearchConvergenceProjectsRelationshipsSetwise(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 2, convergence.ExpectedDocuments)
 	require.EqualValues(t, 2, convergence.DriftedDocuments)
+	require.ErrorIs(t, repo.CheckSearchConvergence(ctx), ErrSearchConvergenceAttentionRequired)
+
+	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 2,
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 2)
+	embeddings := make([]SearchDocumentEmbedding, 0, len(selected))
+	for index, document := range selected {
+		vector := []float32{1, 0}
+		if index == 1 {
+			vector = []float32{0, 1}
+		}
+		embeddings = append(embeddings, SearchDocumentEmbedding{
+			TeamID: document.TeamID, SearchDocumentID: document.SearchDocumentID,
+			OwnerProfileID: document.OwnerProfileID, SourceKind: document.SourceKind, SourceID: document.SourceID,
+			DocumentText: document.DocumentText, DocumentHash: document.DocumentHash,
+			StoredDocumentHash: document.StoredDocumentHash, SourceVersion: document.SourceVersion,
+			ProjectionFormat: document.ProjectionFormat, ProjectionGenerationID: document.ProjectionGenerationID,
+			DocumentVersion: document.DocumentVersion, EmbeddingContractID: document.EmbeddingContractID,
+			EmbeddingDimensions: document.EmbeddingDimensions, Embedding: vector,
+			SpaceID: document.SpaceID, SpaceGeneration: document.SpaceGeneration,
+		})
+	}
+	apply, err := repo.CompleteSearchReconciliationDocuments(ctx, ApplySearchReconciliationInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Documents: embeddings,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, apply.UpdatedCount)
+	require.NoError(t, repo.CheckSearchConvergence(ctx))
 }
