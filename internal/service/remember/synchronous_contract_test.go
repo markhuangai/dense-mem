@@ -81,7 +81,7 @@ func validTerminalResultForTest() *TerminalRememberResult {
 		CorrelationID: "correlation", Kind: ResultKindTerminal,
 		Evidence: []TerminalEvidenceResult{
 			{Disposition: "stored", EvidenceID: "11111111-1111-1111-1111-111111111111", EvidenceIndex: 0, SearchState: string(TerminalSearchCurrent)},
-			{Disposition: "not_stored", EvidenceIndex: 1, SearchState: string(TerminalSearchNotRequired)},
+			{Disposition: "not_stored", EvidenceIndex: 1, SearchState: string(TerminalSearchNotRequired), Reason: "not_supported_by_evidence"},
 		},
 		RelationshipResults: []SubmissionRelationshipResult{
 			{RelationshipRef: "rel-a", Disposition: "stored", Splits: []SubmissionRelationshipSplit{{
@@ -146,7 +146,15 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"evidence disposition", func(result *TerminalRememberResult) { result.Evidence[0].Disposition = "unknown" }},
 		{"stored evidence id", func(result *TerminalRememberResult) { result.Evidence[0].EvidenceID = "" }},
 		{"stored evidence uuid", func(result *TerminalRememberResult) { result.Evidence[0].EvidenceID = "not-a-uuid" }},
+		{"stored evidence reason", func(result *TerminalRememberResult) { result.Evidence[0].Reason = "provider_secret_detail" }},
 		{"non-stored evidence id", func(result *TerminalRememberResult) { result.Evidence[1].EvidenceID = "unexpected" }},
+		{"non-stored evidence reason", func(result *TerminalRememberResult) { result.Evidence[1].Reason = "provider_secret_detail" }},
+		{"superseded evidence uuid", func(result *TerminalRememberResult) {
+			result.Evidence[0].SupersededEvidenceIDs = []string{"not-a-uuid"}
+		}},
+		{"superseded evidence duplicate", func(result *TerminalRememberResult) {
+			result.Evidence[0].SupersededEvidenceIDs = []string{"22222222-2222-2222-2222-222222222222", "22222222-2222-2222-2222-222222222222"}
+		}},
 		{"evidence search state", func(result *TerminalRememberResult) { result.Evidence[0].SearchState = "queued" }},
 		{"relationship count", func(result *TerminalRememberResult) { result.RelationshipResults = result.RelationshipResults[:1] }},
 		{"relationship order", func(result *TerminalRememberResult) { result.RelationshipResults[1].RelationshipRef = "rel-c" }},
@@ -157,6 +165,15 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		}},
 		{"non-stored relationship reason", func(result *TerminalRememberResult) {
 			result.RelationshipResults[1].Reason = "provider_secret_detail"
+		}},
+		{"terminal error state", func(result *TerminalRememberResult) {
+			result.ProcessingState = string(TerminalProcessingRejected)
+			result.Evidence[0].Disposition = "not_stored"
+			result.Evidence[0].EvidenceID = ""
+			result.RelationshipResults[0].Disposition = "not_stored"
+			result.RelationshipResults[0].Splits = nil
+			result.RelationshipResults[0].Reason = "not_supported_by_evidence"
+			result.Errors = []SubmissionStatusError{TerminalStatusError(TerminalErrorProviderUnavailable)}
 		}},
 	}
 	for _, test := range tests {
@@ -178,6 +195,7 @@ func TestValidateTerminalRememberResultAcceptsClosedNotStoredRelationshipReasons
 		"not_supported_by_evidence", "stale_input", "security_quarantine", "internal_failure",
 	} {
 		result := validTerminalResultForTest()
+		result.Evidence[1].Reason = reason
 		result.RelationshipResults[1].Reason = reason
 		require.NoError(t, ValidateTerminalRememberResult(result, 2, []string{"rel-a", "rel-b"}), reason)
 	}

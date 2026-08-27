@@ -160,7 +160,10 @@ func validatePlan(plan Plan) error {
 		strings.TrimSpace(plan.Fence.Model) != plan.Fence.Model ||
 		plan.Fence.Dimensions <= 0 ||
 		strings.TrimSpace(plan.Fence.EmbeddingContractID) == "" ||
-		strings.TrimSpace(plan.Fence.SearchGenerationID) == "" || plan.Fence.SearchGenerationVersion < 1 {
+		strings.TrimSpace(plan.Fence.EmbeddingContractID) != plan.Fence.EmbeddingContractID ||
+		strings.TrimSpace(plan.Fence.SearchGenerationID) == "" ||
+		strings.TrimSpace(plan.Fence.SearchGenerationID) != plan.Fence.SearchGenerationID ||
+		plan.Fence.SearchGenerationVersion < 1 {
 		return fmt.Errorf("%w: complete active search fence is required", ErrInvalidPlan)
 	}
 	seen := make(map[string]struct{}, len(plan.Documents))

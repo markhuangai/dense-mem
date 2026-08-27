@@ -97,6 +97,8 @@ func TestExecutorRejectsMalformedPlansBeforeProvider(t *testing.T) {
 		{"duplicate hash", func() Plan { plan := validPlan(); plan.Documents[1].Hash = plan.Documents[0].Hash; return plan }()},
 		{"non-canonical hash", func() Plan { plan := validPlan(); plan.Documents[0].Hash = " hash-a "; return plan }()},
 		{"non-canonical model", func() Plan { plan := validPlan(); plan.Fence.Model = " model "; return plan }()},
+		{"non-canonical embedding contract", func() Plan { plan := validPlan(); plan.Fence.EmbeddingContractID = " contract "; return plan }()},
+		{"non-canonical search generation", func() Plan { plan := validPlan(); plan.Fence.SearchGenerationID = " generation "; return plan }()},
 		{"blank text", func() Plan { plan := validPlan(); plan.Documents[0].Text = " "; return plan }()},
 		{"zero timeout", func() Plan { plan := validPlan(); plan.Timeout = 0; return plan }()},
 	}

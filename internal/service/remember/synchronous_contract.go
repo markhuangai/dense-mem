@@ -363,10 +363,26 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 			if _, err := uuid.Parse(item.EvidenceID); err != nil {
 				return fmt.Errorf("remember: stored evidence %d has invalid evidence_id", index)
 			}
+			if strings.TrimSpace(item.Reason) != "" {
+				return fmt.Errorf("remember: stored evidence %d has a reason", index)
+			}
 			storedResult = true
 		}
 		if item.Disposition == "not_stored" && item.EvidenceID != "" {
 			return fmt.Errorf("remember: non-stored evidence %d has an evidence_id", index)
+		}
+		if item.Disposition == "not_stored" && !terminalNotStoredReasonAllowed(item.Reason) {
+			return fmt.Errorf("remember: non-stored evidence %d has unsupported reason", index)
+		}
+		seenSuperseded := make(map[string]struct{}, len(item.SupersededEvidenceIDs))
+		for _, supersededID := range item.SupersededEvidenceIDs {
+			if _, err := uuid.Parse(supersededID); err != nil {
+				return fmt.Errorf("remember: terminal evidence %d has invalid superseded evidence_id", index)
+			}
+			if _, ok := seenSuperseded[supersededID]; ok {
+				return fmt.Errorf("remember: terminal evidence %d has duplicated superseded evidence_id", index)
+			}
+			seenSuperseded[supersededID] = struct{}{}
 		}
 		if item.SearchState != string(TerminalSearchCurrent) && item.SearchState != string(TerminalSearchNotRequired) {
 			return fmt.Errorf("remember: terminal evidence %d has invalid search state %q", index, item.SearchState)
@@ -375,6 +391,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	for index, item := range result.Errors {
 		if err := ValidateTerminalStatusError(item); err != nil {
 			return fmt.Errorf("remember: terminal error %d: %w", index, err)
+		}
+		if result.ProcessingState != string(terminalProcessingStateForError(TerminalErrorCode(item.Code))) {
+			return fmt.Errorf("remember: terminal error %d is inconsistent with processing state", index)
 		}
 	}
 	if len(result.RelationshipResults) != len(relationshipRefs) {
@@ -395,7 +414,7 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		if item.Disposition == "not_stored" && len(item.Splits) > 0 {
 			return fmt.Errorf("remember: non-stored relationship %q has splits", item.RelationshipRef)
 		}
-		if item.Disposition == "not_stored" && !terminalRelationshipNotStoredReasonAllowed(item.Reason) {
+		if item.Disposition == "not_stored" && !terminalNotStoredReasonAllowed(item.Reason) {
 			return fmt.Errorf("remember: non-stored relationship %q has unsupported reason", item.RelationshipRef)
 		}
 		if item.Disposition == "stored" {
@@ -438,7 +457,7 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	return nil
 }
 
-func terminalRelationshipNotStoredReasonAllowed(reason string) bool {
+func terminalNotStoredReasonAllowed(reason string) bool {
 	switch strings.TrimSpace(reason) {
 	case "not_supported_by_evidence", "stale_input", "security_quarantine", "internal_failure":
 		return true
