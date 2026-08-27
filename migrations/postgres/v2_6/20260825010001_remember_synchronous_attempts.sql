@@ -439,7 +439,12 @@ SELECT normalized.team_id, normalized.ingest_id, normalized.owner_profile_id,
        COALESCE(NULLIF(normalized.idempotency_key, ''), 'legacy:' || normalized.ingest_id::text),
        COALESCE(NULLIF(normalized.request_hash, ''), 'legacy:' || normalized.ingest_id::text),
        'dense-mem.v2.6', 'remember', normalized.outcome,
-       CASE WHEN normalized.outcome = 'failed' THEN 'internal_failure' ELSE '' END,
+       CASE normalized.outcome
+           WHEN 'failed' THEN 'internal_failure'
+           WHEN 'rejected' THEN 'no_supported_memory'
+           WHEN 'quarantined' THEN 'submission_quarantined'
+           ELSE ''
+       END,
        normalized.correlation_id,
        jsonb_build_object(
            'contract_version', 'dense-mem.v2.6.1',
@@ -450,10 +455,23 @@ SELECT normalized.team_id, normalized.ingest_id, normalized.owner_profile_id,
            'correlation_id', normalized.correlation_id,
            'evidence', COALESCE(evidence_replay.evidence, '[]'::JSONB),
            'relationship_results', COALESCE(relationship_replay.relationship_results, '[]'::JSONB),
-           'errors', CASE WHEN normalized.outcome = 'failed' THEN jsonb_build_array(jsonb_build_object(
-               'code', 'internal_failure', 'message', 'legacy Remember result was migrated during the v2.6.1 cutover',
-               'retryable', true, 'next_action', 'retry_same_request', 'remediation', 'Retry the complete request with the same idempotency key.'
-           )) ELSE '[]'::jsonb END
+           'errors', CASE normalized.outcome
+               WHEN 'failed' THEN jsonb_build_array(jsonb_build_object(
+                   'code', 'internal_failure', 'message', 'legacy Remember result was migrated during the v2.6.1 cutover',
+                   'retryable', true, 'next_action', 'retry_same_request', 'remediation', 'Retry the complete request with the same idempotency key.'
+               ))
+               WHEN 'rejected' THEN jsonb_build_array(jsonb_build_object(
+                   'code', 'no_supported_memory', 'message', 'no supported memory could be stored from this submission',
+                   'retryable', true, 'next_action', 'resubmit_remember',
+                   'remediation', 'Submit the complete batch again with remember and a new idempotency_key after correcting the input.'
+               ))
+               WHEN 'quarantined' THEN jsonb_build_array(jsonb_build_object(
+                   'code', 'submission_quarantined', 'message', 'submission was quarantined by security policy',
+                   'retryable', true, 'next_action', 'resubmit_remember',
+                   'remediation', 'Use a new idempotency_key for any later Remember submission.'
+               ))
+               ELSE '[]'::jsonb
+           END
        ),
        normalized.ingest_id, normalized.evidence_count, normalized.relationship_count,
        normalized.created_at, COALESCE(normalized.completed_at, now())

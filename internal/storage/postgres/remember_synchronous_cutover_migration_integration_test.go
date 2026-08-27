@@ -112,6 +112,7 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	ingestID, runID, itemID, fragmentID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	relationshipID := uuid.New()
 	expiredIngestID, expiredRunID := uuid.New(), uuid.New()
+	rejectedIngestID := uuid.New()
 	assessmentID, revisionID, outcomeID := uuid.New(), uuid.New(), uuid.New()
 	claimKey := uuid.New()
 	responseHash := "sha256:legacy-assessment"
@@ -119,7 +120,7 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO knowledge_ingests (
+				INSERT INTO knowledge_ingests (
 				team_id, ingest_id, owner_profile_id, idempotency_key,
 				request_hash, status, proposal, metadata, completed_at
 			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'cutover-history',
@@ -246,7 +247,17 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 			          'cutover-expired-request', 'quarantined', '{}'::jsonb,
 			          '{"_dense_mem_telemetry_origin":"remember"}'::jsonb,
 			          now() - interval '8 days')
-		`, teamID, expiredIngestID, profileID); err != nil {
+			`, teamID, expiredIngestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+				INSERT INTO knowledge_ingests (
+					team_id, ingest_id, owner_profile_id, idempotency_key,
+					request_hash, status, proposal, metadata, completed_at
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, 'cutover-rejected',
+				          'cutover-rejected-request', 'rejected', '{}'::jsonb,
+				          '{"_dense_mem_telemetry_origin":"remember"}'::jsonb, now())
+			`, teamID, rejectedIngestID, profileID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -349,6 +360,43 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	`, teamID, expiredIngestID).Scan(&expiredPayloadEvents))
 	require.Zero(t, expiredArtifacts)
 	require.Equal(t, 1, expiredPayloadEvents)
+
+	for _, test := range []struct {
+		attemptID, outcome, errorCode, message, remediation string
+	}{
+		{
+			attemptID: expiredIngestID.String(), outcome: "quarantined", errorCode: "submission_quarantined",
+			message:     "submission was quarantined by security policy",
+			remediation: "Use a new idempotency_key for any later Remember submission.",
+		},
+		{
+			attemptID: rejectedIngestID.String(), outcome: "rejected", errorCode: "no_supported_memory",
+			message:     "no supported memory could be stored from this submission",
+			remediation: "Submit the complete batch again with remember and a new idempotency_key after correcting the input.",
+		},
+	} {
+		var outcome, errorCode, publicCode, message, nextAction, remediation string
+		var retryable bool
+		require.NoError(t, db.QueryRowContext(ctx, `
+			SELECT outcome, error_code,
+			       public_result #>> '{errors,0,code}',
+			       public_result #>> '{errors,0,message}',
+			       (public_result #>> '{errors,0,retryable}')::boolean,
+			       public_result #>> '{errors,0,next_action}',
+			       public_result #>> '{errors,0,remediation}'
+			FROM remember_attempts
+			WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+		`, teamID, test.attemptID).Scan(
+			&outcome, &errorCode, &publicCode, &message, &retryable, &nextAction, &remediation,
+		))
+		require.Equal(t, test.outcome, outcome)
+		require.Equal(t, test.errorCode, errorCode)
+		require.Equal(t, test.errorCode, publicCode)
+		require.Equal(t, test.message, message)
+		require.True(t, retryable)
+		require.Equal(t, "resubmit_remember", nextAction)
+		require.Equal(t, test.remediation, remediation)
+	}
 
 	var historyCount, acceptedRevision int
 	var semanticAssessmentID string
