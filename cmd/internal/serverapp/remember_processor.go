@@ -413,15 +413,34 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 			attrs = append(attrs, observability.Int("provider_status_code", metadata.StatusCode))
 		}
 	case phase == "commit":
-		logError = errors.New("remember semantic commit failed")
+		logError = rememberCommitOperationalLogError(failure)
 		failureClass, failureCode := rememberCommitFailureMetadata(failure)
 		attrs = append(attrs,
 			observability.String("failure_source", "semantic_commit"),
 			observability.String("failure_class", failureClass),
 			observability.String("failure_code", failureCode),
 		)
+		if stage := repository.RememberCommitFailureStage(failure); stage != "" {
+			attrs = append(attrs, observability.String("commit_stage", stage))
+		}
 	}
 	p.logger.Error("remember_processing_failed", logError, attrs...)
+}
+
+func rememberCommitOperationalLogError(err error) error {
+	stage := repository.RememberCommitFailureStage(err)
+	operation := "remember semantic commit"
+	if stage != "" {
+		operation += " at " + stage
+	}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("%s timed out: %w", operation, context.DeadlineExceeded)
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("%s was cancelled: %w", operation, context.Canceled)
+	default:
+		return errors.New(operation + " failed")
+	}
 }
 
 func rememberEmbeddingPlanFailureMetadata(err error) (string, string) {
@@ -475,7 +494,18 @@ func (p *rememberSynchronousProcessor) logRememberFailureRecordError(
 	}
 	attrs := rememberFailureLogAttrs(input, attemptID, phase, errorCode, correlationID)
 	attrs = append(attrs, observability.String("recovery_error_code", rememberFailureRecoveryErrorCode(failure)))
-	p.logger.Error("remember_failure_record_failed", errors.New("remember failure record persistence failed"), attrs...)
+	p.logger.Error("remember_failure_record_failed", rememberFailureRecoveryLogError(failure), attrs...)
+}
+
+func rememberFailureRecoveryLogError(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("remember failure record persistence timed out: %w", context.DeadlineExceeded)
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("remember failure record persistence was cancelled: %w", context.Canceled)
+	default:
+		return errors.New("remember failure record persistence failed")
+	}
 }
 
 func rememberFailureLogAttrs(

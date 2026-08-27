@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -24,11 +25,25 @@ func (h *controlPortalHandler) getSearchConvergence(c echo.Context) error {
 			return httperr.New(httperr.SERVICE_UNAVAILABLE, "search convergence unavailable")
 		}
 		if h.logger != nil {
-			h.logger.Warn("control_search_convergence_failed", observability.String("error_code", "search_convergence_query_failed"))
+			h.logger.Warn("control_search_convergence_failed",
+				observability.String("error", boundedControlSearchLogError(err)),
+				observability.String("error_code", "search_convergence_query_failed"),
+			)
 		}
 		return httperr.New(httperr.INTERNAL_ERROR, "failed to load search convergence")
 	}
 	return response.SuccessOK(c, toControlSearchConvergence(projection))
+}
+
+func boundedControlSearchLogError(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "search convergence query failed: context deadline exceeded"
+	case errors.Is(err, context.Canceled):
+		return "search convergence query failed: context canceled"
+	default:
+		return "search convergence query failed"
+	}
 }
 
 type controlSearchConvergenceResponse struct {

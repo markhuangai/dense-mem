@@ -3,7 +3,9 @@ package serverapp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,7 +74,9 @@ func TestSearchConvergenceHealthCheckBoundsRepositoryErrors(t *testing.T) {
 	if len(logger.warnings) != 1 || logger.warnings[0] != "search_convergence_health_query_failed" {
 		t.Fatalf("warnings = %#v", logger.warnings)
 	}
-	if len(logger.attrs) != 1 || logger.attrs[0].Key != "error_code" || logger.attrs[0].Value != "search_convergence_query_failed" {
+	if len(logger.attrs) != 2 ||
+		logger.attrs[0].Key != "error" || logger.attrs[0].Value != "search convergence query failed" ||
+		logger.attrs[1].Key != "error_code" || logger.attrs[1].Value != "search_convergence_query_failed" {
 		t.Fatalf("warning attrs = %#v", logger.attrs)
 	}
 }
@@ -88,6 +92,18 @@ func TestSearchConvergenceHealthCheckDoesNotLogExpectedDegradation(t *testing.T)
 	}
 	if len(logger.warnings) != 0 {
 		t.Fatalf("warnings = %#v", logger.warnings)
+	}
+}
+
+func TestSafeOperationalLogErrorRetainsOnlyBoundedCauses(t *testing.T) {
+	raw := fmt.Errorf("database detail that must stay private: %w", context.DeadlineExceeded)
+	err := safeOperationalLogError(raw, errSearchConvergenceQueryFailed)
+
+	if !errors.Is(err, errSearchConvergenceQueryFailed) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("bounded error = %v", err)
+	}
+	if strings.Contains(err.Error(), "database detail") {
+		t.Fatalf("bounded error exposed database detail: %v", err)
 	}
 }
 

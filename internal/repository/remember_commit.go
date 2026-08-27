@@ -31,6 +31,25 @@ type SynchronousRememberCommitResult struct {
 	EntityResolutionIDs []string
 }
 
+type rememberCommitStageError struct {
+	stage string
+	err   error
+}
+
+func (e *rememberCommitStageError) Error() string {
+	return fmt.Sprintf("repository: commit Remember at %s: %v", e.stage, e.err)
+}
+
+func (e *rememberCommitStageError) Unwrap() error { return e.err }
+
+func RememberCommitFailureStage(err error) string {
+	var staged *rememberCommitStageError
+	if errors.As(err, &staged) {
+		return staged.stage
+	}
+	return ""
+}
+
 // CommitRememberWithEmbeddings persists one accepted Remember after
 // provider work has completed. No knowledge-ingest, evidence, placement, or
 // attempt row exists before this transaction starts.
@@ -51,7 +70,9 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 	}
 	ctx = WithInlineEmbeddingResults(ctx, embeddings)
 	result := &SynchronousRememberCommitResult{IngestID: input.IngestID, AssessmentID: input.AssessmentID, Outcome: "completed"}
+	stage := "transaction_setup"
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+		stage = "idempotency_fence"
 		if err := lockRememberIdempotencyKeyInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey); err != nil {
 			return err
 		}
@@ -65,6 +86,7 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 			result.Outcome = replay.Outcome
 			return ErrRememberReplay
 		}
+		stage = "embedding_contract_fence"
 		contract, err := loadActiveSearchContractInTx(ctx, tx)
 		if err != nil {
 			return err
@@ -72,6 +94,7 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 		if err := validateRememberEmbeddingContractAgainstActive(embeddings, contract); err != nil {
 			return err
 		}
+		stage = "ingest"
 		createInput := rememberCreateIngestInput(input)
 		if err := validateCreateIngestInput(createInput); err != nil {
 			return err
@@ -83,10 +106,12 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 		if !created {
 			return ErrRememberReplay
 		}
+		stage = "predicate_catalog"
 		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
 			return err
 		}
 
+		stage = "evidence"
 		sources := make(map[string]SourceRevisionResult, len(input.Evidence))
 		evidence := make([]EvidenceFragment, 0, len(input.Evidence))
 		for index, item := range createInput.Evidence {
@@ -132,6 +157,7 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 		}
 		applyRememberCommitSourceReferences(input.Commit.RelationshipObservations, evidence)
 
+		stage = "assessment_history"
 		if err := insertRememberSemanticAssessment(ctx, tx, input); err != nil {
 			return err
 		}
@@ -139,6 +165,7 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 		common := CommitSemanticInput{
 			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
 		}
+		stage = "entity_resolution"
 		entitiesByRef := make(map[string]string, len(input.Commit.EntityResolutions))
 		for _, entry := range input.Commit.EntityResolutions {
 			fragmentID := strings.TrimSpace(entry.Resolution.FragmentID)
@@ -161,9 +188,11 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 			semanticResult.EntityResolutionIDs = append(semanticResult.EntityResolutionIDs, resolutionID)
 		}
 
+		stage = "predicate_resolution"
 		if err := resolveSubmissionPredicates(ctx, tx, &input.Commit); err != nil {
 			return err
 		}
+		stage = "relationships"
 		appliedSplits := make([]submissionRelationshipAppliedSplit, 0, len(input.Commit.RelationshipObservations))
 		for _, entry := range input.Commit.RelationshipObservations {
 			fragmentID, err := rememberRelationshipFragmentID(entry)
@@ -204,6 +233,7 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 			appliedSplits = append(appliedSplits, submissionRelationshipAppliedSplit{RelationshipRef: entry.RelationshipRef, SplitIndex: entry.SplitIndex, Result: applied})
 		}
 
+		stage = "search_documents"
 		for _, item := range evidence {
 			commit := common
 			commit.FragmentID = item.FragmentID
@@ -213,13 +243,16 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 			}
 			appendSemanticSearchDocument(semanticResult, document)
 		}
+		stage = "embeddings"
 		if err := applyInlineSubmissionEmbeddings(ctx, tx, input.Commit, semanticResult, embeddings); err != nil {
 			return err
 		}
+		stage = "relationship_results"
 		if err := insertSubmissionRelationshipResults(ctx, tx, input.Commit.RememberCommitScope, input.Commit.RelationshipResults, appliedSplits); err != nil {
 			return err
 		}
 		publicResult := rememberPublicResult(input, evidence, semanticResult, appliedSplits)
+		stage = "terminal_attempt"
 		if err := insertRememberAttemptInTx(ctx, tx, RememberAttemptRecordInput{
 			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, AttemptID: input.IngestID,
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
@@ -234,10 +267,11 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 		result.RelationshipResults = append([]RelationshipDecisionResult(nil), semanticResult.RelationshipResults...)
 		result.SearchDocuments = append([]SearchDocumentResult(nil), semanticResult.SearchDocuments...)
 		result.EntityResolutionIDs = append([]string(nil), semanticResult.EntityResolutionIDs...)
+		stage = "transaction_commit"
 		return nil
 	})
 	if err != nil {
-		return result, fmt.Errorf("repository: commit Remember: %w", err)
+		return result, &rememberCommitStageError{stage: stage, err: err}
 	}
 	return result, nil
 }

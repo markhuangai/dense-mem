@@ -209,23 +209,39 @@ func isSensitiveField(key string) bool {
 
 // Info logs an info message.
 func (l *Logger) Info(msg string, attrs ...LogAttr) {
-	l.logger.Info(msg, toSlogAttrs(attrs)...)
+	l.log(slog.LevelInfo, msg, callerPC(), attrs...)
 }
 
 // Error logs an error message.
 func (l *Logger) Error(msg string, err error, attrs ...LogAttr) {
 	allAttrs := append([]LogAttr{{Key: "error", Value: err.Error()}}, attrs...)
-	l.logger.Error(msg, toSlogAttrs(allAttrs)...)
+	l.log(slog.LevelError, msg, callerPC(), allAttrs...)
 }
 
 // Warn logs a warning message.
 func (l *Logger) Warn(msg string, attrs ...LogAttr) {
-	l.logger.Warn(msg, toSlogAttrs(attrs)...)
+	l.log(slog.LevelWarn, msg, callerPC(), attrs...)
 }
 
 // Debug logs a debug message.
 func (l *Logger) Debug(msg string, attrs ...LogAttr) {
-	l.logger.Debug(msg, toSlogAttrs(attrs)...)
+	l.log(slog.LevelDebug, msg, callerPC(), attrs...)
+}
+
+func callerPC() uintptr {
+	pc, _, _, _ := runtime.Caller(2)
+	return pc
+}
+
+func (l *Logger) log(level slog.Level, msg string, pc uintptr, attrs ...LogAttr) {
+	ctx := context.Background()
+	handler := l.logger.Handler()
+	if !handler.Enabled(ctx, level) {
+		return
+	}
+	record := slog.NewRecord(time.Now(), level, msg, pc)
+	record.Add(toSlogAttrs(attrs)...)
+	_ = handler.Handle(ctx, record)
 }
 
 // With returns a new LogProvider with the given attributes pre-set.

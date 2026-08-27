@@ -367,6 +367,17 @@ func TestOperationLogHandlerBuildsSanitizedRecords(t *testing.T) {
 	assert.Equal(t, map[string]any{"name": "visible"}, items[0])
 }
 
+func TestLoggerRecordsTheExternalCallSite(t *testing.T) {
+	sink := &recordingLogSink{}
+	logger := NewWithSinks(slog.LevelDebug, sink)
+
+	logger.Error("call site", errors.New("safe failure"))
+
+	require.Len(t, sink.records, 1)
+	assert.Contains(t, sink.records[0].Source, "internal/observability/logger_test.go:")
+	assert.NotContains(t, sink.records[0].Source, "internal/observability/logger.go:")
+}
+
 func TestOperationLogHandlerReturnsSinkErrors(t *testing.T) {
 	writeErr := errors.New("write failed")
 	handler := newOperationLogHandler(slog.LevelDebug, failingLogSink{err: writeErr})

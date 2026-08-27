@@ -40,6 +40,7 @@ func TestSubmissionDiagnosticsLoadsEventsAndArtifactsOnlyForDetail(t *testing.T)
 	page, err := ledger.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{TeamID: teamID})
 	require.NoError(t, err)
 	require.Len(t, page.Records, 1)
+	require.False(t, page.Records[0].Historical)
 	require.Empty(t, page.Records[0].Events)
 	require.Empty(t, page.Records[0].Artifacts)
 
@@ -48,6 +49,32 @@ func TestSubmissionDiagnosticsLoadsEventsAndArtifactsOnlyForDetail(t *testing.T)
 	require.Len(t, detail.Events, 1)
 	require.Len(t, detail.Artifacts, 1)
 	require.Equal(t, "request", detail.Artifacts[0].ArtifactKind)
+}
+
+func TestSubmissionDiagnosticsMarksOnlyMigratedAttemptsHistorical(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-diagnostics-history-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-diagnostics-history-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	attemptID := uuid.NewString()
+	require.NoError(t, ledger.RecordRememberFailure(context.Background(), RememberFailureRecordInput{
+		TeamID: teamID, OwnerProfileID: ownerID, AttemptID: attemptID,
+		IdempotencyKey: "diagnostics-history-key", RequestHash: "diagnostics-history-hash",
+		ContractVersion: "dense-mem.v2.6", SubmissionKind: "remember",
+		FailedPhase: "commit", ErrorCode: "internal_failure",
+		PublicResult: map[string]any{"submission_id": attemptID, "processing_state": "failed"},
+	}))
+
+	page, err := ledger.ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{TeamID: teamID})
+	require.NoError(t, err)
+	require.Len(t, page.Records, 1)
+	require.True(t, page.Records[0].Historical)
+
+	detail, err := ledger.GetSubmissionDiagnostic(context.Background(), teamID, attemptID)
+	require.NoError(t, err)
+	require.True(t, detail.Historical)
 }
 
 func TestSubmissionDiagnosticsAllowsAllTeamFilter(t *testing.T) {

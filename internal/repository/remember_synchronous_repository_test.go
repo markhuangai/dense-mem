@@ -186,3 +186,11 @@ func TestRememberAttemptDurationUsesRequestStart(t *testing.T) {
 	})
 	require.Greater(t, duration, 500*time.Millisecond)
 }
+
+func TestRememberCommitStageErrorPreservesCauseAndStage(t *testing.T) {
+	err := &rememberCommitStageError{stage: "search_documents", err: context.DeadlineExceeded}
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, "search_documents", RememberCommitFailureStage(err))
+	require.Contains(t, err.Error(), "commit Remember at search_documents")
+}

@@ -113,9 +113,9 @@ export function SubmissionsPanel({ api, team }: { api: ControlApi; team: Team })
             <tbody>{items.map((item) => (
               <tr key={item.submission_id} className={item.submission_id === selectedID ? "selected-row" : undefined}>
                 <td><strong>{formatDate(item.completed_at ?? item.created_at)}</strong><small className="table-subline">{shortId(item.submission_id)}</small></td>
-                <td><span className={submissionStateClass(item.processing_state)}>{stateLabel(item.processing_state)}</span></td>
+                <td><span className={submissionStateClass(item.processing_state)}>{stateLabel(item.processing_state)}</span>{item.historical && <small className="table-subline">Migrated history</small>}</td>
                 <td>{item.failed_phase || item.error_code || "—"}</td>
-                <td>{item.evidence_count}</td><td>{item.document_count}</td><td>{item.duration_ms} ms</td>
+                <td>{item.evidence_count}</td><td>{diagnosticMetric(item.historical, item.document_count)}</td><td>{diagnosticMetric(item.historical, item.duration_ms, " ms")}</td>
                 <td><button className="text-button" type="button" aria-label={"Inspect Remember attempt " + item.submission_id} onClick={() => { setSelectedID(item.submission_id); void loadDetail(item.submission_id); }}>Inspect <ArrowRight size={14} aria-hidden="true" /></button></td>
               </tr>
             ))}</tbody>
@@ -159,9 +159,10 @@ function AttemptDetail({ api, detail }: { api: ControlApi; detail: SubmissionDia
         <Fact label="Attempt" value={detail.submission_id} code />
         <Fact label="Correlation" value={detail.correlation_id || "Not recorded"} code={Boolean(detail.correlation_id)} />
         <Fact label="Handled" value={formatDate(detail.completed_at ?? detail.created_at)} />
-        <Fact label="Duration" value={detail.duration_ms + " ms"} />
-        <Fact label="Evidence / documents" value={detail.evidence_count + " / " + detail.document_count} />
-        <Fact label="Assessor turns" value={String(detail.assessor_turns)} />
+        {detail.historical && <Fact label="Origin" value="Migrated history" />}
+        <Fact label="Duration" value={diagnosticMetric(detail.historical, detail.duration_ms, " ms")} />
+        <Fact label="Evidence / documents" value={detail.evidence_count + " / " + diagnosticMetric(detail.historical, detail.document_count)} />
+        <Fact label="Assessor turns" value={diagnosticMetric(detail.historical, detail.assessor_turns)} />
         {detail.failed_phase && <Fact label="Failed phase" value={detail.failed_phase} />}
       </div>
       {detail.errors.map((item) => <article className="submission-guidance" key={item.code}><strong>{item.code}</strong><p>{item.message}</p><p className="submission-remediation">{item.remediation}</p></article>)}
@@ -196,4 +197,8 @@ function stateLabel(value: string): string {
 
 function submissionStateClass(state: string): string {
   return state === "completed" || state === "replayed" ? "status-pill success" : state === "rejected" || state === "quarantined" || state === "failed" ? "status-pill error" : "status-pill";
+}
+
+function diagnosticMetric(historical: boolean, value: number, suffix = ""): string {
+  return historical ? "Not recorded" : value + suffix;
 }

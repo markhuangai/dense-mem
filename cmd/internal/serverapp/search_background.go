@@ -3,6 +3,7 @@ package serverapp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -10,7 +11,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
-var errSearchConvergenceQueryFailed = errors.New("search convergence query failed")
+var (
+	errSearchConvergenceQueryFailed = errors.New("search convergence query failed")
+	errSearchReconciliationFailed   = errors.New("search reconciliation failed")
+)
 
 type searchConvergenceHealthReader interface {
 	CheckSearchConvergence(context.Context) error
@@ -24,7 +28,10 @@ func searchConvergenceHealthCheck(search searchConvergenceHealthReader, logger o
 				return err
 			}
 			if logger != nil {
-				logger.Warn("search_convergence_health_query_failed", observability.String("error_code", "search_convergence_query_failed"))
+				logger.Warn("search_convergence_health_query_failed",
+					observability.String("error", safeOperationalLogError(err, errSearchConvergenceQueryFailed).Error()),
+					observability.String("error_code", "search_convergence_query_failed"),
+				)
 			}
 			return errSearchConvergenceQueryFailed
 		}
@@ -50,7 +57,10 @@ func startSearchReconciliation(ctx context.Context, runner searchReconciliationR
 			result, err := runner.Run(ctx)
 			if err != nil {
 				if logger != nil {
-					logger.Warn("search_reconciliation_failed", observability.String("error_code", result.ErrorCode))
+					logger.Warn("search_reconciliation_failed",
+						observability.String("error", safeOperationalLogError(err, errSearchReconciliationFailed).Error()),
+						observability.String("error_code", result.ErrorCode),
+					)
 				}
 				return
 			}
@@ -75,5 +85,16 @@ func startSearchReconciliation(ctx context.Context, runner searchReconciliationR
 		case <-ticker.C:
 			run()
 		}
+	}
+}
+
+func safeOperationalLogError(err error, fallback error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("%w: %w", fallback, context.DeadlineExceeded)
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("%w: %w", fallback, context.Canceled)
+	default:
+		return fallback
 	}
 }

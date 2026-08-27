@@ -26,12 +26,19 @@ func (r controlSearchConvergenceReader) GetSearchConvergence(context.Context) (*
 	return r.value, r.err
 }
 
-type controlSearchLogger struct{ warnings []string }
+type controlSearchLogger struct {
+	warnings []string
+	attrs    map[string]any
+}
 
 func (*controlSearchLogger) Info(string, ...observability.LogAttr)         {}
 func (*controlSearchLogger) Error(string, error, ...observability.LogAttr) {}
-func (l *controlSearchLogger) Warn(message string, _ ...observability.LogAttr) {
+func (l *controlSearchLogger) Warn(message string, attrs ...observability.LogAttr) {
 	l.warnings = append(l.warnings, message)
+	l.attrs = map[string]any{}
+	for _, attr := range attrs {
+		l.attrs[attr.Key] = attr.Value
+	}
 }
 func (*controlSearchLogger) Debug(string, ...observability.LogAttr)                    {}
 func (l *controlSearchLogger) With(...observability.LogAttr) observability.LogProvider { return l }
@@ -81,6 +88,8 @@ func TestControlPortalSearchConvergenceHandlerBoundsFailures(t *testing.T) {
 			require.NotContains(t, rec.Body.String(), "private details")
 			if test.name == "backend failure" {
 				require.Contains(t, logger.warnings, "control_search_convergence_failed")
+				require.Equal(t, "search convergence query failed", logger.attrs["error"])
+				require.Equal(t, "search_convergence_query_failed", logger.attrs["error_code"])
 			}
 		})
 	}

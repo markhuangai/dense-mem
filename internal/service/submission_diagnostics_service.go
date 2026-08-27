@@ -37,6 +37,7 @@ type SubmissionDiagnosticSummary struct {
 	OwnerProfileID    string     `json:"owner_profile_id"`
 	SubmissionID      string     `json:"submission_id"`
 	ProcessingState   string     `json:"processing_state"`
+	Historical        bool       `json:"historical"`
 	CorrelationID     string     `json:"correlation_id,omitempty"`
 	FailedPhase       string     `json:"failed_phase,omitempty"`
 	ErrorCode         string     `json:"error_code,omitempty"`
@@ -59,6 +60,7 @@ type SubmissionDiagnosticDetail struct {
 	TeamID            string                                         `json:"team_id"`
 	TeamName          string                                         `json:"team_name"`
 	OwnerProfileID    string                                         `json:"owner_profile_id"`
+	Historical        bool                                           `json:"historical"`
 	FailedPhase       string                                         `json:"failed_phase,omitempty"`
 	ErrorCode         string                                         `json:"error_code,omitempty"`
 	EvidenceCount     int                                            `json:"evidence_count"`
@@ -68,8 +70,17 @@ type SubmissionDiagnosticDetail struct {
 	DurationMS        int64                                          `json:"duration_ms"`
 	CreatedAt         time.Time                                      `json:"created_at"`
 	CompletedAt       *time.Time                                     `json:"completed_at,omitempty"`
-	Events            []repository.SubmissionDiagnosticEvent         `json:"events"`
+	Events            []SubmissionDiagnosticEvent                    `json:"events"`
 	Artifacts         []repository.RememberFailureArtifactDescriptor `json:"failure_artifacts,omitempty"`
+}
+
+type SubmissionDiagnosticEvent struct {
+	SequenceNo int            `json:"sequence_no"`
+	Phase      string         `json:"phase"`
+	EventKind  string         `json:"event_kind"`
+	Outcome    string         `json:"outcome"`
+	Metadata   map[string]any `json:"metadata"`
+	CreatedAt  time.Time      `json:"created_at"`
 }
 
 type SubmissionDiagnosticsService struct {
@@ -152,11 +163,12 @@ func (s *SubmissionDiagnosticsService) GetSubmissionDiagnostic(ctx context.Conte
 	return &SubmissionDiagnosticDetail{
 		SubmissionStatusResult: *status,
 		TeamID:                 record.TeamID, TeamName: record.TeamName, OwnerProfileID: record.OwnerProfileID,
+		Historical:  record.Historical,
 		FailedPhase: record.FailedPhase, ErrorCode: record.ErrorCode,
 		EvidenceCount: record.EvidenceCount, RelationshipCount: record.RelationshipCount,
 		DocumentCount: record.DocumentCount, AssessorTurns: record.AssessorTurns,
 		DurationMS: record.Duration.Milliseconds(), CreatedAt: record.CreatedAt,
-		CompletedAt: record.CompletedAt, Events: record.Events,
+		CompletedAt: record.CompletedAt, Events: submissionDiagnosticEvents(record.Events),
 		Artifacts: record.Artifacts,
 	}, nil
 }
@@ -165,12 +177,28 @@ func rememberAttemptSummary(record repository.SubmissionDiagnosticRecord) Submis
 	return SubmissionDiagnosticSummary{
 		TeamID: record.TeamID, TeamName: record.TeamName, OwnerProfileID: record.OwnerProfileID,
 		SubmissionID: record.SubmissionID, ProcessingState: record.ProcessingState,
+		Historical:    record.Historical,
 		CorrelationID: record.CorrelationID, FailedPhase: record.FailedPhase, ErrorCode: record.ErrorCode,
 		EvidenceCount: record.EvidenceCount, RelationshipCount: record.RelationshipCount,
 		DocumentCount: record.DocumentCount, AssessorTurns: record.AssessorTurns,
 		DurationMS: record.Duration.Milliseconds(), CreatedAt: record.CreatedAt,
 		CompletedAt: record.CompletedAt,
 	}
+}
+
+func submissionDiagnosticEvents(records []repository.SubmissionDiagnosticEvent) []SubmissionDiagnosticEvent {
+	events := make([]SubmissionDiagnosticEvent, 0, len(records))
+	for _, record := range records {
+		events = append(events, SubmissionDiagnosticEvent{
+			SequenceNo: record.SequenceNo,
+			Phase:      record.Phase,
+			EventKind:  record.EventKind,
+			Outcome:    record.Outcome,
+			Metadata:   record.Metadata,
+			CreatedAt:  record.CreatedAt,
+		})
+	}
+	return events
 }
 
 func rememberAttemptResult(public map[string]any) *memoryservice.SubmissionStatusResult {

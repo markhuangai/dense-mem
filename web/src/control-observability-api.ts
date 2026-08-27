@@ -40,6 +40,7 @@ export type SubmissionDiagnosticSummary = {
   owner_profile_id: string;
   submission_id: string;
   processing_state: string;
+  historical: boolean;
   correlation_id?: string;
   failed_phase?: string;
   error_code?: string;
@@ -82,6 +83,7 @@ export type SubmissionDiagnosticDetail = {
   team_id: string;
   team_name: string;
   owner_profile_id: string;
+  historical: boolean;
   submission_id: string;
   submission_kind: "remember";
   processing_state: string;

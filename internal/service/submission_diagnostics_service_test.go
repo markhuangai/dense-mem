@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -59,7 +60,7 @@ func TestSubmissionDiagnosticsServiceListsAndNormalizesAttempts(t *testing.T) {
 		Records: []repository.SubmissionDiagnosticRecord{{
 			TeamID: teamID, TeamName: "team", OwnerProfileID: uuid.NewString(), SubmissionID: uuid.NewString(),
 			ProcessingState: "completed", CorrelationID: "corr", EvidenceCount: 2, RelationshipCount: 3,
-			DocumentCount: 4, AssessorTurns: 2, Duration: 1500 * time.Millisecond, CreatedAt: now, CompletedAt: &now,
+			Historical: true, DocumentCount: 4, AssessorTurns: 2, Duration: 1500 * time.Millisecond, CreatedAt: now, CompletedAt: &now,
 		}},
 	}}
 	page, err := NewSubmissionDiagnosticsService(repo).ListSubmissionDiagnostics(context.Background(), SubmissionDiagnosticFilter{
@@ -69,6 +70,7 @@ func TestSubmissionDiagnosticsServiceListsAndNormalizesAttempts(t *testing.T) {
 	require.Equal(t, int64(1), page.Total)
 	require.Len(t, page.Items, 1)
 	require.Equal(t, teamID, page.Items[0].TeamID)
+	require.True(t, page.Items[0].Historical)
 	require.Equal(t, int64(1500), page.Items[0].DurationMS)
 	require.Equal(t, repository.SubmissionDiagnosticFilter{TeamID: teamID, ProcessingState: "completed", Limit: 100, Offset: 0}, repo.listFilter)
 }
@@ -100,19 +102,34 @@ func TestSubmissionDiagnosticsServiceGetsDetailAndMapsPublicResult(t *testing.T)
 		TeamID: teamID, TeamName: "team", OwnerProfileID: uuid.NewString(), SubmissionID: attemptID,
 		ProcessingState: "failed", FailedPhase: "embedding", ErrorCode: "embedding_unavailable",
 		EvidenceCount: 1, RelationshipCount: 2, DocumentCount: 3, AssessorTurns: 1,
-		Duration: 2 * time.Second, PublicResult: map[string]any{
+		Historical: true, Duration: 2 * time.Second, PublicResult: map[string]any{
 			"contract_version": "dense-mem.v2.6.1", "submission_id": attemptID,
 			"submission_kind": "remember", "processing_state": "failed", "search_state": "not_required",
 			"evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
-		},
+		}, Events: []repository.SubmissionDiagnosticEvent{{
+			SequenceNo: 1, Phase: "legacy_cutover", EventKind: "legacy_terminalized", Outcome: "failed", Metadata: map[string]any{}, CreatedAt: time.Now().UTC(),
+		}},
 	}}
 	detail, err := NewSubmissionDiagnosticsService(repo).GetSubmissionDiagnostic(context.Background(), "  "+teamID, attemptID)
 	require.NoError(t, err)
 	require.Equal(t, "team", detail.TeamName)
 	require.Equal(t, "embedding", detail.FailedPhase)
+	require.True(t, detail.Historical)
 	require.Equal(t, int64(2000), detail.DurationMS)
 	require.Equal(t, "dense-mem.v2.6.1", detail.ContractVersion)
 	require.Empty(t, detail.Errors)
+	require.Len(t, detail.Events, 1)
+	require.Equal(t, "legacy_terminalized", detail.Events[0].EventKind)
+
+	encoded, err := json.Marshal(detail)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &payload))
+	events := payload["events"].([]any)
+	event := events[0].(map[string]any)
+	require.Equal(t, "legacy_terminalized", event["event_kind"])
+	require.Contains(t, event, "sequence_no")
+	require.NotContains(t, event, "EventKind")
 
 	for _, ids := range [][2]string{{"bad", attemptID}, {teamID, "bad"}} {
 		_, err = NewSubmissionDiagnosticsService(repo).GetSubmissionDiagnostic(context.Background(), ids[0], ids[1])

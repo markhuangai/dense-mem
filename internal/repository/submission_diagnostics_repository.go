@@ -11,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 var ErrSubmissionDiagnosticNotFound = errors.New("remember attempt not found")
@@ -35,6 +37,7 @@ type SubmissionDiagnosticRecord struct {
 	OwnerProfileID    string
 	SubmissionID      string
 	ProcessingState   string
+	Historical        bool
 	CorrelationID     string
 	FailedPhase       string
 	ErrorCode         string
@@ -114,6 +117,7 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(ctx context.Context, fi
 		rows, err := tx.WithContext(ctx).Raw(`
 			SELECT attempt.team_id::text, team.name, attempt.owner_profile_id::text,
 			       attempt.attempt_id::text, attempt.outcome,
+			       attempt.contract_version = ? AS historical,
 			       attempt.correlation_id, attempt.failed_phase, attempt.error_code,
 			       attempt.evidence_count, attempt.relationship_count,
 			       attempt.document_count, attempt.assessor_turns,
@@ -125,7 +129,7 @@ func (r *LedgerRepositoryImpl) ListSubmissionDiagnostics(ctx context.Context, fi
 			  AND (? = '' OR attempt.outcome = ?)
 			ORDER BY attempt.created_at DESC, attempt.attempt_id DESC
 			LIMIT ? OFFSET ?
-		`, filter.TeamID, filter.TeamID, filter.ProcessingState, filter.ProcessingState, filter.Limit, filter.Offset).Rows()
+			`, domain.MigratedRememberRequestHashVersion, filter.TeamID, filter.TeamID, filter.ProcessingState, filter.ProcessingState, filter.Limit, filter.Offset).Rows()
 		if err != nil {
 			return err
 		}
@@ -163,6 +167,7 @@ func (r *LedgerRepositoryImpl) GetSubmissionDiagnostic(ctx context.Context, team
 		rows, err := tx.WithContext(ctx).Raw(`
 			SELECT attempt.team_id::text, team.name, attempt.owner_profile_id::text,
 			       attempt.attempt_id::text, attempt.outcome,
+			       attempt.contract_version = ? AS historical,
 			       attempt.correlation_id, attempt.failed_phase, attempt.error_code,
 			       attempt.evidence_count, attempt.relationship_count,
 			       attempt.document_count, attempt.assessor_turns,
@@ -171,7 +176,7 @@ func (r *LedgerRepositoryImpl) GetSubmissionDiagnostic(ctx context.Context, team
 			FROM remember_attempts AS attempt
 			JOIN teams AS team ON team.id = attempt.team_id
 			WHERE attempt.team_id = ?::uuid AND attempt.attempt_id = ?::uuid
-		`, teamID, submissionID).Rows()
+			`, domain.MigratedRememberRequestHashVersion, teamID, submissionID).Rows()
 		if err != nil {
 			return err
 		}
@@ -223,6 +228,7 @@ func scanRememberAttemptDiagnostic(scanner rememberAttemptDiagnosticScanner) (Su
 	if err := scanner.Scan(
 		&record.TeamID, &record.TeamName, &record.OwnerProfileID,
 		&record.SubmissionID, &record.ProcessingState,
+		&record.Historical,
 		&record.CorrelationID, &record.FailedPhase, &record.ErrorCode,
 		&record.EvidenceCount, &record.RelationshipCount,
 		&record.DocumentCount, &record.AssessorTurns,

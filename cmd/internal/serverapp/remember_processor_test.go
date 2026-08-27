@@ -294,6 +294,20 @@ func TestRememberFailureLogClassifiesCommitWithoutExposingCause(t *testing.T) {
 	}
 }
 
+func TestRememberFailureLogPreservesSafeCommitTimeoutCause(t *testing.T) {
+	logger := &rememberProcessorLoggerStub{}
+	processor := &rememberSynchronousProcessor{logger: logger}
+
+	processor.logRememberFailure(
+		rememberapp.RememberProcessRequest{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString()},
+		uuid.NewString(), time.Now(), "commit", string(rememberapp.SubmissionErrorRequestTimeout), "corr-commit-timeout", context.DeadlineExceeded,
+	)
+
+	require.ErrorIs(t, logger.err, context.DeadlineExceeded)
+	require.Equal(t, "timeout", logger.attrs["failure_class"])
+	require.Equal(t, "semantic_commit_timeout", logger.attrs["failure_code"])
+}
+
 func TestRememberFailureCodeDistinguishesEmbeddingBoundaries(t *testing.T) {
 	tests := []struct {
 		name string
@@ -362,6 +376,19 @@ func TestRememberFailureRecordLogDoesNotExposeDatabaseError(t *testing.T) {
 	require.Equal(t, "remember_failure_record_failed", logger.message)
 	require.NotContains(t, logger.err.Error(), rawDatabaseError.Error())
 	require.Equal(t, "persistence_failed", logger.attrs["recovery_error_code"])
+}
+
+func TestRememberFailureRecordLogPreservesSafeTimeoutCause(t *testing.T) {
+	logger := &rememberProcessorLoggerStub{}
+	processor := &rememberSynchronousProcessor{logger: logger}
+
+	processor.logRememberFailureRecordError(
+		rememberapp.RememberProcessRequest{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString()},
+		uuid.NewString(), "commit", string(rememberapp.SubmissionErrorRequestTimeout), "corr-recovery-timeout", context.DeadlineExceeded,
+	)
+
+	require.ErrorIs(t, logger.err, context.DeadlineExceeded)
+	require.Equal(t, "deadline_exceeded", logger.attrs["recovery_error_code"])
 }
 
 func TestRememberFailurePersistenceErrorPreservesTypingAndCause(t *testing.T) {

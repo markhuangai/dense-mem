@@ -668,7 +668,11 @@ func processConflictReviewTick(
 	for offset := workerIndex * pageSize; ; offset += pageSize * workerCount {
 		page, err := teams.List(ctx, pageSize, offset)
 		if err != nil {
-			logger.Error("conflict review team list failed", errConflictReviewTeamListFailed)
+			logger.Error("conflict review team list failed", safeOperationalLogError(err, errConflictReviewTeamListFailed),
+				observability.String("error_code", "conflict_review_team_list_failed"),
+				observability.String("worker_id", workerID),
+				observability.Int("offset", offset),
+			)
 			return
 		}
 		if len(page) == 0 {
@@ -679,7 +683,11 @@ func processConflictReviewTick(
 				continue
 			}
 			if err := processTeamConflictReview(ctx, logger, ledger, cfg, metrics, team.ID.String(), workerID, now); err != nil {
-				logger.Error("conflict review run failed", errConflictReviewRunFailed, observability.String("team_id", team.ID.String()))
+				logger.Error("conflict review run failed", safeOperationalLogError(err, errConflictReviewRunFailed),
+					observability.String("error_code", "conflict_review_run_failed"),
+					observability.String("team_id", team.ID.String()),
+					observability.String("worker_id", workerID),
+				)
 			}
 		}
 		if len(page) < pageSize {
@@ -781,7 +789,12 @@ func processTeamConflictReview(
 			})
 			if err != nil {
 				counts.FailedCases++
-				logger.Error("conflict review case failed", errConflictReviewCaseFailed, observability.String("team_id", teamID), observability.String("conflict_id", conflictCase.ConflictID))
+				logger.Error("conflict review case failed", safeOperationalLogError(err, errConflictReviewCaseFailed),
+					observability.String("error_code", "conflict_review_case_failed"),
+					observability.String("team_id", teamID),
+					observability.String("conflict_id", conflictCase.ConflictID),
+					observability.String("worker_id", workerID),
+				)
 				continue
 			}
 			switch result.Outcome {
