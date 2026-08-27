@@ -116,7 +116,7 @@ func (e *Executor) Execute(ctx context.Context, plan Plan) (Result, error) {
 		if providerCtx.Err() != nil {
 			return Result{}, providerCtx.Err()
 		}
-		return Result{}, ErrProviderResponseInvalid
+		return Result{}, fmt.Errorf("%w: provider call failed", ErrProviderUnavailable)
 	}
 	if err := providerCtx.Err(); err != nil {
 		return Result{}, err

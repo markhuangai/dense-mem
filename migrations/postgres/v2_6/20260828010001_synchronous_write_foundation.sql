@@ -311,12 +311,16 @@ DECLARE
     tx_mode TEXT := current_setting('app.tx_mode', true);
 BEGIN
     IF tx_mode IN ('system', 'migration') THEN
-        IF TG_TABLE_NAME = 'remember_failure_artifacts' AND TG_OP = 'DELETE' THEN
-            IF OLD.expires_at > CURRENT_TIMESTAMP THEN
-                RAISE EXCEPTION 'remember_failure_artifacts cannot be purged before expires_at';
-            END IF;
+        IF TG_OP = 'UPDATE' THEN
+            RETURN NEW;
         END IF;
-        RETURN OLD;
+        IF TG_TABLE_NAME = 'remember_failure_artifacts' AND TG_OP = 'DELETE'
+           AND OLD.expires_at <= CURRENT_TIMESTAMP THEN
+            RETURN OLD;
+        END IF;
+        IF TG_TABLE_NAME = 'remember_failure_artifacts' AND TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'remember_failure_artifacts cannot be purged before expires_at';
+        END IF;
     END IF;
     RAISE EXCEPTION '% is append-only: % operations are not allowed', TG_TABLE_NAME, TG_OP;
 END;

@@ -502,6 +502,13 @@ func TestSynchronousWriteFoundationAppendOnlyRowsAndGuardedDown(t *testing.T) {
 		`, teamID, activeArtifactID)
 		return err
 	}))
+	require.Error(t, execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			DELETE FROM remember_attempt_events
+			WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+		`, teamID, attemptID)
+		return err
+	}))
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			DELETE FROM remember_failure_artifacts
@@ -516,6 +523,12 @@ func TestSynchronousWriteFoundationAppendOnlyRowsAndGuardedDown(t *testing.T) {
 		`, teamID, attemptID)
 		return err
 	}))
+	var errorCode string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT error_code FROM remember_attempts
+		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+	`, teamID, attemptID).Scan(&errorCode))
+	require.Equal(t, "migration_repair", errorCode)
 	require.Error(t, execPostgresTxModeRollback(ctx, db, "profile", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			UPDATE remember_attempts SET error_code = 'profile_tamper'

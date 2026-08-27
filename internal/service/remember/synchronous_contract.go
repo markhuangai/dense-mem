@@ -336,9 +336,13 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	if result.SearchState != string(TerminalSearchCurrent) && result.SearchState != string(TerminalSearchNotRequired) {
 		return fmt.Errorf("remember: invalid terminal search state %q", result.SearchState)
 	}
+	if result.Errors == nil {
+		return errors.New("remember: terminal errors are required")
+	}
 	if len(result.Evidence) != evidenceCount {
 		return fmt.Errorf("remember: terminal evidence count %d, expected %d", len(result.Evidence), evidenceCount)
 	}
+	storedResult := false
 	for index, item := range result.Evidence {
 		if item.EvidenceIndex != index {
 			return fmt.Errorf("remember: terminal evidence index %d is out of order", item.EvidenceIndex)
@@ -348,6 +352,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		}
 		if item.Disposition == "stored" && item.EvidenceID == "" {
 			return fmt.Errorf("remember: stored evidence %d has no evidence_id", index)
+		}
+		if item.Disposition == "stored" {
+			storedResult = true
 		}
 		if item.Disposition == "not_stored" && item.EvidenceID != "" {
 			return fmt.Errorf("remember: non-stored evidence %d has an evidence_id", index)
@@ -378,6 +385,25 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		}
 		if item.Disposition == "not_stored" && len(item.Splits) > 0 {
 			return fmt.Errorf("remember: non-stored relationship %q has splits", item.RelationshipRef)
+		}
+		if item.Disposition == "stored" {
+			storedResult = true
+		}
+	}
+	switch result.ProcessingState {
+	case string(TerminalProcessingCompleted):
+		if len(result.Errors) > 0 {
+			return errors.New("remember: completed terminal result cannot contain errors")
+		}
+		if !storedResult {
+			return errors.New("remember: completed terminal result has no stored result")
+		}
+	case string(TerminalProcessingRejected), string(TerminalProcessingQuarantined), string(TerminalProcessingFailed):
+		if len(result.Errors) == 0 {
+			return fmt.Errorf("remember: %s terminal result requires an error", result.ProcessingState)
+		}
+		if storedResult {
+			return fmt.Errorf("remember: %s terminal result cannot contain stored results", result.ProcessingState)
 		}
 	}
 	return nil

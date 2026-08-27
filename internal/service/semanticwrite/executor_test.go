@@ -133,11 +133,11 @@ func TestExecutorRejectsProviderAvailabilityAndContractMismatches(t *testing.T) 
 	}
 }
 
-func TestExecutorBoundsProviderErrorAndHonorsContextDeadline(t *testing.T) {
+func TestExecutorBoundsProviderFailureAndHonorsContextDeadline(t *testing.T) {
 	provider := validProvider()
 	provider.err = errors.New("provider failed")
 	_, err := NewExecutor(provider).Execute(context.Background(), validPlan())
-	require.ErrorIs(t, err, ErrProviderResponseInvalid)
+	require.ErrorIs(t, err, ErrProviderUnavailable)
 	require.NotContains(t, err.Error(), "provider failed")
 
 	ctx, cancel := context.WithCancel(context.Background())

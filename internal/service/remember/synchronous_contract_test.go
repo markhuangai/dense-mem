@@ -87,6 +87,7 @@ func validTerminalResultForTest() *TerminalRememberResult {
 			{RelationshipRef: "rel-a", Disposition: "stored"},
 			{RelationshipRef: "rel-b", Disposition: "not_stored"},
 		},
+		Errors: []SubmissionStatusError{},
 	}
 }
 
@@ -102,6 +103,29 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"missing identity", func(result *TerminalRememberResult) { result.CorrelationID = "" }},
 		{"invalid processing state", func(result *TerminalRememberResult) { result.ProcessingState = "processing" }},
 		{"invalid search state", func(result *TerminalRememberResult) { result.SearchState = "queued" }},
+		{"missing errors array", func(result *TerminalRememberResult) { result.Errors = nil }},
+		{"completed errors", func(result *TerminalRememberResult) {
+			result.Errors = []SubmissionStatusError{TerminalStatusError(TerminalErrorInternalFailure)}
+		}},
+		{"completed without stored result", func(result *TerminalRememberResult) {
+			for index := range result.Evidence {
+				result.Evidence[index].Disposition = "not_stored"
+				result.Evidence[index].EvidenceID = ""
+			}
+			for index := range result.RelationshipResults {
+				result.RelationshipResults[index].Disposition = "not_stored"
+			}
+		}},
+		{"rejected without error", func(result *TerminalRememberResult) {
+			result.ProcessingState = string(TerminalProcessingRejected)
+		}},
+		{"failed without error", func(result *TerminalRememberResult) {
+			result.ProcessingState = string(TerminalProcessingFailed)
+		}},
+		{"rejected with stored result", func(result *TerminalRememberResult) {
+			result.ProcessingState = string(TerminalProcessingRejected)
+			result.Errors = []SubmissionStatusError{TerminalStatusError(TerminalErrorNoSupportedMemory)}
+		}},
 		{"evidence count", func(result *TerminalRememberResult) { result.Evidence = result.Evidence[:1] }},
 		{"evidence order", func(result *TerminalRememberResult) { result.Evidence[0].EvidenceIndex = 1 }},
 		{"evidence disposition", func(result *TerminalRememberResult) { result.Evidence[0].Disposition = "unknown" }},
