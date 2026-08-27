@@ -49,6 +49,61 @@ if (replay.submission_id !== baselineID || JSON.stringify(replay.relationship_re
   throw new Error("same idempotency key did not replay the terminal Remember result");
 }
 
+const valueSeed = await mcpTool("remember", {
+  idempotency_key: `${runID}:value-seed`,
+  evidence: [{ content: "Feature Flag feature status is enabled.", source_type: "document" }],
+  relationships: [valueRelationship(
+    "value-seed-enabled", 0, "Feature Flag", "feature_status", "other",
+    { type: "boolean", value: true, display: "enabled" },
+  )],
+});
+await assertTerminal(valueSeed, "completed");
+
+const mixedEvidence = [
+  "Dense-Mem uses database PostgreSQL and operates in mode synchronous.",
+  "Dense-Mem deployed at 2026-08-27T06:50:00Z.",
+  "Dense-Mem uses cache Redis and its relationship count is six.",
+  "Dense-Mem is enabled true.",
+];
+const mixed = await mcpTool("remember", {
+  idempotency_key: `${runID}:mixed-endpoints`,
+  evidence: mixedEvidence.map((content) => ({ content, source_type: "document" })),
+  relationships: [
+    relationship("mixed-database", 0, "Dense-Mem", "uses database", "PostgreSQL", "uses_database", "project", "product"),
+    valueRelationship("mixed-mode", 0, "Dense-Mem", "operates_in_mode", "project", { type: "string", value: "synchronous", display: "synchronous" }),
+    valueRelationship("mixed-deployed", 1, "Dense-Mem", "deployed_at", "project", { type: "date_time", value: "2026-08-27T06:50:00Z", display: "2026-08-27T06:50:00Z" }),
+    relationship("mixed-cache", 2, "Dense-Mem", "uses cache", "Redis", "uses_cache", "project", "product"),
+    valueRelationship("mixed-count", 2, "Dense-Mem", "relationship_count", "project", { type: "number", value: 6, display: "six" }),
+    valueRelationship("mixed-enabled", 3, "Dense-Mem", "is_enabled", "project", { type: "boolean", value: true, display: "true" }),
+  ],
+});
+await assertTerminal(mixed, "completed");
+if (mixed.search_state !== "current" || mixed.evidence?.length !== mixedEvidence.length || mixed.relationship_results?.length !== 6 ||
+    mixed.relationship_results.some((item) => item.disposition !== "stored" || item.splits?.length !== 1)) {
+  throw new Error("mixed-endpoint Remember did not return complete current semantic results");
+}
+const mixedCounts = postgresRow(`
+  SELECT
+    (SELECT count(*) FROM search_documents WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND source_id IN (
+        SELECT fragment_id FROM evidence_fragments WHERE team_id = ${sqlLiteral(teamID)}::uuid
+          AND ingest_id = ${sqlLiteral(mixed.submission_id)}::uuid
+        UNION ALL
+        SELECT relationship_id FROM relationship_observations WHERE team_id = ${sqlLiteral(teamID)}::uuid
+          AND ingest_id = ${sqlLiteral(mixed.submission_id)}::uuid
+      ) AND search_state = 'current' AND embedding IS NOT NULL),
+    (SELECT count(*) FROM relationship_observations WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND ingest_id = ${sqlLiteral(mixed.submission_id)}::uuid),
+    (SELECT count(*) FROM value_records WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND value_type = 'boolean' AND canonical_value = 'true'),
+    (SELECT display FROM value_records WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND value_type = 'boolean' AND canonical_value = 'true' ORDER BY value_id LIMIT 1)
+`);
+if (positiveCount(mixedCounts[0]) !== 10 || positiveCount(mixedCounts[1]) !== 6 ||
+    positiveCount(mixedCounts[2]) !== 1 || mixedCounts[3] !== "enabled") {
+  throw new Error("mixed-endpoint Remember did not atomically reuse the typed Value and persist all current vectors");
+}
+
 const baselineCounts = postgresRow(`
   SELECT
     (SELECT outcome FROM remember_attempts WHERE team_id = ${sqlLiteral(teamID)}::uuid AND attempt_id = ${sqlLiteral(baselineID)}::uuid),
@@ -118,6 +173,8 @@ console.log(JSON.stringify({
   baseline_submission_id: baselineID,
   baseline_processing_state: baseline.processing_state,
   replay_submission_id: replay.submission_id,
+  mixed_submission_id: mixed.submission_id,
+  mixed_processing_state: mixed.processing_state,
   security_processing_state: security.processing_state,
   unsupported_processing_state: unsupported.processing_state,
 }, null, 2));
@@ -128,6 +185,17 @@ function relationship(ref, evidenceIndex, subject, predicateSurface, object, pro
     subject: { name: subject, entity_kind: subjectKind },
     predicate: { proposed_key: proposedKey },
     object: { entity: { name: object, entity_kind: objectKind } },
+    polarity: "+",
+    evidence_indices: [evidenceIndex],
+  };
+}
+
+function valueRelationship(ref, evidenceIndex, subject, proposedKey, subjectKind, value) {
+  return {
+    ref,
+    subject: { name: subject, entity_kind: subjectKind },
+    predicate: { proposed_key: proposedKey },
+    object: { value },
     polarity: "+",
     evidence_indices: [evidenceIndex],
   };

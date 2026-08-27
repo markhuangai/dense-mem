@@ -96,12 +96,16 @@ func (r *LedgerRepositoryImpl) PlanRememberEmbeddings(
 			}
 			valueType, value, unit := "", "", ""
 			if observation.ObjectValue != nil {
-				valueType = observation.ObjectValue.ValueType
-				value = observation.ObjectValue.Display
-				if value == "" {
-					value = observation.ObjectValue.CanonicalValue
+				projected, err := loadInlineEmbeddingValueProjection(ctx, tx, input.TeamID, *observation.ObjectValue)
+				if err != nil {
+					return err
 				}
-				unit = observation.ObjectValue.Unit
+				valueType = projected.ValueType
+				value = projected.Display
+				if value == "" {
+					value = projected.CanonicalValue
+				}
+				unit = projected.Unit
 				objectName = value
 			}
 			text := relationshipProjectionText(&RelationshipRecord{

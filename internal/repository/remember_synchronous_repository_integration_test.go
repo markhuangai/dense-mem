@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -11,6 +12,127 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
+
+func TestRememberCommitMixedEndpointsReusesTypedValueProjection(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "remember-mixed-endpoints", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-mixed-endpoints-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-mixed-endpoints-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+
+	_, err := semantic.UpsertValue(ctx, UpsertValueInput{
+		TeamID: teamID, OwnerProfileID: ownerID,
+		ValueType: "boolean", CanonicalValue: "true", Display: "enabled",
+	})
+	require.NoError(t, err)
+
+	contents := []string{
+		"Dense-Mem uses PostgreSQL and operates synchronously.",
+		"Dense-Mem was deployed at 2026-08-27T06:50:00Z.",
+		"Dense-Mem also uses Redis and stores six relationships.",
+		"Dense-Mem is enabled.",
+	}
+	fragments := make([]string, len(contents))
+	evidence := make([]EvidenceInput, len(contents))
+	items := make([]SubmissionAssessmentItemInput, len(contents))
+	for index, content := range contents {
+		fragments[index] = uuid.NewString()
+		evidence[index] = EvidenceInput{
+			FragmentID: fragments[index], Content: content, ContentHash: sha256Hex(content),
+			SourceType: "conversation", Authority: "primary",
+		}
+		items[index] = SubmissionAssessmentItemInput{FragmentID: fragments[index]}
+	}
+
+	assessmentID := uuid.NewString()
+	type relationshipSpec struct {
+		ref              string
+		predicate        string
+		objectRef        string
+		objectValue      *SemanticValueInput
+		objectKind       string
+		relationshipKind string
+		evidenceIndex    int
+	}
+	specs := []relationshipSpec{
+		{ref: "database", predicate: "sync_mix_database_65a1", objectRef: "postgresql", objectKind: "product", relationshipKind: "state", evidenceIndex: 0},
+		{ref: "mode", predicate: "sync_mix_mode_54b2", objectValue: &SemanticValueInput{Ref: "mode:value", ValueType: "string", CanonicalValue: "synchronous", Display: "synchronous"}, objectKind: "string", relationshipKind: "state", evidenceIndex: 0},
+		{ref: "deployed", predicate: "sync_mix_deployed_43c3", objectValue: &SemanticValueInput{Ref: "deployed:value", ValueType: "date_time", CanonicalValue: "2026-08-27T06:50:00Z", Display: "2026-08-27T06:50:00Z"}, objectKind: "date_time", relationshipKind: "event", evidenceIndex: 1},
+		{ref: "cache", predicate: "sync_mix_cache_32d4", objectRef: "redis", objectKind: "product", relationshipKind: "state", evidenceIndex: 2},
+		{ref: "count", predicate: "sync_mix_count_21e5", objectValue: &SemanticValueInput{Ref: "count:value", ValueType: "number", CanonicalValue: "6", Display: "six"}, objectKind: "number", relationshipKind: "state", evidenceIndex: 2},
+		{ref: "enabled", predicate: "sync_mix_enabled_10f6", objectValue: &SemanticValueInput{Ref: "enabled:value", ValueType: "boolean", CanonicalValue: "true", Display: "true"}, objectKind: "boolean", relationshipKind: "state", evidenceIndex: 3},
+	}
+	observations := make([]SubmissionAssessmentRelationshipObservationInput, 0, len(specs))
+	registrations := make([]SubmissionPredicateRegistrationInput, 0, len(specs))
+	relationshipResults := make([]SubmissionRelationshipResultInput, 0, len(specs))
+	for _, spec := range specs {
+		content := contents[spec.evidenceIndex]
+		observations = append(observations, SubmissionAssessmentRelationshipObservationInput{
+			RelationshipRef: spec.ref,
+			Observation: SemanticRelationshipDecisionInput{
+				Ref: spec.ref, SubjectRef: "dense-mem", OriginalPredicate: spec.predicate,
+				ObjectRef: spec.objectRef, ObjectValue: spec.objectValue, Polarity: "+",
+				AssessorAccepted: true, AssessmentID: assessmentID,
+				Support: &EvidenceSupportInput{
+					FragmentID: fragments[spec.evidenceIndex], SourceGroupKey: "remember-mixed-endpoints",
+					SpanStart: 0, SpanEnd: len(content), Quote: content, Authority: "primary",
+				},
+			},
+		})
+		registrations = append(registrations, SubmissionPredicateRegistrationInput{
+			RelationshipRef: spec.ref, PredicateKey: spec.predicate,
+			SubjectKind: "project", ObjectKind: spec.objectKind,
+			RelationshipKind: spec.relationshipKind, CurrentCardinality: "many",
+		})
+		relationshipResults = append(relationshipResults, SubmissionRelationshipResultInput{
+			RelationshipRef: spec.ref, Disposition: "stored",
+		})
+	}
+
+	input := SynchronousRememberCommitInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: uuid.NewString(),
+		IdempotencyKey: "remember-mixed-endpoints", RequestHash: sha256Hex("remember-mixed-endpoints"),
+		SourceSummary: "mixed endpoint commit regression", Evidence: evidence,
+		AssessmentID: assessmentID, AssessmentJSON: json.RawMessage(`{"request_id":"remember-mixed-endpoints"}`), ProviderTurns: 1,
+		Commit: CommitSubmissionAssessmentInput{
+			AssessmentID: assessmentID, Items: items,
+			EntityResolutions: []SubmissionAssessmentEntityResolutionInput{
+				{Resolution: SemanticEntityResolutionInput{MentionRef: "dense-mem", Action: string(domain.EntityResolutionCreate), EntityKind: "project", CanonicalName: "Dense-Mem", FragmentID: fragments[0], AssessmentID: assessmentID}},
+				{Resolution: SemanticEntityResolutionInput{MentionRef: "postgresql", Action: string(domain.EntityResolutionCreate), EntityKind: "product", CanonicalName: "PostgreSQL", FragmentID: fragments[0], AssessmentID: assessmentID}},
+				{Resolution: SemanticEntityResolutionInput{MentionRef: "redis", Action: string(domain.EntityResolutionCreate), EntityKind: "product", CanonicalName: "Redis", FragmentID: fragments[2], AssessmentID: assessmentID}},
+			},
+			RelationshipObservations: observations, PredicateRegistrations: registrations,
+			RelationshipResults: relationshipResults,
+			Payload: map[string]any{
+				"response_hash": sha256Hex("remember-mixed-endpoints-assessment"), "model": "test-model",
+				"tokenizer": "o200k_base", "candidate_context_tokens": 0, "candidate_context_truncated": false,
+			},
+		},
+	}
+	plan, err := ledger.PlanRememberEmbeddings(ctx, input)
+	require.NoError(t, err)
+	require.Len(t, plan.Documents, len(contents)+len(specs))
+	embeddings := make([]InlineEmbeddingResult, 0, len(plan.Documents))
+	for _, document := range plan.Documents {
+		embeddings = append(embeddings, InlineEmbeddingResult{
+			DocumentHash: document.DocumentHash, Embedding: []float32{1, 0, 0},
+			EmbeddingContractID: plan.EmbeddingContractID, EmbeddingDimensions: plan.EmbeddingDimensions,
+			EmbeddingModel: plan.EmbeddingModel, SearchIndexGenerationID: plan.SearchIndexGenerationID,
+			IndexGeneration: plan.IndexGeneration,
+		})
+	}
+
+	result, err := ledger.CommitRememberWithEmbeddings(ctx, input, embeddings)
+	require.NoError(t, err)
+	require.Len(t, result.RelationshipResults, len(specs))
+	require.Len(t, result.SearchDocuments, len(contents)+len(specs))
+	for _, document := range result.SearchDocuments {
+		require.Equal(t, string(domain.SearchProjectionCurrent), document.SearchState)
+	}
+}
 
 func TestRememberTerminalCommitHasNoRetiredWorkflowTables(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -220,6 +221,34 @@ func TestRememberFailureLogClassifiesProviderConfiguration(t *testing.T) {
 	require.Equal(t, "configuration", logger.attrs["failure_class"])
 	require.Equal(t, "embedding_provider_not_configured", logger.attrs["failure_code"])
 	require.EqualError(t, logger.err, "remember embedding provider configuration is invalid")
+}
+
+func TestRememberFailureLogClassifiesCommitWithoutExposingCause(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		failure      error
+		failureClass string
+		failureCode  string
+	}{
+		{name: "embedding plan mismatch", failure: fmt.Errorf("repository commit: %w", repository.ErrInlineEmbeddingPlanMismatch), failureClass: "data_contract", failureCode: "embedding_plan_mismatch"},
+		{name: "database failure", failure: errors.New("postgres password=do-not-log"), failureClass: "database", failureCode: "semantic_commit_failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			logger := &rememberProcessorLoggerStub{}
+			processor := &rememberSynchronousProcessor{logger: logger}
+
+			processor.logRememberFailure(
+				rememberapp.RememberProcessRequest{TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString()},
+				uuid.NewString(), time.Now(), "commit", string(rememberapp.SubmissionErrorDatabaseFailure), "corr-commit", test.failure,
+			)
+
+			require.Equal(t, "semantic_commit", logger.attrs["failure_source"])
+			require.Equal(t, test.failureClass, logger.attrs["failure_class"])
+			require.Equal(t, test.failureCode, logger.attrs["failure_code"])
+			require.EqualError(t, logger.err, "remember semantic commit failed")
+			require.NotContains(t, logger.err.Error(), test.failure.Error())
+		})
+	}
 }
 
 func TestRememberFailureCodeDistinguishesEmbeddingBoundaries(t *testing.T) {

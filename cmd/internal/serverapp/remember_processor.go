@@ -402,6 +402,14 @@ func (p *rememberSynchronousProcessor) logRememberFailure(
 		if metadata.StatusCode > 0 {
 			attrs = append(attrs, observability.Int("provider_status_code", metadata.StatusCode))
 		}
+	case phase == "commit":
+		logError = errors.New("remember semantic commit failed")
+		failureClass, failureCode := rememberCommitFailureMetadata(failure)
+		attrs = append(attrs,
+			observability.String("failure_source", "semantic_commit"),
+			observability.String("failure_class", failureClass),
+			observability.String("failure_code", failureCode),
+		)
 	}
 	p.logger.Error("remember_processing_failed", logError, attrs...)
 }
@@ -420,6 +428,25 @@ func rememberEmbeddingPlanFailureMetadata(err error) (string, string) {
 		return "cancelled", "embedding_plan_cancelled"
 	default:
 		return "internal", "embedding_plan_failed"
+	}
+}
+
+func rememberCommitFailureMetadata(err error) (string, string) {
+	switch {
+	case errors.Is(err, repository.ErrInlineEmbeddingPlanMismatch):
+		return "data_contract", "embedding_plan_mismatch"
+	case errors.Is(err, repository.ErrSearchContractMismatch):
+		return "fence_conflict", "search_contract_changed"
+	case errors.Is(err, repository.ErrSearchStaleVersion):
+		return "fence_conflict", "search_document_stale"
+	case errors.Is(err, rememberapp.ErrRememberStaleInput), errors.Is(err, repository.ErrSourceRevisionConflict):
+		return "stale_input", "source_state_changed"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout", "semantic_commit_timeout"
+	case errors.Is(err, context.Canceled):
+		return "cancelled", "semantic_commit_cancelled"
+	default:
+		return "database", "semantic_commit_failed"
 	}
 }
 
