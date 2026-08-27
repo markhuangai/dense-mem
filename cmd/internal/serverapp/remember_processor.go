@@ -24,7 +24,7 @@ import (
 // rememberSynchronousProcessor owns the request-scoped Remember boundary:
 // assessment, one embedding batch, and one terminal repository transaction.
 type rememberSynchronousProcessor struct {
-	ledger   *repository.LedgerRepositoryImpl
+	ledger   rememberSynchronousLedger
 	catalog  memoryservice.SubmissionAssessmentCatalog
 	provider assessor.Provider
 	embedder embedding.EmbeddingProviderInterface
@@ -33,7 +33,17 @@ type rememberSynchronousProcessor struct {
 	logger   observability.LogProvider
 }
 
+type rememberSynchronousLedger interface {
+	LoadRememberAttempt(context.Context, repository.RememberAttemptLookupInput) (*repository.RememberAttempt, error)
+	CommitRememberPreflightQuarantine(context.Context, repository.SynchronousRememberCommitInput, string) (*repository.SynchronousRememberCommitResult, error)
+	CommitRememberTerminal(context.Context, repository.SynchronousRememberCommitInput, string, string, []repository.SubmissionAssessmentSecurityQuarantineInput) (*repository.SynchronousRememberCommitResult, error)
+	PlanRememberEmbeddings(context.Context, repository.SynchronousRememberCommitInput) (*repository.InlineEmbeddingPlan, error)
+	CommitRememberWithEmbeddings(context.Context, repository.SynchronousRememberCommitInput, []repository.InlineEmbeddingResult) (*repository.SynchronousRememberCommitResult, error)
+	RecordRememberFailure(context.Context, repository.RememberFailureRecordInput) error
+}
+
 var _ rememberapp.SynchronousProcessor = (*rememberSynchronousProcessor)(nil)
+var _ rememberSynchronousLedger = (*repository.LedgerRepositoryImpl)(nil)
 
 func newRememberSynchronousProcessor(
 	ledger *repository.LedgerRepositoryImpl,
@@ -44,8 +54,12 @@ func newRememberSynchronousProcessor(
 	metrics observability.DiscoverabilityMetrics,
 	logger observability.LogProvider,
 ) *rememberSynchronousProcessor {
+	var ledgerPort rememberSynchronousLedger
+	if ledger != nil {
+		ledgerPort = ledger
+	}
 	return &rememberSynchronousProcessor{
-		ledger: ledger, catalog: catalog, provider: provider, embedder: embedder, limits: limits,
+		ledger: ledgerPort, catalog: catalog, provider: provider, embedder: embedder, limits: limits,
 		metrics: metrics, logger: logger,
 	}
 }
@@ -103,7 +117,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 			return rememberAttemptStatus(replayed)
 		}
 		if terminalErr != nil {
-			return nil, fmt.Errorf("%w: preflight quarantine commit: %v", rememberapp.ErrRememberPersistence, terminalErr)
+			return fail(terminalErr, "commit")
 		}
 		return rememberAttemptStatus(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult})
 	}

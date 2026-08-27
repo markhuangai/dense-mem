@@ -75,6 +75,32 @@ func TestRememberAssessmentTerminalOutcomePrioritizesSecurity(t *testing.T) {
 	require.Empty(t, rememberAssessmentTerminalOutcome(&memoryservice.SynchronousAssessmentResult{}, false))
 }
 
+func TestRememberPreflightCommitFailureRecordsAuthoritativeAttempt(t *testing.T) {
+	ledger := &rememberProcessorLedgerStub{preflightErr: context.DeadlineExceeded}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	input := rememberapp.RememberProcessRequest{
+		TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString(), IdempotencyKey: "preflight-timeout",
+		RequestHash: "request-hash", SecurityRejected: true,
+		Metadata: map[string]any{"actor": map[string]any{"correlation_id": "preflight-correlation"}},
+		Evidence: []rememberapp.EvidenceInput{{Content: "rejected evidence", ContentHash: "content-hash"}},
+	}
+
+	result, err := processor.ProcessRemember(context.Background(), input)
+
+	require.Nil(t, result)
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotNil(t, processErr.Status)
+	require.Equal(t, ledger.failure.AttemptID, processErr.Status.SubmissionID)
+	require.Equal(t, "failed", processErr.Status.ProcessingState)
+	require.Equal(t, string(rememberapp.SubmissionErrorRequestTimeout), processErr.Status.Errors[0].Code)
+	require.Equal(t, "commit", ledger.failure.FailedPhase)
+	require.Equal(t, string(rememberapp.SubmissionErrorRequestTimeout), ledger.failure.ErrorCode)
+	require.Equal(t, "preflight-correlation", ledger.failure.CorrelationID)
+	require.Len(t, ledger.failure.Artifacts, 2)
+}
+
 func TestRememberProcessorRequiresEmbedderOnlyForNonemptyPlan(t *testing.T) {
 	processor := &rememberSynchronousProcessor{}
 	embeddings, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), nil)
@@ -340,6 +366,36 @@ func TestRememberAttemptMatchesMigratedRequestHash(t *testing.T) {
 	require.False(t, rememberAttemptMatchesRequest(&repository.RememberAttempt{
 		RequestHash: "different", ContractVersion: domain.MigratedRememberRequestHashVersion,
 	}, input))
+}
+
+type rememberProcessorLedgerStub struct {
+	preflightErr error
+	failure      repository.RememberFailureRecordInput
+}
+
+func (s *rememberProcessorLedgerStub) LoadRememberAttempt(context.Context, repository.RememberAttemptLookupInput) (*repository.RememberAttempt, error) {
+	return nil, repository.ErrRememberAttemptNotFound
+}
+
+func (s *rememberProcessorLedgerStub) CommitRememberPreflightQuarantine(context.Context, repository.SynchronousRememberCommitInput, string) (*repository.SynchronousRememberCommitResult, error) {
+	return nil, s.preflightErr
+}
+
+func (s *rememberProcessorLedgerStub) RecordRememberFailure(_ context.Context, input repository.RememberFailureRecordInput) error {
+	s.failure = input
+	return nil
+}
+
+func (s *rememberProcessorLedgerStub) CommitRememberTerminal(context.Context, repository.SynchronousRememberCommitInput, string, string, []repository.SubmissionAssessmentSecurityQuarantineInput) (*repository.SynchronousRememberCommitResult, error) {
+	panic("unexpected terminal commit")
+}
+
+func (s *rememberProcessorLedgerStub) PlanRememberEmbeddings(context.Context, repository.SynchronousRememberCommitInput) (*repository.InlineEmbeddingPlan, error) {
+	panic("unexpected embedding plan")
+}
+
+func (s *rememberProcessorLedgerStub) CommitRememberWithEmbeddings(context.Context, repository.SynchronousRememberCommitInput, []repository.InlineEmbeddingResult) (*repository.SynchronousRememberCommitResult, error) {
+	panic("unexpected embedding commit")
 }
 
 var _ embedding.EmbeddingProviderInterface = (*rememberProcessorEmbedderStub)(nil)
