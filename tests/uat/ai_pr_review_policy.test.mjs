@@ -114,14 +114,22 @@ test("maintainability review is preventive, bounded, and impact-scored", async (
   );
   assert.match(
     normalizedWorkflow,
+    /Own these bounded design-only concerns across repository domains, including authentication, authorization, durable state, transactions, concurrency, HTTP and MCP contracts, frontend, deployment, and operations/,
+  );
+  assert.match(
+    normalizedWorkflow,
     /similar syntax that implements different boundary-specific policy/,
   );
   assert.match(
     normalizedWorkflow,
     /an extraction that broadens an API or creates cross-layer coupling/,
   );
-  assert.match(normalizedWorkflow, /leave it to that designated goal rather than duplicating it/);
+  assert.match(normalizedWorkflow, /leave that functional defect to its designated goal rather than duplicating it/);
   assert.match(normalizedWorkflow, /Use Low severity by default/);
+  assert.match(
+    normalizedWorkflow,
+    /That exclusion does not apply to the bounded design-only concerns owned above/,
+  );
 });
 
 test("test-assurance review owns positive, negative, and local E2E proof", async () => {
