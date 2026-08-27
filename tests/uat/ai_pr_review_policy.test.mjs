@@ -144,7 +144,7 @@ test("test-assurance review owns positive, negative, and local E2E proof", async
   assert.match(normalizedWorkflow, /existing tests count when their setup and assertions exercise the changed path/);
   assert.match(
     normalizedWorkflow,
-    /real PostgreSQL or service coverage for RLS, migrations, constraints, transactions, locks, idempotency, pgvector, concurrency, and cross-profile behavior/,
+    /real PostgreSQL-backed service integration coverage for RLS, migrations, constraints, transactions, locks, idempotency, pgvector, concurrency, and cross-profile behavior/,
   );
   assert.match(
     normalizedWorkflow,
