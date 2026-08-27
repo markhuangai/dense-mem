@@ -149,6 +149,9 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"stored evidence reason", func(result *TerminalRememberResult) { result.Evidence[0].Reason = "provider_secret_detail" }},
 		{"non-stored evidence id", func(result *TerminalRememberResult) { result.Evidence[1].EvidenceID = "unexpected" }},
 		{"non-stored evidence reason", func(result *TerminalRememberResult) { result.Evidence[1].Reason = "provider_secret_detail" }},
+		{"non-stored evidence supersession", func(result *TerminalRememberResult) {
+			result.Evidence[1].SupersededEvidenceIDs = []string{"22222222-2222-2222-2222-222222222222"}
+		}},
 		{"superseded evidence uuid", func(result *TerminalRememberResult) {
 			result.Evidence[0].SupersededEvidenceIDs = []string{"not-a-uuid"}
 		}},
@@ -156,6 +159,12 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 			result.Evidence[0].SupersededEvidenceIDs = []string{"22222222-2222-2222-2222-222222222222", "22222222-2222-2222-2222-222222222222"}
 		}},
 		{"evidence search state", func(result *TerminalRememberResult) { result.Evidence[0].SearchState = "queued" }},
+		{"stored evidence not-required search state", func(result *TerminalRememberResult) {
+			result.Evidence[0].SearchState = string(TerminalSearchNotRequired)
+		}},
+		{"non-stored evidence current search state", func(result *TerminalRememberResult) {
+			result.Evidence[1].SearchState = string(TerminalSearchCurrent)
+		}},
 		{"relationship count", func(result *TerminalRememberResult) { result.RelationshipResults = result.RelationshipResults[:1] }},
 		{"relationship order", func(result *TerminalRememberResult) { result.RelationshipResults[1].RelationshipRef = "rel-c" }},
 		{"relationship duplicate", func(result *TerminalRememberResult) { result.RelationshipResults[1].RelationshipRef = "rel-a" }},
@@ -174,6 +183,17 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 			result.RelationshipResults[0].Splits = nil
 			result.RelationshipResults[0].Reason = "not_supported_by_evidence"
 			result.Errors = []SubmissionStatusError{TerminalStatusError(TerminalErrorProviderUnavailable)}
+		}},
+		{"rejected current search state", func(result *TerminalRememberResult) {
+			result.ProcessingState = string(TerminalProcessingRejected)
+			result.SearchState = string(TerminalSearchCurrent)
+			result.Evidence[0].Disposition = "not_stored"
+			result.Evidence[0].EvidenceID = ""
+			result.Evidence[0].SearchState = string(TerminalSearchNotRequired)
+			result.RelationshipResults[0].Disposition = "not_stored"
+			result.RelationshipResults[0].Splits = nil
+			result.RelationshipResults[0].Reason = "not_supported_by_evidence"
+			result.Errors = []SubmissionStatusError{TerminalStatusError(TerminalErrorNoSupportedMemory)}
 		}},
 	}
 	for _, test := range tests {

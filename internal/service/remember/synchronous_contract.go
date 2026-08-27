@@ -371,6 +371,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		if item.Disposition == "not_stored" && item.EvidenceID != "" {
 			return fmt.Errorf("remember: non-stored evidence %d has an evidence_id", index)
 		}
+		if item.Disposition == "not_stored" && len(item.SupersededEvidenceIDs) > 0 {
+			return fmt.Errorf("remember: non-stored evidence %d has superseded evidence", index)
+		}
 		if item.Disposition == "not_stored" && !terminalNotStoredReasonAllowed(item.Reason) {
 			return fmt.Errorf("remember: non-stored evidence %d has unsupported reason", index)
 		}
@@ -386,6 +389,12 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		}
 		if item.SearchState != string(TerminalSearchCurrent) && item.SearchState != string(TerminalSearchNotRequired) {
 			return fmt.Errorf("remember: terminal evidence %d has invalid search state %q", index, item.SearchState)
+		}
+		if item.Disposition == "stored" && item.SearchState != string(TerminalSearchCurrent) {
+			return fmt.Errorf("remember: stored evidence %d must have current search state", index)
+		}
+		if item.Disposition == "not_stored" && item.SearchState != string(TerminalSearchNotRequired) {
+			return fmt.Errorf("remember: non-stored evidence %d must have not_required search state", index)
 		}
 	}
 	for index, item := range result.Errors {
@@ -453,6 +462,13 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		if storedResult {
 			return fmt.Errorf("remember: %s terminal result cannot contain stored results", result.ProcessingState)
 		}
+	}
+	expectedSearchState := TerminalSearchNotRequired
+	if storedResult {
+		expectedSearchState = TerminalSearchCurrent
+	}
+	if result.SearchState != string(expectedSearchState) {
+		return fmt.Errorf("remember: terminal search state %q is inconsistent with stored results", result.SearchState)
 	}
 	return nil
 }

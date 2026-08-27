@@ -8,7 +8,9 @@
 -- RLS impact: attempts and events are visible to the owning team; raw failure
 -- artifacts and assessment history are control-only. Inserts are limited to
 -- the owner profile (or audited system and migration transactions).
--- Append-only rows cannot be updated or deleted by normal application code.
+-- Append-only rows cannot be updated or deleted by normal application code;
+-- only audited migration repairs may update history, and system cleanup may
+-- purge expired failure artifacts.
 -- Backfill: none. Existing placement, assessment, and reconciliation history
 -- remains byte-for-byte unchanged for the later stopped-service cutover.
 -- Backward compatibility: the release binary does not read or write these
@@ -310,17 +312,15 @@ RETURNS TRIGGER AS $$
 DECLARE
     tx_mode TEXT := current_setting('app.tx_mode', true);
 BEGIN
-    IF tx_mode IN ('system', 'migration') THEN
-        IF TG_OP = 'UPDATE' THEN
-            RETURN NEW;
-        END IF;
-        IF TG_TABLE_NAME = 'remember_failure_artifacts' THEN
-            IF TG_OP = 'DELETE' THEN
-                IF OLD.expires_at <= CURRENT_TIMESTAMP THEN
-                    RETURN OLD;
-                END IF;
-                RAISE EXCEPTION 'remember_failure_artifacts cannot be purged before expires_at';
+    IF tx_mode = 'migration' AND TG_OP = 'UPDATE' THEN
+        RETURN NEW;
+    END IF;
+    IF tx_mode IN ('system', 'migration') AND TG_TABLE_NAME = 'remember_failure_artifacts' THEN
+        IF TG_OP = 'DELETE' THEN
+            IF OLD.expires_at <= CURRENT_TIMESTAMP THEN
+                RETURN OLD;
             END IF;
+            RAISE EXCEPTION 'remember_failure_artifacts cannot be purged before expires_at';
         END IF;
     END IF;
     RAISE EXCEPTION '% is append-only: % operations are not allowed', TG_TABLE_NAME, TG_OP;

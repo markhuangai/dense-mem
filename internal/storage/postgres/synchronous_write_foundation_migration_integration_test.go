@@ -518,7 +518,16 @@ func TestSynchronousWriteFoundationAppendOnlyRowsAndGuardedDown(t *testing.T) {
 		`, teamID, expiredArtifactID)
 		return err
 	}))
-	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+	systemUpdateErr := execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE remember_attempts SET error_code = 'migration_repair'
+			WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+		`, teamID, attemptID)
+		return err
+	})
+	require.Error(t, systemUpdateErr)
+	require.Contains(t, systemUpdateErr.Error(), "remember_attempts is append-only")
+	require.NoError(t, execPostgresTxMode(ctx, db, "migration", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			UPDATE remember_attempts SET error_code = 'migration_repair'
 			WHERE team_id = $1::uuid AND attempt_id = $2::uuid
