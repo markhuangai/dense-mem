@@ -17,6 +17,16 @@ const sharedWorkflowURL = new URL(
 );
 const ciCheckURL = new URL("../../scripts/ci-check.sh", import.meta.url);
 
+function normalizedReviewPrompt(workflow, heading) {
+  const start = workflow.indexOf(`{0} ${heading}`);
+  assert.notEqual(start, -1, `missing review prompt: ${heading}`);
+
+  const end = workflow.indexOf("', env.REVIEW_PROTOCOL))", start);
+  assert.notEqual(end, -1, `unterminated review prompt: ${heading}`);
+
+  return workflow.slice(start, end).replace(/\s+/g, " ");
+}
+
 test("repository guidance requires cross-boundary review and falsification", async () => {
   const agents = await readFile(agentsURL, "utf8");
   const normalizedAgents = agents.replace(/\s+/g, " ");
@@ -103,7 +113,10 @@ test("AI review uses six ownership-driven goals and one memory-first protocol", 
 
 test("maintainability review is preventive, bounded, and impact-scored", async () => {
   const workflow = await readFile(reviewWorkflowURL, "utf8");
-  const normalizedWorkflow = workflow.replace(/\s+/g, " ");
+  const normalizedWorkflow = normalizedReviewPrompt(
+    workflow,
+    "Review functional and semantic correctness plus bounded design integrity, including model-provider boundaries",
+  );
 
   assert.match(normalizedWorkflow, /duplication of the same authoritative rule/);
   assert.match(normalizedWorkflow, /supported sites change for the same reason/);
@@ -134,7 +147,10 @@ test("maintainability review is preventive, bounded, and impact-scored", async (
 
 test("test-assurance review owns positive, negative, and local E2E proof", async () => {
   const workflow = await readFile(reviewWorkflowURL, "utf8");
-  const normalizedWorkflow = workflow.replace(/\s+/g, " ");
+  const normalizedWorkflow = normalizedReviewPrompt(
+    workflow,
+    "Review test assurance for every new or changed supported behavior",
+  );
 
   assert.match(normalizedWorkflow, /Build a scenario map from the linked issue/);
   assert.match(
