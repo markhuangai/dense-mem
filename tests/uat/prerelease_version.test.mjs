@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { devNull, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -60,6 +60,17 @@ function tag(repository, ...tags) {
   }
 }
 
+function commitFiles(repository, message, files) {
+  for (const [path, contents] of Object.entries(files)) {
+    const target = join(repository, path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, contents);
+  }
+  git(repository, "add", "--", ...Object.keys(files));
+  git(repository, "commit", "--quiet", "-m", message);
+  return git(repository, "rev-parse", "HEAD");
+}
+
 test("temporary repositories ignore configured global hooks", (t) => {
   const home = mkdtempSync(join(tmpdir(), "dense-mem-prerelease-home-"));
   const hooks = join(home, "hooks");
@@ -115,6 +126,88 @@ test("next returns to patch allocation after the active line becomes stable", (t
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), "v2.5.1-rc.0");
+});
+
+test("should-release skips accumulated GitHub and root README changes", (t) => {
+  const repository = createRepository(t);
+  tag(repository, "v2.6.1-rc.0");
+  const head = commitFiles(repository, "update repository metadata", {
+    ".github/workflows/ci.yml": "name: CI\n",
+    "README.md": "English\n",
+    "README.zh-CN.md": "Chinese\n",
+  });
+
+  const result = resolve(repository, "should-release", head);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "false");
+});
+
+test("should-release skips an empty untagged commit", (t) => {
+  const repository = createRepository(t);
+  tag(repository, "v2.6.1-rc.0");
+  git(repository, "commit", "--quiet", "--allow-empty", "-m", "empty");
+  const head = git(repository, "rev-parse", "HEAD");
+
+  const result = resolve(repository, "should-release", head);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "false");
+});
+
+test("should-release includes untagged code before a README-only commit", (t) => {
+  const repository = createRepository(t);
+  tag(repository, "v2.6.1-rc.0");
+  commitFiles(repository, "change code", {
+    "internal/service.go": "package internal\n",
+  });
+  const head = commitFiles(repository, "update docs", {
+    "README.md": "Documentation\n",
+  });
+
+  const result = resolve(repository, "should-release", head);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "true");
+});
+
+test("should-release includes a code file renamed into an ignored path", (t) => {
+  const repository = createRepository(t);
+  commitFiles(repository, "add code", {
+    "internal/config.go": "package internal\n",
+  });
+  tag(repository, "v2.6.1-rc.0");
+  git(repository, "mv", "internal/config.go", "README.md");
+  git(repository, "commit", "--quiet", "-m", "rename code");
+  const head = git(repository, "rev-parse", "HEAD");
+
+  const result = resolve(repository, "should-release", head);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "true");
+});
+
+test("should-release keeps tagged-head publication retries eligible", (t) => {
+  const repository = createRepository(t);
+  tag(repository, "v2.6.1-rc.0");
+  const head = git(repository, "rev-parse", "HEAD");
+
+  const result = resolve(repository, "should-release", head);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "true");
+});
+
+test("should-release publishes when no version baseline exists", (t) => {
+  const repository = createRepository(t);
+  const head = commitFiles(repository, "initial docs", {
+    "README.md": "Documentation\n",
+  });
+
+  const result = resolve(repository, "should-release", head);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "true");
 });
 
 test("start accepts any canonical SemVer base newer than known lines", (t) => {

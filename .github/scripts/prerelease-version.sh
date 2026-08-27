@@ -68,6 +68,77 @@ latest_rc() {
 	printf '%s\n' "${latest}"
 }
 
+is_version_tag() {
+	local tag="$1"
+
+	[[ "${tag}" =~ ${SEMVER_REGEX} || "${tag}" =~ ${RC_REGEX} ]]
+}
+
+commit_has_version_tag() {
+	local commit="$1"
+	local tag
+
+	while IFS= read -r tag; do
+		is_version_tag "${tag}" && return 0
+	done < <(git tag --points-at "${commit}")
+
+	return 1
+}
+
+nearest_version_commit() {
+	local target="$1"
+	local commit
+
+	while IFS= read -r commit; do
+		if commit_has_version_tag "${commit}"; then
+			printf '%s\n' "${commit}"
+			return
+		fi
+	done < <(git rev-list --first-parent "${target}")
+
+	return 1
+}
+
+release_path_is_ignored() {
+	case "$1" in
+	.github/* | README.md | README.zh-CN.md) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+resolve_should_release() {
+	local target="${1:-}"
+	local parent
+	local baseline
+	local path
+
+	[[ "${target}" =~ ^[0-9a-f]{40}$ ]] || fail "target must be a 40-character commit SHA"
+	git rev-parse --verify "${target}^{commit}" >/dev/null 2>&1 || fail "target commit does not exist: ${target}"
+
+	if commit_has_version_tag "${target}"; then
+		printf 'true\n'
+		return
+	fi
+
+	if ! parent="$(git rev-parse "${target}^" 2>/dev/null)"; then
+		printf 'true\n'
+		return
+	fi
+	if ! baseline="$(nearest_version_commit "${parent}")"; then
+		printf 'true\n'
+		return
+	fi
+
+	while IFS= read -r -d '' path; do
+		if ! release_path_is_ignored "${path}"; then
+			printf 'true\n'
+			return
+		fi
+	done < <(git diff --name-only --no-renames -z "${baseline}" "${target}")
+
+	printf 'false\n'
+}
+
 resolve_next() {
 	local stable
 	local base
@@ -137,6 +208,7 @@ usage() {
 	printf '%s\n' \
 		"usage:" \
 		"  $0 next" \
+		"  $0 should-release TARGET_SHA" \
 		"  $0 start RELEASE_BASE TARGET_SHA" >&2
 	exit 2
 }
@@ -145,6 +217,10 @@ case "${1:-}" in
 next)
 	[[ "$#" -eq 1 ]] || usage
 	resolve_next
+	;;
+should-release)
+	[[ "$#" -eq 2 ]] || usage
+	resolve_should_release "$2"
 	;;
 start)
 	[[ "$#" -eq 3 ]] || usage
