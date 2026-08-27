@@ -97,6 +97,8 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 	}{
 		{"missing result", nil},
 		{"non-terminal kind", func(result *TerminalRememberResult) { result.Kind = ResultKindLegacyReceipt }},
+		{"contract version", func(result *TerminalRememberResult) { result.ContractVersion = "dense-mem.v2.future" }},
+		{"submission kind", func(result *TerminalRememberResult) { result.SubmissionKind = "relationship_correction" }},
 		{"missing identity", func(result *TerminalRememberResult) { result.CorrelationID = "" }},
 		{"invalid processing state", func(result *TerminalRememberResult) { result.ProcessingState = "processing" }},
 		{"invalid search state", func(result *TerminalRememberResult) { result.SearchState = "queued" }},

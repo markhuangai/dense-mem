@@ -26,3 +26,9 @@ test("provider timeout fault is longer than the pinned E2E request caps", async 
   assert.match(overlay, /DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: "5000"/);
   assert.match(fixture, /timeoutDelayMs/);
 });
+
+test("compose runner filters the resolved default slice", async () => {
+  const overlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");
+  assert.match(overlay, /local slice="\$\{DENSE_MEM_E2E_WRITE_SLICE:-legacy\}"/);
+  assert.match(overlay, /DENSE_MEM_E2E_WRITE_CASE="\$slice"/);
+});

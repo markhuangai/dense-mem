@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 // ResultKind tells transitional consumers whether a result is a legacy queued
@@ -319,8 +321,10 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	if result.Kind != ResultKindTerminal {
 		return fmt.Errorf("remember: result kind %q is not terminal", result.Kind)
 	}
-	if strings.TrimSpace(result.ContractVersion) == "" || strings.TrimSpace(result.SubmissionID) == "" ||
-		strings.TrimSpace(result.SubmissionKind) == "" || strings.TrimSpace(result.CorrelationID) == "" {
+	if result.ContractVersion != domain.ContractVersion || result.SubmissionKind != "remember" {
+		return fmt.Errorf("remember: terminal result identity is invalid")
+	}
+	if strings.TrimSpace(result.SubmissionID) == "" || strings.TrimSpace(result.CorrelationID) == "" {
 		return errors.New("remember: terminal result identity fields are required")
 	}
 	if result.ProcessingState != string(TerminalProcessingCompleted) &&

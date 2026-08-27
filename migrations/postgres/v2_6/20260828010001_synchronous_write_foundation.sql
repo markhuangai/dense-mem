@@ -5,9 +5,9 @@
 -- indexes, and adds nullable transition columns with no table rewrite. The
 -- reconciliation counters use NOT VALID checks so a production-sized queue
 -- is not scanned while the service is running.
--- RLS impact: attempts, events, artifacts, and assessments are visible to the
--- owning team and writable only by the owner profile (or audited system and
--- migration transactions).
+-- RLS impact: attempts and events are visible to the owning team; raw failure
+-- artifacts and assessment history are control-only. Inserts are limited to
+-- the owner profile (or audited system and migration transactions).
 -- Append-only rows cannot be updated or deleted by normal application code.
 -- Backfill: none. Existing placement, assessment, and reconciliation history
 -- remains byte-for-byte unchanged for the later stopped-service cutover.
@@ -19,6 +19,7 @@
 SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
+SELECT set_config('app.allowed_space_ids', '', true);
 SELECT set_config('lock_timeout', '30s', true);
 
 -- These nullable keys let the later stopped-service cutover retain the old
@@ -242,15 +243,23 @@ BEGIN
             WHERE schemaname = 'public' AND tablename = table_name
               AND policyname = table_name || '_select'
         ) THEN
-            EXECUTE format($policy$
-                CREATE POLICY %I ON %I FOR SELECT USING (
-                    current_setting('app.tx_mode', true) IN ('system', 'migration')
-                    OR (
-                        current_setting('app.tx_mode', true) IN ('team', 'profile')
-                        AND team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+            IF table_name IN ('remember_failure_artifacts', 'semantic_assessments') THEN
+                EXECUTE format($policy$
+                    CREATE POLICY %I ON %I FOR SELECT USING (
+                        current_setting('app.tx_mode', true) IN ('system', 'migration')
                     )
-                )
-            $policy$, table_name || '_select', table_name);
+                $policy$, table_name || '_select', table_name);
+            ELSE
+                EXECUTE format($policy$
+                    CREATE POLICY %I ON %I FOR SELECT USING (
+                        current_setting('app.tx_mode', true) IN ('system', 'migration')
+                        OR (
+                            current_setting('app.tx_mode', true) IN ('team', 'profile')
+                            AND team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+                        )
+                    )
+                $policy$, table_name || '_select', table_name);
+            END IF;
         END IF;
         IF NOT EXISTS (
             SELECT 1 FROM pg_policies
@@ -298,7 +307,17 @@ $dense_mem_synchronous_write_policies$;
 
 CREATE OR REPLACE FUNCTION prevent_synchronous_write_append_only_mutation()
 RETURNS TRIGGER AS $$
+DECLARE
+    tx_mode TEXT := current_setting('app.tx_mode', true);
 BEGIN
+    IF tx_mode IN ('system', 'migration') THEN
+        IF TG_TABLE_NAME = 'remember_failure_artifacts' AND TG_OP = 'DELETE' THEN
+            IF OLD.expires_at > CURRENT_TIMESTAMP THEN
+                RAISE EXCEPTION 'remember_failure_artifacts cannot be purged before expires_at';
+            END IF;
+        END IF;
+        RETURN OLD;
+    END IF;
     RAISE EXCEPTION '% is append-only: % operations are not allowed', TG_TABLE_NAME, TG_OP;
 END;
 $$ LANGUAGE plpgsql;
@@ -355,6 +374,7 @@ BEGIN
     PERFORM set_config('app.tx_mode', 'migration', true);
     PERFORM set_config('app.current_team_id', '', true);
     PERFORM set_config('app.current_profile_id', '', true);
+    PERFORM set_config('app.allowed_space_ids', '', true);
     SELECT
         (SELECT count(*) FROM remember_attempts) +
         (SELECT count(*) FROM remember_attempt_events) +

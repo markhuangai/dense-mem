@@ -253,15 +253,55 @@ func TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam(t *testing
 		return err
 	})
 
-	withProfile(teamID, profileB, func(tx *sql.Tx) error {
+	withProfile(teamID, profileA, func(tx *sql.Tx) error {
 		for _, query := range []struct {
 			name string
 			sql  string
+			id   string
 		}{
-			{"attempt", `SELECT count(*) FROM remember_attempts WHERE team_id = $1::uuid AND attempt_id = $2::uuid`},
-			{"event", `SELECT count(*) FROM remember_attempt_events WHERE team_id = $1::uuid AND event_id = $2::uuid`},
-			{"artifact", `SELECT count(*) FROM remember_failure_artifacts WHERE team_id = $1::uuid AND artifact_id = $2::uuid`},
-			{"assessment", `SELECT count(*) FROM semantic_assessments WHERE team_id = $1::uuid AND semantic_assessment_id = $2::uuid`},
+			{"artifact", `SELECT count(*) FROM remember_failure_artifacts WHERE team_id = $1::uuid AND artifact_id = $2::uuid`, artifactA},
+			{"assessment", `SELECT count(*) FROM semantic_assessments WHERE team_id = $1::uuid AND semantic_assessment_id = $2::uuid`, assessmentA},
+		} {
+			var count int
+			if err := tx.QueryRowContext(ctx, query.sql, teamID, query.id).Scan(&count); err != nil {
+				return err
+			}
+			if count != 0 {
+				return fmt.Errorf("profile A can read control-only %s bytes", query.name)
+			}
+		}
+		return nil
+	})
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		for _, query := range []struct {
+			name string
+			sql  string
+			id   string
+		}{
+			{"artifact", `SELECT count(*) FROM remember_failure_artifacts WHERE team_id = $1::uuid AND artifact_id = $2::uuid`, artifactA},
+			{"assessment", `SELECT count(*) FROM semantic_assessments WHERE team_id = $1::uuid AND semantic_assessment_id = $2::uuid`, assessmentA},
+		} {
+			var count int
+			if err := tx.QueryRowContext(ctx, query.sql, teamID, query.id).Scan(&count); err != nil {
+				return err
+			}
+			if count != 1 {
+				return fmt.Errorf("system context cannot read %s row", query.name)
+			}
+		}
+		return nil
+	}))
+
+	withProfile(teamID, profileB, func(tx *sql.Tx) error {
+		for _, query := range []struct {
+			name    string
+			sql     string
+			visible int
+		}{
+			{"attempt", `SELECT count(*) FROM remember_attempts WHERE team_id = $1::uuid AND attempt_id = $2::uuid`, 1},
+			{"event", `SELECT count(*) FROM remember_attempt_events WHERE team_id = $1::uuid AND event_id = $2::uuid`, 1},
+			{"artifact", `SELECT count(*) FROM remember_failure_artifacts WHERE team_id = $1::uuid AND artifact_id = $2::uuid`, 0},
+			{"assessment", `SELECT count(*) FROM semantic_assessments WHERE team_id = $1::uuid AND semantic_assessment_id = $2::uuid`, 0},
 		} {
 			var count int
 			var id string
@@ -278,8 +318,8 @@ func TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam(t *testing
 			if err := tx.QueryRowContext(ctx, query.sql, teamID, id).Scan(&count); err != nil {
 				return err
 			}
-			if count != 1 {
-				return fmt.Errorf("%s row was not visible to same-team profile B", query.name)
+			if count != query.visible {
+				return fmt.Errorf("%s row visibility for same-team profile B = %d, want %d", query.name, count, query.visible)
 			}
 		}
 		update, err := tx.ExecContext(ctx, `
@@ -417,6 +457,7 @@ func TestSynchronousWriteFoundationAppendOnlyRowsAndGuardedDown(t *testing.T) {
 	runGooseUpTo(t, ctx, db, synchronousWriteFoundationMigrationVersion)
 	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
 	attemptID := uuid.New()
+	activeArtifactID, expiredArtifactID := uuid.New(), uuid.New()
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO remember_attempts (
@@ -434,12 +475,50 @@ func TestSynchronousWriteFoundationAppendOnlyRowsAndGuardedDown(t *testing.T) {
 			) VALUES ($1::uuid, $2::uuid, $3::uuid, 1,
 			          'commit', 'failed', '{}'::jsonb)
 		`, teamID, attemptID, profileID)
-		return err
+		if err != nil {
+			return err
+		}
+		contentHash := "sha256:" + strings.Repeat("0", 64)
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_failure_artifacts (
+				team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind,
+				content_type, content_bytes, byte_count, content_sha256, captured_at, expires_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'active',
+			          'text/plain', decode('61', 'hex'), 1, $5,
+			          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + interval '1 hour'),
+			       ($1::uuid, $6::uuid, $3::uuid, $4::uuid, 'expired',
+			          'text/plain', decode('62', 'hex'), 1, $5,
+			          CURRENT_TIMESTAMP - interval '8 days', CURRENT_TIMESTAMP - interval '1 hour')
+		`, teamID, activeArtifactID, attemptID, profileID, contentHash, expiredArtifactID); err != nil {
+			return err
+		}
+		return nil
 	}))
 
 	require.Error(t, execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
-			UPDATE remember_attempts SET error_code = 'tampered'
+			DELETE FROM remember_failure_artifacts
+			WHERE team_id = $1::uuid AND artifact_id = $2::uuid
+		`, teamID, activeArtifactID)
+		return err
+	}))
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			DELETE FROM remember_failure_artifacts
+			WHERE team_id = $1::uuid AND artifact_id = $2::uuid
+		`, teamID, expiredArtifactID)
+		return err
+	}))
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE remember_attempts SET error_code = 'migration_repair'
+			WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+		`, teamID, attemptID)
+		return err
+	}))
+	require.Error(t, execPostgresTxModeRollback(ctx, db, "profile", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE remember_attempts SET error_code = 'profile_tamper'
 			WHERE team_id = $1::uuid AND attempt_id = $2::uuid
 		`, teamID, attemptID)
 		return err

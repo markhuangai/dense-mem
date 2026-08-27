@@ -51,11 +51,13 @@ NODE
 
 run_synchronous_write_e2e() {
   local team_id="$1"
-  echo "Running compose-backed synchronous-write contract cases with slice ${DENSE_MEM_E2E_WRITE_SLICE:-legacy}."
+  local slice="${DENSE_MEM_E2E_WRITE_SLICE:-legacy}"
+  echo "Running compose-backed synchronous-write contract cases with slice ${slice}."
   DENSE_MEM_USER_URL="$USER_URL" \
   DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
   DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
   DENSE_MEM_E2E_TEAM_ID="$team_id" \
   DENSE_MEM_E2E_API_KEY="$api_key" \
+  DENSE_MEM_E2E_WRITE_CASE="$slice" \
   node "$ROOT_DIR/tests/uat/synchronous_write/runner.mjs"
 }

@@ -56,3 +56,11 @@ func TestReleaseImageDoesNotUseTheE2EEntrypoint(t *testing.T) {
 	require.NotContains(t, string(serverMain), "e2eapp")
 	require.NotContains(t, string(serverMain), "DENSE_MEM_E2E_WRITE_SLICE")
 }
+
+func TestSharedBootstrapDoesNotLogRawErrors(t *testing.T) {
+	body, err := os.ReadFile("../internal/serverapp/bootstrap.go")
+	require.NoError(t, err)
+	source := string(body)
+	require.NotContains(t, source, "%v")
+	require.NotContains(t, source, "log.Fatal(err)")
+}

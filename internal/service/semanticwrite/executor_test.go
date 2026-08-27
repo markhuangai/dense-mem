@@ -95,6 +95,8 @@ func TestExecutorRejectsMalformedPlansBeforeProvider(t *testing.T) {
 	}{
 		{"missing fence", Plan{Documents: validPlan().Documents, Timeout: time.Second}},
 		{"duplicate hash", func() Plan { plan := validPlan(); plan.Documents[1].Hash = plan.Documents[0].Hash; return plan }()},
+		{"non-canonical hash", func() Plan { plan := validPlan(); plan.Documents[0].Hash = " hash-a "; return plan }()},
+		{"non-canonical model", func() Plan { plan := validPlan(); plan.Fence.Model = " model "; return plan }()},
 		{"blank text", func() Plan { plan := validPlan(); plan.Documents[0].Text = " "; return plan }()},
 		{"zero timeout", func() Plan { plan := validPlan(); plan.Timeout = 0; return plan }()},
 	}

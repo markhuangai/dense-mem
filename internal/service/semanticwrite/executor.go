@@ -156,7 +156,9 @@ func validatePlan(plan Plan) error {
 	if plan.Timeout <= 0 {
 		return fmt.Errorf("%w: timeout must be positive", ErrInvalidPlan)
 	}
-	if strings.TrimSpace(plan.Fence.Model) == "" || plan.Fence.Dimensions <= 0 ||
+	if strings.TrimSpace(plan.Fence.Model) == "" ||
+		strings.TrimSpace(plan.Fence.Model) != plan.Fence.Model ||
+		plan.Fence.Dimensions <= 0 ||
 		strings.TrimSpace(plan.Fence.EmbeddingContractID) == "" ||
 		strings.TrimSpace(plan.Fence.SearchGenerationID) == "" || plan.Fence.SearchGenerationVersion < 1 {
 		return fmt.Errorf("%w: complete active search fence is required", ErrInvalidPlan)
@@ -164,7 +166,7 @@ func validatePlan(plan Plan) error {
 	seen := make(map[string]struct{}, len(plan.Documents))
 	for index, document := range plan.Documents {
 		hash := strings.TrimSpace(document.Hash)
-		if hash == "" || strings.TrimSpace(document.Text) == "" {
+		if hash == "" || hash != document.Hash || strings.TrimSpace(document.Text) == "" {
 			return fmt.Errorf("%w: document %d requires hash and text", ErrInvalidPlan, index)
 		}
 		if _, ok := seen[hash]; ok {
