@@ -140,6 +140,10 @@ test("test-assurance review owns positive, negative, and local E2E proof", async
   );
   assert.match(
     normalizedWorkflow,
+    /mocks may isolate outbound provider transport failures or pure query construction, but must still exercise real validation and domain policy around those boundaries/,
+  );
+  assert.match(
+    normalizedWorkflow,
     /committed local Compose or UAT end-to-end scenario through production entry points and real dependencies/,
   );
   assert.match(
