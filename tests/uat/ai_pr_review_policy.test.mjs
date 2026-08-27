@@ -73,11 +73,14 @@ test("AI review uses six ownership-driven goals and one memory-first protocol", 
   assert.match(normalizedWorkflow, /Report only root causes owned by this goal/);
   assert.match(
     normalizedWorkflow,
-    /For behavior owned by this goal, inspect the applicable real-logic tests and required evaluation evidence/,
+    /Use applicable real-logic tests and required evaluation evidence to confirm or falsify behavior claims/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /Only the test-assurance goal may report missing or vacuous test, evaluation, and end-to-end coverage/,
   );
   assert.doesNotMatch(workflow, /Before returning an empty findings list/);
   assert.doesNotMatch(workflow, /construct at least one concrete failure scenario/);
-  assert.doesNotMatch(workflow, /Review whether tests prove the changed behavior/);
   assert.doesNotMatch(workflow, /dormant[- ]V2/);
   assert.doesNotMatch(workflow, /Collect workflow analyzer context/);
   assert.doesNotMatch(workflow, /workflow_analysis/);
@@ -87,12 +90,12 @@ test("AI review uses six ownership-driven goals and one memory-first protocol", 
   );
 
   for (const goal of [
-    "Review functional and semantic correctness, including model-provider boundaries",
+    "Review functional and semantic correctness plus bounded design integrity, including model-provider boundaries",
     "Review authentication, authorization, isolation, privacy, and trust boundaries",
     "Review durable-state integrity and distributed reliability",
     "Review HTTP and MCP contracts plus user-facing behavior",
     "Review scope, release compatibility, performance, and operational readiness",
-    "Review design integrity, semantic duplication, and single responsibility",
+    "Review test assurance for every new or changed supported behavior",
   ]) {
     assert.match(workflow, new RegExp(goal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
@@ -117,8 +120,48 @@ test("maintainability review is preventive, bounded, and impact-scored", async (
     normalizedWorkflow,
     /an extraction that broadens an API or creates cross-layer coupling/,
   );
-  assert.match(normalizedWorkflow, /leave it to that functional goal rather than duplicating it/);
+  assert.match(normalizedWorkflow, /leave it to that designated goal rather than duplicating it/);
   assert.match(normalizedWorkflow, /Use Low severity by default/);
+});
+
+test("test-assurance review owns positive, negative, and local E2E proof", async () => {
+  const workflow = await readFile(reviewWorkflowURL, "utf8");
+  const normalizedWorkflow = workflow.replace(/\s+/g, " ");
+
+  assert.match(normalizedWorkflow, /Build a scenario map from the linked issue/);
+  assert.match(
+    normalizedWorkflow,
+    /concrete positive coverage and a distinct negative, rejection, boundary, failure, recovery, or regression case/,
+  );
+  assert.match(normalizedWorkflow, /existing tests count when their setup and assertions exercise the changed path/);
+  assert.match(
+    normalizedWorkflow,
+    /real PostgreSQL or service coverage for RLS, migrations, constraints, transactions, locks, idempotency, concurrency, and cross-profile behavior/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /committed local Compose or UAT end-to-end scenario through production entry points and real dependencies/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /compose-backed Playwright coverage of the built image in desktop and mobile projects/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /presentation constraints such as visibility, clipping, overlap, and horizontal overflow/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /Do not require screenshot baselines, CI execution, or PR-reported run output/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /behavior-preserving refactors, or internal changes with no affected observable invariant/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /name the missing scenario, trigger, and expected observable result/,
+  );
 });
 
 test("review safety controls and CI policy coverage remain enabled", async () => {
