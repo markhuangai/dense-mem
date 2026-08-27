@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
@@ -124,6 +126,20 @@ func TestBuildActiveWiresExecutableCorrectRelationship(t *testing.T) {
 	if stub.correctReq.Action != "submit" || stub.correctReq.RelationshipID != "relationship-source" {
 		t.Fatalf("stub correct request not populated: %#v", stub.correctReq)
 	}
+
+	pendingID := uuid.NewString()
+	stub.correctErr = memoryservice.ErrLifecycleEmbeddingTimeout
+	_, err = correct.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
+		"action":             "confirm",
+		"submission_id":      pendingID,
+		"confirmation_token": "confirmation-token",
+		"selection":          map[string]any{"subject_entity_id": uuid.NewString()},
+		"idempotency_key":    "relationship-correction-confirm",
+	})
+	structured, ok := ToolResultFromError(err)
+	if !ok || structured.Result["submission_id"] != pendingID {
+		t.Fatalf("confirm failure result = %#v", structured)
+	}
 }
 
 func TestBuildActiveCorrectRelationshipRejectsTenantOverride(t *testing.T) {
@@ -152,6 +168,7 @@ func TestBuildActiveCorrectRelationshipRejectsTenantOverride(t *testing.T) {
 
 type stubLifecycleService struct {
 	correctReq memoryservice.CorrectRelationshipRequest
+	correctErr error
 	retractReq memoryservice.RetractEvidenceRequest
 	retractErr error
 }
@@ -161,6 +178,9 @@ func (s *stubLifecycleService) CorrectRelationship(
 	req memoryservice.CorrectRelationshipRequest,
 ) (*memoryservice.CorrectRelationshipReceipt, error) {
 	s.correctReq = req
+	if s.correctErr != nil {
+		return nil, s.correctErr
+	}
 	return &memoryservice.CorrectRelationshipReceipt{
 		ContractVersion: domain.ContractVersion,
 		SubmissionID:    "correction-canonical", SubmissionKind: "relationship_correction",

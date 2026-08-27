@@ -93,7 +93,11 @@ func rememberErrorCode(err error) rememberapp.SubmissionErrorCode {
 	}
 }
 
-func correctionToolResultError(ctx context.Context, err error) error {
+func correctionToolResultError(ctx context.Context, submissionID string, err error) error {
+	submissionID = strings.TrimSpace(submissionID)
+	if submissionID == "" {
+		submissionID = uuid.NewString()
+	}
 	code := rememberapp.SubmissionErrorDatabaseFailure
 	switch {
 	case errors.Is(err, memoryservice.ErrLifecycleEmbeddingUnavailable):
@@ -121,7 +125,7 @@ func correctionToolResultError(ctx context.Context, err error) error {
 	}
 	return NewToolResultError(map[string]any{
 		"contract_version": domainContractVersion(),
-		"submission_id":    uuid.NewString(),
+		"submission_id":    submissionID,
 		"submission_kind":  "relationship_correction",
 		"correlation_id":   correlation.FromContext(ctx),
 		"errors": []any{map[string]any{

@@ -141,43 +141,49 @@ func TestLifecycleInlineRelationshipEmbeddingBatchValidatesProviderOutput(t *tes
 	}
 	provider := &lifecycleEmbeddingStub{available: true, model: "embed-model", vectors: [][]float32{{1, 2, 3}}}
 	svc := &lifecycleService{embedder: provider}
-	embeddings, err := svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	embeddings, err := svc.embedRelationshipDocumentBatch(context.Background(), "embed-model", []repository.SearchDocumentForEmbedding{document})
 	require.NoError(t, err)
 	require.Len(t, embeddings, 1)
 	require.Equal(t, document.SearchDocumentID, embeddings[0].SearchDocumentID)
 	require.Equal(t, []float32{1, 2, 3}, embeddings[0].Embedding)
+	provider.hasOperation = false
+	provider.model = "stale-model"
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), "embed-model", []repository.SearchDocumentForEmbedding{document})
+	require.ErrorIs(t, err, ErrLifecycleEmbeddingInvalid)
+	require.False(t, provider.hasOperation)
+	provider.model = "embed-model"
 
-	empty, err := svc.embedRelationshipDocumentBatch(context.Background(), nil)
+	empty, err := svc.embedRelationshipDocumentBatch(context.Background(), "embed-model", nil)
 	require.NoError(t, err)
 	require.Empty(t, empty)
-	_, err = svc.embedRelationshipDocumentBatch(context.Background(), make([]repository.SearchDocumentForEmbedding, 257))
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), "embed-model", make([]repository.SearchDocumentForEmbedding, 257))
 	require.ErrorIs(t, err, ErrLifecycleEmbeddingInvalid)
 	provider.vectors = [][]float32{}
-	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), "embed-model", []repository.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, ErrLifecycleEmbeddingInvalid)
 	provider.vectors = [][]float32{{1, 2, 3}}
 	provider.returnedModel = "different-model"
-	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), "embed-model", []repository.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, ErrLifecycleEmbeddingInvalid)
 	provider.returnedModel = ""
 	provider.vectors = [][]float32{{float32(math.NaN()), 2, 3}}
-	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), "embed-model", []repository.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, ErrLifecycleEmbeddingInvalid)
 	provider.vectors = [][]float32{{1, 2, 3}}
 
 	provider.available = false
-	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), "embed-model", []repository.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, ErrLifecycleEmbeddingUnavailable)
 	provider.available = true
 	provider.vectors = [][]float32{{1, 2}}
-	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), "embed-model", []repository.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, ErrLifecycleEmbeddingInvalid)
 	provider.vectors = [][]float32{{1, 2, 3}}
 	provider.err = context.DeadlineExceeded
-	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), "embed-model", []repository.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, ErrLifecycleEmbeddingTimeout)
 	provider.err = context.Canceled
-	_, err = svc.embedRelationshipDocumentBatch(context.Background(), []repository.SearchDocumentForEmbedding{document})
+	_, err = svc.embedRelationshipDocumentBatch(context.Background(), "embed-model", []repository.SearchDocumentForEmbedding{document})
 	require.ErrorIs(t, err, ErrLifecycleEmbeddingCancelled)
 }
 

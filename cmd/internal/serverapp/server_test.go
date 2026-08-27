@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/service"
 )
 
 type searchConvergenceHealthStub struct {
@@ -21,6 +22,25 @@ type searchConvergenceHealthStub struct {
 
 func (s searchConvergenceHealthStub) CheckSearchConvergence(context.Context) error {
 	return s.err
+}
+
+type searchReconciliationRunnerStub struct {
+	results  []service.SearchReconciliationResult
+	cancel   context.CancelFunc
+	cancelAt int
+	calls    int
+}
+
+func (s *searchReconciliationRunnerStub) Run(context.Context) (service.SearchReconciliationResult, error) {
+	s.calls++
+	if s.calls > len(s.results) {
+		return service.SearchReconciliationResult{}, errors.New("unexpected reconciliation pass")
+	}
+	result := s.results[s.calls-1]
+	if s.calls == s.cancelAt {
+		s.cancel()
+	}
+	return result, nil
 }
 
 type searchConvergenceHealthLogger struct {
@@ -68,6 +88,40 @@ func TestSearchConvergenceHealthCheckDoesNotLogExpectedDegradation(t *testing.T)
 	}
 	if len(logger.warnings) != 0 {
 		t.Fatalf("warnings = %#v", logger.warnings)
+	}
+}
+
+func TestStartSearchReconciliationDrainsOnlyWhileProgressing(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		results []service.SearchReconciliationResult
+		calls   int
+	}{
+		{
+			name: "drains remaining drift",
+			results: []service.SearchReconciliationResult{
+				{UpdatedCount: 256, DriftedCount: 2},
+				{UpdatedCount: 2, DriftedCount: 0},
+			},
+			calls: 2,
+		},
+		{
+			name:    "stops without progress",
+			results: []service.SearchReconciliationResult{{UpdatedCount: 0, DriftedCount: 2}},
+			calls:   1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			runner := &searchReconciliationRunnerStub{results: test.results, cancel: cancel, cancelAt: test.calls}
+
+			startSearchReconciliation(ctx, runner, nil)
+
+			if runner.calls != test.calls {
+				t.Fatalf("reconciliation passes = %d, want %d", runner.calls, test.calls)
+			}
+		})
 	}
 }
 

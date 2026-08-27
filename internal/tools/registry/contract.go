@@ -187,7 +187,11 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				res, err := deps.Lifecycle.CorrectRelationship(ctx, req)
 				if err != nil {
-					return nil, correctionToolResultError(ctx, err)
+					submissionID := ""
+					if req.Action == "confirm" {
+						submissionID = req.SubmissionID
+					}
+					return nil, correctionToolResultError(ctx, submissionID, err)
 				}
 				result, err := structToMap(res)
 				if err != nil {

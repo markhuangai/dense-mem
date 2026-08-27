@@ -119,7 +119,7 @@ func TestRememberToolResultErrorKeepsPersistenceTypingWithoutDurableStatus(t *te
 }
 
 func TestCorrectionToolResultErrorIsBoundedAndRetryable(t *testing.T) {
-	structured, ok := ToolResultFromError(correctionToolResultError(context.Background(), errors.New("raw correction failure")))
+	structured, ok := ToolResultFromError(correctionToolResultError(context.Background(), "", errors.New("raw correction failure")))
 	require.True(t, ok)
 	require.Equal(t, "relationship_correction", structured.Result["submission_kind"])
 	require.NotEmpty(t, structured.Result["submission_id"])
@@ -140,7 +140,7 @@ func TestCorrectionToolResultErrorPreservesEmbeddingFailureCodes(t *testing.T) {
 		{memoryservice.ErrLifecycleEmbeddingTimeout, "request_timeout"},
 		{memoryservice.ErrLifecycleEmbeddingCancelled, "request_cancelled"},
 	} {
-		structured, ok := ToolResultFromError(correctionToolResultError(context.Background(), test.err))
+		structured, ok := ToolResultFromError(correctionToolResultError(context.Background(), "", test.err))
 		require.True(t, ok)
 		item := structured.Result["errors"].([]any)[0].(map[string]any)
 		require.Equal(t, test.code, item["code"])

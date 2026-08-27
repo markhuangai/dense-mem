@@ -153,7 +153,7 @@ func (s *lifecycleService) CorrectRelationship(
 			var embedded []repository.SearchDocumentEmbedding
 			embedCtx := observability.WithMetricIdentity(ctx, semanticInput.TeamID, semanticInput.OwnerProfileID)
 			embedCtx = observability.WithAIOperation(embedCtx, observability.AIOperationSearchDocumentEmbedding, len(plan.Documents))
-			embedded, err = s.embedRelationshipDocumentBatch(embedCtx, plan.Documents)
+			embedded, err = s.embedRelationshipDocumentBatch(embedCtx, plan.EmbeddingModel, plan.Documents)
 			if err == nil {
 				results = make([]repository.InlineEmbeddingResult, 0, len(embedded))
 				for _, embedding := range embedded {
@@ -215,6 +215,7 @@ func (s *lifecycleService) CorrectRelationship(
 
 func (s *lifecycleService) embedRelationshipDocumentBatch(
 	ctx context.Context,
+	embeddingModel string,
 	documents []repository.SearchDocumentForEmbedding,
 ) ([]repository.SearchDocumentEmbedding, error) {
 	if len(documents) == 0 {
@@ -225,6 +226,10 @@ func (s *lifecycleService) embedRelationshipDocumentBatch(
 	}
 	if s.embedder == nil || !s.embedder.IsAvailable() {
 		return nil, ErrLifecycleEmbeddingUnavailable
+	}
+	embeddingModel = strings.TrimSpace(embeddingModel)
+	if embeddingModel == "" || strings.TrimSpace(s.embedder.ModelName()) != embeddingModel {
+		return nil, ErrLifecycleEmbeddingInvalid
 	}
 	texts := make([]string, len(documents))
 	for index := range documents {
@@ -242,7 +247,7 @@ func (s *lifecycleService) embedRelationshipDocumentBatch(
 		}
 		return nil, fmt.Errorf("%w: provider request failed", ErrLifecycleEmbeddingUnavailable)
 	}
-	if len(vectors) != len(documents) || strings.TrimSpace(model) == "" || model != strings.TrimSpace(s.embedder.ModelName()) {
+	if len(vectors) != len(documents) || strings.TrimSpace(model) != embeddingModel {
 		return nil, ErrLifecycleEmbeddingInvalid
 	}
 	completed := make([]repository.SearchDocumentEmbedding, len(documents))

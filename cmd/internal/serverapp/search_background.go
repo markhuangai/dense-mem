@@ -39,22 +39,30 @@ type searchReconciliationRunner interface {
 const searchReconciliationInterval = time.Hour
 
 // startSearchReconciliation performs bounded document repair on a maintenance
-// interval. It never creates a queue or changes the request-scoped Remember
-// path; each pass is one provider batch followed by one fenced SQL transaction.
+// interval. Successful passes repeat while they make progress toward
+// convergence; each pass remains one provider batch and one fenced transaction.
 func startSearchReconciliation(ctx context.Context, runner searchReconciliationRunner, logger observability.LogProvider) {
 	if runner == nil {
 		return
 	}
 	run := func() {
-		result, err := runner.Run(ctx)
-		if err != nil {
-			if logger != nil {
-				logger.Warn("search_reconciliation_failed", observability.String("error_code", result.ErrorCode))
+		for ctx.Err() == nil {
+			result, err := runner.Run(ctx)
+			if err != nil {
+				if logger != nil {
+					logger.Warn("search_reconciliation_failed", observability.String("error_code", result.ErrorCode))
+				}
+				return
 			}
-			return
-		}
-		if result.Skipped && logger != nil {
-			logger.Debug("search_reconciliation_skipped")
+			if result.Skipped {
+				if logger != nil {
+					logger.Debug("search_reconciliation_skipped")
+				}
+				return
+			}
+			if result.DriftedCount == 0 || result.UpdatedCount == 0 {
+				return
+			}
 		}
 	}
 	run()
