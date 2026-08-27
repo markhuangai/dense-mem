@@ -109,10 +109,17 @@ CREATE TABLE IF NOT EXISTS remember_attempts (
         CHECK (btrim(idempotency_key) <> '' AND btrim(request_hash) <> ''),
     CONSTRAINT remember_attempts_kind_check
         CHECK (submission_kind IN ('remember', 'relationship_correction')),
+    CONSTRAINT remember_attempts_replay_shape_check CHECK (
+        (outcome = 'replayed' AND canonical_attempt_id IS NOT NULL
+            AND canonical_attempt_id IS DISTINCT FROM attempt_id)
+        OR (outcome <> 'replayed' AND canonical_attempt_id IS NULL)
+    ),
     FOREIGN KEY (team_id, owner_profile_id)
         REFERENCES ownership_aliases(team_id, legacy_owner_id) ON DELETE RESTRICT,
     FOREIGN KEY (team_id, space_id)
-        REFERENCES memory_spaces(team_id, id) ON DELETE RESTRICT
+        REFERENCES memory_spaces(team_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (team_id, canonical_attempt_id, owner_profile_id)
+        REFERENCES remember_attempts(team_id, attempt_id, owner_profile_id) ON DELETE RESTRICT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS remember_attempts_canonical_key_idx
@@ -208,8 +215,13 @@ CREATE TABLE IF NOT EXISTS semantic_assessments (
     CONSTRAINT semantic_assessments_history_check CHECK (
         jsonb_typeof(response_history) = 'array' AND pg_column_size(response_history) <= 1048576
     ),
-    CONSTRAINT semantic_assessments_revision_check
-        CHECK (accepted_revision IS NULL OR accepted_revision >= 1),
+    CONSTRAINT semantic_assessments_revision_check CHECK (
+        accepted_revision IS NULL OR (
+            accepted_revision >= 1
+            AND accepted_revision <= jsonb_array_length(response_history)
+            AND validated_at IS NOT NULL
+        )
+    ),
     CONSTRAINT semantic_assessments_token_counts_check CHECK (
         input_tokens >= 0 AND output_tokens >= 0 AND candidate_context_tokens >= 0
     ),

@@ -138,6 +138,88 @@ func TestSynchronousWriteFoundationMigrationPreservesPopulatedUpgrade(t *testing
 	require.EqualValues(t, 0, after.drifted)
 }
 
+func TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, synchronousWriteFoundationMigrationVersion)
+
+	teamID, profileA := insertRememberReliabilityIdentityFixture(t, ctx, db)
+	profileB, identityB := uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO actor_identities (id, kind, team_id, display_name)
+			VALUES ($1::uuid, 'human', $2::uuid, 'Synchronous write replay profile B')
+		`, identityB, teamID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id, reason)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, 'synchronous_write_replay_test')
+		`, teamID, profileB, identityB)
+		return err
+	}))
+
+	canonicalAttemptID, replayAttemptID := uuid.New(), uuid.New()
+	insertAttempt := func(attemptID uuid.UUID, ownerID, key, outcome string, canonicalID *uuid.UUID) error {
+		var canonicalValue any
+		if canonicalID != nil {
+			canonicalValue = canonicalID.String()
+		}
+		return execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO remember_attempts (
+					team_id, attempt_id, owner_profile_id, idempotency_key,
+					request_hash, contract_version, outcome, canonical_attempt_id
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5,
+				          'dense-mem.v2.6', $6, $7::uuid)
+			`, teamID, attemptID.String(), ownerID, key, key+"-request", outcome, canonicalValue)
+			return err
+		})
+	}
+	require.NoError(t, insertAttempt(canonicalAttemptID, profileA, "canonical-lineage", "completed", nil))
+	require.NoError(t, insertAttempt(replayAttemptID, profileA, "replay-lineage", "replayed", &canonicalAttemptID))
+
+	var linkedCanonicalID string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT canonical_attempt_id::text FROM remember_attempts
+		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+	`, teamID, replayAttemptID.String()).Scan(&linkedCanonicalID))
+	require.Equal(t, canonicalAttemptID.String(), linkedCanonicalID)
+
+	require.Error(t, insertAttempt(uuid.New(), profileA, "replay-missing", "replayed", nil))
+	nonexistentCanonicalID := uuid.New()
+	require.Error(t, insertAttempt(uuid.New(), profileA, "replay-unknown", "replayed", &nonexistentCanonicalID))
+	require.Error(t, insertAttempt(uuid.New(), profileB, "replay-owner-mismatch", "replayed", &canonicalAttemptID))
+	require.Error(t, insertAttempt(uuid.New(), profileA, "completed-with-link", "completed", &canonicalAttemptID))
+
+	assessmentAttemptID := uuid.New()
+	require.NoError(t, insertAttempt(assessmentAttemptID, profileA, "assessment-lineage", "failed", nil))
+	insertAssessment := func(assessmentID uuid.UUID, history string, acceptedRevision string, validatedAt string) error {
+		return execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO semantic_assessments (
+					team_id, semantic_assessment_id, attempt_id, owner_profile_id,
+					response_history, accepted_revision, validated_at
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::jsonb, $6::integer, `+validatedAt+`)
+			`, teamID, assessmentID, assessmentAttemptID, profileA, history, acceptedRevision)
+			return err
+		})
+	}
+	require.Error(t, insertAssessment(uuid.New(), "[]", "1", "NULL"))
+	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "NULL"))
+	require.Error(t, insertAssessment(uuid.New(), "[{}]", "2", "CURRENT_TIMESTAMP"))
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_assessments (
+				team_id, semantic_assessment_id, attempt_id, owner_profile_id,
+				response_history, accepted_revision, validated_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '[{}]'::jsonb, 1, CURRENT_TIMESTAMP)
+		`, teamID, uuid.New().String(), assessmentAttemptID.String(), profileA)
+		return err
+	}))
+}
+
 func TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
