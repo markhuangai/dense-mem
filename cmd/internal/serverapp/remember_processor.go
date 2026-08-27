@@ -71,6 +71,13 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	if p == nil || p.ledger == nil {
 		return nil, errors.New("remember processor: ledger is required")
 	}
+	started := time.Now()
+	ingestID := uuid.NewString()
+	snapshot, scope := rememberAssessmentSnapshot(input, ingestID)
+	assessorTurns := 0
+	fail := func(err error, phase string) (*rememberapp.SubmissionStatusResult, error) {
+		return p.recordRememberFailure(ctx, input, ingestID, snapshot, started, phase, assessorTurns, err)
+	}
 	attempt, lookupErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
 	})
@@ -86,14 +93,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 			return replay, nil
 		}
 	} else if lookupErr != nil && !errors.Is(lookupErr, repository.ErrRememberAttemptNotFound) {
-		return nil, lookupErr
-	}
-	started := time.Now()
-	ingestID := uuid.NewString()
-	snapshot, scope := rememberAssessmentSnapshot(input, ingestID)
-	assessorTurns := 0
-	fail := func(err error, phase string) (*rememberapp.SubmissionStatusResult, error) {
-		return p.recordRememberFailure(ctx, input, ingestID, snapshot, started, phase, assessorTurns, err)
+		return fail(lookupErr, "commit")
 	}
 	if input.SecurityRejected {
 		commitInput := repository.SynchronousRememberCommitInput{

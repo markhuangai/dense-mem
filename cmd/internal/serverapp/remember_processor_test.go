@@ -102,6 +102,29 @@ func TestRememberPreflightCommitFailureRecordsAuthoritativeAttempt(t *testing.T)
 	require.Len(t, ledger.failure.Artifacts, 2)
 }
 
+func TestRememberAttemptLookupFailureRecordsDatabaseFailure(t *testing.T) {
+	lookupErr := errors.New("attempt lookup failed")
+	ledger := &rememberProcessorLedgerStub{lookupErr: lookupErr}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	input := rememberapp.RememberProcessRequest{
+		TeamID: uuid.NewString(), OwnerProfileID: uuid.NewString(), IdempotencyKey: "lookup-failure",
+		RequestHash: "request-hash", Evidence: []rememberapp.EvidenceInput{{Content: "lookup evidence", ContentHash: "content-hash"}},
+	}
+
+	result, err := processor.ProcessRemember(context.Background(), input)
+
+	require.Nil(t, result)
+	require.ErrorIs(t, err, lookupErr)
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.NotNil(t, processErr.Status)
+	require.Equal(t, ledger.failure.AttemptID, processErr.Status.SubmissionID)
+	require.Equal(t, "failed", processErr.Status.ProcessingState)
+	require.Equal(t, string(rememberapp.SubmissionErrorDatabaseFailure), processErr.Status.Errors[0].Code)
+	require.Equal(t, "commit", ledger.failure.FailedPhase)
+	require.Equal(t, string(rememberapp.SubmissionErrorDatabaseFailure), ledger.failure.ErrorCode)
+}
+
 func TestRememberProcessorRequiresEmbedderOnlyForNonemptyPlan(t *testing.T) {
 	processor := &rememberSynchronousProcessor{}
 	embeddings, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), nil)
@@ -413,10 +436,14 @@ func TestRememberAttemptMatchesMigratedRequestHash(t *testing.T) {
 
 type rememberProcessorLedgerStub struct {
 	preflightErr error
+	lookupErr    error
 	failure      repository.RememberFailureRecordInput
 }
 
 func (s *rememberProcessorLedgerStub) LoadRememberAttempt(context.Context, repository.RememberAttemptLookupInput) (*repository.RememberAttempt, error) {
+	if s.lookupErr != nil {
+		return nil, s.lookupErr
+	}
 	return nil, repository.ErrRememberAttemptNotFound
 }
 

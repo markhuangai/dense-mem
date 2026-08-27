@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
@@ -167,8 +168,9 @@ func TestAssessSynchronousRememberRunsOneValidTerminalAssessment(t *testing.T) {
 		}}
 	}
 	provider := &validSynchronousAssessmentProvider{}
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	result, err := AssessSynchronousRemember(context.Background(), SynchronousAssessmentDependencies{
-		Catalog: catalog, Provider: provider, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Catalog: catalog, Provider: provider, Limits: assessor.DefaultSemanticAssessmentLimits(), Metrics: metrics,
 	}, input)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -177,6 +179,9 @@ func TestAssessSynchronousRememberRunsOneValidTerminalAssessment(t *testing.T) {
 	require.NotEmpty(t, result.Assessment.ResponseHash)
 	require.NotEmpty(t, result.Assessment.NormalizedResponse)
 	require.Equal(t, result.Response.RequestID, provider.request.RequestID)
+	require.Len(t, metrics.AssessorCalls(), 1)
+	require.Equal(t, "ok", metrics.AssessorCalls()[0].Outcome)
+	require.Positive(t, metrics.AssessorCalls()[0].InputTokens)
 }
 
 func TestAssessSynchronousRememberMapsProviderTerminalErrors(t *testing.T) {
@@ -203,8 +208,11 @@ func TestAssessSynchronousRememberMapsProviderTerminalErrors(t *testing.T) {
 		{name: "cancelled", provider: &terminalAssessmentProvider{err: context.Canceled}, want: context.Canceled},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := AssessSynchronousRemember(context.Background(), SynchronousAssessmentDependencies{Catalog: catalog, Provider: test.provider}, input)
+			metrics := observability.NewInMemoryDiscoverabilityMetrics()
+			_, err := AssessSynchronousRemember(context.Background(), SynchronousAssessmentDependencies{Catalog: catalog, Provider: test.provider, Metrics: metrics}, input)
 			require.ErrorIs(t, err, test.want)
+			require.Len(t, metrics.AssessorCalls(), 1)
+			require.Equal(t, "provider_error", metrics.AssessorCalls()[0].Outcome)
 		})
 	}
 }
@@ -433,6 +441,16 @@ func TestAssessSynchronousRememberRejectsPreflightAndRepairFailures(t *testing.T
 	require.ErrorIs(t, err, rememberapp.ErrRememberProviderUnavailable)
 	require.Equal(t, 1, SynchronousAssessmentProviderTurns(err))
 	require.NotContains(t, err.Error(), "repair failed")
+
+	expandedCatalog := validCatalog()
+	_, err = AssessSynchronousRemember(context.Background(), SynchronousAssessmentDependencies{
+		Catalog: expandedCatalog,
+		Provider: &catalogExpansionAssessmentProvider{expand: func() {
+			expandedCatalog.predicateComplete = false
+		}},
+	}, input)
+	require.ErrorIs(t, err, rememberapp.ErrRememberInputBudgetExceeded)
+	require.Equal(t, 1, SynchronousAssessmentProviderTurns(err))
 }
 
 func TestSubmissionAssessmentGroundingRejectsIncompleteCatalogs(t *testing.T) {
@@ -495,6 +513,21 @@ func (*repairFailureAssessmentProvider) Repair(context.Context, assessor.Semanti
 }
 
 func (*repairFailureAssessmentProvider) ModelName() string { return "repair-failure" }
+
+type catalogExpansionAssessmentProvider struct{ expand func() }
+
+func (p *catalogExpansionAssessmentProvider) Assess(context.Context, assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+	if p.expand != nil {
+		p.expand()
+	}
+	return boundedAssessmentSession{}, assessor.SemanticAssessmentTurn{Turn: 1, ValidationErrors: []assessor.SemanticValidationError{{Field: "response", Message: "invalid"}}}, nil
+}
+
+func (*catalogExpansionAssessmentProvider) Repair(context.Context, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
+	return assessor.SemanticAssessmentTurn{}, errors.New("repair is not expected after refresh failure")
+}
+
+func (*catalogExpansionAssessmentProvider) ModelName() string { return "catalog-expansion" }
 
 func TestSubmissionAssessmentPlanRejectsInvalidRelationshipContracts(t *testing.T) {
 	fragment := repository.EvidenceFragment{FragmentID: "fragment", EvidenceIndex: 0, Content: "Dense-Mem uses PostgreSQL."}

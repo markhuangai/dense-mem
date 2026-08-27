@@ -247,14 +247,22 @@ func AssessSynchronousRemember(
 	}
 	providerCtx := observability.WithMetricIdentity(ctx, input.Scope.TeamID, input.Scope.OwnerProfileID)
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationSemanticAssessment, 1)
+	started := time.Now()
 	response, _, finalRequest, err := concrete.assessRememberSession(providerCtx, request, refresh, 0)
 	if err != nil {
 		providerTurns := SynchronousAssessmentProviderTurns(err)
+		outcome := "provider_error"
+		if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
+			outcome = "malformed_exhausted"
+		}
+		observability.RecordAssessorCall(deps.Metrics, request.InputTokens, 0, time.Since(started).Seconds(), outcome)
 		var mapped error
 		if errors.Is(err, context.DeadlineExceeded) {
 			mapped = fmt.Errorf("%w: assessor phase exceeded 160 seconds", rememberapp.ErrRememberRequestTimeout)
 		} else if errors.Is(err, context.Canceled) {
 			mapped = context.Canceled
+		} else if errors.Is(err, rememberapp.ErrRememberInputBudgetExceeded) {
+			mapped = fmt.Errorf("%w: refreshed assessor input exceeded the deterministic budget", rememberapp.ErrRememberInputBudgetExceeded)
 		} else if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
 			mapped = fmt.Errorf("%w: complete assessor response remained invalid", rememberapp.ErrRememberProviderResponseInvalid)
 		} else {
@@ -282,6 +290,7 @@ func AssessSynchronousRemember(
 	if inputTokens <= 0 {
 		inputTokens = finalRequest.InputTokens
 	}
+	observability.RecordAssessorCall(deps.Metrics, inputTokens, response.OutputTokens, time.Since(started).Seconds(), "ok")
 	now := time.Now().UTC()
 	assessment := repository.SubmissionAssessment{
 		TeamID: input.Scope.TeamID, AssessmentID: assessmentID, OwnerProfileID: input.Scope.OwnerProfileID,
