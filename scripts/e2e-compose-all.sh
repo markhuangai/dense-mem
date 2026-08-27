@@ -11,6 +11,7 @@ E2E_ALL_SCENARIOS=(
   submission_terminal_errors
   security_intake
   submission_assessment
+  synchronous_write
   identity_cleanup
   community
   conflict

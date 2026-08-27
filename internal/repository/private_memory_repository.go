@@ -75,6 +75,9 @@ var privateMemoryErasureManifest = []string{
 var privateMemoryCatalogExclusions = []string{
 	"private_memory_erasure_operations",
 	"private_memory_legal_holds",
+	// Synchronous-write foundation history is unused until the stopped-service
+	// cutover; its erasure lineage is owned by that adoption ticket.
+	"remember_attempts",
 }
 
 var privateMemoryExternalDependencies = map[string]struct {

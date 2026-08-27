@@ -48,6 +48,13 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -tags=evaluation -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 
+FROM builder-base AS e2e-builder
+
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/e2e-server
+
 # ============================================================================
 # Shared runtime stage
 # ============================================================================
@@ -105,6 +112,11 @@ FROM runtime-base AS evaluation
 
 LABEL org.opencontainers.image.variant="evaluation"
 COPY --from=evaluation-builder --chown=densemem:densemem /out/server /app/server
+
+FROM runtime-base AS e2e
+
+LABEL org.opencontainers.image.variant="e2e"
+COPY --from=e2e-builder --chown=densemem:densemem /out/server /app/server
 
 # Preview and production contain the same runtime; only preview carries the
 # trusted receipt that authorizes later release-candidate layer reuse.

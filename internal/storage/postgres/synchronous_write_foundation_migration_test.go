@@ -1,0 +1,41 @@
+package postgres
+
+import (
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestSynchronousWriteFoundationMigrationContract(t *testing.T) {
+	const version int64 = 20260828010001
+	migrationFile, err := migrationPath(getMigrationsDir(), version)
+	require.NoError(t, err)
+	body, err := os.ReadFile(migrationFile)
+	require.NoError(t, err)
+	migration := string(body)
+
+	for _, required := range []string{
+		"CREATE TABLE IF NOT EXISTS remember_attempts",
+		"CREATE TABLE IF NOT EXISTS remember_attempt_events",
+		"CREATE TABLE IF NOT EXISTS remember_failure_artifacts",
+		"CREATE TABLE IF NOT EXISTS semantic_assessments",
+		"ALTER TABLE relationship_observations",
+		"ADD COLUMN IF NOT EXISTS remember_attempt_id UUID NULL",
+		"ADD COLUMN IF NOT EXISTS semantic_assessment_id UUID NULL",
+		"ADD COLUMN IF NOT EXISTS selected_count BIGINT NOT NULL DEFAULT 0",
+		"CREATE OR REPLACE FUNCTION prevent_synchronous_write_append_only_mutation()",
+		"ENABLE ROW LEVEL SECURITY",
+		"FORCE ROW LEVEL SECURITY",
+		"20260828010001 is irreversible after synchronous-write foundation history exists",
+	} {
+		require.Contains(t, migration, required)
+	}
+	require.NotContains(t, migration, "INSERT INTO v2_compatibility_markers")
+	require.NotContains(t, migration, "UPDATE knowledge_ingests")
+	require.NotContains(t, migration, "DELETE FROM")
+	up := strings.SplitN(migration, "-- +goose Down", 2)[0]
+	require.NotRegexp(t, `(?im)^\s*DROP\s+`, up)
+	require.Equal(t, 1, strings.Count(migration, "CREATE TABLE IF NOT EXISTS remember_attempts"))
+}

@@ -623,7 +623,7 @@ function assertErasedSpace(spaceID, operation, fixture, lifecycle) {
           ON tables.table_schema = columns.table_schema AND tables.table_name = columns.table_name
         WHERE columns.table_schema = 'public' AND columns.column_name = 'space_id'
           AND tables.table_type = 'BASE TABLE'
-          AND columns.table_name NOT IN ('private_memory_erasure_operations', 'private_memory_legal_holds')
+          AND columns.table_name NOT IN ('private_memory_erasure_operations', 'private_memory_legal_holds', 'remember_attempts')
       LOOP
         EXECUTE format('SELECT count(*) FROM %I WHERE space_id = $1', target_table) INTO remaining USING target_space;
         IF remaining <> 0 THEN
@@ -908,7 +908,7 @@ function privateMemoryManifestTables() {
         ON tables.table_schema = columns.table_schema AND tables.table_name = columns.table_name
       WHERE columns.table_schema = 'public' AND columns.column_name = 'space_id'
         AND tables.table_type = 'BASE TABLE'
-        AND columns.table_name NOT IN ('private_memory_erasure_operations', 'private_memory_legal_holds')
+        AND columns.table_name NOT IN ('private_memory_erasure_operations', 'private_memory_legal_holds', 'remember_attempts')
     ) AS catalog
   `);
   manifestTables = value ? value.split(",") : [];

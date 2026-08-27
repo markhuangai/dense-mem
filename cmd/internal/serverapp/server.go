@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
-	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
@@ -48,35 +47,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/markhuangai/dense-mem/internal/verifier"
 )
-
-// CounterStore is the atomic counter surface used by runtimes that need
-// Redis-backed limits outside the normal rate limiter.
-type CounterStore interface {
-	IncrWithExpire(ctx context.Context, key string, expireSeconds int64) (int64, error)
-	AddWithExpire(ctx context.Context, key string, delta int64, expireSeconds int64) (int64, error)
-}
-
-type RuntimeContext struct {
-	Echo              *echo.Echo
-	Config            *config.Config
-	TeamService       accessservice.TeamService
-	CredentialService accessservice.CredentialService
-	CounterStore      CounterStore
-	PostgresDB        *gorm.DB
-	RLS               postgres.RLSHelper
-	Logger            observability.LogProvider
-}
-
-type RuntimeOptions struct {
-	DisableControlPortal bool
-	RequireRedis         bool
-	MetricsOnlyAddr      string
-	ConfigureRegistry    func(context.Context, RuntimeContext, registry.Registry) (registry.Registry, error)
-	RegisterRoutes       func(RuntimeContext) error
-	StartBackground      func(context.Context, RuntimeContext) (func(context.Context) error, error)
-	PostAuthMiddleware   []echo.MiddlewareFunc
-	UserPortalMiddleware []echo.MiddlewareFunc
-}
 
 func RunActiveServer(
 	startupCtx context.Context,
@@ -267,7 +237,16 @@ func RunActiveServer(
 		Metrics: discoverabilityMetrics,
 		Logger:  logger,
 	})
-	rememberSvc := newRememberServiceCompat(rememberCore)
+	writeRuntime := &WriteRuntime{Remember: rememberCore}
+	if options.WriteRuntimeOverride != nil {
+		if err := options.WriteRuntimeOverride(startupCtx, runtimeCtx, writeRuntime); err != nil {
+			log.Fatalf("failed to configure write runtime: %v", err)
+		}
+	}
+	if writeRuntime.Remember == nil {
+		log.Fatal("write runtime override removed Remember service")
+	}
+	rememberSvc := newRememberServiceCompat(writeRuntime.Remember)
 	recallSvc := memoryservice.NewRecallService(memoryservice.RecallDependencies{
 		Search:          searchRepo,
 		Provider:        retryEmbedder,
@@ -335,6 +314,15 @@ func RunActiveServer(
 		toolRegistry, err = options.ConfigureRegistry(startupCtx, runtimeCtx, toolRegistry)
 		if err != nil {
 			log.Fatalf("failed to configure runtime tool registry: %v", err)
+		}
+	}
+	if writeRuntime.RegistryOverride != nil {
+		toolRegistry, err = writeRuntime.RegistryOverride(startupCtx, runtimeCtx, toolRegistry)
+		if err != nil {
+			log.Fatalf("failed to configure write runtime registry: %v", err)
+		}
+		if toolRegistry == nil {
+			log.Fatal("write runtime registry override returned nil registry")
 		}
 	}
 	streamLifecycle := sse.NewStreamLifecycleWithConfig(

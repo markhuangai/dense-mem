@@ -1,0 +1,28 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import { discoverCases } from "./runner.mjs";
+
+test("synchronous-write cases are sorted and filterable", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dense-mem-synchronous-write-"));
+  await mkdir(join(directory, "nested"));
+  await writeFile(join(directory, "zeta.mjs"), "export const name = 'zeta'; export const run = () => ({});\n");
+  await writeFile(join(directory, "alpha.mjs"), "export const name = 'alpha'; export const run = () => ({});\n");
+  await writeFile(join(directory, "README.md"), "ignored\n");
+  const all = await discoverCases(directory, "");
+  assert.deepEqual(all.map((url) => url.split("/").pop()), ["alpha.mjs", "zeta.mjs"]);
+  const filtered = await discoverCases(directory, "zeta");
+  assert.deepEqual(filtered.map((url) => url.split("/").pop()), ["zeta.mjs"]);
+});
+
+test("provider timeout fault is longer than the pinned E2E request caps", async () => {
+  const overlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");
+  const fixture = await readFile(new URL("./provider-fixture.mjs", import.meta.url), "utf8");
+  assert.match(overlay, /AI_API_EMBEDDING_TIMEOUT_SECONDS: "2"/);
+  assert.match(overlay, /AI_VERIFIER_TIMEOUT_SECONDS: "2"/);
+  assert.match(overlay, /DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: "5000"/);
+  assert.match(fixture, /timeoutDelayMs/);
+});

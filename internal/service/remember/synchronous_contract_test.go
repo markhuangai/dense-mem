@@ -1,0 +1,151 @@
+package remember
+
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestTerminalStatusErrorUsesOnlyClosedVocabulary(t *testing.T) {
+	for _, raw := range TerminalErrorCodes() {
+		status := TerminalStatusError(TerminalErrorCode(raw))
+		require.NoError(t, ValidateTerminalStatusError(status), raw)
+	}
+
+	unknown := TerminalStatusError("provider-secret-detail")
+	require.Equal(t, string(TerminalErrorInternalFailure), unknown.Code)
+	require.NotContains(t, unknown.Message, "provider-secret-detail")
+	require.NoError(t, ValidateTerminalStatusError(unknown))
+}
+
+func TestValidateTerminalRememberResultRejectsUnclosedErrorProjection(t *testing.T) {
+	result := &TerminalRememberResult{
+		ContractVersion: "dense-mem.v2.6",
+		SubmissionID:    "submission",
+		SubmissionKind:  "remember",
+		CorrelationID:   "correlation",
+		Kind:            ResultKindTerminal,
+		ProcessingState: string(TerminalProcessingFailed),
+		SearchState:     string(TerminalSearchNotRequired),
+		Evidence:        []TerminalEvidenceResult{},
+		Errors: []SubmissionStatusError{{
+			Code:        "provider-secret-detail",
+			Message:     "bounded",
+			NextAction:  string(TerminalNextActionContactOperator),
+			Remediation: "bounded",
+		}},
+		RelationshipResults: []SubmissionRelationshipResult{},
+	}
+	require.ErrorContains(t, ValidateTerminalRememberResult(result, 0, nil), "terminal error code")
+}
+
+func TestTerminalResultWithErrorForcesTerminalFailureKind(t *testing.T) {
+	result := &TerminalRememberResult{Kind: ResultKindLegacyReceipt, ProcessingState: "queued"}
+	failure := TerminalResultWithError(result, TerminalErrorEmbeddingResponseInvalid)
+	require.NotNil(t, failure)
+	require.Equal(t, ResultKindTerminal, failure.Result.Kind)
+	require.Equal(t, string(TerminalProcessingFailed), failure.Result.ProcessingState)
+	require.Equal(t, string(TerminalSearchNotRequired), failure.Result.SearchState)
+	require.Len(t, failure.Result.Errors, 1)
+	require.NoError(t, ValidateTerminalStatusError(failure.Result.Errors[0]))
+}
+
+func TestRememberProcessErrorDoesNotExposeOperationalCause(t *testing.T) {
+	cause := errors.New("database password and provider payload")
+	failure := &RememberProcessError{Err: cause}
+	require.Equal(t, "remember: processor failed", failure.Error())
+	require.ErrorIs(t, failure, cause)
+}
+
+func TestTerminalNextActionsAreClosedAndCopied(t *testing.T) {
+	actions := TerminalNextActions()
+	require.Equal(t, []string{
+		string(TerminalNextActionRetrySameRequest),
+		string(TerminalNextActionResubmitRemember),
+		string(TerminalNextActionRetryCorrection),
+		string(TerminalNextActionContactOperator),
+		string(TerminalNextActionNone),
+	}, actions)
+	require.True(t, IsTerminalNextAction(TerminalNextActionNone))
+	require.False(t, IsTerminalNextAction("unknown"))
+	actions[0] = "mutated"
+	require.Equal(t, string(TerminalNextActionRetrySameRequest), TerminalNextActions()[0])
+}
+
+func validTerminalResultForTest() *TerminalRememberResult {
+	return &TerminalRememberResult{
+		ContractVersion: "dense-mem.v2.6", SubmissionID: "submission", SubmissionKind: "remember",
+		ProcessingState: string(TerminalProcessingCompleted), SearchState: string(TerminalSearchCurrent),
+		CorrelationID: "correlation", Kind: ResultKindTerminal,
+		Evidence: []TerminalEvidenceResult{
+			{Disposition: "stored", EvidenceID: "evidence-1", EvidenceIndex: 0, SearchState: string(TerminalSearchCurrent)},
+			{Disposition: "not_stored", EvidenceIndex: 1, SearchState: string(TerminalSearchNotRequired)},
+		},
+		RelationshipResults: []SubmissionRelationshipResult{
+			{RelationshipRef: "rel-a", Disposition: "stored"},
+			{RelationshipRef: "rel-b", Disposition: "not_stored"},
+		},
+	}
+}
+
+func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*TerminalRememberResult)
+	}{
+		{"missing result", nil},
+		{"non-terminal kind", func(result *TerminalRememberResult) { result.Kind = ResultKindLegacyReceipt }},
+		{"missing identity", func(result *TerminalRememberResult) { result.CorrelationID = "" }},
+		{"invalid processing state", func(result *TerminalRememberResult) { result.ProcessingState = "processing" }},
+		{"invalid search state", func(result *TerminalRememberResult) { result.SearchState = "queued" }},
+		{"evidence count", func(result *TerminalRememberResult) { result.Evidence = result.Evidence[:1] }},
+		{"evidence order", func(result *TerminalRememberResult) { result.Evidence[0].EvidenceIndex = 1 }},
+		{"evidence disposition", func(result *TerminalRememberResult) { result.Evidence[0].Disposition = "unknown" }},
+		{"stored evidence id", func(result *TerminalRememberResult) { result.Evidence[0].EvidenceID = "" }},
+		{"non-stored evidence id", func(result *TerminalRememberResult) { result.Evidence[1].EvidenceID = "unexpected" }},
+		{"evidence search state", func(result *TerminalRememberResult) { result.Evidence[0].SearchState = "queued" }},
+		{"relationship count", func(result *TerminalRememberResult) { result.RelationshipResults = result.RelationshipResults[:1] }},
+		{"relationship order", func(result *TerminalRememberResult) { result.RelationshipResults[1].RelationshipRef = "rel-c" }},
+		{"relationship duplicate", func(result *TerminalRememberResult) { result.RelationshipResults[1].RelationshipRef = "rel-a" }},
+		{"relationship disposition", func(result *TerminalRememberResult) { result.RelationshipResults[0].Disposition = "unknown" }},
+		{"non-stored relationship splits", func(result *TerminalRememberResult) {
+			result.RelationshipResults[1].Splits = []SubmissionRelationshipSplit{{SplitIndex: 0}}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.edit == nil {
+				require.Error(t, ValidateTerminalRememberResult(nil, 0, nil))
+				return
+			}
+			result := validTerminalResultForTest()
+			test.edit(result)
+			require.Error(t, ValidateTerminalRememberResult(result, 2, []string{"rel-a", "rel-b"}))
+		})
+	}
+	require.NoError(t, ValidateTerminalRememberResult(validTerminalResultForTest(), 2, []string{"rel-a", "rel-b"}))
+}
+
+func TestValidateTerminalStatusErrorRejectsMalformedOutput(t *testing.T) {
+	valid := TerminalStatusError(TerminalErrorProviderUnavailable)
+	tests := []struct {
+		name string
+		edit func(*SubmissionStatusError)
+	}{
+		{"unknown action", func(value *SubmissionStatusError) { value.NextAction = "unknown" }},
+		{"inconsistent guidance", func(value *SubmissionStatusError) { value.Retryable = false }},
+		{"empty message", func(value *SubmissionStatusError) { value.Message = " " }},
+		{"long message", func(value *SubmissionStatusError) { value.Message = strings.Repeat("x", 257) }},
+		{"empty remediation", func(value *SubmissionStatusError) { value.Remediation = " " }},
+		{"long remediation", func(value *SubmissionStatusError) { value.Remediation = strings.Repeat("x", 513) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := valid
+			test.edit(&value)
+			require.Error(t, ValidateTerminalStatusError(value))
+		})
+	}
+}

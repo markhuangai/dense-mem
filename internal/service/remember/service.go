@@ -91,14 +91,15 @@ type RememberEvidenceInput struct {
 }
 
 type RememberResult struct {
-	ContractVersion   string `json:"contract_version"`
-	IngestID          string `json:"-"`
-	SubmissionID      string `json:"submission_id"`
-	SubmissionKind    string `json:"submission_kind"`
-	ProcessingState   string `json:"processing_state"`
-	CheckAfterSeconds int    `json:"check_after_seconds"`
-	StatusTool        string `json:"status_tool"`
-	CorrelationID     string `json:"correlation_id"`
+	ContractVersion   string     `json:"contract_version"`
+	IngestID          string     `json:"-"`
+	SubmissionID      string     `json:"submission_id"`
+	SubmissionKind    string     `json:"submission_kind"`
+	ProcessingState   string     `json:"processing_state"`
+	CheckAfterSeconds int        `json:"check_after_seconds"`
+	StatusTool        string     `json:"status_tool"`
+	CorrelationID     string     `json:"correlation_id"`
+	Kind              ResultKind `json:"-"`
 }
 
 type SubmissionStatusResult struct {
@@ -123,6 +124,7 @@ type SubmissionStatusResult struct {
 	QuarantineExpiresAt  *time.Time                      `json:"quarantine_expires_at,omitempty"`
 	AwaitingConfirmation *SubmissionAwaitingConfirmation `json:"awaiting_confirmation,omitempty"`
 	CorrectionResult     *RelationshipCorrectionResult   `json:"correction_result,omitempty"`
+	Kind                 ResultKind                      `json:"-"`
 }
 
 type SubmissionStatusDegradation struct {
@@ -447,7 +449,7 @@ func rememberResultFromLedger(created *StageResult, correlationID string) *Remem
 	if created.Existing && strings.TrimSpace(created.CorrelationID) != "" {
 		correlationID = created.CorrelationID
 	}
-	return &RememberResult{ContractVersion: domain.ContractVersion, IngestID: created.SubmissionID, SubmissionID: created.SubmissionID, SubmissionKind: "remember", ProcessingState: publicSubmissionProcessingState(created.Status), CheckAfterSeconds: rememberCheckAfterSeconds, StatusTool: rememberStatusTool, CorrelationID: correlationID}
+	return &RememberResult{ContractVersion: domain.ContractVersion, IngestID: created.SubmissionID, SubmissionID: created.SubmissionID, SubmissionKind: "remember", ProcessingState: publicSubmissionProcessingState(created.Status), CheckAfterSeconds: rememberCheckAfterSeconds, StatusTool: rememberStatusTool, CorrelationID: correlationID, Kind: ResultKindLegacyReceipt}
 }
 
 func translateRememberLedgerError(err error) error {
