@@ -55,15 +55,17 @@
   active and eligible.
 - Candidates and Hypotheses never enter default recall or active graph reads.
   Stored knowledge and search context never become submitted evidence.
-- Remember durably stages exact evidence and processing intent before
-  acknowledgement. Provider calls occur outside the authoritative semantic
-  transaction.
+- Remember runs assessment and required embedding work before its terminal
+  response. Provider calls occur outside the authoritative semantic
+  transaction, and no semantic or workflow state is staged before provider
+  success.
 - Validate each complete verifier response. Invalid, missing, duplicate,
   unknown, or out-of-allowlist results trigger bounded complete regeneration
   and zero partial semantic commit; do not coerce or splice responses.
 - Commit accepted evidence decisions, lifecycle history, current state, search
-  documents, and embedding jobs atomically in PostgreSQL. Embeddings are
-  derived, asynchronous, versioned state and cannot overwrite newer sources.
+  documents, validated vectors, terminal attempt metadata, and events atomically
+  in PostgreSQL. Document reconciliation remains derived, version-fenced work
+  and cannot overwrite newer sources.
 - Required failures remain visible and typed. Optional degradation must be
   reported; never replace a required failure with an empty result or silent
   fallback.
@@ -119,14 +121,17 @@
 
 - `v2.1.0` is a bootstrap release only. Active V2 implementation starts at #74
   after stable `v2.1.0` is promoted from `v2.1.0-rc.0`.
-- Keep V2 dormant through #93. #94 is the only issue allowed to write the
-  compatible cutover marker and switch normal authority to PostgreSQL V2.
-- #95 requires a compatible cutover marker and removes Neo4j/runtime-v1 paths
-  without changing supported V2 behavior.
+- The completed #94/#95 sequence governs the historical initial V2 authority
+  cutover: #94 wrote its compatible marker, and #95 removed Neo4j/runtime-v1
+  paths without changing supported V2 behavior.
+- #291 owns the later v2.6.1 stopped-service cutover marker for synchronous
+  Remember. It does not reopen the historical #94/#95 compatibility window.
 - PRs that may affect retrieval quality, ranking, placement accuracy,
   semantic verifier/reviewer behavior, embeddings, search documents, migration
   placement, or performance must include the deterministic 1k
-  evaluation/comparison result.
+  evaluation/comparison result unless the maintainer grants an explicit,
+  issue-specific waiver. #291 has that waiver and must report the evaluation as
+  not run.
 - Generated evaluation seeds, suites, downloaded datasets, imports, runtime
   databases, run outputs, and comparison artifacts stay in ignored local paths.
   Commit generator, source-lock, provenance, validation, scoring, and compact
@@ -168,6 +173,10 @@ go test ./tests/integration/... -count=1
 npm test --prefix web
 ./scripts/ci-check.sh
 ```
+
+- Compose E2E scenarios are local, on-demand release gates rather than CI jobs.
+  Run the scenario required by the issue and record its result; do not add it to
+  CI without an explicit maintainer policy change.
 
 - RLS, migrations, constraints, transactions, locks, idempotency, `pgvector`,
   and concurrency require real PostgreSQL/service integration tests. Mocked
