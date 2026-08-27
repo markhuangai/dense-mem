@@ -409,6 +409,25 @@ BEGIN
                         )
                     )
                 $policy$, table_name || '_insert', table_name);
+            ELSIF table_name IN ('remember_attempt_events', 'remember_failure_artifacts', 'semantic_assessments') THEN
+                EXECUTE format($policy$
+                    CREATE POLICY %I ON %I FOR INSERT WITH CHECK (
+                        current_setting('app.tx_mode', true) IN ('system', 'migration')
+                        OR (
+                            current_setting('app.tx_mode', true) = 'profile'
+                            AND team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
+                            AND owner_profile_id = NULLIF(current_setting('app.current_profile_id', true), '')::uuid
+                            AND EXISTS (
+                                SELECT 1
+                                FROM remember_attempts AS attempt
+                                WHERE attempt.team_id = %I.team_id
+                                  AND attempt.attempt_id = %I.attempt_id
+                                  AND attempt.owner_profile_id = %I.owner_profile_id
+                                  AND (attempt.space_id IS NULL OR dense_mem_space_allowed(attempt.space_id))
+                            )
+                        )
+                    )
+                $policy$, table_name || '_insert', table_name, table_name, table_name, table_name);
             ELSE
                 EXECUTE format($policy$
                     CREATE POLICY %I ON %I FOR INSERT WITH CHECK (

@@ -34,6 +34,7 @@ func TestSynchronousWriteFoundationMigrationContract(t *testing.T) {
 		"remember_attempts_space_generation",
 		"dense_mem_active_space_generation(NEW.team_id, NEW.space_id)",
 		"attempt.space_id IS NULL OR dense_mem_space_allowed(attempt.space_id)",
+		"table_name IN ('remember_attempt_events', 'remember_failure_artifacts', 'semantic_assessments')",
 		"space_id IS NULL OR dense_mem_space_allowed(space_id)",
 		"semantic_assessments_revision_check",
 		"accepted_revision <= jsonb_array_length(response_history)",

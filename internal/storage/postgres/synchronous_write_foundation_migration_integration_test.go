@@ -590,6 +590,25 @@ func TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam(t *testing
 		) VALUES ($1::uuid, gen_random_uuid(), $2::uuid, $3::uuid, 1,
 		          'rls-space-forbidden', 'rls-space-forbidden-request', 'dense-mem.v2.6', 'failed')
 	`, teamID, profileA, spaceB)
+	expectProfileInsertDeniedFor(teamID, profileA, spaceB, `
+		INSERT INTO remember_attempt_events (
+			team_id, event_id, attempt_id, owner_profile_id, sequence_no, phase, event_kind
+		) VALUES ($1::uuid, gen_random_uuid(), $2::uuid, $3::uuid, 2, 'commit', 'wrong-space')
+	`, teamID, spaceAttemptID, profileA)
+	expectProfileInsertDeniedFor(teamID, profileA, spaceB, `
+		INSERT INTO remember_failure_artifacts (
+			team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind,
+			content_type, content_bytes, byte_count, content_sha256, expires_at
+		) VALUES ($1::uuid, gen_random_uuid(), $2::uuid, $3::uuid, 'wrong-space',
+		          'text/plain', decode('63', 'hex'), 1, $4,
+		          now() + interval '1 hour')
+	`, teamID, spaceAttemptID, profileA, contentHash)
+	expectProfileInsertDeniedFor(teamID, profileA, spaceB, `
+		INSERT INTO semantic_assessments (
+			team_id, semantic_assessment_id, attempt_id, owner_profile_id,
+			response_history, provider_turns, model
+		) VALUES ($1::uuid, gen_random_uuid(), $2::uuid, $3::uuid, '[]'::jsonb, 1, 'wrong-space')
+	`, teamID, spaceAttemptID, profileA)
 
 	expectProfileInsertDenied(teamID, profileB, `
 		INSERT INTO remember_attempts (
