@@ -128,6 +128,12 @@ func TestRememberPublicResultsHaveNoPollingOrDegradationFields(t *testing.T) {
 	}
 }
 
+func TestRememberTerminalErrorGuidanceQuarantineRequiresNewKey(t *testing.T) {
+	nextAction, remediation := rememberTerminalErrorGuidance("submission_quarantined")
+	require.Equal(t, "resubmit_remember", nextAction)
+	require.Equal(t, "Use a new idempotency_key for any later Remember submission.", remediation)
+}
+
 func TestRememberPublicRelationshipResultsUseOnlyContractReference(t *testing.T) {
 	input := SynchronousRememberCommitInput{
 		IngestID: uuid.NewString(),
