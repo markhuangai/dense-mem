@@ -277,6 +277,7 @@ func loadRememberFailureArtifactDescriptors(ctx context.Context, tx *gorm.DB, te
 		       content_sha256, captured_at, expires_at
 		FROM remember_failure_artifacts
 		WHERE team_id = ?::uuid AND attempt_id = ?::uuid
+		  AND expires_at > clock_timestamp()
 		ORDER BY captured_at ASC, artifact_id ASC
 	`, teamID, attemptID).Rows()
 	if err != nil {

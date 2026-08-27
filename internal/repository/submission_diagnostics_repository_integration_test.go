@@ -143,6 +143,7 @@ func TestPurgeExpiredRememberFailureArtifactsUsesAuditedSystemPath(t *testing.T)
 	ledger := NewLedgerRepository(appDB, rls)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	attemptID := uuid.NewString()
+	artifactID := uuid.NewString()
 	require.NoError(t, ledger.RecordRememberFailure(ctx, RememberFailureRecordInput{
 		TeamID: teamID, OwnerProfileID: ownerID, AttemptID: attemptID,
 		IdempotencyKey: "purge-key", RequestHash: "purge-hash",
@@ -150,10 +151,16 @@ func TestPurgeExpiredRememberFailureArtifactsUsesAuditedSystemPath(t *testing.T)
 		FailedPhase: "embedding", ErrorCode: "embedding_unavailable",
 		PublicResult: map[string]any{"submission_id": attemptID},
 		Artifacts: []RememberFailureArtifactInput{{
-			ArtifactKind: "failure", ContentType: "application/json", Content: []byte(`{"expired":true}`),
+			ArtifactID: artifactID, ArtifactKind: "failure", ContentType: "application/json", Content: []byte(`{"expired":true}`),
 			CapturedAt: now.Add(-7 * 24 * time.Hour), ExpiresAt: now.Add(-time.Hour),
 		}},
 	}))
+
+	_, err := ledger.GetRememberFailureArtifact(ctx, teamID, attemptID, artifactID)
+	require.ErrorIs(t, err, ErrRememberFailureArtifactNotFound)
+	detail, err := ledger.GetSubmissionDiagnostic(ctx, teamID, attemptID)
+	require.NoError(t, err)
+	require.Empty(t, detail.Artifacts)
 
 	mutationErr := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`

@@ -319,6 +319,7 @@ func (r *LedgerRepositoryImpl) GetRememberFailureArtifact(ctx context.Context, t
 			       content_type, content_bytes, byte_count, content_sha256, captured_at, expires_at
 			FROM remember_failure_artifacts
 			WHERE team_id = ?::uuid AND attempt_id = ?::uuid AND artifact_id = ?::uuid
+			  AND expires_at > clock_timestamp()
 		`, teamID, attemptID, artifactID).Row().Scan(
 			&artifact.TeamID, &artifact.ArtifactID, &artifact.AttemptID, &artifact.ArtifactKind,
 			&artifact.ContentType, &artifact.Content, &artifact.ByteCount, &artifact.ContentSHA256,
