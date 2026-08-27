@@ -170,6 +170,9 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"superseded evidence uuid", func(result *TerminalRememberResult) {
 			result.Evidence[0].SupersededEvidenceIDs = []string{"not-a-uuid"}
 		}},
+		{"self superseded evidence uuid", func(result *TerminalRememberResult) {
+			result.Evidence[0].SupersededEvidenceIDs = []string{result.Evidence[0].EvidenceID}
+		}},
 		{"superseded evidence duplicate", func(result *TerminalRememberResult) {
 			result.Evidence[0].SupersededEvidenceIDs = []string{"22222222-2222-2222-2222-222222222222", "22222222-2222-2222-2222-222222222222"}
 		}},

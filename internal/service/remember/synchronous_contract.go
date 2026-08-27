@@ -369,6 +369,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 			if _, ok := seenStoredEvidenceIDs[evidenceID]; ok {
 				return fmt.Errorf("remember: stored evidence %d has duplicated evidence_id", index)
 			}
+			if _, ok := seenSupersededEvidenceIDs[evidenceID]; ok {
+				return fmt.Errorf("remember: stored evidence %d supersedes itself", index)
+			}
 			seenStoredEvidenceIDs[evidenceID] = struct{}{}
 			if strings.TrimSpace(item.Reason) != "" {
 				return fmt.Errorf("remember: stored evidence %d has a reason", index)
@@ -391,6 +394,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 			}
 			if _, ok := seenSupersededEvidenceIDs[supersededUUID]; ok {
 				return fmt.Errorf("remember: terminal evidence %d has duplicated superseded evidence_id", index)
+			}
+			if _, ok := seenStoredEvidenceIDs[supersededUUID]; ok {
+				return fmt.Errorf("remember: terminal evidence %d supersedes a stored evidence_id", index)
 			}
 			seenSupersededEvidenceIDs[supersededUUID] = struct{}{}
 		}
