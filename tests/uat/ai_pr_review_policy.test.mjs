@@ -144,7 +144,15 @@ test("test-assurance review owns positive, negative, and local E2E proof", async
   );
   assert.match(
     normalizedWorkflow,
+    /with a supported local production-entry harness, require an applicable committed local Compose or UAT end-to-end scenario/,
+  );
+  assert.match(
+    normalizedWorkflow,
     /committed local Compose or UAT end-to-end scenario through production entry points and real dependencies/,
+  );
+  assert.match(
+    normalizedWorkflow,
+    /For GitHub Actions or external-host workflow behavior that the local harness cannot execute, require the repository-prescribed real-logic policy test and static validation instead of Compose or UAT/,
   );
   assert.match(
     normalizedWorkflow,
