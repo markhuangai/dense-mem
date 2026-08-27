@@ -350,6 +350,7 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	}
 	storedResult := false
 	seenStoredEvidenceIDs := make(map[uuid.UUID]struct{}, len(result.Evidence))
+	seenSupersededEvidenceIDs := make(map[uuid.UUID]struct{})
 	for index, item := range result.Evidence {
 		if item.EvidenceIndex != index {
 			return fmt.Errorf("remember: terminal evidence index %d is out of order", item.EvidenceIndex)
@@ -383,15 +384,15 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		if item.Disposition == "not_stored" && !terminalNotStoredReasonAllowed(item.Reason) {
 			return fmt.Errorf("remember: non-stored evidence %d has unsupported reason", index)
 		}
-		seenSuperseded := make(map[string]struct{}, len(item.SupersededEvidenceIDs))
 		for _, supersededID := range item.SupersededEvidenceIDs {
-			if _, err := uuid.Parse(supersededID); err != nil {
+			supersededUUID, err := uuid.Parse(supersededID)
+			if err != nil {
 				return fmt.Errorf("remember: terminal evidence %d has invalid superseded evidence_id", index)
 			}
-			if _, ok := seenSuperseded[supersededID]; ok {
+			if _, ok := seenSupersededEvidenceIDs[supersededUUID]; ok {
 				return fmt.Errorf("remember: terminal evidence %d has duplicated superseded evidence_id", index)
 			}
-			seenSuperseded[supersededID] = struct{}{}
+			seenSupersededEvidenceIDs[supersededUUID] = struct{}{}
 		}
 		if item.SearchState != string(TerminalSearchCurrent) && item.SearchState != string(TerminalSearchNotRequired) {
 			return fmt.Errorf("remember: terminal evidence %d has invalid search state %q", index, item.SearchState)
@@ -500,8 +501,19 @@ func TerminalResultWithError(result *TerminalRememberResult, code TerminalErrorC
 	}
 	result.Kind = ResultKindTerminal
 	result.ProcessingState = string(terminalProcessingStateForError(code))
-	if result.SearchState != string(TerminalSearchCurrent) && result.SearchState != string(TerminalSearchNotRequired) {
-		result.SearchState = string(TerminalSearchNotRequired)
+	result.SearchState = string(TerminalSearchNotRequired)
+	notStoredReason := terminalNotStoredReasonForError(code)
+	for index := range result.Evidence {
+		result.Evidence[index].Disposition = "not_stored"
+		result.Evidence[index].EvidenceID = ""
+		result.Evidence[index].SupersededEvidenceIDs = []string{}
+		result.Evidence[index].SearchState = string(TerminalSearchNotRequired)
+		result.Evidence[index].Reason = notStoredReason
+	}
+	for index := range result.RelationshipResults {
+		result.RelationshipResults[index].Disposition = "not_stored"
+		result.RelationshipResults[index].Reason = notStoredReason
+		result.RelationshipResults[index].Splits = []SubmissionRelationshipSplit{}
 	}
 	if result.Evidence == nil {
 		result.Evidence = []TerminalEvidenceResult{}
@@ -512,6 +524,19 @@ func TerminalResultWithError(result *TerminalRememberResult, code TerminalErrorC
 	status := TerminalStatusError(code)
 	result.Errors = []SubmissionStatusError{status}
 	return &RememberProcessError{Result: result, Err: errors.New(status.Message)}
+}
+
+func terminalNotStoredReasonForError(code TerminalErrorCode) string {
+	switch normalizeTerminalErrorCode(code) {
+	case TerminalErrorNoSupportedMemory:
+		return "not_supported_by_evidence"
+	case TerminalErrorStaleInput:
+		return "stale_input"
+	case TerminalErrorQuarantined:
+		return "security_quarantine"
+	default:
+		return "internal_failure"
+	}
 }
 
 func terminalProcessingStateForError(code TerminalErrorCode) TerminalProcessingState {

@@ -3,6 +3,7 @@ package semanticwrite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -99,6 +100,19 @@ func TestExecutorRejectsMalformedPlansBeforeProvider(t *testing.T) {
 		{"non-canonical model", func() Plan { plan := validPlan(); plan.Fence.Model = " model "; return plan }()},
 		{"non-canonical embedding contract", func() Plan { plan := validPlan(); plan.Fence.EmbeddingContractID = " contract "; return plan }()},
 		{"non-canonical search generation", func() Plan { plan := validPlan(); plan.Fence.SearchGenerationID = " generation "; return plan }()},
+		{"document limit", func() Plan {
+			plan := validPlan()
+			plan.Documents = make([]Document, MaxDocuments+1)
+			for index := range plan.Documents {
+				plan.Documents[index] = Document{Hash: fmt.Sprintf("hash-%d", index), Text: "text"}
+			}
+			return plan
+		}()},
+		{"zero search generation version", func() Plan {
+			plan := validPlan()
+			plan.Fence.SearchGenerationVersion = 0
+			return plan
+		}()},
 		{"blank text", func() Plan { plan := validPlan(); plan.Documents[0].Text = " "; return plan }()},
 		{"zero timeout", func() Plan { plan := validPlan(); plan.Timeout = 0; return plan }()},
 	}
@@ -109,6 +123,21 @@ func TestExecutorRejectsMalformedPlansBeforeProvider(t *testing.T) {
 			require.Zero(t, provider.calls)
 		})
 	}
+}
+
+func TestExecutorAcceptsMaximumDocumentBoundary(t *testing.T) {
+	provider := validProvider()
+	plan := validPlan()
+	plan.Documents = make([]Document, MaxDocuments)
+	provider.vectors = make([]IndexedEmbedding, MaxDocuments)
+	for index := range plan.Documents {
+		plan.Documents[index] = Document{Hash: fmt.Sprintf("hash-%d", index), Text: "text"}
+		provider.vectors[index] = IndexedEmbedding{Index: index, Vector: []float32{1, 2}}
+	}
+	result, err := NewExecutor(provider).Execute(context.Background(), plan)
+	require.NoError(t, err)
+	require.Len(t, result.Embeddings, MaxDocuments)
+	require.Equal(t, 1, provider.calls)
 }
 
 func TestExecutorRejectsProviderAvailabilityAndContractMismatches(t *testing.T) {

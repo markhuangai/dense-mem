@@ -159,6 +159,14 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 			result.Evidence[1].SearchState = string(TerminalSearchCurrent)
 			result.Evidence[1].Reason = ""
 		}},
+		{"duplicate superseded evidence id across items", func(result *TerminalRememberResult) {
+			result.Evidence[1].Disposition = "stored"
+			result.Evidence[1].EvidenceID = "22222222-2222-2222-2222-222222222222"
+			result.Evidence[1].SearchState = string(TerminalSearchCurrent)
+			result.Evidence[1].Reason = ""
+			result.Evidence[0].SupersededEvidenceIDs = []string{"33333333-3333-3333-3333-333333333333"}
+			result.Evidence[1].SupersededEvidenceIDs = []string{"33333333-3333-3333-3333-333333333333"}
+		}},
 		{"superseded evidence uuid", func(result *TerminalRememberResult) {
 			result.Evidence[0].SupersededEvidenceIDs = []string{"not-a-uuid"}
 		}},
@@ -274,4 +282,22 @@ func TestTerminalResultWithErrorUsesSemanticProcessingStates(t *testing.T) {
 		require.Equal(t, string(test.state), failure.Result.ProcessingState)
 		require.NoError(t, ValidateTerminalRememberResult(failure.Result, 0, nil), test.code)
 	}
+}
+
+func TestTerminalResultWithErrorClearsStaleEffects(t *testing.T) {
+	failure := TerminalResultWithError(validTerminalResultForTest(), TerminalErrorProviderUnavailable)
+	require.Equal(t, string(TerminalSearchNotRequired), failure.Result.SearchState)
+	for _, item := range failure.Result.Evidence {
+		require.Equal(t, "not_stored", item.Disposition)
+		require.Empty(t, item.EvidenceID)
+		require.Empty(t, item.SupersededEvidenceIDs)
+		require.Equal(t, string(TerminalSearchNotRequired), item.SearchState)
+		require.Equal(t, "internal_failure", item.Reason)
+	}
+	for _, item := range failure.Result.RelationshipResults {
+		require.Equal(t, "not_stored", item.Disposition)
+		require.Empty(t, item.Splits)
+		require.Equal(t, "internal_failure", item.Reason)
+	}
+	require.NoError(t, ValidateTerminalRememberResult(failure.Result, 2, []string{"rel-a", "rel-b"}))
 }
