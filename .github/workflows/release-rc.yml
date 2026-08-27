@@ -18,12 +18,55 @@ concurrency:
   queue: max
 
 jobs:
-  staging-migration-rehearsal:
-    name: Rehearse migrations on staging data
+  classify-release:
+    name: Classify release changes
     if: >-
       ${{
         github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.event == 'push'
+      }}
+    permissions:
+      contents: read
+    runs-on: docker-runner
+    outputs:
+      should_release: ${{ steps.policy.outputs.should_release }}
+
+    steps:
+      - name: Checkout release candidate
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Classify release changes
+        id: policy
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          test "$(git rev-parse HEAD)" = "${HEAD_SHA}"
+          git fetch --tags --force origin '+refs/tags/*:refs/tags/*'
+          should_release="$(.github/scripts/prerelease-version.sh should-release "${HEAD_SHA}")"
+          case "${should_release}" in
+            true | false) ;;
+            *)
+              echo "::error::invalid release classification: ${should_release}"
+              exit 1
+              ;;
+          esac
+          echo "should_release=${should_release}" >> "${GITHUB_OUTPUT}"
+
+  staging-migration-rehearsal:
+    name: Rehearse migrations on staging data
+    needs: classify-release
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        needs.classify-release.outputs.should_release == 'true'
       }}
     uses: ./.github/workflows/staging-migration-rehearsal.yml
     with:
@@ -32,11 +75,14 @@ jobs:
 
   prepare-prerelease:
     name: Prepare prerelease
-    needs: staging-migration-rehearsal
+    needs:
+      - classify-release
+      - staging-migration-rehearsal
     if: >-
       ${{
         github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.event == 'push' &&
+        needs.classify-release.outputs.should_release == 'true' &&
         needs.staging-migration-rehearsal.result == 'success'
       }}
     permissions:
