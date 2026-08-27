@@ -30,17 +30,25 @@ func TestRememberTerminalCommitHasNoRetiredWorkflowTables(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "rejected", result.Outcome)
+	resultErrors := result.PublicResult["errors"].([]map[string]any)
+	require.Len(t, resultErrors, 1)
+	require.Equal(t, "no supported memory could be stored from this submission", resultErrors[0]["message"])
 
 	var retiredTables int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		return tx.Raw(`SELECT COUNT(*) FROM pg_class WHERE relname IN ('placement_runs', 'placement_items')`).Scan(&retiredTables).Error
 	}))
 	require.Zero(t, retiredTables)
-	var outcome string
+	var outcome, message string
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT outcome FROM remember_attempts WHERE team_id = ?::uuid AND attempt_id = ?::uuid`, teamID, input.IngestID).Scan(&outcome).Error
+		return tx.Raw(`
+			SELECT outcome, public_result #>> '{errors,0,message}'
+			FROM remember_attempts
+			WHERE team_id = ?::uuid AND attempt_id = ?::uuid
+		`, teamID, input.IngestID).Row().Scan(&outcome, &message)
 	}))
 	require.Equal(t, "rejected", outcome)
+	require.Equal(t, "no supported memory could be stored from this submission", message)
 }
 
 func TestRememberPreflightQuarantineWritesOnlyTerminalAttempt(t *testing.T) {
@@ -71,6 +79,7 @@ func TestRememberPreflightQuarantineWritesOnlyTerminalAttempt(t *testing.T) {
 	errors, ok := result.PublicResult["errors"].([]map[string]any)
 	require.True(t, ok)
 	require.Len(t, errors, 1)
+	require.Equal(t, "submission was quarantined by security policy", errors[0]["message"])
 	require.Equal(t, "resubmit_remember", errors[0]["next_action"])
 	require.Equal(t, "Use a new idempotency_key for any later Remember submission.", errors[0]["remediation"])
 
@@ -86,14 +95,15 @@ func TestRememberPreflightQuarantineWritesOnlyTerminalAttempt(t *testing.T) {
 	}))
 	require.Zero(t, canonicalRows)
 
-	var outcome string
+	var outcome, message string
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		return tx.Raw(`
-			SELECT outcome FROM remember_attempts
+			SELECT outcome, public_result #>> '{errors,0,message}' FROM remember_attempts
 			WHERE team_id = ?::uuid AND attempt_id = ?::uuid
-		`, teamID, input.IngestID).Scan(&outcome).Error
+		`, teamID, input.IngestID).Row().Scan(&outcome, &message)
 	}))
 	require.Equal(t, "quarantined", outcome)
+	require.Equal(t, "submission was quarantined by security policy", message)
 }
 
 func TestRememberFailureCannotFollowCanonicalTerminalAttempt(t *testing.T) {

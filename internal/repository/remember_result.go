@@ -88,17 +88,28 @@ func rememberTerminalPublicResult(input SynchronousRememberCommitInput, evidence
 	code := strings.TrimSpace(errorCode)
 	if code == "" {
 		if outcome == "quarantined" {
-			code = "quarantined"
+			code = "submission_quarantined"
 		} else {
 			code = "no_supported_memory"
 		}
 	}
 	nextAction, remediation := rememberTerminalErrorGuidance(code)
 	result["errors"] = []map[string]any{{
-		"code": code, "message": code, "retryable": true,
+		"code": code, "message": rememberTerminalErrorMessage(code), "retryable": true,
 		"next_action": nextAction, "remediation": remediation,
 	}}
 	return result
+}
+
+func rememberTerminalErrorMessage(code string) string {
+	switch code {
+	case "no_supported_memory":
+		return domain.SubmissionErrorMessageNoSupportedMemory
+	case "submission_quarantined":
+		return domain.SubmissionErrorMessageQuarantined
+	default:
+		return domain.SubmissionErrorMessageInternalFailure
+	}
 }
 
 func rememberTerminalErrorGuidance(code string) (string, string) {

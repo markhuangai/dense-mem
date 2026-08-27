@@ -134,6 +134,24 @@ func TestRememberTerminalErrorGuidanceQuarantineRequiresNewKey(t *testing.T) {
 	require.Equal(t, "Use a new idempotency_key for any later Remember submission.", remediation)
 }
 
+func TestRememberTerminalPublicResultUsesBoundedErrorMessages(t *testing.T) {
+	input := SynchronousRememberCommitInput{IngestID: uuid.NewString()}
+	for _, test := range []struct {
+		outcome string
+		code    string
+		message string
+	}{
+		{outcome: "rejected", code: "no_supported_memory", message: "no supported memory could be stored from this submission"},
+		{outcome: "quarantined", code: "submission_quarantined", message: "submission was quarantined by security policy"},
+	} {
+		result := rememberTerminalPublicResult(input, nil, test.outcome, test.code)
+		errors := result["errors"].([]map[string]any)
+		require.Len(t, errors, 1)
+		require.Equal(t, test.code, errors[0]["code"])
+		require.Equal(t, test.message, errors[0]["message"])
+	}
+}
+
 func TestRememberTerminalPublicResultDoesNotReportUnappliedSupersessions(t *testing.T) {
 	input := SynchronousRememberCommitInput{IngestID: uuid.NewString()}
 	evidence := []EvidenceFragment{{EvidenceIndex: 0, SupersededEvidenceIDs: []string{uuid.NewString()}}}

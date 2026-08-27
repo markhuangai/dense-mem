@@ -2,6 +2,8 @@ package remember
 
 import (
 	"strings"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 // SubmissionErrorCode is the closed public vocabulary for terminal submission
@@ -130,7 +132,7 @@ func SubmissionNextActions() []string {
 }
 
 var submissionErrorMessages = map[SubmissionErrorCode]string{
-	SubmissionErrorNoSupportedMemory:        "no supported memory could be stored from this submission",
+	SubmissionErrorNoSupportedMemory:        domain.SubmissionErrorMessageNoSupportedMemory,
 	SubmissionErrorStaleInput:               "an exact client-owned input changed before commit",
 	SubmissionErrorProviderUnavailable:      "the semantic assessor was unavailable",
 	SubmissionErrorProviderResponseInvalid:  "the semantic assessor returned an invalid response",
@@ -143,9 +145,9 @@ var submissionErrorMessages = map[SubmissionErrorCode]string{
 	SubmissionErrorDatabaseFailure:          "Dense-Mem could not persist the submission",
 	SubmissionErrorRequestTimeout:           "the bounded Remember request deadline was reached",
 	SubmissionErrorRequestCancelled:         "the Remember request was cancelled before commit",
-	SubmissionErrorInternalFailure:          "Dense-Mem could not complete the submission",
+	SubmissionErrorInternalFailure:          domain.SubmissionErrorMessageInternalFailure,
 	SubmissionErrorPolicyRejected:           "submission was rejected by semantic policy",
-	SubmissionErrorQuarantined:              "submission was quarantined by security policy",
+	SubmissionErrorQuarantined:              domain.SubmissionErrorMessageQuarantined,
 
 	SubmissionErrorRelationshipVersionStale:      "relationship version is stale",
 	SubmissionErrorRelationshipNotActive:         "relationship must be active, supported, and canonical",

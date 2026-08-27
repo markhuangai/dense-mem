@@ -155,6 +155,15 @@ func TestPurgeExpiredRememberFailureArtifactsUsesAuditedSystemPath(t *testing.T)
 		}},
 	}))
 
+	mutationErr := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE remember_failure_artifacts
+			SET content_type = 'text/plain'
+			WHERE team_id = ?::uuid AND attempt_id = ?::uuid
+		`, teamID, attemptID).Error
+	})
+	require.ErrorContains(t, mutationErr, "remember_failure_artifacts is append-only")
+
 	deleted, err := ledger.PurgeExpiredRememberFailureArtifacts(ctx, now, 100)
 	require.NoError(t, err)
 	require.Equal(t, 1, deleted)

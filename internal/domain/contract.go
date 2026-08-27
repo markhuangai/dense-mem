@@ -10,6 +10,12 @@ const (
 	ToolVisibility                     = "dormant"
 )
 
+const (
+	SubmissionErrorMessageNoSupportedMemory = "no supported memory could be stored from this submission"
+	SubmissionErrorMessageQuarantined       = "submission was quarantined by security policy"
+	SubmissionErrorMessageInternalFailure   = "Dense-Mem could not complete the submission"
+)
+
 type IngestID string
 type EvidenceID string
 type ObservationID string

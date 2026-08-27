@@ -322,6 +322,10 @@ DROP TRIGGER IF EXISTS remember_attempt_events_append_only ON remember_attempt_e
 CREATE TRIGGER remember_attempt_events_append_only
     BEFORE UPDATE OR DELETE ON remember_attempt_events
     FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation();
+DROP TRIGGER IF EXISTS remember_failure_artifacts_append_only ON remember_failure_artifacts;
+CREATE TRIGGER remember_failure_artifacts_append_only
+    BEFORE UPDATE OR DELETE ON remember_failure_artifacts
+    FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation();
 
 -- The v2.5 normalizer treats this exact authenticated actor envelope as a
 -- legacy Remember origin. Persist that classification before copying history.
