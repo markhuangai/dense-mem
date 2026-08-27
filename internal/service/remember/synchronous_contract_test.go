@@ -231,15 +231,76 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 	require.NoError(t, ValidateTerminalRememberResult(validTerminalResultForTest(), 2, []string{"rel-a", "rel-b"}))
 }
 
-func TestValidateTerminalRememberResultAcceptsClosedNotStoredRelationshipReasons(t *testing.T) {
-	for _, reason := range []string{
-		"not_supported_by_evidence", "stale_input", "security_quarantine", "internal_failure",
+func TestValidateTerminalRememberResultAcceptsContextualNotStoredReasons(t *testing.T) {
+	result := validTerminalResultForTest()
+	result.Evidence[1].Reason = "not_supported_by_evidence"
+	result.RelationshipResults[1].Reason = "not_supported_by_evidence"
+	require.NoError(t, ValidateTerminalRememberResult(result, 2, []string{"rel-a", "rel-b"}))
+
+	for _, test := range []struct {
+		name   string
+		state  string
+		code   TerminalErrorCode
+		reason string
+	}{
+		{"stale input", string(TerminalProcessingRejected), TerminalErrorStaleInput, "stale_input"},
+		{"quarantine", string(TerminalProcessingQuarantined), TerminalErrorQuarantined, "security_quarantine"},
+		{"failure", string(TerminalProcessingFailed), TerminalErrorProviderUnavailable, "internal_failure"},
 	} {
-		result := validTerminalResultForTest()
-		result.Evidence[1].Reason = reason
-		result.RelationshipResults[1].Reason = reason
-		require.NoError(t, ValidateTerminalRememberResult(result, 2, []string{"rel-a", "rel-b"}), reason)
+		t.Run(test.name, func(t *testing.T) {
+			result := terminalFailureResultForTest(test.state, test.code, test.reason)
+			require.NoError(t, ValidateTerminalRememberResult(result, 2, []string{"rel-a", "rel-b"}))
+		})
 	}
+}
+
+func TestValidateTerminalRememberResultRejectsMismatchedNotStoredReasons(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*TerminalRememberResult)
+	}{
+		{"completed evidence reason", func(result *TerminalRememberResult) {
+			result.Evidence[1].Reason = "security_quarantine"
+		}},
+		{"completed relationship reason", func(result *TerminalRememberResult) {
+			result.RelationshipResults[1].Reason = "internal_failure"
+		}},
+		{"rejected evidence reason", func(result *TerminalRememberResult) {
+			failure := terminalFailureResultForTest(string(TerminalProcessingRejected), TerminalErrorNoSupportedMemory, "stale_input")
+			*result = *failure
+		}},
+		{"failed relationship reason", func(result *TerminalRememberResult) {
+			failure := terminalFailureResultForTest(string(TerminalProcessingFailed), TerminalErrorProviderUnavailable, "stale_input")
+			*result = *failure
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := validTerminalResultForTest()
+			test.edit(result)
+			require.Error(t, ValidateTerminalRememberResult(result, 2, []string{"rel-a", "rel-b"}))
+		})
+	}
+}
+
+func terminalFailureResultForTest(state string, code TerminalErrorCode, reason string) *TerminalRememberResult {
+	result := validTerminalResultForTest()
+	result.ProcessingState = state
+	result.SearchState = string(TerminalSearchNotRequired)
+	for index := range result.Evidence {
+		result.Evidence[index].Disposition = "not_stored"
+		result.Evidence[index].EvidenceID = ""
+		result.Evidence[index].SupersededEvidenceIDs = []string{}
+		result.Evidence[index].SearchState = string(TerminalSearchNotRequired)
+		result.Evidence[index].Reason = reason
+	}
+	for index := range result.RelationshipResults {
+		result.RelationshipResults[index].Disposition = "not_stored"
+		result.RelationshipResults[index].Splits = []SubmissionRelationshipSplit{}
+		result.RelationshipResults[index].Reason = reason
+	}
+	result.Errors = []SubmissionStatusError{TerminalStatusError(code)}
+	return result
 }
 
 func TestValidateTerminalStatusErrorRejectsMalformedOutput(t *testing.T) {

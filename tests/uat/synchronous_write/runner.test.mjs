@@ -23,6 +23,7 @@ test("provider timeout fault is longer than the pinned E2E request caps", async 
   const fixture = await readFile(new URL("./provider-fixture.mjs", import.meta.url), "utf8");
   assert.match(overlay, /AI_API_EMBEDDING_TIMEOUT_SECONDS: "2"/);
   assert.match(overlay, /AI_VERIFIER_TIMEOUT_SECONDS: "2"/);
+  assert.match(overlay, /AI_VERIFIER_API_KEY: dense-mem-e2e-verifier-key/);
   assert.match(overlay, /DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: "5000"/);
   assert.match(fixture, /timeoutDelayMs/);
 });

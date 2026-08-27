@@ -384,7 +384,7 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		if item.Disposition == "not_stored" && len(item.SupersededEvidenceIDs) > 0 {
 			return fmt.Errorf("remember: non-stored evidence %d has superseded evidence", index)
 		}
-		if item.Disposition == "not_stored" && !terminalNotStoredReasonAllowed(item.Reason) {
+		if item.Disposition == "not_stored" && !terminalNotStoredReasonAllowedForResult(result, item.Reason) {
 			return fmt.Errorf("remember: non-stored evidence %d has unsupported reason", index)
 		}
 		for _, supersededID := range item.SupersededEvidenceIDs {
@@ -436,7 +436,7 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		if item.Disposition == "not_stored" && len(item.Splits) > 0 {
 			return fmt.Errorf("remember: non-stored relationship %q has splits", item.RelationshipRef)
 		}
-		if item.Disposition == "not_stored" && !terminalNotStoredReasonAllowed(item.Reason) {
+		if item.Disposition == "not_stored" && !terminalNotStoredReasonAllowedForResult(result, item.Reason) {
 			return fmt.Errorf("remember: non-stored relationship %q has unsupported reason", item.RelationshipRef)
 		}
 		if item.Disposition == "stored" {
@@ -497,6 +497,21 @@ func terminalNotStoredReasonAllowed(reason string) bool {
 	default:
 		return false
 	}
+}
+
+func terminalNotStoredReasonAllowedForResult(result *TerminalRememberResult, reason string) bool {
+	if result == nil || !terminalNotStoredReasonAllowed(reason) {
+		return false
+	}
+	if result.ProcessingState == string(TerminalProcessingCompleted) {
+		return reason == "not_supported_by_evidence"
+	}
+	for _, item := range result.Errors {
+		if reason == terminalNotStoredReasonForError(TerminalErrorCode(item.Code)) {
+			return true
+		}
+	}
+	return false
 }
 
 // TerminalResultWithError builds a bounded failure projection for transport

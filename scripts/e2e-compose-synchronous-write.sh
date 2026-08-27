@@ -34,6 +34,7 @@ services:
       AI_VERIFIER_TIMEOUT_SECONDS: "2"
       AI_API_URL: http://synchronous-write-provider:8787/v1
       AI_VERIFIER_API_URL: http://synchronous-write-provider:8787/v1
+      AI_VERIFIER_API_KEY: dense-mem-e2e-verifier-key
   synchronous-write-provider:
     image: node:22-alpine
     working_dir: /e2e
