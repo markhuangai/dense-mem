@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 const testDreamPathPredicateFingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -33,17 +36,48 @@ func TestDreamInputsIncludeExpiredPendingEvidence(t *testing.T) {
 	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "PostgreSQL")
 	content := "Dense-Mem may use PostgreSQL after independent review."
 	ingest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID, "dream-pending-input", content)
+	assessmentID := uuid.NewString()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO remember_attempts (
+			    team_id, attempt_id, owner_profile_id, space_id, space_generation,
+			    idempotency_key, request_hash, contract_version, submission_kind, outcome,
+			    public_result, evidence_count, relationship_count, assessor_turns, completed_at
+			)
+			SELECT ingest.team_id, ingest.ingest_id, ingest.owner_profile_id,
+			       ingest.space_id, ingest.space_generation,
+			       'dream-pending-input-assessment', 'sha256:dream-pending-input-assessment', ?,
+			       'remember', 'completed', '{}'::jsonb, 1, 1, 1, now()
+			FROM knowledge_ingests AS ingest
+			WHERE ingest.team_id = ?::uuid
+			  AND ingest.ingest_id = ?::uuid
+			  AND ingest.owner_profile_id = ?::uuid
+		`, domain.ContractVersion, teamID, ingest.IngestID, ownerID).Error; err != nil {
+			return err
+		}
+		return insertRememberSemanticAssessment(ctx, tx, SynchronousRememberCommitInput{
+			TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+			AssessmentID: assessmentID, AssessmentJSON: json.RawMessage(`{"relationship_results":[]}`),
+			ProviderTurns: 1, InputTokens: 1, OutputTokens: 1,
+			Commit: CommitSubmissionAssessmentInput{Payload: map[string]any{
+				"model": "dream-test", "tokenizer": "dream-test", "response_hash": "sha256:dream-pending-input-assessment",
+				"candidate_context_tokens": 0, "candidate_context_truncated": false,
+			}},
+		})
+	}))
 	threshold := 0.8
 	pending := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
-		TeamID:          teamID,
-		OwnerProfileID:  ownerID,
-		IngestID:        ingest.IngestID,
-		SubjectEntityID: denseMem.EntityID,
-		PredicateKey:    "uses",
-		ObjectEntityID:  postgres.EntityID,
-		EvidenceVerdict: "insufficient",
-		ThresholdUsed:   &threshold,
-		GateResult:      "below_write_threshold",
+		TeamID:                  teamID,
+		OwnerProfileID:          ownerID,
+		IngestID:                ingest.IngestID,
+		SubjectEntityID:         denseMem.EntityID,
+		PredicateKey:            "uses",
+		ObjectEntityID:          postgres.EntityID,
+		EvidenceVerdict:         "insufficient",
+		AssessmentID:            assessmentID,
+		AssessmentPolicyVersion: AssessmentPolicyVersion,
+		ThresholdUsed:           &threshold,
+		GateResult:              "below_write_threshold",
 		Support: &EvidenceSupportInput{
 			FragmentID:     ingest.Evidence[0].FragmentID,
 			SourceGroupKey: "pending_observation",
@@ -58,14 +92,14 @@ func TestDreamInputsIncludeExpiredPendingEvidence(t *testing.T) {
 			INSERT INTO review_tasks (
 			    team_id, owner_profile_id, ingest_id,
 			    relationship_id, observation_id, task_type, status, reason,
-			    payload
+			    payload, assessment_id
 			) VALUES (
 			    ?::uuid, ?::uuid, ?::uuid,
 			    ?::uuid, ?::uuid, 'relationship_needs_review', 'open', 'pending_semantic_review',
-			    '{}'::jsonb
+			    '{}'::jsonb, ?::uuid
 			)
 		`, teamID, ownerID, ingest.IngestID,
-			pending.Relationship.RelationshipID, pending.ObservationID).Error
+			pending.Relationship.RelationshipID, pending.ObservationID, assessmentID).Error
 	}))
 
 	inputs, err := semanticRepo.ListDreamInputs(ctx, DreamInputListInput{TeamID: teamID, Limit: 10})

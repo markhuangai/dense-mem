@@ -204,7 +204,13 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	if err != nil {
 		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
 	}
-	plannedEmbeddings, err := p.embedSearchDocumentBatch(embeddingCtx, input.TeamID, input.OwnerProfileID, plan.Documents)
+	plannedEmbeddings, err := p.embedSearchDocumentBatch(
+		embeddingCtx,
+		input.TeamID,
+		input.OwnerProfileID,
+		plan.EmbeddingModel,
+		plan.Documents,
+	)
 	if err != nil {
 		return fail(err, "embedding")
 	}
@@ -714,6 +720,7 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 	ctx context.Context,
 	teamID string,
 	ownerProfileID string,
+	embeddingModel string,
 	documents []repository.SearchDocumentForEmbedding,
 ) ([]repository.SearchDocumentEmbedding, error) {
 	if len(documents) == 0 {
@@ -733,6 +740,10 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 	if p.embedder == nil || !p.embedder.IsAvailable() {
 		return nil, &rememberEmbeddingConfigurationFailure{}
 	}
+	embeddingModel = strings.TrimSpace(embeddingModel)
+	if embeddingModel == "" || strings.TrimSpace(p.embedder.ModelName()) != embeddingModel {
+		return nil, fmt.Errorf("%w: configured model does not match the embedding plan", rememberapp.ErrRememberEmbeddingInvalid)
+	}
 	vectors, model, err := p.embedder.EmbedBatch(embedCtx, texts)
 	if err != nil {
 		if errors.Is(embedCtx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
@@ -743,7 +754,7 @@ func (p *rememberSynchronousProcessor) embedSearchDocumentBatch(
 		}
 		return nil, &rememberEmbeddingProviderFailure{cause: err}
 	}
-	if len(vectors) != len(documents) || strings.TrimSpace(model) == "" || model != strings.TrimSpace(p.embedder.ModelName()) {
+	if len(vectors) != len(documents) || strings.TrimSpace(model) != embeddingModel {
 		return nil, fmt.Errorf("%w: count or model mismatch", rememberapp.ErrRememberEmbeddingInvalid)
 	}
 	completed := make([]repository.SearchDocumentEmbedding, len(documents))

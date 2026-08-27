@@ -197,11 +197,8 @@ func (r *SemanticRepositoryImpl) ListSemanticAssessmentPredicateOptions(
 	}
 	out := []SemanticReviewPredicateCandidate{}
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
 		rows, err := tx.WithContext(ctx).Raw(`
-			WITH latest AS (
+			WITH latest_team_definitions AS (
 			    SELECT DISTINCT ON (predicate_key)
 			           predicate_key, version, aliases, allowed_subject_kinds,
 			           allowed_object_kinds, relationship_kind, current_cardinality,
@@ -209,6 +206,26 @@ func (r *SemanticRepositoryImpl) ListSemanticAssessmentPredicateOptions(
 			    FROM team_predicate_definitions
 			    WHERE team_id = ?::uuid
 			    ORDER BY predicate_key, version DESC
+			), latest_builtin_definitions AS (
+			    SELECT DISTINCT ON (predicate_key)
+			           predicate_key, version, aliases, allowed_subject_kinds,
+			           allowed_object_kinds, relationship_kind, current_cardinality,
+			           lifecycle_state, created_at
+			    FROM predicate_definitions
+			    ORDER BY predicate_key, version DESC
+			), latest AS (
+			    SELECT * FROM latest_team_definitions
+			    UNION ALL
+			    SELECT builtin.predicate_key, builtin.version, builtin.aliases,
+			           builtin.allowed_subject_kinds, builtin.allowed_object_kinds,
+			           builtin.relationship_kind, builtin.current_cardinality,
+			           builtin.lifecycle_state, 'built_in'::text, builtin.created_at
+			    FROM latest_builtin_definitions AS builtin
+			    WHERE NOT EXISTS (
+			        SELECT 1
+			        FROM latest_team_definitions AS team_definition
+			        WHERE team_definition.predicate_key = builtin.predicate_key
+			    )
 			), proposed_terms AS (
 			    SELECT DISTINCT btrim(regexp_replace(lower(replace(term, '_', ' ')), '[[:space:]]+', ' ', 'g')) AS term
 			    FROM unnest(?::text[]) AS proposed(term)

@@ -141,9 +141,6 @@ func (r *SemanticRepositoryImpl) ResolveSemanticReviewPredicateCandidates(
 	}
 	out := []SemanticReviewPredicateResolution{}
 	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
 		rows, err := tx.WithContext(ctx).Raw(`
 			WITH requested AS (
 			    SELECT btrim(input.requested_predicate) AS requested_predicate,
@@ -152,14 +149,31 @@ func (r *SemanticRepositoryImpl) ResolveSemanticReviewPredicateCandidates(
 			    FROM unnest(?::text[], ?::text[]) WITH ORDINALITY
 			         AS input(requested_predicate, normalized_predicate, ordinality)
 			    WHERE btrim(input.requested_predicate) <> ''
-			), latest_definitions AS (
-			    SELECT definition.*,
-			           row_number() OVER (
-			               PARTITION BY definition.predicate_key
-			               ORDER BY definition.version DESC
-			           ) AS version_rank
+			), latest_team_definitions AS (
+			    SELECT DISTINCT ON (definition.predicate_key) definition.predicate_key, definition.version, definition.aliases,
+			           definition.allowed_subject_kinds, definition.allowed_object_kinds,
+			           definition.relationship_kind, definition.current_cardinality,
+			           definition.lifecycle_state
 			    FROM team_predicate_definitions AS definition
 			    WHERE definition.team_id = ?::uuid
+			    ORDER BY definition.predicate_key, definition.version DESC
+			), latest_builtin_definitions AS (
+			    SELECT DISTINCT ON (definition.predicate_key) definition.predicate_key, definition.version, definition.aliases,
+			           definition.allowed_subject_kinds, definition.allowed_object_kinds,
+			           definition.relationship_kind, definition.current_cardinality,
+			           definition.lifecycle_state
+			    FROM predicate_definitions AS definition
+			    ORDER BY definition.predicate_key, definition.version DESC
+			), latest_definitions AS (
+			    SELECT * FROM latest_team_definitions
+			    UNION ALL
+			    SELECT builtin.*
+			    FROM latest_builtin_definitions AS builtin
+			    WHERE NOT EXISTS (
+			        SELECT 1
+			        FROM latest_team_definitions AS team_definition
+			        WHERE team_definition.predicate_key = builtin.predicate_key
+			    )
 			), matched AS (
 			    SELECT requested.requested_predicate, requested.requested_order,
 			           CASE WHEN definition.predicate_key = requested.normalized_predicate
@@ -170,8 +184,7 @@ func (r *SemanticRepositoryImpl) ResolveSemanticReviewPredicateCandidates(
 			           definition.lifecycle_state
 			    FROM requested
 			    JOIN latest_definitions AS definition
-			      ON definition.version_rank = 1
-			     AND definition.lifecycle_state = 'active'
+			      ON definition.lifecycle_state = 'active'
 			     AND (
 			         definition.predicate_key = requested.normalized_predicate
 			         OR requested.requested_predicate = ANY(definition.aliases)

@@ -132,6 +132,18 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 	require.NoError(t, err)
 	require.NotEmpty(t, options)
 	assert.Equal(t, "team_a_only", options[0].PredicateKey)
+	countEmptyTeamPredicates := func() int64 {
+		var count int64
+		require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, emptyTeam, emptyOwner, func(tx *gorm.DB) error {
+			return tx.Raw(`
+				SELECT count(*)
+				FROM team_predicate_definitions
+				WHERE team_id = ?::uuid
+			`, emptyTeam).Scan(&count).Error
+		}))
+		return count
+	}
+	require.Zero(t, countEmptyTeamPredicates())
 
 	emptyTeamPredicates, err := repo.ResolveSemanticReviewPredicateCandidates(ctx, SemanticReviewPredicateResolutionInput{
 		TeamID: emptyTeam, OwnerProfileID: emptyOwner, Predicates: []string{"uses"}, Limit: 2,
@@ -139,6 +151,7 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 	require.NoError(t, err)
 	require.Len(t, emptyTeamPredicates, 1)
 	assert.Equal(t, "uses", emptyTeamPredicates[0].Candidate.PredicateKey)
+	require.Zero(t, countEmptyTeamPredicates())
 
 	emptyTeamOptions, err := repo.ListSemanticAssessmentPredicateOptions(ctx, SemanticAssessmentPredicateOptionsInput{
 		TeamID: emptyTeam, OwnerProfileID: emptyOwner, QueryText: "Project uses Atlas", ProposedKeys: []string{"uses"}, Limit: 20,
@@ -146,4 +159,5 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 	require.NoError(t, err)
 	require.NotEmpty(t, emptyTeamOptions)
 	assert.Equal(t, "uses", emptyTeamOptions[0].PredicateKey)
+	require.Zero(t, countEmptyTeamPredicates())
 }

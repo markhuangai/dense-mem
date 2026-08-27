@@ -55,12 +55,32 @@ func TestRememberProcessorEmbedsOneValidatedBatch(t *testing.T) {
 		{SearchDocumentResult: repository.SearchDocumentResult{SearchDocumentID: "document-b", EmbeddingDimensions: 3}, DocumentText: "second"},
 	}
 
-	result, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), documents)
+	result, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), "embed-model", documents)
 	require.NoError(t, err)
 	require.Len(t, result, 2)
 	require.Equal(t, []float32{1, 2, 3}, result[0].Embedding)
 	require.Equal(t, []string{"first", "second"}, processor.embedder.(*rememberProcessorEmbedderStub).texts)
 	require.True(t, processor.embedder.(*rememberProcessorEmbedderStub).hasOperation)
+}
+
+func TestRememberProcessorRejectsProviderModelOutsideEmbeddingPlan(t *testing.T) {
+	embedder := &rememberProcessorEmbedderStub{model: "stale-model", vectors: [][]float32{{1, 2}}}
+	processor := &rememberSynchronousProcessor{embedder: embedder}
+	documents := []repository.SearchDocumentForEmbedding{{
+		SearchDocumentResult: repository.SearchDocumentResult{SearchDocumentID: "document", EmbeddingDimensions: 2},
+		DocumentText:         "text",
+	}}
+
+	_, err := processor.embedSearchDocumentBatch(
+		context.Background(),
+		uuid.NewString(),
+		uuid.NewString(),
+		"active-model",
+		documents,
+	)
+
+	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingInvalid)
+	require.Empty(t, embedder.texts)
 }
 
 func TestRememberAssessmentTerminalOutcomePrioritizesSecurity(t *testing.T) {
@@ -127,11 +147,11 @@ func TestRememberAttemptLookupFailureRecordsDatabaseFailure(t *testing.T) {
 
 func TestRememberProcessorRequiresEmbedderOnlyForNonemptyPlan(t *testing.T) {
 	processor := &rememberSynchronousProcessor{}
-	embeddings, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), nil)
+	embeddings, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), "embed-model", nil)
 	require.NoError(t, err)
 	require.Empty(t, embeddings)
 
-	_, err = processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), []repository.SearchDocumentForEmbedding{{
+	_, err = processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), "embed-model", []repository.SearchDocumentForEmbedding{{
 		SearchDocumentResult: repository.SearchDocumentResult{EmbeddingDimensions: 2}, DocumentText: "text",
 	}})
 	require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingUnavailable)
@@ -147,7 +167,7 @@ func TestRememberProcessorRejectsInvalidEmbeddingResponsesBeforeCommit(t *testin
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			processor := &rememberSynchronousProcessor{embedder: &rememberProcessorEmbedderStub{model: "embed-model", vectors: test.vectors}}
-			_, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), []repository.SearchDocumentForEmbedding{{
+			_, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), "embed-model", []repository.SearchDocumentForEmbedding{{
 				SearchDocumentResult: repository.SearchDocumentResult{SearchDocumentID: "document", EmbeddingDimensions: 2}, DocumentText: "text",
 			}})
 			require.ErrorIs(t, err, rememberapp.ErrRememberEmbeddingInvalid)
@@ -160,7 +180,7 @@ func TestRememberProcessorPreservesEmbeddingCancellation(t *testing.T) {
 		model: "embed-model", vectors: [][]float32{{1, 2}}, err: context.Canceled,
 	}}
 
-	_, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), []repository.SearchDocumentForEmbedding{{
+	_, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), "embed-model", []repository.SearchDocumentForEmbedding{{
 		SearchDocumentResult: repository.SearchDocumentResult{SearchDocumentID: "document", EmbeddingDimensions: 2}, DocumentText: "text",
 	}})
 
@@ -174,7 +194,7 @@ func TestRememberProcessorPreservesProviderFailureForOperatorLogging(t *testing.
 		model: "embed-model", err: providerErr,
 	}}
 
-	_, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), []repository.SearchDocumentForEmbedding{{
+	_, err := processor.embedSearchDocumentBatch(context.Background(), uuid.NewString(), uuid.NewString(), "embed-model", []repository.SearchDocumentForEmbedding{{
 		SearchDocumentResult: repository.SearchDocumentResult{SearchDocumentID: "document", EmbeddingDimensions: 2}, DocumentText: "text",
 	}})
 
