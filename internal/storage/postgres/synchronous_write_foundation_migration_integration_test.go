@@ -159,6 +159,15 @@ func TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage(t *testi
 		`, teamID, profileB, identityB)
 		return err
 	}))
+	spaceA, spaceB := uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO memory_spaces (id, team_id, kind, owner_credential_id)
+			VALUES ($1::uuid, $3::uuid, 'credential_private', $4::uuid),
+			       ($2::uuid, $3::uuid, 'credential_private', $5::uuid)
+		`, spaceA, spaceB, teamID, uuid.NewString(), uuid.NewString())
+		return err
+	}))
 
 	canonicalAttemptID, replayAttemptID := uuid.New(), uuid.New()
 	insertAttempt := func(attemptID uuid.UUID, ownerID, key, requestHash, submissionKind, outcome string, canonicalID *uuid.UUID) error {
@@ -177,8 +186,29 @@ func TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage(t *testi
 			return err
 		})
 	}
+	insertSpacedAttempt := func(attemptID uuid.UUID, ownerID, key, requestHash, submissionKind, outcome string, spaceID any, spaceGeneration any, canonicalID *uuid.UUID) error {
+		var canonicalValue any
+		if canonicalID != nil {
+			canonicalValue = canonicalID.String()
+		}
+		return execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO remember_attempts (
+					team_id, attempt_id, owner_profile_id, space_id, space_generation,
+					idempotency_key, request_hash, contract_version, submission_kind, outcome, canonical_attempt_id
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::bigint,
+				          $6, $7, 'dense-mem.v2.6', $8, $9, $10::uuid)
+			`, teamID, attemptID.String(), ownerID, spaceID, spaceGeneration, key, requestHash, submissionKind, outcome, canonicalValue)
+			return err
+		})
+	}
 	require.NoError(t, insertAttempt(canonicalAttemptID, profileA, "canonical-lineage", "canonical-lineage-request", "remember", "completed", nil))
 	require.NoError(t, insertAttempt(replayAttemptID, profileA, "canonical-lineage", "canonical-lineage-request", "remember", "replayed", &canonicalAttemptID))
+	privateCanonicalID, privateReplayID := uuid.New(), uuid.New()
+	require.NoError(t, insertSpacedAttempt(privateCanonicalID, profileA, "private-lineage", "private-lineage-request", "remember", "completed", spaceA, int64(1), nil))
+	require.NoError(t, insertSpacedAttempt(privateReplayID, profileA, "private-lineage", "private-lineage-request", "remember", "replayed", spaceA, nil, &privateCanonicalID))
+	require.Error(t, insertSpacedAttempt(uuid.New(), profileA, "private-lineage", "private-lineage-request", "remember", "replayed", nil, nil, &privateCanonicalID))
+	require.Error(t, insertSpacedAttempt(uuid.New(), profileA, "private-lineage", "private-lineage-request", "remember", "replayed", spaceB, int64(1), &privateCanonicalID))
 
 	var linkedCanonicalID string
 	require.NoError(t, db.QueryRowContext(ctx, `
@@ -213,13 +243,14 @@ func TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage(t *testi
 	}
 	require.Error(t, insertAssessment(uuid.New(), "[]", "1", "NULL"))
 	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "NULL"))
+	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "CURRENT_TIMESTAMP"))
 	require.Error(t, insertAssessment(uuid.New(), "[{}]", "2", "CURRENT_TIMESTAMP"))
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO semantic_assessments (
 				team_id, semantic_assessment_id, attempt_id, owner_profile_id,
-				response_history, accepted_revision, validated_at
-			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '[{}]'::jsonb, 1, CURRENT_TIMESTAMP)
+				response_history, accepted_revision, provider_turns, validated_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '[{}]'::jsonb, 1, 1, CURRENT_TIMESTAMP)
 		`, teamID, uuid.New().String(), assessmentAttemptID.String(), profileA)
 		return err
 	}))

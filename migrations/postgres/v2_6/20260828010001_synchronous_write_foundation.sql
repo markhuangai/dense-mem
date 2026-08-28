@@ -149,7 +149,9 @@ BEGIN
     IF NOT FOUND OR canonical_attempt.outcome NOT IN ('completed', 'rejected', 'quarantined')
        OR canonical_attempt.idempotency_key IS DISTINCT FROM NEW.idempotency_key
        OR canonical_attempt.request_hash IS DISTINCT FROM NEW.request_hash
-       OR canonical_attempt.submission_kind IS DISTINCT FROM NEW.submission_kind THEN
+       OR canonical_attempt.submission_kind IS DISTINCT FROM NEW.submission_kind
+       OR canonical_attempt.space_id IS DISTINCT FROM NEW.space_id
+       OR canonical_attempt.space_generation IS DISTINCT FROM NEW.space_generation THEN
         RAISE EXCEPTION 'replayed attempt must reference a matching canonical terminal attempt';
     END IF;
     RETURN NEW;
@@ -211,9 +213,9 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_trigger
         WHERE tgrelid = 'remember_attempts'::regclass
-          AND tgname = 'remember_attempts_space_generation'
+          AND tgname = 'remember_attempts_generation'
     ) THEN
-        CREATE TRIGGER remember_attempts_space_generation
+        CREATE TRIGGER remember_attempts_generation
             BEFORE INSERT ON remember_attempts
             FOR EACH ROW EXECUTE FUNCTION validate_synchronous_write_space_generation();
     END IF;
@@ -307,6 +309,7 @@ CREATE TABLE IF NOT EXISTS semantic_assessments (
         accepted_revision IS NULL OR (
             accepted_revision >= 1
             AND accepted_revision <= jsonb_array_length(response_history)
+            AND accepted_revision <= provider_turns
             AND validated_at IS NOT NULL
         )
     ),
@@ -556,6 +559,7 @@ BEGIN
     DROP TRIGGER IF EXISTS remember_attempts_append_only ON remember_attempts;
     DROP TRIGGER IF EXISTS remember_attempts_replay_integrity ON remember_attempts;
     DROP TRIGGER IF EXISTS remember_attempts_space_generation ON remember_attempts;
+    DROP TRIGGER IF EXISTS remember_attempts_generation ON remember_attempts;
     DROP TRIGGER IF EXISTS remember_attempt_events_append_only ON remember_attempt_events;
     DROP TRIGGER IF EXISTS remember_failure_artifacts_append_only ON remember_failure_artifacts;
     DROP TRIGGER IF EXISTS semantic_assessments_append_only ON semantic_assessments;
