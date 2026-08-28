@@ -109,7 +109,7 @@ func (r *LedgerRepositoryImpl) CommitSynchronousRemember(ctx context.Context, in
 			return wrapSynchronousRememberCommitStage("ingest", err)
 		}
 		if created.Existing {
-			return ErrRememberReplay
+			return wrapSynchronousRememberCommitStage("ingest", fmt.Errorf("%w: existing ingest has no synchronous terminal attempt", ErrIdempotencyConflict))
 		}
 		result.Ingest = created
 		scope, err := activateSynchronousRememberRun(txCtx, transactionFromContext(txCtx), created)
@@ -228,7 +228,7 @@ func (r *LedgerRepositoryImpl) CommitSynchronousRememberTerminal(ctx context.Con
 			return err
 		}
 		if created.Existing {
-			return ErrRememberReplay
+			return fmt.Errorf("%w: existing ingest has no synchronous terminal attempt", ErrIdempotencyConflict)
 		}
 		result.Ingest = created
 		scope, err := activateSynchronousRememberRun(txCtx, tx, created)

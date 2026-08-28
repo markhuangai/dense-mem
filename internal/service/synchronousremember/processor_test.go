@@ -3,6 +3,7 @@ package synchronousremember
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -375,6 +376,32 @@ func TestSynchronousProcessorRejectsChangedTerminalHashBeforeProviderWork(t *tes
 	require.Zero(t, ledger.commitCalls)
 }
 
+func TestSynchronousProcessorReturnsBoundedConflictForExistingLegacyIngest(t *testing.T) {
+	teamID, ownerID := uuid.NewString(), uuid.NewString()
+	ledger := &synchronousExistingLegacyLedger{
+		synchronousPipelineLedger: &synchronousPipelineLedger{},
+	}
+	provider := &synchronousPipelineProvider{}
+	embeddings := &synchronousPipelineEmbeddingProvider{}
+	processor := NewSynchronousRememberProcessor(SynchronousRememberProcessorDependencies{
+		Ledger: ledger, Catalog: synchronousPipelineCatalog{}, Provider: provider, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Embeddings: semanticwrite.NewExecutor(embeddings),
+	})
+
+	_, err := processor.ProcessRemember(context.Background(), synchronousPipelineRememberRequest(teamID, ownerID, "pipeline-existing-legacy", "pipeline-existing-legacy-hash"))
+
+	var processErr *remember.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.NotNil(t, processErr.Result)
+	require.Equal(t, "failed", processErr.Result.ProcessingState)
+	require.Len(t, processErr.Result.Errors, 1)
+	require.Equal(t, string(remember.TerminalErrorIdempotencyConflict), processErr.Result.Errors[0].Code)
+	require.Equal(t, 1, ledger.commitCalls)
+	require.Equal(t, 1, ledger.recordFailureCalls)
+	require.Equal(t, "commit", ledger.failureInput.Attempt.FailedPhase)
+	require.Equal(t, 1, embeddings.calls)
+}
+
 func TestSynchronousProcessorSkipsEmbeddingForPreflightQuarantine(t *testing.T) {
 	teamID, ownerID := uuid.NewString(), uuid.NewString()
 	input := synchronousPipelineRememberRequest(teamID, ownerID, "pipeline-preflight-quarantine", "pipeline-preflight-quarantine-hash")
@@ -687,6 +714,15 @@ type synchronousPipelineLedger struct {
 	recordFailureCalls int
 	failureInput       repository.RememberFailureRecordInput
 	terminalInput      repository.SynchronousRememberTerminalInput
+}
+
+type synchronousExistingLegacyLedger struct {
+	*synchronousPipelineLedger
+}
+
+func (ledger *synchronousExistingLegacyLedger) CommitSynchronousRemember(context.Context, repository.SynchronousRememberCommitInput) (*repository.SynchronousRememberCommitResult, error) {
+	ledger.commitCalls++
+	return nil, fmt.Errorf("%w: existing ingest has no synchronous terminal attempt", repository.ErrIdempotencyConflict)
 }
 
 type boundedFailureRecordLedger struct {
