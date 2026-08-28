@@ -41,6 +41,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -262,8 +263,10 @@ func RunActiveServer(
 		Metrics:   discoverabilityMetrics,
 	})
 	lifecycleSvc := memoryservice.NewLifecycleService(memoryservice.LifecycleDependencies{
-		Semantic: semanticRepo,
-		Evidence: ledgerRepo,
+		Semantic:                   semanticRepo,
+		Evidence:                   ledgerRepo,
+		CorrectionExecutor:         semanticwrite.NewExecutor(semanticWriteProvider{provider: openaiProvider}),
+		CorrectionEmbeddingTimeout: 10 * time.Second,
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{

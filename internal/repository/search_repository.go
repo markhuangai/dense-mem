@@ -21,6 +21,7 @@ const (
 var (
 	ErrSearchStaleVersion                   = errors.New("search stale source or document version")
 	ErrSearchContractMismatch               = errors.New("search contract mismatch")
+	ErrSearchEmbeddingRequired              = errors.New("search embedding is required")
 	ErrSearchConvergenceAttentionRequired   = errors.New("search convergence is attention_required")
 	ErrEmbeddingLeaseLost                   = errors.New("embedding lease lost")
 	ErrEmbeddingReconciliationCanarySkipped = errors.New("embedding reconciliation canary was no longer claimable")

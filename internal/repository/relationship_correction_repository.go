@@ -108,6 +108,26 @@ func (r *SemanticRepositoryImpl) CorrectRelationship(
 	ctx context.Context,
 	input CorrectRelationshipInput,
 ) (*CorrectRelationshipResult, error) {
+	// Corrections cannot fall back to the asynchronous embedding queue. This
+	// compatibility entry point therefore fails a state-changing correction
+	// unless its caller supplies the precomputed provider result.
+	return r.correctRelationship(withRelationshipCorrectionEmbeddings(ctx, nil), input)
+}
+
+// CorrectRelationshipWithEmbeddings commits only provider results produced by
+// PlanRelationshipCorrectionEmbeddings before the transaction began.
+func (r *SemanticRepositoryImpl) CorrectRelationshipWithEmbeddings(
+	ctx context.Context,
+	input CorrectRelationshipInput,
+	embeddings []RelationshipCorrectionEmbedding,
+) (*CorrectRelationshipResult, error) {
+	return r.correctRelationship(withRelationshipCorrectionEmbeddings(ctx, embeddings), input)
+}
+
+func (r *SemanticRepositoryImpl) correctRelationship(
+	ctx context.Context,
+	input CorrectRelationshipInput,
+) (*CorrectRelationshipResult, error) {
 	input = normalizeCorrectRelationshipInput(input)
 	if err := validateCorrectRelationshipInput(input); err != nil {
 		return nil, err

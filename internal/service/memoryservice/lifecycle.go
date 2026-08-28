@@ -9,19 +9,24 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
 var (
-	ErrLifecycleAuthContext = errors.New("memory lifecycle: authenticated actor context is required")
-	ErrLifecyclePersistence = errors.New("memory lifecycle: persistence failed")
+	ErrLifecycleAuthContext          = errors.New("memory lifecycle: authenticated actor context is required")
+	ErrLifecyclePersistence          = errors.New("memory lifecycle: persistence failed")
+	ErrLifecycleEmbeddingUnavailable = errors.New("memory lifecycle: embedding provider unavailable")
+	ErrLifecycleEmbeddingInvalid     = errors.New("memory lifecycle: embedding response invalid")
 )
 
 type LifecycleService interface {
@@ -31,13 +36,20 @@ type LifecycleService interface {
 }
 
 type LifecycleDependencies struct {
-	Semantic LifecycleSemanticRepository
-	Evidence LifecycleEvidenceRepository
+	Semantic                   LifecycleSemanticRepository
+	Evidence                   LifecycleEvidenceRepository
+	CorrectionExecutor         LifecycleCorrectionExecutor
+	CorrectionEmbeddingTimeout time.Duration
 }
 
 type LifecycleSemanticRepository interface {
-	CorrectRelationship(ctx context.Context, input repository.CorrectRelationshipInput) (*repository.CorrectRelationshipResult, error)
+	PlanRelationshipCorrectionEmbeddings(ctx context.Context, input repository.CorrectRelationshipInput) (*repository.RelationshipCorrectionEmbeddingPlan, error)
+	CorrectRelationshipWithEmbeddings(ctx context.Context, input repository.CorrectRelationshipInput, embeddings []repository.RelationshipCorrectionEmbedding) (*repository.CorrectRelationshipResult, error)
 	GetRelationshipCorrection(ctx context.Context, input repository.GetRelationshipCorrectionInput) (*repository.RelationshipCorrectionStatus, error)
+}
+
+type LifecycleCorrectionExecutor interface {
+	Execute(context.Context, semanticwrite.Plan) (semanticwrite.Result, error)
 }
 
 type LifecycleEvidenceRepository interface {
@@ -45,12 +57,18 @@ type LifecycleEvidenceRepository interface {
 }
 
 type lifecycleService struct {
-	semantic LifecycleSemanticRepository
-	evidence LifecycleEvidenceRepository
+	semantic         LifecycleSemanticRepository
+	evidence         LifecycleEvidenceRepository
+	executor         LifecycleCorrectionExecutor
+	embeddingTimeout time.Duration
 }
 
 func NewLifecycleService(deps LifecycleDependencies) LifecycleService {
-	return &lifecycleService{semantic: deps.Semantic, evidence: deps.Evidence}
+	timeout := deps.CorrectionEmbeddingTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	return &lifecycleService{semantic: deps.Semantic, evidence: deps.Evidence, executor: deps.CorrectionExecutor, embeddingTimeout: timeout}
 }
 
 type CorrectRelationshipRequest struct {
@@ -105,7 +123,7 @@ func (s *lifecycleService) CorrectRelationship(
 	if req.Action != "submit" && req.Action != "confirm" {
 		return nil, errors.New("memory lifecycle: action must be submit or confirm")
 	}
-	result, err := s.semantic.CorrectRelationship(ctx, repository.CorrectRelationshipInput{
+	input := repository.CorrectRelationshipInput{
 		TeamID:            actor.TeamID.String(),
 		OwnerProfileID:    actor.OwnerID.String(),
 		Action:            req.Action,
@@ -118,7 +136,37 @@ func (s *lifecycleService) CorrectRelationship(
 		ConfirmationToken: req.ConfirmationToken,
 		Selection:         req.Selection,
 		IdempotencyKey:    req.IdempotencyKey,
-	})
+	}
+	plan, err := s.semantic.PlanRelationshipCorrectionEmbeddings(ctx, input)
+	if err == nil && plan == nil {
+		err = ErrLifecyclePersistence
+	}
+	var embeddings []repository.RelationshipCorrectionEmbedding
+	if err == nil && len(plan.Documents) > 0 {
+		if s.executor == nil {
+			err = ErrLifecycleEmbeddingUnavailable
+		} else {
+			executionCtx := observability.WithMetricIdentity(ctx, input.TeamID, input.OwnerProfileID)
+			result, executeErr := s.executor.Execute(executionCtx, semanticwrite.Plan{
+				Documents: correctionPlanDocuments(plan.Documents),
+				Fence:     semanticwrite.Fence{Model: plan.EmbeddingModel, Dimensions: plan.EmbeddingDimensions, EmbeddingContractID: plan.EmbeddingContractID, SearchGenerationID: plan.SearchIndexGenerationID, SearchGenerationVersion: int64(plan.IndexGeneration)},
+				Timeout:   s.embeddingTimeout,
+			})
+			if executeErr != nil {
+				err = translateCorrectionEmbeddingError(executeErr)
+			} else {
+				embeddings = correctionEmbeddingsFromResult(result)
+			}
+		}
+	}
+	var result *repository.CorrectRelationshipResult
+	if err == nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = ctxErr
+		} else {
+			result, err = s.semantic.CorrectRelationshipWithEmbeddings(ctx, input, embeddings)
+		}
+	}
 	if err != nil {
 		return nil, translateRelationshipCorrectionError(err)
 	}
@@ -131,6 +179,33 @@ func (s *lifecycleService) CorrectRelationship(
 		StatusTool:        rememberStatusTool,
 		CorrelationID:     correlation.FromContext(ctx),
 	}, nil
+}
+
+func correctionPlanDocuments(documents []repository.RelationshipCorrectionEmbeddingDocument) []semanticwrite.Document {
+	result := make([]semanticwrite.Document, 0, len(documents))
+	for _, document := range documents {
+		result = append(result, semanticwrite.Document{Hash: document.DocumentHash, Text: document.DocumentText})
+	}
+	return result
+}
+
+func correctionEmbeddingsFromResult(result semanticwrite.Result) []repository.RelationshipCorrectionEmbedding {
+	embeddings := make([]repository.RelationshipCorrectionEmbedding, 0, len(result.Embeddings))
+	for _, embedding := range result.Embeddings {
+		embeddings = append(embeddings, repository.RelationshipCorrectionEmbedding{DocumentHash: embedding.DocumentHash, Embedding: append([]float32(nil), embedding.Vector...), EmbeddingContractID: result.Fence.EmbeddingContractID, EmbeddingDimensions: result.Fence.Dimensions, EmbeddingModel: result.Fence.Model, SearchIndexGenerationID: result.Fence.SearchGenerationID, IndexGeneration: int(result.Fence.SearchGenerationVersion)})
+	}
+	return embeddings
+}
+
+func translateCorrectionEmbeddingError(err error) error {
+	switch {
+	case errors.Is(err, semanticwrite.ErrProviderUnavailable):
+		return ErrLifecycleEmbeddingUnavailable
+	case errors.Is(err, semanticwrite.ErrProviderResponseInvalid), errors.Is(err, semanticwrite.ErrInvalidPlan):
+		return ErrLifecycleEmbeddingInvalid
+	default:
+		return err
+	}
 }
 
 func (s *lifecycleService) GetRelationshipCorrectionStatus(
@@ -158,6 +233,9 @@ func (s *lifecycleService) GetRelationshipCorrectionStatus(
 }
 
 func translateRelationshipCorrectionError(err error) error {
+	if errors.Is(err, ErrLifecycleEmbeddingUnavailable) || errors.Is(err, ErrLifecycleEmbeddingInvalid) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
 	if errors.Is(err, repository.ErrSemanticOwnerMismatch) || errors.Is(err, repository.ErrRelationshipCorrectionNotFound) {
 		return httperr.New(httperr.NOT_FOUND, "submission not found")
 	}

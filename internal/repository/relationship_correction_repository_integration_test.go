@@ -83,10 +83,10 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	_, err = semantic.CorrectRelationship(ctx, crossTeam)
 	require.ErrorIs(t, err, ErrSemanticOwnerMismatch)
 
-	result, err := semantic.CorrectRelationship(ctx, request)
+	result, err := correctRelationshipWithTestEmbeddings(ctx, semantic, request)
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.ProcessingState)
-	require.Equal(t, "pending", result.SearchState)
+	require.Equal(t, "current", result.SearchState)
 	require.NotNil(t, result.Correction)
 	require.False(t, result.Correction.ReusedSuccessor)
 	require.NotEqual(t, original.RelationshipID, result.Correction.SuccessorRelationshipID)
@@ -101,7 +101,7 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	})
 	require.NoError(t, err)
 	require.Equal(t, "completed", status.ProcessingState)
-	require.Equal(t, "pending", status.SearchState)
+	require.Equal(t, "current", status.SearchState)
 
 	err = rls.WithTeamProfileTx(ctx, appDB, teamA, ownerA, func(tx *gorm.DB) error {
 		var originalStatus, successorStatus string
@@ -131,6 +131,15 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 			return err
 		}
 		assert.Equal(t, searchState, status.SearchState)
+		var correctionJobs int64
+		if err := tx.Raw(`
+			SELECT COUNT(*) FROM embedding_jobs
+			WHERE team_id = ?::uuid AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+		`, teamA, result.Correction.SuccessorRelationshipID).Scan(&correctionJobs).Error; err != nil {
+			return err
+		}
+		assert.Zero(t, correctionJobs)
 
 		var crossReferences, correctionEvents int64
 		if err := tx.Raw(`
@@ -233,7 +242,7 @@ func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.
 	}))
 	require.Equal(t, "active", originalStatus)
 
-	confirmed, err := semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
+	confirmed, err := correctRelationshipWithTestEmbeddings(ctx, semantic, CorrectRelationshipInput{
 		TeamID: teamID, OwnerProfileID: ownerID, Action: "confirm",
 		SubmissionID: submitted.SubmissionID, ConfirmationToken: submitted.Confirmation.Token,
 		Selection:      RelationshipCorrectionSelection{ObjectEntityID: strings.ToUpper(firstAtlas.EntityID)},
@@ -510,7 +519,7 @@ func TestRelationshipCorrectionReusesActiveCollisionAndRejectsNoOp(t *testing.T)
 		Support: &EvidenceSupportInput{FragmentID: targetIngest.Evidence[0].FragmentID, SourceGroupKey: "collision:target", SpanStart: 0, SpanEnd: targetSpan, Authority: "primary"},
 	}).Relationship
 
-	reused, err := semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
+	reused, err := correctRelationshipWithTestEmbeddings(ctx, semantic, CorrectRelationshipInput{
 		TeamID: teamID, OwnerProfileID: ownerID, Action: "submit",
 		RelationshipID: source.RelationshipID, ExpectedVersion: source.Version,
 		Patch:    RelationshipCorrectionPatch{ObjectEntity: &RelationshipCorrectionEntityPatch{EntityID: targetObject.EntityID}},

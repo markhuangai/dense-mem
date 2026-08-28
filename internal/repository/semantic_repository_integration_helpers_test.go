@@ -9,6 +9,26 @@ import (
 	"gorm.io/gorm"
 )
 
+func correctRelationshipWithTestEmbeddings(ctx context.Context, semantic *SemanticRepositoryImpl, input CorrectRelationshipInput) (*CorrectRelationshipResult, error) {
+	plan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	embeddings := make([]RelationshipCorrectionEmbedding, 0, len(plan.Documents))
+	for _, document := range plan.Documents {
+		embeddings = append(embeddings, RelationshipCorrectionEmbedding{
+			DocumentHash:            document.DocumentHash,
+			Embedding:               make([]float32, plan.EmbeddingDimensions),
+			EmbeddingContractID:     plan.EmbeddingContractID,
+			EmbeddingDimensions:     plan.EmbeddingDimensions,
+			EmbeddingModel:          plan.EmbeddingModel,
+			SearchIndexGenerationID: plan.SearchIndexGenerationID,
+			IndexGeneration:         plan.IndexGeneration,
+		})
+	}
+	return semantic.CorrectRelationshipWithEmbeddings(ctx, input, embeddings)
+}
+
 func assertGraphHasNode(t *testing.T, nodes []SemanticGraphNode, nodeType, id, title string) {
 	t.Helper()
 	for _, node := range nodes {

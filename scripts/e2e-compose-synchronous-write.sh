@@ -60,6 +60,8 @@ run_synchronous_write_e2e() {
   DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
   DENSE_MEM_E2E_TEAM_ID="$team_id" \
   DENSE_MEM_E2E_API_KEY="$api_key" \
+	DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
+	DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
   DENSE_MEM_E2E_WRITE_CASE="$slice" \
   node "$ROOT_DIR/tests/uat/synchronous_write/runner.mjs"
 }
