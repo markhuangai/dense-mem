@@ -83,7 +83,7 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 		}
 	}
 	if err != nil && !errors.Is(err, repository.ErrRememberAttemptNotFound) {
-		return p.failure(ctx, input, attemptID, base, "commit", 0, err)
+		return p.failure(ctx, input, attemptID, base, "commit", 0, started, err)
 	}
 
 	if input.SecurityRejected {
@@ -105,7 +105,7 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 			return synchronousAttemptStatus(winner)
 		}
 		if err != nil {
-			return p.failure(ctx, input, attemptID, base, "commit", 0, err)
+			return p.failure(ctx, input, attemptID, base, "commit", 0, started, err)
 		}
 		return terminalStatus(failure.Result)
 	}
@@ -114,30 +114,30 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 	prepared, err := memoryservice.AssessSynchronousRemember(assessmentCtx, memoryservice.SynchronousRememberAssessmentDependencies{Catalog: p.catalog, Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger}, memoryservice.SynchronousRememberAssessmentInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: attemptID, Proposal: input.Proposal, Evidence: synchronousEvidence(input.Evidence)})
 	cancelAssessment()
 	if err != nil {
-		return p.failure(ctx, input, attemptID, base, "assessment", 0, err)
+		return p.failure(ctx, input, attemptID, base, "assessment", synchronousAssessmentTurns(err), started, err)
 	}
 	create := repository.CreateIngestInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey, RequestHash: input.RequestHash, SourceSummary: input.SourceSummary, Status: "queued", TelemetryRemember: true, Proposal: input.Proposal, Metadata: input.Metadata, Evidence: synchronousEvidence(input.Evidence)}
 	preview, err := memoryservice.BuildSynchronousRememberPreviewCommitInput(prepared)
 	if err != nil {
 		var noSupported *memoryservice.NoSupportedMemoryError
 		if errors.As(err, &noSupported) {
-			return p.commitTerminal(ctx, input, attemptID, base, create, prepared, "rejected", noSupported.RelationshipResults, relationshipRefs)
+			return p.commitTerminal(ctx, input, attemptID, base, create, prepared, "rejected", noSupported.RelationshipResults, relationshipRefs, started)
 		}
-		return p.failure(ctx, input, attemptID, base, "assessment", prepared.Response.ProviderTurns, err)
+		return p.failure(ctx, input, attemptID, base, "assessment", prepared.Response.ProviderTurns, started, err)
 	}
 	if len(prepared.Response.SecuritySignals) > 0 {
-		return p.commitTerminal(ctx, input, attemptID, base, create, prepared, "quarantined", nil, relationshipRefs)
+		return p.commitTerminal(ctx, input, attemptID, base, create, prepared, "quarantined", nil, relationshipRefs, started)
 	}
 	embeddingCtx, cancelEmbedding := remember.ContextForPhase(ctx, remember.RememberPhaseEmbedding)
 	plan, err := p.ledger.PlanSynchronousRememberEmbeddings(embeddingCtx, create, preview)
 	if err != nil {
 		cancelEmbedding()
-		return p.failure(ctx, input, attemptID, base, "embedding", prepared.Response.ProviderTurns, err)
+		return p.failure(ctx, input, attemptID, base, "embedding", prepared.Response.ProviderTurns, started, err)
 	}
 	embedded, err := p.embeddings.Execute(embeddingCtx, semanticwritePlan(plan))
 	cancelEmbedding()
 	if err != nil {
-		return p.failure(ctx, input, attemptID, base, "embedding", prepared.Response.ProviderTurns, err)
+		return p.failure(ctx, input, attemptID, base, "embedding", prepared.Response.ProviderTurns, started, err)
 	}
 	inline := synchronousEmbeddingResult(embedded)
 	commitCtx, cancelCommit := remember.ContextForPhase(ctx, remember.RememberPhaseCommit)
@@ -174,15 +174,15 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 		return synchronousAttemptStatus(winner)
 	}
 	if err != nil {
-		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, err)
+		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, started, err)
 	}
 	if committed == nil || committed.Attempt == nil {
-		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, errors.New("remember: synchronous commit result is required"))
+		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, started, errors.New("remember: synchronous commit result is required"))
 	}
 	return synchronousAttemptStatus(committed.Attempt)
 }
 
-func (p *synchronousRememberProcessor) failure(ctx context.Context, input remember.RememberProcessRequest, attemptID string, base *remember.TerminalRememberResult, phase string, turns int, cause error) (*remember.SubmissionStatusResult, error) {
+func (p *synchronousRememberProcessor) failure(ctx context.Context, input remember.RememberProcessRequest, attemptID string, base *remember.TerminalRememberResult, phase string, turns int, started time.Time, cause error) (*remember.SubmissionStatusResult, error) {
 	code := synchronousFailureCode(phase, cause)
 	if p.logger != nil {
 		attrs := []observability.LogAttr{
@@ -201,7 +201,7 @@ func (p *synchronousRememberProcessor) failure(ctx context.Context, input rememb
 	failure := remember.TerminalResultWithError(base, code)
 	recordCtx, cancelRecord := context.WithTimeout(context.WithoutCancel(ctx), remember.RememberFailurePersistenceBudget)
 	defer cancelRecord()
-	if err := p.ledger.RecordRememberFailure(recordCtx, repository.RememberFailureRecordInput{Attempt: synchronousAttempt(input, attemptID, failure.Result, "failed", phase, string(code), turns, time.Now())}); err != nil {
+	if err := p.ledger.RecordRememberFailure(recordCtx, repository.RememberFailureRecordInput{Attempt: synchronousAttempt(input, attemptID, failure.Result, "failed", phase, string(code), turns, started)}); err != nil {
 		if errors.Is(err, repository.ErrRememberReplay) {
 			winner, loadErr := p.ledger.LoadRememberAttempt(recordCtx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
 			if loadErr != nil {
@@ -242,12 +242,12 @@ func synchronousRememberEmbeddingStage(err error) string {
 	return ""
 }
 
-func (p *synchronousRememberProcessor) commitTerminal(ctx context.Context, input remember.RememberProcessRequest, attemptID string, base *remember.TerminalRememberResult, create repository.CreateIngestInput, prepared *memoryservice.SynchronousRememberAssessmentResult, outcome string, rejected []repository.SubmissionRelationshipResultInput, refs []string) (*remember.SubmissionStatusResult, error) {
+func (p *synchronousRememberProcessor) commitTerminal(ctx context.Context, input remember.RememberProcessRequest, attemptID string, base *remember.TerminalRememberResult, create repository.CreateIngestInput, prepared *memoryservice.SynchronousRememberAssessmentResult, outcome string, rejected []repository.SubmissionRelationshipResultInput, refs []string, started time.Time) (*remember.SubmissionStatusResult, error) {
 	commitCtx, cancel := remember.ContextForPhase(ctx, remember.RememberPhaseCommit)
 	defer cancel()
 	terminal, err := p.ledger.CommitSynchronousRememberTerminal(commitCtx, repository.SynchronousRememberTerminalInput{
 		CreateIngest: create,
-		Attempt:      synchronousAttempt(input, attemptID, nil, outcome, "", "", prepared.Response.ProviderTurns, time.Now()),
+		Attempt:      synchronousAttempt(input, attemptID, nil, outcome, "", "", prepared.Response.ProviderTurns, started),
 		BuildTerminal: func(created *repository.CreateIngestResult, scope repository.SubmissionAssessmentRunScope) (*repository.PersistSubmissionAssessmentInput, repository.CompleteSubmissionAssessmentInput, error) {
 			persist, err := memoryservice.BuildSynchronousRememberAssessmentPersistenceInput(created, prepared)
 			if err != nil {
@@ -275,12 +275,20 @@ func (p *synchronousRememberProcessor) commitTerminal(ctx context.Context, input
 		return synchronousAttemptStatus(winner)
 	}
 	if err != nil {
-		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, err)
+		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, started, err)
 	}
 	if terminal == nil || terminal.Attempt == nil {
-		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, errors.New("remember: terminal commit result is required"))
+		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, started, errors.New("remember: terminal commit result is required"))
 	}
 	return synchronousAttemptStatus(terminal.Attempt)
+}
+
+func synchronousAssessmentTurns(err error) int {
+	var malformed *assessor.MalformedResponseError
+	if errors.As(err, &malformed) && malformed.Attempts > 0 {
+		return malformed.Attempts
+	}
+	return 0
 }
 
 func synchronousFailureCode(phase string, err error) remember.TerminalErrorCode {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -68,6 +69,21 @@ func TestSynchronousFailureClassifiesMalformedAssessmentResponse(t *testing.T) {
 	if got := synchronousFailureCode("assessment", err); got != remember.TerminalErrorProviderResponseInvalid {
 		t.Fatalf("failure code = %q, want %q", got, remember.TerminalErrorProviderResponseInvalid)
 	}
+}
+
+func TestSynchronousAssessmentFailurePreservesTurnsAndElapsedDuration(t *testing.T) {
+	teamID, ownerID := uuid.NewString(), uuid.NewString()
+	ledger := &synchronousPipelineLedger{}
+	processor := NewSynchronousRememberProcessor(SynchronousRememberProcessorDependencies{
+		Ledger: ledger, Catalog: synchronousPipelineCatalog{}, Provider: &synchronousMalformedProvider{}, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Embeddings: semanticwrite.NewExecutor(&synchronousPipelineEmbeddingProvider{}),
+	})
+
+	_, err := processor.ProcessRemember(context.Background(), synchronousPipelineRememberRequest(teamID, ownerID, "pipeline-malformed-exhausted", "pipeline-malformed-exhausted-hash"))
+	var processErr *remember.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.Equal(t, 3, ledger.failureInput.Attempt.AssessorTurns)
+	require.GreaterOrEqual(t, ledger.failureInput.Attempt.Duration, 20*time.Millisecond)
 }
 
 func TestSynchronousFailureDistinguishesProviderUnavailabilityFromRequestDeadline(t *testing.T) {
@@ -165,7 +181,7 @@ func TestSynchronousFailureReplaysConcurrentTerminalWinner(t *testing.T) {
 	}
 	processor := &synchronousRememberProcessor{ledger: ledger}
 
-	status, err := processor.failure(context.Background(), input, "loser-submission", synchronousTerminalBase(input, "loser-submission", nil), "embedding", 0, errors.New("embedding failed"))
+	status, err := processor.failure(context.Background(), input, "loser-submission", synchronousTerminalBase(input, "loser-submission", nil), "embedding", 0, time.Now(), errors.New("embedding failed"))
 	require.NoError(t, err)
 	require.NotNil(t, status)
 	require.Equal(t, "winner-submission", status.SubmissionID)
@@ -178,7 +194,7 @@ func TestSynchronousFailureRecordUsesBoundedCleanupContext(t *testing.T) {
 	ledger := &boundedFailureRecordLedger{synchronousPipelineLedger: &synchronousPipelineLedger{}}
 	processor := &synchronousRememberProcessor{ledger: ledger}
 
-	_, err := processor.failure(context.Background(), input, uuid.NewString(), synchronousTerminalBase(input, uuid.NewString(), nil), "embedding", 0, errors.New("embedding failed"))
+	_, err := processor.failure(context.Background(), input, uuid.NewString(), synchronousTerminalBase(input, uuid.NewString(), nil), "embedding", 0, time.Now(), errors.New("embedding failed"))
 
 	require.ErrorIs(t, err, remember.ErrRememberPersistence)
 	require.True(t, ledger.sawDeadline)
@@ -376,7 +392,10 @@ func TestSynchronousPreflightAuditRunsOnlyForNewQuarantine(t *testing.T) {
 func TestSynchronousProcessorSkipsEmbeddingForNoSupportedMemory(t *testing.T) {
 	teamID, ownerID := uuid.NewString(), uuid.NewString()
 	ledger := &synchronousPipelineLedger{}
-	provider := &synchronousPipelineProvider{response: synchronousPipelineUnsupportedResponse}
+	provider := &synchronousPipelineProvider{response: func(request assessor.SemanticAssessmentRequest) assessor.SemanticAssessmentResponse {
+		time.Sleep(20 * time.Millisecond)
+		return synchronousPipelineUnsupportedResponse(request)
+	}}
 	embeddings := &synchronousPipelineEmbeddingProvider{}
 	processor := NewSynchronousRememberProcessor(SynchronousRememberProcessorDependencies{
 		Ledger: ledger, Catalog: synchronousPipelineCatalog{}, Provider: provider, Limits: assessor.DefaultSemanticAssessmentLimits(),
@@ -394,6 +413,7 @@ func TestSynchronousProcessorSkipsEmbeddingForNoSupportedMemory(t *testing.T) {
 	require.Zero(t, ledger.planCalls)
 	require.Zero(t, ledger.commitCalls)
 	require.Equal(t, 1, ledger.terminalCalls)
+	require.GreaterOrEqual(t, ledger.terminalInput.Attempt.Duration, 15*time.Millisecond)
 }
 
 func TestSynchronousProcessorMapsEmbeddingResponseFailureToTerminal(t *testing.T) {
@@ -463,6 +483,30 @@ type synchronousPipelineProvider struct {
 	response    func(assessor.SemanticAssessmentRequest) assessor.SemanticAssessmentResponse
 	assessCalls int
 	repairCalls int
+}
+
+type synchronousMalformedProvider struct {
+	repairs int
+}
+
+func (p *synchronousMalformedProvider) Assess(context.Context, assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
+	time.Sleep(10 * time.Millisecond)
+	return synchronousPipelineSession{}, synchronousMalformedTurn(), nil
+}
+
+func (p *synchronousMalformedProvider) Repair(context.Context, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
+	p.repairs++
+	time.Sleep(10 * time.Millisecond)
+	return synchronousMalformedTurn(), nil
+}
+
+func (*synchronousMalformedProvider) ModelName() string { return "synchronous-malformed" }
+
+func synchronousMalformedTurn() assessor.SemanticAssessmentTurn {
+	return assessor.SemanticAssessmentTurn{
+		ValidationStage:  "response_contract",
+		ValidationErrors: []assessor.SemanticValidationError{{Field: "response", Message: "invalid"}},
+	}
 }
 
 func (p *synchronousPipelineProvider) Assess(_ context.Context, request assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
@@ -562,6 +606,7 @@ type synchronousPipelineLedger struct {
 	preflightCalls     int
 	recordFailureCalls int
 	failureInput       repository.RememberFailureRecordInput
+	terminalInput      repository.SynchronousRememberTerminalInput
 }
 
 type boundedFailureRecordLedger struct {
@@ -679,6 +724,7 @@ func (ledger *synchronousPipelineLedger) CommitSynchronousRemember(_ context.Con
 
 func (ledger *synchronousPipelineLedger) CommitSynchronousRememberTerminal(_ context.Context, input repository.SynchronousRememberTerminalInput) (*repository.SynchronousRememberCommitResult, error) {
 	ledger.terminalCalls++
+	ledger.terminalInput = input
 	created := synchronousPipelineCreated(input.CreateIngest)
 	scope := synchronousPipelineRunScope(created)
 	if _, _, err := input.BuildTerminal(created, scope); err != nil {
