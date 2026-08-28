@@ -111,11 +111,11 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 		}
 		subjectPatch := effective.Patch.SubjectEntity
 		objectPatch := effective.Patch.ObjectEntity
-		if effective.Action == "confirm" && effective.Selection.SubjectEntityID != "" {
-			subjectPatch = &RelationshipCorrectionEntityPatch{EntityID: effective.Selection.SubjectEntityID}
+		if resolution.Selection.SubjectEntityID != "" {
+			subjectPatch = &RelationshipCorrectionEntityPatch{EntityID: resolution.Selection.SubjectEntityID}
 		}
-		if effective.Action == "confirm" && effective.Selection.ObjectEntityID != "" {
-			objectPatch = &RelationshipCorrectionEntityPatch{EntityID: effective.Selection.ObjectEntityID}
+		if resolution.Selection.ObjectEntityID != "" {
+			objectPatch = &RelationshipCorrectionEntityPatch{EntityID: resolution.Selection.ObjectEntityID}
 		}
 		subjectID, subjectName, err := correctionEndpointProjection(ctx, tx, input.TeamID, source.SubjectEntityID, names.SubjectName, subjectPatch)
 		if err != nil {
