@@ -217,7 +217,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
 			return nil, scanErr
 		}
-		input := securityRejectionAuditInput(ctx, actor, "remember", scan, scanErr)
+		input := securityRejectionAuditInputForIdempotency(ctx, actor, "remember", scan, scanErr, req.IdempotencyKey)
 		securityAudit = &input
 	}
 

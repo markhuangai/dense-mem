@@ -339,6 +339,21 @@ func TestRememberSynchronousDefersSecurityAuditUntilAfterReplayLookup(t *testing
 	require.NotNil(t, processor.request.SecurityRejectionAudit)
 }
 
+func TestSecurityRejectionAuditEventIDIsStableForRequestIdentity(t *testing.T) {
+	teamID, ownerID := uuid.New(), uuid.New()
+	actor := requestctx.Actor{TeamID: teamID, OwnerID: ownerID}
+	scan := SubmissionSecurityBatchScan{EvidenceCount: 1}
+
+	first := securityRejectionAuditInputForIdempotency(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected, "same-request")
+	second := securityRejectionAuditInputForIdempotency(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected, "same-request")
+	different := securityRejectionAuditInputForIdempotency(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected, "different-request")
+
+	require.Equal(t, first.EventID, second.EventID)
+	require.NotEqual(t, first.EventID, different.EventID)
+	_, err := uuid.Parse(first.EventID)
+	require.NoError(t, err)
+}
+
 func TestRememberSecurityAuditFailureLogsOnlyBoundedErrorClass(t *testing.T) {
 	logger := &rememberLoggerStub{}
 	svc := NewService(Dependencies{

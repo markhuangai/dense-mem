@@ -478,8 +478,8 @@ func synchronousTerminalOutcome(input remember.RememberProcessRequest, created *
 	if outcome == "quarantined" {
 		reason = "security_quarantine"
 	}
-	for index, evidence := range created.Evidence {
-		base.Evidence[index] = remember.TerminalEvidenceResult{Disposition: "not_stored", EvidenceIndex: index, SupersededEvidenceIDs: append([]string{}, evidence.SupersededEvidenceIDs...), SearchState: string(remember.TerminalSearchNotRequired), Reason: reason}
+	for index := range created.Evidence {
+		base.Evidence[index] = remember.TerminalEvidenceResult{Disposition: "not_stored", EvidenceIndex: index, SupersededEvidenceIDs: []string{}, SearchState: string(remember.TerminalSearchNotRequired), Reason: reason}
 	}
 	byRef := make(map[string]repository.SubmissionRelationshipResultInput, len(relationshipResults))
 	for _, result := range relationshipResults {

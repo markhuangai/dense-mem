@@ -104,6 +104,23 @@ func expectAnyAuditInsert(mock sqlmock.Sqlmock) {
 	mock.ExpectExec("INSERT INTO audit_log").WithArgs(args...).WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
+func TestAuditAppendTreatsDuplicateEventIDAsIdempotent(t *testing.T) {
+	svc, mock, cleanup := newMockAuditService(t)
+	defer cleanup()
+
+	expectAnyAuditInsert(mock)
+	args := make([]driver.Value, 14)
+	for i := range args {
+		args[i] = sqlmock.AnyArg()
+	}
+	mock.ExpectExec("INSERT INTO audit_log").WithArgs(args...).WillReturnResult(sqlmock.NewResult(0, 0))
+	entry := AuditLogEntry{ID: "security-event", Operation: "SECURITY_REJECTED", EntityType: "memory_intake_attempt", EntityID: "security-event"}
+
+	require.NoError(t, svc.Append(context.Background(), entry))
+	require.NoError(t, svc.Append(context.Background(), entry))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestAuditClientIPValueUsesEntryClientIP(t *testing.T) {
 	ctx := requestctx.WithClientIP(context.Background(), "192.168.1.101")
 	got := auditClientIPValue(ctx, AuditLogEntry{ClientIP: "203.0.113.10"})

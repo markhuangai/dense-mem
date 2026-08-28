@@ -28,6 +28,9 @@ func TestSynchronousTerminalOutcomeUsesClosedNonStoredReasons(t *testing.T) {
 		if result.Evidence[0].Reason != test.reason || result.RelationshipResults[0].Reason != test.reason {
 			t.Fatalf("%s reasons = %q / %q, want %q", test.outcome, result.Evidence[0].Reason, result.RelationshipResults[0].Reason, test.reason)
 		}
+		if len(result.Evidence[0].SupersededEvidenceIDs) != 0 {
+			t.Fatalf("%s non-stored evidence retained supersession IDs: %v", test.outcome, result.Evidence[0].SupersededEvidenceIDs)
+		}
 		if err := remember.ValidateTerminalRememberResult(result, 1, []string{"relationship"}); err != nil {
 			t.Fatalf("%s terminal result is invalid: %v", test.outcome, err)
 		}

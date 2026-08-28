@@ -52,6 +52,26 @@ func securityRejectionAuditInput(
 	}
 }
 
+func securityRejectionAuditInputForIdempotency(
+	ctx context.Context,
+	actor requestctx.Actor,
+	surface string,
+	scan SubmissionSecurityBatchScan,
+	rejection error,
+	idempotencyKey string,
+) SecurityRejectionAuditInput {
+	input := securityRejectionAuditInput(ctx, actor, surface, scan, rejection)
+	seed := strings.Join([]string{
+		"dense-mem/security-rejection",
+		actor.TeamID.String(),
+		actor.OwnerID.String(),
+		strings.TrimSpace(surface),
+		strings.TrimSpace(idempotencyKey),
+	}, "\x00")
+	input.EventID = uuid.NewSHA1(uuid.NameSpaceURL, []byte(seed)).String()
+	return input
+}
+
 // RecordSecurityRejectionAudit persists bounded security metadata after the
 // caller has established that no terminal attempt is already replayable.
 func RecordSecurityRejectionAudit(
