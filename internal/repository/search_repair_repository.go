@@ -106,14 +106,36 @@ func (r *SearchRepositoryImpl) ReserveSearchRepairRun(ctx context.Context, input
 	claimed := false
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		if input.CreateIfMissing {
-			if err := tx.WithContext(ctx).Exec(`
-				INSERT INTO embedding_reconciliation_runs (
-					embedding_contract_id, embedding_dimensions, local_run_date,
-					candidate_cutoff, status
-				) VALUES (?::uuid, ?, ?, clock_timestamp(), 'reserved')
-				ON CONFLICT (embedding_contract_id, embedding_dimensions, local_run_date) DO NOTHING
-			`, input.EmbeddingContractID, input.EmbeddingDimensions, input.LocalRunDate.Format("2006-01-02")).Error; err != nil {
+			var runExists bool
+			if err := tx.WithContext(ctx).Raw(`
+				SELECT EXISTS (
+					SELECT 1
+					FROM embedding_reconciliation_runs
+					WHERE embedding_contract_id = ?::uuid
+					  AND embedding_dimensions = ?
+					  AND local_run_date = ?
+				)
+			`, input.EmbeddingContractID, input.EmbeddingDimensions, input.LocalRunDate.Format("2006-01-02")).Scan(&runExists).Error; err != nil {
 				return err
+			}
+			if !runExists {
+				var potentiallyEligible bool
+				if err := tx.WithContext(ctx).Raw(searchRepairReservationProbeSQL,
+					input.EmbeddingContractID, input.EmbeddingDimensions,
+				).Scan(&potentiallyEligible).Error; err != nil {
+					return err
+				}
+				if potentiallyEligible {
+					if err := tx.WithContext(ctx).Exec(`
+						INSERT INTO embedding_reconciliation_runs (
+							embedding_contract_id, embedding_dimensions, local_run_date,
+							candidate_cutoff, status
+						) VALUES (?, ?, ?, clock_timestamp(), 'reserved')
+						ON CONFLICT (embedding_contract_id, embedding_dimensions, local_run_date) DO NOTHING
+					`, input.EmbeddingContractID, input.EmbeddingDimensions, input.LocalRunDate.Format("2006-01-02")).Error; err != nil {
+						return err
+					}
+				}
 			}
 		}
 		var value SearchRepairRun
@@ -419,7 +441,7 @@ func applySearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *Activ
 	if item.Retired {
 		return retireSearchRepairDocument(ctx, tx, contract, item.SearchRepairDocument)
 	}
-	expected, known, err := canonicalSearchRepairDocument(ctx, tx, contract, item.SearchRepairDocument)
+	expected, known, err := canonicalSearchRepairDocumentWithSourceLock(ctx, tx, contract, item.SearchRepairDocument, true)
 	if err != nil {
 		return false, false, err
 	}
@@ -436,6 +458,16 @@ func applySearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *Activ
 }
 
 func canonicalSearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *ActiveSearchContract, snapshot SearchRepairDocument) (*SearchRepairDocument, bool, error) {
+	return canonicalSearchRepairDocumentWithSourceLock(ctx, tx, contract, snapshot, false)
+}
+
+func canonicalSearchRepairDocumentWithSourceLock(
+	ctx context.Context,
+	tx *gorm.DB,
+	contract *ActiveSearchContract,
+	snapshot SearchRepairDocument,
+	lockSource bool,
+) (*SearchRepairDocument, bool, error) {
 	teamActive, err := lockSearchRepairActiveTeam(ctx, tx, snapshot.TeamID)
 	if err != nil {
 		return nil, true, err
@@ -445,6 +477,11 @@ func canonicalSearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *A
 	}
 	switch snapshot.SourceKind {
 	case "evidence":
+		if lockSource {
+			if err := lockSearchRepairEvidenceSource(ctx, tx, snapshot); err != nil {
+				return nil, true, err
+			}
+		}
 		var content, spaceID string
 		var spaceGeneration int64
 		err := tx.WithContext(ctx).Raw(`
@@ -476,7 +513,12 @@ func canonicalSearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *A
 		expected.EmbeddingContractID, expected.EmbeddingDimensions = contract.EmbeddingContractID, contract.EmbeddingDimensions
 		return &expected, true, nil
 	case "relationship":
-		relationship, err := loadRelationshipRecord(ctx, tx, snapshot.TeamID, snapshot.SourceID)
+		var relationship *RelationshipRecord
+		if lockSource {
+			relationship, err = loadRelationshipRecordForUpdate(ctx, tx, snapshot.TeamID, snapshot.SourceID)
+		} else {
+			relationship, err = loadRelationshipRecord(ctx, tx, snapshot.TeamID, snapshot.SourceID)
+		}
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, true, nil
 		}
@@ -513,6 +555,47 @@ func canonicalSearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *A
 	default:
 		return &snapshot, false, nil
 	}
+}
+
+func lockSearchRepairEvidenceSource(ctx context.Context, tx *gorm.DB, snapshot SearchRepairDocument) error {
+	var sourceID sql.NullString
+	err := tx.WithContext(ctx).Raw(`
+		SELECT source_id::text
+		FROM evidence_fragments
+		WHERE team_id = ?::uuid AND fragment_id = ?::uuid
+	`, snapshot.TeamID, snapshot.SourceID).Row().Scan(&sourceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if sourceID.Valid && sourceID.String != "" {
+		var lockedSourceID string
+		err = tx.WithContext(ctx).Raw(`
+			SELECT source_id::text
+			FROM evidence_sources
+			WHERE team_id = ?::uuid AND source_id = ?::uuid
+			FOR UPDATE
+		`, snapshot.TeamID, sourceID.String).Row().Scan(&lockedSourceID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+	var lockedFragmentID string
+	err = tx.WithContext(ctx).Raw(`
+		SELECT fragment_id::text
+		FROM evidence_fragments
+		WHERE team_id = ?::uuid AND fragment_id = ?::uuid
+		FOR UPDATE
+	`, snapshot.TeamID, snapshot.SourceID).Row().Scan(&lockedFragmentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	return err
 }
 
 func lockSearchRepairActiveTeam(ctx context.Context, tx *gorm.DB, teamID string) (bool, error) {
@@ -659,7 +742,7 @@ func updateSearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *Acti
 	if item.OwnerProfileID != "" {
 		canonicalSnapshot.OwnerProfileID = item.OwnerProfileID
 	}
-	revalidated, known, err := canonicalSearchRepairDocument(ctx, tx, contract, canonicalSnapshot)
+	revalidated, known, err := canonicalSearchRepairDocumentWithSourceLock(ctx, tx, contract, canonicalSnapshot, true)
 	if err != nil {
 		return false, false, err
 	}
@@ -759,7 +842,7 @@ func retireSearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *Acti
 	if current.DocumentVersion != snapshot.DocumentVersion || current.DocumentHash != snapshot.StoredDocumentHash {
 		return false, true, nil
 	}
-	expected, known, err := canonicalSearchRepairDocument(ctx, tx, contract, current)
+	expected, known, err := canonicalSearchRepairDocumentWithSourceLock(ctx, tx, contract, current, true)
 	if err != nil {
 		return false, false, err
 	}
@@ -857,89 +940,4 @@ func searchRepairDocumentResult(document SearchRepairDocument) SearchDocumentRes
 		EmbeddingDimensions: document.EmbeddingDimensions, SpaceID: document.SpaceID,
 		SpaceGeneration: document.SpaceGeneration,
 	}
-}
-
-func normalizeSearchRepairRunInput(input SearchRepairRunInput) SearchRepairRunInput {
-	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
-	input.WorkerID = strings.TrimSpace(input.WorkerID)
-	if input.Lease <= 0 {
-		input.Lease = 15 * time.Minute
-	}
-	return input
-}
-
-func validateSearchRepairRunInput(input SearchRepairRunInput) error {
-	if _, err := uuid.Parse(input.EmbeddingContractID); err != nil {
-		return fmt.Errorf("embedding_contract_id is invalid: %w", err)
-	}
-	if input.EmbeddingDimensions < 1 || input.LocalRunDate.IsZero() || input.WorkerID == "" || input.Lease < time.Second {
-		return errors.New("search repair run input is invalid")
-	}
-	return nil
-}
-
-func normalizeSearchRepairSelectionInput(input SearchRepairSelectionInput) SearchRepairSelectionInput {
-	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
-	return input
-}
-
-func validateSearchRepairSelectionInput(input SearchRepairSelectionInput) error {
-	if _, err := uuid.Parse(input.EmbeddingContractID); err != nil {
-		return fmt.Errorf("embedding_contract_id is invalid: %w", err)
-	}
-	if input.EmbeddingDimensions < 1 {
-		return errors.New("embedding_dimensions must be positive")
-	}
-	return nil
-}
-
-func normalizeApplySearchRepairInput(input ApplySearchRepairInput) ApplySearchRepairInput {
-	input.RunID = strings.TrimSpace(input.RunID)
-	input.LeaseToken = strings.TrimSpace(input.LeaseToken)
-	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
-	input.SearchIndexGenerationID = strings.TrimSpace(input.SearchIndexGenerationID)
-	return input
-}
-
-func validateApplySearchRepairInput(input ApplySearchRepairInput) error {
-	if _, err := uuid.Parse(input.RunID); err != nil {
-		return fmt.Errorf("run_id is invalid: %w", err)
-	}
-	if _, err := uuid.Parse(input.LeaseToken); err != nil {
-		return fmt.Errorf("lease_token is invalid: %w", err)
-	}
-	if _, err := uuid.Parse(input.EmbeddingContractID); err != nil {
-		return fmt.Errorf("embedding_contract_id is invalid: %w", err)
-	}
-	if _, err := uuid.Parse(input.SearchIndexGenerationID); err != nil {
-		return fmt.Errorf("search_index_generation_id is invalid: %w", err)
-	}
-	if input.EmbeddingDimensions < 1 || input.IndexGeneration < 1 || len(input.Documents) > searchRepairCandidateLimit {
-		return errors.New("search repair apply input is invalid")
-	}
-	return nil
-}
-
-func normalizeFinishSearchRepairRunInput(input FinishSearchRepairRunInput) FinishSearchRepairRunInput {
-	input.RunID = strings.TrimSpace(input.RunID)
-	input.LeaseToken = strings.TrimSpace(input.LeaseToken)
-	input.LastError = strings.TrimSpace(input.LastError)
-	if len(input.LastError) > 128 {
-		input.LastError = input.LastError[:128]
-	}
-	return input
-}
-
-func validateFinishSearchRepairRunInput(input FinishSearchRepairRunInput) error {
-	if _, err := uuid.Parse(input.RunID); err != nil {
-		return fmt.Errorf("run_id is invalid: %w", err)
-	}
-	if _, err := uuid.Parse(input.LeaseToken); err != nil {
-		return fmt.Errorf("lease_token is invalid: %w", err)
-	}
-	if input.Status != "completed" && input.Status != "deferred" && input.Status != "failed" && input.Status != "ambiguous" ||
-		input.SelectedCount < 0 || input.EmbeddedCount < 0 || input.UpdatedCount < 0 || input.DriftedCount < 0 {
-		return errors.New("search repair completion input is invalid")
-	}
-	return nil
 }

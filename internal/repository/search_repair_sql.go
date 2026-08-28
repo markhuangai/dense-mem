@@ -80,7 +80,7 @@ const searchRepairDriftCTE = `
 		       COALESCE(source.projection_generation_id::text, ''), COALESCE(document.document_version, 1),
 		       contract.embedding_contract_id::text, contract.embedding_dimensions,
 		       COALESCE(source.space_id::text, ''), source.space_generation, source.document_text, source.document_hash,
-		       COALESCE(document.document_hash, ''), false AS retired, source.observed_at
+		       COALESCE(document.document_hash, ''), false AS retired, COALESCE(document.updated_at, source.observed_at)
 		FROM canonical_sources AS source
 		CROSS JOIN active_contract AS contract
 		LEFT JOIN search_documents AS document ON document.team_id = source.team_id AND document.source_kind = source.source_kind AND document.source_id = source.source_id AND document.embedding_contract_id = contract.embedding_contract_id
@@ -134,12 +134,162 @@ const searchRepairDriftCTE = `
 	)
 `
 
-// searchRepairCandidateSQL applies the canonical drift predicates before the
-// keyset limit while returning only metadata and fence columns. Hydration then
-// loads canonical text and hashes only for the bounded candidate page.
-const searchRepairCandidateSQL = searchRepairDriftCTE + `
+// searchRepairCandidateSQL returns source and stored-document keys only. The
+// caller applies the keyset page before hydrateSearchRepairCandidate renders
+// canonical text and hashes, so hydration remains bounded even when the
+// canonical source set is large.
+const searchRepairCandidateSQL = `
+	WITH active_contract AS (
+		SELECT ?::uuid AS embedding_contract_id, ?::integer AS embedding_dimensions
+	), activated_generations AS (
+		SELECT DISTINCT ON (team_id) team_id, projection_generation_id
+		FROM search_projection_generations
+		WHERE source_kind = 'relationship' AND projection_format_version = 2
+		  AND state = 'current' AND activated_at IS NOT NULL
+		ORDER BY team_id, generation DESC, created_at DESC
+	), latest_generations AS (
+		SELECT DISTINCT ON (team_id) team_id, projection_generation_id
+		FROM search_projection_generations
+		WHERE source_kind = 'relationship' AND projection_format_version = 2
+		ORDER BY team_id, generation DESC, created_at DESC
+	), foreground_generations AS (
+		SELECT COALESCE(active.team_id, latest.team_id) AS team_id,
+		       COALESCE(active.projection_generation_id, latest.projection_generation_id) AS projection_generation_id
+		FROM activated_generations AS active
+		FULL JOIN latest_generations AS latest ON latest.team_id = active.team_id
+	), canonical_source_keys AS MATERIALIZED (
+		SELECT fragment.team_id, fragment.owner_profile_id, 'evidence'::text AS source_kind,
+		       fragment.fragment_id AS source_id, 1::bigint AS source_version,
+		       1 AS projection_format_version, NULL::uuid AS projection_generation_id,
+		       fragment.space_id, COALESCE(fragment.space_generation, 0)::bigint AS space_generation,
+		       fragment.created_at AS observed_at
+		FROM evidence_fragments AS fragment
+` + searchRepairEvidenceTerminalPlacementJoinSQL + `
+		JOIN teams AS team ON team.id = fragment.team_id AND team.status = 'active' AND team.deleted_at IS NULL
+		WHERE COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+		  AND fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
+		  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
+		  AND NOT EXISTS (SELECT 1 FROM evidence_quarantines q WHERE q.team_id = fragment.team_id AND q.fragment_id = fragment.fragment_id AND q.status = 'active')
+		  AND NOT EXISTS (SELECT 1 FROM evidence_lifecycle_events e WHERE e.team_id = fragment.team_id AND e.target_fragment_id = fragment.fragment_id)
+		UNION ALL
+		SELECT relationship.team_id, relationship.owner_profile_id, 'relationship'::text,
+		       relationship.relationship_id, relationship.version::bigint, 2,
+		       foreground.projection_generation_id,
+		       relationship.space_id, COALESCE(relationship.space_generation, 0)::bigint,
+		       relationship.created_at
+		FROM relationship_records AS relationship
+		JOIN teams AS team ON team.id = relationship.team_id AND team.status = 'active' AND team.deleted_at IS NULL
+		LEFT JOIN foreground_generations AS foreground ON foreground.team_id = relationship.team_id
+		WHERE relationship.status = 'active' AND relationship.support_count > 0 AND relationship.identity_alias_of_relationship_id IS NULL
+		  AND relationship.space_generation = dense_mem_active_space_generation(relationship.team_id, relationship.space_id)
+	), candidate_keys (
+		team_id, search_document_id, owner_profile_id, source_kind, source_id, source_version,
+		projection_format_version, projection_generation_id, document_version, embedding_contract_id,
+		embedding_dimensions, space_id, space_generation, retired, observed_at
+	) AS (
+		SELECT source.team_id::text, COALESCE(document.search_document_id::text, ''), source.owner_profile_id::text,
+		       source.source_kind, source.source_id::text, source.source_version,
+		       source.projection_format_version, COALESCE(source.projection_generation_id::text, ''),
+		       COALESCE(document.document_version, 1), contract.embedding_contract_id::text,
+		       contract.embedding_dimensions, COALESCE(source.space_id::text, ''), source.space_generation,
+		       false, source.observed_at
+		FROM canonical_source_keys AS source
+		CROSS JOIN active_contract AS contract
+		LEFT JOIN search_documents AS document
+		  ON document.team_id = source.team_id
+		 AND document.source_kind = source.source_kind
+		 AND document.source_id = source.source_id
+		 AND document.embedding_contract_id = contract.embedding_contract_id
+		UNION ALL
+		SELECT document.team_id::text, document.search_document_id::text, document.owner_profile_id::text,
+		       document.source_kind, document.source_id::text, document.source_version,
+		       document.projection_format_version, COALESCE(document.projection_generation_id::text, ''),
+		       document.document_version, document.embedding_contract_id::text,
+		       document.embedding_dimensions, COALESCE(document.space_id::text, ''),
+		       COALESCE(document.space_generation, 0), true, document.updated_at
+		FROM search_documents AS document
+		JOIN teams AS team ON team.id = document.team_id AND team.status = 'active' AND team.deleted_at IS NULL
+		CROSS JOIN active_contract AS contract
+		WHERE document.embedding_contract_id = contract.embedding_contract_id
+		  AND document.embedding_dimensions = contract.embedding_dimensions
+		  AND document.source_kind IN ('evidence', 'relationship')
+		  AND document.search_state <> 'not_required'
+		  AND document.space_generation = dense_mem_active_space_generation(document.team_id, document.space_id)
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM evidence_quarantines AS quarantine
+			WHERE document.source_kind = 'evidence'
+			  AND quarantine.team_id = document.team_id
+			  AND quarantine.fragment_id = document.source_id
+			  AND quarantine.status = 'active'
+		  )
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM canonical_source_keys AS source
+			WHERE source.team_id = document.team_id
+			  AND source.source_kind = document.source_kind
+			  AND source.source_id = document.source_id
+		  )
+		UNION ALL
+		SELECT document.team_id::text, document.search_document_id::text, document.owner_profile_id::text,
+		       document.source_kind, document.source_id::text, document.source_version,
+		       document.projection_format_version, COALESCE(document.projection_generation_id::text, ''),
+		       document.document_version, document.embedding_contract_id::text,
+		       document.embedding_dimensions, COALESCE(document.space_id::text, ''),
+		       COALESCE(document.space_generation, 0), false, document.updated_at
+		FROM search_documents AS document
+		JOIN teams AS team ON team.id = document.team_id AND team.status = 'active' AND team.deleted_at IS NULL
+		CROSS JOIN active_contract AS contract
+		WHERE document.embedding_contract_id = contract.embedding_contract_id
+		  AND document.embedding_dimensions = contract.embedding_dimensions
+		  AND document.source_kind NOT IN ('evidence', 'relationship')
+		  AND document.search_state <> 'not_required'
+		  AND document.space_generation = dense_mem_active_space_generation(document.team_id, document.space_id)
+		  AND (document.search_state <> 'current' OR document.embedding IS NULL OR vector_dims(document.embedding) <> document.embedding_dimensions)
+	)
 SELECT team_id, search_document_id, owner_profile_id, source_kind, source_id, source_version,
        projection_format_version, projection_generation_id, document_version, embedding_contract_id,
        embedding_dimensions, space_id, space_generation, retired, observed_at
-FROM drift
+FROM candidate_keys
+`
+
+// searchRepairReservationProbeSQL only checks for potentially eligible source
+// or document keys. It is intentionally conservative: the bounded selection
+// pass remains authoritative for deciding whether a repair is needed.
+const searchRepairReservationProbeSQL = `
+	SELECT EXISTS (
+		SELECT 1
+		FROM (
+			SELECT fragment.team_id
+			FROM evidence_fragments AS fragment
+` + searchRepairEvidenceTerminalPlacementJoinSQL + `
+			JOIN teams AS team ON team.id = fragment.team_id AND team.status = 'active' AND team.deleted_at IS NULL
+			WHERE COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+			  AND fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
+			  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
+			  AND NOT EXISTS (SELECT 1 FROM evidence_quarantines AS quarantine WHERE quarantine.team_id = fragment.team_id AND quarantine.fragment_id = fragment.fragment_id AND quarantine.status = 'active')
+			  AND NOT EXISTS (SELECT 1 FROM evidence_lifecycle_events AS lifecycle WHERE lifecycle.team_id = fragment.team_id AND lifecycle.target_fragment_id = fragment.fragment_id)
+			LIMIT 1
+		) AS evidence_keys
+	)
+	OR EXISTS (
+		SELECT 1
+		FROM relationship_records AS relationship
+		JOIN teams AS team ON team.id = relationship.team_id AND team.status = 'active' AND team.deleted_at IS NULL
+		WHERE relationship.status = 'active'
+		  AND relationship.support_count > 0
+		  AND relationship.identity_alias_of_relationship_id IS NULL
+		  AND relationship.space_generation = dense_mem_active_space_generation(relationship.team_id, relationship.space_id)
+		LIMIT 1
+	)
+	OR EXISTS (
+		SELECT 1
+		FROM search_documents AS document
+		JOIN teams AS team ON team.id = document.team_id AND team.status = 'active' AND team.deleted_at IS NULL
+		WHERE document.embedding_contract_id = ?::uuid
+		  AND document.embedding_dimensions = ?
+		  AND document.search_state <> 'not_required'
+		  AND document.space_generation = dense_mem_active_space_generation(document.team_id, document.space_id)
+		LIMIT 1
+	)
 `

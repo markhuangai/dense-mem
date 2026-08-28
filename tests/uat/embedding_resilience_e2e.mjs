@@ -109,8 +109,8 @@ async function runScheduledDocumentRepair() {
   const failedScheduledAt = nextUTCMinute(5);
   const failedTimezone = chooseReconciliationTimezone(before?.latest_run?.local_run_date, failedScheduledAt);
   const failedLocalDate = formatDateInZone(failedScheduledAt, failedTimezone);
-  await scheduleDocumentRepair(failedScheduledAt, failedTimezone);
   const failedProxyBefore = await proxyJSON("/stats");
+  await scheduleDocumentRepair(failedScheduledAt, failedTimezone);
   const failedRequest = await waitForRepairRequest(failedProxyBefore.requests, failedScheduledAt, failedLocalDate);
   const failedBatchItemCount = failedRequest.request_item_counts?.[failedProxyBefore.requests] ?? 0;
   if (failedBatchItemCount < 1 || failedBatchItemCount > 256) {

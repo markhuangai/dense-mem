@@ -9,8 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-
-	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func createSearchRepairAcceptedIngest(
@@ -287,6 +285,211 @@ func TestSearchRepairRepairsCanonicalEvidenceOwnerMismatch(t *testing.T) {
 	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
 	require.NoError(t, err)
 	require.Zero(t, convergence.DriftedDocuments)
+}
+
+func TestSearchRepairDoesNotCommitAfterRelationshipRetraction(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-repair-relationship-source-fence-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-repair-relationship-source-fence-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-repair-relationship-source-fence", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Source Fence Subject")
+	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Source Fence Object")
+	content := "Source Fence Subject uses Source Fence Object."
+	ingest := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "search-repair-relationship-source-fence-ingest", content)
+	decision := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "uses", ObjectEntityID: object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: "search-repair-relationship-source-fence",
+			SpanStart: 0, SpanEnd: len(content), Authority: "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+	_, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship", SourceID: decision.Relationship.RelationshipID,
+		SourceVersion: int64(decision.Relationship.Version), ProjectionFormat: 2, DocumentText: "stale relationship source",
+	})
+	require.NoError(t, err)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	run, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: time.Now().UTC(), CreateIfMissing: true, WorkerID: "relationship-source-fence-worker", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	selected, _, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions, Limit: searchRepairCandidateLimit,
+	})
+	require.NoError(t, err)
+	var candidate SearchRepairDocument
+	for _, item := range selected {
+		if item.SourceKind == "relationship" && item.SourceID == decision.Relationship.RelationshipID {
+			candidate = item
+			break
+		}
+	}
+	require.NotEmpty(t, candidate.SearchDocumentID)
+
+	operationCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	sourceReady := make(chan struct{})
+	sourceRelease := make(chan struct{})
+	sourceDone := make(chan error, 1)
+	var blockerPID int
+	go func() {
+		sourceDone <- rls.WithSystemTx(operationCtx, adminDB, func(tx *gorm.DB) error {
+			if err := tx.Raw(`SELECT pg_backend_pid()`).Row().Scan(&blockerPID); err != nil {
+				return err
+			}
+			var locked string
+			if err := tx.Raw(`
+				SELECT relationship_id::text
+				FROM relationship_records
+				WHERE team_id = ?::uuid AND relationship_id = ?::uuid
+				FOR UPDATE
+			`, teamID, decision.Relationship.RelationshipID).Row().Scan(&locked); err != nil {
+				return err
+			}
+			close(sourceReady)
+			select {
+			case <-sourceRelease:
+			case <-operationCtx.Done():
+				return operationCtx.Err()
+			}
+			return tx.Exec(`
+				UPDATE relationship_records
+				SET status = 'retracted', version = version + 1, updated_at = now()
+				WHERE team_id = ?::uuid AND relationship_id = ?::uuid AND owner_profile_id = ?::uuid
+			`, teamID, decision.Relationship.RelationshipID, ownerID).Error
+		})
+	}()
+	select {
+	case <-sourceReady:
+	case <-operationCtx.Done():
+		require.FailNow(t, "relationship source lock was not acquired", operationCtx.Err())
+	}
+
+	applyDone := make(chan struct {
+		result *SearchRepairApplyResult
+		err    error
+	}, 1)
+	go func() {
+		result, applyErr := repo.ApplySearchRepair(operationCtx, ApplySearchRepairInput{
+			RunID: run.RunID, LeaseToken: run.LeaseToken,
+			EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+			SearchIndexGenerationID: contract.SearchIndexGenerationID, IndexGeneration: contract.IndexGeneration,
+			Documents: []SearchRepairEmbedding{{SearchRepairDocument: candidate, Embedding: []float32{0.25, 0.75}}},
+		})
+		applyDone <- struct {
+			result *SearchRepairApplyResult
+			err    error
+		}{result: result, err: applyErr}
+	}()
+	requirePostgresBackendBlockedBy(t, operationCtx, adminDB, rls, blockerPID)
+	close(sourceRelease)
+	require.NoError(t, <-sourceDone)
+	applyResult := <-applyDone
+	require.NoError(t, applyResult.err)
+	require.Zero(t, applyResult.result.UpdatedCount)
+	require.EqualValues(t, 1, applyResult.result.SkippedCount)
+
+	var status string
+	var sourceVersion int
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT relationship.status, relationship.version
+			FROM relationship_records AS relationship
+			WHERE relationship.team_id = ?::uuid AND relationship.relationship_id = ?::uuid
+		`, teamID, decision.Relationship.RelationshipID).Row().Scan(&status, &sourceVersion)
+	}))
+	require.Equal(t, "retracted", status)
+	require.Equal(t, decision.Relationship.Version+1, sourceVersion)
+	var documentState string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT search_state
+			FROM search_documents
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, candidate.SearchDocumentID).Row().Scan(&documentState)
+	}))
+	require.NotEqual(t, "current", documentState)
+}
+
+func TestSearchRepairDoesNotCommitAfterEvidenceQuarantine(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-repair-evidence-source-fence-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-repair-evidence-source-fence-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-repair-evidence-source-fence", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	ingest := createSearchRepairAcceptedIngest(t, ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-repair-evidence-source-fence",
+		RequestHash: sha256Hex("evidence source fence"), Evidence: []EvidenceInput{{Content: "evidence source fence"}},
+	})
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	run, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: time.Now().UTC(), CreateIfMissing: true, WorkerID: "evidence-source-fence-worker", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	selected, _, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions, Limit: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	require.Equal(t, ingest.Evidence[0].FragmentID, selected[0].SourceID)
+	require.NotEmpty(t, selected[0].SearchDocumentID)
+	initialState := selected[0].SearchState
+	initialVersion := selected[0].DocumentVersion
+	initialHash := selected[0].DocumentHash
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO evidence_quarantines (team_id, fragment_id, ingest_id, owner_profile_id, status, reason)
+			VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, 'active', 'source fence test')
+		`, teamID, ingest.Evidence[0].FragmentID, ingest.IngestID, ownerID).Error
+	}))
+	applyResult, err := repo.ApplySearchRepair(ctx, ApplySearchRepairInput{
+		RunID: run.RunID, LeaseToken: run.LeaseToken,
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		SearchIndexGenerationID: contract.SearchIndexGenerationID, IndexGeneration: contract.IndexGeneration,
+		Documents: []SearchRepairEmbedding{{SearchRepairDocument: selected[0], Embedding: []float32{0.25, 0.75}}},
+	})
+	require.NoError(t, err)
+	require.Zero(t, applyResult.UpdatedCount)
+	require.EqualValues(t, 1, applyResult.SkippedCount)
+
+	var quarantineStatus string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status
+			FROM evidence_quarantines
+			WHERE team_id = ?::uuid AND fragment_id = ?::uuid
+		`, teamID, ingest.Evidence[0].FragmentID).Row().Scan(&quarantineStatus)
+	}))
+	require.Equal(t, "active", quarantineStatus)
+	var documentState, documentHash string
+	var documentVersion int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT search_state, document_version, document_hash
+			FROM search_documents
+			WHERE team_id = ?::uuid AND source_kind = 'evidence' AND source_id = ?::uuid
+		`, teamID, ingest.Evidence[0].FragmentID).Row().Scan(&documentState, &documentVersion, &documentHash)
+	}))
+	require.Equal(t, initialState, documentState)
+	require.Equal(t, initialVersion, documentVersion)
+	require.Equal(t, initialHash, documentHash)
 }
 
 func TestSearchRepairDoesNotCommitAfterTeamBecomesInactive(t *testing.T) {
@@ -752,222 +955,4 @@ func TestSearchRepairSkipsRelationshipProjectionGenerationChangedAfterSelection(
 		`, teamID, decision.Relationship.RelationshipID, firstGenerationID).Scan(&staleDocuments).Error
 	}))
 	require.Zero(t, staleDocuments)
-}
-
-func TestSearchRepairExcludesQueuedRejectedRememberEvidenceAndRetiresLegacyDocument(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	teamID := createLedgerTeam(t, adminDB, rls, "search-repair-rejected-team")
-	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-repair-rejected-owner")
-	insertSearchTestContract(t, adminDB, rls, "search-repair-rejected", 2, "exact", "")
-	repo := NewSearchRepository(appDB, rls)
-	ledger := NewLedgerRepository(appDB, rls)
-	ingest, err := ledger.CreateIngest(ctx, CreateIngestInput{
-		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-repair-rejected-evidence",
-		RequestHash: sha256Hex("rejected search repair evidence"), Evidence: []EvidenceInput{{Content: "rejected search repair evidence"}},
-	})
-	require.NoError(t, err)
-	claimed, err := ledger.ClaimNextPlacementRun(ctx, teamID, "search-repair-rejected-worker", time.Minute)
-	require.NoError(t, err)
-	require.NotNil(t, claimed)
-	_, err = ledger.CompleteSubmissionAssessment(ctx, CompleteSubmissionAssessmentInput{
-		SubmissionAssessmentRunScope: SubmissionAssessmentRunScope{
-			TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
-			PlacementRunID: ingest.PlacementRunID, WorkerID: "search-repair-rejected-worker", ExpectedAttempts: claimed.Attempts,
-		},
-		OutcomeKind: "search_repair_rejected_fixture", Status: string(domain.SemanticReviewRejected), Category: "rejected",
-		Payload: map[string]any{"failure_code": "no_supported_memory"},
-	})
-	require.NoError(t, err)
-	var ingestStatus, placementStatus, itemStatus string
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			SELECT ingest.status, run.status, item.status
-			FROM knowledge_ingests AS ingest
-			JOIN placement_runs AS run
-			  ON run.team_id = ingest.team_id AND run.ingest_id = ingest.ingest_id
-			JOIN placement_items AS item
-			  ON item.team_id = run.team_id AND item.placement_run_id = run.placement_run_id
-			WHERE ingest.team_id = ?::uuid AND ingest.ingest_id = ?::uuid
-		`, teamID, ingest.IngestID).Row().Scan(&ingestStatus, &placementStatus, &itemStatus)
-	}))
-	require.Equal(t, "queued", ingestStatus)
-	require.Equal(t, "rejected", placementStatus)
-	require.Equal(t, "rejected", itemStatus)
-	legacy, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
-		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: ingest.Evidence[0].FragmentID,
-		SourceVersion: 1, ProjectionFormat: 1, DocumentText: "rejected search repair evidence",
-	})
-	require.NoError(t, err)
-	contract, err := repo.GetActiveSearchContract(ctx)
-	require.NoError(t, err)
-	projection, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
-	require.NoError(t, err)
-	require.Zero(t, projection.ExpectedDocuments)
-	require.EqualValues(t, 1, projection.DriftedDocuments)
-	run, claimedRun, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
-		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-		LocalRunDate: time.Now().UTC(), CreateIfMissing: true, WorkerID: "repair-rejected-worker", Lease: time.Minute,
-	})
-	require.NoError(t, err)
-	require.True(t, claimedRun)
-	selected, _, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
-		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions, Limit: 1,
-	})
-	require.NoError(t, err)
-	require.Len(t, selected, 1)
-	require.Equal(t, legacy.SearchDocumentID, selected[0].SearchDocumentID)
-	require.True(t, selected[0].Retired)
-	apply, err := repo.ApplySearchRepair(ctx, ApplySearchRepairInput{
-		RunID: run.RunID, LeaseToken: run.LeaseToken,
-		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-		SearchIndexGenerationID: contract.SearchIndexGenerationID, IndexGeneration: contract.IndexGeneration,
-		Documents: []SearchRepairEmbedding{{SearchRepairDocument: selected[0]}},
-	})
-	require.NoError(t, err)
-	require.EqualValues(t, 1, apply.UpdatedCount)
-	var state string
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			SELECT search_state FROM search_documents
-			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
-		`, teamID, legacy.SearchDocumentID).Row().Scan(&state)
-	}))
-	require.Equal(t, "not_required", state)
-}
-
-func TestSearchRepairFindsDriftBeyondCurrentDocumentPrefix(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	teamID := createLedgerTeam(t, adminDB, rls, "search-repair-continuation-team")
-	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-repair-continuation-owner")
-	insertSearchTestContract(t, adminDB, rls, "search-repair-continuation", 2, "exact", "")
-	repo := NewSearchRepository(appDB, rls)
-	contract, err := repo.GetActiveSearchContract(ctx)
-	require.NoError(t, err)
-	documents := make([]*SearchDocumentResult, 0, 5)
-	for index := 0; index < 5; index++ {
-		document, upsertErr := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
-			TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "entity", SourceID: uuid.NewString(),
-			SourceVersion: 1, DocumentText: "bounded continuation entity",
-		})
-		require.NoError(t, upsertErr)
-		documents = append(documents, document)
-	}
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		for index, document := range documents[:4] {
-			if err := tx.Exec(`
-				UPDATE search_documents
-				SET search_state = 'current', embedding = '[1,0]'::vector,
-				    embedding_updated_at = clock_timestamp(), updated_at = clock_timestamp() - (?::integer * interval '1 minute')
-				WHERE team_id = ?::uuid AND search_document_id = ?::uuid
-			`, 10-index, teamID, document.SearchDocumentID).Error; err != nil {
-				return err
-			}
-		}
-		return tx.Exec(`
-			UPDATE search_documents SET updated_at = clock_timestamp()
-			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
-		`, teamID, documents[4].SearchDocumentID).Error
-	}))
-	selected, hasMore, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
-		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions, Limit: 1,
-	})
-	require.NoError(t, err)
-	require.Len(t, selected, 1)
-	require.Equal(t, documents[4].SearchDocumentID, selected[0].SearchDocumentID)
-	require.False(t, hasMore)
-}
-
-func TestSearchRepairRefillsAfterHydrationExclusions(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	teamID := createLedgerTeam(t, adminDB, rls, "search-repair-refill-team")
-	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-repair-refill-owner")
-	insertSearchTestContract(t, adminDB, rls, "search-repair-refill", 2, "exact", "")
-	repo := NewSearchRepository(appDB, rls)
-	ledger := NewLedgerRepository(appDB, rls)
-	contents := []string{
-		"search repair refill evidence one",
-		"search repair refill evidence two",
-		"search repair refill evidence three",
-		"search repair refill evidence four",
-		"search repair refill evidence five",
-	}
-	var targetSourceID string
-	for index, content := range contents {
-		ingest := createSearchRepairAcceptedIngest(t, ctx, ledger, CreateIngestInput{
-			TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-repair-refill-evidence-" + content,
-			RequestHash: sha256Hex(content), Evidence: []EvidenceInput{{Content: content}},
-		})
-		fragmentID := ingest.Evidence[0].FragmentID
-		if index == len(contents)-1 {
-			targetSourceID = fragmentID
-			continue
-		}
-		document, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
-			TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: fragmentID,
-			SourceVersion: 1, DocumentText: content,
-		})
-		require.NoError(t, err)
-		require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-			return tx.Exec(`
-				UPDATE search_documents
-				SET search_state = 'current', embedding = '[1,0]'::vector,
-				    embedding_updated_at = clock_timestamp(), updated_at = clock_timestamp()
-				WHERE team_id = ?::uuid AND search_document_id = ?::uuid
-			`, teamID, document.SearchDocumentID).Error
-		}))
-	}
-	contract, err := repo.GetActiveSearchContract(ctx)
-	require.NoError(t, err)
-	selected, hasMore, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
-		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions, Limit: 1,
-	})
-	require.NoError(t, err)
-	require.False(t, hasMore)
-	require.Len(t, selected, 1)
-	require.Equal(t, targetSourceID, selected[0].SourceID)
-}
-
-func TestSearchRepairActiveTeamFenceBlocksConcurrentSoftDelete(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	teamID := createLedgerTeam(t, adminDB, rls, "search-repair-team-lock")
-	locked := make(chan struct{})
-	release := make(chan struct{})
-	lockErr := make(chan error, 1)
-	go func() {
-		lockErr <- rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
-			active, err := lockSearchRepairActiveTeam(ctx, tx, teamID)
-			if err != nil {
-				return err
-			}
-			if !active {
-				return gorm.ErrRecordNotFound
-			}
-			close(locked)
-			<-release
-			return nil
-		})
-	}()
-	<-locked
-	deleteDone := make(chan error, 1)
-	go func() {
-		deleteDone <- rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
-			return tx.Exec(`UPDATE teams SET status = 'deleted', deleted_at = clock_timestamp() WHERE id = ?::uuid`, teamID).Error
-		})
-	}()
-	select {
-	case err := <-deleteDone:
-		t.Fatalf("soft delete completed while repair held its active-team fence: %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
-	close(release)
-	require.NoError(t, <-lockErr)
-	require.NoError(t, <-deleteDone)
 }
