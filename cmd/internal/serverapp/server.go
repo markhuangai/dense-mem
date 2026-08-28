@@ -778,10 +778,12 @@ func processTeamConflictReview(
 			excluded = append(excluded, id)
 		}
 		cases, err := ledger.ClaimRelationshipConflictCases(ctx, repository.ClaimRelationshipConflictCasesInput{
-			TeamID:              teamID,
-			WorkerID:            workerID,
-			ReviewRunID:         run.ReviewRunID,
-			Limit:               cfg.GetConflictReviewBatchSize(),
+			TeamID:      teamID,
+			WorkerID:    workerID,
+			ReviewRunID: run.ReviewRunID,
+			// Claims are leased per case while synchronous resolution may spend
+			// the full embedding timeout before the next case is processed.
+			Limit:               1,
 			Lease:               lease,
 			MaxAttempts:         cfg.GetConflictReviewMaxAttempts(),
 			Now:                 time.Now().UTC(),

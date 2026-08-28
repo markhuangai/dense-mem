@@ -223,7 +223,7 @@ func TestRelationshipConflictResolutionPreflightCountsNonForegroundDocuments(t *
 	assert.Empty(t, plan.Documents)
 }
 
-func TestRelationshipConflictResolutionDeduplicatesRenderedDocumentsBeforeBound(t *testing.T) {
+func TestRelationshipConflictResolutionRetainsAssignmentsForDeduplicatedRenderedDocuments(t *testing.T) {
 	fixture := NewOversizedConflictServiceFixture(t)
 	ctx := context.Background()
 	reviewNow := fixture.ReviewNow.Add(-24 * time.Hour)
@@ -258,7 +258,31 @@ func TestRelationshipConflictResolutionDeduplicatesRenderedDocumentsBeforeBound(
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 	assert.False(t, plan.Pending)
-	assert.Len(t, plan.Documents, 1)
+	assert.Len(t, plan.Documents, domain.MaxEmbeddingBatchDocuments+1)
+	assert.Equal(t, 1, uniqueConflictResolutionDocumentCount(plan.Documents))
+	committed, err := fixture.Ledger.CommitRelationshipConflictResolution(ctx, CommitRelationshipConflictResolutionInput{
+		Plan: *plan, Embeddings: conflictResolutionTestEmbeddings(plan),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, committed)
+	assert.True(t, committed.Resolved)
+	winnerIDs := make([]string, 0, len(plan.Documents))
+	for _, document := range plan.Documents {
+		winnerIDs = append(winnerIDs, document.RelationshipID)
+	}
+	var currentWinnerCount int64
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ANY(?::uuid[])
+			  AND search_state = 'current'
+			  AND embedding IS NOT NULL
+		`, fixture.TeamID, pq.Array(winnerIDs)).Row().Scan(&currentWinnerCount)
+	}))
+	assert.Equal(t, int64(len(winnerIDs)), currentWinnerCount)
 }
 
 type conflictResolutionStateSnapshot struct {

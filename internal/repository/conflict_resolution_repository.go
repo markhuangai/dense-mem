@@ -691,9 +691,6 @@ func loadConflictResolutionDocuments(
 		if !required {
 			continue
 		}
-		if _, exists := seenHashes[normalized.DocumentHash]; exists {
-			continue
-		}
 		assignments = append(assignments, RelationshipConflictResolutionDocument{
 			TeamID: relationship.TeamID, RelationshipID: relationship.RelationshipID, OwnerProfileID: relationship.OwnerProfileID,
 			SpaceID: relationship.SpaceID, SpaceGeneration: relationship.SpaceGeneration,

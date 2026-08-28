@@ -346,6 +346,35 @@ func TestProcessTeamConflictReviewCountsMixedOutcomes(t *testing.T) {
 	}
 }
 
+func TestProcessTeamConflictReviewClaimsCasesOneAtATime(t *testing.T) {
+	cfg := testConflictReviewConfig(t, "UTC", "04:00", "0")
+	teamID := "00000000-0000-0000-0000-000000000110"
+	runID := "00000000-0000-0000-0000-000000000111"
+	ledger := &conflictReviewLedgerStub{
+		run: &repository.ConflictReviewRunRecord{
+			TeamID: teamID, ReviewRunID: runID, Status: "running", WorkerID: "worker-one-at-a-time",
+		},
+		claimed: true,
+		claimBatches: [][]repository.RelationshipConflictCaseRecord{{
+			{ConflictID: "00000000-0000-0000-0000-000000000112"},
+			{ConflictID: "00000000-0000-0000-0000-000000000113"},
+		}},
+	}
+
+	err := processTeamConflictReview(context.Background(), observability.New(slog.LevelError), ledger, cfg, observability.NoopDiscoverabilityMetrics(), teamID, ledger.run.WorkerID, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("processTeamConflictReview returned error: %v", err)
+	}
+	if len(ledger.claimInputs) == 0 {
+		t.Fatal("expected at least one conflict claim")
+	}
+	for _, input := range ledger.claimInputs {
+		if input.Limit != 1 {
+			t.Fatalf("conflict claim limit = %d, want 1", input.Limit)
+		}
+	}
+}
+
 func testConflictReviewConfig(t *testing.T, timezone string, start string, jitter string) *config.Config {
 	t.Helper()
 	t.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
@@ -368,6 +397,7 @@ type conflictReviewLedgerStub struct {
 	claimed               bool
 	reserveErr            error
 	claimBatches          [][]repository.RelationshipConflictCaseRecord
+	claimInputs           []repository.ClaimRelationshipConflictCasesInput
 	claimErr              error
 	derivedErr            error
 	derivedInputs         []repository.ClaimConflictDerivedEvidenceTasksInput
@@ -419,7 +449,8 @@ func (s *conflictReviewLedgerStub) ReserveRelationshipConflictReviewRun(context.
 	return s.run, s.claimed, s.reserveErr
 }
 
-func (s *conflictReviewLedgerStub) ClaimRelationshipConflictCases(context.Context, repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error) {
+func (s *conflictReviewLedgerStub) ClaimRelationshipConflictCases(_ context.Context, input repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error) {
+	s.claimInputs = append(s.claimInputs, input)
 	if s.claimErr != nil {
 		return nil, s.claimErr
 	}
