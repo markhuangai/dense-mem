@@ -254,48 +254,11 @@ func completeFailedRun(
 }
 
 func driverConfig() config.Config {
-	if strings.TrimSpace(os.Getenv("DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE")) == "1" {
-		limits := conflictassessment.DefaultSemanticAssessmentLimits()
-		return config.Config{
-			PostgresDSN:                         postgresDSN(),
-			AIAPIURL:                            requiredEnv("AI_API_URL"),
-			AIAPIKey:                            requiredEnv("AI_API_KEY"),
-			AIEmbeddingModel:                    requiredEnv("AI_API_EMBEDDING_MODEL"),
-			AIEmbeddingDimensions:               requiredPositiveIntEnv("AI_API_EMBEDDING_DIMENSIONS"),
-			AIEmbeddingTimeoutSeconds:           requiredPositiveIntEnv("AI_API_EMBEDDING_TIMEOUT_SECONDS"),
-			AIVerifierAPIURL:                    requiredEnv("AI_VERIFIER_API_URL"),
-			AIVerifierAPIKey:                    requiredEnv("AI_VERIFIER_API_KEY"),
-			AIVerifierModel:                     requiredEnv("AI_VERIFIER_MODEL"),
-			AIVerifierDisableTemperature:        true,
-			AIVerifierTimeoutSeconds:            10,
-			AIVerifierMaxConcurrency:            1,
-			AIVerifierMaxInputTokens:            limits.MaxInputTokens,
-			AIVerifierMaxOutputTokens:           limits.MaxOutputTokens,
-			AIVerifierMaxCandidateContextTokens: limits.MaxCandidateContextTokens,
-			AIVerifierMaxPredicateOptions:       limits.MaxPredicateOptions,
-			AIVerifierTokenizer:                 limits.Tokenizer,
-		}
+	cfg, err := config.LoadWithPostgresDSN(postgresDSN())
+	if err != nil {
+		fatal("load conflict review configuration: %v", err)
 	}
-	limits := conflictassessment.DefaultSemanticAssessmentLimits()
-	return config.Config{
-		PostgresDSN:                         postgresDSN(),
-		AIAPIURL:                            requiredEnv("DENSE_MEM_E2E_CONFLICT_PROVIDER_URL"),
-		AIAPIKey:                            "dense-mem-conflict-e2e-key",
-		AIEmbeddingModel:                    "dense-mem-conflict-e2e-embedding",
-		AIEmbeddingDimensions:               1536,
-		AIEmbeddingTimeoutSeconds:           10,
-		AIVerifierAPIURL:                    requiredEnv("DENSE_MEM_E2E_CONFLICT_PROVIDER_URL"),
-		AIVerifierAPIKey:                    "dense-mem-conflict-e2e-key",
-		AIVerifierModel:                     "dense-mem-conflict-e2e-verifier",
-		AIVerifierDisableTemperature:        true,
-		AIVerifierTimeoutSeconds:            10,
-		AIVerifierMaxConcurrency:            1,
-		AIVerifierMaxInputTokens:            limits.MaxInputTokens,
-		AIVerifierMaxOutputTokens:           limits.MaxOutputTokens,
-		AIVerifierMaxCandidateContextTokens: limits.MaxCandidateContextTokens,
-		AIVerifierMaxPredicateOptions:       limits.MaxPredicateOptions,
-		AIVerifierTokenizer:                 limits.Tokenizer,
-	}
+	return cfg
 }
 
 func postgresDSN() string {
@@ -328,15 +291,6 @@ func requiredEnv(name string) string {
 		fatal("%s is required", name)
 	}
 	return value
-}
-
-func requiredPositiveIntEnv(name string) int {
-	value := strings.TrimSpace(os.Getenv(name))
-	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed < 1 {
-		fatal("%s must be a positive integer", name)
-	}
-	return parsed
 }
 
 func fatal(format string, args ...any) {

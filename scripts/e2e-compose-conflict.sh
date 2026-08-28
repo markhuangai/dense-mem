@@ -66,7 +66,7 @@ prepare_conflict_provider_volume() {
 }
 
 prepare_conflict_review_driver() {
-  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && !( "$E2E_SCENARIO" == "synchronous_write" && "${DENSE_MEM_E2E_WRITE_SLICE:-legacy}" == "conflict" ) ]]; then
+  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && ! ( "$E2E_SCENARIO" == "synchronous_write" && "${DENSE_MEM_E2E_WRITE_SLICE:-legacy}" == "conflict" ) ]]; then
     return
   fi
   E2E_CONFLICT_REVIEW_DRIVER="${TEMP_DIR}/conflict-review-driver"
@@ -95,6 +95,15 @@ run_conflict_e2e() {
   DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
   DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER="$E2E_CONFLICT_REVIEW_DRIVER" \
   DENSE_MEM_E2E_CONFLICT_PROVIDER_URL="http://127.0.0.1:${E2E_CONFLICT_PROVIDER_PORT}/v1" \
+  AI_API_URL="http://127.0.0.1:${E2E_CONFLICT_PROVIDER_PORT}/v1" \
+  AI_API_KEY="dense-mem-conflict-e2e-key" \
+  AI_API_EMBEDDING_MODEL="dense-mem-conflict-e2e-embedding" \
+  AI_API_EMBEDDING_DIMENSIONS="1536" \
+  AI_API_EMBEDDING_TIMEOUT_SECONDS="10" \
+  AI_VERIFIER_API_URL="http://127.0.0.1:${E2E_CONFLICT_PROVIDER_PORT}/v1" \
+  AI_VERIFIER_API_KEY="dense-mem-conflict-e2e-key" \
+  AI_VERIFIER_MODEL="dense-mem-conflict-e2e-verifier" \
+  AI_VERIFIER_DISABLE_TEMPERATURE="true" \
   DENSE_MEM_E2E_POSTGRES_HOST="127.0.0.1" \
   DENSE_MEM_E2E_POSTGRES_PORT="$POSTGRES_HOST_PORT" \
   DENSE_MEM_E2E_POSTGRES_USER="$runtime_postgres_user" \

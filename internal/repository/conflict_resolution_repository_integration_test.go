@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -179,6 +180,9 @@ func TestRelationshipConflictResolutionFencesStaleCaseVersionBeforeWrites(t *tes
 
 type conflictResolutionStateSnapshot struct {
 	CaseState           string
+	CaseAttempts        int
+	CaseLeaseWorkerID   string
+	CaseLeaseUntil      *time.Time
 	RelationshipState   string
 	SearchDocumentState string
 	EmbeddingJobState   string
@@ -197,14 +201,19 @@ func captureConflictResolutionStateSnapshot(
 ) conflictResolutionStateSnapshot {
 	t.Helper()
 	var snapshot conflictResolutionStateSnapshot
+	var leaseUntil sql.NullTime
 	require.NotEmpty(t, relationshipIDs)
 	require.NoError(t, rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
-			SELECT status || ':' || version::text || ':' || attempts::text || ':' || COALESCE(lease_worker_id, '') || ':' || COALESCE(resolution_reason, '') || ':' || next_review_at::text || ':' || review_due_at::text
+			SELECT status || ':' || version::text || ':' || COALESCE(resolution_reason, '') || ':' || next_review_at::text || ':' || review_due_at::text,
+			       attempts, COALESCE(lease_worker_id, ''), lease_until
 			FROM relationship_conflict_cases
 			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
-		`, teamID, conflictID).Row().Scan(&snapshot.CaseState); err != nil {
+		`, teamID, conflictID).Row().Scan(&snapshot.CaseState, &snapshot.CaseAttempts, &snapshot.CaseLeaseWorkerID, &leaseUntil); err != nil {
 			return err
+		}
+		if leaseUntil.Valid {
+			snapshot.CaseLeaseUntil = &leaseUntil.Time
 		}
 		if err := tx.Raw(`
 			SELECT COALESCE(string_agg(status || ':' || version::text || ':' || support_count::text || ':' || space_id::text || ':' || space_generation::text, ',' ORDER BY relationship_id::text), '')

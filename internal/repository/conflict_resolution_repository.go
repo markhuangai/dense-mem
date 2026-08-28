@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -405,6 +404,7 @@ func loadConflictResolutionDocuments(
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	relationshipIDs := []string{}
 	for rows.Next() {
 		var relationshipID string
@@ -482,9 +482,9 @@ func conflictResolutionEmbeddingRequired(
 	if err != nil {
 		return false, err
 	}
-	return !(state == string(domain.SearchProjectionCurrent) && hash == documentHash &&
-		dimensions == contract.EmbeddingDimensions && spaceID == relationship.SpaceID &&
-		spaceGeneration == relationship.SpaceGeneration && sourceVersion == int64(relationship.Version) && hasEmbedding), nil
+	return state != string(domain.SearchProjectionCurrent) || hash != documentHash ||
+		dimensions != contract.EmbeddingDimensions || spaceID != relationship.SpaceID ||
+		spaceGeneration != relationship.SpaceGeneration || sourceVersion != int64(relationship.Version) || !hasEmbedding, nil
 }
 
 func conflictResolutionEmbeddingsByHash(
@@ -524,6 +524,12 @@ func applyConflictResolutionEmbedding(
 ) error {
 	if len(vector) != fence.EmbeddingDimensions {
 		return errors.New("conflict resolution embedding dimensions do not match the plan")
+	}
+	previousGenerationID, err := relationshipSearchDocumentProjectionGenerationID(
+		ctx, tx, document.TeamID, document.RelationshipID, fence.EmbeddingContractID,
+	)
+	if err != nil {
+		return err
 	}
 	vectorValue, err := vectorLiteral(vector)
 	if err != nil {
@@ -579,7 +585,10 @@ func applyConflictResolutionEmbedding(
 	if err != nil {
 		return err
 	}
-	return staleConflictRelationshipEmbeddingJobs(ctx, tx, document.TeamID, []string{document.RelationshipID})
+	if err := staleConflictRelationshipEmbeddingJobs(ctx, tx, document.TeamID, []string{document.RelationshipID}); err != nil {
+		return err
+	}
+	return refreshPreviousRelationshipProjectionGeneration(ctx, tx, document.TeamID, previousGenerationID)
 }
 
 func staleConflictRelationshipEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string, relationshipIDs []string) error {
@@ -653,15 +662,4 @@ func validateRelationshipConflictResolutionInput(input RelationshipConflictResol
 		return errors.New("conflict resolution method is unsupported")
 	}
 	return nil
-}
-
-func sortedConflictResolutionDocuments(values []RelationshipConflictResolutionDocument) []RelationshipConflictResolutionDocument {
-	result := append([]RelationshipConflictResolutionDocument(nil), values...)
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].RelationshipID == result[j].RelationshipID {
-			return result[i].DocumentHash < result[j].DocumentHash
-		}
-		return result[i].RelationshipID < result[j].RelationshipID
-	})
-	return result
 }
