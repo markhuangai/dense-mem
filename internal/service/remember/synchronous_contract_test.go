@@ -112,7 +112,7 @@ func validTerminalResultForTest() *TerminalRememberResult {
 			{RelationshipRef: "rel-a", Disposition: "stored", Splits: []SubmissionRelationshipSplit{{
 				SplitIndex: 0, RelationshipID: "11111111-1111-1111-1111-111111111111", RelationshipVersion: 1, Status: "active",
 			}}},
-			{RelationshipRef: "rel-b", Disposition: "not_stored", Reason: "not_supported_by_evidence"},
+			{RelationshipRef: "rel-b", Disposition: "not_stored", Splits: []SubmissionRelationshipSplit{}, Reason: "not_supported_by_evidence"},
 		},
 		Errors: []SubmissionStatusError{},
 	}
@@ -233,6 +233,9 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"relationship disposition", func(result *TerminalRememberResult) { result.RelationshipResults[0].Disposition = "unknown" }},
 		{"non-stored relationship splits", func(result *TerminalRememberResult) {
 			result.RelationshipResults[1].Splits = []SubmissionRelationshipSplit{{SplitIndex: 0}}
+		}},
+		{"non-stored relationship missing splits array", func(result *TerminalRememberResult) {
+			result.RelationshipResults[1].Splits = nil
 		}},
 		{"non-stored relationship reason", func(result *TerminalRememberResult) {
 			result.RelationshipResults[1].Reason = "provider_secret_detail"

@@ -464,6 +464,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		if item.Disposition != "stored" && item.Disposition != "not_stored" {
 			return fmt.Errorf("remember: terminal relationship disposition %q is invalid", item.Disposition)
 		}
+		if item.Splits == nil {
+			return fmt.Errorf("remember: terminal relationship %q splits are required", item.RelationshipRef)
+		}
 		if len(item.Splits) > maxTerminalRelationshipSplits {
 			return fmt.Errorf("remember: terminal relationship %q has too many splits", item.RelationshipRef)
 		}

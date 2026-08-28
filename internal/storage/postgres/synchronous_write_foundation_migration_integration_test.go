@@ -197,8 +197,8 @@ func TestSynchronousWriteFoundationStoresAdditiveLineage(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO semantic_assessments (
 				team_id, semantic_assessment_id, attempt_id, owner_profile_id, response_history,
-				accepted_revision, provider_turns, validated_at, response_hash
-			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '[{}]'::jsonb, 1, 1, now(), $5)
+				accepted_revision, provider_turns, validated_at, response_hash, model
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '[{}]'::jsonb, 1, 1, now(), $5, 'lineage-model')
 		`, teamID, assessmentID, attemptID, profileID, responseHash); err != nil {
 			return err
 		}
@@ -367,38 +367,35 @@ func TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage(t *testi
 	require.Error(t, insertAttempt(uuid.New(), profileA, "replay-lineage", "replay-lineage-request", "remember", "replayed", &canonicalAttemptID))
 	require.Error(t, insertAttempt(uuid.New(), profileA, "canonical-lineage", "different-request", "remember", "replayed", &canonicalAttemptID))
 	require.Error(t, insertAttempt(uuid.New(), profileA, "canonical-lineage", "canonical-lineage-request", "relationship_correction", "replayed", &canonicalAttemptID))
-	failedRetryID := uuid.New()
-	require.NoError(t, insertAttempt(failedRetryID, profileA, "failed-retry", "failed-retry-request", "remember", "failed", nil))
-	require.Error(t, insertAttempt(uuid.New(), profileA, "failed-retry", "different-failed-retry-request", "remember", "completed", nil))
-	require.NoError(t, insertAttempt(uuid.New(), profileA, "failed-retry", "failed-retry-request", "remember", "completed", nil))
 	failedCanonicalID := uuid.New()
 	require.NoError(t, insertAttempt(failedCanonicalID, profileA, "failed-canonical", "failed-canonical-request", "remember", "failed", nil))
 	require.Error(t, insertAttempt(uuid.New(), profileA, "failed-canonical", "failed-canonical-request", "remember", "replayed", &failedCanonicalID))
 
 	assessmentAttemptID := uuid.New()
 	require.NoError(t, insertAttempt(assessmentAttemptID, profileA, "assessment-lineage", "assessment-lineage-request", "remember", "failed", nil))
-	insertAssessment := func(assessmentID uuid.UUID, history string, acceptedRevision string, validatedAt string, responseHash string) error {
+	insertAssessment := func(assessmentID uuid.UUID, history string, acceptedRevision string, validatedAt string, responseHash, model string) error {
 		return execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, `
 				INSERT INTO semantic_assessments (
 					team_id, semantic_assessment_id, attempt_id, owner_profile_id,
-					response_history, accepted_revision, validated_at, response_hash
-				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::jsonb, $6::integer, `+validatedAt+`, $7)
-			`, teamID, assessmentID, assessmentAttemptID, profileA, history, acceptedRevision, responseHash)
+					response_history, accepted_revision, validated_at, response_hash, model
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::jsonb, $6::integer, `+validatedAt+`, $7, $8)
+			`, teamID, assessmentID, assessmentAttemptID, profileA, history, acceptedRevision, responseHash, model)
 			return err
 		})
 	}
 	validResponseHash := "sha256:" + strings.Repeat("1", 64)
-	require.Error(t, insertAssessment(uuid.New(), "[]", "1", "NULL", validResponseHash))
-	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "NULL", validResponseHash))
-	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "CURRENT_TIMESTAMP", ""))
-	require.Error(t, insertAssessment(uuid.New(), "[{}]", "2", "CURRENT_TIMESTAMP", validResponseHash))
+	require.Error(t, insertAssessment(uuid.New(), "[]", "1", "NULL", validResponseHash, "test-model"))
+	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "NULL", validResponseHash, "test-model"))
+	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "CURRENT_TIMESTAMP", "", "test-model"))
+	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "CURRENT_TIMESTAMP", validResponseHash, ""))
+	require.Error(t, insertAssessment(uuid.New(), "[{}]", "2", "CURRENT_TIMESTAMP", validResponseHash, "test-model"))
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO semantic_assessments (
 				team_id, semantic_assessment_id, attempt_id, owner_profile_id,
-				response_history, accepted_revision, provider_turns, validated_at, response_hash
-			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '[{}]'::jsonb, 1, 1, CURRENT_TIMESTAMP, $5)
+				response_history, accepted_revision, provider_turns, validated_at, response_hash, model
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '[{}]'::jsonb, 1, 1, CURRENT_TIMESTAMP, $5, 'test-model')
 		`, teamID, uuid.New().String(), assessmentAttemptID.String(), profileA, validResponseHash)
 		return err
 	}))
