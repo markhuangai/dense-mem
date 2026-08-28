@@ -96,6 +96,16 @@ run_synchronous_write_e2e() {
     DENSE_MEM_E2E_POSTGRES_USER="$runtime_postgres_user" \
     DENSE_MEM_E2E_POSTGRES_PASSWORD="$runtime_postgres_password" \
     DENSE_MEM_E2E_POSTGRES_DB="$runtime_postgres_database" \
+    AI_API_URL="http://127.0.0.1:${E2E_CONFLICT_PROVIDER_PORT}/v1" \
+    AI_API_KEY="dense-mem-conflict-e2e-key" \
+    AI_API_EMBEDDING_MODEL="dense-mem-conflict-e2e-embedding" \
+    AI_API_EMBEDDING_DIMENSIONS="1536" \
+    AI_API_EMBEDDING_TIMEOUT_SECONDS="10" \
+    AI_VERIFIER_API_URL="http://127.0.0.1:${E2E_CONFLICT_PROVIDER_PORT}/v1" \
+    AI_VERIFIER_API_KEY="dense-mem-conflict-e2e-key" \
+    AI_VERIFIER_MODEL="dense-mem-conflict-e2e-verifier" \
+    AI_VERIFIER_TIMEOUT_SECONDS="2" \
+    AI_VERIFIER_DISABLE_TEMPERATURE="true" \
     DENSE_MEM_USER_URL="$USER_URL" \
     DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
     DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \

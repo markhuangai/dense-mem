@@ -419,17 +419,26 @@ func (s *Service) executeResolution(
 ) (*repository.ApplyOverdueConflictResolutionResult, error) {
 	plan, err := s.repository.PlanRelationshipConflictResolution(ctx, input)
 	if err != nil {
+		if retryErr := s.releaseRetryableConflictClaim(ctx, input, err); retryErr != nil {
+			return nil, errors.Join(err, retryErr)
+		}
 		return nil, err
 	}
 	if plan == nil {
 		return nil, errors.New("conflict review service: resolution planner returned no plan")
 	}
 	if plan.Stale || plan.Pending {
-		return &repository.ApplyOverdueConflictResolutionResult{
+		result := &repository.ApplyOverdueConflictResolutionResult{
 			ConflictID: plan.Resolution.ConflictID, PreferredPositionID: plan.Resolution.PreferredPositionID,
 			Method: plan.Resolution.Method, Stale: plan.Stale, Pending: plan.Pending,
 			PendingTransitioned: plan.PendingTransitioned,
-		}, nil
+		}
+		if plan.Stale {
+			if retryErr := s.releaseRetryableConflictClaim(ctx, input, repository.ErrConflictAssessmentStale); retryErr != nil {
+				return nil, retryErr
+			}
+		}
+		return result, nil
 	}
 	documents := make([]semanticwrite.Document, 0, len(plan.Documents))
 	seen := make(map[string]struct{}, len(plan.Documents))
@@ -465,9 +474,21 @@ func (s *Service) executeResolution(
 			Embedding:    append([]float32(nil), value.Vector...),
 		})
 	}
-	return s.repository.CommitRelationshipConflictResolution(ctx, repository.CommitRelationshipConflictResolutionInput{
+	committed, err := s.repository.CommitRelationshipConflictResolution(ctx, repository.CommitRelationshipConflictResolutionInput{
 		Plan: *plan, Embeddings: embeddings,
 	})
+	if err != nil {
+		if retryErr := s.releaseRetryableConflictClaim(ctx, input, err); retryErr != nil {
+			return nil, errors.Join(err, retryErr)
+		}
+		return nil, err
+	}
+	if committed != nil && committed.Stale {
+		if retryErr := s.releaseRetryableConflictClaim(ctx, input, repository.ErrConflictAssessmentStale); retryErr != nil {
+			return nil, retryErr
+		}
+	}
+	return committed, nil
 }
 
 func (s *Service) releaseRetryableConflictClaim(
@@ -476,15 +497,23 @@ func (s *Service) releaseRetryableConflictClaim(
 	processingErr error,
 ) error {
 	if !errors.Is(processingErr, semanticwrite.ErrProviderUnavailable) &&
+		!errors.Is(processingErr, semanticwrite.ErrProviderResponseInvalid) &&
+		!errors.Is(processingErr, repository.ErrConflictAssessmentStale) &&
 		!errors.Is(processingErr, context.Canceled) &&
 		!errors.Is(processingErr, context.DeadlineExceeded) {
 		return nil
 	}
 	releaseCtx := context.WithoutCancel(ctx)
-	return s.repository.ReleaseRelationshipConflictCaseClaim(releaseCtx, repository.ReleaseRelationshipConflictCaseClaimInput{
+	if err := s.repository.ReleaseRelationshipConflictCaseClaim(releaseCtx, repository.ReleaseRelationshipConflictCaseClaimInput{
 		TeamID: input.TeamID, ConflictID: input.ConflictID, WorkerID: input.WorkerID,
 		ReviewRunID: input.ReviewRunID, Now: input.Now,
-	})
+	}); err != nil {
+		if errors.Is(err, repository.ErrPlacementLeaseLost) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Service) applyResolutionResult(

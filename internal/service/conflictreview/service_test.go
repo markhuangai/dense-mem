@@ -889,18 +889,23 @@ type conflictReviewProviderStub struct {
 }
 
 type conflictReviewEmbeddingProviderStub struct {
-	err error
+	err           error
+	returnedModel string
 }
 
 func (stub *conflictReviewEmbeddingProviderStub) EmbedBatch(_ context.Context, texts []string) ([][]float32, string, error) {
+	model := stub.returnedModel
+	if model == "" {
+		model = "test-embedding-model"
+	}
 	if stub.err != nil {
-		return nil, "test-embedding-model", stub.err
+		return nil, model, stub.err
 	}
 	vectors := make([][]float32, len(texts))
 	for index := range texts {
 		vectors[index] = []float32{1, 0}
 	}
-	return vectors, "test-embedding-model", nil
+	return vectors, model, nil
 }
 
 func (*conflictReviewEmbeddingProviderStub) ModelName() string { return "test-embedding-model" }

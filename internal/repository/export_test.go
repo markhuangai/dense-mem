@@ -107,3 +107,15 @@ func (f *DeterministicConflictServiceFixture) Snapshot(t *testing.T) ConflictRes
 	t.Helper()
 	return captureConflictResolutionStateSnapshot(t, context.Background(), f.adminDB, f.rls, f.TeamID, f.ConflictID, f.RelationshipIDs)
 }
+
+// ExpireClaim makes the fixture's claimed conflict unavailable to the current worker.
+func (f *DeterministicConflictServiceFixture) ExpireClaim(t *testing.T) {
+	t.Helper()
+	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_conflict_cases
+			SET lease_until = now() - interval '1 second'
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, f.TeamID, f.ConflictID).Error
+	}))
+}

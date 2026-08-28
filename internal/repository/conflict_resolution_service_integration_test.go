@@ -57,6 +57,58 @@ func TestDeterministicConflictEmbeddingFailureReleasesClaimAndRetries(t *testing
 	assert.Equal(t, repository.ConflictReviewStageDueMajority, resolved.Stage)
 }
 
+func TestDeterministicConflictResolutionReleasesExpiredClaimAfterEmbedding(t *testing.T) {
+	fixture := repository.NewDeterministicConflictServiceFixture(t)
+
+	embedder := &blockingDeterministicConflictEmbeddingProvider{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	reviewer, err := conflictreviewservice.New(conflictreviewservice.Dependencies{
+		Repository: fixture.Ledger, Provider: deterministicConflictProvider{}, Embeddings: embedder,
+		EmbeddingTimeout: 5 * time.Second, Timezone: "UTC", Limits: conflictassessment.DefaultSemanticAssessmentLimits(),
+	})
+	require.NoError(t, err)
+	before := fixture.Snapshot(t)
+	type reviewResult struct {
+		result *repository.ReviewRelationshipConflictCaseResult
+		err    error
+	}
+	completed := make(chan reviewResult, 1)
+	go func() {
+		result, reviewErr := reviewer.ReviewRelationshipConflictCase(context.Background(), repository.ReviewRelationshipConflictCaseInput{
+			TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+			ConflictID: fixture.ConflictID, Now: fixture.ReviewNow,
+		})
+		completed <- reviewResult{result: result, err: reviewErr}
+	}()
+	<-embedder.started
+	fixture.ExpireClaim(t)
+	close(embedder.release)
+	reviewed := <-completed
+	require.NoError(t, reviewed.err)
+	require.NotNil(t, reviewed.result)
+	assert.Equal(t, repository.ConflictReviewOutcomeNoop, reviewed.result.Outcome)
+	assert.Equal(t, "resolution_stale", reviewed.result.Stage)
+
+	after := fixture.Snapshot(t)
+	assert.Equal(t, before.CaseState, after.CaseState)
+	assert.Equal(t, before.RelationshipState, after.RelationshipState)
+	assert.Equal(t, before.SearchDocumentState, after.SearchDocumentState)
+	assert.Equal(t, before.EmbeddingJobState, after.EmbeddingJobState)
+	assert.Equal(t, 1, before.CaseAttempts)
+	assert.Equal(t, 0, after.CaseAttempts)
+	assert.Empty(t, after.CaseLeaseWorkerID)
+	assert.Nil(t, after.CaseLeaseUntil)
+
+	reclaimed, err := fixture.Ledger.ClaimRelationshipConflictCases(context.Background(), repository.ClaimRelationshipConflictCasesInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+		Limit: 1, Lease: time.Minute, MaxAttempts: 1, Now: fixture.ReviewNow.Add(time.Second),
+	})
+	require.NoError(t, err)
+	require.Len(t, reclaimed, 1)
+}
+
 type deterministicConflictProvider struct{}
 
 func (deterministicConflictProvider) AssessRelationshipConflict(context.Context, conflictassessment.ConflictAssessmentRequest) (conflictassessment.ConflictAssessmentResponse, error) {
@@ -83,3 +135,26 @@ func (p *deterministicConflictEmbeddingProvider) EmbedBatch(_ context.Context, t
 func (*deterministicConflictEmbeddingProvider) ModelName() string { return "test-model" }
 func (*deterministicConflictEmbeddingProvider) Dimensions() int   { return 3 }
 func (*deterministicConflictEmbeddingProvider) IsAvailable() bool { return true }
+
+type blockingDeterministicConflictEmbeddingProvider struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingDeterministicConflictEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, string, error) {
+	close(p.started)
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+		return nil, "test-model", ctx.Err()
+	}
+	vectors := make([][]float32, len(texts))
+	for index := range vectors {
+		vectors[index] = []float32{1, 0, 0}
+	}
+	return vectors, "test-model", nil
+}
+
+func (*blockingDeterministicConflictEmbeddingProvider) ModelName() string { return "test-model" }
+func (*blockingDeterministicConflictEmbeddingProvider) Dimensions() int   { return 3 }
+func (*blockingDeterministicConflictEmbeddingProvider) IsAvailable() bool { return true }

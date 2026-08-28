@@ -87,6 +87,9 @@ func (r *LedgerRepositoryImpl) CommitRelationshipConflictResolution(
 		}
 		for _, document := range current.Documents {
 			if err := applyConflictResolutionEmbedding(ctx, tx, document, current.Fence, vectors[document.DocumentHash]); err != nil {
+				if errors.Is(err, ErrConflictAssessmentStale) {
+					return ErrConflictAssessmentStale
+				}
 				return err
 			}
 		}
@@ -158,6 +161,15 @@ func (r *LedgerRepositoryImpl) CommitRelationshipConflictResolution(
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, ErrConflictAssessmentStale) {
+			*result = ApplyOverdueConflictResolutionResult{
+				ConflictID:          input.Plan.Resolution.ConflictID,
+				PreferredPositionID: input.Plan.Resolution.PreferredPositionID,
+				Method:              input.Plan.Resolution.Method,
+				Stale:               true,
+			}
+			return result, nil
+		}
 		return nil, fmt.Errorf("conflict review: commit resolution: %w", err)
 	}
 	return result, nil
