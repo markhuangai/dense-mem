@@ -223,6 +223,44 @@ func TestRelationshipConflictResolutionPreflightCountsNonForegroundDocuments(t *
 	assert.Empty(t, plan.Documents)
 }
 
+func TestRelationshipConflictResolutionDeduplicatesRenderedDocumentsBeforeBound(t *testing.T) {
+	fixture := NewOversizedConflictServiceFixture(t)
+	ctx := context.Background()
+	reviewNow := fixture.ReviewNow.Add(-24 * time.Hour)
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE relationship_records
+			SET valid_from = ?
+			WHERE team_id = ?::uuid AND relationship_id = ANY(?::uuid[])
+		`, reviewNow, fixture.TeamID, pq.Array(fixture.RelationshipIDs)).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'pending', embedding = NULL,
+			    embedding_updated_at = NULL, embedding_error = '', document_hash = ''
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ANY(?::uuid[])
+		`, fixture.TeamID, pq.Array(fixture.RelationshipIDs)).Error
+	}))
+
+	reviewed, err := fixture.Ledger.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+		ConflictID: fixture.ConflictID, Now: fixture.ReviewNow,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, reviewed)
+	require.Equal(t, ConflictReviewOutcomeResolve, reviewed.Outcome)
+	require.NotNil(t, reviewed.Resolution)
+
+	plan, err := fixture.Ledger.PlanRelationshipConflictResolution(ctx, *reviewed.Resolution)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	assert.False(t, plan.Pending)
+	assert.Len(t, plan.Documents, 1)
+}
+
 type conflictResolutionStateSnapshot struct {
 	CaseState           string
 	CaseAttempts        int

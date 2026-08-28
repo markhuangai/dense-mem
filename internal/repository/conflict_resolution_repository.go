@@ -469,7 +469,7 @@ func countConflictResolutionDocumentsForBound(
 			 AND document_space_id = space_id
 			 AND document_space_generation = space_generation
 			THEN document_hash
-			ELSE relationship_id
+			ELSE NULL
 		END)::int
 		FROM required
 	`, input.TeamID, input.ConflictID, input.PreferredPositionID, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions, foregroundGenerationID, foregroundGenerationID).Row().Scan(&count)
@@ -691,12 +691,18 @@ func loadConflictResolutionDocuments(
 		if !required {
 			continue
 		}
+		if _, exists := seenHashes[normalized.DocumentHash]; exists {
+			continue
+		}
 		assignments = append(assignments, RelationshipConflictResolutionDocument{
 			TeamID: relationship.TeamID, RelationshipID: relationship.RelationshipID, OwnerProfileID: relationship.OwnerProfileID,
 			SpaceID: relationship.SpaceID, SpaceGeneration: relationship.SpaceGeneration,
 			SourceVersion: int64(relationship.Version), DocumentHash: normalized.DocumentHash, DocumentText: normalized.DocumentText,
 		})
 		seenHashes[normalized.DocumentHash] = struct{}{}
+		if len(seenHashes) > domain.MaxEmbeddingBatchDocuments {
+			break
+		}
 	}
 	return assignments, nil
 }
