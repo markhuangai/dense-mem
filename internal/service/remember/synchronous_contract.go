@@ -151,6 +151,8 @@ var terminalErrorCodes = []TerminalErrorCode{
 	TerminalErrorQuarantined,
 }
 
+const maxTerminalErrors = 50
+
 func TerminalErrorCodes() []string {
 	result := make([]string, 0, len(terminalErrorCodes))
 	for _, code := range terminalErrorCodes {
@@ -345,6 +347,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	if result.Errors == nil {
 		return errors.New("remember: terminal errors are required")
 	}
+	if len(result.Errors) > maxTerminalErrors {
+		return fmt.Errorf("remember: terminal error count %d exceeds limit %d", len(result.Errors), maxTerminalErrors)
+	}
 	if len(result.Evidence) != evidenceCount {
 		return fmt.Errorf("remember: terminal evidence count %d, expected %d", len(result.Evidence), evidenceCount)
 	}
@@ -410,11 +415,17 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 			return fmt.Errorf("remember: non-stored evidence %d must have not_required search state", index)
 		}
 	}
+	seenErrorCodes := make(map[TerminalErrorCode]struct{}, len(result.Errors))
 	for index, item := range result.Errors {
 		if err := ValidateTerminalStatusError(item); err != nil {
 			return fmt.Errorf("remember: terminal error %d: %w", index, err)
 		}
-		if result.ProcessingState != string(terminalProcessingStateForError(TerminalErrorCode(item.Code))) {
+		code := TerminalErrorCode(item.Code)
+		if _, ok := seenErrorCodes[code]; ok {
+			return fmt.Errorf("remember: terminal error %d duplicates code %q", index, item.Code)
+		}
+		seenErrorCodes[code] = struct{}{}
+		if result.ProcessingState != string(terminalProcessingStateForError(code)) {
 			return fmt.Errorf("remember: terminal error %d is inconsistent with processing state", index)
 		}
 	}

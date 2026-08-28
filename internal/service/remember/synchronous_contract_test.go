@@ -41,6 +41,31 @@ func TestValidateTerminalRememberResultRejectsUnclosedErrorProjection(t *testing
 	require.ErrorContains(t, ValidateTerminalRememberResult(result, 0, nil), "terminal error code")
 }
 
+func TestValidateTerminalRememberResultBoundsAndDeduplicatesErrors(t *testing.T) {
+	t.Run("bounds errors", func(t *testing.T) {
+		result := terminalFailureResultForTest(
+			string(TerminalProcessingFailed),
+			TerminalErrorProviderUnavailable,
+			"internal_failure",
+		)
+		result.Errors = make([]SubmissionStatusError, maxTerminalErrors+1)
+		for index := range result.Errors {
+			result.Errors[index] = TerminalStatusError(TerminalErrorProviderUnavailable)
+		}
+		require.ErrorContains(t, ValidateTerminalRememberResult(result, 2, []string{"rel-a", "rel-b"}), "exceeds limit")
+	})
+
+	t.Run("rejects duplicate codes", func(t *testing.T) {
+		result := terminalFailureResultForTest(
+			string(TerminalProcessingFailed),
+			TerminalErrorProviderUnavailable,
+			"internal_failure",
+		)
+		result.Errors = append(result.Errors, TerminalStatusError(TerminalErrorProviderUnavailable))
+		require.ErrorContains(t, ValidateTerminalRememberResult(result, 2, []string{"rel-a", "rel-b"}), "duplicates code")
+	})
+}
+
 func TestTerminalResultWithErrorForcesTerminalFailureKind(t *testing.T) {
 	result := &TerminalRememberResult{Kind: ResultKindLegacyReceipt, ProcessingState: "queued"}
 	failure := TerminalResultWithError(result, TerminalErrorEmbeddingResponseInvalid)
