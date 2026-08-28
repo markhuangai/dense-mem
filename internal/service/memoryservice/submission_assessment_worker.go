@@ -447,7 +447,7 @@ func (s *submissionAssessmentPlacementWorkerService) retryOrFail(
 ) error {
 	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
 		cause := firstError(failureCause)
-		if isRepositoryDatabaseFailure(cause) {
+		if IsRepositoryDatabaseFailure(cause) {
 			return s.completeTerminalWithoutRelationshipResults(ctx, scope, stage, cause)
 		}
 		return s.completeTerminal(ctx, scope, string(domain.SemanticReviewTerminalFailure), "failed", stage, cause)

@@ -76,6 +76,14 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 	replay, err := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
 	if err == nil && replay != nil {
 		if !domain.RememberRequestHashMatches(replay.RequestHash, replay.ContractVersion, input.RequestHash, input.MigratedRequestHash) {
+			if input.SecurityRejected && input.SecurityRejectionAudit != nil {
+				commitCtx, cancelCommit := remember.ContextForPhase(ctx, remember.RememberPhaseCommit)
+				auditErr := remember.RecordSecurityRejectionAudit(commitCtx, p.auditor, p.logger, *input.SecurityRejectionAudit)
+				cancelCommit()
+				if auditErr != nil {
+					return nil, remember.ErrRememberPersistence
+				}
+			}
 			return nil, remember.ErrRememberConflict
 		}
 		if replay.Outcome == "completed" || replay.Outcome == "rejected" || replay.Outcome == "quarantined" || replay.Outcome == "replayed" {
@@ -309,6 +317,8 @@ func synchronousFailureCode(phase string, err error) remember.TerminalErrorCode 
 		return remember.TerminalErrorEmbeddingResponseInvalid
 	case errors.Is(err, assessor.ErrVerifierMalformedResponse):
 		return remember.TerminalErrorProviderResponseInvalid
+	case memoryservice.IsRepositoryDatabaseFailure(err):
+		return remember.TerminalErrorDatabaseFailure
 	case phase == "assessment":
 		return remember.TerminalErrorProviderUnavailable
 	case phase == "embedding":

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -317,6 +319,40 @@ func TestRememberUsesExplicitSynchronousProcessorWithoutStaging(t *testing.T) {
 	require.Equal(t, ownerID.String(), processor.request.OwnerProfileID)
 	require.NotEmpty(t, processor.request.MigratedRequestHash)
 	require.NotEqual(t, processor.request.RequestHash, processor.request.MigratedRequestHash)
+}
+
+func TestRememberSynchronousBoundsCorrelationIDBeforeProcessing(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		correlationID string
+	}{
+		{name: "blank", correlationID: "   "},
+		{name: "too long", correlationID: strings.Repeat("界", maxTerminalCorrelationIDRunes+1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			processor := &synchronousProcessorStub{result: &SubmissionStatusResult{
+				ContractVersion: domain.ContractVersion, SubmissionID: uuid.NewString(), SubmissionKind: "remember",
+				ProcessingState: "completed", SearchState: "current", CorrelationID: "terminal-correlation",
+			}}
+			svc := NewService(Dependencies{Intake: &intakeStub{}, Synchronous: processor})
+			ctx := correlation.WithID(rememberTestContext(uuid.New(), uuid.New()), test.correlationID)
+
+			_, err := svc.Remember(ctx, RememberRequest{
+				IdempotencyKey:    "bounded-correlation-" + test.name,
+				Evidence:          []RememberEvidenceInput{{Content: "A supported fact."}},
+				RelationshipHints: coveredRelationships(1),
+			})
+
+			require.NoError(t, err)
+			actor, ok := processor.request.Metadata["actor"].(map[string]any)
+			require.True(t, ok)
+			bounded, ok := actor["correlation_id"].(string)
+			require.True(t, ok)
+			require.NotEmpty(t, bounded)
+			require.LessOrEqual(t, utf8.RuneCountInString(bounded), maxTerminalCorrelationIDRunes)
+			require.NotEqual(t, strings.TrimSpace(test.correlationID), bounded)
+		})
+	}
 }
 
 func TestRememberSynchronousDefersSecurityAuditUntilAfterReplayLookup(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -193,6 +194,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	}
 	started := time.Now()
 	if s.synchronous != nil {
+		ctx = correlation.WithID(ctx, normalizeSynchronousCorrelationID(correlation.FromContext(ctx)))
 		ctx = WithRememberDeadlines(ctx, started)
 		operationCtx, cancel := context.WithDeadline(ctx, started.Add(RememberTotalBudget))
 		defer cancel()
@@ -297,6 +299,14 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		observability.RecordRememberFirstDisposition(ctx, s.metrics, disposition.CompletedAt.Sub(disposition.CreatedAt), disposition.Status)
 	}
 	return rememberResultFromLedger(created, correlationID), nil
+}
+
+func normalizeSynchronousCorrelationID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || utf8.RuneCountInString(value) > maxTerminalCorrelationIDRunes {
+		return uuid.NewString()
+	}
+	return value
 }
 
 func rememberResultFromTerminal(status *SubmissionStatusResult) *RememberResult {

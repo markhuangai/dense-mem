@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -99,6 +100,13 @@ func TestSynchronousFailureDistinguishesProviderUnavailabilityFromRequestDeadlin
 	}
 	if got := synchronousFailureCode("embedding", context.DeadlineExceeded); got != remember.TerminalErrorRequestTimeout {
 		t.Fatalf("embedding phase deadline code = %q, want %q", got, remember.TerminalErrorRequestTimeout)
+	}
+}
+
+func TestSynchronousFailureClassifiesRepositoryDatabaseFailures(t *testing.T) {
+	databaseErr := fmt.Errorf("repository query failed: %w", &pgconn.PgError{Code: "08006"})
+	for _, phase := range []string{"embedding", "commit"} {
+		require.Equal(t, remember.TerminalErrorDatabaseFailure, synchronousFailureCode(phase, databaseErr), phase)
 	}
 }
 
@@ -374,6 +382,29 @@ func TestSynchronousProcessorRejectsChangedTerminalHashBeforeProviderWork(t *tes
 	require.Zero(t, embeddings.calls)
 	require.Zero(t, ledger.planCalls)
 	require.Zero(t, ledger.commitCalls)
+}
+
+func TestSynchronousProcessorAuditsSecurityRejectedHashConflict(t *testing.T) {
+	teamID, ownerID := uuid.NewString(), uuid.NewString()
+	input := synchronousPipelineRememberRequest(teamID, ownerID, "pipeline-security-conflict", "current-hash")
+	input.SecurityRejected = true
+	input.SecurityRejectionAudit = &remember.SecurityRejectionAuditInput{EventID: uuid.NewString(), TeamID: teamID, ActorProfileID: ownerID, Surface: "remember", ReasonCode: "evidence_security_rejected", EvidenceCount: 1}
+	ledger := &synchronousPipelineLedger{loadResult: &repository.RememberAttempt{
+		RequestHash: "different-hash", ContractVersion: domain.ContractVersion, Outcome: "quarantined",
+	}}
+	audit := &synchronousSecurityAuditStub{}
+	provider := &synchronousPipelineProvider{}
+	processor := NewSynchronousRememberProcessor(SynchronousRememberProcessorDependencies{
+		Ledger: ledger, Catalog: synchronousPipelineCatalog{}, Provider: provider, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Embeddings: semanticwrite.NewExecutor(&synchronousPipelineEmbeddingProvider{}), Auditor: audit,
+	})
+
+	_, err := processor.ProcessRemember(context.Background(), input)
+
+	require.ErrorIs(t, err, remember.ErrRememberConflict)
+	require.Equal(t, 1, audit.calls)
+	require.Zero(t, ledger.preflightCalls)
+	require.Zero(t, provider.assessCalls)
 }
 
 func TestSynchronousProcessorReturnsBoundedConflictForExistingLegacyIngest(t *testing.T) {
