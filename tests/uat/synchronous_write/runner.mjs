@@ -38,22 +38,22 @@ function assert(condition, message) {
 
 async function liveRPC(method, params) {
   const payload = await liveRawRPC(method, params);
-  if (payload.error) throw new Error(`MCP ${method} returned a bounded error`);
+  if (payload.error) throw new Error(`MCP ${method} returned a bounded error: ${payload.error.message || "unknown"}`);
   return payload.result ?? payload;
 }
 
-async function liveRawRPC(method, params) {
+async function liveRawRPC(method, params, signal) {
   const base = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
   const key = required("DENSE_MEM_E2E_API_KEY");
   const response = await fetch(`${base}/mcp`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
+    signal,
   });
   const body = await response.text();
   if (!response.ok) throw new Error(`MCP request failed with HTTP ${response.status}`);
-  const payload = body ? JSON.parse(body) : {};
-  return payload;
+  return body ? JSON.parse(body) : {};
 }
 
 function required(name) {

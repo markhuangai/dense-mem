@@ -9,6 +9,9 @@ const writeSlice = (process.env.DENSE_MEM_E2E_WRITE_SLICE || "").trim();
 const timeoutDelayMs = Number(process.env.DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS || 30_000);
 const correctionProviderFaultMarker = "e2e-correction-provider-fault";
 const correctionProviderTimeoutMarker = "e2e-correction-provider-timeout";
+const assessmentAttempts = new Map();
+let assessmentCalls = 0;
+let embeddingCalls = 0;
 
 function vectorFor(text, width) {
   const output = [];
@@ -104,17 +107,9 @@ function fullEvidenceRange(evidence) {
 
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
-    sendJSON(response, 200, { status: "ok", fault });
+    sendJSON(response, 200, { status: "ok", fault, assessment_calls: assessmentCalls, embedding_calls: embeddingCalls });
     return;
   }
-  if (fault === "timeout") {
-    await new Promise((resolve) => setTimeout(resolve, timeoutDelayMs));
-  }
-  if (fault === "unavailable") {
-    response.destroy();
-    return;
-  }
-
   let body = "";
   for await (const chunk of request) body += chunk;
   let payload = {};
@@ -122,6 +117,18 @@ const server = createServer(async (request, response) => {
     payload = body ? JSON.parse(body) : {};
   } catch {
     sendJSON(response, 400, { error: { message: "invalid fixture request" } });
+    return;
+  }
+
+  const requestFault = fixtureFault(payload) || fault;
+  const route = request.url?.endsWith("/embeddings") ? "embedding" : request.url?.endsWith("/chat/completions") ? "assessment" : "other";
+  const routeFault = faultForRoute(requestFault, route);
+  if (route === "embedding") embeddingCalls += 1;
+  if (routeFault === "timeout" || routeFault === "assessment-timeout" || routeFault === "embedding-timeout" || routeFault === "embedding-only-timeout" || (routeFault === "embedding-cancel" && embeddingCalls === 1)) {
+    await new Promise((resolve) => setTimeout(resolve, timeoutDelayMs));
+  }
+  if (routeFault === "unavailable" || routeFault === "assessment-unavailable" || routeFault === "embedding-unavailable") {
+    response.destroy();
     return;
   }
 
@@ -134,32 +141,158 @@ const server = createServer(async (request, response) => {
       response.destroy();
       return;
     }
-    if (fault === "malformed") {
+    if (routeFault === "malformed" || routeFault === "embedding-malformed" || routeFault === "embedding-model") {
       sendJSON(response, 200, { model: "fixture-wrong-model", data: [{ index: 0, embedding: [0] }] });
       return;
     }
+    if (routeFault === "embedding-count") {
+      sendJSON(response, 200, {
+        model: payload.model || "dense-mem-e2e-embedding",
+        data: inputs.slice(0, Math.max(0, inputs.length - 1)).map((input, index) => ({ index, embedding: vectorFor(input, dimensions) })),
+        usage: { prompt_tokens: inputs.length, total_tokens: inputs.length },
+      });
+      return;
+    }
+    const vectorWidth = routeFault === "embedding-dimension" ? Math.max(1, dimensions - 1) : dimensions;
+    const data = inputs.map((input, index) => ({ index, embedding: vectorFor(input, vectorWidth) }));
+    if (routeFault === "embedding-non-finite" && data.length > 0) data[0].embedding[0] = "NaN";
     sendJSON(response, 200, {
       model: payload.model || "dense-mem-e2e-embedding",
-      data: inputs.map((input, index) => ({ index, embedding: vectorFor(input, dimensions) })),
+      data,
       usage: { prompt_tokens: inputs.length, total_tokens: inputs.length },
     });
     return;
   }
 
   if (request.url?.endsWith("/chat/completions")) {
-    if (fault === "malformed") {
+    assessmentCalls += 1;
+    const assessmentRequest = assessmentInput(payload);
+    const assessmentFault = routeFault;
+    const attemptKey = assessmentRequest.request_id || "fixture";
+    const attempt = (assessmentAttempts.get(attemptKey) || 0) + 1;
+    assessmentAttempts.set(attemptKey, attempt);
+    const repair = isRepairPayload(payload);
+    if (assessmentFault === "malformed" || assessmentFault === "assessment-malformed" || assessmentFault === "repair-exhausted" || (assessmentFault === "repair" && !repair)) {
       sendJSON(response, 200, { choices: [{ message: { content: "not-json" } }] });
       return;
     }
     const correctionResponse = writeSlice === "correction" ? correctionAssessmentResponse(payload) : null;
+    const assessment = correctionResponse || fixtureAssessment(assessmentRequest, assessmentFault, attempt);
     sendJSON(response, 200, {
-      choices: [{ message: { content: JSON.stringify(correctionResponse || { request_id: "fixture", entity_results: [], relationship_results: [], security_signals: [] }) } }],
+      choices: [{ message: { content: JSON.stringify(assessment) } }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     });
     return;
   }
   sendJSON(response, 404, { error: { message: "fixture route not found" } });
 });
+
+function assessmentInput(payload) {
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role !== "user" || typeof messages[index]?.content !== "string") continue;
+    try {
+      const parsed = JSON.parse(messages[index].content);
+      if (Array.isArray(parsed.submitted_relationships)) return parsed;
+    } catch {
+      // Repair feedback is not an assessment request.
+    }
+  }
+  return { request_id: "fixture", submitted_entities: [], submitted_relationships: [], evidence: [] };
+}
+
+function fixtureAssessment(request, requestFault, attempt) {
+  const evidenceByID = new Map((request.evidence || []).map((item) => [item.evidence_id, item]));
+  const entities = (request.submitted_entities || []).map((entity) => {
+    const groundingRef = entity.groundings?.[0]?.grounding_ref ?? null;
+    const group = (request.entity_candidate_groups || []).find((candidate) => candidate.grounding_ref === groundingRef);
+    const candidates = (group?.candidates || []).filter((candidate) => candidate.kind === entity.kind);
+    const reusable = candidates.length === 1 ? candidates[0] : null;
+    return {
+      ref: entity.ref,
+      grounding_ref: groundingRef,
+      action: reusable ? "reuse" : "create",
+      candidate_entity_id: reusable?.entity_id ?? null,
+    };
+  });
+  const relationships = (request.submitted_relationships || []).map((relationship, index) => {
+    const evidenceIDs = Array.isArray(relationship.evidence_ids) ? relationship.evidence_ids : [];
+    const ranges = evidenceIDs.map((evidenceID) => wholeEvidenceRange(evidenceByID.get(evidenceID))).filter(Boolean);
+    const range = ranges[0] || wholeEvidenceRange(request.evidence?.[0]);
+    const unsupported = requestFault === "no-supported" || (requestFault === "mixed" && index > 0);
+    if (unsupported) {
+      return { ref: relationship.ref, disposition: "not_supported", reason: "not_supported_by_evidence", splits: [] };
+    }
+    const knownPredicate = relationship.known_predicate_key || "";
+    const predicateOptions = Array.isArray(request.predicate_options) ? request.predicate_options : [];
+    const resolved = predicateOptions.find((option) => option.predicate_key === (knownPredicate || relationship.predicate_hint));
+    return {
+      ref: relationship.ref,
+      disposition: "stored",
+      reason: null,
+      splits: [{
+        split_index: 0,
+        subject_ref: relationship.subject_ref,
+        predicate_range: range,
+        predicate_status: resolved ? "resolved" : "registration_required",
+        predicate_key: resolved?.predicate_key ?? null,
+        predicate_version: resolved?.version ?? null,
+        predicate_registration: resolved ? null : {
+          predicate_key: relationship.predicate_hint || "related_to",
+          relationship_kind: "state",
+          current_cardinality: "many",
+        },
+        object_ref: relationship.object_ref ?? null,
+        object_value: relationship.object_value ?? null,
+        value_range: relationship.object_value ? range : null,
+        polarity: relationship.polarity,
+        support_ranges: ranges.length > 0 ? ranges : [range],
+        valid_from: relationship.valid_from ?? null,
+        valid_to: relationship.valid_to ?? null,
+      }],
+    };
+  });
+  const securitySignals = requestFault === "security" && request.evidence?.length > 0 ? [{
+    evidence_id: request.evidence[0].evidence_id,
+    kind: "instruction_override",
+    ...wholeEvidenceRange(request.evidence[0]),
+  }] : [];
+  if (requestFault === "repair" && attempt === 1) {
+    return { request_id: request.request_id || "fixture", security_signals: [], entity_results: [], relationship_results: relationships };
+  }
+  return { request_id: request.request_id || "fixture", security_signals: securitySignals, entity_results: entities, relationship_results: relationships };
+}
+
+function wholeEvidenceRange(evidence) {
+  const boundaryText = String(evidence?.boundary_text || "");
+  const refs = [...boundaryText.matchAll(/⟦([^⟧]+)⟧/g)].map((match) => match[1]);
+  return { evidence_id: evidence?.evidence_id || "evidence:0", start_ref: refs[0] || "fixture-start", end_ref: refs.at(-1) || "fixture-end" };
+}
+
+function fixtureFault(payload) {
+  const serialized = JSON.stringify(payload);
+  const match = serialized.match(/\[fixture-fault:([a-z0-9_-]+)\]/i);
+  return match?.[1] || "";
+}
+
+function faultForRoute(value, route) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (route === "embedding" && (normalized.startsWith("assessment-") || normalized === "repair" || normalized === "repair-exhausted" || normalized === "security" || normalized === "no-supported" || normalized === "mixed")) return "";
+  if (route === "assessment" && (normalized.startsWith("embedding-") || normalized === "embedding-only-timeout")) return "";
+  return normalized;
+}
+
+function isRepairPayload(payload) {
+  return (Array.isArray(payload.messages) ? payload.messages : []).some((message) => {
+    if (message?.role !== "user" || typeof message.content !== "string") return false;
+    try {
+      const parsed = JSON.parse(message.content);
+      return Array.isArray(parsed.validation_errors) && typeof parsed.instruction === "string";
+    } catch {
+      return false;
+    }
+  });
+}
 
 server.listen(port, "0.0.0.0", () => {
   process.stdout.write(`synchronous-write-provider listening on ${port}\n`);

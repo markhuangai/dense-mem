@@ -37,9 +37,12 @@ type RuntimeContext struct {
 // registry continues to use the legacy intake service until an adoption
 // ticket wires a terminal processor.
 type WriteRuntime struct {
-	Remember         rememberapp.Service
-	RegistryOverride func(context.Context, RuntimeContext, registry.Registry) (registry.Registry, error)
-	Slice            string
+	Remember rememberapp.Service
+	// SynchronousRememberFactory is lazy so release boot never constructs or
+	// installs the E2E-only terminal Remember service.
+	SynchronousRememberFactory func() rememberapp.Service
+	RegistryOverride           func(context.Context, RuntimeContext, registry.Registry) (registry.Registry, error)
+	Slice                      string
 }
 
 type RuntimeOptions struct {

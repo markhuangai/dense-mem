@@ -43,6 +43,7 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
+	"github.com/markhuangai/dense-mem/internal/service/synchronousremember"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
@@ -240,13 +241,27 @@ func RunActiveServer(
 	if err != nil {
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
+	rememberIntake := newRememberLedgerAdapter(ledgerRepo)
+	rememberAuditor := newRememberSecurityRejectionAuditAdapter(auditService)
 	rememberCore := rememberapp.NewService(rememberapp.Dependencies{
-		Intake:  newRememberLedgerAdapter(ledgerRepo),
-		Auditor: newRememberSecurityRejectionAuditAdapter(auditService),
+		Intake:  rememberIntake,
+		Auditor: rememberAuditor,
 		Metrics: discoverabilityMetrics,
 		Logger:  logger,
 	})
-	writeRuntime := &WriteRuntime{Remember: rememberCore}
+	writeRuntime := &WriteRuntime{
+		Remember: rememberCore,
+		SynchronousRememberFactory: func() rememberapp.Service {
+			processor := synchronousremember.NewSynchronousRememberProcessor(synchronousremember.SynchronousRememberProcessorDependencies{
+				Ledger: ledgerRepo, Catalog: semanticRepo, Provider: assessorProvider, Limits: assessmentLimits,
+				Embeddings: newSemanticwriteEmbeddingExecutor(retryEmbedder), Metrics: discoverabilityMetrics, Logger: logger,
+			})
+			return rememberapp.NewService(rememberapp.Dependencies{
+				Intake: rememberIntake, Synchronous: processor, Auditor: rememberAuditor,
+				Metrics: discoverabilityMetrics, Logger: logger,
+			})
+		},
+	}
 	if options.WriteRuntimeOverride != nil {
 		if err := options.WriteRuntimeOverride(startupCtx, runtimeCtx, writeRuntime); err != nil {
 			log.Fatalf("failed to configure write runtime: %v", err)

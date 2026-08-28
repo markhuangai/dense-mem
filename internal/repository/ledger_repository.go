@@ -534,6 +534,15 @@ func (r *LedgerRepositoryImpl) withTeamProfileTx(ctx context.Context, teamID, pr
 	if r.rls == nil {
 		return errors.New("ledger: rls helper is required")
 	}
+	if scoped, ok := ctx.Value(teamProfileTransactionContextKey{}).(teamProfileTransaction); ok && scoped.tx != nil {
+		if scoped.teamID != teamID || scoped.profileID != profileID {
+			return errors.New("ledger: transaction scope does not match authenticated actor")
+		}
+		if err := ensureActiveTeamForMutation(ctx, scoped.tx, teamID); err != nil {
+			return err
+		}
+		return fn(scoped.tx)
+	}
 	return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, func(tx *gorm.DB) error {
 		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
 			return err

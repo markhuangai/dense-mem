@@ -34,6 +34,9 @@ services:
   server:
     build:
       target: e2e
+    depends_on:
+      synchronous-write-provider:
+        condition: service_healthy
     environment:
       DENSE_MEM_E2E_WRITE_SLICE: ${quote(slice)}
       AI_API_EMBEDDING_TIMEOUT_SECONDS: "2"
@@ -52,6 +55,11 @@ services:
       DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: "5000"
     volumes:
       - e2e-synchronous-write-provider-files:/e2e
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
 volumes:
   e2e-synchronous-write-provider-files:
 `;
@@ -120,8 +128,8 @@ run_synchronous_write_e2e() {
   DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
   DENSE_MEM_E2E_TEAM_ID="$team_id" \
   DENSE_MEM_E2E_API_KEY="$api_key" \
-	DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
-	DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
+  DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
+  DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
   DENSE_MEM_E2E_WRITE_CASE="$slice" \
   node "$ROOT_DIR/tests/uat/synchronous_write/runner.mjs"
 }

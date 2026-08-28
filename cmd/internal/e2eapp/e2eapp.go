@@ -4,10 +4,15 @@ package e2eapp
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -69,9 +74,8 @@ func Run() {
 	serverapp.RunFromEnvironment(optionsForSlice(slice))
 }
 
-// optionsForSlice keeps one predeclared slot per adoption ticket. The slots
-// intentionally leave the current legacy service unchanged until that ticket
-// supplies a real terminal writer.
+// optionsForSlice keeps one predeclared slot per adoption ticket. Only the
+// selected slice can replace its owned writer or registry entry.
 func optionsForSlice(slice WriteSlice) serverapp.RuntimeOptions {
 	selected := sliceOverrides[slice]
 	return serverapp.RuntimeOptions{
@@ -120,7 +124,19 @@ func legacyOverride(_ context.Context, _ serverapp.RuntimeContext, write *server
 	return validateSliceHook(write, WriteSliceLegacy)
 }
 func rememberOverride(_ context.Context, _ serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
-	return validateSliceHook(write, WriteSliceRemember)
+	if err := validateSliceHook(write, WriteSliceRemember); err != nil {
+		return err
+	}
+	if write.SynchronousRememberFactory == nil {
+		return fmt.Errorf("e2e write slice %q has no synchronous Remember factory", WriteSliceRemember)
+	}
+	remember := write.SynchronousRememberFactory()
+	if remember == nil {
+		return fmt.Errorf("e2e write slice %q factory returned nil Remember service", WriteSliceRemember)
+	}
+	write.Remember = remember
+	write.RegistryOverride = terminalRememberRegistryOverride(remember)
+	return nil
 }
 func correctionOverride(_ context.Context, _ serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
 	return validateSliceHook(write, WriteSliceCorrection)
@@ -156,6 +172,197 @@ func writeSliceName(write *serverapp.WriteRuntime) string {
 		return ""
 	}
 	return write.Slice
+}
+
+func terminalRememberRegistryOverride(remember rememberapp.Service) func(context.Context, serverapp.RuntimeContext, registry.Registry) (registry.Registry, error) {
+	return func(_ context.Context, _ serverapp.RuntimeContext, active registry.Registry) (registry.Registry, error) {
+		if active == nil {
+			return nil, fmt.Errorf("e2e terminal Remember received a nil registry")
+		}
+		if remember == nil {
+			return nil, fmt.Errorf("e2e terminal Remember has no service")
+		}
+		legacy, ok := active.Get(registry.ToolRemember)
+		if !ok {
+			return nil, fmt.Errorf("e2e terminal Remember registry has no Remember tool")
+		}
+		replacement := legacy
+		replacement.OutputSchema = terminalRememberOutputSchema()
+		replacement.Invoke = terminalRememberInvoker(legacy, remember)
+		return cloneRegistryReplacing(active, replacement)
+	}
+}
+
+func cloneRegistryReplacing(active registry.Registry, replacement registry.Tool) (registry.Registry, error) {
+	cloned := registry.New()
+	replaced := false
+	for _, tool := range active.List() {
+		if tool.Name == replacement.Name {
+			tool = replacement
+			replaced = true
+		}
+		if err := cloned.Register(tool); err != nil {
+			return nil, fmt.Errorf("e2e clone registry: %w", err)
+		}
+	}
+	if !replaced {
+		return nil, fmt.Errorf("e2e clone registry: tool %q is not registered", replacement.Name)
+	}
+	return cloned, nil
+}
+
+func terminalRememberInvoker(legacy registry.Tool, remember rememberapp.Service) registry.ToolInvoker {
+	return func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
+		actor, ok := requestctx.ActorFromContext(ctx)
+		if !ok {
+			return nil, fmt.Errorf("remember: authenticated actor context is required")
+		}
+		if err := registry.ValidateContractInput(legacy, input, actor.Grants); err != nil {
+			return nil, fmt.Errorf("remember: invalid input: %w", err)
+		}
+		req, err := terminalRememberRequest(input)
+		if err != nil {
+			return nil, fmt.Errorf("remember: invalid input: %w", err)
+		}
+		result, err := remember.Remember(ctx, req)
+		if err != nil {
+			var processErr *rememberapp.RememberProcessError
+			if !errors.As(err, &processErr) || processErr.Result == nil {
+				return nil, err
+			}
+			result = &rememberapp.RememberResult{Terminal: processErr.Result}
+		}
+		if result == nil || result.Terminal == nil {
+			return nil, fmt.Errorf("remember: terminal result is required")
+		}
+		if err := rememberapp.ValidateTerminalRememberResult(result.Terminal, len(req.Evidence), terminalRelationshipRefs(input)); err != nil {
+			return nil, fmt.Errorf("remember: invalid terminal result")
+		}
+		return terminalRememberResultMap(result.Terminal)
+	}
+}
+
+func terminalRememberRequest(input map[string]any) (rememberapp.RememberRequest, error) {
+	copyInput := make(map[string]any, len(input)+1)
+	for key, value := range input {
+		copyInput[key] = value
+	}
+	copyInput["relationship_hints"] = input["relationships"]
+	encoded, err := json.Marshal(copyInput)
+	if err != nil {
+		return rememberapp.RememberRequest{}, err
+	}
+	var request rememberapp.RememberRequest
+	if err := json.Unmarshal(encoded, &request); err != nil {
+		return rememberapp.RememberRequest{}, err
+	}
+	return request, nil
+}
+
+func terminalRelationshipRefs(input map[string]any) []string {
+	switch raw := input["relationships"].(type) {
+	case []any:
+		refs := make([]string, 0, len(raw))
+		for _, value := range raw {
+			item, _ := value.(map[string]any)
+			ref, _ := item["ref"].(string)
+			refs = append(refs, ref)
+		}
+		return refs
+	case []map[string]any:
+		refs := make([]string, 0, len(raw))
+		for _, item := range raw {
+			ref, _ := item["ref"].(string)
+			refs = append(refs, ref)
+		}
+		return refs
+	}
+	return []string{}
+}
+
+func terminalRememberResultMap(result *rememberapp.TerminalRememberResult) (map[string]any, error) {
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
+	}
+	output := map[string]any{}
+	if err := json.Unmarshal(encoded, &output); err != nil {
+		return nil, err
+	}
+	return output, nil
+}
+
+func terminalRememberOutputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"required": []string{
+			"contract_version", "submission_id", "submission_kind", "processing_state", "search_state",
+			"correlation_id", "evidence", "relationship_results", "errors",
+		},
+		"properties": map[string]any{
+			"contract_version":     map[string]any{"type": "string", "enum": []string{domain.ContractVersion}},
+			"submission_id":        map[string]any{"type": "string", "maxLength": 128},
+			"submission_kind":      map[string]any{"type": "string", "enum": []string{"remember"}},
+			"processing_state":     map[string]any{"type": "string", "enum": []string{"completed", "rejected", "quarantined", "failed"}},
+			"search_state":         map[string]any{"type": "string", "enum": []string{"current", "not_required"}},
+			"correlation_id":       map[string]any{"type": "string", "maxLength": 128},
+			"evidence":             map[string]any{"type": "array", "minItems": 0, "maxItems": 20, "items": terminalEvidenceSchema()},
+			"relationship_results": map[string]any{"type": "array", "minItems": 0, "maxItems": 200, "items": terminalRelationshipResultSchema()},
+			"errors":               map[string]any{"type": "array", "minItems": 0, "maxItems": 50, "items": terminalErrorSchema()},
+		},
+		"additionalProperties": false,
+	}
+}
+
+func terminalEvidenceSchema() map[string]any {
+	return map[string]any{
+		"type": "object", "required": []string{"disposition", "evidence_index", "superseded_evidence_ids", "search_state"},
+		"properties": map[string]any{
+			"disposition":             map[string]any{"type": "string", "enum": []string{"stored", "not_stored"}},
+			"evidence_id":             map[string]any{"type": "string", "maxLength": 128},
+			"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
+			"superseded_evidence_ids": map[string]any{"type": "array", "maxItems": 50, "items": map[string]any{"type": "string", "maxLength": 128}},
+			"search_state":            map[string]any{"type": "string", "enum": []string{"current", "not_required"}},
+			"reason":                  map[string]any{"type": "string", "maxLength": 256},
+		},
+		"additionalProperties": false,
+	}
+}
+
+func terminalRelationshipResultSchema() map[string]any {
+	return map[string]any{
+		"type": "object", "required": []string{"ref", "disposition", "splits"},
+		"properties": map[string]any{
+			"ref":         map[string]any{"type": "string", "maxLength": 128},
+			"disposition": map[string]any{"type": "string", "enum": []string{"stored", "not_stored"}},
+			"reason":      map[string]any{"type": "string", "maxLength": 256},
+			"splits": map[string]any{"type": "array", "maxItems": 50, "items": map[string]any{
+				"type": "object", "required": []string{"split_index", "relationship_id", "relationship_version", "status"},
+				"properties": map[string]any{
+					"split_index":          map[string]any{"type": "integer", "minimum": 0},
+					"relationship_id":      map[string]any{"type": "string", "maxLength": 128},
+					"relationship_version": map[string]any{"type": "integer", "minimum": 1},
+					"status":               map[string]any{"type": "string", "maxLength": 64},
+				},
+				"additionalProperties": false,
+			}},
+		},
+		"additionalProperties": false,
+	}
+}
+
+func terminalErrorSchema() map[string]any {
+	return map[string]any{
+		"type": "object", "required": []string{"code", "message", "retryable", "next_action", "remediation"},
+		"properties": map[string]any{
+			"code":        map[string]any{"type": "string", "enum": rememberapp.TerminalErrorCodes()},
+			"message":     map[string]any{"type": "string", "maxLength": 512},
+			"retryable":   map[string]any{"type": "boolean"},
+			"next_action": map[string]any{"type": "string", "enum": rememberapp.TerminalNextActions()},
+			"remediation": map[string]any{"type": "string", "maxLength": 512},
+		},
+		"additionalProperties": false,
+	}
 }
 
 // getenv is a variable for unit tests; only this E2E package owns the lookup.

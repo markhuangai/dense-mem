@@ -50,6 +50,19 @@ type auditStub struct {
 	err    error
 }
 
+type synchronousProcessorStub struct {
+	request RememberProcessRequest
+	result  *SubmissionStatusResult
+	err     error
+	calls   int
+}
+
+func (s *synchronousProcessorStub) ProcessRemember(_ context.Context, request RememberProcessRequest) (*SubmissionStatusResult, error) {
+	s.calls++
+	s.request = request
+	return s.result, s.err
+}
+
 func (s *auditStub) RecordSecurityRejection(_ context.Context, input SecurityRejectionAuditInput) error {
 	s.inputs = append(s.inputs, input)
 	return s.err
@@ -278,6 +291,30 @@ func TestRememberSecurityRejectionAuditsWithoutStaging(t *testing.T) {
 	require.Equal(t, teamID.String(), audit.inputs[0].TeamID)
 	require.Equal(t, ownerID.String(), audit.inputs[0].ActorProfileID)
 	require.NotEmpty(t, audit.inputs[0].ReasonCode)
+}
+
+func TestRememberUsesExplicitSynchronousProcessorWithoutStaging(t *testing.T) {
+	teamID, ownerID := uuid.New(), uuid.New()
+	intake := &intakeStub{}
+	processor := &synchronousProcessorStub{result: &SubmissionStatusResult{
+		ContractVersion: domain.ContractVersion, SubmissionID: uuid.NewString(), SubmissionKind: "remember",
+		ProcessingState: "completed", SearchState: "current", CorrelationID: "terminal-correlation",
+	}}
+	svc := NewService(Dependencies{Intake: intake, Synchronous: processor})
+
+	result, err := svc.Remember(rememberTestContext(teamID, ownerID), RememberRequest{
+		IdempotencyKey: "terminal", Evidence: []RememberEvidenceInput{{Content: "A supported fact."}},
+		RelationshipHints: coveredRelationships(1),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, processor.calls)
+	require.Equal(t, 0, intake.stageCalls)
+	require.Equal(t, ResultKindTerminal, result.Kind)
+	require.Equal(t, "completed", result.ProcessingState)
+	require.Equal(t, "terminal-correlation", result.CorrelationID)
+	require.Equal(t, teamID.String(), processor.request.TeamID)
+	require.Equal(t, ownerID.String(), processor.request.OwnerProfileID)
 }
 
 func TestRememberSecurityAuditFailureLogsOnlyBoundedErrorClass(t *testing.T) {
