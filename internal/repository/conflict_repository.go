@@ -64,6 +64,16 @@ type ClaimRelationshipConflictCasesInput struct {
 	ExcludedConflictIDs []string
 }
 
+// ReleaseRelationshipConflictCaseClaimInput identifies the worker claim that
+// should be returned to the conflict queue after retryable processing fails.
+type ReleaseRelationshipConflictCaseClaimInput struct {
+	TeamID      string
+	ConflictID  string
+	WorkerID    string
+	ReviewRunID string
+	Now         time.Time
+}
+
 type ReviewRelationshipConflictCaseInput struct {
 	TeamID      string
 	WorkerID    string

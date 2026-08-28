@@ -20,6 +20,7 @@ const AssessmentConfidenceThreshold = 0.70
 
 type Repository interface {
 	ReviewRelationshipConflictCase(context.Context, repository.ReviewRelationshipConflictCaseInput) (*repository.ReviewRelationshipConflictCaseResult, error)
+	ReleaseRelationshipConflictCaseClaim(context.Context, repository.ReleaseRelationshipConflictCaseClaimInput) error
 	ResumePendingOverdueConflictResolution(context.Context, repository.ResumePendingOverdueConflictResolutionInput) (*repository.RelationshipConflictResolutionInput, bool, error)
 	ReserveOverdueConflictAssessment(context.Context, repository.ReserveOverdueConflictAssessmentInput) (*repository.OverdueConflictAssessmentReservation, *repository.OverdueConflictAssessmentDossier, bool, error)
 	CompleteOverdueConflictAssessment(context.Context, repository.CompleteOverdueConflictAssessmentInput) (*repository.CompleteOverdueConflictAssessmentResult, error)
@@ -452,6 +453,9 @@ func (s *Service) executeResolution(
 		Timeout: s.embeddingTimeout,
 	})
 	if err != nil {
+		if retryErr := s.releaseRetryableConflictClaim(ctx, input, err); retryErr != nil {
+			return nil, errors.Join(err, retryErr)
+		}
 		return nil, err
 	}
 	embeddings := make([]repository.RelationshipConflictResolutionEmbedding, 0, len(embedded.Embeddings))
@@ -463,6 +467,23 @@ func (s *Service) executeResolution(
 	}
 	return s.repository.CommitRelationshipConflictResolution(ctx, repository.CommitRelationshipConflictResolutionInput{
 		Plan: *plan, Embeddings: embeddings,
+	})
+}
+
+func (s *Service) releaseRetryableConflictClaim(
+	ctx context.Context,
+	input repository.RelationshipConflictResolutionInput,
+	processingErr error,
+) error {
+	if !errors.Is(processingErr, semanticwrite.ErrProviderUnavailable) &&
+		!errors.Is(processingErr, context.Canceled) &&
+		!errors.Is(processingErr, context.DeadlineExceeded) {
+		return nil
+	}
+	releaseCtx := context.WithoutCancel(ctx)
+	return s.repository.ReleaseRelationshipConflictCaseClaim(releaseCtx, repository.ReleaseRelationshipConflictCaseClaimInput{
+		TeamID: input.TeamID, ConflictID: input.ConflictID, WorkerID: input.WorkerID,
+		ReviewRunID: input.ReviewRunID, Now: input.Now,
 	})
 }
 

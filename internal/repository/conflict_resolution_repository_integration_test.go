@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -81,6 +82,151 @@ func TestRelationshipConflictResolutionRejectsStaleSearchGenerationBeforeLifecyc
 	assert.Equal(t, "overdue", conflictStatus)
 	assert.Equal(t, "active", firstStatus)
 	assert.Equal(t, "active", secondStatus)
+}
+
+func TestRelationshipConflictResolutionFencesStaleCaseVersionBeforeWrites(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "conflict-resolution-stale-case-version", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-resolution-stale-case-version-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "conflict-resolution-stale-case-version-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "conflict-resolution-stale-case-version-owner-b")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Conflict case version fence")
+	firstObject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "First case version value")
+	secondObject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "Second case version value")
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerA, "worker-case-version-a",
+		"case-version-fence-a", "The first case version value is current.", subject.EntityID, firstObject.EntityID, "source-group-case-version-a",
+	)
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerB, "worker-case-version-b",
+		"case-version-fence-b", "The second case version value is current.", subject.EntityID, secondObject.EntityID, "source-group-case-version-b",
+	)
+
+	conflictID, expectedVersion := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+	reviewNow := time.Now().UTC()
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_conflict_cases
+			SET review_due_at = ?, next_review_at = ?
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, reviewNow.Add(-time.Minute), reviewNow.Add(-time.Minute), teamID, conflictID).Error
+	}))
+	reviewed := reviewConflictCaseForTest(t, ctx, ledgerRepo, teamID, "worker-case-version-review", conflictID, reviewNow)
+	require.Equal(t, ConflictReviewOutcomeOverdue, reviewed.Outcome)
+	reservation, dossier, reserved, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
+		TeamID: teamID, ConflictID: conflictID, ReviewRunID: uuid.NewString(), WorkerID: "worker-case-version-assessment",
+		LocalAssessmentDate: reviewNow, Model: "test-model", PolicyVersion: domain.ConflictOverduePolicyVersion,
+	})
+	require.NoError(t, err)
+	require.True(t, reserved)
+	require.NotNil(t, dossier)
+	require.NotEmpty(t, dossier.Positions)
+	selectedPositionID := dossier.Positions[0].PositionID
+	confidence := 0.95
+	_, err = ledgerRepo.CompleteOverdueConflictAssessment(ctx, CompleteOverdueConflictAssessmentInput{
+		TeamID: teamID, ConflictID: conflictID, AssessmentAttemptID: reservation.AssessmentAttemptID,
+		CaseVersion: reservation.CaseVersion, ReviewRunID: uuid.NewString(), Decision: "selected",
+		SelectedPositionID: selectedPositionID, Confidence: &confidence, ResponseHash: "sha256:case-version-fence",
+	})
+	require.NoError(t, err)
+
+	resolution := RelationshipConflictResolutionInput{
+		TeamID: teamID, ConflictID: conflictID, ReviewRunID: uuid.NewString(), WorkerID: "worker-case-version-commit",
+		ExpectedCaseVersion: expectedVersion, PreferredPositionID: selectedPositionID,
+		AssessmentAttemptID: reservation.AssessmentAttemptID, Method: "ai", Now: reviewNow,
+	}
+	plan, err := ledgerRepo.PlanRelationshipConflictResolution(ctx, resolution)
+	require.NoError(t, err)
+	require.False(t, plan.Stale)
+	require.NotEmpty(t, plan.Documents)
+
+	// Add a new support through the placement path so the persisted conflict
+	// snapshot version advances after the plan has been prepared.
+	commitPlacementRelationshipForConflictTestWithOptions(
+		t, ctx, ledgerRepo, teamID, ownerA, "worker-case-version-support",
+		"case-version-fence-support", "The first case version value has another supporting source.",
+		subject.EntityID, firstObject.EntityID, "source-group-case-version-support", conflictTestRelationshipOptions{authority: "secondary"},
+	)
+	var currentVersion int
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT version FROM relationship_conflict_cases WHERE team_id = ?::uuid AND conflict_id = ?::uuid`, teamID, conflictID).Row().Scan(&currentVersion)
+	}))
+	require.Greater(t, currentVersion, expectedVersion)
+
+	stalePlan, err := ledgerRepo.PlanRelationshipConflictResolution(ctx, resolution)
+	require.NoError(t, err)
+	require.True(t, stalePlan.Stale)
+
+	relationshipIDs := make([]string, 0, len(plan.Documents))
+	for _, document := range plan.Documents {
+		relationshipIDs = append(relationshipIDs, document.RelationshipID)
+	}
+	before := captureConflictResolutionStateSnapshot(t, ctx, adminDB, rls, teamID, conflictID, relationshipIDs)
+	committed, err := ledgerRepo.CommitRelationshipConflictResolution(ctx, CommitRelationshipConflictResolutionInput{
+		Plan: *plan, Embeddings: conflictResolutionTestEmbeddings(plan),
+	})
+	require.NoError(t, err)
+	require.True(t, committed.Stale)
+	require.False(t, committed.Resolved)
+	after := captureConflictResolutionStateSnapshot(t, ctx, adminDB, rls, teamID, conflictID, relationshipIDs)
+	assert.Equal(t, before, after)
+}
+
+type conflictResolutionStateSnapshot struct {
+	CaseState           string
+	RelationshipState   string
+	SearchDocumentState string
+	EmbeddingJobState   string
+}
+
+func captureConflictResolutionStateSnapshot(
+	t *testing.T,
+	ctx context.Context,
+	db *gorm.DB,
+	rls interface {
+		WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
+	},
+	teamID string,
+	conflictID string,
+	relationshipIDs []string,
+) conflictResolutionStateSnapshot {
+	t.Helper()
+	var snapshot conflictResolutionStateSnapshot
+	require.NotEmpty(t, relationshipIDs)
+	require.NoError(t, rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT status || ':' || version::text || ':' || attempts::text || ':' || COALESCE(lease_worker_id, '') || ':' || COALESCE(resolution_reason, '') || ':' || next_review_at::text || ':' || review_due_at::text
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, teamID, conflictID).Row().Scan(&snapshot.CaseState); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT COALESCE(string_agg(status || ':' || version::text || ':' || support_count::text || ':' || space_id::text || ':' || space_generation::text, ',' ORDER BY relationship_id::text), '')
+			FROM relationship_records
+			WHERE team_id = ?::uuid AND relationship_id = ANY(?::uuid[])
+		`, teamID, pq.Array(relationshipIDs)).Row().Scan(&snapshot.RelationshipState); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT COALESCE(string_agg(search_state || ':' || document_hash || ':' || embedding_dimensions::text || ':' || source_version::text || ':' || document_version::text || ':' || (embedding IS NOT NULL)::text, ',' ORDER BY source_id::text), '')
+			FROM search_documents
+			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ANY(?::uuid[])
+		`, teamID, pq.Array(relationshipIDs)).Row().Scan(&snapshot.SearchDocumentState); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT COALESCE(string_agg(status || ':' || source_version::text || ':' || attempts::text || ':' || COALESCE(error, ''), ',' ORDER BY embedding_job_id::text), '')
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ANY(?::uuid[])
+		`, teamID, pq.Array(relationshipIDs)).Row().Scan(&snapshot.EmbeddingJobState)
+	}))
+	return snapshot
 }
 
 func conflictResolutionTestEmbeddings(plan *RelationshipConflictResolutionPlan) []RelationshipConflictResolutionEmbedding {

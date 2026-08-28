@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -354,6 +355,7 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 	var loserEmbeddingJobStatus string
 	var loserRelationshipVersion, loserSearchSourceVersion int64
 	var preferredPositionCount, suppressedPositionCount, transitionCount, staleEmbeddingJobs, queuedEmbeddingJobs int64
+	var activeConflictEmbeddingJobs, currentWinnerSearchDocuments int64
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
 		require.NoError(t, tx.Raw(`
 			SELECT status
@@ -423,6 +425,33 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 			  AND conflict_id = ?::uuid
 			  AND disposition = 'suppressed_current'
 		`, teamID, conflictID).Scan(&suppressedPositionCount).Error)
+		require.NoError(t, tx.Raw(`
+			SELECT COUNT(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ANY(?::uuid[])
+			  AND status IN ('queued', 'processing', 'failed')
+		`, teamID, pq.Array([]string{
+			preferredA.RelationshipResults[0].Relationship.RelationshipID,
+			preferredC.RelationshipResults[0].Relationship.RelationshipID,
+			loser.RelationshipResults[0].Relationship.RelationshipID,
+		})).Scan(&activeConflictEmbeddingJobs).Error)
+		if err := tx.Raw(`
+			SELECT COUNT(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ANY(?::uuid[])
+			  AND search_state = 'current'
+			  AND embedding IS NOT NULL
+			  AND embedding_dimensions = 3
+		`, teamID, pq.Array([]string{
+			preferredA.RelationshipResults[0].Relationship.RelationshipID,
+			preferredC.RelationshipResults[0].Relationship.RelationshipID,
+		})).Scan(&currentWinnerSearchDocuments).Error; err != nil {
+			return err
+		}
 		return tx.Raw(`
 			SELECT COUNT(*)
 			FROM relationship_transition_events
@@ -439,6 +468,8 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 	assert.Equal(t, "stale", loserEmbeddingJobStatus)
 	assert.GreaterOrEqual(t, staleEmbeddingJobs, int64(1))
 	assert.Equal(t, int64(0), queuedEmbeddingJobs)
+	assert.Zero(t, activeConflictEmbeddingJobs)
+	assert.Equal(t, int64(2), currentWinnerSearchDocuments)
 	assert.Equal(t, "active", preferredAStatus)
 	assert.Equal(t, "active", preferredCStatus)
 	assert.Equal(t, int64(1), preferredPositionCount)

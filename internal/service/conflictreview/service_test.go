@@ -104,6 +104,11 @@ func TestServiceLeavesResolutionUncommittedWhenEmbeddingFails(t *testing.T) {
 	require.ErrorIs(t, err, semanticwrite.ErrProviderUnavailable)
 	assert.Len(t, repo.applyInputs, 1)
 	assert.Empty(t, repo.commitInputs)
+	require.Len(t, repo.releaseInputs, 1)
+	assert.Equal(t, conflictReviewTestTeamID, repo.releaseInputs[0].TeamID)
+	assert.Equal(t, conflictReviewTestConflictID, repo.releaseInputs[0].ConflictID)
+	assert.Equal(t, conflictReviewTestReviewRunID, repo.releaseInputs[0].ReviewRunID)
+	assert.Equal(t, conflictReviewTestWorkerID, repo.releaseInputs[0].WorkerID)
 }
 
 func TestServiceUsesLastWriteWinsAfterExplicitAbstention(t *testing.T) {
@@ -700,6 +705,7 @@ type conflictReviewRepositoryStub struct {
 	completeErr     error
 	planErr         error
 	applyErr        error
+	releaseErr      error
 	derivedClaimErr error
 	stageErr        error
 	recordStageErr  error
@@ -708,6 +714,7 @@ type conflictReviewRepositoryStub struct {
 	completions        []repository.CompleteOverdueConflictAssessmentInput
 	applyInputs        []repository.RelationshipConflictResolutionInput
 	commitInputs       []repository.CommitRelationshipConflictResolutionInput
+	releaseInputs      []repository.ReleaseRelationshipConflictCaseClaimInput
 	derivedClaimInputs []repository.ClaimConflictDerivedEvidenceTasksInput
 	derivedBatches     [][]repository.ConflictDerivedEvidenceTarget
 	stagedTargets      []repository.ConflictDerivedEvidenceTarget
@@ -779,6 +786,11 @@ func (s *conflictReviewRepositoryStub) ResumePendingOverdueConflictResolution(_ 
 	}
 	copy := *s.pendingResult
 	return &copy, true, nil
+}
+
+func (s *conflictReviewRepositoryStub) ReleaseRelationshipConflictCaseClaim(_ context.Context, input repository.ReleaseRelationshipConflictCaseClaimInput) error {
+	s.releaseInputs = append(s.releaseInputs, input)
+	return s.releaseErr
 }
 
 func (s *conflictReviewRepositoryStub) ReserveOverdueConflictAssessment(_ context.Context, input repository.ReserveOverdueConflictAssessmentInput) (*repository.OverdueConflictAssessmentReservation, *repository.OverdueConflictAssessmentDossier, bool, error) {

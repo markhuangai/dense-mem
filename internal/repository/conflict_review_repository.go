@@ -170,6 +170,42 @@ func (r *LedgerRepositoryImpl) ClaimRelationshipConflictCases(
 	return records, nil
 }
 
+func (r *LedgerRepositoryImpl) ReleaseRelationshipConflictCaseClaim(
+	ctx context.Context,
+	input ReleaseRelationshipConflictCaseClaimInput,
+) error {
+	input = normalizeReleaseRelationshipConflictCaseClaimInput(input)
+	if err := validateReleaseRelationshipConflictCaseClaimInput(input); err != nil {
+		return err
+	}
+	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		result := tx.WithContext(ctx).Exec(`
+			UPDATE relationship_conflict_cases
+			SET lease_worker_id = '',
+			    lease_until = NULL,
+			    next_review_at = ?,
+			    attempts = GREATEST(attempts - 1, 0),
+			    updated_at = now()
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+			  AND status IN ('open', 'overdue')
+			  AND lease_worker_id = ?
+			  AND last_review_run_id = ?::uuid
+		`, input.Now, input.TeamID, input.ConflictID, input.WorkerID, input.ReviewRunID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrPlacementLeaseLost
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("conflict review: release case claim: %w", err)
+	}
+	return nil
+}
+
 func (r *LedgerRepositoryImpl) ReviewRelationshipConflictCase(
 	ctx context.Context,
 	input ReviewRelationshipConflictCaseInput,
@@ -679,6 +715,34 @@ func normalizeClaimRelationshipConflictCasesInput(input ClaimRelationshipConflic
 		input.Now = time.Now().UTC()
 	}
 	return input
+}
+
+func normalizeReleaseRelationshipConflictCaseClaimInput(input ReleaseRelationshipConflictCaseClaimInput) ReleaseRelationshipConflictCaseClaimInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.ConflictID = strings.TrimSpace(input.ConflictID)
+	input.WorkerID = strings.TrimSpace(input.WorkerID)
+	input.ReviewRunID = strings.TrimSpace(input.ReviewRunID)
+	if input.Now.IsZero() {
+		input.Now = time.Now().UTC()
+	} else {
+		input.Now = input.Now.UTC()
+	}
+	return input
+}
+
+func validateReleaseRelationshipConflictCaseClaimInput(input ReleaseRelationshipConflictCaseClaimInput) error {
+	for _, value := range []struct{ name, id string }{
+		{name: "team_id", id: input.TeamID}, {name: "conflict_id", id: input.ConflictID},
+		{name: "review_run_id", id: input.ReviewRunID},
+	} {
+		if _, err := uuid.Parse(value.id); err != nil {
+			return fmt.Errorf("%s is required: %w", value.name, err)
+		}
+	}
+	if input.WorkerID == "" {
+		return errors.New("worker_id is required")
+	}
+	return nil
 }
 
 func validateClaimRelationshipConflictCasesInput(input ClaimRelationshipConflictCasesInput) error {

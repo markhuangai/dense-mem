@@ -25,7 +25,6 @@ func TestRelationshipConflictReviewerDismissesStaleCaseAfterRetraction(t *testin
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-dismiss-stale-owner-b")
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	semanticRepo := NewSemanticRepository(appDB, rls)
-
 	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
 	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL")
 	graphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB")
@@ -131,12 +130,10 @@ func TestRelationshipConflictReviewerDoesNotExhaustAttemptsBeforeDueDate(t *test
 		t, ctx, ledgerRepo, teamID, ownerB, "worker-attempts-b",
 		"attempts-conflict-b", "Dense-Mem uses GraphDB.", subject.EntityID, graphdb.EntityID, "source-group-attempts-b",
 	)
-
 	conflictID, _ := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
 	result := reviewConflictCaseForTest(t, ctx, ledgerRepo, teamID, "conflict-reviewer-attempts", conflictID, time.Now().UTC())
 	assert.Equal(t, ConflictReviewOutcomeNoop, result.Outcome)
 	assert.Equal(t, ConflictReviewStageWaitingForReviewDue, result.Stage)
-
 	var status string
 	var attempts int
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
@@ -161,7 +158,6 @@ func TestRelationshipConflictReviewerResetsAttemptsAfterOverdueAndSnapshotVersio
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-reset-attempts-owner-b")
 	ledgerRepo := NewLedgerRepository(appDB, rls)
 	semanticRepo := NewSemanticRepository(appDB, rls)
-
 	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
 	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL")
 	graphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB")
@@ -253,6 +249,79 @@ func TestRelationshipConflictReviewerResetsAttemptsAfterOverdueAndSnapshotVersio
 	assert.Empty(t, leaseWorkerID)
 	assert.Empty(t, lastError)
 	assert.Equal(t, "superseded", assessmentStatus)
+}
+
+func TestRelationshipConflictReviewerReleasesClaimAfterRetryableResolutionFailure(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "conflict-review-release-claim", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-review-release-claim-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-release-claim-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-release-claim-owner-b")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "project", "Dense-Mem")
+	postgres := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "PostgreSQL")
+	graphdb := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerA, "product", "GraphDB")
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerA, "worker-release-claim-a",
+		"release-claim-conflict-a", "Dense-Mem uses PostgreSQL.", subject.EntityID, postgres.EntityID, "source-group-release-claim-a",
+	)
+	commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerB, "worker-release-claim-b",
+		"release-claim-conflict-b", "Dense-Mem uses GraphDB.", subject.EntityID, graphdb.EntityID, "source-group-release-claim-b",
+	)
+	conflictID, _ := loadConflictCaseVersionForSubject(t, ctx, appDB, rls, teamID, ownerA, subject.EntityID)
+	reviewNow := time.Now().UTC()
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_conflict_cases
+			SET review_due_at = ?, next_review_at = ?, attempts = 4
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, reviewNow.Add(-time.Minute), reviewNow.Add(-time.Minute), teamID, conflictID).Error
+	}))
+
+	run, claimed, err := ledgerRepo.ReserveRelationshipConflictReviewRun(ctx, ConflictReviewRunInput{
+		TeamID: teamID, WorkerID: "worker-release-claim", LocalRunDate: reviewNow, Timezone: "UTC", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	cases, err := ledgerRepo.ClaimRelationshipConflictCases(ctx, ClaimRelationshipConflictCasesInput{
+		TeamID: teamID, WorkerID: "worker-release-claim", ReviewRunID: run.ReviewRunID,
+		Limit: 1, Lease: time.Minute, MaxAttempts: 5, Now: reviewNow,
+	})
+	require.NoError(t, err)
+	require.Len(t, cases, 1)
+	var attempts int
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT attempts FROM relationship_conflict_cases WHERE team_id = ?::uuid AND conflict_id = ?::uuid`, teamID, conflictID).Row().Scan(&attempts)
+	}))
+	assert.Equal(t, 5, attempts)
+	err = ledgerRepo.ReleaseRelationshipConflictCaseClaim(ctx, ReleaseRelationshipConflictCaseClaimInput{
+		TeamID: teamID, ConflictID: conflictID, WorkerID: "worker-release-claim", ReviewRunID: run.ReviewRunID, Now: reviewNow,
+	})
+	require.NoError(t, err)
+	var status, leaseWorkerID string
+	var nextReviewAt time.Time
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status, attempts, lease_worker_id, next_review_at
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, teamID, conflictID).Row().Scan(&status, &attempts, &leaseWorkerID, &nextReviewAt)
+	}))
+	assert.Equal(t, "open", status)
+	assert.Equal(t, 4, attempts)
+	assert.Empty(t, leaseWorkerID)
+	assert.WithinDuration(t, reviewNow, nextReviewAt, time.Millisecond)
+	reclaimed, err := ledgerRepo.ClaimRelationshipConflictCases(ctx, ClaimRelationshipConflictCasesInput{
+		TeamID: teamID, WorkerID: "worker-release-claim", ReviewRunID: run.ReviewRunID,
+		Limit: 1, Lease: time.Minute, MaxAttempts: 5, Now: reviewNow.Add(time.Second),
+	})
+	require.NoError(t, err)
+	require.Len(t, reclaimed, 1)
 }
 
 func TestEnsureConflictSystemProfileAvoidsLegacyUserNameCollision(t *testing.T) {
