@@ -40,6 +40,7 @@ type searchRepairRepositoryStub struct {
 	run       *repository.SearchRepairRun
 	documents []repository.SearchRepairDocument
 	selectErr error
+	reserve   repository.SearchRepairRunInput
 	now       time.Time
 	timeErr   error
 	apply     *repository.ApplySearchRepairInput
@@ -70,7 +71,8 @@ func (s *searchRepairRepositoryStub) GetSearchRepairTime(context.Context) (time.
 	}
 	return time.Now().UTC(), nil
 }
-func (s *searchRepairRepositoryStub) ReserveSearchRepairRun(context.Context, repository.SearchRepairRunInput) (*repository.SearchRepairRun, bool, error) {
+func (s *searchRepairRepositoryStub) ReserveSearchRepairRun(_ context.Context, input repository.SearchRepairRunInput) (*repository.SearchRepairRun, bool, error) {
+	s.reserve = input
 	return s.run, s.run != nil, nil
 }
 func (s *searchRepairRepositoryStub) SelectSearchRepairDocuments(context.Context, repository.SearchRepairSelectionInput) ([]repository.SearchRepairDocument, bool, error) {
@@ -225,6 +227,27 @@ func TestSearchReconciliationProcessDueRunsAtConfiguredMinute(t *testing.T) {
 	require.Equal(t, 10*time.Second, executor.plan.Timeout)
 	require.NotNil(t, repo.apply)
 	require.NotNil(t, repo.finish)
+}
+
+func TestSearchReconciliationProcessDueCreatesOverdueRun(t *testing.T) {
+	contract := searchRepairTestContract()
+	repo := &searchRepairRepositoryStub{
+		contract: contract,
+		run:      &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
+		now:      time.Date(2026, 8, 28, 4, 31, 20, 0, time.UTC),
+	}
+	svc := NewSearchRepairService(SearchRepairDependencies{
+		Repository: repo,
+		Executor:   &searchRepairExecutorStub{},
+		AppConfig:  searchRepairConfigStub{value: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}},
+		WorkerID:   "worker",
+	})
+
+	result, err := svc.ProcessDue(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.True(t, repo.reserve.CreateIfMissing)
 }
 
 func TestSearchReconciliationProcessDueRejectsInvalidRuntime(t *testing.T) {

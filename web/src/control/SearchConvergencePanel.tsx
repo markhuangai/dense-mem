@@ -103,29 +103,27 @@ export function SearchConvergencePanel({ api }: { api: ControlApi }) {
               {snapshot.contract.index_generation}
             </p>
           )}
-          {snapshot.drift_classes.length > 0 && (
-            <section
-              className="overview-panel"
-              aria-label="Document drift classes"
-            >
-              <SectionHeading
-                title="Document drift"
-                meta={
-                  snapshot.oldest_drift_age_seconds > 0
-                    ? `Oldest ${Math.floor(snapshot.oldest_drift_age_seconds)} seconds`
-                    : "No outstanding drift"
-                }
-              />
-              <div className="mini-table">
-                {snapshot.drift_classes.map((drift) => (
-                  <div className="mini-table-row" key={drift.class}>
-                    <span>{drift.class.replaceAll("_", " ")}</span>
-                    <strong>{drift.count}</strong>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
+          <section
+            className="overview-panel"
+            aria-label="Document drift classes"
+          >
+            <SectionHeading
+              title="Document drift"
+              meta={
+                snapshot.oldest_drift_age_seconds > 0
+                  ? `Oldest ${Math.floor(snapshot.oldest_drift_age_seconds)} seconds`
+                  : "No outstanding drift"
+              }
+            />
+            <div className="mini-table">
+              {snapshot.drift_classes.map((drift) => (
+                <div className="mini-table-row" key={drift.class}>
+                  <span>{drift.class.replaceAll("_", " ")}</span>
+                  <strong>{drift.count}</strong>
+                </div>
+              ))}
+            </div>
+          </section>
           {snapshot.latest_run && (
             <section
               className="overview-panel"

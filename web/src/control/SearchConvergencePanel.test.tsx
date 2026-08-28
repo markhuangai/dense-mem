@@ -51,6 +51,9 @@ describe("SearchConvergencePanel", () => {
     snapshot.failure_groups = [];
     snapshot.failure_group_count = 0;
     snapshot.failure_groups_truncated = false;
+    snapshot.drift_classes = [];
+    snapshot.drifted_documents = 0;
+    snapshot.oldest_drift_age_seconds = 0;
     const api = {
       getSearchConvergence: vi.fn().mockResolvedValue(snapshot),
     } as unknown as ControlApi;
@@ -60,6 +63,8 @@ describe("SearchConvergencePanel", () => {
     expect(
       await screen.findByText("No unresolved failure groups."),
     ).toBeInTheDocument();
+    expect(screen.getByText("Document drift")).toBeInTheDocument();
+    expect(screen.getByText("No outstanding drift")).toBeInTheDocument();
     expect(screen.queryByText("Payments")).not.toBeInTheDocument();
     expect(
       screen.queryByText("provider_quota_exhausted"),

@@ -32,6 +32,7 @@ const searchRepairDriftCTE = `
 		JOIN teams AS team ON team.id = fragment.team_id AND team.status = 'active' AND team.deleted_at IS NULL
 		WHERE COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 		  AND fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
+		  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
 		  AND NOT EXISTS (SELECT 1 FROM evidence_quarantines q WHERE q.team_id = fragment.team_id AND q.fragment_id = fragment.fragment_id AND q.status = 'active')
 		  AND NOT EXISTS (SELECT 1 FROM evidence_lifecycle_events e WHERE e.team_id = fragment.team_id AND e.target_fragment_id = fragment.fragment_id)
 		UNION ALL

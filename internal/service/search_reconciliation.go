@@ -129,7 +129,8 @@ func (s *searchRepairService) ProcessDue(ctx context.Context) (SearchRepairResul
 		return SearchRepairResult{}, fmt.Errorf("%w: database clock unavailable", ErrSearchRepairFailed)
 	}
 	localNow := now.In(location)
-	create := localNow.Hour() == start.Hour() && localNow.Minute() == start.Minute()
+	scheduled := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), start.Hour(), start.Minute(), 0, 0, localNow.Location())
+	create := !localNow.Before(scheduled)
 	return s.Run(ctx, localNow, create)
 }
 

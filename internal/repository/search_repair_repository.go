@@ -79,6 +79,9 @@ const searchRepairEvidenceTerminalPlacementJoinSQL = `
 	 AND placement_item.space_id IS NOT DISTINCT FROM fragment.space_id
 	 AND placement_item.space_generation IS NOT DISTINCT FROM fragment.space_generation
 	 AND placement_item.status = 'completed'
+	LEFT JOIN evidence_sources AS source
+	  ON source.team_id = fragment.team_id
+	 AND source.source_id = fragment.source_id
 `
 
 var _ SearchRepairRepository = (*SearchRepositoryImpl)(nil)
@@ -449,10 +452,11 @@ func canonicalSearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *A
 				FROM evidence_fragments AS fragment
 `+searchRepairEvidenceTerminalPlacementJoinSQL+`
 				WHERE fragment.team_id = ?::uuid
-			  AND fragment.owner_profile_id = ?::uuid
-			  AND fragment.fragment_id = ?::uuid
-			  AND fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
-			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+				  AND fragment.owner_profile_id = ?::uuid
+				  AND fragment.fragment_id = ?::uuid
+				  AND fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
+				  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
+				  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 			  AND NOT EXISTS (SELECT 1 FROM evidence_quarantines q WHERE q.team_id = fragment.team_id AND q.fragment_id = fragment.fragment_id AND q.status = 'active')
 			  AND NOT EXISTS (SELECT 1 FROM evidence_lifecycle_events e WHERE e.team_id = fragment.team_id AND e.target_fragment_id = fragment.fragment_id)
 		`, snapshot.TeamID, snapshot.OwnerProfileID, snapshot.SourceID).Row().Scan(&content, &spaceID, &spaceGeneration)
