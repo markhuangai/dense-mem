@@ -14,6 +14,10 @@ func correctRelationshipWithTestEmbeddings(ctx context.Context, semantic *Semant
 	if err != nil {
 		return nil, err
 	}
+	return semantic.CorrectRelationshipWithEmbeddings(ctx, input, relationshipCorrectionTestEmbeddings(plan))
+}
+
+func relationshipCorrectionTestEmbeddings(plan *RelationshipCorrectionEmbeddingPlan) []RelationshipCorrectionEmbedding {
 	embeddings := make([]RelationshipCorrectionEmbedding, 0, len(plan.Documents))
 	for _, document := range plan.Documents {
 		embeddings = append(embeddings, RelationshipCorrectionEmbedding{
@@ -26,7 +30,7 @@ func correctRelationshipWithTestEmbeddings(ctx context.Context, semantic *Semant
 			IndexGeneration:         plan.IndexGeneration,
 		})
 	}
-	return semantic.CorrectRelationshipWithEmbeddings(ctx, input, embeddings)
+	return embeddings
 }
 
 func assertGraphHasNode(t *testing.T, nodes []SemanticGraphNode, nodeType, id, title string) {

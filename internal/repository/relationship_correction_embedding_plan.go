@@ -93,7 +93,7 @@ func (r *SemanticRepositoryImpl) PlanRelationshipCorrectionEmbeddings(
 				subtle.ConstantTimeCompare([]byte(pending.ConfirmationToken), []byte(input.ConfirmationToken)) != 1 {
 				return nil
 			}
-			if _, err := validateRelationshipCorrectionSelection(pending, effective.Selection); err != nil {
+			if _, err := validateRelationshipCorrectionSelection(pending, input.Selection); err != nil {
 				return nil
 			}
 			resolution.Selection = mergeRelationshipCorrectionSelection(resolution.Selection, effective.Selection)

@@ -68,7 +68,9 @@ func TestLifecycleCorrectRelationshipDoesNotCommitWhenEmbeddingFails(t *testing.
 	}, correctResult: &repository.CorrectRelationshipResult{SubmissionID: uuid.NewString(), ProcessingState: "completed"}}
 	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, CorrectionExecutor: &lifecycleExecutorStub{err: semanticwrite.ErrProviderUnavailable}})
 	_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "failed-planned-correction"})
-	require.ErrorIs(t, err, ErrLifecycleEmbeddingUnavailable)
+	var publicErr *httperr.APIError
+	require.ErrorAs(t, err, &publicErr)
+	require.Equal(t, httperr.ErrEmbeddingUnavailable, publicErr.Code)
 	require.Zero(t, semantic.commitCalls)
 }
 
@@ -117,6 +119,21 @@ func TestTranslateRelationshipCorrectionErrorMapsSearchFencesToConflict(t *testi
 		var publicErr *httperr.APIError
 		require.ErrorAs(t, err, &publicErr)
 		require.Equal(t, httperr.CONFLICT, publicErr.Code)
+	}
+}
+
+func TestTranslateRelationshipCorrectionErrorMapsEmbeddingFailures(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		code httperr.ErrorCode
+	}{
+		{ErrLifecycleEmbeddingUnavailable, httperr.ErrEmbeddingUnavailable},
+		{ErrLifecycleEmbeddingInvalid, httperr.ErrEmbeddingResponseInvalid},
+	} {
+		err := translateRelationshipCorrectionError(test.err)
+		var publicErr *httperr.APIError
+		require.ErrorAs(t, err, &publicErr)
+		require.Equal(t, test.code, publicErr.Code)
 	}
 }
 

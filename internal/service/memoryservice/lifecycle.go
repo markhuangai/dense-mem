@@ -233,7 +233,13 @@ func (s *lifecycleService) GetRelationshipCorrectionStatus(
 }
 
 func translateRelationshipCorrectionError(err error) error {
-	if errors.Is(err, ErrLifecycleEmbeddingUnavailable) || errors.Is(err, ErrLifecycleEmbeddingInvalid) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, ErrLifecycleEmbeddingUnavailable) {
+		return httperr.New(httperr.ErrEmbeddingUnavailable, "embedding provider unavailable")
+	}
+	if errors.Is(err, ErrLifecycleEmbeddingInvalid) {
+		return httperr.New(httperr.ErrEmbeddingResponseInvalid, "embedding provider response invalid")
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
 	if errors.Is(err, repository.ErrSemanticOwnerMismatch) || errors.Is(err, repository.ErrRelationshipCorrectionNotFound) {

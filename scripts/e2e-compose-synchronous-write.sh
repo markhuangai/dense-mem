@@ -15,14 +15,19 @@ prepare_synchronous_write_files() {
       ;;
   esac
 
+  local provider_dimensions
+  provider_dimensions="$(compose_server_environment_value AI_API_EMBEDDING_DIMENSIONS)"
+  if [[ -z "$provider_dimensions" || ! "$provider_dimensions" =~ ^[1-9][0-9]*$ ]]; then
+    echo "AI_API_EMBEDDING_DIMENSIONS must be a positive integer for the synchronous-write provider fixture." >&2
+    return 1
+  fi
+
   SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE="${ROOT_DIR}/docker-compose.synchronous-write-e2e-${E2E_FILE_ID}.yml"
-  node - "$SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE" "$ROOT_DIR" "$slice" "$E2E_MARKER" <<'NODE'
+  node - "$SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE" "$slice" "$provider_dimensions" "$E2E_MARKER" <<'NODE'
 const fs = require("node:fs");
 
-const [destination, rootDir, slice, marker] = process.argv.slice(2);
+const [destination, slice, providerDimensions, marker] = process.argv.slice(2);
 const quote = (value) => JSON.stringify(value);
-const fixture = `${rootDir}/tests/uat/synchronous_write/provider-fixture.mjs`;
-const fixtureMount = `${fixture}:/e2e/provider-fixture.mjs:ro`;
 const contents = `${marker}
 services:
   server:
@@ -41,13 +46,32 @@ services:
     command: ["node", "/e2e/provider-fixture.mjs"]
     environment:
       DENSE_MEM_E2E_PROVIDER_FAULT: "\${DENSE_MEM_E2E_PROVIDER_FAULT:-none}"
-      DENSE_MEM_E2E_PROVIDER_DIMENSIONS: "\${AI_API_EMBEDDING_DIMENSIONS:-1536}"
+      DENSE_MEM_E2E_WRITE_SLICE: ${quote(slice)}
+      DENSE_MEM_E2E_PROVIDER_DIMENSIONS: ${quote(providerDimensions)}
       DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: "5000"
     volumes:
-      - ${quote(fixtureMount)}
+      - e2e-synchronous-write-provider-files:/e2e
+volumes:
+  e2e-synchronous-write-provider-files:
 `;
 fs.writeFileSync(destination, contents);
 NODE
+}
+
+prepare_synchronous_write_provider_fixture_volume() {
+  if [[ "$E2E_SCENARIO" != "synchronous_write" ]]; then
+    return
+  fi
+
+  local container_id
+  container_id="$(compose create synchronous-write-provider >/dev/null && compose ps -aq synchronous-write-provider)"
+  if [[ -z "$container_id" ]]; then
+    echo "Failed to create the synchronous-write provider fixture volume." >&2
+    return 1
+  fi
+  docker cp \
+    "$ROOT_DIR/tests/uat/synchronous_write/provider-fixture.mjs" \
+    "${container_id}:/e2e/provider-fixture.mjs"
 }
 
 run_synchronous_write_e2e() {

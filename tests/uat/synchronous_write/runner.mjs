@@ -17,12 +17,12 @@ export async function discoverCases(directory = casesRoot, filter = requested) {
   return selected.map((name) => pathToFileURL(join(directory, name)).href);
 }
 
-export async function runCases({ rpc = liveRPC, expect = assert } = {}) {
+export async function runCases({ rpc = liveRPC, rawRPC = liveRawRPC, expect = assert } = {}) {
   const modules = [];
   for (const url of await discoverCases()) {
     const module = await import(url);
     if (typeof module.run !== "function" || typeof module.name !== "string") throw new Error(`invalid synchronous-write case ${url}`);
-    modules.push({ name: module.name, result: await module.run({ rpc, expect }) });
+    modules.push({ name: module.name, result: await module.run({ rpc, rawRPC, expect }) });
   }
   return modules;
 }
@@ -37,6 +37,12 @@ function assert(condition, message) {
 }
 
 async function liveRPC(method, params) {
+  const payload = await liveRawRPC(method, params);
+  if (payload.error) throw new Error(`MCP ${method} returned a bounded error`);
+  return payload.result ?? payload;
+}
+
+async function liveRawRPC(method, params) {
   const base = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
   const key = required("DENSE_MEM_E2E_API_KEY");
   const response = await fetch(`${base}/mcp`, {
@@ -47,8 +53,7 @@ async function liveRPC(method, params) {
   const body = await response.text();
   if (!response.ok) throw new Error(`MCP request failed with HTTP ${response.status}`);
   const payload = body ? JSON.parse(body) : {};
-  if (payload.error) throw new Error(`MCP ${method} returned a bounded error`);
-  return payload.result ?? payload;
+  return payload;
 }
 
 function required(name) {

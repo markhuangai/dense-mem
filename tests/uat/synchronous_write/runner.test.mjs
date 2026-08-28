@@ -25,7 +25,16 @@ test("provider timeout fault is longer than the pinned E2E request caps", async 
   assert.match(overlay, /AI_VERIFIER_TIMEOUT_SECONDS: "2"/);
   assert.match(overlay, /AI_VERIFIER_API_KEY: dense-mem-e2e-verifier-key/);
   assert.match(overlay, /DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: "5000"/);
+  assert.match(overlay, /provider_dimensions=.*compose_server_environment_value AI_API_EMBEDDING_DIMENSIONS/);
   assert.match(fixture, /timeoutDelayMs/);
+});
+
+test("provider fixture uses a Compose volume instead of a worktree bind mount", async () => {
+  const overlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");
+  assert.match(overlay, /e2e-synchronous-write-provider-files:\/e2e/);
+  assert.match(overlay, /prepare_synchronous_write_provider_fixture_volume/);
+  assert.match(overlay, /docker cp/);
+  assert.doesNotMatch(overlay, /provider-fixture\.mjs:\/e2e\/provider-fixture\.mjs:ro/);
 });
 
 test("compose runner filters the resolved default slice", async () => {
@@ -35,4 +44,11 @@ test("compose runner filters the resolved default slice", async () => {
   assert.match(overlay, /local api_key="\$2"/);
   assert.match(overlay, /DENSE_MEM_E2E_WRITE_CASE="\$slice"/);
   assert.match(compose, /run_synchronous_write_e2e "\$team_id" "\$api_key"/);
+});
+
+test("correction slice contains executable success and provider-failure assertions", async () => {
+  const correction = await readFile(new URL("./cases/correction.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(correction, /reserved-for-adoption/);
+  assert.match(correction, /correct_relationship/);
+  assert.match(correction, /provider_failure_preserved/);
 });

@@ -839,6 +839,7 @@ fi
 prepare_e2e_prometheus_volume
 prepare_oauth_fixture_volume; prepare_conflict_provider_volume
 prepare_embedding_proxy_volume
+prepare_synchronous_write_provider_fixture_volume
 
 echo "Starting e2e compose stack on ${USER_URL}, ${CONTROL_URL}, and ${PROMETHEUS_URL}."
 compose up -d postgres
