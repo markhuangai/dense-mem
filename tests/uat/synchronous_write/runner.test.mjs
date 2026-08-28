@@ -51,4 +51,6 @@ test("correction slice contains executable success and provider-failure assertio
   assert.doesNotMatch(correction, /reserved-for-adoption/);
   assert.match(correction, /correct_relationship/);
   assert.match(correction, /provider_failure_preserved/);
+  assert.match(correction, /provider_timeout_preserved/);
+  assert.match(correction, /embedding_timeout/);
 });

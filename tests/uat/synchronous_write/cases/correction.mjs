@@ -1,6 +1,7 @@
 export const name = "correction";
 
 const providerFaultMarker = "e2e-correction-provider-fault";
+const providerTimeoutMarker = "e2e-correction-provider-timeout";
 const sourcePlacementTimeoutSeconds = Number(process.env.DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS || 240);
 
 export async function run({ rpc, rawRPC, expect }) {
@@ -31,7 +32,15 @@ export async function run({ rpc, rawRPC, expect }) {
 
   const preserved = await toolSuccess(rpc, "trace_memory", { relationship_id: failedSource.relationshipID });
   expect(preserved.relationship?.relationship_status === "active", "provider failure must preserve the original active relationship");
-  return { mode: name, processing_state: successfulStatus.processing_state, provider_failure_preserved: true };
+
+  const timeoutSource = await createSource(rpc, expect, `${runID}-timeout`);
+  const timedOut = await toolRaw(rawRPC, "correct_relationship", correctionInput(timeoutSource, `${providerTimeoutMarker}-${runID}`));
+  expect(timedOut.error && timedOut.result === undefined, "provider timeout must return a bounded MCP error");
+  expect(String(timedOut.error.message || "").includes("embedding_timeout"), "provider timeout must retain its bounded embedding classification");
+  const timeoutPreserved = await toolSuccess(rpc, "trace_memory", { relationship_id: timeoutSource.relationshipID });
+  expect(timeoutPreserved.relationship?.relationship_status === "active", "provider timeout must preserve the original active relationship");
+
+  return { mode: name, processing_state: successfulStatus.processing_state, provider_failure_preserved: true, provider_timeout_preserved: true };
 }
 
 async function createSource(rpc, expect, label) {

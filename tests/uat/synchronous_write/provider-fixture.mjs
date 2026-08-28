@@ -8,6 +8,7 @@ const fault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
 const writeSlice = (process.env.DENSE_MEM_E2E_WRITE_SLICE || "").trim();
 const timeoutDelayMs = Number(process.env.DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS || 30_000);
 const correctionProviderFaultMarker = "e2e-correction-provider-fault";
+const correctionProviderTimeoutMarker = "e2e-correction-provider-timeout";
 
 function vectorFor(text, width) {
   const output = [];
@@ -126,6 +127,9 @@ const server = createServer(async (request, response) => {
 
   if (request.url?.endsWith("/embeddings")) {
     const inputs = Array.isArray(payload.input) ? payload.input : [payload.input || ""];
+    if (writeSlice === "correction" && inputs.some((input) => String(input).includes(correctionProviderTimeoutMarker))) {
+      await new Promise((resolve) => setTimeout(resolve, timeoutDelayMs));
+    }
     if (writeSlice === "correction" && inputs.some((input) => String(input).includes(correctionProviderFaultMarker))) {
       response.destroy();
       return;
