@@ -458,9 +458,6 @@ func loadConflictResolutionDocuments(
 			SourceVersion: int64(relationship.Version), DocumentHash: normalized.DocumentHash, DocumentText: normalized.DocumentText,
 		})
 		seenHashes[normalized.DocumentHash] = struct{}{}
-		if len(seenHashes) > 256 {
-			return nil, errors.New("conflict resolution requires more than 256 unique search documents")
-		}
 	}
 	return assignments, nil
 }
