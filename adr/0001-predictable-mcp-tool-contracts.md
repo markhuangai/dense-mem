@@ -41,12 +41,12 @@ state changes, or that model-proposed content is byte-for-byte reproducible. It
 means the client can rely on the tool's schema, bounds, state semantics, and
 next action without guessing about hidden required work.
 
-The asynchronous `remember` receipt and `get_submission_status` tool are a
-temporary compatibility path while Remember moves to synchronous terminal
-processing. During that transition, changes may preserve the existing path but
-must not introduce a new asynchronous public tool or widen the polling
-contract. Completing the transition removes status polling from the supported
-contract.
+The asynchronous `remember` and `correct_relationship` receipts, together with
+`get_submission_status`, are temporary compatibility paths while their
+server-owned processing moves to synchronous terminal processing. During that
+transition, changes may preserve the existing paths but must not introduce a
+new asynchronous public tool or widen the polling contract. Completing the
+transition removes status polling from the supported contract.
 
 ## Consequences
 
