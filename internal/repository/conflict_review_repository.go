@@ -561,6 +561,10 @@ func suppressConflictLosingRelationships(
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	contract, err := loadActiveSearchContractInTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	updatedIDs := make([]string, 0, len(suppressed))
 	for _, item := range suppressed {
 		updatedIDs = append(updatedIDs, item.RelationshipID)
@@ -574,7 +578,7 @@ func suppressConflictLosingRelationships(
 		}, relationship); err != nil {
 			return nil, err
 		}
-		if err := staleConflictRelationshipEmbeddingJobs(ctx, tx, input.TeamID, []string{item.RelationshipID}); err != nil {
+		if err := staleConflictRelationshipEmbeddingJobs(ctx, tx, input.TeamID, contract.EmbeddingContractID, []string{item.RelationshipID}); err != nil {
 			return nil, err
 		}
 		if _, err := insertRelationshipTransition(ctx, tx, transitionInput{

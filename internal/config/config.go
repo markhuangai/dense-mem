@@ -37,6 +37,7 @@ const (
 	DefaultMemoryPlacementPollSeconds          = 5
 	DefaultConflictReviewTTLDays               = 7
 	DefaultConflictReviewStartTime             = "04:00"
+	conflictReviewLeaseSafetySeconds           = 30
 )
 
 var legacyNeo4jEnvVars = []string{
@@ -751,6 +752,17 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		return cfg, &ValidationError{
 			Field:   "CONFLICT_REVIEW_LEASE_SECONDS",
 			Message: fmt.Sprintf("must be between 30 and 1800, got %d", cfg.ConflictReviewLeaseSeconds),
+		}
+	}
+	if cfg.AIEmbeddingTimeoutSeconds > 0 &&
+		cfg.ConflictReviewLeaseSeconds <= cfg.AIEmbeddingTimeoutSeconds+conflictReviewLeaseSafetySeconds {
+		return cfg, &ValidationError{
+			Field: "CONFLICT_REVIEW_LEASE_SECONDS",
+			Message: fmt.Sprintf(
+				"must exceed AI_API_EMBEDDING_TIMEOUT_SECONDS plus %d seconds, got %d <= %d",
+				conflictReviewLeaseSafetySeconds, cfg.ConflictReviewLeaseSeconds,
+				cfg.AIEmbeddingTimeoutSeconds+conflictReviewLeaseSafetySeconds,
+			),
 		}
 	}
 	if cfg.ConflictReviewMaxAttempts > 20 {

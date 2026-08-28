@@ -693,11 +693,13 @@ func conflictResolutionEmbeddingRequired(
 	documentHash string,
 ) (bool, error) {
 	var state, hash, spaceID string
-	var dimensions int
+	var projectionGenerationID sql.NullString
+	var dimensions, projectionFormat int
 	var spaceGeneration, sourceVersion int64
 	var hasEmbedding bool
 	err := tx.WithContext(ctx).Raw(`
-		SELECT search_state, document_hash, embedding_dimensions, space_id::text, space_generation,
+		SELECT search_state, document_hash, embedding_dimensions, projection_format_version,
+		       projection_generation_id::text, space_id::text, space_generation,
 		       source_version, embedding IS NOT NULL
 		FROM search_documents
 		WHERE team_id = ?::uuid
@@ -706,7 +708,8 @@ func conflictResolutionEmbeddingRequired(
 		  AND embedding_contract_id = ?::uuid
 		LIMIT 1
 	`, relationship.TeamID, relationship.RelationshipID, contract.EmbeddingContractID).Row().Scan(
-		&state, &hash, &dimensions, &spaceID, &spaceGeneration, &sourceVersion, &hasEmbedding,
+		&state, &hash, &dimensions, &projectionFormat, &projectionGenerationID,
+		&spaceID, &spaceGeneration, &sourceVersion, &hasEmbedding,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
@@ -716,7 +719,8 @@ func conflictResolutionEmbeddingRequired(
 	}
 	return state != string(domain.SearchProjectionCurrent) || hash != documentHash ||
 		dimensions != contract.EmbeddingDimensions || spaceID != relationship.SpaceID ||
-		spaceGeneration != relationship.SpaceGeneration || sourceVersion != int64(relationship.Version) || !hasEmbedding, nil
+		spaceGeneration != relationship.SpaceGeneration || sourceVersion != int64(relationship.Version) ||
+		projectionFormat != 2 || projectionGenerationID.Valid || !hasEmbedding, nil
 }
 
 func conflictResolutionEmbeddingsByHash(
@@ -817,13 +821,13 @@ func applyConflictResolutionEmbedding(
 	if err != nil {
 		return err
 	}
-	if err := staleConflictRelationshipEmbeddingJobs(ctx, tx, document.TeamID, []string{document.RelationshipID}); err != nil {
+	if err := staleConflictRelationshipEmbeddingJobs(ctx, tx, document.TeamID, fence.EmbeddingContractID, []string{document.RelationshipID}); err != nil {
 		return err
 	}
 	return refreshPreviousRelationshipProjectionGeneration(ctx, tx, document.TeamID, previousGenerationID)
 }
 
-func staleConflictRelationshipEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID string, relationshipIDs []string) error {
+func staleConflictRelationshipEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID, embeddingContractID string, relationshipIDs []string) error {
 	if len(relationshipIDs) == 0 {
 		return nil
 	}
@@ -834,8 +838,9 @@ func staleConflictRelationshipEmbeddingJobs(ctx context.Context, tx *gorm.DB, te
 		WHERE team_id = ?::uuid
 		  AND source_kind = 'relationship'
 		  AND source_id = ANY(?::uuid[])
+		  AND embedding_contract_id = ?::uuid
 		  AND status IN ('queued', 'processing', 'failed')
-	`, teamID, pq.Array(relationshipIDs)).Error
+	`, teamID, pq.Array(relationshipIDs), embeddingContractID).Error
 }
 
 func relationshipConflictResolutionPlansEqual(left, right RelationshipConflictResolutionPlan) bool {

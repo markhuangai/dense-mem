@@ -352,7 +352,7 @@ func testConflictReviewConfig(t *testing.T, timezone string, start string, jitte
 	t.Setenv("APP_TIMEZONE", timezone)
 	t.Setenv("CONFLICT_REVIEW_START_TIME_LOCAL", start)
 	t.Setenv("CONFLICT_REVIEW_JITTER_SECONDS", jitter)
-	t.Setenv("CONFLICT_REVIEW_LEASE_SECONDS", "60")
+	t.Setenv("CONFLICT_REVIEW_LEASE_SECONDS", "120")
 	t.Setenv("CONFLICT_REVIEW_BATCH_SIZE", "10")
 	t.Setenv("CONFLICT_REVIEW_MAX_ATTEMPTS", "5")
 	t.Setenv("CONFLICT_REVIEW_MAX_CONCURRENCY", "1")

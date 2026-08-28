@@ -231,9 +231,19 @@ func TestPrivateSpaceConflictResolutionCommitsOnlyScopedSearchDocuments(t *testi
 	defer cleanup()
 	ctx := context.Background()
 	fixture := setupPrivateSpaceConflictResolutionFixture(t, ctx, adminDB, appDB, rls, "private-conflict-resolution")
+	var jobsBefore int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id IN (?::uuid, ?::uuid)
+		`, fixture.teamID, fixture.firstRelationship.RelationshipID, fixture.secondRelationship.RelationshipID).Row().Scan(&jobsBefore)
+	}))
 	applied := commitConflictReviewResolutionWithVectors(t, ctx, fixture.ledger, fixture.resolution)
 	require.True(t, applied.Resolved)
-	var resolved, scopedCurrent, unscopedDocuments int64
+	var resolved, scopedCurrent, unscopedDocuments, jobsAfter, activeJobsAfter int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, fixture.teamID, fixture.ownerA, func(tx *gorm.DB) error {
 		if err := tx.Raw(`SELECT count(*) FROM relationship_conflict_cases WHERE team_id = ?::uuid AND conflict_id = ?::uuid AND status = 'resolved'`, fixture.teamID, fixture.conflictID).Scan(&resolved).Error; err != nil {
 			return err
@@ -241,11 +251,32 @@ func TestPrivateSpaceConflictResolutionCommitsOnlyScopedSearchDocuments(t *testi
 		if err := tx.Raw(`SELECT count(*) FROM search_documents WHERE team_id = ?::uuid AND source_kind = 'relationship' AND space_id = ?::uuid AND space_generation = ? AND search_state = 'current'`, fixture.teamID, fixture.spaceID, fixture.generation).Scan(&scopedCurrent).Error; err != nil {
 			return err
 		}
-		return tx.Raw(`SELECT count(*) FROM search_documents WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id IN (?::uuid, ?::uuid) AND (space_id <> ?::uuid OR space_generation <> ?)`, fixture.teamID, fixture.firstRelationship.RelationshipID, fixture.secondRelationship.RelationshipID, fixture.spaceID, fixture.generation).Scan(&unscopedDocuments).Error
+		if err := tx.Raw(`SELECT count(*) FROM search_documents WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id IN (?::uuid, ?::uuid) AND (space_id <> ?::uuid OR space_generation <> ?)`, fixture.teamID, fixture.firstRelationship.RelationshipID, fixture.secondRelationship.RelationshipID, fixture.spaceID, fixture.generation).Scan(&unscopedDocuments).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT count(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id IN (?::uuid, ?::uuid)
+		`, fixture.teamID, fixture.firstRelationship.RelationshipID, fixture.secondRelationship.RelationshipID).Row().Scan(&jobsAfter); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT count(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id IN (?::uuid, ?::uuid)
+			  AND status IN ('queued', 'processing', 'failed')
+		`, fixture.teamID, fixture.firstRelationship.RelationshipID, fixture.secondRelationship.RelationshipID).Row().Scan(&activeJobsAfter)
 	}))
 	assert.Equal(t, int64(1), resolved)
 	assert.GreaterOrEqual(t, scopedCurrent, int64(1))
 	assert.Zero(t, unscopedDocuments)
+	assert.Equal(t, jobsBefore, jobsAfter)
+	assert.Zero(t, activeJobsAfter)
 }
 
 func TestPrivateSpaceConflictResolutionRejectsSealedSpaceAfterEmptyPlan(t *testing.T) {

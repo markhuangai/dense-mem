@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -111,6 +112,152 @@ func TestConflictResolutionRefreshesPreviousProjectionGenerationAfterEmbedding(t
 	assert.Zero(t, projectedCount)
 	assert.Zero(t, currentVectorCount)
 	assert.Zero(t, failedJobCount)
+}
+
+func TestConflictResolutionReprojectsNonForegroundDocument(t *testing.T) {
+	fixture := NewDeterministicConflictServiceFixture(t)
+	ctx := context.Background()
+	reviewed, err := fixture.Ledger.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+		ConflictID: fixture.ConflictID, Now: fixture.ReviewNow,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, reviewed)
+	require.Equal(t, ConflictReviewOutcomeResolve, reviewed.Outcome)
+	require.NotNil(t, reviewed.Resolution)
+
+	var winnerRelationshipID string
+	var contract *ActiveSearchContract
+	projectionGenerationID := uuid.NewString()
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
+		var err error
+		contract, err = loadActiveSearchContractInTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT relationship_id::text
+			FROM relationship_conflict_position_members
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid AND position_id = ?::uuid AND active
+			ORDER BY relationship_id
+			LIMIT 1
+		`, fixture.TeamID, fixture.ConflictID, reviewed.Resolution.PreferredPositionID).Row().Scan(&winnerRelationshipID); err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO search_projection_generations (
+			    team_id, projection_generation_id, source_kind, generation,
+			    projection_format_version, state, eligible_count, projected_count,
+			    current_vector_count, failed_job_count, last_error, activated_at
+			) VALUES (
+			    ?::uuid, ?::uuid, 'relationship', 1, 2,
+			    'current', 1, 1, 1, 0, '', now()
+			)
+		`, fixture.TeamID, projectionGenerationID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'current', embedding = '[1,0,0]'::vector,
+			    embedding_updated_at = now(), embedding_error = '',
+			    projection_format_version = 2, projection_generation_id = NULL
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ANY(?::uuid[])
+			  AND embedding_contract_id = ?::uuid
+		`, fixture.TeamID, pq.Array(fixture.RelationshipIDs), contract.EmbeddingContractID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE search_documents
+			SET projection_generation_id = ?::uuid
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+			  AND embedding_contract_id = ?::uuid
+		`, projectionGenerationID, fixture.TeamID, winnerRelationshipID, contract.EmbeddingContractID).Error
+	}))
+	require.NotNil(t, contract)
+	require.NotEmpty(t, winnerRelationshipID)
+
+	plan, err := fixture.Ledger.PlanRelationshipConflictResolution(ctx, *reviewed.Resolution)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.False(t, plan.Stale)
+	require.Len(t, plan.Documents, 1)
+	assert.Equal(t, winnerRelationshipID, plan.Documents[0].RelationshipID)
+}
+
+func TestConflictResolutionStalesOnlyMatchingContractEmbeddingJobs(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	oldContractID := insertSearchTestContract(t, adminDB, rls, "conflict-resolution-old-contract", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-resolution-contract-scope-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "conflict-resolution-contract-scope-owner")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	searchRepo := NewSearchRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Contract scope subject")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "product", "Contract scope object")
+	relationship := commitPlacementRelationshipForConflictTest(
+		t, ctx, ledgerRepo, teamID, ownerID, "worker-contract-scope", "contract-scope-relationship",
+		"The contract scope relationship is active.", subject.EntityID, object.EntityID, "source-contract-scope",
+	).RelationshipResults[0].Relationship
+	require.NotNil(t, relationship)
+
+	documentText := "relationship\nsubject: Contract scope subject\npredicate: works on\nobject: Contract scope object\npolarity: positive"
+	oldDocument, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship", SourceID: relationship.RelationshipID,
+		SourceVersion: int64(relationship.Version), ProjectionFormat: 2, DocumentText: documentText,
+		SpaceID: relationship.SpaceID, SpaceGeneration: relationship.SpaceGeneration,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, oldDocument.QueuedJobID)
+
+	insertSearchTestContract(t, adminDB, rls, "conflict-resolution-new-contract", 3, "exact", "")
+	newDocument, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship", SourceID: relationship.RelationshipID,
+		SourceVersion: int64(relationship.Version), ProjectionFormat: 2, DocumentText: documentText,
+		SpaceID: relationship.SpaceID, SpaceGeneration: relationship.SpaceGeneration,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, newDocument.QueuedJobID)
+
+	var contract *ActiveSearchContract
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		var err error
+		contract, err = loadActiveSearchContractInTx(ctx, tx)
+		return err
+	}))
+	require.NotNil(t, contract)
+	require.NotEqual(t, oldContractID, contract.EmbeddingContractID)
+	documentInput := normalizeUpsertSearchDocumentInput(UpsertSearchDocumentInput{DocumentText: documentText})
+	document := RelationshipConflictResolutionDocument{
+		TeamID: relationship.TeamID, RelationshipID: relationship.RelationshipID, OwnerProfileID: relationship.OwnerProfileID,
+		SpaceID: relationship.SpaceID, SpaceGeneration: relationship.SpaceGeneration, SourceVersion: int64(relationship.Version),
+		DocumentHash: documentInput.DocumentHash, DocumentText: documentInput.DocumentText,
+	}
+	fence := RelationshipConflictResolutionFence{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		EmbeddingModel: contract.EmbeddingModel, SearchIndexGenerationID: contract.SearchIndexGenerationID,
+		IndexGeneration: contract.IndexGeneration,
+	}
+	vector := make([]float32, contract.EmbeddingDimensions)
+	vector[0] = 1
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		return applyConflictResolutionEmbedding(ctx, tx, document, fence, vector)
+	}))
+
+	var oldJobState, newJobState string
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT status FROM embedding_jobs WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid`, teamID, oldDocument.QueuedJobID).Row().Scan(&oldJobState); err != nil {
+			return err
+		}
+		return tx.Raw(`SELECT status FROM embedding_jobs WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid`, teamID, newDocument.QueuedJobID).Row().Scan(&newJobState)
+	}))
+	assert.Equal(t, "queued", oldJobState)
+	assert.Equal(t, "stale", newJobState)
 }
 
 func TestConflictResolutionRejectsIncompleteEmbeddingBatchWithoutWrites(t *testing.T) {

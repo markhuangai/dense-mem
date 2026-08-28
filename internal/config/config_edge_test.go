@@ -66,6 +66,10 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 		{"excessive conflict concurrency", func() { os.Setenv("CONFLICT_REVIEW_MAX_CONCURRENCY", "17") }, "CONFLICT_REVIEW_MAX_CONCURRENCY"},
 		{"excessive conflict batch size", func() { os.Setenv("CONFLICT_REVIEW_BATCH_SIZE", "501") }, "CONFLICT_REVIEW_BATCH_SIZE"},
 		{"short conflict lease", func() { os.Setenv("CONFLICT_REVIEW_LEASE_SECONDS", "29") }, "CONFLICT_REVIEW_LEASE_SECONDS"},
+		{"conflict lease does not cover synchronous embedding", func() {
+			os.Setenv("AI_API_EMBEDDING_TIMEOUT_SECONDS", "60")
+			os.Setenv("CONFLICT_REVIEW_LEASE_SECONDS", "90")
+		}, "CONFLICT_REVIEW_LEASE_SECONDS"},
 		{"long conflict lease", func() { os.Setenv("CONFLICT_REVIEW_LEASE_SECONDS", "1801") }, "CONFLICT_REVIEW_LEASE_SECONDS"},
 		{"excessive conflict attempts", func() { os.Setenv("CONFLICT_REVIEW_MAX_ATTEMPTS", "21") }, "CONFLICT_REVIEW_MAX_ATTEMPTS"},
 		{"negative conflict jitter", func() { os.Setenv("CONFLICT_REVIEW_JITTER_SECONDS", "-1") }, "CONFLICT_REVIEW_JITTER_SECONDS"},
