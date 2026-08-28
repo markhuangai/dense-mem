@@ -105,8 +105,8 @@ func validTerminalResultForTest() *TerminalRememberResult {
 		ProcessingState: string(TerminalProcessingCompleted), SearchState: string(TerminalSearchCurrent),
 		CorrelationID: "correlation", Kind: ResultKindTerminal,
 		Evidence: []TerminalEvidenceResult{
-			{Disposition: "stored", EvidenceID: "11111111-1111-1111-1111-111111111111", EvidenceIndex: 0, SearchState: string(TerminalSearchCurrent)},
-			{Disposition: "not_stored", EvidenceIndex: 1, SearchState: string(TerminalSearchNotRequired), Reason: "not_supported_by_evidence"},
+			{Disposition: "stored", EvidenceID: "11111111-1111-1111-1111-111111111111", EvidenceIndex: 0, SupersededEvidenceIDs: []string{}, SearchState: string(TerminalSearchCurrent)},
+			{Disposition: "not_stored", EvidenceIndex: 1, SupersededEvidenceIDs: []string{}, SearchState: string(TerminalSearchNotRequired), Reason: "not_supported_by_evidence"},
 		},
 		RelationshipResults: []SubmissionRelationshipResult{
 			{RelationshipRef: "rel-a", Disposition: "stored", Splits: []SubmissionRelationshipSplit{{
@@ -133,6 +133,7 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"invalid processing state", func(result *TerminalRememberResult) { result.ProcessingState = "processing" }},
 		{"invalid search state", func(result *TerminalRememberResult) { result.SearchState = "queued" }},
 		{"missing errors array", func(result *TerminalRememberResult) { result.Errors = nil }},
+		{"missing evidence array", func(result *TerminalRememberResult) { result.Evidence = nil }},
 		{"completed errors", func(result *TerminalRememberResult) {
 			result.Errors = []SubmissionStatusError{TerminalStatusError(TerminalErrorInternalFailure)}
 		}},
@@ -189,6 +190,12 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"non-canonical evidence reason", func(result *TerminalRememberResult) { result.Evidence[1].Reason = " stale_input " }},
 		{"non-stored evidence supersession", func(result *TerminalRememberResult) {
 			result.Evidence[1].SupersededEvidenceIDs = []string{"22222222-2222-2222-2222-222222222222"}
+		}},
+		{"missing superseded evidence array", func(result *TerminalRememberResult) {
+			result.Evidence[0].SupersededEvidenceIDs = nil
+		}},
+		{"superseded evidence count", func(result *TerminalRememberResult) {
+			result.Evidence[0].SupersededEvidenceIDs = make([]string, 51)
 		}},
 		{"duplicate stored evidence id", func(result *TerminalRememberResult) {
 			result.Evidence[1].Disposition = "stored"
@@ -266,6 +273,15 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		})
 	}
 	require.NoError(t, ValidateTerminalRememberResult(validTerminalResultForTest(), 2, []string{"rel-a", "rel-b"}))
+}
+
+func TestValidateTerminalRememberResultRejectsNilZeroRelationshipResults(t *testing.T) {
+	result := validTerminalResultForTest()
+	result.RelationshipResults = nil
+	require.Error(t, ValidateTerminalRememberResult(result, len(result.Evidence), []string{}))
+
+	result.RelationshipResults = []SubmissionRelationshipResult{}
+	require.NoError(t, ValidateTerminalRememberResult(result, len(result.Evidence), []string{}))
 }
 
 func TestValidateTerminalRememberResultAcceptsContextualNotStoredReasons(t *testing.T) {

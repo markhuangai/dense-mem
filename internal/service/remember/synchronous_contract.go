@@ -155,6 +155,7 @@ var terminalErrorCodes = []TerminalErrorCode{
 const (
 	maxTerminalErrors             = 50
 	maxTerminalRelationshipSplits = 50
+	maxTerminalSupersededEvidence = 50
 )
 
 func TerminalErrorCodes() []string {
@@ -354,6 +355,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	if result.Errors == nil {
 		return errors.New("remember: terminal errors are required")
 	}
+	if result.Evidence == nil {
+		return errors.New("remember: terminal evidence is required")
+	}
 	if len(result.Errors) > maxTerminalErrors {
 		return fmt.Errorf("remember: terminal error count %d exceeds limit %d", len(result.Errors), maxTerminalErrors)
 	}
@@ -369,6 +373,12 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		}
 		if item.Disposition != "stored" && item.Disposition != "not_stored" {
 			return fmt.Errorf("remember: terminal evidence disposition %q is invalid", item.Disposition)
+		}
+		if item.SupersededEvidenceIDs == nil {
+			return fmt.Errorf("remember: terminal evidence %d superseded evidence is required", index)
+		}
+		if len(item.SupersededEvidenceIDs) > maxTerminalSupersededEvidence {
+			return fmt.Errorf("remember: terminal evidence %d has too many superseded evidence IDs", index)
 		}
 		if item.Disposition == "stored" && item.EvidenceID == "" {
 			return fmt.Errorf("remember: stored evidence %d has no evidence_id", index)
@@ -435,6 +445,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		if result.ProcessingState != string(terminalProcessingStateForError(code)) {
 			return fmt.Errorf("remember: terminal error %d is inconsistent with processing state", index)
 		}
+	}
+	if result.RelationshipResults == nil {
+		return errors.New("remember: terminal relationship results are required")
 	}
 	if len(result.RelationshipResults) != len(relationshipRefs) {
 		return fmt.Errorf("remember: terminal relationship count %d, expected %d", len(result.RelationshipResults), len(relationshipRefs))
