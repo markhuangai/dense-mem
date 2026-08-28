@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/google/uuid"
@@ -112,6 +113,107 @@ func TestConflictResolutionRefreshesPreviousProjectionGenerationAfterEmbedding(t
 	assert.Zero(t, projectedCount)
 	assert.Zero(t, currentVectorCount)
 	assert.Zero(t, failedJobCount)
+}
+
+func TestConflictResolutionRefreshesLosingProjectionGenerationAfterStalingJob(t *testing.T) {
+	fixture := NewDeterministicConflictServiceFixture(t)
+	ctx := context.Background()
+	reviewed, err := fixture.Ledger.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+		ConflictID: fixture.ConflictID, Now: fixture.ReviewNow,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, reviewed)
+	require.Equal(t, ConflictReviewOutcomeResolve, reviewed.Outcome)
+	require.NotNil(t, reviewed.Resolution)
+
+	projectionGenerationID := uuid.NewString()
+	var loserRelationshipID string
+	var contract *ActiveSearchContract
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
+		var err error
+		contract, err = loadActiveSearchContractInTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT relationship_id::text
+			FROM relationship_conflict_position_members
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+			  AND position_id <> ?::uuid AND active
+			ORDER BY relationship_id
+			LIMIT 1
+		`, fixture.TeamID, fixture.ConflictID, reviewed.Resolution.PreferredPositionID).Row().Scan(&loserRelationshipID)
+	}))
+	require.NotNil(t, contract)
+	require.NotEmpty(t, loserRelationshipID)
+	insertRelationshipProjectionGenerationForTest(t, fixture.adminDB, fixture.rls, fixture.TeamID, projectionGenerationID, 1, "embedding")
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'pending', embedding = NULL,
+			    embedding_updated_at = NULL, embedding_error = '',
+			    projection_format_version = 2, projection_generation_id = ?::uuid
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+			  AND embedding_contract_id = ?::uuid
+		`, projectionGenerationID, fixture.TeamID, loserRelationshipID, contract.EmbeddingContractID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE embedding_jobs
+			SET projection_format_version = 2, projection_generation_id = ?::uuid,
+			    status = 'queued', lease_until = NULL, worker_id = '', completed_at = NULL
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+			  AND embedding_contract_id = ?::uuid
+		`, projectionGenerationID, fixture.TeamID, loserRelationshipID, contract.EmbeddingContractID).Error
+	}))
+
+	plan, err := fixture.Ledger.PlanRelationshipConflictResolution(ctx, *reviewed.Resolution)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	result, err := fixture.Ledger.CommitRelationshipConflictResolution(ctx, CommitRelationshipConflictResolutionInput{
+		Plan: *plan, Embeddings: conflictResolutionTestEmbeddings(plan),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.Resolved)
+
+	var generationState, jobState, documentState string
+	var projectedCount, currentVectorCount, failedJobCount int64
+	var documentGenerationID sql.NullString
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT state, projected_count, current_vector_count, failed_job_count
+			FROM search_projection_generations
+			WHERE team_id = ?::uuid AND projection_generation_id = ?::uuid
+		`, fixture.TeamID, projectionGenerationID).Row().Scan(&generationState, &projectedCount, &currentVectorCount, &failedJobCount); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT status FROM embedding_jobs
+			WHERE team_id = ?::uuid AND source_kind = 'relationship'
+			  AND source_id = ?::uuid AND embedding_contract_id = ?::uuid
+		`, fixture.TeamID, loserRelationshipID, contract.EmbeddingContractID).Row().Scan(&jobState); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT search_state, projection_generation_id
+			FROM search_documents
+			WHERE team_id = ?::uuid AND source_kind = 'relationship'
+			  AND source_id = ?::uuid AND embedding_contract_id = ?::uuid
+		`, fixture.TeamID, loserRelationshipID, contract.EmbeddingContractID).Row().Scan(&documentState, &documentGenerationID)
+	}))
+	assert.Equal(t, "current", generationState)
+	assert.Zero(t, projectedCount)
+	assert.Zero(t, currentVectorCount)
+	assert.Zero(t, failedJobCount)
+	assert.Equal(t, "stale", jobState)
+	assert.Equal(t, "not_required", documentState)
+	assert.False(t, documentGenerationID.Valid)
 }
 
 func TestConflictResolutionReprojectsNonForegroundDocument(t *testing.T) {

@@ -572,13 +572,13 @@ func suppressConflictLosingRelationships(
 		if err != nil {
 			return nil, err
 		}
+		if err := staleConflictRelationshipEmbeddingJobs(ctx, tx, input.TeamID, contract.EmbeddingContractID, []string{item.RelationshipID}); err != nil {
+			return nil, err
+		}
 		if _, err := markRelationshipSearchDocumentNotRequired(ctx, tx, CommitPlacementSemanticInput{
 			TeamID:         input.TeamID,
 			OwnerProfileID: item.OwnerProfileID,
 		}, relationship); err != nil {
-			return nil, err
-		}
-		if err := staleConflictRelationshipEmbeddingJobs(ctx, tx, input.TeamID, contract.EmbeddingContractID, []string{item.RelationshipID}); err != nil {
 			return nil, err
 		}
 		if _, err := insertRelationshipTransition(ctx, tx, transitionInput{
