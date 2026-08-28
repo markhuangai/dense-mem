@@ -16,7 +16,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
-const AssessmentConfidenceThreshold = 0.70
+const (
+	AssessmentConfidenceThreshold = 0.70
+	conflictClaimReleaseTimeout   = 15 * time.Second
+)
 
 type Repository interface {
 	ReviewRelationshipConflictCase(context.Context, repository.ReviewRelationshipConflictCaseInput) (*repository.ReviewRelationshipConflictCaseResult, error)
@@ -503,7 +506,8 @@ func (s *Service) releaseRetryableConflictClaim(
 		!errors.Is(processingErr, context.DeadlineExceeded) {
 		return nil
 	}
-	releaseCtx := context.WithoutCancel(ctx)
+	releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), conflictClaimReleaseTimeout)
+	defer releaseCancel()
 	if err := s.repository.ReleaseRelationshipConflictCaseClaim(releaseCtx, repository.ReleaseRelationshipConflictCaseClaimInput{
 		TeamID: input.TeamID, ConflictID: input.ConflictID, WorkerID: input.WorkerID,
 		ReviewRunID: input.ReviewRunID, Now: input.Now,

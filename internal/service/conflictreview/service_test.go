@@ -715,6 +715,7 @@ type conflictReviewRepositoryStub struct {
 	applyInputs        []repository.RelationshipConflictResolutionInput
 	commitInputs       []repository.CommitRelationshipConflictResolutionInput
 	releaseInputs      []repository.ReleaseRelationshipConflictCaseClaimInput
+	releaseContexts    []context.Context
 	derivedClaimInputs []repository.ClaimConflictDerivedEvidenceTasksInput
 	derivedBatches     [][]repository.ConflictDerivedEvidenceTarget
 	stagedTargets      []repository.ConflictDerivedEvidenceTarget
@@ -788,8 +789,9 @@ func (s *conflictReviewRepositoryStub) ResumePendingOverdueConflictResolution(_ 
 	return &copy, true, nil
 }
 
-func (s *conflictReviewRepositoryStub) ReleaseRelationshipConflictCaseClaim(_ context.Context, input repository.ReleaseRelationshipConflictCaseClaimInput) error {
+func (s *conflictReviewRepositoryStub) ReleaseRelationshipConflictCaseClaim(ctx context.Context, input repository.ReleaseRelationshipConflictCaseClaimInput) error {
 	s.releaseInputs = append(s.releaseInputs, input)
+	s.releaseContexts = append(s.releaseContexts, ctx)
 	return s.releaseErr
 }
 

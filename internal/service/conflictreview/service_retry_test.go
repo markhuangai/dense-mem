@@ -89,3 +89,21 @@ func TestServiceReleasesClaimWhenResolutionBecomesStale(t *testing.T) {
 	require.Len(t, repo.releaseInputs, 1)
 	assert.Equal(t, conflictReviewTestConflictID, repo.releaseInputs[0].ConflictID)
 }
+
+func TestServiceBoundsDetachedClaimReleaseContext(t *testing.T) {
+	repo := newConflictReviewRepositoryStub(t)
+	service := &Service{repository: repo}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := service.releaseRetryableConflictClaim(ctx, repository.RelationshipConflictResolutionInput{
+		TeamID: conflictReviewTestTeamID, ConflictID: conflictReviewTestConflictID,
+		ReviewRunID: conflictReviewTestReviewRunID, WorkerID: conflictReviewTestWorkerID,
+		Now: time.Now().UTC(),
+	}, semanticwrite.ErrProviderUnavailable)
+	require.NoError(t, err)
+	require.Len(t, repo.releaseContexts, 1)
+	deadline, ok := repo.releaseContexts[0].Deadline()
+	require.True(t, ok)
+	assert.WithinDuration(t, time.Now().Add(conflictClaimReleaseTimeout), deadline, time.Second)
+}
