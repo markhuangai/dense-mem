@@ -501,6 +501,7 @@ func (s *Service) releaseRetryableConflictClaim(
 ) error {
 	if !errors.Is(processingErr, semanticwrite.ErrProviderUnavailable) &&
 		!errors.Is(processingErr, semanticwrite.ErrProviderResponseInvalid) &&
+		!errors.Is(processingErr, semanticwrite.ErrProviderTimeout) &&
 		!errors.Is(processingErr, repository.ErrConflictAssessmentStale) &&
 		!errors.Is(processingErr, context.Canceled) &&
 		!errors.Is(processingErr, context.DeadlineExceeded) {

@@ -57,6 +57,48 @@ func TestDeterministicConflictEmbeddingFailureReleasesClaimAndRetries(t *testing
 	assert.Equal(t, repository.ConflictReviewStageDueMajority, resolved.Stage)
 }
 
+func TestDeterministicConflictEmbeddingTimeoutReleasesClaimAndRetries(t *testing.T) {
+	fixture := repository.NewDeterministicConflictServiceFixture(t)
+
+	embedder := &deterministicConflictEmbeddingProvider{timeout: true}
+	reviewer, err := conflictreviewservice.New(conflictreviewservice.Dependencies{
+		Repository: fixture.Ledger, Provider: deterministicConflictProvider{}, Embeddings: embedder,
+		EmbeddingTimeout: 25 * time.Millisecond, Timezone: "UTC", Limits: conflictassessment.DefaultSemanticAssessmentLimits(),
+	})
+	require.NoError(t, err)
+	before := fixture.Snapshot(t)
+	failedResult, err := reviewer.ReviewRelationshipConflictCase(context.Background(), repository.ReviewRelationshipConflictCaseInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID, ConflictID: fixture.ConflictID, Now: fixture.ReviewNow,
+	})
+	require.ErrorIs(t, err, semanticwrite.ErrProviderTimeout)
+	assert.Nil(t, failedResult)
+	after := fixture.Snapshot(t)
+	assert.Equal(t, before.CaseState, after.CaseState)
+	assert.Equal(t, before.RelationshipState, after.RelationshipState)
+	assert.Equal(t, before.SearchDocumentState, after.SearchDocumentState)
+	assert.Equal(t, before.EmbeddingJobState, after.EmbeddingJobState)
+	assert.Equal(t, 1, before.CaseAttempts)
+	assert.Equal(t, 0, after.CaseAttempts)
+	assert.Empty(t, after.CaseLeaseWorkerID)
+	assert.Nil(t, after.CaseLeaseUntil)
+
+	embedder.timeout = false
+	reclaimed, err := fixture.Ledger.ClaimRelationshipConflictCases(context.Background(), repository.ClaimRelationshipConflictCasesInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+		Limit: 1, Lease: time.Minute, MaxAttempts: 5, Now: fixture.ReviewNow.Add(time.Second),
+	})
+	require.NoError(t, err)
+	require.Len(t, reclaimed, 1)
+	resolved, err := reviewer.ReviewRelationshipConflictCase(context.Background(), repository.ReviewRelationshipConflictCaseInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+		ConflictID: fixture.ConflictID, Now: fixture.ReviewNow.Add(time.Second),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resolved)
+	assert.Equal(t, repository.ConflictReviewOutcomeResolve, resolved.Outcome)
+	assert.Equal(t, repository.ConflictReviewStageDueMajority, resolved.Stage)
+}
+
 func TestDeterministicConflictResolutionReleasesExpiredClaimAfterEmbedding(t *testing.T) {
 	fixture := repository.NewDeterministicConflictServiceFixture(t)
 
@@ -162,12 +204,17 @@ func (deterministicConflictProvider) AssessRelationshipConflict(context.Context,
 func (deterministicConflictProvider) ModelName() string { return "test-model" }
 
 type deterministicConflictEmbeddingProvider struct {
-	failed bool
-	calls  int
+	failed  bool
+	timeout bool
+	calls   int
 }
 
-func (p *deterministicConflictEmbeddingProvider) EmbedBatch(_ context.Context, texts []string) ([][]float32, string, error) {
+func (p *deterministicConflictEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string) ([][]float32, string, error) {
 	p.calls++
+	if p.timeout {
+		<-ctx.Done()
+		return nil, "test-model", ctx.Err()
+	}
 	if p.failed {
 		return nil, "test-model", errors.New("forced deterministic embedding failure")
 	}
