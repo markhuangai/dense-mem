@@ -390,6 +390,16 @@ func TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage(t *testi
 	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "CURRENT_TIMESTAMP", "", "test-model"))
 	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "CURRENT_TIMESTAMP", validResponseHash, ""))
 	require.Error(t, insertAssessment(uuid.New(), "[{}]", "2", "CURRENT_TIMESTAMP", validResponseHash, "test-model"))
+	turnsAttemptID := uuid.New()
+	require.NoError(t, insertAttempt(turnsAttemptID, profileA, "assessment-history", "assessment-history-request", "remember", "failed", nil))
+	require.Error(t, execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_assessments (
+				team_id, semantic_assessment_id, attempt_id, owner_profile_id, response_history, provider_turns
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '[{}]'::jsonb, 0)
+		`, teamID, uuid.New(), turnsAttemptID, profileA)
+		return err
+	}))
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO semantic_assessments (

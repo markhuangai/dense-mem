@@ -128,6 +128,7 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"contract version", func(result *TerminalRememberResult) { result.ContractVersion = "dense-mem.v2.future" }},
 		{"submission kind", func(result *TerminalRememberResult) { result.SubmissionKind = "relationship_correction" }},
 		{"missing identity", func(result *TerminalRememberResult) { result.CorrelationID = "" }},
+		{"non-canonical correlation id", func(result *TerminalRememberResult) { result.CorrelationID = " correlation " }},
 		{"correlation id exceeds code-point bound", func(result *TerminalRememberResult) { result.CorrelationID = strings.Repeat("界", 129) }},
 		{"submission uuid", func(result *TerminalRememberResult) { result.SubmissionID = "not-a-uuid" }},
 		{"invalid processing state", func(result *TerminalRememberResult) { result.ProcessingState = "processing" }},

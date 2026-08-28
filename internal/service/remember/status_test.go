@@ -32,6 +32,7 @@ func TestStatusProjectionCoversStatesAndBoundedFailures(t *testing.T) {
 			Items:    []PlacementItem{{FragmentID: "evidence-1", EvidenceIndex: 2, Result: map[string]any{"search_document_states": []any{"current"}}}},
 		})
 		require.Equal(t, want, result.ProcessingState)
+		require.Equal(t, ResultKindLegacyReceipt, result.Kind)
 		require.Equal(t, string(domain.SearchProjectionCurrent), result.SearchState)
 		require.Equal(t, []string{}, result.Evidence[0].SupersededEvidenceIDs)
 		if status == string(domain.PlacementRunFailed) || status == string(domain.PlacementRunQuarantined) || status == "unexpected" {
@@ -104,9 +105,11 @@ func TestStatusProjectionCoversStatesAndBoundedFailures(t *testing.T) {
 	rejectedWithoutItems := ProjectSubmissionStatus(&StageResult{Status: string(domain.PlacementRunRejected)})
 	require.Equal(t, string(SubmissionErrorNoSupportedMemory), rejectedWithoutItems.Errors[0].Code)
 
-	require.Empty(t, ProjectSubmissionStatus(nil).Evidence)
-	require.Empty(t, ProjectSubmissionStatus(nil).Errors)
-	require.Empty(t, ProjectSubmissionStatus(nil).Degradations)
+	empty := ProjectSubmissionStatus(nil)
+	require.Equal(t, ResultKindLegacyReceipt, empty.Kind)
+	require.Empty(t, empty.Evidence)
+	require.Empty(t, empty.Errors)
+	require.Empty(t, empty.Degradations)
 }
 
 func TestStatusPolicyAdaptersAndSearchHelpers(t *testing.T) {

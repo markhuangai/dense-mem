@@ -305,7 +305,9 @@ CREATE TABLE IF NOT EXISTS semantic_assessments (
     PRIMARY KEY (team_id, semantic_assessment_id),
     UNIQUE (team_id, attempt_id),
     CONSTRAINT semantic_assessments_history_check CHECK (
-        jsonb_typeof(response_history) = 'array' AND pg_column_size(response_history) <= 1048576
+        jsonb_typeof(response_history) = 'array'
+        AND pg_column_size(response_history) <= 1048576
+        AND jsonb_array_length(response_history) <= provider_turns
     ),
     CONSTRAINT semantic_assessments_revision_check CHECK (
         accepted_revision IS NULL OR (

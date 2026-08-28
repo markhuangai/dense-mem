@@ -334,7 +334,7 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	if result.ContractVersion != domain.ContractVersion || result.SubmissionKind != "remember" {
 		return fmt.Errorf("remember: terminal result identity is invalid")
 	}
-	if strings.TrimSpace(result.SubmissionID) == "" || strings.TrimSpace(result.CorrelationID) == "" {
+	if strings.TrimSpace(result.SubmissionID) == "" || result.CorrelationID == "" || result.CorrelationID != strings.TrimSpace(result.CorrelationID) {
 		return errors.New("remember: terminal result identity fields are required")
 	}
 	if utf8.RuneCountInString(result.CorrelationID) > 128 {
