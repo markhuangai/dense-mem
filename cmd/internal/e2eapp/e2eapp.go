@@ -266,14 +266,14 @@ func terminalRelationshipRefs(input map[string]any) []string {
 		for _, value := range raw {
 			item, _ := value.(map[string]any)
 			ref, _ := item["ref"].(string)
-			refs = append(refs, ref)
+			refs = append(refs, strings.TrimSpace(ref))
 		}
 		return refs
 	case []map[string]any:
 		refs := make([]string, 0, len(raw))
 		for _, item := range raw {
 			ref, _ := item["ref"].(string)
-			refs = append(refs, ref)
+			refs = append(refs, strings.TrimSpace(ref))
 		}
 		return refs
 	}

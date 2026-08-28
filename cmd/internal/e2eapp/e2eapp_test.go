@@ -177,6 +177,14 @@ func TestTerminalRememberInvokerReturnsPollingFreeTerminalResult(t *testing.T) {
 	require.NoError(t, registry.ValidateInput(registry.Tool{InputSchema: terminalRememberOutputSchema()}, output))
 }
 
+func TestTerminalRelationshipRefsTrimWhitespace(t *testing.T) {
+	refs := terminalRelationshipRefs(map[string]any{"relationships": []any{
+		map[string]any{"ref": "  first  "},
+		map[string]any{"ref": "second"},
+	}})
+	require.Equal(t, []string{"first", "second"}, refs)
+}
+
 func terminalRememberServiceFactory() rememberapp.Service {
 	return terminalRememberService{}
 }

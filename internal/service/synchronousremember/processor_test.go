@@ -330,6 +330,28 @@ func TestSynchronousProcessorReplaysMatchingTerminalBeforeProviderWork(t *testin
 	require.Zero(t, ledger.commitCalls)
 }
 
+func TestSynchronousAttemptStatusReordersMatchingRelationshipReplay(t *testing.T) {
+	input := remember.RememberProcessRequest{Proposal: map[string]any{
+		"relationship_hints": []map[string]any{{"ref": "first"}, {"ref": "second"}},
+	}}
+	terminal := &remember.TerminalRememberResult{
+		ContractVersion: domain.ContractVersion, SubmissionID: uuid.NewString(), SubmissionKind: "remember",
+		ProcessingState: "completed", SearchState: "current", CorrelationID: "replay-correlation",
+		Evidence: []remember.TerminalEvidenceResult{}, Errors: []remember.SubmissionStatusError{}, Kind: remember.ResultKindTerminal,
+		RelationshipResults: []remember.SubmissionRelationshipResult{
+			{RelationshipRef: "second", Disposition: "stored", Splits: []remember.SubmissionRelationshipSplit{{SplitIndex: 0, RelationshipID: uuid.NewString(), RelationshipVersion: 1, Status: "active"}}},
+			{RelationshipRef: "first", Disposition: "stored", Splits: []remember.SubmissionRelationshipSplit{{SplitIndex: 0, RelationshipID: uuid.NewString(), RelationshipVersion: 1, Status: "active"}}},
+		},
+	}
+	public, err := terminalMap(terminal)
+	require.NoError(t, err)
+
+	status, err := synchronousAttemptStatus(&repository.RememberAttempt{RequestHash: "hash", ContractVersion: domain.ContractVersion, Outcome: "completed", PublicResult: public}, input)
+	require.NoError(t, err)
+	require.Equal(t, []string{"first", "second"}, []string{status.RelationshipResults[0].RelationshipRef, status.RelationshipResults[1].RelationshipRef})
+	require.Equal(t, []string{"first", "second"}, []string{status.Terminal.RelationshipResults[0].RelationshipRef, status.Terminal.RelationshipResults[1].RelationshipRef})
+}
+
 func TestSynchronousProcessorRejectsChangedTerminalHashBeforeProviderWork(t *testing.T) {
 	teamID, ownerID := uuid.NewString(), uuid.NewString()
 	input := synchronousPipelineRememberRequest(teamID, ownerID, "pipeline-conflict", "current-hash")

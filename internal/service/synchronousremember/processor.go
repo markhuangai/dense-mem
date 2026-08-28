@@ -79,7 +79,7 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 			return nil, remember.ErrRememberConflict
 		}
 		if replay.Outcome == "completed" || replay.Outcome == "rejected" || replay.Outcome == "quarantined" || replay.Outcome == "replayed" {
-			return synchronousAttemptStatus(replay)
+			return synchronousAttemptStatus(replay, input)
 		}
 	}
 	if err != nil && !errors.Is(err, repository.ErrRememberAttemptNotFound) {
@@ -102,7 +102,7 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 			if loadErr != nil {
 				return nil, loadErr
 			}
-			return synchronousAttemptStatus(winner)
+			return synchronousAttemptStatus(winner, input)
 		}
 		if err != nil {
 			return p.failure(ctx, input, attemptID, base, "commit", 0, started, err)
@@ -171,7 +171,7 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 		if loadErr != nil {
 			return nil, loadErr
 		}
-		return synchronousAttemptStatus(winner)
+		return synchronousAttemptStatus(winner, input)
 	}
 	if err != nil {
 		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, started, err)
@@ -179,7 +179,7 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 	if committed == nil || committed.Attempt == nil {
 		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, started, errors.New("remember: synchronous commit result is required"))
 	}
-	return synchronousAttemptStatus(committed.Attempt)
+	return synchronousAttemptStatus(committed.Attempt, input)
 }
 
 func (p *synchronousRememberProcessor) failure(ctx context.Context, input remember.RememberProcessRequest, attemptID string, base *remember.TerminalRememberResult, phase string, turns int, started time.Time, cause error) (*remember.SubmissionStatusResult, error) {
@@ -207,7 +207,7 @@ func (p *synchronousRememberProcessor) failure(ctx context.Context, input rememb
 			if loadErr != nil {
 				return nil, loadErr
 			}
-			return synchronousAttemptStatus(winner)
+			return synchronousAttemptStatus(winner, input)
 		}
 		if errors.Is(err, repository.ErrIdempotencyConflict) {
 			return nil, remember.ErrRememberConflict
@@ -272,7 +272,7 @@ func (p *synchronousRememberProcessor) commitTerminal(ctx context.Context, input
 		if loadErr != nil {
 			return nil, loadErr
 		}
-		return synchronousAttemptStatus(winner)
+		return synchronousAttemptStatus(winner, input)
 	}
 	if err != nil {
 		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, started, err)
@@ -280,7 +280,7 @@ func (p *synchronousRememberProcessor) commitTerminal(ctx context.Context, input
 	if terminal == nil || terminal.Attempt == nil {
 		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, started, errors.New("remember: terminal commit result is required"))
 	}
-	return synchronousAttemptStatus(terminal.Attempt)
+	return synchronousAttemptStatus(terminal.Attempt, input)
 }
 
 func synchronousAssessmentTurns(err error) int {
@@ -402,7 +402,7 @@ func terminalStatus(result *remember.TerminalRememberResult) (*remember.Submissi
 	out.Terminal = result
 	return &out, nil
 }
-func synchronousAttemptStatus(attempt *repository.RememberAttempt) (*remember.SubmissionStatusResult, error) {
+func synchronousAttemptStatus(attempt *repository.RememberAttempt, input remember.RememberProcessRequest) (*remember.SubmissionStatusResult, error) {
 	if attempt == nil {
 		return nil, errors.New("remember: replay attempt is required")
 	}
@@ -420,8 +420,46 @@ func synchronousAttemptStatus(attempt *repository.RememberAttempt) (*remember.Su
 		return nil, err
 	}
 	terminal.Kind = remember.ResultKindTerminal
+	terminal.RelationshipResults = reorderSynchronousRelationshipResults(terminal.RelationshipResults, synchronousRelationshipRefs(input.Proposal))
+	status.RelationshipResults = terminal.RelationshipResults
 	status.Terminal = &terminal
 	return &status, nil
+}
+
+func reorderSynchronousRelationshipResults(results []remember.SubmissionRelationshipResult, refs []string) []remember.SubmissionRelationshipResult {
+	if len(results) != len(refs) {
+		return results
+	}
+	byRef := make(map[string]remember.SubmissionRelationshipResult, len(results))
+	for _, result := range results {
+		ref := strings.TrimSpace(result.RelationshipRef)
+		if ref == "" {
+			return results
+		}
+		if _, exists := byRef[ref]; exists {
+			return results
+		}
+		byRef[ref] = result
+	}
+	seenRefs := make(map[string]struct{}, len(refs))
+	reordered := make([]remember.SubmissionRelationshipResult, len(refs))
+	for index, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return results
+		}
+		if _, exists := seenRefs[ref]; exists {
+			return results
+		}
+		seenRefs[ref] = struct{}{}
+		result, exists := byRef[ref]
+		if !exists {
+			return results
+		}
+		result.RelationshipRef = ref
+		reordered[index] = result
+	}
+	return reordered
 }
 
 func synchronousCompletedResult(input remember.RememberProcessRequest, created *repository.CreateIngestResult, committed *repository.CommitSubmissionAssessmentResult, durable []repository.SubmissionRelationshipResultInput, observations []repository.SubmissionAssessmentRelationshipObservationInput, refs []string) *remember.TerminalRememberResult {
