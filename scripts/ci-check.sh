@@ -8,6 +8,7 @@ npm ci --prefix .lint
 npm run --prefix .lint lint:lines
 node scripts/check-architecture.mjs
 node --test tests/uat/architecture_conformance.test.mjs
+node --test tests/uat/synchronous_write/*.test.mjs
 scripts/static-analysis.sh
 node --test tests/uat/team_dreaming_schedule.test.mjs
 node --test tests/uat/image_release_policy.test.mjs

@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import { discoverCases } from "./runner.mjs";
+
+test("synchronous-write cases are sorted and filterable", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dense-mem-synchronous-write-"));
+  await mkdir(join(directory, "nested"));
+  await writeFile(join(directory, "zeta.mjs"), "export const name = 'zeta'; export const run = () => ({});\n");
+  await writeFile(join(directory, "alpha.mjs"), "export const name = 'alpha'; export const run = () => ({});\n");
+  await writeFile(join(directory, "README.md"), "ignored\n");
+  const all = await discoverCases(directory, "");
+  assert.deepEqual(all.map((url) => url.split("/").pop()), ["alpha.mjs", "zeta.mjs"]);
+  const filtered = await discoverCases(directory, "zeta");
+  assert.deepEqual(filtered.map((url) => url.split("/").pop()), ["zeta.mjs"]);
+});
+
+test("provider timeout fault is longer than the pinned E2E request caps", async () => {
+  const overlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");
+  const fixture = await readFile(new URL("./provider-fixture.mjs", import.meta.url), "utf8");
+  assert.match(overlay, /AI_API_EMBEDDING_TIMEOUT_SECONDS: "2"/);
+  assert.match(overlay, /AI_VERIFIER_TIMEOUT_SECONDS: "2"/);
+  assert.match(overlay, /AI_VERIFIER_API_KEY: dense-mem-e2e-verifier-key/);
+  assert.match(overlay, /DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: "5000"/);
+  assert.match(fixture, /timeoutDelayMs/);
+});
+
+test("compose runner filters the resolved default slice", async () => {
+  const overlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");
+  const compose = await readFile(new URL("../../../scripts/e2e-compose.sh", import.meta.url), "utf8");
+  assert.match(overlay, /local slice="\$\{DENSE_MEM_E2E_WRITE_SLICE:-legacy\}"/);
+  assert.match(overlay, /local api_key="\$2"/);
+  assert.match(overlay, /DENSE_MEM_E2E_WRITE_CASE="\$slice"/);
+  assert.match(compose, /run_synchronous_write_e2e "\$team_id" "\$api_key"/);
+});

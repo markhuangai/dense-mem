@@ -11,6 +11,7 @@ func submissionStatusResultFromLedger(placement *StageResult) *SubmissionStatusR
 	if placement == nil {
 		return &SubmissionStatusResult{
 			ContractVersion: domain.ContractVersion,
+			Kind:            ResultKindLegacyReceipt,
 			Evidence:        []SubmissionEvidenceStatus{},
 			Errors:          []SubmissionStatusError{},
 			Degradations:    []SubmissionStatusDegradation{},
@@ -72,6 +73,7 @@ func submissionStatusResultFromLedger(placement *StageResult) *SubmissionStatusR
 		NextAttemptAt: placement.NextAttemptAt, StartedAt: placement.StartedAt, UpdatedAt: placement.UpdatedAt,
 		CompletedAt: placement.CompletedAt, Evidence: items, Errors: statusErrors, Degradations: degradations,
 		QuarantineExpiresAt: placement.QuarantineExpiresAt,
+		Kind:                ResultKindLegacyReceipt,
 	}
 	for _, item := range placement.RelationshipResults {
 		copy := SubmissionRelationshipResult{
