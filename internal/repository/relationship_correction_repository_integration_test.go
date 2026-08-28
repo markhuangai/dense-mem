@@ -83,6 +83,19 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 	_, err = semantic.CorrectRelationship(ctx, crossTeam)
 	require.ErrorIs(t, err, ErrSemanticOwnerMismatch)
 
+	missingEmbedding := request
+	missingEmbedding.IdempotencyKey = "replace-owned-relationship-missing-embedding"
+	_, err = semantic.CorrectRelationship(ctx, missingEmbedding)
+	require.ErrorIs(t, err, ErrSearchEmbeddingRequired)
+	var originalStateAfterFailure string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamA, ownerA, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status FROM relationship_records
+			WHERE team_id = ?::uuid AND relationship_id = ?::uuid
+		`, teamA, original.RelationshipID).Row().Scan(&originalStateAfterFailure)
+	}))
+	require.Equal(t, "active", originalStateAfterFailure)
+
 	result, err := correctRelationshipWithTestEmbeddings(ctx, semantic, request)
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.ProcessingState)

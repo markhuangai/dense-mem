@@ -266,7 +266,7 @@ func RunActiveServer(
 		Semantic:                   semanticRepo,
 		Evidence:                   ledgerRepo,
 		CorrectionExecutor:         semanticwrite.NewExecutor(semanticWriteProvider{provider: openaiProvider}),
-		CorrectionEmbeddingTimeout: 10 * time.Second,
+		CorrectionEmbeddingTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{

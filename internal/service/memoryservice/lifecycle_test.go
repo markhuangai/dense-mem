@@ -111,6 +111,15 @@ func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
 	require.NotContains(t, err.Error(), unsafeAction)
 }
 
+func TestTranslateRelationshipCorrectionErrorMapsSearchFencesToConflict(t *testing.T) {
+	for _, cause := range []error{repository.ErrSearchContractMismatch, repository.ErrSearchStaleVersion} {
+		err := translateRelationshipCorrectionError(cause)
+		var publicErr *httperr.APIError
+		require.ErrorAs(t, err, &publicErr)
+		require.Equal(t, httperr.CONFLICT, publicErr.Code)
+	}
+}
+
 func TestLifecycleCorrectRelationshipRequiresAuthAndRepository(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
 	req := CorrectRelationshipRequest{

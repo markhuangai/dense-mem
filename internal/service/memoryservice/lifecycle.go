@@ -242,7 +242,9 @@ func translateRelationshipCorrectionError(err error) error {
 	if errors.Is(err, repository.ErrSemanticIdempotencyConflict) ||
 		errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) ||
 		errors.Is(err, repository.ErrRelationshipCorrectionConfirmationExpired) ||
-		errors.Is(err, repository.ErrRelationshipCorrectionStateConflict) {
+		errors.Is(err, repository.ErrRelationshipCorrectionStateConflict) ||
+		errors.Is(err, repository.ErrSearchContractMismatch) ||
+		errors.Is(err, repository.ErrSearchStaleVersion) {
 		return httperr.New(httperr.CONFLICT, "relationship correction conflict")
 	}
 	return ErrLifecyclePersistence
