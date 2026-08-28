@@ -37,10 +37,6 @@ its semantics, authority, or change trigger differs. Do not create a generic
 `utils`, `common`, or parallel framework to host unrelated reuse. Prefer an
 existing owner, a narrow private extraction, or deletion of the duplicate.
 
-The current staged capability-boundary migration has declared architecture
-exceptions. Those exceptions describe transitional dependencies, not
-permission to add new duplicate owners or widen broad packages.
-
 ## Consequences
 
 A supported policy change normally edits one owner plus affected callers and
