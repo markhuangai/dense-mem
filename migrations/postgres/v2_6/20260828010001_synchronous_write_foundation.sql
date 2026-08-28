@@ -270,7 +270,9 @@ CREATE TABLE IF NOT EXISTS remember_failure_artifacts (
         byte_count = octet_length(content_bytes) AND byte_count BETWEEN 0 AND 262144
     ),
     CONSTRAINT remember_failure_artifacts_hash_check
-        CHECK (content_sha256 ~ '^sha256:[0-9a-f]{64}$'),
+        CHECK (
+            content_sha256 = 'sha256:' || encode(digest(content_bytes, 'sha256'), 'hex')
+        ),
     CONSTRAINT remember_failure_artifacts_metadata_check CHECK (
         jsonb_typeof(metadata) = 'object' AND pg_column_size(metadata) <= 16384
     ),

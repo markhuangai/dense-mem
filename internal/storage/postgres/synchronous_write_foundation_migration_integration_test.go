@@ -458,9 +458,7 @@ func TestSynchronousWriteFoundationRLSIsolatesProfileWritesWithinTeam(t *testing
 	}))
 
 	attemptA, attemptA2, eventA, artifactA, assessmentA := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
-	// The artifact hash constraint only needs a bounded shape for this RLS test;
-	// its content is intentionally a single non-sensitive byte.
-	contentHash := "sha256:" + strings.Repeat("0", 64)
+	contentHash := "sha256:ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
 	withProfile := func(currentTeamID, profileID string, fn func(*sql.Tx) error) {
 		t.Helper()
 		tx, beginErr := db.BeginTx(ctx, nil)
@@ -875,23 +873,36 @@ func TestSynchronousWriteFoundationAppendOnlyRowsAndGuardedDown(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		contentHash := "sha256:" + strings.Repeat("0", 64)
+		contentHashA := "sha256:ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+		contentHashB := "sha256:3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d"
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO remember_failure_artifacts (
 				team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind,
 				content_type, content_bytes, byte_count, content_sha256, captured_at, expires_at
 			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'active',
 			          'text/plain', decode('61', 'hex'), 1, $5,
-			          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + interval '1 hour'),
+				          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + interval '1 hour'),
 			       ($1::uuid, $6::uuid, $3::uuid, $4::uuid, 'expired',
-			          'text/plain', decode('62', 'hex'), 1, $5,
+				          'text/plain', decode('62', 'hex'), 1, $7,
 			          CURRENT_TIMESTAMP - interval '8 days', CURRENT_TIMESTAMP - interval '1 hour')
-		`, teamID, activeArtifactID, attemptID, profileID, contentHash, expiredArtifactID); err != nil {
+		`, teamID, activeArtifactID, attemptID, profileID, contentHashA, expiredArtifactID, contentHashB); err != nil {
 			return err
 		}
 		return nil
 	}))
 
+	require.Error(t, execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_failure_artifacts (
+				team_id, attempt_id, owner_profile_id, artifact_kind,
+				content_type, content_bytes, byte_count, content_sha256, expires_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'hash-mismatch',
+			          'text/plain', decode('61', 'hex'), 1,
+			          'sha256:3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d',
+			          CURRENT_TIMESTAMP + interval '1 hour')
+		`, teamID, attemptID, profileID)
+		return err
+	}))
 	require.Error(t, execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			DELETE FROM remember_failure_artifacts
