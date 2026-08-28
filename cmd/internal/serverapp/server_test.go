@@ -368,6 +368,9 @@ func TestProcessTeamConflictReviewClaimsCasesOneAtATime(t *testing.T) {
 	if len(ledger.claimInputs) == 0 {
 		t.Fatal("expected at least one conflict claim")
 	}
+	if len(ledger.reserveInputs) < 2 {
+		t.Fatalf("review-run renewals = %d, want at least 2", len(ledger.reserveInputs))
+	}
 	for _, input := range ledger.claimInputs {
 		if input.Limit != 1 {
 			t.Fatalf("conflict claim limit = %d, want 1", input.Limit)
@@ -396,6 +399,7 @@ type conflictReviewLedgerStub struct {
 	run                   *repository.ConflictReviewRunRecord
 	claimed               bool
 	reserveErr            error
+	reserveInputs         []repository.ConflictReviewRunInput
 	claimBatches          [][]repository.RelationshipConflictCaseRecord
 	claimInputs           []repository.ClaimRelationshipConflictCasesInput
 	claimErr              error
@@ -445,7 +449,8 @@ func (l *conflictReviewLogCapture) With(...observability.LogAttr) observability.
 	return l
 }
 
-func (s *conflictReviewLedgerStub) ReserveRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error) {
+func (s *conflictReviewLedgerStub) ReserveRelationshipConflictReviewRun(_ context.Context, input repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error) {
+	s.reserveInputs = append(s.reserveInputs, input)
 	return s.run, s.claimed, s.reserveErr
 }
 

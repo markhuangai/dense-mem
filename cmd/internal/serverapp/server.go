@@ -739,13 +739,8 @@ func processTeamConflictReview(
 		observability.RecordConflictReviewDuration(observability.WithMetricIdentity(ctx, teamID, ""), metrics, time.Since(started).Seconds(), outcome)
 	}()
 	lease := time.Duration(cfg.GetConflictReviewLeaseSeconds()) * time.Second
-	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, repository.ConflictReviewRunInput{
-		TeamID:       teamID,
-		WorkerID:     workerID,
-		LocalRunDate: now,
-		Timezone:     cfg.GetAppTimezone(),
-		Lease:        lease,
-	})
+	runInput := repository.ConflictReviewRunInput{TeamID: teamID, WorkerID: workerID, LocalRunDate: now, Timezone: cfg.GetAppTimezone(), Lease: lease}
+	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, runInput)
 	if err != nil {
 		outcome = "error"
 		return err
@@ -773,6 +768,20 @@ func processTeamConflictReview(
 	}
 	attempted := map[string]struct{}{}
 	for {
+		renewed, owned, err := ledger.ReserveRelationshipConflictReviewRun(ctx, runInput)
+		if err != nil {
+			counts.Status = "failed"
+			counts.LastError = safeConflictReviewError(err)
+			outcome = "failed"
+			break
+		}
+		if renewed == nil || !owned || renewed.ReviewRunID != run.ReviewRunID || renewed.WorkerID != workerID {
+			counts.Status = "failed"
+			counts.LastError = "conflict review run lease lost"
+			outcome = "failed"
+			break
+		}
+		run = renewed
 		excluded := make([]string, 0, len(attempted))
 		for id := range attempted {
 			excluded = append(excluded, id)
