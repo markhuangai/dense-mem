@@ -14,7 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func TestCheckSearchConvergenceDetectsActiveBacklog(t *testing.T) {
+func TestCheckSearchConvergenceUsesCanonicalDocumentState(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -32,11 +32,19 @@ func TestCheckSearchConvergenceDetectsActiveBacklog(t *testing.T) {
 	require.ErrorContains(t, err, "attention_required")
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`
+		if err := tx.Exec(`
 			UPDATE embedding_jobs
 			SET status = 'stale', completed_at = now(), updated_at = now()
 			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
-		`, teamID, document.QueuedJobID).Error
+		`, teamID, document.QueuedJobID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'current', embedding = '[1,0,0]'::vector,
+			    embedding_updated_at = now(), embedding_error = '', updated_at = now()
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, document.SearchDocumentID).Error
 	}))
 	require.NoError(t, repo.CheckSearchConvergence(ctx))
 }

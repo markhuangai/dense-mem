@@ -50,8 +50,11 @@ func TestControlPortalSearchConvergenceIsBoundedAndReadOnly(t *testing.T) {
 		ControlPortalToken: "secret",
 	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
 		Convergence: controlSearchConvergenceReaderStub{value: &repository.SearchConvergence{
-			ObservedAt: now,
-			Status:     "attention_required",
+			ObservedAt:        now,
+			Status:            "attention_required",
+			ExpectedDocuments: 4, CurrentDocuments: 2, DriftedDocuments: 2,
+			AffectedTeamCount: 1, OldestDriftAge: time.Minute,
+			DriftClasses: []repository.SearchDocumentDriftCount{{Class: "missing_document", Count: 1}, {Class: "missing_vector", Count: 1}},
 			Failures: []repository.EmbeddingFailureCount{{
 				SourceKind: "evidence", FailureClass: "provider_action_required",
 				FailureCode: "provider_quota_exhausted", Count: 2,
@@ -86,6 +89,9 @@ func TestControlPortalSearchConvergenceIsBoundedAndReadOnly(t *testing.T) {
 	require.Contains(t, body, "Add provider credit")
 	require.Contains(t, body, `"failure_group_count":101`)
 	require.Contains(t, body, `"failure_groups_truncated":true`)
+	require.Contains(t, body, `"expected_documents":4`)
+	require.Contains(t, body, `"drifted_documents":2`)
+	require.Contains(t, body, `"class":"missing_document"`)
 	require.Contains(t, body, "reconciliation failed: provider_quota_exhausted")
 	require.NotContains(t, body, "provider response contained a secret")
 }
@@ -110,10 +116,13 @@ func TestControlSearchConvergenceConversionAndRunErrorsAreBounded(t *testing.T) 
 
 	now := time.Date(2026, 8, 10, 4, 30, 0, 0, time.UTC)
 	converted := toControlSearchConvergence(&repository.SearchConvergence{
-		ObservedAt: now,
-		Status:     "recovering",
-		Contract:   &repository.ActiveSearchContract{EmbeddingProvider: "openai", EmbeddingModel: "model", EmbeddingDimensions: 3, IndexGeneration: 2, IndexStrategy: "exact"},
-		Queued:     1, Processing: 2, Failed: 3, ExpiredLeases: 4, AffectedTeamCount: 5,
+		ObservedAt:        now,
+		Status:            "recovering",
+		ExpectedDocuments: 4, CurrentDocuments: 3, DriftedDocuments: 1,
+		AffectedTeamCount: 2, OldestDriftAge: time.Minute,
+		DriftClasses: []repository.SearchDocumentDriftCount{{Class: "missing_vector", Count: 1}},
+		Contract:     &repository.ActiveSearchContract{EmbeddingProvider: "openai", EmbeddingModel: "model", EmbeddingDimensions: 3, IndexGeneration: 2, IndexStrategy: "exact"},
+		Queued:       1, Processing: 2, Failed: 3, ExpiredLeases: 4, QueueAffectedTeamCount: 5,
 		FailureGroupCount: 7, FailureGroupsTruncated: true,
 		OldestPendingAge: time.Minute, OldestFailureAge: 2 * time.Minute,
 		LatestRun: &repository.EmbeddingReconciliationRun{RunID: "run", LocalRunDate: now, Status: "completed", CanaryAttemptedAt: &now, CanaryOutcome: "succeeded", UpdatedAt: now},
@@ -122,6 +131,9 @@ func TestControlSearchConvergenceConversionAndRunErrorsAreBounded(t *testing.T) 
 	require.Equal(t, "model", converted.Contract.Model)
 	require.Equal(t, int64(3), converted.Queue.Failed)
 	require.Equal(t, int64(7), converted.FailureGroupCount)
+	require.Equal(t, int64(4), converted.ExpectedDocuments)
+	require.Equal(t, int64(1), converted.DriftedDocuments)
+	require.Equal(t, "missing_vector", converted.DriftClasses[0].Class)
 	require.True(t, converted.FailureGroupsTruncated)
 	require.NotNil(t, converted.LatestRun)
 	require.Equal(t, now.Format(time.RFC3339), converted.LatestRun.CanaryAttemptedAt)

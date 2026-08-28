@@ -5,20 +5,40 @@ import { ControlApi, SearchConvergence } from "../api";
 import { SearchConvergencePanel } from "./SearchConvergencePanel";
 
 describe("SearchConvergencePanel", () => {
-  it("renders bounded job-derived failure groups and refreshes read-only state", async () => {
+  it("renders canonical document drift before legacy diagnostics and refreshes read-only state", async () => {
     const getSearchConvergence = vi.fn().mockResolvedValue(failureSnapshot());
     const api = { getSearchConvergence } as unknown as ControlApi;
 
     render(<SearchConvergencePanel api={api} />);
 
     expect(await screen.findByText("Payments")).toBeInTheDocument();
+    expect(screen.getByText("Document drift")).toBeInTheDocument();
+    expect(
+      screen.getByText("Legacy embedding jobs — temporary until T09"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Legacy embedding job summary"),
+    ).toHaveTextContent("Queued");
+    expect(
+      screen.getByLabelText("Legacy embedding job summary"),
+    ).toHaveTextContent("Failure groups");
     expect(screen.getByText("provider_quota_exhausted")).toBeInTheDocument();
     expect(screen.getByText("2 / 1")).toBeInTheDocument();
-    expect(screen.getByText("Add provider credit or repair billing before the next daily canary.")).toBeInTheDocument();
-    expect(screen.getByText("Showing the most recent 1 of 101 failure groups.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /retry|resolve|delete|requeue/i })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Add provider credit or repair billing before the next daily canary.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Showing the most recent 1 of 101 failure groups."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /retry|resolve|delete|requeue/i }),
+    ).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Refresh search convergence" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Refresh search convergence" }),
+    );
     await waitFor(() => expect(getSearchConvergence).toHaveBeenCalledTimes(2));
   });
 
@@ -31,13 +51,19 @@ describe("SearchConvergencePanel", () => {
     snapshot.failure_groups = [];
     snapshot.failure_group_count = 0;
     snapshot.failure_groups_truncated = false;
-    const api = { getSearchConvergence: vi.fn().mockResolvedValue(snapshot) } as unknown as ControlApi;
+    const api = {
+      getSearchConvergence: vi.fn().mockResolvedValue(snapshot),
+    } as unknown as ControlApi;
 
     render(<SearchConvergencePanel api={api} />);
 
-    expect(await screen.findByText("No unresolved failure groups.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("No unresolved failure groups."),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Payments")).not.toBeInTheDocument();
-    expect(screen.queryByText("provider_quota_exhausted")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("provider_quota_exhausted"),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -45,6 +71,15 @@ function failureSnapshot(): SearchConvergence {
   return {
     observed_at: "2026-08-11T04:30:00Z",
     status: "attention_required",
+    expected_documents: 4,
+    current_documents: 2,
+    drifted_documents: 2,
+    affected_team_count: 1,
+    oldest_drift_age_seconds: 120,
+    drift_classes: [
+      { class: "missing_document", count: 1 },
+      { class: "missing_vector", count: 1 },
+    ],
     contract: {
       provider: "openai",
       model: "embedding-model",
@@ -61,28 +96,33 @@ function failureSnapshot(): SearchConvergence {
       oldest_pending_age_seconds: 60,
       oldest_failure_age_seconds: 120,
     },
-    failures: [{
-      source_kind: "evidence",
-      failure_class: "provider_action_required",
-      failure_code: "provider_quota_exhausted",
-      count: 2,
-    }],
-    failure_groups: [{
-      team_id: "11111111-1111-4111-8111-111111111111",
-      team_name: "Payments",
-      source_kind: "evidence",
-      failure_class: "provider_action_required",
-      failure_code: "provider_quota_exhausted",
-      status: "attention_required",
-      failed_job_count: 2,
-      queued_job_count: 1,
-      processing_job_count: 0,
-      affected_job_count: 3,
-      first_failed_at: "2026-08-11T04:28:00Z",
-      last_failed_at: "2026-08-11T04:29:00Z",
-      age_seconds: 60,
-      guidance: "Add provider credit or repair billing before the next daily canary.",
-    }],
+    failures: [
+      {
+        source_kind: "evidence",
+        failure_class: "provider_action_required",
+        failure_code: "provider_quota_exhausted",
+        count: 2,
+      },
+    ],
+    failure_groups: [
+      {
+        team_id: "11111111-1111-4111-8111-111111111111",
+        team_name: "Payments",
+        source_kind: "evidence",
+        failure_class: "provider_action_required",
+        failure_code: "provider_quota_exhausted",
+        status: "attention_required",
+        failed_job_count: 2,
+        queued_job_count: 1,
+        processing_job_count: 0,
+        affected_job_count: 3,
+        first_failed_at: "2026-08-11T04:28:00Z",
+        last_failed_at: "2026-08-11T04:29:00Z",
+        age_seconds: 60,
+        guidance:
+          "Add provider credit or repair billing before the next daily canary.",
+      },
+    ],
     failure_group_count: 101,
     failure_groups_truncated: true,
     latest_run: {
@@ -94,6 +134,10 @@ function failureSnapshot(): SearchConvergence {
       canary_failure_code: "provider_quota_exhausted",
       requeued_count: 0,
       recovered_count: 0,
+      selected_count: 2,
+      embedded_count: 2,
+      updated_count: 2,
+      drifted_count: 0,
       updated_at: "2026-08-11T04:30:00Z",
     },
   };

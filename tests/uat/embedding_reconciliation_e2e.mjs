@@ -87,17 +87,18 @@ if (configured?.effective_value !== scheduledLocalTime) {
 }
 
 await proxyJSON("/control/mode", { method: "POST", body: JSON.stringify({ mode: "forward" }) });
-const firstRecoveryRequest = await waitForCanaryRequest(proxyBefore.requests, scheduledAt);
-if (firstRecoveryRequest.request_item_counts?.[proxyBefore.requests] !== 1) {
-  throw new Error(`first post-window provider request was not a one-item canary: ${JSON.stringify(firstRecoveryRequest)}`);
+const firstRepairRequest = await waitForRepairRequest(proxyBefore.requests, scheduledAt);
+const repairItemCount = firstRepairRequest.request_item_counts?.[proxyBefore.requests] ?? 0;
+if (repairItemCount < 1 || repairItemCount > 256) {
+  throw new Error(`first post-window provider request was not one bounded repair batch: ${JSON.stringify(firstRepairRequest)}`);
 }
 
 const recovered = await waitForConvergedProjection();
-if (recovered.latest_run?.status !== "completed" || recovered.latest_run?.canary_outcome !== "succeeded") {
+if (recovered.latest_run?.status !== "completed") {
   throw new Error(`reconciliation did not complete successfully: ${JSON.stringify(recovered)}`);
 }
-if (recovered.latest_run.recovered_count !== 1 || recovered.latest_run.requeued_count < Math.max(failed.count - 1, 0)) {
-  throw new Error(`reconciliation accounting did not separate completed canary from requeued backlog: ${JSON.stringify(recovered.latest_run)}`);
+if (recovered.latest_run.selected_count < 1 || recovered.latest_run.embedded_count < 1 || recovered.latest_run.updated_count < 1) {
+  throw new Error(`reconciliation did not retain document repair counters: ${JSON.stringify(recovered.latest_run)}`);
 }
 
 const finalStatus = await waitForCurrentSubmission(submissionID);
@@ -105,14 +106,13 @@ if (finalStatus.degradations?.some((item) => item.code === "search_indexing_dela
   throw new Error(`public submission status retained a stale indexing degradation: ${JSON.stringify(finalStatus)}`);
 }
 const proxyAfter = await proxyJSON("/stats");
-if (proxyAfter.forwarded < 1 || proxyAfter.request_item_counts[proxyBefore.requests] !== 1) {
-  throw new Error(`proxy did not forward the recovery canary: ${JSON.stringify(proxyAfter)}`);
+if (proxyAfter.forwarded < 1 || proxyAfter.request_item_counts[proxyBefore.requests] !== repairItemCount) {
+  throw new Error(`proxy did not forward the document repair batch: ${JSON.stringify(proxyAfter)}`);
 }
-await waitForPrometheusValue("sum(densemem_embedding_reconciliation_canaries_total{outcome=\"succeeded\"})", 1);
 const recoveryLogs = await waitForRecoveryLog();
 const serializedRecoveryLogs = JSON.stringify(recoveryLogs);
-if (!serializedRecoveryLogs.includes(teamID) || !serializedRecoveryLogs.includes("aggregation") || !serializedRecoveryLogs.includes("job_count")) {
-  throw new Error("embedding recovery operation log omitted bounded team or aggregation fields");
+if (!serializedRecoveryLogs.includes("search_reconciliation_completed") || !serializedRecoveryLogs.includes("selected_count")) {
+  throw new Error("document repair operation log omitted bounded run counters");
 }
 
 console.log(JSON.stringify({
@@ -122,10 +122,10 @@ console.log(JSON.stringify({
   failed_jobs: failed.count,
   initial_provider_requests: writeFailureProxy.requests,
   failed_recall_query_requests: proxyBefore.requests - writeFailureProxy.requests,
-  recovery_canary_item_count: proxyAfter.request_item_counts[proxyBefore.requests],
+  repair_batch_item_count: proxyAfter.request_item_counts[proxyBefore.requests],
   final_search_status: finalStatus.search_state,
   reconciliation_status: recovered.status,
-  reconciliation_canary: recovered.latest_run.canary_outcome,
+  repaired_documents: recovered.latest_run.updated_count,
   operator_guidance_verified: true,
   public_error_bounded: true,
   readiness_structural: true,
@@ -196,26 +196,26 @@ async function waitForRecoveryLog() {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const page = await controlJSON("/logs?limit=100&severity=info");
     const serialized = JSON.stringify(page.data ?? page);
-    if (serialized.includes("embedding_recovery_completed") && serialized.includes(teamID)) return page;
+    if (serialized.includes("search_reconciliation_completed") && serialized.includes("selected_count")) return page;
     await delay(1_000);
   }
   throw new Error("timed out waiting for bounded embedding recovery operation log");
 }
 
-async function waitForCanaryRequest(previousRequests, scheduledAt) {
+async function waitForRepairRequest(previousRequests, scheduledAt) {
   const deadline = scheduledAt.getTime() + 180_000;
   while (Date.now() < deadline) {
     const stats = await proxyJSON("/stats");
     if (stats.requests > previousRequests) return stats;
     await delay(2_000);
   }
-  throw new Error("timed out waiting for the first scheduled canary provider request");
+  throw new Error("timed out waiting for the scheduled document repair provider request");
 }
 
 async function waitForConvergedProjection() {
   for (let attempt = 0; attempt < 180; attempt += 1) {
     const projection = (await controlJSON("/search/convergence")).data;
-    if (projection?.status === "converged" && projection.queue?.failed === 0 && projection.queue?.queued === 0 && projection.queue?.processing === 0 && (projection.failure_groups ?? []).length === 0) return projection;
+    if (projection?.status === "converged" && projection.drifted_documents === 0) return projection;
     await delay(2_000);
   }
   throw new Error("timed out waiting for search convergence");
@@ -240,7 +240,7 @@ function assertPublicDelayedStatus(status, id) {
 }
 
 function assertAttentionProjection(projection) {
-  if (!projection || !["attention_required", "recovering"].includes(projection.status)) throw new Error(`operator projection did not require attention: ${JSON.stringify(projection)}`);
+  if (!projection || projection.status !== "attention_required" || projection.drifted_documents < 1) throw new Error(`operator projection did not report canonical document drift: ${JSON.stringify(projection)}`);
   if (!projection.failures?.some((item) => item.failure_code === "provider_quota_exhausted")) throw new Error("operator projection omitted quota failure code");
   const failureGroup = projection.failure_groups?.find((item) => item.team_id === teamID && item.failure_code === "provider_quota_exhausted");
   if (!failureGroup || failureGroup.status !== "attention_required" || failureGroup.failed_job_count < 1 || !failureGroup.guidance.includes("provider credit")) {

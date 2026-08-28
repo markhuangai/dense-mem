@@ -503,13 +503,13 @@ func RunActiveServer(
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 	privateMemoryService.Start(workerCtx)
-	reconciliationSvc := newEmbeddingReconciliationService(
+	searchRepairSvc := newSearchRepairService(
 		searchRepo, openaiProvider, appConfigService, logger, discoverabilityMetrics,
 		time.Duration(cfg.GetAIEmbeddingTimeoutSeconds())*time.Second,
 		cfg.GetDistributedCoordinationRequired(),
 	)
-	reconciliationSvc.Start(workerCtx)
-	defer reconciliationSvc.Stop()
+	searchRepairSvc.Start(workerCtx)
+	defer searchRepairSvc.Stop()
 	var quarantinePurgeMetrics repository.SubmissionQuarantinePurgeMetrics
 	if metrics, ok := discoverabilityMetrics.(repository.SubmissionQuarantinePurgeMetrics); ok {
 		quarantinePurgeMetrics = metrics

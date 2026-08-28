@@ -31,31 +31,14 @@ func (r *SearchRepositoryImpl) GetEmbeddingReconciliationTime(ctx context.Contex
 	return now.UTC(), nil
 }
 
-// CheckSearchConvergence returns an error when the active search contract has
-// any queued, processing, or failed jobs.
-// It intentionally uses bounded existence checks for health probes instead of
-// building the full operator convergence projection.
+// CheckSearchConvergence probes the active canonical document projection. Job
+// diagnostics remain visible to operators but do not determine readiness.
 func (r *SearchRepositoryImpl) CheckSearchConvergence(ctx context.Context) error {
 	contract, err := r.GetActiveSearchContract(ctx)
 	if err != nil {
 		return err
 	}
-	var attentionRequired bool
-	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		return tx.WithContext(ctx).Raw(`
-			SELECT EXISTS (
-			    SELECT 1
-			    FROM embedding_jobs AS job
-			    JOIN teams AS team
-			      ON team.id = job.team_id
-			     AND team.status = 'active'
-			     AND team.deleted_at IS NULL
-			    WHERE job.embedding_contract_id = ?::uuid
-			      AND job.embedding_dimensions = ?
-			      AND job.status IN ('queued', 'processing', 'failed')
-				)
-			`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&attentionRequired).Error
-	})
+	attentionRequired, err := r.searchDocumentConvergenceAttentionRequired(ctx, contract)
 	if err != nil {
 		return fmt.Errorf("search: convergence health: %w", err)
 	}
@@ -98,7 +81,16 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 		ExpiredLeases:    stats.ExpiredLeases,
 		OldestPendingAge: stats.OldestPendingAge,
 	}
-	var hasFailedGroup, hasRecoveringGroup bool
+	documentStats, err := r.searchDocumentConvergence(ctx, contract)
+	if err != nil {
+		return nil, err
+	}
+	convergence.ExpectedDocuments = documentStats.expected
+	convergence.CurrentDocuments = documentStats.current
+	convergence.DriftedDocuments = documentStats.drifted
+	convergence.AffectedTeamCount = documentStats.affectedTeams
+	convergence.OldestDriftAge = documentStats.oldestDrift
+	convergence.DriftClasses = documentStats.classes
 	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		rows, err := tx.WithContext(ctx).Raw(`
 			SELECT source_kind, failure_class, failure_code, count(*)
@@ -152,18 +144,16 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 			WHERE job.embedding_contract_id = ?::uuid
 			  AND job.embedding_dimensions = ?
 			  AND job.status = 'failed'
-		`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&convergence.AffectedTeamCount).Error; err != nil {
+		`, contract.EmbeddingContractID, contract.EmbeddingDimensions).Scan(&convergence.QueueAffectedTeamCount).Error; err != nil {
 			return err
 		}
-		groups, groupCount, failedGroup, recoveringGroup, groupsTruncated, err := readSearchConvergenceFailureGroups(ctx, tx, contract.EmbeddingContractID, contract.EmbeddingDimensions)
+		groups, groupCount, _, _, groupsTruncated, err := readSearchConvergenceFailureGroups(ctx, tx, contract.EmbeddingContractID, contract.EmbeddingDimensions)
 		if err != nil {
 			return err
 		}
 		convergence.FailureGroups = groups
 		convergence.FailureGroupCount = groupCount
 		convergence.FailureGroupsTruncated = groupsTruncated
-		hasFailedGroup = failedGroup
-		hasRecoveringGroup = recoveringGroup
 		return nil
 	})
 	if err != nil {
@@ -173,10 +163,8 @@ func (r *SearchRepositoryImpl) GetSearchConvergence(ctx context.Context, input S
 	if err != nil {
 		return nil, err
 	}
-	if convergence.Failed > 0 || hasFailedGroup {
+	if convergence.DriftedDocuments > 0 {
 		convergence.Status = "attention_required"
-	} else if convergence.Queued > 0 || convergence.Processing > 0 || hasRecoveringGroup {
-		convergence.Status = "recovering"
 	}
 	return convergence, nil
 }
@@ -547,6 +535,7 @@ func (r *SearchRepositoryImpl) latestEmbeddingReconciliationRun(ctx context.Cont
 			       worker_id, lease_token::text, lease_until, canary_job_id::text,
 			       canary_attempted_at, canary_outcome, canary_failure_class,
 			       canary_failure_code, requeued_count, recovered_count, last_error,
+			       selected_count, embedded_count, updated_count, drifted_count,
 			       started_at, completed_at, updated_at
 			FROM embedding_reconciliation_runs
 			WHERE embedding_contract_id = ?::uuid AND embedding_dimensions = ?
@@ -557,6 +546,7 @@ func (r *SearchRepositoryImpl) latestEmbeddingReconciliationRun(ctx context.Cont
 			&leaseToken, &leaseUntil, &canaryJobID, &attemptedAt,
 			&run.CanaryOutcome, &run.CanaryFailureClass, &run.CanaryFailureCode,
 			&run.RequeuedCount, &run.RecoveredCount, &run.LastError,
+			&run.SelectedCount, &run.EmbeddedCount, &run.UpdatedCount, &run.DriftedCount,
 			&startedAt, &completedAt, &run.UpdatedAt,
 		)
 	})

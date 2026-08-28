@@ -11,7 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
 var errSearchConvergenceQueryFailed = errors.New("search convergence query failed")
@@ -36,7 +36,7 @@ func searchConvergenceHealthCheck(search searchConvergenceHealthReader, logger o
 	}
 }
 
-func newEmbeddingReconciliationService(
+func newSearchRepairService(
 	search *repository.SearchRepositoryImpl,
 	provider embedding.EmbeddingProviderInterface,
 	appConfig service.AppConfigService,
@@ -44,12 +44,36 @@ func newEmbeddingReconciliationService(
 	metrics observability.DiscoverabilityMetrics,
 	providerTimeout time.Duration,
 	distributedCoordinationRequired bool,
-) embeddingservice.EmbeddingReconciliationService {
+) service.SearchRepairService {
 	hostname, _ := os.Hostname()
-	return embeddingservice.NewEmbeddingReconciliationService(embeddingservice.EmbeddingReconciliationDependencies{
-		Search: search, Reconciliation: search, Provider: provider, AppConfig: appConfig,
-		Logger: logger, Metrics: metrics, WorkerID: fmt.Sprintf("embedding-reconciliation-%s-%d", hostname, os.Getpid()),
+	return service.NewSearchRepairService(service.SearchRepairDependencies{
+		Repository:                      search,
+		Executor:                        semanticwrite.NewExecutor(searchRepairBatchProvider{provider: provider}),
+		AppConfig:                       appConfig,
+		Logger:                          logger,
+		Metrics:                         metrics,
+		WorkerID:                        fmt.Sprintf("search-repair-%s-%d", hostname, os.Getpid()),
 		ProviderTimeout:                 providerTimeout,
 		DistributedCoordinationRequired: distributedCoordinationRequired,
 	})
 }
+
+type searchRepairBatchProvider struct {
+	provider embedding.EmbeddingProviderInterface
+}
+
+func (p searchRepairBatchProvider) EmbedBatch(ctx context.Context, texts []string) ([]semanticwrite.IndexedEmbedding, string, error) {
+	vectors, model, err := p.provider.EmbedBatch(ctx, texts)
+	if err != nil {
+		return nil, model, err
+	}
+	result := make([]semanticwrite.IndexedEmbedding, len(vectors))
+	for index, vector := range vectors {
+		result[index] = semanticwrite.IndexedEmbedding{Index: index, Vector: vector}
+	}
+	return result, model, nil
+}
+
+func (p searchRepairBatchProvider) ModelName() string { return p.provider.ModelName() }
+func (p searchRepairBatchProvider) Dimensions() int   { return p.provider.Dimensions() }
+func (p searchRepairBatchProvider) IsAvailable() bool { return p.provider.IsAvailable() }
