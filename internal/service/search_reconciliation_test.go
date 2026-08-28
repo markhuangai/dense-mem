@@ -160,6 +160,24 @@ func TestSearchReconciliationRunPreservesDriftWhenSelectionFails(t *testing.T) {
 	require.EqualValues(t, 1, repo.finish.DriftedCount)
 }
 
+func TestSearchReconciliationRunClearsDriftWhenSelectionConverged(t *testing.T) {
+	contract := searchRepairTestContract()
+	repo := &searchRepairRepositoryStub{
+		contract: contract,
+		run:      &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
+	}
+	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: &searchRepairExecutorStub{}, WorkerID: "worker"})
+
+	result, err := svc.Run(context.Background(), time.Now().UTC(), true)
+
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Zero(t, result.SelectedCount)
+	require.Zero(t, result.DriftedCount)
+	require.NotNil(t, repo.finish)
+	require.Zero(t, repo.finish.DriftedCount)
+}
+
 func TestSearchReconciliationSchedulerErrorsAreVisible(t *testing.T) {
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	logger := &searchRepairLoggerStub{}

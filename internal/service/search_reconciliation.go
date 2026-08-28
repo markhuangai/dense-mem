@@ -177,6 +177,7 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 	}
 	result.SelectedCount = int64(len(documents))
 	if len(documents) == 0 {
+		result.DriftedCount = 0
 		if hasMore {
 			result.DriftedCount = 1
 		}
