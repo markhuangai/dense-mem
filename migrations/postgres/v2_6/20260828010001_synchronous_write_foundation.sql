@@ -136,7 +136,27 @@ CREATE OR REPLACE FUNCTION validate_synchronous_write_replay()
 RETURNS TRIGGER AS $$
 DECLARE
     canonical_attempt remember_attempts%ROWTYPE;
+    conflicting_attempt UUID;
 BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        NEW.team_id::text || ':' || NEW.owner_profile_id::text || ':' || NEW.idempotency_key, 0
+    ));
+    SELECT attempt_id INTO conflicting_attempt
+    FROM remember_attempts
+    WHERE team_id = NEW.team_id
+      AND owner_profile_id = NEW.owner_profile_id
+      AND idempotency_key = NEW.idempotency_key
+      AND attempt_id IS DISTINCT FROM NEW.attempt_id
+      AND (
+          request_hash IS DISTINCT FROM NEW.request_hash
+          OR submission_kind IS DISTINCT FROM NEW.submission_kind
+          OR space_id IS DISTINCT FROM NEW.space_id
+          OR space_generation IS DISTINCT FROM NEW.space_generation
+      )
+    LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION 'idempotency key must retain request identity across attempts';
+    END IF;
     IF NEW.outcome <> 'replayed' THEN
         RETURN NEW;
     END IF;

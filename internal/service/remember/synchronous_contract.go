@@ -152,7 +152,10 @@ var terminalErrorCodes = []TerminalErrorCode{
 	TerminalErrorQuarantined,
 }
 
-const maxTerminalErrors = 50
+const (
+	maxTerminalErrors             = 50
+	maxTerminalRelationshipSplits = 50
+)
 
 func TerminalErrorCodes() []string {
 	result := make([]string, 0, len(terminalErrorCodes))
@@ -447,6 +450,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		seenRefs[item.RelationshipRef] = struct{}{}
 		if item.Disposition != "stored" && item.Disposition != "not_stored" {
 			return fmt.Errorf("remember: terminal relationship disposition %q is invalid", item.Disposition)
+		}
+		if len(item.Splits) > maxTerminalRelationshipSplits {
+			return fmt.Errorf("remember: terminal relationship %q has too many splits", item.RelationshipRef)
 		}
 		if item.Disposition == "not_stored" && len(item.Splits) > 0 {
 			return fmt.Errorf("remember: non-stored relationship %q has splits", item.RelationshipRef)

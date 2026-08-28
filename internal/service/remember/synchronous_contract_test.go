@@ -167,6 +167,14 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"stored relationship with non-contiguous split", func(result *TerminalRememberResult) {
 			result.RelationshipResults[0].Splits[0].SplitIndex = 1
 		}},
+		{"stored relationship split count", func(result *TerminalRememberResult) {
+			result.RelationshipResults[0].Splits = make([]SubmissionRelationshipSplit, 51)
+			for index := range result.RelationshipResults[0].Splits {
+				result.RelationshipResults[0].Splits[index] = SubmissionRelationshipSplit{
+					SplitIndex: index, RelationshipID: "11111111-1111-1111-1111-111111111111", RelationshipVersion: 1, Status: "active",
+				}
+			}
+		}},
 		{"stored relationship with inactive split", func(result *TerminalRememberResult) {
 			result.RelationshipResults[0].Splits[0].Status = "superseded"
 		}},
