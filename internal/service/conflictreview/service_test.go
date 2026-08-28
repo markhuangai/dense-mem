@@ -893,11 +893,9 @@ type conflictReviewProviderStub struct {
 type conflictReviewEmbeddingProviderStub struct {
 	err           error
 	returnedModel string
-	batchSizes    []int
 }
 
 func (stub *conflictReviewEmbeddingProviderStub) EmbedBatch(_ context.Context, texts []string) ([][]float32, string, error) {
-	stub.batchSizes = append(stub.batchSizes, len(texts))
 	model := stub.returnedModel
 	if model == "" {
 		model = "test-embedding-model"

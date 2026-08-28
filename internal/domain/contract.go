@@ -230,7 +230,10 @@ const (
 
 type VectorIndexStrategy string
 
-const MaxEmbeddingDimensions = 16000
+const (
+	MaxEmbeddingDimensions     = 16000
+	MaxEmbeddingBatchDocuments = 256
+)
 
 const (
 	VectorIndexExact       VectorIndexStrategy = "exact"

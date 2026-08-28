@@ -220,6 +220,38 @@ func (r *LedgerRepositoryImpl) ReviewRelationshipConflictCase(
 		if err != nil {
 			return err
 		}
+		initialEvaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
+			Now:         input.Now,
+			ReviewDueAt: caseRecord.ReviewDueAt,
+			Positions:   caseRecord.Positions,
+		})
+		if initialEvaluation.Outcome == ConflictReviewOutcomeResolve && initialEvaluation.PreferredPositionID != "" {
+			documentCount, err := countDeterministicResolutionDocuments(ctx, tx, input, caseRecord, initialEvaluation.PreferredPositionID)
+			if err != nil {
+				return err
+			}
+			if documentCount > domain.MaxEmbeddingBatchDocuments {
+				if err := appendRelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, initialEvaluation.PreferredPositionID, "", "", string(domain.RelationshipConflictEventEvaluated), initialEvaluation.Outcome, "case:"+input.ConflictID+":run:"+input.ReviewRunID+":evaluated", map[string]any{
+					"stage":                 initialEvaluation.Stage,
+					"reason":                initialEvaluation.Reason,
+					"total_supporter_count": initialEvaluation.TotalSupporterCount,
+				}); err != nil {
+					return err
+				}
+				if _, err := deferConflictResolutionForDocumentBound(ctx, tx, RelationshipConflictResolutionInput{
+					TeamID: input.TeamID, ConflictID: input.ConflictID, ReviewRunID: input.ReviewRunID,
+					WorkerID: input.WorkerID, ExpectedCaseVersion: caseRecord.Version,
+					PreferredPositionID: initialEvaluation.PreferredPositionID, Method: "deterministic", Now: input.Now,
+				}, caseRecord, "", documentCount); err != nil {
+					return err
+				}
+				result.Outcome = ConflictReviewOutcomeNoop
+				result.Stage = "resolution_pending"
+				result.PreferredPositionID = initialEvaluation.PreferredPositionID
+				result.ResolutionPending = true
+				return nil
+			}
+		}
 		caseRecord, dismissed, err := refreshRelationshipConflictCaseSnapshotForReview(ctx, tx, input, caseRecord)
 		if err != nil {
 			return err

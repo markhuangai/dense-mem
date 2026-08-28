@@ -2,7 +2,6 @@ package conflictreview
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -107,48 +106,4 @@ func TestServiceBoundsDetachedClaimReleaseContext(t *testing.T) {
 	deadline, ok := repo.releaseContexts[0].Deadline()
 	require.True(t, ok)
 	assert.WithinDuration(t, time.Now().Add(conflictClaimReleaseTimeout), deadline, time.Second)
-}
-
-func TestServiceEmbedsOversizedResolutionInBoundedBatches(t *testing.T) {
-	repo := newConflictReviewRepositoryStub(t)
-	repo.reviewResult = &repository.ReviewRelationshipConflictCaseResult{
-		ConflictID: conflictReviewTestConflictID,
-		Outcome:    repository.ConflictReviewOutcomeResolve,
-		Resolution: &repository.RelationshipConflictResolutionInput{
-			TeamID: conflictReviewTestTeamID, ConflictID: conflictReviewTestConflictID,
-			ReviewRunID: conflictReviewTestReviewRunID, WorkerID: conflictReviewTestWorkerID,
-			ExpectedCaseVersion: 3, PreferredPositionID: conflictReviewTestPositionAID,
-			Method: "deterministic", Now: time.Now().UTC(),
-		},
-	}
-	repo.planResult = &repository.RelationshipConflictResolutionPlan{
-		Fence: repository.RelationshipConflictResolutionFence{
-			EmbeddingContractID:     "00000000-0000-0000-0000-000000000601",
-			EmbeddingDimensions:     2,
-			EmbeddingModel:          "test-embedding-model",
-			SearchIndexGenerationID: "00000000-0000-0000-0000-000000000602",
-			IndexGeneration:         1,
-		},
-		Documents: make([]repository.RelationshipConflictResolutionDocument, semanticwrite.MaxDocuments+1),
-	}
-	for index := range repo.planResult.Documents {
-		repo.planResult.Documents[index] = repository.RelationshipConflictResolutionDocument{
-			TeamID: conflictReviewTestTeamID, RelationshipID: conflictReviewTestConflictID,
-			OwnerProfileID: conflictReviewTestTeamID, SpaceID: conflictReviewTestTeamID,
-			SpaceGeneration: 1, SourceVersion: 1, DocumentHash: fmt.Sprintf("hash-%03d", index),
-			DocumentText: fmt.Sprintf("relationship %03d", index),
-		}
-	}
-	embedder := &conflictReviewEmbeddingProviderStub{}
-	service := newConflictReviewService(t, repo, &conflictReviewProviderStub{})
-	service.embeddings = semanticwrite.NewExecutor(conflictEmbeddingBatchProvider{provider: embedder})
-
-	result, err := service.ReviewRelationshipConflictCase(context.Background(), conflictReviewInput())
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, repository.ConflictReviewOutcomeResolve, result.Outcome)
-	require.Len(t, embedder.batchSizes, 2)
-	assert.Equal(t, []int{semanticwrite.MaxDocuments, 1}, embedder.batchSizes)
-	require.Len(t, repo.commitInputs, 1)
-	assert.Len(t, repo.commitInputs[0].Embeddings, semanticwrite.MaxDocuments+1)
 }

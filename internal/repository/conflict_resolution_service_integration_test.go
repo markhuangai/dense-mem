@@ -109,6 +109,50 @@ func TestDeterministicConflictResolutionReleasesExpiredClaimAfterEmbedding(t *te
 	require.Len(t, reclaimed, 1)
 }
 
+func TestOversizedDeterministicConflictDefersBeforeEmbeddingOrSemanticWrites(t *testing.T) {
+	fixture := repository.NewOversizedConflictServiceFixture(t)
+	embedder := &deterministicConflictEmbeddingProvider{}
+	reviewer, err := conflictreviewservice.New(conflictreviewservice.Dependencies{
+		Repository: fixture.Ledger, Provider: deterministicConflictProvider{}, Embeddings: embedder,
+		EmbeddingTimeout: time.Second, Timezone: "UTC", Limits: conflictassessment.DefaultSemanticAssessmentLimits(),
+	})
+	require.NoError(t, err)
+	before := fixture.Snapshot(t)
+
+	result, err := reviewer.ReviewRelationshipConflictCase(context.Background(), repository.ReviewRelationshipConflictCaseInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+		ConflictID: fixture.ConflictID, Now: fixture.ReviewNow,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, repository.ConflictReviewOutcomeNoop, result.Outcome)
+	assert.Equal(t, "resolution_pending", result.Stage)
+	assert.True(t, result.ResolutionPending)
+	assert.Zero(t, embedder.calls)
+
+	after := fixture.Snapshot(t)
+	assert.Equal(t, before.RelationshipState, after.RelationshipState)
+	assert.Equal(t, before.SearchDocumentState, after.SearchDocumentState)
+	assert.Equal(t, before.EmbeddingJobState, after.EmbeddingJobState)
+	assert.Equal(t, 0, after.CaseAttempts)
+	assert.Empty(t, after.CaseLeaseWorkerID)
+	assert.Nil(t, after.CaseLeaseUntil)
+	eventCount, nextReviewAt := fixture.PendingState(t)
+	assert.Equal(t, int64(1), eventCount)
+	assert.True(t, nextReviewAt.After(fixture.ReviewNow))
+	assert.WithinDuration(t, fixture.ReviewNow.Add(24*time.Hour), nextReviewAt, 2*time.Second)
+
+	fixture.Reclaim(t)
+	_, err = reviewer.ReviewRelationshipConflictCase(context.Background(), repository.ReviewRelationshipConflictCaseInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+		ConflictID: fixture.ConflictID, Now: fixture.ReviewNow,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, embedder.calls)
+	retryEventCount, _ := fixture.PendingState(t)
+	assert.Equal(t, int64(1), retryEventCount)
+}
+
 type deterministicConflictProvider struct{}
 
 func (deterministicConflictProvider) AssessRelationshipConflict(context.Context, conflictassessment.ConflictAssessmentRequest) (conflictassessment.ConflictAssessmentResponse, error) {
@@ -119,9 +163,11 @@ func (deterministicConflictProvider) ModelName() string { return "test-model" }
 
 type deterministicConflictEmbeddingProvider struct {
 	failed bool
+	calls  int
 }
 
 func (p *deterministicConflictEmbeddingProvider) EmbedBatch(_ context.Context, texts []string) ([][]float32, string, error) {
+	p.calls++
 	if p.failed {
 		return nil, "test-model", errors.New("forced deterministic embedding failure")
 	}

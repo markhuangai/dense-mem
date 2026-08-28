@@ -207,6 +207,67 @@ func buildRelationshipConflictResolutionPlan(
 		}
 		return nil, err
 	}
+	preflightEligible := false
+	preflightPlanID := ""
+	var preflightEffectiveAt time.Time
+	preflightEffectiveBasis := ""
+	switch input.Method {
+	case "deterministic":
+		if record.Status == string(domain.RelationshipConflictOpen) {
+			evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
+				Now: input.Now, ReviewDueAt: record.ReviewDueAt, Positions: record.Positions,
+			})
+			preflightEligible = evaluation.Outcome == ConflictReviewOutcomeResolve && evaluation.PreferredPositionID == input.PreferredPositionID
+		}
+	case "ai", "last_write_wins":
+		if record.Status == string(domain.RelationshipConflictOverdue) {
+			legacyInput := ApplyOverdueConflictResolutionInput(input)
+			if err := validateConflictResolutionAssessment(ctx, tx, legacyInput); err != nil {
+				if errors.Is(err, ErrConflictAssessmentStale) {
+					plan.Stale = true
+					return plan, nil
+				}
+				return nil, err
+			}
+			preflightEffectiveAt, preflightEffectiveBasis = conflictResolutionEffectiveTime(*record, input.PreferredPositionID, input.Now)
+			planID, status, err := ensureConflictResolutionPlan(ctx, tx, legacyInput, preflightEffectiveAt, preflightEffectiveBasis)
+			if err != nil {
+				return nil, err
+			}
+			if status == "applied" || status == "superseded" || status == "failed" {
+				plan.Stale = true
+				return plan, nil
+			}
+			preflightPlanID = planID
+			preflightEligible = true
+		}
+	}
+	var preflightContract *ActiveSearchContract
+	if preflightEligible {
+		preflightContract, err = loadActiveSearchContractInTx(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		documentCount, err := countConflictResolutionDocumentsForBound(ctx, tx, input, preflightContract)
+		if err != nil {
+			return nil, err
+		}
+		if documentCount > domain.MaxEmbeddingBatchDocuments {
+			transitioned, err := deferConflictResolutionForDocumentBound(ctx, tx, input, record, preflightPlanID, documentCount)
+			if err != nil {
+				return nil, err
+			}
+			plan.ResolutionPlanID = preflightPlanID
+			plan.Pending = true
+			plan.PendingTransitioned = transitioned
+			plan.Fence = RelationshipConflictResolutionFence{
+				EmbeddingContractID: preflightContract.EmbeddingContractID, EmbeddingDimensions: preflightContract.EmbeddingDimensions,
+				EmbeddingModel: preflightContract.EmbeddingModel, SearchIndexGenerationID: preflightContract.SearchIndexGenerationID,
+				IndexGeneration: preflightContract.IndexGeneration,
+			}
+			return plan, nil
+		}
+	}
 	record, dismissed, err := refreshRelationshipConflictCaseSnapshotForReview(ctx, tx, reviewInput, record)
 	if err != nil {
 		return nil, err
@@ -287,6 +348,9 @@ func buildRelationshipConflictResolutionPlan(
 				}
 				plan.PendingTransitioned = true
 			}
+			if err := releaseRelationshipConflictCaseLease(ctx, tx, reviewInput, conflictNextReviewAt(input.Now, record.ReviewDueAt), true); err != nil {
+				return nil, err
+			}
 			plan.Pending = true
 			return plan, nil
 		}
@@ -295,9 +359,12 @@ func buildRelationshipConflictResolutionPlan(
 		return nil, errors.New("conflict resolution method is unsupported")
 	}
 
-	contract, err := loadActiveSearchContractInTx(ctx, tx)
-	if err != nil {
-		return nil, err
+	contract := preflightContract
+	if contract == nil {
+		contract, err = loadActiveSearchContractInTx(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	plan.Fence = RelationshipConflictResolutionFence{
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
@@ -309,7 +376,163 @@ func buildRelationshipConflictResolutionPlan(
 		return nil, err
 	}
 	plan.Documents = documents
+	if documentCount := uniqueConflictResolutionDocumentCount(documents); documentCount > domain.MaxEmbeddingBatchDocuments {
+		transitioned, err := deferConflictResolutionForDocumentBound(ctx, tx, input, record, plan.ResolutionPlanID, documentCount)
+		if err != nil {
+			return nil, err
+		}
+		plan.Pending = true
+		plan.PendingTransitioned = transitioned
+		return plan, nil
+	}
 	return plan, nil
+}
+
+func uniqueConflictResolutionDocumentCount(documents []RelationshipConflictResolutionDocument) int {
+	seen := make(map[string]struct{}, len(documents))
+	for _, document := range documents {
+		seen[document.DocumentHash] = struct{}{}
+	}
+	return len(seen)
+}
+
+func countConflictResolutionDocumentsForBound(
+	ctx context.Context,
+	tx *gorm.DB,
+	input RelationshipConflictResolutionInput,
+	contract *ActiveSearchContract,
+) (int, error) {
+	if contract == nil {
+		return 0, errors.New("active search contract is required")
+	}
+	var count int
+	err := tx.WithContext(ctx).Raw(`
+		WITH selected AS (
+			SELECT DISTINCT member.relationship_id
+			FROM relationship_conflict_position_members AS member
+			JOIN relationship_records AS relationship
+			  ON relationship.team_id = member.team_id
+			 AND relationship.relationship_id = member.relationship_id
+			JOIN memory_spaces AS space
+			  ON space.team_id = relationship.team_id
+			 AND space.id = relationship.space_id
+			 AND space.generation = relationship.space_generation
+			 AND space.lifecycle_state = 'active'
+			WHERE member.team_id = ?::uuid
+			  AND member.conflict_id = ?::uuid
+			  AND member.position_id = ?::uuid
+			  AND member.active
+			  AND relationship.status = 'active'
+			  AND relationship.support_count > 0
+		), required AS (
+			SELECT relationship.relationship_id::text AS relationship_id,
+			       relationship.version,
+			       relationship.space_id,
+			       relationship.space_generation,
+			       document.document_hash,
+			       document.search_state,
+			       document.embedding,
+			       document.source_version,
+			       document.space_id AS document_space_id,
+			       document.space_generation AS document_space_generation
+			FROM selected
+			JOIN relationship_records AS relationship
+			  ON relationship.team_id = ?::uuid
+			 AND relationship.relationship_id = selected.relationship_id
+			LEFT JOIN search_documents AS document
+			  ON document.team_id = relationship.team_id
+			 AND document.source_kind = 'relationship'
+			 AND document.source_id = relationship.relationship_id
+			 AND document.embedding_contract_id = ?::uuid
+		)
+		SELECT COUNT(DISTINCT CASE
+			WHEN search_state = 'current'
+			 AND embedding IS NOT NULL
+			 AND source_version = version
+			 AND document_space_id = space_id
+			 AND document_space_generation = space_generation
+			THEN NULL
+			WHEN document_hash <> ''
+			 AND source_version = version
+			 AND document_space_id = space_id
+			 AND document_space_generation = space_generation
+			THEN document_hash
+			ELSE relationship_id
+		END)::int
+		FROM required
+	`, input.TeamID, input.ConflictID, input.PreferredPositionID, input.TeamID, contract.EmbeddingContractID).Row().Scan(&count)
+	return count, err
+}
+
+func countDeterministicResolutionDocuments(
+	ctx context.Context,
+	tx *gorm.DB,
+	input ReviewRelationshipConflictCaseInput,
+	record *RelationshipConflictCaseRecord,
+	preferredPositionID string,
+) (int, error) {
+	if record == nil {
+		return 0, errors.New("conflict resolution case is required")
+	}
+	contract, err := loadActiveSearchContractInTx(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	count, err := countConflictResolutionDocumentsForBound(ctx, tx, RelationshipConflictResolutionInput{
+		TeamID: input.TeamID, ConflictID: input.ConflictID, PreferredPositionID: preferredPositionID,
+	}, contract)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func deferConflictResolutionForDocumentBound(
+	ctx context.Context,
+	tx *gorm.DB,
+	input RelationshipConflictResolutionInput,
+	record *RelationshipConflictCaseRecord,
+	resolutionPlanID string,
+	documentCount int,
+) (bool, error) {
+	if record == nil {
+		return false, errors.New("conflict resolution case is required")
+	}
+	pendingKey := fmt.Sprintf(
+		"case:%s:version:%d:position:%s:resolution_pending:embedding_bound:%d:%d",
+		input.ConflictID, input.ExpectedCaseVersion, input.PreferredPositionID,
+		domain.MaxEmbeddingBatchDocuments, documentCount,
+	)
+	var exists bool
+	if err := tx.WithContext(ctx).Raw(`
+		SELECT EXISTS (
+			SELECT 1 FROM relationship_conflict_events
+			WHERE team_id = ?::uuid AND idempotency_key = ?
+		)
+	`, input.TeamID, pendingKey).Row().Scan(&exists); err != nil {
+		return false, err
+	}
+	if !exists {
+		metadata := map[string]any{
+			"case_version":          input.ExpectedCaseVersion,
+			"preferred_position_id": input.PreferredPositionID,
+			"document_count":        documentCount,
+			"document_limit":        domain.MaxEmbeddingBatchDocuments,
+		}
+		if resolutionPlanID != "" {
+			metadata["resolution_plan_id"] = resolutionPlanID
+		}
+		if err := appendRelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, input.PreferredPositionID, "", "", string(domain.RelationshipConflictEventResolutionPending), "embedding_bound", pendingKey, metadata); err != nil {
+			return false, err
+		}
+	}
+	if err := releaseRelationshipConflictCaseLease(ctx, tx, ReviewRelationshipConflictCaseInput{
+		TeamID: input.TeamID, ConflictID: input.ConflictID, ReviewRunID: input.ReviewRunID,
+		WorkerID: input.WorkerID, Now: input.Now,
+	}, conflictNextReviewAt(input.Now, record.ReviewDueAt), true); err != nil {
+		return false, err
+	}
+	return !exists, nil
 }
 
 func validateConflictResolutionSpaceFence(ctx context.Context, tx *gorm.DB, input RelationshipConflictResolutionInput) error {

@@ -452,35 +452,30 @@ func (s *Service) executeResolution(
 		seen[document.DocumentHash] = struct{}{}
 		documents = append(documents, semanticwrite.Document{Hash: document.DocumentHash, Text: document.DocumentText})
 	}
-	embeddings := make([]repository.RelationshipConflictResolutionEmbedding, 0, len(documents))
-	fence := semanticwrite.Fence{
-		Model: plan.Fence.EmbeddingModel, Dimensions: plan.Fence.EmbeddingDimensions,
-		EmbeddingContractID:     plan.Fence.EmbeddingContractID,
-		SearchGenerationID:      plan.Fence.SearchIndexGenerationID,
-		SearchGenerationVersion: int64(plan.Fence.IndexGeneration),
+	providerCtx := observability.WithMetricIdentity(ctx, input.TeamID, "")
+	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationConflictReview, 1)
+	embedded, err := s.embeddings.Execute(providerCtx, semanticwrite.Plan{
+		Documents: documents,
+		Fence: semanticwrite.Fence{
+			Model: plan.Fence.EmbeddingModel, Dimensions: plan.Fence.EmbeddingDimensions,
+			EmbeddingContractID:     plan.Fence.EmbeddingContractID,
+			SearchGenerationID:      plan.Fence.SearchIndexGenerationID,
+			SearchGenerationVersion: int64(plan.Fence.IndexGeneration),
+		},
+		Timeout: s.embeddingTimeout,
+	})
+	if err != nil {
+		if retryErr := s.releaseRetryableConflictClaim(ctx, input, err); retryErr != nil {
+			return nil, errors.Join(err, retryErr)
+		}
+		return nil, err
 	}
-	for start := 0; start < len(documents); start += semanticwrite.MaxDocuments {
-		end := start + semanticwrite.MaxDocuments
-		if end > len(documents) {
-			end = len(documents)
-		}
-		providerCtx := observability.WithMetricIdentity(ctx, input.TeamID, "")
-		providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationConflictReview, end-start)
-		embedded, err := s.embeddings.Execute(providerCtx, semanticwrite.Plan{
-			Documents: documents[start:end], Fence: fence, Timeout: s.embeddingTimeout,
+	embeddings := make([]repository.RelationshipConflictResolutionEmbedding, 0, len(embedded.Embeddings))
+	for _, value := range embedded.Embeddings {
+		embeddings = append(embeddings, repository.RelationshipConflictResolutionEmbedding{
+			DocumentHash: value.DocumentHash,
+			Embedding:    append([]float32(nil), value.Vector...),
 		})
-		if err != nil {
-			if retryErr := s.releaseRetryableConflictClaim(ctx, input, err); retryErr != nil {
-				return nil, errors.Join(err, retryErr)
-			}
-			return nil, err
-		}
-		for _, value := range embedded.Embeddings {
-			embeddings = append(embeddings, repository.RelationshipConflictResolutionEmbedding{
-				DocumentHash: value.DocumentHash,
-				Embedding:    append([]float32(nil), value.Vector...),
-			})
-		}
 	}
 	committed, err := s.repository.CommitRelationshipConflictResolution(ctx, repository.CommitRelationshipConflictResolutionInput{
 		Plan: *plan, Embeddings: embeddings,
