@@ -217,13 +217,15 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
 			return nil, scanErr
 		}
-		input := securityRejectionAuditInputForIdempotency(ctx, actor, "remember", scan, scanErr, req.IdempotencyKey)
-		securityAudit = &input
 	}
 
 	requestHash, err := canonicalRequestHash(req)
 	if err != nil {
 		return nil, err
+	}
+	if scanErr != nil {
+		input := securityRejectionAuditInputForIdempotency(ctx, actor, "remember", scan, scanErr, req.IdempotencyKey, requestHash)
+		securityAudit = &input
 	}
 	migratedRequestHash, err := canonicalRequestHashForVersion(req, domain.MigratedRememberRequestHashVersion)
 	if err != nil {

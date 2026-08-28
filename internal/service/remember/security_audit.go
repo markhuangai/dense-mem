@@ -59,6 +59,7 @@ func securityRejectionAuditInputForIdempotency(
 	scan SubmissionSecurityBatchScan,
 	rejection error,
 	idempotencyKey string,
+	requestHash string,
 ) SecurityRejectionAuditInput {
 	input := securityRejectionAuditInput(ctx, actor, surface, scan, rejection)
 	seed := strings.Join([]string{
@@ -67,6 +68,7 @@ func securityRejectionAuditInputForIdempotency(
 		actor.OwnerID.String(),
 		strings.TrimSpace(surface),
 		strings.TrimSpace(idempotencyKey),
+		strings.TrimSpace(requestHash),
 	}, "\x00")
 	input.EventID = uuid.NewSHA1(uuid.NameSpaceURL, []byte(seed)).String()
 	return input

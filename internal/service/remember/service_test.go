@@ -343,14 +343,18 @@ func TestSecurityRejectionAuditEventIDIsStableForRequestIdentity(t *testing.T) {
 	teamID, ownerID := uuid.New(), uuid.New()
 	actor := requestctx.Actor{TeamID: teamID, OwnerID: ownerID}
 	scan := SubmissionSecurityBatchScan{EvidenceCount: 1}
+	firstHash, err := canonicalRequestHash(RememberRequest{Evidence: []RememberEvidenceInput{{Content: "first"}}})
+	require.NoError(t, err)
+	differentHash, err := canonicalRequestHash(RememberRequest{Evidence: []RememberEvidenceInput{{Content: "different"}}})
+	require.NoError(t, err)
 
-	first := securityRejectionAuditInputForIdempotency(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected, "same-request")
-	second := securityRejectionAuditInputForIdempotency(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected, "same-request")
-	different := securityRejectionAuditInputForIdempotency(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected, "different-request")
+	first := securityRejectionAuditInputForIdempotency(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected, "same-request", firstHash)
+	second := securityRejectionAuditInputForIdempotency(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected, "same-request", firstHash)
+	different := securityRejectionAuditInputForIdempotency(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected, "same-request", differentHash)
 
 	require.Equal(t, first.EventID, second.EventID)
 	require.NotEqual(t, first.EventID, different.EventID)
-	_, err := uuid.Parse(first.EventID)
+	_, err = uuid.Parse(first.EventID)
 	require.NoError(t, err)
 }
 
