@@ -649,6 +649,7 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		{"SSE_HEARTBEAT_SECONDS", cfg.SSEHeartbeatSeconds},
 		{"SSE_MAX_DURATION_SECONDS", cfg.SSEMaxDurationSeconds},
 		{"SSE_MAX_CONCURRENT_STREAMS", cfg.SSEMaxConcurrentStreams},
+		{"AI_API_EMBEDDING_TIMEOUT_SECONDS", cfg.AIEmbeddingTimeoutSeconds},
 		{"AI_API_EMBEDDING_MAX_CONCURRENCY", cfg.AIEmbeddingMaxConcurrency},
 		{"EMBEDDING_WORKER_COUNT", cfg.EmbeddingWorkerCount},
 		{"EMBEDDING_BATCH_SIZE", cfg.EmbeddingBatchSize},

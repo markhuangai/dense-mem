@@ -178,6 +178,51 @@ func TestRelationshipConflictResolutionFencesStaleCaseVersionBeforeWrites(t *tes
 	assert.Equal(t, before, after)
 }
 
+func TestRelationshipConflictResolutionPreflightCountsNonForegroundDocuments(t *testing.T) {
+	fixture := NewOversizedConflictServiceFixture(t)
+	ctx := context.Background()
+	reviewed, err := fixture.Ledger.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+		ConflictID: fixture.ConflictID, Now: fixture.ReviewNow,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, reviewed)
+	require.Equal(t, ConflictReviewOutcomeResolve, reviewed.Outcome)
+	require.NotNil(t, reviewed.Resolution)
+
+	projectionGenerationID := uuid.NewString()
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO search_projection_generations (
+			    team_id, projection_generation_id, source_kind, generation,
+			    projection_format_version, state, eligible_count, projected_count,
+			    current_vector_count, failed_job_count, last_error, activated_at
+			) VALUES (
+			    ?::uuid, ?::uuid, 'relationship', 1, 2,
+			    'current', ?, ?, ?, 0, '', now()
+			)
+		`, fixture.TeamID, projectionGenerationID, len(fixture.RelationshipIDs), len(fixture.RelationshipIDs), len(fixture.RelationshipIDs)).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'current', embedding = '[1,0,0]'::vector,
+			    embedding_updated_at = now(), embedding_error = '',
+			    projection_format_version = 2, projection_generation_id = ?::uuid
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ANY(?::uuid[])
+		`, projectionGenerationID, fixture.TeamID, pq.Array(fixture.RelationshipIDs)).Error
+	}))
+
+	plan, err := fixture.Ledger.PlanRelationshipConflictResolution(ctx, *reviewed.Resolution)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	assert.True(t, plan.Pending)
+	assert.True(t, plan.PendingTransitioned)
+	assert.Empty(t, plan.Documents)
+}
+
 type conflictResolutionStateSnapshot struct {
 	CaseState           string
 	CaseAttempts        int

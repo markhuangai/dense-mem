@@ -27,6 +27,7 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 			os.Setenv("AI_API_EMBEDDING_DIMENSIONS", "16001")
 		}, "AI_API_EMBEDDING_DIMENSIONS"},
 		{"invalid embedding timeout", func() { os.Setenv("AI_API_EMBEDDING_TIMEOUT_SECONDS", "bad") }, "AI_API_EMBEDDING_TIMEOUT_SECONDS"},
+		{"zero embedding timeout", func() { os.Setenv("AI_API_EMBEDDING_TIMEOUT_SECONDS", "0") }, "AI_API_EMBEDDING_TIMEOUT_SECONDS"},
 		{"invalid embedding concurrency", func() { os.Setenv("AI_API_EMBEDDING_MAX_CONCURRENCY", "bad") }, "AI_API_EMBEDDING_MAX_CONCURRENCY"},
 		{"zero embedding concurrency", func() { os.Setenv("AI_API_EMBEDDING_MAX_CONCURRENCY", "0") }, "AI_API_EMBEDDING_MAX_CONCURRENCY"},
 		{"invalid embedding worker count", func() { os.Setenv("EMBEDDING_WORKER_COUNT", "bad") }, "EMBEDDING_WORKER_COUNT"},

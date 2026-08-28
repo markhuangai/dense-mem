@@ -432,6 +432,9 @@ func countConflictResolutionDocumentsForBound(
 			       document.document_hash,
 			       document.search_state,
 			       document.embedding,
+			       document.embedding_dimensions,
+			       document.projection_format_version,
+			       document.projection_generation_id,
 			       document.source_version,
 			       document.space_id AS document_space_id,
 			       document.space_generation AS document_space_generation
@@ -448,6 +451,9 @@ func countConflictResolutionDocumentsForBound(
 		SELECT COUNT(DISTINCT CASE
 			WHEN search_state = 'current'
 			 AND embedding IS NOT NULL
+			 AND embedding_dimensions = ?
+			 AND projection_format_version = 2
+			 AND projection_generation_id IS NULL
 			 AND source_version = version
 			 AND document_space_id = space_id
 			 AND document_space_generation = space_generation
@@ -460,7 +466,7 @@ func countConflictResolutionDocumentsForBound(
 			ELSE relationship_id
 		END)::int
 		FROM required
-	`, input.TeamID, input.ConflictID, input.PreferredPositionID, input.TeamID, contract.EmbeddingContractID).Row().Scan(&count)
+	`, input.TeamID, input.ConflictID, input.PreferredPositionID, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Row().Scan(&count)
 	return count, err
 }
 
