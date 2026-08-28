@@ -28,6 +28,7 @@ const fs = require("node:fs");
 
 const [destination, slice, providerDimensions, marker] = process.argv.slice(2);
 const quote = (value) => JSON.stringify(value);
+const providerURL = slice === "conflict" ? "http://conflict-provider:8081/v1" : "http://synchronous-write-provider:8787/v1";
 const contents = `${marker}
 services:
   server:
@@ -37,8 +38,8 @@ services:
       DENSE_MEM_E2E_WRITE_SLICE: ${quote(slice)}
       AI_API_EMBEDDING_TIMEOUT_SECONDS: "2"
       AI_VERIFIER_TIMEOUT_SECONDS: "2"
-      AI_API_URL: http://synchronous-write-provider:8787/v1
-      AI_VERIFIER_API_URL: http://synchronous-write-provider:8787/v1
+      AI_API_URL: ${providerURL}
+      AI_VERIFIER_API_URL: ${providerURL}
       AI_VERIFIER_API_KEY: dense-mem-e2e-verifier-key
   synchronous-write-provider:
     image: node:22-alpine
@@ -78,7 +79,32 @@ run_synchronous_write_e2e() {
   local team_id="$1"
   local api_key="$2"
   local slice="${DENSE_MEM_E2E_WRITE_SLICE:-legacy}"
+  local runtime_postgres_user
+  local runtime_postgres_password
+  local runtime_postgres_database
   echo "Running compose-backed synchronous-write contract cases with slice ${slice}."
+  if [[ "$slice" == "conflict" ]]; then
+    runtime_postgres_user="$(compose_server_environment_value POSTGRES_USER)"
+    runtime_postgres_password="$(compose_server_environment_value POSTGRES_PASSWORD)"
+    runtime_postgres_database="$(compose_server_environment_value POSTGRES_DB)"
+    DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER="$E2E_CONFLICT_REVIEW_DRIVER" \
+    DENSE_MEM_E2E_CONFLICT_PROVIDER_URL="http://127.0.0.1:${E2E_CONFLICT_PROVIDER_PORT}/v1" \
+    DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
+    DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
+    DENSE_MEM_E2E_POSTGRES_HOST="127.0.0.1" \
+    DENSE_MEM_E2E_POSTGRES_PORT="$POSTGRES_HOST_PORT" \
+    DENSE_MEM_E2E_POSTGRES_USER="$runtime_postgres_user" \
+    DENSE_MEM_E2E_POSTGRES_PASSWORD="$runtime_postgres_password" \
+    DENSE_MEM_E2E_POSTGRES_DB="$runtime_postgres_database" \
+    DENSE_MEM_USER_URL="$USER_URL" \
+    DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
+    DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
+    DENSE_MEM_E2E_TEAM_ID="$team_id" \
+    DENSE_MEM_E2E_API_KEY="$api_key" \
+    DENSE_MEM_E2E_WRITE_CASE="$slice" \
+    node "$ROOT_DIR/tests/uat/synchronous_write/runner.mjs"
+    return
+  fi
   DENSE_MEM_USER_URL="$USER_URL" \
   DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
   DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \

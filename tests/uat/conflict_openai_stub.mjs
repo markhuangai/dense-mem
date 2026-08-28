@@ -4,11 +4,20 @@ import http from "node:http";
 
 const port = positiveInteger(process.env.DENSE_MEM_CONFLICT_STUB_PORT ?? "8081", "DENSE_MEM_CONFLICT_STUB_PORT");
 const host = process.env.DENSE_MEM_CONFLICT_STUB_HOST ?? "0.0.0.0";
+let embeddingFault = false;
 
 const server = http.createServer(async (request, response) => {
   try {
     if (request.method === "GET" && request.url === "/health") {
       return sendJSON(response, 200, { status: "ok" });
+    }
+    if (request.method === "POST" && request.url === "/control/embedding-fault") {
+      const payload = await readJSON(request);
+      if (typeof payload?.enabled !== "boolean") {
+        return sendJSON(response, 400, { error: { message: "enabled must be boolean" } });
+      }
+      embeddingFault = payload.enabled;
+      return sendJSON(response, 200, { enabled: embeddingFault });
     }
     if (request.method !== "POST") {
       return sendJSON(response, 405, { error: { message: "method not allowed" } });
@@ -44,7 +53,7 @@ const server = http.createServer(async (request, response) => {
     return sendJSON(response, 400, { error: { message: "unsupported response schema" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "invalid request";
-    return sendJSON(response, 400, { error: { message } });
+    return sendJSON(response, error instanceof ProviderFault ? 503 : 400, { error: { message } });
   }
 });
 
@@ -55,6 +64,9 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 function embeddingResponse(payload) {
+  if (embeddingFault) {
+    throw new ProviderFault("deterministic conflict embedding failure");
+  }
   const input = Array.isArray(payload?.input) ? payload.input : [];
   const dimensions = positiveInteger(payload?.dimensions, "embedding dimensions");
   return {
@@ -68,6 +80,8 @@ function embeddingResponse(payload) {
     usage: { prompt_tokens: Math.max(1, input.length), total_tokens: Math.max(1, input.length) },
   };
 }
+
+class ProviderFault extends Error {}
 
 function deterministicVector(text, dimensions) {
   let seed = 2166136261;

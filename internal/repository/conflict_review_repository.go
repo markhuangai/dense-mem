@@ -210,11 +210,16 @@ func (r *LedgerRepositoryImpl) ReviewRelationshipConflictCase(
 		}
 		switch evaluation.Outcome {
 		case ConflictReviewOutcomeResolve:
-			updated, err := resolveRelationshipConflictCase(ctx, tx, input, caseRecord, evaluation, r.embeddingJobMaxAttempts)
-			if err != nil {
-				return err
+			result.Resolution = &RelationshipConflictResolutionInput{
+				TeamID:              input.TeamID,
+				ConflictID:          input.ConflictID,
+				ReviewRunID:         input.ReviewRunID,
+				WorkerID:            input.WorkerID,
+				ExpectedCaseVersion: caseRecord.Version,
+				PreferredPositionID: evaluation.PreferredPositionID,
+				Method:              "deterministic",
+				Now:                 input.Now,
 			}
-			result.UpdatedRelationships = updated
 		case ConflictReviewOutcomeOverdue:
 			if err := markRelationshipConflictCaseOverdue(ctx, tx, input, evaluation); err != nil {
 				return err
@@ -357,7 +362,6 @@ func resolveRelationshipConflictCase(
 	input ReviewRelationshipConflictCaseInput,
 	record *RelationshipConflictCaseRecord,
 	evaluation RelationshipConflictEvaluation,
-	embeddingJobMaxAttempts int,
 ) ([]string, error) {
 	if evaluation.PreferredPositionID == "" {
 		return nil, errors.New("preferred position is required to resolve conflict")
@@ -393,7 +397,7 @@ func resolveRelationshipConflictCase(
 	if err := updateConflictPositionDispositions(ctx, tx, input.TeamID, input.ConflictID, evaluation.PreferredPositionID); err != nil {
 		return nil, err
 	}
-	updated, err := suppressConflictLosingRelationships(ctx, tx, input, record, evaluation.PreferredPositionID, *effectiveAt, embeddingJobMaxAttempts)
+	updated, err := suppressConflictLosingRelationships(ctx, tx, input, record, evaluation.PreferredPositionID, *effectiveAt)
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +438,6 @@ func suppressConflictLosingRelationships(
 	record *RelationshipConflictCaseRecord,
 	preferredPositionID string,
 	effectiveAt time.Time,
-	embeddingJobMaxAttempts int,
 ) ([]string, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH losers AS (
@@ -497,10 +500,13 @@ func suppressConflictLosingRelationships(
 		if err != nil {
 			return nil, err
 		}
-		if _, err := upsertPlacementRelationshipSearchDocument(ctx, tx, CommitPlacementSemanticInput{
+		if _, err := markRelationshipSearchDocumentNotRequired(ctx, tx, CommitPlacementSemanticInput{
 			TeamID:         input.TeamID,
 			OwnerProfileID: item.OwnerProfileID,
-		}, relationship, embeddingJobMaxAttempts); err != nil {
+		}, relationship); err != nil {
+			return nil, err
+		}
+		if err := staleConflictRelationshipEmbeddingJobs(ctx, tx, input.TeamID, []string{item.RelationshipID}); err != nil {
 			return nil, err
 		}
 		if _, err := insertRelationshipTransition(ctx, tx, transitionInput{
@@ -517,11 +523,6 @@ func suppressConflictLosingRelationships(
 		if err := appendRelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, "", item.RelationshipID, item.OwnerProfileID, string(domain.RelationshipConflictEventRelationshipUpdated), "superseded", "case:"+input.ConflictID+":relationship:"+item.RelationshipID+":superseded", map[string]any{
 			"preferred_position_id": preferredPositionID,
 		}); err != nil {
-			return nil, err
-		}
-	}
-	if len(suppressed) > 0 {
-		if err := markStaleEmbeddingJobs(ctx, tx, input.TeamID); err != nil {
 			return nil, err
 		}
 	}

@@ -2,13 +2,14 @@ E2E_CONFLICT_PROVIDER_PORT=""
 E2E_CONFLICT_REVIEW_DRIVER=""
 
 append_conflict_e2e_environment() {
-  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "submission_assessment" ]]; then
+  if ! conflict_provider_required; then
     return
   fi
   printf '%s\n' \
     "AI_API_URL=http://conflict-provider:8081/v1" \
     "AI_API_KEY=dense-mem-conflict-e2e-key" \
     "AI_API_EMBEDDING_MODEL=dense-mem-conflict-e2e-embedding" \
+    "AI_API_EMBEDDING_DIMENSIONS=1536" \
     "AI_VERIFIER_API_URL=http://conflict-provider:8081/v1" \
     "AI_VERIFIER_API_KEY=dense-mem-conflict-e2e-key" \
     "AI_VERIFIER_MODEL=dense-mem-conflict-e2e-verifier" \
@@ -16,7 +17,7 @@ append_conflict_e2e_environment() {
 }
 
 prepare_conflict_provider_files() {
-  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "submission_assessment" ]]; then
+  if ! conflict_provider_required; then
     return
   fi
   E2E_COMPOSE_OVERLAY_FILE="${ROOT_DIR}/docker-compose.conflict-e2e-${E2E_FILE_ID}.yml"
@@ -52,7 +53,7 @@ NODE
 
 prepare_conflict_provider_volume() {
   local container_id
-  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "submission_assessment" ]]; then
+  if ! conflict_provider_required; then
     return
   fi
   compose create conflict-provider >/dev/null
@@ -65,11 +66,15 @@ prepare_conflict_provider_volume() {
 }
 
 prepare_conflict_review_driver() {
-  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" ]]; then
+  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && !( "$E2E_SCENARIO" == "synchronous_write" && "${DENSE_MEM_E2E_WRITE_SLICE:-legacy}" == "conflict" ) ]]; then
     return
   fi
   E2E_CONFLICT_REVIEW_DRIVER="${TEMP_DIR}/conflict-review-driver"
   go build -o "$E2E_CONFLICT_REVIEW_DRIVER" ./tests/uat/conflict_review_driver
+}
+
+conflict_provider_required() {
+  [[ "$E2E_SCENARIO" == "conflict" || "$E2E_SCENARIO" == "submission_assessment" || ( "$E2E_SCENARIO" == "synchronous_write" && "${DENSE_MEM_E2E_WRITE_SLICE:-legacy}" == "conflict" ) ]]
 }
 
 run_conflict_e2e() {
@@ -122,6 +127,11 @@ run_conflict_queue_e2e() {
   DENSE_MEM_E2E_POSTGRES_PASSWORD="$runtime_postgres_password" \
   DENSE_MEM_E2E_POSTGRES_DB="$runtime_postgres_database" \
   DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE=1 \
+  AI_API_URL="$(env_file_value AI_API_URL)" \
+  AI_API_KEY="$(env_file_value AI_API_KEY)" \
+  AI_API_EMBEDDING_MODEL="$(env_file_value AI_API_EMBEDDING_MODEL)" \
+  AI_API_EMBEDDING_DIMENSIONS="$(env_file_value AI_API_EMBEDDING_DIMENSIONS)" \
+  AI_API_EMBEDDING_TIMEOUT_SECONDS="$(env_file_value AI_API_EMBEDDING_TIMEOUT_SECONDS)" \
   AI_VERIFIER_API_URL="$(env_file_value AI_VERIFIER_API_URL)" \
   AI_VERIFIER_API_KEY="$(env_file_value AI_VERIFIER_API_KEY)" \
   AI_VERIFIER_MODEL="$(env_file_value AI_VERIFIER_MODEL)" \

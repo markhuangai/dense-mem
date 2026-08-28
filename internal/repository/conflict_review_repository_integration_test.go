@@ -202,7 +202,7 @@ func TestRelationshipConflictReviewerResetsAttemptsAfterOverdueAndSnapshotVersio
 	}))
 	assert.Equal(t, "overdue", status)
 	assert.Equal(t, 0, attempts)
-	reservation, _, reserved, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
+	reservation, dossier, reserved, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
 		TeamID:              teamID,
 		ConflictID:          conflictID,
 		ReviewRunID:         uuid.NewString(),
@@ -213,6 +213,8 @@ func TestRelationshipConflictReviewerResetsAttemptsAfterOverdueAndSnapshotVersio
 	})
 	require.NoError(t, err)
 	require.True(t, reserved)
+	require.NotNil(t, dossier)
+	require.NotEmpty(t, dossier.Positions)
 	require.NotNil(t, reservation)
 
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
@@ -453,7 +455,7 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 		ResponseHash:        "sha256:test",
 	})
 	require.NoError(t, err)
-	applied, err := ledgerRepo.ApplyOverdueConflictResolution(ctx, ApplyOverdueConflictResolutionInput{
+	applied := commitOverdueConflictResolutionWithVectors(t, ctx, ledgerRepo, ApplyOverdueConflictResolutionInput{
 		TeamID:              teamID,
 		ConflictID:          conflictID,
 		ReviewRunID:         uuid.NewString(),
@@ -464,7 +466,6 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 		Method:              "ai",
 		Now:                 reviewNow,
 	})
-	require.NoError(t, err)
 	require.True(t, applied.Resolved)
 	assert.Contains(t, applied.RetractedEvidenceIDs, losingFragmentID)
 	require.Len(t, applied.DerivedEvidence, 1)
@@ -606,20 +607,6 @@ func TestOverdueConflictResolutionRetiresLosingEvidenceAndStagesDeletionOnlyDeri
 			{MentionRef: "subject", Action: "reuse", EntityID: subject.EntityID},
 			{MentionRef: "object", Action: "reuse", EntityID: postgres.EntityID},
 		},
-		RelationshipObservations: []PlacementRelationshipDecisionInput{{
-			Ref:          "derived-must-not-project",
-			SubjectRef:   "subject",
-			PredicateKey: "primary_database",
-			ObjectRef:    "object",
-			Support: &EvidenceSupportInput{
-				FragmentID:     derived.ReplacementFragment,
-				SourceGroupKey: "source-group-overdue-loser",
-				SpanStart:      0,
-				SpanEnd:        len(derivedIngest.Evidence[0].Content),
-				Quote:          derivedIngest.Evidence[0].Content,
-				Authority:      "inferred",
-			},
-		}},
 	})
 	require.NoError(t, err)
 	assert.Empty(t, derivedCommit.RelationshipResults)
@@ -680,7 +667,7 @@ func TestOverdueConflictResolutionRejectsAssessmentAfterEvidenceRetraction(t *te
 	review := reviewConflictCaseForTest(t, ctx, ledgerRepo, teamID, "worker-overdue-stale-review", conflictID, reviewNow)
 	require.Equal(t, ConflictReviewOutcomeOverdue, review.Outcome)
 
-	reservation, _, reserved, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
+	reservation, dossier, reserved, err := ledgerRepo.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
 		TeamID:              teamID,
 		ConflictID:          conflictID,
 		ReviewRunID:         uuid.NewString(),
@@ -691,6 +678,8 @@ func TestOverdueConflictResolutionRejectsAssessmentAfterEvidenceRetraction(t *te
 	})
 	require.NoError(t, err)
 	require.True(t, reserved)
+	require.NotNil(t, dossier)
+	require.NotEmpty(t, dossier.Positions)
 	require.NotNil(t, reservation)
 
 	preferredPositionID, losingFragmentID := "", ""
@@ -736,7 +725,7 @@ func TestOverdueConflictResolutionRejectsAssessmentAfterEvidenceRetraction(t *te
 	})
 	require.NoError(t, err)
 
-	applied, err := ledgerRepo.ApplyOverdueConflictResolution(ctx, ApplyOverdueConflictResolutionInput{
+	applied := commitOverdueConflictResolutionWithVectors(t, ctx, ledgerRepo, ApplyOverdueConflictResolutionInput{
 		TeamID:              teamID,
 		ConflictID:          conflictID,
 		ReviewRunID:         uuid.NewString(),
@@ -747,7 +736,6 @@ func TestOverdueConflictResolutionRejectsAssessmentAfterEvidenceRetraction(t *te
 		Method:              "ai",
 		Now:                 reviewNow,
 	})
-	require.NoError(t, err)
 	assert.True(t, applied.Stale)
 	assert.False(t, applied.Resolved)
 	assert.Empty(t, applied.RetractedEvidenceIDs)
@@ -883,7 +871,7 @@ func TestReserveOverdueConflictAssessmentExpiresAbandonedAttemptIntoLastWriteWin
 	winner, ok := domain.SelectConflictLastWriteWinner(positions)
 	require.True(t, ok)
 	assert.Equal(t, "authoritative", winner.Authority)
-	applied, err := ledgerRepo.ApplyOverdueConflictResolution(ctx, ApplyOverdueConflictResolutionInput{
+	applied := commitOverdueConflictResolutionWithVectors(t, ctx, ledgerRepo, ApplyOverdueConflictResolutionInput{
 		TeamID:              teamID,
 		ConflictID:          conflictID,
 		ReviewRunID:         uuid.NewString(),
@@ -894,7 +882,6 @@ func TestReserveOverdueConflictAssessmentExpiresAbandonedAttemptIntoLastWriteWin
 		Method:              "last_write_wins",
 		Now:                 reviewNow.AddDate(0, 0, ConflictAssessmentMaxFailedDays),
 	})
-	require.NoError(t, err)
 	assert.True(t, applied.Resolved)
 }
 

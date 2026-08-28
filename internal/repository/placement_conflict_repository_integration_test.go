@@ -336,6 +336,10 @@ func TestRelationshipConflictReviewerResolvesMajorityAndSupersedesLosers(t *test
 	require.NoError(t, err)
 	assert.Equal(t, ConflictReviewOutcomeResolve, result.Outcome)
 	assert.Equal(t, "due_supporter_majority", result.Stage)
+	require.NotNil(t, result.Resolution)
+	applied := commitConflictReviewResolutionWithVectors(t, ctx, ledgerRepo, *result.Resolution)
+	require.True(t, applied.Resolved)
+	result.UpdatedRelationships = applied.UpdatedRelationships
 	assert.ElementsMatch(t, []string{loser.RelationshipResults[0].Relationship.RelationshipID}, result.UpdatedRelationships)
 	require.NoError(t, ledgerRepo.CompleteRelationshipConflictReviewRun(ctx, ConflictReviewRunCompleteInput{
 		TeamID:        teamID,
@@ -571,6 +575,10 @@ func TestRelationshipConflictReviewerClampsLoserValidToToItsValidFrom(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, ConflictReviewOutcomeResolve, result.Outcome)
 	assert.Equal(t, "due_supporter_majority", result.Stage)
+	require.NotNil(t, result.Resolution)
+	applied := commitConflictReviewResolutionWithVectors(t, ctx, ledgerRepo, *result.Resolution)
+	require.True(t, applied.Resolved)
+	result.UpdatedRelationships = applied.UpdatedRelationships
 	assert.ElementsMatch(t, []string{loser.RelationshipResults[0].Relationship.RelationshipID}, result.UpdatedRelationships)
 
 	var winnerStatus, loserStatus string
@@ -667,6 +675,9 @@ func TestRelationshipConflictReviewerCountsSupportersAcrossCopiedSourceGroups(t 
 	require.NoError(t, err)
 	assert.Equal(t, ConflictReviewOutcomeResolve, result.Outcome)
 	assert.Equal(t, "due_supporter_majority", result.Stage)
+	require.NotNil(t, result.Resolution)
+	applied := commitConflictReviewResolutionWithVectors(t, ctx, ledgerRepo, *result.Resolution)
+	require.True(t, applied.Resolved)
 
 	var conflictStatus, preferredAStatus, loserStatus, preferredCStatus string
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {

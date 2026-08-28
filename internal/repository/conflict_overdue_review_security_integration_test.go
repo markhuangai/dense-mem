@@ -242,7 +242,7 @@ func TestOverdueConflictWorkflowTablesEnforceCrossTeamRLS(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	stale, err := ledgerRepo.ApplyOverdueConflictResolution(ctx, ApplyOverdueConflictResolutionInput{
+	stale := commitOverdueConflictResolutionWithVectors(t, ctx, ledgerRepo, ApplyOverdueConflictResolutionInput{
 		TeamID:              teamB,
 		ConflictID:          conflictID,
 		ReviewRunID:         uuid.NewString(),
@@ -253,7 +253,6 @@ func TestOverdueConflictWorkflowTablesEnforceCrossTeamRLS(t *testing.T) {
 		Method:              "ai",
 		Now:                 time.Now().UTC(),
 	})
-	require.NoError(t, err)
 	assert.True(t, stale.Stale)
 }
 

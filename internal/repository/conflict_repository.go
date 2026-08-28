@@ -77,11 +77,68 @@ type ReviewRelationshipConflictCaseResult struct {
 	Outcome              string
 	Stage                string
 	PreferredPositionID  string
+	Resolution           *RelationshipConflictResolutionInput
 	UpdatedRelationships []string
 	RetractedEvidenceIDs []string
 	AssessmentAttemptID  string
 	ResolutionMethod     string
 	ResolutionPending    bool
+}
+
+// RelationshipConflictResolutionInput identifies one selected resolution. The
+// repository revalidates every field before it mutates durable state.
+type RelationshipConflictResolutionInput struct {
+	TeamID              string
+	ConflictID          string
+	ReviewRunID         string
+	WorkerID            string
+	ExpectedCaseVersion int
+	PreferredPositionID string
+	AssessmentAttemptID string
+	Method              string
+	Now                 time.Time
+}
+
+type RelationshipConflictResolutionDocument struct {
+	TeamID          string
+	RelationshipID  string
+	OwnerProfileID  string
+	SpaceID         string
+	SpaceGeneration int64
+	SourceVersion   int64
+	DocumentHash    string
+	DocumentText    string
+}
+
+type RelationshipConflictResolutionFence struct {
+	EmbeddingContractID     string
+	EmbeddingDimensions     int
+	EmbeddingModel          string
+	SearchIndexGenerationID string
+	IndexGeneration         int
+}
+
+type RelationshipConflictResolutionPlan struct {
+	Resolution          RelationshipConflictResolutionInput
+	Fence               RelationshipConflictResolutionFence
+	Documents           []RelationshipConflictResolutionDocument
+	EffectiveAt         time.Time
+	EffectiveTimeBasis  string
+	Reason              string
+	ResolutionPlanID    string
+	Pending             bool
+	PendingTransitioned bool
+	Stale               bool
+}
+
+type RelationshipConflictResolutionEmbedding struct {
+	DocumentHash string
+	Embedding    []float32
+}
+
+type CommitRelationshipConflictResolutionInput struct {
+	Plan       RelationshipConflictResolutionPlan
+	Embeddings []RelationshipConflictResolutionEmbedding
 }
 
 type RelationshipConflictCaseRecord struct {

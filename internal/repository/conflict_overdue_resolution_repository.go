@@ -15,187 +15,15 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func (r *LedgerRepositoryImpl) ApplyOverdueConflictResolution(
-	ctx context.Context,
-	input ApplyOverdueConflictResolutionInput,
-) (*ApplyOverdueConflictResolutionResult, error) {
-	input = normalizeApplyOverdueConflictResolutionInput(input)
-	if err := validateApplyOverdueConflictResolutionInput(input); err != nil {
-		return nil, err
-	}
-	result := &ApplyOverdueConflictResolutionResult{
-		ConflictID:          input.ConflictID,
-		PreferredPositionID: input.PreferredPositionID,
-		Method:              input.Method,
-	}
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		if err := setConflictSystemTeamContext(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
-		if err := ensureActiveTeamForMutation(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
-		var status string
-		var version int
-		if err := tx.WithContext(ctx).Raw(`
-			SELECT status, version
-			FROM relationship_conflict_cases
-			WHERE team_id = ?::uuid
-			  AND conflict_id = ?::uuid
-			FOR UPDATE
-		`, input.TeamID, input.ConflictID).Row().Scan(&status, &version); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				result.Stale = true
-				return nil
-			}
-			return err
-		}
-		if status != string(domain.RelationshipConflictOverdue) || version != input.ExpectedCaseVersion {
-			result.Stale = true
-			return markConflictResolutionPlanSuperseded(ctx, tx, input.TeamID, input.ConflictID, input.ExpectedCaseVersion)
-		}
-		records, err := loadRelationshipConflictRecordsByID(ctx, tx, input.TeamID, []string{input.ConflictID}, nil)
-		if err != nil {
-			return err
-		}
-		if len(records) != 1 {
-			return ErrConflictAssessmentStale
-		}
-		current, dismissed, err := refreshRelationshipConflictCaseSnapshotForReview(ctx, tx, ReviewRelationshipConflictCaseInput{
-			TeamID:      input.TeamID,
-			WorkerID:    input.WorkerID,
-			ReviewRunID: input.ReviewRunID,
-			ConflictID:  input.ConflictID,
-			Now:         input.Now,
-		}, &records[0])
-		if err != nil {
-			return err
-		}
-		if dismissed || current.Version != input.ExpectedCaseVersion {
-			result.Stale = true
-			return nil
-		}
-		if err := validateConflictResolutionPosition(ctx, tx, input.TeamID, input.ConflictID, input.PreferredPositionID); err != nil {
-			return err
-		}
-		if err := validateConflictResolutionAssessment(ctx, tx, input); err != nil {
-			return err
-		}
-		records[0] = *current
-		effectiveAt, effectiveTimeBasis := conflictResolutionEffectiveTime(records[0], input.PreferredPositionID, input.Now)
-		planID, planStatus, err := ensureConflictResolutionPlan(ctx, tx, input, effectiveAt, effectiveTimeBasis)
-		if err != nil {
-			return err
-		}
-		if planStatus == "applied" {
-			result.Resolved = true
-			return nil
-		}
-		if planStatus == "superseded" || planStatus == "failed" {
-			result.Stale = true
-			return nil
-		}
-		targets, err := loadConflictLosingEvidenceTargets(ctx, tx, input.TeamID, input.ConflictID, input.PreferredPositionID)
-		if err != nil {
-			return err
-		}
-		if len(targets) > conflictResolutionMaxFragments {
-			pendingKey := "case:" + input.ConflictID + ":plan:" + planID + ":pending"
-			var pendingEventExists bool
-			if err := tx.WithContext(ctx).Raw(`
-				SELECT EXISTS (
-					SELECT 1
-					FROM relationship_conflict_events
-					WHERE team_id = ?::uuid AND idempotency_key = ?
-				)
-			`, input.TeamID, pendingKey).Row().Scan(&pendingEventExists); err != nil {
-				return err
-			}
-			if !pendingEventExists {
-				if err := appendRelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, input.PreferredPositionID, "", "", string(domain.RelationshipConflictEventResolutionPending), "fanout_bound", pendingKey, map[string]any{
-					"resolution_plan_id":    planID,
-					"target_fragment_count": len(targets),
-				}); err != nil {
-					return err
-				}
-				result.PendingTransitioned = true
-			}
-			result.Pending = true
-			return nil
-		}
-		systemProfileID, err := ensureConflictSystemProfile(ctx, tx, input.TeamID)
-		if err != nil {
-			return err
-		}
-		evaluation := RelationshipConflictEvaluation{
-			Outcome:             ConflictReviewOutcomeResolve,
-			Stage:               "overdue_" + input.Method,
-			PreferredPositionID: input.PreferredPositionID,
-			Reason:              conflictResolutionReason(input.Method),
-			EffectiveAt:         &effectiveAt,
-			EffectiveTimeBasis:  effectiveTimeBasis,
-		}
-		updated, err := resolveRelationshipConflictCase(ctx, tx, ReviewRelationshipConflictCaseInput{
-			TeamID:      input.TeamID,
-			WorkerID:    input.WorkerID,
-			ReviewRunID: input.ReviewRunID,
-			ConflictID:  input.ConflictID,
-			Now:         input.Now,
-		}, &records[0], evaluation, r.embeddingJobMaxAttempts)
-		if err != nil {
-			return err
-		}
-		retracted, err := retractConflictLosingEvidence(ctx, tx, input, systemProfileID, targets)
-		if err != nil {
-			return err
-		}
-		derived, err := enqueueConflictDerivedEvidenceTasks(ctx, tx, planID, conflictDerivedEvidenceTargets(
-			input.TeamID,
-			input.ConflictID,
-			systemProfileID,
-			input.PreferredPositionID,
-			targets,
-			retracted,
-		))
-		if err != nil {
-			return err
-		}
-		updatePlan := tx.WithContext(ctx).Exec(`
-			UPDATE relationship_conflict_resolution_plans
-			SET status = 'applied',
-			    applied_at = now(),
-			    failure_reason = ''
-			WHERE team_id = ?::uuid
-			  AND resolution_plan_id = ?::uuid
-			  AND status = 'resolution_pending'
-		`, input.TeamID, planID)
-		if updatePlan.Error != nil {
-			return updatePlan.Error
-		}
-		if updatePlan.RowsAffected != 1 {
-			return ErrConflictAssessmentStale
-		}
-		result.Resolved = true
-		result.UpdatedRelationships = updated
-		result.RetractedEvidenceIDs = retracted
-		result.DerivedEvidence = derived
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("conflict review: apply overdue resolution: %w", err)
-	}
-	return result, nil
-}
-
 func (r *LedgerRepositoryImpl) ResumePendingOverdueConflictResolution(
 	ctx context.Context,
 	input ResumePendingOverdueConflictResolutionInput,
-) (*ApplyOverdueConflictResolutionResult, bool, error) {
+) (*RelationshipConflictResolutionInput, bool, error) {
 	input = normalizeResumePendingOverdueConflictResolutionInput(input)
 	if err := validateResumePendingOverdueConflictResolutionInput(input); err != nil {
 		return nil, false, err
 	}
-	var resolutionInput ApplyOverdueConflictResolutionInput
+	var resolutionInput RelationshipConflictResolutionInput
 	found := false
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		if err := setConflictSystemTeamContext(ctx, tx, input.TeamID); err != nil {
@@ -235,7 +63,7 @@ func (r *LedgerRepositoryImpl) ResumePendingOverdueConflictResolution(
 		if err != nil {
 			return err
 		}
-		resolutionInput = ApplyOverdueConflictResolutionInput{
+		resolutionInput = RelationshipConflictResolutionInput{
 			TeamID:              input.TeamID,
 			ConflictID:          input.ConflictID,
 			ReviewRunID:         input.ReviewRunID,
@@ -255,11 +83,7 @@ func (r *LedgerRepositoryImpl) ResumePendingOverdueConflictResolution(
 	if !found {
 		return nil, false, nil
 	}
-	result, err := r.ApplyOverdueConflictResolution(ctx, resolutionInput)
-	if err != nil {
-		return nil, true, err
-	}
-	return result, true, nil
+	return &resolutionInput, true, nil
 }
 
 func normalizeApplyOverdueConflictResolutionInput(input ApplyOverdueConflictResolutionInput) ApplyOverdueConflictResolutionInput {

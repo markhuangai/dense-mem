@@ -3,6 +3,7 @@ package conflictreview
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/conflictassessment"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -24,6 +25,8 @@ type Runner struct {
 func NewRunner(
 	ledger RunLedger,
 	provider Provider,
+	embeddings EmbeddingProvider,
+	embeddingTimeout time.Duration,
 	timezone string,
 	limits conflictassessment.SemanticAssessmentLimits,
 	metrics observability.DiscoverabilityMetrics,
@@ -32,11 +35,13 @@ func NewRunner(
 		return nil, errors.New("conflict review runner: ledger is required")
 	}
 	service, err := New(Dependencies{
-		Repository: ledger,
-		Provider:   provider,
-		Metrics:    metrics,
-		Timezone:   timezone,
-		Limits:     limits,
+		Repository:       ledger,
+		Provider:         provider,
+		Embeddings:       embeddings,
+		EmbeddingTimeout: embeddingTimeout,
+		Metrics:          metrics,
+		Timezone:         timezone,
+		Limits:           limits,
 	})
 	if err != nil {
 		return nil, err

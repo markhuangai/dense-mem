@@ -228,7 +228,15 @@ func RunActiveServer(
 	verifierProvider.SetMetrics(discoverabilityMetrics)
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
-	conflictReviewRunner, err := conflictreview.NewRunner(ledgerRepo, legacyConflictProvider{provider: verifierProvider}, cfg.GetAppTimezone(), conflictassessment.SemanticAssessmentLimits(assessmentLimits), discoverabilityMetrics)
+	conflictReviewRunner, err := conflictreview.NewRunner(
+		ledgerRepo,
+		legacyConflictProvider{provider: verifierProvider},
+		retryEmbedder,
+		time.Duration(cfg.GetAIEmbeddingTimeoutSeconds())*time.Second,
+		cfg.GetAppTimezone(),
+		conflictassessment.SemanticAssessmentLimits(assessmentLimits),
+		discoverabilityMetrics,
+	)
 	if err != nil {
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}

@@ -149,7 +149,7 @@ func TestOverdueConflictResolutionPreservesSharedEvidenceOutsideConflict(t *test
 		ResponseHash:        "sha256:shared-evidence",
 	})
 	require.NoError(t, err)
-	applied, err := ledgerRepo.ApplyOverdueConflictResolution(ctx, ApplyOverdueConflictResolutionInput{
+	applied := commitOverdueConflictResolutionWithVectors(t, ctx, ledgerRepo, ApplyOverdueConflictResolutionInput{
 		TeamID:              teamID,
 		ConflictID:          conflictID,
 		ReviewRunID:         uuid.NewString(),
@@ -160,7 +160,6 @@ func TestOverdueConflictResolutionPreservesSharedEvidenceOutsideConflict(t *test
 		Method:              "ai",
 		Now:                 reviewNow,
 	})
-	require.NoError(t, err)
 	require.True(t, applied.Resolved)
 	assert.Empty(t, applied.RetractedEvidenceIDs)
 	assert.Empty(t, applied.DerivedEvidence)
