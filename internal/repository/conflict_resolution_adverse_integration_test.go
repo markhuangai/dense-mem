@@ -188,6 +188,62 @@ func TestConflictResolutionReprojectsNonForegroundDocument(t *testing.T) {
 	assert.Equal(t, winnerRelationshipID, plan.Documents[0].RelationshipID)
 }
 
+func TestConflictResolutionReprojectsForegroundDocumentWithStaleGenerationMetadata(t *testing.T) {
+	fixture := NewDeterministicConflictServiceFixture(t)
+	ctx := context.Background()
+	reviewed, err := fixture.Ledger.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+		ConflictID: fixture.ConflictID, Now: fixture.ReviewNow,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, reviewed)
+	require.Equal(t, ConflictReviewOutcomeResolve, reviewed.Outcome)
+	require.NotNil(t, reviewed.Resolution)
+
+	staleGenerationID := uuid.NewString()
+	currentGenerationID := uuid.NewString()
+	var winnerRelationshipID string
+	var contract *ActiveSearchContract
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
+		var err error
+		contract, err = loadActiveSearchContractInTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT relationship_id::text
+			FROM relationship_conflict_position_members
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid AND position_id = ?::uuid AND active
+			ORDER BY relationship_id
+			LIMIT 1
+		`, fixture.TeamID, fixture.ConflictID, reviewed.Resolution.PreferredPositionID).Row().Scan(&winnerRelationshipID); err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'current', embedding = '[1,0,0]'::vector,
+			    embedding_updated_at = now(), embedding_error = '',
+			    projection_format_version = 2, projection_generation_id = NULL,
+			    metadata = jsonb_build_object(?, ?)
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ?::uuid
+			  AND embedding_contract_id = ?::uuid
+		`, relationshipForegroundRecallGenerationMetadataKey, staleGenerationID, fixture.TeamID, winnerRelationshipID, contract.EmbeddingContractID).Error
+	}))
+	require.NotNil(t, contract)
+	require.NotEmpty(t, winnerRelationshipID)
+	insertRelationshipProjectionGenerationForTest(t, fixture.adminDB, fixture.rls, fixture.TeamID, staleGenerationID, 1, "failed")
+	insertRelationshipProjectionGenerationForTest(t, fixture.adminDB, fixture.rls, fixture.TeamID, currentGenerationID, 2, "current")
+
+	plan, err := fixture.Ledger.PlanRelationshipConflictResolution(ctx, *reviewed.Resolution)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.False(t, plan.Stale)
+	require.Len(t, plan.Documents, 1)
+	assert.Equal(t, winnerRelationshipID, plan.Documents[0].RelationshipID)
+}
+
 func TestConflictResolutionStalesOnlyMatchingContractEmbeddingJobs(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

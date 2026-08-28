@@ -405,8 +405,12 @@ func countConflictResolutionDocumentsForBound(
 	if contract == nil {
 		return 0, errors.New("active search contract is required")
 	}
+	foregroundGenerationID, err := relationshipForegroundRecallGenerationID(ctx, tx, input.TeamID)
+	if err != nil {
+		return 0, err
+	}
 	var count int
-	err := tx.WithContext(ctx).Raw(`
+	err = tx.WithContext(ctx).Raw(`
 		WITH selected AS (
 			SELECT DISTINCT member.relationship_id
 			FROM relationship_conflict_position_members AS member
@@ -435,6 +439,7 @@ func countConflictResolutionDocumentsForBound(
 			       document.embedding_dimensions,
 			       document.projection_format_version,
 			       document.projection_generation_id,
+			       COALESCE(document.metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') AS document_foreground_generation_id,
 			       document.source_version,
 			       document.space_id AS document_space_id,
 			       document.space_generation AS document_space_generation
@@ -454,6 +459,7 @@ func countConflictResolutionDocumentsForBound(
 			 AND embedding_dimensions = ?
 			 AND projection_format_version = 2
 			 AND projection_generation_id IS NULL
+			 AND (? = '' OR document_foreground_generation_id = ?)
 			 AND source_version = version
 			 AND document_space_id = space_id
 			 AND document_space_generation = space_generation
@@ -466,7 +472,7 @@ func countConflictResolutionDocumentsForBound(
 			ELSE relationship_id
 		END)::int
 		FROM required
-	`, input.TeamID, input.ConflictID, input.PreferredPositionID, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions).Row().Scan(&count)
+	`, input.TeamID, input.ConflictID, input.PreferredPositionID, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions, foregroundGenerationID, foregroundGenerationID).Row().Scan(&count)
 	return count, err
 }
 
@@ -662,6 +668,10 @@ func loadConflictResolutionDocuments(
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	foregroundGenerationID, err := relationshipForegroundRecallGenerationID(ctx, tx, input.TeamID)
+	if err != nil {
+		return nil, err
+	}
 	assignments := []RelationshipConflictResolutionDocument{}
 	seenHashes := make(map[string]struct{})
 	for _, relationshipID := range relationshipIDs {
@@ -674,7 +684,7 @@ func loadConflictResolutionDocuments(
 			return nil, err
 		}
 		normalized := normalizeUpsertSearchDocumentInput(UpsertSearchDocumentInput{DocumentText: text})
-		required, err := conflictResolutionEmbeddingRequired(ctx, tx, relationship, contract, normalized.DocumentHash)
+		required, err := conflictResolutionEmbeddingRequired(ctx, tx, relationship, contract, normalized.DocumentHash, foregroundGenerationID)
 		if err != nil {
 			return nil, err
 		}
@@ -697,16 +707,19 @@ func conflictResolutionEmbeddingRequired(
 	relationship *RelationshipRecord,
 	contract *ActiveSearchContract,
 	documentHash string,
+	foregroundGenerationID string,
 ) (bool, error) {
 	var state, hash, spaceID string
 	var projectionGenerationID sql.NullString
+	var documentForegroundGenerationID string
 	var dimensions, projectionFormat int
 	var spaceGeneration, sourceVersion int64
 	var hasEmbedding bool
 	err := tx.WithContext(ctx).Raw(`
 		SELECT search_state, document_hash, embedding_dimensions, projection_format_version,
 		       projection_generation_id::text, space_id::text, space_generation,
-		       source_version, embedding IS NOT NULL
+		       source_version, embedding IS NOT NULL,
+		       COALESCE(metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '')
 		FROM search_documents
 		WHERE team_id = ?::uuid
 		  AND source_kind = 'relationship'
@@ -715,7 +728,7 @@ func conflictResolutionEmbeddingRequired(
 		LIMIT 1
 	`, relationship.TeamID, relationship.RelationshipID, contract.EmbeddingContractID).Row().Scan(
 		&state, &hash, &dimensions, &projectionFormat, &projectionGenerationID,
-		&spaceID, &spaceGeneration, &sourceVersion, &hasEmbedding,
+		&spaceID, &spaceGeneration, &sourceVersion, &hasEmbedding, &documentForegroundGenerationID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
@@ -726,7 +739,8 @@ func conflictResolutionEmbeddingRequired(
 	return state != string(domain.SearchProjectionCurrent) || hash != documentHash ||
 		dimensions != contract.EmbeddingDimensions || spaceID != relationship.SpaceID ||
 		spaceGeneration != relationship.SpaceGeneration || sourceVersion != int64(relationship.Version) ||
-		projectionFormat != 2 || projectionGenerationID.Valid || !hasEmbedding, nil
+		projectionFormat != 2 || projectionGenerationID.Valid || !hasEmbedding ||
+		(foregroundGenerationID != "" && documentForegroundGenerationID != foregroundGenerationID), nil
 }
 
 func conflictResolutionEmbeddingsByHash(
