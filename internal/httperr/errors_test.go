@@ -273,6 +273,9 @@ func TestKnowledgeErrorCodes(t *testing.T) {
 		{ErrVerifierTimeout, "verifier_timeout", http.StatusGatewayTimeout},
 		{ErrVerifierProvider, "verifier_provider", http.StatusServiceUnavailable},
 		{ErrVerifierMalformedResponse, "verifier_malformed_response", http.StatusBadGateway},
+		{ErrEmbeddingUnavailable, "embedding_unavailable", http.StatusServiceUnavailable},
+		{ErrEmbeddingResponseInvalid, "embedding_response_invalid", http.StatusBadGateway},
+		{ErrEmbeddingTimeout, "embedding_timeout", http.StatusGatewayTimeout},
 
 		// Policy / predicate violations
 		{ErrPredicateNotPoliced, "predicate_not_policed", http.StatusUnprocessableEntity},

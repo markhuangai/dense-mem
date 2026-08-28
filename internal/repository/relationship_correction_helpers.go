@@ -764,11 +764,7 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 		reused, string(patchJSON), string(supportsJSON), row.Reason, sourceSpaceID).Error; err != nil {
 		return nil, err
 	}
-	commit := CommitPlacementSemanticInput{TeamID: row.TeamID, OwnerProfileID: row.OwnerProfileID}
-	if _, err := upsertPlacementRelationshipSearchDocument(ctx, tx, commit, original, defaultEmbeddingJobMaxAttempts); err != nil {
-		return nil, err
-	}
-	if _, err := upsertPlacementRelationshipSearchDocument(ctx, tx, commit, successor, defaultEmbeddingJobMaxAttempts); err != nil {
+	if err := applyRelationshipCorrectionSearchDocuments(ctx, tx, row, original, successor); err != nil {
 		return nil, err
 	}
 	selectionJSON, err := json.Marshal(resolution.Selection)

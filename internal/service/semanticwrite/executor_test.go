@@ -166,6 +166,16 @@ func TestExecutorRejectsProviderAvailabilityAndContractMismatches(t *testing.T) 
 	}
 }
 
+func TestExecutorPreservesTypedProviderResponseErrors(t *testing.T) {
+	provider := validProvider()
+	provider.err = ErrProviderResponseInvalid
+
+	_, err := NewExecutor(provider).Execute(context.Background(), validPlan())
+
+	require.ErrorIs(t, err, ErrProviderResponseInvalid)
+	require.NotErrorIs(t, err, ErrProviderUnavailable)
+}
+
 func TestExecutorRejectsNilExecutorAndProvider(t *testing.T) {
 	var nilExecutor *Executor
 	_, err := nilExecutor.Execute(context.Background(), validPlan())
@@ -187,6 +197,50 @@ func TestExecutorBoundsProviderFailureAndHonorsContextDeadline(t *testing.T) {
 	provider.err = nil
 	_, err = NewExecutor(provider).Execute(ctx, validPlan())
 	require.Error(t, err)
+}
+
+type blockingProvider struct {
+	providerStub
+}
+
+func (p *blockingProvider) EmbedBatch(ctx context.Context, _ []string) ([]IndexedEmbedding, string, error) {
+	<-ctx.Done()
+	return nil, "", ctx.Err()
+}
+
+func TestExecutorClassifiesItsOwnTimeout(t *testing.T) {
+	provider := &blockingProvider{providerStub: *validProvider()}
+	plan := validPlan()
+	plan.Timeout = 10 * time.Millisecond
+
+	_, err := NewExecutor(provider).Execute(context.Background(), plan)
+
+	require.ErrorIs(t, err, ErrProviderTimeout)
+	require.NotErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestExecutorPreservesCallerDeadline(t *testing.T) {
+	provider := &blockingProvider{providerStub: *validProvider()}
+	callerCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	plan := validPlan()
+	plan.Timeout = time.Second
+
+	_, err := NewExecutor(provider).Execute(callerCtx, plan)
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, ErrProviderTimeout)
+}
+
+func TestExecutorPreservesCallerCancellation(t *testing.T) {
+	provider := &blockingProvider{providerStub: *validProvider()}
+	callerCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := NewExecutor(provider).Execute(callerCtx, validPlan())
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, ErrProviderTimeout)
 }
 
 func TestExecutorAllowsEmptyNotRequiredPlanWithoutProviderCall(t *testing.T) {

@@ -13,6 +13,8 @@ type SemanticRepository interface {
 	RetractRelationship(ctx context.Context, input RetractRelationshipInput) (*RelationshipTransitionResult, error)
 	ApplyRelationshipSupportDecision(ctx context.Context, input ApplyRelationshipSupportDecisionInput) (*RelationshipSupportDecisionResult, error)
 	CorrectRelationship(ctx context.Context, input CorrectRelationshipInput) (*CorrectRelationshipResult, error)
+	PlanRelationshipCorrectionEmbeddings(ctx context.Context, input CorrectRelationshipInput) (*RelationshipCorrectionEmbeddingPlan, error)
+	CorrectRelationshipWithEmbeddings(ctx context.Context, input CorrectRelationshipInput, embeddings []RelationshipCorrectionEmbedding) (*CorrectRelationshipResult, error)
 	GetRelationshipCorrection(ctx context.Context, input GetRelationshipCorrectionInput) (*RelationshipCorrectionStatus, error)
 	AppendCrossReference(ctx context.Context, input AppendCrossReferenceInput) (string, error)
 	CreateHypothesis(ctx context.Context, input CreateHypothesisInput) (string, error)
@@ -379,6 +381,34 @@ type CorrectRelationshipResult struct {
 	Correction      *RelationshipCorrectionResult
 	ErrorCode       string
 	ErrorMessage    string
+}
+
+// RelationshipCorrectionEmbeddingPlan is the read-only provider input for a
+// correction. The commit phase identifies final rows by document hash.
+type RelationshipCorrectionEmbeddingPlan struct {
+	Documents               []RelationshipCorrectionEmbeddingDocument
+	EmbeddingContractID     string
+	EmbeddingDimensions     int
+	EmbeddingModel          string
+	SearchIndexGenerationID string
+	IndexGeneration         int
+}
+
+type RelationshipCorrectionEmbeddingDocument struct {
+	DocumentHash string
+	DocumentText string
+}
+
+// RelationshipCorrectionEmbedding is a validated provider result associated
+// with the stable document hash from a correction plan.
+type RelationshipCorrectionEmbedding struct {
+	DocumentHash            string
+	Embedding               []float32
+	EmbeddingContractID     string
+	EmbeddingDimensions     int
+	EmbeddingModel          string
+	SearchIndexGenerationID string
+	IndexGeneration         int
 }
 
 type GetRelationshipCorrectionInput struct {

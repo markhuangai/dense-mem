@@ -95,7 +95,7 @@ func TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage(t *testing.T) 
 	relationshipID := decision.Relationship.RelationshipID
 	require.Equal(t, target.MemorySpaceID.String(), decision.Relationship.SpaceID)
 
-	correction, err := semantic.CorrectRelationship(semanticCtx, CorrectRelationshipInput{
+	correction, err := correctRelationshipWithTestEmbeddings(semanticCtx, semantic, CorrectRelationshipInput{
 		TeamID:          teamID.String(),
 		OwnerProfileID:  ownerID.String(),
 		Action:          "submit",

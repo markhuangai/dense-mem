@@ -85,6 +85,29 @@ func upsertSearchDocumentInTx(
 	contract *ActiveSearchContract,
 	embeddingJobMaxAttempts int,
 ) (*SearchDocumentResult, error) {
+	loaded, err := upsertSearchDocumentRecordInTx(ctx, tx, input, contract)
+	if err != nil {
+		return nil, err
+	}
+	if err := retireSupersededEmbeddingJobs(ctx, tx, *loaded); err != nil {
+		return nil, err
+	}
+	jobID, err := enqueueEmbeddingJob(ctx, tx, *loaded, embeddingJobMaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	loaded.QueuedJobID = jobID
+	return loaded, nil
+}
+
+// upsertSearchDocumentRecordInTx writes the fenced document record only.
+// Callers that require asynchronous embedding must enqueue separately.
+func upsertSearchDocumentRecordInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	input UpsertSearchDocumentInput,
+	contract *ActiveSearchContract,
+) (*SearchDocumentResult, error) {
 	metadata, err := marshalSearchJSON(input.Metadata)
 	if err != nil {
 		return nil, err
@@ -165,8 +188,12 @@ func upsertSearchDocumentInTx(
 		return nil, err
 	}
 	if !rows.Next() {
+		err := rows.Err()
 		_ = rows.Close()
-		return nil, rows.Err()
+		if err != nil {
+			return nil, err
+		}
+		return nil, ErrSearchStaleVersion
 	}
 	loaded := SearchDocumentResult{}
 	if err := rows.Scan(
@@ -195,14 +222,6 @@ func upsertSearchDocumentInTx(
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	if err := retireSupersededEmbeddingJobs(ctx, tx, loaded); err != nil {
-		return nil, err
-	}
-	jobID, err := enqueueEmbeddingJob(ctx, tx, loaded, embeddingJobMaxAttempts)
-	if err != nil {
-		return nil, err
-	}
-	loaded.QueuedJobID = jobID
 	return &loaded, nil
 }
 

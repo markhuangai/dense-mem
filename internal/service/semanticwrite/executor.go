@@ -15,6 +15,7 @@ var (
 	ErrInvalidPlan             = errors.New("semantic write: invalid embedding plan")
 	ErrProviderUnavailable     = errors.New("semantic write: embedding provider unavailable")
 	ErrProviderResponseInvalid = errors.New("semantic write: embedding provider response invalid")
+	ErrProviderTimeout         = errors.New("semantic write: embedding provider timed out")
 )
 
 // Document is one rendered search document. Hash is the canonical document
@@ -109,17 +110,23 @@ func (e *Executor) Execute(ctx context.Context, plan Plan) (Result, error) {
 	providerCtx, cancel := context.WithTimeout(ctx, plan.Timeout)
 	defer cancel()
 	if err := providerCtx.Err(); err != nil {
-		return Result{}, err
+		return Result{}, providerContextError(ctx, providerCtx, err)
 	}
 	vectors, model, err := e.provider.EmbedBatch(providerCtx, texts)
 	if err != nil {
 		if providerCtx.Err() != nil {
-			return Result{}, providerCtx.Err()
+			return Result{}, providerContextError(ctx, providerCtx, providerCtx.Err())
+		}
+		if errors.Is(err, ErrProviderResponseInvalid) {
+			return Result{}, ErrProviderResponseInvalid
+		}
+		if errors.Is(err, ErrProviderTimeout) {
+			return Result{}, ErrProviderTimeout
 		}
 		return Result{}, fmt.Errorf("%w: provider call failed", ErrProviderUnavailable)
 	}
 	if err := providerCtx.Err(); err != nil {
-		return Result{}, err
+		return Result{}, providerContextError(ctx, providerCtx, err)
 	}
 	if model != plan.Fence.Model {
 		return Result{}, ErrProviderResponseInvalid
@@ -147,6 +154,28 @@ func (e *Executor) Execute(ctx context.Context, plan Plan) (Result, error) {
 		}
 	}
 	return result, nil
+}
+
+func providerContextError(parent, child context.Context, childErr error) error {
+	if parentErr := parent.Err(); parentErr != nil {
+		if errors.Is(parentErr, context.Canceled) {
+			return parentErr
+		}
+		if errors.Is(parentErr, context.DeadlineExceeded) {
+			parentDeadline, parentHasDeadline := parent.Deadline()
+			childDeadline, childHasDeadline := child.Deadline()
+			if !parentHasDeadline || !childHasDeadline || !childDeadline.Before(parentDeadline) {
+				return parentErr
+			}
+		}
+	}
+	if errors.Is(childErr, context.Canceled) {
+		return childErr
+	}
+	if errors.Is(childErr, context.DeadlineExceeded) {
+		return ErrProviderTimeout
+	}
+	return childErr
 }
 
 func validatePlan(plan Plan) error {

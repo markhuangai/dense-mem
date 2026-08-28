@@ -35,11 +35,11 @@ func HTTPStatusCode(code ErrorCode) int {
 		return http.StatusNotFound
 	case ErrVerifierRateLimit:
 		return http.StatusTooManyRequests
-	case ErrVerifierTimeout:
+	case ErrVerifierTimeout, ErrEmbeddingTimeout:
 		return http.StatusGatewayTimeout
-	case ErrVerifierProvider:
+	case ErrVerifierProvider, ErrEmbeddingUnavailable:
 		return http.StatusServiceUnavailable
-	case ErrVerifierMalformedResponse:
+	case ErrVerifierMalformedResponse, ErrEmbeddingResponseInvalid:
 		return http.StatusBadGateway
 	case ErrPredicateNotPoliced, ErrUnsupportedPolicy, ErrCommunityGraphTooLarge:
 		return http.StatusUnprocessableEntity
