@@ -165,7 +165,7 @@ func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
 }
 
 func TestTranslateRelationshipCorrectionErrorMapsSearchFencesToConflict(t *testing.T) {
-	for _, cause := range []error{repository.ErrSearchContractMismatch, repository.ErrSearchStaleVersion} {
+	for _, cause := range []error{repository.ErrSearchEmbeddingRequired, repository.ErrSearchContractMismatch, repository.ErrSearchStaleVersion} {
 		err := translateRelationshipCorrectionError(cause)
 		var publicErr *httperr.APIError
 		require.ErrorAs(t, err, &publicErr)

@@ -279,6 +279,7 @@ func translateRelationshipCorrectionError(err error) error {
 		errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) ||
 		errors.Is(err, repository.ErrRelationshipCorrectionConfirmationExpired) ||
 		errors.Is(err, repository.ErrRelationshipCorrectionStateConflict) ||
+		errors.Is(err, repository.ErrSearchEmbeddingRequired) ||
 		errors.Is(err, repository.ErrSearchContractMismatch) ||
 		errors.Is(err, repository.ErrSearchStaleVersion) {
 		return httperr.New(httperr.CONFLICT, "relationship correction conflict")
