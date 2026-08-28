@@ -337,17 +337,8 @@ func (r *SearchRepositoryImpl) ApplySearchRepair(ctx context.Context, input Appl
 	}
 	result := &SearchRepairApplyResult{}
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		var runOwned bool
-		if err := tx.WithContext(ctx).Raw(`
-			SELECT EXISTS (
-				SELECT 1
-				FROM embedding_reconciliation_runs
-				WHERE reconciliation_run_id = ?::uuid
-				  AND status = 'running'
-				  AND lease_token = ?::uuid
-				  AND lease_until > clock_timestamp()
-			)
-		`, input.RunID, input.LeaseToken).Scan(&runOwned).Error; err != nil {
+		runOwned, err := lockSearchRepairRun(ctx, tx, input.RunID, input.LeaseToken)
+		if err != nil {
 			return err
 		}
 		if !runOwned {
@@ -376,10 +367,24 @@ func (r *SearchRepositoryImpl) ApplySearchRepair(ctx context.Context, input Appl
 			active.IndexGeneration != input.IndexGeneration {
 			return ErrSearchContractMismatch
 		}
+		leaseActive, err := searchRepairRunLeaseActive(ctx, tx, input.RunID, input.LeaseToken)
+		if err != nil {
+			return err
+		}
+		if !leaseActive {
+			return gorm.ErrRecordNotFound
+		}
 		for _, item := range input.Documents {
 			updated, skipped, err := applySearchRepairDocument(ctx, tx, active, item)
 			if err != nil {
 				return err
+			}
+			leaseActive, err := searchRepairRunLeaseActive(ctx, tx, input.RunID, input.LeaseToken)
+			if err != nil {
+				return err
+			}
+			if !leaseActive {
+				return gorm.ErrRecordNotFound
 			}
 			if updated {
 				result.UpdatedCount++
@@ -401,6 +406,41 @@ func (r *SearchRepositoryImpl) ApplySearchRepair(ctx context.Context, input Appl
 	}
 	result.RemainingDrifted = len(remaining) > 0
 	return result, nil
+}
+
+func lockSearchRepairRun(ctx context.Context, tx *gorm.DB, runID, leaseToken string) (bool, error) {
+	var lockedRunID string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT reconciliation_run_id::text
+		FROM embedding_reconciliation_runs
+		WHERE reconciliation_run_id = ?::uuid
+		  AND status = 'running'
+		  AND lease_token = ?::uuid
+		  AND lease_until > clock_timestamp()
+		FOR UPDATE
+	`, runID, leaseToken).Row().Scan(&lockedRunID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return lockedRunID != "", nil
+}
+
+func searchRepairRunLeaseActive(ctx context.Context, tx *gorm.DB, runID, leaseToken string) (bool, error) {
+	var active bool
+	err := tx.WithContext(ctx).Raw(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM embedding_reconciliation_runs
+			WHERE reconciliation_run_id = ?::uuid
+			  AND status = 'running'
+			  AND lease_token = ?::uuid
+			  AND lease_until > clock_timestamp()
+		)
+	`, runID, leaseToken).Scan(&active).Error
+	return active, err
 }
 
 func (r *SearchRepositoryImpl) FinishSearchRepairRun(ctx context.Context, input FinishSearchRepairRunInput) error {

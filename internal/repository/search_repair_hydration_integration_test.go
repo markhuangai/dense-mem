@@ -190,3 +190,81 @@ func TestSearchRepairRefillsAfterHydrationExclusions(t *testing.T) {
 	require.Len(t, selected, 1)
 	require.Equal(t, targetSourceID, selected[0].SourceID)
 }
+
+func TestSearchRepairCandidatePageSkipsHealthyCanonicalSourceBeforeHydration(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	firstTeamID := createLedgerTeam(t, adminDB, rls, "search-repair-bounded-first-team")
+	firstOwnerID := createLedgerProfile(t, adminDB, rls, firstTeamID, "search-repair-bounded-first-owner")
+	secondTeamID := createLedgerTeam(t, adminDB, rls, "search-repair-bounded-second-team")
+	secondOwnerID := createLedgerProfile(t, adminDB, rls, secondTeamID, "search-repair-bounded-second-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-repair-bounded", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	firstIngest := createSearchRepairAcceptedIngest(t, ctx, ledger, CreateIngestInput{
+		TeamID: firstTeamID, OwnerProfileID: firstOwnerID, IdempotencyKey: "search-repair-bounded-first",
+		RequestHash: sha256Hex("search repair bounded first"), Evidence: []EvidenceInput{{Content: "search repair bounded first"}},
+	})
+	firstDocument, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: firstTeamID, OwnerProfileID: firstOwnerID, SourceKind: "evidence", SourceID: firstIngest.Evidence[0].FragmentID,
+		SourceVersion: 1, DocumentText: "search repair bounded first",
+	})
+	require.NoError(t, err)
+	time.Sleep(10 * time.Millisecond)
+	secondIngest := createSearchRepairAcceptedIngest(t, ctx, ledger, CreateIngestInput{
+		TeamID: secondTeamID, OwnerProfileID: secondOwnerID, IdempotencyKey: "search-repair-bounded-second",
+		RequestHash: sha256Hex("search repair bounded second"), Evidence: []EvidenceInput{{Content: "search repair bounded second"}},
+	})
+	_, err = repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: secondTeamID, OwnerProfileID: secondOwnerID, SourceKind: "evidence", SourceID: secondIngest.Evidence[0].FragmentID,
+		SourceVersion: 1, DocumentText: "search repair bounded second",
+	})
+	require.NoError(t, err)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'current', embedding = '[1,0]'::vector,
+			    embedding_updated_at = clock_timestamp(), updated_at = clock_timestamp()
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, firstTeamID, firstDocument.SearchDocumentID).Error; err != nil {
+			return err
+		}
+		return nil
+	}))
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	teamLocked := make(chan struct{})
+	releaseTeam := make(chan struct{})
+	lockErr := make(chan error, 1)
+	go func() {
+		lockErr <- rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			var lockedTeamID string
+			if err := tx.Raw(`
+				SELECT id::text
+				FROM teams
+				WHERE id = ?::uuid
+				FOR UPDATE
+			`, firstTeamID).Row().Scan(&lockedTeamID); err != nil {
+				return err
+			}
+			close(teamLocked)
+			<-releaseTeam
+			return nil
+		})
+	}()
+	<-teamLocked
+	selectionCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	selected, hasMore, err := repo.SelectSearchRepairDocuments(selectionCtx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID,
+		EmbeddingDimensions: 2,
+		Limit:               1,
+	})
+	cancel()
+	close(releaseTeam)
+	require.NoError(t, <-lockErr)
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	require.Equal(t, secondIngest.Evidence[0].FragmentID, selected[0].SourceID)
+	require.False(t, hasMore)
+}

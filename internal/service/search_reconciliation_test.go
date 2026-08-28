@@ -300,6 +300,7 @@ func TestSearchReconciliationExecutorFailureClassification(t *testing.T) {
 		code   string
 	}{
 		{name: "timeout", err: context.DeadlineExceeded, status: "deferred", code: "embedding_timeout"},
+		{name: "provider timeout", err: semanticwrite.ErrProviderTimeout, status: "deferred", code: "embedding_timeout"},
 		{name: "canceled", err: context.Canceled, status: "deferred", code: "embedding_cancelled"},
 		{name: "unavailable", err: semanticwrite.ErrProviderUnavailable, status: "deferred", code: "embedding_unavailable"},
 		{name: "invalid response", err: semanticwrite.ErrProviderResponseInvalid, status: "failed", code: "embedding_response_invalid"},

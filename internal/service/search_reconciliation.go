@@ -275,6 +275,8 @@ func (s *searchRepairService) finishExecutorFailure(ctx context.Context, result 
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return s.finishFailure(ctx, result, "deferred", "embedding_timeout")
+	case errors.Is(err, semanticwrite.ErrProviderTimeout):
+		return s.finishFailure(ctx, result, "deferred", "embedding_timeout")
 	case errors.Is(err, context.Canceled):
 		return s.finishFailure(ctx, result, "deferred", "embedding_cancelled")
 	case errors.Is(err, semanticwrite.ErrProviderUnavailable):
