@@ -81,15 +81,6 @@ const searchRepairEvidenceTerminalPlacementJoinSQL = `
 	 AND placement_item.status = 'completed'
 `
 
-const searchRepairSelectionSQL = searchRepairDriftCTE + `
-	SELECT team_id, search_document_id, owner_profile_id, source_kind, source_id, source_version,
-	       projection_format_version, projection_generation_id, document_version, embedding_contract_id,
-	       embedding_dimensions, space_id, space_generation, retired
-	FROM drift
-	ORDER BY observed_at, team_id, source_kind, source_id
-	LIMIT ?
-`
-
 var _ SearchRepairRepository = (*SearchRepositoryImpl)(nil)
 
 func (r *SearchRepositoryImpl) GetSearchRepairTime(ctx context.Context) (time.Time, error) {
@@ -215,52 +206,39 @@ func (r *SearchRepositoryImpl) SelectSearchRepairDocuments(ctx context.Context, 
 	if limit > searchRepairCandidateLimit {
 		return nil, false, fmt.Errorf("search: repair batch exceeds %d documents", searchRepairCandidateLimit)
 	}
-	selectionLimit := (limit + 1) * 2
 	items := make([]SearchRepairDocument, 0, limit+1)
-	truncated := false
+	hasMore := false
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		contract := &ActiveSearchContract{EmbeddingContractID: input.EmbeddingContractID, EmbeddingDimensions: input.EmbeddingDimensions}
-		rows, err := tx.WithContext(ctx).Raw(searchRepairSelectionSQL, input.EmbeddingContractID, input.EmbeddingDimensions, selectionLimit).Rows()
-		if err != nil {
-			return err
+		cursor := searchRepairCursor{}
+		pageSize := limit + 1
+		if pageSize > searchRepairCandidateLimit {
+			pageSize = searchRepairCandidateLimit
 		}
-		candidates := make([]SearchRepairDocument, 0, selectionLimit)
-		for rows.Next() {
-			var candidate SearchRepairDocument
-			if err := rows.Scan(
-				&candidate.TeamID, &candidate.SearchDocumentID, &candidate.OwnerProfileID,
-				&candidate.SourceKind, &candidate.SourceID, &candidate.SourceVersion,
-				&candidate.ProjectionFormat, &candidate.ProjectionGenerationID,
-				&candidate.DocumentVersion, &candidate.EmbeddingContractID,
-				&candidate.EmbeddingDimensions, &candidate.SpaceID, &candidate.SpaceGeneration,
-				&candidate.Retired,
-			); err != nil {
-				_ = rows.Close()
-				return err
-			}
-			candidates = append(candidates, candidate)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-		if len(candidates) >= selectionLimit {
-			truncated = true
-		}
-		for _, candidate := range candidates {
-			item, include, err := hydrateSearchRepairCandidate(ctx, tx, contract, candidate)
+		for len(items) < limit+1 {
+			candidates, err := selectSearchRepairCandidatePage(ctx, tx, input, cursor, pageSize)
 			if err != nil {
 				return err
 			}
-			if !include {
-				continue
+			if len(candidates) == 0 {
+				break
 			}
-			items = append(items, item)
-			if len(items) >= limit+1 {
-				truncated = true
+			for _, candidate := range candidates {
+				cursor = searchRepairCursorFrom(candidate)
+				item, include, err := hydrateSearchRepairCandidate(ctx, tx, contract, candidate)
+				if err != nil {
+					return err
+				}
+				if !include {
+					continue
+				}
+				items = append(items, item)
+				if len(items) >= limit+1 {
+					hasMore = true
+					break
+				}
+			}
+			if len(candidates) < pageSize {
 				break
 			}
 		}
@@ -269,7 +247,6 @@ func (r *SearchRepositoryImpl) SelectSearchRepairDocuments(ctx context.Context, 
 	if err != nil {
 		return nil, false, fmt.Errorf("search: select repair documents: %w", err)
 	}
-	hasMore := truncated || len(items) > limit
 	if len(items) > limit {
 		items = items[:limit]
 	}
@@ -295,7 +272,12 @@ func hydrateSearchRepairCandidate(ctx context.Context, tx *gorm.DB, contract *Ac
 	if err != nil {
 		return SearchRepairDocument{}, false, err
 	}
+	item.Retired = candidate.Retired
 	item.StoredDocumentHash = item.DocumentHash
+	item.StoredOwnerProfileID = item.OwnerProfileID
+	if candidate.OwnerProfileID != "" {
+		item.OwnerProfileID = candidate.OwnerProfileID
+	}
 	if candidate.Retired {
 		expected, known, err := canonicalSearchRepairDocument(ctx, tx, contract, item)
 		if err != nil {
@@ -308,7 +290,11 @@ func hydrateSearchRepairCandidate(ctx context.Context, tx *gorm.DB, contract *Ac
 		return SearchRepairDocument{}, false, err
 	}
 	if known {
-		if expected == nil || (searchRepairDocumentMatches(item, *expected) && vectorCurrent) {
+		ownerCurrent := item.StoredOwnerProfileID
+		if ownerCurrent == "" {
+			ownerCurrent = item.OwnerProfileID
+		}
+		if expected == nil || (ownerCurrent == expected.OwnerProfileID && searchRepairDocumentMatches(item, *expected) && vectorCurrent) {
 			return SearchRepairDocument{}, false, nil
 		}
 		expected.SearchDocumentID = item.SearchDocumentID
@@ -655,10 +641,21 @@ func updateSearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *Acti
 		current.EmbeddingContractID != contract.EmbeddingContractID || current.EmbeddingDimensions != contract.EmbeddingDimensions {
 		return false, true, nil
 	}
+	storedOwner := item.StoredOwnerProfileID
+	if storedOwner == "" {
+		storedOwner = item.OwnerProfileID
+	}
+	if current.OwnerProfileID != storedOwner {
+		return false, true, nil
+	}
 	if current.SearchDocumentID == "" {
 		return false, true, nil
 	}
-	revalidated, known, err := canonicalSearchRepairDocument(ctx, tx, contract, current)
+	canonicalSnapshot := current
+	if item.OwnerProfileID != "" {
+		canonicalSnapshot.OwnerProfileID = item.OwnerProfileID
+	}
+	revalidated, known, err := canonicalSearchRepairDocument(ctx, tx, contract, canonicalSnapshot)
 	if err != nil {
 		return false, false, err
 	}
@@ -706,7 +703,7 @@ func updateSearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *Acti
 		expected.OwnerProfileID, expected.SourceVersion, expected.ProjectionFormat,
 		expected.ProjectionGenerationID, expected.SpaceID, expected.SpaceGeneration,
 		expected.DocumentText, expected.DocumentHash, vector,
-		item.TeamID, item.SearchDocumentID, item.OwnerProfileID, item.DocumentVersion,
+		item.TeamID, item.SearchDocumentID, storedOwner, item.DocumentVersion,
 		item.StoredDocumentHash, contract.EmbeddingContractID, contract.EmbeddingDimensions,
 		item.SourceKind, item.SourceID, item.SourceVersion, item.ProjectionFormat,
 		item.ProjectionGenerationID, item.SpaceID, item.SpaceGeneration, item.DocumentText,
@@ -818,6 +815,7 @@ func loadSearchRepairDocumentForUpdate(ctx context.Context, tx *gorm.DB, snapsho
 		&current.SpaceGeneration, &current.DocumentText, &current.DocumentHash,
 		&current.StoredDocumentHash, &current.Retired,
 	)
+	current.StoredOwnerProfileID = current.OwnerProfileID
 	return current, err
 }
 
@@ -841,6 +839,7 @@ func loadSearchRepairDocument(ctx context.Context, tx *gorm.DB, teamID, document
 		&current.SpaceGeneration, &current.DocumentText, &current.DocumentHash,
 		&current.StoredDocumentHash, &current.Retired, &vectorCurrent,
 	)
+	current.StoredOwnerProfileID = current.OwnerProfileID
 	return current, vectorCurrent, err
 }
 

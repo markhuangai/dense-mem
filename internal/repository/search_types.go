@@ -343,9 +343,13 @@ type SearchRepairSelectionInput struct {
 // SearchRepairDocument is a snapshot of one canonical document repair. The
 // stored fence prevents provider output from replacing a newer document.
 type SearchRepairDocument struct {
-	TeamID                 string
-	SearchDocumentID       string
-	OwnerProfileID         string
+	TeamID           string
+	SearchDocumentID string
+	// OwnerProfileID is the canonical owner expected by the source snapshot.
+	OwnerProfileID string
+	// StoredOwnerProfileID is the owner observed on an existing search document.
+	// It is retained as an update fence when canonical ownership has changed.
+	StoredOwnerProfileID   string
 	SourceKind             string
 	SourceID               string
 	SourceVersion          int64
@@ -361,6 +365,7 @@ type SearchRepairDocument struct {
 	DocumentHash           string
 	StoredDocumentHash     string
 	Retired                bool
+	ObservedAt             time.Time
 }
 
 type SearchRepairEmbedding struct {

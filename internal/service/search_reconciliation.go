@@ -180,6 +180,9 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 		}
 		return s.finish(ctx, result, "completed", "")
 	}
+	// A selected document remains drifted until ApplySearchRepair proves that
+	// no fenced work remains; failure paths must not report convergence.
+	result.DriftedCount = 1
 
 	plan, err := searchRepairPlan(documents, contract, s.providerTimeout)
 	if err != nil {
@@ -223,6 +226,8 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 	result.UpdatedCount = apply.UpdatedCount
 	if hasMore || apply.RemainingDrifted || apply.SkippedCount > 0 {
 		result.DriftedCount = 1
+	} else {
+		result.DriftedCount = 0
 	}
 	return s.finish(ctx, result, "completed", "")
 }

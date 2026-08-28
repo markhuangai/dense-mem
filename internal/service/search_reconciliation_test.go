@@ -112,6 +112,7 @@ func TestSearchReconciliationRunUsesOneFencedBatchAndFinishesDocumentCounters(t 
 	require.Equal(t, int64(1), repo.finish.SelectedCount)
 	require.Equal(t, int64(1), repo.finish.EmbeddedCount)
 	require.Equal(t, int64(1), repo.finish.UpdatedCount)
+	require.Zero(t, repo.finish.DriftedCount)
 }
 
 func TestSearchReconciliationRunLeavesDocumentsUntouchedWhenProviderFails(t *testing.T) {
@@ -128,12 +129,14 @@ func TestSearchReconciliationRunLeavesDocumentsUntouchedWhenProviderFails(t *tes
 		Repository: repo, Executor: &searchRepairExecutorStub{err: errors.New("provider unavailable")}, WorkerID: "worker",
 	})
 
-	_, err := svc.Run(context.Background(), time.Now().UTC(), true)
+	result, err := svc.Run(context.Background(), time.Now().UTC(), true)
 
 	require.ErrorIs(t, err, ErrSearchRepairFailed)
+	require.EqualValues(t, 1, result.DriftedCount)
 	require.Nil(t, repo.apply)
 	require.NotNil(t, repo.finish)
 	require.Equal(t, "failed", repo.finish.Status)
+	require.EqualValues(t, 1, repo.finish.DriftedCount)
 }
 
 func TestSearchReconciliationSchedulerErrorsAreVisible(t *testing.T) {
@@ -250,6 +253,8 @@ func TestSearchReconciliationExecutorFailureClassification(t *testing.T) {
 			require.Equal(t, tc.status, result.Status)
 			require.Equal(t, tc.code, result.ErrorCode)
 			require.Equal(t, tc.status, repo.finish.Status)
+			require.EqualValues(t, 1, result.DriftedCount)
+			require.EqualValues(t, 1, repo.finish.DriftedCount)
 		})
 	}
 }
