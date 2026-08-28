@@ -93,6 +93,9 @@ func upsertSearchDocumentInTx(
 	if err := retireSupersededEmbeddingJobs(ctx, tx, *loaded); err != nil {
 		return nil, err
 	}
+	if synchronousInlineEmbeddingEnabled(ctx) {
+		return loaded, nil
+	}
 	jobID, err := enqueueEmbeddingJob(ctx, tx, *loaded, embeddingJobMaxAttempts)
 	if err != nil {
 		return nil, err

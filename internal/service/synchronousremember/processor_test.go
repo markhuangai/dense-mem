@@ -263,6 +263,27 @@ func TestSynchronousProcessorBuildsTerminalResultFromAssessmentDerivedTypedValue
 	require.Equal(t, 1, ledger.commitCalls)
 }
 
+func TestSynchronousProcessorTrimsRelationshipRefsInTerminalResult(t *testing.T) {
+	teamID, ownerID := uuid.NewString(), uuid.NewString()
+	input := synchronousPipelineRememberRequest(teamID, ownerID, "pipeline-trimmed-ref", "pipeline-trimmed-ref-hash")
+	relationships := input.Proposal["relationship_hints"].([]map[string]any)
+	relationships[0]["ref"] = "  durable-store  "
+	ledger := &synchronousPipelineLedger{}
+	processor := NewSynchronousRememberProcessor(SynchronousRememberProcessorDependencies{
+		Ledger: ledger, Catalog: synchronousPipelineCatalog{}, Provider: &synchronousPipelineProvider{}, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Embeddings: semanticwrite.NewExecutor(&synchronousPipelineEmbeddingProvider{}),
+	})
+
+	status, err := processor.ProcessRemember(context.Background(), input)
+
+	require.NoError(t, err)
+	require.Equal(t, "completed", status.ProcessingState)
+	require.Len(t, status.RelationshipResults, 1)
+	require.Equal(t, "durable-store", status.RelationshipResults[0].RelationshipRef)
+	require.Equal(t, "stored", status.RelationshipResults[0].Disposition)
+	require.Len(t, status.RelationshipResults[0].Splits, 1)
+}
+
 func TestSynchronousProcessorReplaysMatchingTerminalBeforeProviderWork(t *testing.T) {
 	teamID, ownerID := uuid.NewString(), uuid.NewString()
 	input := synchronousPipelineRememberRequest(teamID, ownerID, "pipeline-replay", "pipeline-replay-hash")
@@ -417,6 +438,40 @@ func TestSynchronousProcessorSkipsEmbeddingForNoSupportedMemory(t *testing.T) {
 	require.Zero(t, ledger.commitCalls)
 	require.Equal(t, 1, ledger.terminalCalls)
 	require.GreaterOrEqual(t, ledger.terminalInput.Attempt.Duration, 15*time.Millisecond)
+}
+
+func TestSynchronousProcessorSecuritySignalsOverrideNoSupportedMemory(t *testing.T) {
+	teamID, ownerID := uuid.NewString(), uuid.NewString()
+	ledger := &synchronousPipelineLedger{}
+	provider := &synchronousPipelineProvider{response: func(request assessor.SemanticAssessmentRequest) assessor.SemanticAssessmentResponse {
+		response := synchronousPipelineUnsupportedResponse(request)
+		evidence := request.Evidence[0]
+		startRef, startOK := assessor.SemanticAssessmentBoundaryRef(evidence, 0)
+		endRef, endOK := assessor.SemanticAssessmentBoundaryRef(evidence, len([]rune(evidence.Content)))
+		if !startOK || !endOK {
+			t.Fatal("synchronous assessment evidence boundaries are required")
+		}
+		response.SecuritySignals = []assessor.SemanticAssessmentSecuritySignal{{
+			EvidenceID: evidence.EvidenceID, Kind: "instruction_override", StartRef: startRef, EndRef: endRef,
+		}}
+		return response
+	}}
+	embeddings := &synchronousPipelineEmbeddingProvider{}
+	processor := NewSynchronousRememberProcessor(SynchronousRememberProcessorDependencies{
+		Ledger: ledger, Catalog: synchronousPipelineCatalog{}, Provider: provider, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Embeddings: semanticwrite.NewExecutor(embeddings),
+	})
+
+	status, err := processor.ProcessRemember(context.Background(), synchronousPipelineRememberRequest(teamID, ownerID, "pipeline-security-wins", "pipeline-security-wins-hash"))
+
+	require.NoError(t, err)
+	require.Equal(t, "quarantined", status.ProcessingState)
+	require.Len(t, status.Errors, 1)
+	require.Equal(t, string(remember.TerminalErrorQuarantined), status.Errors[0].Code)
+	require.Equal(t, 1, ledger.terminalCalls)
+	require.Equal(t, "quarantined", ledger.terminalInput.Attempt.Outcome)
+	require.Zero(t, embeddings.calls)
+	require.Zero(t, ledger.planCalls)
 }
 
 func TestSynchronousProcessorMapsEmbeddingResponseFailureToTerminal(t *testing.T) {

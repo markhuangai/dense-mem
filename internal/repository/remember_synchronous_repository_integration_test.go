@@ -423,6 +423,157 @@ func TestSynchronousRememberInlineCommitAddsNoEmbeddingJobs(t *testing.T) {
 	assert.Equal(t, plannedHashes, currentHashes)
 }
 
+func TestSynchronousRememberInlineCommitRetiresExistingEmbeddingJob(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "sync-remember-inline-retire", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "sync-remember-inline-retire-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "sync-remember-inline-retire-owner")
+	semantic := NewSemanticRepository(appDB, rls)
+	entity := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "concept", "Authoritative Dense-Mem")
+	search := NewSearchRepository(appDB, rls)
+	target, err := search.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "entity", SourceID: entity.EntityID,
+		SourceVersion: int64(entity.Version), ProjectionFormat: 1,
+		DocumentText: entitySearchProjectionText(entity.CanonicalName, entity.EntityKind),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, target.QueuedJobID)
+	unrelated, err := search.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: uuid.NewString(),
+		SourceVersion: 1, ProjectionFormat: 1, DocumentText: "unrelated asynchronous embedding document",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, unrelated.QueuedJobID)
+
+	repo := NewLedgerRepository(appDB, rls)
+	input := synchronousRememberAcceptedFixture(teamID, ownerID, "sync-inline-retire", "sync-inline-retire-hash", nil)
+	configureSynchronousRememberEntityReuse(t, repo, &input, entity)
+
+	committed, err := repo.CommitSynchronousRemember(ctx, input)
+	require.NoError(t, err)
+	require.NotNil(t, committed)
+
+	var targetState, targetJobStatus, unrelatedJobStatus string
+	var targetHasEmbedding bool
+	var targetRunnableJobs int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT search_state, embedding IS NOT NULL
+			FROM search_documents
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, target.SearchDocumentID).Row().Scan(&targetState, &targetHasEmbedding); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT status FROM embedding_jobs
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, teamID, target.QueuedJobID).Row().Scan(&targetJobStatus); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT count(*) FROM embedding_jobs
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+			  AND status IN ('queued', 'processing', 'failed')
+		`, teamID, target.SearchDocumentID).Scan(&targetRunnableJobs).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT status FROM embedding_jobs
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, teamID, unrelated.QueuedJobID).Row().Scan(&unrelatedJobStatus)
+	}))
+	assert.Equal(t, string(domain.SearchProjectionCurrent), targetState)
+	assert.True(t, targetHasEmbedding)
+	assert.Equal(t, string(domain.EmbeddingJobStale), targetJobStatus)
+	assert.Zero(t, targetRunnableJobs)
+	assert.Equal(t, string(domain.EmbeddingJobQueued), unrelatedJobStatus)
+}
+
+func TestSynchronousRememberInlineCommitRollsBackWhenEmbeddingJobRetirementFails(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "sync-remember-inline-retire-failure", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "sync-remember-inline-retire-failure-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "sync-remember-inline-retire-failure-owner")
+	semantic := NewSemanticRepository(appDB, rls)
+	entity := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "concept", "Authoritative Dense-Mem")
+	search := NewSearchRepository(appDB, rls)
+	target, err := search.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "entity", SourceID: entity.EntityID,
+		SourceVersion: int64(entity.Version), ProjectionFormat: 1,
+		DocumentText: entitySearchProjectionText(entity.CanonicalName, entity.EntityKind),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, target.QueuedJobID)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			CREATE FUNCTION test_synchronous_remember_embedding_job_retirement_failure()
+			RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN
+				RAISE EXCEPTION 'intentional synchronous Remember embedding job retirement failure';
+			END;
+			$$;
+			CREATE TRIGGER test_synchronous_remember_embedding_job_retirement_failure
+			BEFORE UPDATE OF status ON embedding_jobs
+			FOR EACH ROW WHEN (NEW.status = 'stale')
+			EXECUTE FUNCTION test_synchronous_remember_embedding_job_retirement_failure()
+		`).Error
+	}))
+	defer func() {
+		err := rls.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
+			if err := tx.Exec(`DROP TRIGGER IF EXISTS test_synchronous_remember_embedding_job_retirement_failure ON embedding_jobs`).Error; err != nil {
+				return err
+			}
+			return tx.Exec(`DROP FUNCTION IF EXISTS test_synchronous_remember_embedding_job_retirement_failure()`).Error
+		})
+		if err != nil {
+			t.Errorf("clean up embedding job retirement failure trigger: %v", err)
+		}
+	}()
+
+	repo := NewLedgerRepository(appDB, rls)
+	input := synchronousRememberAcceptedFixture(teamID, ownerID, "sync-inline-retire-failure", "sync-inline-retire-failure-hash", nil)
+	configureSynchronousRememberEntityReuse(t, repo, &input, entity)
+
+	_, err = repo.CommitSynchronousRemember(ctx, input)
+	require.Error(t, err)
+	var stageErr *synchronousRememberEmbeddingStageError
+	require.ErrorAs(t, err, &stageErr)
+	assert.Equal(t, "job_retirement", stageErr.SynchronousRememberEmbeddingStage())
+
+	var targetState, targetJobStatus string
+	var targetHasEmbedding bool
+	var attempts int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT search_state, embedding IS NOT NULL
+			FROM search_documents
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, target.SearchDocumentID).Row().Scan(&targetState, &targetHasEmbedding); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT status FROM embedding_jobs
+			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
+		`, teamID, target.QueuedJobID).Row().Scan(&targetJobStatus); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT count(*) FROM remember_attempts
+			WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = 'sync-inline-retire-failure'
+		`, teamID, ownerID).Scan(&attempts).Error
+	}))
+	assert.Equal(t, string(domain.SearchProjectionPending), targetState)
+	assert.False(t, targetHasEmbedding)
+	assert.Equal(t, string(domain.EmbeddingJobQueued), targetJobStatus)
+	assert.Zero(t, attempts)
+}
+
 func TestSynchronousRememberInlineCommitSupportsTypedValueProjection(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

@@ -391,6 +391,9 @@ func applySynchronousRememberEmbeddingsInSystemMode(ctx context.Context, tx *gor
 		if err != nil {
 			return wrapSynchronousRememberEmbeddingStage("vector", err)
 		}
+		if err := retireSynchronousRememberEmbeddingJobs(ctx, tx, document); err != nil {
+			return wrapSynchronousRememberEmbeddingStage("job_retirement", err)
+		}
 		updated := tx.WithContext(ctx).Exec(`UPDATE search_documents SET embedding = ?::vector, search_state = 'current', embedding_updated_at = now(), embedding_error = '', updated_at = now() WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND search_document_id = ?::uuid AND document_hash = ? AND embedding_contract_id = ?::uuid AND embedding_dimensions = ? AND search_state = 'pending'`, literal, teamID, documentOwnerID, document.SearchDocumentID, hash, result.EmbeddingContractID, result.EmbeddingDimensions)
 		if updated.Error != nil {
 			return wrapSynchronousRememberEmbeddingStage("document_apply", updated.Error)
@@ -400,6 +403,34 @@ func applySynchronousRememberEmbeddingsInSystemMode(ctx context.Context, tx *gor
 		}
 	}
 	return nil
+}
+
+func retireSynchronousRememberEmbeddingJobs(ctx context.Context, tx *gorm.DB, document SearchDocumentResult) error {
+	return tx.WithContext(ctx).Exec(`
+		UPDATE embedding_jobs AS job
+		SET status = 'stale',
+		    error = 'embedded synchronously by Remember',
+		    completed_at = COALESCE(job.completed_at, now()),
+		    lease_until = NULL,
+		    worker_id = '',
+		    updated_at = now()
+		WHERE job.team_id = ?::uuid
+		  AND job.search_document_id = ?::uuid
+		  AND job.source_kind = ?
+		  AND job.source_id = ?::uuid
+		  AND job.source_version = ?
+		  AND job.projection_format_version = ?
+		  AND job.projection_generation_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
+		  AND job.document_version = ?
+		  AND job.embedding_contract_id = ?::uuid
+		  AND job.embedding_dimensions = ?
+		  AND job.space_id = ?::uuid
+		  AND job.space_generation = ?
+		  AND job.status IN ('queued', 'processing', 'failed')
+	`, document.TeamID, document.SearchDocumentID, document.SourceKind, document.SourceID,
+		document.SourceVersion, document.ProjectionFormat, document.ProjectionGenerationID,
+		document.DocumentVersion, document.EmbeddingContractID, document.EmbeddingDimensions,
+		document.SpaceID, document.SpaceGeneration).Error
 }
 
 func lockSynchronousRememberSearchGeneration(ctx context.Context, tx *gorm.DB, result SynchronousRememberEmbeddingResult) error {

@@ -29,6 +29,14 @@ test("provider timeout fault is longer than the pinned E2E request caps", async 
   assert.match(fixture, /timeoutDelayMs/);
 });
 
+test("embedding cancellation delay is scoped by provider fault", async () => {
+  const fixture = await readFile(new URL("./provider-fixture.mjs", import.meta.url), "utf8");
+  assert.match(fixture, /const embeddingCallsByFault = new Map\(\)/);
+  assert.match(fixture, /embeddingCallsByFault\.get\(embeddingFaultKey\)/);
+  assert.match(fixture, /routeFault === "embedding-cancel" && embeddingFaultCall === 1/);
+  assert.doesNotMatch(fixture, /routeFault === "embedding-cancel" && embeddingCalls === 1/);
+});
+
 test("provider fixture uses a Compose volume instead of a worktree bind mount", async () => {
   const overlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");
   assert.match(overlay, /e2e-synchronous-write-provider-files:\/e2e/);

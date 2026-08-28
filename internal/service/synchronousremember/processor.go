@@ -117,6 +117,9 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 		return p.failure(ctx, input, attemptID, base, "assessment", synchronousAssessmentTurns(err), started, err)
 	}
 	create := repository.CreateIngestInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey, RequestHash: input.RequestHash, SourceSummary: input.SourceSummary, Status: "queued", TelemetryRemember: true, Proposal: input.Proposal, Metadata: input.Metadata, Evidence: synchronousEvidence(input.Evidence)}
+	if len(prepared.Response.SecuritySignals) > 0 {
+		return p.commitTerminal(ctx, input, attemptID, base, create, prepared, "quarantined", nil, relationshipRefs, started)
+	}
 	preview, err := memoryservice.BuildSynchronousRememberPreviewCommitInput(prepared)
 	if err != nil {
 		var noSupported *memoryservice.NoSupportedMemoryError
@@ -124,9 +127,6 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 			return p.commitTerminal(ctx, input, attemptID, base, create, prepared, "rejected", noSupported.RelationshipResults, relationshipRefs, started)
 		}
 		return p.failure(ctx, input, attemptID, base, "assessment", prepared.Response.ProviderTurns, started, err)
-	}
-	if len(prepared.Response.SecuritySignals) > 0 {
-		return p.commitTerminal(ctx, input, attemptID, base, create, prepared, "quarantined", nil, relationshipRefs, started)
 	}
 	embeddingCtx, cancelEmbedding := remember.ContextForPhase(ctx, remember.RememberPhaseEmbedding)
 	plan, err := p.ledger.PlanSynchronousRememberEmbeddings(embeddingCtx, create, preview)
@@ -372,7 +372,8 @@ func synchronousRelationshipRefs(proposal map[string]any) []string {
 	refs := make([]string, 0, len(raw))
 	for i, item := range raw {
 		ref, _ := item["ref"].(string)
-		if strings.TrimSpace(ref) == "" {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
 			ref = fmt.Sprintf("relationship:%d", i)
 		}
 		refs = append(refs, ref)

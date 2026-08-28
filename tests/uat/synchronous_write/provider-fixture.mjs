@@ -10,6 +10,7 @@ const timeoutDelayMs = Number(process.env.DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_M
 const correctionProviderFaultMarker = "e2e-correction-provider-fault";
 const correctionProviderTimeoutMarker = "e2e-correction-provider-timeout";
 const assessmentAttempts = new Map();
+const embeddingCallsByFault = new Map();
 let assessmentCalls = 0;
 let embeddingCalls = 0;
 
@@ -123,8 +124,14 @@ const server = createServer(async (request, response) => {
   const requestFault = fixtureFault(payload) || fault;
   const route = request.url?.endsWith("/embeddings") ? "embedding" : request.url?.endsWith("/chat/completions") ? "assessment" : "other";
   const routeFault = faultForRoute(requestFault, route);
+  let embeddingFaultCall = 0;
   if (route === "embedding") embeddingCalls += 1;
-  if (routeFault === "timeout" || routeFault === "assessment-timeout" || routeFault === "embedding-timeout" || routeFault === "embedding-only-timeout" || (routeFault === "embedding-cancel" && embeddingCalls === 1)) {
+  if (route === "embedding") {
+    const embeddingFaultKey = routeFault || "none";
+    embeddingFaultCall = (embeddingCallsByFault.get(embeddingFaultKey) || 0) + 1;
+    embeddingCallsByFault.set(embeddingFaultKey, embeddingFaultCall);
+  }
+  if (routeFault === "timeout" || routeFault === "assessment-timeout" || routeFault === "embedding-timeout" || routeFault === "embedding-only-timeout" || (routeFault === "embedding-cancel" && embeddingFaultCall === 1)) {
     await new Promise((resolve) => setTimeout(resolve, timeoutDelayMs));
   }
   if (routeFault === "unavailable" || routeFault === "assessment-unavailable" || routeFault === "embedding-unavailable") {
