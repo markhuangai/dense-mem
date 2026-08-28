@@ -74,6 +74,7 @@ type RememberProcessRequest struct {
 	SecuritySignals          []SubmissionSecurityBatchSignal
 	SecuritySignalsTruncated bool
 	SecurityRejected         bool
+	SecurityRejectionAudit   *SecurityRejectionAuditInput
 }
 
 type TerminalRememberResult struct {

@@ -120,6 +120,7 @@ func TestSynchronousRememberClassifiersCoverTypedStagesAndTerminalErrors(t *test
 		{phase: "assessment", err: context.Canceled, want: remember.TerminalErrorRequestCancelled},
 		{phase: "commit", err: repository.ErrIdempotencyConflict, want: remember.TerminalErrorIdempotencyConflict},
 		{phase: "commit", err: repository.ErrPlacementStaleSource, want: remember.TerminalErrorStaleInput},
+		{phase: "embedding", err: repository.ErrSynchronousRememberEmbeddingInputBudget, want: remember.TerminalErrorInputBudgetExceeded},
 		{phase: "embedding", err: semanticwrite.ErrProviderResponseInvalid, want: remember.TerminalErrorEmbeddingResponseInvalid},
 		{phase: "embedding", err: semanticwrite.ErrInvalidPlan, want: remember.TerminalErrorEmbeddingResponseInvalid},
 		{phase: "assessment", err: assessor.ErrVerifierMalformedResponse, want: remember.TerminalErrorProviderResponseInvalid},
@@ -134,13 +135,13 @@ func TestSynchronousRememberClassifiersCoverTypedStagesAndTerminalErrors(t *test
 
 func TestSynchronousRememberHashMatchesRequiresMigrationContract(t *testing.T) {
 	input := remember.RememberProcessRequest{RequestHash: "current", MigratedRequestHash: "migrated"}
-	if !synchronousRememberHashMatches(&repository.RememberAttempt{RequestHash: "current", ContractVersion: "dense-mem.v2.6"}, input) {
+	if !domain.RememberRequestHashMatches("current", domain.ContractVersion, input.RequestHash, input.MigratedRequestHash) {
 		t.Fatal("current request hash must match")
 	}
-	if !synchronousRememberHashMatches(&repository.RememberAttempt{RequestHash: "migrated", ContractVersion: repository.MigratedRememberRequestHashVersion}, input) {
+	if !domain.RememberRequestHashMatches("migrated", domain.MigratedRememberRequestHashVersion, input.RequestHash, input.MigratedRequestHash) {
 		t.Fatal("recognized migration hash must match")
 	}
-	if synchronousRememberHashMatches(&repository.RememberAttempt{RequestHash: "migrated", ContractVersion: "dense-mem.v2.6"}, input) {
+	if domain.RememberRequestHashMatches("migrated", domain.ContractVersion, input.RequestHash, input.MigratedRequestHash) {
 		t.Fatal("non-migrated attempt must not match a migration hash")
 	}
 }
@@ -170,6 +171,17 @@ func TestSynchronousFailureReplaysConcurrentTerminalWinner(t *testing.T) {
 	require.Equal(t, "winner-submission", status.SubmissionID)
 	require.Equal(t, "winner-correlation", status.CorrelationID)
 	require.Equal(t, "completed", status.ProcessingState)
+}
+
+func TestSynchronousFailureRecordUsesBoundedCleanupContext(t *testing.T) {
+	input := synchronousPipelineRememberRequest(uuid.NewString(), uuid.NewString(), "bounded-failure", "bounded-failure-hash")
+	ledger := &boundedFailureRecordLedger{synchronousPipelineLedger: &synchronousPipelineLedger{}}
+	processor := &synchronousRememberProcessor{ledger: ledger}
+
+	_, err := processor.failure(context.Background(), input, uuid.NewString(), synchronousTerminalBase(input, uuid.NewString(), nil), "embedding", 0, errors.New("embedding failed"))
+
+	require.ErrorIs(t, err, remember.ErrRememberPersistence)
+	require.True(t, ledger.sawDeadline)
 }
 
 func TestSynchronousPreflightReplaysConcurrentTerminalWinner(t *testing.T) {
@@ -326,6 +338,39 @@ func TestSynchronousProcessorSkipsEmbeddingForPreflightQuarantine(t *testing.T) 
 	require.Zero(t, ledger.planCalls)
 	require.Zero(t, ledger.commitCalls)
 	require.Zero(t, ledger.terminalCalls)
+}
+
+func TestSynchronousPreflightAuditRunsOnlyForNewQuarantine(t *testing.T) {
+	teamID, ownerID := uuid.NewString(), uuid.NewString()
+	input := synchronousPipelineRememberRequest(teamID, ownerID, "pipeline-security-replay", "pipeline-security-replay-hash")
+	input.SecurityRejected = true
+	audit := &synchronousSecurityAuditStub{}
+	ledger := &synchronousSecurityReplayLedger{synchronousPipelineLedger: &synchronousPipelineLedger{}}
+	processor := NewSynchronousRememberProcessor(SynchronousRememberProcessorDependencies{
+		Ledger: ledger, Catalog: synchronousPipelineCatalog{}, Provider: &synchronousPipelineProvider{}, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Embeddings: semanticwrite.NewExecutor(&synchronousPipelineEmbeddingProvider{}), Auditor: audit,
+	})
+	auditInput := remember.SecurityRejectionAuditInput{EventID: uuid.NewString(), TeamID: teamID, ActorProfileID: ownerID, Surface: "remember", ReasonCode: "evidence_security_rejected", EvidenceCount: 1}
+	input.SecurityRejectionAudit = &auditInput
+
+	first, err := processor.ProcessRemember(context.Background(), input)
+	require.NoError(t, err)
+	require.Equal(t, "quarantined", first.ProcessingState)
+	require.Equal(t, 1, audit.calls)
+	require.Equal(t, 1, ledger.preflightCalls)
+
+	second, err := processor.ProcessRemember(context.Background(), input)
+	require.NoError(t, err)
+	require.Equal(t, first.SubmissionID, second.SubmissionID)
+	require.Equal(t, first.CorrelationID, second.CorrelationID)
+	require.Equal(t, 1, audit.calls)
+	require.Equal(t, 1, ledger.preflightCalls)
+
+	audit.err = errors.New("audit unavailable")
+	third, err := processor.ProcessRemember(context.Background(), input)
+	require.NoError(t, err)
+	require.Equal(t, first.SubmissionID, third.SubmissionID)
+	require.Equal(t, 1, audit.calls)
 }
 
 func TestSynchronousProcessorSkipsEmbeddingForNoSupportedMemory(t *testing.T) {
@@ -517,6 +562,49 @@ type synchronousPipelineLedger struct {
 	preflightCalls     int
 	recordFailureCalls int
 	failureInput       repository.RememberFailureRecordInput
+}
+
+type boundedFailureRecordLedger struct {
+	*synchronousPipelineLedger
+	sawDeadline bool
+}
+
+func (ledger *boundedFailureRecordLedger) RecordRememberFailure(ctx context.Context, input repository.RememberFailureRecordInput) error {
+	_, ledger.sawDeadline = ctx.Deadline()
+	return errors.New("failure record timed out")
+}
+
+type synchronousSecurityReplayLedger struct {
+	*synchronousPipelineLedger
+	winner *repository.RememberAttempt
+}
+
+func (ledger *synchronousSecurityReplayLedger) LoadRememberAttempt(_ context.Context, _ repository.RememberAttemptLookupInput) (*repository.RememberAttempt, error) {
+	ledger.loadCalls++
+	if ledger.winner == nil {
+		return nil, repository.ErrRememberAttemptNotFound
+	}
+	return ledger.winner, nil
+}
+
+func (ledger *synchronousSecurityReplayLedger) RecordSynchronousRememberPreflightQuarantine(_ context.Context, input repository.RememberAttemptRecordInput) error {
+	ledger.preflightCalls++
+	public := make(map[string]any, len(input.PublicResult))
+	for key, value := range input.PublicResult {
+		public[key] = value
+	}
+	ledger.winner = &repository.RememberAttempt{AttemptID: input.AttemptID, RequestHash: input.RequestHash, ContractVersion: input.ContractVersion, Outcome: input.Outcome, PublicResult: public}
+	return nil
+}
+
+type synchronousSecurityAuditStub struct {
+	calls int
+	err   error
+}
+
+func (stub *synchronousSecurityAuditStub) RecordSecurityRejection(context.Context, remember.SecurityRejectionAuditInput) error {
+	stub.calls++
+	return stub.err
 }
 
 type synchronousPreflightReplayLedger struct {

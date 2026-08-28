@@ -17,6 +17,19 @@ func CanonicalRequestBodyHash(
 	entityHints []map[string]any,
 	relationshipHints []map[string]any,
 ) (string, error) {
+	return canonicalRequestBodyHashForContract(requestHashContractVersion, evidence, entityHints, relationshipHints)
+}
+
+func canonicalRequestBodyHashForContract(
+	contractVersion string,
+	evidence any,
+	entityHints []map[string]any,
+	relationshipHints []map[string]any,
+) (string, error) {
+	contractVersion = strings.TrimSpace(contractVersion)
+	if contractVersion == "" {
+		return "", fmt.Errorf("remember request hash contract version is required")
+	}
 	canonicalEvidence, err := canonicalRememberObjects(evidence)
 	if err != nil {
 		return "", err
@@ -45,7 +58,7 @@ func CanonicalRequestBodyHash(
 		return canonicalRememberObjectOrder(canonicalRelationships[i], canonicalRelationships[j], "ref")
 	})
 	payload := map[string]any{
-		"contract_version": requestHashContractVersion,
+		"contract_version": contractVersion,
 		"evidence":         canonicalEvidence,
 		"relationships":    canonicalRelationships,
 	}
@@ -58,6 +71,14 @@ func CanonicalRequestBodyHash(
 	}
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func canonicalRequestHashForVersion(req RememberRequest, version string) (string, error) {
+	hash, err := canonicalRequestBodyHashForContract(version, req.Evidence, req.EntityHints, req.RelationshipHints)
+	if err != nil {
+		return "", fmt.Errorf("remember: canonical request hash: %w", err)
+	}
+	return hash, nil
 }
 
 func canonicalRememberObjects(value any) ([]map[string]any, error) {

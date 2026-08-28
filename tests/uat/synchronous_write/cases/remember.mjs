@@ -55,6 +55,8 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   if (selectedFault === "none") {
     results.push(await runConcurrentWinnerCase({ rpc, expect }));
     results.push(await runChangedHashConflictCase({ rawRPC, expect }));
+    results.push(await runSupersessionFenceCase({ rpc, expect }));
+    results.push(await runInputBudgetCase({ rpc, expect }));
   }
   return { mode: name, results };
 }
@@ -167,6 +169,10 @@ async function runTerminalDomainCase({ rpc, expect, fault }) {
   expect(result.errors[0]?.code === expectedCode, `${fault} must return ${expectedCode}: ${JSON.stringify(result)}`);
   expect(result.evidence.every((item) => item.disposition === "not_stored"), `${fault} must not store evidence`);
   expect(result.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), `${fault} must not store relationships`);
+  const replay = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
+  assertStrictTerminalRemember(replay, expect);
+  expect(stableJSON(replay) === stableJSON(result), `${fault} terminal replay must be byte-equivalent`);
+  expect(replay.submission_id === result.submission_id && replay.correlation_id === result.correlation_id, `${fault} terminal replay must reuse identity`);
   return { fault, processing_state: result.processing_state };
 }
 
@@ -221,6 +227,58 @@ async function runChangedHashConflictCase({ rawRPC, expect }) {
   const response = await rawRPC("tools/call", { name: "remember", arguments: secondArgs });
   expect(response.error && response.result === undefined, "changed request hash must return a bounded public conflict");
   return { fault: "changed-hash", conflict: true };
+}
+
+async function runSupersessionFenceCase({ rpc, expect }) {
+  const targetArgs = singleItemArguments("supersession-target", "[fixture:supersession-target]");
+  const target = terminalPayload(await rpc("tools/call", { name: "remember", arguments: targetArgs }));
+  assertStrictTerminalRemember(target, expect);
+  expect(target.processing_state === "completed", "supersession target must complete");
+  const targetEvidenceID = target.evidence.find((item) => item.evidence_id)?.evidence_id;
+  expect(targetEvidenceID, "supersession target must return an evidence id");
+
+  const replacementArgs = singleItemArguments("supersession-replacement", "[fixture:supersession-replacement]");
+  replacementArgs.evidence[0].supersedes_evidence_ids = [targetEvidenceID];
+  const replacement = terminalPayload(await rpc("tools/call", { name: "remember", arguments: replacementArgs }));
+  assertStrictTerminalRemember(replacement, expect);
+  expect(replacement.processing_state === "completed", "supersession replacement must complete");
+
+  const staleArgs = singleItemArguments("supersession-stale", "[fixture:supersession-stale]");
+  staleArgs.evidence[0].supersedes_evidence_ids = [targetEvidenceID];
+  const stale = terminalPayload(await rpc("tools/call", { name: "remember", arguments: staleArgs }));
+  assertStrictTerminalRemember(stale, expect);
+  expect(stale.processing_state === "failed", `stale supersession must fail: ${JSON.stringify(stale)}`);
+  expect(stale.search_state === "not_required", "stale supersession must not require search");
+  expect(stale.errors[0]?.code === "stale_input", `stale supersession must return stale_input: ${JSON.stringify(stale)}`);
+  expect(stale.evidence.every((item) => item.disposition === "not_stored"), "stale supersession must not store evidence");
+  return { fault: "supersession-stale", processing_state: stale.processing_state };
+}
+
+async function runInputBudgetCase({ rpc, expect }) {
+  const evidence = Array.from({ length: 20 }, (_, index) => ({
+    content: `Dense-Mem input budget evidence ${index}.`,
+    source_type: "manual",
+  }));
+  const relationships = Array.from({ length: 200 }, (_, index) => relationship(
+    `budget-${index}`,
+    `Budget subject ${index}`,
+    "project",
+    { entity: { name: `Budget object ${index}`, entity_kind: "concept" } },
+    [index % evidence.length],
+  ));
+  const args = {
+    evidence,
+    relationships,
+    idempotency_key: `synchronous-write-remember-input-budget-${Date.now()}-${Math.random()}`,
+  };
+  const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
+  assertStrictTerminalRemember(result, expect);
+  expect(result.processing_state === "failed", `input budget must fail: ${JSON.stringify(result)}`);
+  expect(result.search_state === "not_required", "input budget must not require search");
+  expect(result.errors[0]?.code === "input_budget_exceeded", `input budget must return input_budget_exceeded: ${JSON.stringify(result)}`);
+  expect(result.evidence.every((item) => item.disposition === "not_stored"), "input budget must not store evidence");
+  expect(result.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), "input budget must not store relationships");
+  return { fault: "input-budget", processing_state: result.processing_state };
 }
 
 function singleItemArguments(label, marker) {

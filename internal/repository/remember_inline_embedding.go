@@ -15,6 +15,7 @@ import (
 const synchronousRememberEmbeddingDocumentLimit = 256
 
 var ErrSynchronousRememberEmbeddingFence = errors.New("synchronous Remember embedding fence failed")
+var ErrSynchronousRememberEmbeddingInputBudget = errors.New("synchronous Remember embedding input budget exceeded")
 
 type synchronousRememberEmbeddingStageError struct {
 	stage string
@@ -130,7 +131,7 @@ func (r *LedgerRepositoryImpl) PlanSynchronousRememberEmbeddings(
 				return nil
 			}
 			if len(plan.Documents) >= synchronousRememberEmbeddingDocumentLimit {
-				return fmt.Errorf("%w: document limit %d exceeded", ErrSynchronousRememberEmbeddingFence, synchronousRememberEmbeddingDocumentLimit)
+				return fmt.Errorf("%w: %w: document limit %d exceeded", ErrSynchronousRememberEmbeddingFence, ErrSynchronousRememberEmbeddingInputBudget, synchronousRememberEmbeddingDocumentLimit)
 			}
 			seen[hash] = struct{}{}
 			plan.Documents = append(plan.Documents, SynchronousRememberEmbeddingDocument{Hash: hash, Text: text})
@@ -229,18 +230,30 @@ func entitySearchProjectionText(name, kind string) string {
 }
 
 func upsertSynchronousRememberEntitySearchDocument(ctx context.Context, tx *gorm.DB, teamID, ownerID, entityID string, contract *ActiveSearchContract) (*SearchDocumentResult, error) {
-	var name, kind, spaceID string
-	var version int64
-	var spaceGeneration int64
-	err := tx.WithContext(ctx).Raw(`SELECT COALESCE(canonical.display_name, entity.entity_id::text), entity.entity_kind, entity.version, entity.space_id::text, COALESCE(entity.space_generation, 0) FROM entity_records AS entity LEFT JOIN entity_names AS canonical ON canonical.team_id = entity.team_id AND canonical.entity_id = entity.entity_id AND canonical.name_kind = 'canonical' AND canonical.valid_to IS NULL WHERE entity.team_id = ?::uuid AND entity.entity_id = ?::uuid AND entity.status = 'active' ORDER BY canonical.created_at DESC NULLS LAST, canonical.entity_name_id DESC NULLS LAST LIMIT 1`, teamID, entityID).Row().Scan(&name, &kind, &version, &spaceID, &spaceGeneration)
+	var result *SearchDocumentResult
+	err := withSystemModeInTx(ctx, tx, teamID, ownerID, func(systemTx *gorm.DB) error {
+		var name, kind, spaceID string
+		var authoritativeOwnerID string
+		var version int64
+		var spaceGeneration int64
+		if err := systemTx.WithContext(ctx).Raw(`SELECT COALESCE(canonical.display_name, entity.entity_id::text), entity.entity_kind, entity.version, entity.space_id::text, COALESCE(entity.space_generation, 0), COALESCE(canonical.owner_profile_id::text, '') FROM entity_records AS entity LEFT JOIN entity_names AS canonical ON canonical.team_id = entity.team_id AND canonical.entity_id = entity.entity_id AND canonical.name_kind = 'canonical' AND canonical.valid_to IS NULL WHERE entity.team_id = ?::uuid AND entity.entity_id = ?::uuid AND entity.status = 'active' ORDER BY canonical.created_at DESC NULLS LAST, canonical.entity_name_id DESC NULLS LAST LIMIT 1`, teamID, entityID).Row().Scan(&name, &kind, &version, &spaceID, &spaceGeneration, &authoritativeOwnerID); err != nil {
+			return err
+		}
+		if strings.TrimSpace(authoritativeOwnerID) == "" {
+			authoritativeOwnerID = ownerID
+		}
+		input := normalizeUpsertSearchDocumentInput(UpsertSearchDocumentInput{TeamID: teamID, OwnerProfileID: authoritativeOwnerID, SourceKind: "entity", SourceID: entityID, SourceVersion: version, ProjectionFormat: 1, DocumentText: entitySearchProjectionText(name, kind), Metadata: map[string]any{}, SpaceID: spaceID, SpaceGeneration: spaceGeneration})
+		if err := validateUpsertSearchDocumentInput(input); err != nil {
+			return err
+		}
+		var err error
+		result, err = upsertSearchDocumentInTx(ctx, systemTx, input, contract, 0)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	input := normalizeUpsertSearchDocumentInput(UpsertSearchDocumentInput{TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "entity", SourceID: entityID, SourceVersion: version, ProjectionFormat: 1, DocumentText: entitySearchProjectionText(name, kind), Metadata: map[string]any{}, SpaceID: spaceID, SpaceGeneration: spaceGeneration})
-	if err := validateUpsertSearchDocumentInput(input); err != nil {
-		return nil, err
-	}
-	return upsertSearchDocumentInTx(ctx, tx, input, contract, 0)
+	return result, nil
 }
 
 func previewSynchronousRememberPredicateKey(ctx context.Context, tx *gorm.DB, teamID string, registration SubmissionPredicateRegistrationInput) (string, error) {
@@ -332,6 +345,12 @@ func applySynchronousRememberEmbeddings(ctx context.Context, tx *gorm.DB, teamID
 	if tx == nil {
 		return wrapSynchronousRememberEmbeddingStage("transaction", errors.New("synchronous Remember embedding transaction is required"))
 	}
+	return withSystemModeInTx(ctx, tx, teamID, ownerID, func(systemTx *gorm.DB) error {
+		return applySynchronousRememberEmbeddingsInSystemMode(ctx, systemTx, teamID, ownerID, documents, result)
+	})
+}
+
+func applySynchronousRememberEmbeddingsInSystemMode(ctx context.Context, tx *gorm.DB, teamID, ownerID string, documents []SearchDocumentResult, result SynchronousRememberEmbeddingResult) error {
 	if err := validateSynchronousRememberEmbeddingResult(result); err != nil {
 		return wrapSynchronousRememberEmbeddingStage("result_validation", err)
 	}
@@ -353,8 +372,12 @@ func applySynchronousRememberEmbeddings(ctx context.Context, tx *gorm.DB, teamID
 		if document.SearchState != "pending" {
 			continue
 		}
+		documentOwnerID := strings.TrimSpace(document.OwnerProfileID)
+		if documentOwnerID == "" {
+			documentOwnerID = ownerID
+		}
 		var text, hash string
-		if err := tx.WithContext(ctx).Raw(`SELECT document_text, document_hash FROM search_documents WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND search_document_id = ?::uuid FOR SHARE`, teamID, ownerID, document.SearchDocumentID).Row().Scan(&text, &hash); err != nil {
+		if err := tx.WithContext(ctx).Raw(`SELECT document_text, document_hash FROM search_documents WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND search_document_id = ?::uuid FOR SHARE`, teamID, documentOwnerID, document.SearchDocumentID).Row().Scan(&text, &hash); err != nil {
 			return wrapSynchronousRememberEmbeddingStage("document_load", err)
 		}
 		if hash != searchDocumentTextHash(text) {
@@ -368,7 +391,7 @@ func applySynchronousRememberEmbeddings(ctx context.Context, tx *gorm.DB, teamID
 		if err != nil {
 			return wrapSynchronousRememberEmbeddingStage("vector", err)
 		}
-		updated := tx.WithContext(ctx).Exec(`UPDATE search_documents SET embedding = ?::vector, search_state = 'current', embedding_updated_at = now(), embedding_error = '', updated_at = now() WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND search_document_id = ?::uuid AND document_hash = ? AND embedding_contract_id = ?::uuid AND embedding_dimensions = ? AND search_state = 'pending'`, literal, teamID, ownerID, document.SearchDocumentID, hash, result.EmbeddingContractID, result.EmbeddingDimensions)
+		updated := tx.WithContext(ctx).Exec(`UPDATE search_documents SET embedding = ?::vector, search_state = 'current', embedding_updated_at = now(), embedding_error = '', updated_at = now() WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND search_document_id = ?::uuid AND document_hash = ? AND embedding_contract_id = ?::uuid AND embedding_dimensions = ? AND search_state = 'pending'`, literal, teamID, documentOwnerID, document.SearchDocumentID, hash, result.EmbeddingContractID, result.EmbeddingDimensions)
 		if updated.Error != nil {
 			return wrapSynchronousRememberEmbeddingStage("document_apply", updated.Error)
 		}

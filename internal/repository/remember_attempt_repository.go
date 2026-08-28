@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 // ErrRememberReplay identifies a terminal attempt that owns an idempotency
@@ -20,10 +22,6 @@ import (
 var ErrRememberReplay = errors.New("remember result already committed")
 
 var ErrRememberAttemptNotFound = errors.New("remember attempt not found")
-
-// MigratedRememberRequestHashVersion identifies the legacy request-hash
-// contract whose hash may be accepted as an equivalent retry identity.
-const MigratedRememberRequestHashVersion = "remember_request_hash_v1"
 
 type RememberAttemptRecordInput struct {
 	TeamID, OwnerProfileID, AttemptID string
@@ -73,14 +71,6 @@ func lockRememberIdempotencyKeyInTx(ctx context.Context, tx *gorm.DB, teamID, ow
 		int32(binary.BigEndian.Uint32(digest[:4])), int32(binary.BigEndian.Uint32(digest[4:8]))).Error
 }
 
-func rememberAttemptHashMatches(storedHash, storedContract, requestHash, migratedHash string) bool {
-	if strings.TrimSpace(storedHash) == strings.TrimSpace(requestHash) {
-		return true
-	}
-	return strings.TrimSpace(storedContract) == MigratedRememberRequestHashVersion &&
-		strings.TrimSpace(migratedHash) != "" && strings.TrimSpace(storedHash) == strings.TrimSpace(migratedHash)
-}
-
 func validateRememberFailureRetryInTx(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, key, requestHash, migratedHash string) error {
 	var hasHashMismatch bool
 	if err := tx.WithContext(ctx).Raw(`
@@ -94,7 +84,7 @@ func validateRememberFailureRetryInTx(ctx context.Context, tx *gorm.DB, teamID, 
 				  OR (contract_version = ? AND ? <> '' AND request_hash = ?)
 			  )
 		)
-	`, teamID, ownerProfileID, key, requestHash, MigratedRememberRequestHashVersion, migratedHash, migratedHash).Row().Scan(&hasHashMismatch); err != nil {
+	`, teamID, ownerProfileID, key, requestHash, domain.MigratedRememberRequestHashVersion, migratedHash, migratedHash).Row().Scan(&hasHashMismatch); err != nil {
 		return err
 	}
 	if hasHashMismatch {
@@ -159,7 +149,7 @@ func loadTerminalRememberAttemptInTx(ctx context.Context, tx *gorm.DB, teamID, o
 	if err != nil {
 		return nil, err
 	}
-	if !rememberAttemptHashMatches(result.RequestHash, result.ContractVersion, requestHash, migratedHash) {
+	if !domain.RememberRequestHashMatches(result.RequestHash, result.ContractVersion, requestHash, migratedHash) {
 		return nil, fmt.Errorf("%w: idempotency key reused with a different request hash", ErrIdempotencyConflict)
 	}
 	result.PublicResult = map[string]any{}

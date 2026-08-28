@@ -207,18 +207,25 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		"relationship_hints": req.RelationshipHints,
 	}
 	scan, scanErr := scanSubmissionWithProviderProposal(contents, proposal)
+	var securityAudit *SecurityRejectionAuditInput
 	if scanErr != nil {
-		if err := recordSubmissionSecurityRejection(ctx, s.auditor, s.logger, actor, "remember", scan, scanErr); err != nil {
-			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
-			return nil, ErrRememberPersistence
-		}
 		if s.synchronous == nil {
+			if err := recordSubmissionSecurityRejection(ctx, s.auditor, s.logger, actor, "remember", scan, scanErr); err != nil {
+				observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
+				return nil, ErrRememberPersistence
+			}
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
 			return nil, scanErr
 		}
+		input := securityRejectionAuditInput(ctx, actor, "remember", scan, scanErr)
+		securityAudit = &input
 	}
 
 	requestHash, err := canonicalRequestHash(req)
+	if err != nil {
+		return nil, err
+	}
+	migratedRequestHash, err := canonicalRequestHashForVersion(req, domain.MigratedRememberRequestHashVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -237,10 +244,10 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if s.synchronous != nil {
 		terminal, err := s.synchronous.ProcessRemember(ctx, RememberProcessRequest{
 			TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
-			SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash,
+			SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash, MigratedRequestHash: migratedRequestHash,
 			SourceSummary: sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata, Evidence: repositoryEvidenceInputs(req.Evidence),
 			SecuritySignals:          append([]SubmissionSecurityBatchSignal(nil), scan.Signals...),
-			SecuritySignalsTruncated: scan.SignalsTruncated, SecurityRejected: scanErr != nil,
+			SecuritySignalsTruncated: scan.SignalsTruncated, SecurityRejected: scanErr != nil, SecurityRejectionAudit: securityAudit,
 		})
 		if err != nil {
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")

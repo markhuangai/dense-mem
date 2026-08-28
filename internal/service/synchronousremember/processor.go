@@ -38,6 +38,7 @@ type SynchronousRememberProcessorDependencies struct {
 	Provider   assessor.Provider
 	Limits     assessor.SemanticAssessmentLimits
 	Embeddings *semanticwrite.Executor
+	Auditor    remember.SecurityRejectionAuditor
 	Metrics    observability.DiscoverabilityMetrics
 	Logger     observability.LogProvider
 }
@@ -48,6 +49,7 @@ type synchronousRememberProcessor struct {
 	provider   assessor.Provider
 	limits     assessor.SemanticAssessmentLimits
 	embeddings *semanticwrite.Executor
+	auditor    remember.SecurityRejectionAuditor
 	metrics    observability.DiscoverabilityMetrics
 	logger     observability.LogProvider
 }
@@ -59,7 +61,7 @@ func NewSynchronousRememberProcessor(deps SynchronousRememberProcessorDependenci
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
-	return &synchronousRememberProcessor{ledger: deps.Ledger, catalog: deps.Catalog, provider: deps.Provider, limits: deps.Limits, embeddings: deps.Embeddings, metrics: metrics, logger: deps.Logger}
+	return &synchronousRememberProcessor{ledger: deps.Ledger, catalog: deps.Catalog, provider: deps.Provider, limits: deps.Limits, embeddings: deps.Embeddings, auditor: deps.Auditor, metrics: metrics, logger: deps.Logger}
 }
 
 func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, input remember.RememberProcessRequest) (*remember.SubmissionStatusResult, error) {
@@ -73,7 +75,7 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 
 	replay, err := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
 	if err == nil && replay != nil {
-		if !synchronousRememberHashMatches(replay, input) {
+		if !domain.RememberRequestHashMatches(replay.RequestHash, replay.ContractVersion, input.RequestHash, input.MigratedRequestHash) {
 			return nil, remember.ErrRememberConflict
 		}
 		if replay.Outcome == "completed" || replay.Outcome == "rejected" || replay.Outcome == "quarantined" || replay.Outcome == "replayed" {
@@ -87,6 +89,12 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 	if input.SecurityRejected {
 		failure := remember.TerminalResultWithError(base, remember.TerminalErrorQuarantined)
 		commitCtx, cancelCommit := remember.ContextForPhase(ctx, remember.RememberPhaseCommit)
+		if input.SecurityRejectionAudit != nil {
+			if err := remember.RecordSecurityRejectionAudit(commitCtx, p.auditor, p.logger, *input.SecurityRejectionAudit); err != nil {
+				cancelCommit()
+				return nil, remember.ErrRememberPersistence
+			}
+		}
 		err := p.ledger.RecordSynchronousRememberPreflightQuarantine(commitCtx, synchronousAttempt(input, attemptID, failure.Result, "quarantined", "preflight", string(remember.TerminalErrorQuarantined), 0, started))
 		cancelCommit()
 		if errors.Is(err, repository.ErrRememberReplay) {
@@ -191,7 +199,8 @@ func (p *synchronousRememberProcessor) failure(ctx context.Context, input rememb
 		p.logger.Error("synchronous_remember_failed", errors.New("synchronous Remember failed"), attrs...)
 	}
 	failure := remember.TerminalResultWithError(base, code)
-	recordCtx := context.WithoutCancel(ctx)
+	recordCtx, cancelRecord := context.WithTimeout(context.WithoutCancel(ctx), remember.RememberFailurePersistenceBudget)
+	defer cancelRecord()
 	if err := p.ledger.RecordRememberFailure(recordCtx, repository.RememberFailureRecordInput{Attempt: synchronousAttempt(input, attemptID, failure.Result, "failed", phase, string(code), turns, time.Now())}); err != nil {
 		if errors.Is(err, repository.ErrRememberReplay) {
 			winner, loadErr := p.ledger.LoadRememberAttempt(recordCtx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
@@ -284,6 +293,8 @@ func synchronousFailureCode(phase string, err error) remember.TerminalErrorCode 
 		return remember.TerminalErrorIdempotencyConflict
 	case errors.Is(err, repository.ErrPlacementStaleSource), memoryservice.IsRememberStaleInputError(err):
 		return remember.TerminalErrorStaleInput
+	case errors.Is(err, repository.ErrSynchronousRememberEmbeddingInputBudget):
+		return remember.TerminalErrorInputBudgetExceeded
 	case errors.Is(err, semanticwrite.ErrProviderUnavailable):
 		return remember.TerminalErrorEmbeddingUnavailable
 	case errors.Is(err, semanticwrite.ErrProviderResponseInvalid), errors.Is(err, semanticwrite.ErrInvalidPlan):
@@ -359,17 +370,6 @@ func synchronousRelationshipRefs(proposal map[string]any) []string {
 		refs = append(refs, ref)
 	}
 	return refs
-}
-func synchronousRememberHashMatches(attempt *repository.RememberAttempt, input remember.RememberProcessRequest) bool {
-	if attempt == nil {
-		return false
-	}
-	if strings.TrimSpace(attempt.RequestHash) == strings.TrimSpace(input.RequestHash) {
-		return true
-	}
-	return attempt.ContractVersion == repository.MigratedRememberRequestHashVersion &&
-		strings.TrimSpace(input.MigratedRequestHash) != "" &&
-		strings.TrimSpace(attempt.RequestHash) == strings.TrimSpace(input.MigratedRequestHash)
 }
 func terminalMap(result *remember.TerminalRememberResult) (map[string]any, error) {
 	raw, err := json.Marshal(result)

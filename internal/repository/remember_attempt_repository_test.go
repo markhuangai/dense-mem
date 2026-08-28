@@ -1,21 +1,25 @@
 package repository
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+)
 
 func TestRememberAttemptHashMatchesCurrentHash(t *testing.T) {
-	if !rememberAttemptHashMatches("current", "any", "current", "") {
+	if !domain.RememberRequestHashMatches("current", "any", "current", "") {
 		t.Fatal("current request hash must match")
 	}
-	if rememberAttemptHashMatches("stored", "any", "current", "") {
+	if domain.RememberRequestHashMatches("stored", "any", "current", "") {
 		t.Fatal("different current request hash must not match")
 	}
 }
 
 func TestRememberAttemptHashMatchesOnlyRecognizedMigrationContract(t *testing.T) {
-	if !rememberAttemptHashMatches("migrated", MigratedRememberRequestHashVersion, "current", "migrated") {
+	if !domain.RememberRequestHashMatches("migrated", domain.MigratedRememberRequestHashVersion, "current", "migrated") {
 		t.Fatal("recognized migration hash must match")
 	}
-	if rememberAttemptHashMatches("migrated", "unrecognized", "current", "migrated") {
+	if domain.RememberRequestHashMatches("migrated", "unrecognized", "current", "migrated") {
 		t.Fatal("unrecognized migration contract must not match")
 	}
 }

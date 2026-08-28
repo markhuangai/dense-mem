@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -89,6 +90,41 @@ func TestSynchronousRememberVectorFenceRollsBackCanonicalAndAttemptState(t *test
 	}))
 	assert.Zero(t, canonicalRows)
 	assert.Zero(t, attempts)
+}
+
+func TestSynchronousRememberEmbeddingPlanRejectsOverBudgetDocuments(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "sync-remember-embedding-budget", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "sync-remember-embedding-budget-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "sync-remember-embedding-budget-owner")
+	repo := NewLedgerRepository(appDB, rls)
+
+	evidence := make([]EvidenceInput, 100)
+	for index := range evidence {
+		content := fmt.Sprintf("budget evidence %03d", index)
+		evidence[index] = EvidenceInput{Content: content, ContentHash: sha256Hex(content)}
+	}
+	observations := make([]SubmissionAssessmentRelationshipObservationInput, 157)
+	for index := range observations {
+		observations[index] = SubmissionAssessmentRelationshipObservationInput{
+			RelationshipRef: fmt.Sprintf("budget-relationship-%03d", index),
+			Observation: PlacementRelationshipDecisionInput{
+				Ref: fmt.Sprintf("budget-relationship-%03d", index), SubjectRef: fmt.Sprintf("subject-%03d", index), ObjectRef: fmt.Sprintf("object-%03d", index),
+				PredicateKey: "stores_memory_in", PromoteToFact: true, Polarity: "+",
+			},
+		}
+	}
+	plan, err := repo.PlanSynchronousRememberEmbeddings(ctx,
+		CreateIngestInput{TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "sync-embedding-budget", RequestHash: "sync-embedding-budget-hash", Status: string(domain.PlacementRunQueued), TelemetryRemember: true, Evidence: evidence},
+		CommitSubmissionAssessmentInput{SubmissionAssessmentRunScope: SubmissionAssessmentRunScope{TeamID: teamID, OwnerProfileID: ownerID}, RelationshipObservations: observations},
+	)
+
+	require.Error(t, err)
+	require.Nil(t, plan)
+	require.ErrorIs(t, err, ErrSynchronousRememberEmbeddingFence)
+	require.ErrorIs(t, err, ErrSynchronousRememberEmbeddingInputBudget)
 }
 
 func TestSynchronousRememberPublicResultFailureRollsBackCanonicalAndAttemptState(t *testing.T) {
@@ -290,6 +326,47 @@ func TestSynchronousRememberRejectsStaleSourceAfterPlanning(t *testing.T) {
 	assert.Zero(t, syncAttempts)
 }
 
+func TestSynchronousRememberRejectsStaleSupersessionTargetAfterPlanning(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "sync-remember-supersession-fence", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "sync-remember-supersession-fence-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "sync-remember-supersession-fence-owner")
+	repo := NewLedgerRepository(appDB, rls)
+	target, err := repo.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "sync-supersession-target", RequestHash: "sync-supersession-target-hash",
+		Evidence: []EvidenceInput{{Content: "Original supersession target."}},
+	})
+	require.NoError(t, err)
+	require.Len(t, target.Evidence, 1)
+
+	input := synchronousRememberAcceptedFixture(teamID, ownerID, "sync-supersession-stale", "sync-supersession-stale-hash", nil)
+	input.CreateIngest.Evidence[0].SupersedesEvidenceIDs = []string{target.Evidence[0].FragmentID}
+	prepareSynchronousRememberInline(t, repo, input.CreateIngest, &input)
+
+	_, err = repo.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "sync-supersession-mutator", RequestHash: "sync-supersession-mutator-hash",
+		Evidence: []EvidenceInput{{Content: "A competing replacement wins first.", IdempotencyKey: "sync-supersession-mutator-evidence", SupersedesEvidenceIDs: []string{target.Evidence[0].FragmentID}}},
+	})
+	require.NoError(t, err)
+
+	_, err = repo.CommitSynchronousRemember(ctx, input)
+	var preflight *RememberPreflightError
+	require.ErrorAs(t, err, &preflight)
+	require.Contains(t, preflight.Issues, RememberPreflightIssue{Path: "/evidence/0/supersedes_evidence_ids/0", Code: "stale", Message: "supersession target is stale"})
+
+	var candidateIngests, candidateAttempts int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT count(*) FROM knowledge_ingests WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = 'sync-supersession-stale'`, teamID, ownerID).Scan(&candidateIngests).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`SELECT count(*) FROM remember_attempts WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = 'sync-supersession-stale'`, teamID, ownerID).Scan(&candidateAttempts).Error
+	}))
+	assert.Zero(t, candidateIngests)
+	assert.Zero(t, candidateAttempts)
+}
+
 func TestSynchronousRememberInlineCommitAddsNoEmbeddingJobs(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -393,6 +470,61 @@ func TestSynchronousRememberInlineCommitSupportsTypedValueProjection(t *testing.
 	assert.Zero(t, valueDocuments)
 	assert.GreaterOrEqual(t, relationshipDocuments, int64(1))
 	assert.True(t, relationshipHasValue)
+}
+
+func TestSynchronousRememberPreservesReusedEntitySearchDocumentOwner(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "sync-remember-reused-entity-owner", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "sync-remember-reused-entity-owner-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "sync-remember-reused-entity-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "sync-remember-reused-entity-owner-b")
+	semantic := NewSemanticRepository(appDB, rls)
+	entity := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "concept", "Authoritative Dense-Mem")
+	repo := NewLedgerRepository(appDB, rls)
+
+	commitReusingEntity := func(key string) SynchronousRememberCommitInput {
+		input := synchronousRememberAcceptedFixture(teamID, ownerB, key, key+"-hash", nil)
+		originalBuildCommit := input.BuildCommit
+		input.BuildCommit = func(created *CreateIngestResult, scope SubmissionAssessmentRunScope) (PersistSubmissionAssessmentInput, CommitSubmissionAssessmentInput, error) {
+			persist, commit, err := originalBuildCommit(created, scope)
+			if err != nil {
+				return PersistSubmissionAssessmentInput{}, CommitSubmissionAssessmentInput{}, err
+			}
+			for index := range commit.EntityResolutions {
+				if commit.EntityResolutions[index].Resolution.MentionRef != "orion" {
+					continue
+				}
+				commit.EntityResolutions[index].Resolution.Action = string(domain.EntityResolutionReuse)
+				commit.EntityResolutions[index].Resolution.EntityID = entity.EntityID
+				commit.EntityResolutions[index].Resolution.ExactEntityID = entity.EntityID
+				commit.EntityResolutions[index].Resolution.EntityKind = entity.EntityKind
+				commit.EntityResolutions[index].Resolution.CanonicalName = entity.CanonicalName
+			}
+			return persist, commit, nil
+		}
+		prepareSynchronousRememberInline(t, repo, input.CreateIngest, &input)
+		return input
+	}
+
+	first := commitReusingEntity("sync-reused-entity-owner-first")
+	_, err := repo.CommitSynchronousRemember(ctx, first)
+	require.NoError(t, err)
+	second := commitReusingEntity("sync-reused-entity-owner-second")
+	_, err = repo.CommitSynchronousRemember(ctx, second)
+	require.NoError(t, err)
+
+	var documentCount int64
+	var documentOwner string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT count(*) FROM search_documents WHERE team_id = ?::uuid AND source_kind = 'entity' AND source_id = ?::uuid`, teamID, entity.EntityID).Scan(&documentCount).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`SELECT owner_profile_id::text FROM search_documents WHERE team_id = ?::uuid AND source_kind = 'entity' AND source_id = ?::uuid`, teamID, entity.EntityID).Row().Scan(&documentOwner)
+	}))
+	assert.Equal(t, int64(1), documentCount)
+	assert.Equal(t, ownerA, documentOwner)
 }
 
 func TestSynchronousRememberAttemptRLSIsolatesTeamAndProfileABC(t *testing.T) {

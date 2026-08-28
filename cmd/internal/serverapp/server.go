@@ -254,7 +254,7 @@ func RunActiveServer(
 		SynchronousRememberFactory: func() rememberapp.Service {
 			processor := synchronousremember.NewSynchronousRememberProcessor(synchronousremember.SynchronousRememberProcessorDependencies{
 				Ledger: ledgerRepo, Catalog: semanticRepo, Provider: assessorProvider, Limits: assessmentLimits,
-				Embeddings: newSemanticwriteEmbeddingExecutor(retryEmbedder), Metrics: discoverabilityMetrics, Logger: logger,
+				Embeddings: newSemanticwriteEmbeddingExecutor(openaiProvider), Auditor: rememberAuditor, Metrics: discoverabilityMetrics, Logger: logger,
 			})
 			return rememberapp.NewService(rememberapp.Dependencies{
 				Intake: rememberIntake, Synchronous: processor, Auditor: rememberAuditor,
