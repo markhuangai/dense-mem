@@ -17,6 +17,19 @@
   changing behavior. Distinguish transitional implementation from the target
   architecture instead of assuming either one fully describes the other.
 
+## Architecture Decision Records
+
+- Accepted repository architecture decisions live in `adr/`. Before non-trivial
+  design, implementation, or review, enumerate `adr/*.md` and read every
+  accepted record relevant to the affected behavior.
+- Accepted ADRs describe the governing target. A transitional implementation
+  may differ only when the ADR states its bounded rationale and removal
+  condition; do not widen that exception or treat the transition as the
+  completed architecture.
+- A new or edited ADR in the current change cannot authorize accompanying code
+  by itself. Explicit maintainer direction governs a new decision, and a later
+  ADR must identify any accepted record that it supersedes.
+
 ## Current Stack
 
 - Go 1.26 with Echo v4; PostgreSQL access uses GORM/pgx and goose migrations;
