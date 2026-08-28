@@ -39,6 +39,7 @@ type searchRepairRepositoryStub struct {
 	contract  *repository.ActiveSearchContract
 	run       *repository.SearchRepairRun
 	documents []repository.SearchRepairDocument
+	selectErr error
 	now       time.Time
 	timeErr   error
 	apply     *repository.ApplySearchRepairInput
@@ -73,7 +74,7 @@ func (s *searchRepairRepositoryStub) ReserveSearchRepairRun(context.Context, rep
 	return s.run, s.run != nil, nil
 }
 func (s *searchRepairRepositoryStub) SelectSearchRepairDocuments(context.Context, repository.SearchRepairSelectionInput) ([]repository.SearchRepairDocument, bool, error) {
-	return s.documents, false, nil
+	return s.documents, false, s.selectErr
 }
 func (s *searchRepairRepositoryStub) ApplySearchRepair(_ context.Context, input repository.ApplySearchRepairInput) (*repository.SearchRepairApplyResult, error) {
 	s.apply = &input
@@ -136,6 +137,26 @@ func TestSearchReconciliationRunLeavesDocumentsUntouchedWhenProviderFails(t *tes
 	require.Nil(t, repo.apply)
 	require.NotNil(t, repo.finish)
 	require.Equal(t, "failed", repo.finish.Status)
+	require.EqualValues(t, 1, repo.finish.DriftedCount)
+}
+
+func TestSearchReconciliationRunPreservesDriftWhenSelectionFails(t *testing.T) {
+	contract := &repository.ActiveSearchContract{
+		EmbeddingContractID: "11111111-1111-4111-8111-111111111111", SearchIndexGenerationID: "22222222-2222-4222-8222-222222222222",
+		EmbeddingDimensions: 2, EmbeddingModel: "model", IndexGeneration: 1,
+	}
+	repo := &searchRepairRepositoryStub{
+		contract:  contract,
+		run:       &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
+		selectErr: errors.New("selection unavailable"),
+	}
+	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: &searchRepairExecutorStub{}, WorkerID: "worker"})
+
+	result, err := svc.Run(context.Background(), time.Now().UTC(), true)
+
+	require.ErrorIs(t, err, ErrSearchRepairFailed)
+	require.EqualValues(t, 1, result.DriftedCount)
+	require.NotNil(t, repo.finish)
 	require.EqualValues(t, 1, repo.finish.DriftedCount)
 }
 

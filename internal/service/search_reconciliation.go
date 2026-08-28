@@ -165,6 +165,8 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 		metrics.ObserveEmbeddingReconciliationRun("reserved")
 	}
 
+	// A reserved run cannot claim convergence when selection itself fails.
+	result.DriftedCount = 1
 	documents, hasMore, err := s.repository.SelectSearchRepairDocuments(ctx, repository.SearchRepairSelectionInput{
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions,
@@ -180,10 +182,6 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 		}
 		return s.finish(ctx, result, "completed", "")
 	}
-	// A selected document remains drifted until ApplySearchRepair proves that
-	// no fenced work remains; failure paths must not report convergence.
-	result.DriftedCount = 1
-
 	plan, err := searchRepairPlan(documents, contract, s.providerTimeout)
 	if err != nil {
 		return s.finishFailure(ctx, result, "failed", "reconciliation_snapshot_invalid")
