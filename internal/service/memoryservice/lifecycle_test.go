@@ -74,6 +74,57 @@ func TestLifecycleCorrectRelationshipDoesNotCommitWhenEmbeddingFails(t *testing.
 	require.Zero(t, semantic.commitCalls)
 }
 
+func TestLifecycleCorrectRelationshipDoesNotCommitWhenEmbeddingTimesOut(t *testing.T) {
+	teamID, profileID := uuid.New(), uuid.New()
+	semantic := &lifecycleSemanticStub{plan: &repository.RelationshipCorrectionEmbeddingPlan{
+		Documents:           []repository.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
+		EmbeddingContractID: uuid.NewString(), EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: uuid.NewString(), IndexGeneration: 1,
+	}, correctResult: &repository.CorrectRelationshipResult{SubmissionID: uuid.NewString(), ProcessingState: "completed"}}
+	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, CorrectionExecutor: &lifecycleExecutorStub{err: semanticwrite.ErrProviderTimeout}})
+
+	_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "timed-out-planned-correction"})
+
+	var publicErr *httperr.APIError
+	require.ErrorAs(t, err, &publicErr)
+	require.Equal(t, httperr.ErrEmbeddingTimeout, publicErr.Code)
+	require.Zero(t, semantic.commitCalls)
+}
+
+func TestLifecycleCorrectRelationshipClassifiesConfiguredEmbeddingDeadline(t *testing.T) {
+	teamID, profileID := uuid.New(), uuid.New()
+	semantic := &lifecycleSemanticStub{plan: &repository.RelationshipCorrectionEmbeddingPlan{
+		Documents:           []repository.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
+		EmbeddingContractID: uuid.NewString(), EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: uuid.NewString(), IndexGeneration: 1,
+	}}
+	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, CorrectionExecutor: &lifecycleExecutorStub{waitForContext: true}, CorrectionEmbeddingTimeout: 10 * time.Millisecond})
+
+	_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "configured-timeout-correction"})
+
+	var publicErr *httperr.APIError
+	require.ErrorAs(t, err, &publicErr)
+	require.Equal(t, httperr.ErrEmbeddingTimeout, publicErr.Code)
+	require.Zero(t, semantic.commitCalls)
+}
+
+func TestLifecycleCorrectRelationshipPreservesCallerDeadline(t *testing.T) {
+	teamID, profileID := uuid.New(), uuid.New()
+	semantic := &lifecycleSemanticStub{plan: &repository.RelationshipCorrectionEmbeddingPlan{
+		Documents:           []repository.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
+		EmbeddingContractID: uuid.NewString(), EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: uuid.NewString(), IndexGeneration: 1,
+	}}
+	executor := &lifecycleExecutorStub{waitForContext: true}
+	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, CorrectionExecutor: executor, CorrectionEmbeddingTimeout: time.Second})
+	callerCtx, cancel := context.WithTimeout(authenticatedRememberContext(teamID, profileID, uuid.New()), 10*time.Millisecond)
+	defer cancel()
+
+	_, err := svc.CorrectRelationship(callerCtx, CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "caller-deadline-correction"})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	var publicErr *httperr.APIError
+	require.NotErrorAs(t, err, &publicErr)
+	require.Zero(t, semantic.commitCalls)
+}
+
 func TestLifecycleRelationshipCorrectionStatusPreservesConfirmationWorkflow(t *testing.T) {
 	teamID := uuid.New()
 	profileID := uuid.New()
@@ -129,6 +180,7 @@ func TestTranslateRelationshipCorrectionErrorMapsEmbeddingFailures(t *testing.T)
 	}{
 		{ErrLifecycleEmbeddingUnavailable, httperr.ErrEmbeddingUnavailable},
 		{ErrLifecycleEmbeddingInvalid, httperr.ErrEmbeddingResponseInvalid},
+		{ErrLifecycleEmbeddingTimeout, httperr.ErrEmbeddingTimeout},
 	} {
 		err := translateRelationshipCorrectionError(test.err)
 		var publicErr *httperr.APIError
@@ -274,13 +326,18 @@ type lifecycleEvidenceStub struct {
 }
 
 type lifecycleExecutorStub struct {
-	result semanticwrite.Result
-	err    error
-	calls  int
+	result         semanticwrite.Result
+	err            error
+	calls          int
+	waitForContext bool
 }
 
-func (s *lifecycleExecutorStub) Execute(_ context.Context, _ semanticwrite.Plan) (semanticwrite.Result, error) {
+func (s *lifecycleExecutorStub) Execute(ctx context.Context, _ semanticwrite.Plan) (semanticwrite.Result, error) {
 	s.calls++
+	if s.waitForContext {
+		<-ctx.Done()
+		return semanticwrite.Result{}, ctx.Err()
+	}
 	return s.result, s.err
 }
 

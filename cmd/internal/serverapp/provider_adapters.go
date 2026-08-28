@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/markhuangai/dense-mem/internal/conflictassessment"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/dreamgeneration"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
@@ -19,13 +20,26 @@ type semanticWriteProvider struct {
 func (p semanticWriteProvider) EmbedBatch(ctx context.Context, texts []string) ([]semanticwrite.IndexedEmbedding, string, error) {
 	vectors, model, err := p.provider.EmbedBatch(ctx, texts)
 	if err != nil {
-		return nil, model, err
+		return nil, model, translateSemanticWriteEmbeddingError(err)
 	}
 	result := make([]semanticwrite.IndexedEmbedding, len(vectors))
 	for index, vector := range vectors {
 		result[index] = semanticwrite.IndexedEmbedding{Index: index, Vector: append([]float32(nil), vector...)}
 	}
 	return result, model, nil
+}
+
+func translateSemanticWriteEmbeddingError(err error) error {
+	if err == nil {
+		return nil
+	}
+	switch embedding.ClassifyFailure(err).Code {
+	case string(domain.EmbeddingFailureProviderResponseInvalid):
+		return semanticwrite.ErrProviderResponseInvalid
+	case string(domain.EmbeddingFailureProviderTimeout):
+		return semanticwrite.ErrProviderTimeout
+	}
+	return err
 }
 
 func (p semanticWriteProvider) ModelName() string {

@@ -51,6 +51,7 @@ const (
 	ErrVerifierMalformedResponse ErrorCode = "verifier_malformed_response"
 	ErrEmbeddingUnavailable      ErrorCode = "embedding_unavailable"
 	ErrEmbeddingResponseInvalid  ErrorCode = "embedding_response_invalid"
+	ErrEmbeddingTimeout          ErrorCode = "embedding_timeout"
 
 	// Policy / predicate violations (422)
 	ErrPredicateNotPoliced    ErrorCode = "predicate_not_policed"

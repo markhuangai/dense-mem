@@ -27,6 +27,7 @@ var (
 	ErrLifecyclePersistence          = errors.New("memory lifecycle: persistence failed")
 	ErrLifecycleEmbeddingUnavailable = errors.New("memory lifecycle: embedding provider unavailable")
 	ErrLifecycleEmbeddingInvalid     = errors.New("memory lifecycle: embedding response invalid")
+	ErrLifecycleEmbeddingTimeout     = errors.New("memory lifecycle: embedding provider timed out")
 )
 
 type LifecycleService interface {
@@ -147,16 +148,18 @@ func (s *lifecycleService) CorrectRelationship(
 			err = ErrLifecycleEmbeddingUnavailable
 		} else {
 			executionCtx := observability.WithMetricIdentity(ctx, input.TeamID, input.OwnerProfileID)
-			result, executeErr := s.executor.Execute(executionCtx, semanticwrite.Plan{
+			embeddingCtx, cancel := context.WithTimeout(executionCtx, s.embeddingTimeout)
+			result, executeErr := s.executor.Execute(embeddingCtx, semanticwrite.Plan{
 				Documents: correctionPlanDocuments(plan.Documents),
 				Fence:     semanticwrite.Fence{Model: plan.EmbeddingModel, Dimensions: plan.EmbeddingDimensions, EmbeddingContractID: plan.EmbeddingContractID, SearchGenerationID: plan.SearchIndexGenerationID, SearchGenerationVersion: int64(plan.IndexGeneration)},
 				Timeout:   s.embeddingTimeout,
 			})
 			if executeErr != nil {
-				err = translateCorrectionEmbeddingError(executeErr)
+				err = translateCorrectionEmbeddingErrorWithContext(ctx, embeddingCtx, executeErr)
 			} else {
 				embeddings = correctionEmbeddingsFromResult(result)
 			}
+			cancel()
 		}
 	}
 	var result *repository.CorrectRelationshipResult
@@ -203,9 +206,33 @@ func translateCorrectionEmbeddingError(err error) error {
 		return ErrLifecycleEmbeddingUnavailable
 	case errors.Is(err, semanticwrite.ErrProviderResponseInvalid), errors.Is(err, semanticwrite.ErrInvalidPlan):
 		return ErrLifecycleEmbeddingInvalid
+	case errors.Is(err, semanticwrite.ErrProviderTimeout):
+		return ErrLifecycleEmbeddingTimeout
 	default:
 		return err
 	}
+}
+
+func translateCorrectionEmbeddingErrorWithContext(callerCtx, embeddingCtx context.Context, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) && correctionEmbeddingContextOwnsDeadline(callerCtx, embeddingCtx) {
+		return ErrLifecycleEmbeddingTimeout
+	}
+	return translateCorrectionEmbeddingError(err)
+}
+
+func correctionEmbeddingContextOwnsDeadline(callerCtx, embeddingCtx context.Context) bool {
+	if !errors.Is(embeddingCtx.Err(), context.DeadlineExceeded) {
+		return false
+	}
+	callerDeadline, callerHasDeadline := callerCtx.Deadline()
+	embeddingDeadline, embeddingHasDeadline := embeddingCtx.Deadline()
+	if !embeddingHasDeadline {
+		return false
+	}
+	if !callerHasDeadline {
+		return true
+	}
+	return embeddingDeadline.Before(callerDeadline)
 }
 
 func (s *lifecycleService) GetRelationshipCorrectionStatus(
@@ -238,6 +265,9 @@ func translateRelationshipCorrectionError(err error) error {
 	}
 	if errors.Is(err, ErrLifecycleEmbeddingInvalid) {
 		return httperr.New(httperr.ErrEmbeddingResponseInvalid, "embedding provider response invalid")
+	}
+	if errors.Is(err, ErrLifecycleEmbeddingTimeout) {
+		return httperr.New(httperr.ErrEmbeddingTimeout, "embedding provider timed out")
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
