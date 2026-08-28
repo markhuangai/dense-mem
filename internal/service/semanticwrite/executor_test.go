@@ -166,6 +166,15 @@ func TestExecutorRejectsProviderAvailabilityAndContractMismatches(t *testing.T) 
 	}
 }
 
+func TestExecutorRejectsNilExecutorAndProvider(t *testing.T) {
+	var nilExecutor *Executor
+	_, err := nilExecutor.Execute(context.Background(), validPlan())
+	require.ErrorIs(t, err, ErrProviderUnavailable)
+
+	_, err = NewExecutor(nil).Execute(context.Background(), validPlan())
+	require.ErrorIs(t, err, ErrProviderUnavailable)
+}
+
 func TestExecutorBoundsProviderFailureAndHonorsContextDeadline(t *testing.T) {
 	provider := validProvider()
 	provider.err = errors.New("provider failed")

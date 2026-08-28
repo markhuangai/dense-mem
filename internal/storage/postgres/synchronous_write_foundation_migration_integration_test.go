@@ -136,6 +136,149 @@ func TestSynchronousWriteFoundationMigrationPreservesPopulatedUpgrade(t *testing
 	require.EqualValues(t, 0, after.embedded)
 	require.EqualValues(t, 0, after.updated)
 	require.EqualValues(t, 0, after.drifted)
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE embedding_reconciliation_runs
+			SET selected_count = 7, embedded_count = 6, updated_count = 5, drifted_count = 1
+			WHERE reconciliation_run_id = $1::uuid
+		`, runID)
+		return err
+	}))
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT selected_count, embedded_count, updated_count, drifted_count
+		FROM embedding_reconciliation_runs WHERE reconciliation_run_id = $1::uuid
+	`, runID).Scan(&after.selected, &after.embedded, &after.updated, &after.drifted))
+	require.EqualValues(t, 7, after.selected)
+	require.EqualValues(t, 6, after.embedded)
+	require.EqualValues(t, 5, after.updated)
+	require.EqualValues(t, 1, after.drifted)
+}
+
+func TestSynchronousWriteFoundationStoresAdditiveLineage(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, synchronousWriteFoundationMigrationVersion)
+
+	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
+	ingestID, placementRunID, entityID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (team_id, ingest_id, owner_profile_id, status)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, 'completed')
+		`, teamID, ingestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO entity_records (team_id, entity_id, entity_kind)
+			VALUES ($1::uuid, $2::uuid, 'project')
+		`, teamID, entityID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_runs (team_id, placement_run_id, ingest_id, owner_profile_id, status, completed_at)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'completed', now())
+		`, teamID, placementRunID, ingestID, profileID)
+		return err
+	}))
+
+	attemptID, assessmentID := uuid.NewString(), uuid.NewString()
+	observationID, verificationID, resolutionID, reviewTaskID, registrationID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	responseHash := "sha256:" + strings.Repeat("a", 64)
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_attempts (
+				team_id, attempt_id, owner_profile_id, idempotency_key, request_hash,
+				contract_version, outcome
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'lineage-write', 'lineage-request', 'dense-mem.v2.6', 'completed')
+		`, teamID, attemptID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_assessments (
+				team_id, semantic_assessment_id, attempt_id, owner_profile_id, response_history,
+				accepted_revision, provider_turns, validated_at, response_hash
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '[{}]'::jsonb, 1, 1, now(), $5)
+		`, teamID, assessmentID, attemptID, profileID, responseHash); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO relationship_observations (
+				team_id, observation_id, ingest_id, owner_profile_id,
+				subject_ref, original_predicate, object_ref, remember_attempt_id
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				          'lineage-subject', 'works_on', 'lineage-object', $5::uuid)
+		`, teamID, observationID, ingestID, profileID, attemptID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO verification_events (
+				team_id, verification_event_id, observation_id, owner_profile_id, evidence_verdict,
+				rationale, model, response_hash, remember_attempt_id, semantic_assessment_id
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'entailed',
+				          'lineage verification', 'lineage-model', $5, $6::uuid, $7::uuid)
+		`, teamID, verificationID, observationID, profileID, responseHash, attemptID, assessmentID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO entity_resolution_events (
+				team_id, resolution_event_id, ingest_id, owner_profile_id, mention_ref, action,
+				entity_id, verifier_result, remember_attempt_id, semantic_assessment_id
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'lineage-entity', 'reuse',
+				         $5::uuid, '{}'::jsonb, $6::uuid, $7::uuid)
+		`, teamID, resolutionID, ingestID, profileID, entityID, attemptID, assessmentID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO review_tasks (
+				team_id, review_task_id, owner_profile_id, ingest_id, observation_id, task_type,
+				status, reason, payload, remember_attempt_id, semantic_assessment_id
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, 'relationship_needs_review',
+				          'open', 'lineage', '{}'::jsonb, $6::uuid, $7::uuid)
+		`, teamID, reviewTaskID, profileID, ingestID, observationID, attemptID, assessmentID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_assessments (
+				team_id, assessment_id, owner_profile_id, request_id, assessor_contract_version,
+				model, tokenizer, input_tokens, output_tokens, candidate_context_tokens,
+				normalized_response, response_hash, validated_at, assessment_scope, placement_run_id, ingest_id
+			) VALUES ($1::uuid, gen_random_uuid(), $2::uuid, 'lineage-placement', 'dense-mem.v2.4',
+				          'lineage-model', 'o200k_base', 0, 0, 0, '{}'::jsonb, $3, now(), 'submission', $4::uuid, $5::uuid)
+		`, teamID, profileID, responseHash, placementRunID, ingestID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO predicate_registration_events (
+				team_id, predicate_registration_event_id, placement_run_id, assessment_id, owner_profile_id,
+				relationship_ref, registration_action, predicate_key, predicate_version,
+				ingest_id, remember_attempt_id, semantic_assessment_id
+			) SELECT $1::uuid, $2::uuid, $3::uuid, assessment_id, $4::uuid,
+			         'lineage-relationship', 'reused', 'works_on', 1, $5::uuid, $6::uuid, $7::uuid
+			FROM placement_assessments
+			WHERE team_id = $1::uuid AND placement_run_id = $3::uuid
+			ORDER BY created_at DESC LIMIT 1
+		`, teamID, registrationID, placementRunID, profileID, ingestID, attemptID, assessmentID)
+		return err
+	}))
+
+	for _, check := range []struct {
+		name, query, id string
+		assessment      bool
+	}{
+		{"observation", `SELECT remember_attempt_id::text FROM relationship_observations WHERE team_id = $1::uuid AND observation_id = $2::uuid`, observationID, false},
+		{"resolution", `SELECT remember_attempt_id::text || ':' || semantic_assessment_id::text FROM entity_resolution_events WHERE team_id = $1::uuid AND resolution_event_id = $2::uuid`, resolutionID, true},
+		{"verification", `SELECT remember_attempt_id::text || ':' || semantic_assessment_id::text FROM verification_events WHERE team_id = $1::uuid AND verification_event_id = $2::uuid`, verificationID, true},
+		{"review task", `SELECT remember_attempt_id::text || ':' || semantic_assessment_id::text FROM review_tasks WHERE team_id = $1::uuid AND review_task_id = $2::uuid`, reviewTaskID, true},
+		{"predicate registration", `SELECT ingest_id::text || ':' || remember_attempt_id::text || ':' || semantic_assessment_id::text FROM predicate_registration_events WHERE team_id = $1::uuid AND predicate_registration_event_id = $2::uuid`, registrationID, true},
+	} {
+		var got string
+		require.NoError(t, db.QueryRowContext(ctx, check.query, teamID, check.id).Scan(&got), check.name)
+		require.Contains(t, got, attemptID, check.name)
+		if check.assessment {
+			require.Contains(t, got, assessmentID, check.name)
+		}
+	}
 }
 
 func TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage(t *testing.T) {
@@ -230,28 +373,29 @@ func TestSynchronousWriteFoundationConstrainsReplayAndAssessmentLineage(t *testi
 
 	assessmentAttemptID := uuid.New()
 	require.NoError(t, insertAttempt(assessmentAttemptID, profileA, "assessment-lineage", "assessment-lineage-request", "remember", "failed", nil))
-	insertAssessment := func(assessmentID uuid.UUID, history string, acceptedRevision string, validatedAt string) error {
+	insertAssessment := func(assessmentID uuid.UUID, history string, acceptedRevision string, validatedAt string, responseHash string) error {
 		return execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, `
 				INSERT INTO semantic_assessments (
 					team_id, semantic_assessment_id, attempt_id, owner_profile_id,
-					response_history, accepted_revision, validated_at
-				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::jsonb, $6::integer, `+validatedAt+`)
-			`, teamID, assessmentID, assessmentAttemptID, profileA, history, acceptedRevision)
+					response_history, accepted_revision, validated_at, response_hash
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::jsonb, $6::integer, `+validatedAt+`, $7)
+			`, teamID, assessmentID, assessmentAttemptID, profileA, history, acceptedRevision, responseHash)
 			return err
 		})
 	}
-	require.Error(t, insertAssessment(uuid.New(), "[]", "1", "NULL"))
-	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "NULL"))
-	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "CURRENT_TIMESTAMP"))
-	require.Error(t, insertAssessment(uuid.New(), "[{}]", "2", "CURRENT_TIMESTAMP"))
+	validResponseHash := "sha256:" + strings.Repeat("1", 64)
+	require.Error(t, insertAssessment(uuid.New(), "[]", "1", "NULL", validResponseHash))
+	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "NULL", validResponseHash))
+	require.Error(t, insertAssessment(uuid.New(), "[{}]", "1", "CURRENT_TIMESTAMP", ""))
+	require.Error(t, insertAssessment(uuid.New(), "[{}]", "2", "CURRENT_TIMESTAMP", validResponseHash))
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO semantic_assessments (
 				team_id, semantic_assessment_id, attempt_id, owner_profile_id,
-				response_history, accepted_revision, provider_turns, validated_at
-			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '[{}]'::jsonb, 1, 1, CURRENT_TIMESTAMP)
-		`, teamID, uuid.New().String(), assessmentAttemptID.String(), profileA)
+				response_history, accepted_revision, provider_turns, validated_at, response_hash
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, '[{}]'::jsonb, 1, 1, CURRENT_TIMESTAMP, $5)
+		`, teamID, uuid.New().String(), assessmentAttemptID.String(), profileA, validResponseHash)
 		return err
 	}))
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -331,6 +332,9 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	}
 	if strings.TrimSpace(result.SubmissionID) == "" || strings.TrimSpace(result.CorrelationID) == "" {
 		return errors.New("remember: terminal result identity fields are required")
+	}
+	if utf8.RuneCountInString(result.CorrelationID) > 128 {
+		return errors.New("remember: terminal result correlation_id exceeds maximum length")
 	}
 	if _, err := uuid.Parse(result.SubmissionID); err != nil {
 		return errors.New("remember: terminal result submission_id is invalid")

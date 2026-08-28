@@ -128,6 +128,7 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		{"contract version", func(result *TerminalRememberResult) { result.ContractVersion = "dense-mem.v2.future" }},
 		{"submission kind", func(result *TerminalRememberResult) { result.SubmissionKind = "relationship_correction" }},
 		{"missing identity", func(result *TerminalRememberResult) { result.CorrelationID = "" }},
+		{"correlation id exceeds code-point bound", func(result *TerminalRememberResult) { result.CorrelationID = strings.Repeat("界", 129) }},
 		{"submission uuid", func(result *TerminalRememberResult) { result.SubmissionID = "not-a-uuid" }},
 		{"invalid processing state", func(result *TerminalRememberResult) { result.ProcessingState = "processing" }},
 		{"invalid search state", func(result *TerminalRememberResult) { result.SearchState = "queued" }},
@@ -156,6 +157,9 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		}},
 		{"stored relationship without split", func(result *TerminalRememberResult) {
 			result.RelationshipResults[0].Splits = nil
+		}},
+		{"stored relationship reason", func(result *TerminalRememberResult) {
+			result.RelationshipResults[0].Reason = "not_supported_by_evidence"
 		}},
 		{"stored relationship with malformed split", func(result *TerminalRememberResult) {
 			result.RelationshipResults[0].Splits[0].RelationshipID = "not-a-uuid"

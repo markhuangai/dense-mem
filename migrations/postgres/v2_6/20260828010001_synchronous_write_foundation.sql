@@ -311,6 +311,7 @@ CREATE TABLE IF NOT EXISTS semantic_assessments (
             AND accepted_revision <= jsonb_array_length(response_history)
             AND accepted_revision <= provider_turns
             AND validated_at IS NOT NULL
+            AND response_hash <> ''
         )
     ),
     CONSTRAINT semantic_assessments_token_counts_check CHECK (
