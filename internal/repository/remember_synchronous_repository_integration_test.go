@@ -190,6 +190,7 @@ func TestSynchronousRememberRejectedTerminalCommitsNoCanonicalMemoryOrSearch(t *
 	repo := NewLedgerRepository(appDB, rls)
 	input := synchronousRememberAcceptedFixture(teamID, ownerID, "sync-rejected-terminal", "sync-rejected-terminal-hash", nil)
 	input.Attempt.Outcome = "rejected"
+	input.Attempt.ErrorCode = "no_supported_memory"
 	input.BuildCommit = nil
 	terminalInput := SynchronousRememberTerminalInput{
 		CreateIngest: input.CreateIngest,
@@ -224,10 +225,14 @@ func TestSynchronousRememberRejectedTerminalCommitsNoCanonicalMemoryOrSearch(t *
 				(SELECT count(*) FROM search_documents WHERE team_id = ?::uuid)
 		`, teamID, teamID, teamID, teamID, teamID, teamID).Row().Scan(&canonicalRows, &entities, &relationships, &documents)
 	}))
-	assert.Zero(t, canonicalRows)
-	assert.Zero(t, entities)
-	assert.Zero(t, relationships)
-	assert.Zero(t, documents)
+	assert.Equal(t, []int64{0, 0, 0, 0}, []int64{canonicalRows, entities, relationships, documents})
+
+	var attemptCode, eventCode string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT attempt.error_code, event.metadata ->> 'error_code' FROM remember_attempts AS attempt JOIN remember_attempt_events AS event ON event.team_id = attempt.team_id AND event.attempt_id = attempt.attempt_id WHERE attempt.team_id = ?::uuid AND attempt.owner_profile_id = ?::uuid`, teamID, ownerID).Row().Scan(&attemptCode, &eventCode)
+	}))
+	assert.Equal(t, "no_supported_memory", attemptCode)
+	assert.Equal(t, attemptCode, eventCode)
 }
 
 func TestSynchronousRememberRejectsSearchGenerationRotationAfterPlanning(t *testing.T) {

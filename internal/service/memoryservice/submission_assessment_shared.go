@@ -83,6 +83,10 @@ func semanticAssessmentPreflightFailure(err error) (string, bool) {
 // server-owned candidate context. Callers use this narrow classification to
 // preserve the public input_budget_exceeded contract without exposing stages.
 func IsSemanticAssessmentInputBudgetError(err error) bool {
+	var malformed *assessor.MalformedResponseError
+	if errors.As(err, &malformed) && strings.TrimSpace(malformed.FailureClass) == "input_budget" {
+		return true
+	}
 	stage, terminal := semanticAssessmentPreflightFailure(err)
 	if !terminal {
 		return false

@@ -98,6 +98,12 @@ func TestIsSemanticAssessmentInputBudgetErrorRecognizesBoundedPreflightStages(t 
 	if IsSemanticAssessmentInputBudgetError(errors.New("catalog_context exceeded")) {
 		t.Fatal("untyped error was incorrectly classified as an input budget error")
 	}
+	if !IsSemanticAssessmentInputBudgetError(&assessor.MalformedResponseError{FailureClass: "input_budget"}) {
+		t.Fatal("typed assessor input budget error was not classified")
+	}
+	if IsSemanticAssessmentInputBudgetError(&assessor.MalformedResponseError{FailureClass: "malformed_exhausted"}) {
+		t.Fatal("malformed assessor response was incorrectly classified as an input budget error")
+	}
 }
 
 func TestSynchronousRememberAssessmentBuildsCommitAndTerminalInputs(t *testing.T) {

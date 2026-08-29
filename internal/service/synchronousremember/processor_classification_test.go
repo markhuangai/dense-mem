@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	remember "github.com/markhuangai/dense-mem/internal/service/remember"
 )
@@ -20,6 +21,7 @@ func TestSynchronousFailureCodeClassifiesSearchContractMismatch(t *testing.T) {
 		{name: "search contract during commit", phase: "commit", cause: repository.ErrSearchContractMismatch, want: remember.TerminalErrorConfigurationInvalid},
 		{name: "inactive reused entity", phase: "embedding", cause: repository.ErrRememberExactReferenceStale, want: remember.TerminalErrorStaleInput},
 		{name: "unavailable supersession target", phase: "commit", cause: &repository.RememberPreflightError{Issues: []repository.RememberPreflightIssue{{Path: "/evidence/0/supersedes_evidence_ids/0", Code: "unavailable"}}}, want: remember.TerminalErrorStaleInput},
+		{name: "assessor input budget", phase: "assessment", cause: &assessor.MalformedResponseError{FailureClass: "input_budget"}, want: remember.TerminalErrorInputBudgetExceeded},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require.Equal(t, test.want, synchronousFailureCode(test.phase, test.cause))

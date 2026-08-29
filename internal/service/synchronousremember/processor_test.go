@@ -593,6 +593,7 @@ func TestSynchronousProcessorSkipsEmbeddingForNoSupportedMemory(t *testing.T) {
 	require.Zero(t, ledger.planCalls)
 	require.Zero(t, ledger.commitCalls)
 	require.Equal(t, 1, ledger.terminalCalls)
+	require.Equal(t, string(remember.TerminalErrorNoSupportedMemory), ledger.terminalInput.Attempt.ErrorCode)
 	require.GreaterOrEqual(t, ledger.terminalInput.Attempt.Duration, 15*time.Millisecond)
 }
 
@@ -626,6 +627,7 @@ func TestSynchronousProcessorSecuritySignalsOverrideNoSupportedMemory(t *testing
 	require.Equal(t, string(remember.TerminalErrorQuarantined), status.Errors[0].Code)
 	require.Equal(t, 1, ledger.terminalCalls)
 	require.Equal(t, "quarantined", ledger.terminalInput.Attempt.Outcome)
+	require.Equal(t, string(remember.TerminalErrorQuarantined), ledger.terminalInput.Attempt.ErrorCode)
 	require.Zero(t, embeddings.calls)
 	require.Zero(t, ledger.planCalls)
 }

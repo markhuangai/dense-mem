@@ -286,9 +286,13 @@ func synchronousRememberEmbeddingStage(err error) string {
 func (p *synchronousRememberProcessor) commitTerminal(ctx context.Context, input remember.RememberProcessRequest, attemptID string, base *remember.TerminalRememberResult, create repository.CreateIngestInput, prepared *memoryservice.SynchronousRememberAssessmentResult, outcome string, rejected []repository.SubmissionRelationshipResultInput, refs []string, started time.Time) (*remember.SubmissionStatusResult, error) {
 	commitCtx, cancel := remember.ContextForPhase(ctx, remember.RememberPhaseCommit)
 	defer cancel()
+	terminalCode := remember.TerminalErrorQuarantined
+	if outcome == "rejected" {
+		terminalCode = remember.TerminalErrorNoSupportedMemory
+	}
 	terminal, err := p.ledger.CommitSynchronousRememberTerminal(commitCtx, repository.SynchronousRememberTerminalInput{
 		CreateIngest: create,
-		Attempt:      synchronousAttempt(input, attemptID, nil, outcome, "commit", "", prepared.Response.ProviderTurns, started),
+		Attempt:      synchronousAttempt(input, attemptID, nil, outcome, "commit", string(terminalCode), prepared.Response.ProviderTurns, started),
 		BuildTerminal: func(created *repository.CreateIngestResult, scope repository.SubmissionAssessmentRunScope) (*repository.PersistSubmissionAssessmentInput, repository.CompleteSubmissionAssessmentInput, error) {
 			persist, err := memoryservice.BuildSynchronousRememberAssessmentPersistenceInput(created, prepared)
 			if err != nil {
