@@ -18,7 +18,6 @@ import (
 
 const synchronousSearchGenerationFault = "search-generation-rotation"
 const synchronousSupersessionFault = "supersession-rotation"
-const synchronousProviderFaultEnvironment = "DENSE_MEM_E2E_PROVIDER_FAULT"
 
 // synchronousRememberBeforeCommitHook is installed only by the disposable
 // remember E2E composition. It rotates the active generation after provider
@@ -27,7 +26,6 @@ func synchronousRememberBeforeCommitHook(runtime serverapp.RuntimeContext) func(
 	if runtime.PostgresDB == nil || runtime.RLS == nil {
 		return nil
 	}
-	selectedFault := synchronousFenceFaultSelection(getenv(synchronousProviderFaultEnvironment))
 	var mu sync.Mutex
 	searchGenerationRotated := false
 	supersessionRotated := false
@@ -37,8 +35,8 @@ func synchronousRememberBeforeCommitHook(runtime serverapp.RuntimeContext) func(
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		switch selectedFault {
-		case synchronousSearchGenerationFault:
+		switch {
+		case rememberInputHasFault(input, synchronousSearchGenerationFault):
 			if searchGenerationRotated {
 				return nil
 			}
@@ -46,7 +44,7 @@ func synchronousRememberBeforeCommitHook(runtime serverapp.RuntimeContext) func(
 				return err
 			}
 			searchGenerationRotated = true
-		case synchronousSupersessionFault:
+		case rememberInputHasFault(input, synchronousSupersessionFault):
 			if !synchronousRememberHasSupersessionTarget(input) {
 				return nil
 			}
@@ -62,6 +60,16 @@ func synchronousRememberBeforeCommitHook(runtime serverapp.RuntimeContext) func(
 	}
 }
 
+func rememberInputHasFault(input rememberapp.RememberProcessRequest, fault string) bool {
+	marker := "[fixture-fault:" + fault + "]"
+	for _, evidence := range input.Evidence {
+		if strings.Contains(evidence.Content, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func synchronousRememberHasSupersessionTarget(input rememberapp.RememberProcessRequest) bool {
 	for _, evidence := range input.Evidence {
 		if len(evidence.SupersedesEvidenceIDs) > 0 {
@@ -69,16 +77,6 @@ func synchronousRememberHasSupersessionTarget(input rememberapp.RememberProcessR
 		}
 	}
 	return false
-}
-
-func synchronousFenceFaultSelection(value string) string {
-	value = strings.TrimSpace(value)
-	switch value {
-	case synchronousSearchGenerationFault, synchronousSupersessionFault:
-		return value
-	default:
-		return ""
-	}
 }
 
 func rotateSynchronousSearchGeneration(ctx context.Context, runtime serverapp.RuntimeContext, plan *repository.SynchronousRememberEmbeddingPlan) error {

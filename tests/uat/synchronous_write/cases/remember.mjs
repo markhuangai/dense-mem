@@ -24,6 +24,8 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     "embedding-non-finite",
     "embedding-timeout",
     "embedding-cancel",
+    "search-generation-rotation",
+    "supersession-rotation",
   ] : [selectedFault];
 
   const listed = await rpc("tools/list", {});
@@ -234,7 +236,7 @@ async function runCancellationCase({ rpc, rawRPC, expect }) {
 }
 
 async function runSearchGenerationFenceCase({ rpc, expect }) {
-  const args = singleItemArguments("search-generation-rotation", "");
+  const args = singleItemArguments("search-generation-rotation", "[fixture-fault:search-generation-rotation]");
   const failed = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
   assertStrictTerminalRemember(failed, expect);
   expect(failed.processing_state === "failed", `search-generation rotation must fail: ${JSON.stringify(failed)}`);
@@ -315,7 +317,7 @@ async function runLateSupersessionFenceCase({ rpc, expect }) {
   const targetEvidenceID = target.evidence.find((item) => item.evidence_id)?.evidence_id;
   expect(targetEvidenceID, "late supersession target must return an evidence id");
 
-  const late = singleItemArguments("supersession-late", "");
+  const late = singleItemArguments("supersession-late", "[fixture-fault:supersession-rotation]");
   late.evidence[0].supersedes_evidence_ids = [targetEvidenceID];
   const lateResult = terminalPayload(await rpc("tools/call", { name: "remember", arguments: late }));
   assertStrictTerminalRemember(lateResult, expect);

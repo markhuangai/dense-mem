@@ -18,6 +18,7 @@ func TestSynchronousFailureCodeClassifiesSearchContractMismatch(t *testing.T) {
 	}{
 		{name: "search contract during planning", phase: "embedding", cause: repository.ErrSearchContractMismatch, want: remember.TerminalErrorConfigurationInvalid},
 		{name: "search contract during commit", phase: "commit", cause: repository.ErrSearchContractMismatch, want: remember.TerminalErrorConfigurationInvalid},
+		{name: "inactive reused entity", phase: "embedding", cause: repository.ErrRememberExactReferenceStale, want: remember.TerminalErrorStaleInput},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require.Equal(t, test.want, synchronousFailureCode(test.phase, test.cause))

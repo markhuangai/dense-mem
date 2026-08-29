@@ -39,7 +39,6 @@ services:
         condition: service_healthy
     environment:
       DENSE_MEM_E2E_WRITE_SLICE: ${quote(slice)}
-      DENSE_MEM_E2E_PROVIDER_FAULT: "\${DENSE_MEM_E2E_PROVIDER_FAULT:-none}"
       AI_API_EMBEDDING_TIMEOUT_SECONDS: "2"
       AI_VERIFIER_TIMEOUT_SECONDS: "2"
       AI_API_URL: ${providerURL}
@@ -126,30 +125,6 @@ run_synchronous_write_e2e() {
     return
   fi
 
-  run_case() {
-    local fault="$1"
-    echo "Running synchronous-write ${slice} case with boot fault ${fault}."
-    DENSE_MEM_E2E_PROVIDER_FAULT="$fault" \
-      compose up -d --no-build --force-recreate synchronous-write-provider server >/dev/null
-    wait_for_url "synchronous-write server readiness (${fault})" "${USER_URL}/ready"
-    DENSE_MEM_USER_URL="$USER_URL" \
-    DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
-    DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
-    DENSE_MEM_E2E_TEAM_ID="$team_id" \
-    DENSE_MEM_E2E_API_KEY="$api_key" \
-    DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
-    DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
-    DENSE_MEM_E2E_PROVIDER_FAULT="$fault" \
-    DENSE_MEM_E2E_WRITE_CASE="$slice" \
-    node "$ROOT_DIR/tests/uat/synchronous_write/runner.mjs"
-  }
-
-  if [[ "$slice" == "remember" && "$configured_fault" == "none" ]]; then
-    run_case none
-    run_case search-generation-rotation
-    run_case supersession-rotation
-    return
-  fi
   DENSE_MEM_USER_URL="$USER_URL" \
   DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
   DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \

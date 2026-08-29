@@ -213,6 +213,9 @@ func synchronousRememberEmbeddingEntityTexts(ctx context.Context, tx *gorm.DB, t
 			var spaceGeneration int64
 			err := tx.WithContext(ctx).Raw(`SELECT COALESCE(canonical.display_name, ''), entity.entity_kind, entity.space_id::text, COALESCE(entity.space_generation, 0) FROM entity_records AS entity LEFT JOIN entity_names AS canonical ON canonical.team_id = entity.team_id AND canonical.entity_id = entity.entity_id AND canonical.name_kind = 'canonical' AND canonical.valid_to IS NULL WHERE entity.team_id = ?::uuid AND entity.entity_id = ?::uuid AND entity.status = 'active' ORDER BY canonical.created_at DESC NULLS LAST, canonical.entity_name_id DESC NULLS LAST LIMIT 1`, teamID, resolution.EntityID).Row().Scan(&canonical, &persistedKind, &spaceID, &spaceGeneration)
 			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil, fmt.Errorf("%w: reused entity %q is no longer active", ErrRememberExactReferenceStale, resolution.EntityID)
+				}
 				return nil, err
 			}
 			name, kind = firstNonEmpty(canonical, name, resolution.EntityID), persistedKind
