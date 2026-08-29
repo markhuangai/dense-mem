@@ -1,5 +1,8 @@
 package repository
 
+// PostgreSQL's POSIX space class omits Unicode spaces that Go strings.TrimSpace removes.
+const searchRepairUnicodeTrimPattern = `^[[:space:]\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[[:space:]\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$`
+
 const searchRepairDriftCTE = `
 	WITH active_contract AS (
 		SELECT ?::uuid AS embedding_contract_id, ?::integer AS embedding_dimensions
@@ -23,8 +26,8 @@ const searchRepairDriftCTE = `
 		SELECT fragment.team_id, fragment.owner_profile_id, 'evidence'::text AS source_kind,
 		       fragment.fragment_id AS source_id, 1::bigint AS source_version,
 		       1 AS projection_format_version, NULL::uuid AS projection_generation_id,
-		       regexp_replace(fragment.content, '^[[:space:]\u00a0]+|[[:space:]\u00a0]+$', '', 'g') AS document_text,
-		       encode(digest(regexp_replace(fragment.content, '^[[:space:]\u00a0]+|[[:space:]\u00a0]+$', '', 'g'), 'sha256'), 'hex') AS document_hash,
+		       regexp_replace(fragment.content, '` + searchRepairUnicodeTrimPattern + `', '', 'g') AS document_text,
+		       encode(digest(regexp_replace(fragment.content, '` + searchRepairUnicodeTrimPattern + `', '', 'g'), 'sha256'), 'hex') AS document_hash,
 		       fragment.space_id, COALESCE(fragment.space_generation, 0)::bigint AS space_generation,
 		       fragment.created_at AS observed_at
 		FROM evidence_fragments AS fragment

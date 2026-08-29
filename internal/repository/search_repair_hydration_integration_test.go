@@ -239,6 +239,12 @@ func TestSearchRepairCandidatePageSkipsHealthyCanonicalSourceBeforeHydration(t *
 	lockErr := make(chan error, 1)
 	go func() {
 		lockErr <- rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			signalled := false
+			defer func() {
+				if !signalled {
+					close(teamLocked)
+				}
+			}()
 			var lockedTeamID string
 			if err := tx.Raw(`
 				SELECT id::text
@@ -248,6 +254,7 @@ func TestSearchRepairCandidatePageSkipsHealthyCanonicalSourceBeforeHydration(t *
 			`, firstTeamID).Row().Scan(&lockedTeamID); err != nil {
 				return err
 			}
+			signalled = true
 			close(teamLocked)
 			<-releaseTeam
 			return nil

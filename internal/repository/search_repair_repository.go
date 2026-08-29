@@ -830,10 +830,10 @@ func updateSearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *Acti
 		expected.OwnerProfileID, expected.SourceVersion, expected.ProjectionFormat,
 		expected.ProjectionGenerationID, expected.SpaceID, expected.SpaceGeneration,
 		expected.DocumentText, expected.DocumentHash, vector,
-		item.TeamID, item.SearchDocumentID, storedOwner, item.DocumentVersion,
+		current.TeamID, current.SearchDocumentID, storedOwner, current.DocumentVersion,
 		item.StoredDocumentHash, contract.EmbeddingContractID, contract.EmbeddingDimensions,
-		item.SourceKind, item.SourceID, item.SourceVersion, item.ProjectionFormat,
-		item.ProjectionGenerationID, item.SpaceID, item.SpaceGeneration, item.DocumentText,
+		current.SourceKind, current.SourceID, current.SourceVersion, current.ProjectionFormat,
+		current.ProjectionGenerationID, current.SpaceID, current.SpaceGeneration, current.DocumentText,
 	}
 	args = appendSearchRepairActiveContractFenceArgs(args, contract)
 	if expected.SourceKind == "relationship" {
