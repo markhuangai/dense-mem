@@ -286,7 +286,7 @@ func (r *LedgerRepositoryImpl) RecordSynchronousRememberPreflightQuarantine(ctx 
 	return r.RecordRememberAttempt(ctx, attempt)
 }
 
-// RecordSynchronousRememberRejectedAttempt preserves a deterministic stale
+// RecordSynchronousRememberRejectedAttempt preserves a deterministic rejected
 // result for idempotent replay without creating canonical ingest or semantic
 // state.
 func (r *LedgerRepositoryImpl) RecordSynchronousRememberRejectedAttempt(ctx context.Context, attempt RememberAttemptRecordInput) error {

@@ -56,9 +56,12 @@ func TestSynchronousProcessorReturnsPersistenceWhenPreflightAuditFails(t *testin
 
 	_, err := processor.ProcessRemember(context.Background(), input)
 
-	require.ErrorIs(t, err, remember.ErrRememberPersistence)
+	var processErr *remember.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.Equal(t, string(remember.TerminalErrorCommitConflict), processErr.Result.Errors[0].Code)
 	require.Equal(t, 1, audit.calls)
 	require.Zero(t, ledger.preflightCalls)
+	require.Equal(t, 1, ledger.recordFailureCalls)
 }
 
 func TestSynchronousProcessorReturnsReplayLoadFailureAfterPreflightRace(t *testing.T) {

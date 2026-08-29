@@ -113,7 +113,7 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 		if input.SecurityRejectionAudit != nil {
 			if err := remember.RecordSecurityRejectionAudit(commitCtx, p.auditor, p.logger, *input.SecurityRejectionAudit); err != nil {
 				cancelCommit()
-				return nil, remember.ErrRememberPersistence
+				return p.failure(ctx, input, attemptID, base, "commit", 0, started, err)
 			}
 		}
 		err := p.ledger.RecordSynchronousRememberPreflightQuarantine(commitCtx, synchronousAttempt(input, attemptID, failure.Result, "quarantined", "preflight", string(remember.TerminalErrorQuarantined), 0, started))
@@ -232,7 +232,7 @@ func (p *synchronousRememberProcessor) failure(ctx context.Context, input rememb
 	recordCtx, cancelRecord := context.WithTimeout(context.WithoutCancel(ctx), remember.RememberFailurePersistenceBudget)
 	defer cancelRecord()
 	attemptOutcome := "failed"
-	if code == remember.TerminalErrorStaleInput {
+	if code == remember.TerminalErrorStaleInput || code == remember.TerminalErrorInputBudgetExceeded {
 		attemptOutcome = "rejected"
 	}
 	attempt := synchronousAttempt(input, attemptID, failure.Result, attemptOutcome, phase, string(code), turns, started)
