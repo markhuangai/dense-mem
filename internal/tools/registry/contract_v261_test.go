@@ -39,6 +39,15 @@ func TestContractV261CatalogIsInactiveAndExactlyTenTools(t *testing.T) {
 	require.Contains(t, correctionProperties, "errors")
 }
 
+func TestContractToolRuntimeOptionalCoversGatedToolsOnly(t *testing.T) {
+	for _, name := range []string{ToolSubmitRecallSessionFeedback, ToolListDreams, ToolGetDream, ToolResolveDreamFeedback} {
+		require.True(t, ContractToolRuntimeOptional(name), name)
+	}
+	for _, name := range []string{ToolRemember, ToolRetractEvidence, ToolCorrectRelationship, ToolRecallMemory, ToolTraceMemory, ToolExportMemoryPack, ToolGetSubmissionStatus} {
+		require.False(t, ContractToolRuntimeOptional(name), name)
+	}
+}
+
 func TestBuildContractV261RemovesStatusWithoutChangingProductionCatalog(t *testing.T) {
 	active := New()
 	for _, tool := range ContractTools() {

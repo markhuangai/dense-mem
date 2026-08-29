@@ -173,6 +173,14 @@ func TestTranslateRelationshipCorrectionErrorMapsSearchFencesToConflict(t *testi
 	}
 }
 
+func TestTranslateRelationshipCorrectionIdempotencyConflictPreservesTerminalClassification(t *testing.T) {
+	err := translateRelationshipCorrectionError(repository.ErrSemanticIdempotencyConflict)
+	var publicErr *httperr.APIError
+	require.ErrorAs(t, err, &publicErr)
+	require.Equal(t, httperr.CONFLICT, publicErr.Code)
+	require.Contains(t, publicErr.Details, httperr.ErrorDetail{Field: "reason", Message: "idempotency_conflict"})
+}
+
 func TestTranslateRelationshipCorrectionErrorMapsEmbeddingFailures(t *testing.T) {
 	for _, test := range []struct {
 		err  error

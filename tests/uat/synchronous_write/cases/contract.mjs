@@ -1,10 +1,11 @@
-export const name = "contract";
-
+import { randomUUID } from "node:crypto";
 import {
   TERMINAL_TOOLS,
   assertTerminalCorrectionResult,
   assertTerminalRememberResult,
 } from "../surface.mjs";
+
+export const name = "contract";
 
 export async function run({ rpc, rawRPC, expect }) {
   await enableTargetFeatureGates();
@@ -20,7 +21,7 @@ export async function run({ rpc, rawRPC, expect }) {
   expect(JSON.stringify(rememberProperties.contract_version?.enum) === JSON.stringify(["dense-mem.v2.6.1"]), "Remember schema must identify v2.6.1");
   expect(!Object.hasOwn(rememberProperties, "status_tool") && !Object.hasOwn(rememberProperties, "check_after_seconds"), "v2.6.1 Remember schema must not expose polling fields");
 
-  const runID = `synchronous-write-contract-${Date.now()}`;
+  const runID = `synchronous-write-contract-${randomUUID()}`;
   const sourceRaw = await rawRPC("tools/call", { name: "remember", arguments: rememberArguments(runID, "none") });
   const source = successfulToolResult(sourceRaw, expect);
   assertTerminalRememberResult(source);
@@ -61,6 +62,24 @@ export async function run({ rpc, rawRPC, expect }) {
   expect(!Object.hasOwn(correction, "status_tool") && !Object.hasOwn(correction, "check_after_seconds"), "direct correction must not return polling metadata");
   assertTextStructuredParity(correctionRaw, expect);
 
+  const staleRaw = await rawRPC("tools/call", {
+    name: "correct_relationship",
+    arguments: {
+      action: "submit",
+      relationship_id: split.relationship_id,
+      expected_version: trace.relationship?.version,
+      patch: { object_entity: { name: `${runID} stale successor`, entity_kind: "project" } },
+      supports: [{ evidence_id: support.evidence_id, start: support.span_start, end: support.span_end }],
+      reason: "The relationship version is intentionally stale.",
+      idempotency_key: `${runID}-stale-correction`,
+    },
+  });
+  const stale = structuredToolResult(staleRaw, expect);
+  assertTerminalCorrectionResult(stale);
+  expect(stale.contract_version === "dense-mem.v2.6.1" && stale.processing_state === "rejected", "stale correction must return a terminal rejection");
+  expect(stale.errors?.[0]?.code === "relationship_version_stale", `stale correction must preserve version classification: ${JSON.stringify(stale)}`);
+  assertTextStructuredParity(staleRaw, expect);
+
   // Keep the intermediate confirmation branch exercised even when this
   // disposable seed resolves the correction directly to completed.
   assertTerminalCorrectionResult({
@@ -93,7 +112,7 @@ export async function run({ rpc, rawRPC, expect }) {
 }
 
 async function enableTargetFeatureGates() {
-  const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
+  const controlURL = validatedControlURL();
   const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
   await controlJSON(controlURL, controlToken, "/config/recall-feedback", {
@@ -113,6 +132,22 @@ async function enableTargetFeatureGates() {
   await controlJSON(controlURL, controlToken, `/teams/${teamID}`, {
     config: { dreaming: { enabled: true } },
   }, "PATCH");
+}
+
+function validatedControlURL() {
+  const raw = requiredEnv("DENSE_MEM_CONTROL_URL").trim();
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("DENSE_MEM_CONTROL_URL must be a valid URL");
+  }
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  if (parsed.username || parsed.password || (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback))) {
+    throw new Error("DENSE_MEM_CONTROL_URL must use HTTPS or loopback HTTP");
+  }
+  return parsed.toString().replace(/\/$/, "");
 }
 
 async function controlJSON(baseURL, token, path, body, method = "PATCH") {

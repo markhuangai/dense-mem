@@ -12,6 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
@@ -188,15 +189,15 @@ func TestValidateTerminalCorrectionOutputRequiresStateDetails(t *testing.T) {
 	}
 	awaiting := cloneMap(base)
 	awaiting["processing_state"] = "awaiting_confirmation"
-	err := validateTerminalCorrectionOutput(awaiting)
+	err := validateTerminalCorrectionOutput(awaiting, ContractVersionV261)
 	require.ErrorContains(t, err, "awaiting_confirmation result")
 	completed := cloneMap(base)
 	completed["processing_state"] = "completed"
-	err = validateTerminalCorrectionOutput(completed)
+	err = validateTerminalCorrectionOutput(completed, ContractVersionV261)
 	require.ErrorContains(t, err, "completed correction result")
 	rejected := cloneMap(base)
 	rejected["processing_state"] = "rejected"
-	err = validateTerminalCorrectionOutput(rejected)
+	err = validateTerminalCorrectionOutput(rejected, ContractVersionV261)
 	require.ErrorContains(t, err, "rejected correction result")
 	require.NoError(t, validateTerminalCorrectionOutput(map[string]any{
 		"contract_version": ContractVersionV261, "submission_id": uuid.NewString(),
@@ -206,7 +207,7 @@ func TestValidateTerminalCorrectionOutputRequiresStateDetails(t *testing.T) {
 			"retryable": true, "next_action": string(rememberapp.TerminalNextActionRetrySameRequest),
 			"remediation": rememberapp.TerminalStatusError(rememberapp.TerminalErrorDatabaseFailure).Remediation,
 		}},
-	}))
+	}, ContractVersionV261))
 }
 
 func TestTerminalRememberFailureBaseAndErrorMappings(t *testing.T) {
@@ -291,6 +292,7 @@ func TestTerminalCorrectionToolResultErrorMapsBoundedFailures(t *testing.T) {
 	}{
 		{"not found", httperr.New(httperr.NOT_FOUND, "hidden"), string(rememberapp.SubmissionErrorEntityNotFound)},
 		{"conflict", httperr.New(httperr.CONFLICT, "hidden"), string(rememberapp.SubmissionErrorRelationshipChanged)},
+		{"idempotency conflict", httperr.NewWithDetails(httperr.CONFLICT, "hidden", []httperr.ErrorDetail{{Field: "reason", Message: "idempotency_conflict"}}), string(rememberapp.TerminalErrorIdempotencyConflict)},
 		{"embedding unavailable", httperr.New(httperr.ErrEmbeddingUnavailable, "hidden"), string(rememberapp.TerminalErrorEmbeddingUnavailable)},
 		{"embedding response invalid", httperr.New(httperr.ErrEmbeddingResponseInvalid, "hidden"), string(rememberapp.TerminalErrorEmbeddingResponseInvalid)},
 		{"embedding timeout", httperr.New(httperr.ErrEmbeddingTimeout, "hidden"), string(rememberapp.TerminalErrorRequestTimeout)},
@@ -309,6 +311,25 @@ func TestTerminalCorrectionToolResultErrorMapsBoundedFailures(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestContractCorrectionStatusLookupDoesNotRequireReadScope(t *testing.T) {
+	active, err := BuildActive(Dependencies{Lifecycle: &v261LifecycleService{}})
+	require.NoError(t, err)
+	selected, err := BuildContractV261(active, &v261RememberService{})
+	require.NoError(t, err)
+	correct, ok := selected.Get(ToolCorrectRelationship)
+	require.True(t, ok)
+	output, err := correct.Invoke(contractInvokeContext("write"), "team-1", map[string]any{
+		"action": "submit", "relationship_id": "relationship-1", "expected_version": 1,
+		"patch":    map[string]any{"predicate": map[string]any{"key": "uses"}},
+		"supports": []any{map[string]any{"evidence_id": "evidence-1", "start": 0, "end": 4}},
+		"reason":   "predicate was resolved incorrectly", "idempotency_key": "correction-write-only",
+	})
+	require.NoError(t, err)
+	require.Equal(t, ContractVersionV261, output["contract_version"])
+	require.Equal(t, "completed", output["processing_state"])
+	require.NotNil(t, output["correction_result"])
 }
 
 func newV261ActiveRegistry(t *testing.T) Registry {
@@ -358,6 +379,31 @@ func terminalRememberResultForRequest(req rememberapp.RememberRequest, state str
 type configurableV261RememberService struct {
 	rememberFn func(context.Context, rememberapp.RememberRequest) (*rememberapp.RememberResult, error)
 	statusFn   func(context.Context, rememberapp.GetSubmissionStatusRequest) (*rememberapp.SubmissionStatusResult, error)
+}
+
+type v261LifecycleService struct{}
+
+func (v261LifecycleService) CorrectRelationship(context.Context, memoryservice.CorrectRelationshipRequest) (*memoryservice.CorrectRelationshipReceipt, error) {
+	return &memoryservice.CorrectRelationshipReceipt{
+		ContractVersion: domain.ContractVersion, SubmissionID: uuid.NewString(), SubmissionKind: "relationship_correction",
+		ProcessingState: "completed", StatusTool: ToolGetSubmissionStatus, CorrelationID: "correction-correlation",
+	}, nil
+}
+
+func (v261LifecycleService) GetRelationshipCorrectionStatus(_ context.Context, req memoryservice.GetSubmissionStatusRequest) (*memoryservice.SubmissionStatusResult, error) {
+	return &memoryservice.SubmissionStatusResult{
+		ContractVersion: domain.ContractVersion, SubmissionID: req.SubmissionID, SubmissionKind: "relationship_correction",
+		ProcessingState: "completed", SearchState: "current", Errors: []memoryservice.SubmissionStatusError{},
+		Degradations: []memoryservice.SubmissionStatusDegradation{}, Evidence: []memoryservice.SubmissionEvidenceStatus{},
+		CorrectionResult: &repository.RelationshipCorrectionResult{
+			OriginalRelationshipID: uuid.NewString(), OriginalVersion: 1,
+			SuccessorRelationshipID: uuid.NewString(), SuccessorVersion: 1, ReusedSuccessor: false,
+		},
+	}, nil
+}
+
+func (v261LifecycleService) RetractEvidence(context.Context, memoryservice.RetractEvidenceRequest) (*memoryservice.RetractEvidenceResult, error) {
+	return nil, errors.New("unused")
 }
 
 func (s *configurableV261RememberService) Remember(ctx context.Context, req rememberapp.RememberRequest) (*rememberapp.RememberResult, error) {

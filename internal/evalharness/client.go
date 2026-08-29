@@ -20,9 +20,8 @@ type HTTPClient struct {
 	APIKey           string
 	PlacementTimeout time.Duration
 	Client           *http.Client
-	contractOnce     sync.Once
+	contractMu       sync.Mutex
 	contractMode     contractMode
-	contractErr      error
 }
 
 type HTTPStatusError struct {

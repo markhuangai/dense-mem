@@ -32,10 +32,17 @@ type mcpToolDefinition struct {
 }
 
 func (c *HTTPClient) ensureContract(ctx context.Context) (contractMode, error) {
-	c.contractOnce.Do(func() {
-		c.contractMode, c.contractErr = c.discoverContract(ctx)
-	})
-	return c.contractMode, c.contractErr
+	c.contractMu.Lock()
+	defer c.contractMu.Unlock()
+	if c.contractMode != "" {
+		return c.contractMode, nil
+	}
+	mode, err := c.discoverContract(ctx)
+	if err != nil {
+		return "", err
+	}
+	c.contractMode = mode
+	return mode, nil
 }
 
 func (c *HTTPClient) discoverContract(ctx context.Context) (contractMode, error) {
@@ -56,7 +63,7 @@ func (c *HTTPClient) discoverContract(ctx context.Context) (contractMode, error)
 		return "", fmt.Errorf("discover MCP contract: %w", err)
 	}
 	if response.Error != nil {
-		return "", fmt.Errorf("discover MCP contract returned %d: %s", response.Error.Code, response.Error.Message)
+		return "", fmt.Errorf("discover MCP contract returned error code %d", response.Error.Code)
 	}
 	return classifyContract(response.Result.Tools)
 }
@@ -82,17 +89,29 @@ func classifyContract(tools []mcpToolDefinition) (contractMode, error) {
 	}
 	version := contractVersionFromSchema(rememberSchema)
 	_, statusPresent := names[registry.ToolGetSubmissionStatus]
-	if statusPresent && version == domain.ContractVersion && containsToolNames(names, registry.ContractToolNames()) {
+	if statusPresent && version == domain.ContractVersion && matchesContractToolSet(names, registry.ContractToolNames()) {
 		return contractModeLegacy, nil
 	}
-	if !statusPresent && version == registry.ContractVersionV261 && containsToolNames(names, registry.ContractV261ToolNames()) {
+	if !statusPresent && version == registry.ContractVersionV261 && matchesContractToolSet(names, registry.ContractV261ToolNames()) {
 		return contractModeV261, nil
 	}
 	return "", fmt.Errorf("unsupported or mixed MCP contract: remember=%q status_present=%t", version, statusPresent)
 }
 
-func containsToolNames(names map[string]struct{}, expected []string) bool {
+func matchesContractToolSet(names map[string]struct{}, expected []string) bool {
+	expectedSet := make(map[string]struct{}, len(expected))
 	for _, name := range expected {
+		expectedSet[name] = struct{}{}
+	}
+	for name := range names {
+		if _, ok := expectedSet[name]; !ok {
+			return false
+		}
+	}
+	for _, name := range expected {
+		if registry.ContractToolRuntimeOptional(name) {
+			continue
+		}
 		if _, ok := names[name]; !ok {
 			return false
 		}

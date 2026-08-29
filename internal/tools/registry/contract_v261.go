@@ -215,7 +215,7 @@ func terminalCorrectionInvoker(legacy Tool, status Tool, version string) ToolInv
 		if submissionID == "" {
 			return nil, terminalCorrectionToolResultError(ctx, "", errors.New("correction receipt missing submission_id"), version)
 		}
-		statusOutput, err := status.Invoke(ctx, teamID, map[string]any{"submission_id": submissionID})
+		statusOutput, err := status.Invoke(withInternalSubmissionStatusLookup(ctx), teamID, map[string]any{"submission_id": submissionID})
 		if err != nil {
 			return nil, terminalCorrectionToolResultError(ctx, submissionID, err, version)
 		}
@@ -223,7 +223,7 @@ func terminalCorrectionInvoker(legacy Tool, status Tool, version string) ToolInv
 		if err != nil {
 			return nil, terminalCorrectionToolResultError(ctx, submissionID, err, version)
 		}
-		if err := validateTerminalCorrectionOutput(output); err != nil {
+		if err := validateTerminalCorrectionOutput(output, version); err != nil {
 			return nil, terminalCorrectionToolResultError(ctx, submissionID, err, version)
 		}
 		state := stringInput(output["processing_state"])
@@ -300,8 +300,8 @@ func terminalCorrectionResultMap(receipt, status map[string]any, version string)
 	return output, nil
 }
 
-func validateTerminalCorrectionOutput(output map[string]any) error {
-	if err := ValidateInput(Tool{InputSchema: terminalCorrectionOutputSchema(ContractVersionV261)}, output); err != nil {
+func validateTerminalCorrectionOutput(output map[string]any, version string) error {
+	if err := ValidateInput(Tool{InputSchema: terminalCorrectionOutputSchema(version)}, output); err != nil {
 		return err
 	}
 	state := stringInput(output["processing_state"])
@@ -530,7 +530,11 @@ func terminalCorrectionToolResultError(ctx context.Context, submissionID string,
 		case httperr.NOT_FOUND:
 			statusError = rememberapp.StatusError(rememberapp.SubmissionErrorEntityNotFound)
 		case httperr.CONFLICT:
-			statusError = rememberapp.StatusError(rememberapp.SubmissionErrorRelationshipChanged)
+			if !apiErrorDetailEquals(apiErr, "reason", string(rememberapp.TerminalErrorIdempotencyConflict)) {
+				statusError = rememberapp.StatusError(rememberapp.SubmissionErrorRelationshipChanged)
+			} else {
+				code = rememberapp.TerminalErrorIdempotencyConflict
+			}
 		case httperr.ErrEmbeddingUnavailable:
 			code = rememberapp.TerminalErrorEmbeddingUnavailable
 		case httperr.ErrEmbeddingResponseInvalid:
@@ -566,4 +570,16 @@ func terminalCorrectionToolResultError(ctx context.Context, submissionID string,
 		output["errors"].([]any)[0].(map[string]any)["remediation"] = "Retry correct_relationship with current relationship state and a new idempotency_key."
 	}
 	return NewToolResultError(output)
+}
+
+func apiErrorDetailEquals(apiErr *httperr.APIError, field, value string) bool {
+	if apiErr == nil {
+		return false
+	}
+	for _, detail := range apiErr.Details {
+		if detail.Field == field && detail.Message == value {
+			return true
+		}
+	}
+	return false
 }

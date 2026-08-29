@@ -275,8 +275,12 @@ func translateRelationshipCorrectionError(err error) error {
 	if errors.Is(err, repository.ErrSemanticOwnerMismatch) || errors.Is(err, repository.ErrRelationshipCorrectionNotFound) {
 		return httperr.New(httperr.NOT_FOUND, "submission not found")
 	}
-	if errors.Is(err, repository.ErrSemanticIdempotencyConflict) ||
-		errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) ||
+	if errors.Is(err, repository.ErrSemanticIdempotencyConflict) {
+		return httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+			Field: "reason", Message: "idempotency_conflict",
+		}})
+	}
+	if errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) ||
 		errors.Is(err, repository.ErrRelationshipCorrectionConfirmationExpired) ||
 		errors.Is(err, repository.ErrRelationshipCorrectionStateConflict) ||
 		errors.Is(err, repository.ErrSearchEmbeddingRequired) ||

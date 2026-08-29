@@ -121,6 +121,78 @@ func TestClassifyContractFailsClosedForMixedVersionAndStatus(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported or mixed MCP contract")
 }
 
+func TestClassifyContractAllowsGatedOmissionsAndRejectsUnknownTools(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		mode contractMode
+		list func() []registry.Tool
+	}{
+		{name: "legacy", mode: contractModeLegacy, list: registry.ContractTools},
+		{name: "terminal", mode: contractModeV261, list: registry.ContractV261Tools},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			definitions := make([]mcpToolDefinition, 0)
+			for _, tool := range test.list() {
+				if registry.ContractToolRuntimeOptional(tool.Name) {
+					continue
+				}
+				definitions = append(definitions, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
+			}
+			mode, err := classifyContract(definitions)
+			require.NoError(t, err)
+			require.Equal(t, test.mode, mode)
+
+			definitions = append(definitions, mcpToolDefinition{Name: "unexpected_tool"})
+			_, err = classifyContract(definitions)
+			require.ErrorContains(t, err, "unsupported or mixed MCP contract")
+		})
+	}
+}
+
+func TestHTTPClientRetriesContractDiscoveryAfterFailure(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/mcp" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if atomic.AddInt32(&calls, 1) == 1 {
+			http.Error(w, "temporary", http.StatusServiceUnavailable)
+			return
+		}
+		tools := registry.ContractV261Tools()
+		listed := make([]map[string]any, 0, len(tools))
+		for _, tool := range tools {
+			listed = append(listed, map[string]any{"name": tool.Name, "outputSchema": tool.OutputSchema})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"tools": listed}})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	_, err := client.ensureContract(context.Background())
+	require.Error(t, err)
+	mode, err := client.ensureContract(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, contractModeV261, mode)
+	require.Equal(t, int32(2), atomic.LoadInt32(&calls))
+}
+
+func TestDiscoverContractDoesNotExposeServerErrorMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": 1,
+			"error": map[string]any{"code": -32000, "message": "provider secret details"},
+		})
+	}))
+	defer server.Close()
+
+	client := &HTTPClient{BaseURL: server.URL, APIKey: "api-key", Client: server.Client()}
+	_, err := client.discoverContract(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "error code -32000")
+	require.NotContains(t, err.Error(), "provider secret details")
+}
+
 func newRawContractTestServer(t *testing.T, mode contractMode, call func(http.ResponseWriter, string, map[string]any)) *httptest.Server {
 	t.Helper()
 	tools := registry.ContractTools()
