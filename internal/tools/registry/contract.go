@@ -511,9 +511,9 @@ func validateRecall(args map[string]any) error {
 }
 
 func validateSourceRevisionFields(index int, fields map[string]any) error {
-	_, hasSourceKey := fields["source_key"]
-	_, hasSourceRevision := fields["source_revision"]
-	_, hasPreviousRevision := fields["previous_source_revision"]
+	hasSourceKey := strings.TrimSpace(stringField(fields, "source_key")) != ""
+	hasSourceRevision := strings.TrimSpace(stringField(fields, "source_revision")) != ""
+	hasPreviousRevision := strings.TrimSpace(stringField(fields, "previous_source_revision")) != ""
 	_, hasSupersededEvidence := fields["supersedes_evidence_ids"]
 	if hasSourceKey != hasSourceRevision {
 		missing := "source_revision"

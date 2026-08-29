@@ -217,6 +217,31 @@ func TestRememberRejectsMixedSourceRevisionBatch(t *testing.T) {
 	}
 }
 
+func TestRememberRejectsSourceRevisionPairsAfterTrimming(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name           string
+		sourceKey      string
+		sourceRevision string
+		want           string
+	}{
+		{name: "blank source key", sourceKey: " \t", sourceRevision: "rev-1", want: "evidence[0].source_key"},
+		{name: "blank source revision", sourceKey: "wiki://write-pipeline", sourceRevision: " \t", want: "evidence[0].source_revision"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := validFlatRelationshipSubmission()
+			evidence := input["evidence"].([]any)[0].(map[string]any)
+			evidence["source_key"] = test.sourceKey
+			evidence["source_revision"] = test.sourceRevision
+
+			err := ValidateContractInput(remember, input, []string{"write"})
+
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
 func TestRememberRejectsMixedSourceRevisionProvenance(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)
