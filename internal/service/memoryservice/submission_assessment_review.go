@@ -22,6 +22,18 @@ func (e *submissionAssessmentNoSupportedMemoryError) Error() string {
 }
 
 func isRememberStaleInputError(err error) bool {
+	var preflight *repository.RememberPreflightError
+	if errors.As(err, &preflight) && preflight != nil {
+		for _, issue := range preflight.Issues {
+			code := strings.TrimSpace(issue.Code)
+			path := strings.TrimSpace(issue.Path)
+			if code == "stale" ||
+				(code == "conflict" && strings.HasPrefix(path, "/evidence/") && strings.HasSuffix(path, "/source_revision")) ||
+				(code == "unavailable" && strings.HasPrefix(path, "/evidence/") && strings.Contains(path, "/supersedes_evidence_ids/")) {
+				return true
+			}
+		}
+	}
 	return errors.Is(err, errSubmissionAssessmentStaleInput) ||
 		errors.Is(err, repository.ErrSourceRevisionConflict) ||
 		errors.Is(err, repository.ErrEvidenceLifecycleConflict) ||

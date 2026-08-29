@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -210,6 +211,25 @@ func (r *LedgerRepositoryImpl) CommitSubmissionAssessment(
 					return err
 				}
 				appendPlacementSearchDocument(semanticResult, document)
+			}
+			if synchronousInlineEmbeddingEnabled(ctx) {
+				entityIDs := make([]string, 0, len(entitiesByRef))
+				seenEntityIDs := make(map[string]struct{}, len(entitiesByRef))
+				for _, entityID := range entitiesByRef {
+					if _, exists := seenEntityIDs[entityID]; exists {
+						continue
+					}
+					seenEntityIDs[entityID] = struct{}{}
+					entityIDs = append(entityIDs, entityID)
+				}
+				sort.Strings(entityIDs)
+				for _, entityID := range entityIDs {
+					document, err := upsertSynchronousRememberEntitySearchDocument(ctx, tx, input.TeamID, input.OwnerProfileID, entityID, evidenceSearchContract)
+					if err != nil {
+						return err
+					}
+					appendPlacementSearchDocument(semanticResult, document)
+				}
 			}
 		}
 

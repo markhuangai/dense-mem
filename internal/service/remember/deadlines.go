@@ -15,10 +15,11 @@ const (
 )
 
 const (
-	RememberTotalBudget      = 180 * time.Second
-	RememberAssessmentBudget = 160 * time.Second
-	RememberEmbeddingBudget  = 10 * time.Second
-	RememberCommitBudget     = 10 * time.Second
+	RememberTotalBudget              = 180 * time.Second
+	RememberAssessmentBudget         = 160 * time.Second
+	RememberEmbeddingBudget          = 10 * time.Second
+	RememberCommitBudget             = 10 * time.Second
+	RememberFailurePersistenceBudget = 2 * time.Second
 )
 
 type rememberDeadlineContextKey struct{}

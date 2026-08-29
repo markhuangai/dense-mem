@@ -8,6 +8,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -37,9 +38,15 @@ type RuntimeContext struct {
 // registry continues to use the legacy intake service until an adoption
 // ticket wires a terminal processor.
 type WriteRuntime struct {
-	Remember         rememberapp.Service
-	RegistryOverride func(context.Context, RuntimeContext, registry.Registry) (registry.Registry, error)
-	Slice            string
+	Remember rememberapp.Service
+	// SynchronousRememberFactory is lazy so release boot never constructs or
+	// installs the E2E-only terminal Remember service.
+	SynchronousRememberFactory func() rememberapp.Service
+	// SynchronousRememberBeforeCommit is an E2E-only hook. Production leaves it
+	// nil so the synchronous processor has no injected side effects.
+	SynchronousRememberBeforeCommit func(context.Context, rememberapp.RememberProcessRequest, *repository.SynchronousRememberEmbeddingPlan) error
+	RegistryOverride                func(context.Context, RuntimeContext, registry.Registry) (registry.Registry, error)
+	Slice                           string
 }
 
 type RuntimeOptions struct {

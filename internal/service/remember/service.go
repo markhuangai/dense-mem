@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -43,6 +44,9 @@ type RememberService = Service
 
 type Dependencies struct {
 	Intake IntakePort
+	// Synchronous is installed only by an explicit composition owner. Leaving it
+	// nil preserves the release intake-and-worker path.
+	Synchronous SynchronousProcessor
 	// Auditor is required for security-rejected submissions. A nil auditor
 	// fails closed as ErrRememberPersistence instead of staging the input.
 	Auditor SecurityRejectionAuditor
@@ -51,10 +55,11 @@ type Dependencies struct {
 }
 
 type service struct {
-	intake  IntakePort
-	auditor SecurityRejectionAuditor
-	metrics observability.DiscoverabilityMetrics
-	logger  observability.LogProvider
+	intake      IntakePort
+	synchronous SynchronousProcessor
+	auditor     SecurityRejectionAuditor
+	metrics     observability.DiscoverabilityMetrics
+	logger      observability.LogProvider
 }
 
 func NewService(deps Dependencies) *service {
@@ -62,7 +67,7 @@ func NewService(deps Dependencies) *service {
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
-	return &service{intake: deps.Intake, auditor: deps.Auditor, metrics: metrics, logger: deps.Logger}
+	return &service{intake: deps.Intake, synchronous: deps.Synchronous, auditor: deps.Auditor, metrics: metrics, logger: deps.Logger}
 }
 
 type RememberRequest struct {
@@ -91,15 +96,16 @@ type RememberEvidenceInput struct {
 }
 
 type RememberResult struct {
-	ContractVersion   string     `json:"contract_version"`
-	IngestID          string     `json:"-"`
-	SubmissionID      string     `json:"submission_id"`
-	SubmissionKind    string     `json:"submission_kind"`
-	ProcessingState   string     `json:"processing_state"`
-	CheckAfterSeconds int        `json:"check_after_seconds"`
-	StatusTool        string     `json:"status_tool"`
-	CorrelationID     string     `json:"correlation_id"`
-	Kind              ResultKind `json:"-"`
+	ContractVersion   string                  `json:"contract_version"`
+	IngestID          string                  `json:"-"`
+	SubmissionID      string                  `json:"submission_id"`
+	SubmissionKind    string                  `json:"submission_kind"`
+	ProcessingState   string                  `json:"processing_state"`
+	CheckAfterSeconds int                     `json:"check_after_seconds"`
+	StatusTool        string                  `json:"status_tool"`
+	CorrelationID     string                  `json:"correlation_id"`
+	Kind              ResultKind              `json:"-"`
+	Terminal          *TerminalRememberResult `json:"-"`
 }
 
 type SubmissionStatusResult struct {
@@ -125,6 +131,7 @@ type SubmissionStatusResult struct {
 	AwaitingConfirmation *SubmissionAwaitingConfirmation `json:"awaiting_confirmation,omitempty"`
 	CorrectionResult     *RelationshipCorrectionResult   `json:"correction_result,omitempty"`
 	Kind                 ResultKind                      `json:"-"`
+	Terminal             *TerminalRememberResult         `json:"-"`
 }
 
 type SubmissionStatusDegradation struct {
@@ -164,7 +171,7 @@ type SubmissionEvidenceStatus struct {
 }
 
 func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberResult, error) {
-	if s == nil || s.intake == nil {
+	if s == nil || (s.intake == nil && s.synchronous == nil) {
 		return nil, errors.New("remember: intake port is required")
 	}
 	actor, ok := requestctx.ActorFromContext(ctx)
@@ -185,7 +192,18 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if err := validateRememberRelationshipCoverage(len(req.Evidence), req.RelationshipHints); err != nil {
 		return nil, err
 	}
+	relationshipRefs, err := rememberRelationshipRefs(req.RelationshipHints)
+	if err != nil {
+		return nil, err
+	}
 	started := time.Now()
+	if s.synchronous != nil {
+		ctx = correlation.WithID(ctx, normalizeSynchronousCorrelationID(correlation.FromContext(ctx)))
+		ctx = WithRememberDeadlines(ctx, started)
+		operationCtx, cancel := context.WithDeadline(ctx, started.Add(RememberTotalBudget))
+		defer cancel()
+		ctx = operationCtx
+	}
 	contents := make([]string, 0, len(req.Evidence))
 	for _, evidence := range req.Evidence {
 		contents = append(contents, evidence.Content)
@@ -195,16 +213,27 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		"relationship_hints": req.RelationshipHints,
 	}
 	scan, scanErr := scanSubmissionWithProviderProposal(contents, proposal)
+	var securityAudit *SecurityRejectionAuditInput
 	if scanErr != nil {
-		if err := recordSubmissionSecurityRejection(ctx, s.auditor, s.logger, actor, "remember", scan, scanErr); err != nil {
+		if s.synchronous == nil {
+			if err := recordSubmissionSecurityRejection(ctx, s.auditor, s.logger, actor, "remember", scan, scanErr); err != nil {
+				observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
+				return nil, ErrRememberPersistence
+			}
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
-			return nil, ErrRememberPersistence
+			return nil, scanErr
 		}
-		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
-		return nil, scanErr
 	}
 
 	requestHash, err := canonicalRequestHash(req)
+	if err != nil {
+		return nil, err
+	}
+	if scanErr != nil {
+		input := securityRejectionAuditInput(ctx, actor, "remember", scan, scanErr)
+		securityAudit = &input
+	}
+	migratedRequestHash, err := canonicalRequestHashForVersion(req, domain.MigratedRememberRequestHashVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -220,6 +249,30 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		actorMetadata["credential_id"] = actor.CredentialID.String()
 	}
 	metadata := map[string]any{"contract_version": domain.ContractVersion, "actor": actorMetadata}
+	if s.synchronous != nil {
+		terminal, err := s.synchronous.ProcessRemember(ctx, RememberProcessRequest{
+			TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
+			SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash, MigratedRequestHash: migratedRequestHash,
+			SourceSummary: sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata, Evidence: repositoryEvidenceInputs(req.Evidence),
+			SecuritySignals:          append([]SubmissionSecurityBatchSignal(nil), scan.Signals...),
+			SecuritySignalsTruncated: scan.SignalsTruncated, SecurityRejected: scanErr != nil, SecurityRejectionAudit: securityAudit,
+		})
+		if err != nil {
+			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
+			return nil, err
+		}
+		if terminal == nil {
+			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
+			return nil, ErrRememberPersistence
+		}
+		result, resultErr := rememberResultFromTerminal(terminal, len(req.Evidence), relationshipRefs)
+		if resultErr != nil {
+			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
+			return nil, ErrRememberPersistence
+		}
+		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "ok")
+		return result, nil
+	}
 	created, err := s.intake.Stage(ctx, StageRequest{
 		TeamID:            actor.TeamID.String(),
 		OwnerProfileID:    actor.OwnerID.String(),
@@ -255,6 +308,210 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		observability.RecordRememberFirstDisposition(ctx, s.metrics, disposition.CompletedAt.Sub(disposition.CreatedAt), disposition.Status)
 	}
 	return rememberResultFromLedger(created, correlationID), nil
+}
+
+func normalizeSynchronousCorrelationID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || utf8.RuneCountInString(value) > maxTerminalCorrelationIDRunes {
+		return uuid.NewString()
+	}
+	return value
+}
+
+func rememberResultFromTerminal(status *SubmissionStatusResult, evidenceCount int, relationshipRefs []string) (*RememberResult, error) {
+	if status == nil {
+		return nil, errors.New("remember: terminal status is required")
+	}
+	terminal := status.Terminal
+	if terminal == nil {
+		var err error
+		terminal, err = terminalRememberResultFromStatus(status, evidenceCount, relationshipRefs)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := ValidateTerminalRememberResult(terminal, evidenceCount, relationshipRefs); err != nil {
+		return nil, err
+	}
+	return &RememberResult{
+		ContractVersion: terminal.ContractVersion, IngestID: terminal.SubmissionID, SubmissionID: terminal.SubmissionID,
+		SubmissionKind: terminal.SubmissionKind, ProcessingState: terminal.ProcessingState,
+		CorrelationID: terminal.CorrelationID, Kind: ResultKindTerminal, Terminal: terminal,
+	}, nil
+}
+
+func terminalRememberResultFromStatus(status *SubmissionStatusResult, evidenceCount int, relationshipRefs []string) (*TerminalRememberResult, error) {
+	if status == nil {
+		return nil, errors.New("remember: terminal status is required")
+	}
+	if evidenceCount < 0 {
+		return nil, errors.New("remember: terminal evidence count cannot be negative")
+	}
+	if len(status.Evidence) != 0 && len(status.Evidence) != evidenceCount {
+		return nil, fmt.Errorf("remember: terminal status evidence count %d, expected %d", len(status.Evidence), evidenceCount)
+	}
+	if len(status.RelationshipResults) != 0 && len(status.RelationshipResults) != len(relationshipRefs) {
+		return nil, fmt.Errorf("remember: terminal status relationship count %d, expected %d", len(status.RelationshipResults), len(relationshipRefs))
+	}
+	processingState := status.ProcessingState
+	terminal := &TerminalRememberResult{
+		ContractVersion: status.ContractVersion, SubmissionID: status.SubmissionID,
+		SubmissionKind: status.SubmissionKind, ProcessingState: processingState,
+		SearchState: string(TerminalSearchNotRequired), CorrelationID: status.CorrelationID, Kind: ResultKindTerminal,
+		Evidence:            make([]TerminalEvidenceResult, 0, len(status.Evidence)),
+		RelationshipResults: make([]SubmissionRelationshipResult, 0, len(relationshipRefs)),
+		Errors:              append([]SubmissionStatusError{}, status.Errors...),
+	}
+	if processingState != string(TerminalProcessingCompleted) && len(terminal.Errors) == 0 {
+		terminal.Errors = []SubmissionStatusError{TerminalStatusError(terminalErrorForTerminalState(processingState))}
+	}
+	notStoredReason := terminalNotStoredReasonForStatus(processingState, terminal.Errors)
+	for index := 0; index < evidenceCount; index++ {
+		var evidence SubmissionEvidenceStatus
+		if len(status.Evidence) > 0 {
+			evidence = status.Evidence[index]
+			if evidence.EvidenceIndex != index {
+				return nil, fmt.Errorf("remember: terminal status evidence index %d is out of order", evidence.EvidenceIndex)
+			}
+		}
+		terminal.Evidence = append(terminal.Evidence, terminalEvidenceFromStatus(evidence, index, processingState, notStoredReason))
+	}
+	for index, ref := range relationshipRefs {
+		relationship := SubmissionRelationshipResult{RelationshipRef: ref, Disposition: "not_stored", Reason: notStoredReason, Splits: []SubmissionRelationshipSplit{}}
+		if len(status.RelationshipResults) > 0 {
+			candidate := status.RelationshipResults[index]
+			if candidate.RelationshipRef != ref {
+				return nil, fmt.Errorf("remember: terminal status relationship ref %q is out of order", candidate.RelationshipRef)
+			}
+			if processingState == string(TerminalProcessingCompleted) && candidate.Disposition == "stored" && len(candidate.Splits) > 0 && terminalSplitsValid(candidate.Splits) && strings.TrimSpace(candidate.Reason) == "" {
+				relationship.Disposition = "stored"
+				relationship.Reason = ""
+				relationship.Splits = append([]SubmissionRelationshipSplit{}, candidate.Splits...)
+			}
+		}
+		terminal.RelationshipResults = append(terminal.RelationshipResults, relationship)
+	}
+	if terminal.Errors == nil {
+		terminal.Errors = []SubmissionStatusError{}
+	}
+	for _, evidence := range terminal.Evidence {
+		if evidence.Disposition == "stored" {
+			terminal.SearchState = string(TerminalSearchCurrent)
+			break
+		}
+	}
+	if terminal.SearchState != string(TerminalSearchCurrent) {
+		for _, relationship := range terminal.RelationshipResults {
+			if relationship.Disposition == "stored" {
+				terminal.SearchState = string(TerminalSearchCurrent)
+				break
+			}
+		}
+	}
+	return terminal, nil
+}
+
+func terminalEvidenceFromStatus(status SubmissionEvidenceStatus, index int, processingState, notStoredReason string) TerminalEvidenceResult {
+	notStored := TerminalEvidenceResult{
+		Disposition: "not_stored", EvidenceIndex: index, SupersededEvidenceIDs: []string{},
+		SearchState: string(TerminalSearchNotRequired), Reason: notStoredReason,
+	}
+	if processingState != string(TerminalProcessingCompleted) || status.Error != nil || status.SearchState != string(TerminalSearchCurrent) {
+		return notStored
+	}
+	if _, err := uuid.Parse(status.EvidenceID); err != nil {
+		return notStored
+	}
+	superseded, ok := terminalSupersededEvidenceIDs(status.SupersededEvidenceIDs, status.EvidenceID)
+	if !ok {
+		return notStored
+	}
+	return TerminalEvidenceResult{Disposition: "stored", EvidenceID: status.EvidenceID, EvidenceIndex: index, SupersededEvidenceIDs: superseded, SearchState: string(TerminalSearchCurrent)}
+}
+
+func terminalNotStoredReasonForStatus(state string, terminalErrors []SubmissionStatusError) string {
+	for _, terminalError := range terminalErrors {
+		code := TerminalErrorCode(terminalError.Code)
+		if terminalProcessingStateForError(code) == TerminalProcessingState(state) {
+			return terminalNotStoredReasonForError(code)
+		}
+	}
+	return terminalNotStoredReasonForTerminalState(state)
+}
+
+func terminalSupersededEvidenceIDs(values []string, evidenceID string) ([]string, bool) {
+	current, err := uuid.Parse(evidenceID)
+	if err != nil {
+		return nil, false
+	}
+	result := make([]string, 0, len(values))
+	seen := make(map[uuid.UUID]struct{}, len(values))
+	for _, value := range values {
+		parsed, err := uuid.Parse(value)
+		if err != nil || parsed == current {
+			return nil, false
+		}
+		if _, exists := seen[parsed]; exists {
+			return nil, false
+		}
+		seen[parsed] = struct{}{}
+		result = append(result, value)
+	}
+	return result, true
+}
+
+func terminalSplitsValid(splits []SubmissionRelationshipSplit) bool {
+	for index, split := range splits {
+		if split.SplitIndex != index || split.RelationshipVersion < 1 || split.Status != "active" {
+			return false
+		}
+		if _, err := uuid.Parse(split.RelationshipID); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func terminalNotStoredReasonForTerminalState(state string) string {
+	switch state {
+	case string(TerminalProcessingCompleted):
+		return "not_supported_by_evidence"
+	case string(TerminalProcessingRejected):
+		return "not_supported_by_evidence"
+	case string(TerminalProcessingQuarantined):
+		return "security_quarantine"
+	default:
+		return "internal_failure"
+	}
+}
+
+func terminalErrorForTerminalState(state string) TerminalErrorCode {
+	switch state {
+	case string(TerminalProcessingRejected):
+		return TerminalErrorNoSupportedMemory
+	case string(TerminalProcessingQuarantined):
+		return TerminalErrorQuarantined
+	default:
+		return TerminalErrorInternalFailure
+	}
+}
+
+func rememberRelationshipRefs(relationships []map[string]any) ([]string, error) {
+	refs := make([]string, len(relationships))
+	seen := make(map[string]struct{}, len(relationships))
+	for index, relationship := range relationships {
+		ref, _ := relationship["ref"].(string)
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			ref = fmt.Sprintf("relationship:%d", index)
+		}
+		if _, exists := seen[ref]; exists {
+			return nil, fmt.Errorf("remember: relationship ref %q is duplicated", ref)
+		}
+		seen[ref] = struct{}{}
+		refs[index] = ref
+	}
+	return refs, nil
 }
 
 func (s *service) GetSubmissionStatus(ctx context.Context, req GetSubmissionStatusRequest) (*SubmissionStatusResult, error) {

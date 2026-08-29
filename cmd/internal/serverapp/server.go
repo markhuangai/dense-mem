@@ -240,13 +240,16 @@ func RunActiveServer(
 	if err != nil {
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
+	rememberIntake := newRememberLedgerAdapter(ledgerRepo)
+	rememberAuditor := newRememberSecurityRejectionAuditAdapter(auditService)
 	rememberCore := rememberapp.NewService(rememberapp.Dependencies{
-		Intake:  newRememberLedgerAdapter(ledgerRepo),
-		Auditor: newRememberSecurityRejectionAuditAdapter(auditService),
+		Intake:  rememberIntake,
+		Auditor: rememberAuditor,
 		Metrics: discoverabilityMetrics,
 		Logger:  logger,
 	})
 	writeRuntime := &WriteRuntime{Remember: rememberCore}
+	installSynchronousRememberFactory(writeRuntime, ledgerRepo, semanticRepo, assessorProvider, assessmentLimits, openaiProvider, rememberIntake, rememberAuditor, discoverabilityMetrics, logger)
 	if options.WriteRuntimeOverride != nil {
 		if err := options.WriteRuntimeOverride(startupCtx, runtimeCtx, writeRuntime); err != nil {
 			log.Fatalf("failed to configure write runtime: %v", err)
@@ -988,7 +991,6 @@ func startActiveWorkers(
 		},
 	})
 }
-
 func logServerStartError(logger observability.LogProvider, message string, err error) {
 	if errors.Is(err, nethttp.ErrServerClosed) {
 		return

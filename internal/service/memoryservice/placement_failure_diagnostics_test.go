@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/puddle/v2"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -29,6 +30,24 @@ func TestPlacementFailureDiagnosticClassifiesPostgresFailures(t *testing.T) {
 	require.Equal(t, "database_failure", diagnostic.Class)
 	require.Equal(t, "database_failure", diagnostic.ReasonCode)
 	require.Equal(t, SubmissionErrorDatabaseFailure, submissionFailureCode(diagnostic.Stage, diagnostic.Class))
+}
+
+func TestPlacementFailureDiagnosticClassifiesPostgresConnectionFailures(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		cause error
+	}{
+		{name: "connect", cause: &pgconn.ConnectError{}},
+		{name: "closed connection", cause: pgconn.ErrConnClosed},
+		{name: "closed pool", cause: puddle.ErrClosedPool},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			diagnostic := placementFailureDiagnosticFor("semantic_commit", fmt.Errorf("wrapped: %w", test.cause))
+
+			require.Equal(t, "database_failure", diagnostic.Class)
+			require.Equal(t, "database_failure", diagnostic.ReasonCode)
+		})
+	}
 }
 
 func TestPlacementFailureDiagnosticRetainsBoundedProviderMetadata(t *testing.T) {

@@ -214,11 +214,10 @@ func (s *Server) newSDKServer(ctx context.Context) *sdkmcp.Server {
 			inputSchema = map[string]any{"type": "object"}
 		}
 		server.AddTool(&sdkmcp.Tool{
-			Name:        tool.Name,
-			Description: s.toolDescription(tool.Description),
-			InputSchema: inputSchema,
-			// Keep the established public catalog without an output schema.
-			OutputSchema: nil,
+			Name:         tool.Name,
+			Description:  s.toolDescription(tool.Description),
+			InputSchema:  inputSchema,
+			OutputSchema: tool.OutputSchema,
 		}, s.sdkToolHandler(tool.Name))
 	}
 
@@ -279,7 +278,13 @@ func (s *Server) sdkToolHandler(name string) sdkmcp.ToolHandler {
 		if !ok {
 			return nil, &sdkjsonrpc.Error{Code: errCodeToolFailure, Message: "tool result serialization failed"}
 		}
-		return &sdkmcp.CallToolResult{Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: text}}}, nil
+		structuredContent := result["structuredContent"]
+		isError, _ := result["isError"].(bool)
+		return &sdkmcp.CallToolResult{
+			Content:           []sdkmcp.Content{&sdkmcp.TextContent{Text: text}},
+			StructuredContent: structuredContent,
+			IsError:           isError,
+		}, nil
 	}
 }
 

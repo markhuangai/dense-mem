@@ -25,6 +25,7 @@ type semanticAssessmentPreflightError struct {
 	failureClass string
 	measurement  *assessor.FailureMeasurement
 	err          error
+	cause        error
 }
 
 func (err *semanticAssessmentPreflightError) Error() string {
@@ -37,6 +38,9 @@ func (err *semanticAssessmentPreflightError) Error() string {
 func (err *semanticAssessmentPreflightError) Unwrap() error {
 	if err == nil {
 		return nil
+	}
+	if err.cause != nil {
+		return err.cause
 	}
 	return err.err
 }
@@ -60,12 +64,39 @@ func deterministicSemanticAssessmentPreflightErrorWithMeasurement(
 	return result
 }
 
+func deterministicSemanticAssessmentPreflightErrorWithCause(stage, message string, cause error) error {
+	result := deterministicSemanticAssessmentPreflightError(stage, message).(*semanticAssessmentPreflightError)
+	result.cause = cause
+	return result
+}
+
 func semanticAssessmentPreflightFailure(err error) (string, bool) {
 	var preflight *semanticAssessmentPreflightError
 	if errors.As(err, &preflight) && preflight.stage != "" {
 		return preflight.stage, true
 	}
 	return "candidate_prefetch", false
+}
+
+// IsSemanticAssessmentInputBudgetError reports deterministic assessor request
+// bounds that cannot succeed without changing the submitted batch or its
+// server-owned candidate context. Callers use this narrow classification to
+// preserve the public input_budget_exceeded contract without exposing stages.
+func IsSemanticAssessmentInputBudgetError(err error) bool {
+	var malformed *assessor.MalformedResponseError
+	if errors.As(err, &malformed) && strings.TrimSpace(malformed.FailureClass) == "input_budget" {
+		return true
+	}
+	stage, terminal := semanticAssessmentPreflightFailure(err)
+	if !terminal {
+		return false
+	}
+	switch stage {
+	case "entity_catalog", "catalog_context", "assessment_input", "predicate_options_overflow":
+		return true
+	default:
+		return false
+	}
 }
 
 func terminalizeAfterError(original error, complete func() error) error {

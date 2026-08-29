@@ -55,7 +55,7 @@ func (s *submissionAssessmentPlacementWorkerService) buildRequest(
 	}
 	contractEntities, entityGroups, err := submissionAssessmentGroundedEntities(plan, entityCatalog, evidence)
 	if err != nil {
-		return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightError("catalog_context_validation", "submission entity catalog is invalid")
+		return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithCause("catalog_context_validation", "submission entity catalog is invalid", err)
 	}
 	// Keep the derived, evidence-backed grounding catalog on the plan as well
 	// as in the provider request. Commit-time repair uses the plan and must be
@@ -246,6 +246,9 @@ func submissionAssessmentGroundedEntities(
 		catalogGroup, ok := groupsByRef[entity.Target.Ref]
 		if !ok {
 			return nil, nil, errors.New("entity catalog target is missing")
+		}
+		if entity.KnownEntityID != "" && len(catalogGroup.Candidates) == 0 {
+			return nil, nil, fmt.Errorf("%w: exact entity catalog target is no longer active", errSubmissionAssessmentStaleInput)
 		}
 		if len(catalogGroup.Candidates) > assessor.SemanticAssessmentMaxEntityCandidatesPerSurface {
 			return nil, nil, errors.New("entity catalog candidate bound is exceeded")

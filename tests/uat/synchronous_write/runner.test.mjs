@@ -29,6 +29,14 @@ test("provider timeout fault is longer than the pinned E2E request caps", async 
   assert.match(fixture, /timeoutDelayMs/);
 });
 
+test("embedding cancellation delay is scoped by provider fault", async () => {
+  const fixture = await readFile(new URL("./provider-fixture.mjs", import.meta.url), "utf8");
+  assert.match(fixture, /const embeddingCallsByFault = new Map\(\)/);
+  assert.match(fixture, /embeddingCallsByFault\.get\(embeddingFaultKey\)/);
+  assert.match(fixture, /routeFault === "embedding-cancel" && embeddingFaultCall === 1/);
+  assert.doesNotMatch(fixture, /routeFault === "embedding-cancel" && embeddingCalls === 1/);
+});
+
 test("provider fixture uses a Compose volume instead of a worktree bind mount", async () => {
   const overlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");
   assert.match(overlay, /e2e-synchronous-write-provider-files:\/e2e/);
@@ -44,6 +52,13 @@ test("compose runner filters the resolved default slice", async () => {
   assert.match(overlay, /local api_key="\$2"/);
   assert.match(overlay, /DENSE_MEM_E2E_WRITE_CASE="\$slice"/);
   assert.match(compose, /run_synchronous_write_e2e "\$team_id" "\$api_key"/);
+});
+
+test("remember case covers mixed object success and a late search-generation fence", async () => {
+  const remember = await readFile(new URL("./cases/remember.mjs", import.meta.url), "utf8");
+  assert.match(remember, /mixed-objects/);
+  assert.match(remember, /search-generation-rotation/);
+  assert.match(remember, /commit_conflict/);
 });
 
 test("correction slice contains executable success and provider-failure assertions", async () => {

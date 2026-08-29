@@ -90,7 +90,7 @@ func (s *submissionAssessmentPlacementWorkerService) retryOrFailWithRelationship
 ) error {
 	if run.MaxAttempts > 0 && run.Attempts >= run.MaxAttempts {
 		cause := firstError(failureCause)
-		if isRepositoryDatabaseFailure(cause) {
+		if IsRepositoryDatabaseFailure(cause) {
 			return s.completeTerminalWithoutRelationshipResults(ctx, scope, stage, cause)
 		}
 		return s.completeTerminalWithRelationshipResults(

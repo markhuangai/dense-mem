@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -55,6 +56,30 @@ func TestReleaseImageDoesNotUseTheE2EEntrypoint(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(serverMain), "e2eapp")
 	require.NotContains(t, string(serverMain), "DENSE_MEM_E2E_WRITE_SLICE")
+}
+
+func TestReleaseRuntimeCannotInvokeSynchronousRememberFactory(t *testing.T) {
+	serverMain, err := os.ReadFile("main.go")
+	require.NoError(t, err)
+	require.Contains(t, string(serverMain), "serverapp.RunActiveServer(postMigrationCtx, cfg, pgDB, logger, level, authority, serverapp.RuntimeOptions{})")
+	require.NotContains(t, string(serverMain), "WriteRuntimeOverride")
+	require.NotContains(t, string(serverMain), "SynchronousRememberFactory")
+
+	serverAppFiles, err := filepath.Glob("../internal/serverapp/*.go")
+	require.NoError(t, err)
+	require.NotEmpty(t, serverAppFiles)
+	for _, path := range serverAppFiles {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(path)
+		require.NoError(t, err, path)
+		require.NotContains(t, string(body), "SynchronousRememberFactory()", path)
+	}
+
+	e2eApp, err := os.ReadFile("../internal/e2eapp/e2eapp.go")
+	require.NoError(t, err)
+	require.Contains(t, string(e2eApp), "write.SynchronousRememberFactory()")
 }
 
 func TestSharedBootstrapDoesNotLogRawErrors(t *testing.T) {

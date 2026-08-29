@@ -74,6 +74,7 @@ type RememberProcessRequest struct {
 	SecuritySignals          []SubmissionSecurityBatchSignal
 	SecuritySignalsTruncated bool
 	SecurityRejected         bool
+	SecurityRejectionAudit   *SecurityRejectionAuditInput
 }
 
 type TerminalRememberResult struct {
@@ -156,6 +157,7 @@ const (
 	maxTerminalErrors             = 50
 	maxTerminalRelationshipSplits = 50
 	maxTerminalSupersededEvidence = 50
+	maxTerminalCorrelationIDRunes = 128
 )
 
 func TerminalErrorCodes() []string {
@@ -337,7 +339,7 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	if strings.TrimSpace(result.SubmissionID) == "" || result.CorrelationID == "" || result.CorrelationID != strings.TrimSpace(result.CorrelationID) {
 		return errors.New("remember: terminal result identity fields are required")
 	}
-	if utf8.RuneCountInString(result.CorrelationID) > 128 {
+	if utf8.RuneCountInString(result.CorrelationID) > maxTerminalCorrelationIDRunes {
 		return errors.New("remember: terminal result correlation_id exceeds maximum length")
 	}
 	if _, err := uuid.Parse(result.SubmissionID); err != nil {

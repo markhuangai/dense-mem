@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/puddle/v2"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -138,7 +139,7 @@ func placementFailureDiagnosticFor(stage string, cause error) placementFailureDi
 		diagnostic.Class = boundedPlacementFailureClass(failure.Class)
 		diagnostic.ProviderStatus = boundedProviderStatus(failure.StatusCode)
 	}
-	if isRepositoryDatabaseFailure(cause) {
+	if IsRepositoryDatabaseFailure(cause) {
 		diagnostic.Class = "database_failure"
 	}
 	if errors.Is(cause, repository.ErrPlacementLeaseLost) || errors.Is(cause, repository.ErrPlacementLeaseConflict) {
@@ -156,12 +157,19 @@ func placementFailureDiagnosticFor(stage string, cause error) placementFailureDi
 	return diagnostic
 }
 
-func isRepositoryDatabaseFailure(err error) bool {
+// IsRepositoryDatabaseFailure reports database and driver failures that must
+// remain distinct from provider or semantic policy failures at application
+// boundaries.
+func IsRepositoryDatabaseFailure(err error) bool {
 	if err == nil {
 		return false
 	}
 	var postgresError *pgconn.PgError
+	var connectError *pgconn.ConnectError
 	return errors.As(err, &postgresError) ||
+		errors.As(err, &connectError) ||
+		errors.Is(err, pgconn.ErrConnClosed) ||
+		errors.Is(err, puddle.ErrClosedPool) ||
 		errors.Is(err, sql.ErrConnDone) ||
 		errors.Is(err, driver.ErrBadConn)
 }
