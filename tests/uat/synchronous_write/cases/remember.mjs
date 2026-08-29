@@ -24,7 +24,6 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     "embedding-non-finite",
     "embedding-timeout",
     "embedding-cancel",
-    "search-generation-rotation",
   ] : [selectedFault];
 
   const listed = await rpc("tools/list", {});
@@ -53,6 +52,8 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
       results.push(await runEmbeddingFaultCase({ rpc, expect, fault }));
     } else if (fault === "search-generation-rotation") {
       results.push(await runSearchGenerationFenceCase({ rpc, expect }));
+    } else if (fault === "supersession-rotation") {
+      results.push(await runLateSupersessionFenceCase({ rpc, expect }));
     } else {
       results.push(await runProviderFaultCase({ rpc, expect, fault }));
     }
@@ -233,7 +234,7 @@ async function runCancellationCase({ rpc, rawRPC, expect }) {
 }
 
 async function runSearchGenerationFenceCase({ rpc, expect }) {
-  const args = singleItemArguments("search-generation-rotation", "[fixture-fault:search-generation-rotation]");
+  const args = singleItemArguments("search-generation-rotation", "");
   const failed = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
   assertStrictTerminalRemember(failed, expect);
   expect(failed.processing_state === "failed", `search-generation rotation must fail: ${JSON.stringify(failed)}`);
@@ -303,21 +304,25 @@ async function runSupersessionFenceCase({ rpc, expect }) {
   expect(stale.errors[0]?.code === "stale_input", `stale supersession must return stale_input: ${JSON.stringify(stale)}`);
   expect(stale.evidence.every((item) => item.disposition === "not_stored"), "stale supersession must not store evidence");
 
-  const lateTargetArgs = singleItemArguments("supersession-late-target", "[fixture:supersession-late-target]");
-  const lateTarget = terminalPayload(await rpc("tools/call", { name: "remember", arguments: lateTargetArgs }));
-  assertStrictTerminalRemember(lateTarget, expect);
-  expect(lateTarget.processing_state === "completed", "late supersession target must complete");
-  const lateTargetEvidenceID = lateTarget.evidence.find((item) => item.evidence_id)?.evidence_id;
-  expect(lateTargetEvidenceID, "late supersession target must return an evidence id");
+  return { fault: "supersession-stale", processing_state: stale.processing_state };
+}
 
-  const late = singleItemArguments("supersession-late", "[fixture-fault:supersession-rotation]");
-  late.evidence[0].supersedes_evidence_ids = [lateTargetEvidenceID];
+async function runLateSupersessionFenceCase({ rpc, expect }) {
+  const targetArgs = singleItemArguments("supersession-late-target", "");
+  const target = terminalPayload(await rpc("tools/call", { name: "remember", arguments: targetArgs }));
+  assertStrictTerminalRemember(target, expect);
+  expect(target.processing_state === "completed", "late supersession target must complete");
+  const targetEvidenceID = target.evidence.find((item) => item.evidence_id)?.evidence_id;
+  expect(targetEvidenceID, "late supersession target must return an evidence id");
+
+  const late = singleItemArguments("supersession-late", "");
+  late.evidence[0].supersedes_evidence_ids = [targetEvidenceID];
   const lateResult = terminalPayload(await rpc("tools/call", { name: "remember", arguments: late }));
   assertStrictTerminalRemember(lateResult, expect);
   expect(lateResult.processing_state === "rejected", `late supersession must reject: ${JSON.stringify(lateResult)}`);
   expect(lateResult.errors[0]?.code === "stale_input", `late supersession must return stale_input: ${JSON.stringify(lateResult)}`);
   expect(lateResult.evidence.every((item) => item.disposition === "not_stored"), "late supersession must not store evidence");
-  return { fault: "supersession-stale", processing_state: stale.processing_state, late_processing_state: lateResult.processing_state };
+  return { fault: "supersession-rotation", processing_state: lateResult.processing_state };
 }
 
 async function runInputBudgetCase({ rpc, expect }) {

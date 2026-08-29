@@ -494,9 +494,9 @@ func lockSynchronousRememberSearchGeneration(ctx context.Context, tx *gorm.DB, r
 	`, result.SearchGenerationID, result.EmbeddingContractID).Row().Scan(&state)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("%w: planned search generation is no longer active", ErrSynchronousRememberEmbeddingFence)
+			return wrapSynchronousRememberEmbeddingStage("generation_fence", fmt.Errorf("%w: planned search generation is no longer active", ErrSynchronousRememberEmbeddingFence))
 		}
-		return fmt.Errorf("%w: planned search generation lock failed", ErrSynchronousRememberEmbeddingFence)
+		return wrapSynchronousRememberEmbeddingStage("generation_fence", fmt.Errorf("planned search generation lock failed: %w", err))
 	}
 	if state != "active" {
 		return fmt.Errorf("%w: planned search generation is no longer active", ErrSynchronousRememberEmbeddingFence)

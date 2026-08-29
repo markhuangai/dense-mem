@@ -1,0 +1,26 @@
+package synchronousremember
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/repository"
+	remember "github.com/markhuangai/dense-mem/internal/service/remember"
+)
+
+func TestSynchronousFailureCodeClassifiesSearchContractMismatch(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		phase string
+		cause error
+		want  remember.TerminalErrorCode
+	}{
+		{name: "search contract during planning", phase: "embedding", cause: repository.ErrSearchContractMismatch, want: remember.TerminalErrorConfigurationInvalid},
+		{name: "search contract during commit", phase: "commit", cause: repository.ErrSearchContractMismatch, want: remember.TerminalErrorConfigurationInvalid},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, synchronousFailureCode(test.phase, test.cause))
+		})
+	}
+}

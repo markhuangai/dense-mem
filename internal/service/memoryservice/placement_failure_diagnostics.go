@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/puddle/v2"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -164,7 +165,11 @@ func IsRepositoryDatabaseFailure(err error) bool {
 		return false
 	}
 	var postgresError *pgconn.PgError
+	var connectError *pgconn.ConnectError
 	return errors.As(err, &postgresError) ||
+		errors.As(err, &connectError) ||
+		errors.Is(err, pgconn.ErrConnClosed) ||
+		errors.Is(err, puddle.ErrClosedPool) ||
 		errors.Is(err, sql.ErrConnDone) ||
 		errors.Is(err, driver.ErrBadConn)
 }

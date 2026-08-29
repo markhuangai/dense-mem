@@ -72,6 +72,7 @@ func TestSynchronousRememberVectorFenceRollsBackCanonicalAndAttemptState(t *test
 	previewCommit := synchronousRememberCommitInput(synchronousRememberPreviewCreate(input.CreateIngest), SubmissionAssessmentRunScope{TeamID: teamID, OwnerProfileID: ownerID})
 	plan, err := repo.PlanSynchronousRememberEmbeddings(ctx, input.CreateIngest, previewCommit)
 	require.NoError(t, err)
+	require.NotEmpty(t, plan.Documents)
 	inline := SynchronousRememberEmbeddingResult{EmbeddingContractID: plan.EmbeddingContractID, EmbeddingDimensions: plan.EmbeddingDimensions, EmbeddingModel: plan.EmbeddingModel, SearchGenerationID: plan.SearchGenerationID, SearchGenerationVersion: plan.SearchGenerationVersion}
 	for index, document := range plan.Documents {
 		hash := document.Hash

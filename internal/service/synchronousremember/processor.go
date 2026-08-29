@@ -95,6 +95,14 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 		}
 	}
 	if err != nil && !errors.Is(err, repository.ErrRememberAttemptNotFound) {
+		if input.SecurityRejected && input.SecurityRejectionAudit != nil {
+			auditCtx, cancelAudit := remember.ContextForPhase(ctx, remember.RememberPhaseCommit)
+			auditErr := remember.RecordSecurityRejectionAudit(auditCtx, p.auditor, p.logger, *input.SecurityRejectionAudit)
+			cancelAudit()
+			if auditErr != nil {
+				return nil, remember.ErrRememberPersistence
+			}
+		}
 		return p.failure(ctx, input, attemptID, base, "commit", 0, started, err)
 	}
 
@@ -268,7 +276,7 @@ func (p *synchronousRememberProcessor) commitTerminal(ctx context.Context, input
 	defer cancel()
 	terminal, err := p.ledger.CommitSynchronousRememberTerminal(commitCtx, repository.SynchronousRememberTerminalInput{
 		CreateIngest: create,
-		Attempt:      synchronousAttempt(input, attemptID, nil, outcome, "", "", prepared.Response.ProviderTurns, started),
+		Attempt:      synchronousAttempt(input, attemptID, nil, outcome, "commit", "", prepared.Response.ProviderTurns, started),
 		BuildTerminal: func(created *repository.CreateIngestResult, scope repository.SubmissionAssessmentRunScope) (*repository.PersistSubmissionAssessmentInput, repository.CompleteSubmissionAssessmentInput, error) {
 			persist, err := memoryservice.BuildSynchronousRememberAssessmentPersistenceInput(created, prepared)
 			if err != nil {
@@ -327,6 +335,8 @@ func synchronousFailureCode(phase string, err error) remember.TerminalErrorCode 
 		return remember.TerminalErrorInputBudgetExceeded
 	case memoryservice.IsSemanticAssessmentInputBudgetError(err):
 		return remember.TerminalErrorInputBudgetExceeded
+	case errors.Is(err, repository.ErrSearchContractMismatch):
+		return remember.TerminalErrorConfigurationInvalid
 	case errors.Is(err, repository.ErrSynchronousRememberEmbeddingFence) && phase == "commit":
 		return remember.TerminalErrorCommitConflict
 	case errors.Is(err, repository.ErrSynchronousRememberEmbeddingFence):
