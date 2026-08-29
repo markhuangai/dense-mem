@@ -158,6 +158,17 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 	ctx = registry.WithRuntimeToolPolicy(ctx, policy)
 	result, err := tool.Invoke(ctx, s.teamID, args)
 	if err != nil {
+		if structured, ok := registry.ToolResultFromError(err); ok {
+			payload, marshalErr := json.Marshal(structured.Result)
+			if marshalErr != nil {
+				return nil, &rpcError{Code: errCodeToolFailure, Message: "tool result serialization failed"}
+			}
+			return map[string]any{
+				"content":           []map[string]any{{"type": "text", "text": string(payload)}},
+				"structuredContent": structured.Result,
+				"isError":           true,
+			}, nil
+		}
 		if errors.Is(err, registry.ErrToolDisabled) {
 			return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", name)}
 		}
@@ -187,9 +198,9 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 		return nil, &rpcError{Code: errCodeToolFailure, Message: "tool result serialization failed"}
 	}
 	return map[string]any{
-		"content": []map[string]any{
-			{"type": "text", "text": string(payload)},
-		},
+		"content":           []map[string]any{{"type": "text", "text": string(payload)}},
+		"structuredContent": result,
+		"isError":           false,
 	}, nil
 }
 

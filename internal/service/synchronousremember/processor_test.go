@@ -345,6 +345,27 @@ func TestSynchronousProcessorValidatesIngestBeforeAssessment(t *testing.T) {
 	require.Zero(t, ledger.planCalls)
 }
 
+func TestSynchronousProcessorClassifiesAssessmentInputBudget(t *testing.T) {
+	teamID, ownerID := uuid.NewString(), uuid.NewString()
+	ledger := &synchronousPipelineLedger{}
+	provider := &synchronousPipelineProvider{}
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	limits.MaxInputTokens = 1
+	processor := NewSynchronousRememberProcessor(SynchronousRememberProcessorDependencies{
+		Ledger: ledger, Catalog: synchronousPipelineCatalog{}, Provider: provider, Limits: limits,
+		Embeddings: semanticwrite.NewExecutor(&synchronousPipelineEmbeddingProvider{}),
+	})
+
+	_, err := processor.ProcessRemember(context.Background(), synchronousPipelineRememberRequest(teamID, ownerID, "pipeline-assessment-budget", "pipeline-assessment-budget-hash"))
+
+	var processErr *remember.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.Equal(t, string(remember.TerminalErrorInputBudgetExceeded), processErr.Result.Errors[0].Code)
+	require.Equal(t, string(remember.TerminalErrorInputBudgetExceeded), ledger.failureInput.Attempt.ErrorCode)
+	require.Zero(t, provider.assessCalls)
+	require.Zero(t, ledger.planCalls)
+}
+
 func TestSynchronousProcessorReplaysMatchingTerminalBeforeProviderWork(t *testing.T) {
 	teamID, ownerID := uuid.NewString(), uuid.NewString()
 	input := synchronousPipelineRememberRequest(teamID, ownerID, "pipeline-replay", "pipeline-replay-hash")

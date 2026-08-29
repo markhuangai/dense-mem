@@ -68,6 +68,23 @@ func semanticAssessmentPreflightFailure(err error) (string, bool) {
 	return "candidate_prefetch", false
 }
 
+// IsSemanticAssessmentInputBudgetError reports deterministic assessor request
+// bounds that cannot succeed without changing the submitted batch or its
+// server-owned candidate context. Callers use this narrow classification to
+// preserve the public input_budget_exceeded contract without exposing stages.
+func IsSemanticAssessmentInputBudgetError(err error) bool {
+	stage, terminal := semanticAssessmentPreflightFailure(err)
+	if !terminal {
+		return false
+	}
+	switch stage {
+	case "entity_catalog", "catalog_context", "assessment_input", "predicate_options_overflow":
+		return true
+	default:
+		return false
+	}
+}
+
 func terminalizeAfterError(original error, complete func() error) error {
 	if completionErr := complete(); completionErr != nil {
 		return errors.Join(original, completionErr)

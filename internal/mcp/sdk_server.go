@@ -279,7 +279,13 @@ func (s *Server) sdkToolHandler(name string) sdkmcp.ToolHandler {
 		if !ok {
 			return nil, &sdkjsonrpc.Error{Code: errCodeToolFailure, Message: "tool result serialization failed"}
 		}
-		return &sdkmcp.CallToolResult{Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: text}}}, nil
+		structuredContent := result["structuredContent"]
+		isError, _ := result["isError"].(bool)
+		return &sdkmcp.CallToolResult{
+			Content:           []sdkmcp.Content{&sdkmcp.TextContent{Text: text}},
+			StructuredContent: structuredContent,
+			IsError:           isError,
+		}, nil
 	}
 }
 

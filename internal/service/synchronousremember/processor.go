@@ -324,6 +324,8 @@ func synchronousFailureCode(phase string, err error) remember.TerminalErrorCode 
 		return remember.TerminalErrorStaleInput
 	case errors.Is(err, repository.ErrSynchronousRememberEmbeddingInputBudget):
 		return remember.TerminalErrorInputBudgetExceeded
+	case memoryservice.IsSemanticAssessmentInputBudgetError(err):
+		return remember.TerminalErrorInputBudgetExceeded
 	case errors.Is(err, repository.ErrSynchronousRememberEmbeddingFence) && phase == "commit":
 		return remember.TerminalErrorCommitConflict
 	case errors.Is(err, repository.ErrSynchronousRememberEmbeddingFence):

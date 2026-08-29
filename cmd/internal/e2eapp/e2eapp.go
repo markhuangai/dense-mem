@@ -239,7 +239,14 @@ func terminalRememberInvoker(legacy registry.Tool, remember rememberapp.Service)
 		if err := rememberapp.ValidateTerminalRememberResult(result.Terminal, len(req.Evidence), terminalRelationshipRefs(input)); err != nil {
 			return nil, fmt.Errorf("remember: invalid terminal result")
 		}
-		return terminalRememberResultMap(result.Terminal)
+		output, err := terminalRememberResultMap(result.Terminal)
+		if err != nil {
+			return nil, err
+		}
+		if result.Terminal.ProcessingState != string(rememberapp.TerminalProcessingCompleted) {
+			return nil, registry.NewToolResultError(output)
+		}
+		return output, nil
 	}
 }
 

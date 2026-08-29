@@ -58,6 +58,28 @@ func TestCompleteSynchronousRememberTurnsCountsProviderCallsNotProviderTurnNumbe
 	}
 }
 
+func TestIsSemanticAssessmentInputBudgetErrorRecognizesBoundedPreflightStages(t *testing.T) {
+	for _, stage := range []string{"entity_catalog", "catalog_context", "assessment_input", "predicate_options_overflow"} {
+		t.Run(stage, func(t *testing.T) {
+			err := deterministicSemanticAssessmentPreflightError(stage, "budget exceeded")
+			if !IsSemanticAssessmentInputBudgetError(err) {
+				t.Fatalf("stage %q was not classified as an input budget error", stage)
+			}
+		})
+	}
+	for _, stage := range []string{"catalog_context_validation", "trusted_context_validation", "placement_load"} {
+		t.Run(stage, func(t *testing.T) {
+			err := deterministicSemanticAssessmentPreflightError(stage, "validation failed")
+			if IsSemanticAssessmentInputBudgetError(err) {
+				t.Fatalf("stage %q was incorrectly classified as an input budget error", stage)
+			}
+		})
+	}
+	if IsSemanticAssessmentInputBudgetError(errors.New("catalog_context exceeded")) {
+		t.Fatal("untyped error was incorrectly classified as an input budget error")
+	}
+}
+
 func TestSynchronousRememberAssessmentBuildsCommitAndTerminalInputs(t *testing.T) {
 	ledger, _, catalog, provider, _ := submissionAssessmentWorkerFixture(t)
 	evidence := make([]repository.EvidenceInput, 0, len(ledger.placement.Evidence))

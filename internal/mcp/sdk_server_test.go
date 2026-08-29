@@ -377,12 +377,32 @@ func TestSDKToolHandlerRejectsInvalidAndUnserializableResults(t *testing.T) {
 	good, err := server.sdkToolHandler("good")(context.Background(), &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage(`{"value":"ok"}`)}})
 	require.NoError(t, err)
 	require.Len(t, good.Content, 1)
+	require.False(t, good.IsError)
+	require.Equal(t, map[string]any{"content": []map[string]any{{"text": "ok"}}}, good.StructuredContent)
 
 	_, err = server.sdkToolHandler("good")(context.Background(), &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage("{")}})
 	requireSDKError(t, err, errCodeInvalidParams, "invalid params")
 
 	_, err = server.sdkToolHandler("failed")(context.Background(), nil)
 	requireSDKError(t, err, errCodeToolFailure, "tool execution failed; contact an operator")
+}
+
+func TestSDKToolHandlerReturnsStructuredToolErrors(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	result := map[string]any{"processing_state": "failed", "errors": []any{map[string]any{"code": "embedding_unavailable"}}}
+	require.NoError(t, reg.Register(registry.Tool{Name: "terminal", Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
+		return nil, registry.NewToolResultError(result)
+	}}))
+	server := NewServer(reg, "profile-a", logger)
+
+	got, err := server.sdkToolHandler("terminal")(context.Background(), nil)
+	require.NoError(t, err)
+	require.True(t, got.IsError)
+	require.Equal(t, result, got.StructuredContent)
+	require.Len(t, got.Content, 1)
+	text := got.Content[0].(*sdkmcp.TextContent).Text
+	require.JSONEq(t, `{"processing_state":"failed","errors":[{"code":"embedding_unavailable"}]}`, text)
 }
 
 func requireSDKError(t *testing.T, err error, code int, message string) {

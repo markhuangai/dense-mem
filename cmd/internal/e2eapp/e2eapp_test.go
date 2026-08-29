@@ -177,6 +177,28 @@ func TestTerminalRememberInvokerReturnsPollingFreeTerminalResult(t *testing.T) {
 	require.NoError(t, registry.ValidateInput(registry.Tool{InputSchema: terminalRememberOutputSchema()}, output))
 }
 
+func TestTerminalRememberInvokerReturnsStructuredToolErrorForTerminalFailure(t *testing.T) {
+	legacy := registry.Tool{Name: registry.ToolRemember, InputSchema: map[string]any{"type": "object"}, RequiredScopes: []string{"write"}}
+	invoker := terminalRememberInvoker(legacy, terminalRememberFailureService{})
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{Grants: []string{"write"}})
+
+	_, err := invoker(ctx, "ignored", map[string]any{
+		"evidence": []any{map[string]any{"content": "terminal evidence"}},
+		"relationships": []any{map[string]any{
+			"ref": "r-1", "subject": map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
+			"predicate": map[string]any{"proposed_key": "uses"},
+			"object":    map[string]any{"value": map[string]any{"type": "string", "value": "PostgreSQL"}},
+			"polarity":  "+", "evidence_indices": []any{0},
+		}},
+		"idempotency_key": "terminal-failure-idempotency",
+	})
+
+	structured, ok := registry.ToolResultFromError(err)
+	require.True(t, ok)
+	require.Equal(t, "rejected", structured.Result["processing_state"])
+	require.NotNil(t, structured.Result["errors"])
+}
+
 func TestTerminalRelationshipRefsTrimWhitespace(t *testing.T) {
 	refs := terminalRelationshipRefs(map[string]any{"relationships": []any{
 		map[string]any{"ref": "  first  "},
@@ -206,5 +228,25 @@ func (terminalRememberService) Remember(_ context.Context, req rememberapp.Remem
 }
 
 func (terminalRememberService) GetSubmissionStatus(context.Context, rememberapp.GetSubmissionStatusRequest) (*rememberapp.SubmissionStatusResult, error) {
+	return nil, nil
+}
+
+type terminalRememberFailureService struct{}
+
+func (terminalRememberFailureService) Remember(_ context.Context, req rememberapp.RememberRequest) (*rememberapp.RememberResult, error) {
+	base := &rememberapp.TerminalRememberResult{
+		ContractVersion: domain.ContractVersion, SubmissionID: uuid.NewString(), SubmissionKind: "remember",
+		CorrelationID: "terminal-failure-correlation", Evidence: make([]rememberapp.TerminalEvidenceResult, len(req.Evidence)),
+		RelationshipResults: make([]rememberapp.SubmissionRelationshipResult, len(req.RelationshipHints)),
+		Errors:              []rememberapp.SubmissionStatusError{}, Kind: rememberapp.ResultKindTerminal,
+	}
+	for index := range base.RelationshipResults {
+		ref, _ := req.RelationshipHints[index]["ref"].(string)
+		base.RelationshipResults[index] = rememberapp.SubmissionRelationshipResult{RelationshipRef: ref, Splits: []rememberapp.SubmissionRelationshipSplit{}}
+	}
+	return nil, rememberapp.TerminalResultWithError(base, rememberapp.TerminalErrorNoSupportedMemory)
+}
+
+func (terminalRememberFailureService) GetSubmissionStatus(context.Context, rememberapp.GetSubmissionStatusRequest) (*rememberapp.SubmissionStatusResult, error) {
 	return nil, nil
 }
