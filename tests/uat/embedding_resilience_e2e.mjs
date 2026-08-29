@@ -120,6 +120,9 @@ async function runScheduledDocumentRepair() {
   if (failed.latest_run?.selected_count < 1 || failed.latest_run.updated_count !== 0 || failed.latest_run.embedded_count !== 0) {
     throw new Error(`failed scheduled repair did not retain bounded untouched counters: ${JSON.stringify(failed.latest_run)}`);
   }
+  if (failed.status !== "attention_required" || typeof failed.drifted_documents !== "number" || failed.drifted_documents < 1 || typeof failed.latest_run?.drifted_count !== "number" || failed.latest_run.drifted_count < 1) {
+    throw new Error(`failed scheduled repair did not retain public drift attention: ${JSON.stringify(failed)}`);
+  }
   if (repairDocumentAndSourceFingerprint(staleDocumentID) !== unchangedBeforeFailure) {
     throw new Error("failed scheduled repair changed the selected document or its canonical source");
   }
@@ -141,7 +144,7 @@ async function runScheduledDocumentRepair() {
     throw new Error(`scheduled repair was not one bounded document batch: ${JSON.stringify(repairedRequest)}`);
   }
   const converged = await waitForConvergedRepair();
-  if (converged.latest_run?.status !== "completed" || converged.latest_run.local_run_date !== recoveryLocalDate || converged.latest_run.updated_count < 1) {
+  if (converged.status !== "converged" || converged.drifted_documents !== 0 || converged.latest_run?.drifted_count !== 0 || converged.latest_run?.status !== "completed" || converged.latest_run.local_run_date !== recoveryLocalDate || converged.latest_run.updated_count < 1) {
     throw new Error(`scheduled repair did not persist document counters: ${JSON.stringify(converged)}`);
   }
   return {

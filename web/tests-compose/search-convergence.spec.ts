@@ -40,6 +40,28 @@ test("control panel surfaces a bounded convergence error", async ({ page }) => {
   await expectNoShellOverlap(page);
 });
 
+test("control panel renders converged empty document drift", async ({ page }) => {
+  await page.route("**/control/api/search/convergence", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: convergedSnapshot() }),
+    });
+  });
+
+  await openControlPanel(page);
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+
+  const panel = page.getByRole("region", { name: "Search convergence" });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText("converged", { exact: true })).toBeVisible();
+  await expect(panel.getByText("No outstanding drift", { exact: true })).toBeVisible();
+  await expect(panel.getByText("No unresolved failure groups.", { exact: true })).toBeVisible();
+  await expect(panel).not.toContainText("missing_document");
+  await expect(panel).not.toContainText("stale");
+  await expectNoShellOverlap(page);
+});
+
 async function openControlPanel(page: Page) {
   await page.goto(`${controlUrl}/`);
   await page.getByLabel("Control token").fill(controlToken);
@@ -64,6 +86,52 @@ async function expectNoShellOverlap(page: Page) {
       expect(horizontalOverlap > 0 && verticalOverlap > 0, `${i} and ${j} shell boxes overlap`).toBe(false);
     }
   }
+}
+
+function convergedSnapshot() {
+  return {
+    observed_at: "2026-08-11T04:30:00Z",
+    status: "converged",
+    expected_documents: 2,
+    current_documents: 2,
+    drifted_documents: 0,
+    affected_team_count: 0,
+    oldest_drift_age_seconds: 0,
+    drift_classes: [],
+    contract: {
+      provider: "openai",
+      model: "embedding-model",
+      dimensions: 3,
+      index_generation: 2,
+      index_strategy: "exact",
+    },
+    queue: {
+      queued: 0,
+      processing: 0,
+      failed: 0,
+      expired_leases: 0,
+      affected_team_count: 0,
+      oldest_pending_age_seconds: 0,
+      oldest_failure_age_seconds: 0,
+    },
+    failures: [],
+    failure_groups: [],
+    failure_group_count: 0,
+    failure_groups_truncated: false,
+    latest_run: {
+      run_id: "22222222-2222-4222-8222-222222222222",
+      local_run_date: "2026-08-11",
+      status: "completed",
+      canary_outcome: "not_run",
+      requeued_count: 0,
+      recovered_count: 0,
+      selected_count: 0,
+      embedded_count: 0,
+      updated_count: 0,
+      drifted_count: 0,
+      updated_at: "2026-08-11T04:30:00Z",
+    },
+  };
 }
 
 function requiredEnv(name: string): string {
