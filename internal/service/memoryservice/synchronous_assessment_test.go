@@ -11,6 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/stretchr/testify/require"
 )
 
 type synchronousAssessmentSessionStub struct{}
@@ -18,7 +19,8 @@ type synchronousAssessmentSessionStub struct{}
 func (synchronousAssessmentSessionStub) SessionID() string { return "synchronous-assessment" }
 
 type synchronousAssessmentProviderStub struct {
-	repairs int
+	repairs   int
+	repairErr error
 }
 
 func (*synchronousAssessmentProviderStub) Assess(context.Context, assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
@@ -27,6 +29,9 @@ func (*synchronousAssessmentProviderStub) Assess(context.Context, assessor.Seman
 
 func (s *synchronousAssessmentProviderStub) Repair(context.Context, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
 	s.repairs++
+	if s.repairErr != nil {
+		return assessor.SemanticAssessmentTurn{}, s.repairErr
+	}
 	return invalidSynchronousAssessmentTurn(), nil
 }
 
@@ -56,6 +61,21 @@ func TestCompleteSynchronousRememberTurnsCountsProviderCallsNotProviderTurnNumbe
 	if provider.repairs != synchronousRememberMaxAssessorTurns-1 {
 		t.Fatalf("repairs = %d, want %d", provider.repairs, synchronousRememberMaxAssessorTurns-1)
 	}
+}
+
+func TestCompleteSynchronousRememberTurnsPreservesConsumedTurnsOnRepairFailure(t *testing.T) {
+	repairErr := errors.New("assessor repair unavailable")
+	provider := &synchronousAssessmentProviderStub{repairErr: repairErr}
+	_, _, err := completeSynchronousRememberTurns(
+		context.Background(), provider, observability.NoopDiscoverabilityMetrics(), assessor.DefaultSemanticAssessmentLimits(),
+		synchronousAssessmentSessionStub{}, invalidSynchronousAssessmentTurn(), assessor.SemanticAssessmentRequest{},
+		func(context.Context) (assessor.SemanticAssessmentRequest, error) {
+			return assessor.SemanticAssessmentRequest{}, nil
+		},
+	)
+
+	require.ErrorIs(t, err, repairErr)
+	require.Equal(t, 1, SynchronousRememberAssessmentConsumedProviderTurns(err))
 }
 
 func TestIsSemanticAssessmentInputBudgetErrorRecognizesBoundedPreflightStages(t *testing.T) {
@@ -278,6 +298,12 @@ func TestIsRememberStaleInputErrorRecognizesAllFences(t *testing.T) {
 	}
 	if !IsRememberStaleInputError(&repository.RememberPreflightError{Issues: []repository.RememberPreflightIssue{{Code: "stale"}}}) {
 		t.Fatal("remember preflight stale issue was not recognized")
+	}
+	if !IsRememberStaleInputError(&repository.RememberPreflightError{Issues: []repository.RememberPreflightIssue{{Path: "/evidence/0/source_revision", Code: "conflict"}}}) {
+		t.Fatal("source revision conflict preflight was not recognized")
+	}
+	if IsRememberStaleInputError(&repository.RememberPreflightError{Issues: []repository.RememberPreflightIssue{{Path: "/relationships/0/subject/entity_kind", Code: "conflict"}}}) {
+		t.Fatal("relationship entity conflict was incorrectly recognized as stale input")
 	}
 	if IsRememberStaleInputError(errors.New("unrelated")) {
 		t.Fatal("unrelated error was classified as stale input")

@@ -214,11 +214,10 @@ func (s *Server) newSDKServer(ctx context.Context) *sdkmcp.Server {
 			inputSchema = map[string]any{"type": "object"}
 		}
 		server.AddTool(&sdkmcp.Tool{
-			Name:        tool.Name,
-			Description: s.toolDescription(tool.Description),
-			InputSchema: inputSchema,
-			// Keep the established public catalog without an output schema.
-			OutputSchema: nil,
+			Name:         tool.Name,
+			Description:  s.toolDescription(tool.Description),
+			InputSchema:  inputSchema,
+			OutputSchema: tool.OutputSchema,
 		}, s.sdkToolHandler(tool.Name))
 	}
 

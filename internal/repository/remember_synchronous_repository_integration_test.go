@@ -44,6 +44,19 @@ func TestSynchronousRememberPreflightQuarantineLeavesCanonicalStateEmpty(t *test
 	}))
 	assert.Zero(t, canonicalRows)
 	assert.Equal(t, int64(1), attempts)
+
+	var phase, eventKind string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT phase, event_kind
+			FROM remember_attempt_events
+			WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid
+			ORDER BY sequence_no ASC
+			LIMIT 1
+		`, teamID, ownerID).Row().Scan(&phase, &eventKind)
+	}))
+	assert.Equal(t, "preflight", phase)
+	assert.Equal(t, "preflight_quarantined", eventKind)
 }
 
 func TestSynchronousRememberVectorFenceRollsBackCanonicalAndAttemptState(t *testing.T) {

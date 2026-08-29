@@ -287,11 +287,11 @@ func completeSynchronousRememberTurns(
 		}
 		nextRequest, err := refresh(ctx)
 		if err != nil {
-			return assessor.SemanticAssessmentResponse{}, request, err
+			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{cause: err, providerTurns: turns}
 		}
 		turn, err = provider.Repair(ctx, session, assessor.SemanticAssessmentRepairRequest{Request: nextRequest, ValidationErrors: validationErrors})
 		if err != nil {
-			return assessor.SemanticAssessmentResponse{}, request, err
+			return assessor.SemanticAssessmentResponse{}, request, &submissionAssessmentConsumedTurnsError{cause: err, providerTurns: turns}
 		}
 		request = nextRequest
 	}

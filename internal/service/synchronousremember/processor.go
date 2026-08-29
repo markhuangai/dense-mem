@@ -305,11 +305,12 @@ func (p *synchronousRememberProcessor) commitTerminal(ctx context.Context, input
 }
 
 func synchronousAssessmentTurns(err error) int {
+	turns := memoryservice.SynchronousRememberAssessmentConsumedProviderTurns(err)
 	var malformed *assessor.MalformedResponseError
-	if errors.As(err, &malformed) && malformed.Attempts > 0 {
-		return malformed.Attempts
+	if errors.As(err, &malformed) && malformed.Attempts > turns {
+		turns = malformed.Attempts
 	}
-	return 0
+	return turns
 }
 
 func synchronousFailureCode(phase string, err error) remember.TerminalErrorCode {

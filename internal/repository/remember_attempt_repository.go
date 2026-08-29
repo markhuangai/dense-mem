@@ -307,7 +307,7 @@ func insertRememberAttemptInTx(ctx context.Context, tx *gorm.DB, input RememberA
 }
 
 func rememberAttemptPhase(input RememberAttemptRecordInput) string {
-	if input.Outcome == "failed" && input.FailedPhase != "" {
+	if input.FailedPhase != "" {
 		return input.FailedPhase
 	}
 	return "commit"
@@ -315,6 +315,9 @@ func rememberAttemptPhase(input RememberAttemptRecordInput) string {
 func rememberAttemptEventKind(input RememberAttemptRecordInput) string {
 	if input.Outcome == "failed" {
 		return rememberAttemptPhase(input) + "_failed"
+	}
+	if input.FailedPhase != "" {
+		return rememberAttemptPhase(input) + "_" + input.Outcome
 	}
 	return "commit_completed"
 }

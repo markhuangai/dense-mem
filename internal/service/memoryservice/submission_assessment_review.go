@@ -25,7 +25,9 @@ func isRememberStaleInputError(err error) bool {
 	var preflight *repository.RememberPreflightError
 	if errors.As(err, &preflight) && preflight != nil {
 		for _, issue := range preflight.Issues {
-			if strings.TrimSpace(issue.Code) == "stale" {
+			code := strings.TrimSpace(issue.Code)
+			path := strings.TrimSpace(issue.Path)
+			if code == "stale" || (code == "conflict" && strings.HasPrefix(path, "/evidence/") && strings.HasSuffix(path, "/source_revision")) {
 				return true
 			}
 		}

@@ -26,6 +26,7 @@ func TestSDKHTTPHandlerUsesTheSharedRegistryAndSupportsFrozenAndCurrentFlows(t *
 		Name:           "read_tool",
 		Description:    "read",
 		InputSchema:    map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}},
+		OutputSchema:   map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}, "additionalProperties": false},
 		RequiredScopes: []string{"read"},
 		Invoke: func(_ context.Context, _ string, input map[string]any) (map[string]any, error) {
 			return map[string]any{"value": input["value"]}, nil
@@ -89,6 +90,8 @@ func TestSDKHTTPHandlerUsesTheSharedRegistryAndSupportsFrozenAndCurrentFlows(t *
 	handler.ServeHTTP(listResponse, listRequest)
 	require.Equal(t, http.StatusOK, listResponse.Code)
 	require.Contains(t, listResponse.Body.String(), `"name":"read_tool"`)
+	require.Contains(t, listResponse.Body.String(), `"outputSchema":`)
+	require.Contains(t, listResponse.Body.String(), `"value":{"type":"string"}`)
 
 	callRequest := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_tool","arguments":{"value":"ok"}}}`))
 	callRequest.Header.Set("Content-Type", "application/json")

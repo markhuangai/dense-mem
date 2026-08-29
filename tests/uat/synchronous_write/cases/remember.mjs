@@ -302,7 +302,22 @@ async function runSupersessionFenceCase({ rpc, expect }) {
   expect(stale.search_state === "not_required", "stale supersession must not require search");
   expect(stale.errors[0]?.code === "stale_input", `stale supersession must return stale_input: ${JSON.stringify(stale)}`);
   expect(stale.evidence.every((item) => item.disposition === "not_stored"), "stale supersession must not store evidence");
-  return { fault: "supersession-stale", processing_state: stale.processing_state };
+
+  const lateTargetArgs = singleItemArguments("supersession-late-target", "[fixture:supersession-late-target]");
+  const lateTarget = terminalPayload(await rpc("tools/call", { name: "remember", arguments: lateTargetArgs }));
+  assertStrictTerminalRemember(lateTarget, expect);
+  expect(lateTarget.processing_state === "completed", "late supersession target must complete");
+  const lateTargetEvidenceID = lateTarget.evidence.find((item) => item.evidence_id)?.evidence_id;
+  expect(lateTargetEvidenceID, "late supersession target must return an evidence id");
+
+  const late = singleItemArguments("supersession-late", "[fixture-fault:supersession-rotation]");
+  late.evidence[0].supersedes_evidence_ids = [lateTargetEvidenceID];
+  const lateResult = terminalPayload(await rpc("tools/call", { name: "remember", arguments: late }));
+  assertStrictTerminalRemember(lateResult, expect);
+  expect(lateResult.processing_state === "rejected", `late supersession must reject: ${JSON.stringify(lateResult)}`);
+  expect(lateResult.errors[0]?.code === "stale_input", `late supersession must return stale_input: ${JSON.stringify(lateResult)}`);
+  expect(lateResult.evidence.every((item) => item.disposition === "not_stored"), "late supersession must not store evidence");
+  return { fault: "supersession-stale", processing_state: stale.processing_state, late_processing_state: lateResult.processing_state };
 }
 
 async function runInputBudgetCase({ rpc, expect }) {

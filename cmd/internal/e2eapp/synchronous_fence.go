@@ -7,14 +7,17 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 const synchronousSearchGenerationFault = "search-generation-rotation"
+const synchronousSupersessionFault = "supersession-rotation"
 
 // synchronousRememberBeforeCommitHook is installed only by the disposable
 // remember E2E composition. It rotates the active generation after provider
@@ -24,20 +27,32 @@ func synchronousRememberBeforeCommitHook(runtime serverapp.RuntimeContext) func(
 		return nil
 	}
 	var mu sync.Mutex
-	rotated := false
+	searchGenerationRotated := false
+	supersessionRotated := false
 	return func(ctx context.Context, input rememberapp.RememberProcessRequest, plan *repository.SynchronousRememberEmbeddingPlan) error {
-		if plan == nil || !rememberInputHasFault(input, synchronousSearchGenerationFault) {
+		if plan == nil {
 			return nil
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		if rotated {
-			return nil
+		switch {
+		case rememberInputHasFault(input, synchronousSearchGenerationFault):
+			if searchGenerationRotated {
+				return nil
+			}
+			if err := rotateSynchronousSearchGeneration(ctx, runtime, plan); err != nil {
+				return err
+			}
+			searchGenerationRotated = true
+		case rememberInputHasFault(input, synchronousSupersessionFault):
+			if supersessionRotated {
+				return nil
+			}
+			if err := rotateSynchronousSupersessionTarget(ctx, runtime, input); err != nil {
+				return err
+			}
+			supersessionRotated = true
 		}
-		if err := rotateSynchronousSearchGeneration(ctx, runtime, plan); err != nil {
-			return err
-		}
-		rotated = true
 		return nil
 	}
 }
@@ -99,6 +114,37 @@ func rotateSynchronousSearchGeneration(ctx context.Context, runtime serverapp.Ru
 	})
 	if err != nil {
 		return fmt.Errorf("synchronous E2E search generation rotation: %w", err)
+	}
+	return nil
+}
+
+func rotateSynchronousSupersessionTarget(ctx context.Context, runtime serverapp.RuntimeContext, input rememberapp.RememberProcessRequest) error {
+	targets := make([]string, 0)
+	for _, evidence := range input.Evidence {
+		targets = append(targets, evidence.SupersedesEvidenceIDs...)
+	}
+	if len(targets) == 0 {
+		return errors.New("synchronous E2E supersession rotation requires a target")
+	}
+	rls, ok := runtime.RLS.(*postgres.RLS)
+	if !ok || rls == nil {
+		return errors.New("synchronous E2E supersession rotation requires PostgreSQL RLS")
+	}
+	ledger := repository.NewLedgerRepository(runtime.PostgresDB, rls)
+	_, err := ledger.CreateIngest(ctx, repository.CreateIngestInput{
+		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID,
+		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
+		IdempotencyKey: "e2e-late-supersession-" + uuid.NewString(), RequestHash: uuid.NewString(),
+		SourceSummary: "synchronous E2E late supersession fence", Status: "quarantined",
+		Evidence: []repository.EvidenceInput{{
+			Content:    "synchronous E2E competing supersession",
+			SourceType: "manual", Authority: "primary",
+			IdempotencyKey:        "e2e-late-supersession-evidence-" + uuid.NewString(),
+			SupersedesEvidenceIDs: targets,
+		}},
+	})
+	if err != nil {
+		return fmt.Errorf("synchronous E2E supersession rotation: %w", err)
 	}
 	return nil
 }

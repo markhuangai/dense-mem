@@ -150,7 +150,7 @@ func (r *LedgerRepositoryImpl) PlanSynchronousRememberEmbeddings(
 		for _, registration := range commit.PredicateRegistrations {
 			registrations[registration.RelationshipRef] = registration
 		}
-		entityTexts, err := synchronousRememberEmbeddingEntityTexts(ctx, tx, create.TeamID, commit.EntityResolutions)
+		entityTexts, err := synchronousRememberEmbeddingEntityTexts(ctx, tx, create.TeamID, contract, commit.EntityResolutions)
 		if err != nil {
 			return err
 		}
@@ -203,18 +203,32 @@ func (r *LedgerRepositoryImpl) PlanSynchronousRememberEmbeddings(
 	return plan, nil
 }
 
-func synchronousRememberEmbeddingEntityTexts(ctx context.Context, tx *gorm.DB, teamID string, resolutions []SubmissionAssessmentEntityResolutionInput) ([]string, error) {
+func synchronousRememberEmbeddingEntityTexts(ctx context.Context, tx *gorm.DB, teamID string, contract *ActiveSearchContract, resolutions []SubmissionAssessmentEntityResolutionInput) ([]string, error) {
 	texts := make([]string, 0, len(resolutions))
 	for _, entry := range resolutions {
 		resolution := entry.Resolution
 		name, kind := strings.TrimSpace(resolution.CanonicalName), strings.TrimSpace(resolution.EntityKind)
 		if resolution.EntityID != "" {
-			var canonical, persistedKind string
-			err := tx.WithContext(ctx).Raw(`SELECT COALESCE(canonical.display_name, ''), entity.entity_kind FROM entity_records AS entity LEFT JOIN entity_names AS canonical ON canonical.team_id = entity.team_id AND canonical.entity_id = entity.entity_id AND canonical.name_kind = 'canonical' AND canonical.valid_to IS NULL WHERE entity.team_id = ?::uuid AND entity.entity_id = ?::uuid AND entity.status = 'active' ORDER BY canonical.created_at DESC NULLS LAST, canonical.entity_name_id DESC NULLS LAST LIMIT 1`, teamID, resolution.EntityID).Row().Scan(&canonical, &persistedKind)
+			var canonical, persistedKind, spaceID string
+			var spaceGeneration int64
+			err := tx.WithContext(ctx).Raw(`SELECT COALESCE(canonical.display_name, ''), entity.entity_kind, entity.space_id::text, COALESCE(entity.space_generation, 0) FROM entity_records AS entity LEFT JOIN entity_names AS canonical ON canonical.team_id = entity.team_id AND canonical.entity_id = entity.entity_id AND canonical.name_kind = 'canonical' AND canonical.valid_to IS NULL WHERE entity.team_id = ?::uuid AND entity.entity_id = ?::uuid AND entity.status = 'active' ORDER BY canonical.created_at DESC NULLS LAST, canonical.entity_name_id DESC NULLS LAST LIMIT 1`, teamID, resolution.EntityID).Row().Scan(&canonical, &persistedKind, &spaceID, &spaceGeneration)
 			if err != nil {
 				return nil, err
 			}
 			name, kind = firstNonEmpty(canonical, name, resolution.EntityID), persistedKind
+			if name == "" || kind == "" {
+				return nil, fmt.Errorf("%w: entity projection is incomplete", ErrSynchronousRememberEmbeddingFence)
+			}
+			text := entitySearchProjectionText(name, kind)
+			current, err := synchronousRememberEntitySearchDocumentCurrent(ctx, tx, teamID, resolution.EntityID, contract, text, spaceID, spaceGeneration)
+			if err != nil {
+				return nil, err
+			}
+			if current {
+				continue
+			}
+			texts = append(texts, text)
+			continue
 		}
 		if name == "" || kind == "" {
 			return nil, fmt.Errorf("%w: entity projection is incomplete", ErrSynchronousRememberEmbeddingFence)
@@ -223,6 +237,42 @@ func synchronousRememberEmbeddingEntityTexts(ctx context.Context, tx *gorm.DB, t
 	}
 	sort.Strings(texts)
 	return texts, nil
+}
+
+func synchronousRememberEntitySearchDocumentCurrent(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	entityID string,
+	contract *ActiveSearchContract,
+	text string,
+	spaceID string,
+	spaceGeneration int64,
+) (bool, error) {
+	if contract == nil {
+		return false, errors.New("active search contract is required")
+	}
+	var current bool
+	err := tx.WithContext(ctx).Raw(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM search_documents
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'entity'
+			  AND source_id = ?::uuid
+			  AND embedding_contract_id = ?::uuid
+			  AND embedding_dimensions = ?
+			  AND space_id = ?::uuid
+			  AND space_generation = ?
+			  AND projection_format_version = 1
+			  AND projection_generation_id IS NULL
+			  AND document_hash = ?
+			  AND search_state = 'current'
+			  AND embedding IS NOT NULL
+		)
+	`, teamID, entityID, contract.EmbeddingContractID, contract.EmbeddingDimensions,
+		spaceID, spaceGeneration, searchDocumentTextHash(text)).Row().Scan(&current)
+	return current, err
 }
 
 func entitySearchProjectionText(name, kind string) string {

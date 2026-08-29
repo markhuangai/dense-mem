@@ -697,7 +697,8 @@ type synchronousPipelineProvider struct {
 }
 
 type synchronousMalformedProvider struct {
-	repairs int
+	repairs   int
+	repairErr error
 }
 
 func (p *synchronousMalformedProvider) Assess(context.Context, assessor.SemanticAssessmentRequest) (assessor.SemanticAssessmentSession, assessor.SemanticAssessmentTurn, error) {
@@ -708,6 +709,9 @@ func (p *synchronousMalformedProvider) Assess(context.Context, assessor.Semantic
 func (p *synchronousMalformedProvider) Repair(context.Context, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRepairRequest) (assessor.SemanticAssessmentTurn, error) {
 	p.repairs++
 	time.Sleep(10 * time.Millisecond)
+	if p.repairErr != nil {
+		return assessor.SemanticAssessmentTurn{}, p.repairErr
+	}
 	return synchronousMalformedTurn(), nil
 }
 

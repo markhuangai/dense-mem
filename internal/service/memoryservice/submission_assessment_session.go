@@ -39,6 +39,13 @@ func submissionAssessmentConsumedProviderTurns(err error) int {
 	return consumed.providerTurns
 }
 
+// SynchronousRememberAssessmentConsumedProviderTurns exposes the bounded
+// provider-turn accounting needed by the synchronous application boundary
+// without exposing the internal wrapper type.
+func SynchronousRememberAssessmentConsumedProviderTurns(err error) int {
+	return submissionAssessmentConsumedProviderTurns(err)
+}
+
 func (s *submissionAssessmentPlacementWorkerService) loadOrAssess(
 	ctx context.Context,
 	run repository.PlacementRun,
