@@ -21,6 +21,7 @@ func TestSynchronousFailureCodeClassifiesSearchContractMismatch(t *testing.T) {
 		{name: "search contract during commit", phase: "commit", cause: repository.ErrSearchContractMismatch, want: remember.TerminalErrorConfigurationInvalid},
 		{name: "embedding provider configuration", phase: "embedding", cause: semanticwrite.ErrProviderConfiguration, want: remember.TerminalErrorConfigurationInvalid},
 		{name: "inactive reused entity", phase: "embedding", cause: repository.ErrRememberExactReferenceStale, want: remember.TerminalErrorStaleInput},
+		{name: "unavailable supersession target", phase: "commit", cause: &repository.RememberPreflightError{Issues: []repository.RememberPreflightIssue{{Path: "/evidence/0/supersedes_evidence_ids/0", Code: "unavailable"}}}, want: remember.TerminalErrorStaleInput},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require.Equal(t, test.want, synchronousFailureCode(test.phase, test.cause))

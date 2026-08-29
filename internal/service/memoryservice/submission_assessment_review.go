@@ -27,7 +27,9 @@ func isRememberStaleInputError(err error) bool {
 		for _, issue := range preflight.Issues {
 			code := strings.TrimSpace(issue.Code)
 			path := strings.TrimSpace(issue.Path)
-			if code == "stale" || (code == "conflict" && strings.HasPrefix(path, "/evidence/") && strings.HasSuffix(path, "/source_revision")) {
+			if code == "stale" ||
+				(code == "conflict" && strings.HasPrefix(path, "/evidence/") && strings.HasSuffix(path, "/source_revision")) ||
+				(code == "unavailable" && strings.HasPrefix(path, "/evidence/") && strings.Contains(path, "/supersedes_evidence_ids/")) {
 				return true
 			}
 		}

@@ -326,6 +326,9 @@ func TestIsRememberStaleInputErrorRecognizesAllFences(t *testing.T) {
 	if !IsRememberStaleInputError(&repository.RememberPreflightError{Issues: []repository.RememberPreflightIssue{{Path: "/evidence/0/source_revision", Code: "conflict"}}}) {
 		t.Fatal("source revision conflict preflight was not recognized")
 	}
+	if !IsRememberStaleInputError(&repository.RememberPreflightError{Issues: []repository.RememberPreflightIssue{{Path: "/evidence/0/supersedes_evidence_ids/0", Code: "unavailable"}}}) {
+		t.Fatal("unavailable supersession target was not recognized")
+	}
 	if IsRememberStaleInputError(&repository.RememberPreflightError{Issues: []repository.RememberPreflightIssue{{Path: "/relationships/0/subject/entity_kind", Code: "conflict"}}}) {
 		t.Fatal("relationship entity conflict was incorrectly recognized as stale input")
 	}
