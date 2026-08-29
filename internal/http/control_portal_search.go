@@ -35,12 +35,23 @@ type controlSearchConvergenceResponse struct {
 	ObservedAt             string                              `json:"observed_at"`
 	Status                 string                              `json:"status"`
 	Contract               *controlSearchContractResponse      `json:"contract,omitempty"`
+	ExpectedDocuments      int64                               `json:"expected_documents"`
+	CurrentDocuments       int64                               `json:"current_documents"`
+	DriftedDocuments       int64                               `json:"drifted_documents"`
+	AffectedTeamCount      int64                               `json:"affected_team_count"`
+	OldestDriftAge         float64                             `json:"oldest_drift_age_seconds"`
+	DriftClasses           []controlSearchDriftClassResponse   `json:"drift_classes"`
 	Queue                  controlSearchQueueResponse          `json:"queue"`
 	Failures               []controlSearchFailureResponse      `json:"failures"`
 	FailureGroups          []controlSearchFailureGroupResponse `json:"failure_groups"`
 	FailureGroupCount      int64                               `json:"failure_group_count"`
 	FailureGroupsTruncated bool                                `json:"failure_groups_truncated"`
 	LatestRun              *controlSearchRunResponse           `json:"latest_run,omitempty"`
+}
+
+type controlSearchDriftClassResponse struct {
+	Class string `json:"class"`
+	Count int64  `json:"count"`
 }
 
 type controlSearchContractResponse struct {
@@ -98,15 +109,27 @@ type controlSearchRunResponse struct {
 	RecoveredCount     int64  `json:"recovered_count"`
 	LastError          string `json:"last_error,omitempty"`
 	UpdatedAt          string `json:"updated_at"`
+	SelectedCount      int64  `json:"selected_count"`
+	EmbeddedCount      int64  `json:"embedded_count"`
+	UpdatedCount       int64  `json:"updated_count"`
+	DriftedCount       int64  `json:"drifted_count"`
 }
 
 func toControlSearchConvergence(value *repository.SearchConvergence) controlSearchConvergenceResponse {
-	response := controlSearchConvergenceResponse{Failures: []controlSearchFailureResponse{}, FailureGroups: []controlSearchFailureGroupResponse{}}
+	response := controlSearchConvergenceResponse{Failures: []controlSearchFailureResponse{}, FailureGroups: []controlSearchFailureGroupResponse{}, DriftClasses: []controlSearchDriftClassResponse{}}
 	if value == nil {
 		return response
 	}
 	response.ObservedAt = value.ObservedAt.UTC().Format(time.RFC3339)
 	response.Status = value.Status
+	response.ExpectedDocuments = value.ExpectedDocuments
+	response.CurrentDocuments = value.CurrentDocuments
+	response.DriftedDocuments = value.DriftedDocuments
+	response.AffectedTeamCount = value.AffectedTeamCount
+	response.OldestDriftAge = value.OldestDriftAge.Seconds()
+	for _, drift := range value.DriftClasses {
+		response.DriftClasses = append(response.DriftClasses, controlSearchDriftClassResponse{Class: drift.Class, Count: drift.Count})
+	}
 	if value.Contract != nil {
 		response.Contract = &controlSearchContractResponse{
 			Provider: value.Contract.EmbeddingProvider, Model: value.Contract.EmbeddingModel,
@@ -116,7 +139,7 @@ func toControlSearchConvergence(value *repository.SearchConvergence) controlSear
 	}
 	response.Queue = controlSearchQueueResponse{
 		Queued: value.Queued, Processing: value.Processing, Failed: value.Failed,
-		ExpiredLeases: value.ExpiredLeases, AffectedTeamCount: value.AffectedTeamCount,
+		ExpiredLeases: value.ExpiredLeases, AffectedTeamCount: value.QueueAffectedTeamCount,
 		OldestPendingAge: value.OldestPendingAge.Seconds(), OldestFailureAge: value.OldestFailureAge.Seconds(),
 	}
 	for _, failure := range value.Failures {
@@ -141,6 +164,8 @@ func toControlSearchConvergence(value *repository.SearchConvergence) controlSear
 			CanaryJobID: run.CanaryJobID, CanaryOutcome: run.CanaryOutcome,
 			CanaryFailureClass: run.CanaryFailureClass, CanaryFailureCode: run.CanaryFailureCode,
 			RequeuedCount: run.RequeuedCount, RecoveredCount: run.RecoveredCount,
+			SelectedCount: run.SelectedCount, EmbeddedCount: run.EmbeddedCount,
+			UpdatedCount: run.UpdatedCount, DriftedCount: run.DriftedCount,
 			UpdatedAt: run.UpdatedAt.UTC().Format(time.RFC3339),
 		}
 		response.LatestRun.LastError = boundedControlSearchRunError(run.LastError, run.CanaryFailureCode)
@@ -159,6 +184,9 @@ func boundedControlSearchRunError(message, failureCode string) string {
 	if failureCode != "" {
 		return "reconciliation failed: " + failureCode
 	}
+	if isControlSearchRepairErrorCode(message) {
+		return "reconciliation failed: " + message
+	}
 	const limit = 128
 	if len(message) > limit {
 		return "reconciliation operation failed"
@@ -172,5 +200,22 @@ func boundedControlSearchRunError(message, failureCode string) string {
 		return message
 	default:
 		return "reconciliation operation failed"
+	}
+}
+
+func isControlSearchRepairErrorCode(value string) bool {
+	switch value {
+	case "embedding_timeout",
+		"embedding_cancelled",
+		"embedding_unavailable",
+		"embedding_response_invalid",
+		"embedding_contract_mismatch",
+		"reconciliation_selection_failed",
+		"reconciliation_snapshot_invalid",
+		"reconciliation_commit_failed",
+		"reconciliation_count_failed":
+		return true
+	default:
+		return false
 	}
 }

@@ -1,6 +1,12 @@
 export type SearchConvergence = {
   observed_at: string;
   status: "converged" | "recovering" | "attention_required" | string;
+  expected_documents: number;
+  current_documents: number;
+  drifted_documents: number;
+  affected_team_count: number;
+  oldest_drift_age_seconds: number;
+  drift_classes: Array<{ class: string; count: number }>;
   contract?: {
     provider: string;
     model: string;
@@ -17,7 +23,12 @@ export type SearchConvergence = {
     oldest_pending_age_seconds: number;
     oldest_failure_age_seconds: number;
   };
-  failures: Array<{ source_kind: string; failure_class: string; failure_code: string; count: number }>;
+  failures: Array<{
+    source_kind: string;
+    failure_class: string;
+    failure_code: string;
+    count: number;
+  }>;
   failure_groups: Array<{
     team_id: string;
     team_name: string;
@@ -47,6 +58,10 @@ export type SearchConvergence = {
     canary_failure_code?: string;
     requeued_count: number;
     recovered_count: number;
+    selected_count: number;
+    embedded_count: number;
+    updated_count: number;
+    drifted_count: number;
     last_error?: string;
     updated_at: string;
   };

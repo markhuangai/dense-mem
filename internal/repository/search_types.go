@@ -41,6 +41,19 @@ type EmbeddingReconciliationRepository interface {
 	CompleteEmbeddingReconciliationRun(ctx context.Context, input CompleteEmbeddingReconciliationRunInput) error
 }
 
+// SearchRepairRepository owns bounded, document-centric reconciliation. It is
+// intentionally separate from the legacy embedding-job surface, which remains
+// available to the normal worker until the final cutover.
+type SearchRepairRepository interface {
+	GetActiveSearchContract(context.Context) (*ActiveSearchContract, error)
+	GetSearchRepairTime(context.Context) (time.Time, error)
+	ReserveSearchRepairRun(context.Context, SearchRepairRunInput) (*SearchRepairRun, bool, error)
+	SelectSearchRepairDocuments(context.Context, SearchRepairSelectionInput) ([]SearchRepairDocument, bool, error)
+	CountSearchRepairDocuments(context.Context, SearchRepairSelectionInput) (int64, error)
+	ApplySearchRepair(context.Context, ApplySearchRepairInput) (*SearchRepairApplyResult, error)
+	FinishSearchRepairRun(context.Context, FinishSearchRepairRunInput) error
+}
+
 type RecallRepository interface {
 	RecallEvidence(ctx context.Context, input RecallEvidenceInput) (*RecallEvidenceResult, error)
 	RecallRelationships(ctx context.Context, input RecallRelationshipsInput) (*RecallRelationshipsResult, error)
@@ -217,18 +230,29 @@ type SearchConvergence struct {
 	ObservedAt             time.Time
 	Status                 string
 	Contract               *ActiveSearchContract
+	ExpectedDocuments      int64
+	CurrentDocuments       int64
+	DriftedDocuments       int64
+	OldestDriftAge         time.Duration
+	DriftClasses           []SearchDocumentDriftCount
 	Queued                 int64
 	Processing             int64
 	Failed                 int64
 	ExpiredLeases          int64
 	OldestPendingAge       time.Duration
 	OldestFailureAge       time.Duration
+	QueueAffectedTeamCount int64
 	AffectedTeamCount      int64
 	Failures               []EmbeddingFailureCount
 	FailureGroups          []EmbeddingFailureGroup
 	FailureGroupCount      int64
 	FailureGroupsTruncated bool
 	LatestRun              *EmbeddingReconciliationRun
+}
+
+type SearchDocumentDriftCount struct {
+	Class string
+	Count int64
 }
 
 type EmbeddingFailureCount struct {
@@ -274,10 +298,122 @@ type EmbeddingReconciliationRun struct {
 	CanaryFailureCode   string
 	RequeuedCount       int64
 	RecoveredCount      int64
+	SelectedCount       int64
+	EmbeddedCount       int64
+	UpdatedCount        int64
+	DriftedCount        int64
 	LastError           string
 	StartedAt           *time.Time
 	CompletedAt         *time.Time
 	UpdatedAt           time.Time
+}
+
+type SearchRepairRun struct {
+	RunID               string
+	EmbeddingContractID string
+	EmbeddingDimensions int
+	LocalRunDate        time.Time
+	Status              string
+	LeaseToken          string
+	LeaseUntil          *time.Time
+	SelectedCount       int64
+	EmbeddedCount       int64
+	UpdatedCount        int64
+	DriftedCount        int64
+	LastError           string
+	SelectionCursor     *SearchRepairCursor
+	StartedAt           *time.Time
+	CompletedAt         *time.Time
+	UpdatedAt           time.Time
+}
+
+type SearchRepairRunInput struct {
+	EmbeddingContractID string
+	EmbeddingDimensions int
+	LocalRunDate        time.Time
+	CreateIfMissing     bool
+	WorkerID            string
+	Lease               time.Duration
+}
+
+type SearchRepairSelectionInput struct {
+	EmbeddingContractID string
+	EmbeddingDimensions int
+	Limit               int
+	RunID               string
+	LeaseToken          string
+	Cursor              *SearchRepairCursor
+}
+
+// SearchRepairCursor is the durable keyset position used when a bounded
+// repair selection has to continue past an over-inclusive source page.
+type SearchRepairCursor struct {
+	ObservedAt       time.Time
+	TeamID           string
+	SourceKind       string
+	SourceID         string
+	SearchDocumentID string
+}
+
+// SearchRepairDocument is a snapshot of one canonical document repair. The
+// stored fence prevents provider output from replacing a newer document.
+type SearchRepairDocument struct {
+	TeamID           string
+	SearchDocumentID string
+	// OwnerProfileID is the canonical owner expected by the source snapshot.
+	OwnerProfileID string
+	// StoredOwnerProfileID is the owner observed on an existing search document.
+	// It is retained as an update fence when canonical ownership has changed.
+	StoredOwnerProfileID   string
+	SourceKind             string
+	SourceID               string
+	SourceVersion          int64
+	ProjectionFormat       int
+	ProjectionGenerationID string
+	DocumentVersion        int64
+	EmbeddingContractID    string
+	EmbeddingDimensions    int
+	SearchState            string
+	SpaceID                string
+	SpaceGeneration        int64
+	DocumentText           string
+	DocumentHash           string
+	StoredDocumentHash     string
+	Retired                bool
+	ObservedAt             time.Time
+}
+
+type SearchRepairEmbedding struct {
+	SearchRepairDocument
+	Embedding []float32
+}
+
+type ApplySearchRepairInput struct {
+	RunID                   string
+	LeaseToken              string
+	EmbeddingContractID     string
+	EmbeddingDimensions     int
+	SearchIndexGenerationID string
+	IndexGeneration         int
+	Documents               []SearchRepairEmbedding
+}
+
+type SearchRepairApplyResult struct {
+	UpdatedCount          int64
+	SkippedCount          int64
+	RemainingDriftedCount int64
+}
+
+type FinishSearchRepairRunInput struct {
+	RunID                string
+	LeaseToken           string
+	Status               string
+	SelectedCount        int64
+	EmbeddedCount        int64
+	UpdatedCount         int64
+	DriftedCount         int64
+	LastError            string
+	ResetSelectionCursor bool
 }
 
 type ReserveEmbeddingReconciliationRunInput struct {

@@ -14,7 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func TestCheckSearchConvergenceDetectsActiveBacklog(t *testing.T) {
+func TestCheckSearchConvergenceUsesCanonicalDocumentState(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -26,19 +26,56 @@ func TestCheckSearchConvergenceDetectsActiveBacklog(t *testing.T) {
 	require.ErrorIs(t, err, ErrSearchContractMismatch)
 
 	require.NoError(t, repo.CheckSearchConvergence(ctx))
-	document := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "convergence health backlog", 1)
+	document, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "entity", SourceID: uuid.NewString(),
+		SourceVersion: 1, DocumentText: "convergence health backlog",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, document.SearchDocumentID)
+	require.Equal(t, "pending", document.SearchState)
+	require.NotEmpty(t, document.QueuedJobID)
 	err = repo.CheckSearchConvergence(ctx)
 	require.ErrorIs(t, err, ErrSearchConvergenceAttentionRequired)
 	require.ErrorContains(t, err, "attention_required")
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Exec(`
+		if err := tx.Exec(`
 			UPDATE embedding_jobs
 			SET status = 'stale', completed_at = now(), updated_at = now()
 			WHERE team_id = ?::uuid AND embedding_job_id = ?::uuid
-		`, teamID, document.QueuedJobID).Error
+		`, teamID, document.QueuedJobID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'current', embedding = '[1,0,0]'::vector,
+			    embedding_updated_at = now(), embedding_error = '', updated_at = now()
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, document.SearchDocumentID).Error
 	}))
 	require.NoError(t, repo.CheckSearchConvergence(ctx))
+}
+
+func TestReserveSearchRepairRunDoesNotConsumeNoWorkDate(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "search-repair-no-work", 3, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+
+	run, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID,
+		EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate:        time.Now().UTC(),
+		CreateIfMissing:     true,
+		WorkerID:            "search-repair-no-work-worker",
+		Lease:               time.Minute,
+	})
+	require.NoError(t, err)
+	require.False(t, claimed)
+	require.Nil(t, run)
 }
 
 func TestReserveEmbeddingReconciliationRunWaitsForRecoverableCandidate(t *testing.T) {
@@ -401,8 +438,16 @@ func TestEmbeddingReconciliationRenewsLeaseAndTracksDerivedFailureGroupRecovery(
 	repo := NewSearchRepository(appDB, rls)
 	contract, err := repo.GetActiveSearchContract(ctx)
 	require.NoError(t, err)
-	first := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "first recoverable failure", 1)
-	second := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "second recoverable failure", 1)
+	first, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "entity", SourceID: uuid.NewString(),
+		SourceVersion: 1, DocumentText: "first recoverable failure",
+	})
+	require.NoError(t, err)
+	second, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "entity", SourceID: uuid.NewString(),
+		SourceVersion: 1, DocumentText: "second recoverable failure",
+	})
+	require.NoError(t, err)
 	now := time.Now().UTC()
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		if err := tx.Exec(`

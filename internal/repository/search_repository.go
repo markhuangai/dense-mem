@@ -831,6 +831,16 @@ func (r *SearchRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gor
 	return r.rls.WithSystemTx(ctx, r.db, fn)
 }
 
+func (r *SearchRepositoryImpl) withSystemReadOnlyRepeatableTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
+	if _, err := r.database(); err != nil {
+		return err
+	}
+	if r.rls == nil {
+		return errors.New("search: rls helper is required")
+	}
+	return r.rls.WithSystemReadOnlyRepeatableTx(ctx, r.db, fn)
+}
+
 func (r *SearchRepositoryImpl) database() (*gorm.DB, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("search: database is required")

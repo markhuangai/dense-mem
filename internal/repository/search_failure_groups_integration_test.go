@@ -108,7 +108,7 @@ func TestSearchConvergenceDerivesFailureGroupLifecycleFromJobs(t *testing.T) {
 
 	projection, err = repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
 	require.NoError(t, err)
-	require.Equal(t, "recovering", projection.Status)
+	require.Equal(t, "attention_required", projection.Status)
 	require.Len(t, projection.FailureGroups, 1)
 	require.Equal(t, "recovering", projection.FailureGroups[0].Status)
 	require.EqualValues(t, 1, projection.FailureGroups[0].ProcessingJobCount)
@@ -140,7 +140,7 @@ func TestSearchConvergenceDerivesFailureGroupLifecycleFromJobs(t *testing.T) {
 
 	projection, err = repo.GetSearchConvergence(ctx, SearchConvergenceInput{})
 	require.NoError(t, err)
-	require.Equal(t, "converged", projection.Status)
+	require.Equal(t, "attention_required", projection.Status)
 	require.Empty(t, projection.FailureGroups)
 
 	reopened := upsertSearchDocumentForTest(t, repo, teamID, ownerID, "derived failure group reopened", 1)

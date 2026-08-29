@@ -11,7 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
 var errSearchConvergenceQueryFailed = errors.New("search convergence query failed")
@@ -36,7 +36,7 @@ func searchConvergenceHealthCheck(search searchConvergenceHealthReader, logger o
 	}
 }
 
-func newEmbeddingReconciliationService(
+func newSearchRepairService(
 	search *repository.SearchRepositoryImpl,
 	provider embedding.EmbeddingProviderInterface,
 	appConfig service.AppConfigService,
@@ -44,11 +44,15 @@ func newEmbeddingReconciliationService(
 	metrics observability.DiscoverabilityMetrics,
 	providerTimeout time.Duration,
 	distributedCoordinationRequired bool,
-) embeddingservice.EmbeddingReconciliationService {
+) service.SearchRepairService {
 	hostname, _ := os.Hostname()
-	return embeddingservice.NewEmbeddingReconciliationService(embeddingservice.EmbeddingReconciliationDependencies{
-		Search: search, Reconciliation: search, Provider: provider, AppConfig: appConfig,
-		Logger: logger, Metrics: metrics, WorkerID: fmt.Sprintf("embedding-reconciliation-%s-%d", hostname, os.Getpid()),
+	return service.NewSearchRepairService(service.SearchRepairDependencies{
+		Repository:                      search,
+		Executor:                        semanticwrite.NewExecutor(semanticWriteProvider{provider: provider}),
+		AppConfig:                       appConfig,
+		Logger:                          logger,
+		Metrics:                         metrics,
+		WorkerID:                        fmt.Sprintf("search-repair-%s-%d", hostname, os.Getpid()),
 		ProviderTimeout:                 providerTimeout,
 		DistributedCoordinationRequired: distributedCoordinationRequired,
 	})
