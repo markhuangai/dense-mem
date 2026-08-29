@@ -43,7 +43,6 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
-	"github.com/markhuangai/dense-mem/internal/service/synchronousremember"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
@@ -250,17 +249,7 @@ func RunActiveServer(
 		Logger:  logger,
 	})
 	writeRuntime := &WriteRuntime{Remember: rememberCore}
-	writeRuntime.SynchronousRememberFactory = func() rememberapp.Service {
-		processor := synchronousremember.NewSynchronousRememberProcessor(synchronousremember.SynchronousRememberProcessorDependencies{
-			Ledger: ledgerRepo, Catalog: semanticRepo, Provider: assessorProvider, Limits: assessmentLimits,
-			Embeddings: newSemanticwriteEmbeddingExecutor(openaiProvider), Auditor: rememberAuditor, Metrics: discoverabilityMetrics, Logger: logger,
-			BeforeCommit: writeRuntime.SynchronousRememberBeforeCommit,
-		})
-		return rememberapp.NewService(rememberapp.Dependencies{
-			Intake: rememberIntake, Synchronous: processor, Auditor: rememberAuditor,
-			Metrics: discoverabilityMetrics, Logger: logger,
-		})
-	}
+	installSynchronousRememberFactory(writeRuntime, ledgerRepo, semanticRepo, assessorProvider, assessmentLimits, openaiProvider, rememberIntake, rememberAuditor, discoverabilityMetrics, logger)
 	if options.WriteRuntimeOverride != nil {
 		if err := options.WriteRuntimeOverride(startupCtx, runtimeCtx, writeRuntime); err != nil {
 			log.Fatalf("failed to configure write runtime: %v", err)
@@ -1002,7 +991,6 @@ func startActiveWorkers(
 		},
 	})
 }
-
 func logServerStartError(logger observability.LogProvider, message string, err error) {
 	if errors.Is(err, nethttp.ErrServerClosed) {
 		return
