@@ -523,6 +523,7 @@ func terminalRememberErrorCode(err error) rememberapp.TerminalErrorCode {
 
 func terminalCorrectionToolResultError(ctx context.Context, submissionID string, err error, version string) error {
 	code := rememberapp.TerminalErrorDatabaseFailure
+	processingState := string(rememberapp.TerminalProcessingFailed)
 	var statusError rememberapp.SubmissionStatusError
 	var apiErr *httperr.APIError
 	if errors.As(err, &apiErr) {
@@ -530,10 +531,14 @@ func terminalCorrectionToolResultError(ctx context.Context, submissionID string,
 		case httperr.NOT_FOUND:
 			statusError = rememberapp.StatusError(rememberapp.SubmissionErrorEntityNotFound)
 		case httperr.CONFLICT:
-			if !apiErrorDetailEquals(apiErr, "reason", string(rememberapp.TerminalErrorIdempotencyConflict)) {
-				statusError = rememberapp.StatusError(rememberapp.SubmissionErrorRelationshipChanged)
-			} else {
+			switch {
+			case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.TerminalErrorIdempotencyConflict)):
 				code = rememberapp.TerminalErrorIdempotencyConflict
+			case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.SubmissionErrorConfirmationExpired)):
+				statusError = rememberapp.StatusError(rememberapp.SubmissionErrorConfirmationExpired)
+				processingState = string(rememberapp.TerminalProcessingRejected)
+			default:
+				statusError = rememberapp.StatusError(rememberapp.SubmissionErrorRelationshipChanged)
 			}
 		case httperr.ErrEmbeddingUnavailable:
 			code = rememberapp.TerminalErrorEmbeddingUnavailable
@@ -557,7 +562,7 @@ func terminalCorrectionToolResultError(ctx context.Context, submissionID string,
 		"contract_version": version,
 		"submission_id":    firstNonEmptyString(submissionID, uuid.NewString()),
 		"submission_kind":  "relationship_correction",
-		"processing_state": string(rememberapp.TerminalProcessingFailed),
+		"processing_state": processingState,
 		"search_state":     string(rememberapp.TerminalSearchNotRequired),
 		"correlation_id":   firstNonEmptyString(correlation.FromContext(ctx), uuid.NewString()),
 		"errors": []any{map[string]any{

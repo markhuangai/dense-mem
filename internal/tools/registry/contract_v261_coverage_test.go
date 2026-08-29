@@ -293,6 +293,7 @@ func TestTerminalCorrectionToolResultErrorMapsBoundedFailures(t *testing.T) {
 		{"not found", httperr.New(httperr.NOT_FOUND, "hidden"), string(rememberapp.SubmissionErrorEntityNotFound)},
 		{"conflict", httperr.New(httperr.CONFLICT, "hidden"), string(rememberapp.SubmissionErrorRelationshipChanged)},
 		{"idempotency conflict", httperr.NewWithDetails(httperr.CONFLICT, "hidden", []httperr.ErrorDetail{{Field: "reason", Message: "idempotency_conflict"}}), string(rememberapp.TerminalErrorIdempotencyConflict)},
+		{"confirmation expired", httperr.NewWithDetails(httperr.CONFLICT, "hidden", []httperr.ErrorDetail{{Field: "reason", Message: string(rememberapp.SubmissionErrorConfirmationExpired)}}), string(rememberapp.SubmissionErrorConfirmationExpired)},
 		{"embedding unavailable", httperr.New(httperr.ErrEmbeddingUnavailable, "hidden"), string(rememberapp.TerminalErrorEmbeddingUnavailable)},
 		{"embedding response invalid", httperr.New(httperr.ErrEmbeddingResponseInvalid, "hidden"), string(rememberapp.TerminalErrorEmbeddingResponseInvalid)},
 		{"embedding timeout", httperr.New(httperr.ErrEmbeddingTimeout, "hidden"), string(rememberapp.TerminalErrorRequestTimeout)},
@@ -305,6 +306,9 @@ func TestTerminalCorrectionToolResultErrorMapsBoundedFailures(t *testing.T) {
 			require.True(t, ok)
 			require.Equal(t, test.want, structured.Result["errors"].([]any)[0].(map[string]any)["code"])
 			require.Equal(t, ContractVersionV261, structured.Result["contract_version"])
+			if test.name == "confirmation expired" {
+				require.Equal(t, string(rememberapp.TerminalProcessingRejected), structured.Result["processing_state"])
+			}
 			if test.name == "generic" {
 				errorItem := structured.Result["errors"].([]any)[0].(map[string]any)
 				require.Equal(t, string(rememberapp.TerminalNextActionRetryCorrection), errorItem["next_action"])

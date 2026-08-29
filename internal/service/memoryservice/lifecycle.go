@@ -280,8 +280,12 @@ func translateRelationshipCorrectionError(err error) error {
 			Field: "reason", Message: "idempotency_conflict",
 		}})
 	}
+	if errors.Is(err, repository.ErrRelationshipCorrectionConfirmationExpired) {
+		return httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+			Field: "reason", Message: string(SubmissionErrorConfirmationExpired),
+		}})
+	}
 	if errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) ||
-		errors.Is(err, repository.ErrRelationshipCorrectionConfirmationExpired) ||
 		errors.Is(err, repository.ErrRelationshipCorrectionStateConflict) ||
 		errors.Is(err, repository.ErrSearchEmbeddingRequired) ||
 		errors.Is(err, repository.ErrSearchContractMismatch) ||

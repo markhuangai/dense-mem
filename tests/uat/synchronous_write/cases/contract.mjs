@@ -44,6 +44,8 @@ export async function run({ rpc, rawRPC, expect }) {
   const trace = await toolSuccess(rpc, "trace_memory", { relationship_id: split.relationship_id });
   const support = trace.evidence_supports?.[0];
   expect(support?.evidence_id && Number.isInteger(support.span_start) && Number.isInteger(support.span_end), "trace must expose correction support spans");
+  const ownership = await assertOwnershipIsolation({ runID, source, split, trace, support, expect });
+
   const correctionRaw = await rawRPC("tools/call", {
     name: "correct_relationship",
     arguments: {
@@ -107,6 +109,7 @@ export async function run({ rpc, rawRPC, expect }) {
     remember_state: source.processing_state,
     rejection_is_error: rejectedRaw.result?.isError === true,
     correction_state: correction.processing_state,
+    ownership_isolation: ownership,
     text_structured_parity: true,
   };
 }
@@ -160,10 +163,109 @@ async function controlJSON(baseURL, token, path, body, method = "PATCH") {
   return response.text();
 }
 
+async function controlPayload(path, body, method = "POST") {
+  const baseURL = validatedControlURL();
+  const token = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
+  const response = await fetch(`${baseURL}/control/api${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`control API ${path} returned HTTP ${response.status}`);
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`control API ${path} returned invalid JSON`);
+  }
+}
+
 function requiredEnv(name) {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
+}
+
+function requiredString(value, field) {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${field} missing`);
+  return value;
+}
+
+async function assertOwnershipIsolation({ runID, source, split, trace, support, expect }) {
+  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
+  const sameTeamCredential = await createControlCredential(teamID, `${runID}-same-team-owner`);
+  const otherTeam = await controlPayload("/teams", {
+    name: `${runID} other team`,
+    description: "contract ownership isolation",
+  });
+  const otherTeamID = requiredString(otherTeam.data?.id, "other team id");
+  const crossTeamCredential = await createControlCredential(otherTeamID, `${runID}-cross-team-owner`);
+  const correction = correctionArguments(runID, split.relationship_id, trace.relationship?.version, support, "ownership");
+
+  const sameTeamRaw = await rawRPCWithKey(sameTeamCredential.apiKey, "tools/call", { name: "correct_relationship", arguments: correction });
+  const crossTeamRaw = await rawRPCWithKey(crossTeamCredential.apiKey, "tools/call", { name: "correct_relationship", arguments: correction });
+  const sameTeamDenied = assertOwnershipDenied(sameTeamRaw, source, split.relationship_id, expect, "same-team non-owner");
+  const crossTeamDenied = assertOwnershipDenied(crossTeamRaw, source, split.relationship_id, expect, "cross-team actor");
+
+  for (const [label, credential] of [["same-team", sameTeamCredential], ["cross-team", crossTeamCredential]]) {
+    const statusRaw = await rawRPCWithKey(credential.apiKey, "tools/call", {
+      name: "get_submission_status",
+      arguments: { submission_id: source.submission_id },
+    });
+    expect(statusRaw.error?.code === -32601 && !statusRaw.result, `${label} actor must not obtain the removed correction status tool`);
+  }
+  return {
+    same_team_rejected: sameTeamDenied.processing_state,
+    cross_team_rejected: crossTeamDenied.processing_state,
+    status_lookup_removed: true,
+  };
+}
+
+async function createControlCredential(teamID, name) {
+  const payload = await controlPayload(`/teams/${teamID}/credentials`, {
+    name,
+    scopes: ["read", "write"],
+    rate_limit: 300,
+  });
+  return { apiKey: requiredString(payload.data?.api_key, "credential api key") };
+}
+
+function correctionArguments(runID, relationshipID, expectedVersion, support, suffix) {
+  return {
+    action: "submit",
+    relationship_id: relationshipID,
+    expected_version: expectedVersion,
+    patch: { object_entity: { name: `${runID} ${suffix} successor`, entity_kind: "project" } },
+    supports: [{ evidence_id: support.evidence_id, start: support.span_start, end: support.span_end }],
+    reason: `Ownership isolation ${suffix} correction must be denied.`,
+    idempotency_key: `${runID}-${suffix}-ownership-correction`,
+  };
+}
+
+function assertOwnershipDenied(raw, source, relationshipID, expect, label) {
+  const denied = structuredToolResult(raw, expect);
+  assertTerminalCorrectionResult(denied);
+  expect(denied.processing_state === "failed", `${label} correction must fail without a target mutation`);
+  expect(denied.errors?.[0]?.code === "entity_not_found", `${label} correction must use bounded not-found classification: ${JSON.stringify(denied)}`);
+  expect(!denied.correction_result && !denied.awaiting_confirmation, `${label} correction must not expose a result or confirmation`);
+  expect(denied.submission_id !== source.submission_id, `${label} correction must not expose the owner's submission ID`);
+  expect(!JSON.stringify(denied).includes(relationshipID), `${label} correction must not expose the owner's relationship ID`);
+  assertTextStructuredParity(raw, expect);
+  return denied;
+}
+
+let directRPCID = 0;
+
+async function rawRPCWithKey(apiKey, method, params) {
+  const baseURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
+  const response = await fetch(`${baseURL}/mcp`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: `contract-${++directRPCID}`, method, params }),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`${method} request returned HTTP ${response.status}`);
+  return text ? JSON.parse(text) : {};
 }
 
 function rememberArguments(label, fault) {
