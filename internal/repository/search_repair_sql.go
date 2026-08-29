@@ -95,7 +95,15 @@ const searchRepairDriftCTE = `
 		   OR document.embedding_dimensions <> contract.embedding_dimensions
 		   OR document.source_version <> source.source_version
 		   OR document.projection_format_version <> source.projection_format_version
-		   OR document.projection_generation_id IS DISTINCT FROM source.projection_generation_id
+		   OR NOT (
+				document.projection_generation_id IS NOT DISTINCT FROM source.projection_generation_id
+				OR (
+					source.source_kind = 'relationship'
+					AND source.projection_generation_id IS NOT NULL
+					AND document.projection_generation_id IS NULL
+					AND COALESCE(document.metadata->>'` + relationshipForegroundRecallGenerationMetadataKey + `', '') = source.projection_generation_id::text
+				)
+			)
 		   OR document.document_text <> source.document_text
 		   OR document.document_hash <> source.document_hash
 		   OR document.space_id IS DISTINCT FROM source.space_id

@@ -925,7 +925,11 @@ func loadSearchRepairDocument(ctx context.Context, tx *gorm.DB, teamID, document
 	err := tx.WithContext(ctx).Raw(`
 		SELECT team_id::text, search_document_id::text, owner_profile_id::text,
 		       source_kind, source_id::text, source_version, projection_format_version,
-		       COALESCE(projection_generation_id::text, ''), document_version,
+		       COALESCE(
+				projection_generation_id::text,
+				CASE WHEN source_kind = 'relationship' THEN NULLIF(metadata->>'`+relationshipForegroundRecallGenerationMetadataKey+`', '') END,
+				''
+			), document_version,
 		       embedding_contract_id::text, embedding_dimensions, search_state, COALESCE(space_id::text, ''),
 		       COALESCE(space_generation, 0), document_text, document_hash, document_hash, false,
 		       search_state = 'current' AND embedding IS NOT NULL AND vector_dims(embedding) = embedding_dimensions

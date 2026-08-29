@@ -428,6 +428,71 @@ func TestSearchRepairSelectionRevisitsRelationshipAfterProjectionGenerationChang
 	require.Equal(t, secondGenerationID, continued[0].ProjectionGenerationID)
 }
 
+func TestSearchRepairAcceptsRelationshipForegroundMetadata(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-repair-foreground-metadata-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-repair-foreground-metadata-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-repair-foreground-metadata", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Metadata Subject")
+	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Metadata Object")
+	ingest := createSemanticIngest(t, ctx, ledger, teamID, ownerID,
+		"search-repair-foreground-metadata", "Metadata Subject uses Metadata Object.")
+	decision := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "uses", ObjectEntityID: object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: "search-repair-foreground-metadata",
+			SpanStart: 0, SpanEnd: len("Metadata Subject uses Metadata Object."), Authority: "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+	generationID := uuid.NewString()
+	insertRelationshipProjectionGenerationForTest(t, appDB, rls, teamID, generationID, 1, "current")
+	var document *SearchDocumentResult
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		var err error
+		document, err = upsertPlacementRelationshipSearchDocument(ctx, tx, CommitPlacementSemanticInput{
+			TeamID: teamID, OwnerProfileID: ownerID,
+		}, decision.Relationship, 20)
+		return err
+	}))
+	require.NotNil(t, document)
+	require.Empty(t, document.ProjectionGenerationID)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'current', embedding = '[0.5,0.5]'::vector,
+			    embedding_updated_at = clock_timestamp(), updated_at = clock_timestamp()
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, document.SearchDocumentID).Error
+	}))
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	count, err := repo.CountSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+	})
+	require.NoError(t, err)
+	require.Zero(t, count)
+	run, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: time.Now().UTC(), CreateIfMissing: true, WorkerID: "search-repair-foreground-metadata-worker", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	selected, more, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		Limit: 1, RunID: run.RunID, LeaseToken: run.LeaseToken,
+	})
+	require.NoError(t, err)
+	require.False(t, more)
+	require.Empty(t, selected)
+}
+
 func TestSearchRepairSelectionRevisitsEvidenceChangedBehindCursor(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

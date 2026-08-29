@@ -65,7 +65,7 @@ type searchRepairBatchProvider struct {
 func (p searchRepairBatchProvider) EmbedBatch(ctx context.Context, texts []string) ([]semanticwrite.IndexedEmbedding, string, error) {
 	vectors, model, err := p.provider.EmbedBatch(ctx, texts)
 	if err != nil {
-		return nil, model, err
+		return nil, model, translateSemanticWriteEmbeddingError(err)
 	}
 	result := make([]semanticwrite.IndexedEmbedding, len(vectors))
 	for index, vector := range vectors {
