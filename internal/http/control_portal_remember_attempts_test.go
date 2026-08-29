@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
@@ -23,7 +24,8 @@ func TestControlPortalRememberAttemptRoutes(t *testing.T) {
 		detail:   &service.RememberAttemptDiagnosticDetail{RememberAttemptDiagnosticSummary: service.RememberAttemptDiagnosticSummary{TeamID: teamID.String(), AttemptID: attemptID.String(), Outcome: "failed"}, Events: []service.RememberAttemptDiagnosticEvent{}, Artifacts: []service.RememberFailureArtifactDescriptor{{ArtifactID: artifactID.String(), ArtifactKind: "failure", ContentType: "application/json", ByteCount: 20, ContentSHA256: "sha256:test"}}},
 		artifact: &service.RememberFailureArtifact{ArtifactID: artifactID.String(), ContentType: "application/json", Content: []byte(`{"phase":"assessment"}`)},
 	}
-	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret"}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{RememberAttempts: reader}, HealthConfig{}, nil)
+	logger := &rememberAttemptLogCapture{}
+	server, err := NewControlPortalServerWithMetricsAndTelemetry(&config.Config{ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret"}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{RememberAttempts: reader}, HealthConfig{}, logger)
 	require.NoError(t, err)
 
 	do := func(path string) *httptest.ResponseRecorder {
@@ -51,6 +53,54 @@ func TestControlPortalRememberAttemptRoutes(t *testing.T) {
 	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
 	require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 	require.Contains(t, rec.Header().Get("Content-Disposition"), "attachment")
+	var audit *rememberAttemptLogEntry
+	for index := range logger.entries {
+		if logger.entries[index].message == "control_remember_failure_artifact_access" {
+			audit = &logger.entries[index]
+			break
+		}
+	}
+	require.NotNil(t, audit)
+	require.Equal(t, "control_portal:authorization-bearer", logAttrValue(audit.attrs, "actor"))
+	require.Empty(t, logAttrValue(audit.attrs, "actor_identity_id"))
+	require.Equal(t, teamID.String(), logAttrValue(audit.attrs, "team_id"))
+	require.Equal(t, attemptID.String(), logAttrValue(audit.attrs, "attempt_id"))
+	require.Equal(t, artifactID.String(), logAttrValue(audit.attrs, "artifact_id"))
+}
+
+func TestControlPortalRememberFailureArtifactAuditIncludesSSOIdentity(t *testing.T) {
+	teamID, attemptID, artifactID, identityID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	logger := &rememberAttemptLogCapture{}
+	h := &controlPortalHandler{
+		rememberAttempts: &controlRememberAttemptDiagnosticsStub{
+			artifact: &service.RememberFailureArtifact{ArtifactID: artifactID.String(), ContentType: "application/json", Content: []byte(`{"safe":true}`)},
+		},
+		logger: logger,
+	}
+	req := httptest.NewRequest(http.MethodGet, "/control/api/teams/"+teamID.String()+"/remember-attempts/"+attemptID.String()+"/artifacts/"+artifactID.String(), nil)
+	ctx := context.WithValue(req.Context(), controlPortalActorContextKey{}, "control_portal:sso")
+	ctx = context.WithValue(ctx, controlPortalActorIdentityContextKey{}, identityID.String())
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	e := echo.New()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("teamId", "attemptId", "artifactId")
+	c.SetParamValues(teamID.String(), attemptID.String(), artifactID.String())
+
+	require.NoError(t, h.getRememberFailureArtifact(c))
+	var audit *rememberAttemptLogEntry
+	for index := range logger.entries {
+		if logger.entries[index].message == "control_remember_failure_artifact_access" {
+			audit = &logger.entries[index]
+			break
+		}
+	}
+	require.NotNil(t, audit)
+	require.Equal(t, "control_portal:sso", logAttrValue(audit.attrs, "actor"))
+	require.Equal(t, identityID.String(), logAttrValue(audit.attrs, "actor_identity_id"))
+	require.Equal(t, teamID.String(), logAttrValue(audit.attrs, "team_id"))
+	require.Equal(t, attemptID.String(), logAttrValue(audit.attrs, "attempt_id"))
+	require.Equal(t, artifactID.String(), logAttrValue(audit.attrs, "artifact_id"))
 }
 
 func TestControlPortalRememberAttemptValidationAndNotFound(t *testing.T) {
@@ -135,6 +185,29 @@ type controlRememberAttemptDiagnosticsStub struct {
 	listErr     error
 	detailErr   error
 	artifactErr error
+}
+
+type rememberAttemptLogEntry struct {
+	message string
+	attrs   []observability.LogAttr
+}
+
+type rememberAttemptLogCapture struct {
+	entries []rememberAttemptLogEntry
+}
+
+func (l *rememberAttemptLogCapture) Info(message string, attrs ...observability.LogAttr) {
+	l.entries = append(l.entries, rememberAttemptLogEntry{message: message, attrs: append([]observability.LogAttr(nil), attrs...)})
+}
+func (l *rememberAttemptLogCapture) Error(message string, _ error, attrs ...observability.LogAttr) {
+	l.entries = append(l.entries, rememberAttemptLogEntry{message: message, attrs: append([]observability.LogAttr(nil), attrs...)})
+}
+func (l *rememberAttemptLogCapture) Warn(message string, attrs ...observability.LogAttr) {
+	l.entries = append(l.entries, rememberAttemptLogEntry{message: message, attrs: append([]observability.LogAttr(nil), attrs...)})
+}
+func (*rememberAttemptLogCapture) Debug(string, ...observability.LogAttr) {}
+func (l *rememberAttemptLogCapture) With(...observability.LogAttr) observability.LogProvider {
+	return l
 }
 
 func (s *controlRememberAttemptDiagnosticsStub) ListRememberAttemptDiagnostics(_ context.Context, filter service.RememberAttemptDiagnosticFilter) (*service.RememberAttemptDiagnosticPage, error) {

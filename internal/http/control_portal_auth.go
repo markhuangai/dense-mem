@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/httperr"
@@ -13,6 +14,7 @@ import (
 )
 
 type controlPortalActorContextKey struct{}
+type controlPortalActorIdentityContextKey struct{}
 
 func controlPortalActorFromContext(ctx context.Context) string {
 	actor, ok := ctx.Value(controlPortalActorContextKey{}).(string)
@@ -20,6 +22,14 @@ func controlPortalActorFromContext(ctx context.Context) string {
 		return "control_portal"
 	}
 	return actor
+}
+
+func controlPortalActorIdentityFromContext(ctx context.Context) string {
+	identity, ok := ctx.Value(controlPortalActorIdentityContextKey{}).(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(identity)
 }
 
 func controlPortalActorFromRequest(req *nethttp.Request) string {
@@ -40,6 +50,7 @@ func controlPortalMiddleware(token string, securitySvc service.SecurityService, 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			actor := ""
+			actorIdentity := ""
 			if controlTokenMatches(c.Request(), token) {
 				actor = controlPortalActorFromRequest(c.Request())
 			} else if identityService != nil {
@@ -47,8 +58,11 @@ func controlPortalMiddleware(token string, securitySvc service.SecurityService, 
 				if err == nil {
 					csrf := c.Request().Header.Get(service.ControlCSRFHeaderName)
 					requireCSRF := c.Request().Method != nethttp.MethodGet && c.Request().Method != nethttp.MethodHead
-					if _, authErr := identityService.AuthenticateSession(c.Request().Context(), cookie.Value, csrf, requireCSRF); authErr == nil {
+					if identity, authErr := identityService.AuthenticateSession(c.Request().Context(), cookie.Value, csrf, requireCSRF); authErr == nil {
 						actor = "control_portal:sso"
+						if identity != nil && identity.ID != uuid.Nil {
+							actorIdentity = identity.ID.String()
+						}
 					}
 				}
 			}
@@ -57,6 +71,9 @@ func controlPortalMiddleware(token string, securitySvc service.SecurityService, 
 				return httperr.New(httperr.AUTH_INVALID, "invalid control portal credentials")
 			}
 			ctx := context.WithValue(c.Request().Context(), controlPortalActorContextKey{}, actor)
+			if actorIdentity != "" {
+				ctx = context.WithValue(ctx, controlPortalActorIdentityContextKey{}, actorIdentity)
+			}
 			c.SetRequest(c.Request().WithContext(ctx))
 			return next(c)
 		}

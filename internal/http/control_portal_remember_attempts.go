@@ -9,8 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
 )
 
@@ -82,6 +84,16 @@ func (h *controlPortalHandler) getRememberFailureArtifact(c echo.Context) error 
 	}
 	if err != nil {
 		return err
+	}
+	if h.logger != nil {
+		h.logger.Info("control_remember_failure_artifact_access",
+			observability.String("actor", controlPortalActorFromContext(c.Request().Context())),
+			observability.String("actor_identity_id", controlPortalActorIdentityFromContext(c.Request().Context())),
+			observability.String("team_id", teamID.String()),
+			observability.String("attempt_id", attemptID.String()),
+			observability.String("artifact_id", artifactID.String()),
+			observability.String("correlation_id", httpmw.GetCorrelationID(c.Request().Context())),
+		)
 	}
 	c.Response().Header().Set("Cache-Control", "no-store")
 	c.Response().Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"remember-failure-%s\"", artifact.ArtifactID))
