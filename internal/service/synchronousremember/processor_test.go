@@ -361,9 +361,10 @@ func TestSynchronousProcessorClassifiesAssessmentInputBudget(t *testing.T) {
 	var processErr *remember.RememberProcessError
 	require.ErrorAs(t, err, &processErr)
 	require.Equal(t, string(remember.TerminalErrorInputBudgetExceeded), processErr.Result.Errors[0].Code)
-	require.Equal(t, string(remember.TerminalErrorInputBudgetExceeded), ledger.rejectedInput.ErrorCode)
-	require.Equal(t, "rejected", ledger.rejectedInput.Outcome)
-	require.Zero(t, ledger.recordFailureCalls)
+	require.Equal(t, string(remember.TerminalErrorInputBudgetExceeded), ledger.failureInput.Attempt.ErrorCode)
+	require.Equal(t, "failed", ledger.failureInput.Attempt.Outcome)
+	require.Equal(t, 1, ledger.recordFailureCalls)
+	require.Empty(t, ledger.rejectedInput.ErrorCode)
 	require.Zero(t, provider.assessCalls)
 	require.Zero(t, ledger.planCalls)
 }

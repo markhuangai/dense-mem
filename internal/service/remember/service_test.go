@@ -549,22 +549,18 @@ func TestTerminalFallbackValidationHelpers(t *testing.T) {
 	}
 }
 
-func TestSecurityRejectionAuditEventIDIsStableForRequestIdentity(t *testing.T) {
+func TestSecurityRejectionAuditEventIDIsUniquePerInvocation(t *testing.T) {
 	teamID, ownerID := uuid.New(), uuid.New()
 	actor := requestctx.Actor{TeamID: teamID, OwnerID: ownerID}
 	scan := SubmissionSecurityBatchScan{EvidenceCount: 1}
-	firstHash, err := canonicalRequestHash(RememberRequest{Evidence: []RememberEvidenceInput{{Content: "first"}}})
-	require.NoError(t, err)
-	differentHash, err := canonicalRequestHash(RememberRequest{Evidence: []RememberEvidenceInput{{Content: "different"}}})
-	require.NoError(t, err)
 
-	first := securityRejectionAuditInputForIdempotency(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected, "same-request", firstHash)
-	second := securityRejectionAuditInputForIdempotency(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected, "same-request", firstHash)
-	different := securityRejectionAuditInputForIdempotency(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected, "same-request", differentHash)
+	first := securityRejectionAuditInput(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected)
+	second := securityRejectionAuditInput(context.Background(), actor, "remember", scan, ErrEvidenceSecurityRejected)
 
-	require.Equal(t, first.EventID, second.EventID)
-	require.NotEqual(t, first.EventID, different.EventID)
-	_, err = uuid.Parse(first.EventID)
+	require.NotEqual(t, first.EventID, second.EventID)
+	_, err := uuid.Parse(first.EventID)
+	require.NoError(t, err)
+	_, err = uuid.Parse(second.EventID)
 	require.NoError(t, err)
 }
 

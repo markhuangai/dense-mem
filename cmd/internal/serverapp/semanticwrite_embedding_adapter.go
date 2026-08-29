@@ -25,11 +25,8 @@ func (a semanticwriteEmbeddingAdapter) EmbedBatch(ctx context.Context, texts []s
 	vectors, model, err := a.provider.EmbedBatch(ctx, texts)
 	if err != nil {
 		metadata := embedding.ClassifyFailure(err)
-		switch {
-		case metadata.Code == "provider_response_invalid":
+		if metadata.Code == "provider_response_invalid" {
 			return nil, "", semanticwrite.ErrProviderResponseInvalid
-		case metadata.Class == "provider_action_required":
-			return nil, "", semanticwrite.ErrProviderConfiguration
 		}
 		return nil, "", err
 	}

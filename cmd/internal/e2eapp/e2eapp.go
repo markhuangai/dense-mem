@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
@@ -221,6 +223,9 @@ func terminalRememberInvoker(legacy registry.Tool, remember rememberapp.Service)
 		if err := registry.ValidateContractInput(legacy, input, actor.Grants); err != nil {
 			return nil, fmt.Errorf("remember: invalid input: %w", err)
 		}
+		if err := validateTerminalRememberSupersessions(input); err != nil {
+			return nil, err
+		}
 		req, err := terminalRememberRequest(input)
 		if err != nil {
 			return nil, fmt.Errorf("remember: invalid input: %w", err)
@@ -248,6 +253,41 @@ func terminalRememberInvoker(legacy registry.Tool, remember rememberapp.Service)
 		}
 		return output, nil
 	}
+}
+
+func validateTerminalRememberSupersessions(input map[string]any) error {
+	evidence, _ := input["evidence"].([]any)
+	seen := make(map[uuid.UUID]int)
+	for evidenceIndex, rawEvidence := range evidence {
+		item, _ := rawEvidence.(map[string]any)
+		targets, _ := item["supersedes_evidence_ids"].([]any)
+		for targetIndex, rawTarget := range targets {
+			target, _ := rawTarget.(string)
+			parsed, err := uuid.Parse(strings.TrimSpace(target))
+			if err != nil {
+				return terminalRememberValidationFailure(
+					fmt.Sprintf("/evidence/%d/supersedes_evidence_ids/%d", evidenceIndex, targetIndex),
+					"format",
+					fmt.Sprintf("evidence[%d].supersedes_evidence_ids[%d]: target must be a UUID", evidenceIndex, targetIndex),
+				)
+			}
+			if previous, exists := seen[parsed]; exists {
+				return terminalRememberValidationFailure(
+					fmt.Sprintf("/evidence/%d/supersedes_evidence_ids", evidenceIndex),
+					"duplicate",
+					fmt.Sprintf("evidence[%d].supersedes_evidence_ids: duplicates target from evidence[%d]", evidenceIndex, previous),
+				)
+			}
+			seen[parsed] = evidenceIndex
+		}
+	}
+	return nil
+}
+
+func terminalRememberValidationFailure(path, code, message string) error {
+	return &registry.ContractValidationFailure{Result: registry.ContractValidationResult{Issues: []registry.ContractValidationIssue{{
+		Path: path, Code: code, Message: message,
+	}}}}
 }
 
 func terminalRememberRequest(input map[string]any) (rememberapp.RememberRequest, error) {

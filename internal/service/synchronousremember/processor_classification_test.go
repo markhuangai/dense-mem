@@ -7,7 +7,6 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/repository"
 	remember "github.com/markhuangai/dense-mem/internal/service/remember"
-	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
 func TestSynchronousFailureCodeClassifiesSearchContractMismatch(t *testing.T) {
@@ -19,7 +18,6 @@ func TestSynchronousFailureCodeClassifiesSearchContractMismatch(t *testing.T) {
 	}{
 		{name: "search contract during planning", phase: "embedding", cause: repository.ErrSearchContractMismatch, want: remember.TerminalErrorConfigurationInvalid},
 		{name: "search contract during commit", phase: "commit", cause: repository.ErrSearchContractMismatch, want: remember.TerminalErrorConfigurationInvalid},
-		{name: "embedding provider configuration", phase: "embedding", cause: semanticwrite.ErrProviderConfiguration, want: remember.TerminalErrorConfigurationInvalid},
 		{name: "inactive reused entity", phase: "embedding", cause: repository.ErrRememberExactReferenceStale, want: remember.TerminalErrorStaleInput},
 		{name: "unavailable supersession target", phase: "commit", cause: &repository.RememberPreflightError{Issues: []repository.RememberPreflightIssue{{Path: "/evidence/0/supersedes_evidence_ids/0", Code: "unavailable"}}}, want: remember.TerminalErrorStaleInput},
 	} {

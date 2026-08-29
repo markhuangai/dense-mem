@@ -232,7 +232,7 @@ func (p *synchronousRememberProcessor) failure(ctx context.Context, input rememb
 	recordCtx, cancelRecord := context.WithTimeout(context.WithoutCancel(ctx), remember.RememberFailurePersistenceBudget)
 	defer cancelRecord()
 	attemptOutcome := "failed"
-	if code == remember.TerminalErrorStaleInput || code == remember.TerminalErrorInputBudgetExceeded {
+	if code == remember.TerminalErrorStaleInput {
 		attemptOutcome = "rejected"
 	}
 	attempt := synchronousAttempt(input, attemptID, failure.Result, attemptOutcome, phase, string(code), turns, started)
@@ -348,8 +348,6 @@ func synchronousFailureCode(phase string, err error) remember.TerminalErrorCode 
 	case memoryservice.IsSemanticAssessmentInputBudgetError(err):
 		return remember.TerminalErrorInputBudgetExceeded
 	case errors.Is(err, repository.ErrSearchContractMismatch):
-		return remember.TerminalErrorConfigurationInvalid
-	case errors.Is(err, semanticwrite.ErrProviderConfiguration):
 		return remember.TerminalErrorConfigurationInvalid
 	case errors.Is(err, repository.ErrSynchronousRememberEmbeddingFence) && phase == "commit":
 		return remember.TerminalErrorCommitConflict

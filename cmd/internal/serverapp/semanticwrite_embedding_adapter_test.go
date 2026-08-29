@@ -3,6 +3,7 @@ package serverapp
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -41,18 +42,22 @@ func TestSemanticwriteEmbeddingAdapterClassifiesSanitizedRetryProviderErrors(t *
 	require.ErrorIs(t, err, semanticwrite.ErrProviderResponseInvalid)
 }
 
-func TestSemanticwriteEmbeddingAdapterClassifiesProviderConfigurationErrors(t *testing.T) {
-	for _, failureCode := range []string{"provider_authentication_failed", "provider_permission_denied", "provider_quota_exhausted", "provider_contract_rejected"} {
-		t.Run(failureCode, func(t *testing.T) {
-			adapter := semanticwriteEmbeddingAdapter{provider: semanticwriteEmbeddingProviderStub{
-				err: &embedding.ProviderError{FailureCode: failureCode, FailureClass: "provider_action_required"},
-			}}
+func TestSemanticwriteEmbeddingExecutorBoundsProviderActionFailuresAsUnavailable(t *testing.T) {
+	executor := newSemanticwriteEmbeddingExecutor(semanticwriteEmbeddingProviderStub{
+		err: &embedding.ProviderError{FailureCode: "provider_authentication_failed", FailureClass: "provider_action_required"},
+	})
 
-			_, _, err := adapter.EmbedBatch(context.Background(), []string{"configured"})
+	_, err := executor.Execute(context.Background(), semanticwrite.Plan{
+		Documents: []semanticwrite.Document{{Hash: "document-hash", Text: "document text"}},
+		Fence: semanticwrite.Fence{
+			Model: "fixture", Dimensions: 2, EmbeddingContractID: "contract",
+			SearchGenerationID: "generation", SearchGenerationVersion: 1,
+		},
+		Timeout: time.Second,
+	})
 
-			require.ErrorIs(t, err, semanticwrite.ErrProviderConfiguration)
-		})
-	}
+	require.ErrorIs(t, err, semanticwrite.ErrProviderUnavailable)
+	require.NotContains(t, err.Error(), "provider_authentication_failed")
 }
 
 type semanticwriteEmbeddingProviderStub struct {

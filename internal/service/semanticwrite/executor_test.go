@@ -176,16 +176,6 @@ func TestExecutorPreservesTypedProviderResponseErrors(t *testing.T) {
 	require.NotErrorIs(t, err, ErrProviderUnavailable)
 }
 
-func TestExecutorPreservesProviderConfigurationErrors(t *testing.T) {
-	provider := validProvider()
-	provider.err = ErrProviderConfiguration
-
-	_, err := NewExecutor(provider).Execute(context.Background(), validPlan())
-
-	require.ErrorIs(t, err, ErrProviderConfiguration)
-	require.NotErrorIs(t, err, ErrProviderUnavailable)
-}
-
 func TestExecutorRejectsNilExecutorAndProvider(t *testing.T) {
 	var nilExecutor *Executor
 	_, err := nilExecutor.Execute(context.Background(), validPlan())

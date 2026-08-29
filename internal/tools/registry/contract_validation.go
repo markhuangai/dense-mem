@@ -74,18 +74,12 @@ func validateDirectEvidenceSupersessions(evidence []any) error {
 		if len(targetIDs) == 0 {
 			continue
 		}
-		for targetIndex, rawID := range targetIDs {
+		for _, rawID := range targetIDs {
 			targetID, _ := rawID.(string)
-			normalizedTargetID := strings.TrimSpace(targetID)
-			parsedTargetID, err := uuid.Parse(normalizedTargetID)
-			if err != nil {
-				return fmt.Errorf("evidence[%d].supersedes_evidence_ids[%d]: target must be a UUID", index, targetIndex)
-			}
-			canonicalTargetID := parsedTargetID.String()
-			if previous, exists := targets[canonicalTargetID]; exists {
+			if previous, exists := targets[targetID]; exists {
 				return fmt.Errorf("evidence[%d].supersedes_evidence_ids: duplicates target from evidence[%d]", index, previous)
 			}
-			targets[canonicalTargetID] = index
+			targets[targetID] = index
 		}
 	}
 	return nil

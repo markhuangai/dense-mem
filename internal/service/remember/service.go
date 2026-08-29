@@ -230,7 +230,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		return nil, err
 	}
 	if scanErr != nil {
-		input := securityRejectionAuditInputForIdempotency(ctx, actor, "remember", scan, scanErr, req.IdempotencyKey, requestHash)
+		input := securityRejectionAuditInput(ctx, actor, "remember", scan, scanErr)
 		securityAudit = &input
 	}
 	migratedRequestHash, err := canonicalRequestHashForVersion(req, domain.MigratedRememberRequestHashVersion)

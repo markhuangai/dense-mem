@@ -2,6 +2,7 @@ package e2eapp
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -197,6 +198,59 @@ func TestTerminalRememberInvokerReturnsStructuredToolErrorForTerminalFailure(t *
 	require.True(t, ok)
 	require.Equal(t, "rejected", structured.Result["processing_state"])
 	require.NotNil(t, structured.Result["errors"])
+}
+
+func TestTerminalRememberInvokerValidatesSupersessionUUIDsLocally(t *testing.T) {
+	targetID := uuid.New()
+	for _, test := range []struct {
+		name     string
+		evidence []any
+		path     string
+		code     string
+	}{
+		{
+			name: "invalid UUID",
+			evidence: []any{map[string]any{
+				"content": "replacement", "supersedes_evidence_ids": []any{"not-a-uuid"},
+			}},
+			path: "/evidence/0/supersedes_evidence_ids/0", code: "format",
+		},
+		{
+			name: "equivalent UUID spellings",
+			evidence: []any{
+				map[string]any{"content": "first", "supersedes_evidence_ids": []any{strings.ToUpper(targetID.String())}},
+				map[string]any{"content": "second", "supersedes_evidence_ids": []any{targetID.String()}},
+			},
+			path: "/evidence/1/supersedes_evidence_ids", code: "duplicate",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			legacy := registry.Tool{Name: registry.ToolRemember, InputSchema: map[string]any{"type": "object"}, RequiredScopes: []string{"write"}}
+			invoker := terminalRememberInvoker(legacy, terminalRememberService{})
+			ctx := requestctx.WithActor(context.Background(), requestctx.Actor{Grants: []string{"write"}})
+			evidenceIndices := make([]any, len(test.evidence))
+			for index := range test.evidence {
+				evidenceIndices[index] = index
+			}
+			input := map[string]any{
+				"idempotency_key": "local-supersession-validation",
+				"evidence":        test.evidence,
+				"relationships": []any{map[string]any{
+					"ref": "uses-postgresql", "subject": map[string]any{"name": "Dense-Mem"},
+					"predicate": map[string]any{"proposed_key": "uses"},
+					"object":    map[string]any{"value": map[string]any{"type": "string", "value": "PostgreSQL"}},
+					"polarity":  "+", "evidence_indices": evidenceIndices,
+				}},
+			}
+
+			_, err := invoker(ctx, "ignored", input)
+
+			result, ok := registry.ContractValidationResultFromError(err)
+			require.True(t, ok)
+			require.Equal(t, test.path, result.Issues[0].Path)
+			require.Equal(t, test.code, result.Issues[0].Code)
+		})
+	}
 }
 
 func TestTerminalRelationshipRefsTrimWhitespace(t *testing.T) {
