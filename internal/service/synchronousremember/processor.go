@@ -29,6 +29,7 @@ type SynchronousRememberLedger interface {
 	CommitSynchronousRemember(context.Context, repository.SynchronousRememberCommitInput) (*repository.SynchronousRememberCommitResult, error)
 	CommitSynchronousRememberTerminal(context.Context, repository.SynchronousRememberTerminalInput) (*repository.SynchronousRememberCommitResult, error)
 	RecordSynchronousRememberPreflightQuarantine(context.Context, repository.RememberAttemptRecordInput) error
+	RecordSynchronousRememberRejectedAttempt(context.Context, repository.RememberAttemptRecordInput) error
 	RecordRememberFailure(context.Context, repository.RememberFailureRecordInput) error
 }
 
@@ -230,15 +231,26 @@ func (p *synchronousRememberProcessor) failure(ctx context.Context, input rememb
 	failure := remember.TerminalResultWithError(base, code)
 	recordCtx, cancelRecord := context.WithTimeout(context.WithoutCancel(ctx), remember.RememberFailurePersistenceBudget)
 	defer cancelRecord()
-	if err := p.ledger.RecordRememberFailure(recordCtx, repository.RememberFailureRecordInput{Attempt: synchronousAttempt(input, attemptID, failure.Result, "failed", phase, string(code), turns, started)}); err != nil {
-		if errors.Is(err, repository.ErrRememberReplay) {
+	attemptOutcome := "failed"
+	if code == remember.TerminalErrorStaleInput {
+		attemptOutcome = "rejected"
+	}
+	attempt := synchronousAttempt(input, attemptID, failure.Result, attemptOutcome, phase, string(code), turns, started)
+	var recordErr error
+	if attemptOutcome == "rejected" {
+		recordErr = p.ledger.RecordSynchronousRememberRejectedAttempt(recordCtx, attempt)
+	} else {
+		recordErr = p.ledger.RecordRememberFailure(recordCtx, repository.RememberFailureRecordInput{Attempt: attempt})
+	}
+	if recordErr != nil {
+		if errors.Is(recordErr, repository.ErrRememberReplay) {
 			winner, loadErr := p.ledger.LoadRememberAttempt(recordCtx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
 			if loadErr != nil {
 				return nil, loadErr
 			}
 			return synchronousAttemptStatus(winner, input)
 		}
-		if errors.Is(err, repository.ErrIdempotencyConflict) {
+		if errors.Is(recordErr, repository.ErrIdempotencyConflict) {
 			return nil, remember.ErrRememberConflict
 		}
 		return nil, fmt.Errorf("%w: terminal failure record unavailable", remember.ErrRememberPersistence)
@@ -336,6 +348,8 @@ func synchronousFailureCode(phase string, err error) remember.TerminalErrorCode 
 	case memoryservice.IsSemanticAssessmentInputBudgetError(err):
 		return remember.TerminalErrorInputBudgetExceeded
 	case errors.Is(err, repository.ErrSearchContractMismatch):
+		return remember.TerminalErrorConfigurationInvalid
+	case errors.Is(err, semanticwrite.ErrProviderConfiguration):
 		return remember.TerminalErrorConfigurationInvalid
 	case errors.Is(err, repository.ErrSynchronousRememberEmbeddingFence) && phase == "commit":
 		return remember.TerminalErrorCommitConflict

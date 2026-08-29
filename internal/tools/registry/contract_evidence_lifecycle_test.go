@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -30,6 +31,14 @@ func TestRememberContractDirectEvidenceSupersessionRules(t *testing.T) {
 			name: "does not retire the same evidence twice in one intake",
 			input: map[string]any{"evidence": []any{
 				map[string]any{"content": "First replacement.", "supersedes_evidence_ids": []any{targetA}},
+				map[string]any{"content": "Second replacement.", "supersedes_evidence_ids": []any{targetA}},
+			}},
+			want: "duplicates target from evidence[0]",
+		},
+		{
+			name: "detects equivalent UUID spellings as duplicates",
+			input: map[string]any{"evidence": []any{
+				map[string]any{"content": "First replacement.", "supersedes_evidence_ids": []any{strings.ToUpper(targetA)}},
 				map[string]any{"content": "Second replacement.", "supersedes_evidence_ids": []any{targetA}},
 			}},
 			want: "duplicates target from evidence[0]",

@@ -41,6 +41,20 @@ func TestSemanticwriteEmbeddingAdapterClassifiesSanitizedRetryProviderErrors(t *
 	require.ErrorIs(t, err, semanticwrite.ErrProviderResponseInvalid)
 }
 
+func TestSemanticwriteEmbeddingAdapterClassifiesProviderConfigurationErrors(t *testing.T) {
+	for _, failureCode := range []string{"provider_authentication_failed", "provider_permission_denied"} {
+		t.Run(failureCode, func(t *testing.T) {
+			adapter := semanticwriteEmbeddingAdapter{provider: semanticwriteEmbeddingProviderStub{
+				err: &embedding.ProviderError{FailureCode: failureCode, FailureClass: "provider_action_required"},
+			}}
+
+			_, _, err := adapter.EmbedBatch(context.Background(), []string{"configured"})
+
+			require.ErrorIs(t, err, semanticwrite.ErrProviderConfiguration)
+		})
+	}
+}
+
 type semanticwriteEmbeddingProviderStub struct {
 	err error
 }

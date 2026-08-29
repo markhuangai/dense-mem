@@ -108,6 +108,25 @@ func TestSubmissionAssessmentDefaultsNewEntityKindWhenHintIsOmitted(t *testing.T
 	assert.Equal(t, "other", entities[0].Kind)
 }
 
+func TestSubmissionAssessmentTreatsMissingKnownEntityAsStaleInput(t *testing.T) {
+	evidence := assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
+		EvidenceID: "evidence:0",
+		Content:    "The retired entity is no longer active.",
+	})
+	plan := submissionAssessmentGroundingTestPlan("", "")
+	plan.EntityTargets[0].KnownEntityID = "known-entity-id"
+	plan.entityTargetsByRef = map[string]submissionAssessmentEntityTarget{
+		"entity:subject": plan.EntityTargets[0],
+	}
+
+	_, _, err := submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{
+		Complete: true,
+		Groups:   []repository.SubmissionAssessmentEntityCatalogGroup{{Ref: "entity:subject", Complete: true}},
+	}, []assessor.SemanticReviewEvidence{evidence})
+
+	require.ErrorIs(t, err, errSubmissionAssessmentStaleInput)
+}
+
 func submissionAssessmentGroundingTestPlan(name, kind string) submissionAssessmentPlan {
 	target := submissionAssessmentEntityTarget{Target: assessor.SemanticAssessmentRequiredEntityRef{
 		Ref: "entity:subject", Name: name, Kind: kind, EvidenceIDs: []string{"evidence:0"},

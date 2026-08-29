@@ -286,6 +286,18 @@ func (r *LedgerRepositoryImpl) RecordSynchronousRememberPreflightQuarantine(ctx 
 	return r.RecordRememberAttempt(ctx, attempt)
 }
 
+// RecordSynchronousRememberRejectedAttempt preserves a deterministic stale
+// result for idempotent replay without creating canonical ingest or semantic
+// state.
+func (r *LedgerRepositoryImpl) RecordSynchronousRememberRejectedAttempt(ctx context.Context, attempt RememberAttemptRecordInput) error {
+	attempt = normalizeRememberAttemptRecord(attempt)
+	attempt.Outcome = "rejected"
+	if attempt.ErrorCode == "" {
+		attempt.ErrorCode = "stale_input"
+	}
+	return r.RecordRememberAttempt(ctx, attempt)
+}
+
 func validateSynchronousRememberCommitInput(input SynchronousRememberCommitInput) error {
 	if input.BuildCommit == nil {
 		return errors.New("synchronous Remember commit builder is required")

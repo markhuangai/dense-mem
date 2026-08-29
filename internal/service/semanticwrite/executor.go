@@ -16,6 +16,7 @@ const MaxDocuments = domain.MaxEmbeddingBatchDocuments
 var (
 	ErrInvalidPlan             = errors.New("semantic write: invalid embedding plan")
 	ErrProviderUnavailable     = errors.New("semantic write: embedding provider unavailable")
+	ErrProviderConfiguration   = errors.New("semantic write: embedding provider configuration is invalid")
 	ErrProviderResponseInvalid = errors.New("semantic write: embedding provider response invalid")
 	ErrProviderTimeout         = errors.New("semantic write: embedding provider timed out")
 )
@@ -118,6 +119,9 @@ func (e *Executor) Execute(ctx context.Context, plan Plan) (Result, error) {
 	if err != nil {
 		if providerCtx.Err() != nil {
 			return Result{}, providerContextError(ctx, providerCtx, providerCtx.Err())
+		}
+		if errors.Is(err, ErrProviderConfiguration) {
+			return Result{}, ErrProviderConfiguration
 		}
 		if errors.Is(err, ErrProviderResponseInvalid) {
 			return Result{}, ErrProviderResponseInvalid

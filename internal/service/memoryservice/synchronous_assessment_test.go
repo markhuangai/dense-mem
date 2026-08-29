@@ -199,6 +199,30 @@ func TestSynchronousRememberAssessmentBuildsCommitAndTerminalInputs(t *testing.T
 	}
 }
 
+func TestAssessSynchronousRememberPreservesMissingKnownEntityAsStaleInput(t *testing.T) {
+	ledger, _, catalog, provider, _ := submissionAssessmentWorkerFixture(t)
+	relationships := ledger.placement.Proposal["relationship_hints"].([]any)
+	subject := relationships[0].(map[string]any)["subject"].(map[string]any)
+	delete(subject, "name")
+	subject["known_entity_id"] = uuid.NewString()
+
+	evidence := make([]repository.EvidenceInput, 0, len(ledger.placement.Evidence))
+	for _, fragment := range ledger.placement.Evidence {
+		evidence = append(evidence, repository.EvidenceInput{Content: fragment.Content, ContentHash: fragment.ContentHash, Authority: fragment.Authority})
+	}
+
+	_, err := AssessSynchronousRemember(context.Background(), SynchronousRememberAssessmentDependencies{
+		Catalog: catalog, Provider: provider, Limits: assessor.DefaultSemanticAssessmentLimits(),
+	}, SynchronousRememberAssessmentInput{
+		TeamID: ledger.run.TeamID, OwnerProfileID: ledger.run.OwnerProfileID, IngestID: ledger.run.IngestID,
+		Proposal: ledger.placement.Proposal, Evidence: evidence,
+	})
+
+	require.Error(t, err)
+	require.True(t, IsRememberStaleInputError(err))
+	require.Zero(t, provider.calls)
+}
+
 func TestSynchronousRememberAssessmentBuildersRejectIncompleteState(t *testing.T) {
 	if _, err := BuildSynchronousRememberPreviewCommitInput(nil); err == nil {
 		t.Fatal("nil preview state must fail")

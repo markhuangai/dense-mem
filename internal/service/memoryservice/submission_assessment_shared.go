@@ -25,6 +25,7 @@ type semanticAssessmentPreflightError struct {
 	failureClass string
 	measurement  *assessor.FailureMeasurement
 	err          error
+	cause        error
 }
 
 func (err *semanticAssessmentPreflightError) Error() string {
@@ -37,6 +38,9 @@ func (err *semanticAssessmentPreflightError) Error() string {
 func (err *semanticAssessmentPreflightError) Unwrap() error {
 	if err == nil {
 		return nil
+	}
+	if err.cause != nil {
+		return err.cause
 	}
 	return err.err
 }
@@ -57,6 +61,12 @@ func deterministicSemanticAssessmentPreflightErrorWithMeasurement(
 ) error {
 	result := deterministicSemanticAssessmentPreflightError(stage, message).(*semanticAssessmentPreflightError)
 	result.measurement = &measurement
+	return result
+}
+
+func deterministicSemanticAssessmentPreflightErrorWithCause(stage, message string, cause error) error {
+	result := deterministicSemanticAssessmentPreflightError(stage, message).(*semanticAssessmentPreflightError)
+	result.cause = cause
 	return result
 }
 
