@@ -47,6 +47,7 @@ BEGIN
                 OR (
                     selection_cursor_observed_at IS NOT NULL
                     AND selection_cursor_team_id IS NOT NULL
+                    AND selection_cursor_source_kind IS NOT NULL
                     AND btrim(selection_cursor_source_kind) <> ''
                     AND selection_cursor_source_id IS NOT NULL
                 )
