@@ -104,6 +104,9 @@ func matchesContractToolSet(names map[string]struct{}, expected []string) bool {
 		expectedSet[name] = struct{}{}
 	}
 	for name := range names {
+		if registry.IsEvaluationTool(name) {
+			continue
+		}
 		if _, ok := expectedSet[name]; !ok {
 			return false
 		}

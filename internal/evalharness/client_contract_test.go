@@ -138,6 +138,9 @@ func TestClassifyContractAllowsGatedOmissionsAndRejectsUnknownTools(t *testing.T
 				}
 				definitions = append(definitions, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
 			}
+			for _, name := range []string{"eval_list_knowledge_refs", "eval_run_dream_cycle", "eval_run_recall_case"} {
+				definitions = append(definitions, mcpToolDefinition{Name: name})
+			}
 			mode, err := classifyContract(definitions)
 			require.NoError(t, err)
 			require.Equal(t, test.mode, mode)
