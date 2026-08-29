@@ -48,7 +48,7 @@ func newSearchRepairService(
 	hostname, _ := os.Hostname()
 	return service.NewSearchRepairService(service.SearchRepairDependencies{
 		Repository:                      search,
-		Executor:                        semanticwrite.NewExecutor(searchRepairBatchProvider{provider: provider}),
+		Executor:                        semanticwrite.NewExecutor(semanticWriteProvider{provider: provider}),
 		AppConfig:                       appConfig,
 		Logger:                          logger,
 		Metrics:                         metrics,
@@ -57,23 +57,3 @@ func newSearchRepairService(
 		DistributedCoordinationRequired: distributedCoordinationRequired,
 	})
 }
-
-type searchRepairBatchProvider struct {
-	provider embedding.EmbeddingProviderInterface
-}
-
-func (p searchRepairBatchProvider) EmbedBatch(ctx context.Context, texts []string) ([]semanticwrite.IndexedEmbedding, string, error) {
-	vectors, model, err := p.provider.EmbedBatch(ctx, texts)
-	if err != nil {
-		return nil, model, translateSemanticWriteEmbeddingError(err)
-	}
-	result := make([]semanticwrite.IndexedEmbedding, len(vectors))
-	for index, vector := range vectors {
-		result[index] = semanticwrite.IndexedEmbedding{Index: index, Vector: vector}
-	}
-	return result, model, nil
-}
-
-func (p searchRepairBatchProvider) ModelName() string { return p.provider.ModelName() }
-func (p searchRepairBatchProvider) Dimensions() int   { return p.provider.Dimensions() }
-func (p searchRepairBatchProvider) IsAvailable() bool { return p.provider.IsAvailable() }

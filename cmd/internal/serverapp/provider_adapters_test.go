@@ -65,9 +65,9 @@ func TestSemanticWriteProviderPreservesMalformedResponseClassification(t *testin
 	require.NotErrorIs(t, err, semanticwrite.ErrProviderUnavailable)
 }
 
-func TestSearchRepairBatchProviderPreservesTimeoutClassification(t *testing.T) {
+func TestSemanticWriteProviderPreservesTimeoutClassification(t *testing.T) {
 	provider := semanticWriteEmbeddingProviderStub{err: &embedding.ProviderHTTPError{Status: 408}}
-	adapter := searchRepairBatchProvider{provider: provider}
+	adapter := semanticWriteProvider{provider: provider}
 
 	_, _, err := adapter.EmbedBatch(context.Background(), []string{"relationship"})
 
