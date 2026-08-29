@@ -92,7 +92,7 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 			return nil, remember.ErrRememberConflict
 		}
 		if replay.Outcome == "completed" || replay.Outcome == "rejected" || replay.Outcome == "quarantined" || replay.Outcome == "replayed" {
-			return synchronousAttemptStatus(replay, input)
+			return p.replayStatus(ctx, input, base, replay)
 		}
 	}
 	if err != nil && !errors.Is(err, repository.ErrRememberAttemptNotFound) {
@@ -119,11 +119,7 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 		err := p.ledger.RecordSynchronousRememberPreflightQuarantine(commitCtx, synchronousAttempt(input, attemptID, failure.Result, "quarantined", "preflight", string(remember.TerminalErrorQuarantined), 0, started))
 		cancelCommit()
 		if errors.Is(err, repository.ErrRememberReplay) {
-			winner, loadErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
-			if loadErr != nil {
-				return nil, loadErr
-			}
-			return synchronousAttemptStatus(winner, input)
+			return p.replayStatus(ctx, input, base, nil)
 		}
 		if err != nil {
 			return p.failure(ctx, input, attemptID, base, "commit", 0, started, err)
@@ -197,11 +193,11 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 		},
 	})
 	if errors.Is(err, repository.ErrRememberReplay) {
-		winner, loadErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
-		if loadErr != nil {
-			return nil, loadErr
+		var winner *repository.RememberAttempt
+		if committed != nil {
+			winner = committed.Attempt
 		}
-		return synchronousAttemptStatus(winner, input)
+		return p.replayStatus(ctx, input, base, winner)
 	}
 	if err != nil {
 		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, started, err)
@@ -244,17 +240,41 @@ func (p *synchronousRememberProcessor) failure(ctx context.Context, input rememb
 	}
 	if recordErr != nil {
 		if errors.Is(recordErr, repository.ErrRememberReplay) {
-			winner, loadErr := p.ledger.LoadRememberAttempt(recordCtx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
-			if loadErr != nil {
-				return nil, loadErr
-			}
-			return synchronousAttemptStatus(winner, input)
+			return p.replayStatus(recordCtx, input, base, nil)
 		}
 		if errors.Is(recordErr, repository.ErrIdempotencyConflict) {
 			return nil, remember.ErrRememberConflict
 		}
 		return nil, fmt.Errorf("%w: terminal failure record unavailable", remember.ErrRememberPersistence)
 	}
+	status, _ := terminalStatus(failure.Result)
+	return nil, &remember.RememberProcessError{Status: status, Result: failure.Result, Err: cause}
+}
+
+func (p *synchronousRememberProcessor) replayStatus(ctx context.Context, input remember.RememberProcessRequest, base *remember.TerminalRememberResult, winner *repository.RememberAttempt) (*remember.SubmissionStatusResult, error) {
+	if winner == nil {
+		var err error
+		winner, err = p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
+		if err != nil {
+			return synchronousReplayFailure(base, err)
+		}
+	}
+	status, err := synchronousAttemptStatus(winner, input)
+	if err != nil {
+		return synchronousReplayFailure(base, err)
+	}
+	return status, nil
+}
+
+func synchronousReplayFailure(base *remember.TerminalRememberResult, cause error) (*remember.SubmissionStatusResult, error) {
+	code := remember.TerminalErrorDatabaseFailure
+	switch {
+	case errors.Is(cause, context.DeadlineExceeded):
+		code = remember.TerminalErrorRequestTimeout
+	case errors.Is(cause, context.Canceled):
+		code = remember.TerminalErrorRequestCancelled
+	}
+	failure := remember.TerminalResultWithError(base, code)
 	status, _ := terminalStatus(failure.Result)
 	return nil, &remember.RememberProcessError{Status: status, Result: failure.Result, Err: cause}
 }
@@ -313,11 +333,11 @@ func (p *synchronousRememberProcessor) commitTerminal(ctx context.Context, input
 		},
 	})
 	if errors.Is(err, repository.ErrRememberReplay) {
-		winner, loadErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
-		if loadErr != nil {
-			return nil, loadErr
+		var winner *repository.RememberAttempt
+		if terminal != nil {
+			winner = terminal.Attempt
 		}
-		return synchronousAttemptStatus(winner, input)
+		return p.replayStatus(ctx, input, base, winner)
 	}
 	if err != nil {
 		return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, started, err)

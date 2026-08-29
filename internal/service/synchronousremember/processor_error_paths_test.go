@@ -76,7 +76,11 @@ func TestSynchronousProcessorReturnsReplayLoadFailureAfterPreflightRace(t *testi
 
 	_, err := processor.ProcessRemember(context.Background(), input)
 
-	require.ErrorContains(t, err, "winner lookup failed")
+	var processErr *remember.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.Equal(t, string(remember.TerminalErrorDatabaseFailure), processErr.Result.Errors[0].Code)
+	require.Equal(t, string(remember.TerminalProcessingFailed), processErr.Result.ProcessingState)
+	require.NotNil(t, processErr.Status)
 	require.Equal(t, 1, ledger.preflightCalls)
 	require.Equal(t, 2, ledger.loadCalls)
 }
