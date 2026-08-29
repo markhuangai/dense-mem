@@ -188,7 +188,17 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 	if len(documents) == 0 {
 		result.DriftedCount = 0
 		if hasMore {
-			result.DriftedCount = 1
+			remaining, countErr := s.repository.CountSearchRepairDocuments(ctx, repository.SearchRepairSelectionInput{
+				EmbeddingContractID: contract.EmbeddingContractID,
+				EmbeddingDimensions: contract.EmbeddingDimensions,
+			})
+			if countErr != nil {
+				if ctx.Err() != nil {
+					return result, ctx.Err()
+				}
+				return s.finishFailure(ctx, result, contract, "deferred", "reconciliation_count_failed")
+			}
+			result.DriftedCount = remaining
 		}
 		return s.finish(ctx, result, "completed", "")
 	}

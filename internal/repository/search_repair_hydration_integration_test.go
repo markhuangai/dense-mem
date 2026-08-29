@@ -358,6 +358,81 @@ func TestSearchRepairSelectionRevisitsRelationshipChangedBehindCursor(t *testing
 	require.Equal(t, first.Relationship.RelationshipID, continued[0].SourceID)
 }
 
+func TestSearchRepairSelectionRevisitsRelationshipAfterProjectionGenerationChange(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-repair-generation-cursor-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-repair-generation-cursor-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-repair-generation-cursor", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Generation Subject")
+	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Generation Object")
+	ingest := createSemanticIngest(t, ctx, ledger, teamID, ownerID,
+		"search-repair-generation-cursor", "Generation Subject uses Generation Object.")
+	decision := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "uses", ObjectEntityID: object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID: ingest.Evidence[0].FragmentID, SourceGroupKey: "search-repair-generation-cursor",
+			SpanStart: 0, SpanEnd: len("Generation Subject uses Generation Object."), Authority: "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+	firstGenerationID := uuid.NewString()
+	insertRelationshipProjectionGenerationForTest(t, appDB, rls, teamID, firstGenerationID, 1, "current")
+	_, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship",
+		SourceID: decision.Relationship.RelationshipID, SourceVersion: int64(decision.Relationship.Version),
+		ProjectionGenerationID: firstGenerationID, ProjectionFormat: 2, DocumentText: "stale generation projection",
+	})
+	require.NoError(t, err)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	runDate := time.Now().UTC()
+	run, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: runDate, CreateIfMissing: true, WorkerID: "search-repair-generation-cursor-worker", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	selected, _, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		Limit: 1, RunID: run.RunID, LeaseToken: run.LeaseToken,
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	require.Equal(t, decision.Relationship.RelationshipID, selected[0].SourceID)
+
+	resumed, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: runDate, WorkerID: "search-repair-generation-cursor-observer", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.False(t, claimed)
+	require.NotNil(t, resumed.SelectionCursor)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE search_projection_generations
+			SET state = 'embedding', activated_at = NULL, updated_at = clock_timestamp()
+			WHERE team_id = ?::uuid AND projection_generation_id = ?::uuid
+		`, teamID, firstGenerationID).Error
+	}))
+	secondGenerationID := uuid.NewString()
+	insertRelationshipProjectionGenerationForTest(t, appDB, rls, teamID, secondGenerationID, 2, "current")
+	continued, _, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		Limit: 1, Cursor: resumed.SelectionCursor,
+	})
+	require.NoError(t, err)
+	require.Len(t, continued, 1)
+	require.Equal(t, decision.Relationship.RelationshipID, continued[0].SourceID)
+	require.Equal(t, secondGenerationID, continued[0].ProjectionGenerationID)
+}
+
 func TestSearchRepairReclaimClearsPersistedSelectionCursor(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

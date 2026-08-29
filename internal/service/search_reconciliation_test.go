@@ -45,7 +45,9 @@ type searchRepairRepositoryStub struct {
 	documents   []repository.SearchRepairDocument
 	selectErr   error
 	count       int64
+	countCalls  int
 	countErr    error
+	hasMore     bool
 	reserve     repository.SearchRepairRunInput
 	now         time.Time
 	timeErr     error
@@ -84,9 +86,10 @@ func (s *searchRepairRepositoryStub) ReserveSearchRepairRun(_ context.Context, i
 	return s.run, s.run != nil, nil
 }
 func (s *searchRepairRepositoryStub) SelectSearchRepairDocuments(context.Context, repository.SearchRepairSelectionInput) ([]repository.SearchRepairDocument, bool, error) {
-	return s.documents, false, s.selectErr
+	return s.documents, s.hasMore, s.selectErr
 }
 func (s *searchRepairRepositoryStub) CountSearchRepairDocuments(context.Context, repository.SearchRepairSelectionInput) (int64, error) {
+	s.countCalls++
 	return s.count, s.countErr
 }
 func (s *searchRepairRepositoryStub) ApplySearchRepair(_ context.Context, input repository.ApplySearchRepairInput) (*repository.SearchRepairApplyResult, error) {
@@ -302,6 +305,25 @@ func TestSearchReconciliationRunClearsDriftWhenSelectionConverged(t *testing.T) 
 	require.Equal(t, "completed", result.Status)
 	require.Zero(t, result.SelectedCount)
 	require.Zero(t, result.DriftedCount)
+	require.NotNil(t, repo.finish)
+	require.Zero(t, repo.finish.DriftedCount)
+}
+
+func TestSearchReconciliationEmptyPartialScanUsesAuthoritativeDriftCount(t *testing.T) {
+	contract := searchRepairTestContract()
+	repo := &searchRepairRepositoryStub{
+		contract: contract,
+		run:      &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
+		hasMore:  true,
+		count:    0,
+	}
+	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: &searchRepairExecutorStub{}, WorkerID: "worker"})
+
+	result, err := svc.Run(context.Background(), time.Now().UTC(), true)
+
+	require.NoError(t, err)
+	require.Zero(t, result.DriftedCount)
+	require.Equal(t, 1, repo.countCalls)
 	require.NotNil(t, repo.finish)
 	require.Zero(t, repo.finish.DriftedCount)
 }

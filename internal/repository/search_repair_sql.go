@@ -7,19 +7,20 @@ const searchRepairDriftCTE = `
 	WITH active_contract AS (
 		SELECT ?::uuid AS embedding_contract_id, ?::integer AS embedding_dimensions
 	), activated_generations AS (
-		SELECT DISTINCT ON (team_id) team_id, projection_generation_id
+		SELECT DISTINCT ON (team_id) team_id, projection_generation_id, updated_at
 		FROM search_projection_generations
 		WHERE source_kind = 'relationship' AND projection_format_version = 2
 		  AND state = 'current' AND activated_at IS NOT NULL
 		ORDER BY team_id, generation DESC, created_at DESC
 	), latest_generations AS (
-		SELECT DISTINCT ON (team_id) team_id, projection_generation_id
+		SELECT DISTINCT ON (team_id) team_id, projection_generation_id, updated_at
 		FROM search_projection_generations
 		WHERE source_kind = 'relationship' AND projection_format_version = 2
 		ORDER BY team_id, generation DESC, created_at DESC
 	), foreground_generations AS (
 		SELECT COALESCE(active.team_id, latest.team_id) AS team_id,
-		       COALESCE(active.projection_generation_id, latest.projection_generation_id) AS projection_generation_id
+		       COALESCE(active.projection_generation_id, latest.projection_generation_id) AS projection_generation_id,
+		       COALESCE(active.updated_at, latest.updated_at) AS updated_at
 		FROM activated_generations AS active
 		FULL JOIN latest_generations AS latest ON latest.team_id = active.team_id
 	), canonical_sources AS NOT MATERIALIZED (
@@ -62,7 +63,8 @@ const searchRepairDriftCTE = `
 	         CASE WHEN relationship.valid_from IS NULL THEN NULL ELSE 'valid_from: ' || regexp_replace(to_char(relationship.valid_from AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), '\.{0,1}0+Z$', 'Z') END,
 	         CASE WHEN relationship.valid_to IS NULL THEN NULL ELSE 'valid_to: ' || regexp_replace(to_char(relationship.valid_to AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), '\.{0,1}0+Z$', 'Z') END
 		       ), 'sha256'), 'hex') AS document_hash,
-		       relationship.space_id, COALESCE(relationship.space_generation, 0)::bigint, relationship.updated_at
+		       relationship.space_id, COALESCE(relationship.space_generation, 0)::bigint,
+		       GREATEST(relationship.updated_at, COALESCE(foreground.updated_at, relationship.updated_at))
 		FROM relationship_records AS relationship
 		JOIN teams AS team ON team.id = relationship.team_id AND team.status = 'active' AND team.deleted_at IS NULL
 		LEFT JOIN foreground_generations AS foreground ON foreground.team_id = relationship.team_id
@@ -145,19 +147,20 @@ const searchRepairCandidateSQL = `
 	WITH active_contract AS (
 		SELECT ?::uuid AS embedding_contract_id, ?::integer AS embedding_dimensions
 	), activated_generations AS (
-		SELECT DISTINCT ON (team_id) team_id, projection_generation_id
+		SELECT DISTINCT ON (team_id) team_id, projection_generation_id, updated_at
 		FROM search_projection_generations
 		WHERE source_kind = 'relationship' AND projection_format_version = 2
 		  AND state = 'current' AND activated_at IS NOT NULL
 		ORDER BY team_id, generation DESC, created_at DESC
 	), latest_generations AS (
-		SELECT DISTINCT ON (team_id) team_id, projection_generation_id
+		SELECT DISTINCT ON (team_id) team_id, projection_generation_id, updated_at
 		FROM search_projection_generations
 		WHERE source_kind = 'relationship' AND projection_format_version = 2
 		ORDER BY team_id, generation DESC, created_at DESC
 	), foreground_generations AS (
 		SELECT COALESCE(active.team_id, latest.team_id) AS team_id,
-		       COALESCE(active.projection_generation_id, latest.projection_generation_id) AS projection_generation_id
+		       COALESCE(active.projection_generation_id, latest.projection_generation_id) AS projection_generation_id,
+		       COALESCE(active.updated_at, latest.updated_at) AS updated_at
 		FROM activated_generations AS active
 		FULL JOIN latest_generations AS latest ON latest.team_id = active.team_id
 	), source_keys AS NOT MATERIALIZED (
@@ -178,7 +181,8 @@ const searchRepairCandidateSQL = `
 		SELECT relationship.team_id, relationship.owner_profile_id, 'relationship'::text,
 		       relationship.relationship_id, relationship.version::bigint, 2,
 		       foreground.projection_generation_id, relationship.space_id,
-		       COALESCE(relationship.space_generation, 0)::bigint, relationship.updated_at
+		       COALESCE(relationship.space_generation, 0)::bigint,
+		       GREATEST(relationship.updated_at, COALESCE(foreground.updated_at, relationship.updated_at))
 		FROM relationship_records AS relationship
 		JOIN teams AS team ON team.id = relationship.team_id AND team.status = 'active' AND team.deleted_at IS NULL
 		LEFT JOIN foreground_generations AS foreground ON foreground.team_id = relationship.team_id
