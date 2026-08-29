@@ -47,6 +47,7 @@ type searchRepairRepositoryStub struct {
 	timeErr     error
 	apply       *repository.ApplySearchRepairInput
 	applyResult *repository.SearchRepairApplyResult
+	applyErr    error
 	finish      *repository.FinishSearchRepairRunInput
 }
 
@@ -86,6 +87,9 @@ func (s *searchRepairRepositoryStub) CountSearchRepairDocuments(context.Context,
 }
 func (s *searchRepairRepositoryStub) ApplySearchRepair(_ context.Context, input repository.ApplySearchRepairInput) (*repository.SearchRepairApplyResult, error) {
 	s.apply = &input
+	if s.applyErr != nil {
+		return s.applyResult, s.applyErr
+	}
 	if s.applyResult != nil {
 		return s.applyResult, nil
 	}
@@ -111,7 +115,8 @@ func TestSearchReconciliationRunUsesOneFencedBatchAndFinishesDocumentCounters(t 
 		}},
 	}
 	executor := &searchRepairExecutorStub{result: semanticwrite.Result{Embeddings: []semanticwrite.Embedding{{DocumentHash: "hash", Vector: []float32{1, 2}}}}}
-	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: executor, WorkerID: "worker"})
+	metrics := observability.NewInMemoryDiscoverabilityMetrics()
+	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: executor, Metrics: metrics, WorkerID: "worker"})
 
 	result, err := svc.Run(context.Background(), time.Date(2026, 8, 28, 4, 30, 0, 0, time.UTC), true)
 
@@ -125,6 +130,7 @@ func TestSearchReconciliationRunUsesOneFencedBatchAndFinishesDocumentCounters(t 
 	require.Equal(t, int64(1), repo.finish.EmbeddedCount)
 	require.Equal(t, int64(1), repo.finish.UpdatedCount)
 	require.Zero(t, repo.finish.DriftedCount)
+	require.Equal(t, 1, metrics.EmbeddingReconciliationRunCount("completed"))
 }
 
 func TestSearchReconciliationRunPersistsExactRemainingDriftCount(t *testing.T) {
@@ -212,6 +218,49 @@ func TestSearchReconciliationRunPreservesDriftWhenSelectionFails(t *testing.T) {
 	require.EqualValues(t, 1, result.DriftedCount)
 	require.NotNil(t, repo.finish)
 	require.EqualValues(t, 1, repo.finish.DriftedCount)
+}
+
+func TestSearchReconciliationSelectionCancellationLeavesRunReclaimable(t *testing.T) {
+	contract := searchRepairTestContract()
+	repo := &searchRepairRepositoryStub{
+		contract:  contract,
+		run:       &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
+		selectErr: context.Canceled,
+	}
+	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: &searchRepairExecutorStub{}, WorkerID: "worker"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := svc.Run(ctx, time.Now().UTC(), true)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, string(domain.EmbeddingReconciliationRunning), result.Status)
+	require.Nil(t, repo.finish)
+}
+
+func TestSearchReconciliationPreservesCommittedCountWhenDriftProbeFails(t *testing.T) {
+	contract := searchRepairTestContract()
+	repo := &searchRepairRepositoryStub{
+		contract:    contract,
+		run:         &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
+		documents:   []repository.SearchRepairDocument{searchRepairTestDocument(contract)},
+		applyResult: &repository.SearchRepairApplyResult{UpdatedCount: 1},
+		applyErr:    errors.New("drift probe unavailable"),
+		countErr:    errors.New("drift count unavailable"),
+	}
+	executor := &searchRepairExecutorStub{result: semanticwrite.Result{Embeddings: []semanticwrite.Embedding{{DocumentHash: "hash", Vector: []float32{1, 2}}}}}
+	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: executor, WorkerID: "worker"})
+
+	result, err := svc.Run(context.Background(), time.Now().UTC(), true)
+
+	require.ErrorIs(t, err, ErrSearchRepairFailed)
+	require.Equal(t, int64(1), result.UpdatedCount)
+	require.Equal(t, "deferred", result.Status)
+	require.Equal(t, "reconciliation_count_failed", result.ErrorCode)
+	require.NotNil(t, repo.finish)
+	require.Equal(t, int64(1), repo.finish.UpdatedCount)
+	require.Equal(t, "deferred", repo.finish.Status)
+	require.Equal(t, "reconciliation_count_failed", repo.finish.LastError)
 }
 
 func TestSearchReconciliationRunClearsDriftWhenSelectionConverged(t *testing.T) {

@@ -55,6 +55,7 @@ type SearchRepairResult struct {
 	DriftedCount  int64
 	Skipped       bool
 	ErrorCode     string
+	startedAt     time.Time
 }
 
 type SearchRepairService interface {
@@ -136,7 +137,7 @@ func (s *searchRepairService) ProcessDue(ctx context.Context) (SearchRepairResul
 }
 
 func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, createIfMissing bool) (SearchRepairResult, error) {
-	result := SearchRepairResult{}
+	result := SearchRepairResult{startedAt: time.Now()}
 	if s == nil || s.repository == nil || s.executor == nil || s.workerID == "" {
 		return result, fmt.Errorf("%w: service unavailable", ErrSearchRepairFailed)
 	}
@@ -173,8 +174,14 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions,
 		Limit:               searchRepairLimit,
+		RunID:               result.RunID,
+		LeaseToken:          result.LeaseToken,
+		Cursor:              run.SelectionCursor,
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
 		return s.finishFailure(ctx, result, contract, "failed", "reconciliation_selection_failed")
 	}
 	result.SelectedCount = int64(len(documents))
@@ -222,6 +229,16 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 		Documents:               applyDocuments,
 	})
 	if err != nil {
+		if apply != nil {
+			result.UpdatedCount = apply.UpdatedCount
+			// The write transaction committed, but the follow-up probe did not.
+			// Defer the next probe instead of labeling the durable write ambiguous.
+			result.DriftedCount = apply.RemainingDriftedCount
+			if result.DriftedCount == 0 {
+				result.DriftedCount = 1
+			}
+			return s.finishFailure(ctx, result, contract, "deferred", "reconciliation_count_failed")
+		}
 		return s.finishFailure(ctx, result, contract, "ambiguous", "reconciliation_commit_failed")
 	}
 	result.UpdatedCount = apply.UpdatedCount
@@ -322,6 +339,7 @@ func (s *searchRepairService) finish(ctx context.Context, result SearchRepairRes
 		RunID: result.RunID, LeaseToken: result.LeaseToken, Status: status,
 		SelectedCount: result.SelectedCount, EmbeddedCount: result.EmbeddedCount,
 		UpdatedCount: result.UpdatedCount, DriftedCount: result.DriftedCount, LastError: code,
+		ResetSelectionCursor: status != "completed",
 	})
 	if err != nil {
 		return result, fmt.Errorf("%w: run finalization failed", ErrSearchRepairFailed)
@@ -329,6 +347,9 @@ func (s *searchRepairService) finish(ctx context.Context, result SearchRepairRes
 	result.Status = status
 	if metrics, ok := s.metrics.(observability.EmbeddingReconciliationMetrics); ok {
 		metrics.ObserveEmbeddingReconciliationRun(status)
+		if !result.startedAt.IsZero() {
+			metrics.ObserveEmbeddingReconciliationDuration(time.Since(result.startedAt).Seconds(), status)
+		}
 	}
 	if s.logger != nil {
 		attrs := []observability.LogAttr{
@@ -366,7 +387,8 @@ func (s *searchRepairService) Start(ctx context.Context) {
 		ticker := time.NewTicker(searchRepairTickInterval)
 		defer ticker.Stop()
 		for {
-			if _, err := s.ProcessDue(workerCtx); err != nil {
+			result, err := s.ProcessDue(workerCtx)
+			if err != nil && (result.Status == "" || result.Status == string(domain.EmbeddingReconciliationRunning)) && workerCtx.Err() == nil {
 				s.recordProcessDueError()
 			}
 			select {

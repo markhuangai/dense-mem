@@ -18,6 +18,11 @@ import (
 
 const searchRepairCandidateLimit = 256
 
+// Selection may hydrate more keys than the returned batch to refill rows that
+// disappear during canonical hydration, but it must never scan an unbounded
+// source prefix in one run.
+const searchRepairSelectionScanLimit = searchRepairCandidateLimit
+
 const searchRepairActiveContractFenceSQL = `
 	EXISTS (
 		SELECT 1
@@ -86,6 +91,21 @@ const searchRepairEvidenceTerminalPlacementJoinSQL = `
 
 var _ SearchRepairRepository = (*SearchRepositoryImpl)(nil)
 
+func searchRepairCursorFromNullable(
+	observed sql.NullTime,
+	team, kind, source, document sql.NullString,
+) *SearchRepairCursor {
+	if !observed.Valid || !team.Valid || !kind.Valid || !source.Valid ||
+		observed.Time.IsZero() || strings.TrimSpace(team.String) == "" ||
+		strings.TrimSpace(kind.String) == "" || strings.TrimSpace(source.String) == "" {
+		return nil
+	}
+	return &SearchRepairCursor{
+		ObservedAt: observed.Time.UTC(), TeamID: team.String, SourceKind: kind.String,
+		SourceID: source.String, SearchDocumentID: document.String,
+	}
+}
+
 func (r *SearchRepositoryImpl) GetSearchRepairTime(ctx context.Context) (time.Time, error) {
 	var now time.Time
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
@@ -126,13 +146,36 @@ func (r *SearchRepositoryImpl) ReserveSearchRepairRun(ctx context.Context, input
 					return err
 				}
 				if potentiallyEligible {
+					var previousObserved sql.NullTime
+					var previousTeam, previousKind, previousSource, previousDocument sql.NullString
+					previousErr := tx.WithContext(ctx).Raw(`
+						SELECT selection_cursor_observed_at, selection_cursor_team_id::text,
+						       selection_cursor_source_kind, selection_cursor_source_id::text,
+						       selection_cursor_search_document_id::text
+						FROM embedding_reconciliation_runs
+						WHERE embedding_contract_id = ?::uuid
+						  AND embedding_dimensions = ?
+						  AND local_run_date < ?
+						  AND status IN ('completed', 'deferred', 'failed', 'ambiguous')
+						ORDER BY local_run_date DESC
+						LIMIT 1
+					`, input.EmbeddingContractID, input.EmbeddingDimensions, input.LocalRunDate.Format("2006-01-02")).Row().Scan(
+						&previousObserved, &previousTeam, &previousKind, &previousSource, &previousDocument,
+					)
+					if previousErr != nil && !errors.Is(previousErr, sql.ErrNoRows) {
+						return previousErr
+					}
 					if err := tx.WithContext(ctx).Exec(`
 						INSERT INTO embedding_reconciliation_runs (
 							embedding_contract_id, embedding_dimensions, local_run_date,
-							candidate_cutoff, status
-						) VALUES (?, ?, ?, clock_timestamp(), 'reserved')
+							candidate_cutoff, status, selection_cursor_observed_at,
+							selection_cursor_team_id, selection_cursor_source_kind,
+							selection_cursor_source_id, selection_cursor_search_document_id
+						) VALUES (?, ?, ?, clock_timestamp(), 'reserved', ?, NULLIF(?, '')::uuid,
+						          NULLIF(?, ''), NULLIF(?, '')::uuid, NULLIF(?, '')::uuid)
 						ON CONFLICT (embedding_contract_id, embedding_dimensions, local_run_date) DO NOTHING
-					`, input.EmbeddingContractID, input.EmbeddingDimensions, input.LocalRunDate.Format("2006-01-02")).Error; err != nil {
+					`, input.EmbeddingContractID, input.EmbeddingDimensions, input.LocalRunDate.Format("2006-01-02"),
+						previousObserved, previousTeam.String, previousKind.String, previousSource.String, previousDocument.String).Error; err != nil {
 						return err
 					}
 				}
@@ -140,12 +183,16 @@ func (r *SearchRepositoryImpl) ReserveSearchRepairRun(ctx context.Context, input
 		}
 		var value SearchRepairRun
 		var leaseToken sql.NullString
-		var leaseUntil, startedAt, completedAt sql.NullTime
+		var leaseUntil, startedAt, completedAt, selectionCursorObservedAt sql.NullTime
+		var selectionCursorTeam, selectionCursorKind, selectionCursorSource, selectionCursorDocument sql.NullString
 		err := tx.WithContext(ctx).Raw(`
 			SELECT reconciliation_run_id::text, embedding_contract_id::text,
 			       embedding_dimensions, local_run_date, status, lease_token::text,
 			       lease_until, selected_count, embedded_count, updated_count,
-			       drifted_count, last_error, started_at, completed_at, updated_at
+			       drifted_count, last_error, selection_cursor_observed_at,
+			       selection_cursor_team_id::text, selection_cursor_source_kind,
+			       selection_cursor_source_id::text, selection_cursor_search_document_id::text,
+			       started_at, completed_at, updated_at
 			FROM embedding_reconciliation_runs
 			WHERE embedding_contract_id = ?::uuid
 			  AND embedding_dimensions = ?
@@ -155,7 +202,9 @@ func (r *SearchRepositoryImpl) ReserveSearchRepairRun(ctx context.Context, input
 			&value.RunID, &value.EmbeddingContractID, &value.EmbeddingDimensions,
 			&value.LocalRunDate, &value.Status, &leaseToken, &leaseUntil,
 			&value.SelectedCount, &value.EmbeddedCount, &value.UpdatedCount,
-			&value.DriftedCount, &value.LastError, &startedAt, &completedAt, &value.UpdatedAt,
+			&value.DriftedCount, &value.LastError, &selectionCursorObservedAt,
+			&selectionCursorTeam, &selectionCursorKind, &selectionCursorSource, &selectionCursorDocument,
+			&startedAt, &completedAt, &value.UpdatedAt,
 		)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
@@ -178,6 +227,10 @@ func (r *SearchRepositoryImpl) ReserveSearchRepairRun(ctx context.Context, input
 			completed := completedAt.Time.UTC()
 			value.CompletedAt = &completed
 		}
+		value.SelectionCursor = searchRepairCursorFromNullable(
+			selectionCursorObservedAt, selectionCursorTeam, selectionCursorKind,
+			selectionCursorSource, selectionCursorDocument,
+		)
 		if value.Status == string(domain.EmbeddingReconciliationCompleted) ||
 			value.Status == string(domain.EmbeddingReconciliationDeferred) ||
 			value.Status == string(domain.EmbeddingReconciliationFailed) ||
@@ -193,13 +246,21 @@ func (r *SearchRepositoryImpl) ReserveSearchRepairRun(ctx context.Context, input
 			run = &value
 			return nil
 		}
+		cursorReset := ""
+		if value.LeaseUntil != nil && !value.LeaseUntil.After(now) {
+			cursorReset = `,
+			    selection_cursor_observed_at = NULL, selection_cursor_team_id = NULL,
+			    selection_cursor_source_kind = NULL, selection_cursor_source_id = NULL,
+			    selection_cursor_search_document_id = NULL`
+			value.SelectionCursor = nil
+		}
 		newToken := uuid.NewString()
 		leaseUntilValue := now.Add(input.Lease)
 		if err := tx.WithContext(ctx).Exec(`
 			UPDATE embedding_reconciliation_runs
 			SET status = 'running', worker_id = ?, lease_token = ?::uuid,
 			    lease_until = ?, started_at = COALESCE(started_at, ?),
-			    updated_at = clock_timestamp()
+			    updated_at = clock_timestamp()`+cursorReset+`
 			WHERE reconciliation_run_id = ?::uuid
 		`, input.WorkerID, newToken, leaseUntilValue, now, value.RunID).Error; err != nil {
 			return err
@@ -217,117 +278,6 @@ func (r *SearchRepositoryImpl) ReserveSearchRepairRun(ctx context.Context, input
 		return nil, false, fmt.Errorf("search: reserve repair run: %w", err)
 	}
 	return run, claimed, nil
-}
-
-func (r *SearchRepositoryImpl) SelectSearchRepairDocuments(ctx context.Context, input SearchRepairSelectionInput) ([]SearchRepairDocument, bool, error) {
-	input = normalizeSearchRepairSelectionInput(input)
-	if err := validateSearchRepairSelectionInput(input); err != nil {
-		return nil, false, err
-	}
-	limit := input.Limit
-	if limit <= 0 {
-		limit = searchRepairCandidateLimit
-	}
-	if limit > searchRepairCandidateLimit {
-		return nil, false, fmt.Errorf("search: repair batch exceeds %d documents", searchRepairCandidateLimit)
-	}
-	items := make([]SearchRepairDocument, 0, limit+1)
-	hasMore := false
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		contract := &ActiveSearchContract{EmbeddingContractID: input.EmbeddingContractID, EmbeddingDimensions: input.EmbeddingDimensions}
-		cursor := searchRepairCursor{}
-		pageSize := limit + 1
-		if pageSize > searchRepairCandidateLimit {
-			pageSize = searchRepairCandidateLimit
-		}
-		for len(items) < limit+1 {
-			candidates, err := selectSearchRepairCandidatePage(ctx, tx, input, cursor, pageSize)
-			if err != nil {
-				return err
-			}
-			if len(candidates) == 0 {
-				break
-			}
-			for _, candidate := range candidates {
-				cursor = searchRepairCursorFrom(candidate)
-				item, include, err := hydrateSearchRepairCandidate(ctx, tx, contract, candidate)
-				if err != nil {
-					return err
-				}
-				if !include {
-					continue
-				}
-				items = append(items, item)
-				if len(items) >= limit+1 {
-					hasMore = true
-					break
-				}
-			}
-			if len(candidates) < pageSize {
-				break
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, false, fmt.Errorf("search: select repair documents: %w", err)
-	}
-	if len(items) > limit {
-		items = items[:limit]
-	}
-	return items, hasMore, nil
-}
-
-func hydrateSearchRepairCandidate(ctx context.Context, tx *gorm.DB, contract *ActiveSearchContract, candidate SearchRepairDocument) (SearchRepairDocument, bool, error) {
-	if candidate.SearchDocumentID == "" {
-		expected, known, err := canonicalSearchRepairDocument(ctx, tx, contract, candidate)
-		if err != nil {
-			return SearchRepairDocument{}, false, err
-		}
-		returnSearch := expected != nil && known
-		if !returnSearch {
-			return SearchRepairDocument{}, false, nil
-		}
-		return *expected, true, nil
-	}
-	item, vectorCurrent, err := loadSearchRepairDocument(ctx, tx, candidate.TeamID, candidate.SearchDocumentID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return SearchRepairDocument{}, false, nil
-	}
-	if err != nil {
-		return SearchRepairDocument{}, false, err
-	}
-	item.Retired = candidate.Retired
-	item.StoredDocumentHash = item.DocumentHash
-	item.StoredOwnerProfileID = item.OwnerProfileID
-	if candidate.OwnerProfileID != "" {
-		item.OwnerProfileID = candidate.OwnerProfileID
-	}
-	if candidate.Retired {
-		expected, known, err := canonicalSearchRepairDocument(ctx, tx, contract, item)
-		if err != nil {
-			return SearchRepairDocument{}, false, err
-		}
-		return item, known && expected == nil && item.SearchState != "not_required", nil
-	}
-	expected, known, err := canonicalSearchRepairDocument(ctx, tx, contract, item)
-	if err != nil {
-		return SearchRepairDocument{}, false, err
-	}
-	if known {
-		ownerCurrent := item.StoredOwnerProfileID
-		if ownerCurrent == "" {
-			ownerCurrent = item.OwnerProfileID
-		}
-		if expected == nil || (ownerCurrent == expected.OwnerProfileID && searchRepairDocumentMatches(item, *expected) && vectorCurrent) {
-			return SearchRepairDocument{}, false, nil
-		}
-		expected.SearchDocumentID = item.SearchDocumentID
-		expected.DocumentVersion = item.DocumentVersion
-		expected.StoredDocumentHash = item.StoredDocumentHash
-		return *expected, true, nil
-	}
-	return item, !vectorCurrent, nil
 }
 
 func (r *SearchRepositoryImpl) ApplySearchRepair(ctx context.Context, input ApplySearchRepairInput) (*SearchRepairApplyResult, error) {
@@ -402,7 +352,10 @@ func (r *SearchRepositoryImpl) ApplySearchRepair(ctx context.Context, input Appl
 		EmbeddingContractID: input.EmbeddingContractID, EmbeddingDimensions: input.EmbeddingDimensions,
 	})
 	if err != nil {
-		return nil, err
+		// The write transaction above has already committed. Keep its counters
+		// attached to the error so callers do not report a durable repair as an
+		// ambiguous zero-update outcome when the follow-up probe is unavailable.
+		return result, fmt.Errorf("search: count remaining repair documents: %w", err)
 	}
 	result.RemainingDriftedCount = remaining
 	return result, nil
@@ -449,11 +402,18 @@ func (r *SearchRepositoryImpl) FinishSearchRepairRun(ctx context.Context, input 
 		return err
 	}
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		cursorReset := ""
+		if input.ResetSelectionCursor {
+			cursorReset = `,
+			    selection_cursor_observed_at = NULL, selection_cursor_team_id = NULL,
+			    selection_cursor_source_kind = NULL, selection_cursor_source_id = NULL,
+			    selection_cursor_search_document_id = NULL`
+		}
 		query := `
 			UPDATE embedding_reconciliation_runs
 			SET status = ?, selected_count = ?, embedded_count = ?, updated_count = ?,
 			    drifted_count = ?, last_error = ?, completed_at = clock_timestamp(),
-			    lease_until = NULL, updated_at = clock_timestamp()
+			    lease_until = NULL` + cursorReset + `, updated_at = clock_timestamp()
 			WHERE reconciliation_run_id = ?::uuid
 			  AND status = 'running'
 			  AND lease_until > clock_timestamp()`
@@ -508,7 +468,7 @@ func canonicalSearchRepairDocumentWithSourceLock(
 	snapshot SearchRepairDocument,
 	lockSource bool,
 ) (*SearchRepairDocument, bool, error) {
-	teamActive, err := lockSearchRepairActiveTeam(ctx, tx, snapshot.TeamID)
+	teamActive, err := searchRepairActiveTeam(ctx, tx, snapshot.TeamID, lockSource)
 	if err != nil {
 		return nil, true, err
 	}
@@ -595,6 +555,21 @@ func canonicalSearchRepairDocumentWithSourceLock(
 	default:
 		return &snapshot, false, nil
 	}
+}
+
+func searchRepairActiveTeam(ctx context.Context, tx *gorm.DB, teamID string, lock bool) (bool, error) {
+	if lock {
+		return lockSearchRepairActiveTeam(ctx, tx, teamID)
+	}
+	var active bool
+	err := tx.WithContext(ctx).Raw(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM teams
+			WHERE id = ?::uuid AND status = 'active' AND deleted_at IS NULL
+		)
+	`, teamID).Scan(&active).Error
+	return active, err
 }
 
 func lockSearchRepairEvidenceSource(ctx context.Context, tx *gorm.DB, snapshot SearchRepairDocument) error {

@@ -321,6 +321,7 @@ type SearchRepairRun struct {
 	UpdatedCount        int64
 	DriftedCount        int64
 	LastError           string
+	SelectionCursor     *SearchRepairCursor
 	StartedAt           *time.Time
 	CompletedAt         *time.Time
 	UpdatedAt           time.Time
@@ -339,6 +340,19 @@ type SearchRepairSelectionInput struct {
 	EmbeddingContractID string
 	EmbeddingDimensions int
 	Limit               int
+	RunID               string
+	LeaseToken          string
+	Cursor              *SearchRepairCursor
+}
+
+// SearchRepairCursor is the durable keyset position used when a bounded
+// repair selection has to continue past an over-inclusive source page.
+type SearchRepairCursor struct {
+	ObservedAt       time.Time
+	TeamID           string
+	SourceKind       string
+	SourceID         string
+	SearchDocumentID string
 }
 
 // SearchRepairDocument is a snapshot of one canonical document repair. The
@@ -391,14 +405,15 @@ type SearchRepairApplyResult struct {
 }
 
 type FinishSearchRepairRunInput struct {
-	RunID         string
-	LeaseToken    string
-	Status        string
-	SelectedCount int64
-	EmbeddedCount int64
-	UpdatedCount  int64
-	DriftedCount  int64
-	LastError     string
+	RunID                string
+	LeaseToken           string
+	Status               string
+	SelectedCount        int64
+	EmbeddedCount        int64
+	UpdatedCount         int64
+	DriftedCount         int64
+	LastError            string
+	ResetSelectionCursor bool
 }
 
 type ReserveEmbeddingReconciliationRunInput struct {

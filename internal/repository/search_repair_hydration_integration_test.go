@@ -191,6 +191,125 @@ func TestSearchRepairRefillsAfterHydrationExclusions(t *testing.T) {
 	require.Equal(t, targetSourceID, selected[0].SourceID)
 }
 
+func TestSearchRepairSelectionPersistsCursorForNextBoundedRun(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-repair-cursor-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-repair-cursor-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-repair-cursor", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	first := createSearchRepairAcceptedIngest(t, ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-repair-cursor-first",
+		RequestHash: sha256Hex("search repair cursor first"), Evidence: []EvidenceInput{{Content: "search repair cursor first"}},
+	})
+	time.Sleep(10 * time.Millisecond)
+	second := createSearchRepairAcceptedIngest(t, ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-repair-cursor-second",
+		RequestHash: sha256Hex("search repair cursor second"), Evidence: []EvidenceInput{{Content: "search repair cursor second"}},
+	})
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	runDate := time.Now().UTC()
+	run, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: runDate, CreateIfMissing: true, WorkerID: "search-repair-cursor-worker", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	selected, hasMore, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		Limit: 1, RunID: run.RunID, LeaseToken: run.LeaseToken,
+	})
+	require.NoError(t, err)
+	require.True(t, hasMore)
+	require.Len(t, selected, 1)
+	require.Equal(t, first.Evidence[0].FragmentID, selected[0].SourceID)
+
+	resumed, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: runDate, WorkerID: "search-repair-cursor-observer", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.False(t, claimed)
+	require.NotNil(t, resumed.SelectionCursor)
+	require.Equal(t, first.Evidence[0].FragmentID, resumed.SelectionCursor.SourceID)
+	continued, hasMore, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		Limit: 1, Cursor: resumed.SelectionCursor,
+	})
+	require.NoError(t, err)
+	require.False(t, hasMore)
+	require.Len(t, continued, 1)
+	require.Equal(t, second.Evidence[0].FragmentID, continued[0].SourceID)
+	require.NoError(t, repo.FinishSearchRepairRun(ctx, FinishSearchRepairRunInput{
+		RunID: run.RunID, LeaseToken: run.LeaseToken, Status: "completed",
+		SelectedCount: 1, DriftedCount: 1,
+	}))
+	next, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: runDate.Add(24 * time.Hour), CreateIfMissing: true, WorkerID: "search-repair-cursor-next-worker", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NotNil(t, next.SelectionCursor)
+	require.Equal(t, first.Evidence[0].FragmentID, next.SelectionCursor.SourceID)
+}
+
+func TestSearchRepairReclaimClearsPersistedSelectionCursor(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-repair-reclaim-cursor-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-repair-reclaim-cursor-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-repair-reclaim-cursor", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	first := createSearchRepairAcceptedIngest(t, ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-repair-reclaim-cursor-first",
+		RequestHash: sha256Hex("search repair reclaim cursor first"), Evidence: []EvidenceInput{{Content: "search repair reclaim cursor first"}},
+	})
+	time.Sleep(10 * time.Millisecond)
+	_ = createSearchRepairAcceptedIngest(t, ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-repair-reclaim-cursor-second",
+		RequestHash: sha256Hex("search repair reclaim cursor second"), Evidence: []EvidenceInput{{Content: "search repair reclaim cursor second"}},
+	})
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	runDate := time.Now().UTC()
+	run, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: runDate, CreateIfMissing: true, WorkerID: "search-repair-reclaim-cursor-worker", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	selected, hasMore, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		Limit: 1, RunID: run.RunID, LeaseToken: run.LeaseToken,
+	})
+	require.NoError(t, err)
+	require.True(t, hasMore)
+	require.Len(t, selected, 1)
+	require.Equal(t, first.Evidence[0].FragmentID, selected[0].SourceID)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE embedding_reconciliation_runs
+			SET lease_until = clock_timestamp() - interval '1 second'
+			WHERE reconciliation_run_id = ?::uuid
+		`, run.RunID).Error
+	}))
+	reclaimed, reclaimedClaimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: runDate, WorkerID: "search-repair-reclaim-cursor-reclaimer", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, reclaimedClaimed)
+	require.Nil(t, reclaimed.SelectionCursor)
+}
+
 func TestSearchRepairCandidatePageSkipsHealthyCanonicalSourceBeforeHydration(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

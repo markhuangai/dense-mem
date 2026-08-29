@@ -30,6 +30,14 @@ func validateSearchRepairRunInput(input SearchRepairRunInput) error {
 
 func normalizeSearchRepairSelectionInput(input SearchRepairSelectionInput) SearchRepairSelectionInput {
 	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
+	input.RunID = strings.TrimSpace(input.RunID)
+	input.LeaseToken = strings.TrimSpace(input.LeaseToken)
+	if input.Cursor != nil {
+		input.Cursor.TeamID = strings.TrimSpace(input.Cursor.TeamID)
+		input.Cursor.SourceKind = strings.TrimSpace(input.Cursor.SourceKind)
+		input.Cursor.SourceID = strings.TrimSpace(input.Cursor.SourceID)
+		input.Cursor.SearchDocumentID = strings.TrimSpace(input.Cursor.SearchDocumentID)
+	}
 	return input
 }
 
@@ -39,6 +47,38 @@ func validateSearchRepairSelectionInput(input SearchRepairSelectionInput) error 
 	}
 	if input.EmbeddingDimensions < 1 {
 		return errors.New("embedding_dimensions must be positive")
+	}
+	if (input.RunID == "") != (input.LeaseToken == "") {
+		return errors.New("run_id and lease_token must be provided together")
+	}
+	if input.RunID != "" {
+		if _, err := uuid.Parse(input.RunID); err != nil {
+			return fmt.Errorf("run_id is invalid: %w", err)
+		}
+		if _, err := uuid.Parse(input.LeaseToken); err != nil {
+			return fmt.Errorf("lease_token is invalid: %w", err)
+		}
+	}
+	if input.Cursor != nil {
+		if input.Cursor.ObservedAt.IsZero() {
+			return errors.New("selection cursor timestamp is required")
+		}
+		if input.Cursor.SourceKind == "" {
+			return errors.New("selection cursor source kind is required")
+		}
+		for field, value := range map[string]string{
+			"selection cursor team_id":   input.Cursor.TeamID,
+			"selection cursor source_id": input.Cursor.SourceID,
+		} {
+			if _, err := uuid.Parse(value); err != nil {
+				return fmt.Errorf("%s is invalid: %w", field, err)
+			}
+		}
+		if input.Cursor.SearchDocumentID != "" {
+			if _, err := uuid.Parse(input.Cursor.SearchDocumentID); err != nil {
+				return fmt.Errorf("selection cursor search_document_id is invalid: %w", err)
+			}
+		}
 	}
 	return nil
 }
