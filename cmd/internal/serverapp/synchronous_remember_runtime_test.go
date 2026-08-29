@@ -1,6 +1,7 @@
 package serverapp
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,4 +15,10 @@ func TestInstallSynchronousRememberFactoryBuildsLazyService(t *testing.T) {
 
 	require.NotNil(t, writeRuntime.SynchronousRememberFactory)
 	require.NotNil(t, writeRuntime.SynchronousRememberFactory())
+}
+
+func TestActiveServerLeavesRememberFailureArtifactPurgerDormant(t *testing.T) {
+	source, err := os.ReadFile("server.go")
+	require.NoError(t, err)
+	require.NotContains(t, string(source), "StartRememberFailureArtifactPurger")
 }

@@ -120,6 +120,87 @@ export type SubmissionDiagnosticQuery = {
   offset?: number;
 };
 
+export type RememberAttemptOutcome = "completed" | "rejected" | "quarantined" | "failed" | "replayed";
+
+export type RememberAttemptDiagnosticSummary = {
+  team_id: string;
+  team_name: string;
+  owner_profile_id: string;
+  attempt_id: string;
+  space_id?: string;
+  space_generation?: number;
+  canonical_attempt_id?: string;
+  contract_version: string;
+  submission_kind: string;
+  outcome: RememberAttemptOutcome;
+  failed_phase?: string;
+  error_code?: string;
+  correlation_id?: string;
+  evidence_count: number;
+  relationship_count: number;
+  document_count: number;
+  assessor_turns: number;
+  duration_ms: number;
+  created_at: string;
+  completed_at?: string | null;
+};
+
+export type RememberAttemptDiagnosticEvent = {
+  sequence_no: number;
+  phase: string;
+  event_kind: string;
+  outcome: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type RememberFailureArtifactDescriptor = {
+  artifact_id: string;
+  artifact_kind: string;
+  content_type: string;
+  byte_count: number;
+  content_sha256: string;
+  captured_at: string;
+  expires_at: string;
+};
+
+export type RememberAttemptPublicResult = {
+  contract_version: string;
+  submission_id: string;
+  submission_kind: string;
+  processing_state: string;
+  search_state: string;
+  correlation_id: string;
+  evidence: Array<{
+    disposition: string;
+    evidence_id?: string;
+    evidence_index: number;
+    superseded_evidence_ids: string[];
+    search_state: string;
+    reason?: string;
+  }>;
+  relationship_results: Array<{
+    ref: string;
+    disposition: string;
+    reason?: string;
+    splits: Array<{ split_index: number; relationship_id: string; relationship_version: number; status: string }>;
+  }>;
+  errors: SubmissionStatusError[];
+};
+
+export type RememberAttemptDiagnosticDetail = RememberAttemptDiagnosticSummary & {
+  public_result: RememberAttemptPublicResult;
+  events: RememberAttemptDiagnosticEvent[];
+  artifacts: RememberFailureArtifactDescriptor[];
+};
+
+export type RememberAttemptDiagnosticQuery = {
+  team_id?: string;
+  outcome?: RememberAttemptOutcome | "";
+  limit?: number;
+  offset?: number;
+};
+
 export function buildOperationLogsPath(query: OperationLogQuery): string {
   const params = new URLSearchParams();
   appendParam(params, "limit", query.limit);
@@ -147,6 +228,23 @@ export function buildSubmissionDiagnosticsPath(query: SubmissionDiagnosticQuery)
 
 export function buildSubmissionDiagnosticPath(teamId: string, submissionId: string): string {
   return `/teams/${encodeURIComponent(teamId)}/submissions/${encodeURIComponent(submissionId)}`;
+}
+
+export function buildRememberAttemptDiagnosticsPath(query: RememberAttemptDiagnosticQuery): string {
+  const params = new URLSearchParams();
+  appendParam(params, "team_id", query.team_id);
+  appendParam(params, "outcome", query.outcome);
+  appendParam(params, "limit", query.limit);
+  appendParam(params, "offset", query.offset);
+  return pathWithQuery("/remember-attempts", params);
+}
+
+export function buildRememberAttemptDiagnosticPath(teamId: string, attemptId: string): string {
+  return `/teams/${encodeURIComponent(teamId)}/remember-attempts/${encodeURIComponent(attemptId)}`;
+}
+
+export function buildRememberFailureArtifactPath(teamId: string, attemptId: string, artifactId: string): string {
+  return `${buildRememberAttemptDiagnosticPath(teamId, attemptId)}/artifacts/${encodeURIComponent(artifactId)}`;
 }
 
 function appendParam(params: URLSearchParams, key: string, value: string | number | undefined): void {

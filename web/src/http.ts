@@ -67,6 +67,34 @@ export async function requestJson<T>(url: string, options: JsonRequestOptions = 
   return payload as T;
 }
 
+export async function requestBytes(url: string, options: JsonRequestOptions = {}): Promise<Uint8Array> {
+  const headers: Record<string, string> = { ...options.headers };
+  if (options.token) {
+    headers.Authorization = `Bearer ${options.token}`;
+  }
+  const response = await fetch(url, {
+    method: options.method ?? "GET",
+    headers,
+    credentials: options.credentials,
+    cache: options.cache,
+    signal: options.signal,
+  });
+  const body = new Uint8Array(await response.arrayBuffer());
+  if (!response.ok) {
+    let payload: unknown = null;
+    const text = new TextDecoder().decode(body);
+    if (text) {
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = null;
+      }
+    }
+    throw new ApiError(response.status, errorMessage(payload, response.statusText));
+  }
+  return body;
+}
+
 function readCookie(name: string): string {
   const prefix = `${name}=`;
   return document.cookie

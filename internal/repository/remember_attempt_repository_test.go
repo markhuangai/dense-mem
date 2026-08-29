@@ -33,3 +33,18 @@ func TestRememberAttemptHashMatchesOnlyRecognizedMigrationContract(t *testing.T)
 		t.Fatal("unrecognized migration contract must not match")
 	}
 }
+
+func TestRememberAttemptDiagnosticFilterUsesBoundedOutcomeVocabulary(t *testing.T) {
+	filter := normalizeRememberAttemptDiagnosticFilter(RememberAttemptDiagnosticFilter{Limit: 500, Offset: -1})
+	require.Equal(t, 100, filter.Limit)
+	require.Zero(t, filter.Offset)
+	require.NoError(t, validateRememberAttemptDiagnosticFilter(RememberAttemptDiagnosticFilter{Outcome: "replayed"}))
+	require.ErrorContains(t, validateRememberAttemptDiagnosticFilter(RememberAttemptDiagnosticFilter{Outcome: "processing"}), "outcome")
+	require.Error(t, validateRememberAttemptDiagnosticFilter(RememberAttemptDiagnosticFilter{TeamID: "not-a-uuid"}))
+}
+
+func TestRememberFailureArtifactPurgeBatchIsBounded(t *testing.T) {
+	filter := normalizeRememberAttemptDiagnosticFilter(RememberAttemptDiagnosticFilter{Limit: 0})
+	require.Equal(t, 20, filter.Limit)
+	require.Equal(t, rememberFailureArtifactPurgeBatchSize, 100)
+}

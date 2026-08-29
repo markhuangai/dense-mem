@@ -135,4 +135,9 @@ run_synchronous_write_e2e() {
   DENSE_MEM_E2E_PROVIDER_FAULT="$configured_fault" \
   DENSE_MEM_E2E_WRITE_CASE="$slice" \
   node "$ROOT_DIR/tests/uat/synchronous_write/runner.mjs"
+  if [[ "$slice" == "diagnostics" && "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" != "1" ]]; then
+    export DENSE_MEM_E2E_TEAM_NAME="E2E Team"
+    echo "Running compose-backed Remember-attempt diagnostics Playwright tests."
+    run_compose_playwright_tests remember_attempts
+  fi
 }
