@@ -34,7 +34,15 @@ const searchDocumentConvergenceStatsSQL = searchRepairDriftCTE + `
 		   AND document.embedding_dimensions = contract.embedding_dimensions
 		   AND document.source_version = source.source_version
 		   AND document.projection_format_version = source.projection_format_version
-		   AND document.projection_generation_id IS NOT DISTINCT FROM source.projection_generation_id
+		   AND (
+				document.projection_generation_id IS NOT DISTINCT FROM source.projection_generation_id
+				OR (
+					source.source_kind = 'relationship'
+					AND source.projection_generation_id IS NOT NULL
+					AND document.projection_generation_id IS NULL
+					AND COALESCE(document.metadata->>'` + relationshipForegroundRecallGenerationMetadataKey + `', '') = source.projection_generation_id::text
+				)
+			)
 		   AND document.document_text = source.document_text
 		   AND document.document_hash = source.document_hash
 		   AND document.space_id IS NOT DISTINCT FROM source.space_id

@@ -242,6 +242,9 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
+		if errors.Is(err, repository.ErrSearchContractMismatch) {
+			return s.finishFailure(ctx, result, contract, "deferred", "embedding_contract_mismatch")
+		}
 		if apply != nil {
 			result.UpdatedCount = apply.UpdatedCount
 			// The write transaction committed, but the follow-up probe did not.

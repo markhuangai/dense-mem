@@ -290,6 +290,27 @@ func TestSearchReconciliationApplyCancellationLeavesRunReclaimable(t *testing.T)
 	require.Nil(t, repo.finish)
 }
 
+func TestSearchReconciliationContractMismatchDefersRun(t *testing.T) {
+	contract := searchRepairTestContract()
+	repo := &searchRepairRepositoryStub{
+		contract:  contract,
+		run:       &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
+		documents: []repository.SearchRepairDocument{searchRepairTestDocument(contract)},
+		count:     3,
+		applyErr:  repository.ErrSearchContractMismatch,
+	}
+	executor := &searchRepairExecutorStub{result: semanticwrite.Result{Embeddings: []semanticwrite.Embedding{{DocumentHash: "hash", Vector: []float32{1, 2}}}}}
+	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: executor, WorkerID: "worker"})
+
+	result, err := svc.Run(context.Background(), time.Now().UTC(), true)
+
+	require.ErrorIs(t, err, ErrSearchRepairFailed)
+	require.Equal(t, "deferred", result.Status)
+	require.Equal(t, "embedding_contract_mismatch", result.ErrorCode)
+	require.Equal(t, "deferred", repo.finish.Status)
+	require.Equal(t, "embedding_contract_mismatch", repo.finish.LastError)
+}
+
 func TestSearchReconciliationPreservesCommittedCountWhenDriftProbeFails(t *testing.T) {
 	contract := searchRepairTestContract()
 	repo := &searchRepairRepositoryStub{

@@ -209,6 +209,7 @@ func isControlSearchRepairErrorCode(value string) bool {
 		"embedding_cancelled",
 		"embedding_unavailable",
 		"embedding_response_invalid",
+		"embedding_contract_mismatch",
 		"reconciliation_selection_failed",
 		"reconciliation_snapshot_invalid",
 		"reconciliation_commit_failed",

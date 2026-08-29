@@ -208,7 +208,28 @@ const searchRepairCandidateSQL = `
 	       contract.embedding_contract_id::text AS embedding_contract_id,
 	       contract.embedding_dimensions AS embedding_dimensions,
 	       COALESCE(source.space_id::text, '') AS space_id, source.space_generation AS space_generation,
-	       false AS retired, source.observed_at
+	       false AS retired,
+	       CASE WHEN document.search_document_id IS NOT NULL AND (
+			document.owner_profile_id IS DISTINCT FROM source.owner_profile_id
+			OR document.embedding_dimensions <> contract.embedding_dimensions
+			OR document.source_version <> source.source_version
+			OR document.projection_format_version <> source.projection_format_version
+			OR NOT (
+				document.projection_generation_id IS NOT DISTINCT FROM source.projection_generation_id
+				OR (
+					source.source_kind = 'relationship'
+					AND source.projection_generation_id IS NOT NULL
+					AND document.projection_generation_id IS NULL
+					AND COALESCE(document.metadata->>'` + relationshipForegroundRecallGenerationMetadataKey + `', '') = source.projection_generation_id::text
+				)
+			)
+			OR document.space_id IS DISTINCT FROM source.space_id
+			OR COALESCE(document.space_generation, 0) <> source.space_generation
+			OR document.search_state <> 'current'
+			OR document.embedding IS NULL
+			OR vector_dims(document.embedding) <> document.embedding_dimensions
+	       ) THEN GREATEST(document.updated_at, source.observed_at)
+	       ELSE source.observed_at END
 	FROM source_keys AS source
 	CROSS JOIN active_contract AS contract
 	LEFT JOIN search_documents AS document
