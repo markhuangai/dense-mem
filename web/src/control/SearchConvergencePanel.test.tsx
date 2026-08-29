@@ -23,6 +23,9 @@ describe("SearchConvergencePanel", () => {
       screen.getByLabelText("Legacy embedding job summary"),
     ).toHaveTextContent("Failure groups");
     expect(screen.getByText("provider_quota_exhausted")).toBeInTheDocument();
+    expect(
+      screen.getByText("reconciliation failed: embedding_timeout"),
+    ).toBeInTheDocument();
     expect(screen.getByText("2 / 1")).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -143,6 +146,7 @@ function failureSnapshot(): SearchConvergence {
       embedded_count: 2,
       updated_count: 2,
       drifted_count: 0,
+      last_error: "reconciliation failed: embedding_timeout",
       updated_at: "2026-08-11T04:30:00Z",
     },
   };

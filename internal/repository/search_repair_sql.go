@@ -29,7 +29,7 @@ const searchRepairDriftCTE = `
 		       regexp_replace(fragment.content, '` + searchRepairUnicodeTrimPattern + `', '', 'g') AS document_text,
 		       encode(digest(regexp_replace(fragment.content, '` + searchRepairUnicodeTrimPattern + `', '', 'g'), 'sha256'), 'hex') AS document_hash,
 		       fragment.space_id, COALESCE(fragment.space_generation, 0)::bigint AS space_generation,
-		       fragment.created_at AS observed_at
+		       COALESCE(source.updated_at, fragment.created_at) AS observed_at
 		FROM evidence_fragments AS fragment
 ` + searchRepairEvidenceTerminalPlacementJoinSQL + `
 		JOIN teams AS team ON team.id = fragment.team_id AND team.status = 'active' AND team.deleted_at IS NULL
@@ -62,7 +62,7 @@ const searchRepairDriftCTE = `
 	         CASE WHEN relationship.valid_from IS NULL THEN NULL ELSE 'valid_from: ' || regexp_replace(to_char(relationship.valid_from AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), '\.{0,1}0+Z$', 'Z') END,
 	         CASE WHEN relationship.valid_to IS NULL THEN NULL ELSE 'valid_to: ' || regexp_replace(to_char(relationship.valid_to AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), '\.{0,1}0+Z$', 'Z') END
 		       ), 'sha256'), 'hex') AS document_hash,
-		       relationship.space_id, COALESCE(relationship.space_generation, 0)::bigint, relationship.created_at
+		       relationship.space_id, COALESCE(relationship.space_generation, 0)::bigint, relationship.updated_at
 		FROM relationship_records AS relationship
 		JOIN teams AS team ON team.id = relationship.team_id AND team.status = 'active' AND team.deleted_at IS NULL
 		LEFT JOIN foreground_generations AS foreground ON foreground.team_id = relationship.team_id
@@ -165,7 +165,7 @@ const searchRepairCandidateSQL = `
 		       fragment.fragment_id AS source_id, 1::bigint AS source_version,
 		       1 AS projection_format_version, NULL::uuid AS projection_generation_id,
 		       fragment.space_id, COALESCE(fragment.space_generation, 0)::bigint AS space_generation,
-		       fragment.created_at AS observed_at
+		       COALESCE(source.updated_at, fragment.created_at) AS observed_at
 		FROM evidence_fragments AS fragment
 ` + searchRepairEvidenceTerminalPlacementJoinSQL + `
 		JOIN teams AS team ON team.id = fragment.team_id AND team.status = 'active' AND team.deleted_at IS NULL
@@ -178,7 +178,7 @@ const searchRepairCandidateSQL = `
 		SELECT relationship.team_id, relationship.owner_profile_id, 'relationship'::text,
 		       relationship.relationship_id, relationship.version::bigint, 2,
 		       foreground.projection_generation_id, relationship.space_id,
-		       COALESCE(relationship.space_generation, 0)::bigint, relationship.created_at
+		       COALESCE(relationship.space_generation, 0)::bigint, relationship.updated_at
 		FROM relationship_records AS relationship
 		JOIN teams AS team ON team.id = relationship.team_id AND team.status = 'active' AND team.deleted_at IS NULL
 		LEFT JOIN foreground_generations AS foreground ON foreground.team_id = relationship.team_id
@@ -195,7 +195,10 @@ const searchRepairCandidateSQL = `
 	       contract.embedding_contract_id::text AS embedding_contract_id,
 	       contract.embedding_dimensions AS embedding_dimensions,
 	       COALESCE(source.space_id::text, '') AS space_id, source.space_generation AS space_generation,
-	       false AS retired, COALESCE(document.updated_at, source.observed_at) AS observed_at
+	       false AS retired,
+	       CASE WHEN source.source_kind = 'relationship' THEN source.observed_at
+            ELSE COALESCE(document.updated_at, source.observed_at)
+       END AS observed_at
 	FROM source_keys AS source
 	CROSS JOIN active_contract AS contract
 	LEFT JOIN search_documents AS document

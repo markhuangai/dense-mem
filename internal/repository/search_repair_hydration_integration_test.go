@@ -258,6 +258,106 @@ func TestSearchRepairSelectionPersistsCursorForNextBoundedRun(t *testing.T) {
 	require.Equal(t, first.Evidence[0].FragmentID, next.SelectionCursor.SourceID)
 }
 
+func TestSearchRepairSelectionRevisitsRelationshipChangedBehindCursor(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-repair-relationship-cursor-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-repair-relationship-cursor-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-repair-relationship-cursor", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Cursor Subject")
+	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Cursor Object")
+
+	firstIngest := createSemanticIngest(t, ctx, ledger, teamID, ownerID,
+		"search-repair-relationship-cursor-first", "Cursor Subject works on Cursor Object.")
+	first := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: firstIngest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID: firstIngest.Evidence[0].FragmentID, SourceGroupKey: "search-repair-relationship-cursor-first",
+			SpanStart: 0, SpanEnd: len("Cursor Subject works on Cursor Object."), Authority: "primary",
+		},
+	})
+	secondIngest := createSemanticIngest(t, ctx, ledger, teamID, ownerID,
+		"search-repair-relationship-cursor-second", "Cursor Subject uses Cursor Object.")
+	second := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: secondIngest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "uses", ObjectEntityID: object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID: secondIngest.Evidence[0].FragmentID, SourceGroupKey: "search-repair-relationship-cursor-second",
+			SpanStart: 0, SpanEnd: len("Cursor Subject uses Cursor Object."), Authority: "primary",
+		},
+	})
+	require.NotNil(t, first.Relationship)
+	require.NotNil(t, second.Relationship)
+	_, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship",
+		SourceID: first.Relationship.RelationshipID, SourceVersion: int64(first.Relationship.Version),
+		ProjectionFormat: 2, DocumentText: "stale first relationship",
+	})
+	require.NoError(t, err)
+	_, err = repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship",
+		SourceID: second.Relationship.RelationshipID, SourceVersion: int64(second.Relationship.Version),
+		ProjectionFormat: 2, DocumentText: "stale second relationship",
+	})
+	require.NoError(t, err)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_records
+			SET updated_at = CASE relationship_id
+				WHEN ?::uuid THEN clock_timestamp() - interval '2 minutes'
+				WHEN ?::uuid THEN clock_timestamp() - interval '1 minute'
+			END
+			WHERE team_id = ?::uuid AND relationship_id IN (?::uuid, ?::uuid)
+		`, first.Relationship.RelationshipID, second.Relationship.RelationshipID, teamID,
+			first.Relationship.RelationshipID, second.Relationship.RelationshipID).Error
+	}))
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	runDate := time.Now().UTC()
+	run, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: runDate, CreateIfMissing: true, WorkerID: "search-repair-relationship-cursor-worker", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	selected, hasMore, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		Limit: 1, RunID: run.RunID, LeaseToken: run.LeaseToken,
+	})
+	require.NoError(t, err)
+	require.True(t, hasMore)
+	require.Len(t, selected, 1)
+	require.Equal(t, first.Relationship.RelationshipID, selected[0].SourceID)
+
+	resumed, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: runDate, WorkerID: "search-repair-relationship-cursor-observer", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.False(t, claimed)
+	require.NotNil(t, resumed.SelectionCursor)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE relationship_records
+			SET version = version + 1, updated_at = ?
+			WHERE team_id = ?::uuid AND relationship_id = ?::uuid
+		`, resumed.SelectionCursor.ObservedAt.Add(time.Microsecond), teamID, first.Relationship.RelationshipID).Error
+	}))
+	continued, _, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		Limit: 1, Cursor: resumed.SelectionCursor,
+	})
+	require.NoError(t, err)
+	require.Len(t, continued, 1)
+	require.Equal(t, first.Relationship.RelationshipID, continued[0].SourceID)
+}
+
 func TestSearchRepairReclaimClearsPersistedSelectionCursor(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

@@ -110,6 +110,7 @@ func TestControlSearchConvergenceConversionAndRunErrorsAreBounded(t *testing.T) 
 		{"provider response leaked", "", "reconciliation operation failed"},
 		{strings.Repeat("x", 129), "", "reconciliation operation failed"},
 		{"provider response leaked", "provider_quota_exhausted", "reconciliation failed: provider_quota_exhausted"},
+		{"embedding_timeout", "", "reconciliation failed: embedding_timeout"},
 	} {
 		require.Equal(t, test.want, boundedControlSearchRunError(test.message, test.code))
 	}

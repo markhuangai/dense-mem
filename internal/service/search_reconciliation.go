@@ -294,6 +294,9 @@ func searchRepairPlan(documents []repository.SearchRepairDocument, contract *rep
 }
 
 func (s *searchRepairService) finishExecutorFailure(ctx context.Context, result SearchRepairResult, contract *repository.ActiveSearchContract, err error) (SearchRepairResult, error) {
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return s.finishFailure(ctx, result, contract, "deferred", "embedding_timeout")

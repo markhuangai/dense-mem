@@ -184,6 +184,9 @@ func boundedControlSearchRunError(message, failureCode string) string {
 	if failureCode != "" {
 		return "reconciliation failed: " + failureCode
 	}
+	if isControlSearchRepairErrorCode(message) {
+		return "reconciliation failed: " + message
+	}
 	const limit = 128
 	if len(message) > limit {
 		return "reconciliation operation failed"
@@ -197,5 +200,21 @@ func boundedControlSearchRunError(message, failureCode string) string {
 		return message
 	default:
 		return "reconciliation operation failed"
+	}
+}
+
+func isControlSearchRepairErrorCode(value string) bool {
+	switch value {
+	case "embedding_timeout",
+		"embedding_cancelled",
+		"embedding_unavailable",
+		"embedding_response_invalid",
+		"reconciliation_selection_failed",
+		"reconciliation_snapshot_invalid",
+		"reconciliation_commit_failed",
+		"reconciliation_count_failed":
+		return true
+	default:
+		return false
 	}
 }

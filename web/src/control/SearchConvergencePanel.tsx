@@ -153,6 +153,12 @@ export function SearchConvergencePanel({ api }: { api: ControlApi }) {
                     {snapshot.latest_run.drifted_count}
                   </strong>
                 </div>
+                {snapshot.latest_run.last_error && (
+                  <div className="mini-table-row">
+                    <span>Last error</span>
+                    <strong>{snapshot.latest_run.last_error}</strong>
+                  </div>
+                )}
               </div>
             </section>
           )}
