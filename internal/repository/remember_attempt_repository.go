@@ -71,9 +71,10 @@ type RememberFailureRecordInput struct {
 	Artifacts []RememberFailureArtifactInput
 }
 
-// RememberAttemptDiagnosticFilter bounds the control-portal attempt read
-// model. It deliberately uses the durable attempt outcome rather than a
-// placement processing state.
+// RememberAttemptDiagnosticFilter is the normalized filter supplied by the
+// diagnostics service for the control-portal attempt read model. It
+// deliberately uses the durable attempt outcome rather than a placement
+// processing state.
 type RememberAttemptDiagnosticFilter struct {
 	TeamID  string
 	Outcome string
@@ -428,43 +429,10 @@ func rememberAttemptEventKind(input RememberAttemptRecordInput) string {
 	return "commit_completed"
 }
 
-func normalizeRememberAttemptDiagnosticFilter(filter RememberAttemptDiagnosticFilter) RememberAttemptDiagnosticFilter {
-	filter.TeamID = strings.TrimSpace(filter.TeamID)
-	filter.Outcome = strings.TrimSpace(filter.Outcome)
-	if filter.Limit <= 0 {
-		filter.Limit = 20
-	}
-	if filter.Limit > 100 {
-		filter.Limit = 100
-	}
-	if filter.Offset < 0 {
-		filter.Offset = 0
-	}
-	return filter
-}
-
-func validateRememberAttemptDiagnosticFilter(filter RememberAttemptDiagnosticFilter) error {
-	if filter.TeamID != "" {
-		if _, err := uuid.Parse(filter.TeamID); err != nil {
-			return fmt.Errorf("team_id must be a UUID: %w", err)
-		}
-	}
-	switch filter.Outcome {
-	case "", "completed", "rejected", "quarantined", "failed", "replayed":
-		return nil
-	default:
-		return fmt.Errorf("outcome is unsupported")
-	}
-}
-
 func (r *LedgerRepositoryImpl) ListRememberAttemptDiagnostics(
 	ctx context.Context,
 	filter RememberAttemptDiagnosticFilter,
 ) (*RememberAttemptDiagnosticRecordPage, error) {
-	filter = normalizeRememberAttemptDiagnosticFilter(filter)
-	if err := validateRememberAttemptDiagnosticFilter(filter); err != nil {
-		return nil, err
-	}
 	page := &RememberAttemptDiagnosticRecordPage{Records: []RememberAttemptDiagnosticRecord{}}
 	err := r.withSystemReadOnlyRepeatableTx(ctx, func(tx *gorm.DB) error {
 		teamID := filter.TeamID

@@ -221,6 +221,50 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, failed.Records, 2)
 
+	global, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{Limit: 100})
+	require.NoError(t, err)
+	require.Equal(t, int64(6), global.Total)
+	require.Len(t, global.Records, 6)
+	for index, record := range global.Records {
+		require.Contains(t, []string{teamA, teamC}, record.TeamID)
+		require.Nil(t, record.PublicResult)
+		require.Empty(t, record.Events)
+		require.Empty(t, record.Artifacts)
+		if index == 0 {
+			continue
+		}
+		previous := global.Records[index-1]
+		if record.CreatedAt.Equal(previous.CreatedAt) {
+			require.Less(t, record.AttemptID, previous.AttemptID, "equal timestamps must use descending attempt_id order")
+			continue
+		}
+		require.True(t, record.CreatedAt.Before(previous.CreatedAt), "global records must be ordered newest first")
+	}
+
+	globalPageOne, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: "", Limit: 2, Offset: 0})
+	require.NoError(t, err)
+	globalPageTwo, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: "", Limit: 2, Offset: 2})
+	require.NoError(t, err)
+	require.Equal(t, int64(6), globalPageOne.Total)
+	require.Equal(t, int64(6), globalPageTwo.Total)
+	require.Len(t, globalPageOne.Records, 2)
+	require.Len(t, globalPageTwo.Records, 2)
+	require.Equal(t, global.Records[0].AttemptID, globalPageOne.Records[0].AttemptID)
+	require.Equal(t, global.Records[1].AttemptID, globalPageOne.Records[1].AttemptID)
+	require.Equal(t, global.Records[2].AttemptID, globalPageTwo.Records[0].AttemptID)
+	require.Equal(t, global.Records[3].AttemptID, globalPageTwo.Records[1].AttemptID)
+
+	globalFailed, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: "", Outcome: "failed", Limit: 100})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), globalFailed.Total)
+	require.Len(t, globalFailed.Records, 2)
+	for _, record := range globalFailed.Records {
+		require.Equal(t, "failed", record.Outcome)
+		require.Nil(t, record.PublicResult)
+		require.Empty(t, record.Events)
+		require.Empty(t, record.Artifacts)
+	}
+
 	detail, err := repo.GetRememberAttemptDiagnostic(ctx, teamA, attemptIDs[3])
 	require.NoError(t, err)
 	require.Len(t, detail.Events, 3)

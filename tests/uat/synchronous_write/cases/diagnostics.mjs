@@ -25,6 +25,18 @@ export async function run({ rpc, expect }) {
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
   const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
   const token = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
+  for (const path of [
+    "/control/api/remember-attempts?limit=101",
+    "/control/api/remember-attempts?limit=0",
+    "/control/api/remember-attempts?team_id=bad",
+    "/control/api/remember-attempts?outcome=unknown",
+  ]) {
+    const response = await fetch(`${controlURL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    const body = await response.text();
+    expect(response.status === 400, `invalid diagnostics request ${path} must return 400: ${body}`);
+    expect(body.length < 2048, `invalid diagnostics error ${path} must be bounded`);
+    expect(!body.includes("diagnostics-persisted-secret") && !body.includes("dense-mem-e2e-verifier-key"), `invalid diagnostics error ${path} must not expose payloads`);
+  }
   const diagnosticAttemptIDs = {};
   for (const [label, idempotencyKey] of Object.entries(idempotencyKeys)) {
     const rows = postgresQuery(`
