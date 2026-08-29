@@ -169,6 +169,13 @@
 
 ### Root cause and remedy
 
+- Treat a review comment's file and line as evidence of a symptom, not the
+  presumed edit location. Before changing code, trace the violated rule,
+  authoritative value, state transition, default, or error classification to
+  its narrowest existing owner and across affected supported consumers. Fix
+  that owner when it preserves accepted behavior. Add a downstream guard at the
+  reported location only when an owner-level fix would change valid behavior,
+  cross accepted scope, or couple distinct policies, and state that reason.
 - Combine variants that share one root cause. Trace changed fields, states,
   identifiers, configuration, and contracts through supported writers and
   consumers only far enough to prove the failure. If the claim is valid but the

@@ -47,6 +47,11 @@ test("repository guidance requires material, scoped, simple review findings", as
   );
   assert.match(normalizedAgents, /Do not report speculative hardening/);
   assert.match(agents, /### Root cause and remedy/);
+  assert.match(
+    normalizedAgents,
+    /evidence of a symptom, not the presumed edit location/,
+  );
+  assert.match(normalizedAgents, /narrowest existing owner/);
   assert.match(normalizedAgents, /Combine variants that share one root cause/);
   assert.match(normalizedAgents, /simplest sufficient verified fix/);
   assert.match(normalizedAgents, /request replanning/);
