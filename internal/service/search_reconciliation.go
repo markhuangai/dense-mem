@@ -17,7 +17,7 @@ import (
 const (
 	searchRepairTickInterval = time.Minute
 	searchRepairLease        = 15 * time.Minute
-	searchRepairTimeout      = 10 * time.Second
+	searchRepairTimeout      = 30 * time.Second
 	searchRepairFinalizeCap  = 5 * time.Second
 	searchRepairLimit        = semanticwrite.MaxDocuments
 )
@@ -89,7 +89,7 @@ func NewSearchRepairService(deps SearchRepairDependencies) SearchRepairService {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
 	providerTimeout := deps.ProviderTimeout
-	if providerTimeout <= 0 || providerTimeout > searchRepairTimeout {
+	if providerTimeout <= 0 {
 		providerTimeout = searchRepairTimeout
 	}
 	return &searchRepairService{
@@ -174,7 +174,7 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 		Limit:               searchRepairLimit,
 	})
 	if err != nil {
-		return s.finishFailure(ctx, result, "failed", "reconciliation_selection_failed")
+		return s.finishFailure(ctx, result, contract, "failed", "reconciliation_selection_failed")
 	}
 	result.SelectedCount = int64(len(documents))
 	if len(documents) == 0 {
@@ -186,13 +186,13 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 	}
 	plan, err := searchRepairPlan(documents, contract, s.providerTimeout)
 	if err != nil {
-		return s.finishFailure(ctx, result, "failed", "reconciliation_snapshot_invalid")
+		return s.finishFailure(ctx, result, contract, "failed", "reconciliation_snapshot_invalid")
 	}
 	metricCtx := observability.WithMetricIdentity(ctx, "", "")
 	metricCtx = observability.WithAIOperation(metricCtx, observability.AIOperationBackgroundEmbedding, len(plan.Documents))
 	embedded, err := s.executor.Execute(metricCtx, plan)
 	if err != nil {
-		return s.finishExecutorFailure(ctx, result, err)
+		return s.finishExecutorFailure(ctx, result, contract, err)
 	}
 	result.EmbeddedCount = int64(len(embedded.Embeddings))
 	vectors := make(map[string][]float32, len(embedded.Embeddings))
@@ -205,7 +205,7 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 		if !document.Retired {
 			vector, ok := vectors[document.DocumentHash]
 			if !ok {
-				return s.finishFailure(ctx, result, "failed", "embedding_response_invalid")
+				return s.finishFailure(ctx, result, contract, "failed", "embedding_response_invalid")
 			}
 			entry.Embedding = vector
 		}
@@ -221,14 +221,10 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 		Documents:               applyDocuments,
 	})
 	if err != nil {
-		return s.finishFailure(ctx, result, "ambiguous", "reconciliation_commit_failed")
+		return s.finishFailure(ctx, result, contract, "ambiguous", "reconciliation_commit_failed")
 	}
 	result.UpdatedCount = apply.UpdatedCount
-	if hasMore || apply.RemainingDrifted || apply.SkippedCount > 0 {
-		result.DriftedCount = 1
-	} else {
-		result.DriftedCount = 0
-	}
+	result.DriftedCount = apply.RemainingDriftedCount
 	return s.finish(ctx, result, "completed", "")
 }
 
@@ -236,7 +232,7 @@ func searchRepairPlan(documents []repository.SearchRepairDocument, contract *rep
 	if contract == nil {
 		return semanticwrite.Plan{}, errors.New("active contract is required")
 	}
-	if timeout <= 0 || timeout > searchRepairTimeout {
+	if timeout <= 0 {
 		timeout = searchRepairTimeout
 	}
 	plan := semanticwrite.Plan{Fence: semanticwrite.Fence{
@@ -271,24 +267,37 @@ func searchRepairPlan(documents []repository.SearchRepairDocument, contract *rep
 	return plan, nil
 }
 
-func (s *searchRepairService) finishExecutorFailure(ctx context.Context, result SearchRepairResult, err error) (SearchRepairResult, error) {
+func (s *searchRepairService) finishExecutorFailure(ctx context.Context, result SearchRepairResult, contract *repository.ActiveSearchContract, err error) (SearchRepairResult, error) {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		return s.finishFailure(ctx, result, "deferred", "embedding_timeout")
+		return s.finishFailure(ctx, result, contract, "deferred", "embedding_timeout")
 	case errors.Is(err, semanticwrite.ErrProviderTimeout):
-		return s.finishFailure(ctx, result, "deferred", "embedding_timeout")
+		return s.finishFailure(ctx, result, contract, "deferred", "embedding_timeout")
 	case errors.Is(err, context.Canceled):
-		return s.finishFailure(ctx, result, "deferred", "embedding_cancelled")
+		return s.finishFailure(ctx, result, contract, "deferred", "embedding_cancelled")
 	case errors.Is(err, semanticwrite.ErrProviderUnavailable):
-		return s.finishFailure(ctx, result, "deferred", "embedding_unavailable")
+		return s.finishFailure(ctx, result, contract, "deferred", "embedding_unavailable")
 	case errors.Is(err, semanticwrite.ErrProviderResponseInvalid):
-		return s.finishFailure(ctx, result, "failed", "embedding_response_invalid")
+		return s.finishFailure(ctx, result, contract, "failed", "embedding_response_invalid")
 	default:
-		return s.finishFailure(ctx, result, "failed", "reconciliation_snapshot_invalid")
+		return s.finishFailure(ctx, result, contract, "failed", "reconciliation_snapshot_invalid")
 	}
 }
 
-func (s *searchRepairService) finishFailure(ctx context.Context, result SearchRepairResult, status, code string) (SearchRepairResult, error) {
+func (s *searchRepairService) finishFailure(ctx context.Context, result SearchRepairResult, contract *repository.ActiveSearchContract, status, code string) (SearchRepairResult, error) {
+	counted := false
+	if contract != nil {
+		if remaining, err := s.repository.CountSearchRepairDocuments(ctx, repository.SearchRepairSelectionInput{
+			EmbeddingContractID: contract.EmbeddingContractID,
+			EmbeddingDimensions: contract.EmbeddingDimensions,
+		}); err == nil {
+			result.DriftedCount = remaining
+			counted = true
+		}
+	}
+	if !counted && result.DriftedCount == 0 {
+		result.DriftedCount = 1
+	}
 	result.ErrorCode = code
 	result, finishErr := s.finish(ctx, result, status, code)
 	if finishErr != nil {

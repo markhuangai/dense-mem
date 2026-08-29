@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -64,4 +65,24 @@ LIMIT ?`
 		return nil, err
 	}
 	return candidates, nil
+}
+
+func (r *SearchRepositoryImpl) CountSearchRepairDocuments(ctx context.Context, input SearchRepairSelectionInput) (int64, error) {
+	input = normalizeSearchRepairSelectionInput(input)
+	if err := validateSearchRepairSelectionInput(input); err != nil {
+		return 0, err
+	}
+	var count int64
+	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).Exec("SET LOCAL statement_timeout = '2s'").Error; err != nil {
+			return err
+		}
+		return tx.WithContext(ctx).Raw(
+			searchRepairDriftCountSQL, input.EmbeddingContractID, input.EmbeddingDimensions,
+		).Scan(&count).Error
+	})
+	if err != nil {
+		return 0, fmt.Errorf("search: count repair documents: %w", err)
+	}
+	return count, nil
 }

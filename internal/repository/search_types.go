@@ -49,6 +49,7 @@ type SearchRepairRepository interface {
 	GetSearchRepairTime(context.Context) (time.Time, error)
 	ReserveSearchRepairRun(context.Context, SearchRepairRunInput) (*SearchRepairRun, bool, error)
 	SelectSearchRepairDocuments(context.Context, SearchRepairSelectionInput) ([]SearchRepairDocument, bool, error)
+	CountSearchRepairDocuments(context.Context, SearchRepairSelectionInput) (int64, error)
 	ApplySearchRepair(context.Context, ApplySearchRepairInput) (*SearchRepairApplyResult, error)
 	FinishSearchRepairRun(context.Context, FinishSearchRepairRunInput) error
 }
@@ -384,9 +385,9 @@ type ApplySearchRepairInput struct {
 }
 
 type SearchRepairApplyResult struct {
-	UpdatedCount     int64
-	SkippedCount     int64
-	RemainingDrifted bool
+	UpdatedCount          int64
+	SkippedCount          int64
+	RemainingDriftedCount int64
 }
 
 type FinishSearchRepairRunInput struct {

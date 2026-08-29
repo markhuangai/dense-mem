@@ -398,13 +398,13 @@ func (r *SearchRepositoryImpl) ApplySearchRepair(ctx context.Context, input Appl
 	if err != nil {
 		return nil, fmt.Errorf("search: apply repair: %w", err)
 	}
-	remaining, _, err := r.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
-		EmbeddingContractID: input.EmbeddingContractID, EmbeddingDimensions: input.EmbeddingDimensions, Limit: 1,
+	remaining, err := r.CountSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: input.EmbeddingContractID, EmbeddingDimensions: input.EmbeddingDimensions,
 	})
 	if err != nil {
 		return nil, err
 	}
-	result.RemainingDrifted = len(remaining) > 0
+	result.RemainingDriftedCount = remaining
 	return result, nil
 }
 

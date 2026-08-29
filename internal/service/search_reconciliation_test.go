@@ -36,15 +36,18 @@ func (s *searchRepairExecutorStub) Execute(_ context.Context, plan semanticwrite
 }
 
 type searchRepairRepositoryStub struct {
-	contract  *repository.ActiveSearchContract
-	run       *repository.SearchRepairRun
-	documents []repository.SearchRepairDocument
-	selectErr error
-	reserve   repository.SearchRepairRunInput
-	now       time.Time
-	timeErr   error
-	apply     *repository.ApplySearchRepairInput
-	finish    *repository.FinishSearchRepairRunInput
+	contract    *repository.ActiveSearchContract
+	run         *repository.SearchRepairRun
+	documents   []repository.SearchRepairDocument
+	selectErr   error
+	count       int64
+	countErr    error
+	reserve     repository.SearchRepairRunInput
+	now         time.Time
+	timeErr     error
+	apply       *repository.ApplySearchRepairInput
+	applyResult *repository.SearchRepairApplyResult
+	finish      *repository.FinishSearchRepairRunInput
 }
 
 type searchRepairLoggerStub struct{ warnings []string }
@@ -78,8 +81,14 @@ func (s *searchRepairRepositoryStub) ReserveSearchRepairRun(_ context.Context, i
 func (s *searchRepairRepositoryStub) SelectSearchRepairDocuments(context.Context, repository.SearchRepairSelectionInput) ([]repository.SearchRepairDocument, bool, error) {
 	return s.documents, false, s.selectErr
 }
+func (s *searchRepairRepositoryStub) CountSearchRepairDocuments(context.Context, repository.SearchRepairSelectionInput) (int64, error) {
+	return s.count, s.countErr
+}
 func (s *searchRepairRepositoryStub) ApplySearchRepair(_ context.Context, input repository.ApplySearchRepairInput) (*repository.SearchRepairApplyResult, error) {
 	s.apply = &input
+	if s.applyResult != nil {
+		return s.applyResult, nil
+	}
 	return &repository.SearchRepairApplyResult{UpdatedCount: int64(len(input.Documents))}, nil
 }
 func (s *searchRepairRepositoryStub) FinishSearchRepairRun(_ context.Context, input repository.FinishSearchRepairRunInput) error {
@@ -118,6 +127,47 @@ func TestSearchReconciliationRunUsesOneFencedBatchAndFinishesDocumentCounters(t 
 	require.Zero(t, repo.finish.DriftedCount)
 }
 
+func TestSearchReconciliationRunPersistsExactRemainingDriftCount(t *testing.T) {
+	contract := searchRepairTestContract()
+	repo := &searchRepairRepositoryStub{
+		contract: contract,
+		run:      &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
+		documents: []repository.SearchRepairDocument{{
+			DocumentText: "canonical document", DocumentHash: "hash",
+		}},
+		applyResult: &repository.SearchRepairApplyResult{UpdatedCount: 1, RemainingDriftedCount: 7},
+	}
+	executor := &searchRepairExecutorStub{result: semanticwrite.Result{Embeddings: []semanticwrite.Embedding{{DocumentHash: "hash", Vector: []float32{1, 2}}}}}
+	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: executor, WorkerID: "worker"})
+
+	result, err := svc.Run(context.Background(), time.Now().UTC(), true)
+
+	require.NoError(t, err)
+	require.EqualValues(t, 7, result.DriftedCount)
+	require.EqualValues(t, 7, repo.finish.DriftedCount)
+}
+
+func TestSearchReconciliationFailureUsesAvailableRemainingDriftCount(t *testing.T) {
+	contract := searchRepairTestContract()
+	repo := &searchRepairRepositoryStub{
+		contract: contract,
+		run:      &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
+		documents: []repository.SearchRepairDocument{{
+			DocumentText: "canonical document", DocumentHash: "hash",
+		}},
+		count: 9,
+	}
+	svc := NewSearchRepairService(SearchRepairDependencies{
+		Repository: repo, Executor: &searchRepairExecutorStub{err: semanticwrite.ErrProviderUnavailable}, WorkerID: "worker",
+	})
+
+	result, err := svc.Run(context.Background(), time.Now().UTC(), true)
+
+	require.ErrorIs(t, err, ErrSearchRepairFailed)
+	require.EqualValues(t, 9, result.DriftedCount)
+	require.EqualValues(t, 9, repo.finish.DriftedCount)
+}
+
 func TestSearchReconciliationRunLeavesDocumentsUntouchedWhenProviderFails(t *testing.T) {
 	contract := &repository.ActiveSearchContract{
 		EmbeddingContractID: "11111111-1111-4111-8111-111111111111", SearchIndexGenerationID: "22222222-2222-4222-8222-222222222222",
@@ -127,6 +177,7 @@ func TestSearchReconciliationRunLeavesDocumentsUntouchedWhenProviderFails(t *tes
 		contract:  contract,
 		run:       &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
 		documents: []repository.SearchRepairDocument{{DocumentText: "canonical document", DocumentHash: "hash"}},
+		countErr:  errors.New("count unavailable"),
 	}
 	svc := NewSearchRepairService(SearchRepairDependencies{
 		Repository: repo, Executor: &searchRepairExecutorStub{err: errors.New("provider unavailable")}, WorkerID: "worker",
@@ -151,6 +202,7 @@ func TestSearchReconciliationRunPreservesDriftWhenSelectionFails(t *testing.T) {
 		contract:  contract,
 		run:       &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
 		selectErr: errors.New("selection unavailable"),
+		countErr:  errors.New("count unavailable"),
 	}
 	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: &searchRepairExecutorStub{}, WorkerID: "worker"})
 
@@ -216,7 +268,7 @@ func TestSearchReconciliationProcessDueRunsAtConfiguredMinute(t *testing.T) {
 	}
 	executor := &searchRepairExecutorStub{result: semanticwrite.Result{Embeddings: []semanticwrite.Embedding{{DocumentHash: "hash", Vector: []float32{1, 2}}}}}
 	svc := NewSearchRepairService(SearchRepairDependencies{
-		Repository: repo, Executor: executor, AppConfig: searchRepairConfigStub{value: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}}, WorkerID: "worker",
+		Repository: repo, Executor: executor, AppConfig: searchRepairConfigStub{value: domain.GeneralRuntimeConfig{Timezone: "UTC", EmbeddingReconciliationStartTimeLocal: "04:30"}}, WorkerID: "worker", ProviderTimeout: 45 * time.Second,
 	})
 
 	result, err := svc.ProcessDue(context.Background())
@@ -224,7 +276,7 @@ func TestSearchReconciliationProcessDueRunsAtConfiguredMinute(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.Status)
 	require.Equal(t, int64(1), result.SelectedCount)
-	require.Equal(t, 10*time.Second, executor.plan.Timeout)
+	require.Equal(t, 45*time.Second, executor.plan.Timeout)
 	require.NotNil(t, repo.apply)
 	require.NotNil(t, repo.finish)
 }
@@ -309,7 +361,7 @@ func TestSearchReconciliationExecutorFailureClassification(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			contract := searchRepairTestContract()
-			repo := &searchRepairRepositoryStub{contract: contract, run: &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"}, documents: []repository.SearchRepairDocument{searchRepairTestDocument(contract)}}
+			repo := &searchRepairRepositoryStub{contract: contract, run: &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"}, documents: []repository.SearchRepairDocument{searchRepairTestDocument(contract)}, countErr: errors.New("count unavailable")}
 			svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: &searchRepairExecutorStub{err: tc.err}, WorkerID: "worker"})
 			result, err := svc.Run(context.Background(), time.Now().UTC(), true)
 			require.ErrorIs(t, err, ErrSearchRepairFailed)

@@ -74,8 +74,10 @@ func normalizeFinishSearchRepairRunInput(input FinishSearchRepairRunInput) Finis
 	input.RunID = strings.TrimSpace(input.RunID)
 	input.LeaseToken = strings.TrimSpace(input.LeaseToken)
 	input.LastError = strings.TrimSpace(input.LastError)
-	if len(input.LastError) > 128 {
-		input.LastError = input.LastError[:128]
+	if runes := []rune(input.LastError); len(runes) > 128 {
+		input.LastError = string(runes[:128])
+	} else {
+		input.LastError = string(runes)
 	}
 	return input
 }

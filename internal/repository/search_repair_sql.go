@@ -144,6 +144,11 @@ SELECT team_id, search_document_id, owner_profile_id, source_kind, source_id, so
 FROM drift
 `
 
+const searchRepairDriftCountSQL = searchRepairDriftCTE + `
+SELECT count(*)
+FROM drift
+`
+
 // searchRepairReservationProbeSQL only checks for potentially eligible source
 // or document keys. It is intentionally conservative: the bounded selection
 // pass remains authoritative for deciding whether a repair is needed.
