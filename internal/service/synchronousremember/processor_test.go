@@ -39,6 +39,36 @@ func TestSynchronousTerminalOutcomeUsesClosedNonStoredReasons(t *testing.T) {
 	}
 }
 
+func TestSynchronousEvidencePreservesInitialSecurityEvent(t *testing.T) {
+	input := []remember.EvidenceInput{{
+		Content: "evidence", ContentHash: "hash", SupersedesEvidenceIDs: []string{"target"},
+		InitialEvent: &remember.SecurityEventDraft{
+			EventKind: "deterministic_scan", Decision: "pass", Reason: "scan passed",
+			Signals:  []remember.SecuritySignalInput{{Kind: "instruction_override", Severity: "high", SpanStart: 1, SpanEnd: 2, Metadata: map[string]any{"rule_id": "rule"}}},
+			Metadata: map[string]any{"source": "intake"},
+		},
+	}}
+
+	converted := synchronousEvidence(input)
+
+	require.Len(t, converted, 1)
+	require.NotNil(t, converted[0].InitialEvent)
+	require.Equal(t, "deterministic_scan", converted[0].InitialEvent.EventKind)
+	require.Equal(t, "pass", converted[0].InitialEvent.Decision)
+	require.Equal(t, "scan passed", converted[0].InitialEvent.Reason)
+	require.Equal(t, map[string]any{"source": "intake"}, converted[0].InitialEvent.Metadata)
+	require.Equal(t, []repository.SecuritySignalInput{{Kind: "instruction_override", Severity: "high", SpanStart: 1, SpanEnd: 2, Metadata: map[string]any{"rule_id": "rule"}}}, converted[0].InitialEvent.Signals)
+}
+
+func TestSynchronousCompletedResultIncludesCommittedSupersessionIDs(t *testing.T) {
+	input := remember.RememberProcessRequest{Evidence: []remember.EvidenceInput{{Content: "evidence"}}, Metadata: map[string]any{"actor": map[string]any{"correlation_id": "synchronous-test-correlation"}}}
+	created := &repository.CreateIngestResult{IngestID: uuid.NewString(), Evidence: []repository.EvidenceFragment{{FragmentID: uuid.NewString(), EvidenceIndex: 0, SupersededEvidenceIDs: []string{uuid.NewString()}}}}
+
+	result := synchronousCompletedResult(input, created, &repository.CommitSubmissionAssessmentResult{}, nil, nil, nil)
+
+	require.Equal(t, created.Evidence[0].SupersededEvidenceIDs, result.Evidence[0].SupersededEvidenceIDs)
+}
+
 func TestSynchronousCompletedOutcomeUsesEmptySupersededEvidenceArray(t *testing.T) {
 	input := remember.RememberProcessRequest{Evidence: []remember.EvidenceInput{{Content: "evidence"}}, Metadata: map[string]any{"actor": map[string]any{"correlation_id": "synchronous-test-correlation"}}}
 	created := &repository.CreateIngestResult{IngestID: uuid.NewString(), Evidence: []repository.EvidenceFragment{{FragmentID: uuid.NewString(), EvidenceIndex: 0}}}

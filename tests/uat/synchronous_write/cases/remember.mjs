@@ -242,6 +242,7 @@ async function runSupersessionFenceCase({ rpc, expect }) {
   const replacement = terminalPayload(await rpc("tools/call", { name: "remember", arguments: replacementArgs }));
   assertStrictTerminalRemember(replacement, expect);
   expect(replacement.processing_state === "completed", "supersession replacement must complete");
+  expect(replacement.evidence[0].superseded_evidence_ids.length === 1 && replacement.evidence[0].superseded_evidence_ids[0] === targetEvidenceID, "supersession replacement must return its committed target evidence id");
 
   const staleArgs = singleItemArguments("supersession-stale", "[fixture:supersession-stale]");
   staleArgs.evidence[0].supersedes_evidence_ids = [targetEvidenceID];

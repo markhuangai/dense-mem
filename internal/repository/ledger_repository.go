@@ -823,11 +823,12 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 		return EvidenceFragment{}, sql.ErrNoRows
 	}
 	fragment := EvidenceFragment{
-		EvidenceIndex:    index,
-		Content:          item.Content,
-		ContentHash:      item.ContentHash,
-		SourceID:         sourceID,
-		SourceRevisionID: sourceRevisionID,
+		EvidenceIndex:         index,
+		Content:               item.Content,
+		ContentHash:           item.ContentHash,
+		SourceID:              sourceID,
+		SourceRevisionID:      sourceRevisionID,
+		SupersededEvidenceIDs: append([]string(nil), item.SupersedesEvidenceIDs...),
 	}
 	if err := rows.Scan(&fragment.FragmentID, &fragment.Authority); err != nil {
 		return EvidenceFragment{}, err

@@ -378,6 +378,7 @@ func TestSynchronousRememberInlineCommitAddsNoEmbeddingJobs(t *testing.T) {
 	repo := NewLedgerRepository(appDB, rls)
 
 	input := synchronousRememberAcceptedFixture(teamID, ownerID, "sync-inline", "sync-inline-hash", nil)
+	input.CreateIngest.Evidence[0].InitialEvent = &SecurityEventDraft{EventKind: "deterministic_scan", Decision: "pass", Reason: "deterministic intake scan passed"}
 	previewCreate := input.CreateIngest
 	previewCommit := synchronousRememberCommitInput(synchronousRememberPreviewCreate(previewCreate), SubmissionAssessmentRunScope{TeamID: teamID, OwnerProfileID: ownerID})
 	plan, err := repo.PlanSynchronousRememberEmbeddings(ctx, previewCreate, previewCommit)
@@ -393,10 +394,13 @@ func TestSynchronousRememberInlineCommitAddsNoEmbeddingJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, committed.Attempt)
 
-	var jobs, currentDocuments int64
+	var jobs, currentDocuments, passEvents int64
 	currentHashes := make(map[string]struct{})
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`SELECT count(*) FROM embedding_jobs WHERE team_id = ?::uuid`, teamID).Scan(&jobs).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT count(*) FROM evidence_security_events WHERE team_id = ?::uuid AND ingest_id = ?::uuid AND event_kind = 'deterministic_scan' AND decision = 'pass'`, teamID, committed.Ingest.IngestID).Scan(&passEvents).Error; err != nil {
 			return err
 		}
 		rows, err := tx.Raw(`SELECT document_hash FROM search_documents WHERE team_id = ?::uuid AND search_state = 'current'`, teamID).Rows()
@@ -415,6 +419,7 @@ func TestSynchronousRememberInlineCommitAddsNoEmbeddingJobs(t *testing.T) {
 		return rows.Err()
 	}))
 	assert.Zero(t, jobs)
+	assert.Equal(t, int64(1), passEvents)
 	assert.GreaterOrEqual(t, currentDocuments, int64(len(plan.Documents)))
 	plannedHashes := make(map[string]struct{}, len(plan.Documents))
 	for _, document := range plan.Documents {

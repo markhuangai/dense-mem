@@ -341,9 +341,21 @@ func synchronousAttempt(input remember.RememberProcessRequest, id string, result
 func synchronousEvidence(input []remember.EvidenceInput) []repository.EvidenceInput {
 	out := make([]repository.EvidenceInput, len(input))
 	for i, item := range input {
-		out[i] = repository.EvidenceInput{Content: item.Content, ContentHash: item.ContentHash, SourceType: item.SourceType, Authority: item.Authority, SourceRef: item.SourceRef, SourceKey: item.SourceKey, SourceRevisionToken: item.SourceRevisionToken, ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken, SourceRevisionContentHash: item.SourceRevisionContentHash, SourceRevisionEnvelope: item.SourceRevisionEnvelope, SupersedesEvidenceIDs: append([]string(nil), item.SupersedesEvidenceIDs...), Labels: append([]string(nil), item.Labels...), Metadata: item.Metadata}
+		out[i] = repository.EvidenceInput{Content: item.Content, ContentHash: item.ContentHash, SourceType: item.SourceType, Authority: item.Authority, SourceRef: item.SourceRef, SourceKey: item.SourceKey, SourceRevisionToken: item.SourceRevisionToken, ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken, SourceRevisionContentHash: item.SourceRevisionContentHash, SourceRevisionEnvelope: item.SourceRevisionEnvelope, SupersedesEvidenceIDs: append([]string(nil), item.SupersedesEvidenceIDs...), Labels: append([]string(nil), item.Labels...), Metadata: item.Metadata, InitialEvent: synchronousSecurityEventDraft(item.InitialEvent)}
 	}
 	return out
+}
+
+func synchronousSecurityEventDraft(input *remember.SecurityEventDraft) *repository.SecurityEventDraft {
+	if input == nil {
+		return nil
+	}
+	event := &repository.SecurityEventDraft{EventKind: input.EventKind, Decision: input.Decision, Reason: input.Reason, Metadata: input.Metadata}
+	event.Signals = make([]repository.SecuritySignalInput, 0, len(input.Signals))
+	for _, signal := range input.Signals {
+		event.Signals = append(event.Signals, repository.SecuritySignalInput{Kind: signal.Kind, Severity: signal.Severity, SpanStart: signal.SpanStart, SpanEnd: signal.SpanEnd, Metadata: signal.Metadata})
+	}
+	return event
 }
 
 func semanticwritePlan(plan *repository.SynchronousRememberEmbeddingPlan) semanticwrite.Plan {
