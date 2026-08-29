@@ -373,6 +373,28 @@ func TestSearchReconciliationEmptyPartialScanUsesAuthoritativeDriftCount(t *test
 	require.Zero(t, repo.finish.DriftedCount)
 }
 
+func TestSearchReconciliationEmptyPartialScanDefersWhenDriftCountFails(t *testing.T) {
+	contract := searchRepairTestContract()
+	repo := &searchRepairRepositoryStub{
+		contract: contract,
+		run:      &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
+		hasMore:  true,
+		countErr: errors.New("count unavailable"),
+	}
+	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: &searchRepairExecutorStub{}, WorkerID: "worker"})
+
+	result, err := svc.Run(context.Background(), time.Now().UTC(), true)
+
+	require.ErrorIs(t, err, ErrSearchRepairFailed)
+	require.Equal(t, "deferred", result.Status)
+	require.Equal(t, "reconciliation_count_failed", result.ErrorCode)
+	require.EqualValues(t, 1, result.DriftedCount)
+	require.NotNil(t, repo.finish)
+	require.Equal(t, "deferred", repo.finish.Status)
+	require.Equal(t, "reconciliation_count_failed", repo.finish.LastError)
+	require.EqualValues(t, 1, repo.finish.DriftedCount)
+}
+
 func TestSearchReconciliationSchedulerErrorsAreVisible(t *testing.T) {
 	metrics := observability.NewInMemoryDiscoverabilityMetrics()
 	logger := &searchRepairLoggerStub{}

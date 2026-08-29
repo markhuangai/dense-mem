@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const agentsURL = new URL("../../AGENTS.md", import.meta.url);
+const kissADRURL = new URL(
+  "../../adr/0004-prefer-simplest-sufficient-design.md",
+  import.meta.url,
+);
 const reviewWorkflowURL = new URL(
   "../../.github/workflows/ai-pr-review.yml",
   import.meta.url,
@@ -27,24 +31,37 @@ function normalizedReviewPrompt(workflow, heading) {
   return workflow.slice(start, end).replace(/\s+/g, " ");
 }
 
-test("repository guidance requires cross-boundary review and falsification", async () => {
-  const agents = await readFile(agentsURL, "utf8");
+test("repository guidance requires material, scoped, simple review findings", async () => {
+  const [agents, kissADR] = await Promise.all([
+    readFile(agentsURL, "utf8"),
+    readFile(kissADRURL, "utf8"),
+  ]);
   const normalizedAgents = agents.replace(/\s+/g, " ");
+  const normalizedKissADR = kissADR.replace(/\s+/g, " ");
 
   assert.match(agents, /## Code Review Rules/);
-  assert.match(agents, /### Cross-boundary behavior/);
+  assert.match(agents, /### Material supported defects and scope/);
   assert.match(
     normalizedAgents,
-    /trace all affected supported paths from input or writer through validation/,
+    /concrete supported, reachable path/,
   );
-  assert.match(normalizedAgents, /preserves one authoritative value end to end/);
+  assert.match(normalizedAgents, /Do not report speculative hardening/);
+  assert.match(agents, /### Root cause and remedy/);
+  assert.match(normalizedAgents, /Combine variants that share one root cause/);
+  assert.match(normalizedAgents, /simplest sufficient verified fix/);
+  assert.match(normalizedAgents, /request replanning/);
+  assert.match(normalizedAgents, /maintainer-approved waiver/);
   assert.match(agents, /### Falsification/);
   assert.match(normalizedAgents, /construct a concrete supported counterexample/);
   assert.match(
     normalizedAgents,
-    /reject hypothetical, pre-existing, or contradicted claims/,
+    /reject hypothetical, pre-existing, unreachable, contradicted/,
   );
   assert.match(normalizedAgents, /semantic verifier\/reviewer behavior/);
+  assert.match(kissADR, /Status: Accepted/);
+  assert.match(normalizedKissADR, /least complex design that fully satisfies/);
+  assert.match(normalizedKissADR, /A real defect with an overengineered suggestion/);
+  assert.match(normalizedKissADR, /ADR 0003 continues to govern ownership/);
 });
 
 test("AI review uses six ownership-driven goals and one memory-first protocol", async () => {

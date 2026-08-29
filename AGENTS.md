@@ -60,6 +60,11 @@
   and support.
 - Preserve existing package patterns where they enforce these boundaries. Do
   not rename the tree or create parallel v2 packages without a concrete need.
+- Apply KISS ("Keep It Simple, Stupid"): choose the simplest sufficient design
+  that preserves current supported behavior and every accepted invariant. New
+  abstractions, configuration, durable state, background processes, or
+  generalization require a concrete current need; simplicity never excuses a
+  hidden failure, duplicated authority, or weaker security or data integrity.
 
 ## Semantic Invariants
 
@@ -139,7 +144,9 @@
 - PRs that may affect retrieval quality, ranking, placement accuracy,
   semantic verifier/reviewer behavior, embeddings, search documents, migration
   placement, or performance must include the deterministic 1k
-  evaluation/comparison result.
+  evaluation/comparison result unless the linked issue records an explicit
+  maintainer-approved waiver and replacement verification before
+  implementation.
 - Generated evaluation seeds, suites, downloaded datasets, imports, runtime
   databases, run outputs, and comparison artifacts stay in ignored local paths.
   Commit generator, source-lock, provenance, validation, scoring, and compact
@@ -147,14 +154,28 @@
 
 ## Code Review Rules
 
-### Cross-boundary behavior
+### Material supported defects and scope
 
-- When a change adds or alters a field, state transition, identifier,
-  configuration value, or contract, trace all affected supported paths from
-  input or writer through validation, persistence or serialization,
-  asynchronous work, and each reader or consumer. Flag a path that drops,
-  defaults, overwrites, mis-scopes, or retains stale state; the safe path
-  preserves one authoritative value end to end.
+- Report only a defect introduced or materially worsened by the pull request on
+  a concrete supported, reachable path. Show a consequential incorrect result,
+  security or isolation failure, durable-state defect, compatibility break,
+  material availability or cost impact, or operator signal that drives a wrong
+  action. Treat explicit maintainer-approved linked-issue non-goals,
+  later-ticket ownership, transitions, and evaluation waivers as governing scope
+  unless they conflict with an accepted merge-base ADR; report that conflict
+  once. Do not report speculative hardening, unsupported or future behavior,
+  waived or deferred work, style preferences, or telemetry differences without
+  operational impact.
+
+### Root cause and remedy
+
+- Combine variants that share one root cause. Trace changed fields, states,
+  identifiers, configuration, and contracts through supported writers and
+  consumers only far enough to prove the failure. If the claim is valid but the
+  suggested remedy is overengineered, choose the simplest sufficient verified
+  fix. Simplify reviewer-driven patchwork instead of adding more machinery; if
+  correctness requires changing the accepted architecture or scope, stop and
+  request replanning.
 
 ### Falsification
 
@@ -162,14 +183,16 @@
   concrete supported counterexample and verify it against actual callers and
   state transitions. Report only defects introduced by the change that remain
   reachable after checking current code, tests, linked scope, and project
-  memory; reject hypothetical, pre-existing, or contradicted claims.
+  memory; reject hypothetical, pre-existing, unreachable, contradicted, or
+  merely broader-design claims.
 
 ## Change And Test Workflow
 
 1. Inspect the current package, interfaces, migrations, callers, and tests.
 2. State current behavior, the target invariant, and any unresolved mismatch.
 3. Add or adjust the smallest real-logic test that proves the behavior.
-4. Implement one reviewable responsibility without unrelated cleanup.
+4. Implement one reviewable responsibility with the simplest sufficient design
+   and without unrelated cleanup.
 5. Run focused tests, then repository checks, and inspect the final diff.
 
 Useful commands:
