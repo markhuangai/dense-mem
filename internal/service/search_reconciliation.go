@@ -17,6 +17,7 @@ import (
 const (
 	searchRepairTickInterval = time.Minute
 	searchRepairLease        = 15 * time.Minute
+	searchRepairLeaseGrace   = 30 * time.Second
 	searchRepairTimeout      = 30 * time.Second
 	searchRepairFinalizeCap  = 5 * time.Second
 	searchRepairLimit        = semanticwrite.MaxDocuments
@@ -149,7 +150,7 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 		LocalRunDate:        localNow,
 		CreateIfMissing:     createIfMissing,
 		WorkerID:            s.workerID,
-		Lease:               searchRepairLease,
+		Lease:               searchRepairLeaseForTimeout(s.providerTimeout),
 	})
 	if err != nil {
 		return result, fmt.Errorf("%w: run reservation failed", ErrSearchRepairFailed)
@@ -226,6 +227,14 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 	result.UpdatedCount = apply.UpdatedCount
 	result.DriftedCount = apply.RemainingDriftedCount
 	return s.finish(ctx, result, "completed", "")
+}
+
+func searchRepairLeaseForTimeout(providerTimeout time.Duration) time.Duration {
+	lease := searchRepairLease
+	if providerTimeout > 0 && providerTimeout+searchRepairLeaseGrace > lease {
+		lease = providerTimeout + searchRepairLeaseGrace
+	}
+	return lease
 }
 
 func searchRepairPlan(documents []repository.SearchRepairDocument, contract *repository.ActiveSearchContract, timeout time.Duration) (semanticwrite.Plan, error) {

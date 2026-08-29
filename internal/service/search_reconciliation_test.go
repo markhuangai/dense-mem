@@ -302,6 +302,23 @@ func TestSearchReconciliationProcessDueCreatesOverdueRun(t *testing.T) {
 	require.True(t, repo.reserve.CreateIfMissing)
 }
 
+func TestSearchReconciliationLeaseCoversConfiguredProviderTimeout(t *testing.T) {
+	contract := searchRepairTestContract()
+	repo := &searchRepairRepositoryStub{
+		contract: contract,
+		run:      &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
+	}
+	svc := NewSearchRepairService(SearchRepairDependencies{
+		Repository: repo, Executor: &searchRepairExecutorStub{}, WorkerID: "worker", ProviderTimeout: 16 * time.Minute,
+	})
+
+	result, err := svc.Run(context.Background(), time.Now().UTC(), true)
+
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Equal(t, 16*time.Minute+searchRepairLeaseGrace, repo.reserve.Lease)
+}
+
 func TestSearchReconciliationProcessDueRejectsInvalidRuntime(t *testing.T) {
 	cases := []struct {
 		name        string

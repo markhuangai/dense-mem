@@ -72,7 +72,7 @@ func (r *SearchRepositoryImpl) searchDocumentConvergence(ctx context.Context, co
 		return searchDocumentConvergenceStats{}, fmt.Errorf("active search contract is required")
 	}
 	stats := searchDocumentConvergenceStats{classes: []SearchDocumentDriftCount{}}
-	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+	err := r.withSystemReadOnlyRepeatableTx(ctx, func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).Exec("SET LOCAL statement_timeout = '2s'").Error; err != nil {
 			return err
 		}
