@@ -217,7 +217,7 @@ func terminalCorrectionInvoker(legacy Tool, status Tool, version string) ToolInv
 		}
 		statusOutput, err := status.Invoke(withInternalSubmissionStatusLookup(ctx), teamID, map[string]any{"submission_id": submissionID})
 		if err != nil {
-			return nil, terminalCorrectionToolResultError(ctx, submissionID, err, version)
+			return nil, terminalCorrectionStatusReadError(ctx, submissionID, version)
 		}
 		output, err := terminalCorrectionResultMap(receipt, statusOutput, version)
 		if err != nil {
@@ -522,11 +522,19 @@ func terminalRememberErrorCode(err error) rememberapp.TerminalErrorCode {
 }
 
 func terminalCorrectionToolResultError(ctx context.Context, submissionID string, err error, version string) error {
+	return terminalCorrectionToolResultErrorWithOptions(ctx, submissionID, err, version, false)
+}
+
+func terminalCorrectionStatusReadError(ctx context.Context, submissionID, version string) error {
+	return terminalCorrectionToolResultErrorWithOptions(ctx, submissionID, nil, version, true)
+}
+
+func terminalCorrectionToolResultErrorWithOptions(ctx context.Context, submissionID string, err error, version string, retrySameRequest bool) error {
 	code := rememberapp.TerminalErrorDatabaseFailure
 	processingState := string(rememberapp.TerminalProcessingFailed)
 	var statusError rememberapp.SubmissionStatusError
 	var apiErr *httperr.APIError
-	if errors.As(err, &apiErr) {
+	if !retrySameRequest && errors.As(err, &apiErr) {
 		switch apiErr.Code {
 		case httperr.NOT_FOUND:
 			statusError = rememberapp.StatusError(rememberapp.SubmissionErrorEntityNotFound)
@@ -534,6 +542,7 @@ func terminalCorrectionToolResultError(ctx context.Context, submissionID string,
 			switch {
 			case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.TerminalErrorIdempotencyConflict)):
 				code = rememberapp.TerminalErrorIdempotencyConflict
+				statusError = terminalCorrectionStatusError(code)
 			case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.SubmissionErrorConfirmationExpired)):
 				statusError = rememberapp.StatusError(rememberapp.SubmissionErrorConfirmationExpired)
 				processingState = string(rememberapp.TerminalProcessingRejected)
@@ -548,10 +557,10 @@ func terminalCorrectionToolResultError(ctx context.Context, submissionID string,
 			code = rememberapp.TerminalErrorRequestTimeout
 		}
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	if !retrySameRequest && errors.Is(err, context.DeadlineExceeded) {
 		code = rememberapp.TerminalErrorRequestTimeout
 		statusError = rememberapp.TerminalStatusError(code)
-	} else if errors.Is(err, context.Canceled) {
+	} else if !retrySameRequest && errors.Is(err, context.Canceled) {
 		code = rememberapp.TerminalErrorRequestCancelled
 		statusError = rememberapp.TerminalStatusError(code)
 	}
@@ -570,11 +579,20 @@ func terminalCorrectionToolResultError(ctx context.Context, submissionID string,
 			"next_action": statusError.NextAction, "remediation": statusError.Remediation,
 		}},
 	}
-	if statusError.Code == string(rememberapp.TerminalErrorDatabaseFailure) {
+	if statusError.Code == string(rememberapp.TerminalErrorDatabaseFailure) && !retrySameRequest {
 		output["errors"].([]any)[0].(map[string]any)["next_action"] = string(rememberapp.TerminalNextActionRetryCorrection)
 		output["errors"].([]any)[0].(map[string]any)["remediation"] = "Retry correct_relationship with current relationship state and a new idempotency_key."
 	}
 	return NewToolResultError(output)
+}
+
+func terminalCorrectionStatusError(code rememberapp.TerminalErrorCode) rememberapp.SubmissionStatusError {
+	status := rememberapp.TerminalStatusError(code)
+	if code == rememberapp.TerminalErrorIdempotencyConflict {
+		status.NextAction = string(rememberapp.TerminalNextActionRetryCorrection)
+		status.Remediation = "Retry correct_relationship with current relationship state and a new idempotency_key."
+	}
+	return status
 }
 
 func apiErrorDetailEquals(apiErr *httperr.APIError, field, value string) bool {

@@ -306,6 +306,11 @@ func TestTerminalCorrectionToolResultErrorMapsBoundedFailures(t *testing.T) {
 			require.True(t, ok)
 			require.Equal(t, test.want, structured.Result["errors"].([]any)[0].(map[string]any)["code"])
 			require.Equal(t, ContractVersionV261, structured.Result["contract_version"])
+			if test.name == "idempotency conflict" {
+				errorItem := structured.Result["errors"].([]any)[0].(map[string]any)
+				require.Equal(t, string(rememberapp.TerminalNextActionRetryCorrection), errorItem["next_action"])
+				require.Contains(t, errorItem["remediation"], "correct_relationship")
+			}
 			if test.name == "confirmation expired" {
 				require.Equal(t, string(rememberapp.TerminalProcessingRejected), structured.Result["processing_state"])
 			}

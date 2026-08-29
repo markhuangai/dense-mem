@@ -207,6 +207,45 @@ func TestTerminalCorrectionInvokerProjectsReceiptAndStatusOnce(t *testing.T) {
 	require.Equal(t, []string{"receipt:team-1:same-context", "status:team-1:same-context"}, calls)
 }
 
+func TestTerminalCorrectionInvokerStatusReadFailurePreservesReplayGuidance(t *testing.T) {
+	active := New()
+	for _, tool := range ContractTools() {
+		tool.Visibility = "active"
+		tool.Invoke = func(context.Context, string, map[string]any) (map[string]any, error) {
+			return nil, errors.New("unused")
+		}
+		switch tool.Name {
+		case ToolCorrectRelationship:
+			tool.Invoke = func(context.Context, string, map[string]any) (map[string]any, error) {
+				return map[string]any{"submission_id": uuid.NewString(), "processing_state": "processing", "correlation_id": "receipt-correlation"}, nil
+			}
+		case ToolGetSubmissionStatus:
+			tool.Invoke = func(context.Context, string, map[string]any) (map[string]any, error) {
+				return nil, errors.New("database status read failed")
+			}
+		}
+		require.NoError(t, active.Register(tool))
+	}
+	selected, err := BuildContractV261(active, &v261RememberService{})
+	require.NoError(t, err)
+	tool, ok := selected.Get(ToolCorrectRelationship)
+	require.True(t, ok)
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{Grants: []string{"write"}})
+	_, err = tool.Invoke(ctx, "team-1", map[string]any{
+		"action": "submit", "relationship_id": uuid.NewString(), "expected_version": 1,
+		"patch":    map[string]any{"predicate": map[string]any{"key": "uses"}},
+		"supports": []any{map[string]any{"evidence_id": uuid.NewString(), "start": 0, "end": 4}},
+		"reason":   "predicate was resolved incorrectly", "idempotency_key": "correction-replay-key",
+	})
+	structured, ok := ToolResultFromError(err)
+	require.True(t, ok)
+	errorItem := structured.Result["errors"].([]any)[0].(map[string]any)
+	require.Equal(t, string(rememberapp.TerminalErrorDatabaseFailure), errorItem["code"])
+	require.Equal(t, string(rememberapp.TerminalNextActionRetrySameRequest), errorItem["next_action"])
+	require.Contains(t, errorItem["remediation"], "same idempotency_key")
+	require.NoError(t, ValidateInput(Tool{InputSchema: tool.OutputSchema}, structured.Result))
+}
+
 func TestTerminalCorrectionInvokerMapsBoundedDomainErrors(t *testing.T) {
 	for _, test := range []struct {
 		name string
