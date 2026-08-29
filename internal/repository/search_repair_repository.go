@@ -853,8 +853,6 @@ func updateSearchRepairDocument(ctx context.Context, tx *gorm.DB, contract *Acti
 	updated.SourceVersion = expected.SourceVersion
 	updated.ProjectionFormat = expected.ProjectionFormat
 	updated.ProjectionGenerationID = expected.ProjectionGenerationID
-	updated.SpaceID = expected.SpaceID
-	updated.SpaceGeneration = expected.SpaceGeneration
 	if err := retireSupersededEmbeddingJobs(ctx, tx, updated); err != nil {
 		return false, false, err
 	}

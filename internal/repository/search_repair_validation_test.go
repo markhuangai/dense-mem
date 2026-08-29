@@ -5,6 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,4 +28,14 @@ func TestNormalizeFinishSearchRepairRunInputRepairsInvalidUTF8(t *testing.T) {
 
 	require.True(t, utf8.ValidString(normalized.LastError))
 	require.Equal(t, "a�b", normalized.LastError)
+}
+
+func TestValidateApplySearchRepairInputRejectsDocumentLimit(t *testing.T) {
+	input := ApplySearchRepairInput{
+		RunID: uuid.NewString(), LeaseToken: uuid.NewString(), EmbeddingContractID: uuid.NewString(),
+		SearchIndexGenerationID: uuid.NewString(), EmbeddingDimensions: 2, IndexGeneration: 1,
+		Documents: make([]SearchRepairEmbedding, searchRepairCandidateLimit+1),
+	}
+
+	require.Error(t, validateApplySearchRepairInput(input))
 }
