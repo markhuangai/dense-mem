@@ -223,6 +223,50 @@ func TestRelationshipConflictResolutionPreflightCountsNonForegroundDocuments(t *
 	assert.Empty(t, plan.Documents)
 }
 
+func TestOversizedConflictRefreshesStaleMembershipBeforeDeferral(t *testing.T) {
+	fixture := NewOversizedConflictServiceFixture(t)
+	ctx := context.Background()
+	loserID := fixture.RelationshipIDs[1]
+	winnerIDs := fixture.RelationshipIDs[2:]
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE relationship_records
+			SET status = 'superseded', support_count = 0
+			WHERE team_id = ?::uuid AND relationship_id = ?::uuid
+		`, fixture.TeamID, loserID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'pending', embedding = NULL,
+			    embedding_updated_at = NULL, embedding_error = ''
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id = ANY(?::uuid[])
+		`, fixture.TeamID, pq.Array(winnerIDs)).Error
+	}))
+
+	result, err := fixture.Ledger.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+		ConflictID: fixture.ConflictID, Now: fixture.ReviewNow,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, ConflictReviewOutcomeNoop, result.Outcome)
+	assert.Equal(t, domain.ConflictReviewStageDismissedNoConflict, result.Stage)
+	assert.False(t, result.ResolutionPending)
+
+	var status string
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, fixture.TeamID, fixture.ConflictID).Row().Scan(&status)
+	}))
+	assert.Equal(t, "dismissed", status)
+}
+
 func TestRelationshipConflictResolutionRetainsAssignmentsForDeduplicatedRenderedDocuments(t *testing.T) {
 	fixture := NewOversizedConflictServiceFixture(t)
 	ctx := context.Background()

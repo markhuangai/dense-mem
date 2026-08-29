@@ -220,6 +220,15 @@ func (r *LedgerRepositoryImpl) ReviewRelationshipConflictCase(
 		if err != nil {
 			return err
 		}
+		caseRecord, dismissed, err := refreshRelationshipConflictCaseSnapshotForReview(ctx, tx, input, caseRecord)
+		if err != nil {
+			return err
+		}
+		if dismissed {
+			result.Outcome = ConflictReviewOutcomeNoop
+			result.Stage = domain.ConflictReviewStageDismissedNoConflict
+			return nil
+		}
 		initialEvaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
 			Now:         input.Now,
 			ReviewDueAt: caseRecord.ReviewDueAt,
@@ -251,15 +260,6 @@ func (r *LedgerRepositoryImpl) ReviewRelationshipConflictCase(
 				result.ResolutionPending = true
 				return nil
 			}
-		}
-		caseRecord, dismissed, err := refreshRelationshipConflictCaseSnapshotForReview(ctx, tx, input, caseRecord)
-		if err != nil {
-			return err
-		}
-		if dismissed {
-			result.Outcome = ConflictReviewOutcomeNoop
-			result.Stage = domain.ConflictReviewStageDismissedNoConflict
-			return nil
 		}
 		evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
 			Now:         input.Now,
