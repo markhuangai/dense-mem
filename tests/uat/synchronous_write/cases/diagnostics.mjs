@@ -46,6 +46,18 @@ export async function run({ rpc, expect }) {
     expect(item.outcome === result?.processing_state, `${label} list must preserve the terminal outcome`);
   }
 
+  for (const label of ["completed", "rejected", "quarantined"]) {
+    const terminalDetail = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs[label]}`);
+    expect(Array.isArray(terminalDetail.data?.artifacts) && terminalDetail.data.artifacts.length === 0, `${label} attempt detail must not expose failure artifacts`);
+    if (label === "completed") {
+      const publicResult = terminalDetail.data?.public_result || {};
+      const allowedKeys = new Set(["contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"]);
+      expect(Object.keys(publicResult).every((key) => allowedKeys.has(key)), "completed detail public result must use the terminal allowlist");
+      expect(!Object.hasOwn(publicResult, "secret"), "completed detail public result must not expose secret fields");
+      expect(Array.isArray(terminalDetail.data?.events) && terminalDetail.data.events.length >= 1, "completed attempt detail must expose its event transcript");
+    }
+  }
+
   const failed = attempts.failed;
   const failedList = await controlJSON(controlURL, token, `/control/api/remember-attempts?team_id=${encodeURIComponent(teamID)}&outcome=failed&limit=100`);
   const item = (failedList.data || []).find((candidate) => candidate.attempt_id === diagnosticAttemptIDs.failed);

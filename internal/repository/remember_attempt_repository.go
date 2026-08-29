@@ -149,7 +149,11 @@ type RememberAttemptDiagnosticsRepository interface {
 
 var _ RememberAttemptDiagnosticsRepository = (*LedgerRepositoryImpl)(nil)
 
-const rememberFailureArtifactPurgeBatchSize = 100
+const (
+	maxRememberFailureArtifactBytes       = 256 * 1024
+	maxRememberFailureArtifactRetention   = 7 * 24 * time.Hour
+	rememberFailureArtifactPurgeBatchSize = 100
+)
 
 func lockRememberIdempotencyKeyInTx(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, key string) error {
 	digest := sha256.Sum256([]byte(teamID + "\x00" + ownerProfileID + "\x00" + key))
@@ -281,21 +285,37 @@ func (r *LedgerRepositoryImpl) RecordRememberFailure(ctx context.Context, input 
 		if artifact.ArtifactKind == "" || artifact.ContentType == "" {
 			return fmt.Errorf("remember failure: artifact[%d] kind and content type are required", index)
 		}
-		if len(artifact.Content) > 256*1024 {
-			return fmt.Errorf("remember failure: artifact[%d] exceeds 262144 bytes", index)
+		if len(artifact.Content) > maxRememberFailureArtifactBytes {
+			return fmt.Errorf("remember failure: artifact[%d] exceeds %d bytes", index, maxRememberFailureArtifactBytes)
 		}
-		if artifact.CapturedAt.IsZero() {
-			artifact.CapturedAt = time.Now().UTC()
-		}
-		if artifact.ExpiresAt.IsZero() {
-			artifact.ExpiresAt = artifact.CapturedAt.Add(7 * 24 * time.Hour)
-		}
-		if artifact.ExpiresAt.Before(artifact.CapturedAt) || artifact.ExpiresAt.After(artifact.CapturedAt.Add(7*24*time.Hour)) {
+		if !artifact.CapturedAt.IsZero() && !artifact.ExpiresAt.IsZero() &&
+			(artifact.ExpiresAt.Before(artifact.CapturedAt) || artifact.ExpiresAt.After(artifact.CapturedAt.Add(maxRememberFailureArtifactRetention))) {
 			return fmt.Errorf("remember failure: artifact[%d] expiry is outside retention", index)
 		}
 	}
 	return r.withAtomicRememberTx(ctx, input.Attempt.TeamID, input.Attempt.OwnerProfileID, func(txCtx context.Context) error {
 		tx := transactionFromContext(txCtx)
+		var databaseNow time.Time
+		for index := range input.Artifacts {
+			artifact := &input.Artifacts[index]
+			if artifact.CapturedAt.IsZero() || artifact.ExpiresAt.IsZero() {
+				if databaseNow.IsZero() {
+					if err := tx.WithContext(txCtx).Raw(`SELECT clock_timestamp()`).Row().Scan(&databaseNow); err != nil {
+						return fmt.Errorf("remember failure: database clock: %w", err)
+					}
+					databaseNow = databaseNow.UTC()
+				}
+				if artifact.CapturedAt.IsZero() {
+					artifact.CapturedAt = databaseNow
+				}
+				if artifact.ExpiresAt.IsZero() {
+					artifact.ExpiresAt = artifact.CapturedAt.Add(maxRememberFailureArtifactRetention)
+				}
+			}
+			if artifact.ExpiresAt.Before(artifact.CapturedAt) || artifact.ExpiresAt.After(artifact.CapturedAt.Add(maxRememberFailureArtifactRetention)) {
+				return fmt.Errorf("remember failure: artifact[%d] expiry is outside retention", index)
+			}
+		}
 		if err := insertRememberAttemptInTx(txCtx, tx, input.Attempt); err != nil {
 			return err
 		}

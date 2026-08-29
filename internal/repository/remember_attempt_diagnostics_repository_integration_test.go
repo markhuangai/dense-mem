@@ -56,6 +56,12 @@ func TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes(t 
 	artifact, err := repo.GetRememberFailureArtifact(ctx, teamA, attemptID, artifactID)
 	require.NoError(t, err)
 	require.Equal(t, content, artifact.Content)
+	var databaseNow time.Time
+	require.NoError(t, rls.WithSystemReadOnlyRepeatableTx(ctx, appDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT clock_timestamp()`).Scan(&databaseNow).Error
+	}))
+	require.WithinDuration(t, databaseNow.UTC(), artifact.CapturedAt.UTC(), 2*time.Second)
+	require.Equal(t, maxRememberFailureArtifactRetention, artifact.ExpiresAt.Sub(artifact.CapturedAt))
 	_, err = repo.GetRememberFailureArtifact(ctx, teamB, attemptID, artifactID)
 	require.ErrorIs(t, err, ErrRememberFailureArtifactNotFound)
 
