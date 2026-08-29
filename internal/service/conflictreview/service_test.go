@@ -16,6 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
 const (
@@ -66,6 +67,50 @@ func TestServiceResolvesSelectedAssessment(t *testing.T) {
 	assert.Equal(t, 2, provider.requests[0].Positions[0].SupporterCount)
 }
 
+func TestServiceLeavesResolutionUncommittedWhenEmbeddingFails(t *testing.T) {
+	repo := newConflictReviewRepositoryStub(t)
+	repo.reviewResult = &repository.ReviewRelationshipConflictCaseResult{
+		ConflictID: conflictReviewTestConflictID,
+		Outcome:    repository.ConflictReviewOutcomeResolve,
+		Resolution: &repository.RelationshipConflictResolutionInput{
+			TeamID: conflictReviewTestTeamID, ConflictID: conflictReviewTestConflictID,
+			ReviewRunID: conflictReviewTestReviewRunID, WorkerID: conflictReviewTestWorkerID,
+			ExpectedCaseVersion: 3, PreferredPositionID: conflictReviewTestPositionAID,
+			Method: "deterministic", Now: time.Now().UTC(),
+		},
+	}
+	repo.planResult = &repository.RelationshipConflictResolutionPlan{
+		Fence: repository.RelationshipConflictResolutionFence{
+			EmbeddingContractID:     "00000000-0000-0000-0000-000000000601",
+			EmbeddingDimensions:     2,
+			EmbeddingModel:          "test-embedding-model",
+			SearchIndexGenerationID: "00000000-0000-0000-0000-000000000602",
+			IndexGeneration:         1,
+		},
+		Documents: []repository.RelationshipConflictResolutionDocument{{
+			TeamID: conflictReviewTestTeamID, RelationshipID: conflictReviewTestConflictID,
+			OwnerProfileID: conflictReviewTestTeamID, SpaceID: conflictReviewTestTeamID,
+			SpaceGeneration: 1, SourceVersion: 1, DocumentHash: "hash-a", DocumentText: "relationship A",
+		}},
+	}
+	embedder := &conflictReviewEmbeddingProviderStub{err: errors.New("embedding unavailable")}
+	service, err := New(Dependencies{
+		Repository: repo, Provider: &conflictReviewProviderStub{}, Embeddings: embedder,
+		EmbeddingTimeout: time.Second, Timezone: "UTC", Limits: conflictassessment.DefaultSemanticAssessmentLimits(),
+	})
+	require.NoError(t, err)
+
+	_, err = service.ReviewRelationshipConflictCase(context.Background(), conflictReviewInput())
+	require.ErrorIs(t, err, semanticwrite.ErrProviderUnavailable)
+	assert.Len(t, repo.applyInputs, 1)
+	assert.Empty(t, repo.commitInputs)
+	require.Len(t, repo.releaseInputs, 1)
+	assert.Equal(t, conflictReviewTestTeamID, repo.releaseInputs[0].TeamID)
+	assert.Equal(t, conflictReviewTestConflictID, repo.releaseInputs[0].ConflictID)
+	assert.Equal(t, conflictReviewTestReviewRunID, repo.releaseInputs[0].ReviewRunID)
+	assert.Equal(t, conflictReviewTestWorkerID, repo.releaseInputs[0].WorkerID)
+}
+
 func TestServiceUsesLastWriteWinsAfterExplicitAbstention(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	provider := &conflictReviewProviderStub{
@@ -111,11 +156,13 @@ func TestServiceAttributesProviderUsageToConflictReview(t *testing.T) {
 		},
 	}
 	service, err := New(Dependencies{
-		Repository: repo,
-		Provider:   provider,
-		Metrics:    metrics,
-		Timezone:   "UTC",
-		Limits:     conflictassessment.DefaultSemanticAssessmentLimits(),
+		Repository:       repo,
+		Provider:         provider,
+		Embeddings:       &conflictReviewEmbeddingProviderStub{},
+		EmbeddingTimeout: time.Second,
+		Metrics:          metrics,
+		Timezone:         "UTC",
+		Limits:           conflictassessment.DefaultSemanticAssessmentLimits(),
 	})
 	require.NoError(t, err)
 
@@ -193,12 +240,13 @@ func TestServiceUsesLastWriteWinsAfterAbandonedAssessmentRecoveryWithoutProvider
 func TestServiceResumesPendingResolutionWithoutProviderCall(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	repo.pendingFound = true
-	repo.pendingResult = &repository.ApplyOverdueConflictResolutionResult{
-		ConflictID:          conflictReviewTestConflictID,
-		PreferredPositionID: conflictReviewTestPositionAID,
-		Method:              "ai",
-		Pending:             true,
+	repo.pendingResult = &repository.RelationshipConflictResolutionInput{
+		TeamID: conflictReviewTestTeamID, ConflictID: conflictReviewTestConflictID,
+		ReviewRunID: conflictReviewTestReviewRunID, WorkerID: conflictReviewTestWorkerID,
+		ExpectedCaseVersion: 3, PreferredPositionID: conflictReviewTestPositionAID,
+		AssessmentAttemptID: conflictReviewTestAttemptID, Method: "ai", Now: time.Now(),
 	}
+	repo.planResult = &repository.RelationshipConflictResolutionPlan{Pending: true}
 	provider := &conflictReviewProviderStub{err: errors.New("provider must not be called")}
 	service := newConflictReviewService(t, repo, provider)
 
@@ -215,19 +263,22 @@ func TestServiceResumesPendingResolutionWithoutProviderCall(t *testing.T) {
 func TestServiceObservesPendingResolutionOnlyOnTransition(t *testing.T) {
 	repo := newConflictReviewRepositoryStub(t)
 	repo.pendingFound = true
-	repo.pendingResult = &repository.ApplyOverdueConflictResolutionResult{
-		ConflictID:          conflictReviewTestConflictID,
-		PreferredPositionID: conflictReviewTestPositionAID,
-		Method:              "ai",
-		Pending:             true,
+	repo.pendingResult = &repository.RelationshipConflictResolutionInput{
+		TeamID: conflictReviewTestTeamID, ConflictID: conflictReviewTestConflictID,
+		ReviewRunID: conflictReviewTestReviewRunID, WorkerID: conflictReviewTestWorkerID,
+		ExpectedCaseVersion: 3, PreferredPositionID: conflictReviewTestPositionAID,
+		AssessmentAttemptID: conflictReviewTestAttemptID, Method: "ai", Now: time.Now(),
 	}
+	repo.planResult = &repository.RelationshipConflictResolutionPlan{Pending: true}
 	metrics := observability.NewPrometheusMetrics()
 	service, err := New(Dependencies{
-		Repository: repo,
-		Provider:   &conflictReviewProviderStub{err: errors.New("provider must not be called")},
-		Metrics:    metrics,
-		Timezone:   "UTC",
-		Limits:     conflictassessment.DefaultSemanticAssessmentLimits(),
+		Repository:       repo,
+		Provider:         &conflictReviewProviderStub{err: errors.New("provider must not be called")},
+		Embeddings:       &conflictReviewEmbeddingProviderStub{},
+		EmbeddingTimeout: time.Second,
+		Metrics:          metrics,
+		Timezone:         "UTC",
+		Limits:           conflictassessment.DefaultSemanticAssessmentLimits(),
 	})
 	require.NoError(t, err)
 
@@ -236,7 +287,7 @@ func TestServiceObservesPendingResolutionOnlyOnTransition(t *testing.T) {
 	before := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(before, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	require.NotContains(t, before.Body.String(), `densemem_conflict_resolutions_total{`)
-	repo.pendingResult.PendingTransitioned = true
+	repo.planResult.PendingTransitioned = true
 	_, err = service.ReviewRelationshipConflictCase(context.Background(), conflictReviewInput())
 	require.NoError(t, err)
 
@@ -404,27 +455,27 @@ func TestServiceLeavesAlreadyReservedAssessmentUntouched(t *testing.T) {
 
 func TestNewRejectsInvalidConflictReviewDependencies(t *testing.T) {
 	provider := &conflictReviewProviderStub{}
-	_, err := New(Dependencies{Provider: provider})
+	_, err := New(Dependencies{Provider: provider, Embeddings: &conflictReviewEmbeddingProviderStub{}, EmbeddingTimeout: time.Second})
 	require.EqualError(t, err, "conflict review service: repository is required")
 
 	repo := newConflictReviewRepositoryStub(t)
-	_, err = New(Dependencies{Repository: repo})
+	_, err = New(Dependencies{Repository: repo, Embeddings: &conflictReviewEmbeddingProviderStub{}, EmbeddingTimeout: time.Second})
 	require.EqualError(t, err, "conflict review service: provider is required")
 
-	_, err = New(Dependencies{Repository: repo, Provider: emptyModelConflictReviewProvider{}})
+	_, err = New(Dependencies{Repository: repo, Provider: emptyModelConflictReviewProvider{}, Embeddings: &conflictReviewEmbeddingProviderStub{}, EmbeddingTimeout: time.Second})
 	require.EqualError(t, err, "conflict review service: provider model is required")
 
-	_, err = New(Dependencies{Repository: repo, Provider: provider, Timezone: "not/a-timezone"})
+	_, err = New(Dependencies{Repository: repo, Provider: provider, Embeddings: &conflictReviewEmbeddingProviderStub{}, EmbeddingTimeout: time.Second, Timezone: "not/a-timezone"})
 	require.ErrorContains(t, err, "timezone is invalid")
 }
 
 func TestNewRunnerRejectsInvalidDependencies(t *testing.T) {
 	provider := &conflictReviewProviderStub{}
-	_, err := NewRunner(nil, provider, "UTC", conflictassessment.DefaultSemanticAssessmentLimits(), nil)
+	_, err := NewRunner(nil, provider, &conflictReviewEmbeddingProviderStub{}, time.Second, "UTC", conflictassessment.DefaultSemanticAssessmentLimits(), nil)
 	require.EqualError(t, err, "conflict review runner: ledger is required")
 
 	ledger := newConflictReviewRunLedgerStub(t)
-	_, err = NewRunner(ledger, emptyModelConflictReviewProvider{}, "UTC", conflictassessment.DefaultSemanticAssessmentLimits(), nil)
+	_, err = NewRunner(ledger, emptyModelConflictReviewProvider{}, &conflictReviewEmbeddingProviderStub{}, time.Second, "UTC", conflictassessment.DefaultSemanticAssessmentLimits(), nil)
 	require.EqualError(t, err, "conflict review service: provider model is required")
 }
 
@@ -438,7 +489,7 @@ func TestRunnerExecutesConflictReviewLifecycle(t *testing.T) {
 			Rationale:  "The supplied evidence supports this position.",
 		},
 	}
-	runner, err := NewRunner(ledger, provider, "UTC", conflictassessment.DefaultSemanticAssessmentLimits(), nil)
+	runner, err := NewRunner(ledger, provider, &conflictReviewEmbeddingProviderStub{}, time.Second, "UTC", conflictassessment.DefaultSemanticAssessmentLimits(), nil)
 	require.NoError(t, err)
 
 	run, claimed, err := runner.ReserveRelationshipConflictReviewRun(context.Background(), repository.ConflictReviewRunInput{
@@ -514,6 +565,12 @@ func TestServiceStopsBeforeOverdueAssessmentWhenReviewCannotProceed(t *testing.T
 	t.Run("already resolved deterministic case does not reserve an assessment", func(t *testing.T) {
 		repo := newConflictReviewRepositoryStub(t)
 		repo.reviewResult.Outcome = repository.ConflictReviewOutcomeResolve
+		repo.reviewResult.Resolution = &repository.RelationshipConflictResolutionInput{
+			TeamID: conflictReviewTestTeamID, ConflictID: conflictReviewTestConflictID,
+			ReviewRunID: conflictReviewTestReviewRunID, WorkerID: conflictReviewTestWorkerID,
+			ExpectedCaseVersion: 3, PreferredPositionID: conflictReviewTestPositionAID,
+			Method: "deterministic", Now: time.Now(),
+		}
 		input := conflictReviewInput()
 		input.Now = time.Time{}
 		result, err := newConflictReviewService(t, repo, &conflictReviewProviderStub{}).ReviewRelationshipConflictCase(context.Background(), input)
@@ -540,10 +597,12 @@ func TestServiceStopsBeforeOverdueAssessmentWhenReviewCannotProceed(t *testing.T
 func newConflictReviewService(t *testing.T, repo *conflictReviewRepositoryStub, provider *conflictReviewProviderStub) *Service {
 	t.Helper()
 	service, err := New(Dependencies{
-		Repository: repo,
-		Provider:   provider,
-		Timezone:   "UTC",
-		Limits:     conflictassessment.DefaultSemanticAssessmentLimits(),
+		Repository:       repo,
+		Provider:         provider,
+		Embeddings:       &conflictReviewEmbeddingProviderStub{},
+		EmbeddingTimeout: time.Second,
+		Timezone:         "UTC",
+		Limits:           conflictassessment.DefaultSemanticAssessmentLimits(),
 		Now: func() time.Time {
 			return time.Date(2026, time.July, 31, 12, 0, 0, 0, time.UTC)
 		},
@@ -637,20 +696,26 @@ type conflictReviewRepositoryStub struct {
 	completeNil     bool
 	applyResult     *repository.ApplyOverdueConflictResolutionResult
 	pendingFound    bool
-	pendingResult   *repository.ApplyOverdueConflictResolutionResult
+	pendingResult   *repository.RelationshipConflictResolutionInput
+	planResult      *repository.RelationshipConflictResolutionPlan
 	reserved        bool
 	reviewErr       error
 	resumeErr       error
 	reserveErr      error
 	completeErr     error
+	planErr         error
 	applyErr        error
+	releaseErr      error
 	derivedClaimErr error
 	stageErr        error
 	recordStageErr  error
 
 	reserveInputs      []repository.ReserveOverdueConflictAssessmentInput
 	completions        []repository.CompleteOverdueConflictAssessmentInput
-	applyInputs        []repository.ApplyOverdueConflictResolutionInput
+	applyInputs        []repository.RelationshipConflictResolutionInput
+	commitInputs       []repository.CommitRelationshipConflictResolutionInput
+	releaseInputs      []repository.ReleaseRelationshipConflictCaseClaimInput
+	releaseContexts    []context.Context
 	derivedClaimInputs []repository.ClaimConflictDerivedEvidenceTasksInput
 	derivedBatches     [][]repository.ConflictDerivedEvidenceTarget
 	stagedTargets      []repository.ConflictDerivedEvidenceTarget
@@ -713,7 +778,7 @@ func (s *conflictReviewRepositoryStub) ReviewRelationshipConflictCase(_ context.
 	return &copy, nil
 }
 
-func (s *conflictReviewRepositoryStub) ResumePendingOverdueConflictResolution(_ context.Context, _ repository.ResumePendingOverdueConflictResolutionInput) (*repository.ApplyOverdueConflictResolutionResult, bool, error) {
+func (s *conflictReviewRepositoryStub) ResumePendingOverdueConflictResolution(_ context.Context, _ repository.ResumePendingOverdueConflictResolutionInput) (*repository.RelationshipConflictResolutionInput, bool, error) {
 	if s.resumeErr != nil {
 		return nil, false, s.resumeErr
 	}
@@ -722,6 +787,12 @@ func (s *conflictReviewRepositoryStub) ResumePendingOverdueConflictResolution(_ 
 	}
 	copy := *s.pendingResult
 	return &copy, true, nil
+}
+
+func (s *conflictReviewRepositoryStub) ReleaseRelationshipConflictCaseClaim(ctx context.Context, input repository.ReleaseRelationshipConflictCaseClaimInput) error {
+	s.releaseInputs = append(s.releaseInputs, input)
+	s.releaseContexts = append(s.releaseContexts, ctx)
+	return s.releaseErr
 }
 
 func (s *conflictReviewRepositoryStub) ReserveOverdueConflictAssessment(_ context.Context, input repository.ReserveOverdueConflictAssessmentInput) (*repository.OverdueConflictAssessmentReservation, *repository.OverdueConflictAssessmentDossier, bool, error) {
@@ -748,14 +819,37 @@ func (s *conflictReviewRepositoryStub) CompleteOverdueConflictAssessment(_ conte
 	return &copy, nil
 }
 
-func (s *conflictReviewRepositoryStub) ApplyOverdueConflictResolution(_ context.Context, input repository.ApplyOverdueConflictResolutionInput) (*repository.ApplyOverdueConflictResolutionResult, error) {
+func (s *conflictReviewRepositoryStub) PlanRelationshipConflictResolution(_ context.Context, input repository.RelationshipConflictResolutionInput) (*repository.RelationshipConflictResolutionPlan, error) {
 	s.applyInputs = append(s.applyInputs, input)
+	if s.planErr != nil {
+		return nil, s.planErr
+	}
+	if s.planResult != nil {
+		copy := *s.planResult
+		copy.Resolution = input
+		return &copy, nil
+	}
+	return &repository.RelationshipConflictResolutionPlan{
+		Resolution: input,
+		Fence: repository.RelationshipConflictResolutionFence{
+			EmbeddingContractID:     "00000000-0000-0000-0000-000000000601",
+			EmbeddingDimensions:     2,
+			EmbeddingModel:          "test-embedding-model",
+			SearchIndexGenerationID: "00000000-0000-0000-0000-000000000602",
+			IndexGeneration:         1,
+		},
+		Documents: []repository.RelationshipConflictResolutionDocument{},
+	}, nil
+}
+
+func (s *conflictReviewRepositoryStub) CommitRelationshipConflictResolution(_ context.Context, input repository.CommitRelationshipConflictResolutionInput) (*repository.ApplyOverdueConflictResolutionResult, error) {
+	s.commitInputs = append(s.commitInputs, input)
 	if s.applyErr != nil {
 		return nil, s.applyErr
 	}
 	copy := *s.applyResult
-	copy.PreferredPositionID = input.PreferredPositionID
-	copy.Method = input.Method
+	copy.PreferredPositionID = input.Plan.Resolution.PreferredPositionID
+	copy.Method = input.Plan.Resolution.Method
 	return &copy, nil
 }
 
@@ -795,6 +889,30 @@ type conflictReviewProviderStub struct {
 	metrics     observability.DiscoverabilityMetrics
 	recordUsage bool
 }
+
+type conflictReviewEmbeddingProviderStub struct {
+	err           error
+	returnedModel string
+}
+
+func (stub *conflictReviewEmbeddingProviderStub) EmbedBatch(_ context.Context, texts []string) ([][]float32, string, error) {
+	model := stub.returnedModel
+	if model == "" {
+		model = "test-embedding-model"
+	}
+	if stub.err != nil {
+		return nil, model, stub.err
+	}
+	vectors := make([][]float32, len(texts))
+	for index := range texts {
+		vectors[index] = []float32{1, 0}
+	}
+	return vectors, model, nil
+}
+
+func (*conflictReviewEmbeddingProviderStub) ModelName() string { return "test-embedding-model" }
+func (*conflictReviewEmbeddingProviderStub) Dimensions() int   { return 2 }
+func (*conflictReviewEmbeddingProviderStub) IsAvailable() bool { return true }
 
 func (s *conflictReviewProviderStub) AssessRelationshipConflict(ctx context.Context, request conflictassessment.ConflictAssessmentRequest) (conflictassessment.ConflictAssessmentResponse, error) {
 	s.requests = append(s.requests, request)

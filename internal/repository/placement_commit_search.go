@@ -46,6 +46,7 @@ func loadActiveSearchContractInTx(ctx context.Context, tx *gorm.DB) (*ActiveSear
 		  AND contract.distance_metric = ?
 		ORDER BY contract.version DESC, generation.generation DESC, generation.created_at DESC
 		LIMIT 1
+		FOR SHARE OF generation, contract
 	`, string(domain.VectorDistanceCosine)).Row().Scan(
 		&contract.EmbeddingContractID,
 		&contract.EmbeddingDimensions,

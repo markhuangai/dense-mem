@@ -7,9 +7,11 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-const MaxDocuments = 256
+const MaxDocuments = domain.MaxEmbeddingBatchDocuments
 
 var (
 	ErrInvalidPlan             = errors.New("semantic write: invalid embedding plan")

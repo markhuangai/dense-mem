@@ -9,11 +9,13 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/conflictassessment"
+	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	postgresstorage "github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -21,8 +23,8 @@ import (
 )
 
 const (
-	reviewLease = 2 * time.Minute
-	claimWait   = 15 * time.Second
+	defaultReviewLease = 2 * time.Minute
+	claimWait          = 15 * time.Second
 )
 
 type output struct {
@@ -92,23 +94,31 @@ func main() {
 	ledger := repository.NewLedgerRepository(db, rls)
 	limits := conflictassessment.DefaultSemanticAssessmentLimits()
 	provider := verifier.NewOpenAIVerifierWithAssessmentLimits(&cfg, nil, verifier.SemanticAssessmentLimits(limits))
+	embeddingProvider := embedding.NewRetryEmbeddingProviderWithKey(
+		embedding.NewOpenAIEmbeddingProvider(&cfg, nil),
+		nil,
+		cfg.GetAIAPIKey(),
+	)
 	reviewer, err := conflictreview.New(conflictreview.Dependencies{
-		Repository: ledger,
-		Provider:   legacyConflictProvider{provider: provider},
-		Timezone:   "UTC",
-		Limits:     limits,
+		Repository:       ledger,
+		Provider:         legacyConflictProvider{provider: provider},
+		Embeddings:       embeddingProvider,
+		EmbeddingTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
+		Timezone:         "UTC",
+		Limits:           limits,
 	})
 	if err != nil {
 		fatal("build conflict reviewer: %v", err)
 	}
 
 	workerID := fmt.Sprintf("conflict-e2e-%s-%d", compactID(*conflictID), now.Unix())
+	lease := reviewLease()
 	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, repository.ConflictReviewRunInput{
 		TeamID:       *teamID,
 		WorkerID:     workerID,
 		LocalRunDate: now,
 		Timezone:     "UTC",
-		Lease:        reviewLease,
+		Lease:        lease,
 	})
 	if err != nil {
 		fatal("reserve conflict review run: %v", err)
@@ -117,7 +127,7 @@ func main() {
 		fatal("conflict review run was not claimable for %s", now.Format("2006-01-02"))
 	}
 
-	record, err := claimTarget(ctx, ledger, *teamID, *conflictID, run.ReviewRunID, workerID, now)
+	record, err := claimTarget(ctx, ledger, *teamID, *conflictID, run.ReviewRunID, workerID, lease, now)
 	if err != nil {
 		completeFailedRun(ctx, ledger, *teamID, run.ReviewRunID, workerID)
 		fatal("claim conflict: %v", err)
@@ -178,6 +188,7 @@ func claimTarget(
 	conflictID string,
 	reviewRunID string,
 	workerID string,
+	lease time.Duration,
 	now time.Time,
 ) (*repository.RelationshipConflictCaseRecord, error) {
 	deadline := time.Now().Add(claimWait)
@@ -187,7 +198,7 @@ func claimTarget(
 			WorkerID:    workerID,
 			ReviewRunID: reviewRunID,
 			Limit:       10,
-			Lease:       reviewLease,
+			Lease:       lease,
 			MaxAttempts: 20,
 			Now:         now,
 		})
@@ -213,6 +224,18 @@ func claimTarget(
 	}
 }
 
+func reviewLease() time.Duration {
+	value := strings.TrimSpace(os.Getenv("DENSE_MEM_E2E_CONFLICT_REVIEW_LEASE_SECONDS"))
+	if value == "" {
+		return defaultReviewLease
+	}
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds < 1 || seconds > int(defaultReviewLease.Seconds()) {
+		fatal("DENSE_MEM_E2E_CONFLICT_REVIEW_LEASE_SECONDS must be between 1 and %d", int(defaultReviewLease.Seconds()))
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func completeFailedRun(
 	ctx context.Context,
 	ledger *repository.LedgerRepositoryImpl,
@@ -231,38 +254,11 @@ func completeFailedRun(
 }
 
 func driverConfig() config.Config {
-	if strings.TrimSpace(os.Getenv("DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE")) == "1" {
-		limits := conflictassessment.DefaultSemanticAssessmentLimits()
-		return config.Config{
-			PostgresDSN:                         postgresDSN(),
-			AIVerifierAPIURL:                    requiredEnv("AI_VERIFIER_API_URL"),
-			AIVerifierAPIKey:                    requiredEnv("AI_VERIFIER_API_KEY"),
-			AIVerifierModel:                     requiredEnv("AI_VERIFIER_MODEL"),
-			AIVerifierDisableTemperature:        true,
-			AIVerifierTimeoutSeconds:            10,
-			AIVerifierMaxConcurrency:            1,
-			AIVerifierMaxInputTokens:            limits.MaxInputTokens,
-			AIVerifierMaxOutputTokens:           limits.MaxOutputTokens,
-			AIVerifierMaxCandidateContextTokens: limits.MaxCandidateContextTokens,
-			AIVerifierMaxPredicateOptions:       limits.MaxPredicateOptions,
-			AIVerifierTokenizer:                 limits.Tokenizer,
-		}
+	cfg, err := config.LoadWithPostgresDSN(postgresDSN())
+	if err != nil {
+		fatal("load conflict review configuration: %v", err)
 	}
-	limits := conflictassessment.DefaultSemanticAssessmentLimits()
-	return config.Config{
-		PostgresDSN:                         postgresDSN(),
-		AIVerifierAPIURL:                    requiredEnv("DENSE_MEM_E2E_CONFLICT_PROVIDER_URL"),
-		AIVerifierAPIKey:                    "dense-mem-conflict-e2e-key",
-		AIVerifierModel:                     "dense-mem-conflict-e2e-verifier",
-		AIVerifierDisableTemperature:        true,
-		AIVerifierTimeoutSeconds:            10,
-		AIVerifierMaxConcurrency:            1,
-		AIVerifierMaxInputTokens:            limits.MaxInputTokens,
-		AIVerifierMaxOutputTokens:           limits.MaxOutputTokens,
-		AIVerifierMaxCandidateContextTokens: limits.MaxCandidateContextTokens,
-		AIVerifierMaxPredicateOptions:       limits.MaxPredicateOptions,
-		AIVerifierTokenizer:                 limits.Tokenizer,
-	}
+	return cfg
 }
 
 func postgresDSN() string {

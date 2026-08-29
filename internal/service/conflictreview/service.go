@@ -13,16 +13,22 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
-const AssessmentConfidenceThreshold = 0.70
+const (
+	AssessmentConfidenceThreshold = 0.70
+	conflictClaimReleaseTimeout   = 15 * time.Second
+)
 
 type Repository interface {
 	ReviewRelationshipConflictCase(context.Context, repository.ReviewRelationshipConflictCaseInput) (*repository.ReviewRelationshipConflictCaseResult, error)
-	ResumePendingOverdueConflictResolution(context.Context, repository.ResumePendingOverdueConflictResolutionInput) (*repository.ApplyOverdueConflictResolutionResult, bool, error)
+	ReleaseRelationshipConflictCaseClaim(context.Context, repository.ReleaseRelationshipConflictCaseClaimInput) error
+	ResumePendingOverdueConflictResolution(context.Context, repository.ResumePendingOverdueConflictResolutionInput) (*repository.RelationshipConflictResolutionInput, bool, error)
 	ReserveOverdueConflictAssessment(context.Context, repository.ReserveOverdueConflictAssessmentInput) (*repository.OverdueConflictAssessmentReservation, *repository.OverdueConflictAssessmentDossier, bool, error)
 	CompleteOverdueConflictAssessment(context.Context, repository.CompleteOverdueConflictAssessmentInput) (*repository.CompleteOverdueConflictAssessmentResult, error)
-	ApplyOverdueConflictResolution(context.Context, repository.ApplyOverdueConflictResolutionInput) (*repository.ApplyOverdueConflictResolutionResult, error)
+	PlanRelationshipConflictResolution(context.Context, repository.RelationshipConflictResolutionInput) (*repository.RelationshipConflictResolutionPlan, error)
+	CommitRelationshipConflictResolution(context.Context, repository.CommitRelationshipConflictResolutionInput) (*repository.ApplyOverdueConflictResolutionResult, error)
 	ClaimConflictDerivedEvidenceTasks(context.Context, repository.ClaimConflictDerivedEvidenceTasksInput) ([]repository.ConflictDerivedEvidenceTarget, error)
 	StageConflictDerivedEvidence(context.Context, repository.ConflictDerivedEvidenceTarget) (*repository.StageConflictDerivedEvidenceResult, error)
 	RecordConflictDerivedEvidenceFailure(context.Context, repository.ConflictDerivedEvidenceTarget, string) error
@@ -33,26 +39,69 @@ type Provider interface {
 	ModelName() string
 }
 
+type EmbeddingProvider interface {
+	EmbedBatch(context.Context, []string) ([][]float32, string, error)
+	ModelName() string
+	Dimensions() int
+	IsAvailable() bool
+}
+
+type embeddingExecutor interface {
+	Execute(context.Context, semanticwrite.Plan) (semanticwrite.Result, error)
+}
+
 type metricsProvider interface {
 	SetMetrics(observability.DiscoverabilityMetrics)
 }
 
 type Dependencies struct {
-	Repository Repository
-	Provider   Provider
-	Metrics    observability.DiscoverabilityMetrics
-	Timezone   string
-	Limits     conflictassessment.SemanticAssessmentLimits
-	Now        func() time.Time
+	Repository       Repository
+	Provider         Provider
+	Embeddings       EmbeddingProvider
+	EmbeddingTimeout time.Duration
+	Metrics          observability.DiscoverabilityMetrics
+	Timezone         string
+	Limits           conflictassessment.SemanticAssessmentLimits
+	Now              func() time.Time
 }
 
 type Service struct {
-	repository Repository
-	provider   Provider
-	metrics    observability.DiscoverabilityMetrics
-	location   *time.Location
-	limits     conflictassessment.SemanticAssessmentLimits
-	now        func() time.Time
+	repository       Repository
+	provider         Provider
+	embeddings       embeddingExecutor
+	embeddingTimeout time.Duration
+	metrics          observability.DiscoverabilityMetrics
+	location         *time.Location
+	limits           conflictassessment.SemanticAssessmentLimits
+	now              func() time.Time
+}
+
+type conflictEmbeddingBatchProvider struct {
+	provider EmbeddingProvider
+}
+
+func (p conflictEmbeddingBatchProvider) EmbedBatch(ctx context.Context, texts []string) ([]semanticwrite.IndexedEmbedding, string, error) {
+	vectors, model, err := p.provider.EmbedBatch(ctx, texts)
+	if err != nil {
+		return nil, model, err
+	}
+	indexed := make([]semanticwrite.IndexedEmbedding, len(vectors))
+	for index, vector := range vectors {
+		indexed[index] = semanticwrite.IndexedEmbedding{Index: index, Vector: append([]float32(nil), vector...)}
+	}
+	return indexed, model, nil
+}
+
+func (p conflictEmbeddingBatchProvider) ModelName() string {
+	return p.provider.ModelName()
+}
+
+func (p conflictEmbeddingBatchProvider) Dimensions() int {
+	return p.provider.Dimensions()
+}
+
+func (p conflictEmbeddingBatchProvider) IsAvailable() bool {
+	return p.provider.IsAvailable()
 }
 
 func New(deps Dependencies) (*Service, error) {
@@ -61,6 +110,15 @@ func New(deps Dependencies) (*Service, error) {
 	}
 	if deps.Provider == nil {
 		return nil, errors.New("conflict review service: provider is required")
+	}
+	if deps.Embeddings == nil {
+		return nil, errors.New("conflict review service: embedding provider is required")
+	}
+	if strings.TrimSpace(deps.Embeddings.ModelName()) == "" || deps.Embeddings.Dimensions() < 1 {
+		return nil, errors.New("conflict review service: embedding provider contract is invalid")
+	}
+	if deps.EmbeddingTimeout <= 0 {
+		return nil, errors.New("conflict review service: embedding timeout is required")
 	}
 	if strings.TrimSpace(deps.Provider.ModelName()) == "" {
 		return nil, errors.New("conflict review service: provider model is required")
@@ -85,12 +143,14 @@ func New(deps Dependencies) (*Service, error) {
 		provider.SetMetrics(metrics)
 	}
 	return &Service{
-		repository: deps.Repository,
-		provider:   deps.Provider,
-		metrics:    metrics,
-		location:   location,
-		limits:     deps.Limits,
-		now:        now,
+		repository:       deps.Repository,
+		provider:         deps.Provider,
+		embeddings:       semanticwrite.NewExecutor(conflictEmbeddingBatchProvider{provider: deps.Embeddings}),
+		embeddingTimeout: deps.EmbeddingTimeout,
+		metrics:          metrics,
+		location:         location,
+		limits:           deps.Limits,
+		now:              now,
 	}, nil
 }
 
@@ -98,7 +158,7 @@ func (s *Service) ReviewRelationshipConflictCase(
 	ctx context.Context,
 	input repository.ReviewRelationshipConflictCaseInput,
 ) (*repository.ReviewRelationshipConflictCaseResult, error) {
-	if s == nil || s.repository == nil || s.provider == nil {
+	if s == nil || s.repository == nil || s.provider == nil || s.embeddings == nil {
 		return nil, errors.New("conflict review service is not configured")
 	}
 	if input.Now.IsZero() {
@@ -115,6 +175,25 @@ func (s *Service) ReviewRelationshipConflictCase(
 	}
 	if result.Outcome != repository.ConflictReviewOutcomeOverdue {
 		if result.Outcome == repository.ConflictReviewOutcomeResolve {
+			if result.Resolution == nil {
+				return nil, errors.New("conflict review service: deterministic resolution plan is required")
+			}
+			applied, err := s.executeResolution(ctx, *result.Resolution)
+			if err != nil {
+				return nil, err
+			}
+			if applied == nil || applied.Stale {
+				result.Outcome = repository.ConflictReviewOutcomeNoop
+				result.Stage = "resolution_stale"
+				return result, nil
+			}
+			if applied.Pending || !applied.Resolved {
+				result.Outcome = repository.ConflictReviewOutcomeNoop
+				result.Stage = "resolution_pending"
+				result.ResolutionPending = true
+				return result, nil
+			}
+			result.UpdatedRelationships = append([]string(nil), applied.UpdatedRelationships...)
 			s.observeConflictResolution(input.TeamID, "deterministic", "resolved")
 		}
 		return result, nil
@@ -131,7 +210,11 @@ func (s *Service) ReviewRelationshipConflictCase(
 		return nil, err
 	}
 	if found {
-		return s.applyResolutionResult(ctx, result, input, "", "", pending)
+		applied, err := s.executeResolution(ctx, *pending)
+		if err != nil {
+			return nil, err
+		}
+		return s.applyResolutionResult(ctx, result, input, pending.AssessmentAttemptID, pending.Method, applied)
 	}
 
 	localNow := input.Now.In(s.location)
@@ -228,7 +311,7 @@ func (s *Service) applyAssessmentResponse(
 			return s.handleAssessmentCompletionError(result, err)
 		}
 		s.observeConflictAssessment(input.TeamID, "selected", "none")
-		applied, err := s.repository.ApplyOverdueConflictResolution(ctx, repository.ApplyOverdueConflictResolutionInput{
+		applied, err := s.executeResolution(ctx, repository.RelationshipConflictResolutionInput{
 			TeamID:              input.TeamID,
 			ConflictID:          input.ConflictID,
 			ReviewRunID:         input.ReviewRunID,
@@ -316,7 +399,7 @@ func (s *Service) applyLastWriteWins(
 		result.Stage = "overdue_last_write_wins_unavailable"
 		return result, nil
 	}
-	applied, err := s.repository.ApplyOverdueConflictResolution(ctx, repository.ApplyOverdueConflictResolutionInput{
+	applied, err := s.executeResolution(ctx, repository.RelationshipConflictResolutionInput{
 		TeamID:              input.TeamID,
 		ConflictID:          input.ConflictID,
 		ReviewRunID:         input.ReviewRunID,
@@ -331,6 +414,111 @@ func (s *Service) applyLastWriteWins(
 		return nil, err
 	}
 	return s.applyResolutionResult(ctx, result, input, reservation.AssessmentAttemptID, "last_write_wins", applied)
+}
+
+func (s *Service) executeResolution(
+	ctx context.Context,
+	input repository.RelationshipConflictResolutionInput,
+) (*repository.ApplyOverdueConflictResolutionResult, error) {
+	plan, err := s.repository.PlanRelationshipConflictResolution(ctx, input)
+	if err != nil {
+		if retryErr := s.releaseRetryableConflictClaim(ctx, input, err); retryErr != nil {
+			return nil, errors.Join(err, retryErr)
+		}
+		return nil, err
+	}
+	if plan == nil {
+		return nil, errors.New("conflict review service: resolution planner returned no plan")
+	}
+	if plan.Stale || plan.Pending {
+		result := &repository.ApplyOverdueConflictResolutionResult{
+			ConflictID: plan.Resolution.ConflictID, PreferredPositionID: plan.Resolution.PreferredPositionID,
+			Method: plan.Resolution.Method, Stale: plan.Stale, Pending: plan.Pending,
+			PendingTransitioned: plan.PendingTransitioned,
+		}
+		if plan.Stale {
+			if retryErr := s.releaseRetryableConflictClaim(ctx, input, repository.ErrConflictAssessmentStale); retryErr != nil {
+				return nil, retryErr
+			}
+		}
+		return result, nil
+	}
+	documents := make([]semanticwrite.Document, 0, len(plan.Documents))
+	seen := make(map[string]struct{}, len(plan.Documents))
+	for _, document := range plan.Documents {
+		if _, exists := seen[document.DocumentHash]; exists {
+			continue
+		}
+		seen[document.DocumentHash] = struct{}{}
+		documents = append(documents, semanticwrite.Document{Hash: document.DocumentHash, Text: document.DocumentText})
+	}
+	providerCtx := observability.WithMetricIdentity(ctx, input.TeamID, "")
+	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationConflictReview, 1)
+	embedded, err := s.embeddings.Execute(providerCtx, semanticwrite.Plan{
+		Documents: documents,
+		Fence: semanticwrite.Fence{
+			Model: plan.Fence.EmbeddingModel, Dimensions: plan.Fence.EmbeddingDimensions,
+			EmbeddingContractID:     plan.Fence.EmbeddingContractID,
+			SearchGenerationID:      plan.Fence.SearchIndexGenerationID,
+			SearchGenerationVersion: int64(plan.Fence.IndexGeneration),
+		},
+		Timeout: s.embeddingTimeout,
+	})
+	if err != nil {
+		if retryErr := s.releaseRetryableConflictClaim(ctx, input, err); retryErr != nil {
+			return nil, errors.Join(err, retryErr)
+		}
+		return nil, err
+	}
+	embeddings := make([]repository.RelationshipConflictResolutionEmbedding, 0, len(embedded.Embeddings))
+	for _, value := range embedded.Embeddings {
+		embeddings = append(embeddings, repository.RelationshipConflictResolutionEmbedding{
+			DocumentHash: value.DocumentHash,
+			Embedding:    append([]float32(nil), value.Vector...),
+		})
+	}
+	committed, err := s.repository.CommitRelationshipConflictResolution(ctx, repository.CommitRelationshipConflictResolutionInput{
+		Plan: *plan, Embeddings: embeddings,
+	})
+	if err != nil {
+		if retryErr := s.releaseRetryableConflictClaim(ctx, input, err); retryErr != nil {
+			return nil, errors.Join(err, retryErr)
+		}
+		return nil, err
+	}
+	if committed != nil && committed.Stale {
+		if retryErr := s.releaseRetryableConflictClaim(ctx, input, repository.ErrConflictAssessmentStale); retryErr != nil {
+			return nil, retryErr
+		}
+	}
+	return committed, nil
+}
+
+func (s *Service) releaseRetryableConflictClaim(
+	ctx context.Context,
+	input repository.RelationshipConflictResolutionInput,
+	processingErr error,
+) error {
+	if !errors.Is(processingErr, semanticwrite.ErrProviderUnavailable) &&
+		!errors.Is(processingErr, semanticwrite.ErrProviderResponseInvalid) &&
+		!errors.Is(processingErr, semanticwrite.ErrProviderTimeout) &&
+		!errors.Is(processingErr, repository.ErrConflictAssessmentStale) &&
+		!errors.Is(processingErr, context.Canceled) &&
+		!errors.Is(processingErr, context.DeadlineExceeded) {
+		return nil
+	}
+	releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), conflictClaimReleaseTimeout)
+	defer releaseCancel()
+	if err := s.repository.ReleaseRelationshipConflictCaseClaim(releaseCtx, repository.ReleaseRelationshipConflictCaseClaimInput{
+		TeamID: input.TeamID, ConflictID: input.ConflictID, WorkerID: input.WorkerID,
+		ReviewRunID: input.ReviewRunID, Now: input.Now,
+	}); err != nil {
+		if errors.Is(err, repository.ErrPlacementLeaseLost) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Service) applyResolutionResult(

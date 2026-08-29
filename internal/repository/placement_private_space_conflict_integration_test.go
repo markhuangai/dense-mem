@@ -2,10 +2,17 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 func TestPlacementConflictDoesNotCombinePrivateSpacesAndPersistsPlacementSpace(t *testing.T) {
@@ -218,6 +225,263 @@ func TestPlacementConflictDoesNotCombinePrivateSpacesAndPersistsPlacementSpace(t
 	require.Equal(t, int64(6), eventCount)
 	require.Equal(t, sharedSpaceID, eventMinSpace)
 	require.Equal(t, sharedSpaceID, eventMaxSpace)
+}
+
+func TestPrivateSpaceConflictResolutionCommitsOnlyScopedSearchDocuments(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	fixture := setupPrivateSpaceConflictResolutionFixture(t, ctx, adminDB, appDB, rls, "private-conflict-resolution")
+	var jobsBefore int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id IN (?::uuid, ?::uuid)
+		`, fixture.teamID, fixture.firstRelationship.RelationshipID, fixture.secondRelationship.RelationshipID).Row().Scan(&jobsBefore)
+	}))
+	applied := commitConflictReviewResolutionWithVectors(t, ctx, fixture.ledger, fixture.resolution)
+	require.True(t, applied.Resolved)
+	var resolved, scopedCurrent, unscopedDocuments, jobsAfter, activeJobsAfter int64
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, fixture.teamID, fixture.ownerA, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT count(*) FROM relationship_conflict_cases WHERE team_id = ?::uuid AND conflict_id = ?::uuid AND status = 'resolved'`, fixture.teamID, fixture.conflictID).Scan(&resolved).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT count(*) FROM search_documents WHERE team_id = ?::uuid AND source_kind = 'relationship' AND space_id = ?::uuid AND space_generation = ? AND search_state = 'current'`, fixture.teamID, fixture.spaceID, fixture.generation).Scan(&scopedCurrent).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT count(*) FROM search_documents WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id IN (?::uuid, ?::uuid) AND (space_id <> ?::uuid OR space_generation <> ?)`, fixture.teamID, fixture.firstRelationship.RelationshipID, fixture.secondRelationship.RelationshipID, fixture.spaceID, fixture.generation).Scan(&unscopedDocuments).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT count(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id IN (?::uuid, ?::uuid)
+		`, fixture.teamID, fixture.firstRelationship.RelationshipID, fixture.secondRelationship.RelationshipID).Row().Scan(&jobsAfter); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT count(*)
+			FROM embedding_jobs
+			WHERE team_id = ?::uuid
+			  AND source_kind = 'relationship'
+			  AND source_id IN (?::uuid, ?::uuid)
+			  AND status IN ('queued', 'processing', 'failed')
+		`, fixture.teamID, fixture.firstRelationship.RelationshipID, fixture.secondRelationship.RelationshipID).Row().Scan(&activeJobsAfter)
+	}))
+	assert.Equal(t, int64(1), resolved)
+	assert.GreaterOrEqual(t, scopedCurrent, int64(1))
+	assert.Zero(t, unscopedDocuments)
+	assert.Equal(t, jobsBefore, jobsAfter)
+	assert.Zero(t, activeJobsAfter)
+}
+
+func TestPrivateSpaceConflictResolutionRejectsSealedSpaceAfterEmptyPlan(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	fixture := setupPrivateSpaceConflictResolutionFixture(t, ctx, adminDB, appDB, rls, "sealed-private-empty-plan")
+
+	initialPlan, err := fixture.ledger.PlanRelationshipConflictResolution(ctx, fixture.resolution)
+	require.NoError(t, err)
+	require.False(t, initialPlan.Stale)
+	require.NotEmpty(t, initialPlan.Documents)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		for _, document := range initialPlan.Documents {
+			vector := make([]float32, initialPlan.Fence.EmbeddingDimensions)
+			vector[0] = 1
+			if err := applyConflictResolutionEmbedding(ctx, tx, document, initialPlan.Fence, vector); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	emptyPlan, err := fixture.ledger.PlanRelationshipConflictResolution(ctx, fixture.resolution)
+	require.NoError(t, err)
+	require.False(t, emptyPlan.Stale)
+	require.Empty(t, emptyPlan.Documents)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		result := tx.Exec(`
+			UPDATE memory_spaces
+			SET generation = generation + 1,
+				lifecycle_state = 'sealed',
+				sealed_at = now(),
+				updated_at = now()
+			WHERE team_id = ?::uuid
+			  AND id = ?::uuid
+			  AND generation = ?
+			  AND lifecycle_state = 'active'
+		`, fixture.teamID, fixture.spaceID, fixture.generation)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("expected one private space to seal, got %d", result.RowsAffected)
+		}
+		return nil
+	}))
+
+	beforeCommit := capturePrivateSpaceConflictResolutionState(t, ctx, adminDB, rls, fixture)
+	committed, err := fixture.ledger.CommitRelationshipConflictResolution(ctx, CommitRelationshipConflictResolutionInput{Plan: *emptyPlan})
+	require.NoError(t, err)
+	require.True(t, committed.Stale)
+	require.False(t, committed.Resolved)
+	afterCommit := capturePrivateSpaceConflictResolutionState(t, ctx, adminDB, rls, fixture)
+	assert.Equal(t, beforeCommit, afterCommit)
+}
+
+type privateSpaceConflictResolutionFixture struct {
+	ledger             *LedgerRepositoryImpl
+	teamID             string
+	ownerA             string
+	spaceID            string
+	generation         int64
+	conflictID         string
+	firstRelationship  *RelationshipRecord
+	secondRelationship *RelationshipRecord
+	resolution         RelationshipConflictResolutionInput
+}
+
+func setupPrivateSpaceConflictResolutionFixture(
+	t *testing.T,
+	ctx context.Context,
+	adminDB, appDB *gorm.DB,
+	rls *storagepostgres.RLS,
+	prefix string,
+) privateSpaceConflictResolutionFixture {
+	t.Helper()
+	insertSearchTestContract(t, adminDB, rls, prefix, 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, prefix+"-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, prefix+"-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, prefix+"-owner-b")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "project", prefix+" subject")
+	firstObject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "product", prefix+" first")
+	secondObject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "product", prefix+" second")
+	first := commitPlacementRelationshipForConflictTest(t, ctx, ledger, teamID, ownerA, prefix+"-worker-a", prefix+"-a", prefix+" chooses first.", subject.EntityID, firstObject.EntityID, prefix+"-source-a")
+	second := commitPlacementRelationshipForConflictTest(t, ctx, ledger, teamID, ownerB, prefix+"-worker-b", prefix+"-b", prefix+" chooses second.", subject.EntityID, secondObject.EntityID, prefix+"-source-b")
+	firstRelationship := first.RelationshipResults[0].Relationship
+	secondRelationship := second.RelationshipResults[0].Relationship
+	var spaceID string
+	var generation int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			UPDATE relationship_conflict_cases
+			SET status = 'dismissed', next_review_at = now()
+			WHERE team_id = ?::uuid AND status = 'open'
+		`, teamID).Error; err != nil {
+			return err
+		}
+		if err := tx.Raw(`INSERT INTO memory_spaces (team_id, kind, owner_profile_id) VALUES (?, 'profile_private', ?) RETURNING id::text, generation`, teamID, ownerA).Row().Scan(&spaceID, &generation); err != nil {
+			return err
+		}
+		for _, relationshipID := range []string{firstRelationship.RelationshipID, secondRelationship.RelationshipID} {
+			if err := tx.Exec(`UPDATE relationship_records SET space_id = ?::uuid, space_generation = ? WHERE team_id = ?::uuid AND relationship_id = ?::uuid`, spaceID, generation, teamID, relationshipID).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec(`UPDATE search_documents SET space_id = ?::uuid, space_generation = ? WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ?::uuid`, spaceID, generation, teamID, relationshipID).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	firstRelationship.SpaceID, firstRelationship.SpaceGeneration = spaceID, generation
+	secondRelationship.SpaceID, secondRelationship.SpaceGeneration = spaceID, generation
+	applyPrivateSpaceConflictPlacementForTest(t, ctx, adminDB, rls, firstRelationship, teamID)
+	applyPrivateSpaceConflictPlacementForTest(t, ctx, adminDB, rls, secondRelationship, teamID)
+
+	var conflictID string
+	reviewNow := time.Now().UTC()
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT conflict_id::text
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid AND space_id = ?::uuid AND space_generation = ? AND status = 'open'
+		`, teamID, spaceID, generation).Scan(&conflictID).Error
+	}))
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE relationship_conflict_cases SET review_due_at = ?, next_review_at = ? WHERE team_id = ?::uuid AND conflict_id = ?::uuid`, reviewNow.Add(-time.Minute), reviewNow.Add(-time.Minute), teamID, conflictID).Error
+	}))
+	reviewed := reviewConflictCaseForTest(t, ctx, ledger, teamID, prefix+"-review", conflictID, reviewNow)
+	require.Equal(t, ConflictReviewOutcomeOverdue, reviewed.Outcome)
+	reservation, dossier, reserved, err := ledger.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{TeamID: teamID, ConflictID: conflictID, ReviewRunID: uuid.NewString(), WorkerID: prefix + "-assessment", LocalAssessmentDate: reviewNow, Model: "test-model", PolicyVersion: domain.ConflictOverduePolicyVersion})
+	require.NoError(t, err)
+	require.True(t, reserved)
+	require.NotNil(t, dossier)
+	require.NotEmpty(t, dossier.Positions)
+	selected := dossier.Positions[0].PositionID
+	confidence := 0.95
+	_, err = ledger.CompleteOverdueConflictAssessment(ctx, CompleteOverdueConflictAssessmentInput{TeamID: teamID, ConflictID: conflictID, AssessmentAttemptID: reservation.AssessmentAttemptID, CaseVersion: reservation.CaseVersion, ReviewRunID: uuid.NewString(), Decision: "selected", SelectedPositionID: selected, Confidence: &confidence, ResponseHash: "sha256:" + prefix})
+	require.NoError(t, err)
+	return privateSpaceConflictResolutionFixture{
+		ledger: ledger, teamID: teamID, ownerA: ownerA, spaceID: spaceID, generation: generation, conflictID: conflictID,
+		firstRelationship: firstRelationship, secondRelationship: secondRelationship,
+		resolution: RelationshipConflictResolutionInput{TeamID: teamID, ConflictID: conflictID, ReviewRunID: uuid.NewString(), WorkerID: prefix + "-commit", ExpectedCaseVersion: reservation.CaseVersion, PreferredPositionID: selected, AssessmentAttemptID: reservation.AssessmentAttemptID, Method: "ai", Now: reviewNow},
+	}
+}
+
+type privateSpaceConflictResolutionState struct {
+	caseState            string
+	relationshipState    string
+	conflictEventCount   int64
+	transitionEventCount int64
+	resolutionPlanState  string
+	searchDocumentState  string
+}
+
+func capturePrivateSpaceConflictResolutionState(
+	t *testing.T,
+	ctx context.Context,
+	db *gorm.DB,
+	rls interface {
+		WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
+	},
+	fixture privateSpaceConflictResolutionFixture,
+) privateSpaceConflictResolutionState {
+	t.Helper()
+	var state privateSpaceConflictResolutionState
+	require.NoError(t, rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT status || ':' || version::text
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, fixture.teamID, fixture.conflictID).Row().Scan(&state.caseState); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT COALESCE(string_agg(status || ':' || version::text || ':' || support_count::text || ':' || COALESCE(valid_to::text, ''), ',' ORDER BY relationship_id::text), '')
+			FROM relationship_records
+			WHERE team_id = ?::uuid AND relationship_id IN (?::uuid, ?::uuid)
+		`, fixture.teamID, fixture.firstRelationship.RelationshipID, fixture.secondRelationship.RelationshipID).Row().Scan(&state.relationshipState); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT count(*) FROM relationship_conflict_events WHERE team_id = ?::uuid AND conflict_id = ?::uuid`, fixture.teamID, fixture.conflictID).Row().Scan(&state.conflictEventCount); err != nil {
+			return err
+		}
+		if err := tx.Raw(`SELECT count(*) FROM relationship_transition_events WHERE team_id = ?::uuid AND relationship_id IN (?::uuid, ?::uuid)`, fixture.teamID, fixture.firstRelationship.RelationshipID, fixture.secondRelationship.RelationshipID).Row().Scan(&state.transitionEventCount); err != nil {
+			return err
+		}
+		if err := tx.Raw(`
+			SELECT COALESCE(string_agg(status || ':' || failure_reason || ':' || COALESCE(applied_at::text, ''), ',' ORDER BY resolution_plan_id::text), '')
+			FROM relationship_conflict_resolution_plans
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, fixture.teamID, fixture.conflictID).Row().Scan(&state.resolutionPlanState); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT COALESCE(string_agg(search_state || ':' || document_hash || ':' || embedding_dimensions::text || ':' || space_id::text || ':' || space_generation::text || ':' || source_version::text || ':' || document_version::text || ':' || (embedding IS NOT NULL)::text, ',' ORDER BY source_id::text), '')
+			FROM search_documents
+			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id IN (?::uuid, ?::uuid)
+		`, fixture.teamID, fixture.firstRelationship.RelationshipID, fixture.secondRelationship.RelationshipID).Row().Scan(&state.searchDocumentState)
+	}))
+	return state
 }
 
 func applyPrivateSpaceConflictPlacementForTest(t *testing.T, ctx context.Context, adminDB *gorm.DB, rls interface {

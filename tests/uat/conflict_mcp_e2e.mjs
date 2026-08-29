@@ -10,6 +10,7 @@ const seededTeamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const reviewDriver = requiredEnv("DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER");
+const conflictProviderURL = requiredEnv("DENSE_MEM_E2E_CONFLICT_PROVIDER_URL");
 const submissionTimeoutEnv = process.env.DENSE_MEM_E2E_SUBMISSION_TIMEOUT_SECONDS
   ? "DENSE_MEM_E2E_SUBMISSION_TIMEOUT_SECONDS"
   : "DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS";
@@ -20,6 +21,7 @@ let rpcID = 0;
 
 const early = await earlyQuorumScenario(seededTeamID);
 await assertRemovedPlacementTools(early.profileA.apiKey);
+const embeddingFailure = await embeddingFailureRetryScenario();
 const authoritative = await dueUniqueAuthoritativeScenario();
 const majority = await dueMajorityScenario();
 const selected = await aiSelectionScenario();
@@ -31,6 +33,7 @@ console.log(JSON.stringify({
   status: "ok",
   run_id: runID,
   supporter_majority_after_ttl: early.summary,
+  embedding_failure_retry: embeddingFailure,
   authority_does_not_veto_majority: authoritative,
   due_majority: majority,
   ai_selection: selected,
@@ -91,6 +94,30 @@ async function dueUniqueAuthoritativeScenario() {
   const state = conflictState(fixture.teamID, fixture.conflictID);
   assert(state.status === "resolved" && state.resolution_reason === "due_supporter_majority", `authority vetoed supporter majority: ${JSON.stringify(state)}`);
   return { conflict_id: fixture.conflictID, preferred_position_id: fixture.positionBID, stage: result.stage };
+}
+
+async function embeddingFailureRetryScenario() {
+  const fixture = await createConflictFixture("embedding-failure-retry", {
+    authorityA: "primary",
+    authorityB: "primary",
+    markerA: "[conflict-ai-select-winner]",
+  });
+  const reviewAt = offsetTime(fixture.reviewDueAt, 1_000);
+  forceConflictEmbeddingsRequired(fixture.teamID, [fixture.relationshipA, fixture.relationshipB]);
+  const before = conflictResolutionWriteSnapshot(fixture.teamID, fixture.conflictID, [fixture.relationshipA, fixture.relationshipB]);
+  await setConflictEmbeddingFault(true);
+  try {
+    runReviewExpectFailure(fixture, reviewAt);
+  } finally {
+    await setConflictEmbeddingFault(false);
+  }
+  const afterFailure = conflictResolutionWriteSnapshot(fixture.teamID, fixture.conflictID, [fixture.relationshipA, fixture.relationshipB]);
+  assert(stableJSON(afterFailure) === stableJSON(before), `embedding failure wrote lifecycle or search state: before=${JSON.stringify(before)} after=${JSON.stringify(afterFailure)}`);
+  assert(conflictState(fixture.teamID, fixture.conflictID).status === "overdue", "embedding failure resolved the conflict");
+  await delay(1_200);
+  const retried = runReview(fixture, offsetTime(reviewAt, 24 * 60 * 60 * 1_000 + 1_000));
+  assertReview(retried, "resolve", "overdue_ai", fixture.positionAID, "ai");
+  return { conflict_id: fixture.conflictID, retried_stage: retried.stage };
 }
 
 async function dueMajorityScenario() {
@@ -495,6 +522,20 @@ function runReview(fixture, now) {
   return JSON.parse(line);
 }
 
+function runReviewExpectFailure(fixture, now) {
+  const result = spawnSync(reviewDriver, [
+    "--team-id", fixture.teamID,
+    "--conflict-id", fixture.conflictID,
+    "--now", now,
+  ], {
+    cwd: fileURLToPath(new URL("../..", import.meta.url)),
+    env: { ...process.env, DENSE_MEM_E2E_CONFLICT_REVIEW_LEASE_SECONDS: "1" },
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  assert(result.status !== 0, "embedding fault did not fail the conflict review driver");
+}
+
 function assertReview(result, outcome, stage, preferredPositionID, method) {
   assert(result.outcome === outcome, `review outcome = ${result.outcome}, want ${outcome}: ${JSON.stringify(result)}`);
   assert(result.stage === stage, `review stage = ${result.stage}, want ${stage}: ${JSON.stringify(result)}`);
@@ -602,6 +643,35 @@ function conflictSemanticSnapshot(teamID, conflictID) {
   `);
 }
 
+function conflictResolutionWriteSnapshot(teamID, conflictID, relationshipIDs) {
+  return postgresJSON(`
+    SELECT json_build_object(
+      'relationships', COALESCE((
+        SELECT json_agg(item ORDER BY item ->> 'relationship_id')
+        FROM (
+          SELECT json_build_object(
+            'relationship_id', relationship.relationship_id::text,
+            'status', relationship.status,
+            'version', relationship.version,
+            'search_state', COALESCE(document.search_state, ''),
+            'has_embedding', document.embedding IS NOT NULL
+          ) AS item
+          FROM relationship_records AS relationship
+          LEFT JOIN search_documents AS document
+            ON document.team_id = relationship.team_id
+           AND document.source_kind = 'relationship'
+           AND document.source_id = relationship.relationship_id
+          WHERE relationship.team_id = ${sqlLiteral(teamID)}::uuid
+            AND relationship.relationship_id = ANY(ARRAY[${relationshipIDs.map((id) => `${sqlLiteral(id)}::uuid`).join(", ")}])
+        ) AS relationships
+      ), '[]'::json)
+    )::text
+    FROM relationship_conflict_cases AS conflict
+    WHERE conflict.team_id = ${sqlLiteral(teamID)}::uuid
+      AND conflict.conflict_id = ${sqlLiteral(conflictID)}::uuid
+  `);
+}
+
 function postgresJSON(sql) {
   const raw = postgresQuery(sql);
   if (!raw) throw new Error("PostgreSQL lineage query returned no JSON");
@@ -622,6 +692,43 @@ function postgresQuery(sql) {
   });
   if (result.status !== 0) throw new Error(`PostgreSQL read failed (${result.status}): ${redactText(result.stderr || result.stdout)}`);
   return result.stdout.trim();
+}
+
+function forceConflictEmbeddingsRequired(teamID, relationshipIDs) {
+  if (!Array.isArray(relationshipIDs) || relationshipIDs.length === 0) throw new Error("conflict embedding fixture requires relationship IDs");
+  postgresMutation(teamID, `
+    UPDATE search_documents
+    SET search_state = 'failed',
+        embedding = NULL,
+        embedding_updated_at = NULL,
+        embedding_error = 'conflict e2e requires synchronous vector'
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND source_kind = 'relationship'
+      AND source_id = ANY(ARRAY[${relationshipIDs.map((relationshipID) => `${sqlLiteral(relationshipID)}::uuid`).join(", ")}])
+  `);
+}
+
+function postgresMutation(teamID, sql) {
+  const normalized = sql.trim();
+  if (!/^UPDATE\s+search_documents\b/i.test(normalized)) throw new Error("conflict e2e PostgreSQL helper permits only its scoped search-document mutation");
+  const scoped = `
+    BEGIN;
+    SELECT set_config('app.tx_mode', 'system', true),
+           set_config('app.current_team_id', ${sqlLiteral(teamID)}, true),
+           set_config('app.current_profile_id', '', true);
+    ${normalized};
+    COMMIT;
+  `;
+  const result = spawnSync("docker", [
+    "compose", "-p", composeProject, "-f", composeFile,
+    "exec", "-T", "postgres", "sh", "-ec",
+    'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$1"',
+    "conflict-e2e", scoped,
+  ], {
+    cwd: fileURLToPath(new URL("../..", import.meta.url)),
+    encoding: "utf8",
+  });
+  if (result.status !== 0) throw new Error(`PostgreSQL mutation failed (${result.status}): ${redactText(result.stderr || result.stdout)}`);
 }
 
 async function assertRemovedPlacementTools(apiKey) {
@@ -696,6 +803,18 @@ async function httpJSON(url, options) {
   const text = await response.text();
   if (!response.ok) throw new Error(`HTTP ${response.status} ${url}: ${redactText(text)}`);
   return text ? JSON.parse(text) : {};
+}
+
+async function setConflictEmbeddingFault(enabled) {
+  const url = new URL(conflictProviderURL);
+  url.pathname = "/control/embedding-fault";
+  url.search = "";
+  const response = await httpJSON(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  assert(response.enabled === enabled, "conflict embedding fault control did not acknowledge the requested state");
 }
 
 function positionForRelationship(conflict, relationshipID) {

@@ -228,7 +228,15 @@ func RunActiveServer(
 	verifierProvider.SetMetrics(discoverabilityMetrics)
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
-	conflictReviewRunner, err := conflictreview.NewRunner(ledgerRepo, legacyConflictProvider{provider: verifierProvider}, cfg.GetAppTimezone(), conflictassessment.SemanticAssessmentLimits(assessmentLimits), discoverabilityMetrics)
+	conflictReviewRunner, err := conflictreview.NewRunner(
+		ledgerRepo,
+		legacyConflictProvider{provider: verifierProvider},
+		retryEmbedder,
+		time.Duration(cfg.GetAIEmbeddingTimeoutSeconds())*time.Second,
+		cfg.GetAppTimezone(),
+		conflictassessment.SemanticAssessmentLimits(assessmentLimits),
+		discoverabilityMetrics,
+	)
 	if err != nil {
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
@@ -731,13 +739,8 @@ func processTeamConflictReview(
 		observability.RecordConflictReviewDuration(observability.WithMetricIdentity(ctx, teamID, ""), metrics, time.Since(started).Seconds(), outcome)
 	}()
 	lease := time.Duration(cfg.GetConflictReviewLeaseSeconds()) * time.Second
-	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, repository.ConflictReviewRunInput{
-		TeamID:       teamID,
-		WorkerID:     workerID,
-		LocalRunDate: now,
-		Timezone:     cfg.GetAppTimezone(),
-		Lease:        lease,
-	})
+	runInput := repository.ConflictReviewRunInput{TeamID: teamID, WorkerID: workerID, LocalRunDate: now, Timezone: cfg.GetAppTimezone(), Lease: lease}
+	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, runInput)
 	if err != nil {
 		outcome = "error"
 		return err
@@ -765,15 +768,31 @@ func processTeamConflictReview(
 	}
 	attempted := map[string]struct{}{}
 	for {
+		renewed, owned, err := ledger.ReserveRelationshipConflictReviewRun(ctx, runInput)
+		if err != nil {
+			counts.Status = "failed"
+			counts.LastError = safeConflictReviewError(err)
+			outcome = "failed"
+			break
+		}
+		if renewed == nil || !owned || renewed.ReviewRunID != run.ReviewRunID || renewed.WorkerID != workerID {
+			counts.Status = "failed"
+			counts.LastError = "conflict review run lease lost"
+			outcome = "failed"
+			break
+		}
+		run = renewed
 		excluded := make([]string, 0, len(attempted))
 		for id := range attempted {
 			excluded = append(excluded, id)
 		}
 		cases, err := ledger.ClaimRelationshipConflictCases(ctx, repository.ClaimRelationshipConflictCasesInput{
-			TeamID:              teamID,
-			WorkerID:            workerID,
-			ReviewRunID:         run.ReviewRunID,
-			Limit:               cfg.GetConflictReviewBatchSize(),
+			TeamID:      teamID,
+			WorkerID:    workerID,
+			ReviewRunID: run.ReviewRunID,
+			// Claims are leased per case while synchronous resolution may spend
+			// the full embedding timeout before the next case is processed.
+			Limit:               1,
 			Lease:               lease,
 			MaxAttempts:         cfg.GetConflictReviewMaxAttempts(),
 			Now:                 time.Now().UTC(),

@@ -170,6 +170,42 @@ func (r *LedgerRepositoryImpl) ClaimRelationshipConflictCases(
 	return records, nil
 }
 
+func (r *LedgerRepositoryImpl) ReleaseRelationshipConflictCaseClaim(
+	ctx context.Context,
+	input ReleaseRelationshipConflictCaseClaimInput,
+) error {
+	input = normalizeReleaseRelationshipConflictCaseClaimInput(input)
+	if err := validateReleaseRelationshipConflictCaseClaimInput(input); err != nil {
+		return err
+	}
+	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		result := tx.WithContext(ctx).Exec(`
+			UPDATE relationship_conflict_cases
+			SET lease_worker_id = '',
+			    lease_until = NULL,
+			    next_review_at = ?,
+			    attempts = GREATEST(attempts - 1, 0),
+			    updated_at = now()
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+			  AND status IN ('open', 'overdue')
+			  AND lease_worker_id = ?
+			  AND last_review_run_id = ?::uuid
+		`, input.Now, input.TeamID, input.ConflictID, input.WorkerID, input.ReviewRunID)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrPlacementLeaseLost
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("conflict review: release case claim: %w", err)
+	}
+	return nil
+}
+
 func (r *LedgerRepositoryImpl) ReviewRelationshipConflictCase(
 	ctx context.Context,
 	input ReviewRelationshipConflictCaseInput,
@@ -193,6 +229,38 @@ func (r *LedgerRepositoryImpl) ReviewRelationshipConflictCase(
 			result.Stage = domain.ConflictReviewStageDismissedNoConflict
 			return nil
 		}
+		initialEvaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
+			Now:         input.Now,
+			ReviewDueAt: caseRecord.ReviewDueAt,
+			Positions:   caseRecord.Positions,
+		})
+		if initialEvaluation.Outcome == ConflictReviewOutcomeResolve && initialEvaluation.PreferredPositionID != "" {
+			documentCount, err := countDeterministicResolutionDocuments(ctx, tx, input, caseRecord, initialEvaluation.PreferredPositionID)
+			if err != nil {
+				return err
+			}
+			if documentCount > domain.MaxEmbeddingBatchDocuments {
+				if err := appendRelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, initialEvaluation.PreferredPositionID, "", "", string(domain.RelationshipConflictEventEvaluated), initialEvaluation.Outcome, "case:"+input.ConflictID+":run:"+input.ReviewRunID+":evaluated", map[string]any{
+					"stage":                 initialEvaluation.Stage,
+					"reason":                initialEvaluation.Reason,
+					"total_supporter_count": initialEvaluation.TotalSupporterCount,
+				}); err != nil {
+					return err
+				}
+				if _, err := deferConflictResolutionForDocumentBound(ctx, tx, RelationshipConflictResolutionInput{
+					TeamID: input.TeamID, ConflictID: input.ConflictID, ReviewRunID: input.ReviewRunID,
+					WorkerID: input.WorkerID, ExpectedCaseVersion: caseRecord.Version,
+					PreferredPositionID: initialEvaluation.PreferredPositionID, Method: "deterministic", Now: input.Now,
+				}, caseRecord, "", documentCount); err != nil {
+					return err
+				}
+				result.Outcome = ConflictReviewOutcomeNoop
+				result.Stage = "resolution_pending"
+				result.PreferredPositionID = initialEvaluation.PreferredPositionID
+				result.ResolutionPending = true
+				return nil
+			}
+		}
 		evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
 			Now:         input.Now,
 			ReviewDueAt: caseRecord.ReviewDueAt,
@@ -210,11 +278,16 @@ func (r *LedgerRepositoryImpl) ReviewRelationshipConflictCase(
 		}
 		switch evaluation.Outcome {
 		case ConflictReviewOutcomeResolve:
-			updated, err := resolveRelationshipConflictCase(ctx, tx, input, caseRecord, evaluation, r.embeddingJobMaxAttempts)
-			if err != nil {
-				return err
+			result.Resolution = &RelationshipConflictResolutionInput{
+				TeamID:              input.TeamID,
+				ConflictID:          input.ConflictID,
+				ReviewRunID:         input.ReviewRunID,
+				WorkerID:            input.WorkerID,
+				ExpectedCaseVersion: caseRecord.Version,
+				PreferredPositionID: evaluation.PreferredPositionID,
+				Method:              "deterministic",
+				Now:                 input.Now,
 			}
-			result.UpdatedRelationships = updated
 		case ConflictReviewOutcomeOverdue:
 			if err := markRelationshipConflictCaseOverdue(ctx, tx, input, evaluation); err != nil {
 				return err
@@ -357,7 +430,6 @@ func resolveRelationshipConflictCase(
 	input ReviewRelationshipConflictCaseInput,
 	record *RelationshipConflictCaseRecord,
 	evaluation RelationshipConflictEvaluation,
-	embeddingJobMaxAttempts int,
 ) ([]string, error) {
 	if evaluation.PreferredPositionID == "" {
 		return nil, errors.New("preferred position is required to resolve conflict")
@@ -393,7 +465,7 @@ func resolveRelationshipConflictCase(
 	if err := updateConflictPositionDispositions(ctx, tx, input.TeamID, input.ConflictID, evaluation.PreferredPositionID); err != nil {
 		return nil, err
 	}
-	updated, err := suppressConflictLosingRelationships(ctx, tx, input, record, evaluation.PreferredPositionID, *effectiveAt, embeddingJobMaxAttempts)
+	updated, err := suppressConflictLosingRelationships(ctx, tx, input, record, evaluation.PreferredPositionID, *effectiveAt)
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +506,6 @@ func suppressConflictLosingRelationships(
 	record *RelationshipConflictCaseRecord,
 	preferredPositionID string,
 	effectiveAt time.Time,
-	embeddingJobMaxAttempts int,
 ) ([]string, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH losers AS (
@@ -490,6 +561,10 @@ func suppressConflictLosingRelationships(
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	contract, err := loadActiveSearchContractInTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	updatedIDs := make([]string, 0, len(suppressed))
 	for _, item := range suppressed {
 		updatedIDs = append(updatedIDs, item.RelationshipID)
@@ -497,10 +572,13 @@ func suppressConflictLosingRelationships(
 		if err != nil {
 			return nil, err
 		}
-		if _, err := upsertPlacementRelationshipSearchDocument(ctx, tx, CommitPlacementSemanticInput{
+		if err := staleConflictRelationshipEmbeddingJobs(ctx, tx, input.TeamID, contract.EmbeddingContractID, []string{item.RelationshipID}); err != nil {
+			return nil, err
+		}
+		if _, err := markRelationshipSearchDocumentNotRequired(ctx, tx, CommitPlacementSemanticInput{
 			TeamID:         input.TeamID,
 			OwnerProfileID: item.OwnerProfileID,
-		}, relationship, embeddingJobMaxAttempts); err != nil {
+		}, relationship); err != nil {
 			return nil, err
 		}
 		if _, err := insertRelationshipTransition(ctx, tx, transitionInput{
@@ -517,11 +595,6 @@ func suppressConflictLosingRelationships(
 		if err := appendRelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, "", item.RelationshipID, item.OwnerProfileID, string(domain.RelationshipConflictEventRelationshipUpdated), "superseded", "case:"+input.ConflictID+":relationship:"+item.RelationshipID+":superseded", map[string]any{
 			"preferred_position_id": preferredPositionID,
 		}); err != nil {
-			return nil, err
-		}
-	}
-	if len(suppressed) > 0 {
-		if err := markStaleEmbeddingJobs(ctx, tx, input.TeamID); err != nil {
 			return nil, err
 		}
 	}
@@ -678,6 +751,34 @@ func normalizeClaimRelationshipConflictCasesInput(input ClaimRelationshipConflic
 		input.Now = time.Now().UTC()
 	}
 	return input
+}
+
+func normalizeReleaseRelationshipConflictCaseClaimInput(input ReleaseRelationshipConflictCaseClaimInput) ReleaseRelationshipConflictCaseClaimInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.ConflictID = strings.TrimSpace(input.ConflictID)
+	input.WorkerID = strings.TrimSpace(input.WorkerID)
+	input.ReviewRunID = strings.TrimSpace(input.ReviewRunID)
+	if input.Now.IsZero() {
+		input.Now = time.Now().UTC()
+	} else {
+		input.Now = input.Now.UTC()
+	}
+	return input
+}
+
+func validateReleaseRelationshipConflictCaseClaimInput(input ReleaseRelationshipConflictCaseClaimInput) error {
+	for _, value := range []struct{ name, id string }{
+		{name: "team_id", id: input.TeamID}, {name: "conflict_id", id: input.ConflictID},
+		{name: "review_run_id", id: input.ReviewRunID},
+	} {
+		if _, err := uuid.Parse(value.id); err != nil {
+			return fmt.Errorf("%s is required: %w", value.name, err)
+		}
+	}
+	if input.WorkerID == "" {
+		return errors.New("worker_id is required")
+	}
+	return nil
 }
 
 func validateClaimRelationshipConflictCasesInput(input ClaimRelationshipConflictCasesInput) error {

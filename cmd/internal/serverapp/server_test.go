@@ -346,13 +346,45 @@ func TestProcessTeamConflictReviewCountsMixedOutcomes(t *testing.T) {
 	}
 }
 
+func TestProcessTeamConflictReviewClaimsCasesOneAtATime(t *testing.T) {
+	cfg := testConflictReviewConfig(t, "UTC", "04:00", "0")
+	teamID := "00000000-0000-0000-0000-000000000110"
+	runID := "00000000-0000-0000-0000-000000000111"
+	ledger := &conflictReviewLedgerStub{
+		run: &repository.ConflictReviewRunRecord{
+			TeamID: teamID, ReviewRunID: runID, Status: "running", WorkerID: "worker-one-at-a-time",
+		},
+		claimed: true,
+		claimBatches: [][]repository.RelationshipConflictCaseRecord{{
+			{ConflictID: "00000000-0000-0000-0000-000000000112"},
+			{ConflictID: "00000000-0000-0000-0000-000000000113"},
+		}},
+	}
+
+	err := processTeamConflictReview(context.Background(), observability.New(slog.LevelError), ledger, cfg, observability.NoopDiscoverabilityMetrics(), teamID, ledger.run.WorkerID, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("processTeamConflictReview returned error: %v", err)
+	}
+	if len(ledger.claimInputs) == 0 {
+		t.Fatal("expected at least one conflict claim")
+	}
+	if len(ledger.reserveInputs) < 2 {
+		t.Fatalf("review-run renewals = %d, want at least 2", len(ledger.reserveInputs))
+	}
+	for _, input := range ledger.claimInputs {
+		if input.Limit != 1 {
+			t.Fatalf("conflict claim limit = %d, want 1", input.Limit)
+		}
+	}
+}
+
 func testConflictReviewConfig(t *testing.T, timezone string, start string, jitter string) *config.Config {
 	t.Helper()
 	t.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost/db?sslmode=disable")
 	t.Setenv("APP_TIMEZONE", timezone)
 	t.Setenv("CONFLICT_REVIEW_START_TIME_LOCAL", start)
 	t.Setenv("CONFLICT_REVIEW_JITTER_SECONDS", jitter)
-	t.Setenv("CONFLICT_REVIEW_LEASE_SECONDS", "60")
+	t.Setenv("CONFLICT_REVIEW_LEASE_SECONDS", "120")
 	t.Setenv("CONFLICT_REVIEW_BATCH_SIZE", "10")
 	t.Setenv("CONFLICT_REVIEW_MAX_ATTEMPTS", "5")
 	t.Setenv("CONFLICT_REVIEW_MAX_CONCURRENCY", "1")
@@ -367,7 +399,9 @@ type conflictReviewLedgerStub struct {
 	run                   *repository.ConflictReviewRunRecord
 	claimed               bool
 	reserveErr            error
+	reserveInputs         []repository.ConflictReviewRunInput
 	claimBatches          [][]repository.RelationshipConflictCaseRecord
+	claimInputs           []repository.ClaimRelationshipConflictCasesInput
 	claimErr              error
 	derivedErr            error
 	derivedInputs         []repository.ClaimConflictDerivedEvidenceTasksInput
@@ -415,11 +449,13 @@ func (l *conflictReviewLogCapture) With(...observability.LogAttr) observability.
 	return l
 }
 
-func (s *conflictReviewLedgerStub) ReserveRelationshipConflictReviewRun(context.Context, repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error) {
+func (s *conflictReviewLedgerStub) ReserveRelationshipConflictReviewRun(_ context.Context, input repository.ConflictReviewRunInput) (*repository.ConflictReviewRunRecord, bool, error) {
+	s.reserveInputs = append(s.reserveInputs, input)
 	return s.run, s.claimed, s.reserveErr
 }
 
-func (s *conflictReviewLedgerStub) ClaimRelationshipConflictCases(context.Context, repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error) {
+func (s *conflictReviewLedgerStub) ClaimRelationshipConflictCases(_ context.Context, input repository.ClaimRelationshipConflictCasesInput) ([]repository.RelationshipConflictCaseRecord, error) {
+	s.claimInputs = append(s.claimInputs, input)
 	if s.claimErr != nil {
 		return nil, s.claimErr
 	}
