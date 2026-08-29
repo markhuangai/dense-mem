@@ -113,6 +113,19 @@ func TestValidateContractInputIssuesRememberValidAndMalformedShapes(t *testing.T
 	require.Contains(t, issueMessages(result), "relationships must be an array")
 }
 
+func TestRememberRejectsInvalidSupersessionUUIDBeforeInvocation(t *testing.T) {
+	remember, err := requireTool(toolMap(t), ToolRemember)
+	require.NoError(t, err)
+	args := validFlatRelationshipSubmission()
+	args["evidence"].([]any)[0].(map[string]any)["supersedes_evidence_ids"] = []any{"not-a-uuid"}
+
+	result := ValidateContractInputIssues(remember, args, []string{"write"})
+	require.Contains(t, result.Issues, ContractValidationIssue{
+		Path: "/evidence/0/supersedes_evidence_ids/0", Code: "format", Message: "evidence[0].supersedes_evidence_ids[0]: target must be a UUID",
+	})
+	require.Error(t, ValidateContractInput(remember, args, []string{"write"}))
+}
+
 func TestContractIssueCollectorDeduplicatesAndTruncates(t *testing.T) {
 	collector := contractIssueCollector{}
 	collector.add("", "", "   ")
