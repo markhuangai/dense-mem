@@ -65,6 +65,9 @@ func (r *LedgerRepositoryImpl) CommitRelationshipConflictResolution(
 		if err := ensureActiveTeamForMutation(ctx, tx, resolution.TeamID); err != nil {
 			return err
 		}
+		if err := lockConflictResolutionRelationships(ctx, tx, resolution); err != nil {
+			return err
+		}
 		current, err := buildRelationshipConflictResolutionPlan(ctx, tx, resolution)
 		if err != nil {
 			return err
@@ -85,6 +88,26 @@ func (r *LedgerRepositoryImpl) CommitRelationshipConflictResolution(
 		if err != nil {
 			return err
 		}
+		lockedRecord, err := loadRelationshipConflictCaseForResolution(ctx, tx, resolution, ReviewRelationshipConflictCaseInput{
+			TeamID: resolution.TeamID, ConflictID: resolution.ConflictID, ReviewRunID: resolution.ReviewRunID,
+			WorkerID: resolution.WorkerID, Now: resolution.Now,
+		})
+		if err != nil {
+			if errors.Is(err, ErrPlacementLeaseLost) || errors.Is(err, ErrConflictAssessmentStale) {
+				return ErrConflictAssessmentStale
+			}
+			return err
+		}
+		lockedRecord, dismissed, err := refreshRelationshipConflictCaseSnapshotForReview(ctx, tx, ReviewRelationshipConflictCaseInput{
+			TeamID: resolution.TeamID, ConflictID: resolution.ConflictID, ReviewRunID: resolution.ReviewRunID,
+			WorkerID: resolution.WorkerID, Now: resolution.Now,
+		}, lockedRecord)
+		if err != nil {
+			return err
+		}
+		if dismissed || lockedRecord == nil || lockedRecord.Version != resolution.ExpectedCaseVersion {
+			return ErrConflictAssessmentStale
+		}
 		for _, document := range current.Documents {
 			if err := applyConflictResolutionEmbedding(ctx, tx, document, current.Fence, vectors[document.DocumentHash]); err != nil {
 				if errors.Is(err, ErrConflictAssessmentStale) {
@@ -99,8 +122,7 @@ func (r *LedgerRepositoryImpl) CommitRelationshipConflictResolution(
 			return err
 		}
 		if len(records) != 1 || records[0].Version != resolution.ExpectedCaseVersion {
-			result.Stale = true
-			return nil
+			return ErrConflictAssessmentStale
 		}
 		evaluation := RelationshipConflictEvaluation{
 			Outcome:             ConflictReviewOutcomeResolve,
@@ -193,6 +215,14 @@ func buildRelationshipConflictResolutionPlan(
 		}
 		return nil, err
 	}
+	record, dismissed, err := refreshRelationshipConflictCaseSnapshotForReview(ctx, tx, reviewInput, record)
+	if err != nil {
+		return nil, err
+	}
+	if dismissed || record.Version != input.ExpectedCaseVersion {
+		plan.Stale = true
+		return plan, nil
+	}
 	if err := validateConflictResolutionPosition(ctx, tx, input.TeamID, input.ConflictID, input.PreferredPositionID); err != nil {
 		if errors.Is(err, ErrConflictAssessmentStale) {
 			plan.Stale = true
@@ -267,14 +297,6 @@ func buildRelationshipConflictResolutionPlan(
 			}
 			return plan, nil
 		}
-	}
-	record, dismissed, err := refreshRelationshipConflictCaseSnapshotForReview(ctx, tx, reviewInput, record)
-	if err != nil {
-		return nil, err
-	}
-	if dismissed || record.Version != input.ExpectedCaseVersion {
-		plan.Stale = true
-		return plan, nil
 	}
 	effectiveAt, effectiveBasis := conflictResolutionEffectiveTime(*record, input.PreferredPositionID, input.Now)
 	plan.EffectiveAt = effectiveAt
@@ -586,6 +608,32 @@ func validateConflictResolutionSpaceFence(ctx context.Context, tx *gorm.DB, inpu
 		return ErrConflictAssessmentStale
 	}
 	return nil
+}
+
+func lockConflictResolutionRelationships(ctx context.Context, tx *gorm.DB, input RelationshipConflictResolutionInput) error {
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT relationship.relationship_id::text
+		FROM relationship_conflict_position_members AS member
+		JOIN relationship_records AS relationship
+		  ON relationship.team_id = member.team_id
+		 AND relationship.relationship_id = member.relationship_id
+		WHERE member.team_id = ?::uuid
+		  AND member.conflict_id = ?::uuid
+		  AND member.active
+		ORDER BY relationship.relationship_id::text
+		FOR UPDATE OF relationship
+	`, input.TeamID, input.ConflictID).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var relationshipID string
+		if err := rows.Scan(&relationshipID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 func loadRelationshipConflictCaseForResolution(

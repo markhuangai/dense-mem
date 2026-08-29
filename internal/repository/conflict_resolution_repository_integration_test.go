@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -178,6 +179,109 @@ func TestRelationshipConflictResolutionFencesStaleCaseVersionBeforeWrites(t *tes
 	assert.Equal(t, before, after)
 }
 
+func TestRelationshipConflictResolutionLocksMembersBeforeLifecycleMutation(t *testing.T) {
+	fixture := NewDeterministicConflictServiceFixture(t)
+	ctx := context.Background()
+	reviewed, err := fixture.Ledger.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{
+		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
+		ConflictID: fixture.ConflictID, Now: fixture.ReviewNow,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, reviewed)
+	require.Equal(t, ConflictReviewOutcomeResolve, reviewed.Outcome)
+	require.NotNil(t, reviewed.Resolution)
+
+	plan, err := fixture.Ledger.PlanRelationshipConflictResolution(ctx, *reviewed.Resolution)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.False(t, plan.Stale)
+	require.NotEmpty(t, plan.Documents)
+	before := fixture.Snapshot(t)
+
+	var relationshipID string
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.Ledger.db, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT relationship_id::text
+			FROM relationship_conflict_position_members
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+			  AND position_id = ?::uuid
+			  AND active
+			ORDER BY relationship_id::text
+			LIMIT 1
+		`, fixture.TeamID, fixture.ConflictID, plan.Resolution.PreferredPositionID).Row().Scan(&relationshipID)
+	}))
+	require.NotEmpty(t, relationshipID)
+
+	blockingTx := fixture.Ledger.db.WithContext(ctx).Begin()
+	require.NoError(t, blockingTx.Error)
+	defer blockingTx.Rollback()
+	for _, setting := range []struct{ key, value string }{
+		{key: "app.current_team_id", value: ""},
+		{key: "app.current_profile_id", value: ""},
+		{key: "app.allowed_space_ids", value: ""},
+		{key: "app.tx_mode", value: "system"},
+		{key: "app.role", value: "admin"},
+	} {
+		require.NoError(t, blockingTx.Exec("SELECT set_config(?, ?, true)", setting.key, setting.value).Error)
+	}
+	var lockedID string
+	require.NoError(t, blockingTx.Raw(`
+		SELECT relationship_id::text
+		FROM relationship_records
+		WHERE team_id = ?::uuid AND relationship_id = ?::uuid
+		FOR UPDATE
+	`, fixture.TeamID, relationshipID).Row().Scan(&lockedID))
+	require.Equal(t, relationshipID, lockedID)
+	require.NoError(t, blockingTx.Exec(`
+		UPDATE relationship_records
+		SET status = 'pending_evidence', support_count = 0, version = version + 1, updated_at = now()
+		WHERE team_id = ?::uuid AND relationship_id = ?::uuid
+	`, fixture.TeamID, relationshipID).Error)
+
+	type commitResult struct {
+		result *ApplyOverdueConflictResolutionResult
+		err    error
+	}
+	commitDone := make(chan commitResult, 1)
+	go func() {
+		committed, commitErr := fixture.Ledger.CommitRelationshipConflictResolution(ctx, CommitRelationshipConflictResolutionInput{
+			Plan: *plan, Embeddings: conflictResolutionTestEmbeddings(plan),
+		})
+		commitDone <- commitResult{result: committed, err: commitErr}
+	}()
+	select {
+	case outcome := <-commitDone:
+		t.Fatalf("commit completed while a conflict member was locked: result=%+v err=%v", outcome.result, outcome.err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	require.NoError(t, blockingTx.Commit().Error)
+
+	var outcome commitResult
+	select {
+	case outcome = <-commitDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for conflict commit after releasing lifecycle lock")
+	}
+	require.NoError(t, outcome.err)
+	require.NotNil(t, outcome.result)
+	assert.True(t, outcome.result.Stale)
+	assert.False(t, outcome.result.Resolved)
+
+	after := fixture.Snapshot(t)
+	assert.Equal(t, before.SearchDocumentState, after.SearchDocumentState)
+	assert.Equal(t, before.EmbeddingJobState, after.EmbeddingJobState)
+	var status string
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.Ledger.db, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT status
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+		`, fixture.TeamID, fixture.ConflictID).Row().Scan(&status)
+	}))
+	assert.Equal(t, "open", status)
+}
+
 func TestRelationshipConflictResolutionPreflightCountsNonForegroundDocuments(t *testing.T) {
 	fixture := NewOversizedConflictServiceFixture(t)
 	ctx := context.Background()
@@ -226,14 +330,38 @@ func TestRelationshipConflictResolutionPreflightCountsNonForegroundDocuments(t *
 func TestOversizedConflictRefreshesStaleMembershipBeforeDeferral(t *testing.T) {
 	fixture := NewOversizedConflictServiceFixture(t)
 	ctx := context.Background()
+	var record RelationshipConflictCaseRecord
+	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
+		records, err := loadRelationshipConflictRecordsByID(ctx, tx, fixture.TeamID, []string{fixture.ConflictID}, nil)
+		if err != nil {
+			return err
+		}
+		if len(records) != 1 {
+			return fmt.Errorf("expected one conflict record, got %d", len(records))
+		}
+		record = records[0]
+		return nil
+	}))
+	evaluation := EvaluateRelationshipConflict(RelationshipConflictEvaluationInput{
+		Now: fixture.ReviewNow, ReviewDueAt: record.ReviewDueAt, Positions: record.Positions,
+	})
+	require.Equal(t, ConflictReviewOutcomeResolve, evaluation.Outcome)
+	require.NotEmpty(t, evaluation.PreferredPositionID)
 	loserID := fixture.RelationshipIDs[1]
-	winnerIDs := fixture.RelationshipIDs[2:]
+	winnerIDs := append([]string{fixture.RelationshipIDs[0]}, fixture.RelationshipIDs[2:]...)
 	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
 		if err := tx.Exec(`
 			UPDATE relationship_records
 			SET status = 'superseded', support_count = 0
 			WHERE team_id = ?::uuid AND relationship_id = ?::uuid
 		`, fixture.TeamID, loserID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			UPDATE relationship_records
+			SET valid_from = ?
+			WHERE team_id = ?::uuid AND relationship_id = ANY(?::uuid[])
+		`, fixture.ReviewNow.Add(time.Hour), fixture.TeamID, pq.Array(winnerIDs)).Error; err != nil {
 			return err
 		}
 		return tx.Exec(`
@@ -246,15 +374,15 @@ func TestOversizedConflictRefreshesStaleMembershipBeforeDeferral(t *testing.T) {
 		`, fixture.TeamID, pq.Array(winnerIDs)).Error
 	}))
 
-	result, err := fixture.Ledger.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{
-		TeamID: fixture.TeamID, WorkerID: fixture.WorkerID, ReviewRunID: fixture.ReviewRunID,
-		ConflictID: fixture.ConflictID, Now: fixture.ReviewNow,
+	plan, err := fixture.Ledger.PlanRelationshipConflictResolution(ctx, RelationshipConflictResolutionInput{
+		TeamID: fixture.TeamID, ConflictID: fixture.ConflictID, ReviewRunID: fixture.ReviewRunID,
+		WorkerID: fixture.WorkerID, ExpectedCaseVersion: record.Version,
+		PreferredPositionID: evaluation.PreferredPositionID, Method: "deterministic", Now: fixture.ReviewNow,
 	})
 	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, ConflictReviewOutcomeNoop, result.Outcome)
-	assert.Equal(t, domain.ConflictReviewStageDismissedNoConflict, result.Stage)
-	assert.False(t, result.ResolutionPending)
+	require.NotNil(t, plan)
+	assert.True(t, plan.Stale)
+	assert.False(t, plan.Pending)
 
 	var status string
 	require.NoError(t, fixture.rls.WithSystemTx(ctx, fixture.adminDB, func(tx *gorm.DB) error {
