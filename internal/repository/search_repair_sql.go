@@ -7,20 +7,20 @@ const searchRepairDriftCTE = `
 	WITH active_contract AS (
 		SELECT ?::uuid AS embedding_contract_id, ?::integer AS embedding_dimensions
 	), activated_generations AS (
-		SELECT DISTINCT ON (team_id) team_id, projection_generation_id, updated_at
+		SELECT DISTINCT ON (team_id) team_id, projection_generation_id, created_at, activated_at
 		FROM search_projection_generations
 		WHERE source_kind = 'relationship' AND projection_format_version = 2
 		  AND state = 'current' AND activated_at IS NOT NULL
 		ORDER BY team_id, generation DESC, created_at DESC
 	), latest_generations AS (
-		SELECT DISTINCT ON (team_id) team_id, projection_generation_id, updated_at
+		SELECT DISTINCT ON (team_id) team_id, projection_generation_id, created_at, activated_at
 		FROM search_projection_generations
 		WHERE source_kind = 'relationship' AND projection_format_version = 2
 		ORDER BY team_id, generation DESC, created_at DESC
 	), foreground_generations AS (
 		SELECT COALESCE(active.team_id, latest.team_id) AS team_id,
 		       COALESCE(active.projection_generation_id, latest.projection_generation_id) AS projection_generation_id,
-		       COALESCE(active.updated_at, latest.updated_at) AS updated_at
+		       COALESCE(active.activated_at, latest.activated_at, active.created_at, latest.created_at) AS changed_at
 		FROM activated_generations AS active
 		FULL JOIN latest_generations AS latest ON latest.team_id = active.team_id
 	), canonical_sources AS NOT MATERIALIZED (
@@ -64,7 +64,7 @@ const searchRepairDriftCTE = `
 	         CASE WHEN relationship.valid_to IS NULL THEN NULL ELSE 'valid_to: ' || regexp_replace(to_char(relationship.valid_to AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), '\.{0,1}0+Z$', 'Z') END
 		       ), 'sha256'), 'hex') AS document_hash,
 		       relationship.space_id, COALESCE(relationship.space_generation, 0)::bigint,
-		       GREATEST(relationship.updated_at, COALESCE(foreground.updated_at, relationship.updated_at))
+		       GREATEST(relationship.updated_at, COALESCE(foreground.changed_at, relationship.updated_at))
 		FROM relationship_records AS relationship
 		JOIN teams AS team ON team.id = relationship.team_id AND team.status = 'active' AND team.deleted_at IS NULL
 		LEFT JOIN foreground_generations AS foreground ON foreground.team_id = relationship.team_id
@@ -85,7 +85,8 @@ const searchRepairDriftCTE = `
 		       COALESCE(source.projection_generation_id::text, ''), COALESCE(document.document_version, 1),
 		       contract.embedding_contract_id::text, contract.embedding_dimensions,
 		       COALESCE(source.space_id::text, ''), source.space_generation, source.document_text, source.document_hash,
-		       COALESCE(document.document_hash, ''), false AS retired, COALESCE(document.updated_at, source.observed_at)
+		       COALESCE(document.document_hash, ''), false AS retired,
+		       GREATEST(COALESCE(document.updated_at, source.observed_at), source.observed_at)
 		FROM canonical_sources AS source
 		CROSS JOIN active_contract AS contract
 		LEFT JOIN search_documents AS document ON document.team_id = source.team_id AND document.source_kind = source.source_kind AND document.source_id = source.source_id AND document.embedding_contract_id = contract.embedding_contract_id
@@ -147,20 +148,20 @@ const searchRepairCandidateSQL = `
 	WITH active_contract AS (
 		SELECT ?::uuid AS embedding_contract_id, ?::integer AS embedding_dimensions
 	), activated_generations AS (
-		SELECT DISTINCT ON (team_id) team_id, projection_generation_id, updated_at
+		SELECT DISTINCT ON (team_id) team_id, projection_generation_id, created_at, activated_at
 		FROM search_projection_generations
 		WHERE source_kind = 'relationship' AND projection_format_version = 2
 		  AND state = 'current' AND activated_at IS NOT NULL
 		ORDER BY team_id, generation DESC, created_at DESC
 	), latest_generations AS (
-		SELECT DISTINCT ON (team_id) team_id, projection_generation_id, updated_at
+		SELECT DISTINCT ON (team_id) team_id, projection_generation_id, created_at, activated_at
 		FROM search_projection_generations
 		WHERE source_kind = 'relationship' AND projection_format_version = 2
 		ORDER BY team_id, generation DESC, created_at DESC
 	), foreground_generations AS (
 		SELECT COALESCE(active.team_id, latest.team_id) AS team_id,
 		       COALESCE(active.projection_generation_id, latest.projection_generation_id) AS projection_generation_id,
-		       COALESCE(active.updated_at, latest.updated_at) AS updated_at
+		       COALESCE(active.activated_at, latest.activated_at, active.created_at, latest.created_at) AS changed_at
 		FROM activated_generations AS active
 		FULL JOIN latest_generations AS latest ON latest.team_id = active.team_id
 	), source_keys AS NOT MATERIALIZED (
@@ -182,7 +183,7 @@ const searchRepairCandidateSQL = `
 		       relationship.relationship_id, relationship.version::bigint, 2,
 		       foreground.projection_generation_id, relationship.space_id,
 		       COALESCE(relationship.space_generation, 0)::bigint,
-		       GREATEST(relationship.updated_at, COALESCE(foreground.updated_at, relationship.updated_at))
+		       GREATEST(relationship.updated_at, COALESCE(foreground.changed_at, relationship.updated_at))
 		FROM relationship_records AS relationship
 		JOIN teams AS team ON team.id = relationship.team_id AND team.status = 'active' AND team.deleted_at IS NULL
 		LEFT JOIN foreground_generations AS foreground ON foreground.team_id = relationship.team_id
@@ -199,10 +200,7 @@ const searchRepairCandidateSQL = `
 	       contract.embedding_contract_id::text AS embedding_contract_id,
 	       contract.embedding_dimensions AS embedding_dimensions,
 	       COALESCE(source.space_id::text, '') AS space_id, source.space_generation AS space_generation,
-	       false AS retired,
-	       CASE WHEN source.source_kind = 'relationship' THEN source.observed_at
-            ELSE COALESCE(document.updated_at, source.observed_at)
-       END AS observed_at
+	       false AS retired, source.observed_at
 	FROM source_keys AS source
 	CROSS JOIN active_contract AS contract
 	LEFT JOIN search_documents AS document

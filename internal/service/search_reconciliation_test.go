@@ -48,6 +48,7 @@ type searchRepairRepositoryStub struct {
 	countCalls  int
 	countErr    error
 	hasMore     bool
+	beforeApply func()
 	reserve     repository.SearchRepairRunInput
 	now         time.Time
 	timeErr     error
@@ -94,6 +95,9 @@ func (s *searchRepairRepositoryStub) CountSearchRepairDocuments(context.Context,
 }
 func (s *searchRepairRepositoryStub) ApplySearchRepair(_ context.Context, input repository.ApplySearchRepairInput) (*repository.SearchRepairApplyResult, error) {
 	s.apply = &input
+	if s.beforeApply != nil {
+		s.beforeApply()
+	}
 	if s.applyErr != nil {
 		return s.applyResult, s.applyErr
 	}
@@ -257,6 +261,26 @@ func TestSearchReconciliationProviderCancellationLeavesRunReclaimable(t *testing
 		err:           context.Canceled,
 		beforeExecute: cancel,
 	}
+	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: executor, WorkerID: "worker"})
+
+	result, err := svc.Run(ctx, time.Now().UTC(), true)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, string(domain.EmbeddingReconciliationRunning), result.Status)
+	require.Nil(t, repo.finish)
+}
+
+func TestSearchReconciliationApplyCancellationLeavesRunReclaimable(t *testing.T) {
+	contract := searchRepairTestContract()
+	repo := &searchRepairRepositoryStub{
+		contract:  contract,
+		run:       &repository.SearchRepairRun{RunID: "33333333-3333-4333-8333-333333333333", LeaseToken: "44444444-4444-4444-8444-444444444444"},
+		documents: []repository.SearchRepairDocument{searchRepairTestDocument(contract)},
+		applyErr:  context.Canceled,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	repo.beforeApply = cancel
+	executor := &searchRepairExecutorStub{result: semanticwrite.Result{Embeddings: []semanticwrite.Embedding{{DocumentHash: "hash", Vector: []float32{1, 2}}}}}
 	svc := NewSearchRepairService(SearchRepairDependencies{Repository: repo, Executor: executor, WorkerID: "worker"})
 
 	result, err := svc.Run(ctx, time.Now().UTC(), true)

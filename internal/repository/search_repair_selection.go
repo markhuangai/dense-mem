@@ -231,6 +231,7 @@ func hydrateSearchRepairCandidate(ctx context.Context, tx *gorm.DB, contract *Ac
 	if err != nil {
 		return SearchRepairDocument{}, false, err
 	}
+	item.ObservedAt = candidate.ObservedAt
 	item.Retired = candidate.Retired
 	item.StoredDocumentHash = item.DocumentHash
 	item.StoredOwnerProfileID = item.OwnerProfileID

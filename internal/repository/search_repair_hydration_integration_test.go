@@ -406,13 +406,8 @@ func TestSearchRepairSelectionRevisitsRelationshipAfterProjectionGenerationChang
 	require.Len(t, selected, 1)
 	require.Equal(t, decision.Relationship.RelationshipID, selected[0].SourceID)
 
-	resumed, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
-		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-		LocalRunDate: runDate, WorkerID: "search-repair-generation-cursor-observer", Lease: time.Minute,
-	})
-	require.NoError(t, err)
-	require.False(t, claimed)
-	require.NotNil(t, resumed.SelectionCursor)
+	cursor := searchRepairCursorToInput(searchRepairCursorFrom(selected[0]))
+	require.NotNil(t, cursor)
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
@@ -425,12 +420,92 @@ func TestSearchRepairSelectionRevisitsRelationshipAfterProjectionGenerationChang
 	insertRelationshipProjectionGenerationForTest(t, appDB, rls, teamID, secondGenerationID, 2, "current")
 	continued, _, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
 		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
-		Limit: 1, Cursor: resumed.SelectionCursor,
+		Limit: 1, Cursor: cursor,
 	})
 	require.NoError(t, err)
 	require.Len(t, continued, 1)
 	require.Equal(t, decision.Relationship.RelationshipID, continued[0].SourceID)
 	require.Equal(t, secondGenerationID, continued[0].ProjectionGenerationID)
+}
+
+func TestSearchRepairSelectionRevisitsEvidenceChangedBehindCursor(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-repair-evidence-cursor-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-repair-evidence-cursor-owner")
+	insertSearchTestContract(t, adminDB, rls, "search-repair-evidence-cursor", 2, "exact", "")
+	repo := NewSearchRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	first := createSearchRepairAcceptedIngest(t, ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-repair-evidence-cursor-first",
+		RequestHash: sha256Hex("search repair evidence cursor first"), Evidence: []EvidenceInput{{
+			Content: "search repair evidence cursor first", SourceType: "document", SourceKey: "search-repair-evidence-cursor-first",
+			SourceRevisionToken: "rev-1", SourceRevisionContentHash: "sha256:search-repair-evidence-cursor-first",
+		}},
+	})
+	time.Sleep(10 * time.Millisecond)
+	second := createSearchRepairAcceptedIngest(t, ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-repair-evidence-cursor-second",
+		RequestHash: sha256Hex("search repair evidence cursor second"), Evidence: []EvidenceInput{{
+			Content: "search repair evidence cursor second", SourceType: "document", SourceKey: "search-repair-evidence-cursor-second",
+			SourceRevisionToken: "rev-1", SourceRevisionContentHash: "sha256:search-repair-evidence-cursor-second",
+		}},
+	})
+	_, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: first.Evidence[0].FragmentID,
+		SourceVersion: 1, DocumentText: "stale first evidence",
+	})
+	require.NoError(t, err)
+	_, err = repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: second.Evidence[0].FragmentID,
+		SourceVersion: 1, DocumentText: "stale second evidence",
+	})
+	require.NoError(t, err)
+	contract, err := repo.GetActiveSearchContract(ctx)
+	require.NoError(t, err)
+	runDate := time.Now().UTC()
+	run, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: runDate, CreateIfMissing: true, WorkerID: "search-repair-evidence-cursor-worker", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	selected, _, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		Limit: 1, RunID: run.RunID, LeaseToken: run.LeaseToken,
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	require.Equal(t, first.Evidence[0].FragmentID, selected[0].SourceID)
+
+	resumed, claimed, err := repo.ReserveSearchRepairRun(ctx, SearchRepairRunInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		LocalRunDate: runDate, WorkerID: "search-repair-evidence-cursor-observer", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.False(t, claimed)
+	require.NotNil(t, resumed.SelectionCursor)
+	cursor := resumed.SelectionCursor.ObservedAt
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE evidence_sources AS source
+			SET updated_at = CASE source.source_id
+				WHEN (SELECT source_id FROM evidence_fragments WHERE team_id = ?::uuid AND fragment_id = ?::uuid) THEN ?::timestamptz
+				WHEN (SELECT source_id FROM evidence_fragments WHERE team_id = ?::uuid AND fragment_id = ?::uuid) THEN ?::timestamptz
+				ELSE source.updated_at
+			END
+			WHERE source.team_id = ?::uuid
+		`, teamID, first.Evidence[0].FragmentID, cursor.Add(time.Hour), teamID, second.Evidence[0].FragmentID,
+			cursor.Add(-time.Hour), teamID).Error
+	}))
+	continued, _, err := repo.SelectSearchRepairDocuments(ctx, SearchRepairSelectionInput{
+		EmbeddingContractID: contract.EmbeddingContractID, EmbeddingDimensions: contract.EmbeddingDimensions,
+		Limit: 1, Cursor: resumed.SelectionCursor,
+	})
+	require.NoError(t, err)
+	require.Len(t, continued, 1)
+	require.Equal(t, first.Evidence[0].FragmentID, continued[0].SourceID)
 }
 
 func TestSearchRepairReclaimClearsPersistedSelectionCursor(t *testing.T) {

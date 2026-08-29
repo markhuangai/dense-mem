@@ -239,6 +239,9 @@ func (s *searchRepairService) Run(ctx context.Context, localNow time.Time, creat
 		Documents:               applyDocuments,
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
 		if apply != nil {
 			result.UpdatedCount = apply.UpdatedCount
 			// The write transaction committed, but the follow-up probe did not.
