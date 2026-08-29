@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -410,9 +411,11 @@ func setupPrivateSpaceConflictResolutionFixture(
 	}))
 	reviewed := reviewConflictCaseForTest(t, ctx, ledger, teamID, prefix+"-review", conflictID, reviewNow)
 	require.Equal(t, ConflictReviewOutcomeOverdue, reviewed.Outcome)
-	reservation, dossier, reserved, err := ledger.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{TeamID: teamID, ConflictID: conflictID, ReviewRunID: uuid.NewString(), WorkerID: prefix + "-assessment", LocalAssessmentDate: reviewNow, Model: "test-model", PolicyVersion: "v1"})
+	reservation, dossier, reserved, err := ledger.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{TeamID: teamID, ConflictID: conflictID, ReviewRunID: uuid.NewString(), WorkerID: prefix + "-assessment", LocalAssessmentDate: reviewNow, Model: "test-model", PolicyVersion: domain.ConflictOverduePolicyVersion})
 	require.NoError(t, err)
 	require.True(t, reserved)
+	require.NotNil(t, dossier)
+	require.NotEmpty(t, dossier.Positions)
 	selected := dossier.Positions[0].PositionID
 	confidence := 0.95
 	_, err = ledger.CompleteOverdueConflictAssessment(ctx, CompleteOverdueConflictAssessmentInput{TeamID: teamID, ConflictID: conflictID, AssessmentAttemptID: reservation.AssessmentAttemptID, CaseVersion: reservation.CaseVersion, ReviewRunID: uuid.NewString(), Decision: "selected", SelectedPositionID: selected, Confidence: &confidence, ResponseHash: "sha256:" + prefix})
