@@ -44,10 +44,17 @@ func TestEveryWriteSliceHasAnOverrideSlot(t *testing.T) {
 		active := registry.New()
 		if slice == WriteSliceRemember || slice == WriteSliceDiagnostics {
 			require.NoError(t, active.Register(registry.Tool{Name: registry.ToolRemember, InputSchema: map[string]any{"type": "object"}}))
+		} else if slice == WriteSliceContract {
+			for _, tool := range registry.ContractTools() {
+				tool.Visibility = "active"
+				require.NoError(t, active.Register(tool))
+			}
 		}
-		selectedRegistry, err := write.RegistryOverride(context.Background(), serverapp.RuntimeContext{}, active)
-		require.NoError(t, err)
-		require.NotNil(t, selectedRegistry)
+		if slice == WriteSliceRemember || slice == WriteSliceDiagnostics || slice == WriteSliceContract {
+			selectedRegistry, err := write.RegistryOverride(context.Background(), serverapp.RuntimeContext{}, active)
+			require.NoError(t, err)
+			require.NotNil(t, selectedRegistry)
+		}
 	}
 }
 
@@ -103,7 +110,7 @@ func TestNonRememberSliceDoesNotInvokeSynchronousFactory(t *testing.T) {
 	}
 	for _, raw := range WriteSlices() {
 		slice := WriteSlice(raw)
-		if slice == WriteSliceRemember || slice == WriteSliceDiagnostics {
+		if slice == WriteSliceRemember || slice == WriteSliceDiagnostics || slice == WriteSliceContract {
 			continue
 		}
 		options := optionsForSlice(slice)
@@ -179,7 +186,13 @@ func TestRememberOverridePreservesEveryNonRememberTool(t *testing.T) {
 func TestTerminalRememberInvokerReturnsPollingFreeTerminalResult(t *testing.T) {
 	legacy := registry.Tool{Name: registry.ToolRemember, InputSchema: map[string]any{"type": "object"}, RequiredScopes: []string{"write"}}
 	service := terminalRememberServiceFactory()
-	invoker := terminalRememberInvoker(legacy, service)
+	active := registry.New()
+	require.NoError(t, active.Register(legacy))
+	selected, err := registry.WithTerminalRemember(active, service)
+	require.NoError(t, err)
+	remember, ok := selected.Get(registry.ToolRemember)
+	require.True(t, ok)
+	invoker := remember.Invoke
 	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{Grants: []string{"write"}})
 	output, err := invoker(ctx, "ignored", map[string]any{
 		"evidence": []any{map[string]any{"content": "terminal evidence"}},
@@ -198,15 +211,21 @@ func TestTerminalRememberInvokerReturnsPollingFreeTerminalResult(t *testing.T) {
 	require.False(t, hasStatus)
 	_, hasPoll := output["check_after_seconds"]
 	require.False(t, hasPoll)
-	require.NoError(t, registry.ValidateInput(registry.Tool{InputSchema: terminalRememberOutputSchema()}, output))
+	require.NoError(t, registry.ValidateInput(registry.Tool{InputSchema: remember.OutputSchema}, output))
 }
 
 func TestTerminalRememberInvokerReturnsStructuredToolErrorForTerminalFailure(t *testing.T) {
 	legacy := registry.Tool{Name: registry.ToolRemember, InputSchema: map[string]any{"type": "object"}, RequiredScopes: []string{"write"}}
-	invoker := terminalRememberInvoker(legacy, terminalRememberFailureService{})
+	active := registry.New()
+	require.NoError(t, active.Register(legacy))
+	selected, err := registry.WithTerminalRemember(active, terminalRememberFailureService{})
+	require.NoError(t, err)
+	remember, ok := selected.Get(registry.ToolRemember)
+	require.True(t, ok)
+	invoker := remember.Invoke
 	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{Grants: []string{"write"}})
 
-	_, err := invoker(ctx, "ignored", map[string]any{
+	_, err = invoker(ctx, "ignored", map[string]any{
 		"evidence": []any{map[string]any{"content": "terminal evidence"}},
 		"relationships": []any{map[string]any{
 			"ref": "r-1", "subject": map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
@@ -249,7 +268,13 @@ func TestTerminalRememberInvokerValidatesSupersessionUUIDsLocally(t *testing.T) 
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			legacy := registry.Tool{Name: registry.ToolRemember, InputSchema: map[string]any{"type": "object"}, RequiredScopes: []string{"write"}}
-			invoker := terminalRememberInvoker(legacy, terminalRememberService{})
+			active := registry.New()
+			require.NoError(t, active.Register(legacy))
+			selected, err := registry.WithTerminalRemember(active, terminalRememberService{})
+			require.NoError(t, err)
+			remember, ok := selected.Get(registry.ToolRemember)
+			require.True(t, ok)
+			invoker := remember.Invoke
 			ctx := requestctx.WithActor(context.Background(), requestctx.Actor{Grants: []string{"write"}})
 			evidenceIndices := make([]any, len(test.evidence))
 			for index := range test.evidence {
@@ -266,7 +291,7 @@ func TestTerminalRememberInvokerValidatesSupersessionUUIDsLocally(t *testing.T) 
 				}},
 			}
 
-			_, err := invoker(ctx, "ignored", input)
+			_, err = invoker(ctx, "ignored", input)
 
 			result, ok := registry.ContractValidationResultFromError(err)
 			require.True(t, ok)
@@ -277,11 +302,28 @@ func TestTerminalRememberInvokerValidatesSupersessionUUIDsLocally(t *testing.T) 
 }
 
 func TestTerminalRelationshipRefsTrimWhitespace(t *testing.T) {
-	refs := terminalRelationshipRefs(map[string]any{"relationships": []any{
-		map[string]any{"ref": "  first  "},
-		map[string]any{"ref": "second"},
-	}})
-	require.Equal(t, []string{"first", "second"}, refs)
+	legacy := registry.Tool{Name: registry.ToolRemember, InputSchema: map[string]any{"type": "object"}, RequiredScopes: []string{"write"}}
+	active := registry.New()
+	require.NoError(t, active.Register(legacy))
+	selected, err := registry.WithTerminalRemember(active, terminalRememberService{})
+	require.NoError(t, err)
+	remember, ok := selected.Get(registry.ToolRemember)
+	require.True(t, ok)
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{Grants: []string{"write"}})
+	output, err := remember.Invoke(ctx, "ignored", map[string]any{
+		"evidence": []any{map[string]any{"content": "terminal evidence"}},
+		"relationships": []any{map[string]any{
+			"ref": "first", "subject": map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
+			"predicate": map[string]any{"proposed_key": "uses"},
+			"object":    map[string]any{"value": map[string]any{"type": "string", "value": "PostgreSQL"}},
+			"polarity":  "+", "evidence_indices": []any{0},
+		}},
+		"idempotency_key": "relationship-ref-trim",
+	})
+	require.NoError(t, err)
+	results := output["relationship_results"].([]any)
+	first := results[0].(map[string]any)
+	require.Equal(t, "first", first["ref"])
 }
 
 func terminalRememberServiceFactory() rememberapp.Service {

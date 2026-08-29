@@ -21,7 +21,7 @@ test("classifies the legacy polling surface", () => {
 
 test("classifies the terminal surface", () => {
   const remember = { processing_state: "completed", search_state: "current", evidence: [], relationship_results: [] };
-  const correction = { processing_state: "completed", relationship_results: [], correlation_id: "corr" };
+  const correction = { processing_state: "completed", search_state: "current", correction_result: {}, errors: [], correlation_id: "corr" };
   assert.equal(classifyStagingSurface({
     tools: TERMINAL_TOOLS,
     remember,
@@ -51,13 +51,13 @@ test("fails closed on mixed or ambiguous surfaces", () => {
   assert.throws(() => classifyStagingSurface({
     tools: TERMINAL_TOOLS,
     remember: { processing_state: "completed", search_state: "current", evidence: [], relationship_results: [] },
-    correction: { processing_state: "completed", relationship_results: [], correlation_id: "corr", status_tool: "get_submission_status" },
+    correction: { processing_state: "completed", search_state: "current", correction_result: {}, errors: [], correlation_id: "corr", status_tool: "get_submission_status" },
     removedToolFailure: true,
   }), /mixed or ambiguous/);
   assert.throws(() => classifyStagingSurface({
     tools: TERMINAL_TOOLS,
     remember: { processing_state: "completed", search_state: "current", evidence: [], relationship_results: [], check_after_seconds: 60 },
-    correction: { processing_state: "completed", relationship_results: [], correlation_id: "corr" },
+    correction: { processing_state: "completed", search_state: "current", correction_result: {}, errors: [], correlation_id: "corr" },
     removedToolFailure: true,
   }), /mixed or ambiguous/);
 });

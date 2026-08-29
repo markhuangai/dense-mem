@@ -4,17 +4,10 @@ package e2eapp
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
-
 	"github.com/markhuangai/dense-mem/cmd/internal/serverapp"
-	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/requestctx"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -138,7 +131,9 @@ func rememberOverride(_ context.Context, runtime serverapp.RuntimeContext, write
 		return fmt.Errorf("e2e write slice %q factory returned nil Remember service", WriteSliceRemember)
 	}
 	write.Remember = remember
-	write.RegistryOverride = terminalRememberRegistryOverride(remember)
+	write.RegistryOverride = func(_ context.Context, _ serverapp.RuntimeContext, active registry.Registry) (registry.Registry, error) {
+		return registry.WithTerminalRemember(active, remember)
+	}
 	return nil
 }
 func correctionOverride(_ context.Context, _ serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
@@ -169,8 +164,23 @@ func diagnosticsOverride(_ context.Context, runtime serverapp.RuntimeContext, wr
 	write.RegistryOverride = terminalRememberRegistryOverride(remember)
 	return nil
 }
-func contractOverride(_ context.Context, _ serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
-	return validateSliceHook(write, WriteSliceContract)
+func contractOverride(_ context.Context, runtime serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
+	if err := validateSliceHook(write, WriteSliceContract); err != nil {
+		return err
+	}
+	write.SynchronousRememberBeforeCommit = synchronousRememberBeforeCommitHook(runtime)
+	if write.SynchronousRememberFactory == nil {
+		return fmt.Errorf("e2e write slice %q has no synchronous Remember factory", WriteSliceContract)
+	}
+	remember := write.SynchronousRememberFactory()
+	if remember == nil {
+		return fmt.Errorf("e2e write slice %q factory returned nil Remember service", WriteSliceContract)
+	}
+	write.Remember = remember
+	write.RegistryOverride = func(_ context.Context, _ serverapp.RuntimeContext, active registry.Registry) (registry.Registry, error) {
+		return registry.BuildContractV261(active, remember)
+	}
+	return nil
 }
 
 func validateSliceHook(write *serverapp.WriteRuntime, expected WriteSlice) error {
@@ -188,242 +198,6 @@ func writeSliceName(write *serverapp.WriteRuntime) string {
 		return ""
 	}
 	return write.Slice
-}
-
-func terminalRememberRegistryOverride(remember rememberapp.Service) func(context.Context, serverapp.RuntimeContext, registry.Registry) (registry.Registry, error) {
-	return func(_ context.Context, _ serverapp.RuntimeContext, active registry.Registry) (registry.Registry, error) {
-		if active == nil {
-			return nil, fmt.Errorf("e2e terminal Remember received a nil registry")
-		}
-		if remember == nil {
-			return nil, fmt.Errorf("e2e terminal Remember has no service")
-		}
-		legacy, ok := active.Get(registry.ToolRemember)
-		if !ok {
-			return nil, fmt.Errorf("e2e terminal Remember registry has no Remember tool")
-		}
-		replacement := legacy
-		replacement.OutputSchema = terminalRememberOutputSchema()
-		replacement.Invoke = terminalRememberInvoker(legacy, remember)
-		return cloneRegistryReplacing(active, replacement)
-	}
-}
-
-func cloneRegistryReplacing(active registry.Registry, replacement registry.Tool) (registry.Registry, error) {
-	cloned := registry.New()
-	replaced := false
-	for _, tool := range active.List() {
-		if tool.Name == replacement.Name {
-			tool = replacement
-			replaced = true
-		}
-		if err := cloned.Register(tool); err != nil {
-			return nil, fmt.Errorf("e2e clone registry: %w", err)
-		}
-	}
-	if !replaced {
-		return nil, fmt.Errorf("e2e clone registry: tool %q is not registered", replacement.Name)
-	}
-	return cloned, nil
-}
-
-func terminalRememberInvoker(legacy registry.Tool, remember rememberapp.Service) registry.ToolInvoker {
-	return func(ctx context.Context, _ string, input map[string]any) (map[string]any, error) {
-		actor, ok := requestctx.ActorFromContext(ctx)
-		if !ok {
-			return nil, fmt.Errorf("remember: authenticated actor context is required")
-		}
-		if err := registry.ValidateContractInput(legacy, input, actor.Grants); err != nil {
-			return nil, fmt.Errorf("remember: invalid input: %w", err)
-		}
-		if err := validateTerminalRememberSupersessions(input); err != nil {
-			return nil, err
-		}
-		req, err := terminalRememberRequest(input)
-		if err != nil {
-			return nil, fmt.Errorf("remember: invalid input: %w", err)
-		}
-		result, err := remember.Remember(ctx, req)
-		if err != nil {
-			var processErr *rememberapp.RememberProcessError
-			if !errors.As(err, &processErr) || processErr.Result == nil {
-				return nil, err
-			}
-			result = &rememberapp.RememberResult{Terminal: processErr.Result}
-		}
-		if result == nil || result.Terminal == nil {
-			return nil, fmt.Errorf("remember: terminal result is required")
-		}
-		if err := rememberapp.ValidateTerminalRememberResult(result.Terminal, len(req.Evidence), terminalRelationshipRefs(input)); err != nil {
-			return nil, fmt.Errorf("remember: invalid terminal result")
-		}
-		output, err := terminalRememberResultMap(result.Terminal)
-		if err != nil {
-			return nil, err
-		}
-		if result.Terminal.ProcessingState != string(rememberapp.TerminalProcessingCompleted) {
-			return nil, registry.NewToolResultError(output)
-		}
-		return output, nil
-	}
-}
-
-func validateTerminalRememberSupersessions(input map[string]any) error {
-	evidence, _ := input["evidence"].([]any)
-	seen := make(map[uuid.UUID]int)
-	for evidenceIndex, rawEvidence := range evidence {
-		item, _ := rawEvidence.(map[string]any)
-		targets, _ := item["supersedes_evidence_ids"].([]any)
-		for targetIndex, rawTarget := range targets {
-			target, _ := rawTarget.(string)
-			parsed, err := uuid.Parse(strings.TrimSpace(target))
-			if err != nil {
-				return terminalRememberValidationFailure(
-					fmt.Sprintf("/evidence/%d/supersedes_evidence_ids/%d", evidenceIndex, targetIndex),
-					"format",
-					fmt.Sprintf("evidence[%d].supersedes_evidence_ids[%d]: target must be a UUID", evidenceIndex, targetIndex),
-				)
-			}
-			if previous, exists := seen[parsed]; exists {
-				return terminalRememberValidationFailure(
-					fmt.Sprintf("/evidence/%d/supersedes_evidence_ids", evidenceIndex),
-					"duplicate",
-					fmt.Sprintf("evidence[%d].supersedes_evidence_ids: duplicates target from evidence[%d]", evidenceIndex, previous),
-				)
-			}
-			seen[parsed] = evidenceIndex
-		}
-	}
-	return nil
-}
-
-func terminalRememberValidationFailure(path, code, message string) error {
-	return &registry.ContractValidationFailure{Result: registry.ContractValidationResult{Issues: []registry.ContractValidationIssue{{
-		Path: path, Code: code, Message: message,
-	}}}}
-}
-
-func terminalRememberRequest(input map[string]any) (rememberapp.RememberRequest, error) {
-	copyInput := make(map[string]any, len(input)+1)
-	for key, value := range input {
-		copyInput[key] = value
-	}
-	copyInput["relationship_hints"] = input["relationships"]
-	encoded, err := json.Marshal(copyInput)
-	if err != nil {
-		return rememberapp.RememberRequest{}, err
-	}
-	var request rememberapp.RememberRequest
-	if err := json.Unmarshal(encoded, &request); err != nil {
-		return rememberapp.RememberRequest{}, err
-	}
-	return request, nil
-}
-
-func terminalRelationshipRefs(input map[string]any) []string {
-	switch raw := input["relationships"].(type) {
-	case []any:
-		refs := make([]string, 0, len(raw))
-		for _, value := range raw {
-			item, _ := value.(map[string]any)
-			ref, _ := item["ref"].(string)
-			refs = append(refs, strings.TrimSpace(ref))
-		}
-		return refs
-	case []map[string]any:
-		refs := make([]string, 0, len(raw))
-		for _, item := range raw {
-			ref, _ := item["ref"].(string)
-			refs = append(refs, strings.TrimSpace(ref))
-		}
-		return refs
-	}
-	return []string{}
-}
-
-func terminalRememberResultMap(result *rememberapp.TerminalRememberResult) (map[string]any, error) {
-	encoded, err := json.Marshal(result)
-	if err != nil {
-		return nil, err
-	}
-	output := map[string]any{}
-	if err := json.Unmarshal(encoded, &output); err != nil {
-		return nil, err
-	}
-	return output, nil
-}
-
-func terminalRememberOutputSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"required": []string{
-			"contract_version", "submission_id", "submission_kind", "processing_state", "search_state",
-			"correlation_id", "evidence", "relationship_results", "errors",
-		},
-		"properties": map[string]any{
-			"contract_version":     map[string]any{"type": "string", "enum": []string{domain.ContractVersion}},
-			"submission_id":        map[string]any{"type": "string", "maxLength": 128},
-			"submission_kind":      map[string]any{"type": "string", "enum": []string{"remember"}},
-			"processing_state":     map[string]any{"type": "string", "enum": []string{"completed", "rejected", "quarantined", "failed"}},
-			"search_state":         map[string]any{"type": "string", "enum": []string{"current", "not_required"}},
-			"correlation_id":       map[string]any{"type": "string", "maxLength": 128},
-			"evidence":             map[string]any{"type": "array", "minItems": 0, "maxItems": 20, "items": terminalEvidenceSchema()},
-			"relationship_results": map[string]any{"type": "array", "minItems": 0, "maxItems": 200, "items": terminalRelationshipResultSchema()},
-			"errors":               map[string]any{"type": "array", "minItems": 0, "maxItems": 50, "items": terminalErrorSchema()},
-		},
-		"additionalProperties": false,
-	}
-}
-
-func terminalEvidenceSchema() map[string]any {
-	return map[string]any{
-		"type": "object", "required": []string{"disposition", "evidence_index", "superseded_evidence_ids", "search_state"},
-		"properties": map[string]any{
-			"disposition":             map[string]any{"type": "string", "enum": []string{"stored", "not_stored"}},
-			"evidence_id":             map[string]any{"type": "string", "maxLength": 128},
-			"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
-			"superseded_evidence_ids": map[string]any{"type": "array", "maxItems": 50, "items": map[string]any{"type": "string", "maxLength": 128}},
-			"search_state":            map[string]any{"type": "string", "enum": []string{"current", "not_required"}},
-			"reason":                  map[string]any{"type": "string", "maxLength": 256},
-		},
-		"additionalProperties": false,
-	}
-}
-
-func terminalRelationshipResultSchema() map[string]any {
-	return map[string]any{
-		"type": "object", "required": []string{"ref", "disposition", "splits"},
-		"properties": map[string]any{
-			"ref":         map[string]any{"type": "string", "maxLength": 128},
-			"disposition": map[string]any{"type": "string", "enum": []string{"stored", "not_stored"}},
-			"reason":      map[string]any{"type": "string", "maxLength": 256},
-			"splits": map[string]any{"type": "array", "maxItems": 50, "items": map[string]any{
-				"type": "object", "required": []string{"split_index", "relationship_id", "relationship_version", "status"},
-				"properties": map[string]any{
-					"split_index":          map[string]any{"type": "integer", "minimum": 0},
-					"relationship_id":      map[string]any{"type": "string", "maxLength": 128},
-					"relationship_version": map[string]any{"type": "integer", "minimum": 1},
-					"status":               map[string]any{"type": "string", "maxLength": 64},
-				},
-				"additionalProperties": false,
-			}},
-		},
-		"additionalProperties": false,
-	}
-}
-
-func terminalErrorSchema() map[string]any {
-	return map[string]any{
-		"type": "object", "required": []string{"code", "message", "retryable", "next_action", "remediation"},
-		"properties": map[string]any{
-			"code":        map[string]any{"type": "string", "enum": rememberapp.TerminalErrorCodes()},
-			"message":     map[string]any{"type": "string", "maxLength": 512},
-			"retryable":   map[string]any{"type": "boolean"},
-			"next_action": map[string]any{"type": "string", "enum": rememberapp.TerminalNextActions()},
-			"remediation": map[string]any{"type": "string", "maxLength": 512},
-		},
-		"additionalProperties": false,
-	}
 }
 
 // getenv is a variable for unit tests; only this E2E package owns the lookup.

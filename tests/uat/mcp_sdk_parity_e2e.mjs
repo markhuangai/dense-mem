@@ -23,9 +23,10 @@ const listed = await rpc("tools/list", {}, { "MCP-Protocol-Version": "2025-11-25
 if (listed.error || !listed.result?.tools?.some((tool) => tool.name === "remember")) {
   throw new Error("live SDK tools/list did not expose the shared registry");
 }
+const hasStatusTool = listed.result.tools.some((tool) => tool.name === "get_submission_status");
 const bounded = await rpc("tools/call", {
-  name: "get_submission_status",
-  arguments: { submission_id: "00000000-0000-0000-0000-000000000000" },
+  name: hasStatusTool ? "get_submission_status" : "remember",
+  arguments: hasStatusTool ? { submission_id: "00000000-0000-0000-0000-000000000000" } : {},
 }, { "MCP-Protocol-Version": "2025-11-25" });
 if (!bounded.error || typeof bounded.error.message !== "string" || bounded.error.message.length > 512) {
   throw new Error("live SDK error mapping was not bounded");
