@@ -179,6 +179,8 @@ func TestSynchronousRememberClassifiersCoverTypedStagesAndTerminalErrors(t *test
 		{phase: "commit", err: repository.ErrIdempotencyConflict, want: remember.TerminalErrorIdempotencyConflict},
 		{phase: "commit", err: repository.ErrPlacementStaleSource, want: remember.TerminalErrorStaleInput},
 		{phase: "embedding", err: repository.ErrSynchronousRememberEmbeddingInputBudget, want: remember.TerminalErrorInputBudgetExceeded},
+		{phase: "embedding", err: repository.ErrSynchronousRememberEmbeddingFence, want: remember.TerminalErrorInternalFailure},
+		{phase: "commit", err: repository.ErrSynchronousRememberEmbeddingFence, want: remember.TerminalErrorCommitConflict},
 		{phase: "embedding", err: semanticwrite.ErrProviderResponseInvalid, want: remember.TerminalErrorEmbeddingResponseInvalid},
 		{phase: "embedding", err: semanticwrite.ErrInvalidPlan, want: remember.TerminalErrorEmbeddingResponseInvalid},
 		{phase: "assessment", err: assessor.ErrVerifierMalformedResponse, want: remember.TerminalErrorProviderResponseInvalid},
@@ -321,6 +323,26 @@ func TestSynchronousProcessorTrimsRelationshipRefsInTerminalResult(t *testing.T)
 	require.Equal(t, "durable-store", status.RelationshipResults[0].RelationshipRef)
 	require.Equal(t, "stored", status.RelationshipResults[0].Disposition)
 	require.Len(t, status.RelationshipResults[0].Splits, 1)
+}
+
+func TestSynchronousProcessorValidatesIngestBeforeAssessment(t *testing.T) {
+	teamID, ownerID := uuid.NewString(), uuid.NewString()
+	input := synchronousPipelineRememberRequest(teamID, ownerID, "pipeline-invalid-ingest", "pipeline-invalid-ingest-hash")
+	input.Evidence[0].SupersedesEvidenceIDs = []string{"not-a-uuid"}
+	ledger := &synchronousPipelineLedger{}
+	provider := &synchronousPipelineProvider{}
+	processor := NewSynchronousRememberProcessor(SynchronousRememberProcessorDependencies{
+		Ledger: ledger, Catalog: synchronousPipelineCatalog{}, Provider: provider, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Embeddings: semanticwrite.NewExecutor(&synchronousPipelineEmbeddingProvider{}),
+	})
+
+	_, err := processor.ProcessRemember(context.Background(), input)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid UUID")
+	require.Zero(t, provider.assessCalls)
+	require.Zero(t, ledger.recordFailureCalls)
+	require.Zero(t, ledger.planCalls)
 }
 
 func TestSynchronousProcessorReplaysMatchingTerminalBeforeProviderWork(t *testing.T) {
@@ -615,7 +637,7 @@ func synchronousPipelineRememberRequest(teamID, ownerID, key, hash string) remem
 	return remember.RememberProcessRequest{
 		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: key, RequestHash: hash,
 		Metadata: map[string]any{"actor": map[string]any{"correlation_id": "synchronous-pipeline-correlation"}},
-		Evidence: []remember.EvidenceInput{{Content: "Dense-Mem stores its durable memory in PostgreSQL.", ContentHash: "pipeline-typed-value-content", SourceType: "manual", Authority: "primary"}},
+		Evidence: []remember.EvidenceInput{{Content: "Dense-Mem stores its durable memory in PostgreSQL.", SourceType: "manual", Authority: "primary"}},
 		Proposal: map[string]any{"relationship_hints": []map[string]any{{
 			"ref": "durable-store", "subject": map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
 			"predicate": map[string]any{"proposed_key": "stores_memory_in"},

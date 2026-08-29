@@ -249,18 +249,17 @@ func RunActiveServer(
 		Metrics: discoverabilityMetrics,
 		Logger:  logger,
 	})
-	writeRuntime := &WriteRuntime{
-		Remember: rememberCore,
-		SynchronousRememberFactory: func() rememberapp.Service {
-			processor := synchronousremember.NewSynchronousRememberProcessor(synchronousremember.SynchronousRememberProcessorDependencies{
-				Ledger: ledgerRepo, Catalog: semanticRepo, Provider: assessorProvider, Limits: assessmentLimits,
-				Embeddings: newSemanticwriteEmbeddingExecutor(openaiProvider), Auditor: rememberAuditor, Metrics: discoverabilityMetrics, Logger: logger,
-			})
-			return rememberapp.NewService(rememberapp.Dependencies{
-				Intake: rememberIntake, Synchronous: processor, Auditor: rememberAuditor,
-				Metrics: discoverabilityMetrics, Logger: logger,
-			})
-		},
+	writeRuntime := &WriteRuntime{Remember: rememberCore}
+	writeRuntime.SynchronousRememberFactory = func() rememberapp.Service {
+		processor := synchronousremember.NewSynchronousRememberProcessor(synchronousremember.SynchronousRememberProcessorDependencies{
+			Ledger: ledgerRepo, Catalog: semanticRepo, Provider: assessorProvider, Limits: assessmentLimits,
+			Embeddings: newSemanticwriteEmbeddingExecutor(openaiProvider), Auditor: rememberAuditor, Metrics: discoverabilityMetrics, Logger: logger,
+			BeforeCommit: writeRuntime.SynchronousRememberBeforeCommit,
+		})
+		return rememberapp.NewService(rememberapp.Dependencies{
+			Intake: rememberIntake, Synchronous: processor, Auditor: rememberAuditor,
+			Metrics: discoverabilityMetrics, Logger: logger,
+		})
 	}
 	if options.WriteRuntimeOverride != nil {
 		if err := options.WriteRuntimeOverride(startupCtx, runtimeCtx, writeRuntime); err != nil {

@@ -54,6 +54,13 @@ test("compose runner filters the resolved default slice", async () => {
   assert.match(compose, /run_synchronous_write_e2e "\$team_id" "\$api_key"/);
 });
 
+test("remember case covers mixed object success and a late search-generation fence", async () => {
+  const remember = await readFile(new URL("./cases/remember.mjs", import.meta.url), "utf8");
+  assert.match(remember, /mixed-objects/);
+  assert.match(remember, /search-generation-rotation/);
+  assert.match(remember, /commit_conflict/);
+});
+
 test("correction slice contains executable success and provider-failure assertions", async () => {
   const correction = await readFile(new URL("./cases/correction.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(correction, /reserved-for-adoption/);

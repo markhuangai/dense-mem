@@ -41,17 +41,21 @@ type SynchronousRememberProcessorDependencies struct {
 	Auditor    remember.SecurityRejectionAuditor
 	Metrics    observability.DiscoverabilityMetrics
 	Logger     observability.LogProvider
+	// BeforeCommit is an optional composition hook used only by the disposable
+	// E2E runtime to inject a deterministic post-embedding fence race.
+	BeforeCommit func(context.Context, remember.RememberProcessRequest, *repository.SynchronousRememberEmbeddingPlan) error
 }
 
 type synchronousRememberProcessor struct {
-	ledger     SynchronousRememberLedger
-	catalog    memoryservice.SubmissionAssessmentCatalog
-	provider   assessor.Provider
-	limits     assessor.SemanticAssessmentLimits
-	embeddings *semanticwrite.Executor
-	auditor    remember.SecurityRejectionAuditor
-	metrics    observability.DiscoverabilityMetrics
-	logger     observability.LogProvider
+	ledger       SynchronousRememberLedger
+	catalog      memoryservice.SubmissionAssessmentCatalog
+	provider     assessor.Provider
+	limits       assessor.SemanticAssessmentLimits
+	embeddings   *semanticwrite.Executor
+	auditor      remember.SecurityRejectionAuditor
+	metrics      observability.DiscoverabilityMetrics
+	logger       observability.LogProvider
+	beforeCommit func(context.Context, remember.RememberProcessRequest, *repository.SynchronousRememberEmbeddingPlan) error
 }
 
 var _ remember.SynchronousProcessor = (*synchronousRememberProcessor)(nil)
@@ -61,7 +65,7 @@ func NewSynchronousRememberProcessor(deps SynchronousRememberProcessorDependenci
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
-	return &synchronousRememberProcessor{ledger: deps.Ledger, catalog: deps.Catalog, provider: deps.Provider, limits: deps.Limits, embeddings: deps.Embeddings, auditor: deps.Auditor, metrics: metrics, logger: deps.Logger}
+	return &synchronousRememberProcessor{ledger: deps.Ledger, catalog: deps.Catalog, provider: deps.Provider, limits: deps.Limits, embeddings: deps.Embeddings, auditor: deps.Auditor, metrics: metrics, logger: deps.Logger, beforeCommit: deps.BeforeCommit}
 }
 
 func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, input remember.RememberProcessRequest) (*remember.SubmissionStatusResult, error) {
@@ -118,13 +122,17 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 		return terminalStatus(failure.Result)
 	}
 
+	create := repository.CreateIngestInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey, RequestHash: input.RequestHash, SourceSummary: input.SourceSummary, Status: "queued", TelemetryRemember: true, Proposal: input.Proposal, Metadata: input.Metadata, Evidence: synchronousEvidence(input.Evidence)}
+	if err := repository.ValidateCreateIngestInput(create); err != nil {
+		return nil, fmt.Errorf("remember: invalid input: %w", err)
+	}
+
 	assessmentCtx, cancelAssessment := remember.ContextForPhase(ctx, remember.RememberPhaseAssessment)
 	prepared, err := memoryservice.AssessSynchronousRemember(assessmentCtx, memoryservice.SynchronousRememberAssessmentDependencies{Catalog: p.catalog, Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger}, memoryservice.SynchronousRememberAssessmentInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: attemptID, Proposal: input.Proposal, Evidence: synchronousEvidence(input.Evidence)})
 	cancelAssessment()
 	if err != nil {
 		return p.failure(ctx, input, attemptID, base, "assessment", synchronousAssessmentTurns(err), started, err)
 	}
-	create := repository.CreateIngestInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey, RequestHash: input.RequestHash, SourceSummary: input.SourceSummary, Status: "queued", TelemetryRemember: true, Proposal: input.Proposal, Metadata: input.Metadata, Evidence: synchronousEvidence(input.Evidence)}
 	if len(prepared.Response.SecuritySignals) > 0 {
 		return p.commitTerminal(ctx, input, attemptID, base, create, prepared, "quarantined", nil, relationshipRefs, started)
 	}
@@ -146,6 +154,11 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 	cancelEmbedding()
 	if err != nil {
 		return p.failure(ctx, input, attemptID, base, "embedding", prepared.Response.ProviderTurns, started, err)
+	}
+	if p.beforeCommit != nil {
+		if err := p.beforeCommit(ctx, input, plan); err != nil {
+			return p.failure(ctx, input, attemptID, base, "commit", prepared.Response.ProviderTurns, started, err)
+		}
 	}
 	inline := synchronousEmbeddingResult(embedded)
 	commitCtx, cancelCommit := remember.ContextForPhase(ctx, remember.RememberPhaseCommit)
@@ -311,6 +324,10 @@ func synchronousFailureCode(phase string, err error) remember.TerminalErrorCode 
 		return remember.TerminalErrorStaleInput
 	case errors.Is(err, repository.ErrSynchronousRememberEmbeddingInputBudget):
 		return remember.TerminalErrorInputBudgetExceeded
+	case errors.Is(err, repository.ErrSynchronousRememberEmbeddingFence) && phase == "commit":
+		return remember.TerminalErrorCommitConflict
+	case errors.Is(err, repository.ErrSynchronousRememberEmbeddingFence):
+		return remember.TerminalErrorInternalFailure
 	case errors.Is(err, semanticwrite.ErrProviderUnavailable):
 		return remember.TerminalErrorEmbeddingUnavailable
 	case errors.Is(err, semanticwrite.ErrProviderResponseInvalid), errors.Is(err, semanticwrite.ErrInvalidPlan):

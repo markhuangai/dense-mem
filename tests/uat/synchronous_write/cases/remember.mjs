@@ -9,6 +9,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   const faults = selectedFault === "none" ? [
     "none",
     "multi",
+    "mixed-objects",
     "mixed",
     "repair",
     "repair-exhausted",
@@ -23,6 +24,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     "embedding-non-finite",
     "embedding-timeout",
     "embedding-cancel",
+    "search-generation-rotation",
   ] : [selectedFault];
 
   const listed = await rpc("tools/list", {});
@@ -39,6 +41,8 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
       results.push(await runCancellationCase({ rpc, rawRPC, expect }));
     } else if (fault === "multi") {
       results.push(await runMultiItemCase({ rpc, expect }));
+    } else if (fault === "mixed-objects") {
+      results.push(await runMixedObjectCase({ rpc, expect }));
     } else if (fault === "mixed") {
       results.push(await runMixedDispositionCase({ rpc, expect }));
     } else if (fault === "repair" || fault === "repair-exhausted") {
@@ -47,6 +51,8 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
       results.push(await runTerminalDomainCase({ rpc, expect, fault }));
     } else if (fault.startsWith("embedding-")) {
       results.push(await runEmbeddingFaultCase({ rpc, expect, fault }));
+    } else if (fault === "search-generation-rotation") {
+      results.push(await runSearchGenerationFenceCase({ rpc, expect }));
     } else {
       results.push(await runProviderFaultCase({ rpc, expect, fault }));
     }
@@ -117,6 +123,32 @@ async function runMultiItemCase({ rpc, expect }) {
   expect(result.relationship_results.length === 2, "multi-item batch must return every relationship disposition");
   expect(result.relationship_results.every((item) => item.disposition === "stored" && item.splits.length > 0), "multi-item relationships must be stored with splits");
   return { fault: "multi", processing_state: result.processing_state, evidence_count: result.evidence.length };
+}
+
+async function runMixedObjectCase({ rpc, expect }) {
+  const suffix = Date.now();
+  const subject = `Dense-Mem Mixed Objects ${suffix}`;
+  const database = `PostgreSQL Mixed Objects ${suffix}`;
+  const entityPredicate = `stores_memory_in_mixed_objects_entity_${suffix}`;
+  const args = {
+    evidence: [
+      { content: `${subject} stores its durable memory in ${database}. [fixture:mixed-objects-entity]`, source_type: "manual" },
+      { content: `${subject} retains a stable memory contract. [fixture:mixed-objects-value]`, source_type: "manual" },
+    ],
+    relationships: [
+      relationship("entity-object", subject, "project", { entity: { name: database, entity_kind: "product" } }, [0], entityPredicate),
+      relationship("typed-value", subject, "project", { value: { type: "string", value: "stable" } }, [1]),
+    ],
+    idempotency_key: `synchronous-write-remember-mixed-objects-${Date.now()}`,
+  };
+  const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
+  assertStrictTerminalRemember(result, expect);
+  expect(result.processing_state === "completed", `mixed Entity and typed-Value batch must complete: ${JSON.stringify(result)}`);
+  expect(result.evidence.length === 2 && result.evidence.every((item) => item.disposition === "stored" && item.search_state === "current"), "mixed object evidence must be current");
+  const byRef = new Map(result.relationship_results.map((item) => [item.ref, item]));
+  expect(byRef.get("entity-object")?.disposition === "stored" && byRef.get("entity-object")?.splits.length > 0, "Entity-object relationship must be stored");
+  expect(byRef.get("typed-value")?.disposition === "stored" && byRef.get("typed-value")?.splits.length > 0, "typed-Value relationship must be stored");
+  return { fault: "mixed-objects", processing_state: result.processing_state, relationship_count: result.relationship_results.length };
 }
 
 async function runMixedDispositionCase({ rpc, expect }) {
@@ -200,6 +232,24 @@ async function runCancellationCase({ rpc, rawRPC, expect }) {
   return { fault: "embedding-cancel", processing_state: retry.processing_state };
 }
 
+async function runSearchGenerationFenceCase({ rpc, expect }) {
+  const args = singleItemArguments("search-generation-rotation", "[fixture-fault:search-generation-rotation]");
+  const failed = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
+  assertStrictTerminalRemember(failed, expect);
+  expect(failed.processing_state === "failed", `search-generation rotation must fail: ${JSON.stringify(failed)}`);
+  expect(failed.search_state === "not_required", "late search-generation fence must not require search");
+  expect(failed.errors[0]?.code === "commit_conflict", `late search-generation fence must return commit_conflict: ${JSON.stringify(failed)}`);
+  expect(failed.errors[0]?.retryable === true && failed.errors[0]?.next_action === "retry_same_request", "late search-generation fence must be retryable with the same key");
+  expect(failed.evidence.every((item) => item.disposition === "not_stored"), "late search-generation fence must leave evidence not_stored");
+  expect(failed.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), "late search-generation fence must leave relationships not_stored");
+
+  const retry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
+  assertStrictTerminalRemember(retry, expect);
+  expect(retry.processing_state === "completed", `late search-generation fence must recover on retry: ${JSON.stringify(retry)}`);
+  expect(retry.submission_id !== failed.submission_id, "retry after a late fence must create a new attempt");
+  return { fault: "search-generation-rotation", processing_state: failed.processing_state, retry_state: retry.processing_state };
+}
+
 async function runConcurrentWinnerCase({ rpc, expect }) {
   const args = singleItemArguments("concurrent", "[fixture:concurrent]");
   const [left, right] = await Promise.all([
@@ -248,7 +298,7 @@ async function runSupersessionFenceCase({ rpc, expect }) {
   staleArgs.evidence[0].supersedes_evidence_ids = [targetEvidenceID];
   const stale = terminalPayload(await rpc("tools/call", { name: "remember", arguments: staleArgs }));
   assertStrictTerminalRemember(stale, expect);
-  expect(stale.processing_state === "failed", `stale supersession must fail: ${JSON.stringify(stale)}`);
+  expect(stale.processing_state === "rejected", `stale supersession must reject: ${JSON.stringify(stale)}`);
   expect(stale.search_state === "not_required", "stale supersession must not require search");
   expect(stale.errors[0]?.code === "stale_input", `stale supersession must return stale_input: ${JSON.stringify(stale)}`);
   expect(stale.evidence.every((item) => item.disposition === "not_stored"), "stale supersession must not store evidence");
@@ -256,17 +306,25 @@ async function runSupersessionFenceCase({ rpc, expect }) {
 }
 
 async function runInputBudgetCase({ rpc, expect }) {
-  const evidence = Array.from({ length: 20 }, (_, index) => ({
-    content: `Dense-Mem input budget evidence ${index}.`,
-    source_type: "manual",
-  }));
-  const relationships = Array.from({ length: 200 }, (_, index) => relationship(
+  const evidenceCount = 20;
+  const relationships = Array.from({ length: 140 }, (_, index) => relationship(
     `budget-${index}`,
-    `Budget subject ${index}`,
+    "Budget subject",
     "project",
     { entity: { name: `Budget object ${index}`, entity_kind: "concept" } },
-    [index % evidence.length],
+    [index % evidenceCount],
+    "uses",
   ));
+  const evidence = Array.from({ length: evidenceCount }, (_, evidenceIndex) => ({
+    content: [
+      `Dense-Mem input budget evidence ${evidenceIndex}.`,
+      "Budget subject.",
+      ...relationships
+        .filter((_, relationshipIndex) => relationshipIndex % evidenceCount === evidenceIndex)
+        .map((item) => `${item.object.entity.name}.`),
+    ].join(" "),
+    source_type: "manual",
+  }));
   const args = {
     evidence,
     relationships,

@@ -50,6 +50,13 @@ func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
 	return input
 }
 
+// ValidateCreateIngestInput applies the same normalization and validation used
+// by durable ingest writers without opening a database transaction. Synchronous
+// callers use it to reject malformed ingest metadata before provider work.
+func ValidateCreateIngestInput(input CreateIngestInput) error {
+	return validateCreateIngestInput(normalizeCreateIngestInput(input))
+}
+
 func validateCreateIngestInput(input CreateIngestInput) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)

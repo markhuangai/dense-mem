@@ -123,10 +123,11 @@ func runOverride(ctx context.Context, runtime serverapp.RuntimeContext, write *s
 func legacyOverride(_ context.Context, _ serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
 	return validateSliceHook(write, WriteSliceLegacy)
 }
-func rememberOverride(_ context.Context, _ serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
+func rememberOverride(_ context.Context, runtime serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
 	if err := validateSliceHook(write, WriteSliceRemember); err != nil {
 		return err
 	}
+	write.SynchronousRememberBeforeCommit = synchronousRememberBeforeCommitHook(runtime)
 	if write.SynchronousRememberFactory == nil {
 		return fmt.Errorf("e2e write slice %q has no synchronous Remember factory", WriteSliceRemember)
 	}

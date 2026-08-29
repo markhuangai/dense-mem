@@ -254,6 +254,9 @@ func TestIsRememberStaleInputErrorRecognizesAllFences(t *testing.T) {
 			t.Errorf("stale input error %v was not recognized", candidate)
 		}
 	}
+	if !IsRememberStaleInputError(&repository.RememberPreflightError{Issues: []repository.RememberPreflightIssue{{Code: "stale"}}}) {
+		t.Fatal("remember preflight stale issue was not recognized")
+	}
 	if IsRememberStaleInputError(errors.New("unrelated")) {
 		t.Fatal("unrelated error was classified as stale input")
 	}
