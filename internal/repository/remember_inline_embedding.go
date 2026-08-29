@@ -499,7 +499,7 @@ func lockSynchronousRememberSearchGeneration(ctx context.Context, tx *gorm.DB, r
 		return wrapSynchronousRememberEmbeddingStage("generation_fence", fmt.Errorf("planned search generation lock failed: %w", err))
 	}
 	if state != "active" {
-		return fmt.Errorf("%w: planned search generation is no longer active", ErrSynchronousRememberEmbeddingFence)
+		return wrapSynchronousRememberEmbeddingStage("generation_fence", fmt.Errorf("%w: planned search generation is no longer active", ErrSynchronousRememberEmbeddingFence))
 	}
 	return nil
 }

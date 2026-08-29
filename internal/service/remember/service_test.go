@@ -451,6 +451,36 @@ func TestRememberTerminalFallbackUsesStatusErrorReason(t *testing.T) {
 	require.Equal(t, "stale_input", result.Terminal.RelationshipResults[0].Reason)
 }
 
+func TestRememberRejectsDuplicateCanonicalRelationshipRefsBeforeProcessing(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		relationships []map[string]any
+		wantError     string
+	}{
+		{name: "trimmed explicit refs", relationships: []map[string]any{
+			{"ref": "duplicate", "evidence_indices": []any{0}},
+			{"ref": " duplicate ", "evidence_indices": []any{1}},
+		}, wantError: "remember: relationship ref \"duplicate\" is duplicated"},
+		{name: "generated ref collision", relationships: []map[string]any{
+			{"evidence_indices": []any{0}},
+			{"ref": "relationship:0", "evidence_indices": []any{1}},
+		}, wantError: "remember: relationship ref \"relationship:0\" is duplicated"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			processor := &synchronousProcessorStub{result: synchronousStatusFixture(string(TerminalProcessingCompleted), "terminal-correlation")}
+			svc := NewService(Dependencies{Intake: &intakeStub{}, Synchronous: processor})
+			_, err := svc.Remember(rememberTestContext(uuid.New(), uuid.New()), RememberRequest{
+				IdempotencyKey:    "duplicate-ref-" + test.name,
+				Evidence:          []RememberEvidenceInput{{Content: "first"}, {Content: "second"}},
+				RelationshipHints: test.relationships,
+			})
+
+			require.EqualError(t, err, test.wantError)
+			require.Zero(t, processor.calls)
+		})
+	}
+}
+
 func TestRememberTerminalFallbackRejectsAmbiguousStatusShapes(t *testing.T) {
 	base := &SubmissionStatusResult{
 		ContractVersion: domain.ContractVersion, SubmissionID: uuid.NewString(), SubmissionKind: "remember",

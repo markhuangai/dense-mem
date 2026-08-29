@@ -140,6 +140,31 @@ func TestSynchronousProcessorAuditsSecurityRejectionWhenReplayLookupFails(t *tes
 	require.Equal(t, 1, ledger.recordFailureCalls)
 }
 
+func TestSynchronousProcessorRecordsFailureWhenReplayAndSecurityAuditFail(t *testing.T) {
+	teamID, ownerID := uuid.NewString(), uuid.NewString()
+	input := synchronousPipelineRememberRequest(teamID, ownerID, "replay-and-audit-failure", "replay-and-audit-failure-hash")
+	input.SecurityRejected = true
+	input.SecurityRejectionAudit = &remember.SecurityRejectionAuditInput{
+		EventID: uuid.NewString(), TeamID: teamID, ActorProfileID: ownerID,
+		Surface: "remember", ReasonCode: "evidence_security_rejected", EvidenceCount: 1,
+	}
+	ledger := &synchronousPipelineLedger{loadErr: errors.New("attempt lookup failed")}
+	audit := &synchronousSecurityAuditStub{err: errors.New("audit unavailable")}
+	processor := NewSynchronousRememberProcessor(SynchronousRememberProcessorDependencies{
+		Ledger: ledger, Catalog: synchronousPipelineCatalog{}, Provider: &synchronousPipelineProvider{}, Limits: assessor.DefaultSemanticAssessmentLimits(),
+		Embeddings: semanticwrite.NewExecutor(&synchronousPipelineEmbeddingProvider{}), Auditor: audit,
+	})
+
+	_, err := processor.ProcessRemember(context.Background(), input)
+
+	var processErr *remember.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, remember.ErrRememberPersistence)
+	require.Equal(t, 1, audit.calls)
+	require.Equal(t, 1, ledger.recordFailureCalls)
+	require.Equal(t, "commit", ledger.failureInput.Attempt.FailedPhase)
+}
+
 func TestSynchronousAttemptStatusRejectsMalformedReplayShapes(t *testing.T) {
 	_, err := synchronousAttemptStatus(nil, remember.RememberProcessRequest{})
 	require.ErrorContains(t, err, "replay attempt is required")

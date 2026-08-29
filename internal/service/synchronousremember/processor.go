@@ -100,7 +100,7 @@ func (p *synchronousRememberProcessor) ProcessRemember(ctx context.Context, inpu
 			auditErr := remember.RecordSecurityRejectionAudit(auditCtx, p.auditor, p.logger, *input.SecurityRejectionAudit)
 			cancelAudit()
 			if auditErr != nil {
-				return nil, remember.ErrRememberPersistence
+				return p.failure(ctx, input, attemptID, base, "commit", 0, started, remember.ErrRememberPersistence)
 			}
 		}
 		return p.failure(ctx, input, attemptID, base, "commit", 0, started, err)

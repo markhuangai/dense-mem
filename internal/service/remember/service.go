@@ -192,7 +192,10 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if err := validateRememberRelationshipCoverage(len(req.Evidence), req.RelationshipHints); err != nil {
 		return nil, err
 	}
-	relationshipRefs := rememberRelationshipRefs(req.RelationshipHints)
+	relationshipRefs, err := rememberRelationshipRefs(req.RelationshipHints)
+	if err != nil {
+		return nil, err
+	}
 	started := time.Now()
 	if s.synchronous != nil {
 		ctx = correlation.WithID(ctx, normalizeSynchronousCorrelationID(correlation.FromContext(ctx)))
@@ -493,17 +496,22 @@ func terminalErrorForTerminalState(state string) TerminalErrorCode {
 	}
 }
 
-func rememberRelationshipRefs(relationships []map[string]any) []string {
+func rememberRelationshipRefs(relationships []map[string]any) ([]string, error) {
 	refs := make([]string, len(relationships))
+	seen := make(map[string]struct{}, len(relationships))
 	for index, relationship := range relationships {
 		ref, _ := relationship["ref"].(string)
 		ref = strings.TrimSpace(ref)
 		if ref == "" {
 			ref = fmt.Sprintf("relationship:%d", index)
 		}
+		if _, exists := seen[ref]; exists {
+			return nil, fmt.Errorf("remember: relationship ref %q is duplicated", ref)
+		}
+		seen[ref] = struct{}{}
 		refs[index] = ref
 	}
-	return refs
+	return refs, nil
 }
 
 func (s *service) GetSubmissionStatus(ctx context.Context, req GetSubmissionStatusRequest) (*SubmissionStatusResult, error) {
