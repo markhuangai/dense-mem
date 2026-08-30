@@ -543,6 +543,9 @@ func terminalCorrectionToolResultErrorWithOptions(ctx context.Context, submissio
 			case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.TerminalErrorIdempotencyConflict)):
 				code = rememberapp.TerminalErrorIdempotencyConflict
 				statusError = terminalCorrectionStatusError(code)
+			case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.TerminalErrorCommitConflict)):
+				code = rememberapp.TerminalErrorCommitConflict
+				statusError = rememberapp.TerminalStatusError(code)
 			case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.SubmissionErrorConfirmationExpired)):
 				statusError = rememberapp.StatusError(rememberapp.SubmissionErrorConfirmationExpired)
 				processingState = string(rememberapp.TerminalProcessingRejected)

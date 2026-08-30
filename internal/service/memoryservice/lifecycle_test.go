@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
@@ -88,6 +89,26 @@ func TestLifecycleCorrectRelationshipDoesNotCommitWhenEmbeddingTimesOut(t *testi
 	require.ErrorAs(t, err, &publicErr)
 	require.Equal(t, httperr.ErrEmbeddingTimeout, publicErr.Code)
 	require.Zero(t, semantic.commitCalls)
+}
+
+func TestLifecycleCorrectRelationshipPreservesCommitFenceClassification(t *testing.T) {
+	teamID, profileID := uuid.New(), uuid.New()
+	for _, cause := range []error{repository.ErrSearchEmbeddingRequired, repository.ErrSearchContractMismatch, repository.ErrSearchStaleVersion} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			semantic := &lifecycleSemanticStub{plan: &repository.RelationshipCorrectionEmbeddingPlan{
+				Documents:           []repository.RelationshipCorrectionEmbeddingDocument{{DocumentHash: "hash", DocumentText: "relationship"}},
+				EmbeddingContractID: uuid.NewString(), EmbeddingDimensions: 2, EmbeddingModel: "model", SearchIndexGenerationID: uuid.NewString(), IndexGeneration: 1,
+			}, correctResult: &repository.CorrectRelationshipResult{SubmissionID: uuid.NewString(), ProcessingState: "completed"}, commitErr: cause}
+			executor := &lifecycleExecutorStub{result: semanticwrite.Result{Fence: semanticwrite.Fence{Model: semantic.plan.EmbeddingModel, Dimensions: 2, EmbeddingContractID: semantic.plan.EmbeddingContractID, SearchGenerationID: semantic.plan.SearchIndexGenerationID, SearchGenerationVersion: 1}, Embeddings: []semanticwrite.Embedding{{DocumentHash: "hash", Vector: []float32{1, 2}}}}}
+			svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic, CorrectionExecutor: executor})
+
+			_, err := svc.CorrectRelationship(authenticatedRememberContext(teamID, profileID, uuid.New()), CorrectRelationshipRequest{Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1, Patch: repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_on"}}, Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 1}}, Reason: "incorrect predicate", IdempotencyKey: "commit-fence-correction"})
+			var publicErr *httperr.APIError
+			require.ErrorAs(t, err, &publicErr)
+			require.Equal(t, httperr.CONFLICT, publicErr.Code)
+			require.Contains(t, publicErr.Details, httperr.ErrorDetail{Field: "reason", Message: string(rememberapp.TerminalErrorCommitConflict)})
+		})
+	}
 }
 
 func TestLifecycleCorrectRelationshipClassifiesConfiguredEmbeddingDeadline(t *testing.T) {
@@ -293,6 +314,7 @@ type lifecycleSemanticStub struct {
 	err           error
 	plan          *repository.RelationshipCorrectionEmbeddingPlan
 	embeddings    []repository.RelationshipCorrectionEmbedding
+	commitErr     error
 	commitCalls   int
 }
 
@@ -321,6 +343,9 @@ func (s *lifecycleSemanticStub) PlanRelationshipCorrectionEmbeddings(_ context.C
 func (s *lifecycleSemanticStub) CorrectRelationshipWithEmbeddings(ctx context.Context, input repository.CorrectRelationshipInput, embeddings []repository.RelationshipCorrectionEmbedding) (*repository.CorrectRelationshipResult, error) {
 	s.commitCalls++
 	s.embeddings = append([]repository.RelationshipCorrectionEmbedding(nil), embeddings...)
+	if s.commitErr != nil {
+		return nil, s.commitErr
+	}
 	return s.CorrectRelationship(ctx, input)
 }
 

@@ -293,6 +293,7 @@ func TestTerminalCorrectionToolResultErrorMapsBoundedFailures(t *testing.T) {
 		{"not found", httperr.New(httperr.NOT_FOUND, "hidden"), string(rememberapp.SubmissionErrorEntityNotFound)},
 		{"conflict", httperr.New(httperr.CONFLICT, "hidden"), string(rememberapp.SubmissionErrorRelationshipChanged)},
 		{"idempotency conflict", httperr.NewWithDetails(httperr.CONFLICT, "hidden", []httperr.ErrorDetail{{Field: "reason", Message: "idempotency_conflict"}}), string(rememberapp.TerminalErrorIdempotencyConflict)},
+		{"commit conflict", httperr.NewWithDetails(httperr.CONFLICT, "hidden", []httperr.ErrorDetail{{Field: "reason", Message: string(rememberapp.TerminalErrorCommitConflict)}}), string(rememberapp.TerminalErrorCommitConflict)},
 		{"confirmation expired", httperr.NewWithDetails(httperr.CONFLICT, "hidden", []httperr.ErrorDetail{{Field: "reason", Message: string(rememberapp.SubmissionErrorConfirmationExpired)}}), string(rememberapp.SubmissionErrorConfirmationExpired)},
 		{"embedding unavailable", httperr.New(httperr.ErrEmbeddingUnavailable, "hidden"), string(rememberapp.TerminalErrorEmbeddingUnavailable)},
 		{"embedding response invalid", httperr.New(httperr.ErrEmbeddingResponseInvalid, "hidden"), string(rememberapp.TerminalErrorEmbeddingResponseInvalid)},
@@ -310,6 +311,11 @@ func TestTerminalCorrectionToolResultErrorMapsBoundedFailures(t *testing.T) {
 				errorItem := structured.Result["errors"].([]any)[0].(map[string]any)
 				require.Equal(t, string(rememberapp.TerminalNextActionRetryCorrection), errorItem["next_action"])
 				require.Contains(t, errorItem["remediation"], "correct_relationship")
+			}
+			if test.name == "commit conflict" {
+				errorItem := structured.Result["errors"].([]any)[0].(map[string]any)
+				require.Equal(t, string(rememberapp.TerminalNextActionRetrySameRequest), errorItem["next_action"])
+				require.Contains(t, errorItem["remediation"], "same idempotency_key")
 			}
 			if test.name == "confirmation expired" {
 				require.Equal(t, string(rememberapp.TerminalProcessingRejected), structured.Result["processing_state"])
