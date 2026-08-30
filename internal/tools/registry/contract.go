@@ -164,7 +164,11 @@ func contractTools(deps Dependencies) []Tool {
 				if statusService == nil && deps.Lifecycle == nil {
 					return nil, ErrToolUnavailable
 				}
-				if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
+				if internalSubmissionStatusLookup(ctx) {
+					if err := ValidateInput(tool, input); err != nil {
+						return nil, fmt.Errorf("get_submission_status: invalid input: %w", err)
+					}
+				} else if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
 					return nil, fmt.Errorf("get_submission_status: invalid input: %w", err)
 				}
 				var req memoryservice.GetSubmissionStatusRequest

@@ -7,9 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
 func newEvalHarnessServer(t *testing.T, handler http.Handler) *httptest.Server {
+	return newEvalHarnessServerWithContract(t, contractModeLegacy, handler)
+}
+
+func newEvalHarnessServerWithContract(t *testing.T, mode contractMode, handler http.Handler) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/mcp" {
@@ -27,6 +33,24 @@ func newEvalHarnessServer(t *testing.T, handler http.Handler) *httptest.Server {
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Method == "tools/list" {
+			tools := registry.ContractTools()
+			if mode == contractModeV261 {
+				tools = registry.ContractV261Tools()
+			}
+			listed := make([]map[string]any, 0, len(tools))
+			for _, tool := range tools {
+				listed = append(listed, map[string]any{
+					"name": tool.Name, "description": tool.Description,
+					"inputSchema": tool.InputSchema, "outputSchema": tool.OutputSchema,
+				})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"tools": listed},
+			})
 			return
 		}
 		if req.Method != "tools/call" || req.Params.Name == "" {

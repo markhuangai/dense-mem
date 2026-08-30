@@ -19,16 +19,23 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
 
 var (
-	ErrLifecycleAuthContext          = errors.New("memory lifecycle: authenticated actor context is required")
-	ErrLifecyclePersistence          = errors.New("memory lifecycle: persistence failed")
-	ErrLifecycleEmbeddingUnavailable = errors.New("memory lifecycle: embedding provider unavailable")
-	ErrLifecycleEmbeddingInvalid     = errors.New("memory lifecycle: embedding response invalid")
-	ErrLifecycleEmbeddingTimeout     = errors.New("memory lifecycle: embedding provider timed out")
+	ErrLifecycleAuthContext           = errors.New("memory lifecycle: authenticated actor context is required")
+	ErrLifecyclePersistence           = errors.New("memory lifecycle: persistence failed")
+	ErrLifecycleEmbeddingUnavailable  = errors.New("memory lifecycle: embedding provider unavailable")
+	ErrLifecycleEmbeddingInvalid      = errors.New("memory lifecycle: embedding response invalid")
+	ErrLifecycleEmbeddingTimeout      = errors.New("memory lifecycle: embedding provider timed out")
+	errLifecycleCorrectionCommitFence = errors.New("memory lifecycle: correction commit search fence conflict")
 )
+
+// CorrectionConfirmationInvalidReason identifies a pending confirmation that
+// remains awaiting confirmation after the legacy lifecycle rejects a token or
+// candidate selection.
+const CorrectionConfirmationInvalidReason = "confirmation_invalid"
 
 type LifecycleService interface {
 	CorrectRelationship(ctx context.Context, req CorrectRelationshipRequest) (*CorrectRelationshipReceipt, error)
@@ -168,6 +175,9 @@ func (s *lifecycleService) CorrectRelationship(
 			err = ctxErr
 		} else {
 			result, err = s.semantic.CorrectRelationshipWithEmbeddings(ctx, input, embeddings)
+			if isCorrectionCommitSearchFenceError(err) {
+				err = fmt.Errorf("%w: %w", errLifecycleCorrectionCommitFence, err)
+			}
 		}
 	}
 	if err != nil {
@@ -275,9 +285,27 @@ func translateRelationshipCorrectionError(err error) error {
 	if errors.Is(err, repository.ErrSemanticOwnerMismatch) || errors.Is(err, repository.ErrRelationshipCorrectionNotFound) {
 		return httperr.New(httperr.NOT_FOUND, "submission not found")
 	}
-	if errors.Is(err, repository.ErrSemanticIdempotencyConflict) ||
-		errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) ||
-		errors.Is(err, repository.ErrRelationshipCorrectionConfirmationExpired) ||
+	if errors.Is(err, repository.ErrSemanticIdempotencyConflict) {
+		return httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+			Field: "reason", Message: "idempotency_conflict",
+		}})
+	}
+	if errors.Is(err, repository.ErrRelationshipCorrectionConfirmationExpired) {
+		return httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+			Field: "reason", Message: string(SubmissionErrorConfirmationExpired),
+		}})
+	}
+	if errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) {
+		return httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+			Field: "reason", Message: CorrectionConfirmationInvalidReason,
+		}})
+	}
+	if errors.Is(err, errLifecycleCorrectionCommitFence) {
+		return httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+			Field: "reason", Message: string(rememberapp.TerminalErrorCommitConflict),
+		}})
+	}
+	if errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) ||
 		errors.Is(err, repository.ErrRelationshipCorrectionStateConflict) ||
 		errors.Is(err, repository.ErrSearchEmbeddingRequired) ||
 		errors.Is(err, repository.ErrSearchContractMismatch) ||
@@ -285,6 +313,12 @@ func translateRelationshipCorrectionError(err error) error {
 		return httperr.New(httperr.CONFLICT, "relationship correction conflict")
 	}
 	return ErrLifecyclePersistence
+}
+
+func isCorrectionCommitSearchFenceError(err error) bool {
+	return errors.Is(err, repository.ErrSearchEmbeddingRequired) ||
+		errors.Is(err, repository.ErrSearchContractMismatch) ||
+		errors.Is(err, repository.ErrSearchStaleVersion)
 }
 
 func relationshipCorrectionSubmissionStatus(result *repository.RelationshipCorrectionStatus) *SubmissionStatusResult {

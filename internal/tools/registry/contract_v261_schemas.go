@@ -1,0 +1,92 @@
+package registry
+
+import (
+	"github.com/markhuangai/dense-mem/internal/service/remember"
+)
+
+func terminalRememberOutputSchema(version string) map[string]any {
+	return closedObject(
+		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"},
+		map[string]any{
+			"contract_version":     schemaEnum([]string{version}),
+			"submission_id":        schemaString("Submission ID.", 128),
+			"submission_kind":      schemaEnum([]string{"remember"}),
+			"processing_state":     schemaEnum([]string{"completed", "rejected", "quarantined", "failed"}),
+			"search_state":         schemaEnum([]string{"current", "not_required"}),
+			"correlation_id":       schemaString("Request correlation ID.", 128),
+			"evidence":             array(terminalEvidenceSchema(), 0, 20),
+			"relationship_results": submissionRelationshipResultsSchema(),
+			"errors":               array(terminalErrorSchema(), 0, 50),
+		},
+	)
+}
+
+func terminalEvidenceSchema() map[string]any {
+	return closedObject(
+		[]string{"disposition", "evidence_index", "superseded_evidence_ids", "search_state"},
+		map[string]any{
+			"disposition":             schemaEnum([]string{"stored", "not_stored"}),
+			"evidence_id":             schemaString("Durable evidence ID when stored.", 128),
+			"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
+			"superseded_evidence_ids": stringArraySchema("Evidence ID superseded by this evidence.", 50, 128),
+			"search_state":            schemaEnum([]string{"current", "not_required"}),
+			"reason":                  schemaString("Bounded reason when not stored.", 256),
+		},
+	)
+}
+
+func terminalCorrectionOutputSchema(version string) map[string]any {
+	return closedObject(
+		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "errors"},
+		map[string]any{
+			"contract_version":      schemaEnum([]string{version}),
+			"submission_id":         schemaString("Correction submission ID.", 128),
+			"submission_kind":       schemaEnum([]string{"relationship_correction"}),
+			"processing_state":      schemaEnum([]string{"awaiting_confirmation", "completed", "rejected", "failed"}),
+			"search_state":          schemaEnum([]string{"current", "pending", "not_required", "failed"}),
+			"correlation_id":        schemaString("Request correlation ID.", 128),
+			"awaiting_confirmation": relationshipCorrectionConfirmationSchema(),
+			"correction_result":     relationshipCorrectionResultSchema(),
+			"errors":                array(terminalErrorSchema(), 0, 50),
+		},
+	)
+}
+
+func terminalErrorSchema() map[string]any {
+	return closedObject(
+		[]string{"code", "message", "retryable", "next_action", "remediation"},
+		map[string]any{
+			"code":      schemaEnum(contractV261ErrorCodes()),
+			"message":   schemaString("Bounded safe submission error.", 512),
+			"retryable": map[string]any{"type": "boolean"},
+			"next_action": schemaEnum([]string{
+				string(remember.TerminalNextActionRetrySameRequest),
+				string(remember.TerminalNextActionResubmitRemember),
+				string(remember.TerminalNextActionRetryCorrection),
+				string(remember.TerminalNextActionContactOperator),
+				string(remember.TerminalNextActionNone),
+			}),
+			"remediation": schemaString("Bounded action the caller can take next.", 512),
+		},
+	)
+}
+
+func contractV261ErrorCodes() []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0)
+	add := func(values []string) {
+		for _, value := range values {
+			if value == string(remember.SubmissionErrorSearchIndexingDelayed) {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			result = append(result, value)
+		}
+	}
+	add(remember.TerminalErrorCodes())
+	add(remember.SubmissionErrorCodes())
+	return result
+}

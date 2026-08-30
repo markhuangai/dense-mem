@@ -20,6 +20,8 @@ type HTTPClient struct {
 	APIKey           string
 	PlacementTimeout time.Duration
 	Client           *http.Client
+	contractMu       sync.Mutex
+	contractMode     contractMode
 }
 
 type HTTPStatusError struct {
@@ -34,8 +36,28 @@ type DreamCycleSeed struct {
 	SourceRefs []Ref  `json:"source_refs"`
 }
 
+// StructuredToolError carries the bounded terminal payload returned by an MCP
+// tool when the protocol succeeds but the tool reports isError=true.
+type StructuredToolError struct {
+	Tool   string
+	Result map[string]any
+}
+
 func (e *HTTPStatusError) Error() string {
 	return fmt.Sprintf("%s %s returned %d: %s", e.Method, e.URL, e.StatusCode, e.Body)
+}
+
+func (e *StructuredToolError) Error() string {
+	if e == nil {
+		return "mcp tool returned a structured error"
+	}
+	if cause := submissionErrorMessage(e.Result); cause != "" {
+		return fmt.Sprintf("mcp tools/call %s returned a structured tool error: %s", e.Tool, cause)
+	}
+	if processing := submissionProcessingState(e.Result); processing != "" {
+		return fmt.Sprintf("mcp tools/call %s returned a structured tool error: processing_state %s", e.Tool, processing)
+	}
+	return fmt.Sprintf("mcp tools/call %s returned a structured tool error", e.Tool)
 }
 
 func (c *HTTPClient) CallTool(ctx context.Context, name string, input any, out any) error {
@@ -75,6 +97,22 @@ func (c *HTTPClient) callMCPTool(ctx context.Context, name string, input any, ou
 	if rpc.Error != nil {
 		return fmt.Errorf("mcp tools/call %s returned %d: %s", name, rpc.Error.Code, rpc.Error.Message)
 	}
+	if rpc.Result.IsError {
+		if len(rpc.Result.StructuredContent) == 0 {
+			return fmt.Errorf("mcp tools/call %s returned isError without structuredContent", name)
+		}
+		encoded, err := json.Marshal(rpc.Result.StructuredContent)
+		if err != nil {
+			return fmt.Errorf("decode mcp tools/call %s structured error: %w", name, err)
+		}
+		if out != nil {
+			resetToolOutput(out)
+			if err := json.Unmarshal(encoded, out); err != nil {
+				return fmt.Errorf("decode mcp tools/call %s structured error: %w", name, err)
+			}
+		}
+		return &StructuredToolError{Tool: name, Result: rpc.Result.StructuredContent}
+	}
 	if out == nil {
 		return nil
 	}
@@ -82,6 +120,7 @@ func (c *HTTPClient) callMCPTool(ctx context.Context, name string, input any, ou
 		if content.Type != "text" || strings.TrimSpace(content.Text) == "" {
 			continue
 		}
+		resetToolOutput(out)
 		decoder := json.NewDecoder(strings.NewReader(content.Text))
 		decoder.UseNumber()
 		if err := decoder.Decode(out); err != nil {
@@ -99,7 +138,9 @@ type mcpToolResponse struct {
 }
 
 type mcpToolResult struct {
-	Content []mcpToolContent `json:"content"`
+	Content           []mcpToolContent `json:"content"`
+	StructuredContent map[string]any   `json:"structuredContent,omitempty"`
+	IsError           bool             `json:"isError,omitempty"`
 }
 
 type mcpToolContent struct {
@@ -110,6 +151,12 @@ type mcpToolContent struct {
 type mcpToolError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+func resetToolOutput(out any) {
+	if target, ok := out.(*map[string]any); ok && target != nil {
+		*target = nil
+	}
 }
 
 func (c *HTTPClient) ImportCorpus(ctx context.Context, corpus []CorpusItem) (KnowledgeMapping, error) {
@@ -394,12 +441,19 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 		input["relationships"] = item.Relationships
 	}
 	var out map[string]any
+	mode, err := c.ensureContract(ctx)
+	if err != nil {
+		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
+	}
 	if err := c.callToolWithRetry(ctx, "remember", input, &out); err != nil {
 		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
 	}
 	submissionID := stringValue(out["submission_id"])
 	if submissionID == "" {
 		return mapping, fmt.Errorf("import %s: remember response missing submission_id", item.SourceDocID)
+	}
+	if mode == contractModeV261 {
+		return c.importTerminalRememberResult(item, out, mapping)
 	}
 	status, err := c.WaitForSubmissionStatusResult(ctx, submissionID, c.placementTimeout())
 	if err != nil {
@@ -636,7 +690,7 @@ func (c *HTTPClient) callToolWithRetry(ctx context.Context, name string, input a
 			return nil
 		}
 		lastErr = err
-		if !isTransientHTTPError(err) || attempt == maxAttempts {
+		if !isTransientCallToolError(err) || attempt == maxAttempts {
 			return err
 		}
 		delay := time.Duration(attempt) * 750 * time.Millisecond

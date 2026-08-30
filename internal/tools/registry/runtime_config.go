@@ -26,6 +26,16 @@ func IsEvaluationTool(name string) bool {
 	return ok
 }
 
+// ContractToolRuntimeOptional reports whether a contract tool may be omitted
+// from discovery while its runtime feature is disabled.
+func ContractToolRuntimeOptional(name string) bool {
+	if name == ToolSubmitRecallSessionFeedback {
+		return true
+	}
+	_, ok := dreamToolNames[name]
+	return ok
+}
+
 // ErrToolDisabled is returned when a registered tool is unavailable under the
 // current runtime feature configuration.
 var ErrToolDisabled = errors.New("tool disabled")

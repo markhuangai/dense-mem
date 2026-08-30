@@ -81,3 +81,20 @@ test("diagnostics slice contains control API and scrubbed artifact assertions", 
   assert.match(overlay, /run_compose_playwright_tests remember_attempts/);
   assert.match(compose, /remember-attempts\.spec\.ts/);
 });
+
+test("contract slice asserts target catalog, terminal errors, correction, and parity", async () => {
+  const contract = await readFile(new URL("./cases/contract.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(contract, /reserved-for-adoption/);
+  assert.match(contract, /exactly ten tools/);
+  assert.match(contract, /get_submission_status/);
+  assert.match(contract, /structuredContent/);
+  assert.match(contract, /correct_relationship/);
+});
+
+test("contract ownership callers validate the user endpoint before sending credentials", async () => {
+  const contract = await readFile(new URL("./cases/contract.mjs", import.meta.url), "utf8");
+  assert.match(contract, /validatedUserURL\(\);/);
+  assert.match(contract, /validatedEndpointURL\("DENSE_MEM_USER_URL"\)/);
+  assert.match(contract, /must use HTTPS or loopback HTTP/);
+  assert.match(contract, /const baseURL = validatedUserURL\(\);/);
+});
