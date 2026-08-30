@@ -523,6 +523,9 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 	if isDreamConfirmationDecision(decision) {
 		return s.resolveConfirmationWithLock(ctx, teamID, actorProfileID, dreamID, decision, req)
 	}
+	if isDreamLifecycleDecision(decision) {
+		return s.resolveLifecycleFeedbackWithLock(ctx, teamID, actorProfileID, dreamID, decision, req)
+	}
 	record, err := s.deps.Store.GetHypothesis(ctx, repository.GetHypothesisInput{
 		TeamID:       teamID,
 		HypothesisID: dreamID,
@@ -536,36 +539,6 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 	}
 	dream := dreamRecord(record)
 	switch decision {
-	case "reject":
-		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
-			TeamID:            teamID,
-			ActorProfileID:    actorProfileID,
-			HypothesisID:      dreamID,
-			Status:            string(domain.DreamStatusRejected),
-			Decision:          decision,
-			InvalidatedReason: req.Feedback,
-		})
-		return s.feedbackResult(ctx, decision, dream, updated, nil, err)
-	case "stale":
-		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
-			TeamID:            teamID,
-			ActorProfileID:    actorProfileID,
-			HypothesisID:      dreamID,
-			Status:            string(domain.DreamStatusStale),
-			Decision:          decision,
-			InvalidatedReason: req.Feedback,
-		})
-		return s.feedbackResult(ctx, decision, dream, updated, nil, err)
-	case "reinforce":
-		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
-			TeamID:            teamID,
-			ActorProfileID:    actorProfileID,
-			HypothesisID:      dreamID,
-			Status:            string(domain.DreamStatusReinforced),
-			Decision:          decision,
-			InvalidatedReason: req.Feedback,
-		})
-		return s.feedbackResult(ctx, decision, dream, updated, nil, err)
 	case "ignore":
 		s.recordDreamFeedback(ctx, decision, dream, "ok")
 		return &ResolveFeedbackResult{Dream: dream}, nil

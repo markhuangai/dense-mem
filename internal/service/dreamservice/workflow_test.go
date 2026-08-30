@@ -647,6 +647,11 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			if isDreamConfirmationDecision(tc.req.Decision) || isDreamLifecycleDecision(tc.req.Decision) {
+				assert.Equal(t, 1, repo.confirmationLockCalls)
+			} else {
+				assert.Zero(t, repo.confirmationLockCalls)
+			}
 			require.NotNil(t, res.Dream)
 			assert.Equal(t, tc.wantStatus, res.Dream.Status)
 			if tc.wantMemory {
@@ -815,6 +820,17 @@ func TestResolveFeedbackErrorBranches(t *testing.T) {
 	})
 	_, err := svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{DreamID: hypothesisID, Decision: "reject"})
 	require.ErrorIs(t, err, ErrDreamNotFound)
+
+	svc = New(Dependencies{
+		Store: &dreamRepositoryStub{
+			getRecord:           record,
+			confirmationLockErr: repository.ErrDreamConfirmationBusy,
+		},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
+	})
+	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{DreamID: hypothesisID, Decision: "reject"})
+	var busyErr *ConfirmationBusyError
+	require.ErrorAs(t, err, &busyErr)
 
 	svc = New(Dependencies{
 		Store:     &dreamRepositoryStub{getRecord: record},

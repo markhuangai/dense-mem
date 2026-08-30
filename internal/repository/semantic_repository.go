@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -23,8 +22,7 @@ type SemanticRepositoryImpl struct {
 	db  *gorm.DB
 	rls rLSHelper
 
-	dreamConfirmationLockAdmissionOnce sync.Once
-	dreamConfirmationLockAdmission     chan struct{}
+	dreamConfirmationLockState dreamConfirmationLockAdmissionState
 }
 
 var _ SemanticRepository = (*SemanticRepositoryImpl)(nil)

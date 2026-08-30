@@ -54,6 +54,8 @@ type dreamRepositoryStub struct {
 	submitErr           error
 	latestErr           error
 	confirmationLockErr error
+
+	confirmationLockCalls int
 }
 
 func (s *dreamRepositoryStub) ClaimDreamCycle(_ context.Context, input repository.DreamCycleClaimInput) (*repository.DreamCycleRun, error) {
@@ -209,6 +211,7 @@ func (s *dreamRepositoryStub) GetHypothesis(context.Context, repository.GetHypot
 }
 
 func (s *dreamRepositoryStub) WithHypothesisConfirmationLock(_ context.Context, _, _ string, fn func(repository.DreamRepository) error) error {
+	s.confirmationLockCalls++
 	if s.confirmationLockErr != nil {
 		return s.confirmationLockErr
 	}

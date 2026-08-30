@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +22,11 @@ const (
 )
 
 var ErrDreamConfirmationBusy = errors.New("dream confirmation is already in progress")
+
+type dreamConfirmationLockAdmissionState struct {
+	once  sync.Once
+	slots chan struct{}
+}
 
 // WithHypothesisConfirmationLock admits one confirmation workflow for a
 // team-owned Hypothesis without retaining the application pool while provider
@@ -110,8 +116,8 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 }
 
 func (r *SemanticRepositoryImpl) acquireDreamConfirmationLockAdmission(ctx context.Context) (func(), error) {
-	r.dreamConfirmationLockAdmissionOnce.Do(func() {
-		r.dreamConfirmationLockAdmission = make(chan struct{}, dreamConfirmationLockAdmissionLimit)
+	r.dreamConfirmationLockState.once.Do(func() {
+		r.dreamConfirmationLockState.slots = make(chan struct{}, dreamConfirmationLockAdmissionLimit)
 	})
 	select {
 	case <-ctx.Done():
@@ -119,8 +125,8 @@ func (r *SemanticRepositoryImpl) acquireDreamConfirmationLockAdmission(ctx conte
 	default:
 	}
 	select {
-	case r.dreamConfirmationLockAdmission <- struct{}{}:
-		return func() { <-r.dreamConfirmationLockAdmission }, nil
+	case r.dreamConfirmationLockState.slots <- struct{}{}:
+		return func() { <-r.dreamConfirmationLockState.slots }, nil
 	default:
 		return nil, ErrDreamConfirmationBusy
 	}

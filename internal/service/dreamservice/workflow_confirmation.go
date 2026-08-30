@@ -22,6 +22,15 @@ func isDreamConfirmationDecision(decision string) bool {
 	}
 }
 
+func isDreamLifecycleDecision(decision string) bool {
+	switch decision {
+	case "reject", "stale", "reinforce":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *service) resolveConfirmationWithLock(
 	ctx context.Context,
 	teamID string,
@@ -40,6 +49,70 @@ func (s *service) resolveConfirmationWithLock(
 		return nil, &ConfirmationBusyError{}
 	}
 	return result, err
+}
+
+func (s *service) resolveLifecycleFeedbackWithLock(
+	ctx context.Context,
+	teamID string,
+	actorProfileID string,
+	dreamID string,
+	decision string,
+	req ResolveFeedbackRequest,
+) (*ResolveFeedbackResult, error) {
+	var result *ResolveFeedbackResult
+	err := s.deps.Store.WithHypothesisConfirmationLock(ctx, teamID, dreamID, func(store repository.DreamRepository) error {
+		var err error
+		result, err = s.resolveLifecycleFeedback(ctx, store, teamID, actorProfileID, dreamID, decision, req)
+		return err
+	})
+	if errors.Is(err, repository.ErrDreamConfirmationBusy) {
+		return nil, &ConfirmationBusyError{}
+	}
+	return result, err
+}
+
+func (s *service) resolveLifecycleFeedback(
+	ctx context.Context,
+	store repository.DreamRepository,
+	teamID string,
+	actorProfileID string,
+	dreamID string,
+	decision string,
+	req ResolveFeedbackRequest,
+) (*ResolveFeedbackResult, error) {
+	record, err := store.GetHypothesis(ctx, repository.GetHypothesisInput{
+		TeamID:       teamID,
+		HypothesisID: dreamID,
+	})
+	if err != nil {
+		s.recordDreamFeedback(ctx, decision, nil, "error")
+		if errors.Is(err, repository.ErrDreamHypothesisNotFound) {
+			return nil, ErrDreamNotFound
+		}
+		return nil, err
+	}
+	updated, err := store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
+		TeamID:            teamID,
+		ActorProfileID:    actorProfileID,
+		HypothesisID:      dreamID,
+		Status:            lifecycleStatus(decision),
+		Decision:          decision,
+		InvalidatedReason: req.Feedback,
+	})
+	return s.feedbackResult(ctx, decision, dreamRecord(record), updated, nil, err)
+}
+
+func lifecycleStatus(decision string) string {
+	switch decision {
+	case "reject":
+		return string(domain.DreamStatusRejected)
+	case "stale":
+		return string(domain.DreamStatusStale)
+	case "reinforce":
+		return string(domain.DreamStatusReinforced)
+	default:
+		return ""
+	}
 }
 
 func (s *service) resolveConfirmation(
