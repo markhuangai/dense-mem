@@ -36,6 +36,9 @@ func (s *service) resolveConfirmationWithLock(
 		result, err = s.resolveConfirmation(ctx, store, teamID, actorProfileID, dreamID, decision, req)
 		return err
 	})
+	if errors.Is(err, repository.ErrDreamConfirmationBusy) {
+		return nil, &ConfirmationBusyError{}
+	}
 	return result, err
 }
 
@@ -84,7 +87,7 @@ func (s *service) resolveConfirmation(
 		Evidence:          evidence,
 		EntityHints:       req.EntityHints,
 		RelationshipHints: req.RelationshipHints,
-		IdempotencyKey:    dreamFeedbackIdempotency(req, dreamID, decision),
+		IdempotencyKey:    dreamFeedbackIdempotency(req, record.HypothesisID, decision),
 	})
 	if err != nil {
 		var processErr *rememberapp.RememberProcessError
@@ -100,7 +103,7 @@ func (s *service) resolveConfirmation(
 		return nil, err
 	}
 	if !completed {
-		applyDreamTerminalRetryGuidance(remember, dreamID, decision)
+		applyDreamTerminalRetryGuidance(remember, record.HypothesisID, decision)
 		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return &ResolveFeedbackResult{Dream: dream, Memory: remember}, nil
 	}

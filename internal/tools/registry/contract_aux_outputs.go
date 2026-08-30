@@ -2,6 +2,7 @@ package registry
 
 import (
 	"github.com/markhuangai/dense-mem/internal/domain"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 func recallFeedbackOutputSchema() map[string]any {
@@ -46,8 +47,22 @@ func resolveDreamFeedbackOutputSchema() map[string]any {
 				},
 			),
 			terminalRememberOutputSchema(domain.ContractVersion),
+			dreamConfirmationBusyOutputSchema(),
 		},
 	}
+}
+
+func dreamConfirmationBusyOutputSchema() map[string]any {
+	return closedObject(
+		[]string{"code", "message", "retryable", "next_action", "remediation"},
+		map[string]any{
+			"code":        schemaEnum([]string{"dream_confirmation_busy"}),
+			"message":     schemaString("Bounded Dream confirmation admission error.", 512),
+			"retryable":   map[string]any{"type": "boolean"},
+			"next_action": schemaEnum([]string{string(rememberapp.TerminalNextActionRetryDreamFeedback)}),
+			"remediation": schemaString("Bounded action the caller can take next.", 512),
+		},
+	)
 }
 
 // TerminalRememberOutputSchema is shared by the terminal Remember registry

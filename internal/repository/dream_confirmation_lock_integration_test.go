@@ -89,7 +89,7 @@ func TestHypothesisConfirmationLockReleasesAfterContextCancellation(t *testing.T
 	require.NoError(t, <-followupErr)
 }
 
-func TestHypothesisConfirmationLockCallbackUsesReservedConnectionAtMaxOpenOne(t *testing.T) {
+func TestHypothesisConfirmationLockAllowsNestedRepositoryUseAtMaxOpenOne(t *testing.T) {
 	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 

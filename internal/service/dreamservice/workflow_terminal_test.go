@@ -256,6 +256,88 @@ func TestResolveFeedbackAddsDreamRetryIdentityToTerminalResubmission(t *testing.
 	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, attemptID)
 }
 
+func TestResolveFeedbackUsesCanonicalDreamIDForDefaultRetryKey(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	canonicalID := uuid.NewString()
+	aliasID := uuid.NewString()
+	ingestID := uuid.NewString()
+	repo := &dreamRepositoryStub{getRecord: repository.HypothesisRecord{
+		TeamID: teamID.String(), HypothesisID: canonicalID, CreatedByProfileID: ownerID.String(),
+		Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
+	}}
+	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), ingestID)}
+	svc := New(Dependencies{Store: repo, Remember: remember})
+
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: aliasID, Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
+	})
+	require.NoError(t, err)
+	require.Len(t, remember.requests, 1)
+	require.Equal(t, "dream-feedback:"+canonicalID+":confirm_true", remember.requests[0].IdempotencyKey)
+
+	remember.result = dreamTerminalRememberResult(string(rememberapp.TerminalProcessingRejected), uuid.NewString())
+	remember.result.Terminal.Errors = []rememberapp.SubmissionStatusError{
+		rememberapp.TerminalStatusError(rememberapp.TerminalErrorNoSupportedMemory),
+	}
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: aliasID, Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
+	})
+	require.NoError(t, err)
+	require.Len(t, remember.requests, 2)
+	require.Contains(t, remember.requests[1].IdempotencyKey, canonicalID)
+	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, canonicalID)
+	require.NotContains(t, result.Memory.Terminal.Errors[0].Remediation, aliasID)
+}
+
+func TestResolveFeedbackReplaysAliasWithCanonicalDefaultKey(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	canonicalID := uuid.NewString()
+	aliasID := uuid.NewString()
+	ingestID := uuid.NewString()
+	record := repository.HypothesisRecord{
+		TeamID: teamID.String(), HypothesisID: canonicalID, CreatedByProfileID: ownerID.String(),
+		Status: string(domain.DreamStatusSubmitted), Statement: "Dense-Mem may use PostgreSQL.",
+		SubmittedIngestID: ingestID, SubmittedIngestIdempotencyKey: "dream-feedback:" + canonicalID + ":confirm_true",
+		SubmittedDecision: "confirm_true",
+	}
+	request := ResolveFeedbackRequest{
+		DreamID: aliasID, Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
+	}
+	evidence, err := dreamSubmissionEvidence(request, &record)
+	require.NoError(t, err)
+	record.SubmittedIngestRequestHash, err = rememberapp.CanonicalRequestBodyHash(evidence, request.EntityHints, request.RelationshipHints)
+	require.NoError(t, err)
+	repo := &dreamRepositoryStub{getRecord: record}
+	remember := &rememberServiceStub{err: errors.New("alias replay must not call Remember")}
+	svc := New(Dependencies{Store: repo, Remember: remember})
+
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", request)
+	require.NoError(t, err)
+	require.Equal(t, domain.DreamStatusSubmitted, result.Dream.Status)
+	require.Equal(t, ingestID, result.Memory.IngestID)
+	require.Empty(t, remember.requests)
+	require.Empty(t, repo.submitInput)
+}
+
+func TestResolveFeedbackWrapsConfirmationBusyWithTypedError(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	svc := New(Dependencies{Store: &dreamRepositoryStub{confirmationLockErr: repository.ErrDreamConfirmationBusy}})
+
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: uuid.NewString(), Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
+	})
+	var busy *ConfirmationBusyError
+	require.ErrorAs(t, err, &busy)
+	require.ErrorIs(t, err, repository.ErrDreamConfirmationBusy)
+}
+
 func dreamTerminalRememberResult(state, submissionID string) *rememberapp.RememberResult {
 	terminal := &rememberapp.TerminalRememberResult{
 		ContractVersion: domain.ContractVersion,

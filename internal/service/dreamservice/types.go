@@ -26,6 +26,19 @@ var (
 	ErrInvalidDreamStatus = errors.New("invalid dream status")
 )
 
+// ConfirmationBusyError reports that another confirmation currently owns the
+// Hypothesis admission slot. The MCP registry translates it into bounded
+// retry guidance without exposing repository details.
+type ConfirmationBusyError struct{}
+
+func (e *ConfirmationBusyError) Error() string {
+	return "dream confirmation is already in progress"
+}
+
+func (e *ConfirmationBusyError) Unwrap() error {
+	return repository.ErrDreamConfirmationBusy
+}
+
 type AppConfig interface {
 	DreamingRuntimeConfig(ctx context.Context) (domain.DreamingRuntimeConfig, error)
 }

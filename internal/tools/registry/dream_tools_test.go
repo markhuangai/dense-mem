@@ -90,13 +90,39 @@ func TestResolveDreamFeedbackReturnsStructuredNonCompletedTerminalOutcomes(t *te
 func TestResolveDreamFeedbackOutputSchemaCoversTerminalBranch(t *testing.T) {
 	variants, ok := resolveDreamFeedbackOutputSchema()["oneOf"].([]any)
 	require.True(t, ok)
-	require.Len(t, variants, 2)
+	require.Len(t, variants, 3)
 	terminal, ok := variants[1].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, []string{
 		"contract_version", "submission_id", "submission_kind", "processing_state", "search_state",
 		"correlation_id", "evidence", "relationship_results", "errors",
 	}, terminal["required"])
+}
+
+func TestResolveDreamFeedbackReturnsStructuredBusyRetry(t *testing.T) {
+	reg, err := BuildActive(Dependencies{Dreams: &stubDreamService{
+		resolveErr: &dreamservice.ConfirmationBusyError{},
+	}})
+	require.NoError(t, err)
+	tool, ok := reg.Get(ToolResolveDreamFeedback)
+	require.True(t, ok)
+
+	_, err = tool.Invoke(contractInvokeContext("write"), "profile-dream", map[string]any{
+		"hypothesis_id": "dream-1", "decision": "confirm_true",
+		"evidence": []any{map[string]any{"content": "independent evidence"}},
+		"relationships": []any{map[string]any{
+			"ref": "r-1", "subject": map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
+			"predicate": map[string]any{"proposed_key": "uses"},
+			"object":    map[string]any{"entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}},
+			"polarity":  "+", "modality": "statement", "evidence_indices": []any{0},
+		}},
+	})
+	structured, ok := ToolResultFromError(err)
+	require.True(t, ok)
+	require.Equal(t, "dream_confirmation_busy", structured.Result["code"])
+	require.Equal(t, string(rememberapp.TerminalNextActionRetryDreamFeedback), structured.Result["next_action"])
+	require.True(t, structured.Result["retryable"].(bool))
+	require.NoError(t, ValidateInput(Tool{InputSchema: dreamConfirmationBusyOutputSchema()}, structured.Result))
 }
 
 func TestBuildActiveDreamToolsInvokeAndValidate(t *testing.T) {

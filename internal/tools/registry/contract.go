@@ -339,6 +339,9 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				res, err := deps.Dreams.ResolveFeedback(ctx, teamID, req)
 				if err != nil {
+					if busy, ok := resolveDreamConfirmationBusyOutcome(err); ok {
+						return nil, NewToolResultError(busy)
+					}
 					return nil, err
 				}
 				if failure, ok, err := resolveDreamTerminalOutcome(res); err != nil {
