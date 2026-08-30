@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestHypothesisConfirmationLockAdmitsOneCallback(t *testing.T) {
 	secondErr := make(chan error, 1)
 
 	go func() {
-		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func() error {
+		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(DreamRepository) error {
 			close(firstEntered)
 			<-releaseFirst
 			return nil
@@ -38,7 +39,7 @@ func TestHypothesisConfirmationLockAdmitsOneCallback(t *testing.T) {
 	}
 
 	go func() {
-		secondErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func() error {
+		secondErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(DreamRepository) error {
 			return nil
 		})
 	}()
@@ -64,7 +65,7 @@ func TestHypothesisConfirmationLockReleasesAfterContextCancellation(t *testing.T
 	entered := make(chan struct{})
 	firstErr := make(chan error, 1)
 	go func() {
-		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func() error {
+		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(DreamRepository) error {
 			close(entered)
 			cancel()
 			return context.Canceled
@@ -81,21 +82,21 @@ func TestHypothesisConfirmationLockReleasesAfterContextCancellation(t *testing.T
 	defer followupCancel()
 	followupErr := make(chan error, 1)
 	go func() {
-		followupErr <- repo.WithHypothesisConfirmationLock(followupCtx, teamID, hypothesisID, func() error {
+		followupErr <- repo.WithHypothesisConfirmationLock(followupCtx, teamID, hypothesisID, func(DreamRepository) error {
 			return nil
 		})
 	}()
 	require.NoError(t, <-followupErr)
 }
 
-func TestHypothesisConfirmationLockCallbacksReuseReservedConnection(t *testing.T) {
+func TestHypothesisConfirmationLockCallbackUsesReservedConnectionAtMaxOpenOne(t *testing.T) {
 	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
 	sqlDB, err := appDB.DB()
 	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(2)
-	sqlDB.SetMaxIdleConns(2)
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 	repo := NewSemanticRepository(appDB, rls)
 	teamID := uuid.NewString()
 	hypothesisID := uuid.NewString()
@@ -103,13 +104,10 @@ func TestHypothesisConfirmationLockCallbacksReuseReservedConnection(t *testing.T
 	defer cancel()
 	firstReady := make(chan struct{})
 	releaseFirst := make(chan struct{})
-	secondEntered := make(chan struct{})
 	firstErr := make(chan error, 1)
-	secondErr := make(chan error, 1)
 	go func() {
-		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func() error {
-			var value int
-			if err := appDB.WithContext(ctx).Raw("SELECT 1").Scan(&value).Error; err != nil {
+		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(store DreamRepository) error {
+			if _, err := store.GetHypothesis(ctx, GetHypothesisInput{TeamID: teamID, HypothesisID: hypothesisID}); !errors.Is(err, ErrDreamHypothesisNotFound) {
 				return err
 			}
 			close(firstReady)
@@ -122,26 +120,10 @@ func TestHypothesisConfirmationLockCallbacksReuseReservedConnection(t *testing.T
 	case <-ctx.Done():
 		t.Fatal("first confirmation callback did not reach its database operation")
 	}
-	go func() {
-		secondErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func() error {
-			close(secondEntered)
-			return nil
-		})
-	}()
-	select {
-	case <-secondEntered:
-	case err := <-secondErr:
-		require.ErrorIs(t, err, ErrDreamConfirmationBusy)
-	case <-ctx.Done():
-		t.Fatal("second confirmation lock admission did not return while the first held the lock")
-	}
 	close(releaseFirst)
 	require.NoError(t, <-firstErr)
-	select {
-	case <-secondEntered:
-		t.Fatal("second confirmation callback ran while the first held the lock")
-	default:
-	}
+	followupErr := repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(DreamRepository) error { return nil })
+	require.NoError(t, followupErr)
 }
 
 func TestHypothesisConfirmationLockUsesCanonicalAlias(t *testing.T) {
@@ -199,7 +181,7 @@ func TestHypothesisConfirmationLockUsesCanonicalAlias(t *testing.T) {
 	firstErr := make(chan error, 1)
 	secondErr := make(chan error, 1)
 	go func() {
-		firstErr <- semanticRepo.WithHypothesisConfirmationLock(lockCtx, teamID, aliasID, func() error {
+		firstErr <- semanticRepo.WithHypothesisConfirmationLock(lockCtx, teamID, aliasID, func(DreamRepository) error {
 			close(firstEntered)
 			<-releaseFirst
 			return nil
@@ -211,7 +193,7 @@ func TestHypothesisConfirmationLockUsesCanonicalAlias(t *testing.T) {
 		t.Fatal("alias confirmation lock callback did not start")
 	}
 	go func() {
-		secondErr <- semanticRepo.WithHypothesisConfirmationLock(lockCtx, teamID, canonical.HypothesisID, func() error {
+		secondErr <- semanticRepo.WithHypothesisConfirmationLock(lockCtx, teamID, canonical.HypothesisID, func(DreamRepository) error {
 			close(secondEntered)
 			return nil
 		})

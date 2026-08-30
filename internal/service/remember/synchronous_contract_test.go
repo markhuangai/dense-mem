@@ -393,6 +393,14 @@ func TestDreamFeedbackRetryGuidanceUsesClosedAction(t *testing.T) {
 
 	value.Retryable = false
 	require.Error(t, ValidateTerminalStatusError(value))
+
+	value = TerminalStatusError(TerminalErrorNoSupportedMemory)
+	value.NextAction = string(TerminalNextActionRetryDreamFeedback)
+	value.Remediation = DreamFeedbackRetryRemediation(strings.Repeat("x", maxTerminalCorrelationIDRunes+1))
+	require.Error(t, ValidateTerminalStatusError(value))
+
+	value.Remediation = DreamFeedbackRetryRemediation("dream-feedback-retry") + " extra"
+	require.Error(t, ValidateTerminalStatusError(value))
 }
 
 func TestTerminalResultWithErrorUsesSemanticProcessingStates(t *testing.T) {

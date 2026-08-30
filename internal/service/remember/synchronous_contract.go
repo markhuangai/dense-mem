@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -158,6 +159,7 @@ const (
 	maxTerminalRelationshipSplits = 50
 	maxTerminalSupersededEvidence = 50
 	maxTerminalCorrelationIDRunes = 128
+	maxTerminalRemediationRunes   = 512
 )
 
 func TerminalErrorCodes() []string {
@@ -247,7 +249,7 @@ func ValidateTerminalStatusError(value SubmissionStatusError) error {
 	retryable, action := terminalErrorGuidance(code)
 	if value.NextAction == string(TerminalNextActionRetryDreamFeedback) {
 		if !retryable || action != TerminalNextActionResubmitRemember || !value.Retryable ||
-			!strings.HasPrefix(value.Remediation, terminalDreamFeedbackRetryRemediationPrefix) {
+			!validDreamFeedbackRetryRemediation(value.Remediation) {
 			return fmt.Errorf("remember: terminal error guidance for %q is inconsistent", code)
 		}
 	} else if value.Retryable != retryable || value.NextAction != string(action) {
@@ -267,6 +269,19 @@ const terminalDreamFeedbackRetryRemediationPrefix = "Retry resolve_dream_feedbac
 
 func DreamFeedbackRetryRemediation(idempotencyKey string) string {
 	return fmt.Sprintf("%s%q.", terminalDreamFeedbackRetryRemediationPrefix, idempotencyKey)
+}
+
+func validDreamFeedbackRetryRemediation(value string) bool {
+	if utf8.RuneCountInString(value) > maxTerminalRemediationRunes ||
+		!strings.HasPrefix(value, terminalDreamFeedbackRetryRemediationPrefix) ||
+		!strings.HasSuffix(value, ".") {
+		return false
+	}
+	quotedKey := strings.TrimSuffix(strings.TrimPrefix(value, terminalDreamFeedbackRetryRemediationPrefix), ".")
+	key, err := strconv.Unquote(quotedKey)
+	return err == nil && strings.TrimSpace(key) != "" &&
+		utf8.RuneCountInString(key) <= maxTerminalCorrelationIDRunes &&
+		DreamFeedbackRetryRemediation(key) == value
 }
 
 func terminalErrorGuidance(code TerminalErrorCode) (bool, TerminalNextAction) {

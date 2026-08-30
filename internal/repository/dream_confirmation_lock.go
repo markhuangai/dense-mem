@@ -20,7 +20,7 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 	ctx context.Context,
 	teamID string,
 	hypothesisID string,
-	fn func() error,
+	fn func(DreamRepository) error,
 ) error {
 	if r == nil || r.db == nil {
 		return errors.New("dream confirmation lock: database is required")
@@ -36,14 +36,16 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 	if fn == nil {
 		return errors.New("dream confirmation lock: callback is required")
 	}
-	canonicalID := hypothesisID
-	if record, err := r.GetHypothesis(ctx, GetHypothesisInput{TeamID: teamID, HypothesisID: hypothesisID}); err == nil {
-		canonicalID = record.HypothesisID
-	} else if !errors.Is(err, ErrDreamHypothesisNotFound) {
-		return fmt.Errorf("dream confirmation lock resolve hypothesis: %w", err)
-	}
-	key := dreamConfirmationLockPrefix + teamID + ":" + canonicalID
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		lockedRepo := *r
+		lockedRepo.db = tx
+		canonicalID := hypothesisID
+		if record, err := lockedRepo.GetHypothesis(ctx, GetHypothesisInput{TeamID: teamID, HypothesisID: hypothesisID}); err == nil {
+			canonicalID = record.HypothesisID
+		} else if !errors.Is(err, ErrDreamHypothesisNotFound) {
+			return fmt.Errorf("dream confirmation lock resolve hypothesis: %w", err)
+		}
+		key := dreamConfirmationLockPrefix + teamID + ":" + canonicalID
 		var acquired bool
 		if err := tx.WithContext(ctx).Raw("SELECT pg_try_advisory_xact_lock(hashtext(?))", key).Row().Scan(&acquired); err != nil {
 			return fmt.Errorf("dream confirmation lock acquire: %w", err)
@@ -51,6 +53,6 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 		if !acquired {
 			return ErrDreamConfirmationBusy
 		}
-		return fn()
+		return fn(&lockedRepo)
 	})
 }
