@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -151,6 +152,24 @@ func TestHypothesisConfirmationLockRejectsPoolWithoutApplicationCapacity(t *test
 	})
 	require.ErrorIs(t, err, ErrDreamConfirmationBusy)
 	require.False(t, callbackCalled)
+}
+
+func TestHypothesisConfirmationLockDiscardsFailedCleanupConnection(t *testing.T) {
+	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	sqlDB, err := appDB.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	lockConn, err := sqlDB.Conn(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, discardDreamConfirmationLockConnection(lockConn))
+	require.ErrorIs(t, lockConn.PingContext(ctx), sql.ErrConnDone)
+	require.NoError(t, sqlDB.PingContext(ctx))
 }
 
 func TestHypothesisConfirmationLockBoundsDifferentHypothesesWithinPoolBudget(t *testing.T) {

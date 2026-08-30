@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"strings"
@@ -92,8 +93,19 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 	if releaseErr == nil && !released {
 		releaseErr = errors.New("database did not release the advisory lock")
 	}
-	closeErr := lockConn.Close()
-	closed = true
+	var closeErr error
+	if releaseErr != nil {
+		closeErr = discardDreamConfirmationLockConnection(lockConn)
+		if closeErr == nil {
+			closed = true
+		} else {
+			closeErr = errors.Join(closeErr, lockConn.Close())
+			closed = true
+		}
+	} else {
+		closeErr = lockConn.Close()
+		closed = true
+	}
 	if releaseErr != nil {
 		releaseErr = fmt.Errorf("dream confirmation lock release: %w", releaseErr)
 	}
@@ -108,6 +120,22 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 		r.db.Logger.Warn(ctx, "dream confirmation lock cleanup failed", "error_class", "database_cleanup")
 	}
 	return nil
+}
+
+func discardDreamConfirmationLockConnection(lockConn *sql.Conn) error {
+	if lockConn == nil {
+		return nil
+	}
+	err := lockConn.Raw(func(any) error {
+		return driver.ErrBadConn
+	})
+	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, sql.ErrConnDone) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("dream confirmation lock discard: %w", err)
+	}
+	return errors.New("dream confirmation lock discard: connection was not discarded")
 }
 
 func (r *SemanticRepositoryImpl) acquireDreamConfirmationLockAdmission(ctx context.Context) (func(), error) {
