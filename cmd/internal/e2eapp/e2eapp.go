@@ -161,7 +161,9 @@ func diagnosticsOverride(_ context.Context, runtime serverapp.RuntimeContext, wr
 		return fmt.Errorf("e2e write slice %q factory returned nil Remember service", WriteSliceDiagnostics)
 	}
 	write.Remember = remember
-	write.RegistryOverride = terminalRememberRegistryOverride(remember)
+	write.RegistryOverride = func(_ context.Context, _ serverapp.RuntimeContext, active registry.Registry) (registry.Registry, error) {
+		return registry.WithTerminalRemember(active, remember)
+	}
 	return nil
 }
 func contractOverride(_ context.Context, runtime serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
