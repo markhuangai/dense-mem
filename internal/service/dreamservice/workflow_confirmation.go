@@ -159,12 +159,22 @@ func (s *service) resolveConfirmation(
 		s.recordDreamFeedback(ctx, decision, dream, "ok")
 		return &ResolveFeedbackResult{Dream: dream, Memory: dreamReplayRememberResult(record)}, nil
 	}
-	remember, err := s.deps.Remember.Remember(ctx, rememberapp.RememberRequest{
+	rememberRequest := rememberapp.RememberRequest{
 		Evidence:          evidence,
 		EntityHints:       req.EntityHints,
 		RelationshipHints: req.RelationshipHints,
 		IdempotencyKey:    dreamFeedbackIdempotency(req, record.HypothesisID, decision),
-	})
+	}
+	remember, err := s.deps.Remember.Remember(ctx, rememberRequest)
+	if ctx.Err() == nil && dreamLegacyReplayConflict(err) {
+		legacyEvidence, legacyErr := dreamSubmissionEvidenceWithStatus(req, record, record.Status, true)
+		if legacyErr != nil {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
+			return nil, legacyErr
+		}
+		rememberRequest.Evidence = legacyEvidence
+		remember, err = s.deps.Remember.Remember(ctx, rememberRequest)
+	}
 	if err != nil {
 		var processErr *rememberapp.RememberProcessError
 		if !errors.As(err, &processErr) || processErr.Result == nil {
@@ -192,6 +202,22 @@ func (s *service) resolveConfirmation(
 		InvalidatedReason: req.Feedback,
 	})
 	return s.feedbackResult(ctx, decision, dream, updated, remember, err)
+}
+
+func dreamLegacyReplayConflict(err error) bool {
+	if errors.Is(err, rememberapp.ErrRememberConflict) {
+		return true
+	}
+	var processErr *rememberapp.RememberProcessError
+	if !errors.As(err, &processErr) || processErr == nil || processErr.Result == nil {
+		return false
+	}
+	for _, statusErr := range processErr.Result.Errors {
+		if statusErr.Code == string(rememberapp.TerminalErrorIdempotencyConflict) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *service) submitDreamHypothesisWithRetry(

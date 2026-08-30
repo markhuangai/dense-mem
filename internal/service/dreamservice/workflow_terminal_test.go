@@ -200,6 +200,62 @@ func TestResolveFeedbackRetriesHypothesisFinalizationAfterTransientFailure(t *te
 	require.Equal(t, 2, repo.submitCalls)
 }
 
+func TestResolveFeedbackReplaysLegacyRememberForProposedHypothesis(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	ingestID := uuid.NewString()
+	repo := &dreamRepositoryStub{getRecord: repository.HypothesisRecord{
+		TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(),
+		Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
+	}}
+	remember := &sequencedRememberServiceStub{responses: []sequencedRememberResponse{
+		{err: rememberapp.ErrRememberConflict},
+		{result: &rememberapp.RememberResult{
+			IngestID: ingestID, SubmissionID: ingestID,
+			ProcessingState: string(domain.PlacementRunQueued),
+			Kind:            rememberapp.ResultKindLegacyReceipt,
+		}},
+	}}
+	svc := New(Dependencies{Store: repo, Remember: remember})
+
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID:  hypothesisID,
+		Decision: "confirm_true",
+		Feedback: "legacy feedback",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, domain.DreamStatusSubmitted, result.Dream.Status)
+	require.Equal(t, ingestID, result.Memory.IngestID)
+	require.Len(t, remember.requests, 2)
+	require.NotContains(t, remember.requests[0].Evidence[0].Metadata, "hypothesis_status_before")
+	require.Equal(t, string(domain.DreamStatusProposed), remember.requests[1].Evidence[0].Metadata["hypothesis_status_before"])
+	require.Equal(t, 1, repo.submitCalls)
+}
+
+type sequencedRememberResponse struct {
+	result *rememberapp.RememberResult
+	err    error
+}
+
+type sequencedRememberServiceStub struct {
+	requests  []rememberapp.RememberRequest
+	responses []sequencedRememberResponse
+}
+
+func (s *sequencedRememberServiceStub) Remember(_ context.Context, req rememberapp.RememberRequest) (*rememberapp.RememberResult, error) {
+	s.requests = append(s.requests, req)
+	if len(s.responses) == 0 {
+		return nil, errors.New("unexpected Remember call")
+	}
+	response := s.responses[0]
+	s.responses = s.responses[1:]
+	return response.result, response.err
+}
+
 func TestResolveFeedbackReplaysCompletedRememberResult(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
