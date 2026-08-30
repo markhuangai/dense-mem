@@ -31,9 +31,9 @@ func (s *service) resolveConfirmationWithLock(
 	req ResolveFeedbackRequest,
 ) (*ResolveFeedbackResult, error) {
 	var result *ResolveFeedbackResult
-	err := s.deps.Store.WithHypothesisConfirmationLock(ctx, teamID, dreamID, func() error {
+	err := s.deps.Store.WithHypothesisConfirmationLock(ctx, teamID, dreamID, func(store repository.DreamRepository) error {
 		var err error
-		result, err = s.resolveConfirmation(ctx, teamID, actorProfileID, dreamID, decision, req)
+		result, err = s.resolveConfirmation(ctx, store, teamID, actorProfileID, dreamID, decision, req)
 		return err
 	})
 	return result, err
@@ -41,13 +41,14 @@ func (s *service) resolveConfirmationWithLock(
 
 func (s *service) resolveConfirmation(
 	ctx context.Context,
+	store repository.DreamRepository,
 	teamID string,
 	actorProfileID string,
 	dreamID string,
 	decision string,
 	req ResolveFeedbackRequest,
 ) (*ResolveFeedbackResult, error) {
-	record, err := s.deps.Store.GetHypothesis(ctx, repository.GetHypothesisInput{
+	record, err := store.GetHypothesis(ctx, repository.GetHypothesisInput{
 		TeamID:       teamID,
 		HypothesisID: dreamID,
 	})
@@ -103,7 +104,7 @@ func (s *service) resolveConfirmation(
 		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return &ResolveFeedbackResult{Dream: dream, Memory: remember}, nil
 	}
-	updated, err := s.deps.Store.SubmitHypothesis(ctx, repository.SubmitHypothesisInput{
+	updated, err := store.SubmitHypothesis(ctx, repository.SubmitHypothesisInput{
 		TeamID:            teamID,
 		ActorProfileID:    actorProfileID,
 		HypothesisID:      dreamID,
@@ -145,7 +146,7 @@ func dreamSubmissionEvidenceWithStatus(
 		if item.Source == "" {
 			item.Source = "dream_feedback:" + record.HypothesisID
 		}
-		metadata := make(map[string]any, len(item.Metadata)+2)
+		metadata := make(map[string]any)
 		for key, value := range item.Metadata {
 			metadata[key] = value
 		}
