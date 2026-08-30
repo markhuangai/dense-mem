@@ -49,7 +49,7 @@ func (s *service) resolveConfirmationWithLock(
 		return err
 	})
 	if errors.Is(err, repository.ErrDreamConfirmationBusy) {
-		return nil, &ConfirmationBusyError{}
+		return nil, &ConfirmationBusyError{Decision: decision}
 	}
 	return result, err
 }
@@ -69,7 +69,7 @@ func (s *service) resolveLifecycleFeedbackWithLock(
 		return err
 	})
 	if errors.Is(err, repository.ErrDreamConfirmationBusy) {
-		return nil, &ConfirmationBusyError{}
+		return nil, &ConfirmationBusyError{Decision: decision}
 	}
 	return result, err
 }

@@ -131,6 +131,28 @@ func TestResolveDreamFeedbackReturnsStructuredBusyRetry(t *testing.T) {
 	require.NoError(t, ValidateInput(Tool{InputSchema: dreamConfirmationBusyOutputSchema()}, structured.Result))
 }
 
+func TestResolveDreamFeedbackReturnsLifecycleCompatibleBusyRetry(t *testing.T) {
+	reg, err := BuildActive(Dependencies{Dreams: &stubDreamService{
+		resolveErr: &dreamservice.ConfirmationBusyError{Decision: "reject"},
+	}})
+	require.NoError(t, err)
+	tool, ok := reg.Get(ToolResolveDreamFeedback)
+	require.True(t, ok)
+
+	_, err = tool.Invoke(contractInvokeContext("write"), "profile-dream", map[string]any{
+		"hypothesis_id": "dream-1", "decision": "reject", "reason": "no longer useful",
+	})
+	structured, ok := ToolResultFromError(err)
+	require.True(t, ok)
+	require.Equal(t, "dream_confirmation_busy", structured.Result["code"])
+	require.Equal(t, "dream lifecycle feedback is already in progress", structured.Result["message"])
+	require.Equal(t, string(rememberapp.TerminalNextActionRetryDreamFeedback), structured.Result["next_action"])
+	require.NotContains(t, structured.Result["remediation"], "same evidence")
+	require.Contains(t, structured.Result["remediation"], "omit idempotency_key")
+	require.Contains(t, structured.Result["remediation"], "same decision and reason")
+	require.NoError(t, ValidateInput(Tool{InputSchema: dreamConfirmationBusyOutputSchema()}, structured.Result))
+}
+
 func TestBuildActiveDreamToolsInvokeAndValidate(t *testing.T) {
 	dreams := &stubDreamService{}
 	reg, err := BuildActive(Dependencies{Dreams: dreams})

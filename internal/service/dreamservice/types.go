@@ -26,17 +26,26 @@ var (
 	ErrInvalidDreamStatus = errors.New("invalid dream status")
 )
 
-// ConfirmationBusyError reports that another confirmation currently owns the
-// Hypothesis admission slot. The MCP registry translates it into bounded
-// retry guidance without exposing repository details.
-type ConfirmationBusyError struct{}
+// ConfirmationBusyError reports that another Dream feedback operation
+// currently owns the Hypothesis admission slot. The MCP registry translates it
+// into bounded retry guidance without exposing repository details.
+type ConfirmationBusyError struct {
+	Decision string
+}
 
 func (e *ConfirmationBusyError) Error() string {
+	if e.IsLifecycle() {
+		return "dream lifecycle feedback is already in progress"
+	}
 	return "dream confirmation is already in progress"
 }
 
 func (e *ConfirmationBusyError) Unwrap() error {
 	return repository.ErrDreamConfirmationBusy
+}
+
+func (e *ConfirmationBusyError) IsLifecycle() bool {
+	return e != nil && isDreamLifecycleDecision(e.Decision)
 }
 
 type AppConfig interface {

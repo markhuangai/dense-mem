@@ -518,12 +518,18 @@ func resolveDreamConfirmationBusyOutcome(err error) (map[string]any, bool) {
 	if !errors.As(err, &busy) || busy == nil {
 		return nil, false
 	}
+	message := "dream confirmation is already in progress"
+	remediation := "Retry resolve_dream_feedback with the same evidence and idempotency_key after the in-progress confirmation completes."
+	if busy.IsLifecycle() {
+		message = "dream lifecycle feedback is already in progress"
+		remediation = "Retry resolve_dream_feedback with the same decision and reason after the in-progress lifecycle update completes; omit idempotency_key."
+	}
 	return map[string]any{
 		"code":        "dream_confirmation_busy",
-		"message":     "dream confirmation is already in progress",
+		"message":     message,
 		"retryable":   true,
 		"next_action": string(rememberapp.TerminalNextActionRetryDreamFeedback),
-		"remediation": "Retry resolve_dream_feedback with the same evidence and idempotency_key after the in-progress confirmation completes.",
+		"remediation": remediation,
 	}, true
 }
 
