@@ -511,6 +511,18 @@ func resolveDreamFeedbackContractOutput(res *dreamservice.ResolveFeedbackResult)
 	return out
 }
 
+func resolveDreamTerminalFailureOutput(res *dreamservice.ResolveFeedbackResult) (map[string]any, bool, error) {
+	if res == nil || res.Memory == nil || res.Memory.Terminal == nil ||
+		res.Memory.Terminal.ProcessingState != "failed" {
+		return nil, false, nil
+	}
+	output, err := structToMap(res.Memory.Terminal)
+	if err != nil {
+		return nil, false, err
+	}
+	return output, true, nil
+}
+
 func exportMemoryPackContractOutput(res *skillpackservice.ExportResult) map[string]any {
 	if res == nil {
 		return map[string]any{

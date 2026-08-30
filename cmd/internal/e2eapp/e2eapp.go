@@ -154,6 +154,7 @@ func dreamOverride(_ context.Context, _ serverapp.RuntimeContext, write *servera
 		return fmt.Errorf("e2e write slice %q factory returned nil Remember service", WriteSliceDream)
 	}
 	write.Remember = remember
+	write.RegistryOverride = terminalRememberRegistryOverride(remember)
 	return nil
 }
 func reconciliationOverride(_ context.Context, _ serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {

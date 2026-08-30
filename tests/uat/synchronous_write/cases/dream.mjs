@@ -71,9 +71,15 @@ export async function run({ rpc, rawRPC, expect }) {
   expect(hypothesisRow(teamID, scenarios.quarantined.hypothesisID).status === "proposed", "quarantined confirmation must not advance Dream state");
   expect(attemptRow(teamID, scenarios.quarantined.idempotencyKey).outcome === "quarantined", "quarantined confirmation must persist a quarantined terminal attempt");
 
-  const failed = await resolve(rpc, scenarios.failed, expect);
-  expect(failed.status === "proposed", "operational Remember failure must leave the Hypothesis reviewable");
-  requireString(failed.submission_id, "failed submission ID");
+  const failedResponse = await rawRPC("tools/call", {
+    name: "resolve_dream_feedback",
+    arguments: resolveArguments(scenarios.failed),
+  });
+  expect(failedResponse.result?.isError === true, "operational Remember failure must be a structured tool error");
+  const failed = failedResponse.result?.structuredContent;
+  expect(failed?.processing_state === "failed", "operational Remember failure must expose terminal state");
+  expect(Array.isArray(failed?.errors) && failed.errors.length > 0, "operational Remember failure must expose typed errors");
+  requireString(failed?.submission_id, "failed submission ID");
   expect(hypothesisRow(teamID, scenarios.failed.hypothesisID).status === "proposed", "operational failure must not advance Dream state");
   expect(attemptRow(teamID, scenarios.failed.idempotencyKey).outcome === "failed", "operational failure must persist a failed terminal attempt");
   const failedAttemptCount = attemptRow(teamID, scenarios.failed.idempotencyKey).count;
@@ -147,14 +153,18 @@ function makeScenarios() {
 }
 
 async function resolve(rpc, scenario, expect) {
-  const result = await toolSuccess(rpc, "resolve_dream_feedback", {
+  const result = await toolSuccess(rpc, "resolve_dream_feedback", resolveArguments(scenario));
+  expect(result.hypothesis_id === scenario.hypothesisID, "Dream feedback must return the requested Hypothesis");
+  return result;
+}
+
+function resolveArguments(scenario) {
+  return {
     hypothesis_id: scenario.hypothesisID,
     decision: "confirm_true",
     evidence: [{ content: scenario.evidence, source_type: "manual", source: `dream-feedback-${scenario.hypothesisID}` }],
     relationships: [dreamRelationship(scenario)],
-  });
-  expect(result.hypothesis_id === scenario.hypothesisID, "Dream feedback must return the requested Hypothesis");
-  return result;
+  };
 }
 
 function dreamRelationship(scenario) {

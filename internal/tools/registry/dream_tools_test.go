@@ -4,8 +4,47 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	"github.com/stretchr/testify/require"
 )
+
+func TestResolveDreamFeedbackReturnsStructuredTerminalFailure(t *testing.T) {
+	dreams := &stubDreamService{resolveResult: &dreamservice.ResolveFeedbackResult{
+		Dream: stubDream("profile-dream"),
+		Memory: &rememberapp.RememberResult{Terminal: &rememberapp.TerminalRememberResult{
+			ContractVersion: domain.ContractVersion, SubmissionID: uuid.NewString(), SubmissionKind: "remember",
+			ProcessingState: string(rememberapp.TerminalProcessingFailed), SearchState: string(rememberapp.TerminalSearchNotRequired),
+			CorrelationID: "terminal-failure", Evidence: []rememberapp.TerminalEvidenceResult{},
+			RelationshipResults: []rememberapp.SubmissionRelationshipResult{},
+			Errors:              []rememberapp.SubmissionStatusError{rememberapp.StatusError(rememberapp.SubmissionErrorProviderUnavailable)},
+		}},
+	}}
+	reg, err := BuildActive(Dependencies{Dreams: dreams})
+	require.NoError(t, err)
+	tool, ok := reg.Get(ToolResolveDreamFeedback)
+	require.True(t, ok)
+
+	_, err = tool.Invoke(contractInvokeContext("write"), "profile-dream", map[string]any{
+		"hypothesis_id": "dream-1", "decision": "confirm_true",
+		"evidence": []any{map[string]any{"content": "independent evidence"}},
+		"relationships": []any{map[string]any{
+			"ref": "r-1", "subject": map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
+			"predicate": map[string]any{"proposed_key": "uses"},
+			"object":    map[string]any{"entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}},
+			"polarity":  "+", "modality": "statement", "evidence_indices": []any{0},
+		}},
+	})
+	structured, ok := ToolResultFromError(err)
+	require.True(t, ok)
+	require.Equal(t, "failed", structured.Result["processing_state"])
+	require.Equal(t, "terminal-failure", structured.Result["correlation_id"])
+	errors, ok := structured.Result["errors"].([]any)
+	require.True(t, ok)
+	require.Len(t, errors, 1)
+}
 
 func TestBuildActiveDreamToolsInvokeAndValidate(t *testing.T) {
 	dreams := &stubDreamService{}

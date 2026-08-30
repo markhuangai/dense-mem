@@ -377,6 +377,30 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	}))
 	assert.Equal(t, eventsAfterFirst, eventsAfterReplay)
 
+	differentSubmission := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"dream-submit-different-ingest", "A different committed ingest must not replace the first.")
+	_, err = semanticRepo.SubmitHypothesis(ctx, SubmitHypothesisInput{
+		TeamID:            teamID,
+		ActorProfileID:    ownerID,
+		HypothesisID:      record.HypothesisID,
+		Decision:          "confirm_true",
+		SubmittedIngestID: differentSubmission.IngestID,
+	})
+	require.ErrorIs(t, err, ErrDreamHypothesisNotFound)
+	unchanged, err := semanticRepo.GetHypothesis(ctx, GetHypothesisInput{TeamID: teamID, HypothesisID: record.HypothesisID})
+	require.NoError(t, err)
+	assert.Equal(t, submissionIngest.IngestID, unchanged.SubmittedIngestID)
+	assert.Equal(t, *firstSubmitted.SubmittedAt, *unchanged.SubmittedAt)
+	var eventsAfterDifferent int
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM hypothesis_feedback_events
+			WHERE team_id = ?::uuid AND hypothesis_id = ?::uuid
+		`, teamID, record.HypothesisID).Scan(&eventsAfterDifferent).Error
+	}))
+	assert.Equal(t, eventsAfterReplay, eventsAfterDifferent)
+
 	legacySubmission := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
 		"dream-migrated-submit", "Independent evidence for a migrated Dream.")
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {

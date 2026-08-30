@@ -145,6 +145,11 @@ func TestDiagnosticsOverrideInstallsTerminalRememberRuntime(t *testing.T) {
 
 func TestDreamOverrideInstallsSynchronousRemember(t *testing.T) {
 	active := registry.New()
+	require.NoError(t, active.Register(registry.Tool{
+		Name:         registry.ToolRemember,
+		InputSchema:  map[string]any{"type": "object"},
+		OutputSchema: map[string]any{"type": "object", "properties": map[string]any{"status_tool": map[string]any{"type": "string"}}, "additionalProperties": false},
+	}))
 	registryOverride := registryOverrideForSlice(WriteSliceDream)
 	factoryCalls := 0
 	write := &serverapp.WriteRuntime{
@@ -159,7 +164,11 @@ func TestDreamOverrideInstallsSynchronousRemember(t *testing.T) {
 	require.NotNil(t, write.RegistryOverride)
 	selected, err := write.RegistryOverride(context.Background(), serverapp.RuntimeContext{}, active)
 	require.NoError(t, err)
-	require.Same(t, active, selected)
+	replacement, ok := selected.Get(registry.ToolRemember)
+	require.True(t, ok)
+	original, ok := active.Get(registry.ToolRemember)
+	require.True(t, ok)
+	require.NotEqual(t, original.OutputSchema, replacement.OutputSchema)
 }
 
 func TestRememberOverridePreservesEveryNonRememberTool(t *testing.T) {

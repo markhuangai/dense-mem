@@ -341,6 +341,11 @@ func contractTools(deps Dependencies) []Tool {
 				if err != nil {
 					return nil, err
 				}
+				if failure, ok, err := resolveDreamTerminalFailureOutput(res); err != nil {
+					return nil, fmt.Errorf("resolve_dream_feedback: terminal result serialization failed")
+				} else if ok {
+					return nil, NewToolResultError(failure)
+				}
 				return resolveDreamFeedbackContractOutput(res), nil
 			}
 		case ToolExportMemoryPack:

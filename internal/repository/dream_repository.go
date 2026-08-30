@@ -768,9 +768,9 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 				        AND space_generation = dense_mem_team_shared_generation(team_id)
 				        AND hypothesis_id = ?::uuid
 			  ), ?::uuid)
-			  AND NOT (status = 'submitted' AND submitted_ingest_id IS NOT NULL AND submitted_ingest_id = ?::uuid)
+			  AND NOT (status = 'submitted' AND submitted_ingest_id IS NOT NULL)
 		`), input.SubmittedIngestID, input.InvalidatedReason, input.InvalidatedReason,
-			input.TeamID, input.TeamID, input.HypothesisID, input.HypothesisID, input.SubmittedIngestID).Rows()
+			input.TeamID, input.TeamID, input.HypothesisID, input.HypothesisID).Rows()
 		if err != nil {
 			return err
 		}
