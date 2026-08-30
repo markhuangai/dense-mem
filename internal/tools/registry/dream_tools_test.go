@@ -194,14 +194,15 @@ func TestBuildActiveDreamToolsInvokeAndValidate(t *testing.T) {
 		}
 	}
 	resolveOut, err := resolveTool.Invoke(ctx, "profile-dream", map[string]any{
-		"hypothesis_id": "dream-1",
-		"decision":      "reinforce",
-		"reason":        "prior conversation still makes this useful",
+		"hypothesis_id":   "dream-1",
+		"decision":        "reinforce",
+		"reason":          "prior conversation still makes this useful",
+		"idempotency_key": "dream-retry-key",
 	})
 	if err != nil {
 		t.Fatalf("resolve_dream_feedback Invoke: %v", err)
 	}
-	if resolveOut["hypothesis_id"] != "dream-1" || dreams.lastResolveReq.Decision != "reinforce" || dreams.lastResolveReq.Feedback != "prior conversation still makes this useful" {
+	if resolveOut["hypothesis_id"] != "dream-1" || dreams.lastResolveReq.Decision != "reinforce" || dreams.lastResolveReq.Feedback != "prior conversation still makes this useful" || dreams.lastResolveReq.IdempotencyKey != "dream-retry-key" {
 		t.Fatalf("resolve_dream_feedback output = %v request = %+v", resolveOut, dreams.lastResolveReq)
 	}
 }
