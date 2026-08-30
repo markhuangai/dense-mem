@@ -16,6 +16,7 @@ import (
 const (
 	dreamConfirmationLockPrefix         = "dream-confirmation:"
 	dreamConfirmationLockCleanupTimeout = 5 * time.Second
+	dreamConfirmationLockFallbackLimit  = 1
 )
 
 var ErrDreamConfirmationBusy = errors.New("dream confirmation is already in progress")
@@ -44,6 +45,11 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 	if fn == nil {
 		return errors.New("dream confirmation lock: callback is required")
 	}
+	releaseAdmission, err := r.acquireDreamConfirmationLockAdmission(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseAdmission()
 	canonicalID := hypothesisID
 	if record, err := r.GetHypothesis(ctx, GetHypothesisInput{TeamID: teamID, HypothesisID: hypothesisID}); err == nil {
 		if strings.TrimSpace(record.HypothesisID) != "" {
@@ -100,6 +106,35 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 		return errors.Join(callbackErr, cleanupErr)
 	}
 	return cleanupErr
+}
+
+func (r *SemanticRepositoryImpl) acquireDreamConfirmationLockAdmission(ctx context.Context) (func(), error) {
+	r.dreamConfirmationLockAdmissionOnce.Do(func() {
+		limit := dreamConfirmationLockFallbackLimit
+		if sqlDB, err := r.db.DB(); err == nil {
+			if configured := sqlDB.Stats().MaxOpenConnections; configured > 0 {
+				limit = configured
+			}
+		} else {
+			r.dreamConfirmationLockAdmissionErr = fmt.Errorf("dream confirmation lock: inspect application pool: %w", err)
+			return
+		}
+		r.dreamConfirmationLockAdmission = make(chan struct{}, limit)
+	})
+	if r.dreamConfirmationLockAdmissionErr != nil {
+		return nil, r.dreamConfirmationLockAdmissionErr
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	select {
+	case r.dreamConfirmationLockAdmission <- struct{}{}:
+		return func() { <-r.dreamConfirmationLockAdmission }, nil
+	default:
+		return nil, ErrDreamConfirmationBusy
+	}
 }
 
 func (r *SemanticRepositoryImpl) openDreamConfirmationLockConnection(ctx context.Context) (*sql.Conn, *sql.DB, error) {

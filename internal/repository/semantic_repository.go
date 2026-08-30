@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -21,6 +22,10 @@ var ErrSemanticIdentityAlias = errors.New("semantic relationship is a legacy ide
 type SemanticRepositoryImpl struct {
 	db  *gorm.DB
 	rls rLSHelper
+
+	dreamConfirmationLockAdmissionOnce sync.Once
+	dreamConfirmationLockAdmission     chan struct{}
+	dreamConfirmationLockAdmissionErr  error
 }
 
 var _ SemanticRepository = (*SemanticRepositoryImpl)(nil)
