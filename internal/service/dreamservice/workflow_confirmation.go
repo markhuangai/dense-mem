@@ -31,9 +31,9 @@ func (s *service) resolveConfirmationWithLock(
 	req ResolveFeedbackRequest,
 ) (*ResolveFeedbackResult, error) {
 	var result *ResolveFeedbackResult
-	err := s.deps.Store.WithHypothesisConfirmationLock(ctx, teamID, dreamID, func(store repository.DreamRepository) error {
+	err := s.deps.Store.WithHypothesisConfirmationLock(ctx, teamID, dreamID, func() error {
 		var err error
-		result, err = s.resolveConfirmation(ctx, store, teamID, actorProfileID, dreamID, decision, req)
+		result, err = s.resolveConfirmation(ctx, teamID, actorProfileID, dreamID, decision, req)
 		return err
 	})
 	return result, err
@@ -41,14 +41,13 @@ func (s *service) resolveConfirmationWithLock(
 
 func (s *service) resolveConfirmation(
 	ctx context.Context,
-	store repository.DreamRepository,
 	teamID string,
 	actorProfileID string,
 	dreamID string,
 	decision string,
 	req ResolveFeedbackRequest,
 ) (*ResolveFeedbackResult, error) {
-	record, err := store.GetHypothesis(ctx, repository.GetHypothesisInput{
+	record, err := s.deps.Store.GetHypothesis(ctx, repository.GetHypothesisInput{
 		TeamID:       teamID,
 		HypothesisID: dreamID,
 	})
@@ -104,7 +103,7 @@ func (s *service) resolveConfirmation(
 		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return &ResolveFeedbackResult{Dream: dream, Memory: remember}, nil
 	}
-	updated, err := store.SubmitHypothesis(ctx, repository.SubmitHypothesisInput{
+	updated, err := s.deps.Store.SubmitHypothesis(ctx, repository.SubmitHypothesisInput{
 		TeamID:            teamID,
 		ActorProfileID:    actorProfileID,
 		HypothesisID:      dreamID,
@@ -226,9 +225,8 @@ func applyDreamTerminalRetryGuidance(result *rememberapp.RememberResult, dreamID
 		if result.Terminal.Errors[index].NextAction != string(rememberapp.TerminalNextActionResubmitRemember) {
 			continue
 		}
-		result.Terminal.Errors[index].Remediation = fmt.Sprintf(
-			"Retry resolve_dream_feedback with corrected evidence and idempotency_key %q.", retryKey,
-		)
+		result.Terminal.Errors[index].NextAction = string(rememberapp.TerminalNextActionRetryDreamFeedback)
+		result.Terminal.Errors[index].Remediation = rememberapp.DreamFeedbackRetryRemediation(retryKey)
 	}
 }
 

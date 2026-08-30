@@ -171,16 +171,18 @@ func TerminalErrorCodes() []string {
 type TerminalNextAction string
 
 const (
-	TerminalNextActionRetrySameRequest TerminalNextAction = "retry_same_request"
-	TerminalNextActionResubmitRemember TerminalNextAction = "resubmit_remember"
-	TerminalNextActionRetryCorrection  TerminalNextAction = "retry_correction"
-	TerminalNextActionContactOperator  TerminalNextAction = "contact_operator"
-	TerminalNextActionNone             TerminalNextAction = "none"
+	TerminalNextActionRetrySameRequest   TerminalNextAction = "retry_same_request"
+	TerminalNextActionResubmitRemember   TerminalNextAction = "resubmit_remember"
+	TerminalNextActionRetryDreamFeedback TerminalNextAction = "retry_dream_feedback"
+	TerminalNextActionRetryCorrection    TerminalNextAction = "retry_correction"
+	TerminalNextActionContactOperator    TerminalNextAction = "contact_operator"
+	TerminalNextActionNone               TerminalNextAction = "none"
 )
 
 var terminalNextActions = []TerminalNextAction{
 	TerminalNextActionRetrySameRequest,
 	TerminalNextActionResubmitRemember,
+	TerminalNextActionRetryDreamFeedback,
 	TerminalNextActionRetryCorrection,
 	TerminalNextActionContactOperator,
 	TerminalNextActionNone,
@@ -243,17 +245,28 @@ func ValidateTerminalStatusError(value SubmissionStatusError) error {
 		return fmt.Errorf("remember: terminal next action %q is not allowed", value.NextAction)
 	}
 	retryable, action := terminalErrorGuidance(code)
-	if value.Retryable != retryable || value.NextAction != string(action) {
+	if value.NextAction == string(TerminalNextActionRetryDreamFeedback) {
+		if !retryable || action != TerminalNextActionResubmitRemember || !value.Retryable ||
+			!strings.HasPrefix(value.Remediation, terminalDreamFeedbackRetryRemediationPrefix) {
+			return fmt.Errorf("remember: terminal error guidance for %q is inconsistent", code)
+		}
+	} else if value.Retryable != retryable || value.NextAction != string(action) {
 		return fmt.Errorf("remember: terminal error guidance for %q is inconsistent", code)
 	}
 	canonical := TerminalStatusError(code)
 	if value.Message != canonical.Message {
 		return fmt.Errorf("remember: terminal error message for %q is not canonical", code)
 	}
-	if value.Remediation != canonical.Remediation {
+	if value.NextAction != string(TerminalNextActionRetryDreamFeedback) && value.Remediation != canonical.Remediation {
 		return fmt.Errorf("remember: terminal error remediation for %q is not canonical", code)
 	}
 	return nil
+}
+
+const terminalDreamFeedbackRetryRemediationPrefix = "Retry resolve_dream_feedback with corrected evidence and idempotency_key "
+
+func DreamFeedbackRetryRemediation(idempotencyKey string) string {
+	return fmt.Sprintf("%s%q.", terminalDreamFeedbackRetryRemediationPrefix, idempotencyKey)
 }
 
 func terminalErrorGuidance(code TerminalErrorCode) (bool, TerminalNextAction) {

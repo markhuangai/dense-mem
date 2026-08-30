@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -13,13 +12,15 @@ import (
 
 const dreamConfirmationLockPrefix = "dream-confirmation:"
 
-// WithHypothesisConfirmationLock serializes confirmation workflows for one
-// team-owned Hypothesis without holding the semantic transaction over provider work.
+var ErrDreamConfirmationBusy = errors.New("dream confirmation is already in progress")
+
+// WithHypothesisConfirmationLock admits one confirmation workflow for a
+// team-owned Hypothesis without retaining pooled connections for lock waiters.
 func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 	ctx context.Context,
 	teamID string,
 	hypothesisID string,
-	fn func(DreamRepository) error,
+	fn func() error,
 ) error {
 	if r == nil || r.db == nil {
 		return errors.New("dream confirmation lock: database is required")
@@ -35,27 +36,21 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 	if fn == nil {
 		return errors.New("dream confirmation lock: callback is required")
 	}
-	key := dreamConfirmationLockPrefix + teamID + ":" + hypothesisID
-	return r.db.WithContext(ctx).Connection(func(conn *gorm.DB) error {
-		lockedRepo := *r
-		lockedRepo.db = conn
-		canonicalID := hypothesisID
-		if record, err := lockedRepo.GetHypothesis(ctx, GetHypothesisInput{TeamID: teamID, HypothesisID: hypothesisID}); err == nil {
-			canonicalID = record.HypothesisID
-		} else if !errors.Is(err, ErrDreamHypothesisNotFound) {
-			return fmt.Errorf("dream confirmation lock resolve hypothesis: %w", err)
-		}
-		key = dreamConfirmationLockPrefix + teamID + ":" + canonicalID
-		if err := conn.WithContext(ctx).Exec("SELECT pg_advisory_lock(hashtext(?))", key).Error; err != nil {
+	canonicalID := hypothesisID
+	if record, err := r.GetHypothesis(ctx, GetHypothesisInput{TeamID: teamID, HypothesisID: hypothesisID}); err == nil {
+		canonicalID = record.HypothesisID
+	} else if !errors.Is(err, ErrDreamHypothesisNotFound) {
+		return fmt.Errorf("dream confirmation lock resolve hypothesis: %w", err)
+	}
+	key := dreamConfirmationLockPrefix + teamID + ":" + canonicalID
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var acquired bool
+		if err := tx.WithContext(ctx).Raw("SELECT pg_try_advisory_xact_lock(hashtext(?))", key).Row().Scan(&acquired); err != nil {
 			return fmt.Errorf("dream confirmation lock acquire: %w", err)
 		}
-		callbackErr := fn(&lockedRepo)
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		unlockErr := conn.WithContext(cleanupCtx).Exec("SELECT pg_advisory_unlock(hashtext(?))", key).Error
-		if unlockErr != nil {
-			unlockErr = fmt.Errorf("dream confirmation lock release: %w", unlockErr)
+		if !acquired {
+			return ErrDreamConfirmationBusy
 		}
-		return errors.Join(callbackErr, unlockErr)
+		return fn()
 	})
 }

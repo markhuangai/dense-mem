@@ -89,6 +89,7 @@ func TestTerminalNextActionsAreClosedAndCopied(t *testing.T) {
 	require.Equal(t, []string{
 		string(TerminalNextActionRetrySameRequest),
 		string(TerminalNextActionResubmitRemember),
+		string(TerminalNextActionRetryDreamFeedback),
 		string(TerminalNextActionRetryCorrection),
 		string(TerminalNextActionContactOperator),
 		string(TerminalNextActionNone),
@@ -382,6 +383,16 @@ func TestValidateTerminalStatusErrorRejectsMalformedOutput(t *testing.T) {
 			require.Error(t, ValidateTerminalStatusError(value))
 		})
 	}
+}
+
+func TestDreamFeedbackRetryGuidanceUsesClosedAction(t *testing.T) {
+	value := TerminalStatusError(TerminalErrorNoSupportedMemory)
+	value.NextAction = string(TerminalNextActionRetryDreamFeedback)
+	value.Remediation = DreamFeedbackRetryRemediation("dream-feedback-retry")
+	require.NoError(t, ValidateTerminalStatusError(value))
+
+	value.Retryable = false
+	require.Error(t, ValidateTerminalStatusError(value))
 }
 
 func TestTerminalResultWithErrorUsesSemanticProcessingStates(t *testing.T) {

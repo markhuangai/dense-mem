@@ -207,10 +207,10 @@ func (s *dreamRepositoryStub) GetHypothesis(context.Context, repository.GetHypot
 	return &record, nil
 }
 
-func (s *dreamRepositoryStub) WithHypothesisConfirmationLock(_ context.Context, _, _ string, fn func(repository.DreamRepository) error) error {
+func (s *dreamRepositoryStub) WithHypothesisConfirmationLock(_ context.Context, _, _ string, fn func() error) error {
 	s.confirmationLock.Lock()
 	defer s.confirmationLock.Unlock()
-	return fn(s)
+	return fn()
 }
 
 func (s *dreamRepositoryStub) RecallHypotheses(context.Context, repository.RecallHypothesesInput) ([]repository.HypothesisRecord, error) {

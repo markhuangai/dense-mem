@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -11,7 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestHypothesisConfirmationLockSerializesCallbacks(t *testing.T) {
+func TestHypothesisConfirmationLockAdmitsOneCallback(t *testing.T) {
 	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
@@ -22,12 +21,11 @@ func TestHypothesisConfirmationLockSerializesCallbacks(t *testing.T) {
 	defer cancel()
 	firstEntered := make(chan struct{})
 	releaseFirst := make(chan struct{})
-	secondEntered := make(chan struct{})
 	firstErr := make(chan error, 1)
 	secondErr := make(chan error, 1)
 
 	go func() {
-		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(DreamRepository) error {
+		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func() error {
 			close(firstEntered)
 			<-releaseFirst
 			return nil
@@ -40,25 +38,19 @@ func TestHypothesisConfirmationLockSerializesCallbacks(t *testing.T) {
 	}
 
 	go func() {
-		secondErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(DreamRepository) error {
-			close(secondEntered)
+		secondErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func() error {
 			return nil
 		})
 	}()
 	select {
-	case <-secondEntered:
-		t.Fatal("second confirmation callback ran before the first released the lock")
-	case <-time.After(100 * time.Millisecond):
+	case err := <-secondErr:
+		require.ErrorIs(t, err, ErrDreamConfirmationBusy)
+	case <-time.After(5 * time.Second):
+		t.Fatal("second confirmation lock admission did not return while the first held the lock")
 	}
 	close(releaseFirst)
 
 	require.NoError(t, <-firstErr)
-	select {
-	case <-secondEntered:
-	case <-ctx.Done():
-		t.Fatal("second confirmation lock callback did not run after release")
-	}
-	require.NoError(t, <-secondErr)
 }
 
 func TestHypothesisConfirmationLockReleasesAfterContextCancellation(t *testing.T) {
@@ -72,7 +64,7 @@ func TestHypothesisConfirmationLockReleasesAfterContextCancellation(t *testing.T
 	entered := make(chan struct{})
 	firstErr := make(chan error, 1)
 	go func() {
-		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(DreamRepository) error {
+		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func() error {
 			close(entered)
 			cancel()
 			return context.Canceled
@@ -89,7 +81,7 @@ func TestHypothesisConfirmationLockReleasesAfterContextCancellation(t *testing.T
 	defer followupCancel()
 	followupErr := make(chan error, 1)
 	go func() {
-		followupErr <- repo.WithHypothesisConfirmationLock(followupCtx, teamID, hypothesisID, func(DreamRepository) error {
+		followupErr <- repo.WithHypothesisConfirmationLock(followupCtx, teamID, hypothesisID, func() error {
 			return nil
 		})
 	}()
@@ -114,23 +106,15 @@ func TestHypothesisConfirmationLockCallbacksReuseReservedConnection(t *testing.T
 	secondEntered := make(chan struct{})
 	firstErr := make(chan error, 1)
 	secondErr := make(chan error, 1)
-	callback := func(ready chan<- struct{}, release <-chan struct{}, store DreamRepository, entered chan<- struct{}) error {
-		_, err := store.GetHypothesis(ctx, GetHypothesisInput{TeamID: teamID, HypothesisID: hypothesisID})
-		if !errors.Is(err, ErrDreamHypothesisNotFound) {
-			return err
-		}
-		close(ready)
-		if release != nil {
-			<-release
-		}
-		if entered != nil {
-			close(entered)
-		}
-		return nil
-	}
 	go func() {
-		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(store DreamRepository) error {
-			return callback(firstReady, releaseFirst, store, nil)
+		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func() error {
+			var value int
+			if err := appDB.WithContext(ctx).Raw("SELECT 1").Scan(&value).Error; err != nil {
+				return err
+			}
+			close(firstReady)
+			<-releaseFirst
+			return nil
 		})
 	}()
 	select {
@@ -139,23 +123,25 @@ func TestHypothesisConfirmationLockCallbacksReuseReservedConnection(t *testing.T
 		t.Fatal("first confirmation callback did not reach its database operation")
 	}
 	go func() {
-		secondErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(store DreamRepository) error {
-			return callback(make(chan struct{}), nil, store, secondEntered)
+		secondErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func() error {
+			close(secondEntered)
+			return nil
 		})
 	}()
 	select {
 	case <-secondEntered:
-		t.Fatal("second confirmation callback ran before the first released the lock")
-	case <-time.After(100 * time.Millisecond):
+	case err := <-secondErr:
+		require.ErrorIs(t, err, ErrDreamConfirmationBusy)
+	case <-ctx.Done():
+		t.Fatal("second confirmation lock admission did not return while the first held the lock")
 	}
 	close(releaseFirst)
 	require.NoError(t, <-firstErr)
 	select {
 	case <-secondEntered:
-	case <-ctx.Done():
-		t.Fatal("second confirmation callback did not run after the first released the lock")
+		t.Fatal("second confirmation callback ran while the first held the lock")
+	default:
 	}
-	require.NoError(t, <-secondErr)
 }
 
 func TestHypothesisConfirmationLockUsesCanonicalAlias(t *testing.T) {
@@ -213,7 +199,7 @@ func TestHypothesisConfirmationLockUsesCanonicalAlias(t *testing.T) {
 	firstErr := make(chan error, 1)
 	secondErr := make(chan error, 1)
 	go func() {
-		firstErr <- semanticRepo.WithHypothesisConfirmationLock(lockCtx, teamID, aliasID, func(DreamRepository) error {
+		firstErr <- semanticRepo.WithHypothesisConfirmationLock(lockCtx, teamID, aliasID, func() error {
 			close(firstEntered)
 			<-releaseFirst
 			return nil
@@ -225,7 +211,7 @@ func TestHypothesisConfirmationLockUsesCanonicalAlias(t *testing.T) {
 		t.Fatal("alias confirmation lock callback did not start")
 	}
 	go func() {
-		secondErr <- semanticRepo.WithHypothesisConfirmationLock(lockCtx, teamID, canonical.HypothesisID, func(DreamRepository) error {
+		secondErr <- semanticRepo.WithHypothesisConfirmationLock(lockCtx, teamID, canonical.HypothesisID, func() error {
 			close(secondEntered)
 			return nil
 		})
@@ -233,14 +219,16 @@ func TestHypothesisConfirmationLockUsesCanonicalAlias(t *testing.T) {
 	select {
 	case <-secondEntered:
 		t.Fatal("canonical confirmation callback ran while alias callback held the lock")
-	case <-time.After(100 * time.Millisecond):
+	case err := <-secondErr:
+		require.ErrorIs(t, err, ErrDreamConfirmationBusy)
+	case <-time.After(5 * time.Second):
+		t.Fatal("canonical confirmation lock admission did not return while alias lock was held")
 	}
 	close(releaseFirst)
 	require.NoError(t, <-firstErr)
 	select {
 	case <-secondEntered:
-	case <-lockCtx.Done():
-		t.Fatal("canonical confirmation callback did not run after alias lock release")
+		t.Fatal("canonical confirmation callback ran while alias lock was held")
+	default:
 	}
-	require.NoError(t, <-secondErr)
 }

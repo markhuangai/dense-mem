@@ -250,6 +250,7 @@ func TestResolveFeedbackAddsDreamRetryIdentityToTerminalResubmission(t *testing.
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result.Memory)
+	require.Equal(t, string(rememberapp.TerminalNextActionRetryDreamFeedback), result.Memory.Terminal.Errors[0].NextAction)
 	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, "resolve_dream_feedback")
 	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, "idempotency_key")
 	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, attemptID)
