@@ -10,14 +10,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	gormpostgres "gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
 const (
 	dreamConfirmationLockPrefix         = "dream-confirmation:"
 	dreamConfirmationLockCleanupTimeout = 5 * time.Second
-	// Keep a small dedicated session budget; the application pool cannot share its sessions across provider work.
+	// Keep a small session budget so provider work cannot exhaust the application pool.
 	dreamConfirmationLockAdmissionLimit = 4
 )
 
@@ -29,9 +27,8 @@ type dreamConfirmationLockAdmissionState struct {
 }
 
 // WithHypothesisConfirmationLock admits one confirmation workflow for a
-// team-owned Hypothesis without retaining the application pool while provider
-// work runs. The advisory lock uses a dedicated session that is closed after
-// the callback, so a failed unlock cannot strand a pooled application session.
+// team-owned Hypothesis. The advisory lock uses one application-pool session
+// through the callback, so lock sessions count against the configured pool.
 func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 	ctx context.Context,
 	teamID string,
@@ -66,7 +63,7 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 		return fmt.Errorf("dream confirmation lock resolve hypothesis: %w", err)
 	}
 
-	lockConn, lockDB, err := r.openDreamConfirmationLockConnection(ctx)
+	lockConn, err := r.openDreamConfirmationLockConnection(ctx)
 	if err != nil {
 		return err
 	}
@@ -76,7 +73,6 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 			return
 		}
 		_ = lockConn.Close()
-		_ = lockDB.Close()
 	}()
 
 	key := dreamConfirmationLockPrefix + teamID + ":" + canonicalID
@@ -97,7 +93,6 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 		releaseErr = errors.New("database did not release the advisory lock")
 	}
 	closeErr := lockConn.Close()
-	lockDBErr := lockDB.Close()
 	closed = true
 	if releaseErr != nil {
 		releaseErr = fmt.Errorf("dream confirmation lock release: %w", releaseErr)
@@ -105,10 +100,7 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 	if closeErr != nil {
 		closeErr = fmt.Errorf("dream confirmation lock connection close: %w", closeErr)
 	}
-	if lockDBErr != nil {
-		lockDBErr = fmt.Errorf("dream confirmation lock database close: %w", lockDBErr)
-	}
-	cleanupErr := errors.Join(releaseErr, closeErr, lockDBErr)
+	cleanupErr := errors.Join(releaseErr, closeErr)
 	if callbackErr != nil {
 		return errors.Join(callbackErr, cleanupErr)
 	}
@@ -120,7 +112,13 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 
 func (r *SemanticRepositoryImpl) acquireDreamConfirmationLockAdmission(ctx context.Context) (func(), error) {
 	r.dreamConfirmationLockState.once.Do(func() {
-		r.dreamConfirmationLockState.slots = make(chan struct{}, dreamConfirmationLockAdmissionLimit)
+		limit := dreamConfirmationLockAdmissionLimit
+		if sqlDB, err := r.db.DB(); err == nil {
+			if configured := sqlDB.Stats().MaxOpenConnections; configured > 0 && configured-1 < limit {
+				limit = configured - 1
+			}
+		}
+		r.dreamConfirmationLockState.slots = make(chan struct{}, limit)
 	})
 	select {
 	case <-ctx.Done():
@@ -135,38 +133,17 @@ func (r *SemanticRepositoryImpl) acquireDreamConfirmationLockAdmission(ctx conte
 	}
 }
 
-func (r *SemanticRepositoryImpl) openDreamConfirmationLockConnection(ctx context.Context) (*sql.Conn, *sql.DB, error) {
+func (r *SemanticRepositoryImpl) openDreamConfirmationLockConnection(ctx context.Context) (*sql.Conn, error) {
 	if r == nil || r.db == nil {
-		return nil, nil, errors.New("dream confirmation lock: database is required")
+		return nil, errors.New("dream confirmation lock: database is required")
 	}
-	dialector, ok := r.db.Dialector.(*gormpostgres.Dialector)
-	if !ok || dialector == nil || dialector.Config == nil || strings.TrimSpace(dialector.DSN) == "" || dialector.Conn != nil {
-		return nil, nil, errors.New("dream confirmation lock: postgres DSN is required for a dedicated lock session")
-	}
-	lockConfig := &gorm.Config{}
-	if r.db.Config != nil {
-		lockConfig.Logger = r.db.Config.Logger
-	}
-	lockDB, err := gorm.Open(gormpostgres.New(gormpostgres.Config{
-		DriverName:           dialector.DriverName,
-		DSN:                  dialector.DSN,
-		WithoutQuotingCheck:  dialector.WithoutQuotingCheck,
-		PreferSimpleProtocol: dialector.PreferSimpleProtocol,
-		WithoutReturning:     dialector.WithoutReturning,
-	}), lockConfig)
+	appDB, err := r.db.DB()
 	if err != nil {
-		return nil, nil, fmt.Errorf("dream confirmation lock: open dedicated database: %w", err)
+		return nil, fmt.Errorf("dream confirmation lock: application database handle: %w", err)
 	}
-	lockSQL, err := lockDB.DB()
+	lockConn, err := appDB.Conn(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("dream confirmation lock: dedicated database handle: %w", err)
+		return nil, fmt.Errorf("dream confirmation lock: acquire application connection: %w", err)
 	}
-	lockSQL.SetMaxOpenConns(1)
-	lockSQL.SetMaxIdleConns(1)
-	lockConn, err := lockSQL.Conn(ctx)
-	if err != nil {
-		_ = lockSQL.Close()
-		return nil, nil, fmt.Errorf("dream confirmation lock: acquire dedicated connection: %w", err)
-	}
-	return lockConn, lockSQL, nil
+	return lockConn, nil
 }

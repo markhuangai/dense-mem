@@ -89,14 +89,14 @@ func TestHypothesisConfirmationLockReleasesAfterContextCancellation(t *testing.T
 	require.NoError(t, <-followupErr)
 }
 
-func TestHypothesisConfirmationLockAllowsNestedRepositoryUseAtMaxOpenOne(t *testing.T) {
+func TestHypothesisConfirmationLockAllowsNestedRepositoryUseWithinPoolBudget(t *testing.T) {
 	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
 	sqlDB, err := appDB.DB()
 	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	sqlDB.SetMaxIdleConns(1)
+	sqlDB.SetMaxOpenConns(2)
+	sqlDB.SetMaxIdleConns(2)
 	repo := NewSemanticRepository(appDB, rls)
 	teamID := uuid.NewString()
 	hypothesisID := uuid.NewString()
@@ -105,6 +105,7 @@ func TestHypothesisConfirmationLockAllowsNestedRepositoryUseAtMaxOpenOne(t *test
 	firstReady := make(chan struct{})
 	releaseFirst := make(chan struct{})
 	firstErr := make(chan error, 1)
+	secondErr := make(chan error, 1)
 	go func() {
 		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(store DreamRepository) error {
 			if _, err := store.GetHypothesis(ctx, GetHypothesisInput{TeamID: teamID, HypothesisID: hypothesisID}); !errors.Is(err, ErrDreamHypothesisNotFound) {
@@ -120,13 +121,19 @@ func TestHypothesisConfirmationLockAllowsNestedRepositoryUseAtMaxOpenOne(t *test
 	case <-ctx.Done():
 		t.Fatal("first confirmation callback did not reach its database operation")
 	}
+	go func() {
+		secondErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, uuid.NewString(), func(DreamRepository) error {
+			return nil
+		})
+	}()
+	require.ErrorIs(t, <-secondErr, ErrDreamConfirmationBusy)
 	close(releaseFirst)
 	require.NoError(t, <-firstErr)
 	followupErr := repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(DreamRepository) error { return nil })
 	require.NoError(t, followupErr)
 }
 
-func TestHypothesisConfirmationLockBoundsDifferentHypotheses(t *testing.T) {
+func TestHypothesisConfirmationLockRejectsPoolWithoutApplicationCapacity(t *testing.T) {
 	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
@@ -134,6 +141,26 @@ func TestHypothesisConfirmationLockBoundsDifferentHypotheses(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
+	repo := NewSemanticRepository(appDB, rls)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	callbackCalled := false
+	err = repo.WithHypothesisConfirmationLock(ctx, uuid.NewString(), uuid.NewString(), func(DreamRepository) error {
+		callbackCalled = true
+		return nil
+	})
+	require.ErrorIs(t, err, ErrDreamConfirmationBusy)
+	require.False(t, callbackCalled)
+}
+
+func TestHypothesisConfirmationLockBoundsDifferentHypothesesWithinPoolBudget(t *testing.T) {
+	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	sqlDB, err := appDB.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(dreamConfirmationLockAdmissionLimit + 1)
+	sqlDB.SetMaxIdleConns(dreamConfirmationLockAdmissionLimit + 1)
 	repo := NewSemanticRepository(appDB, rls)
 	teamID := uuid.NewString()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
