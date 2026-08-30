@@ -278,6 +278,7 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.should_run == 'true'
     runs-on: docker-runner
+    timeout-minutes: 60
     env:
       REVIEW_STATUS_CONTEXT: ${{ needs.resolve.outputs.review_status_context }}
 
