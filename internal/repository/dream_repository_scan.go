@@ -105,6 +105,7 @@ func hypothesisSelectSQL(where string) string {
 		           FROM hypothesis_feedback_events AS feedback
 		           WHERE feedback.team_id = hypotheses.team_id
 		             AND feedback.hypothesis_id = hypotheses.hypothesis_id
+		             AND feedback.submitted_ingest_id = hypotheses.submitted_ingest_id
 		             AND feedback.submitted_ingest_id IS NOT NULL
 		           ORDER BY feedback.created_at DESC, feedback.feedback_event_id DESC
 		           LIMIT 1
@@ -145,6 +146,7 @@ func hypothesisUpdateReturningSQL(update string) string {
 		              FROM hypothesis_feedback_events AS feedback
 		              WHERE feedback.team_id = hypotheses.team_id
 		                AND feedback.hypothesis_id = hypotheses.hypothesis_id
+		                AND feedback.submitted_ingest_id = hypotheses.submitted_ingest_id
 		                AND feedback.submitted_ingest_id IS NOT NULL
 		              ORDER BY feedback.created_at DESC, feedback.feedback_event_id DESC
 		              LIMIT 1

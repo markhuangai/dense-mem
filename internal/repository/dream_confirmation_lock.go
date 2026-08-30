@@ -16,7 +16,8 @@ import (
 const (
 	dreamConfirmationLockPrefix         = "dream-confirmation:"
 	dreamConfirmationLockCleanupTimeout = 5 * time.Second
-	dreamConfirmationLockFallbackLimit  = 1
+	// Keep one dedicated session for coordination; the application pool cannot share its session across provider work.
+	dreamConfirmationLockAdmissionLimit = 1
 )
 
 var ErrDreamConfirmationBusy = errors.New("dream confirmation is already in progress")
@@ -110,20 +111,8 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 
 func (r *SemanticRepositoryImpl) acquireDreamConfirmationLockAdmission(ctx context.Context) (func(), error) {
 	r.dreamConfirmationLockAdmissionOnce.Do(func() {
-		limit := dreamConfirmationLockFallbackLimit
-		if sqlDB, err := r.db.DB(); err == nil {
-			if configured := sqlDB.Stats().MaxOpenConnections; configured > 0 {
-				limit = configured
-			}
-		} else {
-			r.dreamConfirmationLockAdmissionErr = fmt.Errorf("dream confirmation lock: inspect application pool: %w", err)
-			return
-		}
-		r.dreamConfirmationLockAdmission = make(chan struct{}, limit)
+		r.dreamConfirmationLockAdmission = make(chan struct{}, dreamConfirmationLockAdmissionLimit)
 	})
-	if r.dreamConfirmationLockAdmissionErr != nil {
-		return nil, r.dreamConfirmationLockAdmissionErr
-	}
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()

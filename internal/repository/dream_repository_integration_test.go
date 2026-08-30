@@ -349,6 +349,25 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	require.NotNil(t, firstSubmitted.SubmittedAt)
 	assert.Equal(t, "dream-submit-replay", firstSubmitted.SubmittedIngestIdempotencyKey)
 	assert.Equal(t, "confirm_true", firstSubmitted.SubmittedDecision)
+	otherSubmittedIngest := createSemanticIngest(t, ctx, ledgerRepo, teamID, ownerID,
+		"dream-submit-legacy-other", "A legacy feedback event for a different ingest.")
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO hypothesis_feedback_events (
+			    team_id, hypothesis_id, actor_profile_id, decision, feedback,
+			    submitted_ingest_id, created_at
+			) VALUES (
+			    ?::uuid, ?::uuid, ?::uuid, 'confirm_false', 'legacy event',
+			    ?::uuid, now() + interval '1 hour'
+			)
+		`, teamID, record.HypothesisID, ownerID, otherSubmittedIngest.IngestID).Error
+	}))
+	loadedWithLegacyEvent, err := semanticRepo.GetHypothesis(ctx, GetHypothesisInput{
+		TeamID: teamID, HypothesisID: record.HypothesisID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, submissionIngest.IngestID, loadedWithLegacyEvent.SubmittedIngestID)
+	assert.Equal(t, "confirm_true", loadedWithLegacyEvent.SubmittedDecision)
 	var eventsAfterFirst int
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		return tx.Raw(`

@@ -25,7 +25,6 @@ type SemanticRepositoryImpl struct {
 
 	dreamConfirmationLockAdmissionOnce sync.Once
 	dreamConfirmationLockAdmission     chan struct{}
-	dreamConfirmationLockAdmissionErr  error
 }
 
 var _ SemanticRepository = (*SemanticRepositoryImpl)(nil)
