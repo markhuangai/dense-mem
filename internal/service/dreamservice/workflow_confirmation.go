@@ -251,7 +251,6 @@ func dreamSubmissionEvidenceWithStatus(
 		item.Metadata["hypothesis_id"] = record.HypothesisID
 		if legacy {
 			item.Metadata["hypothesis_status_before"] = strings.TrimSpace(statusBefore)
-			delete(item.Metadata, "dream_feedback_reason")
 		} else if feedback := strings.TrimSpace(req.Feedback); feedback != "" {
 			item.Metadata["dream_feedback_reason"] = feedback
 		} else {

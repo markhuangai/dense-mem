@@ -216,7 +216,10 @@ func TestResolveFeedbackReplaysPreUpgradeSubmittedRememberWithoutCallingRemember
 	request := ResolveFeedbackRequest{
 		DreamID: hypothesisID, Decision: "confirm_true", Feedback: record.InvalidatedReason,
 		IdempotencyKey: record.SubmittedIngestIdempotencyKey,
-		Evidence:       []rememberapp.RememberEvidenceInput{{Content: "Independent legacy deployment evidence."}},
+		Evidence: []rememberapp.RememberEvidenceInput{{
+			Content:  "Independent legacy deployment evidence.",
+			Metadata: map[string]any{"dream_feedback_reason": "legacy metadata reason"},
+		}},
 	}
 	legacyEvidence, err := dreamSubmissionEvidenceWithStatus(request, &record, string(domain.DreamStatusProposed), true)
 	require.NoError(t, err)
