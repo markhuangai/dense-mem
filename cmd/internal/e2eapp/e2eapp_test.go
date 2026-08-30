@@ -42,7 +42,7 @@ func TestEveryWriteSliceHasAnOverrideSlot(t *testing.T) {
 		require.Equal(t, raw, write.Slice)
 		require.NotNil(t, write.RegistryOverride)
 		active := registry.New()
-		if slice == WriteSliceRemember {
+		if slice == WriteSliceRemember || slice == WriteSliceDiagnostics {
 			require.NoError(t, active.Register(registry.Tool{Name: registry.ToolRemember, InputSchema: map[string]any{"type": "object"}}))
 		}
 		selectedRegistry, err := write.RegistryOverride(context.Background(), serverapp.RuntimeContext{}, active)
@@ -103,7 +103,7 @@ func TestNonRememberSliceDoesNotInvokeSynchronousFactory(t *testing.T) {
 	}
 	for _, raw := range WriteSlices() {
 		slice := WriteSlice(raw)
-		if slice == WriteSliceRemember {
+		if slice == WriteSliceRemember || slice == WriteSliceDiagnostics {
 			continue
 		}
 		options := optionsForSlice(slice)
@@ -111,6 +111,29 @@ func TestNonRememberSliceDoesNotInvokeSynchronousFactory(t *testing.T) {
 		require.NoError(t, options.WriteRuntimeOverride(context.Background(), serverapp.RuntimeContext{}, write), slice)
 	}
 	require.Zero(t, calls)
+}
+
+func TestDiagnosticsOverrideInstallsTerminalRememberRuntime(t *testing.T) {
+	calls := 0
+	factory := func() rememberapp.Service {
+		calls++
+		return terminalRememberService{}
+	}
+	write := &serverapp.WriteRuntime{SynchronousRememberFactory: factory}
+	options := optionsForSlice(WriteSliceDiagnostics)
+	require.NoError(t, options.WriteRuntimeOverride(context.Background(), serverapp.RuntimeContext{}, write))
+	require.Equal(t, 1, calls)
+	require.NotNil(t, write.Remember)
+
+	active := registry.New()
+	require.NoError(t, active.Register(registry.Tool{Name: registry.ToolRemember, InputSchema: map[string]any{"type": "object"}}))
+	original, ok := active.Get(registry.ToolRemember)
+	require.True(t, ok)
+	selected, err := write.RegistryOverride(context.Background(), serverapp.RuntimeContext{}, active)
+	require.NoError(t, err)
+	replacement, ok := selected.Get(registry.ToolRemember)
+	require.True(t, ok)
+	require.NotEqual(t, original.OutputSchema, replacement.OutputSchema)
 }
 
 func TestRememberOverridePreservesEveryNonRememberTool(t *testing.T) {

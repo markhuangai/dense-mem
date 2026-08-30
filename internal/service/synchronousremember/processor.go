@@ -236,7 +236,10 @@ func (p *synchronousRememberProcessor) failure(ctx context.Context, input rememb
 	if attemptOutcome == "rejected" {
 		recordErr = p.ledger.RecordSynchronousRememberRejectedAttempt(recordCtx, attempt)
 	} else {
-		recordErr = p.ledger.RecordRememberFailure(recordCtx, repository.RememberFailureRecordInput{Attempt: attempt})
+		recordErr = p.ledger.RecordRememberFailure(recordCtx, repository.RememberFailureRecordInput{
+			Attempt:   attempt,
+			Artifacts: []repository.RememberFailureArtifactInput{rememberFailureArtifact(phase, string(code))},
+		})
 	}
 	if recordErr != nil {
 		if errors.Is(recordErr, repository.ErrRememberReplay) {
@@ -249,6 +252,18 @@ func (p *synchronousRememberProcessor) failure(ctx context.Context, input rememb
 	}
 	status, _ := terminalStatus(failure.Result)
 	return nil, &remember.RememberProcessError{Status: status, Result: failure.Result, Err: cause}
+}
+
+func rememberFailureArtifact(phase, errorCode string) repository.RememberFailureArtifactInput {
+	encoded, _ := json.Marshal(struct {
+		Phase     string `json:"phase"`
+		ErrorCode string `json:"error_code"`
+	}{Phase: phase, ErrorCode: errorCode})
+	return repository.RememberFailureArtifactInput{
+		ArtifactKind: "failure",
+		ContentType:  "application/json",
+		Content:      encoded,
+	}
 }
 
 func (p *synchronousRememberProcessor) replayStatus(ctx context.Context, input remember.RememberProcessRequest, base *remember.TerminalRememberResult, winner *repository.RememberAttempt) (*remember.SubmissionStatusResult, error) {

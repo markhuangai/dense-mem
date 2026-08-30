@@ -439,7 +439,6 @@ func RunActiveServer(
 		userPortalDeps.ExtraMiddleware = append(userPortalDeps.ExtraMiddleware, middleware.TelemetryHTTPMiddleware(telemetryHTTPMetrics))
 	}
 	http.RegisterUserPortal(e, userPortalDeps)
-
 	var controlServer *echo.Echo
 	var telemetryServer *echo.Echo
 	if !options.DisableControlPortal {
@@ -449,22 +448,23 @@ func RunActiveServer(
 			credentialService,
 			usageMetricsService,
 			http.ControlPortalTelemetry{
-				Reader:          telemetryReader,
-				HTTPMetrics:     telemetryHTTPMetrics,
-				ScrapeHandler:   telemetryScrapeHandler,
-				ScrapeToken:     cfg.GetTelemetryScrapeToken(),
-				SSO:             ssoService,
-				Directory:       directoryIdentityService,
-				ControlIdentity: controlIdentityService,
-				Config:          appConfigService,
-				Logs:            operationLogService,
-				RecallFeedback:  recallFeedbackEventService,
-				Dreams:          controlDreamSvc,
-				Communities:     communitySvc,
-				ConflictQueue:   conflictQueueService,
-				Convergence:     service.NewSearchConvergenceService(searchRepo),
-				Submissions:     service.NewSubmissionDiagnosticsService(ledgerRepo),
-				PrivateMemory:   privateMemoryService,
+				Reader:           telemetryReader,
+				HTTPMetrics:      telemetryHTTPMetrics,
+				ScrapeHandler:    telemetryScrapeHandler,
+				ScrapeToken:      cfg.GetTelemetryScrapeToken(),
+				SSO:              ssoService,
+				Directory:        directoryIdentityService,
+				ControlIdentity:  controlIdentityService,
+				Config:           appConfigService,
+				Logs:             operationLogService,
+				RecallFeedback:   recallFeedbackEventService,
+				Dreams:           controlDreamSvc,
+				Communities:      communitySvc,
+				ConflictQueue:    conflictQueueService,
+				Convergence:      service.NewSearchConvergenceService(searchRepo),
+				Submissions:      service.NewSubmissionDiagnosticsService(ledgerRepo),
+				RememberAttempts: service.NewRememberAttemptDiagnosticsService(ledgerRepo),
+				PrivateMemory:    privateMemoryService,
 			},
 			healthConfig,
 			logger,

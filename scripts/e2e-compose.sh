@@ -584,9 +584,8 @@ remove_e2e_playwright_container() {
     fi
   fi
 }
-
 run_compose_playwright_tests() {
-  local image
+  local image diagnostics_attempt_id=""
   local test_args=(
     "tests-compose/compose-portal.spec.ts"
     "tests-compose/search-convergence.spec.ts"
@@ -599,6 +598,7 @@ run_compose_playwright_tests() {
     )
   elif [[ "${1:-}" == "submission_status" ]]; then
     set_submission_status_playwright_args
+  elif [[ "${1:-}" == "remember_attempts" ]]; then test_args=("tests-compose/remember-attempts.spec.ts"); if [[ -n "${DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE:-}" && -f "$DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE" ]]; then diagnostics_attempt_id="$(node -e 'const fs = require("node:fs"); const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(value.failed_attempt_id || "");' "$DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE")"; fi
   elif [[ "${1:-}" == "community" ]]; then test_args=("tests-compose/community-recall.spec.ts");
   elif [[ "${1:-}" == "conflict_queue" ]]; then test_args=("tests-compose/compose-conflict-queue.spec.ts");
   elif [[ "${1:-}" == "oauth" ]]; then test_args=("tests-compose/oauth-team-resource.spec.ts");
@@ -627,7 +627,7 @@ run_compose_playwright_tests() {
     -e "DENSE_MEM_CONTROL_TOKEN=$CONTROL_TOKEN" \
     -e "DENSE_MEM_E2E_TEAM_ID=$team_id" \
     -e "DENSE_MEM_E2E_TEAM_NAME=E2E Team" \
-    -e "DENSE_MEM_E2E_API_KEY=$api_key" \
+    -e "DENSE_MEM_E2E_API_KEY=$api_key" -e "DENSE_MEM_E2E_DIAGNOSTIC_ATTEMPT_ID=$diagnostics_attempt_id" \
     -e "DENSE_MEM_E2E_DREAM_STATEMENT=${dream_statement:-}" \
     -e "DENSE_MEM_PROMETHEUS_URL=$PROMETHEUS_URL" \
     -e "DENSE_MEM_E2E_GRAPH_ANCHOR_ENTITY_ID=$E2E_GRAPH_ANCHOR_ENTITY_ID" \
@@ -760,7 +760,7 @@ PROMETHEUS_URL="${DENSE_MEM_PROMETHEUS_URL:-http://127.0.0.1:${PROMETHEUS_PORT}}
 export DENSE_MEM_PORT CONTROL_PORTAL_PORT PROMETHEUS_PORT PROMETHEUS_CONTAINER_NAME
 export POSTGRES_HOST_PORT NEO4J_HTTP_HOST_PORT NEO4J_BOLT_HOST_PORT REDIS_PORT
 
-TEMP_DIR="$(mktemp -d)"
+TEMP_DIR="$(mktemp -d)"; export DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE="${TEMP_DIR}/densemem-e2e-diagnostics-${E2E_FILE_ID}.json"
 cd "$ROOT_DIR"
 trap cleanup EXIT
 prepare_e2e_environment

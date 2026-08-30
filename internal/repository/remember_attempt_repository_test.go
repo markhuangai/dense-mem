@@ -33,3 +33,7 @@ func TestRememberAttemptHashMatchesOnlyRecognizedMigrationContract(t *testing.T)
 		t.Fatal("unrecognized migration contract must not match")
 	}
 }
+
+func TestRememberFailureArtifactPurgeBatchIsBounded(t *testing.T) {
+	require.Equal(t, rememberFailureArtifactPurgeBatchSize, 100)
+}

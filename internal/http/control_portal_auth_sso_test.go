@@ -76,6 +76,9 @@ func TestControlPortalMiddlewareAcceptsCurrentSSOSessionAndRecordsSafeFailures(t
 	e.GET("/session", func(c echo.Context) error {
 		return c.String(nethttp.StatusOK, controlPortalActorFromContext(c.Request().Context()))
 	})
+	e.GET("/identity", func(c echo.Context) error {
+		return c.String(nethttp.StatusOK, controlPortalActorIdentityFromContext(c.Request().Context()))
+	})
 
 	request := httptest.NewRequest(nethttp.MethodGet, "/session", nil)
 	request.AddCookie(&nethttp.Cookie{Name: service.ControlSessionCookieName, Value: sessionToken})
@@ -83,6 +86,13 @@ func TestControlPortalMiddlewareAcceptsCurrentSSOSessionAndRecordsSafeFailures(t
 	e.ServeHTTP(response, request)
 	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
 	require.Equal(t, "control_portal:sso", response.Body.String())
+
+	request = httptest.NewRequest(nethttp.MethodGet, "/identity", nil)
+	request.AddCookie(&nethttp.Cookie{Name: service.ControlSessionCookieName, Value: sessionToken})
+	response = httptest.NewRecorder()
+	e.ServeHTTP(response, request)
+	require.Equal(t, nethttp.StatusOK, response.Code, response.Body.String())
+	require.Equal(t, identityID.String(), response.Body.String())
 
 	request = httptest.NewRequest(nethttp.MethodGet, "/session", nil)
 	response = httptest.NewRecorder()

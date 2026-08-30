@@ -12,44 +12,46 @@ import (
 )
 
 type ControlPortalTelemetry struct {
-	Reader          service.TelemetryReader
-	HTTPMetrics     observability.HTTPMetrics
-	ScrapeHandler   nethttp.Handler
-	ScrapeToken     string
-	SSO             *service.SSOService
-	Directory       *service.DirectoryIdentityService
-	ControlIdentity *service.ControlIdentityService
-	Config          service.AppConfigService
-	Logs            service.OperationLogReader
-	RecallFeedback  service.RecallFeedbackEventReader
-	Dreams          dreamservice.ControlService
-	Communities     communityservice.Service
-	ConflictQueue   conflictqueue.Reader
-	Convergence     service.SearchConvergenceReader
-	Submissions     service.SubmissionDiagnosticsReader
-	PrivateMemory   PrivateMemoryServiceInterface
+	Reader           service.TelemetryReader
+	HTTPMetrics      observability.HTTPMetrics
+	ScrapeHandler    nethttp.Handler
+	ScrapeToken      string
+	SSO              *service.SSOService
+	Directory        *service.DirectoryIdentityService
+	ControlIdentity  *service.ControlIdentityService
+	Config           service.AppConfigService
+	Logs             service.OperationLogReader
+	RecallFeedback   service.RecallFeedbackEventReader
+	Dreams           dreamservice.ControlService
+	Communities      communityservice.Service
+	ConflictQueue    conflictqueue.Reader
+	Convergence      service.SearchConvergenceReader
+	Submissions      service.SubmissionDiagnosticsReader
+	RememberAttempts service.RememberAttemptDiagnosticsReader
+	PrivateMemory    PrivateMemoryServiceInterface
 }
 
 type controlPortalHandler struct {
-	teams           handler.TeamServiceInterface
-	credentials     handler.CredentialServiceInterface
-	security        service.SecurityService
-	metrics         service.UsageMetricsReader
-	telemetry       service.TelemetryReader
-	operationLogs   service.OperationLogReader
-	recallFeedback  service.RecallFeedbackEventReader
-	dreams          dreamservice.ControlService
-	communities     communityservice.Service
-	conflictQueue   conflictqueue.Reader
-	convergence     service.SearchConvergenceReader
-	submissions     service.SubmissionDiagnosticsReader
-	privateMemory   PrivateMemoryServiceInterface
-	health          HealthConfig
-	sso             *service.SSOService
-	directory       *service.DirectoryIdentityService
-	controlIdentity *service.ControlIdentityService
-	appConfig       service.AppConfigService
-	logger          observability.LogProvider
-	verifierModel   string
-	embeddingModel  string
+	teams            handler.TeamServiceInterface
+	credentials      handler.CredentialServiceInterface
+	security         service.SecurityService
+	metrics          service.UsageMetricsReader
+	telemetry        service.TelemetryReader
+	operationLogs    service.OperationLogReader
+	recallFeedback   service.RecallFeedbackEventReader
+	dreams           dreamservice.ControlService
+	communities      communityservice.Service
+	conflictQueue    conflictqueue.Reader
+	convergence      service.SearchConvergenceReader
+	submissions      service.SubmissionDiagnosticsReader
+	rememberAttempts service.RememberAttemptDiagnosticsReader
+	privateMemory    PrivateMemoryServiceInterface
+	health           HealthConfig
+	sso              *service.SSOService
+	directory        *service.DirectoryIdentityService
+	controlIdentity  *service.ControlIdentityService
+	appConfig        service.AppConfigService
+	logger           observability.LogProvider
+	verifierModel    string
+	embeddingModel   string
 }

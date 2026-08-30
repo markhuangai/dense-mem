@@ -2,29 +2,21 @@ import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types
 import type { CommunityStatus } from "./community-api-types";
 import type { OAuthProtectedResourceConfig } from "./oauth-protected-resource-types";
 import type { SearchConvergence } from "./search-convergence-types";
-import { requestJson } from "./http";
+import { requestBytes, requestJson } from "./http";
 import {
-  buildOperationLogsPath,
-  buildSubmissionDiagnosticPath,
-  buildSubmissionDiagnosticsPath,
-  type OperationLog,
-  type OperationLogQuery,
-  type SubmissionDiagnosticDetail,
-  type SubmissionDiagnosticQuery,
-  type SubmissionDiagnosticSummary,
-  type SubmissionOperatorDiagnostic,
+  buildRememberAttemptDiagnosticPath, buildRememberAttemptDiagnosticsPath, buildRememberFailureArtifactPath,
+  buildOperationLogsPath, buildSubmissionDiagnosticPath, buildSubmissionDiagnosticsPath,
+  type RememberAttemptDiagnosticDetail, type RememberAttemptDiagnosticQuery, type RememberAttemptDiagnosticSummary,
+  type OperationLog, type OperationLogQuery, type SubmissionDiagnosticDetail, type SubmissionDiagnosticQuery,
+  type SubmissionDiagnosticSummary, type SubmissionOperatorDiagnostic,
 } from "./control-observability-api";
 export { ApiError } from "./http";
 export { listControlIdentityProviders, type ControlIdentityProvider } from "./control-auth-api";
 export type {
-  OperationLog,
-  OperationLogQuery,
-  SubmissionDiagnosticDetail,
-  SubmissionDiagnosticQuery,
-  SubmissionDiagnosticSummary,
-  SubmissionOperatorDiagnostic,
-  SubmissionEvidenceStatus,
-  SubmissionStatusError,
+  OperationLog, OperationLogQuery, SubmissionDiagnosticDetail, SubmissionDiagnosticQuery,
+  SubmissionDiagnosticSummary, SubmissionOperatorDiagnostic, SubmissionEvidenceStatus, SubmissionStatusError,
+  RememberAttemptDiagnosticDetail, RememberAttemptDiagnosticEvent, RememberAttemptDiagnosticQuery,
+  RememberAttemptDiagnosticSummary, RememberAttemptOutcome, RememberAttemptPublicResult, RememberFailureArtifactDescriptor,
 } from "./control-observability-api";
 export type {
   ConflictQueueItem,
@@ -898,6 +890,22 @@ export class ControlApi {
 
   getSubmissionDiagnostic(teamId: string, submissionId: string): Promise<SubmissionDiagnosticDetail> {
     return this.requestEnvelope<SubmissionDiagnosticDetail>(buildSubmissionDiagnosticPath(teamId, submissionId));
+  }
+
+  listRememberAttemptDiagnostics(query: RememberAttemptDiagnosticQuery = {}): Promise<Page<RememberAttemptDiagnosticSummary>> {
+    return this.request<Page<RememberAttemptDiagnosticSummary>>(buildRememberAttemptDiagnosticsPath(query));
+  }
+
+  getRememberAttemptDiagnostic(teamId: string, attemptId: string): Promise<RememberAttemptDiagnosticDetail> {
+    return this.requestEnvelope<RememberAttemptDiagnosticDetail>(buildRememberAttemptDiagnosticPath(teamId, attemptId));
+  }
+
+  getRememberFailureArtifact(teamId: string, attemptId: string, artifactId: string): Promise<Uint8Array> {
+    return requestBytes(`${this.baseUrl}${buildRememberFailureArtifactPath(teamId, attemptId, artifactId)}`, {
+      token: this.token || undefined,
+      credentials: this.token ? undefined : "include",
+      cache: "no-store",
+    });
   }
 
   listRecallFeedbackEvents(query: RecallFeedbackEventQuery = {}): Promise<Page<RecallFeedbackEvent>> {

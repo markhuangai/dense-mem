@@ -1,5 +1,6 @@
 import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   AlertTriangle,
   Ban,
   BarChart3,
@@ -42,6 +43,7 @@ const RecallFeedbackPanel = lazy(() => import("./control/RecallFeedbackPanel").t
 const ConflictQueuePanel = lazy(() => import("./control/ConflictQueuePanel").then((module) => ({ default: module.ConflictQueuePanel })));
 const SearchConvergencePanel = lazy(() => import("./control/SearchConvergencePanel").then((module) => ({ default: module.SearchConvergencePanel })));
 const SubmissionsPanel = lazy(() => import("./control/SubmissionsPanel").then((module) => ({ default: module.SubmissionsPanel })));
+const RememberAttemptsPanel = lazy(() => import("./control/RememberAttemptsPanel").then((module) => ({ default: module.RememberAttemptsPanel })));
 
 const TOKEN_STORAGE_KEY = "denseMem.controlToken";
 const THEME_STORAGE_KEY = "denseMem.controlTheme";
@@ -283,6 +285,14 @@ function Portal({
           active: activeTab === "teams" && teamWorkspaceTab === "submissions",
           disabled: !selectedTeam,
           onClick: () => openTeamWorkspace("submissions"),
+        },
+        {
+          id: "remember-attempts",
+          label: "Remember Attempts",
+          icon: <Activity size={17} aria-hidden="true" />,
+          active: activeTab === "teams" && teamWorkspaceTab === "remember-attempts",
+          disabled: !selectedTeam,
+          onClick: () => openTeamWorkspace("remember-attempts"),
         },
         {
           id: "metrics",
@@ -582,6 +592,11 @@ function TeamWorkspace({
       {activeTab === "submissions" && (
         <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading submissions" /></div>}>
           <SubmissionsPanel api={api} team={team} />
+        </Suspense>
+      )}
+      {activeTab === "remember-attempts" && (
+        <Suspense fallback={<div className="team-embedded-panel"><LoadingState label="Loading Remember attempts" /></div>}>
+          <RememberAttemptsPanel api={api} team={team} />
         </Suspense>
       )}
       {activeTab === "conflicts" && (

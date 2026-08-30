@@ -69,3 +69,15 @@ test("correction slice contains executable success and provider-failure assertio
   assert.match(correction, /provider_timeout_preserved/);
   assert.match(correction, /embedding_timeout/);
 });
+
+test("diagnostics slice contains control API and scrubbed artifact assertions", async () => {
+  const diagnostics = await readFile(new URL("./cases/diagnostics.mjs", import.meta.url), "utf8");
+  const overlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");
+  const compose = await readFile(new URL("../../../scripts/e2e-compose.sh", import.meta.url), "utf8");
+  assert.doesNotMatch(diagnostics, /reserved-for-adoption/);
+  assert.match(diagnostics, /remember-attempts/);
+  assert.match(diagnostics, /error_code/);
+  assert.match(diagnostics, /Cache-Control|cache-control|no-store/);
+  assert.match(overlay, /run_compose_playwright_tests remember_attempts/);
+  assert.match(compose, /remember-attempts\.spec\.ts/);
+});

@@ -153,8 +153,21 @@ func dreamOverride(_ context.Context, _ serverapp.RuntimeContext, write *servera
 func reconciliationOverride(_ context.Context, _ serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
 	return validateSliceHook(write, WriteSliceReconciliation)
 }
-func diagnosticsOverride(_ context.Context, _ serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
-	return validateSliceHook(write, WriteSliceDiagnostics)
+func diagnosticsOverride(_ context.Context, runtime serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
+	if err := validateSliceHook(write, WriteSliceDiagnostics); err != nil {
+		return err
+	}
+	write.SynchronousRememberBeforeCommit = synchronousRememberBeforeCommitHook(runtime)
+	if write.SynchronousRememberFactory == nil {
+		return fmt.Errorf("e2e write slice %q has no synchronous Remember factory", WriteSliceDiagnostics)
+	}
+	remember := write.SynchronousRememberFactory()
+	if remember == nil {
+		return fmt.Errorf("e2e write slice %q factory returned nil Remember service", WriteSliceDiagnostics)
+	}
+	write.Remember = remember
+	write.RegistryOverride = terminalRememberRegistryOverride(remember)
+	return nil
 }
 func contractOverride(_ context.Context, _ serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
 	return validateSliceHook(write, WriteSliceContract)
