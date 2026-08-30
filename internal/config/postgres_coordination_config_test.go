@@ -112,6 +112,25 @@ func TestLoadValidation_PostgresIdleExceedsOpen(t *testing.T) {
 	}
 }
 
+func TestLoadValidation_PostgresOpenRequiresDreamConfirmationCapacity(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	os.Setenv("POSTGRES_MAX_OPEN_CONNS", "1")
+	os.Setenv("POSTGRES_MAX_IDLE_CONNS", "1")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error for a one-connection postgres pool, got nil")
+	}
+	validationErr, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("expected *ValidationError, got %T", err)
+	}
+	if validationErr.Field != "POSTGRES_MAX_OPEN_CONNS" {
+		t.Errorf("ValidationError.Field = %q, want %q", validationErr.Field, "POSTGRES_MAX_OPEN_CONNS")
+	}
+}
+
 func TestLoadValidation_PostgresMigrationTimeoutExceedsMaximum(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()

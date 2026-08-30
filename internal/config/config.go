@@ -680,6 +680,12 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 			}
 		}
 	}
+	if cfg.PostgresMaxOpenConns < 2 {
+		return cfg, &ValidationError{
+			Field:   "POSTGRES_MAX_OPEN_CONNS",
+			Message: fmt.Sprintf("must be at least 2 for Dream confirmation locking, got %d", cfg.PostgresMaxOpenConns),
+		}
+	}
 	if cfg.EmbeddingJobMaxAttempts > MaxEmbeddingJobMaxAttempts {
 		return cfg, &ValidationError{
 			Field:   "EMBEDDING_JOB_MAX_ATTEMPTS",
