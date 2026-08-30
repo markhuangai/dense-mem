@@ -361,6 +361,38 @@ func TestResolveFeedbackReplaysAliasWithCanonicalDefaultKey(t *testing.T) {
 	require.Empty(t, repo.submitInput)
 }
 
+func TestResolveFeedbackReplaysAliasWithLegacyDefaultKey(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	canonicalID := uuid.NewString()
+	aliasID := uuid.NewString()
+	ingestID := uuid.NewString()
+	record := repository.HypothesisRecord{
+		TeamID: teamID.String(), HypothesisID: canonicalID, CreatedByProfileID: ownerID.String(),
+		Status: string(domain.DreamStatusSubmitted), Statement: "Dense-Mem may use PostgreSQL.",
+		SubmittedIngestID: ingestID, SubmittedIngestIdempotencyKey: "dream-feedback:" + aliasID + ":confirm_true",
+		SubmittedDecision: "confirm_true",
+	}
+	request := ResolveFeedbackRequest{
+		DreamID: aliasID, Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
+	}
+	legacyEvidence, err := dreamSubmissionEvidenceWithStatus(request, &record, string(domain.DreamStatusProposed), true)
+	require.NoError(t, err)
+	record.SubmittedIngestRequestHash, err = rememberapp.CanonicalRequestBodyHash(legacyEvidence, request.EntityHints, request.RelationshipHints)
+	require.NoError(t, err)
+	repo := &dreamRepositoryStub{getRecord: record}
+	remember := &rememberServiceStub{err: errors.New("legacy alias replay must not call Remember")}
+	svc := New(Dependencies{Store: repo, Remember: remember})
+
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", request)
+	require.NoError(t, err)
+	require.Equal(t, domain.DreamStatusSubmitted, result.Dream.Status)
+	require.Equal(t, ingestID, result.Memory.IngestID)
+	require.Empty(t, remember.requests)
+	require.Empty(t, repo.submitInput)
+}
+
 func TestResolveFeedbackWrapsConfirmationBusyWithTypedError(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()

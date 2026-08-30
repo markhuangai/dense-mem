@@ -112,7 +112,10 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 	if callbackErr != nil {
 		return errors.Join(callbackErr, cleanupErr)
 	}
-	return cleanupErr
+	if cleanupErr != nil && r.db.Logger != nil {
+		r.db.Logger.Warn(ctx, "dream confirmation lock cleanup failed", "error_class", "database_cleanup")
+	}
+	return nil
 }
 
 func (r *SemanticRepositoryImpl) acquireDreamConfirmationLockAdmission(ctx context.Context) (func(), error) {

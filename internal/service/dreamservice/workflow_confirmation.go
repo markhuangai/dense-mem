@@ -382,9 +382,15 @@ func dreamConfirmationReplayMatches(record *repository.HypothesisRecord, req Res
 	if record == nil || record.Status != string(domain.DreamStatusSubmitted) || strings.TrimSpace(record.SubmittedIngestID) == "" {
 		return true
 	}
-	return strings.TrimSpace(record.SubmittedIngestIdempotencyKey) != "" &&
-		strings.TrimSpace(record.SubmittedIngestIdempotencyKey) == dreamFeedbackIdempotency(req, record.HypothesisID, decision) &&
-		strings.TrimSpace(record.SubmittedDecision) == decision
+	storedKey := strings.TrimSpace(record.SubmittedIngestIdempotencyKey)
+	if storedKey == "" || strings.TrimSpace(record.SubmittedDecision) != decision {
+		return false
+	}
+	if storedKey == dreamFeedbackIdempotency(req, record.HypothesisID, decision) {
+		return true
+	}
+	return strings.TrimSpace(req.IdempotencyKey) == "" &&
+		storedKey == dreamFeedbackIdempotency(req, strings.TrimSpace(req.DreamID), decision)
 }
 
 func dreamFeedbackIdempotency(req ResolveFeedbackRequest, dreamID string, decision string) string {
