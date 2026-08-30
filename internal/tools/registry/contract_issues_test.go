@@ -92,6 +92,24 @@ func TestValidateContractInputIssuesDispatchesToolSpecificValidation(t *testing.
 	}
 }
 
+func TestValidateContractInputIssuesRejectsLifecycleIdempotencyKey(t *testing.T) {
+	tool, err := requireTool(toolMap(t), ToolResolveDreamFeedback)
+	require.NoError(t, err)
+
+	for _, decision := range []string{"reject", "stale", "reinforce"} {
+		t.Run(decision, func(t *testing.T) {
+			result := ValidateContractInputIssues(tool, map[string]any{
+				"hypothesis_id":   "dream-1",
+				"decision":        decision,
+				"reason":          "not useful",
+				"idempotency_key": "lifecycle-retry",
+			}, []string{"write"})
+
+			require.Contains(t, issueMessages(result), "idempotency_key is only supported for confirmation decisions")
+		})
+	}
+}
+
 func TestValidateContractInputIssuesRememberValidAndMalformedShapes(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	require.NoError(t, err)

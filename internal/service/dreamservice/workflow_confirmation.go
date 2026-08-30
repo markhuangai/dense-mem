@@ -159,11 +159,16 @@ func (s *service) resolveConfirmation(
 		s.recordDreamFeedback(ctx, decision, dream, "ok")
 		return &ResolveFeedbackResult{Dream: dream, Memory: dreamReplayRememberResult(record)}, nil
 	}
+	idempotencyKey, err := s.confirmationIdempotencyKey(ctx, teamID, actorProfileID, req, record, decision)
+	if err != nil {
+		s.recordDreamFeedback(ctx, decision, dream, "error")
+		return nil, err
+	}
 	rememberRequest := rememberapp.RememberRequest{
 		Evidence:          evidence,
 		EntityHints:       req.EntityHints,
 		RelationshipHints: req.RelationshipHints,
-		IdempotencyKey:    dreamFeedbackIdempotency(req, record.HypothesisID, decision),
+		IdempotencyKey:    idempotencyKey,
 	}
 	remember, err := s.deps.Remember.Remember(ctx, rememberRequest)
 	if ctx.Err() == nil && dreamLegacyReplayConflict(err) {
@@ -426,5 +431,44 @@ func dreamFeedbackIdempotency(req ResolveFeedbackRequest, dreamID string, decisi
 	if value := strings.TrimSpace(req.IdempotencyKey); value != "" {
 		return value
 	}
-	return "dream-feedback:" + dreamID + ":" + decision
+	return dreamDefaultFeedbackIdempotency(dreamID, decision)
+}
+
+func dreamDefaultFeedbackIdempotency(dreamID, decision string) string {
+	return "dream-feedback:" + strings.TrimSpace(dreamID) + ":" + strings.TrimSpace(decision)
+}
+
+func (s *service) confirmationIdempotencyKey(
+	ctx context.Context,
+	teamID string,
+	actorProfileID string,
+	req ResolveFeedbackRequest,
+	record *repository.HypothesisRecord,
+	decision string,
+) (string, error) {
+	if record == nil {
+		return "", errors.New("resolve dream feedback: hypothesis record is required")
+	}
+	canonicalKey := dreamFeedbackIdempotency(req, record.HypothesisID, decision)
+	if strings.TrimSpace(req.IdempotencyKey) != "" ||
+		record.Status == string(domain.DreamStatusSubmitted) ||
+		s.deps.RememberIngests == nil {
+		return canonicalKey, nil
+	}
+	requestedID := strings.TrimSpace(req.DreamID)
+	canonicalID := strings.TrimSpace(record.HypothesisID)
+	if requestedID == "" || canonicalID == "" || requestedID == canonicalID {
+		return canonicalKey, nil
+	}
+	legacyKey := dreamDefaultFeedbackIdempotency(requestedID, decision)
+	exists, err := s.deps.RememberIngests.RememberIngestExists(ctx, repository.RememberIngestLookupInput{
+		TeamID: teamID, OwnerProfileID: actorProfileID, IdempotencyKey: legacyKey,
+	})
+	if err != nil {
+		return "", fmt.Errorf("resolve dream feedback: legacy Remember lookup: %w", err)
+	}
+	if exists {
+		return legacyKey, nil
+	}
+	return canonicalKey, nil
 }
