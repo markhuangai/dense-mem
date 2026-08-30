@@ -72,20 +72,23 @@ export async function run({ rpc, rawRPC, expect }) {
   expect(rejected.status === "proposed", "rejected Remember must leave the Hypothesis reviewable");
   requireString(rejected.submission_id, "rejected submission ID");
   expect(hypothesisRow(teamID, scenarios.rejected.hypothesisID).status === "proposed", "rejected confirmation must not advance Dream state");
-  expect(attemptRow(teamID, scenarios.rejected.idempotencyKey).outcome === "rejected", "rejected confirmation must persist a rejected terminal attempt");
+  const rejectedAttempt = attemptRow(teamID, scenarios.rejected.idempotencyKey);
+  expect(rejectedAttempt.outcome === "rejected" && rejectedAttempt.count === 1, "rejected confirmation must persist one rejected terminal attempt");
 
   const quarantined = await resolve(rpc, scenarios.quarantined, expect);
   expect(quarantined.status === "proposed", "quarantined Remember must leave the Hypothesis reviewable");
   requireString(quarantined.submission_id, "quarantined submission ID");
   expect(hypothesisRow(teamID, scenarios.quarantined.hypothesisID).status === "proposed", "quarantined confirmation must not advance Dream state");
-  expect(attemptRow(teamID, scenarios.quarantined.idempotencyKey).outcome === "quarantined", "quarantined confirmation must persist a quarantined terminal attempt");
+  const quarantinedAttempt = attemptRow(teamID, scenarios.quarantined.idempotencyKey);
+  expect(quarantinedAttempt.outcome === "quarantined" && quarantinedAttempt.count === 1, "quarantined confirmation must persist one quarantined terminal attempt");
 
   const failed = await resolve(rpc, scenarios.failed, expect);
   expect(failed.status === "proposed", "operational Remember failure must leave the Hypothesis reviewable");
   requireString(failed.submission_id, "failed submission ID");
   expect(hypothesisRow(teamID, scenarios.failed.hypothesisID).status === "proposed", "operational failure must not advance Dream state");
-  expect(attemptRow(teamID, scenarios.failed.idempotencyKey).outcome === "failed", "operational failure must persist a failed terminal attempt");
-  const failedAttemptCount = attemptRow(teamID, scenarios.failed.idempotencyKey).count;
+  const failedAttempt = attemptRow(teamID, scenarios.failed.idempotencyKey);
+  expect(failedAttempt.outcome === "failed" && failedAttempt.count === 1, "operational failure must persist one failed terminal attempt");
+  const failedAttemptCount = failedAttempt.count;
 
   const noEvidence = await rawRPC("tools/call", {
     name: "resolve_dream_feedback",
