@@ -10,7 +10,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 func dreamTestContext(teamID uuid.UUID, ownerID uuid.UUID) context.Context {
@@ -310,12 +310,12 @@ func (s *dreamRepositoryStub) RecordMissedScheduledDreamCycle(_ context.Context,
 }
 
 type rememberServiceStub struct {
-	requests []memoryservice.RememberRequest
-	result   *memoryservice.RememberResult
+	requests []rememberapp.RememberRequest
+	result   *rememberapp.RememberResult
 	err      error
 }
 
-func (s *rememberServiceStub) Remember(_ context.Context, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
+func (s *rememberServiceStub) Remember(_ context.Context, req rememberapp.RememberRequest) (*rememberapp.RememberResult, error) {
 	s.requests = append(s.requests, req)
 	if s.err != nil {
 		return nil, s.err
@@ -323,8 +323,11 @@ func (s *rememberServiceStub) Remember(_ context.Context, req memoryservice.Reme
 	if s.result != nil {
 		return s.result, nil
 	}
-	return &memoryservice.RememberResult{
-		IngestID:        uuid.NewString(),
+	ingestID := uuid.NewString()
+	return &rememberapp.RememberResult{
+		IngestID:        ingestID,
+		SubmissionID:    ingestID,
 		ProcessingState: string(domain.PlacementRunQueued),
+		Kind:            rememberapp.ResultKindLegacyReceipt,
 	}, nil
 }

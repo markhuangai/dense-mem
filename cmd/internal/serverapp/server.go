@@ -281,7 +281,7 @@ func RunActiveServer(
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
-		Remember:       rememberSvc,
+		Remember:       writeRuntime.Remember,
 		Store:          semanticRepo,
 		ScheduledStore: semanticRepo,
 		AppConfig:      appConfigService,

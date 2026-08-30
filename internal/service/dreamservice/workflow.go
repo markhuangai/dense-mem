@@ -17,7 +17,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 var ErrDreamAuthContext = errors.New("dream: authenticated actor context is required")
@@ -576,22 +576,35 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
 		}
-		remember, err := s.deps.Remember.Remember(ctx, memoryservice.RememberRequest{
+		remember, err := s.deps.Remember.Remember(ctx, rememberapp.RememberRequest{
 			Evidence:          evidence,
 			EntityHints:       req.EntityHints,
 			RelationshipHints: req.RelationshipHints,
 			IdempotencyKey:    dreamFeedbackIdempotency(req, dreamID, decision),
 		})
 		if err != nil {
+			var processErr *rememberapp.RememberProcessError
+			if !errors.As(err, &processErr) || processErr.Result == nil {
+				s.recordDreamFeedback(ctx, decision, dream, "error")
+				return nil, err
+			}
+			remember = rememberResultFromProcessError(processErr.Result)
+		}
+		completed, ingestID, err := dreamRememberCompletion(remember)
+		if err != nil {
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, err
+		}
+		if !completed {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
+			return &ResolveFeedbackResult{Dream: dream, Memory: remember}, nil
 		}
 		updated, err := s.deps.Store.SubmitHypothesis(ctx, repository.SubmitHypothesisInput{
 			TeamID:            teamID,
 			ActorProfileID:    actorProfileID,
 			HypothesisID:      dreamID,
 			Decision:          decision,
-			SubmittedIngestID: remember.IngestID,
+			SubmittedIngestID: ingestID,
 			InvalidatedReason: req.Feedback,
 		})
 		return s.feedbackResult(ctx, decision, dream, updated, remember, err)
@@ -606,7 +619,7 @@ func (s *service) feedbackResult(
 	decision string,
 	original *domain.Dream,
 	updated *repository.HypothesisRecord,
-	remember *memoryservice.RememberResult,
+	remember *rememberapp.RememberResult,
 	err error,
 ) (*ResolveFeedbackResult, error) {
 	if err != nil {
@@ -828,11 +841,11 @@ func hypothesisContentHash(input repository.UpsertHypothesisInput) string {
 func dreamSubmissionEvidence(
 	req ResolveFeedbackRequest,
 	record *repository.HypothesisRecord,
-) ([]memoryservice.RememberEvidenceInput, error) {
+) ([]rememberapp.RememberEvidenceInput, error) {
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("resolve dream feedback: independent evidence is required")
 	}
-	out := make([]memoryservice.RememberEvidenceInput, 0, len(req.Evidence))
+	out := make([]rememberapp.RememberEvidenceInput, 0, len(req.Evidence))
 	for i, item := range req.Evidence {
 		content := strings.TrimSpace(item.Content)
 		if content == "" {
@@ -851,10 +864,65 @@ func dreamSubmissionEvidence(
 			item.Metadata = map[string]any{}
 		}
 		item.Metadata["hypothesis_id"] = record.HypothesisID
-		item.Metadata["hypothesis_status_before"] = record.Status
+		if feedback := strings.TrimSpace(req.Feedback); feedback != "" {
+			item.Metadata["dream_feedback_reason"] = feedback
+		} else {
+			delete(item.Metadata, "dream_feedback_reason")
+		}
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+func rememberResultFromProcessError(terminal *rememberapp.TerminalRememberResult) *rememberapp.RememberResult {
+	if terminal == nil {
+		return nil
+	}
+	return &rememberapp.RememberResult{
+		ContractVersion: terminal.ContractVersion,
+		IngestID:        terminal.SubmissionID,
+		SubmissionID:    terminal.SubmissionID,
+		SubmissionKind:  terminal.SubmissionKind,
+		ProcessingState: terminal.ProcessingState,
+		CorrelationID:   terminal.CorrelationID,
+		Kind:            rememberapp.ResultKindTerminal,
+		Terminal:        terminal,
+	}
+}
+
+func dreamRememberCompletion(result *rememberapp.RememberResult) (bool, string, error) {
+	if result == nil {
+		return false, "", errors.New("resolve dream feedback: Remember result is required")
+	}
+	switch result.Kind {
+	// TODO(#307): remove legacy receipt compatibility when all callers use terminal outcomes.
+	case rememberapp.ResultKindLegacyReceipt:
+		ingestID := strings.TrimSpace(result.IngestID)
+		if _, err := uuid.Parse(ingestID); err != nil {
+			return false, "", errors.New("resolve dream feedback: legacy Remember result has no canonical ingest")
+		}
+		return true, ingestID, nil
+	case rememberapp.ResultKindTerminal:
+		if result.Terminal == nil {
+			return false, "", errors.New("resolve dream feedback: terminal Remember result is required")
+		}
+		switch result.Terminal.ProcessingState {
+		case string(rememberapp.TerminalProcessingCompleted):
+			ingestID := strings.TrimSpace(result.Terminal.SubmissionID)
+			if _, err := uuid.Parse(ingestID); err != nil {
+				return false, "", errors.New("resolve dream feedback: completed Remember result has no canonical ingest")
+			}
+			return true, ingestID, nil
+		case string(rememberapp.TerminalProcessingRejected),
+			string(rememberapp.TerminalProcessingQuarantined),
+			string(rememberapp.TerminalProcessingFailed):
+			return false, "", nil
+		default:
+			return false, "", errors.New("resolve dream feedback: terminal Remember result has an unsupported processing state")
+		}
+	default:
+		return false, "", errors.New("resolve dream feedback: Remember result kind is required")
+	}
 }
 
 func dreamFeedbackIdempotency(req ResolveFeedbackRequest, dreamID string, decision string) string {
