@@ -46,7 +46,7 @@ func resolveDreamFeedbackOutputSchema() map[string]any {
 					"submission_id": schemaString("Submission ID for submitted evidence.", 128),
 				},
 			),
-			terminalRememberOutputSchema(domain.ContractVersion),
+			dreamTerminalRememberOutputSchema(domain.ContractVersion),
 			dreamConfirmationBusyOutputSchema(),
 		},
 	}

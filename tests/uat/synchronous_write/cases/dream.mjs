@@ -79,6 +79,7 @@ export async function run({ rpc, rawRPC, expect }) {
   requireString(rejected?.submission_id, "rejected submission ID");
   expect(hypothesisRow(teamID, scenarios.rejected.hypothesisID).status === "proposed", "rejected confirmation must not advance Dream state");
   expect(attemptRow(teamID, scenarios.rejected.idempotencyKey).outcome === "rejected", "rejected confirmation must persist a rejected terminal attempt");
+  assertDreamRetryGuidance(rejected, scenarios.rejected, "rejected");
 
   const quarantinedResponse = await rawRPC("tools/call", {
     name: "resolve_dream_feedback",
@@ -91,6 +92,7 @@ export async function run({ rpc, rawRPC, expect }) {
   requireString(quarantined?.submission_id, "quarantined submission ID");
   expect(hypothesisRow(teamID, scenarios.quarantined.hypothesisID).status === "proposed", "quarantined confirmation must not advance Dream state");
   expect(attemptRow(teamID, scenarios.quarantined.idempotencyKey).outcome === "quarantined", "quarantined confirmation must persist a quarantined terminal attempt");
+  assertDreamRetryGuidance(quarantined, scenarios.quarantined, "quarantined");
 
   const failedResponse = await rawRPC("tools/call", {
     name: "resolve_dream_feedback",
@@ -103,6 +105,7 @@ export async function run({ rpc, rawRPC, expect }) {
   requireString(failed?.submission_id, "failed submission ID");
   expect(hypothesisRow(teamID, scenarios.failed.hypothesisID).status === "proposed", "operational failure must not advance Dream state");
   expect(attemptRow(teamID, scenarios.failed.idempotencyKey).outcome === "failed", "operational failure must persist a failed terminal attempt");
+  assertDreamRetryGuidance(failed, scenarios.failed, "failed");
   const failedAttemptCount = attemptRow(teamID, scenarios.failed.idempotencyKey).count;
 
   const noEvidence = await rawRPC("tools/call", {
@@ -124,6 +127,32 @@ export async function run({ rpc, rawRPC, expect }) {
   expect(String(hypothesisText.error?.message || "").includes("hypothesis text cannot be submitted"), "Hypothesis text must not be accepted as evidence");
   expect(attemptRow(teamID, scenarios.failed.idempotencyKey).count === failedAttemptCount, "Hypothesis text rejection must not invoke Remember");
 
+  const contention = scenarios.contention;
+  const contentionIngestCount = hypothesisIngestCount(teamID, contention.hypothesisID);
+  const contentionFeedbackCount = feedbackEventCount(teamID, contention.hypothesisID);
+  const firstContention = rawRPC("tools/call", {
+    name: "resolve_dream_feedback",
+    arguments: {
+      ...resolveArguments(contention),
+      evidence: [{ content: "[fixture-fault:assessment-timeout] Independent contention evidence.", source_type: "manual" }],
+    },
+  });
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+  const secondContention = rawRPC("tools/call", {
+    name: "resolve_dream_feedback",
+    arguments: {
+      ...resolveArguments(contention),
+      evidence: [{ content: "[fixture-fault:assessment-timeout] Independent contention evidence.", source_type: "manual" }],
+    },
+  });
+  const contentionResponses = await Promise.all([firstContention, secondContention]);
+  const busyResponse = contentionResponses.find((response) => response.result?.structuredContent?.code === "dream_confirmation_busy");
+  expect(busyResponse?.result?.isError === true, "concurrent Dream confirmation must expose a structured busy error");
+  expect(busyResponse.result.structuredContent.next_action === "retry_dream_feedback", "busy Dream confirmation must advertise retry_dream_feedback");
+  expect(hypothesisIngestCount(teamID, contention.hypothesisID) === contentionIngestCount, "busy Dream confirmation must not create a Remember ingest");
+  expect(feedbackEventCount(teamID, contention.hypothesisID) === contentionFeedbackCount, "busy Dream confirmation must not append a feedback event");
+  expect(attemptRow(teamID, contention.idempotencyKey).count === 1, "concurrent Dream confirmation must persist only the admitted terminal attempt");
+
   return {
     mode: name,
     completed_submission_id: completedSubmissionID,
@@ -131,8 +160,17 @@ export async function run({ rpc, rawRPC, expect }) {
     rejected_reviewable: true,
     quarantined_reviewable: true,
     failed_reviewable: true,
+    contention_busy_reviewable: true,
     independent_evidence_provenance: true,
   };
+}
+
+function assertDreamRetryGuidance(result, scenario, label) {
+  const error = result?.errors?.[0];
+  expect(error?.next_action === "retry_dream_feedback", `${label} Dream terminal result must advertise retry_dream_feedback`);
+  expect(typeof error?.remediation === "string" && error.remediation.includes("resolve_dream_feedback"), `${label} Dream terminal result must name resolve_dream_feedback in remediation`);
+  expect(error.remediation.includes("idempotency_key"), `${label} Dream terminal result must name idempotency_key in remediation`);
+  expect(error.remediation.includes(scenario.hypothesisID), `${label} Dream terminal result must use the canonical Hypothesis ID in remediation`);
 }
 
 async function enableDreaming() {
@@ -151,7 +189,7 @@ async function enableDreaming() {
 }
 
 function makeScenarios() {
-  const labels = ["completed", "rejected", "quarantined", "failed"];
+  const labels = ["completed", "rejected", "quarantined", "failed", "contention"];
   const scenarios = {};
   for (const label of labels) {
     const hypothesisID = randomUUID();

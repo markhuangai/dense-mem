@@ -41,7 +41,7 @@ func TestResolveDreamFeedbackReturnsStructuredTerminalFailure(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "failed", structured.Result["processing_state"])
 	require.Equal(t, "terminal-failure", structured.Result["correlation_id"])
-	require.NoError(t, ValidateInput(Tool{InputSchema: terminalRememberOutputSchema(domain.ContractVersion)}, structured.Result))
+	require.NoError(t, ValidateInput(Tool{InputSchema: dreamTerminalRememberOutputSchema(domain.ContractVersion)}, structured.Result))
 	errors, ok := structured.Result["errors"].([]any)
 	require.True(t, ok)
 	require.Len(t, errors, 1)
@@ -82,7 +82,7 @@ func TestResolveDreamFeedbackReturnsStructuredNonCompletedTerminalOutcomes(t *te
 			structured, ok := ToolResultFromError(err)
 			require.True(t, ok)
 			require.Equal(t, test.state, structured.Result["processing_state"])
-			require.NoError(t, ValidateInput(Tool{InputSchema: terminalRememberOutputSchema(domain.ContractVersion)}, structured.Result))
+			require.NoError(t, ValidateInput(Tool{InputSchema: dreamTerminalRememberOutputSchema(domain.ContractVersion)}, structured.Result))
 		})
 	}
 }
@@ -97,6 +97,12 @@ func TestResolveDreamFeedbackOutputSchemaCoversTerminalBranch(t *testing.T) {
 		"contract_version", "submission_id", "submission_kind", "processing_state", "search_state",
 		"correlation_id", "evidence", "relationship_results", "errors",
 	}, terminal["required"])
+	terminalErrors := terminal["properties"].(map[string]any)["errors"].(map[string]any)["items"].(map[string]any)
+	terminalActions := terminalErrors["properties"].(map[string]any)["next_action"].(map[string]any)["enum"].([]string)
+	require.Contains(t, terminalActions, string(rememberapp.TerminalNextActionRetryDreamFeedback))
+	genericErrors := terminalRememberOutputSchema(domain.ContractVersion)["properties"].(map[string]any)["errors"].(map[string]any)["items"].(map[string]any)
+	genericActions := genericErrors["properties"].(map[string]any)["next_action"].(map[string]any)["enum"].([]string)
+	require.NotContains(t, genericActions, string(rememberapp.TerminalNextActionRetryDreamFeedback))
 }
 
 func TestResolveDreamFeedbackReturnsStructuredBusyRetry(t *testing.T) {
