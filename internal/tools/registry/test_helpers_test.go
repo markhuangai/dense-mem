@@ -70,8 +70,6 @@ type stubDreamService struct {
 	lastResolveReq dreamservice.ResolveFeedbackRequest
 	recallQuery    string
 	recallErr      error
-	resolveResult  *dreamservice.ResolveFeedbackResult
-	resolveErr     error
 }
 
 func (s *stubDreamService) RunCycle(_ context.Context, profileID string, req dreamservice.RunCycleRequest) (*dreamservice.RunCycleResult, error) {
@@ -112,12 +110,6 @@ func (s *stubDreamService) Recall(_ context.Context, profileID, query string, _ 
 
 func (s *stubDreamService) ResolveFeedback(_ context.Context, profileID string, req dreamservice.ResolveFeedbackRequest) (*dreamservice.ResolveFeedbackResult, error) {
 	s.lastResolveReq = req
-	if s.resolveErr != nil {
-		return nil, s.resolveErr
-	}
-	if s.resolveResult != nil {
-		return s.resolveResult, nil
-	}
 	return &dreamservice.ResolveFeedbackResult{Dream: stubDream(profileID)}, nil
 }
 

@@ -1,9 +1,6 @@
 package registry
 
-import (
-	"github.com/markhuangai/dense-mem/internal/domain"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
-)
+import "github.com/markhuangai/dense-mem/internal/domain"
 
 func recallFeedbackOutputSchema() map[string]any {
 	return closedObject(
@@ -36,39 +33,14 @@ func getDreamOutputSchema() map[string]any {
 }
 
 func resolveDreamFeedbackOutputSchema() map[string]any {
-	return map[string]any{
-		"oneOf": []any{
-			closedObject(
-				[]string{"hypothesis_id", "status"},
-				map[string]any{
-					"hypothesis_id": schemaString("Hypothesis ID.", 128),
-					"status":        schemaEnum(domain.HypothesisStatuses()),
-					"submission_id": schemaString("Submission ID for submitted evidence.", 128),
-				},
-			),
-			dreamTerminalRememberOutputSchema(domain.ContractVersion),
-			dreamConfirmationBusyOutputSchema(),
-		},
-	}
-}
-
-func dreamConfirmationBusyOutputSchema() map[string]any {
 	return closedObject(
-		[]string{"code", "message", "retryable", "next_action", "remediation"},
+		[]string{"hypothesis_id", "status"},
 		map[string]any{
-			"code":        schemaEnum([]string{"dream_confirmation_busy"}),
-			"message":     schemaString("Bounded Dream confirmation admission error.", 512),
-			"retryable":   map[string]any{"type": "boolean"},
-			"next_action": schemaEnum([]string{string(rememberapp.TerminalNextActionRetryDreamFeedback)}),
-			"remediation": schemaString("Bounded action the caller can take next.", 512),
+			"hypothesis_id": schemaString("Hypothesis ID.", 128),
+			"status":        schemaEnum(domain.HypothesisStatuses()),
+			"submission_id": schemaString("Submission ID for submitted evidence.", 128),
 		},
 	)
-}
-
-// TerminalRememberOutputSchema is shared by the terminal Remember registry
-// override and Dream feedback's non-completed result contract.
-func TerminalRememberOutputSchema() map[string]any {
-	return terminalRememberOutputSchema(domain.ContractVersion)
 }
 
 func exportMemoryPackOutputSchema() map[string]any {

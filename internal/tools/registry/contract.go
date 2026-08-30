@@ -339,15 +339,7 @@ func contractTools(deps Dependencies) []Tool {
 				}
 				res, err := deps.Dreams.ResolveFeedback(ctx, teamID, req)
 				if err != nil {
-					if busy, ok := resolveDreamConfirmationBusyOutcome(err); ok {
-						return nil, NewToolResultError(busy)
-					}
 					return nil, err
-				}
-				if failure, ok, err := resolveDreamTerminalOutcome(res); err != nil {
-					return nil, fmt.Errorf("resolve_dream_feedback: terminal result serialization failed")
-				} else if ok {
-					return nil, NewToolResultError(failure)
 				}
 				return resolveDreamFeedbackContractOutput(res), nil
 			}

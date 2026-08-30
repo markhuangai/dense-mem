@@ -68,44 +68,23 @@ export async function run({ rpc, rawRPC, expect }) {
   expect(hypothesisIngestCount(teamID, scenarios.completed.hypothesisID) === completedIngestCount, "conflicting Dream confirmation must not create a Remember ingest");
   expect(feedbackEventCount(teamID, scenarios.completed.hypothesisID) === completedFeedbackEvents, "conflicting Dream confirmation must not append a feedback event");
 
-  const rejectedResponse = await rawRPC("tools/call", {
-    name: "resolve_dream_feedback",
-    arguments: resolveArguments(scenarios.rejected),
-  });
-  expect(rejectedResponse.result?.isError === true, "rejected Remember must be a structured tool error");
-  const rejected = rejectedResponse.result?.structuredContent;
-  expect(rejected?.processing_state === "rejected", "rejected Remember must expose terminal state");
-  expect(Array.isArray(rejected?.errors) && rejected.errors.length > 0, "rejected Remember must expose typed errors");
-  requireString(rejected?.submission_id, "rejected submission ID");
+  const rejected = await resolve(rpc, scenarios.rejected, expect);
+  expect(rejected.status === "proposed", "rejected Remember must leave the Hypothesis reviewable");
+  requireString(rejected.submission_id, "rejected submission ID");
   expect(hypothesisRow(teamID, scenarios.rejected.hypothesisID).status === "proposed", "rejected confirmation must not advance Dream state");
   expect(attemptRow(teamID, scenarios.rejected.idempotencyKey).outcome === "rejected", "rejected confirmation must persist a rejected terminal attempt");
-  assertDreamRetryGuidance(rejected, scenarios.rejected, "rejected");
 
-  const quarantinedResponse = await rawRPC("tools/call", {
-    name: "resolve_dream_feedback",
-    arguments: resolveArguments(scenarios.quarantined),
-  });
-  expect(quarantinedResponse.result?.isError === true, "quarantined Remember must be a structured tool error");
-  const quarantined = quarantinedResponse.result?.structuredContent;
-  expect(quarantined?.processing_state === "quarantined", "quarantined Remember must expose terminal state");
-  expect(Array.isArray(quarantined?.errors) && quarantined.errors.length > 0, "quarantined Remember must expose typed errors");
-  requireString(quarantined?.submission_id, "quarantined submission ID");
+  const quarantined = await resolve(rpc, scenarios.quarantined, expect);
+  expect(quarantined.status === "proposed", "quarantined Remember must leave the Hypothesis reviewable");
+  requireString(quarantined.submission_id, "quarantined submission ID");
   expect(hypothesisRow(teamID, scenarios.quarantined.hypothesisID).status === "proposed", "quarantined confirmation must not advance Dream state");
   expect(attemptRow(teamID, scenarios.quarantined.idempotencyKey).outcome === "quarantined", "quarantined confirmation must persist a quarantined terminal attempt");
-  assertDreamRetryGuidance(quarantined, scenarios.quarantined, "quarantined");
 
-  const failedResponse = await rawRPC("tools/call", {
-    name: "resolve_dream_feedback",
-    arguments: resolveArguments(scenarios.failed),
-  });
-  expect(failedResponse.result?.isError === true, "operational Remember failure must be a structured tool error");
-  const failed = failedResponse.result?.structuredContent;
-  expect(failed?.processing_state === "failed", "operational Remember failure must expose terminal state");
-  expect(Array.isArray(failed?.errors) && failed.errors.length > 0, "operational Remember failure must expose typed errors");
-  requireString(failed?.submission_id, "failed submission ID");
+  const failed = await resolve(rpc, scenarios.failed, expect);
+  expect(failed.status === "proposed", "operational Remember failure must leave the Hypothesis reviewable");
+  requireString(failed.submission_id, "failed submission ID");
   expect(hypothesisRow(teamID, scenarios.failed.hypothesisID).status === "proposed", "operational failure must not advance Dream state");
   expect(attemptRow(teamID, scenarios.failed.idempotencyKey).outcome === "failed", "operational failure must persist a failed terminal attempt");
-  assertDreamRetryGuidance(failed, scenarios.failed, "failed");
   const failedAttemptCount = attemptRow(teamID, scenarios.failed.idempotencyKey).count;
 
   const noEvidence = await rawRPC("tools/call", {
@@ -146,9 +125,8 @@ export async function run({ rpc, rawRPC, expect }) {
     },
   });
   const contentionResponses = await Promise.all([firstContention, secondContention]);
-  const busyResponse = contentionResponses.find((response) => response.result?.structuredContent?.code === "dream_confirmation_busy");
-  expect(busyResponse?.result?.isError === true, "concurrent Dream confirmation must expose a structured busy error");
-  expect(busyResponse.result.structuredContent.next_action === "retry_dream_feedback", "busy Dream confirmation must advertise retry_dream_feedback");
+  const busyResponse = contentionResponses.find((response) => String(response.error?.message || "").includes("dream confirmation is already in progress"));
+  expect(busyResponse?.error?.message, "concurrent Dream confirmation must expose a bounded busy error");
   expect(hypothesisIngestCount(teamID, contention.hypothesisID) === contentionIngestCount, "busy Dream confirmation must not create a Remember ingest");
   expect(feedbackEventCount(teamID, contention.hypothesisID) === contentionFeedbackCount, "busy Dream confirmation must not append a feedback event");
   expect(attemptRow(teamID, contention.idempotencyKey).count === 1, "concurrent Dream confirmation must persist only the admitted terminal attempt");
@@ -163,14 +141,6 @@ export async function run({ rpc, rawRPC, expect }) {
     contention_busy_reviewable: true,
     independent_evidence_provenance: true,
   };
-}
-
-function assertDreamRetryGuidance(result, scenario, label) {
-  const error = result?.errors?.[0];
-  expect(error?.next_action === "retry_dream_feedback", `${label} Dream terminal result must advertise retry_dream_feedback`);
-  expect(typeof error?.remediation === "string" && error.remediation.includes("resolve_dream_feedback"), `${label} Dream terminal result must name resolve_dream_feedback in remediation`);
-  expect(error.remediation.includes("idempotency_key"), `${label} Dream terminal result must name idempotency_key in remediation`);
-  expect(error.remediation.includes(scenario.hypothesisID), `${label} Dream terminal result must use the canonical Hypothesis ID in remediation`);
 }
 
 async function enableDreaming() {
