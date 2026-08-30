@@ -189,6 +189,7 @@ func (s *service) resolveConfirmation(
 		return nil, err
 	}
 	if !completed {
+		applyDreamTerminalRetryGuidance(remember, record.HypothesisID, decision)
 		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return &ResolveFeedbackResult{Dream: dream, Memory: remember}, nil
 	}
@@ -351,6 +352,23 @@ func rememberResultFromProcessError(terminal *rememberapp.TerminalRememberResult
 		CorrelationID:   terminal.CorrelationID,
 		Kind:            rememberapp.ResultKindTerminal,
 		Terminal:        terminal,
+	}
+}
+
+func applyDreamTerminalRetryGuidance(result *rememberapp.RememberResult, dreamID, decision string) {
+	if result == nil || result.Terminal == nil {
+		return
+	}
+	retryKey := fmt.Sprintf("dream-feedback:%s:%s:retry:%s", dreamID, decision, result.Terminal.SubmissionID)
+	if len([]rune(retryKey)) > 128 {
+		retryKey = "dream-feedback:" + dreamID + ":" + decision + ":retry"
+	}
+	for index := range result.Terminal.Errors {
+		if result.Terminal.Errors[index].NextAction != string(rememberapp.TerminalNextActionResubmitRemember) {
+			continue
+		}
+		result.Terminal.Errors[index].NextAction = string(rememberapp.TerminalNextActionRetryDreamFeedback)
+		result.Terminal.Errors[index].Remediation = rememberapp.DreamFeedbackRetryRemediation(retryKey)
 	}
 }
 

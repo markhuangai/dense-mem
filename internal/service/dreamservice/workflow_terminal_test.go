@@ -361,6 +361,34 @@ func TestResolveFeedbackRejectsConflictingSubmittedConfirmationBeforeRemember(t 
 	require.Empty(t, repo.submitInput)
 }
 
+func TestResolveFeedbackAddsDreamRetryIdentityToTerminalResubmission(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	attemptID := uuid.NewString()
+	repo := &dreamRepositoryStub{getRecord: repository.HypothesisRecord{
+		TeamID:             teamID.String(),
+		HypothesisID:       hypothesisID,
+		CreatedByProfileID: ownerID.String(),
+		Status:             string(domain.DreamStatusProposed),
+		Statement:          "Dense-Mem may use PostgreSQL.",
+	}}
+	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingRejected), attemptID)}
+	remember.result.Terminal.Errors = []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusError(rememberapp.TerminalErrorNoSupportedMemory)}
+	svc := New(Dependencies{Store: repo, Remember: remember})
+
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent refuting evidence."}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result.Memory)
+	require.Equal(t, string(rememberapp.TerminalNextActionRetryDreamFeedback), result.Memory.Terminal.Errors[0].NextAction)
+	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, "resolve_dream_feedback")
+	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, "idempotency_key")
+	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, attemptID)
+}
+
 func TestResolveFeedbackUsesCanonicalDreamIDForDefaultRetryKey(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
@@ -386,13 +414,15 @@ func TestResolveFeedbackUsesCanonicalDreamIDForDefaultRetryKey(t *testing.T) {
 	remember.result.Terminal.Errors = []rememberapp.SubmissionStatusError{
 		rememberapp.TerminalStatusError(rememberapp.TerminalErrorNoSupportedMemory),
 	}
-	_, err = svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
 		DreamID: aliasID, Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
 	})
 	require.NoError(t, err)
 	require.Len(t, remember.requests, 2)
 	require.Contains(t, remember.requests[1].IdempotencyKey, canonicalID)
+	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, canonicalID)
+	require.NotContains(t, result.Memory.Terminal.Errors[0].Remediation, aliasID)
 }
 
 func TestResolveFeedbackReplaysAliasWithCanonicalDefaultKey(t *testing.T) {

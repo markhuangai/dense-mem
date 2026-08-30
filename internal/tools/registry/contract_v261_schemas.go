@@ -5,6 +5,14 @@ import (
 )
 
 func terminalRememberOutputSchema(version string) map[string]any {
+	return terminalRememberOutputSchemaForActions(version, terminalErrorNextActions(false))
+}
+
+func dreamTerminalRememberOutputSchema(version string) map[string]any {
+	return terminalRememberOutputSchemaForActions(version, terminalErrorNextActions(true))
+}
+
+func terminalRememberOutputSchemaForActions(version string, nextActions []string) map[string]any {
 	return closedObject(
 		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"},
 		map[string]any{
@@ -16,7 +24,7 @@ func terminalRememberOutputSchema(version string) map[string]any {
 			"correlation_id":       schemaString("Request correlation ID.", 128),
 			"evidence":             array(terminalEvidenceSchema(), 0, 20),
 			"relationship_results": submissionRelationshipResultsSchema(),
-			"errors":               array(terminalErrorSchema(), 0, 50),
+			"errors":               array(terminalErrorSchemaForActions(nextActions), 0, 50),
 		},
 	)
 }
@@ -53,22 +61,34 @@ func terminalCorrectionOutputSchema(version string) map[string]any {
 }
 
 func terminalErrorSchema() map[string]any {
+	return terminalErrorSchemaForActions(terminalErrorNextActions(false))
+}
+
+func terminalErrorSchemaForActions(nextActions []string) map[string]any {
 	return closedObject(
 		[]string{"code", "message", "retryable", "next_action", "remediation"},
 		map[string]any{
-			"code":      schemaEnum(contractV261ErrorCodes()),
-			"message":   schemaString("Bounded safe submission error.", 512),
-			"retryable": map[string]any{"type": "boolean"},
-			"next_action": schemaEnum([]string{
-				string(remember.TerminalNextActionRetrySameRequest),
-				string(remember.TerminalNextActionResubmitRemember),
-				string(remember.TerminalNextActionRetryCorrection),
-				string(remember.TerminalNextActionContactOperator),
-				string(remember.TerminalNextActionNone),
-			}),
+			"code":        schemaEnum(contractV261ErrorCodes()),
+			"message":     schemaString("Bounded safe submission error.", 512),
+			"retryable":   map[string]any{"type": "boolean"},
+			"next_action": schemaEnum(nextActions),
 			"remediation": schemaString("Bounded action the caller can take next.", 512),
 		},
 	)
+}
+
+func terminalErrorNextActions(includeDreamFeedback bool) []string {
+	result := []string{
+		string(remember.TerminalNextActionRetrySameRequest),
+		string(remember.TerminalNextActionResubmitRemember),
+		string(remember.TerminalNextActionRetryCorrection),
+		string(remember.TerminalNextActionContactOperator),
+		string(remember.TerminalNextActionNone),
+	}
+	if includeDreamFeedback {
+		result = append(result, string(remember.TerminalNextActionRetryDreamFeedback))
+	}
+	return result
 }
 
 func contractV261ErrorCodes() []string {
