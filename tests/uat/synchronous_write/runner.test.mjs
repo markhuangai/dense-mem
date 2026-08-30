@@ -90,3 +90,11 @@ test("contract slice asserts target catalog, terminal errors, correction, and pa
   assert.match(contract, /structuredContent/);
   assert.match(contract, /correct_relationship/);
 });
+
+test("contract ownership callers validate the user endpoint before sending credentials", async () => {
+  const contract = await readFile(new URL("./cases/contract.mjs", import.meta.url), "utf8");
+  assert.match(contract, /validatedUserURL\(\);/);
+  assert.match(contract, /validatedEndpointURL\("DENSE_MEM_USER_URL"\)/);
+  assert.match(contract, /must use HTTPS or loopback HTTP/);
+  assert.match(contract, /const baseURL = validatedUserURL\(\);/);
+});

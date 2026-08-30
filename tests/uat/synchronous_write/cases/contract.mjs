@@ -9,6 +9,7 @@ export const name = "contract";
 
 export async function run({ rpc, rawRPC, expect }) {
   await enableTargetFeatureGates();
+  validatedUserURL();
   const listed = await rpc("tools/list", {});
   const tools = listed.tools || [];
   const names = tools.map((tool) => tool.name);
@@ -138,17 +139,25 @@ async function enableTargetFeatureGates() {
 }
 
 function validatedControlURL() {
-  const raw = requiredEnv("DENSE_MEM_CONTROL_URL").trim();
+  return validatedEndpointURL("DENSE_MEM_CONTROL_URL");
+}
+
+function validatedUserURL() {
+  return validatedEndpointURL("DENSE_MEM_USER_URL");
+}
+
+function validatedEndpointURL(name) {
+  const raw = requiredEnv(name).trim();
   let parsed;
   try {
     parsed = new URL(raw);
   } catch {
-    throw new Error("DENSE_MEM_CONTROL_URL must be a valid URL");
+    throw new Error(`${name} must be a valid URL`);
   }
   const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
   if (parsed.username || parsed.password || (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback))) {
-    throw new Error("DENSE_MEM_CONTROL_URL must use HTTPS or loopback HTTP");
+    throw new Error(`${name} must use HTTPS or loopback HTTP`);
   }
   return parsed.toString().replace(/\/$/, "");
 }
@@ -257,7 +266,7 @@ function assertOwnershipDenied(raw, source, relationshipID, expect, label) {
 let directRPCID = 0;
 
 async function rawRPCWithKey(apiKey, method, params) {
-  const baseURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
+  const baseURL = validatedUserURL();
   const response = await fetch(`${baseURL}/mcp`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "Content-Type": "application/json" },

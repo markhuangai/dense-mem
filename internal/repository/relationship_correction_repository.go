@@ -145,6 +145,9 @@ func (r *SemanticRepositoryImpl) correctRelationship(
 				committedErr = err
 				return nil
 			}
+			if errors.Is(err, ErrRelationshipCorrectionConfirmation) && result != nil && result.ProcessingState == "awaiting_confirmation" {
+				return nil
+			}
 		} else {
 			result, err = r.submitRelationshipCorrection(ctx, tx, input)
 		}
@@ -342,7 +345,7 @@ func (r *SemanticRepositoryImpl) confirmRelationshipCorrection(
 		return relationshipCorrectionResultFromRow(updated), ErrRelationshipCorrectionConfirmationExpired
 	}
 	if subtle.ConstantTimeCompare([]byte(row.ConfirmationToken), []byte(input.ConfirmationToken)) != 1 {
-		return nil, ErrRelationshipCorrectionConfirmation
+		return relationshipCorrectionResultFromRow(row), ErrRelationshipCorrectionConfirmation
 	}
 
 	source, err := loadRelationshipRecordForUpdate(ctx, tx, row.TeamID, row.RelationshipID)
@@ -391,7 +394,7 @@ func (r *SemanticRepositoryImpl) confirmRelationshipCorrection(
 
 	selection, err := validateRelationshipCorrectionSelection(row, input.Selection)
 	if err != nil {
-		return nil, err
+		return relationshipCorrectionResultFromRow(row), err
 	}
 	confirmInput := CorrectRelationshipInput{
 		TeamID:          row.TeamID,

@@ -255,6 +255,16 @@ func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.
 	}))
 	require.Equal(t, "active", originalStatus)
 
+	invalidToken, err := semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerID, Action: "confirm",
+		SubmissionID: submitted.SubmissionID, ConfirmationToken: uuid.NewString(),
+		Selection: RelationshipCorrectionSelection{ObjectEntityID: firstAtlas.EntityID}, IdempotencyKey: "invalid-token-confirm",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "awaiting_confirmation", invalidToken.ProcessingState)
+	require.NotNil(t, invalidToken.Confirmation)
+	require.Equal(t, submitted.Confirmation.Token, invalidToken.Confirmation.Token)
+
 	confirmed, err := correctRelationshipWithTestEmbeddings(ctx, semantic, CorrectRelationshipInput{
 		TeamID: teamID, OwnerProfileID: ownerID, Action: "confirm",
 		SubmissionID: submitted.SubmissionID, ConfirmationToken: submitted.Confirmation.Token,
