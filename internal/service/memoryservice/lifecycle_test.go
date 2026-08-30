@@ -202,6 +202,14 @@ func TestTranslateRelationshipCorrectionIdempotencyConflictPreservesTerminalClas
 	require.Contains(t, publicErr.Details, httperr.ErrorDetail{Field: "reason", Message: "idempotency_conflict"})
 }
 
+func TestTranslateRelationshipCorrectionConfirmationPreservesTypedConflict(t *testing.T) {
+	err := translateRelationshipCorrectionError(repository.ErrRelationshipCorrectionConfirmation)
+	var publicErr *httperr.APIError
+	require.ErrorAs(t, err, &publicErr)
+	require.Equal(t, httperr.CONFLICT, publicErr.Code)
+	require.Contains(t, publicErr.Details, httperr.ErrorDetail{Field: "reason", Message: CorrectionConfirmationInvalidReason})
+}
+
 func TestTranslateRelationshipCorrectionConfirmationExpiryPreservesTerminalClassification(t *testing.T) {
 	err := translateRelationshipCorrectionError(repository.ErrRelationshipCorrectionConfirmationExpired)
 	var publicErr *httperr.APIError

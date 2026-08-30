@@ -32,6 +32,11 @@ var (
 	errLifecycleCorrectionCommitFence = errors.New("memory lifecycle: correction commit search fence conflict")
 )
 
+// CorrectionConfirmationInvalidReason identifies a pending confirmation that
+// remains awaiting confirmation after the legacy lifecycle rejects a token or
+// candidate selection.
+const CorrectionConfirmationInvalidReason = "confirmation_invalid"
+
 type LifecycleService interface {
 	CorrectRelationship(ctx context.Context, req CorrectRelationshipRequest) (*CorrectRelationshipReceipt, error)
 	GetRelationshipCorrectionStatus(ctx context.Context, req GetSubmissionStatusRequest) (*SubmissionStatusResult, error)
@@ -288,6 +293,11 @@ func translateRelationshipCorrectionError(err error) error {
 	if errors.Is(err, repository.ErrRelationshipCorrectionConfirmationExpired) {
 		return httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
 			Field: "reason", Message: string(SubmissionErrorConfirmationExpired),
+		}})
+	}
+	if errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) {
+		return httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+			Field: "reason", Message: CorrectionConfirmationInvalidReason,
 		}})
 	}
 	if errors.Is(err, errLifecycleCorrectionCommitFence) {

@@ -13,6 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
@@ -244,6 +245,53 @@ func TestTerminalCorrectionInvokerStatusReadFailurePreservesReplayGuidance(t *te
 	require.Equal(t, string(rememberapp.TerminalNextActionRetrySameRequest), errorItem["next_action"])
 	require.Contains(t, errorItem["remediation"], "same idempotency_key")
 	require.NoError(t, ValidateInput(Tool{InputSchema: tool.OutputSchema}, structured.Result))
+}
+
+func TestTerminalCorrectionInvalidConfirmationHydratesAwaitingState(t *testing.T) {
+	active := New()
+	for _, tool := range ContractTools() {
+		tool.Visibility = "active"
+		tool.Invoke = func(context.Context, string, map[string]any) (map[string]any, error) {
+			return nil, errors.New("unused")
+		}
+		switch tool.Name {
+		case ToolCorrectRelationship:
+			tool.Invoke = func(context.Context, string, map[string]any) (map[string]any, error) {
+				return nil, httperr.NewWithDetails(httperr.CONFLICT, "hidden", []httperr.ErrorDetail{{
+					Field: "reason", Message: memoryservice.CorrectionConfirmationInvalidReason,
+				}})
+			}
+		case ToolGetSubmissionStatus:
+			tool.Invoke = func(context.Context, string, map[string]any) (map[string]any, error) {
+				return map[string]any{
+					"submission_id": "status-submission", "processing_state": "awaiting_confirmation", "search_state": "pending", "correlation_id": "status-correlation",
+					"awaiting_confirmation": map[string]any{
+						"confirmation_token": uuid.NewString(), "expires_at": "2026-08-30T00:00:00Z",
+						"candidates": []any{
+							map[string]any{"endpoint": "subject_entity", "entity_id": uuid.NewString(), "entity_kind": "project", "canonical_name": "Subject"},
+							map[string]any{"endpoint": "object_entity", "entity_id": uuid.NewString(), "entity_kind": "project", "canonical_name": "Object"},
+						},
+					},
+					"errors": []any{},
+				}, nil
+			}
+		}
+		require.NoError(t, active.Register(tool))
+	}
+	selected, err := BuildContractV261(active, &v261RememberService{})
+	require.NoError(t, err)
+	correct, ok := selected.Get(ToolCorrectRelationship)
+	require.True(t, ok)
+	output, err := correct.Invoke(contractInvokeContext("write"), "team-1", map[string]any{
+		"action": "confirm", "submission_id": uuid.NewString(), "confirmation_token": uuid.NewString(),
+		"selection": map[string]any{"object_entity_id": uuid.NewString()}, "idempotency_key": "invalid-confirmation",
+	})
+	require.NoError(t, err)
+	require.Equal(t, ContractVersionV261, output["contract_version"])
+	require.Equal(t, "awaiting_confirmation", output["processing_state"])
+	require.Equal(t, "status-correlation", output["correlation_id"])
+	require.NotNil(t, output["awaiting_confirmation"])
+	require.NoError(t, ValidateInput(Tool{InputSchema: correct.OutputSchema}, output))
 }
 
 func TestTerminalCorrectionInvokerMapsBoundedDomainErrors(t *testing.T) {

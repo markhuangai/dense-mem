@@ -145,9 +145,6 @@ func (r *SemanticRepositoryImpl) correctRelationship(
 				committedErr = err
 				return nil
 			}
-			if errors.Is(err, ErrRelationshipCorrectionConfirmation) && result != nil && result.ProcessingState == "awaiting_confirmation" {
-				return nil
-			}
 		} else {
 			result, err = r.submitRelationshipCorrection(ctx, tx, input)
 		}

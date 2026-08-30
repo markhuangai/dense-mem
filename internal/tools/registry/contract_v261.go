@@ -209,6 +209,26 @@ func terminalCorrectionInvoker(legacy Tool, status Tool, version string) ToolInv
 		}
 		receipt, err := legacy.Invoke(ctx, teamID, input)
 		if err != nil {
+			if isInvalidConfirmationError(input, err) {
+				submissionID := strings.TrimSpace(stringInput(input["submission_id"]))
+				statusOutput, statusErr := status.Invoke(withInternalSubmissionStatusLookup(ctx), teamID, map[string]any{"submission_id": submissionID})
+				if statusErr != nil {
+					return nil, terminalCorrectionStatusReadError(ctx, submissionID, version)
+				}
+				correlationID := strings.TrimSpace(stringInput(statusOutput["correlation_id"]))
+				if correlationID == "" {
+					correlationID = firstNonEmptyString(correlation.FromContext(ctx), uuid.NewString())
+				}
+				hydrated, hydrateErr := terminalCorrectionResultMap(map[string]any{
+					"submission_id": submissionID, "correlation_id": correlationID,
+				}, statusOutput, version)
+				if hydrateErr == nil && stringInput(hydrated["processing_state"]) == "awaiting_confirmation" {
+					if hydrateErr = validateTerminalCorrectionOutput(hydrated, version); hydrateErr != nil {
+						return nil, terminalCorrectionToolResultError(ctx, submissionID, hydrateErr, version)
+					}
+					return hydrated, nil
+				}
+			}
 			return nil, terminalCorrectionToolResultError(ctx, stringInput(input["submission_id"]), err, version)
 		}
 		submissionID := strings.TrimSpace(stringInput(receipt["submission_id"]))
@@ -232,6 +252,15 @@ func terminalCorrectionInvoker(legacy Tool, status Tool, version string) ToolInv
 		}
 		return output, nil
 	}
+}
+
+func isInvalidConfirmationError(input map[string]any, err error) bool {
+	if stringInput(input["action"]) != "confirm" {
+		return false
+	}
+	var apiErr *httperr.APIError
+	return errors.As(err, &apiErr) && apiErr.Code == httperr.CONFLICT &&
+		apiErrorDetailEquals(apiErr, "reason", memoryservice.CorrectionConfirmationInvalidReason)
 }
 
 func terminalRememberRequest(input map[string]any) (rememberapp.RememberRequest, error) {

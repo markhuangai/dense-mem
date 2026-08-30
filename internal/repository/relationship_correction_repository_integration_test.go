@@ -255,20 +255,28 @@ func TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation(t *testing.
 	}))
 	require.Equal(t, "active", originalStatus)
 
-	invalidToken, err := semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
+	_, err = semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
 		TeamID: teamID, OwnerProfileID: ownerID, Action: "confirm",
 		SubmissionID: submitted.SubmissionID, ConfirmationToken: uuid.NewString(),
 		Selection: RelationshipCorrectionSelection{ObjectEntityID: firstAtlas.EntityID}, IdempotencyKey: "invalid-token-confirm",
+	})
+	require.ErrorIs(t, err, ErrRelationshipCorrectionConfirmation)
+	invalidToken, err := semantic.GetRelationshipCorrection(ctx, GetRelationshipCorrectionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SubmissionID: submitted.SubmissionID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "awaiting_confirmation", invalidToken.ProcessingState)
 	require.NotNil(t, invalidToken.Confirmation)
 	require.Equal(t, submitted.Confirmation.Token, invalidToken.Confirmation.Token)
 
-	invalidSelection, err := semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
+	_, err = semantic.CorrectRelationship(ctx, CorrectRelationshipInput{
 		TeamID: teamID, OwnerProfileID: ownerID, Action: "confirm",
 		SubmissionID: submitted.SubmissionID, ConfirmationToken: submitted.Confirmation.Token,
 		Selection: RelationshipCorrectionSelection{ObjectEntityID: uuid.NewString()}, IdempotencyKey: "invalid-selection-confirm",
+	})
+	require.ErrorIs(t, err, ErrRelationshipCorrectionConfirmation)
+	invalidSelection, err := semantic.GetRelationshipCorrection(ctx, GetRelationshipCorrectionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SubmissionID: submitted.SubmissionID,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "awaiting_confirmation", invalidSelection.ProcessingState)
