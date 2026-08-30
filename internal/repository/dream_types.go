@@ -17,6 +17,7 @@ type DreamRepository interface {
 	UpsertHypothesis(ctx context.Context, input UpsertHypothesisInput) (*HypothesisRecord, bool, error)
 	ListHypotheses(ctx context.Context, input ListHypothesesInput) ([]HypothesisRecord, string, error)
 	GetHypothesis(ctx context.Context, input GetHypothesisInput) (*HypothesisRecord, error)
+	WithHypothesisConfirmationLock(ctx context.Context, teamID, hypothesisID string, fn func(DreamRepository) error) error
 	RecallHypotheses(ctx context.Context, input RecallHypothesesInput) ([]HypothesisRecord, error)
 	UpdateHypothesisStatus(ctx context.Context, input UpdateHypothesisStatusInput) (*HypothesisRecord, error)
 	SubmitHypothesis(ctx context.Context, input SubmitHypothesisInput) (*HypothesisRecord, error)
@@ -235,34 +236,37 @@ type DreamDerivationSource struct {
 }
 
 type HypothesisRecord struct {
-	TeamID                string
-	HypothesisID          string
-	CreatedByProfileID    string
-	Status                string
-	Statement             string
-	Rationale             string
-	Likelihood            *float64
-	Confidence            *float64
-	SubjectEntityID       string
-	PredicateKey          string
-	PredicateVersion      int
-	ObjectEntityID        string
-	ObjectValueID         string
-	SourceRefs            []map[string]any
-	SourceVersions        map[string]int
-	SourceOwnerProfileIDs []string
-	ContentHash           string
-	TargetIdentity        string
-	Derivations           []DreamDerivationSource
-	CycleRunID            string
-	GeneratorKind         string
-	GeneratorVersion      string
-	InvalidatedReason     string
-	SubmittedIngestID     string
-	SubmittedAt           *time.Time
-	Payload               map[string]any
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
+	TeamID                        string
+	HypothesisID                  string
+	CreatedByProfileID            string
+	Status                        string
+	Statement                     string
+	Rationale                     string
+	Likelihood                    *float64
+	Confidence                    *float64
+	SubjectEntityID               string
+	PredicateKey                  string
+	PredicateVersion              int
+	ObjectEntityID                string
+	ObjectValueID                 string
+	SourceRefs                    []map[string]any
+	SourceVersions                map[string]int
+	SourceOwnerProfileIDs         []string
+	ContentHash                   string
+	TargetIdentity                string
+	Derivations                   []DreamDerivationSource
+	CycleRunID                    string
+	GeneratorKind                 string
+	GeneratorVersion              string
+	InvalidatedReason             string
+	SubmittedIngestID             string
+	SubmittedIngestIdempotencyKey string
+	SubmittedIngestRequestHash    string
+	SubmittedDecision             string
+	SubmittedAt                   *time.Time
+	Payload                       map[string]any
+	CreatedAt                     time.Time
+	UpdatedAt                     time.Time
 }
 
 type ListHypothesesInput struct {

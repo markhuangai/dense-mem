@@ -146,7 +146,31 @@ func insertHypothesisTx(
 		          ARRAY(SELECT source_owner_id::text FROM unnest(source_owner_profile_ids) AS source_owner(source_owner_id)),
 		          COALESCE(content_hash, ''), COALESCE(target_identity, ''), COALESCE(cycle_run_id::text, ''),
 		          generator_kind, generator_version, invalidated_reason,
-		          COALESCE(submitted_ingest_id::text, ''), submitted_at,
+		          COALESCE(submitted_ingest_id::text, ''),
+		          COALESCE((
+		              SELECT ingest.idempotency_key
+		              FROM knowledge_ingests AS ingest
+		              WHERE ingest.team_id = hypotheses.team_id
+		                AND ingest.ingest_id = hypotheses.submitted_ingest_id
+		              LIMIT 1
+		          ), ''),
+		          COALESCE((
+		              SELECT ingest.request_hash
+		              FROM knowledge_ingests AS ingest
+		              WHERE ingest.team_id = hypotheses.team_id
+		                AND ingest.ingest_id = hypotheses.submitted_ingest_id
+		              LIMIT 1
+		          ), ''),
+		          COALESCE((
+		              SELECT feedback.decision
+		              FROM hypothesis_feedback_events AS feedback
+		              WHERE feedback.team_id = hypotheses.team_id
+		                AND feedback.hypothesis_id = hypotheses.hypothesis_id
+		                AND feedback.submitted_ingest_id IS NOT NULL
+		              ORDER BY feedback.created_at DESC, feedback.feedback_event_id DESC
+		              LIMIT 1
+		          ), ''),
+		          submitted_at,
 		          payload, created_at, updated_at
 	`, input.TeamID, input.TeamID, input.TeamID, input.CreatedByProfileID, input.Statement, input.Rationale,
 		input.Likelihood, input.Confidence, input.SubjectEntityID, input.PredicateKey,

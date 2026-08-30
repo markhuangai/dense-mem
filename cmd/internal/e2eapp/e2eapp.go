@@ -143,7 +143,21 @@ func conflictOverride(_ context.Context, _ serverapp.RuntimeContext, write *serv
 	return validateSliceHook(write, WriteSliceConflict)
 }
 func dreamOverride(_ context.Context, _ serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
-	return validateSliceHook(write, WriteSliceDream)
+	if err := validateSliceHook(write, WriteSliceDream); err != nil {
+		return err
+	}
+	if write.SynchronousRememberFactory == nil {
+		return fmt.Errorf("e2e write slice %q has no synchronous Remember factory", WriteSliceDream)
+	}
+	remember := write.SynchronousRememberFactory()
+	if remember == nil {
+		return fmt.Errorf("e2e write slice %q factory returned nil Remember service", WriteSliceDream)
+	}
+	write.Remember = remember
+	write.RegistryOverride = func(_ context.Context, _ serverapp.RuntimeContext, active registry.Registry) (registry.Registry, error) {
+		return registry.WithTerminalRemember(active, remember)
+	}
+	return nil
 }
 func reconciliationOverride(_ context.Context, _ serverapp.RuntimeContext, write *serverapp.WriteRuntime) error {
 	return validateSliceHook(write, WriteSliceReconciliation)

@@ -17,7 +17,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 var ErrDreamAuthContext = errors.New("dream: authenticated actor context is required")
@@ -520,6 +520,12 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 		return nil, fmt.Errorf("resolve dream feedback: dream_id is required")
 	}
 	decision := strings.TrimSpace(req.Decision)
+	if isDreamConfirmationDecision(decision) {
+		return s.resolveConfirmationWithLock(ctx, teamID, actorProfileID, dreamID, decision, req)
+	}
+	if isDreamLifecycleDecision(decision) {
+		return s.resolveLifecycleFeedbackWithLock(ctx, teamID, actorProfileID, dreamID, decision, req)
+	}
 	record, err := s.deps.Store.GetHypothesis(ctx, repository.GetHypothesisInput{
 		TeamID:       teamID,
 		HypothesisID: dreamID,
@@ -533,68 +539,9 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 	}
 	dream := dreamRecord(record)
 	switch decision {
-	case "reject":
-		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
-			TeamID:            teamID,
-			ActorProfileID:    actorProfileID,
-			HypothesisID:      dreamID,
-			Status:            string(domain.DreamStatusRejected),
-			Decision:          decision,
-			InvalidatedReason: req.Feedback,
-		})
-		return s.feedbackResult(ctx, decision, dream, updated, nil, err)
-	case "stale":
-		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
-			TeamID:            teamID,
-			ActorProfileID:    actorProfileID,
-			HypothesisID:      dreamID,
-			Status:            string(domain.DreamStatusStale),
-			Decision:          decision,
-			InvalidatedReason: req.Feedback,
-		})
-		return s.feedbackResult(ctx, decision, dream, updated, nil, err)
-	case "reinforce":
-		updated, err := s.deps.Store.UpdateHypothesisStatus(ctx, repository.UpdateHypothesisStatusInput{
-			TeamID:            teamID,
-			ActorProfileID:    actorProfileID,
-			HypothesisID:      dreamID,
-			Status:            string(domain.DreamStatusReinforced),
-			Decision:          decision,
-			InvalidatedReason: req.Feedback,
-		})
-		return s.feedbackResult(ctx, decision, dream, updated, nil, err)
 	case "ignore":
 		s.recordDreamFeedback(ctx, decision, dream, "ok")
 		return &ResolveFeedbackResult{Dream: dream}, nil
-	case "confirm_true", "confirm_false", "promote_candidate":
-		if s.deps.Remember == nil {
-			s.recordDreamFeedback(ctx, decision, dream, "error")
-			return nil, fmt.Errorf("resolve dream feedback: remember service is required")
-		}
-		evidence, err := dreamSubmissionEvidence(req, record)
-		if err != nil {
-			s.recordDreamFeedback(ctx, decision, dream, "error")
-			return nil, err
-		}
-		remember, err := s.deps.Remember.Remember(ctx, memoryservice.RememberRequest{
-			Evidence:          evidence,
-			EntityHints:       req.EntityHints,
-			RelationshipHints: req.RelationshipHints,
-			IdempotencyKey:    dreamFeedbackIdempotency(req, dreamID, decision),
-		})
-		if err != nil {
-			s.recordDreamFeedback(ctx, decision, dream, "error")
-			return nil, err
-		}
-		updated, err := s.deps.Store.SubmitHypothesis(ctx, repository.SubmitHypothesisInput{
-			TeamID:            teamID,
-			ActorProfileID:    actorProfileID,
-			HypothesisID:      dreamID,
-			Decision:          decision,
-			SubmittedIngestID: remember.IngestID,
-			InvalidatedReason: req.Feedback,
-		})
-		return s.feedbackResult(ctx, decision, dream, updated, remember, err)
 	default:
 		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return nil, fmt.Errorf("%w: %s", ErrInvalidDreamStatus, decision)
@@ -606,7 +553,7 @@ func (s *service) feedbackResult(
 	decision string,
 	original *domain.Dream,
 	updated *repository.HypothesisRecord,
-	remember *memoryservice.RememberResult,
+	remember *rememberapp.RememberResult,
 	err error,
 ) (*ResolveFeedbackResult, error) {
 	if err != nil {
@@ -823,45 +770,6 @@ func hypothesisContentHash(input repository.UpsertHypothesisInput) string {
 	}, "\x00")
 	sum := sha256.Sum256([]byte(raw))
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func dreamSubmissionEvidence(
-	req ResolveFeedbackRequest,
-	record *repository.HypothesisRecord,
-) ([]memoryservice.RememberEvidenceInput, error) {
-	if len(req.Evidence) == 0 {
-		return nil, errors.New("resolve dream feedback: independent evidence is required")
-	}
-	out := make([]memoryservice.RememberEvidenceInput, 0, len(req.Evidence))
-	for i, item := range req.Evidence {
-		content := strings.TrimSpace(item.Content)
-		if content == "" {
-			return nil, fmt.Errorf("resolve dream feedback: evidence[%d].content is required", i)
-		}
-		if strings.EqualFold(content, strings.TrimSpace(record.Statement)) {
-			return nil, errors.New("resolve dream feedback: hypothesis text cannot be submitted as its own evidence")
-		}
-		if item.SourceType == "" {
-			item.SourceType = "manual"
-		}
-		if item.Source == "" {
-			item.Source = "dream_feedback:" + record.HypothesisID
-		}
-		if item.Metadata == nil {
-			item.Metadata = map[string]any{}
-		}
-		item.Metadata["hypothesis_id"] = record.HypothesisID
-		item.Metadata["hypothesis_status_before"] = record.Status
-		out = append(out, item)
-	}
-	return out, nil
-}
-
-func dreamFeedbackIdempotency(req ResolveFeedbackRequest, dreamID string, decision string) string {
-	if value := strings.TrimSpace(req.IdempotencyKey); value != "" {
-		return value
-	}
-	return "dream-feedback:" + dreamID + ":" + decision
 }
 
 func optionalProbability(value float64) *float64 {

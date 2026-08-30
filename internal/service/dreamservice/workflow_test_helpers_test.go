@@ -3,6 +3,7 @@ package dreamservice
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,7 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 func dreamTestContext(teamID uuid.UUID, ownerID uuid.UUID) context.Context {
@@ -23,34 +24,54 @@ func dreamTestContext(teamID uuid.UUID, ownerID uuid.UUID) context.Context {
 }
 
 type dreamRepositoryStub struct {
-	inputs          []repository.DreamInput
-	predicates      []repository.DreamTargetPredicate
-	unassessedPaths []repository.DreamPathEvaluationInput
-	pathEvaluations repository.DreamPathEvaluationRecordInput
-	run             repository.DreamCycleRun
-	getRecord       repository.HypothesisRecord
-	listRecords     []repository.HypothesisRecord
-	recallRecords   []repository.HypothesisRecord
-	listInput       repository.DreamInputListInput
-	claimInput      repository.DreamCycleClaimInput
-	completeInput   repository.DreamCycleCompleteInput
-	missedInput     repository.DreamCycleClaimInput
-	upserts         []repository.UpsertHypothesisInput
-	submitInput     repository.SubmitHypothesisInput
-	updateInput     repository.UpdateHypothesisStatusInput
-	err             error
-	claimErr        error
-	completeErr     error
-	listInputsErr   error
-	targetsErr      error
-	pathAssessErr   error
-	upsertErr       error
-	listErr         error
-	getErr          error
-	recallErr       error
-	updateErr       error
-	submitErr       error
-	latestErr       error
+	confirmationLock    sync.Mutex
+	inputs              []repository.DreamInput
+	predicates          []repository.DreamTargetPredicate
+	unassessedPaths     []repository.DreamPathEvaluationInput
+	pathEvaluations     repository.DreamPathEvaluationRecordInput
+	run                 repository.DreamCycleRun
+	getRecord           repository.HypothesisRecord
+	listRecords         []repository.HypothesisRecord
+	recallRecords       []repository.HypothesisRecord
+	listInput           repository.DreamInputListInput
+	claimInput          repository.DreamCycleClaimInput
+	completeInput       repository.DreamCycleCompleteInput
+	missedInput         repository.DreamCycleClaimInput
+	upserts             []repository.UpsertHypothesisInput
+	submitInput         repository.SubmitHypothesisInput
+	updateInput         repository.UpdateHypothesisStatusInput
+	err                 error
+	claimErr            error
+	completeErr         error
+	listInputsErr       error
+	targetsErr          error
+	pathAssessErr       error
+	upsertErr           error
+	listErr             error
+	getErr              error
+	recallErr           error
+	updateErr           error
+	submitErr           error
+	submitErrs          []error
+	submitCalls         int
+	latestErr           error
+	confirmationLockErr error
+
+	confirmationLockCalls int
+}
+
+type rememberIngestLookupStub struct {
+	existing map[string]bool
+	err      error
+	calls    []repository.RememberIngestLookupInput
+}
+
+func (s *rememberIngestLookupStub) RememberIngestExists(_ context.Context, input repository.RememberIngestLookupInput) (bool, error) {
+	s.calls = append(s.calls, input)
+	if s.err != nil {
+		return false, s.err
+	}
+	return s.existing[input.IdempotencyKey], nil
 }
 
 func (s *dreamRepositoryStub) ClaimDreamCycle(_ context.Context, input repository.DreamCycleClaimInput) (*repository.DreamCycleRun, error) {
@@ -205,6 +226,16 @@ func (s *dreamRepositoryStub) GetHypothesis(context.Context, repository.GetHypot
 	return &record, nil
 }
 
+func (s *dreamRepositoryStub) WithHypothesisConfirmationLock(_ context.Context, _, _ string, fn func(repository.DreamRepository) error) error {
+	s.confirmationLockCalls++
+	if s.confirmationLockErr != nil {
+		return s.confirmationLockErr
+	}
+	s.confirmationLock.Lock()
+	defer s.confirmationLock.Unlock()
+	return fn(s)
+}
+
 func (s *dreamRepositoryStub) RecallHypotheses(context.Context, repository.RecallHypothesesInput) ([]repository.HypothesisRecord, error) {
 	if s.recallErr != nil {
 		return nil, s.recallErr
@@ -237,6 +268,14 @@ func (s *dreamRepositoryStub) UpdateHypothesisStatus(_ context.Context, input re
 
 func (s *dreamRepositoryStub) SubmitHypothesis(_ context.Context, input repository.SubmitHypothesisInput) (*repository.HypothesisRecord, error) {
 	s.submitInput = input
+	s.submitCalls++
+	if len(s.submitErrs) > 0 {
+		err := s.submitErrs[0]
+		s.submitErrs = s.submitErrs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if s.submitErr != nil {
 		return nil, s.submitErr
 	}
@@ -310,21 +349,28 @@ func (s *dreamRepositoryStub) RecordMissedScheduledDreamCycle(_ context.Context,
 }
 
 type rememberServiceStub struct {
-	requests []memoryservice.RememberRequest
-	result   *memoryservice.RememberResult
+	requests []rememberapp.RememberRequest
+	result   *rememberapp.RememberResult
 	err      error
+	after    func()
 }
 
-func (s *rememberServiceStub) Remember(_ context.Context, req memoryservice.RememberRequest) (*memoryservice.RememberResult, error) {
+func (s *rememberServiceStub) Remember(_ context.Context, req rememberapp.RememberRequest) (*rememberapp.RememberResult, error) {
 	s.requests = append(s.requests, req)
+	if s.after != nil {
+		s.after()
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
 	if s.result != nil {
 		return s.result, nil
 	}
-	return &memoryservice.RememberResult{
-		IngestID:        uuid.NewString(),
+	ingestID := uuid.NewString()
+	return &rememberapp.RememberResult{
+		IngestID:        ingestID,
+		SubmissionID:    ingestID,
 		ProcessingState: string(domain.PlacementRunQueued),
+		Kind:            rememberapp.ResultKindLegacyReceipt,
 	}, nil
 }

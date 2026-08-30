@@ -12,7 +12,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 func TestRunCycleDoesNotTurnOneCandidateIntoAHeuristicDream(t *testing.T) {
@@ -485,9 +485,11 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 			UpdatedAt:          time.Now().UTC(),
 		},
 	}
-	remember := &rememberServiceStub{result: &memoryservice.RememberResult{
+	remember := &rememberServiceStub{result: &rememberapp.RememberResult{
 		IngestID:        ingestID,
+		SubmissionID:    ingestID,
 		ProcessingState: string(domain.PlacementRunQueued),
+		Kind:            rememberapp.ResultKindLegacyReceipt,
 	}}
 	svc := New(Dependencies{
 		Store:     repo,
@@ -505,7 +507,7 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
-		Evidence: []memoryservice.RememberEvidenceInput{{
+		Evidence: []rememberapp.RememberEvidenceInput{{
 			Content: "Dense-Mem may use PostgreSQL.",
 		}},
 	})
@@ -541,7 +543,7 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
 		Feedback: "User confirmed this with a deployment note.",
-		Evidence: []memoryservice.RememberEvidenceInput{{
+		Evidence: []rememberapp.RememberEvidenceInput{{
 			Content: evidenceContent,
 		}},
 		RelationshipHints: []map[string]any{relationshipHint},
@@ -610,7 +612,7 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 			req: ResolveFeedbackRequest{
 				DreamID:  hypothesisID,
 				Decision: "confirm_false",
-				Evidence: []memoryservice.RememberEvidenceInput{{
+				Evidence: []rememberapp.RememberEvidenceInput{{
 					Content: "The deployment note says Dense-Mem does not use PostgreSQL.",
 				}},
 			},
@@ -627,9 +629,12 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &dreamRepositoryStub{getRecord: baseRecord}
-			remember := &rememberServiceStub{result: &memoryservice.RememberResult{
-				IngestID:        uuid.NewString(),
+			ingestID := uuid.NewString()
+			remember := &rememberServiceStub{result: &rememberapp.RememberResult{
+				IngestID:        ingestID,
+				SubmissionID:    ingestID,
 				ProcessingState: string(domain.PlacementRunQueued),
+				Kind:            rememberapp.ResultKindLegacyReceipt,
 			}}
 			svc := New(Dependencies{
 				Store:     repo,
@@ -642,6 +647,11 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+			if isDreamConfirmationDecision(tc.req.Decision) || isDreamLifecycleDecision(tc.req.Decision) {
+				assert.Equal(t, 1, repo.confirmationLockCalls)
+			} else {
+				assert.Zero(t, repo.confirmationLockCalls)
+			}
 			require.NotNil(t, res.Dream)
 			assert.Equal(t, tc.wantStatus, res.Dream.Status)
 			if tc.wantMemory {
@@ -812,13 +822,24 @@ func TestResolveFeedbackErrorBranches(t *testing.T) {
 	require.ErrorIs(t, err, ErrDreamNotFound)
 
 	svc = New(Dependencies{
+		Store: &dreamRepositoryStub{
+			getRecord:           record,
+			confirmationLockErr: repository.ErrDreamConfirmationBusy,
+		},
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
+	})
+	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{DreamID: hypothesisID, Decision: "reject"})
+	var busyErr *ConfirmationBusyError
+	require.ErrorAs(t, err, &busyErr)
+
+	svc = New(Dependencies{
 		Store:     &dreamRepositoryStub{getRecord: record},
 		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true}},
 	})
 	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
-		Evidence: []memoryservice.RememberEvidenceInput{{
+		Evidence: []rememberapp.RememberEvidenceInput{{
 			Content: "The deployment note says Dense-Mem uses PostgreSQL.",
 		}},
 	})
@@ -842,7 +863,7 @@ func TestResolveFeedbackErrorBranches(t *testing.T) {
 	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
 		DreamID:  hypothesisID,
 		Decision: "confirm_false",
-		Evidence: []memoryservice.RememberEvidenceInput{{
+		Evidence: []rememberapp.RememberEvidenceInput{{
 			Content: "The deployment note says Dense-Mem does not use PostgreSQL.",
 		}},
 	})

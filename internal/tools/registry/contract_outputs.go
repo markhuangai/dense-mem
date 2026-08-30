@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 )
 
@@ -509,6 +511,38 @@ func resolveDreamFeedbackContractOutput(res *dreamservice.ResolveFeedbackResult)
 		}
 	}
 	return out
+}
+
+func resolveDreamConfirmationBusyOutcome(err error) (map[string]any, bool) {
+	var busy *dreamservice.ConfirmationBusyError
+	if !errors.As(err, &busy) || busy == nil {
+		return nil, false
+	}
+	message := "dream confirmation is already in progress"
+	remediation := "Retry resolve_dream_feedback with the same evidence and idempotency_key after the in-progress confirmation completes."
+	if busy.IsLifecycle() {
+		message = "dream lifecycle feedback is already in progress"
+		remediation = "Retry resolve_dream_feedback with the same decision and reason after the in-progress lifecycle update completes; omit idempotency_key."
+	}
+	return map[string]any{
+		"code":        "dream_confirmation_busy",
+		"message":     message,
+		"retryable":   true,
+		"next_action": string(rememberapp.TerminalNextActionRetryDreamFeedback),
+		"remediation": remediation,
+	}, true
+}
+
+func resolveDreamTerminalOutcome(res *dreamservice.ResolveFeedbackResult) (map[string]any, bool, error) {
+	if res == nil || res.Memory == nil || res.Memory.Terminal == nil ||
+		res.Memory.Terminal.ProcessingState == string(rememberapp.TerminalProcessingCompleted) {
+		return nil, false, nil
+	}
+	output, err := structToMap(res.Memory.Terminal)
+	if err != nil {
+		return nil, false, err
+	}
+	return output, true, nil
 }
 
 func exportMemoryPackContractOutput(res *skillpackservice.ExportResult) map[string]any {

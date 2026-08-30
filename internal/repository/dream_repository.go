@@ -577,34 +577,8 @@ func (r *SemanticRepositoryImpl) GetHypothesis(ctx context.Context, input GetHyp
 	}
 	var record *HypothesisRecord
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		rows, err := tx.WithContext(ctx).Raw(hypothesisSelectSQL(`
-			WHERE team_id = ?::uuid
-			  AND space_id = dense_mem_team_shared_space(team_id)
-			  AND space_generation = dense_mem_team_shared_generation(team_id)
-			  AND canonical_hypothesis_id IS NULL
-			  AND hypothesis_id = COALESCE((
-			      SELECT canonical_hypothesis_id
-			      FROM hypotheses
-				WHERE team_id = ?::uuid
-				        AND space_id = dense_mem_team_shared_space(team_id)
-				        AND space_generation = dense_mem_team_shared_generation(team_id)
-			        AND hypothesis_id = ?::uuid
-			  ), ?::uuid)
-			LIMIT 1
-		`), input.TeamID, input.TeamID, input.HypothesisID, input.HypothesisID).Rows()
+		loaded, err := loadHypothesisRecordInTx(ctx, tx, input.TeamID, input.HypothesisID)
 		if err != nil {
-			return err
-		}
-		if !rows.Next() {
-			_ = rows.Close()
-			return ErrDreamHypothesisNotFound
-		}
-		loaded, err := scanHypothesisRecord(rows)
-		if err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := rows.Close(); err != nil {
 			return err
 		}
 		records := []HypothesisRecord{*loaded}
@@ -618,6 +592,40 @@ func (r *SemanticRepositoryImpl) GetHypothesis(ctx context.Context, input GetHyp
 		return nil, fmt.Errorf("dream: get hypothesis: %w", err)
 	}
 	return record, nil
+}
+
+func loadHypothesisRecordInTx(ctx context.Context, tx *gorm.DB, teamID, hypothesisID string) (*HypothesisRecord, error) {
+	rows, err := tx.WithContext(ctx).Raw(hypothesisSelectSQL(`
+		WHERE team_id = ?::uuid
+		  AND space_id = dense_mem_team_shared_space(team_id)
+		  AND space_generation = dense_mem_team_shared_generation(team_id)
+		  AND canonical_hypothesis_id IS NULL
+		  AND hypothesis_id = COALESCE((
+		      SELECT canonical_hypothesis_id
+		      FROM hypotheses
+			WHERE team_id = ?::uuid
+			        AND space_id = dense_mem_team_shared_space(team_id)
+			        AND space_generation = dense_mem_team_shared_generation(team_id)
+			        AND hypothesis_id = ?::uuid
+		  ), ?::uuid)
+		LIMIT 1
+	`), teamID, teamID, hypothesisID, hypothesisID).Rows()
+	if err != nil {
+		return nil, err
+	}
+	if !rows.Next() {
+		_ = rows.Close()
+		return nil, ErrDreamHypothesisNotFound
+	}
+	loaded, err := scanHypothesisRecord(rows)
+	if err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return loaded, nil
 }
 
 func (r *SemanticRepositoryImpl) RecallHypotheses(ctx context.Context, input RecallHypothesesInput) ([]HypothesisRecord, error) {
@@ -758,16 +766,27 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 				WHERE team_id = ?::uuid
 				        AND space_id = dense_mem_team_shared_space(team_id)
 				        AND space_generation = dense_mem_team_shared_generation(team_id)
-			        AND hypothesis_id = ?::uuid
+				        AND hypothesis_id = ?::uuid
 			  ), ?::uuid)
+			  AND NOT (status = 'submitted' AND submitted_ingest_id IS NOT NULL)
 		`), input.SubmittedIngestID, input.InvalidatedReason, input.InvalidatedReason,
 			input.TeamID, input.TeamID, input.HypothesisID, input.HypothesisID).Rows()
 		if err != nil {
 			return err
 		}
 		if !rows.Next() {
-			_ = rows.Close()
-			return ErrDreamHypothesisNotFound
+			if err := rows.Close(); err != nil {
+				return err
+			}
+			loaded, err := loadHypothesisRecordInTx(ctx, tx, input.TeamID, input.HypothesisID)
+			if err != nil {
+				return err
+			}
+			if loaded.Status != "submitted" || loaded.SubmittedIngestID != input.SubmittedIngestID {
+				return ErrDreamHypothesisNotFound
+			}
+			record = loaded
+			return nil
 		}
 		loaded, err := scanHypothesisRecord(rows)
 		if err != nil {
@@ -781,6 +800,7 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 			input.ActorProfileID, input.Decision, input.InvalidatedReason, input.SubmittedIngestID); err != nil {
 			return err
 		}
+		loaded.SubmittedDecision = input.Decision
 		record = loaded
 		return nil
 	})

@@ -239,6 +239,11 @@ func validateDreamFeedback(args map[string]any) error {
 			return err
 		}
 		return validateSubmittedRelationships(args["relationships"], evidence, "relationships")
+	case "reject", "stale", "reinforce":
+		if value, ok := args["idempotency_key"]; ok && strings.TrimSpace(stringInput(value)) != "" {
+			return errors.New("idempotency_key is only supported for confirmation decisions")
+		}
+		return validateRequiredFields(args, "reason")
 	default:
 		return validateRequiredFields(args, "reason")
 	}

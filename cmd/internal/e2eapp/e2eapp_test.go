@@ -42,7 +42,7 @@ func TestEveryWriteSliceHasAnOverrideSlot(t *testing.T) {
 		require.Equal(t, raw, write.Slice)
 		require.NotNil(t, write.RegistryOverride)
 		active := registry.New()
-		if slice == WriteSliceRemember || slice == WriteSliceDiagnostics {
+		if slice == WriteSliceRemember || slice == WriteSliceDiagnostics || slice == WriteSliceDream {
 			require.NoError(t, active.Register(registry.Tool{Name: registry.ToolRemember, InputSchema: map[string]any{"type": "object"}}))
 		} else if slice == WriteSliceContract {
 			for _, tool := range registry.ContractTools() {
@@ -50,7 +50,7 @@ func TestEveryWriteSliceHasAnOverrideSlot(t *testing.T) {
 				require.NoError(t, active.Register(tool))
 			}
 		}
-		if slice == WriteSliceRemember || slice == WriteSliceDiagnostics || slice == WriteSliceContract {
+		if slice == WriteSliceRemember || slice == WriteSliceDiagnostics || slice == WriteSliceDream || slice == WriteSliceContract {
 			selectedRegistry, err := write.RegistryOverride(context.Background(), serverapp.RuntimeContext{}, active)
 			require.NoError(t, err)
 			require.NotNil(t, selectedRegistry)
@@ -102,7 +102,7 @@ func TestRememberOverrideClonesOnlyRememberWithTerminalInvoker(t *testing.T) {
 	require.Len(t, selected.List(), len(active.List()))
 }
 
-func TestNonRememberSliceDoesNotInvokeSynchronousFactory(t *testing.T) {
+func TestSlicesWithoutSynchronousRememberAdoptionDoNotInvokeFactory(t *testing.T) {
 	calls := 0
 	factory := func() rememberapp.Service {
 		calls++
@@ -110,7 +110,7 @@ func TestNonRememberSliceDoesNotInvokeSynchronousFactory(t *testing.T) {
 	}
 	for _, raw := range WriteSlices() {
 		slice := WriteSlice(raw)
-		if slice == WriteSliceRemember || slice == WriteSliceDiagnostics || slice == WriteSliceContract {
+		if slice == WriteSliceRemember || slice == WriteSliceDiagnostics || slice == WriteSliceDream || slice == WriteSliceContract {
 			continue
 		}
 		options := optionsForSlice(slice)
@@ -139,6 +139,34 @@ func TestDiagnosticsOverrideInstallsTerminalRememberRuntime(t *testing.T) {
 	selected, err := write.RegistryOverride(context.Background(), serverapp.RuntimeContext{}, active)
 	require.NoError(t, err)
 	replacement, ok := selected.Get(registry.ToolRemember)
+	require.True(t, ok)
+	require.NotEqual(t, original.OutputSchema, replacement.OutputSchema)
+}
+
+func TestDreamOverrideInstallsSynchronousRemember(t *testing.T) {
+	active := registry.New()
+	require.NoError(t, active.Register(registry.Tool{
+		Name:         registry.ToolRemember,
+		InputSchema:  map[string]any{"type": "object"},
+		OutputSchema: map[string]any{"type": "object", "properties": map[string]any{"status_tool": map[string]any{"type": "string"}}, "additionalProperties": false},
+	}))
+	registryOverride := registryOverrideForSlice(WriteSliceDream)
+	factoryCalls := 0
+	write := &serverapp.WriteRuntime{
+		Slice:                      string(WriteSliceDream),
+		RegistryOverride:           registryOverride,
+		SynchronousRememberFactory: func() rememberapp.Service { factoryCalls++; return terminalRememberService{} },
+	}
+
+	require.NoError(t, dreamOverride(context.Background(), serverapp.RuntimeContext{}, write))
+	require.Equal(t, 1, factoryCalls)
+	require.NotNil(t, write.Remember)
+	require.NotNil(t, write.RegistryOverride)
+	selected, err := write.RegistryOverride(context.Background(), serverapp.RuntimeContext{}, active)
+	require.NoError(t, err)
+	replacement, ok := selected.Get(registry.ToolRemember)
+	require.True(t, ok)
+	original, ok := active.Get(registry.ToolRemember)
 	require.True(t, ok)
 	require.NotEqual(t, original.OutputSchema, replacement.OutputSchema)
 }

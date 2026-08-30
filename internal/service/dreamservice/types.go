@@ -11,7 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"gorm.io/gorm"
 )
 
@@ -25,6 +25,28 @@ var (
 	ErrDreamNotFound      = errors.New("dream not found")
 	ErrInvalidDreamStatus = errors.New("invalid dream status")
 )
+
+// ConfirmationBusyError reports that another Dream feedback operation
+// currently owns the Hypothesis admission slot. The MCP registry translates it
+// into bounded retry guidance without exposing repository details.
+type ConfirmationBusyError struct {
+	Decision string
+}
+
+func (e *ConfirmationBusyError) Error() string {
+	if e.IsLifecycle() {
+		return "dream lifecycle feedback is already in progress"
+	}
+	return "dream confirmation is already in progress"
+}
+
+func (e *ConfirmationBusyError) Unwrap() error {
+	return repository.ErrDreamConfirmationBusy
+}
+
+func (e *ConfirmationBusyError) IsLifecycle() bool {
+	return e != nil && isDreamLifecycleDecision(e.Decision)
+}
 
 type AppConfig interface {
 	DreamingRuntimeConfig(ctx context.Context) (domain.DreamingRuntimeConfig, error)
@@ -48,8 +70,13 @@ type Generator interface {
 	Model() string
 }
 
+type RememberService interface {
+	Remember(context.Context, rememberapp.RememberRequest) (*rememberapp.RememberResult, error)
+}
+
 type Dependencies struct {
-	Remember           memoryservice.RememberService
+	Remember           RememberService
+	RememberIngests    repository.RememberIngestLookup
 	Store              repository.DreamRepository
 	ScheduledStore     repository.ScheduledDreamRepository
 	AppConfig          AppConfig
@@ -112,19 +139,19 @@ type ListOptions struct {
 }
 
 type ResolveFeedbackRequest struct {
-	DreamID           string                                `json:"dream_id"`
-	Decision          string                                `json:"decision"`
-	Feedback          string                                `json:"feedback,omitempty"`
-	Evidence          []memoryservice.RememberEvidenceInput `json:"evidence,omitempty"`
-	EntityHints       []map[string]any                      `json:"entity_hints,omitempty"`
-	RelationshipHints []map[string]any                      `json:"relationship_hints,omitempty"`
-	IdempotencyKey    string                                `json:"idempotency_key,omitempty"`
+	DreamID           string                              `json:"dream_id"`
+	Decision          string                              `json:"decision"`
+	Feedback          string                              `json:"feedback,omitempty"`
+	Evidence          []rememberapp.RememberEvidenceInput `json:"evidence,omitempty"`
+	EntityHints       []map[string]any                    `json:"entity_hints,omitempty"`
+	RelationshipHints []map[string]any                    `json:"relationship_hints,omitempty"`
+	IdempotencyKey    string                              `json:"idempotency_key,omitempty"`
 }
 
 type ResolveFeedbackResult struct {
-	Dream   *domain.Dream                 `json:"dream"`
-	Memory  *memoryservice.RememberResult `json:"memory,omitempty"`
-	Deleted bool                          `json:"deleted,omitempty"`
+	Dream   *domain.Dream               `json:"dream"`
+	Memory  *rememberapp.RememberResult `json:"memory,omitempty"`
+	Deleted bool                        `json:"deleted,omitempty"`
 }
 
 type StatusResult struct {
