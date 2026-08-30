@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -12,6 +13,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
+
+const dreamConfirmationFinalizationTimeout = 5 * time.Second
 
 func isDreamConfirmationDecision(decision string) bool {
 	switch decision {
@@ -180,7 +183,7 @@ func (s *service) resolveConfirmation(
 		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return &ResolveFeedbackResult{Dream: dream, Memory: remember}, nil
 	}
-	updated, err := store.SubmitHypothesis(ctx, repository.SubmitHypothesisInput{
+	updated, err := s.submitDreamHypothesisWithRetry(ctx, store, repository.SubmitHypothesisInput{
 		TeamID:            teamID,
 		ActorProfileID:    actorProfileID,
 		HypothesisID:      dreamID,
@@ -189,6 +192,24 @@ func (s *service) resolveConfirmation(
 		InvalidatedReason: req.Feedback,
 	})
 	return s.feedbackResult(ctx, decision, dream, updated, remember, err)
+}
+
+func (s *service) submitDreamHypothesisWithRetry(
+	ctx context.Context,
+	store repository.DreamRepository,
+	input repository.SubmitHypothesisInput,
+) (*repository.HypothesisRecord, error) {
+	updated, err := store.SubmitHypothesis(ctx, input)
+	if err == nil {
+		return updated, nil
+	}
+	retryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dreamConfirmationFinalizationTimeout)
+	defer cancel()
+	retried, retryErr := store.SubmitHypothesis(retryCtx, input)
+	if retryErr == nil {
+		return retried, nil
+	}
+	return nil, errors.Join(err, fmt.Errorf("resolve dream feedback: submit hypothesis retry: %w", retryErr))
 }
 
 func dreamSubmissionEvidence(

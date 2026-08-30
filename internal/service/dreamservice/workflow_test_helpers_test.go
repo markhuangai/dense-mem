@@ -52,6 +52,8 @@ type dreamRepositoryStub struct {
 	recallErr           error
 	updateErr           error
 	submitErr           error
+	submitErrs          []error
+	submitCalls         int
 	latestErr           error
 	confirmationLockErr error
 
@@ -252,6 +254,14 @@ func (s *dreamRepositoryStub) UpdateHypothesisStatus(_ context.Context, input re
 
 func (s *dreamRepositoryStub) SubmitHypothesis(_ context.Context, input repository.SubmitHypothesisInput) (*repository.HypothesisRecord, error) {
 	s.submitInput = input
+	s.submitCalls++
+	if len(s.submitErrs) > 0 {
+		err := s.submitErrs[0]
+		s.submitErrs = s.submitErrs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if s.submitErr != nil {
 		return nil, s.submitErr
 	}
@@ -328,10 +338,14 @@ type rememberServiceStub struct {
 	requests []rememberapp.RememberRequest
 	result   *rememberapp.RememberResult
 	err      error
+	after    func()
 }
 
 func (s *rememberServiceStub) Remember(_ context.Context, req rememberapp.RememberRequest) (*rememberapp.RememberResult, error) {
 	s.requests = append(s.requests, req)
+	if s.after != nil {
+		s.after()
+	}
 	if s.err != nil {
 		return nil, s.err
 	}

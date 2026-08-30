@@ -17,8 +17,8 @@ import (
 const (
 	dreamConfirmationLockPrefix         = "dream-confirmation:"
 	dreamConfirmationLockCleanupTimeout = 5 * time.Second
-	// Keep one dedicated session for coordination; the application pool cannot share its session across provider work.
-	dreamConfirmationLockAdmissionLimit = 1
+	// Keep a small dedicated session budget; the application pool cannot share its sessions across provider work.
+	dreamConfirmationLockAdmissionLimit = 4
 )
 
 var ErrDreamConfirmationBusy = errors.New("dream confirmation is already in progress")

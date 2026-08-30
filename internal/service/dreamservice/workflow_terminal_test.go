@@ -1,6 +1,7 @@
 package dreamservice
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -124,6 +125,39 @@ func TestResolveFeedbackUsesExplicitRememberResultKind(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveFeedbackRetriesHypothesisFinalizationAfterCancellation(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	ingestID := uuid.NewString()
+	ctx, cancel := context.WithCancel(dreamTestContext(teamID, ownerID))
+	defer cancel()
+	repo := &dreamRepositoryStub{
+		getRecord: repository.HypothesisRecord{
+			TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(),
+			Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
+		},
+		submitErrs: []error{context.Canceled, nil},
+	}
+	remember := &rememberServiceStub{
+		result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), ingestID),
+		after:  cancel,
+	}
+	svc := New(Dependencies{Store: repo, Remember: remember})
+
+	result, err := svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
+		DreamID:  hypothesisID,
+		Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, domain.DreamStatusSubmitted, result.Dream.Status)
+	require.Equal(t, ingestID, result.Memory.IngestID)
+	require.Equal(t, 2, repo.submitCalls)
 }
 
 func TestResolveFeedbackReplaysCompletedRememberResult(t *testing.T) {

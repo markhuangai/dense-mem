@@ -126,7 +126,7 @@ func TestHypothesisConfirmationLockAllowsNestedRepositoryUseAtMaxOpenOne(t *test
 	require.NoError(t, followupErr)
 }
 
-func TestHypothesisConfirmationLockBoundsDifferentHypothesesAtMaxOpenOne(t *testing.T) {
+func TestHypothesisConfirmationLockBoundsDifferentHypotheses(t *testing.T) {
 	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
@@ -136,44 +136,49 @@ func TestHypothesisConfirmationLockBoundsDifferentHypothesesAtMaxOpenOne(t *test
 	sqlDB.SetMaxIdleConns(1)
 	repo := NewSemanticRepository(appDB, rls)
 	teamID := uuid.NewString()
-	firstHypothesisID := uuid.NewString()
-	secondHypothesisID := uuid.NewString()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	firstEntered := make(chan struct{})
-	releaseFirst := make(chan struct{})
-	firstErr := make(chan error, 1)
-	go func() {
-		firstErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, firstHypothesisID, func(DreamRepository) error {
-			close(firstEntered)
-			<-releaseFirst
-			return nil
-		})
-	}()
-	select {
-	case <-firstEntered:
-	case <-ctx.Done():
-		t.Fatal("first confirmation lock callback did not start")
+	release := make(chan struct{})
+	entered := make(chan struct{}, dreamConfirmationLockAdmissionLimit)
+	errs := make(chan error, dreamConfirmationLockAdmissionLimit)
+	for i := 0; i < dreamConfirmationLockAdmissionLimit; i++ {
+		hypothesisID := uuid.NewString()
+		go func() {
+			errs <- repo.WithHypothesisConfirmationLock(ctx, teamID, hypothesisID, func(DreamRepository) error {
+				entered <- struct{}{}
+				<-release
+				return nil
+			})
+		}()
+	}
+	for i := 0; i < dreamConfirmationLockAdmissionLimit; i++ {
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			t.Fatal("confirmation lock callback did not start")
+		}
 	}
 
-	secondEntered := make(chan struct{})
-	secondErr := make(chan error, 1)
+	extraEntered := make(chan struct{})
+	extraErr := make(chan error, 1)
 	go func() {
-		secondErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, secondHypothesisID, func(DreamRepository) error {
-			close(secondEntered)
+		extraErr <- repo.WithHypothesisConfirmationLock(ctx, teamID, uuid.NewString(), func(DreamRepository) error {
+			close(extraEntered)
 			return nil
 		})
 	}()
 	select {
-	case <-secondEntered:
-		t.Fatal("second confirmation lock callback exceeded the configured admission bound")
-	case err := <-secondErr:
+	case <-extraEntered:
+		t.Fatal("confirmation lock callback exceeded the configured admission bound")
+	case err := <-extraErr:
 		require.ErrorIs(t, err, ErrDreamConfirmationBusy)
 	case <-time.After(5 * time.Second):
-		t.Fatal("second confirmation lock admission did not return while the bound was full")
+		t.Fatal("confirmation lock admission did not return while the bound was full")
 	}
-	close(releaseFirst)
-	require.NoError(t, <-firstErr)
+	close(release)
+	for i := 0; i < dreamConfirmationLockAdmissionLimit; i++ {
+		require.NoError(t, <-errs)
+	}
 }
 
 func TestHypothesisConfirmationLockUsesCanonicalAlias(t *testing.T) {
