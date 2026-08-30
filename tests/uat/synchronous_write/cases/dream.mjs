@@ -108,7 +108,7 @@ export async function run({ rpc, rawRPC, expect }) {
 	expect(hypothesisRow(teamID, scenarios.failed.hypothesisID).status === "proposed", "operational failure must not advance Dream state");
 	const failedAttempt = attemptRow(teamID, scenarios.failed.idempotencyKey);
 	expect(failedAttempt.outcome === "failed" && failedAttempt.count === 1, "operational failure must persist one failed terminal attempt");
-	assertDreamRetryGuidance(failed, scenarios.failed, "failed");
+  assertDreamRetryGuidance(failed, scenarios.failed, "failed", "retry_same_request");
 	const failedAttemptCount = failedAttempt.count;
 
   const noEvidence = await rawRPC("tools/call", {
@@ -168,12 +168,16 @@ export async function run({ rpc, rawRPC, expect }) {
   };
 }
 
-function assertDreamRetryGuidance(result, scenario, label) {
-	const error = result?.errors?.[0];
-	expect(error?.next_action === "retry_dream_feedback", `${label} Dream terminal result must advertise retry_dream_feedback`);
-	expect(typeof error?.remediation === "string" && error.remediation.includes("resolve_dream_feedback"), `${label} Dream terminal result must name resolve_dream_feedback in remediation`);
-	expect(error.remediation.includes("idempotency_key"), `${label} Dream terminal result must name idempotency_key in remediation`);
-	expect(error.remediation.includes(scenario.hypothesisID), `${label} Dream terminal result must use the canonical Hypothesis ID in remediation`);
+function assertDreamRetryGuidance(result, scenario, label, expectedAction = "retry_dream_feedback") {
+  const error = result?.errors?.[0];
+  expect(error?.next_action === expectedAction, `${label} Dream terminal result must advertise ${expectedAction}`);
+  if (expectedAction === "retry_same_request") {
+    expect(typeof error?.remediation === "string" && error.remediation.includes("same idempotency_key"), `${label} Dream terminal result must advertise same-key remediation`);
+    return;
+  }
+  expect(typeof error?.remediation === "string" && error.remediation.includes("resolve_dream_feedback"), `${label} Dream terminal result must name resolve_dream_feedback in remediation`);
+  expect(error.remediation.includes("idempotency_key"), `${label} Dream terminal result must name idempotency_key in remediation`);
+  expect(error.remediation.includes(scenario.hypothesisID), `${label} Dream terminal result must use the canonical Hypothesis ID in remediation`);
 }
 
 async function enableDreaming() {
