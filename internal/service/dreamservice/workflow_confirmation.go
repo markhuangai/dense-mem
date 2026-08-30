@@ -203,7 +203,10 @@ func (s *service) submitDreamHypothesisWithRetry(
 	if err == nil {
 		return updated, nil
 	}
-	retryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dreamConfirmationFinalizationTimeout)
+	if ctx.Err() != nil {
+		return nil, err
+	}
+	retryCtx, cancel := context.WithTimeout(ctx, dreamConfirmationFinalizationTimeout)
 	defer cancel()
 	retried, retryErr := store.SubmitHypothesis(retryCtx, input)
 	if retryErr == nil {

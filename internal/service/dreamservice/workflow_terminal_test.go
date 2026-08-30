@@ -127,7 +127,7 @@ func TestResolveFeedbackUsesExplicitRememberResultKind(t *testing.T) {
 	}
 }
 
-func TestResolveFeedbackRetriesHypothesisFinalizationAfterCancellation(t *testing.T) {
+func TestResolveFeedbackHonorsCancellationBeforeHypothesisFinalization(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
 	hypothesisID := uuid.NewString()
@@ -148,6 +148,46 @@ func TestResolveFeedbackRetriesHypothesisFinalizationAfterCancellation(t *testin
 	svc := New(Dependencies{Store: repo, Remember: remember})
 
 	result, err := svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
+		DreamID:  hypothesisID,
+		Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, result)
+	require.Equal(t, 1, repo.submitCalls)
+
+	remember.after = nil
+	retried, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID:  hypothesisID,
+		Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, retried)
+	require.Equal(t, domain.DreamStatusSubmitted, retried.Dream.Status)
+	require.Equal(t, ingestID, retried.Memory.IngestID)
+	require.Equal(t, 2, repo.submitCalls)
+}
+
+func TestResolveFeedbackRetriesHypothesisFinalizationAfterTransientFailure(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	ingestID := uuid.NewString()
+	repo := &dreamRepositoryStub{
+		getRecord: repository.HypothesisRecord{
+			TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(),
+			Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
+		},
+		submitErrs: []error{errors.New("temporary database failure"), nil},
+	}
+	remember := &rememberServiceStub{
+		result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), ingestID),
+	}
+	svc := New(Dependencies{Store: repo, Remember: remember})
+
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
 		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
