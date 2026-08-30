@@ -347,6 +347,8 @@ func TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment(t *t
 	})
 	require.NoError(t, err)
 	require.NotNil(t, firstSubmitted.SubmittedAt)
+	assert.Equal(t, "dream-submit-replay", firstSubmitted.SubmittedIngestIdempotencyKey)
+	assert.Equal(t, "confirm_true", firstSubmitted.SubmittedDecision)
 	var eventsAfterFirst int
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		return tx.Raw(`

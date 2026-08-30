@@ -800,6 +800,7 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 			input.ActorProfileID, input.Decision, input.InvalidatedReason, input.SubmittedIngestID); err != nil {
 			return err
 		}
+		loaded.SubmittedDecision = input.Decision
 		record = loaded
 		return nil
 	})

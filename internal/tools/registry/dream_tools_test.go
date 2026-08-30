@@ -41,9 +41,62 @@ func TestResolveDreamFeedbackReturnsStructuredTerminalFailure(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "failed", structured.Result["processing_state"])
 	require.Equal(t, "terminal-failure", structured.Result["correlation_id"])
+	require.NoError(t, ValidateInput(Tool{InputSchema: terminalRememberOutputSchema(domain.ContractVersion)}, structured.Result))
 	errors, ok := structured.Result["errors"].([]any)
 	require.True(t, ok)
 	require.Len(t, errors, 1)
+}
+
+func TestResolveDreamFeedbackReturnsStructuredNonCompletedTerminalOutcomes(t *testing.T) {
+	for _, test := range []struct {
+		state string
+		code  rememberapp.TerminalErrorCode
+	}{
+		{state: string(rememberapp.TerminalProcessingRejected), code: rememberapp.TerminalErrorNoSupportedMemory},
+		{state: string(rememberapp.TerminalProcessingQuarantined), code: rememberapp.TerminalErrorQuarantined},
+	} {
+		t.Run(test.state, func(t *testing.T) {
+			terminal := &rememberapp.TerminalRememberResult{
+				ContractVersion: domain.ContractVersion, SubmissionID: uuid.NewString(), SubmissionKind: "remember",
+				ProcessingState: test.state, SearchState: string(rememberapp.TerminalSearchNotRequired),
+				CorrelationID: "terminal-" + test.state, Evidence: []rememberapp.TerminalEvidenceResult{},
+				RelationshipResults: []rememberapp.SubmissionRelationshipResult{},
+				Errors:              []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusError(test.code)},
+			}
+			reg, err := BuildActive(Dependencies{Dreams: &stubDreamService{resolveResult: &dreamservice.ResolveFeedbackResult{
+				Dream: stubDream("profile-dream"), Memory: &rememberapp.RememberResult{Terminal: terminal},
+			}}})
+			require.NoError(t, err)
+			tool, ok := reg.Get(ToolResolveDreamFeedback)
+			require.True(t, ok)
+			_, err = tool.Invoke(contractInvokeContext("write"), "profile-dream", map[string]any{
+				"hypothesis_id": "dream-1", "decision": "confirm_true",
+				"evidence": []any{map[string]any{"content": "independent evidence"}},
+				"relationships": []any{map[string]any{
+					"ref": "r-1", "subject": map[string]any{"name": "Dense-Mem", "entity_kind": "project"},
+					"predicate": map[string]any{"proposed_key": "uses"},
+					"object":    map[string]any{"entity": map[string]any{"name": "PostgreSQL", "entity_kind": "product"}},
+					"polarity":  "+", "modality": "statement", "evidence_indices": []any{0},
+				}},
+			})
+			structured, ok := ToolResultFromError(err)
+			require.True(t, ok)
+			require.Equal(t, test.state, structured.Result["processing_state"])
+			require.NoError(t, ValidateInput(Tool{InputSchema: terminalRememberOutputSchema(domain.ContractVersion)}, structured.Result))
+		})
+	}
+}
+
+func TestResolveDreamFeedbackOutputSchemaCoversTerminalBranch(t *testing.T) {
+	variants, ok := resolveDreamFeedbackOutputSchema()["oneOf"].([]any)
+	require.True(t, ok)
+	require.Len(t, variants, 2)
+	terminal, ok := variants[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, []string{
+		"contract_version", "submission_id", "submission_kind", "processing_state", "search_state",
+		"correlation_id", "evidence", "relationship_results", "errors",
+	}, terminal["required"])
 }
 
 func TestBuildActiveDreamToolsInvokeAndValidate(t *testing.T) {

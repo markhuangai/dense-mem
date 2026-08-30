@@ -148,6 +148,9 @@ func TestResolveFeedbackReplaysCompletedRememberResult(t *testing.T) {
 	// retry payload must remain identical so Remember can replay its terminal
 	// result under the same idempotency key.
 	repo.getRecord.Status = string(domain.DreamStatusSubmitted)
+	repo.getRecord.SubmittedIngestID = ingestID
+	repo.getRecord.SubmittedIngestIdempotencyKey = request.IdempotencyKey
+	repo.getRecord.SubmittedDecision = request.Decision
 	second, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", request)
 	require.NoError(t, err)
 	require.Equal(t, domain.DreamStatusSubmitted, first.Dream.Status)
@@ -158,6 +161,34 @@ func TestResolveFeedbackReplaysCompletedRememberResult(t *testing.T) {
 	require.Equal(t, request.IdempotencyKey, remember.requests[0].IdempotencyKey)
 	require.Equal(t, request.IdempotencyKey, remember.requests[1].IdempotencyKey)
 	require.Equal(t, remember.requests[0].Evidence, remember.requests[1].Evidence)
+}
+
+func TestResolveFeedbackRejectsConflictingSubmittedConfirmationBeforeRemember(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	record := repository.HypothesisRecord{
+		TeamID:                        teamID.String(),
+		HypothesisID:                  hypothesisID,
+		CreatedByProfileID:            ownerID.String(),
+		Status:                        string(domain.DreamStatusSubmitted),
+		Statement:                     "Dense-Mem may use PostgreSQL.",
+		SubmittedIngestID:             uuid.NewString(),
+		SubmittedIngestIdempotencyKey: "dream-feedback:" + hypothesisID + ":confirm_true",
+		SubmittedDecision:             "confirm_true",
+	}
+	repo := &dreamRepositoryStub{getRecord: record}
+	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), uuid.NewString())}
+	svc := New(Dependencies{Store: repo, Remember: remember})
+
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID:  hypothesisID,
+		Decision: "confirm_false",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent refuting evidence."}},
+	})
+	require.ErrorIs(t, err, ErrDreamNotFound)
+	require.Empty(t, remember.requests)
+	require.Empty(t, repo.submitInput)
 }
 
 func dreamTerminalRememberResult(state, submissionID string) *rememberapp.RememberResult {

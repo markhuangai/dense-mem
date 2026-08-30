@@ -511,9 +511,9 @@ func resolveDreamFeedbackContractOutput(res *dreamservice.ResolveFeedbackResult)
 	return out
 }
 
-func resolveDreamTerminalFailureOutput(res *dreamservice.ResolveFeedbackResult) (map[string]any, bool, error) {
+func resolveDreamTerminalOutcome(res *dreamservice.ResolveFeedbackResult) (map[string]any, bool, error) {
 	if res == nil || res.Memory == nil || res.Memory.Terminal == nil ||
-		res.Memory.Terminal.ProcessingState != "failed" {
+		res.Memory.Terminal.ProcessingState == "completed" {
 		return nil, false, nil
 	}
 	output, err := structToMap(res.Memory.Terminal)

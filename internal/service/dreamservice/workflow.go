@@ -571,6 +571,10 @@ func (s *service) resolveFeedback(ctx context.Context, req ResolveFeedbackReques
 			s.recordDreamFeedback(ctx, decision, dream, "error")
 			return nil, fmt.Errorf("resolve dream feedback: remember service is required")
 		}
+		if !dreamConfirmationReplayMatches(record, req, decision) {
+			s.recordDreamFeedback(ctx, decision, dream, "error")
+			return nil, ErrDreamNotFound
+		}
 		evidence, err := dreamSubmissionEvidence(req, record)
 		if err != nil {
 			s.recordDreamFeedback(ctx, decision, dream, "error")
@@ -923,6 +927,15 @@ func dreamRememberCompletion(result *rememberapp.RememberResult) (bool, string, 
 	default:
 		return false, "", errors.New("resolve dream feedback: Remember result kind is required")
 	}
+}
+
+func dreamConfirmationReplayMatches(record *repository.HypothesisRecord, req ResolveFeedbackRequest, decision string) bool {
+	if record == nil || record.Status != string(domain.DreamStatusSubmitted) || strings.TrimSpace(record.SubmittedIngestID) == "" {
+		return true
+	}
+	return strings.TrimSpace(record.SubmittedIngestIdempotencyKey) != "" &&
+		strings.TrimSpace(record.SubmittedIngestIdempotencyKey) == dreamFeedbackIdempotency(req, record.HypothesisID, decision) &&
+		strings.TrimSpace(record.SubmittedDecision) == decision
 }
 
 func dreamFeedbackIdempotency(req ResolveFeedbackRequest, dreamID string, decision string) string {

@@ -59,15 +59,36 @@ export async function run({ rpc, rawRPC, expect }) {
   expect(unchangedHypothesis.submittedIngestID === completedHypothesis.submittedIngestID, "changed Dream feedback reason must preserve submitted ingest");
   expect(unchangedHypothesis.submittedAt === completedHypothesis.submittedAt, "changed Dream feedback reason must preserve submission time");
 
-  const rejected = await resolve(rpc, scenarios.rejected, expect);
-  expect(rejected.status === "proposed", "rejected Remember must leave the Hypothesis reviewable");
-  requireString(rejected.submission_id, "rejected submission ID");
+  const completedIngestCount = hypothesisIngestCount(teamID, scenarios.completed.hypothesisID);
+  const conflicting = await rawRPC("tools/call", {
+    name: "resolve_dream_feedback",
+    arguments: { ...resolveArguments(scenarios.completed), decision: "confirm_false", evidence: [{ content: "Independent refuting evidence.", source_type: "manual" }] },
+  });
+  expect(String(conflicting.error?.message || "").includes("dream not found"), "conflicting Dream confirmation must be rejected before Remember");
+  expect(hypothesisIngestCount(teamID, scenarios.completed.hypothesisID) === completedIngestCount, "conflicting Dream confirmation must not create a Remember ingest");
+  expect(feedbackEventCount(teamID, scenarios.completed.hypothesisID) === completedFeedbackEvents, "conflicting Dream confirmation must not append a feedback event");
+
+  const rejectedResponse = await rawRPC("tools/call", {
+    name: "resolve_dream_feedback",
+    arguments: resolveArguments(scenarios.rejected),
+  });
+  expect(rejectedResponse.result?.isError === true, "rejected Remember must be a structured tool error");
+  const rejected = rejectedResponse.result?.structuredContent;
+  expect(rejected?.processing_state === "rejected", "rejected Remember must expose terminal state");
+  expect(Array.isArray(rejected?.errors) && rejected.errors.length > 0, "rejected Remember must expose typed errors");
+  requireString(rejected?.submission_id, "rejected submission ID");
   expect(hypothesisRow(teamID, scenarios.rejected.hypothesisID).status === "proposed", "rejected confirmation must not advance Dream state");
   expect(attemptRow(teamID, scenarios.rejected.idempotencyKey).outcome === "rejected", "rejected confirmation must persist a rejected terminal attempt");
 
-  const quarantined = await resolve(rpc, scenarios.quarantined, expect);
-  expect(quarantined.status === "proposed", "quarantined Remember must leave the Hypothesis reviewable");
-  requireString(quarantined.submission_id, "quarantined submission ID");
+  const quarantinedResponse = await rawRPC("tools/call", {
+    name: "resolve_dream_feedback",
+    arguments: resolveArguments(scenarios.quarantined),
+  });
+  expect(quarantinedResponse.result?.isError === true, "quarantined Remember must be a structured tool error");
+  const quarantined = quarantinedResponse.result?.structuredContent;
+  expect(quarantined?.processing_state === "quarantined", "quarantined Remember must expose terminal state");
+  expect(Array.isArray(quarantined?.errors) && quarantined.errors.length > 0, "quarantined Remember must expose typed errors");
+  requireString(quarantined?.submission_id, "quarantined submission ID");
   expect(hypothesisRow(teamID, scenarios.quarantined.hypothesisID).status === "proposed", "quarantined confirmation must not advance Dream state");
   expect(attemptRow(teamID, scenarios.quarantined.idempotencyKey).outcome === "quarantined", "quarantined confirmation must persist a quarantined terminal attempt");
 
@@ -223,6 +244,15 @@ function feedbackEventCount(teamID, hypothesisID) {
     SELECT count(*)::text
     FROM hypothesis_feedback_events
     WHERE team_id = ${sqlLiteral(teamID)}::uuid AND hypothesis_id = ${sqlLiteral(hypothesisID)}::uuid
+  `) || 0);
+}
+
+function hypothesisIngestCount(teamID, hypothesisID) {
+  return Number(postgresQuery(`
+    SELECT count(DISTINCT ingest_id)::text
+    FROM evidence_fragments
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid
+      AND metadata->>'hypothesis_id' = ${sqlLiteral(hypothesisID)}
   `) || 0);
 }
 

@@ -1,6 +1,8 @@
 package registry
 
-import "github.com/markhuangai/dense-mem/internal/domain"
+import (
+	"github.com/markhuangai/dense-mem/internal/domain"
+)
 
 func recallFeedbackOutputSchema() map[string]any {
 	return closedObject(
@@ -33,14 +35,25 @@ func getDreamOutputSchema() map[string]any {
 }
 
 func resolveDreamFeedbackOutputSchema() map[string]any {
-	return closedObject(
-		[]string{"hypothesis_id", "status"},
-		map[string]any{
-			"hypothesis_id": schemaString("Hypothesis ID.", 128),
-			"status":        schemaEnum(domain.HypothesisStatuses()),
-			"submission_id": schemaString("Submission ID for submitted evidence.", 128),
+	return map[string]any{
+		"oneOf": []any{
+			closedObject(
+				[]string{"hypothesis_id", "status"},
+				map[string]any{
+					"hypothesis_id": schemaString("Hypothesis ID.", 128),
+					"status":        schemaEnum(domain.HypothesisStatuses()),
+					"submission_id": schemaString("Submission ID for submitted evidence.", 128),
+				},
+			),
+			terminalRememberOutputSchema(domain.ContractVersion),
 		},
-	)
+	}
+}
+
+// TerminalRememberOutputSchema is shared by the terminal Remember registry
+// override and Dream feedback's non-completed result contract.
+func TerminalRememberOutputSchema() map[string]any {
+	return terminalRememberOutputSchema(domain.ContractVersion)
 }
 
 func exportMemoryPackOutputSchema() map[string]any {
