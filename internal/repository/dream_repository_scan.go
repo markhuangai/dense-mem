@@ -94,6 +94,13 @@ func hypothesisSelectSQL(where string) string {
 		           LIMIT 1
 		       ), ''),
 		       COALESCE((
+		           SELECT ingest.request_hash
+		           FROM knowledge_ingests AS ingest
+		           WHERE ingest.team_id = hypotheses.team_id
+		             AND ingest.ingest_id = hypotheses.submitted_ingest_id
+		           LIMIT 1
+		       ), ''),
+		       COALESCE((
 		           SELECT feedback.decision
 		           FROM hypothesis_feedback_events AS feedback
 		           WHERE feedback.team_id = hypotheses.team_id
@@ -121,6 +128,13 @@ func hypothesisUpdateReturningSQL(update string) string {
 		          COALESCE(submitted_ingest_id::text, ''),
 		          COALESCE((
 		              SELECT ingest.idempotency_key
+		              FROM knowledge_ingests AS ingest
+		              WHERE ingest.team_id = hypotheses.team_id
+		                AND ingest.ingest_id = hypotheses.submitted_ingest_id
+		              LIMIT 1
+		          ), ''),
+		          COALESCE((
+		              SELECT ingest.request_hash
 		              FROM knowledge_ingests AS ingest
 		              WHERE ingest.team_id = hypotheses.team_id
 		                AND ingest.ingest_id = hypotheses.submitted_ingest_id
@@ -186,6 +200,7 @@ func scanHypothesisRecord(rows *sql.Rows) (*HypothesisRecord, error) {
 		&record.InvalidatedReason,
 		&record.SubmittedIngestID,
 		&record.SubmittedIngestIdempotencyKey,
+		&record.SubmittedIngestRequestHash,
 		&record.SubmittedDecision,
 		&submittedAt,
 		&payloadRaw,

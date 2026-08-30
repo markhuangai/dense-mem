@@ -514,7 +514,7 @@ func TestCanonicalInputFieldNames(t *testing.T) {
 		{ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, nil, []string{"max_chars"}},
 		{ToolSubmitRecallSessionFeedback, []string{"recalls"}, nil, nil},
 		{ToolGetDream, []string{"hypothesis_id"}, nil, []string{"dream_id"}},
-		{ToolResolveDreamFeedback, []string{"hypothesis_id", "decision", "reason", "evidence", "relationships"}, nil, []string{"dream_id", "feedback", "proposal"}},
+		{ToolResolveDreamFeedback, []string{"hypothesis_id", "decision", "reason", "idempotency_key", "evidence", "relationships"}, nil, []string{"dream_id", "feedback", "proposal"}},
 		{ToolExportMemoryPack, []string{"relationship_ids"}, []string{"name", "relationship_ids"}, []string{"include_support"}},
 	}
 	for _, tc := range cases {

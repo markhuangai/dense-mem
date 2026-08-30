@@ -155,6 +155,13 @@ func insertHypothesisTx(
 		              LIMIT 1
 		          ), ''),
 		          COALESCE((
+		              SELECT ingest.request_hash
+		              FROM knowledge_ingests AS ingest
+		              WHERE ingest.team_id = hypotheses.team_id
+		                AND ingest.ingest_id = hypotheses.submitted_ingest_id
+		              LIMIT 1
+		          ), ''),
+		          COALESCE((
 		              SELECT feedback.decision
 		              FROM hypothesis_feedback_events AS feedback
 		              WHERE feedback.team_id = hypotheses.team_id

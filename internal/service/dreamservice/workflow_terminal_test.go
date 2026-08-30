@@ -163,6 +163,43 @@ func TestResolveFeedbackReplaysCompletedRememberResult(t *testing.T) {
 	require.Equal(t, remember.requests[0].Evidence, remember.requests[1].Evidence)
 }
 
+func TestResolveFeedbackReplaysPreUpgradeSubmittedRememberWithoutCallingRemember(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	ingestID := uuid.NewString()
+	record := repository.HypothesisRecord{
+		TeamID:                        teamID.String(),
+		HypothesisID:                  hypothesisID,
+		CreatedByProfileID:            ownerID.String(),
+		Status:                        string(domain.DreamStatusSubmitted),
+		Statement:                     "Dense-Mem may use PostgreSQL.",
+		InvalidatedReason:             "legacy confirmation reason",
+		SubmittedIngestID:             ingestID,
+		SubmittedIngestIdempotencyKey: "legacy-dream-replay",
+		SubmittedDecision:             "confirm_true",
+	}
+	request := ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true", Feedback: record.InvalidatedReason,
+		IdempotencyKey: record.SubmittedIngestIdempotencyKey,
+		Evidence:       []rememberapp.RememberEvidenceInput{{Content: "Independent legacy deployment evidence."}},
+	}
+	legacyEvidence, err := dreamSubmissionEvidenceWithStatus(request, &record, string(domain.DreamStatusProposed), true)
+	require.NoError(t, err)
+	record.SubmittedIngestRequestHash, err = rememberapp.CanonicalRequestBodyHash(legacyEvidence, request.EntityHints, request.RelationshipHints)
+	require.NoError(t, err)
+	repo := &dreamRepositoryStub{getRecord: record}
+	remember := &rememberServiceStub{err: errors.New("legacy replay must not call Remember")}
+	svc := New(Dependencies{Store: repo, Remember: remember})
+
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", request)
+	require.NoError(t, err)
+	require.Equal(t, domain.DreamStatusSubmitted, result.Dream.Status)
+	require.Equal(t, ingestID, result.Memory.IngestID)
+	require.Empty(t, remember.requests)
+	require.Empty(t, repo.submitInput)
+}
+
 func TestResolveFeedbackRejectsConflictingSubmittedConfirmationBeforeRemember(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
@@ -189,6 +226,33 @@ func TestResolveFeedbackRejectsConflictingSubmittedConfirmationBeforeRemember(t 
 	require.ErrorIs(t, err, ErrDreamNotFound)
 	require.Empty(t, remember.requests)
 	require.Empty(t, repo.submitInput)
+}
+
+func TestResolveFeedbackAddsDreamRetryIdentityToTerminalResubmission(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	attemptID := uuid.NewString()
+	repo := &dreamRepositoryStub{getRecord: repository.HypothesisRecord{
+		TeamID:             teamID.String(),
+		HypothesisID:       hypothesisID,
+		CreatedByProfileID: ownerID.String(),
+		Status:             string(domain.DreamStatusProposed),
+		Statement:          "Dense-Mem may use PostgreSQL.",
+	}}
+	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingRejected), attemptID)}
+	remember.result.Terminal.Errors = []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusError(rememberapp.TerminalErrorNoSupportedMemory)}
+	svc := New(Dependencies{Store: repo, Remember: remember})
+
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent refuting evidence."}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result.Memory)
+	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, "resolve_dream_feedback")
+	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, "idempotency_key")
+	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, attemptID)
 }
 
 func dreamTerminalRememberResult(state, submissionID string) *rememberapp.RememberResult {

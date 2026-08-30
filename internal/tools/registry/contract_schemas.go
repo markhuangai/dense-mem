@@ -345,9 +345,10 @@ func resolveDreamFeedbackInputSchema() map[string]any {
 			"confirm_true",
 			"confirm_false",
 		}),
-		"reason":        schemaString("Bounded lifecycle feedback reason.", 1000),
-		"evidence":      dreamEvidenceArraySchema(),
-		"relationships": dreamRelationshipSubmissionArraySchema(),
+		"reason":          schemaString("Bounded lifecycle feedback reason.", 1000),
+		"idempotency_key": schemaString("Retry key scoped to this Dream confirmation.", 128),
+		"evidence":        dreamEvidenceArraySchema(),
+		"relationships":   dreamRelationshipSubmissionArraySchema(),
 	})
 }
 

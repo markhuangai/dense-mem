@@ -17,6 +17,7 @@ type DreamRepository interface {
 	UpsertHypothesis(ctx context.Context, input UpsertHypothesisInput) (*HypothesisRecord, bool, error)
 	ListHypotheses(ctx context.Context, input ListHypothesesInput) ([]HypothesisRecord, string, error)
 	GetHypothesis(ctx context.Context, input GetHypothesisInput) (*HypothesisRecord, error)
+	WithHypothesisConfirmationLock(ctx context.Context, teamID, hypothesisID string, fn func() error) error
 	RecallHypotheses(ctx context.Context, input RecallHypothesesInput) ([]HypothesisRecord, error)
 	UpdateHypothesisStatus(ctx context.Context, input UpdateHypothesisStatusInput) (*HypothesisRecord, error)
 	SubmitHypothesis(ctx context.Context, input SubmitHypothesisInput) (*HypothesisRecord, error)
@@ -260,6 +261,7 @@ type HypothesisRecord struct {
 	InvalidatedReason             string
 	SubmittedIngestID             string
 	SubmittedIngestIdempotencyKey string
+	SubmittedIngestRequestHash    string
 	SubmittedDecision             string
 	SubmittedAt                   *time.Time
 	Payload                       map[string]any

@@ -257,15 +257,19 @@ function hypothesisIngestCount(teamID, hypothesisID) {
 }
 
 function attemptRow(teamID, idempotencyKey) {
-  const output = postgresQuery(`
-    SELECT COALESCE(outcome, ''), count(*)::text
+  const count = Number(postgresQuery(`
+    SELECT count(*)::text
     FROM remember_attempts
     WHERE team_id = ${sqlLiteral(teamID)}::uuid AND idempotency_key = ${sqlLiteral(idempotencyKey)}
-    GROUP BY outcome ORDER BY outcome LIMIT 1
-  `);
-  if (!output) return { outcome: "", count: 0 };
-  const [outcome, count] = output.split("|");
-  return { outcome, count: Number(count) };
+  `) || 0);
+  if (count === 0) return { outcome: "", count };
+  const outcome = postgresQuery(`
+    SELECT COALESCE(outcome, '')
+    FROM remember_attempts
+    WHERE team_id = ${sqlLiteral(teamID)}::uuid AND idempotency_key = ${sqlLiteral(idempotencyKey)}
+    ORDER BY created_at DESC, attempt_id DESC LIMIT 1
+  `) || "";
+  return { outcome, count };
 }
 
 function evidenceRow(teamID, ingestID) {
