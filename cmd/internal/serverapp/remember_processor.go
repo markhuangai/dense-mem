@@ -110,11 +110,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		terminal, terminalErr := p.ledger.CommitRememberPreflightQuarantine(commitCtx, commitInput, string(rememberapp.SubmissionErrorQuarantined))
 		commitCancel()
 		if errors.Is(terminalErr, repository.ErrRememberReplay) {
-			replayed, loadErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
-			if loadErr != nil {
-				return nil, loadErr
-			}
-			return rememberAttemptStatus(replayed)
+			return p.loadRememberReplay(ctx, input, ingestID)
 		}
 		if terminalErr != nil {
 			return fail(terminalErr, "commit")
@@ -164,11 +160,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		terminal, terminalErr := p.ledger.CommitRememberTerminal(commitCtx, commitInput, "quarantined", string(rememberapp.SubmissionErrorQuarantined), quarantines)
 		commitCancel()
 		if errors.Is(terminalErr, repository.ErrRememberReplay) {
-			replayed, loadErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
-			if loadErr != nil {
-				return nil, loadErr
-			}
-			return rememberAttemptStatus(replayed)
+			return p.loadRememberReplay(ctx, input, ingestID)
 		}
 		if terminalErr != nil {
 			return fail(terminalErr, "commit")
@@ -187,11 +179,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		terminal, terminalErr := p.ledger.CommitRememberTerminal(commitCtx, commitInput, "rejected", string(rememberapp.SubmissionErrorNoSupportedMemory), nil)
 		commitCancel()
 		if errors.Is(terminalErr, repository.ErrRememberReplay) {
-			replayed, loadErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey})
-			if loadErr != nil {
-				return nil, loadErr
-			}
-			return rememberAttemptStatus(replayed)
+			return p.loadRememberReplay(ctx, input, ingestID)
 		}
 		if terminalErr != nil {
 			return fail(terminalErr, "commit")
@@ -234,13 +222,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	defer commitCancel()
 	committed, err := p.ledger.CommitRememberWithEmbeddings(commitCtx, commitInput, inlineEmbeddings)
 	if errors.Is(err, repository.ErrRememberReplay) {
-		replayed, loadErr := p.ledger.LoadRememberAttempt(ctx, repository.RememberAttemptLookupInput{
-			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
-		})
-		if loadErr != nil {
-			return nil, loadErr
-		}
-		return rememberAttemptStatus(replayed)
+		return p.loadRememberReplay(ctx, input, ingestID)
 	}
 	if err != nil {
 		return fail(normalizeRememberCommitFailure(err), "commit")
@@ -785,6 +767,48 @@ func rememberAttemptReplay(attempt *repository.RememberAttempt) (*rememberapp.Su
 		return status, nil
 	}
 	return nil, &rememberapp.RememberProcessError{Status: status, Err: rememberapp.ErrRememberPersistence}
+}
+
+func (p *rememberSynchronousProcessor) loadRememberReplay(
+	ctx context.Context,
+	input rememberapp.RememberProcessRequest,
+	submissionID string,
+) (*rememberapp.SubmissionStatusResult, error) {
+	recoveryCtx, cancel := rememberFailureRecoveryContext(ctx)
+	defer cancel()
+	attempt, err := p.ledger.LoadRememberAttempt(recoveryCtx, repository.RememberAttemptLookupInput{
+		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
+	})
+	if err == nil && attempt != nil {
+		replayed, replayErr := rememberAttemptReplay(attempt)
+		if replayErr == nil {
+			return replayed, nil
+		}
+		var processErr *rememberapp.RememberProcessError
+		if errors.As(replayErr, &processErr) && processErr.Status != nil {
+			return replayed, replayErr
+		}
+		err = replayErr
+	}
+	if err == nil {
+		err = repository.ErrRememberAttemptNotFound
+	}
+	return rememberReplayLoadFailure(input, submissionID, err)
+}
+
+func rememberReplayLoadFailure(
+	input rememberapp.RememberProcessRequest,
+	submissionID string,
+	cause error,
+) (*rememberapp.SubmissionStatusResult, error) {
+	evidence, relationshipResults := rememberFailureResults(input, "internal_failure")
+	status := &rememberapp.SubmissionStatusResult{
+		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
+		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
+		Evidence: evidence, RelationshipResults: relationshipResults,
+		Errors: []rememberapp.SubmissionStatusError{rememberapp.StatusError(rememberapp.SubmissionErrorDatabaseFailure)},
+	}
+	return nil, &rememberapp.RememberProcessError{Status: status, Err: rememberFailurePersistenceError(cause)}
 }
 
 func rememberAssessmentSnapshot(

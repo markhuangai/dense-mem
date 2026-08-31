@@ -145,6 +145,12 @@ func selectMissingCanonicalSearchDocuments(
 		      )
 		  AND NOT EXISTS (
 		          SELECT 1
+		          FROM evidence_lifecycle_events AS lifecycle
+		          WHERE lifecycle.team_id = fragment.team_id
+		            AND lifecycle.target_fragment_id = fragment.fragment_id
+		      )
+		  AND NOT EXISTS (
+		          SELECT 1
 		          FROM search_documents AS document
 		          WHERE document.team_id = fragment.team_id
 		            AND document.source_kind = 'evidence'

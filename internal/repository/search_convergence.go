@@ -331,6 +331,12 @@ func addMissingCanonicalSearchStats(
 			            AND quarantine.fragment_id = fragment.fragment_id
 			            AND quarantine.status = 'active'
 			      )
+			  AND NOT EXISTS (
+			          SELECT 1
+			          FROM evidence_lifecycle_events AS lifecycle
+			          WHERE lifecycle.team_id = fragment.team_id
+			            AND lifecycle.target_fragment_id = fragment.fragment_id
+			      )
 			UNION ALL
 			SELECT relationship.team_id, relationship.relationship_id AS source_id,
 			       'relationship'::text AS source_kind, relationship.created_at

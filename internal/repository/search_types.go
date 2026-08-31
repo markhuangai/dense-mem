@@ -285,8 +285,11 @@ type FinishSearchReconciliationRunInput struct {
 }
 
 type SearchReconciliationApplyResult struct {
-	UpdatedCount          int64
-	SkippedCount          int64
+	UpdatedCount int64
+	SkippedCount int64
+	// RemainingDriftedCount is a bounded count of selected items that could not
+	// be applied. The operator convergence projection owns the exact global
+	// count.
 	RemainingDriftedCount int64
 }
 

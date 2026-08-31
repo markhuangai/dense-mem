@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
@@ -37,6 +38,48 @@ func TestRememberFailureRecoveryContextUsesPersistenceBudget(t *testing.T) {
 	deadline, ok := ctx.Deadline()
 	require.True(t, ok)
 	require.InDelta(t, rememberapp.RememberFailurePersistenceBudget, deadline.Sub(started), float64(50*time.Millisecond))
+}
+
+func TestRememberReplayReloadUsesBoundedRecoveryContext(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{loadSequence: []*repository.RememberAttempt{{
+		AttemptID: "77777777-7777-7777-7777-777777777777", Outcome: "completed",
+		PublicResult: map[string]any{
+			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
+			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
+			"evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+		},
+	}}}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	status, err := processor.loadRememberReplay(ctx, rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key",
+	}, "88888888-8888-8888-8888-888888888888")
+	require.NoError(t, err)
+	require.Equal(t, "77777777-7777-7777-7777-777777777777", status.SubmissionID)
+	require.Len(t, ledger.loadContexts, 1)
+	require.NoError(t, ledger.loadContextErrors[0])
+	require.InDelta(t, rememberapp.RememberFailurePersistenceBudget, time.Until(ledger.loadDeadlines[0]), float64(50*time.Millisecond))
+}
+
+func TestRememberReplayReloadFailurePreservesCompleteTypedResult(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{loadErr: errors.New("database unavailable")}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	input := rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key",
+		RequestHash: "request-hash", Metadata: map[string]any{"actor": map[string]any{"correlation_id": "replay-correlation"}},
+		Evidence: []rememberapp.EvidenceInput{{Content: "first"}, {Content: "second"}},
+		Proposal: map[string]any{"relationship_hints": []map[string]any{{"ref": "rel-a"}, {"ref": "rel-b"}}},
+	}
+
+	_, err := processor.loadRememberReplay(context.Background(), input, "88888888-8888-8888-8888-888888888888")
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.Equal(t, string(rememberapp.SubmissionErrorDatabaseFailure), processErr.Status.Errors[0].Code)
+	require.Equal(t, "replay-correlation", processErr.Status.CorrelationID)
+	require.Len(t, processErr.Status.Evidence, 2)
+	require.Len(t, processErr.Status.RelationshipResults, 2)
 }
 
 func TestRememberAttemptMatchesRequestDoesNotAcceptMigratedHash(t *testing.T) {
@@ -132,13 +175,27 @@ func TestRememberProcessorConflictProjectsEverySubmittedItem(t *testing.T) {
 }
 
 type rememberFailureLedgerStub struct {
-	failure    repository.RememberFailureRecordInput
-	load       *repository.RememberAttempt
-	loadErr    error
-	failureErr error
+	failure           repository.RememberFailureRecordInput
+	load              *repository.RememberAttempt
+	loadErr           error
+	failureErr        error
+	loadSequence      []*repository.RememberAttempt
+	loadContexts      []context.Context
+	loadContextErrors []error
+	loadDeadlines     []time.Time
 }
 
-func (s *rememberFailureLedgerStub) LoadRememberAttempt(context.Context, repository.RememberAttemptLookupInput) (*repository.RememberAttempt, error) {
+func (s *rememberFailureLedgerStub) LoadRememberAttempt(ctx context.Context, _ repository.RememberAttemptLookupInput) (*repository.RememberAttempt, error) {
+	s.loadContexts = append(s.loadContexts, ctx)
+	s.loadContextErrors = append(s.loadContextErrors, ctx.Err())
+	if deadline, ok := ctx.Deadline(); ok {
+		s.loadDeadlines = append(s.loadDeadlines, deadline)
+	}
+	if len(s.loadSequence) > 0 {
+		attempt := s.loadSequence[0]
+		s.loadSequence = s.loadSequence[1:]
+		return attempt, nil
+	}
 	if s.load != nil {
 		return s.load, nil
 	}

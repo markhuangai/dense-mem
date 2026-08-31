@@ -403,6 +403,44 @@ func TestSearchReconciliationRetiresLifecycleTerminalEvidence(t *testing.T) {
 	require.Zero(t, convergence.DriftedDocuments)
 }
 
+func TestSearchReconciliationExcludesLifecycleTerminalEvidenceWithoutDocument(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-lifecycle-missing")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-lifecycle-missing-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-lifecycle-missing", 2, "exact", "")
+	ledger := NewLedgerRepository(appDB, rls)
+	repo := NewSearchRepository(appDB, rls)
+	ingest, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-lifecycle-missing",
+		RequestHash: sha256Hex("lifecycle reconciliation missing evidence"), Evidence: []EvidenceInput{{Content: "lifecycle reconciliation missing evidence"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, ingest.Evidence, 1)
+
+	_, err = ledger.RetractEvidence(ctx, RetractEvidenceInput{
+		TeamID: teamID, OwnerProfileID: ownerID,
+		EvidenceIDs: []string{ingest.Evidence[0].FragmentID},
+		Reason:      "lifecycle reconciliation missing regression", IdempotencyKey: "retract-lifecycle-reconciliation-missing",
+		RequestHash: "sha256:retract-lifecycle-reconciliation-missing",
+	})
+	require.NoError(t, err)
+
+	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 256,
+	})
+	require.NoError(t, err)
+	require.Empty(t, selected)
+
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+	})
+	require.NoError(t, err)
+	require.Zero(t, convergence.ExpectedDocuments)
+	require.Zero(t, convergence.DriftedDocuments)
+}
+
 func TestSearchReconciliationSelectionFillsRelationshipCapacity(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

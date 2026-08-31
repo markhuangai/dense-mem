@@ -560,14 +560,9 @@ func (r *SearchRepositoryImpl) CompleteSearchReconciliationDocuments(
 	if err != nil {
 		return nil, fmt.Errorf("search: complete reconciliation documents: %w", err)
 	}
-	convergence, err := r.GetSearchConvergence(ctx, SearchConvergenceInput{
-		EmbeddingContractID: input.EmbeddingContractID,
-		EmbeddingDimensions: input.EmbeddingDimensions,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("search: complete reconciliation convergence: %w", err)
-	}
-	result.RemainingDriftedCount = convergence.DriftedDocuments
+	// The operator convergence endpoint owns the exact global projection. Keep
+	// this run result bounded to the documents selected for this repair batch.
+	result.RemainingDriftedCount = result.SkippedCount
 	return result, nil
 }
 
