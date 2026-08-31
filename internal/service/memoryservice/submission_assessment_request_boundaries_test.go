@@ -10,6 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 func TestSubmissionAssessmentGroundsAliasesWithBoundedNames(t *testing.T) {
@@ -299,6 +300,32 @@ func TestSubmissionAssessmentRequestPreflightBranches(t *testing.T) {
 	request, err := engine.buildRequest(t.Context(), fixture.input.Scope, plan, fixture.input.Snapshot.Proposal)
 	require.NoError(t, err)
 	require.Equal(t, "synchronous-remember:request", request.RequestID)
+}
+
+func TestSubmissionAssessmentCatalogFailuresCarryDatabaseClassification(t *testing.T) {
+	tests := []struct {
+		name string
+		fail func(*submissionAssessmentWorkerCatalogStub)
+	}{
+		{name: "entity catalog", fail: func(catalog *submissionAssessmentWorkerCatalogStub) { catalog.entityErr = errTestAssessmentCatalog }},
+		{name: "predicate resolution", fail: func(catalog *submissionAssessmentWorkerCatalogStub) {
+			catalog.predicateResolutionErr = errTestAssessmentCatalog
+		}},
+		{name: "predicate options", fail: func(catalog *submissionAssessmentWorkerCatalogStub) {
+			catalog.predicateOptionsErr = errTestAssessmentCatalog
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := synchronousAssessmentFixture(t)
+			plan, err := buildSubmissionAssessmentPlan(fixture.input.Snapshot)
+			require.NoError(t, err)
+			test.fail(fixture.catalog)
+			engine := newAssessmentEngine(fixture.deps, fixture.input.Scope.TeamID, fixture.input.Scope.OwnerProfileID)
+			_, err = engine.buildRequest(t.Context(), fixture.input.Scope, plan, fixture.input.Snapshot.Proposal)
+			require.ErrorIs(t, err, rememberapp.ErrRememberDatabaseFailure)
+		})
+	}
 }
 
 var errTestAssessmentCatalog = errors.New("catalog test failure")

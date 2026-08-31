@@ -129,7 +129,7 @@ func submissionAssessmentCommitInput(
 
 	observations := make([]repository.SubmissionAssessmentRelationshipObservationInput, 0, len(response.RelationshipResults))
 	registrations := make([]repository.SubmissionPredicateRegistrationInput, 0)
-	relationshipResults := make([]repository.SubmissionRelationshipResultInput, 0, len(response.RelationshipResults))
+	relationshipResultsByRef := make(map[string]repository.SubmissionRelationshipResultInput, len(response.RelationshipResults))
 	seenRelationshipRefs := make(map[string]struct{}, len(response.RelationshipResults))
 	for _, result := range response.RelationshipResults {
 		target, ok := plan.relationshipsByRef[result.Ref]
@@ -146,11 +146,11 @@ func submissionAssessmentCommitInput(
 			if result.Reason != nil && strings.TrimSpace(*result.Reason) != "" {
 				reason = strings.TrimSpace(*result.Reason)
 			}
-			relationshipResults = append(relationshipResults, repository.SubmissionRelationshipResultInput{
+			relationshipResultsByRef[result.Ref] = repository.SubmissionRelationshipResultInput{
 				RelationshipRef: result.Ref,
 				Disposition:     "not_stored",
 				Reason:          reason,
-			})
+			}
 			continue
 		case "stored":
 		default:
@@ -258,13 +258,22 @@ func submissionAssessmentCommitInput(
 				Observation:     observation,
 			})
 		}
-		relationshipResults = append(relationshipResults, repository.SubmissionRelationshipResultInput{
+		relationshipResultsByRef[result.Ref] = repository.SubmissionRelationshipResultInput{
 			RelationshipRef: result.Ref,
 			Disposition:     "stored",
-		})
+		}
 	}
 	if len(seenRelationshipRefs) != len(plan.RelationshipTargets) {
 		return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor omitted a relationship result")
+	}
+	relationshipResults := make([]repository.SubmissionRelationshipResultInput, 0, len(plan.RelationshipTargets))
+	for _, target := range plan.RelationshipTargets {
+		ref := target.Target.ProposalID
+		result, ok := relationshipResultsByRef[ref]
+		if !ok {
+			return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor omitted a relationship result")
+		}
+		relationshipResults = append(relationshipResults, result)
 	}
 	coveredEvidence := make(map[string]struct{})
 	for _, observation := range observations {

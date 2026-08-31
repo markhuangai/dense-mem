@@ -285,6 +285,20 @@ func TestSubmissionAssessmentCommitInputCarriesAliasesConstraintsAndRegistration
 	require.Equal(t, true, commit.Payload["assessment_reused"])
 }
 
+func TestSubmissionAssessmentCommitInputRestoresRelationshipTargetOrder(t *testing.T) {
+	prepared, scope := preparedCommitAssessment(t)
+	for left, right := 0, len(prepared.Response.RelationshipResults)-1; left < right; left, right = left+1, right-1 {
+		prepared.Response.RelationshipResults[left], prepared.Response.RelationshipResults[right] = prepared.Response.RelationshipResults[right], prepared.Response.RelationshipResults[left]
+	}
+
+	commit, err := submissionAssessmentCommitInput(scope, prepared.Plan, prepared.Response, &prepared.Assessment, false)
+	require.NoError(t, err)
+	require.Len(t, commit.RelationshipResults, len(prepared.Plan.RelationshipTargets))
+	for index, target := range prepared.Plan.RelationshipTargets {
+		require.Equal(t, target.Target.ProposalID, commit.RelationshipResults[index].RelationshipRef)
+	}
+}
+
 func TestSubmissionAssessmentCommitInputReturnsNoSupportedMemoryForUncoveredEvidence(t *testing.T) {
 	prepared, scope := preparedCommitAssessment(t)
 	for index := range prepared.Response.RelationshipResults {

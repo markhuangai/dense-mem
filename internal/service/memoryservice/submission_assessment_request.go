@@ -11,6 +11,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 func (s *assessmentEngine) buildRequest(
@@ -39,7 +40,7 @@ func (s *assessmentEngine) buildRequest(
 		CandidateLimit: candidateLimit,
 	})
 	if err != nil {
-		return assessor.SemanticAssessmentRequest{}, fmt.Errorf("load submission entity catalog: %w", err)
+		return assessor.SemanticAssessmentRequest{}, submissionAssessmentDatabaseError("load submission entity catalog", err)
 	}
 	if !entityCatalog.Complete {
 		return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
@@ -169,7 +170,7 @@ func (s *assessmentEngine) submissionAssessmentPredicateOptions(
 		Limit:          limit + 1,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("resolve submission predicate candidates: %w", err)
+		return nil, submissionAssessmentDatabaseError("resolve submission predicate candidates", err)
 	}
 
 	candidates := make([]repository.SemanticReviewPredicateCandidate, 0, limit)
@@ -204,7 +205,7 @@ func (s *assessmentEngine) submissionAssessmentPredicateOptions(
 		Limit:          limit,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("load submission predicate options: %w", err)
+		return nil, submissionAssessmentDatabaseError("load submission predicate options", err)
 	}
 	for _, candidate := range ranked {
 		if len(candidates) == limit {
@@ -226,6 +227,10 @@ func (s *assessmentEngine) submissionAssessmentPredicateOptions(
 		})
 	}
 	return options, nil
+}
+
+func submissionAssessmentDatabaseError(operation string, err error) error {
+	return fmt.Errorf("%s: %w", operation, errors.Join(rememberapp.ErrRememberDatabaseFailure, err))
 }
 
 func submissionAssessmentGroundedEntities(

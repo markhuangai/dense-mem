@@ -95,29 +95,28 @@ type CommitSubmissionAssessmentInput struct {
 // one final Remember transaction. Provider work happens before this input is
 // committed; no field represents a pre-provider reservation.
 type SynchronousRememberCommitInput struct {
-	TeamID              string
-	OwnerProfileID      string
-	IngestID            string
-	SpaceID             string
-	SpaceGeneration     int64
-	IdempotencyKey      string
-	RequestHash         string
-	MigratedRequestHash string
-	SourceSummary       string
-	Proposal            map[string]any
-	Metadata            map[string]any
-	Evidence            []EvidenceInput
-	AssessmentID        string
-	AssessmentJSON      json.RawMessage
-	ProviderTurns       int
-	InputTokens         int
-	OutputTokens        int
-	AssessorTurns       int
-	Duration            time.Duration
-	StartedAt           time.Time
-	CorrelationID       string
-	PublicResult        map[string]any
-	Commit              CommitSubmissionAssessmentInput
+	TeamID          string
+	OwnerProfileID  string
+	IngestID        string
+	SpaceID         string
+	SpaceGeneration int64
+	IdempotencyKey  string
+	RequestHash     string
+	SourceSummary   string
+	Proposal        map[string]any
+	Metadata        map[string]any
+	Evidence        []EvidenceInput
+	AssessmentID    string
+	AssessmentJSON  json.RawMessage
+	ProviderTurns   int
+	InputTokens     int
+	OutputTokens    int
+	AssessorTurns   int
+	Duration        time.Duration
+	StartedAt       time.Time
+	CorrelationID   string
+	PublicResult    map[string]any
+	Commit          CommitSubmissionAssessmentInput
 }
 
 type CommitSubmissionAssessmentResult struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -19,6 +20,31 @@ func TestRememberFailureCodeMapsEmbeddingProviderResponseInvalid(t *testing.T) {
 	}}
 
 	require.Equal(t, rememberapp.SubmissionErrorEmbeddingResponseInvalid, rememberFailureCode("embedding", failure))
+}
+
+func TestRememberFailureCodeMapsAssessmentDatabaseFailure(t *testing.T) {
+	failure := errors.Join(rememberapp.ErrRememberDatabaseFailure, errors.New("catalog unavailable"))
+
+	require.Equal(t, rememberapp.SubmissionErrorDatabaseFailure, rememberFailureCode("assessment", failure))
+}
+
+func TestRememberFailureRecoveryContextUsesPersistenceBudget(t *testing.T) {
+	started := time.Now()
+	ctx, cancel := rememberFailureRecoveryContext(context.Background())
+	defer cancel()
+
+	deadline, ok := ctx.Deadline()
+	require.True(t, ok)
+	require.InDelta(t, rememberapp.RememberFailurePersistenceBudget, deadline.Sub(started), float64(50*time.Millisecond))
+}
+
+func TestRememberAttemptMatchesRequestDoesNotAcceptMigratedHash(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{RequestHash: "current"}
+
+	require.True(t, rememberAttemptMatchesRequest(&repository.RememberAttempt{RequestHash: "current"}, input))
+	require.False(t, rememberAttemptMatchesRequest(&repository.RememberAttempt{
+		RequestHash: "legacy", ContractVersion: "remember_request_hash_v1",
+	}, input))
 }
 
 func TestRememberProcessorFailureProjectsEverySubmittedItem(t *testing.T) {

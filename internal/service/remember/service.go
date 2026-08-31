@@ -22,8 +22,6 @@ import (
 
 const (
 	requestHashContractVersion = "dense-mem.v2.6.1"
-	// This envelope is used only to reproduce hashes persisted before cutover.
-	migratedRequestHashContractVersion = "dense-mem.v2.6"
 )
 
 var (
@@ -38,6 +36,7 @@ var (
 	ErrRememberEmbeddingUnavailable    = errors.New("remember: embedding unavailable")
 	ErrRememberEmbeddingInvalid        = errors.New("remember: embedding response invalid")
 	ErrRememberCommitConflict          = errors.New("remember: commit conflict")
+	ErrRememberDatabaseFailure         = errors.New("remember: database failure")
 	ErrRememberRequestTimeout          = errors.New("remember: request timeout")
 	ErrRememberRequestCancelled        = errors.New("remember: request cancelled")
 )
@@ -212,10 +211,6 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if err != nil {
 		return nil, err
 	}
-	migratedRequestHash, err := canonicalRequestHashForVersion(req, migratedRequestHashContractVersion)
-	if err != nil {
-		return nil, err
-	}
 	correlationID := correlation.FromContext(ctx)
 	actorMetadata := map[string]any{
 		"team_id":        actor.TeamID.String(),
@@ -231,8 +226,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	processInput := RememberProcessRequest{
 		TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
 		SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash,
-		MigratedRequestHash: migratedRequestHash,
-		SourceSummary:       sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata,
+		SourceSummary: sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata,
 		Evidence: repositoryEvidenceInputs(req.Evidence),
 	}
 	if scanErr != nil {

@@ -76,20 +76,19 @@ type SynchronousAssessmentResult struct {
 // deliberately emits no workflow identity; evidence IDs are resolved in the
 // resolved by its durable evidence fragment instead.
 type SynchronousRememberCommitRequest struct {
-	TeamID              string
-	OwnerProfileID      string
-	IngestID            string
-	SpaceID             string
-	SpaceGeneration     int64
-	IdempotencyKey      string
-	RequestHash         string
-	MigratedRequestHash string
-	SourceSummary       string
-	Proposal            map[string]any
-	Metadata            map[string]any
-	Evidence            []repository.EvidenceInput
-	Assessment          *SynchronousAssessmentResult
-	Duration            time.Duration
+	TeamID          string
+	OwnerProfileID  string
+	IngestID        string
+	SpaceID         string
+	SpaceGeneration int64
+	IdempotencyKey  string
+	RequestHash     string
+	SourceSummary   string
+	Proposal        map[string]any
+	Metadata        map[string]any
+	Evidence        []repository.EvidenceInput
+	Assessment      *SynchronousAssessmentResult
+	Duration        time.Duration
 }
 
 // BuildSynchronousRememberCommitInput converts the validated assessor result
@@ -126,7 +125,7 @@ func BuildSynchronousRememberCommitInput(input SynchronousRememberCommitRequest)
 		base := repository.SynchronousRememberCommitInput{
 			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
-			RequestHash: input.RequestHash, MigratedRequestHash: input.MigratedRequestHash,
+			RequestHash:   input.RequestHash,
 			SourceSummary: input.SourceSummary, Proposal: input.Proposal,
 			Metadata: input.Metadata, Evidence: append([]repository.EvidenceInput(nil), input.Evidence...),
 			AssessmentID: input.Assessment.Assessment.AssessmentID, AssessmentJSON: append(json.RawMessage(nil), input.Assessment.Assessment.NormalizedResponse...),
@@ -144,7 +143,7 @@ func BuildSynchronousRememberCommitInput(input SynchronousRememberCommitRequest)
 	return repository.SynchronousRememberCommitInput{
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
 		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
-		RequestHash: input.RequestHash, MigratedRequestHash: input.MigratedRequestHash,
+		RequestHash:   input.RequestHash,
 		SourceSummary: input.SourceSummary, Proposal: input.Proposal,
 		Metadata: input.Metadata, Evidence: append([]repository.EvidenceInput(nil), input.Evidence...),
 		AssessmentID: assessment.AssessmentID, AssessmentJSON: append(json.RawMessage(nil), assessment.NormalizedResponse...),

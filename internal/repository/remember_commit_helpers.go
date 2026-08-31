@@ -20,7 +20,6 @@ func normalizeSynchronousRememberCommitInput(input SynchronousRememberCommitInpu
 	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.RequestHash = strings.TrimSpace(input.RequestHash)
-	input.MigratedRequestHash = strings.TrimSpace(input.MigratedRequestHash)
 	input.SourceSummary = strings.TrimSpace(input.SourceSummary)
 	input.AssessmentID = strings.TrimSpace(input.AssessmentID)
 	input.Commit.RememberCommitScope = normalizeRememberCommitScope(input.Commit.RememberCommitScope)
@@ -173,7 +172,7 @@ func loadRememberAttemptInTx(ctx context.Context, tx *gorm.DB, input Synchronous
 	if err != nil {
 		return nil, err
 	}
-	if !rememberAttemptHashMatches(attempt.RequestHash, attempt.ContractVersion, input.RequestHash, input.MigratedRequestHash) {
+	if strings.TrimSpace(attempt.RequestHash) != strings.TrimSpace(input.RequestHash) {
 		return nil, fmt.Errorf("%w: idempotency key reused with a different request hash", ErrIdempotencyConflict)
 	}
 	if len(publicJSON) == 0 {
