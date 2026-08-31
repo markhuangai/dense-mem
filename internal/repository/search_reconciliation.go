@@ -4,9 +4,8 @@ import (
 	"context"
 )
 
-// CheckSearchConvergence is the startup health probe for the active search
-// contract. It checks canonical documents directly; no queue or worker state
-// participates in readiness.
+// CheckSearchConvergence performs an explicit full canonical check for
+// maintenance and operator callers; public health checks use search readiness.
 func (r *SearchRepositoryImpl) CheckSearchConvergence(ctx context.Context) error {
 	convergence, err := r.GetSearchConvergence(ctx, SearchConvergenceInput{})
 	if err != nil {

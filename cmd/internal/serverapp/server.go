@@ -337,7 +337,6 @@ func RunActiveServer(
 		{Name: "search_readiness", Check: func(ctx context.Context) error {
 			return checkSearchReadiness(ctx, searchRepo)
 		}},
-		{Name: "search_convergence", Optional: true, Check: searchConvergenceHealthCheck(searchRepo, logger)},
 	}
 	if backend.redisPingFn != nil {
 		checks = append(checks, http.HealthCheck{Name: "redis", Check: backend.redisPingFn})
