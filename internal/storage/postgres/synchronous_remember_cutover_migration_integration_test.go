@@ -490,6 +490,59 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	require.Equal(t, 4, semanticAssessmentForeignKeys)
 }
 
+func TestRememberSynchronousCutoverNormalizesLegacyReconciliationStatuses(t *testing.T) {
+	ctx := context.Background()
+	for _, legacyStatus := range []string{"reserved", "deferred", "ambiguous"} {
+		t.Run(legacyStatus, func(t *testing.T) {
+			db, cleanup := openMigrationSQLDB(t, ctx)
+			defer cleanup()
+
+			runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
+			contractID, runID := uuid.New(), uuid.New()
+			require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+				if _, err := tx.ExecContext(ctx, `
+					INSERT INTO embedding_contracts (
+						embedding_contract_id, contract_key, version, provider, model,
+						dimensions, distance_metric, vector_normalization,
+						document_format_version, query_format_version, lifecycle_state
+					) VALUES ($1::uuid, $2, 1, 'test', 'cutover-reconciliation-model', 3,
+					          'cosine', 'provider', 1, 1, 'active')
+				`, contractID, "cutover-reconciliation-"+contractID.String()); err != nil {
+					return err
+				}
+				_, err := tx.ExecContext(ctx, `
+					INSERT INTO embedding_reconciliation_runs (
+						reconciliation_run_id, embedding_contract_id, embedding_dimensions,
+						local_run_date, status, last_error
+					) VALUES ($1::uuid, $2::uuid, 3, CURRENT_DATE, $3, '')
+				`, runID, contractID, legacyStatus)
+				return err
+			}))
+
+			runGooseUpTo(t, ctx, db, synchronousRememberCutoverMigrationVersion)
+
+			var status, lastError string
+			var completedAt sql.NullTime
+			require.NoError(t, db.QueryRowContext(ctx, `
+				SELECT status, last_error, completed_at
+				FROM search_reconciliation_runs
+				WHERE reconciliation_run_id = $1::uuid
+			`, runID).Scan(&status, &lastError, &completedAt))
+			require.Equal(t, "failed", status)
+			require.Contains(t, lastError, "legacy status "+legacyStatus)
+			require.True(t, completedAt.Valid)
+			var markerCount int
+			require.NoError(t, db.QueryRowContext(ctx, `
+				SELECT count(*)
+				FROM v2_compatibility_markers
+				WHERE marker_kind = 'v2_cutover'
+				  AND version = 'dense-mem.v2.6.1.cutover.v1'
+			`).Scan(&markerCount))
+			require.Equal(t, 1, markerCount)
+		})
+	}
+}
+
 func TestRememberSynchronousCutoverRollsBackCopiedHistoryOnGateFailure(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)

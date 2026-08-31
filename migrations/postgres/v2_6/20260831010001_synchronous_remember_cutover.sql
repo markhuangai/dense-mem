@@ -2276,6 +2276,16 @@ BEGIN
             DROP COLUMN IF EXISTS canary_failure_code,
             DROP COLUMN IF EXISTS requeued_count,
             DROP COLUMN IF EXISTS recovered_count;
+        UPDATE search_reconciliation_runs
+        SET status = 'failed',
+            last_error = left(
+                CASE WHEN btrim(COALESCE(last_error, '')) = '' THEN '' ELSE last_error || '; ' END
+                || 'legacy status ' || status || ' normalized to failed during v2.6.1 cutover',
+                256
+            ),
+            completed_at = COALESCE(completed_at, clock_timestamp()),
+            updated_at = clock_timestamp()
+        WHERE status IN ('reserved', 'deferred', 'ambiguous');
         DO $dense_mem_search_reconciliation_constraints$
         DECLARE
             unique_constraint TEXT;
