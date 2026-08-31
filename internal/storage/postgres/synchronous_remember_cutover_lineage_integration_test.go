@@ -5,12 +5,128 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRememberSynchronousCutoverPreservesGroupedItemAssessmentHistory(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
+	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
+	ingestID, runID := uuid.New(), uuid.New()
+	const assessmentCount = 6
+	assessmentIDs := make([]uuid.UUID, assessmentCount)
+	responseHashes := make([]string, assessmentCount)
+	for index := range assessmentIDs {
+		assessmentIDs[index] = uuid.New()
+		responseHashes[index] = fmt.Sprintf("sha256:%064x", index+1)
+	}
+
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id, idempotency_key,
+				request_hash, status, proposal, metadata, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'cutover-grouped-assessments',
+			          'cutover-grouped-assessments-request', 'completed', '{}'::jsonb,
+			          '{"_dense_mem_telemetry_origin":"remember","contract_version":"dense-mem.v2.5"}'::jsonb,
+			          now())
+		`, teamID, ingestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_runs (
+				team_id, placement_run_id, ingest_id, owner_profile_id,
+				status, attempts, max_attempts, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          'completed', 1, 5, now())
+		`, teamID, runID, ingestID, profileID); err != nil {
+			return err
+		}
+		for index, assessmentID := range assessmentIDs {
+			itemID, fragmentID, claimKey := uuid.New(), uuid.New(), uuid.New()
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO evidence_fragments (
+					team_id, fragment_id, ingest_id, owner_profile_id,
+					evidence_index, content, content_hash
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				          $5, $6, $7)
+			`, teamID, fragmentID, ingestID, profileID, index,
+				fmt.Sprintf("grouped legacy evidence %d", index),
+				fmt.Sprintf("sha256:grouped-legacy-fragment-%d", index)); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO placement_items (
+					team_id, placement_item_id, placement_run_id, ingest_id,
+					owner_profile_id, fragment_id, evidence_index, claim_key,
+					status, category, result
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				          $5::uuid, $6::uuid, $7, $8::uuid,
+				          'completed', 'validated_claim', '{"accepted":true}'::jsonb)
+			`, teamID, itemID, runID, ingestID, profileID, fragmentID, index, claimKey); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO placement_assessments (
+					team_id, assessment_id, placement_item_id, claim_key,
+					owner_profile_id, request_id, assessor_contract_version,
+					model, tokenizer, input_tokens, output_tokens,
+					candidate_context_tokens, normalized_response, response_hash,
+					validated_at, provider_turns
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+				          $5::uuid, $6, 'dense-mem.v2.5',
+				          'legacy-model', 'legacy-tokenizer', 10, 5, 3,
+				          jsonb_build_object('assessment_index', $7::integer), $8, now(), 1)
+			`, teamID, assessmentID, itemID, claimKey, profileID,
+				fmt.Sprintf("grouped-legacy-request-%d", index), index, responseHashes[index]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	runGooseUpTo(t, ctx, db, synchronousRememberCutoverMigrationVersion)
+
+	var historyCount, providerTurns int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT jsonb_array_length(response_history), provider_turns
+		FROM semantic_assessments
+		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+	`, teamID, ingestID).Scan(&historyCount, &providerTurns))
+	require.Equal(t, assessmentCount, historyCount)
+	require.Equal(t, 1, providerTurns)
+	for index, assessmentID := range assessmentIDs {
+		var preservedCount int
+		require.NoError(t, db.QueryRowContext(ctx, `
+			SELECT count(*)
+			FROM semantic_assessments AS assessment
+			CROSS JOIN LATERAL jsonb_array_elements(assessment.response_history) AS entry(value)
+			WHERE assessment.team_id = $1::uuid
+			  AND assessment.attempt_id = $2::uuid
+			  AND entry.value ->> 'assessment_id' = $3
+			  AND entry.value ->> 'response_hash' = $4
+		`, teamID, ingestID, assessmentID, responseHashes[index]).Scan(&preservedCount))
+		require.Equal(t, 1, preservedCount, "assessment %s should retain its response hash", assessmentID)
+	}
+
+	var historyConstraint string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT pg_get_constraintdef(oid)
+		FROM pg_constraint
+		WHERE conrelid = 'semantic_assessments'::regclass
+		  AND conname = 'semantic_assessments_history_check'
+	`).Scan(&historyConstraint))
+	require.Contains(t, historyConstraint, "pg_column_size")
+	require.NotContains(t, historyConstraint, "jsonb_array_length(response_history)")
+}
 
 func TestRememberSynchronousCutoverRejectsExistingMarkerConflict(t *testing.T) {
 	ctx := context.Background()

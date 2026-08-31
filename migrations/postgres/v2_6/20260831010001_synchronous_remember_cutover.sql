@@ -166,6 +166,18 @@ CREATE TABLE IF NOT EXISTS semantic_assessments (
         REFERENCES knowledge_ingests(team_id, ingest_id, owner_profile_id) ON DELETE RESTRICT
 );
 
+-- The foundation constraint assumes one response-history entry per provider
+-- turn. Cutover groups legacy item assessments under their ingest, so a batch
+-- can contain more entries than any one item's provider-turn count. Preserve
+-- the array and size guards while removing that incompatible cardinality rule.
+ALTER TABLE semantic_assessments
+    DROP CONSTRAINT IF EXISTS semantic_assessments_history_check;
+ALTER TABLE semantic_assessments
+    ADD CONSTRAINT semantic_assessments_history_check CHECK (
+        jsonb_typeof(response_history) = 'array'
+        AND pg_column_size(response_history) <= 1048576
+    );
+
 -- The additive foundation migration created this foreign key as immediate.
 -- Runtime terminal commits write assessment history before the final attempt
 -- row in one transaction, so upgrade every existing form of this FK before
