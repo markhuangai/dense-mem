@@ -44,6 +44,7 @@ func canonicalSearchDocument(ctx context.Context, tx *gorm.DB, document SearchDo
 			      WHERE lifecycle.team_id = fragment.team_id
 			        AND lifecycle.target_fragment_id = fragment.fragment_id
 			  )
+			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 		`, document.TeamID, document.OwnerProfileID, document.SourceID).Row().Scan(&content, &spaceID, &spaceGeneration)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, true, nil
@@ -149,6 +150,7 @@ func selectMissingCanonicalSearchDocuments(
 		          WHERE lifecycle.team_id = fragment.team_id
 		            AND lifecycle.target_fragment_id = fragment.fragment_id
 		      )
+		  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 		  AND NOT EXISTS (
 		          SELECT 1
 		          FROM search_documents AS document

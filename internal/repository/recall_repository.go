@@ -161,6 +161,7 @@ func recallEvidenceSearchState(
 			  AND (document.search_state IN ('pending', 'current', 'failed')
 			       OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 			  AND quarantine.quarantine_id IS NULL
+			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 			  AND NOT EXISTS (
 			      SELECT 1
 			      FROM evidence_lifecycle_events AS lifecycle
@@ -203,19 +204,25 @@ func searchRecallFullText(
 	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	spaceClause := recallSpacePredicate("search_documents.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
-		       source_version, document_version, embedding_contract_id::text,
-		       search_state,
+		SELECT search_documents.team_id::text, search_documents.search_document_id::text,
+		       search_documents.source_kind, search_documents.source_id::text,
+		       search_documents.source_version, search_documents.document_version,
+		       search_documents.embedding_contract_id::text,
+		       search_documents.search_state,
 		       0::double precision AS distance,
-		       ts_rank_cd(search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
+		       ts_rank_cd(search_documents.search_tsv, plainto_tsquery('simple', ?))::double precision AS text_rank
 		FROM search_documents
-		WHERE team_id = ?::uuid
-		  AND source_kind = 'evidence'
-		  AND embedding_contract_id = ?::uuid
-		  AND (search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND search_state = 'not_required'))
-		  AND search_tsv @@ plainto_tsquery('simple', ?)
+		JOIN evidence_fragments AS source_fragment
+		  ON source_fragment.team_id = search_documents.team_id
+		 AND source_fragment.fragment_id = search_documents.source_id
+		WHERE search_documents.team_id = ?::uuid
+		  AND search_documents.source_kind = 'evidence'
+		  AND search_documents.embedding_contract_id = ?::uuid
+		  AND (search_documents.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND search_documents.search_state = 'not_required'))
+		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+		  AND search_documents.search_tsv @@ plainto_tsquery('simple', ?)
 	`+spaceClause+`
-		ORDER BY text_rank DESC, updated_at DESC, search_document_id ASC
+		ORDER BY text_rank DESC, search_documents.updated_at DESC, search_documents.search_document_id ASC
 		LIMIT ?
 	`, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.Query, limit).Rows()
 	if err != nil {
@@ -258,20 +265,26 @@ func searchRecallExactVector(
 	}
 	spaceClause := recallSpacePredicate("search_documents.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT team_id::text, search_document_id::text, source_kind, source_id::text,
-		       source_version, document_version, embedding_contract_id::text,
-		       search_state,
-		       (embedding <=> ?::vector)::double precision AS distance,
+		SELECT search_documents.team_id::text, search_documents.search_document_id::text,
+		       search_documents.source_kind, search_documents.source_id::text,
+		       search_documents.source_version, search_documents.document_version,
+		       search_documents.embedding_contract_id::text,
+		       search_documents.search_state,
+		       (search_documents.embedding <=> ?::vector)::double precision AS distance,
 		       0::double precision AS text_rank
 		FROM search_documents
-		WHERE team_id = ?::uuid
-		  AND source_kind = 'evidence'
-		  AND embedding_contract_id = ?::uuid
-		  AND embedding_dimensions = ?
-		  AND search_state = 'current'
-		  AND embedding IS NOT NULL
-	`+spaceClause+`
-		ORDER BY embedding <=> ?::vector ASC, search_document_id ASC
+		JOIN evidence_fragments AS source_fragment
+		  ON source_fragment.team_id = search_documents.team_id
+		 AND source_fragment.fragment_id = search_documents.source_id
+		WHERE search_documents.team_id = ?::uuid
+		  AND search_documents.source_kind = 'evidence'
+		  AND search_documents.embedding_contract_id = ?::uuid
+		  AND search_documents.embedding_dimensions = ?
+		  AND search_documents.search_state = 'current'
+		  AND search_documents.embedding IS NOT NULL
+		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+		`+spaceClause+`
+		ORDER BY search_documents.embedding <=> ?::vector ASC, search_documents.search_document_id ASC
 		LIMIT ?
 	`, vectorLiteral, input.TeamID, contract.EmbeddingContractID,
 		contract.EmbeddingDimensions, vectorLiteral, limit).Rows()
@@ -311,16 +324,20 @@ func searchRecallANNVector(
 	spaceClause := recallSpacePredicate("search_documents.space_id", input.TeamID, input.SpaceID, input.SpaceKind)
 	query := fmt.Sprintf(`
 		WITH ann_candidates AS MATERIALIZED (
-			SELECT team_id, search_document_id
+			SELECT search_documents.team_id, search_documents.search_document_id
 			FROM search_documents
-			WHERE team_id = ?::uuid
-			  AND source_kind = 'evidence'
-			  AND embedding_contract_id = %s::uuid
-			  AND embedding_dimensions = %d
-			  AND search_state = 'current'
-			  AND embedding IS NOT NULL
+			JOIN evidence_fragments AS source_fragment
+			  ON source_fragment.team_id = search_documents.team_id
+			 AND source_fragment.fragment_id = search_documents.source_id
+			WHERE search_documents.team_id = ?::uuid
+			  AND search_documents.source_kind = 'evidence'
+			  AND search_documents.embedding_contract_id = %s::uuid
+			  AND search_documents.embedding_dimensions = %d
+			  AND search_documents.search_state = 'current'
+			  AND search_documents.embedding IS NOT NULL
+			  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 			%s
-			ORDER BY %s ASC, search_document_id ASC
+			ORDER BY %s ASC, search_documents.search_document_id ASC
 			LIMIT ?
 		)
 		SELECT document.team_id::text,
@@ -469,13 +486,16 @@ func searchRecallEntityExpansion(
 		  ON latest.team_id = support.team_id
 		 AND latest.support_id = support.support_id
 		 AND latest.decision IN ('grant', 'reinstate')
-		JOIN search_documents AS document
-			  ON document.team_id = support.team_id
-			 AND document.source_kind = 'evidence'
-			 AND document.source_id = support.fragment_id
-			 AND document.embedding_contract_id = ?::uuid
-			 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
-			LEFT JOIN evidence_quarantines AS quarantine
+			JOIN search_documents AS document
+				  ON document.team_id = support.team_id
+				 AND document.source_kind = 'evidence'
+				 AND document.source_id = support.fragment_id
+				 AND document.embedding_contract_id = ?::uuid
+				 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
+			JOIN evidence_fragments AS source_fragment
+				  ON source_fragment.team_id = support.team_id
+				 AND source_fragment.fragment_id = support.fragment_id
+				LEFT JOIN evidence_quarantines AS quarantine
 			  ON quarantine.team_id = support.team_id
 			 AND quarantine.fragment_id = support.fragment_id
 			 AND quarantine.status = 'active'
@@ -507,6 +527,7 @@ func searchRecallEntityExpansion(
 			  )
 		  AND (?::timestamptz IS NOT NULL OR relationship.support_count > 0)
 		  AND quarantine.quarantine_id IS NULL
+		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 		  AND (
 		      relationship.subject_entity_id = ANY(?::uuid[])
 		      OR relationship.object_entity_id = ANY(?::uuid[])
@@ -661,6 +682,7 @@ func hydrateRecallEvidence(
 				    LIMIT 1
 				) AS relationship ON TRUE
 			WHERE quarantine.quarantine_id IS NULL
+			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 			  AND NOT EXISTS (
 			      SELECT 1
 			      FROM evidence_lifecycle_events AS lifecycle

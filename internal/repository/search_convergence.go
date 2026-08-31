@@ -337,6 +337,7 @@ func addMissingCanonicalSearchStats(
 			          WHERE lifecycle.team_id = fragment.team_id
 			            AND lifecycle.target_fragment_id = fragment.fragment_id
 			      )
+			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 			UNION ALL
 			SELECT relationship.team_id, relationship.relationship_id AS source_id,
 			       'relationship'::text AS source_kind, relationship.created_at
