@@ -412,6 +412,8 @@ WHERE origin_kind IN ('remember', 'conflict_derived');
 -- Copy Remember-origin history into the terminal-attempt and chronological
 -- event projections before the legacy placement tables are retired. The
 -- source rows remain untouched until the final stopped-service release step.
+-- The attempt contract_version is a storage marker for the legacy request-hash
+-- envelope; public_result retains the v2.6.1 terminal response contract.
 WITH legacy AS MATERIALIZED (
     SELECT ingest.team_id, ingest.ingest_id, ingest.owner_profile_id,
            retained.origin_kind,
@@ -453,7 +455,7 @@ SELECT normalized.team_id, normalized.ingest_id, normalized.owner_profile_id,
        normalized.space_id, normalized.space_generation,
        COALESCE(NULLIF(normalized.idempotency_key, ''), 'legacy:' || normalized.ingest_id::text),
        COALESCE(NULLIF(normalized.request_hash, ''), 'legacy:' || normalized.ingest_id::text),
-       'dense-mem.v2.6.1', 'remember', normalized.outcome,
+       'remember_request_hash_v1', 'remember', normalized.outcome,
        CASE WHEN normalized.outcome = 'failed' THEN 'internal_failure' ELSE '' END,
            normalized.correlation_id,
        jsonb_build_object(
@@ -496,7 +498,7 @@ WITH legacy_events AS (
       ON retained.team_id = ingest.team_id
      AND retained.ingest_id = ingest.ingest_id
      AND retained.owner_profile_id = ingest.owner_profile_id
-    WHERE attempt.contract_version = 'dense-mem.v2.6.1'
+    WHERE attempt.contract_version = 'remember_request_hash_v1'
       AND attempt.submission_kind = 'remember'
 
     UNION ALL
@@ -527,7 +529,7 @@ WITH legacy_events AS (
       ON item.team_id = attempt.team_id
      AND item.ingest_id = attempt.attempt_id
      AND item.owner_profile_id = attempt.owner_profile_id
-    WHERE attempt.contract_version = 'dense-mem.v2.6.1'
+    WHERE attempt.contract_version = 'remember_request_hash_v1'
       AND attempt.submission_kind = 'remember'
 
     UNION ALL
@@ -559,7 +561,7 @@ WITH legacy_events AS (
       ON outcome.team_id = run.team_id
      AND outcome.placement_run_id = run.placement_run_id
      AND outcome.owner_profile_id = run.owner_profile_id
-    WHERE attempt.contract_version = 'dense-mem.v2.6.1'
+    WHERE attempt.contract_version = 'remember_request_hash_v1'
       AND attempt.submission_kind = 'remember'
 ), numbered AS (
     SELECT legacy_events.*,

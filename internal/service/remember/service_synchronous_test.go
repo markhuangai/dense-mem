@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -56,7 +58,7 @@ func TestRememberServiceSynchronousPassesAuthenticatedRequestToProcessor(t *test
 	service := NewService(Dependencies{Synchronous: processor})
 	ctx := rememberServiceTestContext(teamID, ownerID, credentialID)
 
-	result, err := service.Remember(ctx, RememberRequest{
+	req := RememberRequest{
 		IdempotencyKey: "remember-sync-1",
 		Evidence: []RememberEvidenceInput{{
 			Content: "Dense-Mem uses PostgreSQL.", SourceType: "document", Source: "notes",
@@ -64,7 +66,8 @@ func TestRememberServiceSynchronousPassesAuthenticatedRequestToProcessor(t *test
 			Authority: "primary", Labels: []string{"canonical"}, Metadata: map[string]any{"section": "storage"},
 		}},
 		RelationshipHints: []map[string]any{{"evidence_indices": []any{0}}},
-	})
+	}
+	result, err := service.Remember(ctx, req)
 
 	require.NoError(t, err)
 	require.Equal(t, processor.result.SubmissionID, result.SubmissionID)
@@ -75,6 +78,10 @@ func TestRememberServiceSynchronousPassesAuthenticatedRequestToProcessor(t *test
 	require.Equal(t, ownerID.String(), processor.request.OwnerProfileID)
 	require.Equal(t, "remember-sync-1", processor.request.IdempotencyKey)
 	require.NotEmpty(t, processor.request.RequestHash)
+	wantMigratedHash, err := canonicalRequestHashForVersion(req, migratedRequestHashContractVersion)
+	require.NoError(t, err)
+	require.Equal(t, wantMigratedHash, processor.request.MigratedRequestHash)
+	require.NotEqual(t, processor.request.RequestHash, processor.request.MigratedRequestHash)
 	require.Equal(t, "document://notes", processor.request.SourceSummary)
 	require.False(t, processor.request.SecurityRejected)
 	require.Len(t, processor.request.Evidence, 1)
@@ -85,6 +92,35 @@ func TestRememberServiceSynchronousPassesAuthenticatedRequestToProcessor(t *test
 	require.Equal(t, "rev-1", processor.request.Evidence[0].SourceRevisionToken)
 	require.NotNil(t, processor.request.Evidence[0].InitialEvent)
 	require.Equal(t, "pass", processor.request.Evidence[0].InitialEvent.Decision)
+}
+
+func TestRememberServiceNormalizesOversizedCorrelationID(t *testing.T) {
+	teamID, ownerID, credentialID := uuid.New(), uuid.New(), uuid.New()
+	processor := &synchronousRememberProcessorStub{result: &SubmissionStatusResult{
+		ContractVersion: domain.ContractVersion,
+		SubmissionID:    uuid.NewString(),
+		SubmissionKind:  "remember",
+		ProcessingState: string(TerminalProcessingCompleted),
+		SearchState:     string(TerminalSearchNotRequired),
+		CorrelationID:   "normalized-correlation",
+		Evidence: []SubmissionEvidenceStatus{{
+			Disposition: "not_stored", EvidenceIndex: 0,
+			SupersededEvidenceIDs: []string{}, SearchState: string(TerminalSearchNotRequired),
+		}},
+		RelationshipResults: []SubmissionRelationshipResult{},
+		Errors:              []SubmissionStatusError{},
+	}}
+	ctx := correlation.WithID(rememberServiceTestContext(teamID, ownerID, credentialID), strings.Repeat("界", maxTerminalCorrelationIDRunes+1))
+
+	_, err := NewService(Dependencies{Synchronous: processor}).Remember(ctx, validRememberServiceRequest())
+	require.NoError(t, err)
+	actorMetadata, ok := processor.request.Metadata["actor"].(map[string]any)
+	require.True(t, ok)
+	normalized, ok := actorMetadata["correlation_id"].(string)
+	require.True(t, ok)
+	require.NotEqual(t, strings.Repeat("界", maxTerminalCorrelationIDRunes+1), normalized)
+	require.LessOrEqual(t, utf8.RuneCountInString(normalized), maxTerminalCorrelationIDRunes)
+	require.NoError(t, func() error { _, err := uuid.Parse(normalized); return err }())
 }
 
 func TestRememberServiceRejectsInvalidInputBeforeProcessor(t *testing.T) {

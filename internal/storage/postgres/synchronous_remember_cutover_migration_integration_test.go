@@ -165,12 +165,14 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 
 	runGooseUpTo(t, ctx, db, synchronousRememberCutoverMigrationVersion)
 
-	var outcome string
+	var outcome, attemptContractVersion, publicContractVersion string
 	require.NoError(t, db.QueryRowContext(ctx, `
-		SELECT outcome FROM remember_attempts
+		SELECT outcome, contract_version, public_result ->> 'contract_version' FROM remember_attempts
 		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
-	`, teamID, ingestID).Scan(&outcome))
+	`, teamID, ingestID).Scan(&outcome, &attemptContractVersion, &publicContractVersion))
 	require.Equal(t, "completed", outcome)
+	require.Equal(t, "remember_request_hash_v1", attemptContractVersion)
+	require.Equal(t, "dense-mem.v2.6.1", publicContractVersion)
 
 	var eventCount, itemEvents, outcomeEvents int
 	require.NoError(t, db.QueryRowContext(ctx, `

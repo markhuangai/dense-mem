@@ -103,6 +103,15 @@ func selectMissingCanonicalSearchDocuments(
 	if limit <= 0 {
 		return nil
 	}
+	available := limit - len(*result)
+	if available <= 0 {
+		return nil
+	}
+	type missingEvidence struct {
+		teamID, ownerProfileID, sourceID, documentText string
+		spaceID                                        string
+		spaceGeneration                                int64
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT fragment.team_id::text, fragment.owner_profile_id::text,
 		       fragment.fragment_id::text, fragment.content,
@@ -129,18 +138,38 @@ func selectMissingCanonicalSearchDocuments(
 		      )
 		ORDER BY fragment.created_at, fragment.team_id, fragment.fragment_id
 		LIMIT ?
-	`, contract.EmbeddingContractID, limit).Rows()
+	`, contract.EmbeddingContractID, available).Rows()
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
+	evidence := make([]missingEvidence, 0, available)
 	for rows.Next() {
-		var item SearchDocumentForEmbedding
+		var item missingEvidence
 		if err := rows.Scan(
-			&item.TeamID, &item.OwnerProfileID, &item.SourceID, &item.DocumentText,
-			&item.SpaceID, &item.SpaceGeneration,
+			&item.teamID, &item.ownerProfileID, &item.sourceID, &item.documentText,
+			&item.spaceID, &item.spaceGeneration,
 		); err != nil {
 			return err
+		}
+		evidence = append(evidence, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, missing := range evidence {
+		if len(*result) >= limit {
+			return nil
+		}
+		item := SearchDocumentForEmbedding{
+			SearchDocumentResult: SearchDocumentResult{
+				TeamID: missing.teamID, OwnerProfileID: missing.ownerProfileID, SourceID: missing.sourceID,
+				SpaceID: missing.spaceID, SpaceGeneration: missing.spaceGeneration,
+			},
+			DocumentText: missing.documentText,
 		}
 		item.SourceKind = "evidence"
 		item.SourceVersion = 1
@@ -152,19 +181,13 @@ func selectMissingCanonicalSearchDocuments(
 		item.DocumentHash = searchDocumentHash(item.DocumentText)
 		item.StoredDocumentHash = ""
 		*result = append(*result, item)
-		if len(*result) >= limit {
-			return nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
 	}
 	remaining := limit - len(*result)
 	if remaining <= 0 {
 		return nil
+	}
+	type missingRelationship struct {
+		teamID, ownerProfileID, sourceID string
 	}
 	rows, err = tx.WithContext(ctx).Raw(`
 		SELECT relationship.team_id::text, relationship.owner_profile_id::text,
@@ -192,10 +215,28 @@ func selectMissingCanonicalSearchDocuments(
 		return err
 	}
 	defer rows.Close()
+	relationships := make([]missingRelationship, 0, remaining)
 	for rows.Next() {
-		var item SearchDocumentForEmbedding
-		if err := rows.Scan(&item.TeamID, &item.OwnerProfileID, &item.SourceID); err != nil {
+		var item missingRelationship
+		if err := rows.Scan(&item.teamID, &item.ownerProfileID, &item.sourceID); err != nil {
 			return err
+		}
+		relationships = append(relationships, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, missing := range relationships {
+		if len(*result) >= limit {
+			return nil
+		}
+		item := SearchDocumentForEmbedding{
+			SearchDocumentResult: SearchDocumentResult{
+				TeamID: missing.teamID, OwnerProfileID: missing.ownerProfileID, SourceID: missing.sourceID,
+			},
 		}
 		item.SourceKind = "relationship"
 		item.SourceVersion = 1
@@ -212,11 +253,8 @@ func selectMissingCanonicalSearchDocuments(
 		}
 		expected.StoredDocumentHash = ""
 		*result = append(*result, *expected)
-		if len(*result) >= limit {
-			return nil
-		}
 	}
-	return rows.Err()
+	return nil
 }
 
 func markSearchDocumentNotRequired(ctx context.Context, tx *gorm.DB, document SearchDocumentForEmbedding) (bool, error) {

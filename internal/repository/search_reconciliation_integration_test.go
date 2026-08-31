@@ -139,7 +139,8 @@ func TestSearchReconciliationCanonicalSourceSetAndSpaceFence(t *testing.T) {
 		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
 		Documents: []SearchDocumentEmbedding{{
 			TeamID: selected[0].TeamID, SearchDocumentID: selected[0].SearchDocumentID,
-			OwnerProfileID: selected[0].OwnerProfileID, DocumentText: selected[0].DocumentText,
+			OwnerProfileID: selected[0].OwnerProfileID, SourceKind: selected[0].SourceKind,
+			SourceID: selected[0].SourceID, DocumentText: selected[0].DocumentText,
 			DocumentHash: selected[0].DocumentHash, StoredDocumentHash: selected[0].StoredDocumentHash,
 			SourceVersion: selected[0].SourceVersion, ProjectionFormat: selected[0].ProjectionFormat,
 			ProjectionGenerationID: selected[0].ProjectionGenerationID, DocumentVersion: selected[0].DocumentVersion,
@@ -230,6 +231,78 @@ func TestSearchReconciliationCanonicalSourceSetAndSpaceFence(t *testing.T) {
 		return tx.Raw(`SELECT search_state FROM search_documents WHERE team_id = ?::uuid AND search_document_id = ?::uuid`, teamID, selected[0].SearchDocumentID).Row().Scan(&state)
 	}))
 	require.Equal(t, "not_required", state)
+}
+
+func TestSearchReconciliationSelectionFillsRelationshipCapacity(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-relationship-cap")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-relationship-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-relationship-cap", 2, "exact", "")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	repo := NewSearchRepository(appDB, rls)
+
+	staleIngest, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-relationship-cap-stale",
+		RequestHash: sha256Hex("stale evidence"), Evidence: []EvidenceInput{{Content: "stale evidence"}},
+	})
+	require.NoError(t, err)
+	staleDocument, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence",
+		SourceID: staleIngest.Evidence[0].FragmentID, SourceVersion: 1,
+		DocumentText: "outdated stale evidence", EmbeddingContractID: contractID,
+	})
+	require.NoError(t, err)
+
+	relationshipIngest := createSemanticIngest(t, ctx, ledger, teamID, ownerID,
+		"search-reconciliation-relationship-cap-source", "Jamie works on Dense-Mem.")
+	relationshipDocument, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence",
+		SourceID: relationshipIngest.Evidence[0].FragmentID, SourceVersion: 1,
+		DocumentText: "Jamie works on Dense-Mem.", EmbeddingContractID: contractID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'current', embedding = '[0.6,0.8]'::vector,
+			    embedding_updated_at = clock_timestamp()
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, relationshipDocument.SearchDocumentID).Error
+	}))
+
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "person", "Jamie")
+	object := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", "Dense-Mem")
+	decision := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: relationshipIngest.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     relationshipIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "search-reconciliation-relationship-cap", SpanStart: 0,
+			SpanEnd: len("Jamie works on Dense-Mem."), Authority: "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+
+	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 2,
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 2)
+	var foundStale bool
+	var foundRelationship bool
+	for _, item := range selected {
+		if item.SearchDocumentID == staleDocument.SearchDocumentID && item.SourceID == staleIngest.Evidence[0].FragmentID {
+			foundStale = true
+		}
+		if item.SourceKind == "relationship" && item.SourceID == decision.Relationship.RelationshipID {
+			foundRelationship = true
+		}
+	}
+	require.True(t, foundStale)
+	require.True(t, foundRelationship)
 }
 
 func TestSearchConvergenceHydratesRelationshipDocumentsAfterClosingDocumentRows(t *testing.T) {

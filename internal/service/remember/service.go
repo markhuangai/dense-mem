@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -19,7 +20,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-const requestHashContractVersion = "dense-mem.v2.6.1"
+const (
+	requestHashContractVersion = "dense-mem.v2.6.1"
+	// This envelope is used only to reproduce hashes persisted before cutover.
+	migratedRequestHashContractVersion = "dense-mem.v2.6"
+)
 
 var (
 	ErrRememberAuthContext             = errors.New("remember: authenticated actor context is required")
@@ -157,6 +162,7 @@ type SubmissionEvidenceStatus struct {
 
 func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberResult, error) {
 	started := time.Now()
+	ctx = correlation.WithID(ctx, normalizeSynchronousCorrelationID(correlation.FromContext(ctx)))
 	ctx = WithRememberDeadlines(ctx, started)
 	operationCtx, cancel := context.WithDeadline(ctx, started.Add(RememberTotalBudget))
 	defer cancel()
@@ -206,6 +212,10 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if err != nil {
 		return nil, err
 	}
+	migratedRequestHash, err := canonicalRequestHashForVersion(req, migratedRequestHashContractVersion)
+	if err != nil {
+		return nil, err
+	}
 	correlationID := correlation.FromContext(ctx)
 	actorMetadata := map[string]any{
 		"team_id":        actor.TeamID.String(),
@@ -221,7 +231,8 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	processInput := RememberProcessRequest{
 		TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
 		SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash,
-		SourceSummary: sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata,
+		MigratedRequestHash: migratedRequestHash,
+		SourceSummary:       sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata,
 		Evidence: repositoryEvidenceInputs(req.Evidence),
 	}
 	if scanErr != nil {
@@ -250,6 +261,14 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	}
 	observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
 	return nil, ErrRememberProcessor
+}
+
+func normalizeSynchronousCorrelationID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || utf8.RuneCountInString(value) > maxTerminalCorrelationIDRunes {
+		return uuid.NewString()
+	}
+	return value
 }
 
 func preserveProcessStatus(err error, mapped error) error {

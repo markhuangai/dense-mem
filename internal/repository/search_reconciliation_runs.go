@@ -142,6 +142,11 @@ func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(
 	}
 	result := make([]SearchDocumentForEmbedding, 0, limit)
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		type observedDocument struct {
+			item          SearchDocumentForEmbedding
+			vectorCurrent bool
+		}
+		documents := make([]observedDocument, 0)
 		rows, err := tx.WithContext(ctx).Raw(`
 			SELECT document.team_id::text, document.search_document_id::text,
 			       document.owner_profile_id::text, document.source_kind,
@@ -192,30 +197,7 @@ func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(
 				return err
 			}
 			item.StoredDocumentHash = item.DocumentHash
-			expected, known, err := canonicalSearchDocument(ctx, tx, item)
-			if err != nil {
-				return err
-			}
-			if known && expected == nil {
-				item.Retired = true
-				result = append(result, item)
-				if len(result) >= limit {
-					break
-				}
-				continue
-			}
-			if known && expected != nil {
-				if searchDocumentMatchesCanonical(item, *expected) && item.SearchState == string(domain.SearchProjectionCurrent) && vectorCurrent {
-					continue
-				}
-				item = *expected
-			} else if item.SearchState == string(domain.SearchProjectionCurrent) && vectorCurrent {
-				continue
-			}
-			result = append(result, item)
-			if len(result) >= limit {
-				break
-			}
+			documents = append(documents, observedDocument{item: item, vectorCurrent: vectorCurrent})
 		}
 		if err := rows.Err(); err != nil {
 			return err
@@ -223,12 +205,36 @@ func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(
 		if err := rows.Close(); err != nil {
 			return err
 		}
+		for _, observed := range documents {
+			if len(result) >= limit {
+				break
+			}
+			item := observed.item
+			expected, known, err := canonicalSearchDocument(ctx, tx, item)
+			if err != nil {
+				return err
+			}
+			if known && expected == nil {
+				item.Retired = true
+				result = append(result, item)
+				continue
+			}
+			if known && expected != nil {
+				if searchDocumentMatchesCanonical(item, *expected) && item.SearchState == string(domain.SearchProjectionCurrent) && observed.vectorCurrent {
+					continue
+				}
+				item = *expected
+			} else if item.SearchState == string(domain.SearchProjectionCurrent) && observed.vectorCurrent {
+				continue
+			}
+			result = append(result, item)
+		}
 		if len(result) < limit {
 			contract := &ActiveSearchContract{
 				EmbeddingContractID: input.EmbeddingContractID,
 				EmbeddingDimensions: input.EmbeddingDimensions,
 			}
-			if err := selectMissingCanonicalSearchDocuments(ctx, tx, contract, limit-len(result), &result); err != nil {
+			if err := selectMissingCanonicalSearchDocuments(ctx, tx, contract, limit, &result); err != nil {
 				return err
 			}
 		}
@@ -330,7 +336,7 @@ func (r *SearchRepositoryImpl) CompleteSearchReconciliationDocuments(
 				storedHash = document.DocumentHash
 			}
 			var current SearchDocumentForEmbedding
-			err := tx.WithContext(ctx).Raw(`
+			rows, err := tx.WithContext(ctx).Raw(`
 				SELECT document.team_id::text, document.search_document_id::text,
 				       document.owner_profile_id::text, document.source_kind,
 				       document.source_id::text, document.source_version,
@@ -347,15 +353,29 @@ func (r *SearchRepositoryImpl) CompleteSearchReconciliationDocuments(
 				  AND document.embedding_contract_id = ?::uuid
 				  AND document.embedding_dimensions = ?
 				FOR UPDATE
-			`).Row().Scan(
-				&current.TeamID, &current.SearchDocumentID, &current.OwnerProfileID,
-				&current.SourceKind, &current.SourceID, &current.SourceVersion,
-				&current.ProjectionFormat, &current.ProjectionGenerationID,
-				&current.DocumentVersion, &current.EmbeddingContractID,
-				&current.EmbeddingDimensions, &current.SearchState, &current.SpaceID,
-				&current.SpaceGeneration, &current.DocumentText, &current.DocumentHash,
-			)
-			if errors.Is(err, sql.ErrNoRows) {
+			`, document.TeamID, document.SearchDocumentID, document.OwnerProfileID,
+				input.EmbeddingContractID, document.EmbeddingDimensions).Rows()
+			if err != nil {
+				return err
+			}
+			found := rows.Next()
+			if found {
+				err = rows.Scan(
+					&current.TeamID, &current.SearchDocumentID, &current.OwnerProfileID,
+					&current.SourceKind, &current.SourceID, &current.SourceVersion,
+					&current.ProjectionFormat, &current.ProjectionGenerationID,
+					&current.DocumentVersion, &current.EmbeddingContractID,
+					&current.EmbeddingDimensions, &current.SearchState, &current.SpaceID,
+					&current.SpaceGeneration, &current.DocumentText, &current.DocumentHash,
+				)
+			} else {
+				err = rows.Err()
+			}
+			closeErr := rows.Close()
+			if err == nil && closeErr != nil {
+				err = closeErr
+			}
+			if errors.Is(err, sql.ErrNoRows) || (!found && err == nil) {
 				result.SkippedCount++
 				continue
 			}
