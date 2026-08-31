@@ -176,7 +176,7 @@ func correctionConflictCode(apiErr *httperr.APIError) (rememberapp.SubmissionErr
 
 func correctionStatusError(code rememberapp.SubmissionErrorCode) rememberapp.SubmissionStatusError {
 	value := rememberapp.StatusError(code)
-	if code == rememberapp.SubmissionErrorDatabaseFailure || code == rememberapp.SubmissionErrorIdempotencyConflict {
+	if code == rememberapp.SubmissionErrorIdempotencyConflict {
 		value.NextAction = string(rememberapp.SubmissionNextActionRetryCorrection)
 		value.Remediation = "Retry correct_relationship with current relationship state and a new idempotency_key."
 	}

@@ -18,7 +18,7 @@ func (r *LedgerRepositoryImpl) CommitRememberTerminal(
 	ctx context.Context,
 	input SynchronousRememberCommitInput,
 	outcome string,
-	errorCode string,
+	terminalError RememberTerminalErrorInput,
 	quarantines []SubmissionAssessmentSecurityQuarantineInput,
 ) (*SynchronousRememberCommitResult, error) {
 	input = normalizeSynchronousRememberCommitInput(input)
@@ -84,12 +84,12 @@ func (r *LedgerRepositoryImpl) CommitRememberTerminal(
 				return err
 			}
 		}
-		publicResult := rememberTerminalPublicResult(input, evidence, outcome, errorCode)
+		publicResult := rememberTerminalPublicResult(input, evidence, outcome, terminalError)
 		if err := insertRememberAttemptInTx(ctx, tx, RememberAttemptRecordInput{
 			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, AttemptID: input.IngestID,
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 			RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
-			Outcome: outcome, ErrorCode: errorCode, CorrelationID: rememberCorrelationID(input.Metadata), PublicResult: publicResult,
+			Outcome: outcome, ErrorCode: terminalError.Code, CorrelationID: rememberCorrelationID(input.Metadata), PublicResult: publicResult,
 			EvidenceCount: len(evidence), RelationshipCount: len(input.Commit.RelationshipResults), AssessorTurns: input.AssessorTurns, Duration: rememberAttemptDuration(input),
 		}); err != nil {
 			return err
@@ -110,7 +110,7 @@ func (r *LedgerRepositoryImpl) CommitRememberTerminal(
 func (r *LedgerRepositoryImpl) CommitRememberPreflightQuarantine(
 	ctx context.Context,
 	input SynchronousRememberCommitInput,
-	errorCode string,
+	terminalError RememberTerminalErrorInput,
 ) (*SynchronousRememberCommitResult, error) {
 	input = normalizeSynchronousRememberCommitInput(input)
 	relationshipResults, err := rememberTerminalRelationshipResultsFromProposal(input.Proposal, "security_quarantine")
@@ -142,12 +142,12 @@ func (r *LedgerRepositoryImpl) CommitRememberPreflightQuarantine(
 			result.PublicResult, result.Outcome = replay.PublicResult, replay.Outcome
 			return ErrRememberReplay
 		}
-		publicResult := rememberTerminalPublicResult(input, syntheticEvidence, "quarantined", errorCode)
+		publicResult := rememberTerminalPublicResult(input, syntheticEvidence, "quarantined", terminalError)
 		if err := insertRememberAttemptInTx(ctx, tx, RememberAttemptRecordInput{
 			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, AttemptID: input.IngestID,
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 			RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
-			Outcome: "quarantined", ErrorCode: errorCode, CorrelationID: rememberCorrelationID(input.Metadata), PublicResult: publicResult,
+			Outcome: "quarantined", ErrorCode: terminalError.Code, CorrelationID: rememberCorrelationID(input.Metadata), PublicResult: publicResult,
 			EvidenceCount: len(input.Evidence), RelationshipCount: len(input.Commit.RelationshipResults), AssessorTurns: input.AssessorTurns, Duration: rememberAttemptDuration(input),
 		}); err != nil {
 			return err

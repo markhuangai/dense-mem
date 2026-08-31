@@ -30,6 +30,21 @@ func TestRememberFailureCodeMapsAssessmentDatabaseFailure(t *testing.T) {
 	require.Equal(t, rememberapp.SubmissionErrorDatabaseFailure, rememberFailureCode("assessment", failure))
 }
 
+func TestRememberTerminalErrorInputUsesCanonicalStatus(t *testing.T) {
+	for _, code := range []rememberapp.TerminalErrorCode{
+		rememberapp.TerminalErrorNoSupportedMemory,
+		rememberapp.TerminalErrorQuarantined,
+	} {
+		want := rememberapp.TerminalStatusError(code)
+		got := rememberTerminalErrorInput(code)
+		require.Equal(t, want.Code, got.Code)
+		require.Equal(t, want.Message, got.Message)
+		require.Equal(t, want.Retryable, got.Retryable)
+		require.Equal(t, want.NextAction, got.NextAction)
+		require.Equal(t, want.Remediation, got.Remediation)
+	}
+}
+
 func TestRememberFailureRecoveryContextUsesPersistenceBudget(t *testing.T) {
 	started := time.Now()
 	ctx, cancel := rememberFailureRecoveryContext(context.Background())
@@ -205,11 +220,11 @@ func (s *rememberFailureLedgerStub) LoadRememberAttempt(ctx context.Context, _ r
 	return nil, repository.ErrRememberAttemptNotFound
 }
 
-func (*rememberFailureLedgerStub) CommitRememberPreflightQuarantine(context.Context, repository.SynchronousRememberCommitInput, string) (*repository.SynchronousRememberCommitResult, error) {
+func (*rememberFailureLedgerStub) CommitRememberPreflightQuarantine(context.Context, repository.SynchronousRememberCommitInput, repository.RememberTerminalErrorInput) (*repository.SynchronousRememberCommitResult, error) {
 	return nil, errors.New("unused")
 }
 
-func (*rememberFailureLedgerStub) CommitRememberTerminal(context.Context, repository.SynchronousRememberCommitInput, string, string, []repository.SubmissionAssessmentSecurityQuarantineInput) (*repository.SynchronousRememberCommitResult, error) {
+func (*rememberFailureLedgerStub) CommitRememberTerminal(context.Context, repository.SynchronousRememberCommitInput, string, repository.RememberTerminalErrorInput, []repository.SubmissionAssessmentSecurityQuarantineInput) (*repository.SynchronousRememberCommitResult, error) {
 	return nil, errors.New("unused")
 }
 

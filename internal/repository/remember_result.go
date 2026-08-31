@@ -1,10 +1,19 @@
 package repository
 
 import (
-	"strings"
-
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
+
+// RememberTerminalErrorInput carries the application-owned terminal error
+// projection into the persistence adapter without making the adapter own its
+// public error policy.
+type RememberTerminalErrorInput struct {
+	Code        string
+	Message     string
+	Retryable   bool
+	NextAction  string
+	Remediation string
+}
 
 func rememberPublicResult(input SynchronousRememberCommitInput, evidence []EvidenceFragment, semantic *submissionSemanticCommitState, appliedSplits []submissionRelationshipAppliedSplit) map[string]any {
 	result := map[string]any{
@@ -52,7 +61,7 @@ func rememberPublicResult(input SynchronousRememberCommitInput, evidence []Evide
 	return result
 }
 
-func rememberTerminalPublicResult(input SynchronousRememberCommitInput, evidence []EvidenceFragment, outcome, errorCode string) map[string]any {
+func rememberTerminalPublicResult(input SynchronousRememberCommitInput, evidence []EvidenceFragment, outcome string, terminalError RememberTerminalErrorInput) map[string]any {
 	result := map[string]any{
 		"contract_version": domain.ContractVersion, "submission_id": input.IngestID,
 		"submission_kind": "remember", "processing_state": outcome, "search_state": string(domain.SearchProjectionNotRequired),
@@ -85,39 +94,9 @@ func rememberTerminalPublicResult(input SynchronousRememberCommitInput, evidence
 		rels = append(rels, rel)
 	}
 	result["relationship_results"] = rels
-	code := strings.TrimSpace(errorCode)
-	if code == "" {
-		if outcome == "quarantined" {
-			code = "submission_quarantined"
-		} else {
-			code = "no_supported_memory"
-		}
-	}
-	nextAction, remediation := rememberTerminalErrorGuidance(code)
 	result["errors"] = []map[string]any{{
-		"code": code, "message": rememberTerminalErrorMessage(code), "retryable": true,
-		"next_action": nextAction, "remediation": remediation,
+		"code": terminalError.Code, "message": terminalError.Message, "retryable": terminalError.Retryable,
+		"next_action": terminalError.NextAction, "remediation": terminalError.Remediation,
 	}}
 	return result
-}
-
-func rememberTerminalErrorMessage(code string) string {
-	switch code {
-	case "no_supported_memory":
-		return domain.SubmissionErrorMessageNoSupportedMemory
-	case "submission_quarantined":
-		return domain.SubmissionErrorMessageQuarantined
-	default:
-		return domain.SubmissionErrorMessageInternalFailure
-	}
-}
-
-func rememberTerminalErrorGuidance(code string) (string, string) {
-	if code == "no_supported_memory" {
-		return "resubmit_remember", "Submit the complete batch again with remember and a new idempotency_key after correcting the input."
-	}
-	if code == "submission_quarantined" {
-		return "resubmit_remember", "Use a new idempotency_key for any later Remember submission."
-	}
-	return "retry_same_request", "Retry the same request with the same idempotency_key after the transient failure clears."
 }

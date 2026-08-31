@@ -127,8 +127,9 @@ func TestCorrectionToolResultErrorMapsLifecycleAndHTTPFailures(t *testing.T) {
 	generated := structuredToolResult(t, correctionToolResultError(ctx, " ", errors.New("database failure")))
 	require.NotEmpty(t, generated["submission_id"])
 	entry := generated["errors"].([]any)[0].(map[string]any)
-	require.Equal(t, string(rememberapp.SubmissionNextActionRetryCorrection), entry["next_action"])
-	require.NotEmpty(t, entry["remediation"])
+	canonicalDatabaseError := rememberapp.StatusError(rememberapp.SubmissionErrorDatabaseFailure)
+	require.Equal(t, canonicalDatabaseError.NextAction, entry["next_action"])
+	require.Equal(t, canonicalDatabaseError.Remediation, entry["remediation"])
 }
 
 func TestCorrectionToolResultErrorNormalizesOversizedCorrelationID(t *testing.T) {
@@ -180,6 +181,9 @@ func TestCorrectionToolResultErrorPreservesTypedConflictReasons(t *testing.T) {
 			require.Equal(t, test.wantCode, rememberapp.SubmissionErrorCode(result["errors"].([]any)[0].(map[string]any)["code"].(string)))
 			require.Equal(t, test.wantState, result["processing_state"])
 			require.Equal(t, test.wantNextAction, result["errors"].([]any)[0].(map[string]any)["next_action"])
+			if test.wantCode == rememberapp.SubmissionErrorIdempotencyConflict {
+				require.Equal(t, "Retry correct_relationship with current relationship state and a new idempotency_key.", result["errors"].([]any)[0].(map[string]any)["remediation"])
+			}
 		})
 	}
 }

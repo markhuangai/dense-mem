@@ -35,8 +35,8 @@ type rememberSynchronousProcessor struct {
 
 type rememberSynchronousLedger interface {
 	LoadRememberAttempt(context.Context, repository.RememberAttemptLookupInput) (*repository.RememberAttempt, error)
-	CommitRememberPreflightQuarantine(context.Context, repository.SynchronousRememberCommitInput, string) (*repository.SynchronousRememberCommitResult, error)
-	CommitRememberTerminal(context.Context, repository.SynchronousRememberCommitInput, string, string, []repository.SubmissionAssessmentSecurityQuarantineInput) (*repository.SynchronousRememberCommitResult, error)
+	CommitRememberPreflightQuarantine(context.Context, repository.SynchronousRememberCommitInput, repository.RememberTerminalErrorInput) (*repository.SynchronousRememberCommitResult, error)
+	CommitRememberTerminal(context.Context, repository.SynchronousRememberCommitInput, string, repository.RememberTerminalErrorInput, []repository.SubmissionAssessmentSecurityQuarantineInput) (*repository.SynchronousRememberCommitResult, error)
 	PlanRememberEmbeddings(context.Context, repository.SynchronousRememberCommitInput) (*repository.InlineEmbeddingPlan, error)
 	CommitRememberWithEmbeddings(context.Context, repository.SynchronousRememberCommitInput, []repository.InlineEmbeddingResult) (*repository.SynchronousRememberCommitResult, error)
 	RecordRememberFailure(context.Context, repository.RememberFailureRecordInput) error
@@ -107,7 +107,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 			return fail(err, "commit")
 		}
 		commitCtx, commitCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseCommit)
-		terminal, terminalErr := p.ledger.CommitRememberPreflightQuarantine(commitCtx, commitInput, string(rememberapp.SubmissionErrorQuarantined))
+		terminal, terminalErr := p.ledger.CommitRememberPreflightQuarantine(commitCtx, commitInput, rememberTerminalErrorInput(rememberapp.TerminalErrorQuarantined))
 		commitCancel()
 		if errors.Is(terminalErr, repository.ErrRememberReplay) {
 			return p.loadRememberReplay(ctx, input, ingestID)
@@ -157,7 +157,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 			commitCancel()
 			return fail(err, "commit")
 		}
-		terminal, terminalErr := p.ledger.CommitRememberTerminal(commitCtx, commitInput, "quarantined", string(rememberapp.SubmissionErrorQuarantined), quarantines)
+		terminal, terminalErr := p.ledger.CommitRememberTerminal(commitCtx, commitInput, "quarantined", rememberTerminalErrorInput(rememberapp.TerminalErrorQuarantined), quarantines)
 		commitCancel()
 		if errors.Is(terminalErr, repository.ErrRememberReplay) {
 			return p.loadRememberReplay(ctx, input, ingestID)
@@ -176,7 +176,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 			commitCancel()
 			return fail(err, "commit")
 		}
-		terminal, terminalErr := p.ledger.CommitRememberTerminal(commitCtx, commitInput, "rejected", string(rememberapp.SubmissionErrorNoSupportedMemory), nil)
+		terminal, terminalErr := p.ledger.CommitRememberTerminal(commitCtx, commitInput, "rejected", rememberTerminalErrorInput(rememberapp.TerminalErrorNoSupportedMemory), nil)
 		commitCancel()
 		if errors.Is(terminalErr, repository.ErrRememberReplay) {
 			return p.loadRememberReplay(ctx, input, ingestID)
