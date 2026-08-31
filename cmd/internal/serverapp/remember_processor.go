@@ -300,16 +300,33 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	case rememberapp.SubmissionErrorQuarantined:
 		processingState = "quarantined"
 	}
+	notStoredReason := rememberFailureNotStoredReason(code)
+	evidence, relationshipResults := rememberFailureResults(input, notStoredReason)
 	status := &rememberapp.SubmissionStatusResult{
 		ContractVersion: domain.ContractVersion, SubmissionID: attemptID, SubmissionKind: "remember",
 		ProcessingState: processingState, SearchState: "not_required", CorrelationID: correlationID,
-		Evidence: []rememberapp.SubmissionEvidenceStatus{}, RelationshipResults: []rememberapp.SubmissionRelationshipResult{},
+		Evidence: evidence, RelationshipResults: relationshipResults,
 		Errors: []rememberapp.SubmissionStatusError{publicError},
+	}
+	publicEvidence := make([]any, 0, len(evidence))
+	for _, item := range evidence {
+		publicEvidence = append(publicEvidence, map[string]any{
+			"disposition": item.Disposition, "evidence_index": item.EvidenceIndex,
+			"superseded_evidence_ids": item.SupersededEvidenceIDs, "search_state": item.SearchState,
+			"reason": item.Reason,
+		})
+	}
+	publicRelationships := make([]any, 0, len(relationshipResults))
+	for _, item := range relationshipResults {
+		publicRelationships = append(publicRelationships, map[string]any{
+			"ref": item.RelationshipRef, "disposition": item.Disposition,
+			"reason": item.Reason, "splits": item.Splits,
+		})
 	}
 	publicResult := map[string]any{
 		"contract_version": domain.ContractVersion, "submission_id": attemptID, "submission_kind": "remember",
 		"processing_state": processingState, "search_state": "not_required", "correlation_id": correlationID,
-		"evidence": []any{}, "relationship_results": []any{}, "errors": []any{map[string]any{
+		"evidence": publicEvidence, "relationship_results": publicRelationships, "errors": []any{map[string]any{
 			"code": publicError.Code, "message": publicError.Message, "retryable": publicError.Retryable,
 			"next_action": publicError.NextAction, "remediation": publicError.Remediation,
 		}},
@@ -351,6 +368,79 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	}
 	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
 	return nil, &rememberapp.RememberProcessError{Status: status, Err: failure}
+}
+
+func rememberFailureNotStoredReason(code rememberapp.SubmissionErrorCode) string {
+	switch code {
+	case rememberapp.SubmissionErrorNoSupportedMemory:
+		return "not_supported_by_evidence"
+	case rememberapp.SubmissionErrorStaleInput:
+		return "stale_input"
+	case rememberapp.SubmissionErrorQuarantined:
+		return "security_quarantine"
+	default:
+		return "internal_failure"
+	}
+}
+
+func rememberFailureResults(
+	input rememberapp.RememberProcessRequest,
+	notStoredReason string,
+) ([]rememberapp.SubmissionEvidenceStatus, []rememberapp.SubmissionRelationshipResult) {
+	evidence := make([]rememberapp.SubmissionEvidenceStatus, len(input.Evidence))
+	for index := range evidence {
+		evidence[index] = rememberapp.SubmissionEvidenceStatus{
+			Disposition:           "not_stored",
+			EvidenceIndex:         index,
+			SupersededEvidenceIDs: []string{},
+			SearchState:           "not_required",
+			Reason:                notStoredReason,
+		}
+	}
+	refs := rememberFailureRelationshipRefs(input.Proposal)
+	relationships := make([]rememberapp.SubmissionRelationshipResult, len(refs))
+	for index, ref := range refs {
+		relationships[index] = rememberapp.SubmissionRelationshipResult{
+			RelationshipRef: ref,
+			Disposition:     "not_stored",
+			Reason:          notStoredReason,
+			Splits:          []rememberapp.SubmissionRelationshipSplit{},
+		}
+	}
+	return evidence, relationships
+}
+
+func rememberFailureRelationshipRefs(proposal map[string]any) []string {
+	if proposal == nil {
+		return []string{}
+	}
+	raw := proposal["relationship_hints"]
+	if raw == nil {
+		raw = proposal["relationships"]
+	}
+	var values []any
+	switch typed := raw.(type) {
+	case []any:
+		values = typed
+	case []map[string]any:
+		values = make([]any, 0, len(typed))
+		for _, value := range typed {
+			values = append(values, value)
+		}
+	default:
+		return []string{}
+	}
+	refs := make([]string, 0, len(values))
+	for _, value := range values {
+		fields, ok := value.(map[string]any)
+		if !ok {
+			refs = append(refs, "")
+			continue
+		}
+		ref, _ := fields["ref"].(string)
+		refs = append(refs, strings.TrimSpace(ref))
+	}
+	return refs
 }
 
 func normalizeRememberFailure(failure error) error {

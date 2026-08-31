@@ -127,6 +127,47 @@ func TestCorrectionToolResultErrorMapsLifecycleAndHTTPFailures(t *testing.T) {
 	require.NotEmpty(t, entry["remediation"])
 }
 
+func TestCorrectionToolResultErrorPreservesTypedConflictReasons(t *testing.T) {
+	ctx := correlation.WithID(context.Background(), "correction-correlation")
+	cases := []struct {
+		name           string
+		reason         string
+		wantCode       rememberapp.SubmissionErrorCode
+		wantState      string
+		wantNextAction string
+	}{
+		{
+			name: "idempotency", reason: string(rememberapp.SubmissionErrorIdempotencyConflict),
+			wantCode: rememberapp.SubmissionErrorIdempotencyConflict, wantState: "failed",
+			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection),
+		},
+		{
+			name: "confirmation expired", reason: string(rememberapp.SubmissionErrorConfirmationExpired),
+			wantCode: rememberapp.SubmissionErrorConfirmationExpired, wantState: "rejected",
+			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection),
+		},
+		{
+			name: "commit fence", reason: string(rememberapp.SubmissionErrorCommitConflict),
+			wantCode: rememberapp.SubmissionErrorCommitConflict, wantState: "failed",
+			wantNextAction: string(rememberapp.SubmissionNextActionRetrySameRequest),
+		},
+		{
+			name: "invalid confirmation", reason: memoryservice.CorrectionConfirmationInvalidReason,
+			wantCode: rememberapp.SubmissionErrorRelationshipChanged, wantState: "failed",
+			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection),
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			err := httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{Field: "reason", Message: test.reason}})
+			result := structuredToolResult(t, correctionToolResultError(ctx, "correction-submission", err))
+			require.Equal(t, test.wantCode, rememberapp.SubmissionErrorCode(result["errors"].([]any)[0].(map[string]any)["code"].(string)))
+			require.Equal(t, test.wantState, result["processing_state"])
+			require.Equal(t, test.wantNextAction, result["errors"].([]any)[0].(map[string]any)["next_action"])
+		})
+	}
+}
+
 func structuredToolResult(t *testing.T, err error) map[string]any {
 	t.Helper()
 	structured, ok := ToolResultFromError(err)

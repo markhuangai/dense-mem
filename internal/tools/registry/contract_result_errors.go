@@ -115,6 +115,7 @@ func correctionToolResultError(ctx context.Context, submissionID string, err err
 		submissionID = uuid.NewString()
 	}
 	code := rememberapp.SubmissionErrorDatabaseFailure
+	processingState := "failed"
 	switch {
 	case errors.Is(err, memoryservice.ErrLifecycleEmbeddingUnavailable):
 		code = rememberapp.SubmissionErrorEmbeddingUnavailable
@@ -137,19 +138,15 @@ func correctionToolResultError(ctx context.Context, submissionID string, err err
 		case httperr.NOT_FOUND:
 			code = rememberapp.SubmissionErrorEntityNotFound
 		case httperr.CONFLICT:
-			code = rememberapp.SubmissionErrorRelationshipChanged
+			code, processingState = correctionConflictCode(apiErr)
 		}
 	}
-	value := rememberapp.StatusError(code)
-	if code == rememberapp.SubmissionErrorDatabaseFailure {
-		value.NextAction = string(rememberapp.SubmissionNextActionRetryCorrection)
-		value.Remediation = "Retry correct_relationship with current relationship state and a new idempotency_key."
-	}
+	value := correctionStatusError(code)
 	return NewToolResultError(map[string]any{
 		"contract_version": domainContractVersion(),
 		"submission_id":    submissionID,
 		"submission_kind":  "relationship_correction",
-		"processing_state": "failed",
+		"processing_state": processingState,
 		"search_state":     "not_required",
 		"correlation_id":   correlation.FromContext(ctx),
 		"errors": []any{map[string]any{
@@ -160,6 +157,40 @@ func correctionToolResultError(ctx context.Context, submissionID string, err err
 			"remediation": value.Remediation,
 		}},
 	})
+}
+
+func correctionConflictCode(apiErr *httperr.APIError) (rememberapp.SubmissionErrorCode, string) {
+	switch {
+	case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.SubmissionErrorIdempotencyConflict)):
+		return rememberapp.SubmissionErrorIdempotencyConflict, "failed"
+	case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.SubmissionErrorConfirmationExpired)):
+		return rememberapp.SubmissionErrorConfirmationExpired, "rejected"
+	case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.SubmissionErrorCommitConflict)):
+		return rememberapp.SubmissionErrorCommitConflict, "failed"
+	default:
+		return rememberapp.SubmissionErrorRelationshipChanged, "failed"
+	}
+}
+
+func correctionStatusError(code rememberapp.SubmissionErrorCode) rememberapp.SubmissionStatusError {
+	value := rememberapp.StatusError(code)
+	if code == rememberapp.SubmissionErrorDatabaseFailure || code == rememberapp.SubmissionErrorIdempotencyConflict {
+		value.NextAction = string(rememberapp.SubmissionNextActionRetryCorrection)
+		value.Remediation = "Retry correct_relationship with current relationship state and a new idempotency_key."
+	}
+	return value
+}
+
+func apiErrorDetailEquals(apiErr *httperr.APIError, field, value string) bool {
+	if apiErr == nil {
+		return false
+	}
+	for _, detail := range apiErr.Details {
+		if strings.TrimSpace(detail.Field) == field && strings.TrimSpace(detail.Message) == value {
+			return true
+		}
+	}
+	return false
 }
 
 func domainContractVersion() string {
