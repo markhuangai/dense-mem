@@ -53,7 +53,6 @@ MONITOR_DIR="${MONITOR_DIR:-${V1_DATA_DIR}/monitor}"
 CREDENTIAL_PATH="${CREDENTIAL_PATH:-${V1_DATA_DIR}/eval_credential.json}"
 RUNNER="${RUNNER:-${V1_DATA_DIR}/tools/eval-runner}"
 IMPORT_CONCURRENCY="${IMPORT_CONCURRENCY:-10}"
-PLACEMENT_TIMEOUT="${PLACEMENT_TIMEOUT:-10m}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-60}"
 MAX_IMPORT_RESTARTS="${MAX_IMPORT_RESTARTS:-100}"
 MAX_COUNT_FAILURES="${MAX_COUNT_FAILURES:-12}"
@@ -62,7 +61,7 @@ IDENTITY_JSON="${V1_DATA_DIR}/dataset_identity.json"
 VALIDATION_DIR="${MONITOR_DIR}/validation"
 LOG="${MONITOR_DIR}/monitor.log"
 STATUS_JSON="${MONITOR_DIR}/status.json"
-PLACEMENT_SUMMARY="${MONITOR_DIR}/placement_summary.json"
+ATTEMPT_SUMMARY="${MONITOR_DIR}/attempt_summary.json"
 IMPORT_GATE_RESULT="${MONITOR_DIR}/import_gate_result.json"
 RESUME_SOURCE_DOC_IDS="${MONITOR_DIR}/completed_source_doc_ids.txt"
 QUARANTINED_SOURCE_DOC_IDS="${MONITOR_DIR}/quarantined_source_doc_ids.txt"
@@ -206,54 +205,47 @@ count_fragments() {
   "
 }
 
-terminal_placement_statuses_sql() {
+terminal_attempt_outcomes_sql() {
 	printf '%s' "'completed', 'quarantined'"
 }
 
-terminal_placement_count() {
+terminal_attempt_count() {
 	local completed="$1" quarantined="$2"
 	printf '%s\n' "$((completed + quarantined))"
 }
 
-placement_counts() {
+attempt_counts() {
   psql_eval "
-    WITH run_docs AS (
+    WITH attempt_docs AS (
       SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
-             run.ingest_id,
-             run.status,
-             run.created_at
-      FROM placement_runs AS run
+             attempt.attempt_id,
+             attempt.outcome,
+             attempt.created_at
+      FROM remember_attempts AS attempt
       JOIN evidence_fragments AS fragment
-        ON fragment.team_id = run.team_id
-       AND fragment.ingest_id = run.ingest_id
-      LEFT JOIN evidence_sources AS source
-        ON source.team_id = fragment.team_id
-       AND source.source_id = fragment.source_id
-      WHERE run.team_id = :'team_id'::uuid
+        ON fragment.team_id = attempt.team_id
+       AND fragment.ingest_id = attempt.attempt_id
+       AND fragment.owner_profile_id = attempt.owner_profile_id
+      WHERE attempt.team_id = :'team_id'::uuid
+        AND attempt.submission_kind = 'remember'
         AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
-        AND (
-          fragment.source_id IS NULL
-          OR source.current_revision_id = fragment.source_revision_id
-        )
     ), ranked AS (
-      SELECT status,
+      SELECT outcome,
              row_number() OVER (
                PARTITION BY source_doc_id
-               ORDER BY created_at DESC, ingest_id DESC
+               ORDER BY created_at DESC, attempt_id DESC
              ) AS row_num
-      FROM run_docs
+      FROM attempt_docs
     ), latest AS (
-      SELECT status FROM ranked WHERE row_num = 1
+      SELECT outcome FROM ranked WHERE row_num = 1
     ), historical AS (
-      SELECT count(DISTINCT ingest_id) AS attempts
-      FROM run_docs
+      SELECT count(DISTINCT attempt_id) AS attempts
+      FROM attempt_docs
     )
     SELECT count(*),
-           count(*) FILTER (WHERE status = 'completed'),
-           count(*) FILTER (WHERE status = 'quarantined'),
-           count(*) FILTER (WHERE status = 'failed'),
-           count(*) FILTER (WHERE status = 'queued'),
-           count(*) FILTER (WHERE status = 'processing'),
+           count(*) FILTER (WHERE outcome = 'completed'),
+           count(*) FILTER (WHERE outcome = 'quarantined'),
+           count(*) FILTER (WHERE outcome IN ('failed', 'rejected')),
            (SELECT attempts FROM historical)
     FROM latest;
   "
@@ -265,102 +257,87 @@ write_resume_files() {
   quarantined_tmp="$(mktemp "${QUARANTINED_SOURCE_DOC_IDS}.tmp.XXXXXX")"
   failed_tmp="$(mktemp "${FAILED_SOURCE_DOC_IDS}.tmp.XXXXXX")"
   psql_eval "
-    WITH run_docs AS (
+    WITH attempt_docs AS (
       SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
-             run.status,
-             run.created_at,
-             run.ingest_id
-      FROM placement_runs AS run
+             attempt.outcome,
+             attempt.created_at,
+             attempt.attempt_id
+      FROM remember_attempts AS attempt
       JOIN evidence_fragments AS fragment
-        ON fragment.team_id = run.team_id
-       AND fragment.ingest_id = run.ingest_id
-      LEFT JOIN evidence_sources AS source
-        ON source.team_id = fragment.team_id
-       AND source.source_id = fragment.source_id
-      WHERE run.team_id = :'team_id'::uuid
+        ON fragment.team_id = attempt.team_id
+       AND fragment.ingest_id = attempt.attempt_id
+       AND fragment.owner_profile_id = attempt.owner_profile_id
+      WHERE attempt.team_id = :'team_id'::uuid
+        AND attempt.submission_kind = 'remember'
         AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
-        AND (
-          fragment.source_id IS NULL
-          OR source.current_revision_id = fragment.source_revision_id
-        )
     ), ranked AS (
       SELECT source_doc_id,
-             status,
+             outcome,
              row_number() OVER (
                PARTITION BY source_doc_id
-               ORDER BY created_at DESC, ingest_id DESC
+               ORDER BY created_at DESC, attempt_id DESC
              ) AS row_num
-      FROM run_docs
+      FROM attempt_docs
     )
     SELECT source_doc_id
     FROM ranked
-    WHERE row_num = 1 AND status IN ($(terminal_placement_statuses_sql))
+    WHERE row_num = 1 AND outcome IN ($(terminal_attempt_outcomes_sql))
     ORDER BY source_doc_id;
   " > "${completed_tmp}"
   psql_eval "
-    WITH run_docs AS (
+    WITH attempt_docs AS (
       SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
-             run.status,
-             run.created_at,
-             run.ingest_id
-      FROM placement_runs AS run
+             attempt.outcome,
+             attempt.created_at,
+             attempt.attempt_id
+      FROM remember_attempts AS attempt
       JOIN evidence_fragments AS fragment
-        ON fragment.team_id = run.team_id
-       AND fragment.ingest_id = run.ingest_id
-      LEFT JOIN evidence_sources AS source
-        ON source.team_id = fragment.team_id
-       AND source.source_id = fragment.source_id
-      WHERE run.team_id = :'team_id'::uuid
+        ON fragment.team_id = attempt.team_id
+       AND fragment.ingest_id = attempt.attempt_id
+       AND fragment.owner_profile_id = attempt.owner_profile_id
+      WHERE attempt.team_id = :'team_id'::uuid
+        AND attempt.submission_kind = 'remember'
         AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
-        AND (
-          fragment.source_id IS NULL
-          OR source.current_revision_id = fragment.source_revision_id
-        )
     ), ranked AS (
       SELECT source_doc_id,
-             status,
+             outcome,
              row_number() OVER (
                PARTITION BY source_doc_id
-               ORDER BY created_at DESC, ingest_id DESC
+               ORDER BY created_at DESC, attempt_id DESC
              ) AS row_num
-      FROM run_docs
+      FROM attempt_docs
     )
     SELECT source_doc_id
     FROM ranked
-    WHERE row_num = 1 AND status = 'quarantined'
+    WHERE row_num = 1 AND outcome = 'quarantined'
     ORDER BY source_doc_id;
   " > "${quarantined_tmp}"
   psql_eval "
-    WITH run_docs AS (
+    WITH attempt_docs AS (
       SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
-             run.status,
-             run.created_at,
-             run.ingest_id
-      FROM placement_runs AS run
+             attempt.outcome,
+             attempt.created_at,
+             attempt.attempt_id
+      FROM remember_attempts AS attempt
       JOIN evidence_fragments AS fragment
-        ON fragment.team_id = run.team_id
-       AND fragment.ingest_id = run.ingest_id
-      LEFT JOIN evidence_sources AS source
-        ON source.team_id = fragment.team_id
-       AND source.source_id = fragment.source_id
-      WHERE run.team_id = :'team_id'::uuid
+        ON fragment.team_id = attempt.team_id
+       AND fragment.ingest_id = attempt.attempt_id
+       AND fragment.owner_profile_id = attempt.owner_profile_id
+      WHERE attempt.team_id = :'team_id'::uuid
+        AND attempt.submission_kind = 'remember'
         AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
-        AND (
-          fragment.source_id IS NULL
-          OR source.current_revision_id = fragment.source_revision_id
-        )
     ), ranked AS (
       SELECT source_doc_id,
-             status,
+             outcome,
              row_number() OVER (
                PARTITION BY source_doc_id
-               ORDER BY created_at DESC, ingest_id DESC
+               ORDER BY created_at DESC, attempt_id DESC
              ) AS row_num
-      FROM run_docs
+      FROM attempt_docs
     )
     SELECT source_doc_id
     FROM ranked
-    WHERE row_num = 1 AND status = 'failed'
+    WHERE row_num = 1 AND outcome IN ('failed', 'rejected')
     ORDER BY source_doc_id;
   " > "${failed_tmp}"
   mv "${completed_tmp}" "${RESUME_SOURCE_DOC_IDS}"
@@ -368,128 +345,72 @@ write_resume_files() {
   mv "${failed_tmp}" "${FAILED_SOURCE_DOC_IDS}"
 }
 
-write_placement_summary() {
+write_attempt_summary() {
   local tmp
-  tmp="$(mktemp "${PLACEMENT_SUMMARY}.tmp.XXXXXX")"
+  tmp="$(mktemp "${ATTEMPT_SUMMARY}.tmp.XXXXXX")"
   psql_eval "
-    WITH run_docs AS (
+    WITH attempt_docs AS (
       SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
-             run.placement_run_id,
-             run.ingest_id,
-             run.status,
-             run.created_at
-      FROM placement_runs AS run
+             attempt.attempt_id,
+             attempt.outcome,
+             attempt.created_at
+      FROM remember_attempts AS attempt
       JOIN evidence_fragments AS fragment
-        ON fragment.team_id = run.team_id
-       AND fragment.ingest_id = run.ingest_id
-      LEFT JOIN evidence_sources AS source
-        ON source.team_id = fragment.team_id
-       AND source.source_id = fragment.source_id
-      WHERE run.team_id = :'team_id'::uuid
+        ON fragment.team_id = attempt.team_id
+       AND fragment.ingest_id = attempt.attempt_id
+       AND fragment.owner_profile_id = attempt.owner_profile_id
+      WHERE attempt.team_id = :'team_id'::uuid
+        AND attempt.submission_kind = 'remember'
         AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
-        AND (
-          fragment.source_id IS NULL
-          OR source.current_revision_id = fragment.source_revision_id
-        )
     ), ranked AS (
-      SELECT placement_run_id, ingest_id, status,
+      SELECT source_doc_id, attempt_id, outcome,
              row_number() OVER (
                PARTITION BY source_doc_id
-               ORDER BY created_at DESC, ingest_id DESC
+               ORDER BY created_at DESC, attempt_id DESC
              ) AS row_num
-      FROM run_docs
+      FROM attempt_docs
     ), latest AS (
-      SELECT placement_run_id, ingest_id, status FROM ranked WHERE row_num = 1
+      SELECT attempt_id, outcome FROM ranked WHERE row_num = 1
     ), latest_stats AS (
       SELECT count(*) AS total,
-             count(*) FILTER (WHERE status = 'completed') AS completed,
-             count(*) FILTER (WHERE status = 'quarantined') AS quarantined,
-             count(*) FILTER (WHERE status IN ($(terminal_placement_statuses_sql))) AS terminal,
-             count(*) FILTER (WHERE status = 'failed') AS failed,
-             count(*) FILTER (WHERE status = 'queued') AS queued,
-             count(*) FILTER (WHERE status = 'processing') AS processing
+             count(*) FILTER (WHERE outcome = 'completed') AS completed,
+             count(*) FILTER (WHERE outcome = 'quarantined') AS quarantined,
+             count(*) FILTER (WHERE outcome IN ('failed', 'rejected')) AS failed,
+             count(*) FILTER (WHERE outcome = 'rejected') AS rejected,
+             count(*) FILTER (WHERE outcome IN ($(terminal_attempt_outcomes_sql))) AS terminal
       FROM latest
-    ), latest_items AS (
-      SELECT item.category, item.status, latest.status AS run_status
-      FROM latest
-      JOIN placement_items AS item
-        ON item.placement_run_id = latest.placement_run_id
-       AND item.ingest_id = latest.ingest_id
-       AND item.team_id = :'team_id'::uuid
-    ), item_stats AS (
-      SELECT count(*) AS total,
-             count(*) FILTER (WHERE run_status = 'completed') AS completed_total,
-             count(*) FILTER (
-               WHERE run_status = 'completed'
-                 AND category IN ('validated_claim', 'fact')
-             ) AS promoted,
-             count(*) FILTER (
-               WHERE run_status = 'completed'
-                 AND category IN ('candidate', 'quarantined', 'failed')
-             ) AS rejected
-      FROM latest_items
-    ), category_counts AS (
-      SELECT COALESCE(jsonb_object_agg(category, category_count), '{}'::jsonb) AS value
-      FROM (
-        SELECT category, count(*) AS category_count
-        FROM latest_items
-        GROUP BY category
-        ORDER BY category
-      ) AS counts
-    ), item_status_counts AS (
-      SELECT COALESCE(jsonb_object_agg(status, status_count), '{}'::jsonb) AS value
-      FROM (
-        SELECT status, count(*) AS status_count
-        FROM latest_items
-        GROUP BY status
-        ORDER BY status
-      ) AS counts
     ), historical_status_counts AS (
-      SELECT COALESCE(jsonb_object_agg(status, status_count), '{}'::jsonb) AS value,
-             COALESCE(sum(status_count), 0) AS total
+      SELECT COALESCE(jsonb_object_agg(outcome, outcome_count), '{}'::jsonb) AS value,
+             COALESCE(sum(outcome_count), 0) AS total
       FROM (
-        SELECT status, count(*) AS status_count
-        FROM run_docs
-        GROUP BY status
-        ORDER BY status
+        SELECT outcome, count(*) AS outcome_count
+        FROM attempt_docs
+        GROUP BY outcome
+        ORDER BY outcome
       ) AS counts
     )
     SELECT jsonb_pretty(jsonb_build_object(
       'generated_at', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-      'latest_runs', jsonb_build_object(
+      'latest_attempts', jsonb_build_object(
         'total', latest_stats.total,
         'completed', latest_stats.completed,
         'quarantined', latest_stats.quarantined,
         'terminal', latest_stats.terminal,
         'failed', latest_stats.failed,
-        'queued', latest_stats.queued,
-        'processing', latest_stats.processing
-      ),
-      'placement_items', jsonb_build_object(
-        'total', item_stats.total,
-        'by_category', category_counts.value,
-        'by_status', item_status_counts.value,
-        'promotion_rate', CASE
-          WHEN item_stats.completed_total = 0 THEN 0
-          ELSE round(item_stats.promoted::numeric / item_stats.completed_total, 6)
-        END,
-        'rejection_rate', CASE
-          WHEN item_stats.completed_total = 0 THEN 0
-          ELSE round(item_stats.rejected::numeric / item_stats.completed_total, 6)
-        END
+        'rejected', latest_stats.rejected
       ),
       'historical_attempts', jsonb_build_object(
         'total', historical_status_counts.total,
-        'by_status', historical_status_counts.value
+        'by_outcome', historical_status_counts.value
       )
     ))
-    FROM latest_stats, item_stats, category_counts, item_status_counts, historical_status_counts;
+    FROM latest_stats, historical_status_counts;
   " > "${tmp}"
-  mv "${tmp}" "${PLACEMENT_SUMMARY}"
+  mv "${tmp}" "${ATTEMPT_SUMMARY}"
 }
 
 write_import_gate_result() {
-  local fragments="$1" latest="$2" completed="$3" quarantined="$4" failed="$5" queued="$6" processing="$7" attempts="$8" forced_reason="${9:-}"
+  local fragments="$1" latest="$2" completed="$3" quarantined="$4" failed="$5" attempts="$6" forced_reason="${7:-}"
   local terminal passed status reason counts_observed="true" tmp
 
   if [[ -n "${forced_reason}" ]]; then
@@ -504,12 +425,12 @@ write_import_gate_result() {
       terminal=""
       counts_observed="false"
     else
-      terminal="$(terminal_placement_count "${completed}" "${quarantined}")"
+      terminal="$(terminal_attempt_count "${completed}" "${quarantined}")"
     fi
   else
-    terminal="$(terminal_placement_count "${completed}" "${quarantined}")"
+    terminal="$(terminal_attempt_count "${completed}" "${quarantined}")"
 
-    if [[ "${latest}" == "${TARGET}" && "${fragments}" == "${TARGET}" && "${terminal}" == "${TARGET}" && "${failed}" == "0" && "${queued}" == "0" && "${processing}" == "0" ]]; then
+    if [[ "${latest}" == "${TARGET}" && "${fragments}" == "${TARGET}" && "${terminal}" == "${TARGET}" && "${failed}" == "0" ]]; then
       if [[ "${quarantined}" == "0" ]]; then
         passed="true"
         status="passed"
@@ -517,12 +438,12 @@ write_import_gate_result() {
       else
         passed="false"
         status="comparison_only"
-        reason="quarantined_placements"
+        reason="quarantined_attempts"
       fi
     else
       passed="false"
       status="failed"
-      reason="incomplete_or_failed_placements"
+      reason="incomplete_or_failed_attempts"
     fi
   fi
 
@@ -539,8 +460,6 @@ write_import_gate_result() {
     --arg quarantined "${quarantined}" \
     --arg terminal "${terminal}" \
     --arg failed "${failed}" \
-    --arg queued "${queued}" \
-    --arg processing "${processing}" \
     --arg attempts "${attempts}" \
     --arg reason "${reason}" \
     'def optional_count:
@@ -553,13 +472,11 @@ write_import_gate_result() {
       counts_observed: $counts_observed,
       target: ($target | tonumber),
       fragments: ($fragments | optional_count),
-      latest_placements: ($latest | optional_count),
+      latest_attempts: ($latest | optional_count),
       completed: ($completed | optional_count),
       quarantined: ($quarantined | optional_count),
       terminal: ($terminal | optional_count),
       failed: ($failed | optional_count),
-      queued: ($queued | optional_count),
-      processing: ($processing | optional_count),
       historical_attempts: ($attempts | optional_count),
       reasons: (if $reason == "" then [] else [$reason] end)
     }' > "${tmp}"
@@ -567,8 +484,8 @@ write_import_gate_result() {
 }
 
 write_status() {
-  local phase="$1" fragments="$2" latest="$3" completed="$4" quarantined="$5" failed="$6" queued="$7" processing="$8" attempts="$9"
-  local import_pid="${10:-}" rate_per_minute="${11:-}" eta_seconds="${12:-}"
+  local phase="$1" fragments="$2" latest="$3" completed="$4" quarantined="$5" failed="$6" attempts="$7"
+  local import_pid="${8:-}" rate_per_minute="${9:-}" eta_seconds="${10:-}"
   local tmp
   tmp="$(mktemp "${STATUS_JSON}.tmp.XXXXXX")"
   jq -n \
@@ -579,8 +496,6 @@ write_status() {
     --arg completed "${completed}" \
     --arg quarantined "${quarantined}" \
     --arg failed "${failed}" \
-    --arg queued "${queued}" \
-    --arg processing "${processing}" \
     --arg attempts "${attempts}" \
     --arg target "${TARGET}" \
     --arg import_pid "${import_pid}" \
@@ -588,7 +503,7 @@ write_status() {
     --arg eta_seconds "${eta_seconds}" \
     --arg import_dir "${IMPORT_DIR}" \
     --arg baseline_dir "${BASELINE_DIR}" \
-    --arg placement_summary "${PLACEMENT_SUMMARY}" \
+    --arg attempt_summary "${ATTEMPT_SUMMARY}" \
     --arg import_gate_result "${IMPORT_GATE_RESULT}" \
     --arg quarantined_source_doc_ids "${QUARANTINED_SOURCE_DOC_IDS}" \
     --arg failed_source_doc_ids "${FAILED_SOURCE_DOC_IDS}" \
@@ -599,13 +514,11 @@ write_status() {
       phase: $phase,
       target: ($target | tonumber),
       fragments: ($fragments | tonumber),
-      latest_placements: ($latest | tonumber),
+      latest_attempts: ($latest | tonumber),
       completed: ($completed | tonumber),
       quarantined: ($quarantined | tonumber),
       terminal: (($completed | tonumber) + ($quarantined | tonumber)),
       failed: ($failed | tonumber),
-      queued: ($queued | tonumber),
-      processing: ($processing | tonumber),
       historical_attempts: ($attempts | tonumber),
       percent_complete: ((($completed | tonumber) + ($quarantined | tonumber)) / ($target | tonumber) * 100),
       rate_per_minute: ($rate_per_minute | nullable_number),
@@ -613,7 +526,7 @@ write_status() {
       import_pid: $import_pid,
       import_dir: $import_dir,
       baseline_dir: $baseline_dir,
-      placement_summary: $placement_summary,
+      attempt_summary: $attempt_summary,
       import_gate_result: $import_gate_result,
       quarantined_source_doc_ids: $quarantined_source_doc_ids,
       failed_source_doc_ids: $failed_source_doc_ids,
@@ -693,9 +606,9 @@ prepare_identity() {
     return 0
   fi
 
-  local snapshot latest completed quarantined failed queued processing attempts fragments
-  snapshot="$(placement_counts)"
-  IFS='|' read -r latest completed quarantined failed queued processing attempts <<< "${snapshot}"
+  local snapshot latest completed quarantined failed attempts fragments
+  snapshot="$(attempt_counts)"
+  IFS='|' read -r latest completed quarantined failed attempts <<< "${snapshot}"
   fragments="$(count_fragments)"
   if [[ "${latest}" != "0" || "${fragments}" != "0" ]]; then
     echo "eval runtime already contains data but has no dataset identity; refusing to adopt it" >&2
@@ -730,12 +643,11 @@ start_import() {
     --out "${IMPORT_DIR}"
     --import-seed
     --import-concurrency "${IMPORT_CONCURRENCY}"
-    --placement-timeout "${PLACEMENT_TIMEOUT}"
     --resume-source-doc-ids "${RESUME_SOURCE_DOC_IDS}"
     --max-page-size 500
   )
-  printf '\nresume remember import with concurrency=%s placement_timeout=%s at %s\n' \
-    "${IMPORT_CONCURRENCY}" "${PLACEMENT_TIMEOUT}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${IMPORT_DIR}/import.log"
+  printf '\nresume remember import with concurrency=%s at %s\n' \
+    "${IMPORT_CONCURRENCY}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${IMPORT_DIR}/import.log"
   setsid "${args[@]}" 9>&- >> "${IMPORT_DIR}/import.log" 2>&1 < /dev/null &
   printf '%s\n' "$!" > "${IMPORT_DIR}/import.pid"
   log "started_import pid=$(cat "${IMPORT_DIR}/import.pid") route=remember"
@@ -875,32 +787,31 @@ main() {
 
   local restarts=0 count_failures=0 previous_terminal="" previous_epoch=""
   while true; do
-    local now_epoch snapshot latest completed quarantined failed queued processing attempts fragments terminal pending
+    local now_epoch snapshot latest completed quarantined failed attempts fragments terminal
     now_epoch="$(date +%s)"
-    if ! snapshot="$(placement_counts)" || ! fragments="$(count_fragments)"; then
+    if ! snapshot="$(attempt_counts)" || ! fragments="$(count_fragments)"; then
       count_failures=$((count_failures + 1))
-      log "placement_or_fragment_count_failed failures=${count_failures}/${MAX_COUNT_FAILURES}"
+      log "attempt_or_fragment_count_failed failures=${count_failures}/${MAX_COUNT_FAILURES}"
       if [[ "${count_failures}" -ge "${MAX_COUNT_FAILURES}" ]]; then
         log "max_count_failures_reached failures=${count_failures}"
-        write_import_gate_result "" "" "" "" "" "" "" "" "placement_or_fragment_count_failed"
+        write_import_gate_result "" "" "" "" "" "" "attempt_or_fragment_count_failed"
         return 1
       fi
       sleep "${SLEEP_SECONDS}"
       continue
     fi
-    IFS='|' read -r latest completed quarantined failed queued processing attempts <<< "${snapshot}"
-    for value in "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "${fragments}"; do
+    IFS='|' read -r latest completed quarantined failed attempts <<< "${snapshot}"
+    for value in "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "${fragments}"; do
       if ! [[ "${value}" =~ ^[0-9]+$ ]]; then
         log "non_numeric_monitor_count value=${value}"
-        write_import_gate_result "" "" "" "" "" "" "" "" "non_numeric_monitor_count"
+        write_import_gate_result "" "" "" "" "" "" "non_numeric_monitor_count"
         return 1
       fi
     done
-    terminal="$(terminal_placement_count "${completed}" "${quarantined}")"
-    pending=$((queued + processing))
+    terminal="$(terminal_attempt_count "${completed}" "${quarantined}")"
     count_failures=0
     write_resume_files
-    write_placement_summary
+    write_attempt_summary
     local rate_per_minute="" eta_seconds=""
     if [[ -n "${previous_terminal}" && -n "${previous_epoch}" && "${now_epoch}" -gt "${previous_epoch}" && "${terminal}" -ge "${previous_terminal}" ]]; then
       local delta_count=$((terminal - previous_terminal))
@@ -914,70 +825,67 @@ main() {
     previous_epoch="${now_epoch}"
     if [[ "${latest}" -gt "${TARGET}" || "${fragments}" -gt "${TARGET}" ]]; then
       log "dataset_count_exceeds_target latest=${latest}/${TARGET} fragments=${fragments}/${TARGET}; refusing_eval"
-      write_import_gate_result "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "dataset_count_exceeds_target"
-      write_status "failed" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "$(live_import_pid || true)" "${rate_per_minute}" "${eta_seconds}"
+      write_import_gate_result "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "dataset_count_exceeds_target"
+      write_status "failed" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "$(live_import_pid || true)" "${rate_per_minute}" "${eta_seconds}"
       return 1
     fi
     local pid=""
     pid="$(live_import_pid || true)"
-    if [[ "${failed}" -gt 0 && -z "${pid}" && "${pending}" == "0" ]]; then
-      log "failed_placement_detected failed=${failed}; refusing_eval"
-      write_import_gate_result "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "failed_placement_detected"
-      write_status "failed" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
+    if [[ "${failed}" -gt 0 && -z "${pid}" ]]; then
+      log "failed_remember_attempt_detected failed=${failed}; refusing_eval"
+      write_import_gate_result "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "failed_remember_attempt_detected"
+      write_status "failed" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
       return 1
     fi
-    if [[ "${latest}" == "${TARGET}" && "${terminal}" == "${TARGET}" && "${failed}" == "0" && "${queued}" == "0" && "${processing}" == "0" && "${fragments}" == "${TARGET}" ]]; then
+    if [[ "${latest}" == "${TARGET}" && "${terminal}" == "${TARGET}" && "${failed}" == "0" && "${fragments}" == "${TARGET}" ]]; then
       if [[ -n "${pid}" ]]; then
         log "import_finalizing pid=${pid} terminal=${terminal}/${TARGET} completed=${completed} quarantined=${quarantined}"
-        write_status "import_finalizing" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "${pid}" "${rate_per_minute}" "0"
+        write_status "import_finalizing" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "${pid}" "${rate_per_minute}" "0"
         sleep "${SLEEP_SECONDS}"
         continue
       fi
       if [[ ! -s "${IMPORT_DIR}/knowledge_mapping.json" || ! -s "${IMPORT_DIR}/summary.json" ]]; then
         if [[ "${restarts}" -ge "${MAX_IMPORT_RESTARTS}" ]]; then
           log "max_import_restarts_reached while finalizing artifacts"
-          write_import_gate_result "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "import_artifacts_missing"
+          write_import_gate_result "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "import_artifacts_missing"
           return 1
         fi
         restarts=$((restarts + 1))
-        log "placements_complete_but_import_artifacts_missing restart=${restarts}"
+        log "attempts_complete_but_import_artifacts_missing restart=${restarts}"
         start_import
         sleep "${SLEEP_SECONDS}"
         continue
       fi
       log "full_import_verified terminal=${terminal}/${TARGET} completed=${completed} quarantined=${quarantined} fragments=${fragments}/${TARGET} attempts=${attempts}"
-      write_import_gate_result "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}"
-      write_status "full_import_verified" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "0"
+      write_import_gate_result "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}"
+      write_status "full_import_verified" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "" "${rate_per_minute}" "0"
       if ! run_baseline; then
-        write_status "failed" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "0"
+        write_status "failed" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "" "${rate_per_minute}" "0"
         return 1
       fi
       # Preserve complete scores for V1/V2 comparison without treating quarantined input as accepted.
       if [[ "$(jq -r '.passed' "${IMPORT_GATE_RESULT}")" != "true" ]]; then
         log "import_gate_failed path=${IMPORT_GATE_RESULT}"
-        write_status "failed" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "0"
+        write_status "failed" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "" "${rate_per_minute}" "0"
         return 1
       fi
-      write_status "done" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "0"
+      write_status "done" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "" "${rate_per_minute}" "0"
       log "done"
       return 0
     fi
     if [[ -n "${pid}" ]]; then
-      log "import_running pid=${pid} terminal=${terminal}/${TARGET} completed=${completed} quarantined=${quarantined} failed=${failed} pending=${pending} fragments=${fragments}"
-      write_status "import_running" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "${pid}" "${rate_per_minute}" "${eta_seconds}"
-    elif [[ "${pending}" -gt 0 ]]; then
-      log "placement_worker_draining terminal=${terminal}/${TARGET} completed=${completed} quarantined=${quarantined} queued=${queued} processing=${processing}; import_not_restarted"
-      write_status "placement_worker_draining" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
+      log "import_running pid=${pid} terminal=${terminal}/${TARGET} completed=${completed} quarantined=${quarantined} failed=${failed} fragments=${fragments}"
+      write_status "import_running" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "${pid}" "${rate_per_minute}" "${eta_seconds}"
     else
       if [[ "${restarts}" -ge "${MAX_IMPORT_RESTARTS}" ]]; then
         log "max_import_restarts_reached restarts=${restarts} terminal=${terminal}/${TARGET}"
-        write_import_gate_result "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "max_import_restarts_reached"
-        write_status "failed" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
+        write_import_gate_result "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "max_import_restarts_reached"
+        write_status "failed" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
         return 1
       fi
       restarts=$((restarts + 1))
       log "import_not_running restart=${restarts} terminal=${terminal}/${TARGET} completed=${completed} quarantined=${quarantined} failed=${failed} unseen=$((TARGET - latest))"
-      write_status "import_restarting" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${queued}" "${processing}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
+      write_status "import_restarting" "${fragments}" "${latest}" "${completed}" "${quarantined}" "${failed}" "${attempts}" "" "${rate_per_minute}" "${eta_seconds}"
       start_import
     fi
     sleep "${SLEEP_SECONDS}"

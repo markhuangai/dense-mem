@@ -13,31 +13,16 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-// ResultKind tells transitional consumers whether a result is a legacy queued
-// receipt or a terminal synchronous outcome. It is not serialized directly.
+// ResultKind identifies a terminal result for internal transport composition.
 type ResultKind string
 
 const (
-	ResultKindLegacyReceipt ResultKind = "legacy_receipt"
-	ResultKindTerminal      ResultKind = "terminal"
+	ResultKindTerminal ResultKind = "terminal"
 )
 
-// SynchronousProcessor is the request-owned boundary used by the future
-// terminal Remember path. The current release service keeps using IntakePort.
+// SynchronousProcessor is the request-owned boundary for terminal Remember.
 type SynchronousProcessor interface {
 	ProcessRemember(context.Context, RememberProcessRequest) (*SubmissionStatusResult, error)
-}
-
-// Processor is the narrow owner-scoped execution port retained for consumers
-// that already have a staged submission identifier.
-type Processor interface {
-	Process(context.Context, ProcessRequest) (*SubmissionStatusResult, error)
-}
-
-type ProcessRequest struct {
-	TeamID         string
-	OwnerProfileID string
-	SubmissionID   string
 }
 
 // RememberProcessError preserves a bounded terminal result alongside an

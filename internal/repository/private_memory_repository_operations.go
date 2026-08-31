@@ -613,7 +613,10 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 		}
 		counts["relationship_cross_references_inbound"] = inboundCrossReferencesDeleted
 		for _, table := range ordered {
-			query := fmt.Sprintf("DELETE FROM %s WHERE space_id = $1", pq.QuoteIdentifier(table))
+			query, err := privateMemoryManifestDeleteQuery(table)
+			if err != nil {
+				return err
+			}
 			result := tx.WithContext(ctx).Exec(query, space.ID)
 			if result.Error != nil {
 				return fmt.Errorf("delete %s: %w", table, result.Error)
@@ -634,7 +637,10 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 		counts["audit_log"] = auditResult.RowsAffected
 
 		for _, table := range ordered {
-			query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE space_id = $1", pq.QuoteIdentifier(table))
+			query, err := privateMemoryManifestCountQuery(table)
+			if err != nil {
+				return err
+			}
 			var remaining int64
 			if err := tx.WithContext(ctx).Raw(query, space.ID).Row().Scan(&remaining); err != nil {
 				return fmt.Errorf("verify %s: %w", table, err)
@@ -703,6 +709,39 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 	return completed, wrapPrivateMemoryError("execute erasure", err)
 }
 
+func privateMemoryManifestDeleteQuery(table string) (string, error) {
+	quoted := pq.QuoteIdentifier(table)
+	switch table {
+	case "remember_attempt_events", "remember_failure_artifacts", "semantic_assessments":
+		return fmt.Sprintf(`
+			DELETE FROM %s AS row
+			USING remember_attempts AS attempt
+			WHERE row.team_id = attempt.team_id
+			  AND row.attempt_id = attempt.attempt_id
+			  AND row.owner_profile_id = attempt.owner_profile_id
+			  AND attempt.space_id = $1`, quoted), nil
+	default:
+		return fmt.Sprintf("DELETE FROM %s WHERE space_id = $1", quoted), nil
+	}
+}
+
+func privateMemoryManifestCountQuery(table string) (string, error) {
+	quoted := pq.QuoteIdentifier(table)
+	switch table {
+	case "remember_attempt_events", "remember_failure_artifacts", "semantic_assessments":
+		return fmt.Sprintf(`
+			SELECT COUNT(*)
+			FROM %s AS row
+			JOIN remember_attempts AS attempt
+			  ON row.team_id = attempt.team_id
+			 AND row.attempt_id = attempt.attempt_id
+			 AND row.owner_profile_id = attempt.owner_profile_id
+			WHERE attempt.space_id = $1`, quoted), nil
+	default:
+		return fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE space_id = $1", quoted), nil
+	}
+}
+
 func deletePrivateMemoryExternalDependenciesTx(ctx context.Context, tx *gorm.DB, spaceID uuid.UUID) (int64, error) {
 	deleted := int64(0)
 	byIngest := tx.WithContext(ctx).Exec(`
@@ -716,17 +755,6 @@ func deletePrivateMemoryExternalDependenciesTx(ctx context.Context, tx *gorm.DB,
 		return 0, fmt.Errorf("delete v2 migration ingest dependency: %w", byIngest.Error)
 	}
 	deleted += byIngest.RowsAffected
-	byPlacement := tx.WithContext(ctx).Exec(`
-		DELETE FROM v2_migration_corpus_items AS corpus
-		USING placement_items AS item
-		WHERE corpus.team_id = item.team_id
-		  AND corpus.placement_item_id = item.placement_item_id
-		  AND item.space_id = $1
-	`, spaceID)
-	if byPlacement.Error != nil {
-		return 0, fmt.Errorf("delete v2 migration placement dependency: %w", byPlacement.Error)
-	}
-	deleted += byPlacement.RowsAffected
 	var remaining int64
 	if err := tx.WithContext(ctx).Raw(`
 		SELECT COUNT(*)
@@ -736,12 +764,6 @@ func deletePrivateMemoryExternalDependenciesTx(ctx context.Context, tx *gorm.DB,
 			WHERE ingest.team_id = corpus.team_id
 			  AND ingest.ingest_id = corpus.ingest_id
 			  AND ingest.space_id = $1
-		)
-		OR EXISTS (
-			SELECT 1 FROM placement_items AS item
-			WHERE item.team_id = corpus.team_id
-			  AND item.placement_item_id = corpus.placement_item_id
-			  AND item.space_id = $1
 		)
 	`, spaceID).Row().Scan(&remaining); err != nil {
 		return 0, fmt.Errorf("verify v2 migration dependencies: %w", err)

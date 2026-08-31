@@ -114,14 +114,17 @@ func WithRuntimeToolPolicy(ctx context.Context, policy RuntimeToolPolicy) contex
 // ToolVisible reports whether a registered tool should be visible for a request.
 func ToolVisible(ctx context.Context, tool Tool, policy RuntimeToolPolicy) bool {
 	policy = ResolveRuntimeToolPolicy(ctx, policy, tool)
-	if tool.FeatureGate == domain.FeatureGate && tool.Visibility == domain.ToolVisibility {
-		return false
-	}
 	if tool.Name == ToolSubmitRecallSessionFeedback {
 		return policy.resolved.recallFeedbackEnabled
 	}
 	if _, ok := dreamToolNames[tool.Name]; ok {
 		return policy.resolved.dreamingEnabled
+	}
+	if IsContractTool(tool) {
+		return true
+	}
+	if tool.FeatureGate == domain.FeatureGate && tool.Visibility == domain.ToolVisibility {
+		return false
 	}
 	return true
 }

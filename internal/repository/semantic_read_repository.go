@@ -120,12 +120,6 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 		}
 		result.SearchDocuments = searchDocs
 
-		jobs, err := loadTraceEmbeddingJobs(ctx, tx, input.TeamID, input.spaceID, traceSearchDocumentIDs(searchDocs), input.MaxEvents)
-		if err != nil {
-			return err
-		}
-		result.EmbeddingJobs = jobs
-
 		nodes, edges, err := loadTraceGraphContext(ctx, tx, relationship, input)
 		if err != nil {
 			return err
@@ -394,7 +388,7 @@ func loadTraceObservations(
 ) ([]RelationshipObservationRecord, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT observation_id::text, relationship_id::text, ingest_id::text,
-		       COALESCE(placement_item_id::text, ''), owner_profile_id::text,
+		       owner_profile_id::text,
 		       subject_ref, original_predicate, object_ref,
 		       COALESCE(subject_entity_id::text, ''), COALESCE(predicate_key, ''),
 		       COALESCE(predicate_version, 0), COALESCE(object_entity_id::text, ''),
@@ -419,7 +413,7 @@ func loadTraceObservations(
 		var evidenceJSON, metadataJSON string
 		if err := rows.Scan(
 			&row.ObservationID, &row.RelationshipID, &row.IngestID,
-			&row.PlacementItemID, &row.OwnerProfileID, &row.SubjectRef,
+			&row.OwnerProfileID, &row.SubjectRef,
 			&row.OriginalPredicate, &row.ObjectRef, &row.SubjectEntityID,
 			&row.PredicateKey, &row.PredicateVersion, &row.ObjectEntityID,
 			&row.ObjectValueID, &row.Polarity, &row.ScopeKey, &validFrom,
@@ -843,16 +837,6 @@ func traceSupportFragmentIDs(supports []RelationshipEvidenceSupportRecord) []str
 		}
 		seen[support.FragmentID] = struct{}{}
 		out = append(out, support.FragmentID)
-	}
-	return out
-}
-
-func traceSearchDocumentIDs(docs []TraceSearchDocument) []string {
-	out := make([]string, 0, len(docs))
-	for _, doc := range docs {
-		if doc.SearchDocumentID != "" {
-			out = append(out, doc.SearchDocumentID)
-		}
 	}
 	return out
 }

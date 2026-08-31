@@ -44,19 +44,19 @@ func insertRelationshipObservation(ctx context.Context, tx *gorm.DB, input Apply
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO relationship_observations (
-		    team_id, relationship_id, ingest_id, placement_item_id, owner_profile_id,
+		    team_id, relationship_id, ingest_id, owner_profile_id,
 		    subject_ref, original_predicate, object_ref, subject_entity_id,
 		    predicate_key, predicate_version, object_entity_id, object_value_id,
 		    polarity, scope_key, valid_from, valid_to, evidence, metadata, space_id
 		) VALUES (
-		    ?::uuid, NULLIF(?, '')::uuid, ?::uuid, NULLIF(?, '')::uuid, ?::uuid,
+		    ?::uuid, NULLIF(?, '')::uuid, ?::uuid, ?::uuid,
 		    ?, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, ''), NULLIF(?, 0),
 		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, NULLIF(?, ''),
 		    ?, ?, ?::jsonb, ?::jsonb,
 		    ?::uuid
 		)
 		RETURNING observation_id::text
-	`, input.TeamID, relationshipID, input.IngestID, input.PlacementItemID, input.OwnerProfileID,
+	`, input.TeamID, relationshipID, input.IngestID, input.OwnerProfileID,
 		input.SubjectRef, input.OriginalPredicate, input.ObjectRef, input.SubjectEntityID,
 		input.PredicateKey, input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
 		input.Polarity, input.ScopeKey, timeArg(input.ValidFrom), timeArg(input.ValidTo), string(evidenceJSON),

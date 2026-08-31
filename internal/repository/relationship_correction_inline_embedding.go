@@ -48,12 +48,22 @@ func applyRelationshipCorrectionSearchDocuments(ctx context.Context, tx *gorm.DB
 		}
 		byHash[value.DocumentHash] = append([]float32(nil), value.Embedding...)
 	}
-
-	commit := CommitPlacementSemanticInput{TeamID: row.TeamID, OwnerProfileID: row.OwnerProfileID}
-	if _, err := markRelationshipSearchDocumentNotRequired(ctx, tx, commit, original); err != nil {
-		return err
+	inlineResults := make([]InlineEmbeddingResult, 0, len(values))
+	for _, value := range values {
+		inlineResults = append(inlineResults, InlineEmbeddingResult{
+			DocumentHash:            value.DocumentHash,
+			Embedding:               append([]float32(nil), value.Embedding...),
+			EmbeddingContractID:     value.EmbeddingContractID,
+			EmbeddingDimensions:     value.EmbeddingDimensions,
+			EmbeddingModel:          value.EmbeddingModel,
+			SearchIndexGenerationID: value.SearchIndexGenerationID,
+			IndexGeneration:         value.IndexGeneration,
+		})
 	}
-	if err := staleCorrectionEmbeddingJobs(ctx, tx, row.TeamID, original.RelationshipID, contract.EmbeddingContractID); err != nil {
+	ctx = WithInlineEmbeddingResults(ctx, inlineResults)
+
+	commit := CommitSemanticInput{TeamID: row.TeamID, OwnerProfileID: row.OwnerProfileID}
+	if _, err := markRelationshipSearchDocumentNotRequired(ctx, tx, commit, original); err != nil {
 		return err
 	}
 	document, documentHash, err := upsertCorrectionRelationshipSearchDocument(ctx, tx, row, successor, contract)
@@ -88,9 +98,6 @@ func applyRelationshipCorrectionSearchDocuments(ctx context.Context, tx *gorm.DB
 	if updated.RowsAffected != 1 {
 		return ErrSearchStaleVersion
 	}
-	if err := staleCorrectionEmbeddingJobs(ctx, tx, row.TeamID, successor.RelationshipID, contract.EmbeddingContractID); err != nil {
-		return err
-	}
 	if document.ProjectionGenerationID != "" {
 		if err := refreshRelationshipProjectionGeneration(ctx, tx, row.TeamID, document.ProjectionGenerationID); err != nil {
 			return err
@@ -103,7 +110,7 @@ func upsertCorrectionRelationshipSearchDocument(ctx context.Context, tx *gorm.DB
 	if !relationshipSearchEligible(relationship) {
 		return nil, "", errors.New("correction successor is not search eligible")
 	}
-	text, err := placementRelationshipSearchText(ctx, tx, relationship)
+	text, err := semanticRelationshipSearchText(ctx, tx, relationship)
 	if err != nil {
 		return nil, "", err
 	}
@@ -119,7 +126,7 @@ func upsertCorrectionRelationshipSearchDocument(ctx context.Context, tx *gorm.DB
 	if err := validateUpsertSearchDocumentInput(input); err != nil {
 		return nil, "", err
 	}
-	document, err := upsertSearchDocumentRecordInTx(ctx, tx, input, contract)
+	document, err := upsertSearchDocumentInTx(ctx, tx, input, contract)
 	if err != nil {
 		return nil, "", err
 	}
@@ -127,12 +134,4 @@ func upsertCorrectionRelationshipSearchDocument(ctx context.Context, tx *gorm.DB
 		return nil, "", err
 	}
 	return document, input.DocumentHash, nil
-}
-
-func staleCorrectionEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID, relationshipID, contractID string) error {
-	return tx.WithContext(ctx).Exec(`
-		UPDATE embedding_jobs SET status = 'stale', error = 'relationship correction completed synchronously', completed_at = COALESCE(completed_at, now()), lease_until = NULL, worker_id = '', updated_at = now()
-		WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ?::uuid AND embedding_contract_id = ?::uuid
-		  AND status IN ('queued', 'processing', 'failed')
-	`, teamID, relationshipID, contractID).Error
 }

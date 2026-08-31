@@ -7,7 +7,6 @@ import (
 func terminalRememberOutputSchema(version string) map[string]any {
 	return terminalRememberOutputSchemaForActions(version, terminalErrorNextActions(false))
 }
-
 func dreamTerminalRememberOutputSchema(version string) map[string]any {
 	return terminalRememberOutputSchemaForActions(version, terminalErrorNextActions(true))
 }
@@ -96,9 +95,6 @@ func contractV261ErrorCodes() []string {
 	result := make([]string, 0)
 	add := func(values []string) {
 		for _, value := range values {
-			if value == string(remember.SubmissionErrorSearchIndexingDelayed) {
-				continue
-			}
 			if _, ok := seen[value]; ok {
 				continue
 			}

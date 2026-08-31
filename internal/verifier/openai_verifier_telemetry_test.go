@@ -48,7 +48,7 @@ func TestOpenAIStructuredChatUsesTokenizerForIncompleteProviderUsage(t *testing.
 
 			v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 			v.SetMetrics(metrics)
-			ctx := observability.WithAIOperation(context.Background(), observability.AIOperationPlacementAssessment, 1)
+			ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
 			result, err := v.openAIStructuredChatJSONWithUsage(ctx, "assessor-model", "schema", map[string]any{}, "system", map[string]any{})
 			require.NoError(t, err)
 			require.Nil(t, result.Usage)
@@ -91,7 +91,7 @@ func TestOpenAIStructuredChatDoesNotMarkMissingUsageForMalformedProviderError(t 
 
 	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	v.SetMetrics(metrics)
-	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationPlacementAssessment, 1)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
 	_, err := v.openAIStructuredChatMessagesJSONWithUsage(
 		ctx,
 		"assessor-model",
@@ -106,7 +106,7 @@ func TestOpenAIStructuredChatDoesNotMarkMissingUsageForMalformedProviderError(t 
 	_, found := verifierMetricLineValue(
 		recorder.Body.String(),
 		"densemem_ai_operation_unpriced_total",
-		`operation="placement_assessment"`,
+		`operation="semantic_assessment"`,
 		`component="verifier"`,
 		`model="assessor-model"`,
 		`reason="missing_usage"`,
@@ -124,7 +124,7 @@ func TestOpenAIStructuredChatMarksMissingUsageForMalformedOKResponse(t *testing.
 
 	v := NewOpenAIVerifier(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	v.SetMetrics(metrics)
-	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationPlacementAssessment, 1)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
 	_, err := v.openAIStructuredChatMessagesJSONWithUsage(
 		ctx,
 		"assessor-model",
@@ -139,7 +139,7 @@ func TestOpenAIStructuredChatMarksMissingUsageForMalformedOKResponse(t *testing.
 	got, found := verifierMetricLineValue(
 		recorder.Body.String(),
 		"densemem_ai_operation_unpriced_total",
-		`operation="placement_assessment"`,
+		`operation="semantic_assessment"`,
 		`component="verifier"`,
 		`model="assessor-model"`,
 		`reason="missing_usage"`,
@@ -175,7 +175,7 @@ func TestRecordVerifierTokenizerUsageIncludesStructuredSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, wantInputTokens, messageTokens)
 
-	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationPlacementAssessment, 1)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
 	v.recordVerifierTokenizerUsage(ctx, "assessor-model", request, `{}`)
 
 	recorder := httptest.NewRecorder()
@@ -183,7 +183,7 @@ func TestRecordVerifierTokenizerUsageIncludesStructuredSchema(t *testing.T) {
 	got, found := verifierMetricLineValue(
 		recorder.Body.String(),
 		"densemem_ai_operation_tokens_total",
-		`operation="placement_assessment"`,
+		`operation="semantic_assessment"`,
 		`component="verifier"`,
 		`model="assessor-model"`,
 		`kind="input"`,

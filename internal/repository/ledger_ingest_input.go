@@ -15,15 +15,17 @@ const maxEvidenceItems = 100
 func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.IngestID = strings.TrimSpace(input.IngestID)
 	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.RequestHash = strings.TrimSpace(input.RequestHash)
 	input.SourceSummary = strings.TrimSpace(input.SourceSummary)
 	input.Status = strings.TrimSpace(input.Status)
 	if input.Status == "" {
-		input.Status = string(domain.PlacementRunQueued)
+		input.Status = "completed"
 	}
 	for i := range input.Evidence {
+		input.Evidence[i].FragmentID = strings.TrimSpace(input.Evidence[i].FragmentID)
 		input.Evidence[i].ContentHash = strings.TrimSpace(input.Evidence[i].ContentHash)
 		if input.Evidence[i].ContentHash == "" && input.Evidence[i].Content != "" {
 			input.Evidence[i].ContentHash = sha256Hex(input.Evidence[i].Content)
@@ -50,11 +52,8 @@ func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
 	return input
 }
 
-// ValidateCreateIngestInput applies the same normalization and validation used
-// by durable ingest writers without opening a database transaction. Synchronous
-// callers use it to reject malformed ingest metadata before provider work.
-func ValidateCreateIngestInput(input CreateIngestInput) error {
-	return validateCreateIngestInput(normalizeCreateIngestInput(input))
+func requestHashMatches(input CreateIngestInput, existing string) bool {
+	return strings.TrimSpace(existing) == input.RequestHash
 }
 
 func validateCreateIngestInput(input CreateIngestInput) error {
@@ -63,6 +62,11 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 	}
 	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
 		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	if input.IngestID != "" {
+		if _, err := uuid.Parse(input.IngestID); err != nil {
+			return fmt.Errorf("ingest_id is invalid: %w", err)
+		}
 	}
 	if input.SpaceID == "" && input.SpaceGeneration != 0 {
 		return errors.New("space_id is required when space_generation is set")
@@ -75,9 +79,7 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 			return errors.New("space_generation is required when space_id is set")
 		}
 	}
-	if input.Status != string(domain.PlacementRunQueued) &&
-		input.Status != string(domain.PlacementRunGuarded) &&
-		input.Status != string(domain.PlacementRunQuarantined) {
+	if input.Status != "completed" && input.Status != "rejected" && input.Status != "quarantined" {
 		return fmt.Errorf("unsupported ingest status %q", input.Status)
 	}
 	if input.IdempotencyKey != "" && input.RequestHash == "" {
@@ -89,7 +91,7 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 	if len(input.Evidence) > maxEvidenceItems {
 		return fmt.Errorf("evidence count %d exceeds maximum %d", len(input.Evidence), maxEvidenceItems)
 	}
-	directTargets := make(map[string]int)
+	supersessionTargets := make(map[string]int)
 	for i, item := range input.Evidence {
 		if strings.TrimSpace(item.Content) == "" {
 			return fmt.Errorf("evidence[%d].content is required", i)
@@ -129,10 +131,10 @@ func validateCreateIngestInput(input CreateIngestInput) error {
 				if _, err := uuid.Parse(evidenceID); err != nil {
 					return fmt.Errorf("evidence[%d].supersedes_evidence_ids contains invalid UUID %q: %w", i, evidenceID, err)
 				}
-				if previous, exists := directTargets[evidenceID]; exists {
+				if previous, exists := supersessionTargets[evidenceID]; exists {
 					return fmt.Errorf("evidence[%d].supersedes_evidence_ids duplicates evidence target from evidence[%d]", i, previous)
 				}
-				directTargets[evidenceID] = i
+				supersessionTargets[evidenceID] = i
 			}
 		}
 		if item.InitialEvent != nil {

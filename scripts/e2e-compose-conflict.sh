@@ -2,7 +2,7 @@ E2E_CONFLICT_PROVIDER_PORT=""
 E2E_CONFLICT_REVIEW_DRIVER=""
 
 append_conflict_e2e_environment() {
-  if ! conflict_provider_required; then
+  if ! conflict_server_provider_required; then
     return
   fi
   printf '%s\n' \
@@ -66,7 +66,7 @@ prepare_conflict_provider_volume() {
 }
 
 prepare_conflict_review_driver() {
-  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && ! ( "$E2E_SCENARIO" == "synchronous_write" && "${DENSE_MEM_E2E_WRITE_SLICE:-legacy}" == "conflict" ) ]]; then
+  if [[ "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && ! ( "$E2E_SCENARIO" == "synchronous_write" && ( -z "${DENSE_MEM_E2E_WRITE_CASE:-}" || "${DENSE_MEM_E2E_WRITE_CASE:-}" == "conflict" ) ) ]]; then
     return
   fi
   E2E_CONFLICT_REVIEW_DRIVER="${TEMP_DIR}/conflict-review-driver"
@@ -74,7 +74,11 @@ prepare_conflict_review_driver() {
 }
 
 conflict_provider_required() {
-  [[ "$E2E_SCENARIO" == "conflict" || "$E2E_SCENARIO" == "submission_assessment" || ( "$E2E_SCENARIO" == "synchronous_write" && "${DENSE_MEM_E2E_WRITE_SLICE:-legacy}" == "conflict" ) ]]
+  [[ "$E2E_SCENARIO" == "conflict" || ( "$E2E_SCENARIO" == "synchronous_write" && ( -z "${DENSE_MEM_E2E_WRITE_CASE:-}" || "${DENSE_MEM_E2E_WRITE_CASE:-}" == "conflict" ) ) ]]
+}
+
+conflict_server_provider_required() {
+  [[ "$E2E_SCENARIO" == "conflict" || ( "$E2E_SCENARIO" == "synchronous_write" && "${DENSE_MEM_E2E_WRITE_CASE:-}" == "conflict" ) ]]
 }
 
 run_conflict_e2e() {

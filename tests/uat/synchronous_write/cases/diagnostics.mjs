@@ -33,7 +33,7 @@ export async function run({ rpc, expect }) {
   ]) {
     const response = await fetch(`${controlURL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
     const body = await response.text();
-    expect(response.status === 400, `invalid diagnostics request ${path} must return 400: ${body}`);
+    expect(response.status === 422, `invalid diagnostics request ${path} must return 422: ${body}`);
     expect(body.length < 2048, `invalid diagnostics error ${path} must be bounded`);
     expect(!body.includes("diagnostics-persisted-secret") && !body.includes("dense-mem-e2e-verifier-key"), `invalid diagnostics error ${path} must not expose payloads`);
   }
@@ -90,11 +90,12 @@ export async function run({ rpc, expect }) {
   expect(detail.data.events[0].sequence_no === 1 && detail.data.events[1].sequence_no === 2, "attempt events must remain ordered");
   expect(detail.data.events[1].metadata?.markup === "<script>bad()</script>", "detail must retain persisted metadata for safe rendering");
   expect(detail.data?.artifacts?.length >= 1, "failed attempt detail must expose an artifact descriptor");
-  const descriptor = detail.data.artifacts[0];
+  const descriptor = detail.data.artifacts.find((candidate) => candidate.artifact_kind === "failure");
+  expect(descriptor, "failed attempt detail must expose a failure artifact descriptor");
   const artifactResponse = await fetch(`${controlURL}/control/api/teams/${teamID}/remember-attempts/${item.attempt_id}/artifacts/${descriptor.artifact_id}`, { headers: { Authorization: `Bearer ${token}` } });
   expect(artifactResponse.status === 200, "unexpired failure artifact must be readable");
   const artifactText = await artifactResponse.text();
-  expect(artifactText === `{"phase":"assessment","error_code":"provider_unavailable"}`, `artifact bytes must be scrubbed and deterministic: ${artifactText}`);
+  expect(artifactText === `{"phase":"assessment","code":"provider_unavailable"}`, `artifact bytes must be scrubbed and deterministic: ${artifactText}`);
   expect(artifactResponse.headers.get("cache-control") === "no-store", "artifact reads must disable caching");
 
   const expiredArtifactID = randomUUID();

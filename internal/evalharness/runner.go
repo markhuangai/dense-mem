@@ -19,7 +19,6 @@ type RunOptions struct {
 	APIKey                 string
 	ImportSeed             bool
 	ImportConcurrency      int
-	PlacementTimeout       time.Duration
 	ResumeSourceDocIDsPath string
 	TracesPath             string
 	MappingPath            string
@@ -63,12 +62,6 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 	}
 	if strings.TrimSpace(opts.ResumeSourceDocIDsPath) != "" && (mode != "import" || !opts.ImportSeed) {
 		return Summary{}, fmt.Errorf("resume source document IDs require import mode with --import-seed")
-	}
-	if opts.PlacementTimeout < 0 {
-		return Summary{}, fmt.Errorf("placement timeout must not be negative")
-	}
-	if opts.PlacementTimeout == 0 {
-		opts.PlacementTimeout = 2 * time.Minute
 	}
 	importConcurrency, err := normalizeImportConcurrency(opts.ImportConcurrency)
 	if err != nil {
@@ -138,7 +131,6 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		ImportSeed:             opts.ImportSeed,
 		ImportRoute:            importRoute,
 		ImportConcurrency:      opts.ImportConcurrency,
-		PlacementTimeout:       opts.PlacementTimeout.String(),
 		ResumeSourceDocIDsPath: opts.ResumeSourceDocIDsPath,
 		TracesPath:             opts.TracesPath,
 		MappingPath:            opts.MappingPath,
@@ -182,9 +174,8 @@ func Run(ctx context.Context, opts RunOptions) (Summary, error) {
 		}
 	} else {
 		client := &HTTPClient{
-			BaseURL:          opts.BaseURL,
-			APIKey:           opts.APIKey,
-			PlacementTimeout: opts.PlacementTimeout,
+			BaseURL: opts.BaseURL,
+			APIKey:  opts.APIKey,
 		}
 		mappingLoadedFromPath := false
 		if opts.MappingPath != "" {

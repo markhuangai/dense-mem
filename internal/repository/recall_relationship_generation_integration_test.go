@@ -150,7 +150,7 @@ func TestRecallRelationshipsUsesActivatedGenerationWhenNewestGenerationFailed(t 
 		DocumentText:           "relationship\nsubject: Nia\npredicate: activated fallback marker\nobject: Dense Mem",
 	})
 	require.NoError(t, err)
-	completeSearchJobsForTest(t, searchRepo, teamID, map[string][]float32{
+	completeSearchDocumentsForTest(t, searchRepo, teamID, map[string][]float32{
 		document.SearchDocumentID: {1, 0, 0},
 	})
 

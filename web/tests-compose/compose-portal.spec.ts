@@ -242,10 +242,10 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
       relationships: [securityRelationship(originalContent, `${runID}:original-relationship`)],
     },
   }));
-  expect(original.processing_state).toBe("queued");
-  const originalSubmissionID = requiredString(original, "submission_id");
-  const originalItem = await waitForSubmissionEvidence(request, originalSubmissionID);
-  const originalEvidenceID = requiredString(originalItem, "evidence_id");
+	expect(original.processing_state).toBe("completed");
+	requiredString(original, "submission_id");
+	const originalItem = submissionEvidence(original);
+	const originalEvidenceID = requiredString(originalItem, "evidence_id");
 
   const replacement = mcpToolPayload(await mcpCall(request, "tools/call", {
     name: "remember",
@@ -259,8 +259,8 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
       relationships: [securityRelationship(replacementContent, `${runID}:replacement-relationship`)],
     },
   }));
-  expect(replacement.processing_state).toBe("queued");
-  const replacementItem = await waitForSubmissionEvidence(request, requiredString(replacement, "submission_id"));
+	expect(replacement.processing_state).toBe("completed");
+	const replacementItem = submissionEvidence(replacement);
   const replacementEvidenceID = requiredString(replacementItem, "evidence_id");
   expect(replacementItem.superseded_evidence_ids).toEqual([originalEvidenceID]);
 
@@ -424,6 +424,7 @@ test("user portal logs in with a real API key and shows only that credential", a
 
 if (graphAnchorEntityId && graphOriginalObjectEntityId && graphCorrectedObjectEntityId && graphOriginalRelationshipId && graphSuccessorRelationshipId) {
 test("user portal renders the corrected live graph with depth five and an uncapped limit", async ({ page }) => {
+  test.skip(!graphAnchorEntityId || !graphOriginalObjectEntityId || !graphCorrectedObjectEntityId || !graphOriginalRelationshipId || !graphSuccessorRelationshipId, "terminal graph fixture is not seeded for this scenario");
   await openUserPortal(page, seedApiKey);
   await page.getByRole("button", { name: "Graph" }).click();
 
@@ -726,23 +727,15 @@ function mcpToolPayload(response: Record<string, unknown>) {
   return JSON.parse(first.text) as Record<string, unknown>;
 }
 
-async function waitForSubmissionEvidence(request: APIRequestContext, submissionID: string): Promise<Record<string, unknown>> {
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    const status = mcpToolPayload(await mcpCall(request, "tools/call", {
-      name: "get_submission_status",
-      arguments: { submission_id: submissionID },
-    }));
-    const processingState = typeof status.processing_state === "string" ? status.processing_state : "";
-    if (["failed", "rejected", "quarantined"].includes(processingState)) {
-      throw new Error(`submission ${submissionID} reached ${processingState}: ${JSON.stringify(status.errors ?? [])}`);
-    }
-    const first = Array.isArray(status.evidence) ? status.evidence[0] : undefined;
-    if (processingState === "completed" && isRecord(first) && typeof first.evidence_id === "string" && first.evidence_id !== "") {
-      return first;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-  }
-  throw new Error(`submission status did not return evidence for ${submissionID}`);
+function submissionEvidence(value: Record<string, unknown>) {
+	const evidence = value.evidence;
+	expect(Array.isArray(evidence) && evidence.length > 0).toBe(true);
+	const first = Array.isArray(evidence) ? evidence[0] : undefined;
+	expect(isRecord(first)).toBe(true);
+	if (!isRecord(first)) {
+		throw new Error("MCP response evidence missing");
+	}
+	return first;
 }
 
 function requiredString(value: Record<string, unknown>, field: string) {

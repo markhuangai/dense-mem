@@ -8,12 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
 func TestClassifyAuthorityActivatesWhenCompatibleMarkerPresent(t *testing.T) {
 	store := &authorityStoreStub{marker: &domain.CompatibilityMarker{
-		Status: domain.MigrationMarkerCompatible,
+		MarkerKind: domain.MigrationMarkerKindCutover,
+		Version:    cutoverMarkerVersion,
+		Status:     domain.MigrationMarkerCompatible,
 	}}
 
 	bootstrap, err := ClassifyAuthority(context.Background(), store)
@@ -25,13 +26,13 @@ func TestClassifyAuthorityActivatesWhenCompatibleMarkerPresent(t *testing.T) {
 
 func TestClassifyAuthorityFailsClosedForIncompatibleMarker(t *testing.T) {
 	_, err := ClassifyAuthority(context.Background(), &authorityStoreStub{
-		marker: &domain.CompatibilityMarker{Status: domain.MigrationMarkerCorrupt},
+		marker: &domain.CompatibilityMarker{MarkerKind: domain.MigrationMarkerKindCutover, Version: cutoverMarkerVersion, Status: domain.MigrationMarkerCorrupt},
 	})
 	require.ErrorIs(t, err, errAuthorityBlocked)
 	require.ErrorContains(t, err, "corrupt")
 
 	_, err = ClassifyAuthority(context.Background(), &authorityStoreStub{
-		marker: &domain.CompatibilityMarker{Status: domain.MigrationMarkerIncompatible},
+		marker: &domain.CompatibilityMarker{MarkerKind: domain.MigrationMarkerKindCutover, Version: cutoverMarkerVersion, Status: domain.MigrationMarkerIncompatible},
 	})
 	require.ErrorIs(t, err, errAuthorityBlocked)
 	require.ErrorContains(t, err, "incompatible")
@@ -54,45 +55,16 @@ func TestClassifyAuthorityFailsClosedWhenMarkerReadFails(t *testing.T) {
 
 func TestClassifyAuthorityFailsClosedForUnknownMarkerStatus(t *testing.T) {
 	_, err := ClassifyAuthority(context.Background(), &authorityStoreStub{
-		marker: &domain.CompatibilityMarker{Status: "pending"},
+		marker: &domain.CompatibilityMarker{MarkerKind: domain.MigrationMarkerKindCutover, Version: cutoverMarkerVersion, Status: "pending"},
 	})
 
 	require.ErrorIs(t, err, errAuthorityBlocked)
 	require.ErrorContains(t, err, "unknown compatibility marker status pending")
 }
 
-func TestEnsureAuthorityCreatesFreshMarkerWhenNoneExists(t *testing.T) {
-	store := &authorityStoreStub{
-		freshMarker: &domain.CompatibilityMarker{
-			Status:   domain.MigrationMarkerCompatible,
-			Metadata: map[string]any{"fresh_install": true},
-		},
-	}
-
-	bootstrap, err := EnsureAuthority(context.Background(), store)
-
-	require.NoError(t, err)
-	require.Equal(t, authorityActive, bootstrap.Mode)
-	require.Equal(t, store.freshMarker, bootstrap.Marker)
-	require.Equal(t, 1, store.freshCommits)
-}
-
-func TestEnsureAuthorityFailsWhenFreshMarkerCreationBlocked(t *testing.T) {
-	_, err := EnsureAuthority(context.Background(), &authorityStoreStub{
-		freshErr: repository.ErrFreshAuthorityBlocked,
-	})
-
-	require.ErrorIs(t, err, errAuthorityBlocked)
-	require.ErrorIs(t, err, repository.ErrFreshAuthorityBlocked)
-	require.ErrorContains(t, err, "create fresh authority marker")
-}
-
 type authorityStoreStub struct {
-	marker       *domain.CompatibilityMarker
-	markerErr    error
-	freshMarker  *domain.CompatibilityMarker
-	freshErr     error
-	freshCommits int
+	marker    *domain.CompatibilityMarker
+	markerErr error
 }
 
 func (s *authorityStoreStub) GetLatestMarker(context.Context) (*domain.CompatibilityMarker, error) {
@@ -100,15 +72,4 @@ func (s *authorityStoreStub) GetLatestMarker(context.Context) (*domain.Compatibi
 		return nil, s.markerErr
 	}
 	return s.marker, nil
-}
-
-func (s *authorityStoreStub) CommitFreshAuthority(context.Context, repository.CommitFreshAuthorityInput) (*domain.CompatibilityMarker, error) {
-	s.freshCommits++
-	if s.freshErr != nil {
-		return nil, s.freshErr
-	}
-	if s.freshMarker != nil {
-		return s.freshMarker, nil
-	}
-	return nil, errors.New("unexpected fresh authority commit")
 }

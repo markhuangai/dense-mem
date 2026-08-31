@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/lib/pq"
 	"gorm.io/gorm"
@@ -67,52 +66,6 @@ func loadTraceSearchDocuments(
 		); err != nil {
 			return nil, err
 		}
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-func loadTraceEmbeddingJobs(
-	ctx context.Context,
-	tx *gorm.DB,
-	teamID string,
-	spaceID string,
-	searchDocumentIDs []string,
-	limit int,
-) ([]TraceEmbeddingJob, error) {
-	if len(searchDocumentIDs) == 0 {
-		return nil, nil
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT embedding_job_id::text, search_document_id::text, owner_profile_id::text,
-		       source_kind, source_id::text, source_version, document_version,
-		       embedding_contract_id::text, embedding_dimensions, status, attempts,
-		       error, created_at, updated_at, completed_at
-		FROM embedding_jobs AS job
-		WHERE job.team_id = ?::uuid
-		  AND job.space_id = ?::uuid
-		  AND job.search_document_id = ANY(?::uuid[])
-		  AND `+activeSemanticSpaceGenerationSQL("job")+`
-		ORDER BY job.created_at ASC, job.embedding_job_id ASC
-		LIMIT ?
-	`, teamID, spaceID, pq.Array(searchDocumentIDs), limit).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []TraceEmbeddingJob
-	for rows.Next() {
-		var row TraceEmbeddingJob
-		var completedAt sql.NullTime
-		if err := rows.Scan(
-			&row.EmbeddingJobID, &row.SearchDocumentID, &row.OwnerProfileID,
-			&row.SourceKind, &row.SourceID, &row.SourceVersion, &row.DocumentVersion,
-			&row.EmbeddingContractID, &row.EmbeddingDimensions, &row.Status,
-			&row.Attempts, &row.Error, &row.CreatedAt, &row.UpdatedAt, &completedAt,
-		); err != nil {
-			return nil, err
-		}
-		row.CompletedAt = timePtr(completedAt)
 		out = append(out, row)
 	}
 	return out, rows.Err()

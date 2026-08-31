@@ -139,25 +139,10 @@ func validateSingleSupportOwnership(ctx context.Context, tx *gorm.DB, input Appl
 			                AND revision.owner_profile_id = fragment.owner_profile_id
 			          )
 			      )
-			      OR (
-			          fragment.source_id IS NULL
-			          AND fragment.source_revision_id IS NULL
-			          AND EXISTS (
-			              SELECT 1
-			              FROM remember_source_revision_intents AS intent
-			              JOIN evidence_source_revisions AS revision
-			                ON revision.team_id = intent.team_id
-			               AND revision.source_id = intent.source_id
-			               AND revision.source_revision_id = intent.source_revision_id
-			               AND revision.owner_profile_id = intent.owner_profile_id
-			              WHERE intent.team_id = fragment.team_id
-			                AND intent.owner_profile_id = fragment.owner_profile_id
-			                AND intent.ingest_id = fragment.ingest_id
-			                AND intent.fragment_id = fragment.fragment_id
-			                AND intent.source_id = ?::uuid
-			                AND intent.source_revision_id = ?::uuid
-			          )
-			      )
+			  OR (
+			      fragment.source_id = ?::uuid
+			      AND fragment.source_revision_id = ?::uuid
+			  )
 			  )
 		`
 		args = append(args, support.SourceID, support.SourceRevisionID, support.SourceID, support.SourceRevisionID)

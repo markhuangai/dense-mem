@@ -156,12 +156,7 @@ func TestRememberRejectsMismatchedProvenanceWhenReusingSourceRevision(t *testing
 				Evidence:       []EvidenceInput{item},
 			})
 			require.Nil(t, staged)
-			var preflight *RememberPreflightError
-			require.ErrorAs(t, err, &preflight)
-			require.Contains(t, preflight.Issues, RememberPreflightIssue{
-				Path: "/evidence/0/source_revision", Code: "conflict",
-				Message: "source_revision already exists with different provenance",
-			})
+			require.ErrorIs(t, err, ErrSourceRevisionConflict)
 
 			_, err = ledger.AdvanceSourceRevision(ctx, AdvanceSourceRevisionInput{
 				TeamID: teamID, OwnerProfileID: ownerID, SourceKey: item.SourceKey,

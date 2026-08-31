@@ -36,7 +36,6 @@ type effectiveRelationshipCorrectionSupport struct {
 	Authority        string
 	Metadata         map[string]any
 	IngestID         string
-	PlacementItemID  string
 	SpaceID          string
 }
 
@@ -141,17 +140,13 @@ func loadEffectiveRelationshipCorrectionSupports(
 		       COALESCE(support.source_id::text, ''),
 		       COALESCE(support.source_revision_id::text, ''),
 		       support.quote, support.authority, support.metadata,
-		       fragment.ingest_id::text,
-		       COALESCE(observation.placement_item_id::text, ''),
-		       support.space_id::text
+	       fragment.ingest_id::text,
+	       support.space_id::text
 		FROM relationship_evidence_supports AS support
 		JOIN latest ON latest.support_id = support.support_id
 		JOIN evidence_fragments AS fragment
 		  ON fragment.team_id = support.team_id
 		 AND fragment.fragment_id = support.fragment_id
-		JOIN relationship_observations AS observation
-		  ON observation.team_id = support.team_id
-		 AND observation.observation_id = support.observation_id
 		LEFT JOIN evidence_quarantines AS quarantine
 		  ON quarantine.team_id = support.team_id
 		 AND quarantine.fragment_id = support.fragment_id
@@ -182,7 +177,7 @@ func loadEffectiveRelationshipCorrectionSupports(
 			&support.SupportID, &support.EvidenceID, &support.Start, &support.End,
 			&support.SourceGroupKey, &support.SourceID, &support.SourceRevisionID,
 			&support.Quote, &support.Authority, &metadataJSON,
-			&support.IngestID, &support.PlacementItemID, &support.SpaceID,
+			&support.IngestID, &support.SpaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -672,7 +667,6 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 		}
 		copyDecision := decision
 		copyDecision.IngestID = support.IngestID
-		copyDecision.PlacementItemID = support.PlacementItemID
 		copyDecision.SubjectRef = subjectEntityID
 		copyDecision.OriginalPredicate = resolution.Predicate.Key
 		copyDecision.ObjectRef = objectEntityID

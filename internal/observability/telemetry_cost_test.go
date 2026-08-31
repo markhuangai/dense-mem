@@ -50,14 +50,10 @@ func TestAIOperationContextUsesBoundedLabels(t *testing.T) {
 		{name: "source", got: normalizeAITokenSource("unbounded-source")},
 		{name: "reason", got: normalizeAIUnpricedReason("unbounded-reason")},
 		{name: "remember outcome", got: normalizeRememberOutcome("unbounded-outcome")},
-		{name: "placement status", got: normalizePlacementStatus("unbounded-status")},
 	} {
 		if test.got != unknownMetricLabel {
 			t.Errorf("%s label = %q; want %q", test.name, test.got, unknownMetricLabel)
 		}
-	}
-	if got := normalizePlacementStatus(" REJECTED "); got != "rejected" {
-		t.Fatalf("placement status = %q; want rejected", got)
 	}
 }
 
@@ -143,7 +139,6 @@ func TestPrometheusMetricsRecordsCostBoundaryOutcomes(t *testing.T) {
 
 	metrics.ObserveRecallFor(ctx, 1, -1, "ok")
 	metrics.ObserveRememberAcknowledgement(ctx, -1, "ok")
-	metrics.ObserveRememberFirstDisposition(ctx, -1, "completed")
 	metrics.ObserveAIOperationUsage(operationCtx, AIOperationUsage{
 		Component: AIComponentEmbedding,
 		Model:     "configured-embedding",

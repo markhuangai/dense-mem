@@ -9,7 +9,7 @@ export async function run({ rpc, rawRPC, expect }) {
   const listed = await rpc("tools/list", {});
   const names = new Set((listed.tools || []).map((tool) => tool.name));
   expect(names.has("resolve_dream_feedback"), "dream surface must expose resolve_dream_feedback");
-  expect(names.has("get_submission_status"), "dream slice must retain the legacy status tool");
+  expect(!names.has("get_submission_status"), "dream surface must remove the legacy status tool");
 
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
   const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
@@ -80,7 +80,7 @@ export async function run({ rpc, rawRPC, expect }) {
 	expect(hypothesisRow(teamID, scenarios.rejected.hypothesisID).status === "proposed", "rejected confirmation must not advance Dream state");
 	const rejectedAttempt = attemptRow(teamID, scenarios.rejected.idempotencyKey);
 	expect(rejectedAttempt.outcome === "rejected" && rejectedAttempt.count === 1, "rejected confirmation must persist one rejected terminal attempt");
-	assertDreamRetryGuidance(rejected, scenarios.rejected, "rejected");
+	assertDreamRetryGuidance(rejected, scenarios.rejected, "rejected", "retry_dream_feedback", expect);
 
 	const quarantinedResponse = await rawRPC("tools/call", {
 		name: "resolve_dream_feedback",
@@ -94,7 +94,7 @@ export async function run({ rpc, rawRPC, expect }) {
 	expect(hypothesisRow(teamID, scenarios.quarantined.hypothesisID).status === "proposed", "quarantined confirmation must not advance Dream state");
 	const quarantinedAttempt = attemptRow(teamID, scenarios.quarantined.idempotencyKey);
 	expect(quarantinedAttempt.outcome === "quarantined" && quarantinedAttempt.count === 1, "quarantined confirmation must persist one quarantined terminal attempt");
-	assertDreamRetryGuidance(quarantined, scenarios.quarantined, "quarantined");
+	assertDreamRetryGuidance(quarantined, scenarios.quarantined, "quarantined", "retry_dream_feedback", expect);
 
 	const failedResponse = await rawRPC("tools/call", {
 		name: "resolve_dream_feedback",
@@ -108,7 +108,7 @@ export async function run({ rpc, rawRPC, expect }) {
 	expect(hypothesisRow(teamID, scenarios.failed.hypothesisID).status === "proposed", "operational failure must not advance Dream state");
 	const failedAttempt = attemptRow(teamID, scenarios.failed.idempotencyKey);
 	expect(failedAttempt.outcome === "failed" && failedAttempt.count === 1, "operational failure must persist one failed terminal attempt");
-  assertDreamRetryGuidance(failed, scenarios.failed, "failed", "retry_same_request");
+  assertDreamRetryGuidance(failed, scenarios.failed, "failed", "retry_same_request", expect);
 	const failedAttemptCount = failedAttempt.count;
 
   const noEvidence = await rawRPC("tools/call", {
@@ -168,7 +168,7 @@ export async function run({ rpc, rawRPC, expect }) {
   };
 }
 
-function assertDreamRetryGuidance(result, scenario, label, expectedAction = "retry_dream_feedback") {
+function assertDreamRetryGuidance(result, scenario, label, expectedAction = "retry_dream_feedback", expect) {
   const error = result?.errors?.[0];
   expect(error?.next_action === expectedAction, `${label} Dream terminal result must advertise ${expectedAction}`);
   if (expectedAction === "retry_same_request") {

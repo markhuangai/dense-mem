@@ -31,12 +31,6 @@ func TestBuildActiveExecutableToolsRequireDependencies(t *testing.T) {
 			},
 		},
 		{
-			name: ToolGetSubmissionStatus,
-			args: map[string]any{
-				"submission_id": "submission-canonical",
-			},
-		},
-		{
 			name: ToolCorrectRelationship,
 			args: map[string]any{
 				"action":           "submit",

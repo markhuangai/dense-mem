@@ -5,16 +5,15 @@ import type { SearchConvergence } from "./search-convergence-types";
 import { requestBytes, requestJson } from "./http";
 import {
   buildRememberAttemptDiagnosticPath, buildRememberAttemptDiagnosticsPath, buildRememberFailureArtifactPath,
-  buildOperationLogsPath, buildSubmissionDiagnosticPath, buildSubmissionDiagnosticsPath,
+  buildOperationLogsPath,
   type RememberAttemptDiagnosticDetail, type RememberAttemptDiagnosticQuery, type RememberAttemptDiagnosticSummary,
-  type OperationLog, type OperationLogQuery, type SubmissionDiagnosticDetail, type SubmissionDiagnosticQuery,
-  type SubmissionDiagnosticSummary, type SubmissionOperatorDiagnostic,
+  type OperationLog, type OperationLogQuery,
 } from "./control-observability-api";
 export { ApiError } from "./http";
 export { listControlIdentityProviders, type ControlIdentityProvider } from "./control-auth-api";
 export type {
-  OperationLog, OperationLogQuery, SubmissionDiagnosticDetail, SubmissionDiagnosticQuery,
-  SubmissionDiagnosticSummary, SubmissionOperatorDiagnostic, SubmissionEvidenceStatus, SubmissionStatusError,
+  OperationLog, OperationLogQuery,
+  RememberError,
   RememberAttemptDiagnosticDetail, RememberAttemptDiagnosticEvent, RememberAttemptDiagnosticQuery,
   RememberAttemptDiagnosticSummary, RememberAttemptOutcome, RememberAttemptPublicResult, RememberFailureArtifactDescriptor,
 } from "./control-observability-api";
@@ -327,7 +326,6 @@ export type SSOConfig = {
 
 export type GeneralRuntimeConfig = {
   timezone: string;
-  embedding_reconciliation_start_time_local?: string;
 };
 
 export type GeneralConfigItem = SSOConfigItem;
@@ -882,14 +880,6 @@ export class ControlApi {
 
   listOperationLogs(query: OperationLogQuery = {}): Promise<Page<OperationLog>> {
     return this.request<Page<OperationLog>>(buildOperationLogsPath(query));
-  }
-
-  listSubmissionDiagnostics(query: SubmissionDiagnosticQuery = {}): Promise<Page<SubmissionDiagnosticSummary>> {
-    return this.request<Page<SubmissionDiagnosticSummary>>(buildSubmissionDiagnosticsPath(query));
-  }
-
-  getSubmissionDiagnostic(teamId: string, submissionId: string): Promise<SubmissionDiagnosticDetail> {
-    return this.requestEnvelope<SubmissionDiagnosticDetail>(buildSubmissionDiagnosticPath(teamId, submissionId));
   }
 
   listRememberAttemptDiagnostics(query: RememberAttemptDiagnosticQuery = {}): Promise<Page<RememberAttemptDiagnosticSummary>> {

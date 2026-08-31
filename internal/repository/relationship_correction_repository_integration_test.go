@@ -144,16 +144,6 @@ func TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport(t *t
 			return err
 		}
 		assert.Equal(t, searchState, status.SearchState)
-		var correctionJobs int64
-		if err := tx.Raw(`
-			SELECT COUNT(*) FROM embedding_jobs
-			WHERE team_id = ?::uuid AND source_kind = 'relationship'
-			  AND source_id = ?::uuid
-		`, teamA, result.Correction.SuccessorRelationshipID).Scan(&correctionJobs).Error; err != nil {
-			return err
-		}
-		assert.Zero(t, correctionJobs)
-
 		var crossReferences, correctionEvents int64
 		if err := tx.Raw(`
 			SELECT COUNT(*) FROM relationship_cross_references
@@ -724,7 +714,6 @@ func TestRelationshipCorrectionRejectsSearchContractRotationAfterPlan(t *testing
 	require.Equal(t, "pending", sourceDocument.SearchState)
 
 	var beforeSearchState string
-	var beforeJobCount int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT search_state FROM search_documents
@@ -733,7 +722,7 @@ func TestRelationshipCorrectionRejectsSearchContractRotationAfterPlan(t *testing
 		`, teamID, original.RelationshipID).Scan(&beforeSearchState).Error; err != nil {
 			return err
 		}
-		return tx.Raw(`SELECT COUNT(*) FROM embedding_jobs WHERE team_id = ?::uuid`, teamID).Scan(&beforeJobCount).Error
+		return nil
 	}))
 
 	insertSearchTestContract(t, adminDB, rls, "relationship-correction-rotation-next", 3, "exact", "")
@@ -741,7 +730,7 @@ func TestRelationshipCorrectionRejectsSearchContractRotationAfterPlan(t *testing
 	require.ErrorIs(t, err, ErrSearchContractMismatch)
 
 	var originalStatus, afterSearchState string
-	var activeRelationships, afterJobCount int64
+	var activeRelationships int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT status FROM relationship_records
@@ -762,12 +751,11 @@ func TestRelationshipCorrectionRejectsSearchContractRotationAfterPlan(t *testing
 		`, teamID, original.RelationshipID).Scan(&afterSearchState).Error; err != nil {
 			return err
 		}
-		return tx.Raw(`SELECT COUNT(*) FROM embedding_jobs WHERE team_id = ?::uuid`, teamID).Scan(&afterJobCount).Error
+		return nil
 	}))
 	require.Equal(t, "active", originalStatus)
 	require.Equal(t, int64(1), activeRelationships)
 	require.Equal(t, beforeSearchState, afterSearchState)
-	require.Equal(t, beforeJobCount, afterJobCount)
 }
 
 func TestRelationshipCorrectionRejectsInvalidEmbeddingAtomically(t *testing.T) {
@@ -820,7 +808,6 @@ func TestRelationshipCorrectionRejectsInvalidEmbeddingAtomically(t *testing.T) {
 	require.True(t, invalidated)
 
 	var beforeSearchState, beforeDocumentHash string
-	var beforeJobCount int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT search_state, document_hash FROM search_documents
@@ -829,23 +816,20 @@ func TestRelationshipCorrectionRejectsInvalidEmbeddingAtomically(t *testing.T) {
 		`, teamID, original.RelationshipID).Row().Scan(&beforeSearchState, &beforeDocumentHash); err != nil {
 			return err
 		}
-		return tx.Raw(`SELECT COUNT(*) FROM embedding_jobs WHERE team_id = ?::uuid`, teamID).Scan(&beforeJobCount).Error
+		return nil
 	}))
 
 	_, err = semantic.CorrectRelationshipWithEmbeddings(ctx, input, embeddings)
 	require.ErrorIs(t, err, ErrSearchContractMismatch)
 
 	var afterSearchState, afterDocumentHash, originalStatus string
-	var afterJobCount, relationshipCount int64
+	var relationshipCount int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT search_state, document_hash FROM search_documents
 			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ?::uuid
 			ORDER BY updated_at DESC LIMIT 1
 		`, teamID, original.RelationshipID).Row().Scan(&afterSearchState, &afterDocumentHash); err != nil {
-			return err
-		}
-		if err := tx.Raw(`SELECT COUNT(*) FROM embedding_jobs WHERE team_id = ?::uuid`, teamID).Scan(&afterJobCount).Error; err != nil {
 			return err
 		}
 		if err := tx.Raw(`SELECT COUNT(*) FROM relationship_records WHERE team_id = ?::uuid`, teamID).Scan(&relationshipCount).Error; err != nil {
@@ -856,7 +840,6 @@ func TestRelationshipCorrectionRejectsInvalidEmbeddingAtomically(t *testing.T) {
 	require.Equal(t, "active", originalStatus)
 	require.Equal(t, beforeSearchState, afterSearchState)
 	require.Equal(t, beforeDocumentHash, afterDocumentHash)
-	require.Equal(t, beforeJobCount, afterJobCount)
 	require.Equal(t, int64(1), relationshipCount)
 }
 
@@ -903,7 +886,6 @@ func TestRelationshipCorrectionEqualHashUsesOneEmbeddingForBothDocumentStates(t 
 	require.Equal(t, "completed", result.ProcessingState)
 
 	var originalSearchState, successorSearchState, originalHash, successorHash string
-	var successorJobs int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT search_state, document_hash FROM search_documents
@@ -919,16 +901,12 @@ func TestRelationshipCorrectionEqualHashUsesOneEmbeddingForBothDocumentStates(t 
 		`, teamID, result.Correction.SuccessorRelationshipID).Row().Scan(&successorSearchState, &successorHash); err != nil {
 			return err
 		}
-		return tx.Raw(`
-			SELECT COUNT(*) FROM embedding_jobs
-			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ?::uuid
-		`, teamID, result.Correction.SuccessorRelationshipID).Scan(&successorJobs).Error
+		return nil
 	}))
 	require.Equal(t, "not_required", originalSearchState)
 	require.Equal(t, "current", successorSearchState)
 	require.Equal(t, plan.Documents[0].DocumentHash, originalHash)
 	require.Equal(t, plan.Documents[0].DocumentHash, successorHash)
-	require.Zero(t, successorJobs)
 }
 
 func loadRelationshipObjectEntity(

@@ -10,7 +10,6 @@ SUITE=""
 OUT=""
 IMPORT_SEED=0
 IMPORT_CONCURRENCY=""
-PLACEMENT_TIMEOUT=""
 RESUME_SOURCE_DOC_IDS=""
 COMPOSE_UP=0
 TRACES=""
@@ -52,10 +51,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --import-concurrency)
       IMPORT_CONCURRENCY="$2"
-      shift 2
-      ;;
-    --placement-timeout)
-      PLACEMENT_TIMEOUT="$2"
       shift 2
       ;;
     --resume-source-doc-ids)
@@ -150,9 +145,6 @@ if [[ "${IMPORT_SEED}" == "1" ]]; then
 fi
 if [[ -n "${IMPORT_CONCURRENCY}" ]]; then
   args+=(--import-concurrency "${IMPORT_CONCURRENCY}")
-fi
-if [[ -n "${PLACEMENT_TIMEOUT}" ]]; then
-  args+=(--placement-timeout "${PLACEMENT_TIMEOUT}")
 fi
 if [[ -n "${RESUME_SOURCE_DOC_IDS}" ]]; then
   args+=(--resume-source-doc-ids "${RESUME_SOURCE_DOC_IDS}")

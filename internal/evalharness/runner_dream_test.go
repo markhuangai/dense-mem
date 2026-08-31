@@ -77,21 +77,16 @@ func TestRunBaselineLiveHTTPFlowSeedsExpectedDreams(t *testing.T) {
 			if _, ok := rememberIDs[idempotencyKey]; !ok {
 				t.Fatalf("remember input = %#v", input)
 			}
+			submissionID := strings.TrimPrefix(idempotencyKey, "eval:")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    strings.TrimPrefix(idempotencyKey, "eval:"),
-				"processing_state": "queued",
-			})
-		case "tool:get_submission_status":
-			var input map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				t.Fatalf("decode status body: %v", err)
-			}
-			submissionID := input["submission_id"].(string)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    submissionID,
-				"processing_state": "completed",
-				"search_state":     "current",
-				"evidence":         []map[string]any{{"evidence_id": rememberIDs["eval:"+submissionID]}},
+				"contract_version":     "dense-mem.v2.6.1",
+				"submission_id":        submissionID,
+				"submission_kind":      "remember",
+				"processing_state":     "completed",
+				"search_state":         "current",
+				"correlation_id":       "correlation-" + submissionID,
+				"evidence":             []map[string]any{{"disposition": "stored", "evidence_id": rememberIDs["eval:"+submissionID], "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
+				"relationship_results": []map[string]any{}, "errors": []map[string]any{},
 			})
 		case "tool:eval_run_dream_cycle":
 			var input map[string]any

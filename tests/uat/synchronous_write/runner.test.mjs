@@ -45,20 +45,23 @@ test("provider fixture uses a Compose volume instead of a worktree bind mount", 
   assert.doesNotMatch(overlay, /provider-fixture\.mjs:\/e2e\/provider-fixture\.mjs:ro/);
 });
 
-test("compose runner filters the resolved default slice", async () => {
+test("compose runner filters the requested test case without a runtime write slice", async () => {
   const overlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");
+  const conflict = await readFile(new URL("../../../scripts/e2e-compose-conflict.sh", import.meta.url), "utf8");
   const compose = await readFile(new URL("../../../scripts/e2e-compose.sh", import.meta.url), "utf8");
-  assert.match(overlay, /local slice="\$\{DENSE_MEM_E2E_WRITE_SLICE:-legacy\}"/);
+  assert.doesNotMatch(overlay, /DENSE_MEM_E2E_WRITE_SLICE/);
   assert.match(overlay, /local api_key="\$2"/);
-  assert.match(overlay, /DENSE_MEM_E2E_WRITE_CASE="\$slice"/);
+  assert.match(overlay, /DENSE_MEM_E2E_WRITE_CASE="\$case_name"/);
+  assert.match(overlay, /if \[\[ -z "\$case_name" \|\| "\$case_name" == "conflict" \]\]/);
+  assert.match(conflict, /conflict_provider_required\(\) \{[\s\S]*-z "\$\{DENSE_MEM_E2E_WRITE_CASE:-\}"/);
+  assert.match(conflict, /conflict_server_provider_required\(\)/);
   assert.match(compose, /run_synchronous_write_e2e "\$team_id" "\$api_key"/);
 });
 
-test("remember case covers mixed object success and a late search-generation fence", async () => {
+test("remember case covers mixed object success and idempotency conflict behavior", async () => {
   const remember = await readFile(new URL("./cases/remember.mjs", import.meta.url), "utf8");
   assert.match(remember, /mixed-objects/);
-  assert.match(remember, /search-generation-rotation/);
-  assert.match(remember, /commit_conflict/);
+  assert.match(remember, /changed-hash/);
 });
 
 test("correction slice contains executable success and provider-failure assertions", async () => {
@@ -67,7 +70,7 @@ test("correction slice contains executable success and provider-failure assertio
   assert.match(correction, /correct_relationship/);
   assert.match(correction, /provider_failure_preserved/);
   assert.match(correction, /provider_timeout_preserved/);
-  assert.match(correction, /embedding_timeout/);
+  assert.match(correction, /request_timeout/);
 });
 
 test("diagnostics slice contains control API and scrubbed artifact assertions", async () => {
@@ -76,7 +79,7 @@ test("diagnostics slice contains control API and scrubbed artifact assertions", 
   const compose = await readFile(new URL("../../../scripts/e2e-compose.sh", import.meta.url), "utf8");
   assert.doesNotMatch(diagnostics, /reserved-for-adoption/);
   assert.match(diagnostics, /remember-attempts/);
-  assert.match(diagnostics, /error_code/);
+  assert.match(diagnostics, /\{"phase":"assessment","code":"provider_unavailable"\}/);
   assert.match(diagnostics, /Cache-Control|cache-control|no-store/);
   assert.match(overlay, /run_compose_playwright_tests remember_attempts/);
   assert.match(compose, /remember-attempts\.spec\.ts/);

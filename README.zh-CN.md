@@ -82,9 +82,8 @@ ${EDITOR:-vi} .env
 docker compose up -d
 ```
 
-基础 stack 使用带 pgvector 的 PostgreSQL 作为持久权威。当前版本会拒绝任何
-`NEO4J_*` 设置。如果安装仍有遗留 Neo4j 语料，先使用 v2.1.2 完成引导迁移，
-再在升级时清除这些变量。Neo4j 只能作为迁移输入，不是运行时回退。默认本机端口：
+基础 stack 使用带 pgvector 的 PostgreSQL 作为唯一持久权威。v2.6.1 发布要求先由
+停服迁移写入兼容 cutover marker；运行时不再包含旧数据库或回退路径。默认本机端口：
 
 ```text
 MCP:            http://127.0.0.1:8080/mcp
@@ -112,9 +111,11 @@ curl -fsS -X POST http://127.0.0.1:8090/control/api/teams/<team-id>/credentials 
 正式镜像只包含一个项目可执行文件 `/app/server`。它会在开始提供服务前，借助数据库
 session lock 自动执行待处理的 PostgreSQL migration，因此 Compose 不需要单独的
 migration 容器。共享同一个可写 primary 的多个 server replica 会串行执行该启动步骤。
-滚动发布期间，migration 必须与上一版应用保持向后兼容；彼此独立的数据库仍需分别由
-连接到该数据库的 server 完成 migration。管理操作通过私有控制门户/API 完成；dreaming
-和自动 conflict review 仍由 server 后台 worker 执行。
+普通滚动发布期间，migration 必须与上一版应用保持向后兼容。v2.6.1 同步 Remember
+迁移是例外：必须停止所有 server 实例、完成所需的 PostgreSQL 快照，并在启动新二进制
+前应用停服边界。彼此独立的数据库仍需分别由连接到该数据库的 server 完成 migration。
+管理操作通过私有控制门户/API 完成；dreaming 和自动 conflict review 仍由 server 后台
+worker 执行。
 
 镜像 healthcheck 为默认的 30 分钟 migration 窗口保留启动宽限期，并在首次检查成功后
 进入正常检测。若将 `POSTGRES_MIGRATION_TIMEOUT_SECONDS` 设为大于 1800，应把部署的
@@ -156,14 +157,13 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 
 - `AI_VERIFIER_MODEL` 要设为 chat endpoint 上真实存在的模型。启动校验会在开始
   写入 memory 前发现缺失或错误配置。7B-8B 级别模型适合本地 smoke test；更大的
-模型在加载期间可能超过默认 60 秒超时。可重试处理受持久化的 placement 尝试预算限制，
-预算耗尽后会进入终态。
+模型在加载期间可能超过默认 60 秒超时。Remember 会在请求 deadline 内同步运行；客户端
+在超时或临时 provider 故障后应使用相同幂等键重试。
 
 ## 证据生命周期
 
-`remember` 会先持久化精确证据并返回 `submission_id`；provider 调用和处理在确认
-后继续执行。使用 `get_submission_status` 查询按所有者隔离的处理与搜索状态。
-该状态投影不会暴露 placement 问题、provider 输出或内部 run ID。
+`remember` 会持久化精确证据、完成 provider 校验和语义提交后再返回；响应包含按所有者
+隔离的终态处理与搜索状态，不会暴露 provider 输出或内部 run ID。
 
 调用方提交逻辑层的 Entity、predicate 和 Value 提议，不提交文本 offset。
 `remember` 不接受 `span`、`surface` 或 Relationship 的 `supports` 字段。每条
@@ -275,7 +275,7 @@ owner 可以读取团队可见记忆，但不能更正作者的 Relationship。�
 remember 证据（可选 Entity/Relationship 提议）
         |
         v
-持久化暂存 -> 校验后的 placement -> 活跃且有效的 Relationships
+持久化暂存 -> 校验后的终态提交 -> 活跃且有效的 Relationships
         |                                      |
         +-- 生命周期事件 -----------------------+
                                                |
@@ -291,7 +291,6 @@ remember 证据（可选 Entity/Relationship 提议）
 | 工具 | 使用方 | 注册方式 | 用途与能力 |
 |------|--------|----------|------------|
 | `remember` | 两者 | 正式与评估镜像 | 正式证据写入；评估 harness 也通过真实 intake 导入 corpus。 |
-| `get_submission_status` | 两者 | 正式与评估镜像 | 查询 `remember` 与 `correct_relationship` 的所有者隔离状态；harness 用它等待导入 placement。 |
 | `retract_evidence` | 正式 | 正式与评估镜像 | 退役调用者拥有的证据，同时保留只追加来源。 |
 | `correct_relationship` | 正式 | 正式与评估镜像 | 仅作者可替换活跃且有支持的 Relationship；supersede 原记录并保留支持链路。 |
 | `recall_memory` | 正式 | 正式与评估镜像 | 检索活跃证据上下文和 Relationship；有可执行后续动作时返回 `suggested_actions`。 |

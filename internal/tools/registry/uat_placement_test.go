@@ -1,57 +1,18 @@
 package registry
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestBuildActiveWiresExecutableSubmissionStatus(t *testing.T) {
-	stub := &stubRememberService{}
-	reg, err := BuildActive(Dependencies{Remember: stub})
+func TestBuildActiveDoesNotRegisterSubmissionStatus(t *testing.T) {
+	reg, err := BuildActive(Dependencies{})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}
-	status, ok := reg.Get(ToolGetSubmissionStatus)
-	if !ok || status.Invoke == nil {
-		t.Fatal("BuildActive did not register get_submission_status")
-	}
-	out, err := status.Invoke(contractInvokeContext("read"), "ignored-profile", map[string]any{
-		"submission_id": "ingest-canonical",
-	})
-	if err != nil {
-		t.Fatalf("get_submission_status.Invoke: %v", err)
-	}
-	if err := ValidateInput(Tool{InputSchema: status.OutputSchema}, out); err != nil {
-		t.Fatalf("validate output: %v", err)
-	}
-	if out["submission_id"] != "ingest-canonical" || out["processing_state"] != "completed" {
-		t.Fatalf("status output = %#v", out)
-	}
-	if stub.statusReq.SubmissionID != "ingest-canonical" {
-		t.Fatalf("stub status request not populated: %#v", stub.statusReq)
+	if _, ok := reg.Get("get_submission_status"); ok {
+		t.Fatal("removed get_submission_status tool remains registered")
 	}
 }
-
-func TestBuildActiveSubmissionStatusRejectsTenantOverride(t *testing.T) {
-	reg, err := BuildActive(Dependencies{Remember: &stubRememberService{}})
-	if err != nil {
-		t.Fatalf("BuildActive: %v", err)
-	}
-	status, ok := reg.Get(ToolGetSubmissionStatus)
-	if !ok {
-		t.Fatal("BuildActive did not register get_submission_status")
-	}
-	_, err = status.Invoke(contractInvokeContext("read"), "ignored-profile", map[string]any{
-		"team_id":       "attacker-team",
-		"submission_id": "ingest-canonical",
-	})
-	if err == nil || !strings.Contains(err.Error(), "team_id") {
-		t.Fatalf("get_submission_status.Invoke err = %v, want tenant override rejection", err)
-	}
-}
-
 func TestBuildActiveDoesNotRegisterRemovedPlacementTools(t *testing.T) {
-	reg, err := BuildActive(Dependencies{Remember: &stubRememberService{}})
+	reg, err := BuildActive(Dependencies{})
 	if err != nil {
 		t.Fatalf("BuildActive: %v", err)
 	}

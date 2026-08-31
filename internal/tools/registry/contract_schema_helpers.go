@@ -129,18 +129,6 @@ func submissionStatusErrorArraySchema() map[string]any {
 	return array(submissionStatusErrorSchema(), 0, 50)
 }
 
-func submissionStatusDegradationArraySchema() map[string]any {
-	return array(closedObject(
-		[]string{"frontier", "optional", "code", "message"},
-		map[string]any{
-			"frontier": schemaEnum([]string{"search"}),
-			"optional": map[string]any{"type": "boolean"},
-			"code":     schemaEnum([]string{string(memoryservice.SubmissionErrorSearchIndexingDelayed)}),
-			"message":  schemaString("Bounded optional submission degradation.", 512),
-		},
-	), 0, 10)
-}
-
 func submissionRelationshipResultsSchema() map[string]any {
 	return array(closedObject(
 		[]string{"ref", "disposition", "splits"},

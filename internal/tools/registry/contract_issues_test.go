@@ -92,7 +92,7 @@ func TestValidateContractInputIssuesDispatchesToolSpecificValidation(t *testing.
 	}
 }
 
-func TestValidateContractInputIssuesRejectsLifecycleIdempotencyKey(t *testing.T) {
+func TestValidateContractInputIssuesRejectsUnsupportedIdempotencyKey(t *testing.T) {
 	tool, err := requireTool(toolMap(t), ToolResolveDreamFeedback)
 	require.NoError(t, err)
 
@@ -105,7 +105,7 @@ func TestValidateContractInputIssuesRejectsLifecycleIdempotencyKey(t *testing.T)
 				"idempotency_key": "lifecycle-retry",
 			}, []string{"write"})
 
-			require.Contains(t, issueMessages(result), "idempotency_key is only supported for confirmation decisions")
+			require.Contains(t, issueMessages(result), "unknown field: idempotency_key")
 		})
 	}
 }

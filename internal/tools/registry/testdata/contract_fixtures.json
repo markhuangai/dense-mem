@@ -39,38 +39,36 @@
       ]
     },
     "output": {
-      "contract_version": "dense-mem.v2.6",
-      "submission_id": "ing-1",
-      "submission_kind": "remember",
-      "processing_state": "queued",
-      "check_after_seconds": 3,
-      "status_tool": "get_submission_status",
-      "correlation_id": "req-1"
-    }
-  },
-  {
-    "name": "valid submission status",
-    "tool": "get_submission_status",
-    "scopes": ["read"],
-    "valid": true,
-    "input": {"submission_id": "ing-1"},
-    "output": {
-      "contract_version": "dense-mem.v2.6",
+      "contract_version": "dense-mem.v2.6.1",
       "submission_id": "ing-1",
       "submission_kind": "remember",
       "processing_state": "completed",
       "search_state": "current",
-      "check_after_seconds": 60,
+      "correlation_id": "req-1",
       "evidence": [
         {
+          "disposition": "stored",
           "evidence_id": "ev-1",
           "evidence_index": 0,
           "superseded_evidence_ids": [],
           "search_state": "current"
         }
       ],
-	      "errors": [],
-	      "degradations": []
+	      "relationship_results": [
+	        {
+	          "ref": "rel:authority",
+	          "disposition": "stored",
+	          "splits": [
+	            {
+	              "split_index": 0,
+	              "relationship_id": "rel-authority",
+	              "relationship_version": 1,
+	              "status": "active"
+	            }
+	          ]
+	        }
+	      ],
+	      "errors": []
     }
   },
   {
@@ -88,13 +86,13 @@
       "idempotency_key": "relationship-correction-1"
     },
     "output": {
-      "contract_version": "dense-mem.v2.6",
+      "contract_version": "dense-mem.v2.6.1",
       "submission_id": "correction-1",
       "submission_kind": "relationship_correction",
       "processing_state": "completed",
-      "check_after_seconds": 0,
-      "status_tool": "get_submission_status",
-      "correlation_id": "req-correction-1"
+      "search_state": "current",
+      "correlation_id": "req-correction-1",
+      "errors": []
     }
   },
   {
@@ -110,13 +108,13 @@
       "idempotency_key": "relationship-correction-confirm-1"
     },
     "output": {
-      "contract_version": "dense-mem.v2.6",
+      "contract_version": "dense-mem.v2.6.1",
       "submission_id": "correction-1",
       "submission_kind": "relationship_correction",
       "processing_state": "completed",
-      "check_after_seconds": 0,
-      "status_tool": "get_submission_status",
-      "correlation_id": "req-correction-confirm-1"
+      "search_state": "current",
+      "correlation_id": "req-correction-confirm-1",
+      "errors": []
     }
   },
   {

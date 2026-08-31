@@ -11,10 +11,6 @@ const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const reviewDriver = requiredEnv("DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER");
 const conflictProviderURL = requiredEnv("DENSE_MEM_E2E_CONFLICT_PROVIDER_URL");
-const submissionTimeoutEnv = process.env.DENSE_MEM_E2E_SUBMISSION_TIMEOUT_SECONDS
-  ? "DENSE_MEM_E2E_SUBMISSION_TIMEOUT_SECONDS"
-  : "DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS";
-const submissionTimeoutSeconds = positiveIntEnv(submissionTimeoutEnv, 180, 30, 900);
 const runID = `conflict-e2e-${Date.now()}`;
 
 let rpcID = 0;
@@ -246,8 +242,7 @@ async function provenanceAndIsolationScenario() {
     authority: "primary",
     conflictContext: { conflict_id: fixture.conflictID, expected_version: observedVersion },
   });
-  const staleIssue = (stale.data?.issues ?? []).find((issue) => issue?.path === "/relationships/0/conflict_context/expected_version");
-  assert(stale.code === -32602 && stale.data?.reason === "validation_failed" && staleIssue?.code === "stale", `stale conflict submission did not fail exact preflight: ${JSON.stringify(stale)}`);
+  assert(stale.processing_state === "rejected" && stale.errors?.[0]?.code === "stale_input", `stale conflict submission did not fail exact preflight: ${JSON.stringify(stale)}`);
   const semanticAfterStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
   assert(stableJSON(semanticAfterStale) === stableJSON(semanticBeforeStale), `stale conflict submission changed semantic state: before=${JSON.stringify(semanticBeforeStale)} after=${JSON.stringify(semanticAfterStale)}`);
 
@@ -395,8 +390,8 @@ async function submitRelationship(apiKey, input) {
   const evidence = relationshipEvidence(input);
   const receipt = await mcpSuccess(apiKey, "remember", rememberRequest(input, evidence));
   const submissionID = String(receipt.submission_id ?? "");
-  assert(submissionID && receipt.status_tool === "get_submission_status", `remember receipt is invalid: ${JSON.stringify(receipt)}`);
-  const status = await waitForSubmission(apiKey, submissionID);
+  assert(submissionID && typeof receipt.processing_state === "string", `remember result is invalid: ${JSON.stringify(receipt)}`);
+  const status = receipt;
   const expectedState = input.expectedState ?? "completed";
   assert(status.processing_state === expectedState, `submission ${input.label} state = ${status.processing_state}, want ${expectedState}: ${JSON.stringify(status)}`);
   const evidenceID = String(status.evidence?.[0]?.evidence_id ?? "");
@@ -407,7 +402,7 @@ async function submitRelationship(apiKey, input) {
   const relationshipID = postgresQuery(`
     SELECT observation.relationship_id::text
     FROM relationship_observations AS observation
-    WHERE observation.team_id = ${sqlLiteral(statusTeamID(submissionID))}::uuid
+    WHERE observation.team_id = ${sqlLiteral(ingestTeamID(submissionID))}::uuid
       AND observation.ingest_id = ${sqlLiteral(submissionID)}::uuid
       AND observation.relationship_id IS NOT NULL
     ORDER BY observation.created_at, observation.observation_id
@@ -421,13 +416,25 @@ async function submitRelationshipExpectValidationError(apiKey, input) {
   const evidence = relationshipEvidence(input);
   const idempotencyKey = `${runID}:${input.label}`;
   const response = await mcpRaw(apiKey, "remember", rememberRequest(input, evidence));
-  assert(response.error && response.result === undefined, `stale remember unexpectedly staged: ${JSON.stringify(response)}`);
+  const resultText = response.result?.content?.[0]?.text;
+  let terminal;
+  if (typeof resultText === "string") {
+    try {
+      terminal = JSON.parse(resultText);
+    } catch {
+      terminal = undefined;
+    }
+  }
+  assert(
+    response.error || (response.result?.isError === true && terminal?.processing_state === "rejected"),
+    `stale remember unexpectedly staged: ${JSON.stringify(response)}`,
+  );
   const staged = Number(postgresQuery(`
     SELECT count(*) FROM knowledge_ingests
     WHERE idempotency_key = ${sqlLiteral(idempotencyKey)}
   `));
   assert(staged === 0, `stale remember created ${staged} ingest rows`);
-  return response.error;
+  return response.error ?? terminal;
 }
 
 function rememberRequest(input, evidence) {
@@ -471,16 +478,6 @@ function relationshipHint(input, evidence) {
     ...(input.conflictContext ? { conflict_context: input.conflictContext } : {}),
     evidence_indices: [0],
   };
-}
-
-async function waitForSubmission(apiKey, submissionID) {
-  const attempts = Math.ceil((submissionTimeoutSeconds * 1_000) / 250);
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const status = await mcpSuccess(apiKey, "get_submission_status", { submission_id: submissionID });
-    if (["completed", "rejected", "failed", "quarantined"].includes(status.processing_state)) return status;
-    await delay(250);
-  }
-  throw new Error(`timed out waiting for submission ${submissionID} after ${submissionTimeoutSeconds}s`);
 }
 
 async function currentConflict(apiKey, relationshipID, status) {
@@ -843,7 +840,7 @@ function provenanceFields(position) {
   };
 }
 
-function statusTeamID(submissionID) {
+function ingestTeamID(submissionID) {
   // The globally unique ingest ID is the only unscoped fixture key; later lineage reads include its resolved team.
   const value = postgresQuery(`
     SELECT team_id::text

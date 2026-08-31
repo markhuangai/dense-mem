@@ -24,8 +24,6 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     "embedding-non-finite",
     "embedding-timeout",
     "embedding-cancel",
-    "search-generation-rotation",
-    "supersession-rotation",
   ] : [selectedFault];
 
   const listed = await rpc("tools/list", {});
@@ -34,7 +32,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   expect(rememberTool, "selected E2E catalog must expose remember");
   const rememberProperties = rememberTool.outputSchema?.properties || rememberTool.output_schema?.properties || {};
   expect(!Object.hasOwn(rememberProperties, "status_tool") && !Object.hasOwn(rememberProperties, "check_after_seconds"), "selected Remember schema must not expose polling fields");
-  expect(tools.some((tool) => tool.name === "get_submission_status"), "selected catalog must retain the unrelated status tool");
+  expect(!tools.some((tool) => tool.name === "get_submission_status"), "selected catalog must remove the status tool");
 
   const results = [];
   for (const fault of faults) {
@@ -52,10 +50,6 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
       results.push(await runTerminalDomainCase({ rpc, expect, fault }));
     } else if (fault.startsWith("embedding-")) {
       results.push(await runEmbeddingFaultCase({ rpc, expect, fault }));
-    } else if (fault === "search-generation-rotation") {
-      results.push(await runSearchGenerationFenceCase({ rpc, expect }));
-    } else if (fault === "supersession-rotation") {
-      results.push(await runLateSupersessionFenceCase({ rpc, expect }));
     } else {
       results.push(await runProviderFaultCase({ rpc, expect, fault }));
     }
@@ -65,7 +59,6 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     results.push(await runConcurrentWinnerCase({ rpc, expect }));
     results.push(await runChangedHashConflictCase({ rawRPC, expect }));
     results.push(await runSupersessionFenceCase({ rpc, expect }));
-    results.push(await runInputBudgetCase({ rpc, expect }));
   }
   return { mode: name, results };
 }
@@ -216,7 +209,7 @@ async function runEmbeddingFaultCase({ rpc, expect, fault }) {
   const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
   assertStrictTerminalRemember(result, expect);
   expect(result.processing_state === "failed", `${fault} must fail in the embedding phase`);
-  const expectedCode = fault === "embedding-timeout" ? "embedding_unavailable" : "embedding_response_invalid";
+  const expectedCode = fault === "embedding-timeout" ? "request_timeout" : "embedding_response_invalid";
   expect(result.errors[0]?.code === expectedCode, `${fault} must return ${expectedCode}: ${JSON.stringify(result)}`);
   expect(result.evidence.every((item) => item.disposition === "not_stored"), `${fault} must leave evidence not_stored`);
   return { fault, processing_state: result.processing_state, error_code: result.errors[0]?.code };
@@ -233,24 +226,6 @@ async function runCancellationCase({ rpc, rawRPC, expect }) {
   assertStrictTerminalRemember(retry, expect);
   expect(retry.processing_state === "completed", "a cancelled request must be retryable with the same key");
   return { fault: "embedding-cancel", processing_state: retry.processing_state };
-}
-
-async function runSearchGenerationFenceCase({ rpc, expect }) {
-  const args = singleItemArguments("search-generation-rotation", "[fixture-fault:search-generation-rotation]");
-  const failed = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
-  assertStrictTerminalRemember(failed, expect);
-  expect(failed.processing_state === "failed", `search-generation rotation must fail: ${JSON.stringify(failed)}`);
-  expect(failed.search_state === "not_required", "late search-generation fence must not require search");
-  expect(failed.errors[0]?.code === "commit_conflict", `late search-generation fence must return commit_conflict: ${JSON.stringify(failed)}`);
-  expect(failed.errors[0]?.retryable === true && failed.errors[0]?.next_action === "retry_same_request", "late search-generation fence must be retryable with the same key");
-  expect(failed.evidence.every((item) => item.disposition === "not_stored"), "late search-generation fence must leave evidence not_stored");
-  expect(failed.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), "late search-generation fence must leave relationships not_stored");
-
-  const retry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
-  assertStrictTerminalRemember(retry, expect);
-  expect(retry.processing_state === "completed", `late search-generation fence must recover on retry: ${JSON.stringify(retry)}`);
-  expect(retry.submission_id !== failed.submission_id, "retry after a late fence must create a new attempt");
-  return { fault: "search-generation-rotation", processing_state: failed.processing_state, retry_state: retry.processing_state };
 }
 
 async function runConcurrentWinnerCase({ rpc, expect }) {
@@ -278,7 +253,8 @@ async function runChangedHashConflictCase({ rawRPC, expect }) {
   const secondArgs = singleItemArguments("conflict", "[fixture:conflict-b]");
   secondArgs.idempotency_key = key;
   const response = await rawRPC("tools/call", { name: "remember", arguments: secondArgs });
-  expect(response.error && response.result === undefined, "changed request hash must return a bounded public conflict");
+  const conflict = response.result?.structuredContent;
+  expect(response.result?.isError === true && conflict?.errors?.[0]?.code === "idempotency_conflict", "changed request hash must return a structured public conflict");
   return { fault: "changed-hash", conflict: true };
 }
 
@@ -307,59 +283,6 @@ async function runSupersessionFenceCase({ rpc, expect }) {
   expect(stale.evidence.every((item) => item.disposition === "not_stored"), "stale supersession must not store evidence");
 
   return { fault: "supersession-stale", processing_state: stale.processing_state };
-}
-
-async function runLateSupersessionFenceCase({ rpc, expect }) {
-  const targetArgs = singleItemArguments("supersession-late-target", "");
-  const target = terminalPayload(await rpc("tools/call", { name: "remember", arguments: targetArgs }));
-  assertStrictTerminalRemember(target, expect);
-  expect(target.processing_state === "completed", "late supersession target must complete");
-  const targetEvidenceID = target.evidence.find((item) => item.evidence_id)?.evidence_id;
-  expect(targetEvidenceID, "late supersession target must return an evidence id");
-
-  const late = singleItemArguments("supersession-late", "[fixture-fault:supersession-rotation]");
-  late.evidence[0].supersedes_evidence_ids = [targetEvidenceID];
-  const lateResult = terminalPayload(await rpc("tools/call", { name: "remember", arguments: late }));
-  assertStrictTerminalRemember(lateResult, expect);
-  expect(lateResult.processing_state === "rejected", `late supersession must reject: ${JSON.stringify(lateResult)}`);
-  expect(lateResult.errors[0]?.code === "stale_input", `late supersession must return stale_input: ${JSON.stringify(lateResult)}`);
-  expect(lateResult.evidence.every((item) => item.disposition === "not_stored"), "late supersession must not store evidence");
-  return { fault: "supersession-rotation", processing_state: lateResult.processing_state };
-}
-
-async function runInputBudgetCase({ rpc, expect }) {
-  const evidenceCount = 20;
-  const relationships = Array.from({ length: 140 }, (_, index) => relationship(
-    `budget-${index}`,
-    "Budget subject",
-    "project",
-    { entity: { name: `Budget object ${index}`, entity_kind: "concept" } },
-    [index % evidenceCount],
-    "uses",
-  ));
-  const evidence = Array.from({ length: evidenceCount }, (_, evidenceIndex) => ({
-    content: [
-      `Dense-Mem input budget evidence ${evidenceIndex}.`,
-      "Budget subject.",
-      ...relationships
-        .filter((_, relationshipIndex) => relationshipIndex % evidenceCount === evidenceIndex)
-        .map((item) => `${item.object.entity.name}.`),
-    ].join(" "),
-    source_type: "manual",
-  }));
-  const args = {
-    evidence,
-    relationships,
-    idempotency_key: `synchronous-write-remember-input-budget-${Date.now()}-${Math.random()}`,
-  };
-  const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
-  assertStrictTerminalRemember(result, expect);
-  expect(result.processing_state === "failed", `input budget must fail: ${JSON.stringify(result)}`);
-  expect(result.search_state === "not_required", "input budget must not require search");
-  expect(result.errors[0]?.code === "input_budget_exceeded", `input budget must return input_budget_exceeded: ${JSON.stringify(result)}`);
-  expect(result.evidence.every((item) => item.disposition === "not_stored"), "input budget must not store evidence");
-  expect(result.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), "input budget must not store relationships");
-  return { fault: "input-budget", processing_state: result.processing_state };
 }
 
 function singleItemArguments(label, marker) {

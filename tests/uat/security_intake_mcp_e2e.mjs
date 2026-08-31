@@ -106,12 +106,11 @@ for (const testCase of acceptedCases) {
   }
   assertAcceptedIngest(submissionID, input.evidence[0].content);
   verifierAfterAccepted = await waitForExactlyOneVerifierRequest(verifierAfterAccepted, teamID);
-  const placement = await waitForTerminalPlacement(submissionID, testCase.allowProviderQuarantine);
-  assertTerminalRelationshipDisposition(placement, testCase.name);
+  assertTerminalRelationshipDisposition(accepted, testCase.name);
   acceptedResults.push({
     name: testCase.name,
     submission_id: submissionID,
-    processing_state: placement.processing_state,
+    processing_state: accepted.processing_state,
   });
 }
 
@@ -190,11 +189,18 @@ async function mcpRaw(key, name, args, correlationID = "") {
 }
 
 function assertRejectedResponse(response, expectedCode) {
-  if (response.result !== undefined || !response.error) {
-    throw new Error(`rejected remember returned an unexpected MCP shape (expected ${expectedCode})`);
+  if (response.error || !response.result?.isError) {
+    throw new Error(`rejected remember returned an unexpected terminal MCP shape (expected ${expectedCode})`);
   }
-  if (boundedMCPError(response) !== expectedCode) {
-    throw new Error(`rejected remember returned ${boundedMCPError(response)} instead of ${expectedCode}`);
+  const structured = response.result.structuredContent;
+  const text = response.result.content?.[0]?.text;
+  let payload = structured;
+  if (!payload && typeof text === "string") {
+    try { payload = JSON.parse(text); } catch { payload = null; }
+  }
+  const actual = payload?.errors?.[0]?.code;
+  if (actual !== "submission_quarantined") {
+    throw new Error(`rejected remember returned ${actual || "missing code"} instead of terminal quarantine for scanner code ${expectedCode}`);
   }
 }
 
@@ -239,22 +245,6 @@ function relationshipRememberInput(payload, idempotencyKey, source, clientCommen
     }],
     relationships: [relationship],
   };
-}
-
-async function waitForTerminalPlacement(submissionID, allowProviderQuarantine = false) {
-  let lastStatus = "";
-  for (let attempt = 0; attempt < 180; attempt += 1) {
-    const placement = await mcpSuccess(apiKey, "get_submission_status", { submission_id: submissionID });
-    lastStatus = stringValue(placement.processing_state);
-    if (["completed", "rejected", "failed", "quarantined"].includes(lastStatus)) {
-      if (lastStatus === "failed" || (lastStatus === "quarantined" && !allowProviderQuarantine)) {
-        throw new Error(`accepted remember reached unexpected ${lastStatus}`);
-      }
-      return placement;
-    }
-    await delay(2_000);
-  }
-  throw new Error(`timed out waiting for accepted placement (last status: ${lastStatus || "unknown"})`);
 }
 
 async function waitForExactlyOneVerifierRequest(before, targetTeamID) {

@@ -39,7 +39,6 @@ const CorrectionConfirmationInvalidReason = "confirmation_invalid"
 
 type LifecycleService interface {
 	CorrectRelationship(ctx context.Context, req CorrectRelationshipRequest) (*CorrectRelationshipReceipt, error)
-	GetRelationshipCorrectionStatus(ctx context.Context, req GetSubmissionStatusRequest) (*SubmissionStatusResult, error)
 	RetractEvidence(ctx context.Context, req RetractEvidenceRequest) (*RetractEvidenceResult, error)
 }
 
@@ -53,7 +52,6 @@ type LifecycleDependencies struct {
 type LifecycleSemanticRepository interface {
 	PlanRelationshipCorrectionEmbeddings(ctx context.Context, input repository.CorrectRelationshipInput) (*repository.RelationshipCorrectionEmbeddingPlan, error)
 	CorrectRelationshipWithEmbeddings(ctx context.Context, input repository.CorrectRelationshipInput, embeddings []repository.RelationshipCorrectionEmbedding) (*repository.CorrectRelationshipResult, error)
-	GetRelationshipCorrection(ctx context.Context, input repository.GetRelationshipCorrectionInput) (*repository.RelationshipCorrectionStatus, error)
 }
 
 type LifecycleCorrectionExecutor interface {
@@ -93,13 +91,15 @@ type CorrectRelationshipRequest struct {
 }
 
 type CorrectRelationshipReceipt struct {
-	ContractVersion   string `json:"contract_version"`
-	SubmissionID      string `json:"submission_id"`
-	SubmissionKind    string `json:"submission_kind"`
-	ProcessingState   string `json:"processing_state"`
-	CheckAfterSeconds int    `json:"check_after_seconds"`
-	StatusTool        string `json:"status_tool"`
-	CorrelationID     string `json:"correlation_id"`
+	ContractVersion      string                                   `json:"contract_version"`
+	SubmissionID         string                                   `json:"submission_id"`
+	SubmissionKind       string                                   `json:"submission_kind"`
+	ProcessingState      string                                   `json:"processing_state"`
+	SearchState          string                                   `json:"search_state"`
+	CorrelationID        string                                   `json:"correlation_id"`
+	AwaitingConfirmation *SubmissionAwaitingConfirmation          `json:"awaiting_confirmation,omitempty"`
+	CorrectionResult     *repository.RelationshipCorrectionResult `json:"correction_result,omitempty"`
+	Errors               []SubmissionStatusError                  `json:"errors"`
 }
 
 type RetractEvidenceRequest struct {
@@ -183,15 +183,40 @@ func (s *lifecycleService) CorrectRelationship(
 	if err != nil {
 		return nil, translateRelationshipCorrectionError(err)
 	}
-	return &CorrectRelationshipReceipt{
-		ContractVersion:   domain.ContractVersion,
-		SubmissionID:      result.SubmissionID,
-		SubmissionKind:    "relationship_correction",
-		ProcessingState:   result.ProcessingState,
-		CheckAfterSeconds: 0,
-		StatusTool:        rememberStatusTool,
-		CorrelationID:     correlation.FromContext(ctx),
-	}, nil
+	if result == nil {
+		return nil, ErrLifecyclePersistence
+	}
+	receipt := &CorrectRelationshipReceipt{
+		ContractVersion:  domain.ContractVersion,
+		SubmissionID:     result.SubmissionID,
+		SubmissionKind:   "relationship_correction",
+		ProcessingState:  result.ProcessingState,
+		SearchState:      result.SearchState,
+		CorrelationID:    correlation.FromContext(ctx),
+		CorrectionResult: result.Correction,
+		Errors:           []SubmissionStatusError{},
+	}
+	if receipt.SearchState == "" {
+		receipt.SearchState = string(domain.SearchProjectionNotRequired)
+	}
+	if result.Confirmation != nil {
+		receipt.AwaitingConfirmation = &SubmissionAwaitingConfirmation{
+			ConfirmationToken: result.Confirmation.Token,
+			ExpiresAt:         result.Confirmation.ExpiresAt,
+		}
+		for _, candidate := range result.Confirmation.Candidates {
+			receipt.AwaitingConfirmation.Candidates = append(receipt.AwaitingConfirmation.Candidates, rememberapp.RelationshipCorrectionCandidate{
+				Endpoint: candidate.Endpoint, EntityID: candidate.EntityID, EntityKind: candidate.EntityKind, CanonicalName: candidate.CanonicalName,
+			})
+		}
+	}
+	if result.ErrorCode != "" {
+		receipt.Errors = append(receipt.Errors, correctionStatusErrorForCode(result.ErrorCode, result.ProcessingState))
+	}
+	if (result.ProcessingState == "rejected" || result.ProcessingState == "failed") && len(receipt.Errors) == 0 {
+		receipt.Errors = append(receipt.Errors, correctionStatusErrorForCode("", result.ProcessingState))
+	}
+	return receipt, nil
 }
 
 func correctionPlanDocuments(documents []repository.RelationshipCorrectionEmbeddingDocument) []semanticwrite.Document {
@@ -245,30 +270,6 @@ func correctionEmbeddingContextOwnsDeadline(callerCtx, embeddingCtx context.Cont
 	return embeddingDeadline.Before(callerDeadline)
 }
 
-func (s *lifecycleService) GetRelationshipCorrectionStatus(
-	ctx context.Context,
-	req GetSubmissionStatusRequest,
-) (*SubmissionStatusResult, error) {
-	if s.semantic == nil {
-		return nil, errors.New("submission status: semantic repository is required")
-	}
-	actor, ok := requestctx.ActorFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
-		return nil, ErrLifecycleAuthContext
-	}
-	submissionID := strings.TrimSpace(req.SubmissionID)
-	if _, err := uuid.Parse(submissionID); err != nil {
-		return nil, httperr.New(httperr.NOT_FOUND, "submission not found")
-	}
-	result, err := s.semantic.GetRelationshipCorrection(ctx, repository.GetRelationshipCorrectionInput{
-		TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SubmissionID: submissionID,
-	})
-	if err != nil {
-		return nil, translateRelationshipCorrectionError(err)
-	}
-	return relationshipCorrectionSubmissionStatus(result), nil
-}
-
 func translateRelationshipCorrectionError(err error) error {
 	if errors.Is(err, ErrLifecycleEmbeddingUnavailable) {
 		return httperr.New(httperr.ErrEmbeddingUnavailable, "embedding provider unavailable")
@@ -319,40 +320,6 @@ func isCorrectionCommitSearchFenceError(err error) bool {
 	return errors.Is(err, repository.ErrSearchEmbeddingRequired) ||
 		errors.Is(err, repository.ErrSearchContractMismatch) ||
 		errors.Is(err, repository.ErrSearchStaleVersion)
-}
-
-func relationshipCorrectionSubmissionStatus(result *repository.RelationshipCorrectionStatus) *SubmissionStatusResult {
-	status := &SubmissionStatusResult{
-		ContractVersion: domain.ContractVersion,
-		SubmissionKind:  "relationship_correction", SearchState: string(domain.SearchProjectionNotRequired),
-		CheckAfterSeconds: 0, Evidence: []SubmissionEvidenceStatus{}, Errors: []SubmissionStatusError{},
-		Degradations: []SubmissionStatusDegradation{},
-	}
-	if result == nil {
-		return status
-	}
-	status.SubmissionID = result.SubmissionID
-	status.ProcessingState = result.ProcessingState
-	if result.SearchState != "" {
-		status.SearchState = result.SearchState
-	}
-	if result.Confirmation != nil {
-		status.AwaitingConfirmation = &SubmissionAwaitingConfirmation{
-			ConfirmationToken: result.Confirmation.Token,
-			ExpiresAt:         result.Confirmation.ExpiresAt,
-			Candidates:        append([]repository.RelationshipCorrectionCandidate(nil), result.Confirmation.Candidates...),
-		}
-	}
-	status.CorrectionResult = result.Correction
-	if result.ErrorCode != "" {
-		errorValue := correctionStatusErrorForCode(result.ErrorCode, result.ProcessingState)
-		status.Errors = append(status.Errors, errorValue)
-	}
-	if (status.ProcessingState == "rejected" || status.ProcessingState == "failed") && len(status.Errors) == 0 {
-		fallback := correctionStatusErrorForCode("", status.ProcessingState)
-		status.Errors = append(status.Errors, fallback)
-	}
-	return status
 }
 
 func (s *lifecycleService) RetractEvidence(

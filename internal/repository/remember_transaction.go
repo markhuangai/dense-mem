@@ -32,3 +32,8 @@ func (r *LedgerRepositoryImpl) withAtomicRememberTx(ctx context.Context, teamID,
 		return fn(scoped)
 	})
 }
+
+func transactionFromContext(ctx context.Context) *gorm.DB {
+	transaction, _ := ctx.Value(teamProfileTransactionContextKey{}).(teamProfileTransaction)
+	return transaction.tx
+}

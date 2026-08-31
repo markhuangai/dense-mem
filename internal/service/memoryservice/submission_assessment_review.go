@@ -1,7 +1,6 @@
 package memoryservice
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,68 +16,26 @@ type submissionAssessmentNoSupportedMemoryError struct {
 	RelationshipResults []repository.SubmissionRelationshipResultInput
 }
 
+type NoSupportedMemoryError = submissionAssessmentNoSupportedMemoryError
+
 func (e *submissionAssessmentNoSupportedMemoryError) Error() string {
 	return "submission assessment contains no supported memory"
 }
 
 func isRememberStaleInputError(err error) bool {
-	var preflight *repository.RememberPreflightError
-	if errors.As(err, &preflight) && preflight != nil {
-		for _, issue := range preflight.Issues {
-			code := strings.TrimSpace(issue.Code)
-			path := strings.TrimSpace(issue.Path)
-			if code == "stale" ||
-				(code == "conflict" && strings.HasPrefix(path, "/evidence/") && strings.HasSuffix(path, "/source_revision")) ||
-				(code == "unavailable" && strings.HasPrefix(path, "/evidence/") && strings.Contains(path, "/supersedes_evidence_ids/")) {
-				return true
-			}
-		}
-	}
 	return errors.Is(err, errSubmissionAssessmentStaleInput) ||
 		errors.Is(err, repository.ErrSourceRevisionConflict) ||
 		errors.Is(err, repository.ErrEvidenceLifecycleConflict) ||
 		errors.Is(err, repository.ErrConflictContextStale) ||
 		errors.Is(err, repository.ErrRememberExactReferenceStale) ||
 		errors.Is(err, repository.ErrCorrectionTargetStale) ||
-		errors.Is(err, repository.ErrPlacementStaleSource)
+		errors.Is(err, repository.ErrSemanticStaleSource)
 }
 
-func (s *submissionAssessmentPlacementWorkerService) completeRejected(
-	ctx context.Context,
-	scope repository.SubmissionAssessmentRunScope,
-	code SubmissionErrorCode,
-	relationshipResults []repository.SubmissionRelationshipResultInput,
-) error {
-	if code != SubmissionErrorStaleInput {
-		code = SubmissionErrorNoSupportedMemory
-	}
-	payload := map[string]any{
-		"assessor_contract": domain.ContractVersion,
-		"failure_stage":     "semantic_commit",
-		"failure_code":      string(code),
-		"retryable":         true,
-		"next_action":       string(SubmissionNextActionResubmitSubmission),
-	}
-	if code == SubmissionErrorStaleInput {
-		payload["failure_stage"] = "exact_reference_preflight"
-	}
-	completed, err := s.assessments.CompleteSubmissionAssessment(ctx, repository.CompleteSubmissionAssessmentInput{
-		SubmissionAssessmentRunScope: scope,
-		OutcomeKind:                  "submission_assessment_rejected",
-		Status:                       string(domain.SemanticReviewRejected),
-		Category:                     "rejected",
-		Payload:                      payload,
-		RelationshipResults:          relationshipResults,
-	})
-	if err == nil && completed == nil {
-		return newPlacementWorkerError(scope.TeamID, scope.IngestID, "semantic_rejection", errors.New("submission assessment worker: nil rejection result"))
-	}
-	if err != nil {
-		return newPlacementWorkerError(scope.TeamID, scope.IngestID, "semantic_rejection", err)
-	}
-	s.logLifecycle(scope, "submission_rejected", "rejected", "semantic_commit", payload["failure_code"].(string), nil)
-	s.recordFirstDisposition(ctx, scope.TeamID, scope.OwnerProfileID, completed.FirstDisposition)
-	return nil
+// IsRememberStaleInputError exposes the narrow stale-input classification to
+// the request-scoped Remember processor.
+func IsRememberStaleInputError(err error) bool {
+	return isRememberStaleInputError(err)
 }
 
 func submissionAssessmentSupports(

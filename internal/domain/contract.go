@@ -1,17 +1,22 @@
 package domain
 
 const (
-	ContractVersion                    = "dense-mem.v2.6"
+	ContractVersion                    = "dense-mem.v2.6.1"
 	MigratedRememberRequestHashVersion = "remember_request_hash_v1"
 	PredicatePolicyVersion             = "open_vocabulary_v1"
 	ConflictPolicyVersion              = "cross_profile_supporter_majority_after_ttl"
 	ConflictOverduePolicyVersion       = "overdue_conflict_ai_supporter_voting"
 	FeatureGate                        = "memory"
-	ToolVisibility                     = "dormant"
+	ToolVisibility                     = "active"
+)
+
+const (
+	SubmissionErrorMessageNoSupportedMemory = "no supported memory could be stored from this submission"
+	SubmissionErrorMessageQuarantined       = "submission was quarantined by security policy"
+	SubmissionErrorMessageInternalFailure   = "Dense-Mem could not complete the submission"
 )
 
 type IngestID string
-type PlacementItemID string
 type EvidenceID string
 type ObservationID string
 type EntityID string
@@ -171,18 +176,6 @@ const (
 	HypothesisSubmitted  HypothesisStatus = "submitted"
 )
 
-type PlacementRunStatus string
-
-const (
-	PlacementRunQueued      PlacementRunStatus = "queued"
-	PlacementRunGuarded     PlacementRunStatus = "guarded"
-	PlacementRunQuarantined PlacementRunStatus = "quarantined"
-	PlacementRunProcessing  PlacementRunStatus = "processing"
-	PlacementRunCompleted   PlacementRunStatus = "completed"
-	PlacementRunRejected    PlacementRunStatus = "rejected"
-	PlacementRunFailed      PlacementRunStatus = "failed"
-)
-
 type SearchProjectionState string
 
 const (
@@ -241,17 +234,6 @@ const (
 	VectorIndexVectorHNSW  VectorIndexStrategy = "vector_hnsw"
 	VectorIndexHalfvecHNSW VectorIndexStrategy = "halfvec_hnsw"
 	VectorIndexBinaryHNSW  VectorIndexStrategy = "binary_hnsw"
-)
-
-type EmbeddingJobStatus string
-
-const (
-	EmbeddingJobQueued     EmbeddingJobStatus = "queued"
-	EmbeddingJobProcessing EmbeddingJobStatus = "processing"
-	EmbeddingJobCompleted  EmbeddingJobStatus = "completed"
-	EmbeddingJobFailed     EmbeddingJobStatus = "failed"
-	EmbeddingJobStale      EmbeddingJobStatus = "stale"
-	EmbeddingJobCancelled  EmbeddingJobStatus = "cancelled"
 )
 
 type EvidenceItemCategory string
@@ -469,18 +451,6 @@ func ValueTypes() []string {
 	}
 }
 
-func PlacementRunStatuses() []string {
-	return []string{
-		string(PlacementRunQueued),
-		string(PlacementRunGuarded),
-		string(PlacementRunQuarantined),
-		string(PlacementRunProcessing),
-		string(PlacementRunCompleted),
-		string(PlacementRunRejected),
-		string(PlacementRunFailed),
-	}
-}
-
 func SearchProjectionStates() []string {
 	return []string{
 		string(SearchProjectionNotRequired),
@@ -512,17 +482,6 @@ func VectorIndexStrategies() []string {
 		string(VectorIndexVectorHNSW),
 		string(VectorIndexHalfvecHNSW),
 		string(VectorIndexBinaryHNSW),
-	}
-}
-
-func EmbeddingJobStatuses() []string {
-	return []string{
-		string(EmbeddingJobQueued),
-		string(EmbeddingJobProcessing),
-		string(EmbeddingJobCompleted),
-		string(EmbeddingJobFailed),
-		string(EmbeddingJobStale),
-		string(EmbeddingJobCancelled),
 	}
 }
 

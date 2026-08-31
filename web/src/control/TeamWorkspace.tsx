@@ -5,7 +5,7 @@ import { useVisiblePolling } from "../telemetry/useVisiblePolling";
 import { SectionHeading, SummaryCard } from "../ui/components";
 import { credentialPermissionLabel, credentialRoleLabel, formatDate, shortId } from "./utils";
 
-export type TeamWorkspaceTab = "overview" | "submissions" | "remember-attempts" | "credentials" | "dreams" | "conflicts" | "settings";
+export type TeamWorkspaceTab = "overview" | "remember-attempts" | "credentials" | "dreams" | "conflicts" | "settings";
 
 export function TeamWorkspaceShell({
   team,
@@ -39,7 +39,6 @@ function TeamWorkspaceHeader({
 }) {
   const tabs: Array<{ id: TeamWorkspaceTab; label: string }> = [
     { id: "overview", label: "Overview" },
-    { id: "submissions", label: "Submissions" },
     { id: "remember-attempts", label: "Remember Attempts" },
     { id: "credentials", label: "Credentials" },
     { id: "dreams", label: "Dreams" },

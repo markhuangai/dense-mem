@@ -24,17 +24,15 @@ type Dependencies struct {
 	RecallFeedbackEvents RecallFeedbackEventRecorder
 	EvaluationAudit      EvaluationAuditAppender
 
-	Context          contextservice.Service
-	Remember         memoryservice.RememberService
-	SubmissionStatus memoryservice.SubmissionStatusService
-	Recall           memoryservice.RecallService
-	Lifecycle        memoryservice.LifecycleService
-	Evaluation       repository.EvaluationRepository
-	Communities      repository.CommunityRepository
-	MemoryPack       skillpackservice.MemoryPackService
-	Dreams           dreamservice.Service
+	Context     contextservice.Service
+	Remember    memoryservice.RememberService
+	Recall      memoryservice.RecallService
+	Lifecycle   memoryservice.LifecycleService
+	Evaluation  repository.EvaluationRepository
+	Communities repository.CommunityRepository
+	MemoryPack  skillpackservice.MemoryPackService
+	Dreams      dreamservice.Service
 }
-
 type RecallFeedbackEventRecorder interface {
 	RecordRecallSnapshot(ctx context.Context, event domain.RecallFeedbackEvent) error
 	RecordRecallFeedback(ctx context.Context, feedback domain.RecallFeedbackSubmission) error

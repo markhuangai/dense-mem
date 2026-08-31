@@ -18,15 +18,6 @@ type DiscoverabilityMetrics interface {
 	IncVerifyVerdict(outcome string)
 }
 
-// EmbeddingReconciliationMetrics records bounded-cardinality recovery
-// progress. It is optional so existing metrics implementations remain valid.
-type EmbeddingReconciliationMetrics interface {
-	ObserveEmbeddingReconciliationRun(outcome string)
-	ObserveEmbeddingReconciliationCanary(outcome string)
-	ObserveEmbeddingReconciliationJobs(action, sourceKind, failureClass, failureCode string, count int)
-	ObserveEmbeddingReconciliationDuration(seconds float64, outcome string)
-}
-
 // AssessorMetrics is an optional V2.4 write-path metric surface. Its methods
 // deliberately accept no request identity, evidence, threshold, or rationale
 // so assessor telemetry cannot create sensitive or high-cardinality labels.
@@ -39,11 +30,6 @@ type AssessorMetrics interface {
 	IncAssessorDuplicateRequestPrevention(stage string)
 	IncAssessorConfidenceGate(band string)
 	IncAssessorTerminalFailure(stage string)
-}
-
-// SubmissionQuarantineMetrics records required retention-worker failures.
-type SubmissionQuarantineMetrics interface {
-	IncSubmissionQuarantinePurgeFailure()
 }
 
 // NoopDiscoverabilityMetrics returns a recorder that discards all metrics.
@@ -71,7 +57,6 @@ func (noopMetrics) IncAssessorAssessmentPersistence(string)      {}
 func (noopMetrics) IncAssessorDuplicateRequestPrevention(string) {}
 func (noopMetrics) IncAssessorConfidenceGate(string)             {}
 func (noopMetrics) IncAssessorTerminalFailure(string)            {}
-func (noopMetrics) IncSubmissionQuarantinePurgeFailure()         {}
 
 // InMemoryDiscoverabilityMetrics is a test-friendly recorder.
 type InMemoryDiscoverabilityMetrics struct {
@@ -92,11 +77,6 @@ type InMemoryDiscoverabilityMetrics struct {
 	assessorDuplicatePrevention map[string]int
 	assessorGateBands           map[string]int
 	assessorTerminalFailures    map[string]int
-	quarantinePurgeFailures     int
-	reconciliationRuns          map[string]int
-	reconciliationCanaries      map[string]int
-	reconciliationJobs          map[string]int
-	reconciliationDurations     []float64
 }
 
 // AssessorCallSample records one bounded assessor conversation.
@@ -166,7 +146,6 @@ type ConflictReviewSample struct {
 
 var _ DiscoverabilityMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
 var _ AssessorMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
-var _ SubmissionQuarantineMetrics = (*InMemoryDiscoverabilityMetrics)(nil)
 
 // NewInMemoryDiscoverabilityMetrics constructs a fresh recorder.
 func NewInMemoryDiscoverabilityMetrics() *InMemoryDiscoverabilityMetrics {
@@ -179,9 +158,6 @@ func NewInMemoryDiscoverabilityMetrics() *InMemoryDiscoverabilityMetrics {
 		assessorDuplicatePrevention: make(map[string]int),
 		assessorGateBands:           make(map[string]int),
 		assessorTerminalFailures:    make(map[string]int),
-		reconciliationRuns:          make(map[string]int),
-		reconciliationCanaries:      make(map[string]int),
-		reconciliationJobs:          make(map[string]int),
 	}
 }
 
@@ -356,12 +332,6 @@ func (m *InMemoryDiscoverabilityMetrics) IncAssessorTerminalFailure(stage string
 	m.assessorTerminalFailures[NormalizeAssessorTerminalFailureStage(stage)]++
 }
 
-func (m *InMemoryDiscoverabilityMetrics) IncSubmissionQuarantinePurgeFailure() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.quarantinePurgeFailures++
-}
-
 func (m *InMemoryDiscoverabilityMetrics) AssessorCalls() []AssessorCallSample {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -416,7 +386,7 @@ func (m *InMemoryDiscoverabilityMetrics) AssessorTerminalFailureCount(stage stri
 // status projections on a bounded, system-only vocabulary.
 func NormalizeAssessorTerminalFailureStage(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "placement_load", "placement_item", "trusted_context_validation",
+	case "trusted_context_validation",
 		"deterministic_security_scan", "catalog_context_overflow",
 		"catalog_context_validation", "predicate_options_overflow",
 		"assessment_input_overflow", "candidate_context_validation", "candidate_context_limit",
@@ -429,50 +399,4 @@ func NormalizeAssessorTerminalFailureStage(value string) string {
 	default:
 		return "unknown"
 	}
-}
-
-func (m *InMemoryDiscoverabilityMetrics) SubmissionQuarantinePurgeFailureCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.quarantinePurgeFailures
-}
-
-func (m *InMemoryDiscoverabilityMetrics) ObserveEmbeddingReconciliationRun(outcome string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.reconciliationRuns[strings.TrimSpace(outcome)]++
-}
-
-func (m *InMemoryDiscoverabilityMetrics) ObserveEmbeddingReconciliationCanary(outcome string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.reconciliationCanaries[strings.TrimSpace(outcome)]++
-}
-
-func (m *InMemoryDiscoverabilityMetrics) ObserveEmbeddingReconciliationJobs(action, sourceKind, failureClass, failureCode string, count int) {
-	if count <= 0 {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	key := strings.Join([]string{strings.TrimSpace(action), strings.TrimSpace(sourceKind), strings.TrimSpace(failureClass), strings.TrimSpace(failureCode)}, ":")
-	m.reconciliationJobs[key] += count
-}
-
-func (m *InMemoryDiscoverabilityMetrics) ObserveEmbeddingReconciliationDuration(seconds float64, _ string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.reconciliationDurations = append(m.reconciliationDurations, seconds)
-}
-
-func (m *InMemoryDiscoverabilityMetrics) EmbeddingReconciliationRunCount(outcome string) int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.reconciliationRuns[strings.TrimSpace(outcome)]
-}
-
-func (m *InMemoryDiscoverabilityMetrics) EmbeddingReconciliationCanaryCount(outcome string) int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.reconciliationCanaries[strings.TrimSpace(outcome)]
 }

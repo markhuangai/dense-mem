@@ -39,9 +39,9 @@ func (r *LedgerRepositoryImpl) ValidateRelationshipConflictContext(
 func ensureRelationshipConflictContextsCurrent(
 	ctx context.Context,
 	tx *gorm.DB,
-	input CommitPlacementSemanticInput,
+	input CommitSemanticInput,
 ) error {
-	contexts := make([]PlacementConflictContextInput, 0, len(input.RelationshipObservations))
+	contexts := make([]SemanticConflictContextInput, 0, len(input.RelationshipObservations))
 	for _, observation := range input.RelationshipObservations {
 		if observation.ConflictContext == nil {
 			continue
@@ -55,7 +55,7 @@ func requireRelationshipConflictContextsCurrent(
 	ctx context.Context,
 	tx *gorm.DB,
 	teamID string,
-	contexts []PlacementConflictContextInput,
+	contexts []SemanticConflictContextInput,
 ) error {
 	sort.Slice(contexts, func(i, j int) bool {
 		if contexts[i].ConflictID == contexts[j].ConflictID {
@@ -103,7 +103,7 @@ func requireRelationshipConflictContextMatchesDecision(
 	ctx context.Context,
 	tx *gorm.DB,
 	teamID string,
-	context PlacementConflictContextInput,
+	context SemanticConflictContextInput,
 	decision ApplyRelationshipDecisionInput,
 ) error {
 	var found bool

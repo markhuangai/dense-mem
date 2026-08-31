@@ -70,7 +70,7 @@ func RunFromEnvironment(options RuntimeOptions) {
 
 	rlsHelper := postgres.NewRLS()
 	authorityRepo := repository.NewAuthorityRepository(pgDB.GetDB(), rlsHelper)
-	authority, err := EnsureAuthority(postMigrationCtx, authorityRepo)
+	authority, err := ClassifyAuthority(postMigrationCtx, authorityRepo)
 	if err != nil {
 		log.Fatal("authority bootstrap failed")
 	}

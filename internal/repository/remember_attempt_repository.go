@@ -29,6 +29,15 @@ var (
 	ErrRememberFailureArtifactNotFound   = errors.New("remember failure artifact not found")
 )
 
+func rememberAttemptHashMatches(storedHash, storedContractVersion, requestHash, migratedRequestHash string) bool {
+	if strings.TrimSpace(storedHash) == strings.TrimSpace(requestHash) {
+		return true
+	}
+	return strings.TrimSpace(storedContractVersion) == domain.MigratedRememberRequestHashVersion &&
+		strings.TrimSpace(migratedRequestHash) != "" &&
+		strings.TrimSpace(storedHash) == strings.TrimSpace(migratedRequestHash)
+}
+
 type RememberAttemptRecordInput struct {
 	TeamID, OwnerProfileID, AttemptID string
 	SpaceID                           string
@@ -55,17 +64,6 @@ type RememberAttemptLookupInput struct {
 
 type RememberAttemptLookup interface {
 	LoadRememberAttempt(context.Context, RememberAttemptLookupInput) (*RememberAttempt, error)
-}
-
-// RememberIngestLookup is the read-only compatibility port used to detect a
-// team/profile-scoped legacy Remember intake that has not yet produced a
-// terminal attempt.
-type RememberIngestLookup interface {
-	RememberIngestExists(context.Context, RememberIngestLookupInput) (bool, error)
-}
-
-type RememberIngestLookupInput struct {
-	TeamID, OwnerProfileID, IdempotencyKey string
 }
 
 // RememberFailureArtifactInput is intentionally failure-only. Its content must
@@ -160,7 +158,6 @@ type RememberAttemptDiagnosticsRepository interface {
 }
 
 var _ RememberAttemptDiagnosticsRepository = (*LedgerRepositoryImpl)(nil)
-var _ RememberIngestLookup = (*LedgerRepositoryImpl)(nil)
 
 const (
 	maxRememberFailureArtifactBytes       = 256 * 1024
@@ -234,39 +231,6 @@ func (r *LedgerRepositoryImpl) LoadRememberAttempt(ctx context.Context, input Re
 		return nil, ErrRememberAttemptNotFound
 	}
 	return result, err
-}
-
-func (r *LedgerRepositoryImpl) RememberIngestExists(ctx context.Context, input RememberIngestLookupInput) (bool, error) {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
-	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
-	for label, value := range map[string]string{
-		"team_id":          input.TeamID,
-		"owner_profile_id": input.OwnerProfileID,
-	} {
-		if _, err := uuid.Parse(value); err != nil {
-			return false, fmt.Errorf("remember ingest lookup: %s is required: %w", label, err)
-		}
-	}
-	if input.IdempotencyKey == "" {
-		return false, errors.New("remember ingest lookup: idempotency_key is required")
-	}
-	var exists bool
-	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		return tx.WithContext(ctx).Raw(`
-			SELECT EXISTS (
-				SELECT 1
-				FROM knowledge_ingests
-				WHERE team_id = ?::uuid
-				  AND owner_profile_id = ?::uuid
-				  AND idempotency_key = ?
-			)
-		`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Row().Scan(&exists)
-	})
-	if err != nil {
-		return false, fmt.Errorf("remember ingest lookup: %w", err)
-	}
-	return exists, nil
 }
 
 func loadTerminalRememberAttemptInTx(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, key, requestHash, migratedHash string) (*RememberAttempt, error) {

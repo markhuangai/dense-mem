@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const casesRoot = join(root, "cases");
-const requested = (process.env.DENSE_MEM_E2E_WRITE_CASE || process.env.DENSE_MEM_E2E_WRITE_SLICE || "").trim();
+const requested = (process.env.DENSE_MEM_E2E_WRITE_CASE || "").trim();
 
 export async function discoverCases(directory = casesRoot, filter = requested) {
   const names = (await readdir(directory, { withFileTypes: true }))

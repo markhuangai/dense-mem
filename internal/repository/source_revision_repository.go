@@ -37,6 +37,69 @@ type SourceRevisionResult struct {
 	SupersededSourceRevisionSeen bool
 }
 
+type evidenceSourceCurrentState struct {
+	SourceID          string
+	CurrentRevisionID string
+	CurrentToken      string
+	SpaceID           string
+	SpaceGeneration   int64
+}
+
+func loadEvidenceSourceForUpdate(ctx context.Context, tx *gorm.DB, input AdvanceSourceRevisionInput) (*evidenceSourceCurrentState, error) {
+	state := evidenceSourceCurrentState{}
+	err := tx.WithContext(ctx).Raw(`
+		SELECT source_id::text, COALESCE(current_revision_id::text, ''), current_revision_token,
+		       space_id::text, space_generation
+		FROM evidence_sources
+		WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND source_key = ?
+		LIMIT 1 FOR UPDATE
+	`, input.TeamID, input.OwnerProfileID, input.SourceKey).Row().Scan(
+		&state.SourceID, &state.CurrentRevisionID, &state.CurrentToken, &state.SpaceID, &state.SpaceGeneration,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// validateTerminalSourceRevisionInTx preserves source CAS fencing for a
+// terminal Remember without activating a source revision or its supports.
+func validateTerminalSourceRevisionInTx(ctx context.Context, tx *gorm.DB, input AdvanceSourceRevisionInput) error {
+	input = normalizeAdvanceSourceRevisionInput(input)
+	if err := validateAdvanceSourceRevisionInput(input); err != nil {
+		return err
+	}
+	var err error
+	input, err = resolveAdvanceSourceRevisionSpace(ctx, tx, input)
+	if err != nil {
+		return err
+	}
+	current, err := loadEvidenceSourceForUpdate(ctx, tx, input)
+	if err != nil {
+		return err
+	}
+	if current == nil {
+		if input.ExpectedPreviousRevisionToken != "" {
+			return fmt.Errorf("%w: source does not exist", ErrSourceRevisionConflict)
+		}
+		return nil
+	}
+	if current.SpaceID != input.SpaceID || current.SpaceGeneration != input.SpaceGeneration {
+		return errors.New("evidence source memory space does not match ingest")
+	}
+	if current.CurrentToken == input.RevisionToken && current.CurrentRevisionID != "" {
+		_, err := selectMatchingSourceRevisionSupersededRevisionID(ctx, tx, input, current.SourceID, current.CurrentRevisionID)
+		return err
+	}
+	if current.CurrentToken != input.ExpectedPreviousRevisionToken {
+		return fmt.Errorf("%w: expected %q, got %q", ErrSourceRevisionConflict, input.ExpectedPreviousRevisionToken, current.CurrentToken)
+	}
+	return nil
+}
+
 func (r *LedgerRepositoryImpl) AdvanceSourceRevision(ctx context.Context, input AdvanceSourceRevisionInput) (*SourceRevisionResult, error) {
 	input = normalizeAdvanceSourceRevisionInput(input)
 	if err := validateAdvanceSourceRevisionInput(input); err != nil {

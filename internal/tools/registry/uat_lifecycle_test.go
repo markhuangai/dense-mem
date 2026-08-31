@@ -164,19 +164,8 @@ func (s *stubLifecycleService) CorrectRelationship(
 	return &memoryservice.CorrectRelationshipReceipt{
 		ContractVersion: domain.ContractVersion,
 		SubmissionID:    "correction-canonical", SubmissionKind: "relationship_correction",
-		ProcessingState: "completed", StatusTool: ToolGetSubmissionStatus, CorrelationID: "correlation-canonical",
-	}, nil
-}
-
-func (s *stubLifecycleService) GetRelationshipCorrectionStatus(
-	_ context.Context,
-	req memoryservice.GetSubmissionStatusRequest,
-) (*memoryservice.SubmissionStatusResult, error) {
-	return &memoryservice.SubmissionStatusResult{
-		ContractVersion: domain.ContractVersion,
-		SubmissionID:    req.SubmissionID, SubmissionKind: "relationship_correction",
-		ProcessingState: "completed", SearchState: "not_required", Evidence: []memoryservice.SubmissionEvidenceStatus{},
-		Errors: []memoryservice.SubmissionStatusError{}, Degradations: []memoryservice.SubmissionStatusDegradation{},
+		ProcessingState: "completed", SearchState: "current", CorrelationID: "correlation-canonical",
+		Errors: []memoryservice.SubmissionStatusError{},
 	}, nil
 }
 
