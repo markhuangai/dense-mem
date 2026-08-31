@@ -150,7 +150,7 @@ func correctionToolResultError(ctx context.Context, submissionID string, err err
 		"submission_kind":  "relationship_correction",
 		"processing_state": processingState,
 		"search_state":     "not_required",
-		"correlation_id":   correlation.FromContext(ctx),
+		"correlation_id":   rememberapp.NormalizeTerminalCorrelationID(correlation.FromContext(ctx)),
 		"errors": []any{map[string]any{
 			"code":        value.Code,
 			"message":     value.Message,

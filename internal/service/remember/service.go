@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -161,7 +160,7 @@ type SubmissionEvidenceStatus struct {
 
 func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberResult, error) {
 	started := time.Now()
-	ctx = correlation.WithID(ctx, normalizeSynchronousCorrelationID(correlation.FromContext(ctx)))
+	ctx = correlation.WithID(ctx, NormalizeTerminalCorrelationID(correlation.FromContext(ctx)))
 	ctx = WithRememberDeadlines(ctx, started)
 	operationCtx, cancel := context.WithDeadline(ctx, started.Add(RememberTotalBudget))
 	defer cancel()
@@ -199,7 +198,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if scanErr != nil {
 		if err := recordSubmissionSecurityRejection(ctx, s.auditor, s.logger, actor, "remember", scan, scanErr); err != nil {
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
-			return nil, ErrRememberPersistence
+			return nil, rememberSecurityAuditPersistenceError(req, correlation.FromContext(ctx))
 		}
 		if s.synchronous == nil {
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
@@ -257,12 +256,38 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	return nil, ErrRememberProcessor
 }
 
-func normalizeSynchronousCorrelationID(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || utf8.RuneCountInString(value) > maxTerminalCorrelationIDRunes {
-		return uuid.NewString()
+func rememberSecurityAuditPersistenceError(req RememberRequest, correlationID string) *RememberProcessError {
+	status := &SubmissionStatusResult{
+		ContractVersion:     domain.ContractVersion,
+		SubmissionID:        uuid.NewString(),
+		SubmissionKind:      "remember",
+		ProcessingState:     string(TerminalProcessingFailed),
+		SearchState:         string(TerminalSearchNotRequired),
+		CorrelationID:       correlationID,
+		Evidence:            make([]SubmissionEvidenceStatus, len(req.Evidence)),
+		RelationshipResults: make([]SubmissionRelationshipResult, len(req.RelationshipHints)),
+		Errors:              []SubmissionStatusError{StatusError(SubmissionErrorDatabaseFailure)},
 	}
-	return value
+	for index := range status.Evidence {
+		status.Evidence[index] = SubmissionEvidenceStatus{
+			Disposition:           "not_stored",
+			EvidenceIndex:         index,
+			SupersededEvidenceIDs: []string{},
+			SearchState:           string(TerminalSearchNotRequired),
+			Reason:                "internal_failure",
+		}
+	}
+	for index, hint := range req.RelationshipHints {
+		ref, _ := hint["ref"].(string)
+		status.RelationshipResults[index] = SubmissionRelationshipResult{
+			RelationshipRef: strings.TrimSpace(ref),
+			Disposition:     "not_stored",
+			Reason:          "internal_failure",
+			Splits:          []SubmissionRelationshipSplit{},
+		}
+	}
+	result := rememberResultFromStatus(status, status.SubmissionID)
+	return &RememberProcessError{Status: status, Result: result.Terminal, Err: ErrRememberPersistence}
 }
 
 func preserveProcessStatus(err error, mapped error) error {

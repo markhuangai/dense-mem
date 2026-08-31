@@ -3,8 +3,11 @@ package registry
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
@@ -126,6 +129,18 @@ func TestCorrectionToolResultErrorMapsLifecycleAndHTTPFailures(t *testing.T) {
 	entry := generated["errors"].([]any)[0].(map[string]any)
 	require.Equal(t, string(rememberapp.SubmissionNextActionRetryCorrection), entry["next_action"])
 	require.NotEmpty(t, entry["remediation"])
+}
+
+func TestCorrectionToolResultErrorNormalizesOversizedCorrelationID(t *testing.T) {
+	ctx := correlation.WithID(context.Background(), strings.Repeat("x", 129))
+	result := structuredToolResult(t, correctionToolResultError(ctx, "correction-submission", errors.New("database failure")))
+
+	correlationID, ok := result["correlation_id"].(string)
+	require.True(t, ok)
+	require.NotEqual(t, strings.Repeat("x", 129), correlationID)
+	require.LessOrEqual(t, utf8.RuneCountInString(correlationID), 128)
+	_, parseErr := uuid.Parse(correlationID)
+	require.NoError(t, parseErr)
 }
 
 func TestCorrectionToolResultErrorPreservesTypedConflictReasons(t *testing.T) {

@@ -192,7 +192,7 @@ func (s *lifecycleService) CorrectRelationship(
 		SubmissionKind:   "relationship_correction",
 		ProcessingState:  result.ProcessingState,
 		SearchState:      result.SearchState,
-		CorrelationID:    correlation.FromContext(ctx),
+		CorrelationID:    rememberapp.NormalizeTerminalCorrelationID(correlation.FromContext(ctx)),
 		CorrectionResult: result.Correction,
 		Errors:           []SubmissionStatusError{},
 	}

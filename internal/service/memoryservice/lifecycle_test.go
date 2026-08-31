@@ -55,6 +55,27 @@ func TestLifecycleCorrectRelationshipUsesAuthenticatedOwner(t *testing.T) {
 	require.Equal(t, 3, semantic.correctInput.ExpectedVersion)
 }
 
+func TestLifecycleCorrectRelationshipNormalizesOversizedCorrelationID(t *testing.T) {
+	teamID, profileID := uuid.New(), uuid.New()
+	semantic := &lifecycleSemanticStub{correctResult: &repository.CorrectRelationshipResult{
+		SubmissionID: uuid.NewString(), ProcessingState: "completed",
+	}}
+	ctx := correlation.WithID(authenticatedRememberContext(teamID, profileID, uuid.New()), strings.Repeat("x", 129))
+
+	result, err := NewLifecycleService(LifecycleDependencies{Semantic: semantic}).CorrectRelationship(ctx, CorrectRelationshipRequest{
+		Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1,
+		Patch:    repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_with"}},
+		Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 8}},
+		Reason:   "predicate was resolved incorrectly", IdempotencyKey: "oversized-correlation",
+	})
+
+	require.NoError(t, err)
+	require.NotEqual(t, strings.Repeat("x", 129), result.CorrelationID)
+	require.LessOrEqual(t, len([]rune(result.CorrelationID)), 128)
+	_, parseErr := uuid.Parse(result.CorrelationID)
+	require.NoError(t, parseErr)
+}
+
 func TestLifecycleCorrectRelationshipExecutesOnePlannedBatchBeforeCommit(t *testing.T) {
 	teamID, profileID := uuid.New(), uuid.New()
 	semantic := &lifecycleSemanticStub{

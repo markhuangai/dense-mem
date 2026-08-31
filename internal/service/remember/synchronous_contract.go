@@ -146,6 +146,16 @@ const (
 	maxTerminalRemediationRunes   = 512
 )
 
+// NormalizeTerminalCorrelationID returns a bounded correlation identifier for
+// terminal Remember and correction results.
+func NormalizeTerminalCorrelationID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || utf8.RuneCountInString(value) > maxTerminalCorrelationIDRunes {
+		return uuid.NewString()
+	}
+	return value
+}
+
 func TerminalErrorCodes() []string {
 	result := make([]string, 0, len(terminalErrorCodes))
 	for _, code := range terminalErrorCodes {
