@@ -255,6 +255,10 @@ type SearchReconciliationRun struct {
 // SearchReconciliationSelectionInput bounds one document-centric repair
 // snapshot to the active embedding contract.
 type SearchReconciliationSelectionInput struct {
+	// RunID identifies the durable reconciliation pass whose keyset cursor is
+	// advanced before canonical hydration. Empty keeps the selection bounded
+	// without persisting a cursor for callers that only need a one-off snapshot.
+	RunID               string
 	EmbeddingContractID string
 	EmbeddingDimensions int
 	Limit               int

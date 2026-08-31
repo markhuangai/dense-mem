@@ -126,6 +126,12 @@ func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(
 	ctx context.Context,
 	input SearchReconciliationSelectionInput,
 ) ([]SearchDocumentForEmbedding, error) {
+	input.RunID = strings.TrimSpace(input.RunID)
+	if input.RunID != "" {
+		if _, err := uuid.Parse(input.RunID); err != nil {
+			return nil, fmt.Errorf("search: reconciliation run id is invalid: %w", err)
+		}
+	}
 	input.EmbeddingContractID = strings.TrimSpace(input.EmbeddingContractID)
 	if _, err := uuid.Parse(input.EmbeddingContractID); err != nil {
 		return nil, fmt.Errorf("search: reconciliation contract is invalid: %w", err)
@@ -146,8 +152,31 @@ func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(
 			item          SearchDocumentForEmbedding
 			vectorCurrent bool
 		}
+		var cursor struct {
+			TeamID           sql.NullString
+			SourceKind       sql.NullString
+			SourceID         sql.NullString
+			SearchDocumentID sql.NullString
+		}
+		if input.RunID != "" {
+			cursorQuery := tx.WithContext(ctx).Raw(`
+				SELECT selection_cursor_team_id::text,
+				       selection_cursor_source_kind,
+				       selection_cursor_source_id::text,
+				       selection_cursor_search_document_id::text
+				FROM search_reconciliation_runs
+				WHERE embedding_contract_id = ?::uuid
+				  AND embedding_dimensions = ?
+				  AND reconciliation_run_id <> ?::uuid
+				ORDER BY updated_at DESC, reconciliation_run_id DESC
+				LIMIT 1
+			`, input.EmbeddingContractID, input.EmbeddingDimensions, input.RunID).Row()
+			if err := cursorQuery.Scan(&cursor.TeamID, &cursor.SourceKind, &cursor.SourceID, &cursor.SearchDocumentID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
 		documents := make([]observedDocument, 0)
-		rows, err := tx.WithContext(ctx).Raw(`
+		query := `
 			SELECT document.team_id::text, document.search_document_id::text,
 			       document.owner_profile_id::text, document.source_kind,
 			       document.source_id::text, document.source_version,
@@ -177,8 +206,22 @@ func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(
 			        AND generation.embedding_dimensions = document.embedding_dimensions
 			        AND generation.activation_state = 'active'
 			  )
-			ORDER BY document.updated_at ASC, document.team_id, document.search_document_id
-		`, input.EmbeddingContractID, input.EmbeddingDimensions).Rows()
+		`
+		args := []any{input.EmbeddingContractID, input.EmbeddingDimensions}
+		cursorReady := cursor.TeamID.Valid && cursor.SourceKind.Valid && cursor.SourceID.Valid && cursor.SearchDocumentID.Valid
+		if cursorReady {
+			query += `
+			  AND (document.team_id, document.source_kind, document.source_id, document.search_document_id)
+			      > (?::uuid, ?, ?::uuid, ?::uuid)
+			`
+			args = append(args, cursor.TeamID.String, cursor.SourceKind.String, cursor.SourceID.String, cursor.SearchDocumentID.String)
+		}
+		query += `
+			ORDER BY document.team_id, document.source_kind, document.source_id, document.search_document_id
+			LIMIT ?
+		`
+		args = append(args, limit)
+		rows, err := tx.WithContext(ctx).Raw(query, args...).Rows()
 		if err != nil {
 			return err
 		}
@@ -204,6 +247,42 @@ func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(
 		}
 		if err := rows.Close(); err != nil {
 			return err
+		}
+		// Advance the durable keyset before canonical hydration. The page is
+		// bounded by limit, and the cursor lets later runs move past healthy
+		// documents instead of re-reading the same prefix forever.
+		if input.RunID != "" {
+			var update *gorm.DB
+			if len(documents) == 0 {
+				update = tx.WithContext(ctx).Exec(`
+					UPDATE search_reconciliation_runs
+					SET selection_cursor_observed_at = NULL,
+					    selection_cursor_team_id = NULL,
+					    selection_cursor_source_kind = NULL,
+					    selection_cursor_source_id = NULL,
+					    selection_cursor_search_document_id = NULL,
+					    updated_at = clock_timestamp()
+					WHERE reconciliation_run_id = ?::uuid
+				`, input.RunID)
+			} else {
+				last := documents[len(documents)-1].item
+				update = tx.WithContext(ctx).Exec(`
+					UPDATE search_reconciliation_runs
+					SET selection_cursor_observed_at = clock_timestamp(),
+					    selection_cursor_team_id = ?::uuid,
+					    selection_cursor_source_kind = ?,
+					    selection_cursor_source_id = ?::uuid,
+					    selection_cursor_search_document_id = ?::uuid,
+					    updated_at = clock_timestamp()
+					WHERE reconciliation_run_id = ?::uuid
+				`, last.TeamID, last.SourceKind, last.SourceID, last.SearchDocumentID, input.RunID)
+			}
+			if update.Error != nil {
+				return update.Error
+			}
+			if update.RowsAffected != 1 {
+				return gorm.ErrRecordNotFound
+			}
 		}
 		for _, observed := range documents {
 			if len(result) >= limit {
@@ -526,6 +605,21 @@ func (r *SearchRepositoryImpl) FinishSearchReconciliationRun(
 		}
 		if updated.RowsAffected != 1 {
 			return gorm.ErrRecordNotFound
+		}
+		if input.Status != "completed" {
+			reset := tx.WithContext(ctx).Exec(`
+				UPDATE search_reconciliation_runs
+				SET selection_cursor_observed_at = NULL,
+				    selection_cursor_team_id = NULL,
+				    selection_cursor_source_kind = NULL,
+				    selection_cursor_source_id = NULL,
+				    selection_cursor_search_document_id = NULL,
+				    updated_at = clock_timestamp()
+				WHERE reconciliation_run_id = ?::uuid
+			`, input.RunID)
+			if reset.Error != nil {
+				return reset.Error
+			}
 		}
 		return nil
 	})

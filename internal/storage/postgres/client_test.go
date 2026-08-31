@@ -525,11 +525,12 @@ func TestPostCutoverCleanupMigrationFreshUpgradeSucceeds(t *testing.T) {
 	assert.False(t, columnExists(t, ctx, sqlDB, "placement_runs", "migration_claim_epoch"))
 
 	var markerCount int
-	require.NoError(t, sqlDB.QueryRowContext(ctx, `
-		SELECT count(*)::int
-		FROM v2_compatibility_markers
-	`).Scan(&markerCount))
-	assert.Zero(t, markerCount, "fresh authority marker is created by server bootstrap after migrations")
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*)::int FROM v2_compatibility_markers`).Scan(&markerCount))
+	assert.Equal(t, 1, markerCount, "the cutover migration records the compatible authority marker")
+	var markerVersion, markerStatus string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT version, status FROM v2_compatibility_markers WHERE marker_kind = 'v2_cutover'`).Scan(&markerVersion, &markerStatus))
+	assert.Equal(t, "dense-mem.v2.6.1.cutover.v1", markerVersion)
+	assert.Equal(t, "compatible", markerStatus)
 }
 
 func TestPostCutoverCleanupMigrationWithCompatibleMarkerDropsLegacyTables(t *testing.T) {
@@ -964,8 +965,8 @@ func insertMigrationAuthorityFixture(t *testing.T, ctx context.Context, db *sql.
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO knowledge_ingests (team_id, ingest_id, owner_profile_id, status)
-			VALUES ($1::uuid, $2::uuid, $3::uuid, 'queued')
+			INSERT INTO knowledge_ingests (team_id, ingest_id, owner_profile_id, idempotency_key, request_hash, status, metadata)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, 'migration-authority-' || $2::text, 'migration-authority-request-' || $2::text, 'queued', '{"_dense_mem_telemetry_origin":"remember"}'::jsonb)
 		`, teamID, ingestID, profileID); err != nil {
 			return err
 		}

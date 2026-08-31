@@ -409,21 +409,34 @@ SELECT team_id, ingest_id, owner_profile_id, origin_kind
 FROM dense_mem_cutover_ingest_origins
 WHERE origin_kind IN ('remember', 'conflict_derived');
 
+DO $$
+DECLARE
+    unknown_count BIGINT;
+BEGIN
+    SELECT count(*) INTO unknown_count
+    FROM dense_mem_cutover_ingest_origins
+    WHERE origin_kind = 'unknown';
+    IF unknown_count <> 0 THEN
+        RAISE EXCEPTION 'synchronous Remember cutover blocked: % ingests have an unknown origin', unknown_count;
+    END IF;
+END;
+$$;
+
 -- Copy Remember-origin history into the terminal-attempt and chronological
 -- event projections before the legacy placement tables are retired. The
 -- source rows remain untouched until the final stopped-service release step.
 -- The attempt contract_version is a storage marker for the legacy request-hash
 -- envelope; public_result retains the v2.6.1 terminal response contract.
 WITH legacy AS MATERIALIZED (
-    SELECT ingest.team_id, ingest.ingest_id, ingest.owner_profile_id,
-           retained.origin_kind,
-           ingest.space_id, ingest.space_generation,
-           ingest.idempotency_key, ingest.request_hash, ingest.created_at,
-           ingest.completed_at, ingest.status,
-           COALESCE(run.status, ingest.status) AS run_status,
-           COALESCE(run.attempts, 0) AS attempts,
-           COALESCE(run.max_attempts, 0) AS max_attempts,
-           COALESCE(ingest.metadata #>> '{actor,correlation_id}', '') AS correlation_id,
+	SELECT ingest.team_id, ingest.ingest_id, ingest.owner_profile_id,
+	       retained.origin_kind,
+	       ingest.space_id, ingest.space_generation,
+	       ingest.idempotency_key, ingest.request_hash, ingest.created_at,
+	       ingest.completed_at, ingest.status, ingest.proposal,
+	       COALESCE(run.status, ingest.status) AS run_status,
+	       COALESCE(run.attempts, 0) AS attempts,
+	       COALESCE(run.max_attempts, 0) AS max_attempts,
+	       COALESCE(NULLIF(left(btrim(ingest.metadata #>> '{actor,correlation_id}'), 128), ''), ingest.ingest_id::text) AS correlation_id,
            (SELECT count(*) FROM evidence_fragments AS fragment
             WHERE fragment.team_id = ingest.team_id AND fragment.ingest_id = ingest.ingest_id) AS evidence_count,
            (SELECT count(*) FROM relationship_observations AS observation
@@ -435,15 +448,142 @@ WITH legacy AS MATERIALIZED (
      AND retained.owner_profile_id = ingest.owner_profile_id
     LEFT JOIN placement_runs AS run
       ON run.team_id = ingest.team_id AND run.ingest_id = ingest.ingest_id
-), normalized AS (
-    SELECT legacy.*,
+	), normalized AS (
+	    SELECT legacy.*,
            CASE
              WHEN legacy.run_status IN ('completed') OR legacy.status = 'completed' THEN 'completed'
              WHEN legacy.run_status IN ('rejected') OR legacy.status = 'rejected' THEN 'rejected'
              WHEN legacy.run_status IN ('quarantined') OR legacy.status = 'quarantined' THEN 'quarantined'
              ELSE 'failed'
            END AS outcome
-    FROM legacy
+	    FROM legacy
+), projected AS (
+	SELECT normalized.*,
+	       COALESCE(evidence_projection.value, '[]'::jsonb) AS evidence_result,
+	       COALESCE(relationship_projection.value, '[]'::jsonb) AS relationship_result,
+	       COALESCE(evidence_projection.has_stored, false)
+	           OR COALESCE(relationship_projection.has_stored, false) AS has_stored_result
+	FROM normalized
+	LEFT JOIN LATERAL (
+	    SELECT jsonb_agg(
+	               jsonb_strip_nulls(jsonb_build_object(
+	                   'disposition', CASE
+	                       WHEN normalized.outcome = 'completed'
+	                            AND item.status = 'completed'
+	                            AND item.category NOT IN ('rejected', 'quarantined', 'failed')
+	                           THEN 'stored'
+	                       ELSE 'not_stored'
+	                   END,
+	                   'evidence_id', CASE
+	                       WHEN normalized.outcome = 'completed'
+	                            AND item.status = 'completed'
+	                            AND item.category NOT IN ('rejected', 'quarantined', 'failed')
+	                           THEN fragment.fragment_id::text
+	                   END,
+	                   'evidence_index', fragment.evidence_index,
+	                   'superseded_evidence_ids', CASE
+	                       WHEN normalized.outcome = 'completed'
+	                            AND item.status = 'completed'
+	                            AND item.category NOT IN ('rejected', 'quarantined', 'failed')
+	                           THEN COALESCE((
+	                               SELECT jsonb_agg(event.target_fragment_id::text ORDER BY event.target_fragment_id)
+	                               FROM evidence_lifecycle_events AS event
+	                               WHERE event.team_id = fragment.team_id
+	                                 AND event.replacement_fragment_id = fragment.fragment_id
+	                                 AND event.action = 'supersede'
+	                                 AND NOT EXISTS (
+	                                     SELECT 1
+	                                     FROM evidence_fragments AS current_fragment
+	                                     WHERE current_fragment.team_id = normalized.team_id
+	                                       AND current_fragment.ingest_id = normalized.ingest_id
+	                                       AND current_fragment.fragment_id = event.target_fragment_id
+	                                 )
+	                           ), '[]'::jsonb)
+	                       ELSE '[]'::jsonb
+	                   END,
+	                   'search_state', CASE
+	                       WHEN normalized.outcome = 'completed'
+	                            AND item.status = 'completed'
+	                            AND item.category NOT IN ('rejected', 'quarantined', 'failed')
+	                           THEN 'current'
+	                       ELSE 'not_required'
+	                   END,
+	                   'reason', CASE
+	                       WHEN normalized.outcome = 'completed'
+	                            AND item.status = 'completed'
+	                            AND item.category NOT IN ('rejected', 'quarantined', 'failed')
+	                           THEN NULL
+	                       WHEN normalized.outcome = 'rejected' THEN 'not_supported_by_evidence'
+	                       WHEN normalized.outcome = 'quarantined' THEN 'security_quarantine'
+	                       ELSE 'internal_failure'
+	                   END
+	               )) ORDER BY fragment.evidence_index, fragment.fragment_id
+	           ) AS value,
+	           COALESCE(bool_or(
+	               normalized.outcome = 'completed'
+	               AND item.status = 'completed'
+	               AND item.category NOT IN ('rejected', 'quarantined', 'failed')
+	           ), false) AS has_stored
+	    FROM evidence_fragments AS fragment
+    LEFT JOIN placement_items AS item
+      ON item.team_id = fragment.team_id
+     AND item.ingest_id = fragment.ingest_id
+     AND item.owner_profile_id = fragment.owner_profile_id
+     AND item.fragment_id = fragment.fragment_id
+	    WHERE fragment.team_id = normalized.team_id
+	      AND fragment.ingest_id = normalized.ingest_id
+	      AND fragment.owner_profile_id = normalized.owner_profile_id
+	) AS evidence_projection ON true
+	LEFT JOIN LATERAL (
+	    SELECT jsonb_agg(
+	               jsonb_strip_nulls(jsonb_build_object(
+	                   'ref', hint_fields.relationship_ref,
+	                   'disposition', CASE
+	                       WHEN normalized.outcome = 'completed'
+	                           THEN COALESCE(result.disposition, 'not_stored')
+	                       ELSE 'not_stored'
+	                   END,
+	                   'reason', CASE
+	                       WHEN normalized.outcome = 'completed'
+	                            AND COALESCE(result.disposition, 'not_stored') = 'stored'
+	                           THEN NULL
+	                       WHEN result.reason IS NOT NULL AND btrim(result.reason) <> ''
+	                           THEN result.reason
+	                       WHEN normalized.outcome = 'completed' THEN 'not_supported_by_evidence'
+	                       WHEN normalized.outcome = 'rejected' THEN 'not_supported_by_evidence'
+	                       WHEN normalized.outcome = 'quarantined' THEN 'security_quarantine'
+	                       ELSE 'internal_failure'
+	                   END,
+	                   'splits', CASE
+	                       WHEN normalized.outcome = 'completed'
+	                            AND result.disposition = 'stored'
+	                            AND jsonb_typeof(result.splits) = 'array'
+	                           THEN result.splits
+	                       ELSE '[]'::jsonb
+	                   END
+	               )) ORDER BY hints.ordinal
+	           ) AS value,
+	           COALESCE(bool_or(normalized.outcome = 'completed' AND result.disposition = 'stored'), false) AS has_stored
+	    FROM jsonb_array_elements(
+	             CASE
+	                 WHEN jsonb_typeof(normalized.proposal -> 'relationship_hints') = 'array'
+	                     THEN normalized.proposal -> 'relationship_hints'
+	                 WHEN jsonb_typeof(normalized.proposal -> 'relationships') = 'array'
+	                     THEN normalized.proposal -> 'relationships'
+	                 ELSE '[]'::jsonb
+	             END
+	         ) WITH ORDINALITY AS hints(value, ordinal)
+	    CROSS JOIN LATERAL (
+	        SELECT btrim(hints.value ->> 'ref') AS relationship_ref
+	    ) AS hint_fields
+	    LEFT JOIN submission_relationship_results AS result
+	      ON result.team_id = normalized.team_id
+	     AND result.ingest_id = normalized.ingest_id
+	     AND result.owner_profile_id = normalized.owner_profile_id
+	     AND result.relationship_ref = hint_fields.relationship_ref
+	    WHERE jsonb_typeof(hints.value) = 'object'
+	      AND hint_fields.relationship_ref <> ''
+	) AS relationship_projection ON true
 )
 INSERT INTO remember_attempts (
     team_id, attempt_id, owner_profile_id, space_id, space_generation,
@@ -451,32 +591,78 @@ INSERT INTO remember_attempts (
     error_code, correlation_id, public_result, canonical_attempt_id,
     evidence_count, relationship_count, created_at, completed_at
 )
-SELECT normalized.team_id, normalized.ingest_id, normalized.owner_profile_id,
-       normalized.space_id, normalized.space_generation,
-       COALESCE(NULLIF(normalized.idempotency_key, ''), 'legacy:' || normalized.ingest_id::text),
-       COALESCE(NULLIF(normalized.request_hash, ''), 'legacy:' || normalized.ingest_id::text),
-       'remember_request_hash_v1', 'remember', normalized.outcome,
-       CASE WHEN normalized.outcome = 'failed' THEN 'internal_failure' ELSE '' END,
-           normalized.correlation_id,
-       jsonb_build_object(
-           'contract_version', 'dense-mem.v2.6.1',
-           'submission_id', normalized.ingest_id::text,
-           'submission_kind', 'remember',
-           'legacy_origin', normalized.origin_kind,
-           'processing_state', normalized.outcome,
-           'search_state', CASE WHEN normalized.outcome = 'completed' THEN 'current' ELSE 'not_required' END,
-           'correlation_id', normalized.correlation_id,
-           'evidence', '[]'::jsonb,
-           'relationship_results', '[]'::jsonb,
-           'errors', CASE WHEN normalized.outcome = 'failed' THEN jsonb_build_array(jsonb_build_object(
-               'code', 'internal_failure', 'message', 'legacy Remember result was migrated during the v2.6.1 cutover',
-               'retryable', true, 'next_action', 'retry_same_request', 'remediation', 'Retry the complete request with the same idempotency key.'
-           )) ELSE '[]'::jsonb END
-       ),
-       NULL, normalized.evidence_count, normalized.relationship_count,
-       normalized.created_at, COALESCE(normalized.completed_at, now())
-FROM normalized
+	SELECT projected.team_id, projected.ingest_id, projected.owner_profile_id,
+	       projected.space_id, projected.space_generation,
+	       COALESCE(NULLIF(projected.idempotency_key, ''), 'legacy:' || projected.ingest_id::text),
+	       COALESCE(NULLIF(projected.request_hash, ''), 'legacy:' || projected.ingest_id::text),
+	       'remember_request_hash_v1', 'remember', projected.outcome,
+	       CASE projected.outcome
+	           WHEN 'rejected' THEN 'no_supported_memory'
+	           WHEN 'quarantined' THEN 'submission_quarantined'
+	           WHEN 'failed' THEN 'internal_failure'
+	           ELSE ''
+	       END,
+	           projected.correlation_id,
+	       jsonb_build_object(
+	           'contract_version', 'dense-mem.v2.6.1',
+	           'submission_id', projected.ingest_id::text,
+	           'submission_kind', 'remember',
+	           'legacy_origin', projected.origin_kind,
+	           'processing_state', projected.outcome,
+	           'search_state', CASE WHEN projected.has_stored_result THEN 'current' ELSE 'not_required' END,
+	           'correlation_id', projected.correlation_id,
+	           'evidence', projected.evidence_result,
+	           'relationship_results', projected.relationship_result,
+	           'errors', CASE projected.outcome
+	               WHEN 'rejected' THEN jsonb_build_array(jsonb_build_object(
+	                   'code', 'no_supported_memory',
+	                   'message', 'no supported memory could be stored from this submission',
+	                   'retryable', true, 'next_action', 'resubmit_remember',
+	                   'remediation', 'Submit the complete batch again with remember and a new idempotency_key after correcting the input.'
+	               ))
+	               WHEN 'quarantined' THEN jsonb_build_array(jsonb_build_object(
+	                   'code', 'submission_quarantined',
+	                   'message', 'the submission was quarantined by security policy',
+	                   'retryable', true, 'next_action', 'resubmit_remember',
+	                   'remediation', 'Submit the complete batch again with remember and a new idempotency_key after correcting the input.'
+	               ))
+	               WHEN 'failed' THEN jsonb_build_array(jsonb_build_object(
+	                   'code', 'internal_failure',
+	                   'message', 'Dense-Mem could not complete the submission',
+	                   'retryable', true, 'next_action', 'retry_same_request',
+	                   'remediation', 'Retry the same request with the same idempotency_key after the transient failure clears.'
+	               ))
+	               ELSE '[]'::jsonb
+	           END
+	       ),
+	       NULL, projected.evidence_count, projected.relationship_count,
+	       projected.created_at, COALESCE(projected.completed_at, now())
+FROM projected
 ON CONFLICT DO NOTHING;
+
+DO $$
+DECLARE
+    invalid_completed BIGINT;
+BEGIN
+    SELECT count(*) INTO invalid_completed
+    FROM remember_attempts AS attempt
+    WHERE attempt.contract_version = 'remember_request_hash_v1'
+      AND attempt.outcome = 'completed'
+      AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(attempt.public_result -> 'evidence') AS evidence(value)
+          WHERE evidence.value ->> 'disposition' = 'stored'
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(attempt.public_result -> 'relationship_results') AS relationship(value)
+          WHERE relationship.value ->> 'disposition' = 'stored'
+      );
+    IF invalid_completed <> 0 THEN
+        RAISE EXCEPTION 'synchronous Remember cutover blocked: % completed attempts have no stored terminal result', invalid_completed;
+    END IF;
+END;
+$$;
 
 WITH legacy_events AS (
     SELECT attempt.team_id, attempt.attempt_id, attempt.owner_profile_id,
@@ -599,31 +785,38 @@ WITH assessment_rows AS (
            placement.input_tokens, placement.output_tokens,
            placement.candidate_context_tokens, placement.candidate_context_truncated,
            placement.validated_at
-    FROM knowledge_ingests AS legacy
+    FROM placement_assessments AS placement
+    JOIN knowledge_ingests AS legacy
+      ON legacy.team_id = placement.team_id
+     AND legacy.ingest_id = placement.ingest_id
+     AND legacy.owner_profile_id = placement.owner_profile_id
     JOIN dense_mem_cutover_retained_ingests AS retained
       ON retained.team_id = legacy.team_id
      AND retained.ingest_id = legacy.ingest_id
      AND retained.owner_profile_id = legacy.owner_profile_id
-    JOIN placement_runs AS run
-      ON run.team_id = legacy.team_id
-     AND run.ingest_id = legacy.ingest_id
-     AND run.owner_profile_id = legacy.owner_profile_id
-    LEFT JOIN placement_items AS item
-      ON item.team_id = run.team_id
-     AND item.placement_run_id = run.placement_run_id
-     AND item.owner_profile_id = run.owner_profile_id
-    JOIN placement_assessments AS placement
-      ON placement.team_id = legacy.team_id
-     AND (
-         (placement.assessment_scope = 'submission'
-          AND placement.placement_run_id = run.placement_run_id
-          AND placement.ingest_id = legacy.ingest_id
-          AND placement.owner_profile_id = legacy.owner_profile_id)
-         OR
-         (placement.assessment_scope = 'item'
-          AND placement.placement_item_id = item.placement_item_id
-          AND placement.owner_profile_id = item.owner_profile_id)
-     )
+    WHERE placement.assessment_scope = 'submission'
+    UNION ALL
+    SELECT legacy.team_id, legacy.ingest_id, legacy.owner_profile_id,
+           placement.assessment_id, 0 AS revision_number,
+           placement.normalized_response, placement.response_hash,
+           placement.provider_turns, placement.model, placement.tokenizer,
+           placement.input_tokens, placement.output_tokens,
+           placement.candidate_context_tokens, placement.candidate_context_truncated,
+           placement.validated_at
+    FROM placement_assessments AS placement
+    JOIN placement_items AS item
+      ON item.team_id = placement.team_id
+     AND item.placement_item_id = placement.placement_item_id
+     AND item.owner_profile_id = placement.owner_profile_id
+    JOIN knowledge_ingests AS legacy
+      ON legacy.team_id = item.team_id
+     AND legacy.ingest_id = item.ingest_id
+     AND legacy.owner_profile_id = item.owner_profile_id
+    JOIN dense_mem_cutover_retained_ingests AS retained
+      ON retained.team_id = legacy.team_id
+     AND retained.ingest_id = legacy.ingest_id
+     AND retained.owner_profile_id = legacy.owner_profile_id
+    WHERE placement.assessment_scope = 'item'
     UNION ALL
     SELECT revision.team_id, revision.ingest_id, revision.owner_profile_id,
            revision.assessment_id, revision.revision_number,
@@ -1043,6 +1236,27 @@ ALTER TABLE predicate_registration_events
     ADD COLUMN IF NOT EXISTS ingest_id UUID;
 
 DROP TRIGGER IF EXISTS predicate_registration_events_append_only ON predicate_registration_events;
+DROP TRIGGER IF EXISTS entity_resolution_events_append_only ON entity_resolution_events;
+DROP TRIGGER IF EXISTS verification_events_append_only ON verification_events;
+
+-- FORCE RLS applies to the non-superuser table owner used by production
+-- migrations. Open only the bounded update path needed to repoint immutable
+-- assessment history, then remove it before restoring the append-only guards.
+DROP POLICY IF EXISTS dense_mem_20260831010001_predicate_registration_update ON predicate_registration_events;
+CREATE POLICY dense_mem_20260831010001_predicate_registration_update ON predicate_registration_events
+    FOR UPDATE
+    USING (current_setting('app.tx_mode', true) = 'migration')
+    WITH CHECK (current_setting('app.tx_mode', true) = 'migration');
+DROP POLICY IF EXISTS dense_mem_20260831010001_entity_resolution_update ON entity_resolution_events;
+CREATE POLICY dense_mem_20260831010001_entity_resolution_update ON entity_resolution_events
+    FOR UPDATE
+    USING (current_setting('app.tx_mode', true) = 'migration')
+    WITH CHECK (current_setting('app.tx_mode', true) = 'migration');
+DROP POLICY IF EXISTS dense_mem_20260831010001_verification_update ON verification_events;
+CREATE POLICY dense_mem_20260831010001_verification_update ON verification_events
+    FOR UPDATE
+    USING (current_setting('app.tx_mode', true) = 'migration')
+    WITH CHECK (current_setting('app.tx_mode', true) = 'migration');
 
 -- The reassignment below changes the referenced assessment identifiers. Remove
 -- the old placement-assessment foreign keys before updating the identifiers;
@@ -1059,6 +1273,16 @@ ALTER TABLE predicate_registration_events
     DROP CONSTRAINT IF EXISTS predicate_registration_events_assessment_id_fkey,
     DROP CONSTRAINT IF EXISTS predicate_registration_events_assessment_ref;
 
+-- A legacy predicate-registration event can outlive its placement-run link
+-- while its assessment history still identifies one authoritative ingest.
+-- Preserve both legacy identifiers and recover that mapping without deleting
+-- the append-only event.
+UPDATE predicate_registration_events AS event
+SET metadata = event.metadata || jsonb_build_object(
+    'legacy_placement_run_id', event.placement_run_id,
+    'legacy_assessment_id', event.assessment_id
+);
+
 UPDATE predicate_registration_events AS event
 SET ingest_id = run.ingest_id
 FROM placement_runs AS run
@@ -1067,29 +1291,50 @@ WHERE run.team_id = event.team_id
   AND run.owner_profile_id = event.owner_profile_id
   AND event.ingest_id IS NULL;
 
+UPDATE predicate_registration_events AS event
+SET ingest_id = assessment_map.ingest_id
+FROM dense_mem_semantic_assessment_map AS assessment_map,
+     semantic_assessments AS assessment
+WHERE assessment_map.team_id = event.team_id
+  AND assessment_map.old_assessment_id = event.assessment_id
+  AND assessment.team_id = assessment_map.team_id
+  AND assessment.semantic_assessment_id = assessment_map.semantic_assessment_id
+  AND assessment.owner_profile_id = event.owner_profile_id
+  AND event.ingest_id IS NULL;
+
 DO $$
 DECLARE
     missing_ingest BIGINT;
     missing_assessments BIGINT;
     unknown_origins BIGINT;
+    conflicting_mappings BIGINT;
 BEGIN
+    SELECT count(*) INTO conflicting_mappings
+    FROM predicate_registration_events AS event
+    LEFT JOIN dense_mem_semantic_assessment_map AS assessment_map
+      ON assessment_map.team_id = event.team_id
+     AND assessment_map.old_assessment_id = event.assessment_id
+    LEFT JOIN semantic_assessments AS assessment
+      ON assessment.team_id = assessment_map.team_id
+     AND assessment.semantic_assessment_id = assessment_map.semantic_assessment_id
+    WHERE assessment_map.semantic_assessment_id IS NULL
+       OR assessment.owner_profile_id IS DISTINCT FROM event.owner_profile_id
+       OR assessment_map.ingest_id IS DISTINCT FROM event.ingest_id;
+    IF conflicting_mappings <> 0 THEN
+        RAISE EXCEPTION 'synchronous Remember cutover blocked: % predicate registration event mappings disagree with assessment history', conflicting_mappings;
+    END IF;
+
     SELECT count(*) INTO unknown_origins
     FROM predicate_registration_events AS event
-    JOIN placement_runs AS run
-      ON run.team_id = event.team_id
-     AND run.placement_run_id = event.placement_run_id
-     AND run.owner_profile_id = event.owner_profile_id
     LEFT JOIN knowledge_ingests AS ingest
-      ON ingest.team_id = run.team_id
-     AND ingest.ingest_id = run.ingest_id
-     AND ingest.owner_profile_id = run.owner_profile_id
-    WHERE NOT EXISTS (
-        SELECT 1
-        FROM dense_mem_cutover_retained_ingests AS retained
-        WHERE retained.team_id = run.team_id
-          AND retained.ingest_id = run.ingest_id
-          AND retained.owner_profile_id = run.owner_profile_id
-    );
+      ON ingest.team_id = event.team_id
+     AND ingest.ingest_id = event.ingest_id
+     AND ingest.owner_profile_id = event.owner_profile_id
+    LEFT JOIN dense_mem_cutover_retained_ingests AS retained
+      ON retained.team_id = event.team_id
+     AND retained.ingest_id = event.ingest_id
+     AND retained.owner_profile_id = event.owner_profile_id
+    WHERE ingest.ingest_id IS NULL OR retained.ingest_id IS NULL;
     IF unknown_origins <> 0 THEN
         RAISE EXCEPTION 'synchronous Remember cutover blocked: % predicate registrations have an unknown origin', unknown_origins;
     END IF;
@@ -1144,6 +1389,17 @@ SET assessment_id = map.semantic_assessment_id
 FROM dense_mem_semantic_assessment_map AS map
 WHERE map.team_id = event.team_id
   AND map.old_assessment_id = event.assessment_id;
+
+DROP POLICY IF EXISTS dense_mem_20260831010001_predicate_registration_update ON predicate_registration_events;
+DROP POLICY IF EXISTS dense_mem_20260831010001_entity_resolution_update ON entity_resolution_events;
+DROP POLICY IF EXISTS dense_mem_20260831010001_verification_update ON verification_events;
+
+CREATE TRIGGER entity_resolution_events_append_only
+    BEFORE UPDATE OR DELETE ON entity_resolution_events
+    FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation();
+CREATE TRIGGER verification_events_append_only
+    BEFORE UPDATE OR DELETE ON verification_events
+    FOR EACH ROW EXECUTE FUNCTION prevent_append_only_mutation();
 
 DROP INDEX IF EXISTS submission_relationship_results_submission_idx;
 ALTER TABLE submission_relationship_results

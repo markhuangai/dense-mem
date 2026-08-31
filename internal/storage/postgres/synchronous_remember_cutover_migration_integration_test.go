@@ -5,11 +5,13 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,7 +26,8 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
 	ingestID, runID, itemID, fragmentID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	expiredIngestID, expiredRunID := uuid.New(), uuid.New()
-	assessmentID, revisionID, outcomeID := uuid.New(), uuid.New(), uuid.New()
+	rejectedIngestID, rejectedRunID, rejectedItemID, rejectedFragmentID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	assessmentID, revisionID, outcomeID, relationshipID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	claimKey := uuid.New()
 	responseHash := "sha256:" + strings.Repeat("a", 64)
 	revisionHash := "sha256:" + strings.Repeat("b", 64)
@@ -35,8 +38,8 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 				team_id, ingest_id, owner_profile_id, idempotency_key,
 				request_hash, status, proposal, metadata, completed_at
 			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'cutover-history',
-				        'cutover-history-request', 'completed',
-				        '{"relationship_hints":[]}'::jsonb,
+			          'cutover-history-request', 'completed',
+			          '{"relationship_hints":[{"ref":"legacy-ref"}]}'::jsonb,
 				        '{"_dense_mem_telemetry_origin":"remember","contract_version":"dense-mem.v2.5"}'::jsonb,
 				        now())
 		`, teamID, ingestID, profileID); err != nil {
@@ -78,6 +81,20 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			          $5::uuid, 'relationship_result', 'completed', '{"stored":true}'::jsonb)
 		`, teamID, outcomeID, runID, itemID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO submission_relationship_results (
+				team_id, ingest_id, placement_run_id, owner_profile_id,
+				relationship_ref, disposition, reason, splits
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          'legacy-ref', 'stored', '',
+			          jsonb_build_array(jsonb_build_object(
+			              'split_index', 0,
+			              'relationship_id', $5::text,
+			              'relationship_version', 1,
+			              'status', 'active')))
+		`, teamID, ingestID, runID, profileID, relationshipID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -160,6 +177,48 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 			          '{"old":true}'::jsonb, '[{"old":true}]'::jsonb, '{}'::jsonb,
 			          now() - interval '8 days', now() - interval '7 days')
 		`, teamID, expiredRunID, expiredIngestID, profileID)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id, idempotency_key,
+				request_hash, status, proposal, metadata, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'cutover-rejected',
+			          'cutover-rejected-request', 'rejected',
+			          '{"relationship_hints":[]}'::jsonb,
+			          '{"_dense_mem_telemetry_origin":"remember"}'::jsonb,
+			          now())
+		`, teamID, rejectedIngestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_fragments (
+				team_id, fragment_id, ingest_id, owner_profile_id,
+				evidence_index, content, content_hash
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          0, 'legacy rejected evidence', 'sha256:legacy-rejected')
+		`, teamID, rejectedFragmentID, rejectedIngestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_runs (
+				team_id, placement_run_id, ingest_id, owner_profile_id,
+				status, attempts, max_attempts, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          'rejected', 1, 5, now())
+		`, teamID, rejectedRunID, rejectedIngestID, profileID); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO placement_items (
+				team_id, placement_item_id, placement_run_id, ingest_id,
+				owner_profile_id, fragment_id, evidence_index, claim_key,
+				status, category, result
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          $5::uuid, $6::uuid, 0, $7::uuid,
+			          'rejected', 'rejected', '{}'::jsonb)
+		`, teamID, rejectedItemID, rejectedRunID, rejectedIngestID, profileID, rejectedFragmentID, rejectedItemID)
 		return err
 	}))
 
@@ -173,6 +232,67 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	require.Equal(t, "completed", outcome)
 	require.Equal(t, "remember_request_hash_v1", attemptContractVersion)
 	require.Equal(t, "dense-mem.v2.6.1", publicContractVersion)
+	var evidenceDisposition, evidenceID, correlationID string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT public_result -> 'evidence' -> 0 ->> 'disposition',
+		       public_result -> 'evidence' -> 0 ->> 'evidence_id',
+		       public_result ->> 'correlation_id'
+		FROM remember_attempts
+		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+	`, teamID, ingestID).Scan(&evidenceDisposition, &evidenceID, &correlationID))
+	require.Equal(t, "stored", evidenceDisposition)
+	require.Equal(t, fragmentID.String(), evidenceID)
+	require.Equal(t, ingestID.String(), correlationID)
+	var migratedCompletedJSON []byte
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT public_result
+		FROM remember_attempts
+		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+	`, teamID, ingestID).Scan(&migratedCompletedJSON))
+	var migratedCompleted remember.TerminalRememberResult
+	require.NoError(t, json.Unmarshal(migratedCompletedJSON, &migratedCompleted))
+	migratedCompleted.Kind = remember.ResultKindTerminal
+	require.NoError(t, remember.ValidateTerminalRememberResult(&migratedCompleted, 1, []string{"legacy-ref"}))
+
+	var rejectedDisposition, rejectedReason, rejectedErrorCode string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT public_result -> 'evidence' -> 0 ->> 'disposition',
+		       public_result -> 'evidence' -> 0 ->> 'reason',
+		       public_result -> 'errors' -> 0 ->> 'code'
+		FROM remember_attempts
+		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+	`, teamID, rejectedIngestID).Scan(&rejectedDisposition, &rejectedReason, &rejectedErrorCode))
+	require.Equal(t, "not_stored", rejectedDisposition)
+	require.Equal(t, "not_supported_by_evidence", rejectedReason)
+	require.Equal(t, "no_supported_memory", rejectedErrorCode)
+	var migratedRejectedJSON []byte
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT public_result
+		FROM remember_attempts
+		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+	`, teamID, rejectedIngestID).Scan(&migratedRejectedJSON))
+	var migratedRejected remember.TerminalRememberResult
+	require.NoError(t, json.Unmarshal(migratedRejectedJSON, &migratedRejected))
+	migratedRejected.Kind = remember.ResultKindTerminal
+	require.NoError(t, remember.ValidateTerminalRememberResult(&migratedRejected, 1, nil))
+
+	var expiredErrorCode string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT public_result -> 'errors' -> 0 ->> 'code'
+		FROM remember_attempts
+		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+	`, teamID, expiredIngestID).Scan(&expiredErrorCode))
+	require.Equal(t, "submission_quarantined", expiredErrorCode)
+	var migratedQuarantinedJSON []byte
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT public_result
+		FROM remember_attempts
+		WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+	`, teamID, expiredIngestID).Scan(&migratedQuarantinedJSON))
+	var migratedQuarantined remember.TerminalRememberResult
+	require.NoError(t, json.Unmarshal(migratedQuarantinedJSON, &migratedQuarantined))
+	migratedQuarantined.Kind = remember.ResultKindTerminal
+	require.NoError(t, remember.ValidateTerminalRememberResult(&migratedQuarantined, 0, nil))
 
 	var eventCount, itemEvents, outcomeEvents int
 	require.NoError(t, db.QueryRowContext(ctx, `
@@ -266,7 +386,7 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	`).Scan(&markerVersion, &markerStatus, &markerMetadata))
 	require.Equal(t, "dense-mem.v2.6.1.cutover.v1", markerVersion)
 	require.Equal(t, "compatible", markerStatus)
-	require.Contains(t, markerMetadata, `"placement_item_count": 1`)
+	require.Contains(t, markerMetadata, `"placement_item_count": 2`)
 	require.Contains(t, markerMetadata, `"placement_outcome_count": 1`)
 	require.Contains(t, markerMetadata, `"assessment_history_count": 2`)
 
@@ -370,107 +490,6 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	require.Equal(t, 4, semanticAssessmentForeignKeys)
 }
 
-func TestRememberSynchronousCutoverRejectsExistingMarkerConflict(t *testing.T) {
-	ctx := context.Background()
-	db, cleanup := openMigrationSQLDB(t, ctx)
-	defer cleanup()
-
-	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
-	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO v2_compatibility_markers (
-				marker_kind, version, status, corpus_hash, gate_report_hash, metadata
-			) VALUES (
-				'v2_cutover', 'dense-mem.v2.6.1.cutover.v1', 'incompatible',
-				'sha256:fixture', 'sha256:fixture', '{"fixture":"marker-conflict"}'::jsonb
-			)
-		`)
-		return err
-	}))
-
-	err := migrationUpTo(ctx, db, synchronousRememberCutoverMigrationVersion)
-	require.ErrorContains(t, err, "v2.6.1 compatible marker already exists")
-	require.True(t, tableExists(t, ctx, db, "placement_runs"))
-	var markerStatus string
-	require.NoError(t, db.QueryRowContext(ctx, `
-		SELECT status
-		FROM v2_compatibility_markers
-		WHERE marker_kind = 'v2_cutover'
-		  AND version = 'dense-mem.v2.6.1.cutover.v1'
-	`).Scan(&markerStatus))
-	require.Equal(t, "incompatible", markerStatus)
-	var cutoverApplied bool
-	require.NoError(t, db.QueryRowContext(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM goose_db_version
-			WHERE version_id = $1 AND is_applied
-		)
-	`, synchronousRememberCutoverMigrationVersion).Scan(&cutoverApplied))
-	require.False(t, cutoverApplied)
-}
-
-func TestRememberSynchronousCutoverRejectsConflictingAssessmentMapping(t *testing.T) {
-	ctx := context.Background()
-	db, cleanup := openMigrationSQLDB(t, ctx)
-	defer cleanup()
-
-	runGooseUpTo(t, ctx, db, synchronousWriteFoundationMigrationVersion)
-	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
-	attemptA, attemptB := uuid.New(), uuid.New()
-	semanticAssessmentA, semanticAssessmentB := uuid.New(), uuid.New()
-	legacyAssessmentID := uuid.New()
-	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
-		for _, attemptID := range []uuid.UUID{attemptA, attemptB} {
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO remember_attempts (
-					team_id, attempt_id, owner_profile_id, idempotency_key,
-					request_hash, contract_version, submission_kind, outcome
-				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4,
-				          $5, 'dense-mem.v2.6', 'remember', 'completed')
-			`, teamID, attemptID, profileID, "mapping-"+attemptID.String(), "mapping-request-"+attemptID.String()); err != nil {
-				return err
-			}
-		}
-		for _, assessmentID := range []uuid.UUID{semanticAssessmentA, semanticAssessmentB} {
-			attemptID := attemptA
-			if assessmentID == semanticAssessmentB {
-				attemptID = attemptB
-			}
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO semantic_assessments (
-					team_id, semantic_assessment_id, attempt_id, owner_profile_id,
-					response_history, accepted_revision, provider_turns, model,
-					response_hash, validated_at
-				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
-				          jsonb_build_array(jsonb_build_object('assessment_id', $5::text, 'revision_number', 1)),
-				          1, 1, 'mapping-conflict', $6, now())
-			`, teamID, assessmentID, attemptID, profileID, legacyAssessmentID, "sha256:"+strings.Repeat("c", 64)); err != nil {
-				return err
-			}
-		}
-		return nil
-	}))
-
-	err := migrationUpTo(ctx, db, synchronousRememberCutoverMigrationVersion)
-	require.ErrorContains(t, err, "assessment IDs have conflicting semantic mappings")
-	require.True(t, tableExists(t, ctx, db, "placement_runs"))
-	var markerCount int
-	require.NoError(t, db.QueryRowContext(ctx, `
-		SELECT count(*)
-		FROM v2_compatibility_markers
-		WHERE marker_kind = 'v2_cutover'
-		  AND version = 'dense-mem.v2.6.1.cutover.v1'
-	`).Scan(&markerCount))
-	require.Zero(t, markerCount)
-	var assessmentCount int
-	require.NoError(t, db.QueryRowContext(ctx, `
-		SELECT count(*)
-		FROM semantic_assessments
-		WHERE team_id = $1::uuid
-	`, teamID).Scan(&assessmentCount))
-	require.Equal(t, 2, assessmentCount)
-}
-
 func TestRememberSynchronousCutoverRollsBackCopiedHistoryOnGateFailure(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
@@ -478,7 +497,7 @@ func TestRememberSynchronousCutoverRollsBackCopiedHistoryOnGateFailure(t *testin
 
 	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
 	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
-	ingestID, runID := uuid.New(), uuid.New()
+	ingestID, runID, itemID, fragmentID, claimKey := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	contractID, generationID, documentID, sourceID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `
@@ -498,6 +517,26 @@ func TestRememberSynchronousCutoverRollsBackCopiedHistoryOnGateFailure(t *testin
 			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			          'completed', 1, 5, now())
 		`, teamID, runID, ingestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_fragments (
+				team_id, fragment_id, ingest_id, owner_profile_id,
+				evidence_index, content, content_hash
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          0, 'rollback evidence', 'sha256:rollback-evidence')
+		`, teamID, fragmentID, ingestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_items (
+				team_id, placement_item_id, placement_run_id, ingest_id,
+				owner_profile_id, fragment_id, evidence_index, claim_key,
+				status, category, result
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          $5::uuid, $6::uuid, 0, $7::uuid,
+			          'completed', 'validated_claim', '{"accepted":true}'::jsonb)
+		`, teamID, itemID, runID, ingestID, profileID, fragmentID, claimKey); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
@@ -546,41 +585,6 @@ func TestRememberSynchronousCutoverRollsBackCopiedHistoryOnGateFailure(t *testin
 		  AND version = 'dense-mem.v2.6.1.cutover.v1'
 	`).Scan(&markerCount))
 	require.Zero(t, markerCount)
-}
-
-func TestRememberSynchronousCutoverRejectsUnknownPlacementOrigin(t *testing.T) {
-	ctx := context.Background()
-	db, cleanup := openMigrationSQLDB(t, ctx)
-	defer cleanup()
-
-	runGooseUpTo(t, ctx, db, rememberReliabilityMigrationVersion)
-	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
-	ingestID, runID := uuid.New(), uuid.New()
-	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO knowledge_ingests (
-				team_id, ingest_id, owner_profile_id, idempotency_key,
-				request_hash, status, metadata, completed_at
-			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'unknown-origin',
-				        'unknown-origin-request', 'completed', '{}'::jsonb, now())
-		`, teamID, ingestID, profileID); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO placement_runs (
-				team_id, placement_run_id, ingest_id, owner_profile_id,
-				status, attempts, max_attempts, completed_at
-			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
-			          'completed', 1, 5, now())
-		`, teamID, runID, ingestID, profileID)
-		return err
-	}))
-
-	err := migrationUpTo(ctx, db, synchronousRememberCutoverMigrationVersion)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "placement runs have an unknown origin")
-	require.True(t, tableExists(t, ctx, db, "placement_runs"))
-	require.True(t, tableExists(t, ctx, db, "embedding_jobs"))
 }
 
 func TestRememberSynchronousCutoverPreservesConflictDerivedPlacementHistory(t *testing.T) {

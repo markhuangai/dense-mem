@@ -104,6 +104,91 @@ func TestSearchReconciliationSelectionAndHashFence(t *testing.T) {
 		UpdatedCount: apply.UpdatedCount, DriftedCount: apply.RemainingDriftedCount,
 	}))
 }
+
+func TestSearchReconciliationSelectionAdvancesDurableCursorPastHealthyDocuments(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-cursor")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-cursor-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-cursor", 2, "exact", "")
+	ledger := NewLedgerRepository(appDB, rls)
+	repo := NewSearchRepository(appDB, rls)
+
+	healthy, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-cursor-healthy",
+		RequestHash: sha256Hex("healthy cursor document"), Evidence: []EvidenceInput{{
+			FragmentID: "00000000-0000-0000-0000-000000000001", Content: "healthy cursor document",
+		}},
+	})
+	require.NoError(t, err)
+	drifted, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-cursor-drifted",
+		RequestHash: sha256Hex("drifted cursor document"), Evidence: []EvidenceInput{{
+			FragmentID: "00000000-0000-0000-0000-000000000002", Content: "drifted cursor document",
+		}},
+	})
+	require.NoError(t, err)
+
+	healthyDocument, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence",
+		SourceID: healthy.Evidence[0].FragmentID, SourceVersion: 1,
+		DocumentText: "healthy cursor document", EmbeddingContractID: contractID,
+	})
+	require.NoError(t, err)
+	completeSearchDocumentsForTest(t, repo, teamID, map[string][]float32{
+		healthyDocument.SearchDocumentID: {0.6, 0.8},
+	})
+	_, err = repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence",
+		SourceID: drifted.Evidence[0].FragmentID, SourceVersion: 1,
+		DocumentText: "stale cursor document", EmbeddingContractID: contractID,
+	})
+	require.NoError(t, err)
+
+	firstRun, claimed, err := repo.ReserveSearchReconciliationRun(ctx, SearchReconciliationRunInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Now: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		RunID: firstRun.RunID, EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 1,
+	})
+	require.NoError(t, err)
+	// The first bounded page contains only the healthy document, so it is
+	// skipped after hydration while the cursor still advances past it.
+	require.Empty(t, selected)
+	require.NoError(t, repo.FinishSearchReconciliationRun(ctx, FinishSearchReconciliationRunInput{
+		RunID: firstRun.RunID, Status: "completed",
+	}))
+
+	secondRun, claimed, err := repo.ReserveSearchReconciliationRun(ctx, SearchReconciliationRunInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Now: time.Now().UTC().Add(time.Second),
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	selected, err = repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		RunID: secondRun.RunID, EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	require.Equal(t, drifted.Evidence[0].FragmentID, selected[0].SourceID)
+	require.NoError(t, repo.FinishSearchReconciliationRun(ctx, FinishSearchReconciliationRunInput{
+		RunID: secondRun.RunID, Status: "failed", LastError: "provider_unavailable",
+	}))
+	var cursorCleared bool
+	require.NoError(t, adminDB.Raw(`
+		SELECT selection_cursor_observed_at IS NULL
+		   AND selection_cursor_team_id IS NULL
+		   AND selection_cursor_source_kind IS NULL
+		   AND selection_cursor_source_id IS NULL
+		   AND selection_cursor_search_document_id IS NULL
+		FROM search_reconciliation_runs
+		WHERE reconciliation_run_id = ?::uuid
+	`, secondRun.RunID).Row().Scan(&cursorCleared))
+	require.True(t, cursorCleared)
+}
+
 func TestSearchReconciliationCanonicalSourceSetAndSpaceFence(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

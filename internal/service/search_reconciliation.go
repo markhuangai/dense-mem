@@ -100,6 +100,7 @@ func (s *searchReconciliationService) Run(ctx context.Context) (SearchReconcilia
 	result.Status = "running"
 
 	documents, err := s.repository.SelectSearchReconciliationDocuments(ctx, repository.SearchReconciliationSelectionInput{
+		RunID:               run.RunID,
 		EmbeddingContractID: contract.EmbeddingContractID,
 		EmbeddingDimensions: contract.EmbeddingDimensions,
 		Limit:               searchReconciliationDocumentLimit,
