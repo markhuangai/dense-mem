@@ -102,6 +102,7 @@ func TestCorrectionToolResultErrorMapsLifecycleAndHTTPFailures(t *testing.T) {
 		{name: "embedding unavailable", err: memoryservice.ErrLifecycleEmbeddingUnavailable, want: rememberapp.SubmissionErrorEmbeddingUnavailable},
 		{name: "embedding invalid", err: memoryservice.ErrLifecycleEmbeddingInvalid, want: rememberapp.SubmissionErrorEmbeddingResponseInvalid},
 		{name: "embedding timeout", err: memoryservice.ErrLifecycleEmbeddingTimeout, want: rememberapp.SubmissionErrorRequestTimeout},
+		{name: "request deadline", err: context.DeadlineExceeded, want: rememberapp.SubmissionErrorRequestTimeout},
 		{name: "translated embedding unavailable", err: httperr.New(httperr.ErrEmbeddingUnavailable, "embedding provider unavailable"), want: rememberapp.SubmissionErrorEmbeddingUnavailable},
 		{name: "translated embedding invalid", err: httperr.New(httperr.ErrEmbeddingResponseInvalid, "embedding provider response invalid"), want: rememberapp.SubmissionErrorEmbeddingResponseInvalid},
 		{name: "translated embedding timeout", err: httperr.New(httperr.ErrEmbeddingTimeout, "embedding provider timed out"), want: rememberapp.SubmissionErrorRequestTimeout},

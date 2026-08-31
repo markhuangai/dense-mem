@@ -123,6 +123,8 @@ func correctionToolResultError(ctx context.Context, submissionID string, err err
 		code = rememberapp.SubmissionErrorEmbeddingResponseInvalid
 	case errors.Is(err, memoryservice.ErrLifecycleEmbeddingTimeout):
 		code = rememberapp.SubmissionErrorRequestTimeout
+	case errors.Is(err, context.DeadlineExceeded):
+		code = rememberapp.SubmissionErrorRequestTimeout
 	case errors.Is(err, context.Canceled):
 		code = rememberapp.SubmissionErrorRequestCancelled
 	}
