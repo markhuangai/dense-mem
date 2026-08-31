@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/embedding"
@@ -85,11 +86,65 @@ func TestRememberProcessorFailureProjectsEverySubmittedItem(t *testing.T) {
 	require.Len(t, publicRelationships, 2)
 }
 
+func TestRememberProcessorConflictProjectsEverySubmittedItem(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+		Metadata: map[string]any{"actor": map[string]any{"correlation_id": "conflict-correlation"}},
+		Evidence: []rememberapp.EvidenceInput{{Content: "first"}, {Content: "second"}},
+		Proposal: map[string]any{"relationship_hints": []map[string]any{{"ref": " rel-a "}, {"ref": "rel-b"}}},
+	}
+
+	assertConflict := func(t *testing.T, ledger *rememberFailureLedgerStub) {
+		t.Helper()
+		processor := &rememberSynchronousProcessor{ledger: ledger}
+		_, err := processor.ProcessRemember(context.Background(), input)
+		var processErr *rememberapp.RememberProcessError
+		require.ErrorAs(t, err, &processErr)
+		require.ErrorIs(t, err, rememberapp.ErrRememberConflict)
+		require.Equal(t, string(rememberapp.SubmissionErrorIdempotencyConflict), processErr.Status.Errors[0].Code)
+		require.Equal(t, "failed", processErr.Status.ProcessingState)
+		require.Equal(t, "not_required", processErr.Status.SearchState)
+		require.Equal(t, "conflict-correlation", processErr.Status.CorrelationID)
+		require.NoError(t, func() error { _, err := uuid.Parse(processErr.Status.SubmissionID); return err }())
+		require.Len(t, processErr.Status.Evidence, 2)
+		require.Len(t, processErr.Status.RelationshipResults, 2)
+		for index, evidence := range processErr.Status.Evidence {
+			require.Equal(t, "not_stored", evidence.Disposition)
+			require.Equal(t, index, evidence.EvidenceIndex)
+			require.Equal(t, "internal_failure", evidence.Reason)
+			require.Equal(t, "not_required", evidence.SearchState)
+			require.Empty(t, evidence.SupersededEvidenceIDs)
+		}
+		for index, relationship := range processErr.Status.RelationshipResults {
+			require.Equal(t, []string{"rel-a", "rel-b"}[index], relationship.RelationshipRef)
+			require.Equal(t, "not_stored", relationship.Disposition)
+			require.Equal(t, "internal_failure", relationship.Reason)
+			require.Empty(t, relationship.Splits)
+		}
+	}
+
+	t.Run("existing request mismatch", func(t *testing.T) {
+		assertConflict(t, &rememberFailureLedgerStub{load: &repository.RememberAttempt{RequestHash: "different"}})
+	})
+	t.Run("persistence race", func(t *testing.T) {
+		assertConflict(t, &rememberFailureLedgerStub{failureErr: repository.ErrIdempotencyConflict})
+	})
+}
+
 type rememberFailureLedgerStub struct {
-	failure repository.RememberFailureRecordInput
+	failure    repository.RememberFailureRecordInput
+	load       *repository.RememberAttempt
+	loadErr    error
+	failureErr error
 }
 
 func (s *rememberFailureLedgerStub) LoadRememberAttempt(context.Context, repository.RememberAttemptLookupInput) (*repository.RememberAttempt, error) {
+	if s.load != nil {
+		return s.load, nil
+	}
+	if s.loadErr != nil {
+		return nil, s.loadErr
+	}
 	return nil, repository.ErrRememberAttemptNotFound
 }
 
@@ -111,5 +166,5 @@ func (*rememberFailureLedgerStub) CommitRememberWithEmbeddings(context.Context, 
 
 func (s *rememberFailureLedgerStub) RecordRememberFailure(_ context.Context, input repository.RememberFailureRecordInput) error {
 	s.failure = input
-	return nil
+	return s.failureErr
 }

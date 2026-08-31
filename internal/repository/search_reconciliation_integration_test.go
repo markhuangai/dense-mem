@@ -105,6 +105,38 @@ func TestSearchReconciliationSelectionAndHashFence(t *testing.T) {
 	}))
 }
 
+func TestSearchReconciliationExcludesRejectedEvidence(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-rejected")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-rejected-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-rejected", 2, "exact", "")
+	ledger := NewLedgerRepository(appDB, rls)
+	repo := NewSearchRepository(appDB, rls)
+	rejected, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-rejected",
+		RequestHash: sha256Hex("rejected evidence"), Status: "rejected",
+		Evidence: []EvidenceInput{{Content: "rejected evidence"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, rejected.Evidence, 1)
+
+	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 256,
+	})
+	require.NoError(t, err)
+	require.Empty(t, selected)
+
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+	})
+	require.NoError(t, err)
+	require.Zero(t, convergence.ExpectedDocuments)
+	require.Zero(t, convergence.DriftedDocuments)
+	require.Zero(t, convergence.CurrentDocuments)
+}
+
 func TestSearchReconciliationSelectionAdvancesDurableCursorPastHealthyDocuments(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

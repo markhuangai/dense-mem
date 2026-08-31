@@ -83,7 +83,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	})
 	if lookupErr == nil && attempt != nil {
 		if !rememberAttemptMatchesRequest(attempt, input) {
-			return nil, rememberapp.ErrRememberConflict
+			return nil, rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
 		}
 		if attempt.Outcome == "completed" || attempt.Outcome == "rejected" || attempt.Outcome == "quarantined" || attempt.Outcome == "replayed" {
 			replay, replayErr := rememberAttemptStatus(attempt)
@@ -280,7 +280,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	}
 	failure = normalizeRememberFailure(failure)
 	if errors.Is(failure, rememberapp.ErrRememberConflict) || errors.Is(failure, repository.ErrIdempotencyConflict) {
-		return nil, failure
+		return nil, rememberConflictProcessError(input, attemptID, failure)
 	}
 	code := rememberFailureCode(phase, failure)
 	publicError := rememberapp.StatusError(code)
@@ -352,7 +352,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 			return rememberAttemptReplay(winner)
 		}
 		if errors.Is(err, repository.ErrIdempotencyConflict) {
-			return nil, rememberapp.ErrRememberConflict
+			return nil, rememberConflictProcessError(input, attemptID, errors.Join(rememberapp.ErrRememberConflict, err))
 		}
 		p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
 		p.logRememberFailureRecordError(input, attemptID, phase, publicError.Code, correlationID, err)
@@ -360,6 +360,24 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	}
 	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
 	return nil, &rememberapp.RememberProcessError{Status: status, Err: failure}
+}
+
+func rememberConflictProcessError(
+	input rememberapp.RememberProcessRequest,
+	submissionID string,
+	cause error,
+) *rememberapp.RememberProcessError {
+	if cause == nil {
+		cause = rememberapp.ErrRememberConflict
+	}
+	evidence, relationshipResults := rememberFailureResults(input, "internal_failure")
+	status := &rememberapp.SubmissionStatusResult{
+		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
+		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
+		Evidence: evidence, RelationshipResults: relationshipResults,
+		Errors: []rememberapp.SubmissionStatusError{rememberapp.StatusError(rememberapp.SubmissionErrorIdempotencyConflict)},
+	}
+	return &rememberapp.RememberProcessError{Status: status, Err: cause}
 }
 
 func rememberFailureNotStoredReason(code rememberapp.SubmissionErrorCode) string {

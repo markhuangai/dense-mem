@@ -319,6 +319,11 @@ func addMissingCanonicalSearchStats(
 			  ON team.id = fragment.team_id
 			 AND team.status = 'active'
 			 AND team.deleted_at IS NULL
+			JOIN knowledge_ingests AS ingest
+			  ON ingest.team_id = fragment.team_id
+			 AND ingest.ingest_id = fragment.ingest_id
+			 AND ingest.owner_profile_id = fragment.owner_profile_id
+			 AND ingest.status = 'completed'
 			WHERE NOT EXISTS (
 			          SELECT 1
 			          FROM evidence_quarantines AS quarantine
