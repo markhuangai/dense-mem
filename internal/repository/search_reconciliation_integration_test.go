@@ -318,6 +318,59 @@ func TestSearchReconciliationCanonicalSourceSetAndSpaceFence(t *testing.T) {
 	require.Equal(t, "not_required", state)
 }
 
+func TestSearchReconciliationRetiresLifecycleTerminalEvidence(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-lifecycle")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-lifecycle-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-lifecycle", 2, "exact", "")
+	ledger := NewLedgerRepository(appDB, rls)
+	repo := NewSearchRepository(appDB, rls)
+	ingest, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "search-reconciliation-lifecycle",
+		RequestHash: sha256Hex("lifecycle reconciliation evidence"), Evidence: []EvidenceInput{{Content: "lifecycle reconciliation evidence"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, ingest.Evidence, 1)
+	document, err := repo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence",
+		SourceID: ingest.Evidence[0].FragmentID, SourceVersion: 1,
+		DocumentText: ingest.Evidence[0].Content, EmbeddingContractID: contractID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'current', embedding = '[0.6,0.8]'::vector,
+			    embedding_updated_at = clock_timestamp()
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, document.SearchDocumentID).Error
+	}))
+
+	_, err = ledger.RetractEvidence(ctx, RetractEvidenceInput{
+		TeamID: teamID, OwnerProfileID: ownerID,
+		EvidenceIDs: []string{ingest.Evidence[0].FragmentID},
+		Reason:      "lifecycle reconciliation regression", IdempotencyKey: "retract-lifecycle-reconciliation",
+		RequestHash: "sha256:retract-lifecycle-reconciliation",
+	})
+	require.NoError(t, err)
+
+	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 256,
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	require.Equal(t, document.SearchDocumentID, selected[0].SearchDocumentID)
+	require.True(t, selected[0].Retired)
+
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+	})
+	require.NoError(t, err)
+	require.Zero(t, convergence.DriftedDocuments)
+}
+
 func TestSearchReconciliationSelectionFillsRelationshipCapacity(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

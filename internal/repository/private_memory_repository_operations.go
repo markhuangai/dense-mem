@@ -712,7 +712,7 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 func privateMemoryManifestDeleteQuery(table string) (string, error) {
 	quoted := pq.QuoteIdentifier(table)
 	switch table {
-	case "remember_attempt_events", "remember_failure_artifacts", "semantic_assessments":
+	case "remember_attempt_events", "remember_failure_artifacts":
 		return fmt.Sprintf(`
 			DELETE FROM %s AS row
 			USING remember_attempts AS attempt
@@ -720,6 +720,14 @@ func privateMemoryManifestDeleteQuery(table string) (string, error) {
 			  AND row.attempt_id = attempt.attempt_id
 			  AND row.owner_profile_id = attempt.owner_profile_id
 			  AND attempt.space_id = $1`, quoted), nil
+	case "semantic_assessments":
+		return fmt.Sprintf(`
+			DELETE FROM %s AS row
+			USING knowledge_ingests AS ingest
+			WHERE row.team_id = ingest.team_id
+			  AND row.attempt_id = ingest.ingest_id
+			  AND row.owner_profile_id = ingest.owner_profile_id
+			  AND ingest.space_id = $1`, quoted), nil
 	default:
 		return fmt.Sprintf("DELETE FROM %s WHERE space_id = $1", quoted), nil
 	}
@@ -728,7 +736,7 @@ func privateMemoryManifestDeleteQuery(table string) (string, error) {
 func privateMemoryManifestCountQuery(table string) (string, error) {
 	quoted := pq.QuoteIdentifier(table)
 	switch table {
-	case "remember_attempt_events", "remember_failure_artifacts", "semantic_assessments":
+	case "remember_attempt_events", "remember_failure_artifacts":
 		return fmt.Sprintf(`
 			SELECT COUNT(*)
 			FROM %s AS row
@@ -737,6 +745,15 @@ func privateMemoryManifestCountQuery(table string) (string, error) {
 			 AND row.attempt_id = attempt.attempt_id
 			 AND row.owner_profile_id = attempt.owner_profile_id
 			WHERE attempt.space_id = $1`, quoted), nil
+	case "semantic_assessments":
+		return fmt.Sprintf(`
+			SELECT COUNT(*)
+			FROM %s AS row
+			JOIN knowledge_ingests AS ingest
+			  ON row.team_id = ingest.team_id
+			 AND row.attempt_id = ingest.ingest_id
+			 AND row.owner_profile_id = ingest.owner_profile_id
+			WHERE ingest.space_id = $1`, quoted), nil
 	default:
 		return fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE space_id = $1", quoted), nil
 	}

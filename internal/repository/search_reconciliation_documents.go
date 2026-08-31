@@ -34,6 +34,11 @@ func canonicalSearchDocument(ctx context.Context, tx *gorm.DB, document SearchDo
 			        AND quarantine.fragment_id = fragment.fragment_id
 			        AND quarantine.status = 'active'
 			  )
+			  AND NOT EXISTS (
+			      SELECT 1 FROM evidence_lifecycle_events AS lifecycle
+			      WHERE lifecycle.team_id = fragment.team_id
+			        AND lifecycle.target_fragment_id = fragment.fragment_id
+			  )
 		`, document.TeamID, document.OwnerProfileID, document.SourceID).Row().Scan(&content, &spaceID, &spaceGeneration)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, true, nil

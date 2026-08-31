@@ -277,7 +277,9 @@ func validatePrivateMemoryManifestTx(ctx context.Context, tx *gorm.DB) ([]string
 		if fk.child == fk.parent {
 			continue
 		}
-		if fk.deferrable {
+		// PostgreSQL still enforces this assessment's ON DELETE RESTRICT edge at
+		// the delete statement even though the constraint is declared deferrable.
+		if fk.deferrable && !(fk.child == "semantic_assessments" && fk.parent == "remember_attempts") {
 			continue
 		}
 		if _, exists := edges[fk.child][fk.parent]; exists {
@@ -285,6 +287,13 @@ func validatePrivateMemoryManifestTx(ctx context.Context, tx *gorm.DB) ([]string
 		}
 		edges[fk.child][fk.parent] = struct{}{}
 		indegree[fk.parent]++
+	}
+	// Synchronous assessments are keyed by ingest. Databases upgraded from the
+	// additive foundation may not have the later IF-NOT-EXISTS FK, so preserve
+	// the lookup parent explicitly until assessment rows are deleted.
+	if _, exists := edges["semantic_assessments"]["knowledge_ingests"]; !exists {
+		edges["semantic_assessments"]["knowledge_ingests"] = struct{}{}
+		indegree["knowledge_ingests"]++
 	}
 	if len(externalDependencies) > 0 {
 		return nil, fmt.Errorf("%w: external dependencies=%v", ErrPrivateMemoryManifest, externalDependencies)
