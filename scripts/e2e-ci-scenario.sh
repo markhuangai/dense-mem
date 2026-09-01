@@ -66,9 +66,60 @@ run_node_case() {
   node "${ROOT_DIR}/${script}"
 }
 
+parse_json_root_field() {
+  local field="$1"
+  node -e '
+const field = process.argv[1];
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  let value;
+  try {
+    value = JSON.parse(input)?.[field];
+  } catch {
+    process.exitCode = 1;
+    return;
+  }
+  if (typeof value !== "string" || value.length === 0 || /[\r\n]/.test(value)) {
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write(value);
+});
+' "$field"
+}
+
+parse_json_dream_statement() {
+  node -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  let value;
+  try {
+    const payload = JSON.parse(input);
+    value = payload.cases?.find((item) => item?.name === "dream")?.result?.dream_statement;
+  } catch {
+    process.exitCode = 1;
+    return;
+  }
+  if (typeof value !== "string" || value.length === 0 || /[\r\n]/.test(value)) {
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write(value);
+});
+'
+}
+
 run_playwright() {
   [[ "${DENSE_MEM_E2E_RUN_PLAYWRIGHT:-0}" == "1" ]] || return 0
   [[ -f "${ROOT_DIR}/web/package.json" ]] || fail "missing web package for Playwright"
+  case "$SCENARIO" in
+    mcp_oauth) [[ -n "${DENSE_MEM_E2E_OAUTH_SECOND_TEAM_ID:-}" ]] || fail "OAuth Playwright handoff is missing" ;;
+    full|synchronous_write) [[ -n "${DENSE_MEM_E2E_DREAM_STATEMENT:-}" ]] || fail "Dream Playwright handoff is missing" ;;
+  esac
   local -a specs=("tests-compose/search-convergence.spec.ts" "tests-compose/compose-portal.spec.ts")
   case "$SCENARIO" in
     community) specs=("tests-compose/community-recall.spec.ts") ;;
@@ -89,7 +140,10 @@ case "$SCENARIO" in
   mcp_oauth) run_node_case tests/uat/oauth_mcp_e2e.mjs ;;
   private_memory_erasure) run_node_case tests/uat/private_memory_erasure_e2e.mjs ;;
   synchronous_write)
-    node "${ROOT_DIR}/tests/uat/synchronous_write/runner.mjs"
+    synchronous_output="$(node "${ROOT_DIR}/tests/uat/synchronous_write/runner.mjs")" || fail "synchronous-write scenario failed"
+    printf '%s\n' "${synchronous_output}"
+    DENSE_MEM_E2E_DREAM_STATEMENT="$(printf '%s' "${synchronous_output}" | parse_json_dream_statement)" || fail "synchronous-write scenario did not produce the Dream Playwright handoff"
+    export DENSE_MEM_E2E_DREAM_STATEMENT
     ;;
   synchronous_write_primitives)
     DENSE_MEM_E2E_WRITE_CASE=remember node "${ROOT_DIR}/tests/uat/synchronous_write/runner.mjs"
@@ -108,11 +162,21 @@ case "$SCENARIO" in
     run_node_case tests/uat/memory_spaces_e2e.mjs
     ;;
   full)
-    run_node_case tests/uat/team_dreaming_e2e.mjs
+    dreaming_output="$(run_node_case tests/uat/team_dreaming_e2e.mjs)" || fail "team-dreaming scenario failed"
+    printf '%s\n' "${dreaming_output}"
+    DENSE_MEM_E2E_DREAM_STATEMENT="$(printf '%s' "${dreaming_output}" | parse_json_root_field statement)" || fail "team-dreaming scenario did not produce the Dream Playwright handoff"
+    export DENSE_MEM_E2E_DREAM_STATEMENT
     run_node_case tests/uat/telemetry_mcp_e2e.mjs
     ;;
   *) fail "unsupported scenario: ${SCENARIO}" ;;
 esac
+
+if [[ "$SCENARIO" == "mcp_oauth" && "${DENSE_MEM_E2E_RUN_PLAYWRIGHT:-0}" == "1" ]]; then
+  result_file="${DENSE_MEM_E2E_RESULT_FILE:-/results/${SCENARIO}-result.json}"
+  [[ -f "$result_file" ]] || fail "OAuth scenario result handoff is missing"
+  DENSE_MEM_E2E_OAUTH_SECOND_TEAM_ID="$(parse_json_root_field second_team_id < "$result_file")" || fail "OAuth scenario did not produce the Playwright team handoff"
+  export DENSE_MEM_E2E_OAUTH_SECOND_TEAM_ID
+fi
 
 case "$SCENARIO" in
   mcp_oauth|community|conflict_queue|synchronous_write|full) run_playwright ;;

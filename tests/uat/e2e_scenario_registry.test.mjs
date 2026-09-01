@@ -14,6 +14,15 @@ import {
 
 const registry = readRegistry();
 
+function workflowJob(workflow, name) {
+  const marker = `  ${name}:`;
+  const start = workflow.indexOf(marker);
+  assert.notEqual(start, -1, `workflow job ${name} is missing`);
+  const remainder = workflow.slice(start + marker.length);
+  const nextJob = remainder.search(/\n  [a-z0-9-]+:\n/);
+  return nextJob === -1 ? remainder : remainder.slice(0, nextJob);
+}
+
 test("production E2E registry is complete and valid", () => {
   assert.deepEqual(validateRegistry(registry), []);
   assert.deepEqual(registry.scenarios.map(({ name }) => name), EXPECTED_SCENARIOS);
@@ -87,10 +96,15 @@ test("production E2E jobs use the runner that matches their capability", async (
     const remainder = workflow.slice(start + job.length);
     const nextJob = remainder.search(/\n  [a-z0-9-]+:\n/);
     const block = nextJob === -1 ? remainder : remainder.slice(0, nextJob);
-    assert.match(block, /runs-on: rootless-docker/);
+    assert.match(block, /runs-on:\s*(?:rootless-docker|\[rootless-docker(?:,|\]))/);
   }
-  assert.match(reusable, /runs-on: rootless-docker/);
+  assert.match(reusable, /runs-on:\s*(?:rootless-docker|\[rootless-docker(?:,|\]))/);
   assert.match(workflow, /max-parallel: 4/);
+  assert.match(workflowJob(workflow, "exclusive"), /max-parallel: 1/);
+  assert.match(workflowJob(workflow, "shared"), /max-parallel: 4/);
+  assert.match(workflowJob(workflow, "shared-start"), /runs-on: \[rootless-docker, rootless-docker-shared\]/);
+  assert.match(workflowJob(workflow, "shared-stop"), /runs-on: \[rootless-docker, rootless-docker-shared\]/);
+  assert.match(reusable, /runs-on: \[rootless-docker, rootless-docker-shared\]/);
   assert.match(workflow, /SHARED_STOP_RESULT/);
   assert.match(workflow, /passed \(cleanup failed\)/);
   assert.match(workflow, /e2e_host_controller_real\.sh/);

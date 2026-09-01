@@ -41,7 +41,8 @@ permissions:
 jobs:
   scenario:
     name: Run ${{ inputs.scenario }}
-    runs-on: rootless-docker
+    # This label is assigned only to runners sharing the CI user's rootless daemon and home.
+    runs-on: [rootless-docker, rootless-docker-shared]
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}

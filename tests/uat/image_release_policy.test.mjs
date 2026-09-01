@@ -11,6 +11,7 @@ const {
   decideRcPreview,
   parseSuccessfulPolicyStatus,
   selectMergedPull,
+  validateProductionImageReference,
 } = policy;
 
 const baseEvent = {
@@ -41,6 +42,41 @@ test("manual production E2E authorization is owner and main gated", () => {
     }).authorized,
     false,
   );
+});
+
+test("manual production E2E rejects malformed image, trigger, and workflow inputs", () => {
+  const input = {
+    actor: "Z-M-Huang",
+    triggeringActor: "Z-M-Huang",
+    ref: "refs/heads/main",
+    image: "ghcr.io/markhuangai/dense-mem:v2.6.1",
+    repository: "markhuangai/dense-mem",
+  };
+  for (const [label, overrides, reason] of [
+    ["image", { image: "ghcr.io/other/project:v2.6.1" }, "the image is outside the Dense-Mem GHCR repository"],
+    ["triggering actor", { triggeringActor: "other" }, "manual production E2E is restricted to the owner"],
+    ["workflow ref", { ref: "refs/heads/feature" }, "manual production E2E must use the main workflow definition"],
+  ]) {
+    assert.deepEqual(
+      decideManualProductionE2E({ ...input, ...overrides }),
+      { authorized: false, reason },
+      `${label} must be rejected`,
+    );
+  }
+});
+
+test("production image reference validation rejects malformed inputs directly", () => {
+  for (const [image, reason] of [
+    ["", "the image reference is empty or contains whitespace"],
+    ["ghcr.io/other/project:v2.6.1", "the image is outside the Dense-Mem GHCR repository"],
+    ["ghcr.io/markhuangai/dense-mem:bad tag", "the image tag is invalid"],
+    ["ghcr.io/markhuangai/dense-mem@sha256:not-a-digest", "the image digest is invalid"],
+  ]) {
+    assert.deepEqual(
+      validateProductionImageReference(image, "markhuangai/dense-mem"),
+      { valid: false, reason },
+    );
+  }
 });
 
 test("automatic production E2E authorization fences PR, head, main, label, and receipt", () => {
@@ -84,6 +120,60 @@ test("automatic production E2E authorization fences PR, head, main, label, and r
   assert.equal(decideAutomaticProductionE2E({ ...input, publishJob: { ...input.publishJob, conclusion: "failure" } }).authorized, false);
   assert.equal(decideAutomaticProductionE2E({ ...input, workflowRun: { ...input.workflowRun, status: "completed", conclusion: "failure" } }).authorized, false);
   assert.equal(decideAutomaticProductionE2E({ ...input, workflowRun: { ...input.workflowRun, head_sha: "c".repeat(40) } }).authorized, false);
+});
+
+test("automatic production E2E rejects every authorization boundary", () => {
+  const input = {
+    actor: "Z-M-Huang",
+    pullRequestAuthor: "Z-M-Huang",
+    pullRequestNumber: 42,
+    pullRequestState: "open",
+    pullRequestBase: "main",
+    hasPreviewLabel: true,
+    currentHead: "a".repeat(40),
+    expectedHead: "a".repeat(40),
+    currentMain: "b".repeat(40),
+    expectedMain: "b".repeat(40),
+    previewRunId: "123",
+    previewRunAttempt: "1",
+    image: "ghcr.io/markhuangai/dense-mem:test-42",
+    repository: "markhuangai/dense-mem",
+    workflowRun: {
+      id: 123,
+      run_attempt: 1,
+      head_sha: "a".repeat(40),
+      event: "pull_request_target",
+      status: "completed",
+      conclusion: "success",
+      path: ".github/workflows/pr-test-image.yml",
+      display_title: "PR test image: PR #42",
+    },
+    publishJob: {
+      name: "Publish trusted preview",
+      run_id: 123,
+      run_attempt: 1,
+      head_sha: "a".repeat(40),
+      status: "completed",
+      conclusion: "success",
+    },
+  };
+  for (const [label, overrides, reason] of [
+    ["image", { image: "docker.io/example/dense-mem:latest" }, "the image is outside the Dense-Mem GHCR repository"],
+    ["actor", { actor: "other" }, "automatic production E2E is restricted to the owner PR"],
+    ["PR author", { pullRequestAuthor: "other" }, "automatic production E2E is restricted to the owner PR"],
+    ["PR state", { pullRequestState: "closed" }, "the pull request is not open against main"],
+    ["PR base", { pullRequestBase: "feature" }, "the pull request is not open against main"],
+    ["receipt format", { previewRunId: "0" }, "the preview workflow receipt is invalid"],
+    ["workflow attributes", { workflowRun: { ...input.workflowRun, event: "push" } }, "the preview workflow run receipt is invalid"],
+    ["workflow completion", { workflowRun: { ...input.workflowRun, status: "in_progress", conclusion: "success" } }, "the preview workflow run receipt is invalid"],
+    ["publish job attributes", { publishJob: { ...input.publishJob, status: "in_progress" } }, "the preview publication job receipt is invalid"],
+  ]) {
+    assert.deepEqual(
+      decideAutomaticProductionE2E({ ...input, ...overrides }),
+      { authorized: false, reason },
+      `${label} must be rejected`,
+    );
+  }
 });
 
 function workflowJob(workflow, name) {

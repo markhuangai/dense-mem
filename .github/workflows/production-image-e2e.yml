@@ -293,7 +293,8 @@ jobs:
     name: Rootless controller and PostgreSQL prechecks
     needs: authorize
     if: needs.authorize.outputs.authorized == 'true'
-    runs-on: rootless-docker
+    # All controller jobs use the shared daemon/home pool so leases and run manifests remain reachable.
+    runs-on: [rootless-docker, rootless-docker-shared]
     timeout-minutes: 30
     steps:
       - name: Validate rootless host controller
@@ -349,7 +350,7 @@ jobs:
     name: Reclaim stale CI resources
     needs: authorize
     if: always()
-    runs-on: rootless-docker
+    runs-on: [rootless-docker, rootless-docker-shared]
     timeout-minutes: 15
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
@@ -366,7 +367,7 @@ jobs:
     name: Acquire immutable image lease
     needs: [authorize, prechecks, stale-cleanup]
     if: needs.prechecks.result == 'success' && needs.stale-cleanup.result == 'success'
-    runs-on: rootless-docker
+    runs-on: [rootless-docker, rootless-docker-shared]
     timeout-minutes: 15
     outputs:
       lease: ${{ steps.acquire.outputs.lease }}
@@ -478,7 +479,7 @@ jobs:
     if: needs.acquire.result == 'success'
     strategy:
       fail-fast: true
-      max-parallel: 4
+      max-parallel: 1
       matrix: ${{ fromJSON(needs.authorize.outputs.exclusive_matrix) }}
     uses: ./.github/workflows/production-e2e-scenario.yml
     with:
@@ -498,7 +499,7 @@ jobs:
     name: Start shared production stack
     needs: [authorize, acquire, exclusive]
     if: needs.exclusive.result == 'success'
-    runs-on: rootless-docker
+    runs-on: [rootless-docker, rootless-docker-shared]
     timeout-minutes: 20
     outputs:
       manifest: ${{ steps.start.outputs.manifest }}
@@ -558,7 +559,7 @@ jobs:
     name: Stop shared production stack
     needs: [shared-start, shared]
     if: always() && needs.shared-start.result == 'success'
-    runs-on: rootless-docker
+    runs-on: [rootless-docker, rootless-docker-shared]
     timeout-minutes: 15
     env:
       MANIFEST: ${{ needs.shared-start.outputs.manifest }}
@@ -578,7 +579,7 @@ jobs:
     name: Release image lease
     needs: [authorize, acquire, exclusive, shared-start, shared, shared-stop]
     if: always() && needs.acquire.result == 'success' && needs.acquire.outputs.lease != ''
-    runs-on: rootless-docker
+    runs-on: [rootless-docker, rootless-docker-shared]
     timeout-minutes: 15
     steps:
       - name: Validate rootless host controller
@@ -595,7 +596,7 @@ jobs:
     name: Remove workflow run directory
     needs: [authorize, prechecks, stale-cleanup, acquire, exclusive, shared-start, shared, shared-stop, release]
     if: always()
-    runs-on: rootless-docker
+    runs-on: [rootless-docker, rootless-docker-shared]
     timeout-minutes: 15
     steps:
       - name: Validate rootless host controller

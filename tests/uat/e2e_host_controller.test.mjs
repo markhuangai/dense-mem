@@ -15,11 +15,12 @@ const installer = await readFile(new URL("../../scripts/install-e2e-host-control
 const realControllerTest = await readFile(new URL("./e2e_host_controller_real.sh", import.meta.url), "utf8");
 const productionWorkflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
 const scenarioWorkflow = await readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8");
+const scenarioScript = await readFile(new URL("../../scripts/e2e-ci-scenario.sh", import.meta.url), "utf8");
 
 test("controller exposes the versioned lifecycle and lease contract", () => {
   assert.match(controller, /CONTRACT_VERSION="dense-mem-ci-e2e\.v1"/);
   for (const operation of ["doctor", "acquire", "start", "run", "stop", "release", "stale-cleanup", "precheck", "validate"]) {
-    assert.match(controller, new RegExp(`e2e-stack\.sh ${operation}`));
+    assert.match(controller, new RegExp(`e2e-stack[.]sh ${operation}`));
   }
   assert.match(controller, /docker pull/);
   assert.match(controller, /docker image rm/);
@@ -58,6 +59,13 @@ test("runtime adapter uses stable service DNS and rejects inspected IPs", () => 
   assert.match(adapter, /postgres:5432/);
   assert.doesNotMatch(adapter, /docker inspect/);
   assert.doesNotMatch(adapter, /127\.0\.0\.1/);
+});
+
+test("production scenarios preserve Playwright handoff values", () => {
+  assert.match(scenarioScript, /DENSE_MEM_E2E_OAUTH_SECOND_TEAM_ID/);
+  assert.match(scenarioScript, /DENSE_MEM_E2E_DREAM_STATEMENT/);
+  assert.match(scenarioScript, /parse_json_dream_statement/);
+  assert.match(scenarioScript, /OAuth scenario result handoff is missing/);
 });
 
 test("host installer never creates or copies a credential file", () => {
