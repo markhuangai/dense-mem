@@ -57,6 +57,9 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS remember_attempts_failed_retryable_idx
 
 DROP INDEX CONCURRENTLY IF EXISTS remember_attempts_failed_retryable_idx_invalid;
 
+-- Return the Goose connection to the application's default session settings.
+RESET lock_timeout;
+
 -- +goose Down
 -- +goose StatementBegin
 DO $$

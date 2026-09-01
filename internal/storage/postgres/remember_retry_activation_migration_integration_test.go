@@ -18,7 +18,13 @@ func TestRememberRetryActivationMigrationUsesRetryableFailurePredicate(t *testin
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	runGooseUpTo(t, ctx, db, 20260901020001)
+
+	var lockTimeout string
+	require.NoError(t, db.QueryRowContext(ctx, "SHOW lock_timeout").Scan(&lockTimeout))
+	require.Equal(t, "0", lockTimeout, "the migration must not leak its session lock timeout into the application pool")
 
 	var predicate string
 	require.NoError(t, db.QueryRowContext(ctx, `
