@@ -107,7 +107,7 @@ func (r *LedgerRepositoryImpl) CommitRememberTerminal(
 	}
 	if strings.TrimSpace(input.SpaceID) != "" {
 		if err := r.synchronizeRememberFailureArtifactHold(ctx, input.SpaceID); err != nil {
-			return result, fmt.Errorf("repository: commit Remember terminal retention: %w", err)
+			return result, fmt.Errorf("%w: %v", ErrRememberFailureRetentionDegraded, err)
 		}
 	}
 	return result, nil
@@ -180,7 +180,7 @@ func (r *LedgerRepositoryImpl) CommitRememberPreflightQuarantine(
 	}
 	if strings.TrimSpace(input.SpaceID) != "" {
 		if err := r.synchronizeRememberFailureArtifactHold(ctx, input.SpaceID); err != nil {
-			return result, fmt.Errorf("repository: commit Remember preflight quarantine retention: %w", err)
+			return result, fmt.Errorf("%w: %v", ErrRememberFailureRetentionDegraded, err)
 		}
 	}
 	return result, nil

@@ -21,6 +21,7 @@ func TestEvidenceFirstRememberPrimitivesMigrationContainsContract(t *testing.T) 
 		"ADD COLUMN IF NOT EXISTS retryable BOOLEAN NULL",
 		"remember_attempts_retryable_outcome_check",
 		"remember_attempts_failed_retryable_idx",
+		"remember_attempts_failed_retryable_idx_invalid",
 		"CREATE INDEX CONCURRENTLY IF NOT EXISTS remember_attempts_failed_retryable_idx",
 		"ADD COLUMN IF NOT EXISTS retained_by_legal_hold BOOLEAN NOT NULL DEFAULT false",
 		"remember_failure_artifacts_retention_size_check",
@@ -31,4 +32,5 @@ func TestEvidenceFirstRememberPrimitivesMigrationContainsContract(t *testing.T) 
 	}
 	require.Equal(t, 1, strings.Count(migration, "ADD COLUMN IF NOT EXISTS retryable BOOLEAN NULL"))
 	require.Equal(t, 1, strings.Count(migration, "ADD COLUMN IF NOT EXISTS retained_by_legal_hold BOOLEAN NOT NULL DEFAULT false"))
+	require.Equal(t, 1, strings.Count(migration, "CREATE INDEX CONCURRENTLY IF NOT EXISTS remember_attempts_failed_retryable_idx\n"))
 }

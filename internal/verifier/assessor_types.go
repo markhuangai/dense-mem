@@ -1,5 +1,7 @@
 package verifier
 
+import "github.com/markhuangai/dense-mem/internal/assessor"
+
 // SemanticAssessmentRequest is the server-owned, single-call assessor input.
 // Team and owner fields are retained for deterministic validation but never
 // leave the service boundary.
@@ -60,10 +62,9 @@ type SemanticAssessmentResponse struct {
 	ProviderTurns       int                                    `json:"-"`
 }
 
-type SemanticAssessmentSecurityResult struct {
-	EvidenceID string `json:"evidence_id"`
-	Decision   string `json:"decision"`
-}
+// Security result fields and validation are owned by the assessor package;
+// verifier keeps this alias for its legacy in-process API.
+type SemanticAssessmentSecurityResult = assessor.SemanticAssessmentSecurityResult
 
 type SemanticAssessmentEntityResult struct {
 	Ref               string  `json:"ref"`
@@ -91,14 +92,7 @@ type SemanticAssessmentGroundedRange struct {
 	End        int    `json:"-"`
 }
 
-type SemanticAssessmentSecuritySignal struct {
-	EvidenceID string `json:"evidence_id"`
-	Kind       string `json:"kind"`
-	StartRef   string `json:"start_ref"`
-	EndRef     string `json:"end_ref"`
-	Start      int    `json:"-"`
-	End        int    `json:"-"`
-}
+type SemanticAssessmentSecuritySignal = assessor.SemanticAssessmentSecuritySignal
 
 type SemanticAssessmentValue struct {
 	ValueType      string  `json:"value_type"`

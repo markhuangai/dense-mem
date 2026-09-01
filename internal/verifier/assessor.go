@@ -12,6 +12,7 @@ import (
 
 	"github.com/tiktoken-go/tokenizer"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
@@ -28,7 +29,9 @@ const (
 	SemanticAssessmentMaxEntityResults              = 400
 	SemanticAssessmentMaxRelationshipResults        = 200
 	SemanticAssessmentMaxRelationshipSplits         = 50
-	SemanticAssessmentMaxEvidenceSpans              = 20
+	// The assessor owns the security-result/evidence span limit; verifier keeps
+	// this alias for its legacy contract helpers.
+	SemanticAssessmentMaxEvidenceSpans = assessor.SemanticAssessmentMaxEvidenceSpans
 )
 
 const (
@@ -249,7 +252,7 @@ func PrepareSemanticAssessmentResponse(
 	errs = append(errs, resolveSemanticAssessmentSecuritySignals(evidenceByID, response.SecuritySignals)...)
 	errs = append(errs, resolveSemanticAssessmentSubmissionResponse(req, &response)...)
 	errs = append(errs, validateSemanticAssessmentSecuritySignals(response.SecuritySignals, evidenceByID)...)
-	errs = append(errs, validateSemanticAssessmentSecurityResults(response.SecurityResults, response.SecuritySignals, evidenceByID)...)
+	errs = append(errs, assessor.ValidateSemanticAssessmentSecurityResults(response.SecurityResults, response.SecuritySignals, evidenceByID)...)
 	errs = append(errs, validateSemanticAssessmentEntityResults(req, response.EntityResults, response.RelationshipResults, evidenceByID)...)
 	errs = append(errs, validateSemanticAssessmentRelationshipResults(req, response.EntityResults, response.RelationshipResults, evidenceByID)...)
 	errs = append(errs, ValidateSemanticAssessmentRequiredRelationshipRefs(req.RequiredRelationshipRefs, response.RelationshipResults)...)
@@ -680,73 +683,6 @@ func validateSemanticAssessmentSecuritySignals(signals []SemanticAssessmentSecur
 			errs = append(errs, semanticErr(fmt.Sprintf("security_signals[%d]", i), "is duplicated"))
 		}
 		seen[key] = struct{}{}
-	}
-	return errs
-}
-
-func validateSemanticAssessmentSecurityResults(
-	results []SemanticAssessmentSecurityResult,
-	signals []SemanticAssessmentSecuritySignal,
-	evidenceByID map[string]SemanticReviewEvidence,
-) []SemanticValidationError {
-	seen := make(map[string]struct{}, len(results))
-	resultIndexes := make(map[string]int, len(results))
-	decisions := make(map[string]string, len(results))
-	var errs []SemanticValidationError
-	for index, result := range results {
-		field := fmt.Sprintf("security_results[%d]", index)
-		if result.EvidenceID == "" {
-			errs = append(errs, semanticErr(field+".evidence_id", "is required"))
-			continue
-		}
-		if _, ok := evidenceByID[result.EvidenceID]; !ok {
-			errs = append(errs, semanticErr(field+".evidence_id", "is unknown"))
-			continue
-		}
-		if _, exists := resultIndexes[result.EvidenceID]; !exists {
-			resultIndexes[result.EvidenceID] = index
-		}
-		if _, duplicate := seen[result.EvidenceID]; duplicate {
-			errs = append(errs, semanticErr(field+".evidence_id", "is duplicated"))
-		}
-		seen[result.EvidenceID] = struct{}{}
-		if result.Decision != "pass" && result.Decision != "quarantine" {
-			errs = append(errs, semanticErr(field+".decision", "is unsupported"))
-			continue
-		}
-		decisions[result.EvidenceID] = result.Decision
-	}
-	if len(results) != len(evidenceByID) {
-		errs = append(errs, semanticErr("security_results", "must contain exactly one result per evidence item"))
-	}
-	for evidenceID := range evidenceByID {
-		if _, ok := seen[evidenceID]; !ok {
-			errs = append(errs, semanticErr("security_results", "is missing an evidence result"))
-		}
-	}
-	for _, signal := range signals {
-		decision, ok := decisions[signal.EvidenceID]
-		if !ok {
-			continue
-		}
-		if decision != "quarantine" {
-			errs = append(errs, semanticErr(fmt.Sprintf("security_results[%d].decision", resultIndexes[signal.EvidenceID]), "must be quarantine when security_signals cite the evidence"))
-		}
-	}
-	for evidenceID, decision := range decisions {
-		if decision != "quarantine" {
-			continue
-		}
-		found := false
-		for _, signal := range signals {
-			if signal.EvidenceID == evidenceID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			errs = append(errs, semanticErr("security_results", "quarantine requires a security signal for "+evidenceID))
-		}
 	}
 	return errs
 }

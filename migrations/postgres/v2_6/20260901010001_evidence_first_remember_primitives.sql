@@ -45,9 +45,36 @@ ALTER TABLE remember_attempts
     VALIDATE CONSTRAINT remember_attempts_retryable_outcome_check;
 -- +goose StatementEnd
 
+-- CREATE INDEX CONCURRENTLY may leave an invalid catalog entry after an
+-- interrupted build. Remove any prior temporary entry, rename an invalid
+-- canonical entry, and rebuild it on retry.
+DROP INDEX CONCURRENTLY IF EXISTS remember_attempts_failed_retryable_idx_invalid;
+
+-- +goose StatementBegin
+DO $dense_mem_remember_attempts_failed_retryable_invalid_index$
+DECLARE
+    candidate RECORD;
+BEGIN
+    FOR candidate IN
+        SELECT index_class.relname
+        FROM pg_index AS state
+        JOIN pg_class AS index_class ON index_class.oid = state.indexrelid
+        JOIN pg_namespace AS namespace ON namespace.oid = index_class.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND index_class.relname = 'remember_attempts_failed_retryable_idx'
+          AND state.indisvalid IS FALSE
+    LOOP
+        EXECUTE format('ALTER INDEX public.%I RENAME TO %I', candidate.relname, candidate.relname || '_invalid');
+    END LOOP;
+END
+$dense_mem_remember_attempts_failed_retryable_invalid_index$;
+-- +goose StatementEnd
+
 CREATE INDEX CONCURRENTLY IF NOT EXISTS remember_attempts_failed_retryable_idx
     ON remember_attempts(team_id, owner_profile_id, idempotency_key, created_at DESC, attempt_id DESC)
     WHERE outcome = 'failed';
+
+DROP INDEX CONCURRENTLY IF EXISTS remember_attempts_failed_retryable_idx_invalid;
 
 -- +goose StatementBegin
 ALTER TABLE remember_failure_artifacts

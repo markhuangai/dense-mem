@@ -11,6 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
@@ -217,6 +218,28 @@ func TestRememberProcessorFailurePersistencePreservesDatabaseResult(t *testing.T
 	}
 }
 
+func TestRememberProcessorRetentionDegradationPreservesCommittedFailure(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{failureErr: repository.ErrRememberFailureRetentionDegraded}
+	logger := &rememberProcessorLogCapture{}
+	processor := &rememberSynchronousProcessor{ledger: ledger, logger: logger}
+	input := rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+		Evidence: []rememberapp.EvidenceInput{{Content: "first"}},
+	}
+	snapshot, _ := rememberAssessmentSnapshot(input, "88888888-8888-8888-8888-888888888888")
+
+	_, err := processor.recordRememberFailure(
+		context.Background(), input, "88888888-8888-8888-8888-888888888888", snapshot,
+		time.Now(), "assessment", 0, rememberapp.ErrRememberProviderUnavailable,
+	)
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberProviderUnavailable)
+	require.NotErrorIs(t, err, rememberapp.ErrRememberPersistence)
+	require.Equal(t, string(rememberapp.SubmissionErrorProviderUnavailable), processErr.Status.Errors[0].Code)
+	require.Contains(t, logger.warns, "remember_failure_retention_degraded")
+}
+
 func TestRememberProcessorConflictProjectsEverySubmittedItem(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{
 		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
@@ -271,6 +294,30 @@ type rememberFailureLedgerStub struct {
 	loadContexts      []context.Context
 	loadContextErrors []error
 	loadDeadlines     []time.Time
+}
+
+type rememberProcessorLogCapture struct {
+	infos  []string
+	warns  []string
+	errors []string
+}
+
+func (l *rememberProcessorLogCapture) Info(message string, _ ...observability.LogAttr) {
+	l.infos = append(l.infos, message)
+}
+
+func (l *rememberProcessorLogCapture) Error(message string, _ error, _ ...observability.LogAttr) {
+	l.errors = append(l.errors, message)
+}
+
+func (l *rememberProcessorLogCapture) Warn(message string, _ ...observability.LogAttr) {
+	l.warns = append(l.warns, message)
+}
+
+func (*rememberProcessorLogCapture) Debug(string, ...observability.LogAttr) {}
+
+func (l *rememberProcessorLogCapture) With(...observability.LogAttr) observability.LogProvider {
+	return l
 }
 
 func (s *rememberFailureLedgerStub) LoadRememberAttempt(ctx context.Context, _ repository.RememberAttemptLookupInput) (*repository.RememberAttempt, error) {

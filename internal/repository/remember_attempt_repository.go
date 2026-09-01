@@ -22,6 +22,10 @@ var ErrRememberReplay = errors.New("remember result already committed")
 
 var ErrRememberAttemptNotFound = errors.New("remember attempt not found")
 
+// ErrRememberFailureRetentionDegraded identifies a committed failure whose
+// post-commit legal-hold synchronization did not complete.
+var ErrRememberFailureRetentionDegraded = errors.New("remember failure retention synchronization degraded")
+
 var (
 	ErrRememberAttemptDiagnosticNotFound = errors.New("remember attempt diagnostic not found")
 	ErrRememberFailureArtifactNotFound   = errors.New("remember failure artifact not found")
@@ -344,7 +348,7 @@ func (r *LedgerRepositoryImpl) RecordRememberFailure(ctx context.Context, input 
 	}
 	if strings.TrimSpace(input.Attempt.SpaceID) != "" {
 		if err := r.synchronizeRememberFailureArtifactHold(ctx, input.Attempt.SpaceID); err != nil {
-			return fmt.Errorf("remember failure: synchronize legal-hold retention: %w", err)
+			return fmt.Errorf("%w: %v", ErrRememberFailureRetentionDegraded, err)
 		}
 	}
 	return nil

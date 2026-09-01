@@ -5,12 +5,76 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEvidenceFirstRememberPrimitivesMigrationRecoversInvalidRetryabilityIndex(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, 20260901010001)
+
+	const indexName = "remember_attempts_failed_retryable_idx"
+	_, err := db.ExecContext(ctx, "DROP INDEX CONCURRENTLY IF EXISTS "+indexName)
+	require.NoError(t, err)
+
+	blocker, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer blocker.Close()
+	_, err = blocker.ExecContext(ctx, "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+	require.NoError(t, err)
+	defer func() { _, _ = blocker.ExecContext(context.Background(), "ROLLBACK") }()
+	_, err = blocker.ExecContext(ctx, "SELECT 1 FROM remember_attempts LIMIT 1")
+	require.NoError(t, err)
+
+	buildConn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer buildConn.Close()
+	var backendPID int
+	require.NoError(t, buildConn.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&backendPID))
+	buildCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	buildDone := make(chan error, 1)
+	go func() {
+		_, buildErr := buildConn.ExecContext(buildCtx, fmt.Sprintf(
+			"CREATE INDEX CONCURRENTLY %s ON remember_attempts(team_id, owner_profile_id, idempotency_key, created_at DESC, attempt_id DESC) WHERE outcome = 'failed'",
+			indexName,
+		))
+		buildDone <- buildErr
+	}()
+
+	var invalid bool
+	assert.Eventually(t, func() bool {
+		return db.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_index
+				WHERE indexrelid = $1::regclass
+				  AND NOT indisvalid
+			)`, indexName).Scan(&invalid) == nil && invalid
+	}, 10*time.Second, 50*time.Millisecond, "canceled retryability index build did not create an invalid index")
+
+	var canceled bool
+	require.NoError(t, db.QueryRowContext(ctx, "SELECT pg_cancel_backend($1)", backendPID).Scan(&canceled))
+	require.True(t, canceled)
+	_, err = blocker.ExecContext(ctx, "COMMIT")
+	require.NoError(t, err)
+	require.Error(t, <-buildDone)
+
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "DELETE FROM goose_db_version WHERE version_id = 20260901010001 AND is_applied")
+		return err
+	}))
+	require.NoError(t, migrationUpTo(ctx, db, 20260901010001))
+	assert.True(t, indexIsValid(t, ctx, db, indexName), "retryability index should be rebuilt as valid")
+	assert.False(t, indexExists(t, ctx, db, indexName+"_invalid"), "invalid retryability index should be removed")
+}
 
 func TestEvidenceFirstRememberPrimitivesMigrationEnforcesDurableContract(t *testing.T) {
 	ctx := context.Background()

@@ -14,6 +14,16 @@ func ValidateSemanticAssessmentResponseRaw(raw []byte) []SemanticValidationError
 	return validateSemanticAssessmentResponseRaw(raw)
 }
 
+// ValidateSemanticAssessmentSecurityResults validates the complete security
+// disposition table against the submitted evidence and security signals.
+func ValidateSemanticAssessmentSecurityResults(
+	results []SemanticAssessmentSecurityResult,
+	signals []SemanticAssessmentSecuritySignal,
+	evidenceByID map[string]SemanticReviewEvidence,
+) []SemanticValidationError {
+	return validateSemanticAssessmentSecurityResults(results, signals, evidenceByID)
+}
+
 // NormalizeSemanticAssessmentLimits applies the contract defaults to an
 // externally supplied limit set.
 func NormalizeSemanticAssessmentLimits(limits SemanticAssessmentLimits) SemanticAssessmentLimits {
