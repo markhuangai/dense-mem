@@ -22,6 +22,10 @@ var ErrRememberReplay = errors.New("remember result already committed")
 
 var ErrRememberAttemptNotFound = errors.New("remember attempt not found")
 
+// ErrRememberFailureRetentionDegraded identifies a committed failure whose
+// post-commit legal-hold synchronization did not complete.
+var ErrRememberFailureRetentionDegraded = errors.New("remember failure retention synchronization degraded")
+
 var (
 	ErrRememberAttemptDiagnosticNotFound = errors.New("remember attempt diagnostic not found")
 	ErrRememberFailureArtifactNotFound   = errors.New("remember failure artifact not found")
@@ -34,15 +38,20 @@ type RememberAttemptRecordInput struct {
 	IdempotencyKey, RequestHash       string
 	ContractVersion, SubmissionKind   string
 	Outcome, FailedPhase, ErrorCode   string
-	CorrelationID                     string
-	PublicResult                      map[string]any
-	EvidenceCount, RelationshipCount  int
-	DocumentCount, AssessorTurns      int
-	Duration                          time.Duration
+	Retryable                         bool
+	// RetryabilitySet distinguishes an explicit false from legacy callers that
+	// predate the retryability field. New application writers set this flag.
+	RetryabilitySet                  bool
+	CorrelationID                    string
+	PublicResult                     map[string]any
+	EvidenceCount, RelationshipCount int
+	DocumentCount, AssessorTurns     int
+	Duration                         time.Duration
 }
 
 type RememberAttempt struct {
 	AttemptID, RequestHash, ContractVersion, Outcome string
+	Retryable                                        bool
 	PublicResult                                     map[string]any
 }
 
@@ -88,6 +97,7 @@ type RememberAttemptDiagnosticRecord struct {
 	SpaceGeneration                             int64
 	ContractVersion, SubmissionKind             string
 	Outcome, FailedPhase, ErrorCode             string
+	Retryable                                   bool
 	CorrelationID                               string
 	EvidenceCount, RelationshipCount            int
 	DocumentCount, AssessorTurns                int
@@ -109,26 +119,28 @@ type RememberAttemptDiagnosticEvent struct {
 }
 
 type RememberFailureArtifactDescriptor struct {
-	ArtifactID    string
-	ArtifactKind  string
-	ContentType   string
-	ByteCount     int64
-	ContentSHA256 string
-	CapturedAt    time.Time
-	ExpiresAt     time.Time
+	ArtifactID          string
+	ArtifactKind        string
+	ContentType         string
+	ByteCount           int64
+	ContentSHA256       string
+	CapturedAt          time.Time
+	ExpiresAt           time.Time
+	RetainedByLegalHold bool
 }
 
 type RememberFailureArtifact struct {
-	TeamID        string
-	ArtifactID    string
-	AttemptID     string
-	ArtifactKind  string
-	ContentType   string
-	Content       []byte
-	ByteCount     int64
-	ContentSHA256 string
-	CapturedAt    time.Time
-	ExpiresAt     time.Time
+	TeamID              string
+	ArtifactID          string
+	AttemptID           string
+	ArtifactKind        string
+	ContentType         string
+	Content             []byte
+	ByteCount           int64
+	ContentSHA256       string
+	CapturedAt          time.Time
+	ExpiresAt           time.Time
+	RetainedByLegalHold bool
 }
 
 type RememberAttemptDiagnosticRecordPage struct {
@@ -194,12 +206,13 @@ func (r *LedgerRepositoryImpl) LoadRememberAttempt(ctx context.Context, input Re
 		var stored RememberAttempt
 		var raw []byte
 		err := tx.WithContext(ctx).Raw(`
-			SELECT attempt_id::text, request_hash, contract_version, outcome, public_result
+			SELECT attempt_id::text, request_hash, contract_version, outcome,
+			       COALESCE(retryable, outcome = 'failed'), public_result
 			FROM remember_attempts
 			WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
 			ORDER BY CASE WHEN outcome IN ('completed', 'rejected', 'quarantined', 'replayed') THEN 0 ELSE 1 END,
 			         created_at DESC, attempt_id DESC LIMIT 1
-		`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Row().Scan(&stored.AttemptID, &stored.RequestHash, &stored.ContractVersion, &stored.Outcome, &raw)
+		`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Row().Scan(&stored.AttemptID, &stored.RequestHash, &stored.ContractVersion, &stored.Outcome, &stored.Retryable, &raw)
 		if err != nil {
 			return err
 		}
@@ -222,12 +235,13 @@ func loadTerminalRememberAttemptInTx(ctx context.Context, tx *gorm.DB, teamID, o
 	var result RememberAttempt
 	var raw []byte
 	err := tx.WithContext(ctx).Raw(`
-		SELECT attempt_id::text, request_hash, contract_version, outcome, public_result
+		SELECT attempt_id::text, request_hash, contract_version, outcome,
+		       COALESCE(retryable, outcome = 'failed'), public_result
 		FROM remember_attempts
 		WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
 		  AND outcome IN ('completed', 'rejected', 'quarantined')
 		ORDER BY created_at DESC, attempt_id DESC LIMIT 1
-	`, teamID, ownerProfileID, key).Row().Scan(&result.AttemptID, &result.RequestHash, &result.ContractVersion, &result.Outcome, &raw)
+	`, teamID, ownerProfileID, key).Row().Scan(&result.AttemptID, &result.RequestHash, &result.ContractVersion, &result.Outcome, &result.Retryable, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -259,6 +273,9 @@ func (r *LedgerRepositoryImpl) RecordRememberAttempt(ctx context.Context, input 
 func (r *LedgerRepositoryImpl) RecordRememberFailure(ctx context.Context, input RememberFailureRecordInput) error {
 	input.Attempt = normalizeRememberAttemptRecord(input.Attempt)
 	input.Attempt.Outcome = "failed"
+	if !input.Attempt.RetryabilitySet && !input.Attempt.Retryable {
+		input.Attempt.Retryable = true
+	}
 	if err := validateRememberAttemptRecord(input.Attempt); err != nil {
 		return err
 	}
@@ -288,7 +305,7 @@ func (r *LedgerRepositoryImpl) RecordRememberFailure(ctx context.Context, input 
 			return fmt.Errorf("remember failure: artifact[%d] expiry is outside retention", index)
 		}
 	}
-	return r.withAtomicRememberTx(ctx, input.Attempt.TeamID, input.Attempt.OwnerProfileID, func(txCtx context.Context) error {
+	if err := r.withAtomicRememberTx(ctx, input.Attempt.TeamID, input.Attempt.OwnerProfileID, func(txCtx context.Context) error {
 		tx := transactionFromContext(txCtx)
 		var databaseNow time.Time
 		for index := range input.Artifacts {
@@ -326,7 +343,15 @@ func (r *LedgerRepositoryImpl) RecordRememberFailure(ctx context.Context, input 
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	if strings.TrimSpace(input.Attempt.SpaceID) != "" {
+		if err := r.synchronizeRememberFailureArtifactHold(ctx, input.Attempt.SpaceID); err != nil {
+			return fmt.Errorf("%w: %v", ErrRememberFailureRetentionDegraded, err)
+		}
+	}
+	return nil
 }
 
 func normalizeRememberAttemptRecord(input RememberAttemptRecordInput) RememberAttemptRecordInput {
@@ -334,6 +359,9 @@ func normalizeRememberAttemptRecord(input RememberAttemptRecordInput) RememberAt
 	input.SpaceID, input.IdempotencyKey, input.RequestHash = strings.TrimSpace(input.SpaceID), strings.TrimSpace(input.IdempotencyKey), strings.TrimSpace(input.RequestHash)
 	input.ContractVersion, input.SubmissionKind = strings.TrimSpace(input.ContractVersion), strings.TrimSpace(input.SubmissionKind)
 	input.Outcome, input.FailedPhase, input.ErrorCode, input.CorrelationID = strings.TrimSpace(input.Outcome), strings.TrimSpace(input.FailedPhase), strings.TrimSpace(input.ErrorCode), strings.TrimSpace(input.CorrelationID)
+	if input.Outcome == "failed" && !input.RetryabilitySet && !input.Retryable {
+		input.Retryable = true
+	}
 	if input.PublicResult == nil {
 		input.PublicResult = map[string]any{}
 	}
@@ -363,6 +391,9 @@ func validateRememberAttemptRecord(input RememberAttemptRecordInput) error {
 	if input.Outcome != "completed" && input.Outcome != "rejected" && input.Outcome != "quarantined" && input.Outcome != "failed" && input.Outcome != "replayed" {
 		return fmt.Errorf("remember attempt: unsupported outcome %q", input.Outcome)
 	}
+	if input.Retryable && input.Outcome != "failed" {
+		return errors.New("remember attempt: retryable is only valid for failed outcomes")
+	}
 	if input.EvidenceCount < 0 || input.RelationshipCount < 0 || input.DocumentCount < 0 || input.AssessorTurns < 0 || input.Duration < 0 {
 		return errors.New("remember attempt: counters and duration cannot be negative")
 	}
@@ -387,17 +418,17 @@ func insertRememberAttemptInTx(ctx context.Context, tx *gorm.DB, input RememberA
 	}
 	result := tx.WithContext(ctx).Exec(`
 		INSERT INTO remember_attempts (team_id, attempt_id, owner_profile_id, space_id, space_generation,
-		 idempotency_key, request_hash, contract_version, submission_kind, outcome, failed_phase, error_code,
+		 idempotency_key, request_hash, contract_version, submission_kind, outcome, failed_phase, error_code, retryable,
 		 correlation_id, public_result, evidence_count, relationship_count, document_count, assessor_turns, duration_ms, completed_at)
-		VALUES (?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, now())
-	`, input.TeamID, input.AttemptID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration, input.IdempotencyKey, input.RequestHash, input.ContractVersion, input.SubmissionKind, input.Outcome, input.FailedPhase, input.ErrorCode, input.CorrelationID, string(encoded), input.EvidenceCount, input.RelationshipCount, input.DocumentCount, input.AssessorTurns, input.Duration.Milliseconds())
+		VALUES (?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, now())
+	`, input.TeamID, input.AttemptID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration, input.IdempotencyKey, input.RequestHash, input.ContractVersion, input.SubmissionKind, input.Outcome, input.FailedPhase, input.ErrorCode, input.Retryable, input.CorrelationID, string(encoded), input.EvidenceCount, input.RelationshipCount, input.DocumentCount, input.AssessorTurns, input.Duration.Milliseconds())
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
 		return ErrRememberReplay
 	}
-	metadata, err := json.Marshal(map[string]any{"contract_version": input.ContractVersion, "assessor_turns": input.AssessorTurns, "document_count": input.DocumentCount, "error_code": input.ErrorCode})
+	metadata, err := json.Marshal(map[string]any{"contract_version": input.ContractVersion, "assessor_turns": input.AssessorTurns, "document_count": input.DocumentCount, "error_code": input.ErrorCode, "retryable": input.Retryable})
 	if err != nil {
 		return err
 	}
@@ -443,7 +474,7 @@ func (r *LedgerRepositoryImpl) ListRememberAttemptDiagnostics(
 			       attempt.attempt_id::text, COALESCE(attempt.space_id::text, ''),
 			       COALESCE(attempt.space_generation, 0), attempt.contract_version,
 			       attempt.submission_kind, attempt.outcome, attempt.failed_phase,
-			       attempt.error_code, attempt.correlation_id,
+			       attempt.error_code, COALESCE(attempt.retryable, attempt.outcome = 'failed'), attempt.correlation_id,
 			       COALESCE(attempt.canonical_attempt_id::text, ''),
 			       attempt.evidence_count, attempt.relationship_count,
 			       attempt.document_count, attempt.assessor_turns, attempt.duration_ms,
@@ -489,7 +520,7 @@ func (r *LedgerRepositoryImpl) GetRememberAttemptDiagnostic(ctx context.Context,
 			       attempt.attempt_id::text, COALESCE(attempt.space_id::text, ''),
 			       COALESCE(attempt.space_generation, 0), attempt.contract_version,
 			       attempt.submission_kind, attempt.outcome, attempt.failed_phase,
-			       attempt.error_code, attempt.correlation_id,
+			       attempt.error_code, COALESCE(attempt.retryable, attempt.outcome = 'failed'), attempt.correlation_id,
 			       COALESCE(attempt.canonical_attempt_id::text, ''),
 			       attempt.evidence_count, attempt.relationship_count,
 			       attempt.document_count, attempt.assessor_turns, attempt.duration_ms,
@@ -547,7 +578,7 @@ func scanRememberAttemptDiagnosticSummary(scanner rememberAttemptDiagnosticScann
 	if err := scanner.Scan(
 		&record.TeamID, &record.TeamName, &record.OwnerProfileID, &record.AttemptID,
 		&record.SpaceID, &spaceGeneration, &record.ContractVersion, &record.SubmissionKind,
-		&record.Outcome, &record.FailedPhase, &record.ErrorCode, &record.CorrelationID,
+		&record.Outcome, &record.FailedPhase, &record.ErrorCode, &record.Retryable, &record.CorrelationID,
 		&record.CanonicalAttemptID, &record.EvidenceCount, &record.RelationshipCount,
 		&record.DocumentCount, &record.AssessorTurns, &durationMS, &record.CreatedAt,
 		&completedAt,
@@ -576,7 +607,7 @@ func scanRememberAttemptDiagnosticSummaryWithResult(scanner rememberAttemptDiagn
 	if err := scanner.Scan(
 		&record.TeamID, &record.TeamName, &record.OwnerProfileID, &record.AttemptID,
 		&record.SpaceID, &spaceGeneration, &record.ContractVersion, &record.SubmissionKind,
-		&record.Outcome, &record.FailedPhase, &record.ErrorCode, &record.CorrelationID,
+		&record.Outcome, &record.FailedPhase, &record.ErrorCode, &record.Retryable, &record.CorrelationID,
 		&record.CanonicalAttemptID, &record.EvidenceCount, &record.RelationshipCount,
 		&record.DocumentCount, &record.AssessorTurns, &durationMS, &record.CreatedAt,
 		&completedAt, &publicJSON,
@@ -629,13 +660,20 @@ func loadRememberAttemptDiagnosticEvents(ctx context.Context, tx *gorm.DB, teamI
 
 func loadRememberFailureArtifactDescriptors(ctx context.Context, tx *gorm.DB, teamID, attemptID string) ([]RememberFailureArtifactDescriptor, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT artifact_id::text, artifact_kind, content_type, byte_count,
-		       content_sha256, captured_at, expires_at
-		FROM remember_failure_artifacts
-		WHERE team_id = ?::uuid AND attempt_id = ?::uuid
-		  AND expires_at > clock_timestamp()
-		ORDER BY captured_at ASC, artifact_id ASC
-	`, teamID, attemptID).Rows()
+			SELECT artifact.artifact_id::text, artifact.artifact_kind, artifact.content_type, artifact.byte_count,
+			       artifact.content_sha256, artifact.captured_at, artifact.expires_at,
+			       (artifact.retained_by_legal_hold AND hold.id IS NOT NULL)
+			FROM remember_failure_artifacts AS artifact
+			JOIN remember_attempts AS attempt
+			  ON attempt.team_id = artifact.team_id
+			 AND attempt.attempt_id = artifact.attempt_id
+			 AND attempt.owner_profile_id = artifact.owner_profile_id
+			LEFT JOIN private_memory_legal_holds AS hold
+			  ON hold.space_id = attempt.space_id AND hold.released_at IS NULL
+			WHERE artifact.team_id = ?::uuid AND artifact.attempt_id = ?::uuid
+			  AND (artifact.expires_at > clock_timestamp() OR hold.id IS NOT NULL)
+			ORDER BY artifact.captured_at ASC, artifact.artifact_id ASC
+		`, teamID, attemptID).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -643,7 +681,7 @@ func loadRememberFailureArtifactDescriptors(ctx context.Context, tx *gorm.DB, te
 	items := make([]RememberFailureArtifactDescriptor, 0)
 	for rows.Next() {
 		var item RememberFailureArtifactDescriptor
-		if err := rows.Scan(&item.ArtifactID, &item.ArtifactKind, &item.ContentType, &item.ByteCount, &item.ContentSHA256, &item.CapturedAt, &item.ExpiresAt); err != nil {
+		if err := rows.Scan(&item.ArtifactID, &item.ArtifactKind, &item.ContentType, &item.ByteCount, &item.ContentSHA256, &item.CapturedAt, &item.ExpiresAt, &item.RetainedByLegalHold); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -661,15 +699,22 @@ func (r *LedgerRepositoryImpl) GetRememberFailureArtifact(ctx context.Context, t
 	var artifact RememberFailureArtifact
 	err := r.withSystemReadOnlyRepeatableTx(ctx, func(tx *gorm.DB) error {
 		return tx.WithContext(ctx).Raw(`
-			SELECT team_id::text, artifact_id::text, attempt_id::text, artifact_kind,
-			       content_type, content_bytes, byte_count, content_sha256, captured_at, expires_at
-			FROM remember_failure_artifacts
-			WHERE team_id = ?::uuid AND attempt_id = ?::uuid AND artifact_id = ?::uuid
-			  AND expires_at > clock_timestamp()
+				SELECT artifact.team_id::text, artifact.artifact_id::text, artifact.attempt_id::text, artifact.artifact_kind,
+				       artifact.content_type, artifact.content_bytes, artifact.byte_count, artifact.content_sha256, artifact.captured_at, artifact.expires_at,
+			       (artifact.retained_by_legal_hold AND hold.id IS NOT NULL)
+			FROM remember_failure_artifacts AS artifact
+			JOIN remember_attempts AS attempt
+			  ON attempt.team_id = artifact.team_id
+			 AND attempt.attempt_id = artifact.attempt_id
+			 AND attempt.owner_profile_id = artifact.owner_profile_id
+			LEFT JOIN private_memory_legal_holds AS hold
+			  ON hold.space_id = attempt.space_id AND hold.released_at IS NULL
+			WHERE artifact.team_id = ?::uuid AND artifact.attempt_id = ?::uuid AND artifact.artifact_id = ?::uuid
+			  AND (artifact.expires_at > clock_timestamp() OR hold.id IS NOT NULL)
 		`, teamID, attemptID, artifactID).Row().Scan(
 			&artifact.TeamID, &artifact.ArtifactID, &artifact.AttemptID, &artifact.ArtifactKind,
 			&artifact.ContentType, &artifact.Content, &artifact.ByteCount, &artifact.ContentSHA256,
-			&artifact.CapturedAt, &artifact.ExpiresAt,
+			&artifact.CapturedAt, &artifact.ExpiresAt, &artifact.RetainedByLegalHold,
 		)
 	})
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, gorm.ErrRecordNotFound) {
@@ -690,24 +735,60 @@ func (r *LedgerRepositoryImpl) PurgeExpiredRememberFailureArtifacts(ctx context.
 		if err := tx.Exec("SELECT set_config('app.remember_failure_artifact_purge', 'true', true)").Error; err != nil {
 			return fmt.Errorf("remember failure artifact purge guard: %w", err)
 		}
-		result := tx.WithContext(ctx).Exec(`
+		privateResult := tx.WithContext(ctx).Exec(`
 			WITH expired AS (
-				SELECT team_id, artifact_id
-				FROM remember_failure_artifacts
-				WHERE expires_at <= clock_timestamp()
-				ORDER BY expires_at ASC, team_id ASC, artifact_id ASC
+				SELECT artifact.team_id, artifact.artifact_id
+				FROM remember_failure_artifacts AS artifact
+				JOIN remember_attempts AS attempt
+				  ON attempt.team_id = artifact.team_id
+				 AND attempt.attempt_id = artifact.attempt_id
+				 AND attempt.owner_profile_id = artifact.owner_profile_id
+				JOIN memory_spaces AS space
+				  ON space.team_id = attempt.team_id AND space.id = attempt.space_id
+				LEFT JOIN private_memory_legal_holds AS hold
+				  ON hold.space_id = space.id AND hold.released_at IS NULL
+				WHERE artifact.expires_at <= clock_timestamp()
+				  AND hold.id IS NULL
+				ORDER BY space.id, artifact.expires_at ASC, artifact.team_id ASC, artifact.artifact_id ASC
 				LIMIT ?
-				FOR UPDATE SKIP LOCKED
+				FOR UPDATE OF space, artifact SKIP LOCKED
 			)
 			DELETE FROM remember_failure_artifacts AS artifact
 			USING expired
 			WHERE artifact.team_id = expired.team_id
 			  AND artifact.artifact_id = expired.artifact_id
 		`, batchSize)
-		if result.Error != nil {
-			return result.Error
+		if privateResult.Error != nil {
+			return privateResult.Error
 		}
-		deleted = result.RowsAffected
+		deleted = privateResult.RowsAffected
+		if deleted >= int64(batchSize) {
+			return nil
+		}
+		remaining := batchSize - int(deleted)
+		unscopedResult := tx.WithContext(ctx).Exec(`
+			WITH expired AS (
+				SELECT artifact.team_id, artifact.artifact_id
+				FROM remember_failure_artifacts AS artifact
+				JOIN remember_attempts AS attempt
+				  ON attempt.team_id = artifact.team_id
+				 AND attempt.attempt_id = artifact.attempt_id
+				 AND attempt.owner_profile_id = artifact.owner_profile_id
+				WHERE attempt.space_id IS NULL
+				  AND artifact.expires_at <= clock_timestamp()
+				ORDER BY artifact.expires_at ASC, artifact.team_id ASC, artifact.artifact_id ASC
+				LIMIT ?
+				FOR UPDATE OF artifact SKIP LOCKED
+			)
+			DELETE FROM remember_failure_artifacts AS artifact
+			USING expired
+			WHERE artifact.team_id = expired.team_id
+			  AND artifact.artifact_id = expired.artifact_id
+		`, remaining)
+		if unscopedResult.Error != nil {
+			return unscopedResult.Error
+		}
+		deleted += unscopedResult.RowsAffected
 		return nil
 	})
 	if err != nil {

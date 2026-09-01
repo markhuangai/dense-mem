@@ -112,6 +112,10 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		if errors.Is(terminalErr, repository.ErrRememberReplay) {
 			return p.loadRememberReplay(ctx, input, ingestID)
 		}
+		if errors.Is(terminalErr, repository.ErrRememberFailureRetentionDegraded) && terminal != nil {
+			p.logRememberFailureRetentionDegraded(input, terminal.IngestID, "commit")
+			return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult}, input)
+		}
 		if terminalErr != nil {
 			return fail(terminalErr, "commit")
 		}
@@ -162,6 +166,10 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		if errors.Is(terminalErr, repository.ErrRememberReplay) {
 			return p.loadRememberReplay(ctx, input, ingestID)
 		}
+		if errors.Is(terminalErr, repository.ErrRememberFailureRetentionDegraded) && terminal != nil {
+			p.logRememberFailureRetentionDegraded(input, terminal.IngestID, "commit")
+			return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult}, input)
+		}
 		if terminalErr != nil {
 			return fail(terminalErr, "commit")
 		}
@@ -180,6 +188,10 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		commitCancel()
 		if errors.Is(terminalErr, repository.ErrRememberReplay) {
 			return p.loadRememberReplay(ctx, input, ingestID)
+		}
+		if errors.Is(terminalErr, repository.ErrRememberFailureRetentionDegraded) && terminal != nil {
+			p.logRememberFailureRetentionDegraded(input, terminal.IngestID, "commit")
+			return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult}, input)
 		}
 		if terminalErr != nil {
 			return fail(terminalErr, "commit")
@@ -313,18 +325,24 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	}
 	recoveryCtx, cancel := rememberFailureRecoveryContext(ctx)
 	defer cancel()
-	if err := p.ledger.RecordRememberFailure(recoveryCtx, repository.RememberFailureRecordInput{
+	recordErr := p.ledger.RecordRememberFailure(recoveryCtx, repository.RememberFailureRecordInput{
 		Attempt: repository.RememberAttemptRecordInput{
 			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, AttemptID: attemptID,
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 			RequestHash:     input.RequestHash,
 			ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
-			FailedPhase: phase, ErrorCode: publicError.Code, CorrelationID: correlationID, PublicResult: publicResult,
+			FailedPhase: phase, ErrorCode: publicError.Code, Retryable: publicError.Retryable, RetryabilitySet: true, CorrelationID: correlationID, PublicResult: publicResult,
 			EvidenceCount: len(input.Evidence), AssessorTurns: assessorTurns, Duration: time.Since(started),
 		},
 		Artifacts: artifacts,
-	}); err != nil {
-		if errors.Is(err, repository.ErrRememberReplay) {
+	})
+	if recordErr != nil {
+		if errors.Is(recordErr, repository.ErrRememberFailureRetentionDegraded) {
+			p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
+			p.logRememberFailureRetentionDegraded(input, attemptID, phase)
+			return nil, &rememberapp.RememberProcessError{Status: status, Err: failure}
+		}
+		if errors.Is(recordErr, repository.ErrRememberReplay) {
 			winner, loadErr := p.ledger.LoadRememberAttempt(recoveryCtx, repository.RememberAttemptLookupInput{
 				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
 			})
@@ -333,11 +351,11 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 			}
 			return rememberAttemptReplay(winner, input)
 		}
-		if errors.Is(err, repository.ErrIdempotencyConflict) {
-			return nil, rememberConflictProcessError(input, attemptID, errors.Join(rememberapp.ErrRememberConflict, err))
+		if errors.Is(recordErr, repository.ErrIdempotencyConflict) {
+			return nil, rememberConflictProcessError(input, attemptID, errors.Join(rememberapp.ErrRememberConflict, recordErr))
 		}
 		p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
-		p.logRememberFailureRecordError(input, attemptID, phase, publicError.Code, correlationID, err)
+		p.logRememberFailureRecordError(input, attemptID, phase, publicError.Code, correlationID, recordErr)
 		return nil, rememberFailurePersistenceProcessError(input, attemptID, failure)
 	}
 	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
@@ -585,71 +603,6 @@ func rememberCommitFailureMetadata(err error) (string, string) {
 		return "cancelled", "semantic_commit_cancelled"
 	default:
 		return "database", "semantic_commit_failed"
-	}
-}
-
-func (p *rememberSynchronousProcessor) logRememberFailureRecordError(
-	input rememberapp.RememberProcessRequest,
-	attemptID string,
-	phase string,
-	errorCode string,
-	correlationID string,
-	failure error,
-) {
-	if p == nil || p.logger == nil {
-		return
-	}
-	attrs := rememberFailureLogAttrs(input, attemptID, phase, errorCode, correlationID)
-	attrs = append(attrs, observability.String("recovery_error_code", rememberFailureRecoveryErrorCode(failure)))
-	p.logger.Error("remember_failure_record_failed", rememberFailureRecoveryLogError(failure), attrs...)
-}
-
-func rememberFailureRecoveryLogError(err error) error {
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return fmt.Errorf("remember failure record persistence timed out: %w", context.DeadlineExceeded)
-	case errors.Is(err, context.Canceled):
-		return fmt.Errorf("remember failure record persistence was cancelled: %w", context.Canceled)
-	default:
-		return errors.New("remember failure record persistence failed")
-	}
-}
-
-func rememberFailureLogAttrs(
-	input rememberapp.RememberProcessRequest,
-	attemptID string,
-	phase string,
-	errorCode string,
-	correlationID string,
-) []observability.LogAttr {
-	return []observability.LogAttr{
-		observability.String("team_id", input.TeamID),
-		observability.String("profile_id", input.OwnerProfileID),
-		observability.CorrelationID(correlationID),
-		observability.String("reference_type", "remember_attempt"),
-		observability.String("reference_id", attemptID),
-		observability.String("submission_id", attemptID),
-		observability.String("failed_phase", phase),
-		observability.String("error_code", errorCode),
-	}
-}
-
-func rememberProcessCorrelationID(metadata map[string]any) string {
-	if actor, ok := metadata["actor"].(map[string]any); ok {
-		correlationID, _ := actor["correlation_id"].(string)
-		return strings.TrimSpace(correlationID)
-	}
-	return ""
-}
-
-func rememberFailureRecoveryErrorCode(err error) string {
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return "deadline_exceeded"
-	case errors.Is(err, context.Canceled):
-		return "request_cancelled"
-	default:
-		return "persistence_failed"
 	}
 }
 

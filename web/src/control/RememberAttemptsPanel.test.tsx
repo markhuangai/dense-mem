@@ -11,7 +11,7 @@ describe("RememberAttemptsPanel", () => {
         team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: "attempt-1",
         contract_version: "dense-mem.v2.6", submission_kind: "remember", outcome: "failed",
         failed_phase: "assessment", error_code: "provider_unavailable", evidence_count: 1,
-        relationship_count: 1, document_count: 0, assessor_turns: 1, duration_ms: 24,
+        retryable: true, relationship_count: 1, document_count: 0, assessor_turns: 1, duration_ms: 24,
         created_at: "2026-08-18T01:00:00Z",
       }],
       pagination: { limit: 50, offset: 0, total: 1 },
@@ -20,7 +20,7 @@ describe("RememberAttemptsPanel", () => {
       team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: "attempt-1",
       contract_version: "remember_request_hash_v1", submission_kind: "remember", outcome: "failed",
       failed_phase: "assessment", error_code: "provider_unavailable", evidence_count: 1,
-      relationship_count: 1, document_count: 0, assessor_turns: 1, duration_ms: 24,
+      retryable: true, relationship_count: 1, document_count: 0, assessor_turns: 1, duration_ms: 24,
       created_at: "2026-08-18T01:00:00Z", public_result: {
         contract_version: "dense-mem.v2.6", submission_id: "attempt-1", submission_kind: "remember",
         processing_state: "failed", search_state: "not_required", correlation_id: "corr-1",
@@ -31,7 +31,7 @@ describe("RememberAttemptsPanel", () => {
         { sequence_no: 1, phase: "assessment", event_kind: "assessment_failed", outcome: "failed", metadata: { markup: "<script>bad()</script>" }, created_at: "2026-08-18T01:00:01Z" },
         { sequence_no: 2, phase: "commit", event_kind: "commit_completed", outcome: "completed", metadata: {}, created_at: "2026-08-18T01:00:02Z" },
       ],
-      artifacts: [{ artifact_id: "artifact-1", artifact_kind: "failure", content_type: "application/json", byte_count: 64, content_sha256: "sha256:test", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z" }],
+      artifacts: [{ artifact_id: "artifact-1", artifact_kind: "failure", content_type: "application/json", byte_count: 64, content_sha256: "sha256:test", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z", retained_by_legal_hold: false }],
     });
     const getRememberFailureArtifact = vi.fn().mockResolvedValue(new TextEncoder().encode(`{"phase":"assessment","error_code":"provider_unavailable"}`));
     const api = { listRememberAttemptDiagnostics, getRememberAttemptDiagnostic, getRememberFailureArtifact } as unknown as ControlApi;
@@ -188,7 +188,7 @@ function summary(attemptID: string, outcome: RememberAttemptDiagnosticSummary["o
   return {
     team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: attemptID,
     contract_version: "dense-mem.v2.6", submission_kind: "remember", outcome,
-    evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1,
+    retryable: outcome === "failed", evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1,
     created_at: "2026-08-18T01:00:00Z",
   };
 }
@@ -198,7 +198,7 @@ function detailFor(attemptID: string, outcome: RememberAttemptDiagnosticSummary[
     ...baseDetail(attemptID),
     outcome,
     error_code: attemptID === "attempt-a" && outcome === "failed" ? "detail-a-error" : undefined,
-    artifacts: artifactID ? [{ artifact_id: artifactID, artifact_kind: "failure", content_type: "application/json", byte_count: 20, content_sha256: "sha256:test", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z" }] : [],
+    artifacts: artifactID ? [{ artifact_id: artifactID, artifact_kind: "failure", content_type: "application/json", byte_count: 20, content_sha256: "sha256:test", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z", retained_by_legal_hold: false }] : [],
   };
 }
 
@@ -206,7 +206,7 @@ function baseDetail(attemptID: string): RememberAttemptDiagnosticDetail {
   return {
     team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: attemptID,
     contract_version: "remember_request_hash_v1", submission_kind: "remember", outcome: "completed",
-    evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1,
+    retryable: false, evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1,
     created_at: "2026-08-18T01:00:00Z", public_result: { contract_version: "dense-mem.v2.6", submission_id: attemptID, submission_kind: "remember", processing_state: "completed", search_state: "current", correlation_id: "corr", evidence: [], relationship_results: [], errors: [] }, events: [], artifacts: [],
   };
 }

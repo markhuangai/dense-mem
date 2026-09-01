@@ -284,12 +284,12 @@ func submissionAssessmentCommitInput(
 			coveredEvidence[support.FragmentID] = struct{}{}
 		}
 	}
-	if len(observations) == 0 {
+	if len(plan.RelationshipTargets) > 0 && len(observations) == 0 {
 		return repository.CommitSubmissionAssessmentInput{}, &submissionAssessmentNoSupportedMemoryError{
 			RelationshipResults: relationshipResults,
 		}
 	}
-	if len(coveredEvidence) < len(plan.Items) {
+	if len(plan.RelationshipTargets) > 0 && len(coveredEvidence) < len(plan.Items) {
 		for index := range relationshipResults {
 			relationshipResults[index].Disposition = "not_stored"
 			relationshipResults[index].Reason = "not_supported_by_evidence"

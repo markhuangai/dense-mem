@@ -57,7 +57,7 @@ func TestSemanticAssessmentWireRejectsObsoleteAssessorFields(t *testing.T) {
 
 func TestSemanticAssessmentWireRejectsDuplicateFields(t *testing.T) {
 	_, limits := semanticAssessmentTestRequest(t)
-	_, err := DecodeSemanticAssessmentResponseJSON([]byte(`{"request_id":"a","security_signals":[],"entity_results":[],"relationship_results":[],"request_id":"b"}`), limits)
+	_, err := DecodeSemanticAssessmentResponseJSON([]byte(`{"request_id":"a","security_signals":[],"security_results":[],"entity_results":[],"relationship_results":[],"request_id":"b"}`), limits)
 	require.ErrorContains(t, err, "duplicate JSON field")
 }
 
@@ -127,6 +127,7 @@ func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 	response := SemanticAssessmentResponse{
 		RequestID:       prepared.RequestID,
 		SecuritySignals: []SemanticAssessmentSecuritySignal{},
+		SecurityResults: []SemanticAssessmentSecurityResult{{EvidenceID: "ev-1", Decision: "pass"}},
 		EntityResults: []SemanticAssessmentEntityResult{{
 			Ref: "entity:latency", GroundingRef: &groundingRef, Action: "create",
 		}},
@@ -209,11 +210,11 @@ func TestSemanticAssessmentSubmissionContractRejectsUntrustedTargets(t *testing.
 			want: "submission_contract",
 		},
 		{
-			name: "empty contract",
+			name: "mixed empty contract",
 			mutate: func(request *SemanticAssessmentRequest) {
-				request.SubmissionContract = &SemanticAssessmentSubmissionContract{}
+				request.SubmissionContract.Relationships = nil
 			},
-			want: "must contain between 1",
+			want: "must both be empty or both be non-empty",
 		},
 		{
 			name: "duplicate entity ref",
@@ -686,6 +687,7 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 	return SemanticAssessmentResponse{
 		RequestID:       "assess-1",
 		SecuritySignals: []SemanticAssessmentSecuritySignal{},
+		SecurityResults: []SemanticAssessmentSecurityResult{{EvidenceID: "ev-1", Decision: "pass"}},
 		EntityResults: []SemanticAssessmentEntityResult{
 			{
 				Ref:               "person-1",

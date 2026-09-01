@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -27,6 +28,9 @@ func (r *LedgerRepositoryImpl) CommitRememberTerminal(
 	}
 	createInput := rememberCreateIngestInput(input)
 	createInput.Status = rememberIngestStatus(outcome)
+	if err := validateSynchronousRememberTerminalInput(input); err != nil {
+		return nil, err
+	}
 	if err := validateCreateIngestInput(createInput); err != nil {
 		return nil, err
 	}
@@ -90,7 +94,8 @@ func (r *LedgerRepositoryImpl) CommitRememberTerminal(
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 			RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
 			Outcome: outcome, ErrorCode: terminalError.Code, CorrelationID: rememberCorrelationID(input.Metadata), PublicResult: publicResult,
-			EvidenceCount: len(evidence), RelationshipCount: len(input.Commit.RelationshipResults), AssessorTurns: input.AssessorTurns, Duration: rememberAttemptDuration(input),
+			RetryabilitySet: true,
+			EvidenceCount:   len(evidence), RelationshipCount: len(input.Commit.RelationshipResults), AssessorTurns: input.AssessorTurns, Duration: rememberAttemptDuration(input),
 		}); err != nil {
 			return err
 		}
@@ -99,6 +104,11 @@ func (r *LedgerRepositoryImpl) CommitRememberTerminal(
 	})
 	if err != nil {
 		return result, fmt.Errorf("repository: commit Remember terminal: %w", err)
+	}
+	if strings.TrimSpace(input.SpaceID) != "" {
+		if err := r.synchronizeRememberFailureArtifactHold(ctx, input.SpaceID); err != nil {
+			return result, fmt.Errorf("%w: %v", ErrRememberFailureRetentionDegraded, err)
+		}
 	}
 	return result, nil
 }
@@ -118,7 +128,13 @@ func (r *LedgerRepositoryImpl) CommitRememberPreflightQuarantine(
 		return nil, err
 	}
 	input.Commit.RelationshipResults = relationshipResults
-	if err := validateSynchronousRememberCommitInput(input); err != nil {
+	input.EvidenceSecurityResults = make([]EvidenceSecurityResult, 0, len(input.Evidence))
+	for index, evidence := range input.Evidence {
+		input.EvidenceSecurityResults = append(input.EvidenceSecurityResults, EvidenceSecurityResult{
+			FragmentID: evidence.FragmentID, EvidenceIndex: index, Decision: "quarantine", Safe: false,
+		})
+	}
+	if err := validateSynchronousRememberTerminalInput(input); err != nil {
 		return nil, err
 	}
 	result := &SynchronousRememberCommitResult{IngestID: input.IngestID, Outcome: "quarantined"}
@@ -148,8 +164,12 @@ func (r *LedgerRepositoryImpl) CommitRememberPreflightQuarantine(
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 			RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
 			Outcome: "quarantined", ErrorCode: terminalError.Code, CorrelationID: rememberCorrelationID(input.Metadata), PublicResult: publicResult,
-			EvidenceCount: len(input.Evidence), RelationshipCount: len(input.Commit.RelationshipResults), AssessorTurns: input.AssessorTurns, Duration: rememberAttemptDuration(input),
+			RetryabilitySet: true,
+			EvidenceCount:   len(input.Evidence), RelationshipCount: len(input.Commit.RelationshipResults), AssessorTurns: input.AssessorTurns, Duration: rememberAttemptDuration(input),
 		}); err != nil {
+			return err
+		}
+		if err := insertPolicyRejectedRequestArtifact(ctx, tx, input); err != nil {
 			return err
 		}
 		result.PublicResult = publicResult
@@ -158,7 +178,46 @@ func (r *LedgerRepositoryImpl) CommitRememberPreflightQuarantine(
 	if err != nil {
 		return result, fmt.Errorf("repository: commit Remember preflight quarantine: %w", err)
 	}
+	if strings.TrimSpace(input.SpaceID) != "" {
+		if err := r.synchronizeRememberFailureArtifactHold(ctx, input.SpaceID); err != nil {
+			return result, fmt.Errorf("%w: %v", ErrRememberFailureRetentionDegraded, err)
+		}
+	}
 	return result, nil
+}
+
+func insertPolicyRejectedRequestArtifact(ctx context.Context, tx *gorm.DB, input SynchronousRememberCommitInput) error {
+	if len(input.Evidence) == 0 {
+		return nil
+	}
+	evidence := make([]map[string]any, 0, len(input.Evidence))
+	for index, item := range input.Evidence {
+		contentHash := strings.TrimSpace(item.ContentHash)
+		if contentHash == "" {
+			contentHash = sha256Hex(item.Content)
+		}
+		evidence = append(evidence, map[string]any{
+			"evidence_index": index,
+			"content_hash":   contentHash,
+		})
+	}
+	content, err := json.Marshal(map[string]any{
+		"submission_id": input.IngestID,
+		"evidence":      evidence,
+	})
+	if err != nil {
+		return fmt.Errorf("policy rejection artifact: encode: %w", err)
+	}
+	if len(content) > maxRememberFailureArtifactBytes {
+		return errors.New("policy rejection artifact exceeds retention size")
+	}
+	return tx.WithContext(ctx).Exec(`
+		INSERT INTO remember_failure_artifacts (
+		    team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind,
+		    content_type, content_bytes, byte_count, content_sha256, captured_at, expires_at
+		) VALUES (?::uuid, gen_random_uuid(), ?::uuid, ?::uuid, 'policy_rejected_request',
+		          'application/json', ?, ?, ?, statement_timestamp(), statement_timestamp() + interval '7 days')
+	`, input.TeamID, input.IngestID, input.OwnerProfileID, content, len(content), sha256Hex(string(content))).Error
 }
 
 func rememberTerminalRelationshipResultsFromProposal(proposal map[string]any, reason string) ([]SubmissionRelationshipResultInput, error) {

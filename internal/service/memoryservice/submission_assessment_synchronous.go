@@ -97,6 +97,10 @@ func BuildSynchronousRememberCommitInput(input SynchronousRememberCommitRequest)
 	if input.Assessment == nil {
 		return repository.SynchronousRememberCommitInput{}, errors.New("synchronous assessment: prepared result is required")
 	}
+	securityResults, err := BuildSynchronousRememberEvidenceSecurityResults(input.Assessment)
+	if err != nil {
+		return repository.SynchronousRememberCommitInput{}, err
+	}
 	scope := repository.RememberCommitScope{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID}
 	commit, err := submissionAssessmentCommitInput(scope, input.Assessment.Plan, input.Assessment.Response, &input.Assessment.Assessment, false)
 	if err != nil {
@@ -129,7 +133,8 @@ func BuildSynchronousRememberCommitInput(input SynchronousRememberCommitRequest)
 			SourceSummary: input.SourceSummary, Proposal: input.Proposal,
 			Metadata: input.Metadata, Evidence: append([]repository.EvidenceInput(nil), input.Evidence...),
 			AssessmentID: input.Assessment.Assessment.AssessmentID, AssessmentJSON: append(json.RawMessage(nil), input.Assessment.Assessment.NormalizedResponse...),
-			ProviderTurns: input.Assessment.Assessment.ProviderTurns, InputTokens: input.Assessment.Assessment.InputTokens,
+			EvidenceSecurityResults: append([]repository.EvidenceSecurityResult(nil), securityResults...),
+			ProviderTurns:           input.Assessment.Assessment.ProviderTurns, InputTokens: input.Assessment.Assessment.InputTokens,
 			OutputTokens: input.Assessment.Assessment.OutputTokens, AssessorTurns: input.Assessment.Assessment.ProviderTurns,
 			Duration: input.Duration, Commit: commit,
 		}
@@ -147,10 +152,66 @@ func BuildSynchronousRememberCommitInput(input SynchronousRememberCommitRequest)
 		SourceSummary: input.SourceSummary, Proposal: input.Proposal,
 		Metadata: input.Metadata, Evidence: append([]repository.EvidenceInput(nil), input.Evidence...),
 		AssessmentID: assessment.AssessmentID, AssessmentJSON: append(json.RawMessage(nil), assessment.NormalizedResponse...),
-		ProviderTurns: providerTurns, InputTokens: assessment.InputTokens, OutputTokens: assessment.OutputTokens,
+		EvidenceSecurityResults: append([]repository.EvidenceSecurityResult(nil), securityResults...),
+		ProviderTurns:           providerTurns, InputTokens: assessment.InputTokens, OutputTokens: assessment.OutputTokens,
 		AssessorTurns: providerTurns, Duration: input.Duration,
 		Commit: commit,
 	}, nil
+}
+
+// BuildSynchronousRememberEvidenceSecurityResults turns the validated assessor
+// signal set into one complete security disposition for every evidence item.
+// A missing signal is an explicit safe result; an observed signal is routed to
+// terminal quarantine and cannot be accepted by the semantic commit path.
+func BuildSynchronousRememberEvidenceSecurityResults(prepared *SynchronousAssessmentResult) ([]repository.EvidenceSecurityResult, error) {
+	if prepared == nil {
+		return nil, errors.New("synchronous assessment: prepared result is required")
+	}
+	signalsByEvidenceID := make(map[string][]repository.SecuritySignalInput)
+	for _, signal := range prepared.Response.SecuritySignals {
+		item, ok := prepared.Plan.itemsByEvidenceID[signal.EvidenceID]
+		if !ok {
+			return nil, errors.New("submission assessor security result references unknown evidence")
+		}
+		quote, err := assessor.SemanticEvidenceSpan(item.Fragment.Content, signal.Start, signal.End)
+		if err != nil {
+			return nil, err
+		}
+		signalsByEvidenceID[signal.EvidenceID] = append(signalsByEvidenceID[signal.EvidenceID], repository.SecuritySignalInput{
+			Kind: signal.Kind, Severity: "high", SpanStart: signal.Start, SpanEnd: signal.End, Quote: quote,
+		})
+	}
+	securityResultsByEvidenceID := make(map[string]assessor.SemanticAssessmentSecurityResult, len(prepared.Response.SecurityResults))
+	for _, result := range prepared.Response.SecurityResults {
+		if _, exists := securityResultsByEvidenceID[result.EvidenceID]; exists {
+			return nil, errors.New("submission assessor security result is duplicated")
+		}
+		securityResultsByEvidenceID[result.EvidenceID] = result
+	}
+	results := make([]repository.EvidenceSecurityResult, 0, len(prepared.Plan.Items))
+	for _, item := range prepared.Plan.Items {
+		securityResult, ok := securityResultsByEvidenceID[item.EvidenceID]
+		if !ok {
+			return nil, errors.New("submission assessor security result is missing")
+		}
+		signals := append([]repository.SecuritySignalInput(nil), signalsByEvidenceID[item.EvidenceID]...)
+		decision := strings.TrimSpace(securityResult.Decision)
+		if decision != "pass" && decision != "quarantine" {
+			return nil, errors.New("submission assessor security result decision is unsupported")
+		}
+		if decision == "pass" && len(signals) > 0 {
+			return nil, errors.New("submission assessor security result pass contains unsafe signals")
+		}
+		if decision == "quarantine" && len(signals) == 0 {
+			return nil, errors.New("submission assessor quarantine result has no security signal")
+		}
+		results = append(results, repository.EvidenceSecurityResult{
+			FragmentID: item.Fragment.FragmentID, EvidenceID: item.EvidenceID,
+			EvidenceIndex: item.Fragment.EvidenceIndex, Decision: decision,
+			Safe: len(signals) == 0, Signals: signals,
+		})
+	}
+	return results, nil
 }
 
 // BuildSynchronousRememberSecurityQuarantines converts validated assessor

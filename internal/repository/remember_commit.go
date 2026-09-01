@@ -252,7 +252,8 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 			RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
 			Outcome: "completed", CorrelationID: rememberCorrelationID(input.Metadata), PublicResult: publicResult,
-			EvidenceCount: len(evidence), RelationshipCount: len(input.Commit.RelationshipResults),
+			RetryabilitySet: true,
+			EvidenceCount:   len(evidence), RelationshipCount: len(input.Commit.RelationshipResults),
 			DocumentCount: len(semanticResult.SearchDocuments), AssessorTurns: input.AssessorTurns, Duration: rememberAttemptDuration(input),
 		}); err != nil {
 			return err

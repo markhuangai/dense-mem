@@ -10,6 +10,7 @@ E2E_ALL_SCENARIOS=(
   submission_terminal_errors
   security_intake
   synchronous_write
+  synchronous_write_primitives
   identity_cleanup
   community
   conflict
@@ -159,6 +160,7 @@ run_all_e2e_scenarios() {
       setsid --wait env \
         DENSE_MEM_E2E_MODE=standard \
         DENSE_MEM_E2E_SCENARIO="$scenario" \
+        DENSE_MEM_E2E_WRITE_CASE="$(if [[ "$scenario" == "synchronous_write_primitives" ]]; then printf '%s' primitives; fi)" \
         DENSE_MEM_E2E_RUN_ID="$run_id" \
         DENSE_MEM_E2E_PROJECT_NAME="$project_name" \
         DENSE_MEM_E2E_PROMETHEUS_CONTAINER_NAME="$prometheus_name" \

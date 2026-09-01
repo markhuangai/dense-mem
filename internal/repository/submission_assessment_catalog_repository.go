@@ -168,8 +168,8 @@ func validateSubmissionAssessmentEntityCatalogInput(input SubmissionAssessmentEn
 	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
 		return fmt.Errorf("owner_profile_id is required: %w", err)
 	}
-	if len(input.Entities) == 0 || len(input.Entities) > submissionAssessmentMaxEntityTargets {
-		return fmt.Errorf("entities must contain between 1 and %d entries", submissionAssessmentMaxEntityTargets)
+	if len(input.Entities) > submissionAssessmentMaxEntityTargets {
+		return fmt.Errorf("entities must contain at most %d entries", submissionAssessmentMaxEntityTargets)
 	}
 	if input.CandidateLimit < 1 || input.CandidateLimit > submissionAssessmentMaxCandidateSet {
 		return fmt.Errorf("candidate_limit must be between 1 and %d", submissionAssessmentMaxCandidateSet)

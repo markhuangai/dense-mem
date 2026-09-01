@@ -69,6 +69,8 @@ func semanticAssessmentValidationFieldFamily(field string) string {
 	switch {
 	case strings.HasPrefix(field, "security_signals"):
 		return "security_signals"
+	case strings.HasPrefix(field, "security_results"):
+		return "security_results"
 	case strings.HasPrefix(field, "entity_results"):
 		return semanticAssessmentEntityValidationFieldFamily(field)
 	case strings.HasPrefix(field, "relationship_results"):

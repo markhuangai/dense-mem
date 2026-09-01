@@ -5,25 +5,14 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"github.com/markhuangai/dense-mem/internal/assessor"
 )
 
 var semanticHiddenControlMarkupPattern = regexp.MustCompile(`(?is)<!--|<\s*(?:script|iframe|object|embed|meta|svg)\b|\bon[a-z]{3,32}\s*=`)
 
-// SemanticReviewEvidence is the immutable evidence envelope shared by the
-// active proposal and assessor contracts.
-type SemanticReviewEvidence struct {
-	EvidenceID              string         `json:"evidence_id"`
-	FragmentID              string         `json:"-"`
-	EvidenceIndex           int            `json:"-"`
-	Content                 string         `json:"content"`
-	BoundaryText            string         `json:"boundary_text,omitempty"`
-	BoundaryRefs            map[string]int `json:"-"`
-	BoundaryPrefix          string         `json:"-"`
-	Authority               string         `json:"-"`
-	SourceID                string         `json:"-"`
-	SourceRevisionID        string         `json:"-"`
-	CurrentSourceRevisionID string         `json:"-"`
-}
+// SemanticReviewEvidence is the assessor-owned immutable evidence envelope.
+type SemanticReviewEvidence = assessor.SemanticReviewEvidence
 
 // RelationshipCorrectionTarget carries server-trusted correction context
 // through the in-process assessor request without exposing it to providers.
@@ -49,11 +38,9 @@ type SemanticValueObservation struct {
 	Unit    string `json:"unit,omitempty"`
 }
 
-// SemanticValidationError is a bounded field-level contract validation error.
-type SemanticValidationError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
-}
+// SemanticValidationError is the assessor-owned bounded field-level contract
+// validation error kept as a verifier compatibility alias.
+type SemanticValidationError = assessor.SemanticValidationError
 
 func semanticEvidenceByID(evidence []SemanticReviewEvidence) map[string]SemanticReviewEvidence {
 	out := make(map[string]SemanticReviewEvidence, len(evidence))
@@ -61,13 +48,6 @@ func semanticEvidenceByID(evidence []SemanticReviewEvidence) map[string]Semantic
 		out[strings.TrimSpace(item.EvidenceID)] = item
 	}
 	return out
-}
-
-func (e SemanticValidationError) Error() string {
-	if e.Field == "" {
-		return e.Message
-	}
-	return e.Field + ": " + e.Message
 }
 
 func semanticSecuritySignalSpanMatchesKind(kind, quote string) bool {

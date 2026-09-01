@@ -58,6 +58,9 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 	if len(fragmentsByIndex) == 0 {
 		return submissionAssessmentPlan{}, errors.New("submission assessment evidence is required")
 	}
+	if len(fragmentsByIndex) > assessor.SemanticAssessmentMaxEvidenceSpans {
+		return submissionAssessmentPlan{}, fmt.Errorf("submission assessment evidence must contain at most %d entries", assessor.SemanticAssessmentMaxEvidenceSpans)
+	}
 
 	items := make([]submissionAssessmentItem, 0, len(snapshot.Items))
 	itemsByEvidenceID := make(map[string]submissionAssessmentItem, len(snapshot.Items))
@@ -91,8 +94,8 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 	if err != nil {
 		return submissionAssessmentPlan{}, err
 	}
-	if len(rawRelationships) == 0 || len(rawRelationships) > assessor.SemanticAssessmentMaxRelationshipResults {
-		return submissionAssessmentPlan{}, errors.New("submission assessment relationships must be present and bounded")
+	if len(rawRelationships) > assessor.SemanticAssessmentMaxRelationshipResults {
+		return submissionAssessmentPlan{}, errors.New("submission assessment relationships exceed the configured bound")
 	}
 	coveredEvidence := make(map[string]struct{}, len(items))
 	for index, raw := range rawRelationships {
@@ -116,10 +119,13 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 		plan.RelationshipTargets = append(plan.RelationshipTargets, target)
 		plan.relationshipsByRef[target.Target.ProposalID] = target
 	}
-	if len(plan.EntityTargets) == 0 || len(plan.EntityTargets) > assessor.SemanticAssessmentMaxEntityResults {
+	if len(plan.RelationshipTargets) > 0 && len(plan.EntityTargets) == 0 {
+		return submissionAssessmentPlan{}, errors.New("submission assessment relationship targets require entities")
+	}
+	if len(plan.EntityTargets) > assessor.SemanticAssessmentMaxEntityResults {
 		return submissionAssessmentPlan{}, errors.New("submission assessment entity targets must be present and bounded")
 	}
-	if len(coveredEvidence) != len(items) {
+	if len(plan.RelationshipTargets) > 0 && len(coveredEvidence) != len(items) {
 		return submissionAssessmentPlan{}, errors.New("submission assessment relationships must cover every staged evidence item")
 	}
 	sort.Slice(plan.EntityTargets, func(i, j int) bool {

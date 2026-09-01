@@ -195,6 +195,9 @@ func (r *PrivateMemoryRepositoryImpl) PlaceLegalHold(ctx context.Context, spaceI
 		`, hold.ID, hold.TeamID, hold.SpaceID, hold.ReasonCode, hold.PlacedAt).Error; err != nil {
 			return err
 		}
+		if err := setRememberFailureArtifactHoldStateTx(ctx, tx, space.ID, true); err != nil {
+			return err
+		}
 		created = true
 		return nil
 	})
@@ -226,6 +229,9 @@ func (r *PrivateMemoryRepositoryImpl) ReleaseLegalHold(ctx context.Context, spac
 			return result.Error
 		}
 		if result.RowsAffected == 1 {
+			if err := setRememberFailureArtifactHoldStateTx(ctx, tx, spaceID, false); err != nil {
+				return err
+			}
 			hold.ReleasedAt = &now
 			released = true
 		}

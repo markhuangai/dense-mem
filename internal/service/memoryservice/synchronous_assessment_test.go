@@ -104,6 +104,46 @@ func TestSynchronousAssessmentBuildsRequestAndCommitInput(t *testing.T) {
 	require.Nil(t, quarantines)
 }
 
+func TestSynchronousAssessmentSupportsEvidenceOnlyRemember(t *testing.T) {
+	runSynchronousEvidenceOnlyAssessorScenario(t)
+}
+
+func runSynchronousEvidenceOnlyAssessorScenario(t *testing.T) {
+	fixture := synchronousAssessmentFixture(t)
+	input := fixture.input
+	input.Snapshot = cloneRememberAssessmentSnapshot(input.Snapshot)
+	input.Snapshot.Proposal = map[string]any{}
+
+	prepared, err := AssessSynchronousRemember(context.Background(), fixture.deps, input)
+	require.NoError(t, err)
+	require.Equal(t, 1, fixture.provider.calls)
+	require.Empty(t, prepared.Request.SubmittedEntities)
+	require.Empty(t, prepared.Request.SubmittedRelationships)
+
+	evidence := make([]repository.EvidenceInput, 0, len(input.Snapshot.Evidence))
+	for _, fragment := range input.Snapshot.Evidence {
+		evidence = append(evidence, repository.EvidenceInput{
+			FragmentID: fragment.FragmentID, Content: fragment.Content, ContentHash: fragment.ContentHash,
+			SourceType: "conversation", Authority: fragment.Authority,
+		})
+	}
+	commit, err := BuildSynchronousRememberCommitInput(SynchronousRememberCommitRequest{
+		TeamID: input.Scope.TeamID, OwnerProfileID: input.Scope.OwnerProfileID, IngestID: input.Scope.IngestID,
+		IdempotencyKey: "evidence-only", RequestHash: "sha256:evidence-only", Evidence: evidence, Assessment: prepared,
+	})
+	require.NoError(t, err)
+	require.Len(t, commit.Commit.Items, len(evidence))
+	require.Empty(t, commit.Commit.EntityResolutions)
+	require.Empty(t, commit.Commit.RelationshipObservations)
+	require.Empty(t, commit.Commit.RelationshipResults)
+	require.Len(t, commit.EvidenceSecurityResults, len(evidence))
+	for _, result := range commit.EvidenceSecurityResults {
+		require.Equal(t, "pass", result.Decision)
+		require.True(t, result.Safe)
+		require.Empty(t, result.Signals)
+	}
+}
+
 func TestSynchronousAssessmentRepairsInvalidResponseInSameSession(t *testing.T) {
 	fixture := synchronousAssessmentFixture(t)
 	fixture.provider.response = func(request assessor.SemanticAssessmentRequest, turn int) assessor.SemanticAssessmentResponse {
@@ -166,8 +206,9 @@ func TestSynchronousAssessmentMapsPreflightAndSecurityBranches(t *testing.T) {
 		TeamID: fixture.input.Scope.TeamID, OwnerProfileID: fixture.input.Scope.OwnerProfileID,
 		IngestID: fixture.input.Scope.IngestID, Assessment: noSupported,
 	})
-	var noSupportedErr *NoSupportedMemoryError
+	var noSupportedErr *submissionAssessmentNoSupportedMemoryError
 	require.ErrorAs(t, err, &noSupportedErr)
+	require.Len(t, noSupportedErr.RelationshipResults, 2)
 	require.Len(t, commit.Commit.RelationshipResults, 2)
 	require.Equal(t, "not_stored", commit.Commit.RelationshipResults[0].Disposition)
 }
@@ -195,6 +236,13 @@ func TestSubmissionAssessmentPlanCoversReviewTargetsAndRejectsMalformedInput(t *
 		mutate func(*RememberAssessmentSnapshot)
 	}{
 		{name: "missing evidence", mutate: func(snapshot *RememberAssessmentSnapshot) { snapshot.Evidence = nil }},
+		{name: "too many evidence", mutate: func(snapshot *RememberAssessmentSnapshot) {
+			for index := len(snapshot.Evidence); index <= assessor.SemanticAssessmentMaxEvidenceSpans; index++ {
+				fragment := repository.EvidenceFragment{FragmentID: uuid.NewString(), EvidenceIndex: index, Content: "additional evidence", Authority: "primary"}
+				snapshot.Evidence = append(snapshot.Evidence, fragment)
+				snapshot.Items = append(snapshot.Items, RememberAssessmentItem{ItemID: uuid.NewString(), Fragment: fragment})
+			}
+		}},
 		{name: "mismatched item", mutate: func(snapshot *RememberAssessmentSnapshot) { snapshot.Items[0].Fragment.FragmentID = uuid.NewString() }},
 		{name: "missing item", mutate: func(snapshot *RememberAssessmentSnapshot) { snapshot.Items = snapshot.Items[:1] }},
 		{name: "missing relationship", mutate: func(snapshot *RememberAssessmentSnapshot) { snapshot.Proposal["relationship_hints"] = []any{} }},
@@ -208,7 +256,12 @@ func TestSubmissionAssessmentPlanCoversReviewTargetsAndRejectsMalformedInput(t *
 		t.Run(test.name, func(t *testing.T) {
 			broken := cloneRememberAssessmentSnapshot(fixture.input.Snapshot)
 			test.mutate(&broken)
-			_, err := buildSubmissionAssessmentPlan(broken)
+			plan, err := buildSubmissionAssessmentPlan(broken)
+			if test.name == "missing relationship" {
+				require.NoError(t, err)
+				require.Empty(t, plan.RelationshipTargets)
+				return
+			}
 			require.Error(t, err)
 		})
 	}
@@ -639,7 +692,11 @@ func validPreparedSynchronousAssessment(t *testing.T, fixture synchronousAssessm
 func validSynchronousAssessmentResponse(request assessor.SemanticAssessmentRequest) assessor.SemanticAssessmentResponse {
 	response := assessor.SemanticAssessmentResponse{
 		RequestID: request.RequestID, SecuritySignals: []assessor.SemanticAssessmentSecuritySignal{},
-		EntityResults: []assessor.SemanticAssessmentEntityResult{}, RelationshipResults: []assessor.SemanticAssessmentRelationshipResult{},
+		SecurityResults: []assessor.SemanticAssessmentSecurityResult{},
+		EntityResults:   []assessor.SemanticAssessmentEntityResult{}, RelationshipResults: []assessor.SemanticAssessmentRelationshipResult{},
+	}
+	for _, evidence := range request.Evidence {
+		response.SecurityResults = append(response.SecurityResults, assessor.SemanticAssessmentSecurityResult{EvidenceID: evidence.EvidenceID, Decision: "pass"})
 	}
 	for _, entity := range request.SubmittedEntities {
 		if len(entity.Groundings) == 0 {

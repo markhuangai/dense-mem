@@ -124,7 +124,7 @@ function assessmentInput(payload) {
     if (messages[index]?.role !== "user" || typeof messages[index]?.content !== "string") continue;
     try {
       const parsed = JSON.parse(messages[index].content);
-      if (Array.isArray(parsed.submitted_relationships)) return parsed;
+      if (Array.isArray(parsed.evidence)) return parsed;
     } catch {
       // Repair feedback is not an assessment request.
     }
@@ -188,10 +188,15 @@ function fixtureAssessment(request, requestFault, attempt) {
     kind: "instruction_override",
     ...wholeEvidenceRange(request.evidence[0]),
   }] : [];
+  const securitySignalEvidenceIDs = new Set(securitySignals.map((signal) => signal.evidence_id));
+  const securityResults = (request.evidence || []).map((evidence) => ({
+    evidence_id: evidence.evidence_id,
+    decision: securitySignalEvidenceIDs.has(evidence.evidence_id) ? "quarantine" : "pass",
+  }));
   if (requestFault === "repair" && attempt === 1) {
-    return { request_id: request.request_id || "fixture", security_signals: [], entity_results: [], relationship_results: relationships };
+    return { request_id: request.request_id || "fixture", security_signals: [], security_results: securityResults, entity_results: [], relationship_results: relationships };
   }
-  return { request_id: request.request_id || "fixture", security_signals: securitySignals, entity_results: entities, relationship_results: relationships };
+  return { request_id: request.request_id || "fixture", security_signals: securitySignals, security_results: securityResults, entity_results: entities, relationship_results: relationships };
 }
 
 function wholeEvidenceRange(evidence) {
