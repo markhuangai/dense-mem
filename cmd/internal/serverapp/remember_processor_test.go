@@ -106,6 +106,28 @@ func TestRememberAttemptMatchesRequestDoesNotAcceptMigratedHash(t *testing.T) {
 	}, input))
 }
 
+func TestRememberAttemptStatusForRequestRestoresRelationshipOrder(t *testing.T) {
+	attempt := &repository.RememberAttempt{
+		AttemptID: "77777777-7777-7777-7777-777777777777", Outcome: "completed",
+		PublicResult: map[string]any{
+			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
+			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
+			"evidence": []any{}, "relationship_results": []any{
+				map[string]any{"ref": "rel-a", "disposition": "stored", "splits": []any{}},
+				map[string]any{"ref": "rel-b", "disposition": "stored", "splits": []any{}},
+			}, "errors": []any{},
+		},
+	}
+	status, err := rememberAttemptStatusForRequest(attempt, rememberapp.RememberProcessRequest{
+		Proposal: map[string]any{"relationship_hints": []map[string]any{{"ref": "rel-b"}, {"ref": "rel-a"}}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"rel-b", "rel-a"}, []string{
+		status.RelationshipResults[0].RelationshipRef,
+		status.RelationshipResults[1].RelationshipRef,
+	})
+}
+
 func TestRememberProcessorFailureProjectsEverySubmittedItem(t *testing.T) {
 	ledger := &rememberFailureLedgerStub{}
 	processor := &rememberSynchronousProcessor{ledger: ledger}

@@ -86,7 +86,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 			return nil, rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
 		}
 		if attempt.Outcome == "completed" || attempt.Outcome == "rejected" || attempt.Outcome == "quarantined" || attempt.Outcome == "replayed" {
-			replay, replayErr := rememberAttemptStatus(attempt)
+			replay, replayErr := rememberAttemptStatusForRequest(attempt, input)
 			if replayErr != nil {
 				return nil, replayErr
 			}
@@ -115,7 +115,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		if terminalErr != nil {
 			return fail(terminalErr, "commit")
 		}
-		return rememberAttemptStatus(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult})
+		return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult}, input)
 	}
 	prepared, err := memoryservice.AssessSynchronousRemember(ctx, memoryservice.SynchronousAssessmentDependencies{
 		Catalog: p.catalog, Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
@@ -165,7 +165,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		if terminalErr != nil {
 			return fail(terminalErr, "commit")
 		}
-		return rememberAttemptStatus(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult})
+		return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult}, input)
 	}
 	if terminalOutcome == "rejected" {
 		if err := ctx.Err(); err != nil {
@@ -184,7 +184,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		if terminalErr != nil {
 			return fail(terminalErr, "commit")
 		}
-		return rememberAttemptStatus(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult})
+		return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult}, input)
 	}
 	embeddingCtx, embeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
 	defer embeddingCancel()
@@ -230,7 +230,7 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	if committed == nil {
 		return nil, errors.New("remember processor: nil Remember commit result")
 	}
-	return rememberAttemptStatus(&repository.RememberAttempt{AttemptID: committed.IngestID, Outcome: committed.Outcome, PublicResult: committed.PublicResult})
+	return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: committed.IngestID, Outcome: committed.Outcome, PublicResult: committed.PublicResult}, input)
 }
 
 func rememberAssessmentTerminalOutcome(prepared *memoryservice.SynchronousAssessmentResult, noSupported bool) string {
@@ -331,7 +331,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 			if loadErr != nil {
 				return nil, loadErr
 			}
-			return rememberAttemptReplay(winner)
+			return rememberAttemptReplay(winner, input)
 		}
 		if errors.Is(err, repository.ErrIdempotencyConflict) {
 			return nil, rememberConflictProcessError(input, attemptID, errors.Join(rememberapp.ErrRememberConflict, err))
@@ -758,17 +758,6 @@ func rememberAttemptStatus(attempt *repository.RememberAttempt) (*rememberapp.Su
 	return &replay, nil
 }
 
-func rememberAttemptReplay(attempt *repository.RememberAttempt) (*rememberapp.SubmissionStatusResult, error) {
-	status, err := rememberAttemptStatus(attempt)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(attempt.Outcome) != "failed" && strings.TrimSpace(status.ProcessingState) != "failed" {
-		return status, nil
-	}
-	return nil, &rememberapp.RememberProcessError{Status: status, Err: rememberapp.ErrRememberPersistence}
-}
-
 func (p *rememberSynchronousProcessor) loadRememberReplay(
 	ctx context.Context,
 	input rememberapp.RememberProcessRequest,
@@ -780,7 +769,7 @@ func (p *rememberSynchronousProcessor) loadRememberReplay(
 		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IdempotencyKey: input.IdempotencyKey,
 	})
 	if err == nil && attempt != nil {
-		replayed, replayErr := rememberAttemptReplay(attempt)
+		replayed, replayErr := rememberAttemptReplay(attempt, input)
 		if replayErr == nil {
 			return replayed, nil
 		}
