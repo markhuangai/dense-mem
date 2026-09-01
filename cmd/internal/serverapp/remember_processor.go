@@ -265,7 +265,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		return nil, rememberConflictProcessError(input, attemptID, failure)
 	}
 	code := rememberFailureCode(phase, failure)
-	publicError := rememberapp.StatusError(code)
+	publicError := rememberapp.TerminalStatusError(rememberapp.TerminalErrorCode(code))
 	correlationID := rememberProcessCorrelationID(input.Metadata)
 	processingState := "failed"
 	switch code {
@@ -338,7 +338,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		}
 		p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
 		p.logRememberFailureRecordError(input, attemptID, phase, publicError.Code, correlationID, err)
-		return nil, rememberFailurePersistenceError(failure)
+		return nil, rememberFailurePersistenceProcessError(input, attemptID, failure)
 	}
 	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
 	return nil, &rememberapp.RememberProcessError{Status: status, Err: failure}
@@ -457,6 +457,21 @@ func rememberFailurePersistenceError(failure error) error {
 		return rememberapp.ErrRememberPersistence
 	}
 	return fmt.Errorf("%w: terminal failure record unavailable: %w", rememberapp.ErrRememberPersistence, failure)
+}
+
+func rememberFailurePersistenceProcessError(
+	input rememberapp.RememberProcessRequest,
+	submissionID string,
+	cause error,
+) *rememberapp.RememberProcessError {
+	evidence, relationshipResults := rememberFailureResults(input, "internal_failure")
+	status := &rememberapp.SubmissionStatusResult{
+		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
+		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
+		Evidence: evidence, RelationshipResults: relationshipResults,
+		Errors: []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusError(rememberapp.TerminalErrorDatabaseFailure)},
+	}
+	return &rememberapp.RememberProcessError{Status: status, Err: rememberFailurePersistenceError(cause)}
 }
 
 func (p *rememberSynchronousProcessor) logRememberFailure(
@@ -790,14 +805,7 @@ func rememberReplayLoadFailure(
 	submissionID string,
 	cause error,
 ) (*rememberapp.SubmissionStatusResult, error) {
-	evidence, relationshipResults := rememberFailureResults(input, "internal_failure")
-	status := &rememberapp.SubmissionStatusResult{
-		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
-		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
-		Evidence: evidence, RelationshipResults: relationshipResults,
-		Errors: []rememberapp.SubmissionStatusError{rememberapp.StatusError(rememberapp.SubmissionErrorDatabaseFailure)},
-	}
-	return nil, &rememberapp.RememberProcessError{Status: status, Err: rememberFailurePersistenceError(cause)}
+	return nil, rememberFailurePersistenceProcessError(input, submissionID, cause)
 }
 
 func rememberAssessmentSnapshot(

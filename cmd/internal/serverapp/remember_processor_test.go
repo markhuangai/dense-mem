@@ -166,6 +166,57 @@ func TestRememberProcessorFailureProjectsEverySubmittedItem(t *testing.T) {
 	require.Len(t, publicRelationships, 2)
 }
 
+func TestRememberProcessorInputBudgetUsesCanonicalTerminalGuidance(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	input := rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+		Evidence: []rememberapp.EvidenceInput{{Content: "first"}},
+	}
+	snapshot, _ := rememberAssessmentSnapshot(input, "88888888-8888-8888-8888-888888888888")
+
+	_, err := processor.recordRememberFailure(
+		context.Background(), input, "88888888-8888-8888-8888-888888888888", snapshot,
+		time.Now(), "assessment", 0, rememberapp.ErrRememberInputBudgetExceeded,
+	)
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	want := rememberapp.TerminalStatusError(rememberapp.TerminalErrorInputBudgetExceeded)
+	require.Equal(t, want, processErr.Status.Errors[0])
+	require.NoError(t, rememberapp.ValidateTerminalStatusError(processErr.Status.Errors[0]))
+}
+
+func TestRememberProcessorFailurePersistencePreservesDatabaseResult(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{failureErr: errors.New("failure record unavailable")}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	input := rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+		Evidence: []rememberapp.EvidenceInput{{Content: "first"}, {Content: "second"}},
+		Proposal: map[string]any{"relationship_hints": []map[string]any{{"ref": "rel-a"}, {"ref": "rel-b"}}},
+	}
+	snapshot, _ := rememberAssessmentSnapshot(input, "88888888-8888-8888-8888-888888888888")
+
+	_, err := processor.recordRememberFailure(
+		context.Background(), input, "88888888-8888-8888-8888-888888888888", snapshot,
+		time.Now(), "assessment", 0, rememberapp.ErrRememberProviderUnavailable,
+	)
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
+	want := rememberapp.TerminalStatusError(rememberapp.TerminalErrorDatabaseFailure)
+	require.Equal(t, want, processErr.Status.Errors[0])
+	require.Len(t, processErr.Status.Evidence, 2)
+	require.Len(t, processErr.Status.RelationshipResults, 2)
+	for _, item := range processErr.Status.Evidence {
+		require.Equal(t, "not_stored", item.Disposition)
+		require.Equal(t, "internal_failure", item.Reason)
+	}
+	for _, item := range processErr.Status.RelationshipResults {
+		require.Equal(t, "not_stored", item.Disposition)
+		require.Equal(t, "internal_failure", item.Reason)
+	}
+}
+
 func TestRememberProcessorConflictProjectsEverySubmittedItem(t *testing.T) {
 	input := rememberapp.RememberProcessRequest{
 		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
