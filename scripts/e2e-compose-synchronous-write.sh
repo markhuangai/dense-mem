@@ -94,6 +94,10 @@ NODE
   DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1 \
   DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 \
   go test -tags=compose_e2e ./internal/repository -run '^TestComposeRememberPrimitives$' -count=1
+  DATABASE_URL="$database_url" \
+  DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1 \
+  DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 \
+  go test ./cmd/internal/serverapp -run '^TestRememberServiceRejectsHistoricalOutcomesThroughPostgres$' -count=1
 }
 
 run_synchronous_write_e2e() {

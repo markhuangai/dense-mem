@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 
 import { assertTerminalRememberResult } from "../surface.mjs";
 
@@ -187,7 +188,9 @@ async function runRepairCase({ rpc, expect, fault }) {
 }
 
 async function runTerminalDomainCase({ rpc, expect, fault }) {
-  const args = singleItemArguments(`domain-${fault}`, `[fixture-fault:${fault}]`);
+  const args = fault === "security"
+    ? multiEvidenceSecurityArguments(`domain-${fault}`)
+    : singleItemArguments(`domain-${fault}`, `[fixture-fault:${fault}]`);
   const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
   assertStrictTerminalRemember(result, expect);
   const expectedState = fault === "security" ? "failed" : "completed";
@@ -196,8 +199,41 @@ async function runTerminalDomainCase({ rpc, expect, fault }) {
   if (fault === "security") {
     expect(result.search_state === "not_required", `${fault} must not require search`);
     expect(result.errors[0]?.code === expectedCode, `${fault} must return ${expectedCode}: ${JSON.stringify(result)}`);
+    expect(result.evidence.length === 2, `${fault} must return every submitted evidence disposition`);
     expect(result.evidence.every((item) => item.disposition === "not_stored"), `${fault} must not store evidence`);
     expect(result.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), `${fault} must not store relationships`);
+    const zeroWriteCounts = postgresQuery(`
+      SELECT count(*) FROM knowledge_ingests
+      WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+        AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+      UNION ALL
+      SELECT count(*) FROM evidence_fragments
+      WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+        AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+      UNION ALL
+      SELECT count(*) FROM semantic_assessments
+      WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+        AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid
+      UNION ALL
+      SELECT count(*) FROM relationship_observations
+      WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+        AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+      UNION ALL
+      SELECT count(*)
+      FROM search_documents AS document
+      WHERE document.team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+        AND document.source_id IN (
+          SELECT fragment_id FROM evidence_fragments
+          WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+            AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+          UNION ALL
+          SELECT observation.relationship_id
+          FROM relationship_observations AS observation
+          WHERE observation.team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+            AND observation.ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+        );
+    `).split(/\r?\n/).filter(Boolean).map(Number);
+    expect(zeroWriteCounts.length === 5 && zeroWriteCounts.every((count) => count === 0), `${fault} must not create semantic or search rows: ${zeroWriteCounts.join(",")}`);
   } else {
     expect(result.search_state === "current", `${fault} must index safe evidence`);
     expect(result.errors.length === 0, `${fault} must not return a batch error`);
@@ -305,6 +341,16 @@ function singleItemArguments(label, marker) {
   };
 }
 
+function multiEvidenceSecurityArguments(label) {
+  const args = singleItemArguments(label, "[fixture-fault:security]");
+  args.evidence.push({
+    content: "A second safe evidence item must not be partially committed.",
+    source_type: "manual",
+  });
+  args.relationships[0].evidence_indices = [0, 1];
+  return args;
+}
+
 function relationship(ref, subjectName, subjectKind, object, evidenceIndices, predicateKey = "stores_memory_in") {
   return {
     ref,
@@ -343,4 +389,26 @@ function stableJSON(value) {
   if (Array.isArray(value)) return `[${value.map(stableJSON).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJSON(value[key])}`).join(",")}}`;
   return JSON.stringify(value);
+}
+
+function requiredEnv(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function postgresQuery(sql) {
+  const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
+  const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
+  const result = spawnSync("docker", [
+    "compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "postgres", "sh", "-ec",
+    'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
+    "synchronous-write-remember", sql,
+  ], { cwd: process.cwd(), encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`Remember PostgreSQL fixture failed (${result.status})`);
+  return result.stdout.trim();
+}
+
+function sqlLiteral(value) {
+  return String(value).replaceAll("'", "''");
 }
