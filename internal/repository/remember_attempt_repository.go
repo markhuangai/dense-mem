@@ -687,6 +687,9 @@ func (r *LedgerRepositoryImpl) PurgeExpiredRememberFailureArtifacts(ctx context.
 	}
 	var deleted int64
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT set_config('app.remember_failure_artifact_purge', 'true', true)").Error; err != nil {
+			return fmt.Errorf("remember failure artifact purge guard: %w", err)
+		}
 		result := tx.WithContext(ctx).Exec(`
 			WITH expired AS (
 				SELECT team_id, artifact_id
