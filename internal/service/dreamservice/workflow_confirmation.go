@@ -293,7 +293,7 @@ func dreamSubmittedConfirmationReplay(
 		if err != nil {
 			return false, err
 		}
-		legacyHash, err := rememberapp.CanonicalRequestBodyHash(legacyEvidence, req.EntityHints, req.RelationshipHints)
+		legacyHash, err := rememberapp.CanonicalLegacyRequestBodyHash(legacyEvidence, req.EntityHints, req.RelationshipHints)
 		if err != nil {
 			return false, fmt.Errorf("resolve dream feedback: legacy replay request hash: %w", err)
 		}

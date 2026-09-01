@@ -20,6 +20,16 @@ func CanonicalRequestBodyHash(
 	return canonicalRequestBodyHashForContract(requestHashContractVersion, evidence, entityHints, relationshipHints)
 }
 
+// CanonicalLegacyRequestBodyHash hashes the v2.6.1 Remember body retained by
+// submitted Dream confirmations created before the v2.6.2 cutover.
+func CanonicalLegacyRequestBodyHash(
+	evidence any,
+	entityHints []map[string]any,
+	relationshipHints []map[string]any,
+) (string, error) {
+	return canonicalRequestBodyHashForContract("dense-mem.v2.6.1", evidence, entityHints, relationshipHints)
+}
+
 func canonicalRequestBodyHashForContract(
 	contractVersion string,
 	evidence any,

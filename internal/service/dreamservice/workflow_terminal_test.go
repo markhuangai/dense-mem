@@ -241,7 +241,7 @@ func TestResolveFeedbackReplaysPreUpgradeSubmittedRememberWithoutCallingRemember
 	}
 	legacyEvidence, err := dreamSubmissionEvidenceWithStatus(request, &record, string(domain.DreamStatusProposed), true)
 	require.NoError(t, err)
-	record.SubmittedIngestRequestHash, err = rememberapp.CanonicalRequestBodyHash(legacyEvidence, request.EntityHints, request.RelationshipHints)
+	record.SubmittedIngestRequestHash, err = rememberapp.CanonicalLegacyRequestBodyHash(legacyEvidence, request.EntityHints, request.RelationshipHints)
 	require.NoError(t, err)
 	repo := &dreamRepositoryStub{getRecord: record}
 	remember := &rememberServiceStub{err: errors.New("legacy replay must not call Remember")}
@@ -397,7 +397,7 @@ func TestResolveFeedbackReplaysAliasWithLegacyDefaultKey(t *testing.T) {
 	}
 	legacyEvidence, err := dreamSubmissionEvidenceWithStatus(request, &record, string(domain.DreamStatusProposed), true)
 	require.NoError(t, err)
-	record.SubmittedIngestRequestHash, err = rememberapp.CanonicalRequestBodyHash(legacyEvidence, request.EntityHints, request.RelationshipHints)
+	record.SubmittedIngestRequestHash, err = rememberapp.CanonicalLegacyRequestBodyHash(legacyEvidence, request.EntityHints, request.RelationshipHints)
 	require.NoError(t, err)
 	repo := &dreamRepositoryStub{getRecord: record}
 	remember := &rememberServiceStub{err: errors.New("legacy alias replay must not call Remember")}
