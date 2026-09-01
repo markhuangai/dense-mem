@@ -2,6 +2,7 @@ package contextservice
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -14,11 +15,42 @@ import (
 type semanticTraceStoreStub struct {
 	result *repository.RelationshipTraceResult
 	input  repository.TraceRelationshipInput
+	err    error
 }
 
 func (s *semanticTraceStoreStub) TraceRelationship(_ context.Context, input repository.TraceRelationshipInput) (*repository.RelationshipTraceResult, error) {
 	s.input = input
-	return s.result, nil
+	return s.result, s.err
+}
+
+func TestSemanticTraceMapsMissingRelationship(t *testing.T) {
+	teamID := uuid.New()
+	store := &semanticTraceStoreStub{err: repository.ErrTraceRelationshipNotFound}
+	service := NewSemantic(store)
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID:  teamID,
+		OwnerID: uuid.New(),
+	})
+
+	_, err := service.Trace(ctx, "", TraceRequest{RelationshipID: uuid.NewString()})
+	require.ErrorIs(t, err, ErrTraceRelationshipNotFound)
+	require.Equal(t, "not_found: relationship not found", err.Error())
+}
+
+func TestSemanticTracePreservesRepositoryFailures(t *testing.T) {
+	teamID := uuid.New()
+	databaseErr := errors.New("database unavailable")
+	store := &semanticTraceStoreStub{err: databaseErr}
+	service := NewSemantic(store)
+	ctx := requestctx.WithActor(context.Background(), requestctx.Actor{
+		TeamID:  teamID,
+		OwnerID: uuid.New(),
+	})
+
+	_, err := service.Trace(ctx, "", TraceRequest{RelationshipID: uuid.NewString()})
+	require.ErrorIs(t, err, databaseErr)
+	require.NotErrorIs(t, err, ErrTraceRelationshipNotFound)
+	require.Equal(t, "trace: database unavailable", err.Error())
 }
 
 func TestSemanticTraceRejectsMismatchedConflictTeam(t *testing.T) {

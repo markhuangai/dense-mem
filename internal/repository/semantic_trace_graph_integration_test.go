@@ -245,11 +245,15 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 	_, err = semanticRepo.TraceRelationship(ctxB, TraceRelationshipInput{
 		TeamID: teamA, RelationshipID: rootRelationshipID.String(),
 	})
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTraceRelationshipNotFound)
 	_, err = semanticRepo.TraceRelationship(ctxC, TraceRelationshipInput{
 		TeamID: teamC, RelationshipID: rootRelationshipID.String(),
 	})
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTraceRelationshipNotFound)
+	_, err = semanticRepo.TraceRelationship(ctxA, TraceRelationshipInput{
+		TeamID: teamA, RelationshipID: uuid.NewString(),
+	})
+	require.ErrorIs(t, err, ErrTraceRelationshipNotFound)
 
 	graphA, err := semanticRepo.SemanticGraph(ctxA, SemanticGraphQuery{TeamID: teamA, Limit: 10})
 	require.NoError(t, err)
@@ -296,7 +300,7 @@ func TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams(t *testin
 	_, err = semanticRepo.TraceRelationship(ctxA, TraceRelationshipInput{
 		TeamID: teamA, RelationshipID: rootRelationshipID.String(),
 	})
-	require.ErrorIs(t, err, sql.ErrNoRows)
+	require.ErrorIs(t, err, ErrTraceRelationshipNotFound)
 	sealedGraph, err := semanticRepo.SemanticGraph(ctxA, SemanticGraphQuery{TeamID: teamA, Limit: 10})
 	require.NoError(t, err)
 	assert.Empty(t, sealedGraph.Edges)

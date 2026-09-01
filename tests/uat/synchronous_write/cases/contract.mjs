@@ -7,7 +7,7 @@ import {
 
 export const name = "contract";
 
-export async function run({ rpc, rawRPC, expect }) {
+export async function run({ rpc, expect }) {
   await enableTargetFeatureGates();
   validatedUserURL();
   const listed = await rpc("tools/list", {});
@@ -23,7 +23,9 @@ export async function run({ rpc, rawRPC, expect }) {
   expect(!Object.hasOwn(rememberProperties, "status_tool") && !Object.hasOwn(rememberProperties, "check_after_seconds"), "v2.6.1 Remember schema must not expose polling fields");
 
   const runID = `synchronous-write-contract-${randomUUID()}`;
-  const sourceRaw = await rawRPC("tools/call", { name: "remember", arguments: rememberArguments(runID, "none") });
+  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
+  const sourceCredential = await createControlCredential(teamID, `${runID}-shared-source`, "shared_only");
+  const sourceRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "remember", arguments: rememberArguments(runID, "none") });
   const source = successfulToolResult(sourceRaw, expect);
   assertTerminalRememberResult(source);
   expect(source.contract_version === "dense-mem.v2.6.1", "terminal Remember must return v2.6.1");
@@ -31,10 +33,10 @@ export async function run({ rpc, rawRPC, expect }) {
   expect(source.relationship_results?.[0]?.splits?.[0]?.relationship_id, "terminal Remember must return a relationship split");
   assertTextStructuredParity(sourceRaw, expect);
 
-  const removed = await rawRPC("tools/call", { name: "get_submission_status", arguments: { submission_id: source.submission_id } });
+  const removed = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "get_submission_status", arguments: { submission_id: source.submission_id } });
   expect(removed.error?.code === -32601 && !removed.result, "removed get_submission_status must return bounded method-not-found");
 
-  const rejectedRaw = await rawRPC("tools/call", { name: "remember", arguments: rememberArguments(`${runID}-rejected`, "no-supported") });
+  const rejectedRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "remember", arguments: rememberArguments(`${runID}-rejected`, "no-supported") });
   const rejected = structuredToolResult(rejectedRaw, expect);
   assertTerminalRememberResult(rejected);
   expect(rejected.contract_version === "dense-mem.v2.6.1" && rejected.processing_state === "rejected", "terminal rejection must preserve target state");
@@ -42,12 +44,15 @@ export async function run({ rpc, rawRPC, expect }) {
   assertTextStructuredParity(rejectedRaw, expect);
 
   const split = source.relationship_results[0].splits[0];
-  const trace = await toolSuccess(rpc, "trace_memory", { relationship_id: split.relationship_id });
+  const traceRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "trace_memory", arguments: { relationship_id: split.relationship_id } });
+  const trace = successfulToolResult(traceRaw, expect);
   const support = trace.evidence_supports?.[0];
   expect(support?.evidence_id && Number.isInteger(support.span_start) && Number.isInteger(support.span_end), "trace must expose correction support spans");
+  const unknownTrace = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "trace_memory", arguments: { relationship_id: randomUUID() } });
+  expect(unknownTrace.error?.code === -32000 && unknownTrace.error?.message === "not_found: relationship not found" && !unknownTrace.result, `unknown trace target must be a bounded not-found error: ${JSON.stringify(unknownTrace)}`);
   const ownership = await assertOwnershipIsolation({ runID, source, split, trace, support, expect });
 
-  const correctionRaw = await rawRPC("tools/call", {
+  const correctionRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", {
     name: "correct_relationship",
     arguments: {
       action: "submit",
@@ -65,7 +70,7 @@ export async function run({ rpc, rawRPC, expect }) {
   expect(!Object.hasOwn(correction, "status_tool") && !Object.hasOwn(correction, "check_after_seconds"), "direct correction must not return polling metadata");
   assertTextStructuredParity(correctionRaw, expect);
 
-  const staleRaw = await rawRPC("tools/call", {
+  const staleRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", {
     name: "correct_relationship",
     arguments: {
       action: "submit",
@@ -213,6 +218,17 @@ async function assertOwnershipIsolation({ runID, source, split, trace, support, 
 
   const sameTeamRaw = await rawRPCWithKey(sameTeamCredential.apiKey, "tools/call", { name: "correct_relationship", arguments: correction });
   const crossTeamRaw = await rawRPCWithKey(crossTeamCredential.apiKey, "tools/call", { name: "correct_relationship", arguments: correction });
+  const sameTeamTraceRaw = await rawRPCWithKey(sameTeamCredential.apiKey, "tools/call", {
+    name: "trace_memory",
+    arguments: { relationship_id: split.relationship_id },
+  });
+  const sameTeamTrace = successfulToolResult(sameTeamTraceRaw, expect);
+  expect(sameTeamTrace.relationship?.relationship_id === split.relationship_id, "same-team actors must trace shared Relationships");
+  const crossTeamTraceRaw = await rawRPCWithKey(crossTeamCredential.apiKey, "tools/call", {
+    name: "trace_memory",
+    arguments: { relationship_id: split.relationship_id },
+  });
+  expect(crossTeamTraceRaw.error?.code === -32000 && crossTeamTraceRaw.error?.message === "not_found: relationship not found" && !crossTeamTraceRaw.result, `cross-team trace target must be indistinguishable from unknown: ${JSON.stringify(crossTeamTraceRaw)}`);
   const sameTeamDenied = assertOwnershipDenied(sameTeamRaw, source, split.relationship_id, expect, "same-team non-owner");
   const crossTeamDenied = assertOwnershipDenied(crossTeamRaw, source, split.relationship_id, expect, "cross-team actor");
 
@@ -230,12 +246,14 @@ async function assertOwnershipIsolation({ runID, source, split, trace, support, 
   };
 }
 
-async function createControlCredential(teamID, name) {
-  const payload = await controlPayload(`/teams/${teamID}/credentials`, {
+async function createControlCredential(teamID, name, memoryBinding) {
+  const request = {
     name,
     scopes: ["read", "write"],
     rate_limit: 300,
-  });
+  };
+  if (memoryBinding) request.memory_binding = memoryBinding;
+  const payload = await controlPayload(`/teams/${teamID}/credentials`, request);
   return { apiKey: requiredString(payload.data?.api_key, "credential api key") };
 }
 
@@ -313,13 +331,6 @@ function assertTextStructuredParity(raw, expect) {
   const text = raw.result?.content?.[0]?.text;
   const parsed = JSON.parse(text);
   expect(stableJSON(parsed) === stableJSON(raw.result?.structuredContent), "MCP text and structuredContent must be equivalent");
-}
-
-async function toolSuccess(rpc, name, argumentsValue) {
-  const raw = await rpc("tools/call", { name, arguments: argumentsValue });
-  const text = raw?.content?.[0]?.text;
-  if (typeof text !== "string") throw new Error(`MCP ${name} did not return JSON content`);
-  return JSON.parse(text);
 }
 
 function stableJSON(value) {

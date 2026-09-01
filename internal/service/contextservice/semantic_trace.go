@@ -14,6 +14,7 @@ import (
 
 var (
 	ErrTraceAuthContext            = errors.New("trace: authenticated actor context is required")
+	ErrTraceRelationshipNotFound   = errors.New("not_found: relationship not found")
 	ErrTraceRepositoryTeamMismatch = errors.New("trace: repository returned a mismatched team")
 )
 
@@ -78,6 +79,9 @@ func (s *semanticTraceService) Trace(ctx context.Context, _ string, req TraceReq
 		MinRelevance:           req.MinRelevance,
 	})
 	if err != nil {
+		if errors.Is(err, repository.ErrTraceRelationshipNotFound) {
+			return nil, ErrTraceRelationshipNotFound
+		}
 		return nil, fmt.Errorf("trace: %w", err)
 	}
 	if err := validateTraceConflictTeams(trace, actor.TeamID.String()); err != nil {
