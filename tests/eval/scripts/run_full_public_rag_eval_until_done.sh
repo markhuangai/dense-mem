@@ -214,21 +214,39 @@ terminal_attempt_count() {
 	printf '%s\n' "$((completed + quarantined))"
 }
 
-attempt_counts() {
-  psql_eval "
-    WITH attempt_docs AS (
-      SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
+attempt_docs_sql() {
+  cat <<'SQL'
+      SELECT COALESCE(
+               NULLIF(fragment.metadata ->> 'source_doc_id', ''),
+               CASE
+                 WHEN attempt.idempotency_key LIKE 'eval:%'
+                   THEN NULLIF(substring(attempt.idempotency_key FROM 6), '')
+               END
+             ) AS source_doc_id,
              attempt.attempt_id,
              attempt.outcome,
              attempt.created_at
       FROM remember_attempts AS attempt
-      JOIN evidence_fragments AS fragment
+      LEFT JOIN evidence_fragments AS fragment
         ON fragment.team_id = attempt.team_id
        AND fragment.ingest_id = attempt.attempt_id
        AND fragment.owner_profile_id = attempt.owner_profile_id
       WHERE attempt.team_id = :'team_id'::uuid
         AND attempt.submission_kind = 'remember'
-        AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+        AND (
+          COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+          OR (
+            attempt.idempotency_key LIKE 'eval:%'
+            AND NULLIF(substring(attempt.idempotency_key FROM 6), '') IS NOT NULL
+          )
+        )
+SQL
+}
+
+attempt_counts() {
+  psql_eval "
+    WITH attempt_docs AS (
+$(attempt_docs_sql)
     ), ranked AS (
       SELECT outcome,
              row_number() OVER (
@@ -258,18 +276,7 @@ write_resume_files() {
   failed_tmp="$(mktemp "${FAILED_SOURCE_DOC_IDS}.tmp.XXXXXX")"
   psql_eval "
     WITH attempt_docs AS (
-      SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
-             attempt.outcome,
-             attempt.created_at,
-             attempt.attempt_id
-      FROM remember_attempts AS attempt
-      JOIN evidence_fragments AS fragment
-        ON fragment.team_id = attempt.team_id
-       AND fragment.ingest_id = attempt.attempt_id
-       AND fragment.owner_profile_id = attempt.owner_profile_id
-      WHERE attempt.team_id = :'team_id'::uuid
-        AND attempt.submission_kind = 'remember'
-        AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+$(attempt_docs_sql)
     ), ranked AS (
       SELECT source_doc_id,
              outcome,
@@ -286,18 +293,7 @@ write_resume_files() {
   " > "${completed_tmp}"
   psql_eval "
     WITH attempt_docs AS (
-      SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
-             attempt.outcome,
-             attempt.created_at,
-             attempt.attempt_id
-      FROM remember_attempts AS attempt
-      JOIN evidence_fragments AS fragment
-        ON fragment.team_id = attempt.team_id
-       AND fragment.ingest_id = attempt.attempt_id
-       AND fragment.owner_profile_id = attempt.owner_profile_id
-      WHERE attempt.team_id = :'team_id'::uuid
-        AND attempt.submission_kind = 'remember'
-        AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+$(attempt_docs_sql)
     ), ranked AS (
       SELECT source_doc_id,
              outcome,
@@ -314,18 +310,7 @@ write_resume_files() {
   " > "${quarantined_tmp}"
   psql_eval "
     WITH attempt_docs AS (
-      SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
-             attempt.outcome,
-             attempt.created_at,
-             attempt.attempt_id
-      FROM remember_attempts AS attempt
-      JOIN evidence_fragments AS fragment
-        ON fragment.team_id = attempt.team_id
-       AND fragment.ingest_id = attempt.attempt_id
-       AND fragment.owner_profile_id = attempt.owner_profile_id
-      WHERE attempt.team_id = :'team_id'::uuid
-        AND attempt.submission_kind = 'remember'
-        AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+$(attempt_docs_sql)
     ), ranked AS (
       SELECT source_doc_id,
              outcome,
@@ -350,18 +335,7 @@ write_attempt_summary() {
   tmp="$(mktemp "${ATTEMPT_SUMMARY}.tmp.XXXXXX")"
   psql_eval "
     WITH attempt_docs AS (
-      SELECT fragment.metadata ->> 'source_doc_id' AS source_doc_id,
-             attempt.attempt_id,
-             attempt.outcome,
-             attempt.created_at
-      FROM remember_attempts AS attempt
-      JOIN evidence_fragments AS fragment
-        ON fragment.team_id = attempt.team_id
-       AND fragment.ingest_id = attempt.attempt_id
-       AND fragment.owner_profile_id = attempt.owner_profile_id
-      WHERE attempt.team_id = :'team_id'::uuid
-        AND attempt.submission_kind = 'remember'
-        AND COALESCE(fragment.metadata ->> 'source_doc_id', '') <> ''
+$(attempt_docs_sql)
     ), ranked AS (
       SELECT source_doc_id, attempt_id, outcome,
              row_number() OVER (

@@ -26,6 +26,20 @@ if [[ "$(terminal_attempt_count 413 578)" != "991" ]]; then
   exit 1
 fi
 
+attempt_query="$(attempt_docs_sql)"
+if [[ "${attempt_query}" != *"LEFT JOIN evidence_fragments AS fragment"* ]]; then
+  echo "attempt document query drops fragmentless attempts" >&2
+  exit 1
+fi
+if [[ "${attempt_query}" != *"NULLIF(substring(attempt.idempotency_key FROM 6), '')"* ]]; then
+  echo "attempt document query does not derive eval source IDs" >&2
+  exit 1
+fi
+if [[ "${attempt_query}" != *"attempt.idempotency_key LIKE 'eval:%'"* ]]; then
+  echo "attempt document fallback is not eval-key scoped" >&2
+  exit 1
+fi
+
 write_import_gate_result 991 991 413 578 0 0
 jq -e '
   .schema_version == 1 and

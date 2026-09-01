@@ -294,6 +294,9 @@ func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(
 				return err
 			}
 			if known && expected == nil {
+				if item.SearchState == string(domain.SearchProjectionNotRequired) {
+					continue
+				}
 				item.Retired = true
 				result = append(result, item)
 				continue

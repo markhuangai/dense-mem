@@ -516,6 +516,11 @@ func TestSearchReconciliationExcludesConflictResolutionDeletionOnlyEvidence(t *t
 		return tx.Raw(`SELECT search_state FROM search_documents WHERE team_id = ?::uuid AND search_document_id = ?::uuid`, teamID, document.SearchDocumentID).Row().Scan(&state)
 	}))
 	require.Equal(t, "not_required", state)
+	selected, err = repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 256,
+	})
+	require.NoError(t, err)
+	require.Empty(t, selected)
 	convergence, err = repo.GetSearchConvergence(ctx, SearchConvergenceInput{
 		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
 	})
