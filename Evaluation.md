@@ -6,13 +6,14 @@ credentials, and full run outputs are local-only ignored artifacts. The
 generator, source locks, validation, scoring, and compact baseline evidence are
 reviewed with code.
 
-## v2.6 Remember Reliability Exception
+## v2.6.1 Synchronous Remember Exception
 
 This change intentionally does not run the deterministic 1k retrieval
 evaluation, the 100-row smoke, or publish an accuracy comparison. The semantic
 node model is unchanged, and the acceptance evidence is the complete no-skip
 Compose/UAT matrix plus focused real-PostgreSQL/service tests. Those checks prove
-the v2.6 request contract, assessor repair, atomic staging/activation,
+the v2.6.1 request contract, assessor repair, inline embedding, atomic
+commit,
 idempotency, isolation, and rejected-versus-failed status behavior. They do not
 measure duplicate-Entity or dropped-hint rates. Later retrieval-quality or
 ranking changes restore the normal 1k gate.
@@ -39,12 +40,12 @@ relative input before passing it to Compose.
 
 `cmd/eval-seedgen --preset local_eval_100` produces the stable
 `local_eval_100_v2` identity: 100 corpus rows and 25 scored sanity cases. It
-checks the evaluation image, real remember/status import, knowledge mapping,
+checks the evaluation image, real synchronous Remember import, knowledge mapping,
 recall-case execution, scoring, and artifact identity without running the 1k
 release evaluation.
 
-The smoke run requires all 100 latest placements/fragments to be terminal with
-no failed, pending, or quarantined rows; all 25 cases must score; unmapped refs,
+The smoke run requires all 100 latest Remember attempts/fragments to be terminal
+with no failed or quarantined rows; all 25 cases must score; unmapped refs,
 bad rank one, and average bad@k must be zero. It may reuse the public gate's
 recall@k and required-rank-one floors as smoke thresholds, but the output must
 be labeled smoke-only. `dataset_identity.json` records seed/suite hashes,
@@ -160,16 +161,15 @@ server. It imports through the same public MCP route as normal clients:
 ~~~text
 corpus row
   -> tools/call remember
-  -> submission_id
-  -> tools/call get_submission_status
-  -> completed + current/not_required search state
+  -> terminal completed/rejected/quarantined result
+  -> current/not_required search state
   -> canonical evidence mapping
   -> tools/call eval_run_recall_case
   -> deterministic qrel scoring
 ~~~
 
-The runner fails the import gate if a corpus row fails, times out, cannot reach
-a terminal state, or cannot produce its canonical mapping. Completed rows must
+The runner fails the import gate if a corpus row fails, times out, or cannot
+produce its canonical mapping. Completed rows must
 reach `current` or `not_required` search state. A rejected, quarantined, or
 awaiting-review placement is accepted for evidence scoring only when the
 terminal response includes a canonical evidence ID; its review burden remains
@@ -244,21 +244,22 @@ ready.
 
 ## Local E2E Security Gate
 
-Before the 1k evaluation, use the real local Compose server and a live
+As a local, on-demand release gate, use the real Compose server and a live
 ephemeral credential to prove the public integration path:
 
-1. tools/list exposes get_submission_status and omits retired placement/review
-   tools;
-2. a safe spanless remember call with complete evidence-index coverage completes
-   and its search state converges;
-3. Base64 evidence is rejected before a submission is staged;
-4. role-control and prompt-injection evidence are rejected before a submission
-   is staged;
-5. another profile cannot fetch the first profile’s submission status;
+1. tools/list exposes exactly ten current tools and omits
+   `get_submission_status`, placement, and review tools;
+2. a safe spanless remember call with complete evidence-index coverage returns
+   a terminal result with current/not_required search state;
+3. Base64 evidence is rejected before provider or persistence work;
+4. role-control and prompt-injection evidence are rejected before provider or
+   persistence work;
+5. operational failures use MCP `isError: true` with structured JSON content;
 6. recall/trace preserve evidence-first output and flag returned evidence as
    untrusted data; and
-7. the migration and repository integration tests prove exact 24-hour raw
-   quarantine-payload retention and hard-delete cleanup; immutable source
+7. the migration and repository integration tests prove deterministic
+   quarantine retains no raw payload, while control-only operational failure
+   artifacts are physically purged within seven days; immutable accepted source
    evidence and lineage remain restricted audit history.
 
 This is a real PostgreSQL/service test, not a mocked method-call test.
@@ -310,7 +311,7 @@ erase a pre-existing runtime with a different identity.
 | Unsafe corpus input | Historical data contains encoded or injected text. | Keep retained evidence unchanged and run the real scanner; a deterministic rejection fails import before any assessor call, while only passing rows require a live assessor disposition. |
 | Seed semantic drift | Proposal generation changes evidence or cohort while making V2 valid. | Source lock, explicit exclusions, and retained-evidence identity comparison before evaluation. |
 | False pass from mock | Import test checks a stub rather than server behavior. | Use public MCP calls against real Compose PostgreSQL/service. |
-| Search race | Retrieval starts before required derived documents are current. | Poll submission status and fail the import gate on pending/failed timeout. |
+| Search race | Retrieval starts before required derived documents are current. | Embed before the fenced semantic commit and fail the original call on a vector/provider error. |
 | Cross-team leakage | Eval client reads another profile’s submission or evidence. | Dedicated team/profile tests under RLS and public status boundary. |
 | Credential exposure | Evaluation artifacts capture live keys. | Store credential/profile files only in ignored restricted paths; never print or commit them. |
 | Score-only decision | Retrieval score hides rejected/quarantined corpus rows. | Publish terminal-state counts and treat ingestion failure as a hard gate. |

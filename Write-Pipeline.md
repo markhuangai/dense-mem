@@ -5,8 +5,10 @@ array. The server owns every durable decision. There is no client review loop,
 placement selection, or request for follow-up evidence.
 
 The public write contract is the current closed schema. Discover it with MCP
-tools/list; callers do not select a contract version. This page explains the lifecycle behind remember and
-get_submission_status.
+tools/list; callers do not select a contract version. This page explains the
+v2.6.1 synchronous Remember lifecycle. `get_submission_status` and normal
+placement/embedding workers are historical migration sources, not runtime
+dependencies.
 
 ## End-To-End Flow
 
@@ -16,37 +18,37 @@ flowchart LR
   Client["Client"] --> Remember["remember: evidence + logical relationships<br/>with evidence_indices"]
   Remember --> Scan{"Deterministic scan"}
   Scan -- reject --> Reject["Safe write error; nothing staged"]
-  Scan -- pass --> Stage["Isolated PostgreSQL submission"]
-  Stage --> Status["submission_id"]
-  Stage --> Worker["Server placement worker"]
-  Worker --> Ground["Server-owned grounding<br/>and bounded catalogs"]
+  Scan -- pass --> Snapshot["Snapshot owner/source/search fences<br/>and generate request-local IDs"]
+  Snapshot --> Ground["Server-owned grounding<br/>and bounded catalogs"]
   Ground --> Assessor["Capability-free Remember assessor"]
   Assessor --> Security{"Security concern?"}
-  Security -- yes --> Quarantine["Quarantine for exactly 24 hours"]
+  Security -- yes --> Quarantine["Quarantined terminal result<br/>bounded metadata only"]
   Security -- no --> Validate{"Closed-schema validation"}
   Validate -- invalid --> Correct["Complete same-session repair<br/>or bounded operational failure"]
   Validate -- valid --> Policy["Deterministic server policy"]
   Policy -- reject --> RejectMemory["Rejected: no_supported_memory<br/>or stale_input"]
   Policy -- fault --> Failed["Terminal operational failure"]
-  Policy -- accept --> Promote["Atomic canonical promotion"]
-  Promote --> Search["Derived search/embedding jobs"]
-  Status --> Poll["get_submission_status"]
-  Quarantine --> Poll
-  Failed --> Poll
-  Correct --> Poll
-  Search --> Poll
+  Policy -- accept --> Plan["Deterministic semantic/search plan"]
+  Plan --> Embed["One EmbedBatch call<br/>≤256 documents, 10s"]
+  Embed --> Promote["One fenced PostgreSQL transaction<br/>canonical state + vectors, 10s"]
+  Promote --> Result["Terminal structured MCP result"]
+  Quarantine --> Result
+  Failed --> Result
+  Correct --> Ground
 ~~~
 
-remember acknowledges only durable submission staging. It does not claim that
-the evidence has become active memory or that an embedding is current.
+The original `remember` call returns only after the terminal result is known.
+The total request budget is 180 seconds (160 seconds through assessment, 10
+seconds for embedding, and 10 seconds for commit). No canonical semantic state
+is visible without its required current vector. Operational failures are
+structured MCP `isError` results with bounded remediation.
 
-The intake operation is implemented by the Remember capability boundary. Its
-application API performs strict conversion, validates evidence-index coverage,
-scans evidence and structured proposal values before persistence, and sends a
-single staging request through a consumer-owned port. The PostgreSQL adapter is
-composition-only and returns the submission identifier only after the existing
-ledger transaction has committed exact evidence plus processing intent. Provider
-calls and placement policy remain downstream worker responsibilities.
+The Remember capability boundary performs strict conversion, validates
+evidence-index coverage, scans evidence and structured proposal values, snapshots
+the caller-owned fences, and runs the assessor and embedding phases before one
+profile-scoped PostgreSQL transaction. Provider calls stay outside that
+transaction. `remember_attempts` and `remember_attempt_events` retain terminal
+diagnostics; no pre-provider intake or placement receipt is exposed.
 
 ## Client Submission Contract
 
@@ -145,34 +147,34 @@ directive remains unsafe when wrapped in punctuation; descriptive prose that
 quotes a tool/network attack remains eligible. Structured proposal string
 values are scanned as values rather than inferred from serialized JSON quotes.
 
-The worker repeats the deterministic scan before it uses staged content. This
-catches staged data that could otherwise be processed after a compromised or
-stale intake path. Scanner events and pre-stage rejection audits retain bounded
-decisions, reasons, rule IDs, sources, and spans without a scanner version or
-policy hash.
+The request performs the deterministic scan before any provider or persistence
+work. Scanner events and pre-provider rejection audits retain bounded decisions,
+reasons, rule IDs, sources, and spans without raw content.
 
-## Isolated Submission State
+## Terminal Remember Attempt State
 
-Passing evidence is stored only in the submission staging boundary:
+No semantic, intake, reservation, or workflow row is written before provider
+and embedding success. Successful, rejected, and quarantined outcomes are
+replayable through an append-only terminal attempt record:
 
 ~~~text
-submission_runs
-  ├── exact staged evidence
-  ├── client relationships and server processing intent
-  ├── attempts, lease, and bounded error code
-  ├── assessor response and per-ref dispositions
-  └── source/supersession intent until accepted commit
+remember_attempts
+  ├── idempotency key, request hash, owner/space, and terminal outcome
+  ├── safe replayable public result
+  └── counts, failure phase/code, correlation, and duration
+remember_attempt_events
+  └── chronological validation → assessor → embedding → commit events
 
-canonical knowledge (separate until promotion)
+canonical knowledge (one fenced commit)
   ├── evidence and observations
   ├── Entities, Values, Relationships, lifecycle history
-  ├── search documents and embedding jobs
+  ├── search documents and validated current vectors
   └── audit lineage
 ~~~
 
-The raw staging boundary is not searchable, recallable, or canonical memory.
-Every row is team- and owner-scoped using the authenticated request context and
-PostgreSQL RLS.
+Attempt metadata is team- and owner-scoped using the authenticated request
+context and PostgreSQL RLS. Failure-only raw artifacts, when enabled, are
+control-only, bounded, and physically expire after seven days.
 
 ### Restart boundary and resubmission lifecycle
 
@@ -183,19 +185,21 @@ the same bounded conversation. A supported subset is committed only when every
 evidence item remains covered; unsupported refs are recorded as `not_stored`.
 Only `no_supported_memory` and `stale_input` are semantic rejections. Provider,
 configuration, database, and internal faults are typed operational failures.
-No Entity, Value, Relationship, lifecycle, search document, or embedding job is
-committed from a rejected or failed run.
+No Entity, Value, Relationship, lifecycle, or search document is committed from
+a rejected or failed run.
 
-The historical v2.5 restart migration terminalizes unfinished queued, guarded,
-processing, and `awaiting_review` placement work whose ingest metadata identifies
-the old Remember origin. It marks those rows with a contract-superseded failure,
-clears claims, and preserves completed canonical state. This is upgrade
-archaeology only; v2.6 runtime never accepts the old normalizer contract or
-resumes those rows. Unrelated non-Remember placement work remains untouched.
+The stopped-service migration terminalizes unfinished queued, guarded,
+processing, and `awaiting_review` rows whose ingest metadata identifies the old
+Remember origin. It marks those rows with a contract-superseded failure,
+clears claims, and preserves completed canonical state before dropping the
+retired workflow tables. This is upgrade archaeology only; v2.6.1 runtime
+never accepts the old normalizer contract, resumes those rows, or keeps a
+parallel placement workflow.
 
 ## Server-Owned Normalization and Assessment
 
-The worker processes the complete staged submission as one run-scoped unit. For
+The request-scoped processor handles the complete Remember request as one
+run-scoped unit. For
 each submitted Entity name, it finds bounded whole-token occurrences of that
 name and active candidate aliases only within the Relationship's cited evidence.
 It assigns opaque grounding and boundary references, loads complete same-team
@@ -232,14 +236,13 @@ overflow remains `catalog_context_overflow`; if the exact evidence and contract
 cannot fit the input budget, it ends as `assessment_input_overflow`. An omitted
 exact predicate must never become a false registration decision.
 
-One placement-run attempt has one logical assessor conversation whose initial
+One request-scoped attempt has one logical assessor conversation whose initial
 request contains every evidence item and relationship ref. A malformed complete
-response can receive at most four same-session complete-repair turns after the
-initial response. Timeout/transport failures receive bounded in-claim transport
-retries; an exhausted provider failure requeues through the durable
-placement-attempt budget. Once a valid run-scoped response is persisted,
-restart, lease reclaim, and commit retry reuse it and make no further provider
-call.
+response can receive at most two same-session repairs after the initial
+response. Timeout/transport/provider failures end the request with a bounded
+operational error and a replayable failed attempt; retrying the same
+idempotency key starts a new request. There is no lease reclaim, durable retry
+budget, or background assessor retry.
 
 The response is a closed structural-assessment schema. It must contain complete
 security signals plus normalized Entity and Relationship results. Entity results
@@ -249,8 +252,8 @@ predicate result can select only an allowlisted active predicate or return a
 typed registration-required result. The provider cannot clear a deterministic
 security signal, use a range outside the cited evidence, return policy fields,
 decide durable status, create or activate a predicate, or override authenticated
-ownership. The existing atomic commit adapter supplies only deterministic
-server defaults needed by the legacy commit path.
+ownership. The atomic commit adapter supplies only deterministic server defaults
+needed by the current canonical commit path.
 
 A `hidden_control_markup` signal is valid only when its exact cited span contains
 a covered hidden control or active markup. An ungrounded signal invalidates the
@@ -264,13 +267,15 @@ does not make a raw client or assessor predicate durable by itself. If the
 assessor cannot safely support a hint, the server records `not_stored` when all
 evidence remains covered by stored splits. Otherwise the complete batch is
 `rejected/no_supported_memory`; exact client-owned races are
-`rejected/stale_input`. Provider, configuration, database, and internal faults
-are `failed`. Public status never exposes a review task or approval action.
+`rejected/stale_input`. Provider, configuration, database, embedding, timeout,
+and internal faults are structured operational `isError` results. The public
+result never exposes a review task or approval action.
 
 Malformed, incomplete, duplicate, out-of-allowlist, or otherwise invalid
 responses do not produce a partial semantic commit. Malformed content uses the
-same-session complete-repair budget; provider failures use durable fresh
-attempts. Required exhaustion remains visible as a typed operational failure.
+same-session complete-repair budget (three provider calls total); provider
+failures are visible as typed operational errors. No retry worker runs after the
+request returns.
 
 ## Promotion, Rejection, and Quarantine
 
@@ -281,79 +286,60 @@ On a clean valid assessment, one PostgreSQL transaction:
 3. resolves, reuses, or registers predicates only through controlled server
    policy;
 4. records assessment outcomes and audit history;
-5. creates derived full-text/vector search work; and
-6. marks the submission completed.
+5. writes search documents together with validated current vectors; and
+6. records the terminal Remember attempt and events.
 
 No canonical evidence or semantic subset commits before that transaction: all
-items in the run promote together or none do. Embeddings are asynchronous
-derived state and cannot overwrite a newer source.
+items and required vectors promote together or none do. Provider calls happen
+before transaction entry and late source/document fences produce a retryable
+`commit_conflict` with zero semantic commit.
 
 If assessment rejects the proposed semantic content without a security concern,
 the submission becomes rejected. The client can submit a new, complete
 submission, but cannot negotiate or append evidence to the rejected one.
 
-An intake scan concern is not a submission: it returns a bounded error and
-records only safe audit metadata before any evidence or provider-bound proposal
-is staged. A repeated worker scan or an assessor security concern quarantines an
-already-staged submission. A deterministic worker hit records its matching
-placement fragment's security event, quarantine, and terminal placement result in one PostgreSQL
-transaction. PostgreSQL sets quarantine_expires_at to exactly 24 hours after the
-quarantine completion timestamp. The isolated raw payload copy remains only for
-that interval, then the cleanup job hard-deletes it. Append-only evidence,
-identifiers, hashes, security events, and lineage remain restricted audit
-history and are never recallable or provider input. A replacement is a new
-independent complete remember call; it never releases or extends the
-quarantined data.
+A deterministic intake or assessor security concern returns a quarantined
+terminal result. Its terminal transaction records bounded attempt, event, and
+security metadata but creates no canonical evidence, search document, vector,
+or raw quarantine payload. An operational failure artifact, when captured, is
+control-only and its bytes are physically purged within seven days while safe
+attempt/event hashes remain. A replacement is a new independent complete
+remember call; it never releases or extends quarantined input.
 
-## Public Status Contract
+## Public Remember Result
 
-The client polls only get_submission_status with the returned submission_id.
-The status is owner-scoped and contains safe, bounded state only:
+The original call returns a terminal owner-scoped result. The public states are:
 
 | Processing state | Meaning | Client action |
 | --- | --- | --- |
-| queued | Staged and waiting for a worker. | Poll later. |
-| processing | A worker owns a live assessment lease. | Poll later. |
 | completed | Canonical promotion succeeded. | Recall or trace normally. |
 | rejected | The server rejected the submission. | Submit a new complete request if appropriate. |
-| quarantined | Security concern; the isolated raw payload copy expires after 24 hours while immutable source history remains restricted and non-recallable. | Do not use it; optionally submit a replacement. |
-| failed | Required worker/provider/persistence work exhausted its bounded retry policy. | Diagnose using the safe terminal stage in `errors` and correlation context, then submit anew if appropriate. |
+| quarantined | Security concern; bounded terminal/audit metadata remains, but no canonical evidence or raw quarantine payload is stored. | Do not use it; optionally submit a replacement. |
 
-Status reports per-evidence search readiness, one relationship disposition for
-each submitted ref, bounded error codes,
-quarantine_expires_at when applicable, and search state.
-Terminal v2.6 Remember status uses `no_supported_memory` or `stale_input` for
-semantic rejection and `provider_unavailable`, `provider_response_invalid`,
-`input_budget_exceeded`, `configuration_invalid`, `database_failure`,
-or `internal_failure` for operational failure; the
-internal stage is never exposed. Raw
-provider, database, prompt, and credential details never appear in status.
-search_state=pending means canonical promotion may be complete while a derived
-embedding is still being built. current and not_required are ready for the
-evaluation/recall freshness gate; failed is a visible degradation.
+The result reports per-evidence disposition and search readiness, one
+Relationship disposition for each submitted ref, bounded error codes, and
+`correlation_id`. `search_state` is only `current` or `not_required`.
+Semantic rejection uses only `no_supported_memory` or `stale_input`.
+Operational failures use `isError: true` and one of
+`idempotency_conflict`, `provider_unavailable`, `provider_response_invalid`,
+`input_budget_exceeded`, `configuration_invalid`, `embedding_unavailable`,
+`embedding_response_invalid`, `commit_conflict`, `database_failure`,
+`request_timeout`, `request_cancelled`, or `internal_failure`; the internal
+stage is never exposed. Raw provider, database, prompt, and credential details
+never appear in the result.
 
 Historical non-v2.6 submissions retain their internal migration stage but are
-not projected through this contract. Polling one returns the same bounded
-not-found response as an unavailable submission.
+not projected through this contract. The removed status tool returns method/tool
+not found rather than a compatibility alias.
 
-Failed embedding is an asynchronous search degradation, not a rollback of
-accepted evidence or canonical Relationships. The aggregate and affected
-Evidence status may include the bounded `search_indexing_delayed` code; it
-never includes a provider body, credential, prompt, or raw transport error.
-Failed documents remain eligible for lexical recall, while their vectors stay
-out of vector search.
+Embedding is a required write phase. A failed or invalid batch prevents the
+semantic transaction and returns `embedding_unavailable` or
+`embedding_response_invalid`; it is not an asynchronous search degradation.
 
-An always-on daily reconciliation run records durable run history, makes one
-raw-provider canary request, and only after a successful canary requeues the
-pre-cutoff recoverable backlog in bounded batches. `embedding_jobs` is the only
-current failure authority. The control projection groups unresolved failed,
-queued-after-failure, and processing-after-failure jobs by team, contract,
-dimensions, source kind, failure class, and failure code. Quota,
-authentication, and provider-access failures remain eligible for the next daily
-canary; input, contract, and unknown failures stay blocked. There is no user
-retry action. Operators use the control Search convergence view for failure
-codes, affected teams, guidance, run/canary state, bounded operation logs, and
-metrics.
+Document-centric reconciliation remains an operator concern for legacy drift;
+new Remember and correction writes do not create `embedding_jobs`, pending
+vectors, or worker leases. The control view compares expected/current document
+hashes and versions and repairs only rows whose fences still match.
 
 There is deliberately no client-facing placement/review tool, review task,
 client confidence value, or follow-up-evidence action in this contract.
@@ -379,55 +365,62 @@ required even when the write-time scanner and assessor have passed.
 ## Failure and Audit Rules
 
 - remember is idempotent within its authenticated team/profile namespace.
-- Retryable worker failures are lease-bound and durable; a stale worker cannot
-  promote a newer claim.
+- Retryable operational failures return `retry_same_request`; a late provider or
+  document fence cannot promote a newer source.
 - Provider responses, raw evidence, prompts, credentials, embeddings, and
   database errors never appear in public errors or logs.
 - Security decisions, terminal outcomes, promotions, lifecycle events, and
-  quarantine cleanup are auditable.
-- A later independent submission cannot prematurely delete or release a
-  quarantined source during its required 24-hour retention window.
+  failure-artifact expiry are auditable.
+- A later independent submission cannot reuse or release quarantined input;
+  deterministic quarantine retains bounded terminal/audit metadata rather than
+  a raw payload.
 
 ## Migration Boundary
 
-The v2.6 contract is a hard switch from caller-owned text ranges to server-owned
-grounding and assessor-owned repair. The historical restart migration
-terminalizes unfinished pre-v2.6 Remember submissions and preserves accepted
-state; v2.6 runtime does not resume or reinterpret them. New staging records
-source/supersession intent, and only an accepted atomic commit activates those
-effects. Already accepted semantic state and durable provenance ranges remain
-unchanged. Normal runtime paths do not accept the old Remember fields.
+The v2.6.1 contract is a hard switch from caller-owned text ranges to
+server-owned grounding and assessor-owned repair. The historical restart
+migration terminalizes unfinished pre-v2.6 Remember submissions and preserves
+accepted state; v2.6.1 runtime does not resume or reinterpret them. The current
+request creates IDs in memory, completes assessment and embeddings, then writes
+source revisions, evidence, semantics, search vectors, and terminal attempt
+history in one fenced transaction. Already accepted semantic state and durable
+provenance ranges remain unchanged. Normal runtime paths do not accept the old
+Remember fields.
 
 ## Acceptance Checks
 
 1. a missing Relationship, caller span/surface/support field, duplicate or
    out-of-range evidence index, or incomplete evidence-index coverage is
-   rejected before staging;
-2. Base64 and injection evidence are rejected before staging;
-3. staged content cannot enter recall or search before atomic promotion;
+   rejected before provider work;
+2. Base64 and injection evidence are rejected before provider work;
+3. request content cannot enter recall or search before atomic promotion;
 4. every assessor response covers every evidence item with a security verdict;
 5. model concern quarantines rather than partially commits;
-6. a clean valid submission promotes canonical state and derived search work
-   atomically;
+6. a clean valid submission promotes canonical state, search documents, and
+   current vectors atomically;
 7. two relationships may cite one evidence item, while the assessor still
    receives every distinct relationship ref in one run-scoped request;
 8. exact predicate, candidate-context, or input overflow makes zero provider
    call and zero semantic write;
-9. a malformed assessor response is repaired in one session, while provider or
-   internal exhaustion is `failed` with zero semantic subset;
+9. a malformed assessor response is repaired in one session (at most three
+   complete calls), while provider or internal exhaustion is a structured
+   operational `isError` with zero semantic subset;
 10. mixed stored/`not_stored` refs complete only when stored support covers every
     evidence item; otherwise the run is `rejected/no_supported_memory`;
-11. status never exposes a review task, semantic hold, or raw assessor/prompt content;
-12. quarantined staging is removed only after its exact 24-hour retention;
+11. the terminal result never exposes a review task, semantic hold, or raw
+    assessor/prompt content;
+12. deterministic quarantine retains no raw payload, and operational
+    failure-artifact bytes are inaccessible to request/profile paths and purged
+    within seven days;
 13. a predicate is added or activated only through the controlled validated
    registration workflow; and
 14. recall remains evidence-first and treats returned content as untrusted.
 
 ## Terminal Status Error Completeness
 
-Status projection maps persisted terminal reasons to the closed public error
-vocabulary. A `rejected` or `failed` state never returns `errors: []`; repeated
-polls return the same deduplicated code/message pairs. Completed submissions do
-not gain semantic errors, while search-index failures continue to use the
-existing `search_indexing_delayed` behavior. The public mapping is intentionally
-separate from provider and database diagnostics.
+Terminal Remember results map persisted reasons to the closed public error
+vocabulary. A `rejected` or `quarantined` result never returns `errors: []`;
+operational failures are `isError` results with structured content. Completed
+submissions do not gain semantic errors, and required vector failures prevent
+the canonical transaction rather than becoming an asynchronous degradation.
+The public mapping remains separate from provider and database diagnostics.

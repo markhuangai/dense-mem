@@ -16,6 +16,16 @@ principal/authorization semantics in
 topology and index behavior remains in
 [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec).
 
+## v2.6.1 write cutover
+
+The stopped-service migration refuses to proceed while active placement work or
+invalid active-contract vectors remain. It copies terminal Remember history to
+`remember_attempts`/`remember_attempt_events`, validates row counts and hashes,
+repoints retained dependencies, and writes the compatible cutover marker only
+after every assertion succeeds. The active binary fails closed without that
+marker. New Remember and correction transactions write canonical state and
+validated vectors together; they do not create placement or embedding jobs.
+
 ## Outcome And Boundary
 
 The schema runs unchanged as ordinary tables on one PostgreSQL primary and
@@ -67,8 +77,8 @@ PostgreSQL logical schema
 └── tenant-owned by team_id
     ├── direct team and permanent-owner integrity references
     ├── semantic state and append-only history
-    ├── placement/review/import/Conflict queues
-    ├── search documents and embedding jobs
+    ├── review/import/Conflict history and schedules
+    ├── search documents and terminal reconciliation history
     └── feedback, dream/community, and tenant audit
 ```
 
@@ -109,7 +119,7 @@ flowchart LR
   Rows --> Local["Single primary now<br/>one colocated shard later"]
 ```
 
-Normal paths include remember intake, placement, review resolution, Entity
+Normal paths include synchronous remember intake, review resolution, Entity
 correction, Relationship lifecycle, recall, trace, feedback, dreaming,
 community work, imports, and tenant audit. They never open a transaction that
 mutates semantic rows for two teams.
@@ -136,7 +146,8 @@ The following logical families carry non-null `team_id` from creation:
 
 - semantic and workflow rows with direct foreign keys to canonical teams and
   permanent ownership aliases
-- ingests, evidence fragments, placement runs/items, and review tasks
+- ingests, evidence fragments, and review tasks; placement runs/items are
+  stopped-service migration input only
 - Entity records, Entity names, Entity resolution/correction events
 - typed Value records
 - Relationship observations, verification events, current records, evidence
@@ -144,7 +155,8 @@ The following logical families carry non-null `team_id` from creation:
 - team Conflict cases, position membership, append-only events, and nightly run
   reservations
 - Hypotheses and their review/run rows
-- search documents and embedding jobs
+- search documents and document-centric reconciliation history; embedding jobs
+  are stopped-service migration input only
 - recall events/feedback and tenant-scoped evaluation run records
 - memory-pack export provenance and omission metadata
 - team community/dream schedules and results
@@ -372,7 +384,11 @@ to the team-owning shard before the shard-local pgvector index runs. HNSW
 expression, filtering, and index-profile rules belong in
 [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec#postgresql-storage-and-query-shape).
 
-Embedding work is also tenant-local:
+### Historical embedding-job shape (retired)
+
+The following key shape describes rows that may be encountered only while
+validating stopped-service migration input. The current schema does not create
+this table:
 
 ```sql
 PRIMARY KEY (team_id, embedding_job_id)
@@ -393,20 +409,11 @@ PRIMARY KEY (team_id, projection_generation_id)
 UNIQUE (team_id, source_kind, projection_format_version)
 ```
 
-A generation-tagged embedding job uses a nullable composite foreign key
-`(team_id, projection_generation_id)`. It cannot point at another team's
-generation. Foreground and generation job classes share the same team-local
-queue, leases, and version fences.
-
-An embedding worker never needs to scan or lock every team's queue in one
-transaction. The worker first picks a ready team, then claims a bounded batch
-for that team with `FOR UPDATE SKIP LOCKED`. A provider batch never mixes
-teams, which keeps request accounting, failure isolation, and future team-shard
-routing tenant-local.
-
-Within one team, claims reserve capacity for each non-empty foreground or
-generation class, then fill remaining capacity foreground-first. This
-starvation-free class policy does not require a global cross-team ordering.
+The synchronous release does not create an embedding-job table or worker queue.
+Required vectors are produced outside the semantic transaction and committed
+with source/document fences. Any remaining drift is selected by document hash,
+embedded in one bounded provider batch, and updated only when the source and
+document versions still match.
 
 ## Index Contract
 
@@ -488,17 +495,19 @@ transaction-local `set_config`, never session-global state.
 
 Normal internal workers also run with one explicit `team_id`. An unrestricted
 system mode is reserved for migrations and narrow audited control operations;
-it is not the default placement, embedding, dream, community, or cleanup mode.
+it is not the default Conflict, Dream, community, or cleanup mode.
 
 A future distributed adapter must prove that roles, policies, `set_config`, and
 `FORCE ROW LEVEL SECURITY` behave on owning workers. If its coordinator cannot
 guarantee that contract, the adapter is unsupported even when queries appear to
 route correctly.
 
-## Durable Queue And Scheduler Shape
+## Durable Queue And Scheduler Shape (non-Remember schedulers)
 
-Queue truth remains PostgreSQL. Every tenant work row and idempotency key carries
-`team_id`:
+Queue truth remains PostgreSQL for Conflict review, private-memory erasure, and
+other non-Remember schedulers. Remember and correction writes are request-scoped
+and do not enqueue embedding work. Every remaining tenant work row and
+idempotency key carries `team_id`:
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -522,7 +531,7 @@ an index beginning `(team_id, status, next_review_at)` with case-version and
 lease predicates. A claim never scans or locks every team's Relationship rows.
 Only system/team transaction mode may update the team-owned case materialization
 or close losing Relationship episodes selected by a locked resolved case. Profile
-writes affect cases indirectly inside the same placement service transaction and
+writes affect cases indirectly inside the same Conflict service transaction and
 append the authenticated actor to the case event.
 
 Small coordinator summaries or Redis signals may indicate which shard has work,
@@ -531,7 +540,7 @@ durable PostgreSQL job.
 
 Fairness is enforced through bounded per-team concurrency, round-robin/deficit
 scheduling, oldest-age alerts, and hard global worker caps. One noisy team
-cannot consume every placement or embedding worker indefinitely.
+cannot consume every Conflict or cleanup worker indefinitely.
 
 ## Version And Activation Barrier
 
@@ -639,9 +648,8 @@ or retry a write against another placement.
     team-leading keys/FKs and cannot reference another team's Relationship.
 17. Nightly Conflict review reserves and claims one team at a time with durable
     lease/version predicates; no global semantic-row scan is a supported path.
-18. Projection generations and tagged embedding jobs use composite team keys;
-    foreground and generation work make bounded progress without cross-team
-    batches.
+18. Historical projection metadata and any non-Remember scheduler rows use
+    composite team keys; request-scoped writes never share a cross-team batch.
 
 ## Primary References
 

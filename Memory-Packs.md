@@ -83,8 +83,8 @@ selected Relationship or support evidence is not readable by the caller.
 An exported pack is an external artifact. To use its contents elsewhere, a
 caller must extract exact evidence and submit a complete, authenticated
 `remember` request with logical Relationships and supporting
-`evidence_indices`. Poll
-`get_submission_status` for that new submission. The destination never copies
+`evidence_indices`; the originating call returns the complete terminal result.
+The destination never copies
 source IDs, lifecycle status, review decisions, or source profile ownership.
 
 ## Not a backup

@@ -140,24 +140,14 @@ move semantic authority to Redis, a model provider, or a secondary graph store.
 | `AI_API_EMBEDDING_MAX_CONCURRENCY` | `8` | process-wide concurrency |
 | `EMBEDDING_NORMALIZATION_VERSION` | required | canonical preprocessing version |
 
-Daily failed-embedding reconciliation is always enabled. Its schedule is
-PostgreSQL-backed General configuration, not an environment feature flag:
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `EMBEDDING_RECONCILIATION_START_TIME_LOCAL` | `04:30` | strict local `HH:MM` minute in which a run may be created, at most once per active embedding contract and local date |
-
-The scheduler uses `APP_TIMEZONE` from the same General configuration. A
-multi-instance deployment with `DISTRIBUTED_COORDINATION_REQUIRED=true` must
-use an explicit IANA timezone; `Local` remains valid for single-node use. A new
-run is created only during the configured minute. If that minute is missed, the
-next new run is the following local date; an already-created incomplete run can
-resume later the same day under a new lease token. A successful run performs one
-raw-provider canary, then releases at most 500 eligible failed jobs per committed
-batch while renewing its fenced run lease. Quota, authentication, access, and other
-provider-action failures remain eligible for the next daily canary; input,
-contract, and unknown failures remain blocked. The active model and dimensions
-are never changed by recovery guidance.
+Remember has no embedding-job scheduler, queue, worker count, poll interval, or
+job-attempt setting. Required vectors are produced by the originating request
+and committed with the semantic transaction. The retired environment variables
+`EMBEDDING_WORKER_COUNT`, `EMBEDDING_BATCH_SIZE`, `EMBEDDING_JOB_POLL_SECONDS`,
+`EMBEDDING_JOB_MAX_ATTEMPTS`, `MEMORY_PLACEMENT_WORKER_COUNT`, and
+`MEMORY_PLACEMENT_POLL_SECONDS` are rejected when non-empty by the current
+binary and must be removed from deployments. Search convergence is document-centric and reports
+historical drift; it does not recreate a normal embedding queue.
 
 Provider adapter, model, dimensions, normalization, and query construction are
 one persisted numerical embedding contract. Projection format is separately
@@ -243,24 +233,21 @@ adapter also has a fixed 16 MiB response transport cap as a safety boundary; it
 does not replace token accounting.
 
 `AI_ASSESSOR_*` and the obsolete `AI_VERIFIER_MAX_*_BYTES` variables are
-rejected at startup. `AI_REVIEWER_MODEL` is tolerated only as an ignored legacy
-setting with a warning; new deployments must not set it.
+rejected at startup. `AI_REVIEWER_MODEL` is not read by the current binary and
+must not be set in a v2.6.1 deployment.
 
-The correction budget is fixed, not configurable. One placement claim reserves
-one assessor conversation with at most five provider turns: the initial response
-plus four complete-response corrections. For malformed assistant content, the
+The Remember assessor budget is fixed, not configurable: one request-scoped
+conversation allows one initial response plus at most two complete-response
+repairs (three provider calls total). For malformed assistant content, the
 server resends the full in-memory history to the same provider/model, including
 the invalid assistant response and exact validation errors as the next user
 message. It never patches or splices output.
 
-A provider/transport/protocol failure ends that transient history, releases the
-reservation with durable backoff, and consumes one
-`MEMORY_PLACEMENT_MAX_ATTEMPTS` claim. The next claim starts a fresh conversation
-only when no valid fingerprint-matched assessment was persisted. HTTP 429 uses
-the longer of the normal placement backoff and a valid `Retry-After`, capped at
-five minutes. Repeated malformed content is terminal after the fifth turn and
-does not start another conversation. If the accumulated history cannot fit the
-input-token budget, placement fails visibly without another provider turn.
+A provider, transport, protocol, timeout, or cancellation failure ends that
+request and records only bounded terminal diagnostics. The caller may retry the
+same idempotency key; no placement reservation, durable worker attempt, or
+background assessor retry is used. If the accumulated history cannot fit the
+input-token budget, Remember fails visibly without another provider call.
 
 The closed contract and validation rules belong in
 [Memory Write Pipeline](Write-Pipeline#server-owned-assessment).
@@ -291,7 +278,33 @@ duplicate review, but it never enters the automatic write allowlist and no
 confidence threshold authorizes a merge. See
 [Entity Identity And Resolution](Entity-Identity-And-Resolution).
 
-## Placement And Embedding Workers
+## Synchronous Remember budgets and retired worker settings
+
+Remember uses fixed request-scoped budgets regardless of general provider
+timeouts: 180 seconds total, 160 seconds for validation/assessor work, 10
+seconds for one embedding batch, and 10 seconds for the fenced commit. The
+assessor may make at most three complete provider calls; embedding output is
+validated for count, order, model, dimensions, and finite values before commit.
+
+The following retired settings are not read by the current binary and must be
+removed from deployment manifests:
+
+| Retired setting |
+| --- |
+| `MEMORY_PLACEMENT_WORKER_COUNT` |
+| `MEMORY_PLACEMENT_POLL_SECONDS` |
+| `EMBEDDING_WORKER_COUNT` |
+| `EMBEDDING_BATCH_SIZE` |
+| `EMBEDDING_JOB_POLL_SECONDS` |
+| `EMBEDDING_JOB_MAX_ATTEMPTS` |
+
+No normal placement or embedding worker is started. Document-centric
+reconciliation is a bounded maintenance path and does not restore these queue
+settings.
+
+<!-- Historical v2.6 worker settings follow for migration archaeology only. -->
+
+## Historical Placement And Embedding Workers
 
 | Variable | Target default | Meaning |
 | --- | --- | --- |
@@ -543,7 +556,7 @@ dependency is implied. See
 
 ### Conflict review
 
-Conflict review is core maintenance, not an optional feature. Placement opens or
+Conflict review is core maintenance, not an optional feature. Conflict intake opens or
 updates durable cases in the committing transaction; automatic disposition
 belongs to the nightly reviewer. There is no shadow/observe mode and no
 normal-runtime disable flag. The reviewer uses deterministic policy for ordinary
@@ -634,10 +647,10 @@ core Conflict worker.
 | Incompatible ANN generation | a 3,072-dimensional contract attempts unsupported full-precision HNSW | capability resolver, persisted search-index generation, and controlled build gate |
 | Replica read is stale | recall after correction is routed to a lagging standby | primary-only freshness paths plus explicit lag/version gate |
 | Service scale-out exhausts PostgreSQL | each service instance opens 25 connections independently | deployment-wide pool formula and vector-query semaphore |
-| Unbounded assessor correction returns | operator enables an old setting that expands turns or splices missing results | reject the unsupported setting, keep the fixed five-turn complete-replacement loop, and contract-test config parsing |
+| Unbounded assessor correction returns | operator enables an old setting that expands turns or splices missing results | reject the unsupported setting, keep the fixed three-turn complete-replacement loop, and contract-test config parsing |
 | Redis fallback breaks replicas | outage switches multi-instance limits to local state | required distributed flag and no silent fallback |
 | ANN tuning harms quality | low HNSW breadth improves latency but loses tenant results | exact-baseline Recall@K gate and versioned atomic ranking contract/search generation |
-| Worker overload | placement and embedding workers exceed provider/database capacity | startup range checks, saturation metrics, and load testing |
+| Provider overload | request-scoped assessor/embedding calls exceed provider or database capacity | fixed request budgets, bounded concurrency, saturation metrics, and load testing |
 | Conflict schedule creates a thundering herd | every team starts its due-case scan at 04:00 | stable team jitter, bounded team-local batches/concurrency, and durable run reservation |
 | Team override weakens truth policy | an admin sets TTL to zero or chooses a winner | allow only bounded `review_ttl_days`; keep resolver floor/version immutable and audited |
 | Secret enters runtime policy | portal stores provider key in `app_config` | allowlisted keys and secret-shaped value rejection |
@@ -655,7 +668,7 @@ core Conflict worker.
 - verify the integrated assessor and its closed schema
 - create a manager key and least-privilege client key
 - confirm Redis requirement matches one- or multi-instance topology
-- run `remember` → placement → recall → trace, including a pending-vector case
+- run `remember` → recall → trace → forget; the Remember result must already contain required current vectors
 - run the three-profile Conflict smoke: open, evidence-backed resolve, historical
   recall, overdue-without-winner, and nightly lease recovery
 - test PostgreSQL backup/PITR and vector rebuild before important use

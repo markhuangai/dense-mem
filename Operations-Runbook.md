@@ -4,12 +4,19 @@ This page is the operating contract for the PostgreSQL + `pgvector`
 architecture. Commands and dashboards must still be verified against the
 deployed release before use.
 
+v2.6.1 is a stopped-service, irreversible cutover. Drain and stop the pre-v2.6.1
+placement and embedding workers, snapshot PostgreSQL, run the ordered migration
+and row/hash assertions, verify the compatible cutover marker, and only then
+open traffic. The active binary refuses boot without that marker. Smoke-test
+the ten-tool catalog, synchronous Remember terminal results, synchronous correction
+results, and structured `isError` failures; do not poll a removed status tool.
+
 ## Dependency Matrix
 
 | Dependency | Required | Durable authority |
 | --- | --- | --- |
 | PostgreSQL with `pgvector` | yes | yes: all knowledge, workflow, security, audit, and search state |
-| assessor provider | yes for write placement | no |
+| assessor provider | yes for synchronous Remember | no |
 | embedding provider | yes for vector build/query profiles that require it | no |
 | Redis | only for required distributed coordination or explicit configuration | no |
 | summary/dream provider | only for enabled provider-backed optional features | no |
@@ -20,9 +27,11 @@ flowchart TB
   Server["Dense-Mem instances"] --> PG[("PostgreSQL + pgvector")]
   Server --> AI["Assessor and<br/>embedding providers"]
   Server -. "multi-instance coordination" .-> Redis[("Redis")]
-  Workers["Placement, embedding,<br/>dream/community workers"] --> PG
-  Workers --> AI
-  Workers -. "optional signals/limits" .-> Redis
+  Writes["Request-scoped Remember<br/>and correction writes"] --> PG
+  Writes --> AI
+  Schedulers["Conflict, cleanup, dream,<br/>community, and optional schedulers"] --> PG
+  Schedulers --> AI
+  Schedulers -. "optional signals/limits" .-> Redis
 ```
 
 Redis loss must not lose memory. PostgreSQL loss means durable service is
@@ -32,7 +41,7 @@ unavailable and must be recovered before writes resume.
 
 The supported topology contract belongs in
 [ANN, HNSW, And Halfvec](ANN-HNSW-And-Halfvec#single-database-and-cluster-topologies).
-Tenant keys, placement classes, composite constraints, and per-team queue/RLS
+Tenant keys, write classes, composite constraints, and per-team queue/RLS
 behavior belong in
 [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema).
 Operationally, every topology exposes one writer/coordinator endpoint and keeps
@@ -69,8 +78,7 @@ flowchart TD
   Redis -- No --> Providers
   Providers --> Projection{"Relationship text projection<br/>converged?"}
   Projection -- No --> Stop
-  Projection -- Yes --> Workers["Start durable workers"]
-  Workers --> Ready["Open readiness"]
+  Projection -- Yes --> Ready["Open request-scoped writes"]
 ```
 
 Readiness should expose component-level state:
@@ -82,7 +90,7 @@ Readiness should expose component-level state:
 | assessor | required write contract cannot be reached or the provider cannot satisfy the closed contract probe |
 | embedding | required recall profile cannot embed, or configured contract probe fails |
 | Redis | unreachable when distributed coordination is required |
-| placement/embedding jobs | backlog exceeds the release-defined readiness boundary |
+| current search documents | required active-contract documents are missing valid vectors or have drift |
 | Relationship projection | any eligible Relationship lacks format-2 text or any ineligible Relationship is not marked `not_required` |
 | authority state | missing, incompatible, or corrupt PostgreSQL authority metadata |
 
@@ -146,9 +154,10 @@ Before user traffic:
 8. validate one embedding against persisted dimensions/normalization
 9. validate the active search-index generation, query plan, and exact/ANN oracle
 10. configure Redis as required by service-instance topology
-11. start workers and confirm queues are empty/healthy
-12. run `remember` → placement → recall → trace → forget smoke
-13. verify a pending embedding does not hide committed SemanticEdges
+11. start only the documented schedulers (dream, community, conflict review, and
+    retention); there is no placement or embedding-job worker to drain
+12. run `remember` → recall → trace → forget smoke and inspect the terminal attempt
+13. verify a successful Remember result already has current required vectors
 14. take and restore a PostgreSQL backup before accepting important memory
 
 ### Migration startup progress
@@ -219,7 +228,8 @@ the bridge, `identity_compatibility_state`, and `team_profiles`. There is no
 manual cleanup command, feature flag, backup-confirmation gate, or required
 intermediate release.
 
-Migration `2026081601` adds the partial terminal embedding-job retention index.
+Historical migration `2026081601` added the partial terminal embedding-job
+retention index; it is migration archaeology, not a current runtime setting.
 Migration `2026081602` then validates the active embedding contract and every
 semantic team/owner reference, installs and validates direct foreign keys to
 `teams` and `ownership_aliases`, and drops `semantic_team_refs`,
@@ -234,8 +244,8 @@ backfill update per table, index builds, `SET NOT NULL` scans, foreign-key
 validation, and the WAL generated by rewritten rows. It runs as one serialized
 startup migration, so several minutes of migration heartbeats can be normal on
 a database with substantial evidence, operation-log, search, or workflow
-history. It does not call a model provider, change embedding input, enqueue
-embedding jobs, or re-embed evidence.
+history. It does not call a model provider, change embedding input, or create
+live search-reconciliation work.
 
 The backfill installs narrow temporary migration-mode SELECT and UPDATE RLS
 policies before updating each FORCE-RLS table, including
@@ -329,13 +339,13 @@ Public exposure belongs in
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
   Alert["Alert or user report"] --> Scope{"Which path?"}
-  Scope -- intake/write --> Placement["Placement state and worker lease"]
+  Scope -- intake/write --> Remember["Remember attempt and phase events"]
   Scope -- normal recall --> Search["Branch health and search freshness"]
   Scope -- trace/control --> PG["PostgreSQL query/auth state"]
   Scope -- multi-instance limits --> Redis["Redis coordination state"]
-  Placement --> Provider["Assessor health"]
-  Placement --> Database["PostgreSQL transaction/lock health"]
-  Search --> Embed["Query embedding and vector jobs"]
+  Remember --> Provider["Assessor and write-embedding health"]
+  Remember --> Database["PostgreSQL transaction/lock health"]
+  Search --> Embed["Query embedding and legacy drift"]
   Search --> Database
   PG --> Database
   Redis --> Topology["Replica count and no-fallback policy"]
@@ -353,20 +363,16 @@ Always capture:
 
 ### Submission diagnostics
 
-The control portal's team **Submissions** workspace reads authoritative
-PostgreSQL placement state. It lists state, attempts, evidence count,
-correlation ID, timestamps, and a scheduled retry. Detail shows the closed
-error, retryability, next action, remediation, per-evidence search state, and
-resubmission guidance without returning evidence text, prompts,
-provider payloads, or internal placement IDs.
+The control portal's team **Remember Attempts** workspace reads terminal attempt
+metadata and its chronological phase events. It lists outcome, evidence and
+document counts, duration, correlation ID, and bounded error guidance. Detail
+shows the per-evidence and per-Relationship dispositions without returning
+evidence text, prompts, provider payloads, or internal IDs.
 
-The detail timeline is supplemental history from operation logs. Durable
-transitions emit `submission_accepted`, `submission_retry_scheduled`,
-`submission_completed`, `submission_failed`, or
-`submission_quarantined` only after the corresponding PostgreSQL transition
-succeeds. The safe attributes include team/profile/correlation/submission,
-from/to state, attempts, stage, reason code, and the next retry time when one
-exists.
+The detail timeline is the bounded attempt transcript. Durable events record
+request validation, assessor turns/repairs, embedding completion, commit
+completion or failure, and the terminal outcome. Safe attributes include
+team/profile/correlation/submission, phase, outcome, and bounded reason codes.
 
 Use exact `event`, `team_id`, `reference_type`, `reference_id`, `from`, and `to`
 filters on the operation-log API. A missing retained event does not override
@@ -374,7 +380,26 @@ the PostgreSQL state; log retention and asynchronous persistence can make the
 timeline incomplete. Start triage from the submission detail, then use its
 `submission_id` and `correlation_id` to scope logs and database inspection.
 
-## Placement Backlog
+## Synchronous Remember Failure Triage
+
+The originating request owns the complete write. Inspect the attempt's terminal
+`processing_state`, `search_state`, structured error code, and phase events:
+
+- `completed` must have `search_state=current` or `not_required` and no errors;
+- `rejected` exposes only `no_supported_memory` or `stale_input` with every
+  evidence index and Relationship ref represented as `not_stored` when needed;
+- `quarantined` exposes bounded security guidance and no recallable content;
+- provider, embedding, timeout, conflict, and database failures are MCP
+  `isError` results with retry/contact guidance and no polling action.
+
+Correlate the request with the safe attempt ID and phase events. Do not retry
+inside the server, start background Remember processing, or use
+provider/database error text as a client diagnostic.
+
+## Historical Placement Backlog (legacy)
+
+The following section describes pre-v2.6.1 migration history only. It is not a
+live queue or supported repair path.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
@@ -396,7 +421,7 @@ Required checks:
 - active lease owner, heartbeat, and attempt count
 - failures grouped by stage and safe code
 - `densemem_assessor_terminal_failures_total{stage=...}` and owner-scoped
-  submission status `errors`; use the stage to distinguish predicate option
+  terminal-attempt `errors`; use the stage to distinguish predicate option
   overflow, input/catalog overflow, provider exhaustion, and commit failures
 - invalid-assessor-response count, JSON-pointer classes, provider turns per
   assessor conversation, persisted-assessment reuse, and
@@ -410,24 +435,19 @@ Required checks:
 - historical v2.5 restart-terminalized count separately from the live worker
   backlog; it is not a v2.6 status code
 
-Retryable provider failures use deterministic exponential backoff with bounded
-jitter. The first four retry releases wait about 15s, 30s, 60s, and 120s. A
-valid `Retry-After` hint may extend that delay; the effective delay remains
-capped at 300s. Attempts are not reset by ordinary retries. A schema-invalid
-HTTP 200 response does not release the placement item: the assessor receives
-the bounded validation errors in the same message history and may return a
-complete replacement, for at most five provider turns total in that
-conversation. Transport failures use bounded in-claim retries; exhausted
-normalization/provider failures use the durable attempt budget.
+The request may receive at most three assessor turns. A schema-invalid HTTP
+200 response stays in the same message history and may produce one complete
+replacement; transport, provider, timeout, and exhausted validation failures
+return directly as bounded operational errors.
 
-Public v2.6 Remember status projects `no_supported_memory` and `stale_input`
+Public v2.6.1 Remember results project `no_supported_memory` and `stale_input`
 for semantic rejection, and `provider_unavailable`,
 `provider_response_invalid`, `input_budget_exceeded`, `configuration_invalid`,
 `database_failure`, or `internal_failure` for
-operational failure. Search/embedding trouble is a degradation on a completed
-submission. A non-v2.6 submission ID returns the same bounded not-found result
-as an unavailable submission. Historical failure stages remain control-plane
-audit data and are never live worker outcomes or public status codes. Never use
+operational failure. Required write-embedding trouble is an `isError` result,
+not a degradation on committed semantics. Historical failure stages remain
+control-plane audit data and are never live worker outcomes or public status
+codes. Never use
 provider/database error text from logs or SQL as a client diagnostic. If the operator stage is `unknown`, inspect
 the authenticated correlation window, worker lease/attempt row, and PostgreSQL
 transaction/constraint state without exporting raw payloads.
@@ -441,7 +461,7 @@ Do not mark jobs complete, delete queue rows, reset attempts, or extend leases
 with direct SQL. Repair the root cause, use the supported pause/resume repair
 path, and let stable idempotency converge retries.
 
-## Invalid Remember-Assessor Responses
+## Synchronous Assessor Response Failures
 
 The application never coerces or splices provider output. It may ask the same
 assessor session for a complete replacement after bounded validation feedback.
@@ -454,7 +474,7 @@ flowchart LR
   Persisted -- No --> Classify["JSON parse, schema,<br/>coverage, allowlist, dependency"]
   Classify --> Contract{"Model, prompt revision, and local<br/>contract hash match deployment?"}
   Contract -- No --> Rollback["Restore compatible model/prompt<br/>or deploy the intended contract"]
-  Contract -- Yes --> Turns{"Fewer than five provider<br/>turns used?"}
+  Contract -- Yes --> Turns{"Fewer than three assessor<br/>turns used?"}
   Turns -- Yes --> Correct["Append invalid assistant output and<br/>bounded validation errors to same history"]
   Correct --> Replace["Request one complete response;<br/>never a patch"]
   Replace --> Invalid
@@ -469,51 +489,54 @@ raw response payloads, or provider error bodies.
 
 No `VerificationEvent` or semantic subset exists for an invalid intermediate
 turn. The full history is transient and sent only back to the same provider.
-After five total semantic turns, the submission reaches a visible typed
-operational failure with zero partial semantic commit. Do not delete the claim,
-clear its attempt history, or manually invoke the provider.
+After three total assessor turns, the request returns a visible typed
+operational failure with zero partial semantic commit. Do not manually invoke
+the provider or create a background retry.
 
 A timeout, 429, 4xx, 5xx, transport failure, or invalid provider envelope ends
-the current conversation immediately. The placement item requeues through its
-durable `max_attempts` budget with fresh message history and the bounded
-backoff above. On the final durable attempt it fails terminally. A provider
+the current request and returns its bounded operational error. A provider
 failure is never appended to the malformed-response correction history.
 
 If a valid assessment exists, treat any later provider turn as an invariant
-failure. Stop the affected placement workers, preserve the assessment and claim
-rows, inspect uniqueness/lease/version predicates, and resume only after the
-retry path is proven to reload the persisted result.
+failure. Preserve the request's failure artifact and terminal attempt, inspect
+the idempotency and version fences, and retry the complete request only after
+the provider/database cause is understood. There is no placement lease or
+worker state to resume.
 
-## Embedding Backlog And Search Freshness
+## Historical Embedding Backlog And Search Freshness
+
+This section applies only to legacy rows retained while the stopped-service
+cutover is verified. Normal Remember and correction writes do not create or
+wait on embedding jobs; document-centric reconciliation renders a bounded drift
+snapshot, makes one provider batch call, and fences updates by source version
+and document hash.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart TD
-  Alert["pending/failed embeddings"] --> Jobs{"Workers claiming jobs?"}
-  Jobs -- No --> Worker["Restore worker/config"]
-  Jobs -- Yes --> Provider{"Provider healthy and<br/>within quota?"}
+  Alert["drifted search documents"] --> Snapshot["Select bounded drift snapshot"]
+  Snapshot --> Provider{"Provider healthy and<br/>within quota?"}
   Provider -- No --> Dependency["Apply cooldown/backoff;<br/>escalate provider"]
   Provider -- Yes --> Versions{"Source/document/contract<br/>versions match?"}
-  Versions -- No --> Supersede["Finish stale jobs;<br/>coalesce current job"]
+  Versions -- No --> Supersede["Leave row unchanged;<br/>select newer projection"]
   Versions -- Yes --> DB{"Vector update/index healthy?"}
   DB -- No --> Index["Inspect dimensions, locks,<br/>WAL, index and disk"]
-  DB -- Yes --> Capacity["Tune bounded worker/provider capacity"]
+  DB -- Yes --> Commit["Fence source/hash and update vector"]
 ```
 
-During a vector backlog:
+During a historical vector-repair backlog:
 
 - current PostgreSQL Relationships and SemanticEdges remain authoritative
 - exact, full-text, and adjacency branches may remain available
 - vector retrieval includes only version-matched vectors
 - the API reports pending/failed document counts and degraded branches
-- embedding throughput is tuned by `EMBEDDING_BATCH_SIZE` first and
-  `EMBEDDING_WORKER_COUNT` second; increasing many single-job workers is not the
-  target operating mode
+- the retired worker settings are not accepted by the current binary; bound
+  repair batches to preserve capacity for request-scoped writes
 
 Never copy an older vector onto a newer document or mark `search_state=current`
 without the source/document/contract version predicate succeeding.
 
-### Daily failed-embedding reconciliation
+### Historical failed-vector repair (migration only)
 
 `/ready` is a structural safety probe. A `200` response can coexist with an
 optional `search_convergence` dependency in `degraded`, `attention_required`,
@@ -526,16 +549,12 @@ curl -fsS "$CONTROL_URL/control/api/search/convergence" \
 ```
 
 The response contains the active provider/model/dimensions and index
-generation, queue counts, allowlisted failure codes, affected teams, guidance,
-job-derived failure groups, and the latest durable run/canary. A failure group
-is the current unresolved set of `embedding_jobs` with the same team, contract,
-dimensions, source kind, failure class, and failure code. A group with failed
-jobs is `attention_required`; a group whose jobs are queued or processing is
-`recovering`. Completing or superseding the last job removes the group without
-a separate lifecycle write. The operation-log view records bounded
-`embedding_failure_recorded`, `embedding_recovery_completed`, and reconciliation
-events; Prometheus exposes
-`densemem_embedding_reconciliation_runs_total`,
+generation, bounded drift counts, affected teams, guidance, and the latest
+document-centric reconciliation summary. A drift class is derived from
+`search_documents` rows whose source/document/contract fence is not current.
+A team with drift is `attention_required`; a team with no drift is `converged`.
+The operation-log view records bounded document-reconciliation events and
+Prometheus exposes the corresponding document drift metrics.
 `densemem_embedding_reconciliation_canaries_total`,
 `densemem_embedding_reconciliation_jobs_total`, and the duration histogram.
 Only active teams contribute to this operational projection. Soft-deleted-team
@@ -602,7 +621,7 @@ active embedding contract. Failed text remains lexical-recall eligible while
 failed vectors remain excluded; resolve the provider or contract cause, then
 let the canary prove recovery.
 
-### Relationship projection upgrade
+### Historical Relationship projection upgrade (migration-only)
 
 Use this release procedure for projection format `2`; the canonical state
 machine and schema are in
@@ -638,18 +657,15 @@ Relationship lexical discovery remain available. The Relationship vector
 branch stays disabled for the complete affected team and recall reports
 `relationship_vector_warming`.
 
-During asynchronous re-embedding:
+During a historical migration-only re-embedding window:
 
-- generation jobs contain only `source_kind=relationship` and carry the
-  projection generation ID;
-- ordinary live Relationship writes use untagged foreground jobs;
-- each non-empty class receives reserved claim capacity, with remaining slots
-  filled foreground-first;
-- workers drain immediately while claimable backlog exists;
-- provider retries, batch splitting, leases, and document-version fences remain
-  unchanged;
-- one terminal failed generation job keeps the generation from activating but
-  does not disable lexical Relationship recall.
+- do not reopen traffic until the stopped-service migration has verified the
+  copied document rows and their source/document hashes;
+- do not start a placement or embedding-job worker in the new release;
+- use the bounded document-centric reconciliation pass for any remaining drift;
+- provider failure leaves the document unchanged for the next operator run;
+- one terminal failed document keeps the generation from activating but does
+  not disable lexical Relationship recall.
 
 The generation activates only after a transactional recount proves every
 eligible format-2 Relationship vector is current, every ineligible
@@ -782,7 +798,7 @@ follow database change control and confirm blast radius.
 | multiple service instances | protect global quotas/leases by failing affected operations until distributed coordination returns |
 
 After recovery, rate-limit windows and short leases may reset/reacquire.
-Validate that PostgreSQL placement, review, API key, audit, and memory rows were
+Validate that PostgreSQL canonical semantic, review, API key, audit, and memory rows were
 unaffected. Redis restoration from backup is not part of knowledge recovery.
 
 ## Dream And Community Jobs
@@ -803,7 +819,7 @@ Conflict review is core maintenance, separate from optional dream and community
 work. It deterministically handles ordinary cases and uses the configured
 verifier only for an unchanged overdue case with no deterministic winner. New
 evidence is evaluated synchronously, so a nightly outage does not roll back
-committed placement. A provider/schema failure is one bounded local-day attempt;
+committed semantic state. A provider/schema failure is one bounded local-day attempt;
 after five failures for the unchanged tuple, server-side last-write-wins applies.
 
 Inspect durable per-team run rows, oldest due/overdue age, attempts, lease owner
@@ -879,19 +895,12 @@ already queued or processing, its second idempotency mapping upgrades that
 operation to retirement while preserving the sealed target generation and
 worker fence. A different request hash still returns an idempotency conflict.
 
-Placement workers use the same fence: run and outcome rows carry the run's
-private `space_id` and `space_generation`, and claims require that generation to
-remain active. Sealed or stale-generation runs are left unclaimed; they are not
-replayed under a new space generation. Team/RLS predicates remain in force for
-both the claim and the later semantic commit.
+Historical placement runs and embedding jobs are not part of the supported
+erasure runtime. The stopped-service migration validates their space fences
+before dropping them; new Remember and correction writes use the canonical
+space generation directly in their fenced transaction.
 
-Team soft-delete marks only queued or processing embedding jobs from the active
-semantic generation as stale. Jobs stamped with a sealed or stale private
-generation remain untouched; they are not reclassified or replayed under the
-new generation.
-
-The worker reclaims expired leases with a higher fence. It rechecks the
-operation, sealed generation, legal hold, and credential state, then deletes
+The erasure worker rechecks the operation, sealed generation, legal hold, and credential state, then deletes
 the catalog-complete manifest in one transaction, verifies zero remaining rows,
 and redacts private audit payloads while retaining the audit tombstone. If a
 team hard-delete later removes a memory-space catalog row, the append-only audit
@@ -977,7 +986,7 @@ flowchart TD
   Search -- No --> Rebuild["Rebuild derived documents/vectors"]
   Search -- Yes --> Recall["Run exact vs ANN and recall smoke"]
   Rebuild --> Recall
-  Recall --> EndToEnd["remember → placement → recall → trace → forget"]
+  Recall --> EndToEnd["remember → recall → trace → forget"]
   EndToEnd --> Cutover["Controlled traffic cutover"]
 ```
 
@@ -1001,8 +1010,8 @@ Never restore another data store over newer PostgreSQL state.
 | --- | --- |
 | PostgreSQL | backup verification, vacuum/analyze, bloat, locks, slow plans, WAL/disk, replica/PITR checks |
 | `pgvector` | index size/build health, Recall@K, iterative-scan cost, reindex planning |
-| placement | queue age, lease churn, assessor schema/repair failures, turns per conversation, durable provider retries, persisted-result reuse, rejected-versus-failed counts |
-| embeddings | pending/failed age, provider quota, version mismatch, rebuild progress |
+| Remember | terminal outcome/failed-phase counts, assessor turns, provider errors, idempotency replays, and commit conflicts |
+| search convergence | expected/current/drifted document counts, provider errors, version/hash fences, and repair progress |
 | Conflict review | run/due/overdue age, lease recovery, policy parity, resolved/reopened/dismissed events, three-profile recall smoke |
 | security | key/session cleanup, audit retention, RLS tests |
 | optional jobs | dream/community due state, caps, stale output cleanup |
@@ -1038,7 +1047,7 @@ Include bounded, redacted:
 
 - UTC window, correlation/ingest/Relationship IDs
 - application/schema/config/predicate/ranking/assessor/embedding versions
-- component readiness and queue/search freshness summaries
+- component readiness and search-convergence summaries
 - metric samples and structured safe error codes
 - PostgreSQL version, `pgvector` version, pool/lock/plan summaries
 - Redis topology/health when relevant
@@ -1052,12 +1061,12 @@ dumps.
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
 | PostgreSQL treated as replaceable projection | operator serves stale search docs during database outage | fail source reads/writes; PostgreSQL-only truth contract and restore drills |
-| Embedding backlog mistaken for data loss | client repeats `remember` and duplicates provenance | separate processing/search state, idempotency, and SemanticEdge source checks |
+| Search drift mistaken for data loss | client repeats `remember` and duplicates provenance | separate terminal processing/search state, idempotency, and SemanticEdge source checks |
 | ANN latency fix harms quality | operator lowers HNSW work without exact comparison | paired latency/Recall@K gate and versioned tuning |
 | Scale-out exhausts connections | adding service replicas multiplies per-process pools beyond PostgreSQL capacity | deployment-wide connection formula, vector semaphore, and preflight gate |
 | Standby serves stale memory | replica recall misses a committed correction or active contract | primary for freshness-sensitive reads and explicit replay-lag/version gate |
 | Distributed activation is partial | some shards query an older or absent HNSW generation | all-shard build/plan/oracle gate before atomic generation activation |
-| Queue manually edited | placement history and idempotency diverge | supported lease/retry tooling only; investigate root cause |
+| Retired workflow rows manually edited | migration history and idempotency diverge | use the stopped-service migration assertions and investigate the root cause |
 | Redis outage breaks global limits | replicas silently use independent counters | mandatory distributed mode fails readiness/affected operations |
 | Restore leaks tenants | RLS/runtime actor settings are missing after recovery | schema validation plus two-team isolation smoke before traffic cutover |
 | Destructive repair loses ledger | direct deletes remove support/transition history | append-only roles, explicit approval/change control, backup, and dry-run impact |
@@ -1066,7 +1075,7 @@ dumps.
 | Projection rollout biases Relationship rank | traffic opens while only some Relationships have replacement vectors | require complete text convergence before serve and whole-team vector activation after transactional recount |
 | Projection rollout changes Evidence | an operator launches a global vector rebuild for a Relationship-only format change | pre/post Evidence hashes and counts, source-kind-tagged generation, and unchanged contract/index IDs |
 | Mixed-version rollback writes incompatible state | old workers resume against the migrated schema | stop/lease audit before migration and restore database plus matching application as one unit |
-| Placement retry calls the assessor after persistence | a worker loses its lease after persisting a valid result and the next worker starts another conversation | unique claim assessment, post-persist provider-turn alert, stop workers on any violation, and resume from stored result |
+| Retry calls the assessor after a terminal failure | a caller retries with a different key and duplicates a logical write | preserve the request hash and idempotency key, replay terminal winners, and make operational failures retryable with the same key |
 | Team threshold change rewrites history | an operator expects a new value to rescore active or held Relationships | commit-time policy applies only to future/in-flight work; audit the effective version and prohibit backfill |
 | Retired review metadata becomes approval | an operator treats an old expiry field as permission to clear a failed run | V2.5 has no review-task expiry or approval path; inspect the bounded failure and resubmit the complete batch |
 | V2.4 cutover re-embeds Relationships | a shared format/version bump queues vectors even though search text is unchanged | pre/post text hashes and job/provider counts; treat any V2.4 embedding work as a blocker |
@@ -1077,9 +1086,9 @@ Before production:
 
 1. PostgreSQL/PITR restore is proven in isolation
 2. `pgvector` rebuild and exact-vs-ANN quality checks are proven
-3. assessor invalid responses use the same bounded history for at most five
-   complete replacements, and exhaustion is visible with zero partial commit
-4. placement and embedding backlog alerts are active
+3. assessor invalid responses use the same bounded history for at most three
+   total provider calls, and exhaustion is visible with zero partial commit
+4. terminal Remember failure and search-drift alerts are active
 5. multi-instance Redis failure does not fall back locally
 6. two-team RLS/recall/trace leakage tests pass
 7. graceful shutdown and lease recovery are proven
@@ -1090,13 +1099,15 @@ Before production:
 11. Conflict review catch-up, lease recovery, overdue-without-winner, resolved
     support-path filtering, and historical trace/recall are proven without
     mutating either author's Relationship
-12. Relationship projection upgrade proves resumable text convergence,
-    Relationship-only fair re-embedding, whole-team vector activation, and
-    unchanged Evidence/embedding/index state
+12. the historical Relationship projection upgrade proves resumable text
+    convergence, Relationship-only fair re-embedding, whole-team vector
+    activation, and unchanged Evidence/embedding/index state
 13. V2.4 cutover after the projection migration proves bounded same-history correction, durable
     provider retry, persisted-assessment reuse, and zero legacy rescoring or
     lifecycle mutation
-14. V2.4 migration makes zero embedding calls/jobs and leaves search hashes,
-    vectors, projection formats, and active embedding/index contracts unchanged
-15. Remember restart terminalization closes unfinished placement work without
-    activating knowledge; missing knowledge is resubmitted as a complete batch
+14. the historical V2.4 migration makes zero embedding calls and leaves search
+    hashes, vectors, projection formats, and active embedding/index contracts
+    unchanged
+15. Remember restart terminalization closes unfinished retired workflow rows
+    without activating knowledge; missing knowledge is resubmitted as a complete
+    batch

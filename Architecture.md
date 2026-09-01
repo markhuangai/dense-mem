@@ -7,6 +7,26 @@ lifecycle, durable provenance, retrieval, trace, and audit.
 This page is the current architecture overview. Detailed rules live in the linked
 canonical pages.
 
+## v2.6.1 write authority
+
+The normal Remember write path is request-scoped and queue-free:
+
+```text
+authenticate and validate
+  -> snapshot owner/source/search fences
+  -> assessor conversation (initial + at most two complete repairs)
+  -> deterministic semantic/search plan
+  -> one EmbedBatch call (≤256 documents, 10s)
+  -> one fenced PostgreSQL transaction (≤10s)
+  -> terminal MCP result
+```
+
+Provider calls happen outside the transaction. Canonical semantic rows are not
+visible without their required current vectors. `remember_attempts` and
+`remember_attempt_events` provide terminal control diagnostics; placement rows,
+normal placement workers, and `embedding_jobs` are historical migration input,
+not runtime authority.
+
 ## System Map
 
 ```mermaid
@@ -68,25 +88,17 @@ not select a team, profile owner, or storage adapter.
 PostgreSQL repositories, Redis coordination, and the single-node in-process
 implementation satisfy those ports at composition time. They preserve the
 existing persistence, key, and session formats without becoming access policy.
-Compatibility aliases may keep serial callers compiling during a migration, but
-they are not a second policy owner.
+Supported callers use one canonical application interface; retired Remember and
+correction aliases are not retained as runtime compatibility surfaces.
 
 ## Remember Intake Capability Boundary
 
 The `internal/service/remember` application capability owns Remember conversion,
-the deterministic pre-stage security gate, exact evidence and processing-intent
-staging, safe rejection audit metadata, and the bounded submission-status
-projection. It depends on the authenticated request context and a narrow intake
-port. The port returns only staged submission/status values; it does not expose
-provider, placement, search, or PostgreSQL types.
-
-The composition root adapts the existing PostgreSQL ledger and audit writer to
-that port. The adapter returns only after the v2.6 transaction has durably
-created exact evidence, source/supersession intent, placement work, and initial
-security events. The worker then owns one bounded assessor session and persists
-one disposition for every submitted Relationship ref. A compatibility
-forwarding seam remains internal to composition; it is not a second public
-Remember contract.
+the deterministic security gate, request-scoped assessment orchestration, and
+terminal result projection. The composition root supplies the assessor,
+embedding, and PostgreSQL adapters. Provider calls happen before one fenced
+transaction that writes evidence, semantic state, vectors, attempt history, and
+chronological events; no placement or embedding worker is involved.
 
 ## Request Paths
 
@@ -94,7 +106,7 @@ Remember contract.
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
   Request["Authenticated request"] --> Kind{"Operation"}
-  Kind -- remember --> Write["Stage evidence/intents and queue assessor work"]
+  Kind -- remember --> Write["Assess, embed, and fenced commit"]
   Kind -- recall --> Read["Search and bounded adjacency"]
   Kind -- trace --> Trace["Read provenance and current graph"]
   Kind -- review/correct --> Correct["Append decision and recompute"]
@@ -111,10 +123,10 @@ The authenticated principal fixes team, identity, membership, permanent owner
 alias, optional credential, role, and grants before any application service
 runs. A request never chooses its tenant or semantic owner.
 
-Remember submissions are assessed by one canonical submission-wide worker. The
-retired standalone semantic-placement and retry-verifier implementations are
-not runtime paths; provider calls, per-ref dispositions, and durable promotion
-remain separated by the append-once assessment boundary.
+Remember submissions are assessed by one request-scoped submission-wide
+conversation. The result is terminal before the MCP call returns; provider,
+configuration, database, and embedding failures are surfaced as bounded errors
+and are never converted into queued retry work.
 
 ## Runtime Composition
 
@@ -244,7 +256,7 @@ sequenceDiagram
   participant P as PostgreSQL
   participant R as Redis or process memory
   participant A as Model providers
-  participant W as Workers
+  participant W as Schedulers
   participant H as HTTP
 
   S->>S: Load and validate configuration
@@ -253,11 +265,11 @@ sequenceDiagram
   S->>P: Validate pgvector, authority state, embedding contract, and search-index generation
   S->>R: Build required coordination backend
   S->>A: Validate configured provider contracts
-  S->>W: Start placement, embedding, Conflict review, cleanup, and optional schedulers
+  S->>W: Start Conflict review, cleanup, community, and optional schedulers
   S->>H: Start control and main listeners
   H-->>S: Serve until termination
   S->>H: Stop accepting traffic
-  S->>W: Drain or release work safely
+  S->>W: Stop schedulers and release coordination safely
   S->>S: Close providers and adapters
 ```
 
@@ -266,12 +278,11 @@ distributed coordination is required or explicitly configured as mandatory. A
 multi-instance deployment cannot silently fall back to process-local limits or
 leases.
 
-Embedding workers claim PostgreSQL jobs with worker/attempt-fenced renewable
-leases. A slow provider call cannot be reclaimed by another worker while its
-lease is renewed, and a late completion or renewal cannot overwrite a newer
-attempt. Input-rejection failures are recursively split only to isolate the
-bad document; other provider failures retain their existing bounded retry
-policy.
+Legacy embedding workers claimed PostgreSQL jobs with worker/attempt-fenced
+renewable leases in pre-v2.6.1 releases. They are not part of normal Remember,
+correction, or current document-reconciliation writes; those paths use one
+bounded provider batch and source/document/hash-fenced vectors with canonical
+state.
 
 Migrations finish before either HTTP listener serves traffic. Replicas sharing
 one writable PostgreSQL primary serialize startup migration work through the
@@ -280,7 +291,7 @@ with the previous application version; each independent database still needs a
 server connected to it to run the same startup gate.
 
 Provider readiness distinguishes required operations: an unavailable assessor
-may make write placement not-ready while authorized trace reads can still
+may make synchronous Remember not-ready while authorized trace reads can still
 operate. Exact health and incident procedure belongs in
 [Operations Runbook](Operations-Runbook).
 
@@ -328,51 +339,41 @@ Canonical ownership:
 
 Remember first validates and deterministically scans every provider-bound user
 field: evidence and the structured proposal. An intake rejection appends only
-safe, team-scoped audit metadata and returns a bounded error; it creates no
-ingest, fragment, search document, embedding job, or provider request. A
-passing request atomically commits exact evidence, a pass scan event, and
-queued processing intent. The scan normalizes covered format controls before
-matching, rejects a hidden-control flood, and rejects a normalized threat
-pattern; its tool and network rule requires directive wording rather than a
-descriptive statement. The worker repeats the scan before it loads candidates
-or calls the assessor. A worker-time deterministic concern atomically appends
-the matching placement fragment's security event, quarantine, and terminal
-placement outcome; an assessor concern follows the same staged-data quarantine
-path. A clean worker builds server-owned Entity occurrence groundings,
-prefetches complete matching candidates and structured predicate options, starts
-one strict assessor conversation containing bounded `security_signals`,
-`entity_results`, and `relationship_results`, validates and persists the first
-complete valid response, verifies stored support coverage and deterministic
-policy, and commits all material outcomes in PostgreSQL. Malformed content is
-repaired with full same-provider message history for at most five semantic
-turns; provider failures use durable placement retry.
+safe, team-scoped audit metadata and returns a bounded result; it creates no
+ingest, fragment, search document, or provider request. A
+passing request snapshots owner/source/search fences, builds server-owned Entity
+occurrence groundings and complete candidate context, then starts one strict
+assessor conversation with an initial call and at most two complete repairs.
+The response is validated as a whole; no partial response is persisted. The
+server builds a deterministic semantic/search plan, renders and deduplicates
+the final documents, makes one bounded `EmbedBatch` call, revalidates the
+fences, and commits canonical semantics, evidence, current vectors, terminal
+attempt metadata, and chronological events in one PostgreSQL transaction.
+Provider calls remain outside that transaction. A security concern is returned
+as a bounded quarantine result, semantic unsupported/stale input is returned
+with per-ref `not_stored` results, and provider/embedding/commit failures are
+structured `isError` results that callers can retry with the same key.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Request["Authenticated bounded request"] --> Scan{"Intake scan passes?"}
+  Request["Authenticated bounded request"] --> Scan{"Admission scan passes?"}
   Scan -- no --> Audit["Safe rejection audit;<br/>nothing staged"]
-  Scan -- yes --> Intake["Commit evidence, pass event,<br/>and queue intent"]
-  Intake --> WorkerScan{"Worker scan passes?"}
-  WorkerScan -- no --> Quarantine["Atomically record security event,<br/>quarantine, and terminal state"]
-  WorkerScan -- yes --> Context["Server-owned Entity groundings,<br/>candidates, and predicate options"]
-  Context --> Assess["One bounded assessor conversation"]
-  Assess --> Validate["Closed-schema, security-signal,<br/>and allowlist validation"]
-  Validate --> Signal{"Model security signal?"}
-  Signal -- Yes --> Quarantine
-  Signal -- No --> Persist["Persist first valid assessment"]
-  Persist --> Gate["Verify stored support covers every evidence item"]
-  Gate --> Policy["Deterministic lifecycle"]
-  Policy --> Commit["One PostgreSQL transaction"]
-  Commit --> Immediate["Current rows, SemanticEdges,<br/>and full-text available"]
-  Commit --> Async["Versioned embedding job"]
+  Scan -- yes --> Snapshot["Snapshot owner/source/search fences<br/>and candidate catalogs"]
+  Snapshot --> Assess["Assessor: initial + ≤2 complete repairs"]
+  Assess --> Validate["Closed-schema and allowlist validation"]
+  Validate --> Plan["Deterministic semantic/search plan"]
+  Plan --> Embed["One EmbedBatch call<br/>≤256 documents, 10s"]
+  Embed --> Revalidate["Revalidate server-owned fences"]
+  Revalidate --> Commit["One PostgreSQL transaction<br/>canonical rows + vectors + attempt"]
+  Commit --> Result["Complete terminal MCP result"]
 ```
 
 Malformed assessor output is returned to the same provider with bounded
-validation errors and full message history for at most five semantic turns. The
+validation errors and full message history for at most three provider calls. The
 application does not coerce it or commit a valid subset. Provider failures end
-the conversation and consume a durable placement attempt with fresh history;
-restart and commit retries reuse the first valid result. Unsupported hints are
+the conversation and produce a replayable failed attempt for retry with the
+same idempotency key; no placement attempt or background retry is used. Unsupported hints are
 recorded as `not_stored` only when stored support covers every evidence item;
 otherwise the complete submission is `rejected/no_supported_memory`. Exact
 client-owned races are `rejected/stale_input`; infrastructure faults are
@@ -395,31 +396,33 @@ and SemanticEdge query shape; it is not another database or authority.
 ## Consistency Boundary
 
 Core semantic state, cross-profile Conflict case disposition, and their
-append-only histories commit atomically in PostgreSQL transactions. Placement
-opens or updates cases with caller-owned knowledge. Nightly Conflict review may
+append-only histories commit atomically in PostgreSQL transactions. Conflict
+intake opens or updates cases with caller-owned knowledge. Nightly Conflict review may
 resolve a locked case, close losing stale Relationship episodes, append
 Relationship/Conflict ledger events, and queue search refresh in one transaction.
 
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
 sequenceDiagram
-  participant W as Placement worker
+  participant R as Request-scoped writer
   participant P as PostgreSQL
-  participant E as Embedding worker
+  participant E as Assessor/embedding providers
 
-  W->>P: Begin semantic transaction
-  W->>P: Append evidence decisions and transitions
-  W->>P: Update current Entity / Relationship rows
-  W->>P: Upsert search document and embedding job
-  W->>P: Commit
-  P-->>W: Authoritative state and SemanticEdge visibility
-  E->>P: Claim embedding job
-  E->>P: Write vector only for matching source version
+  R->>P: Snapshot owner/source/search fences
+  R->>E: Assessor conversation
+  E-->>R: Complete validated response
+  R->>E: One batch embedding request
+  E-->>R: Ordered validated vectors
+  R->>P: Begin fenced semantic transaction
+  R->>P: Append evidence, decisions, transitions, documents, vectors
+  R->>P: Commit terminal attempt and canonical state
+  P-->>R: Authoritative state and SemanticEdge visibility
 ```
 
-Only embeddings are intentionally asynchronous because they are derived.
-`search_state` exposes their freshness. There is no cross-database graph
-projection, outbox, or graph-reconciliation loop in the target.
+Required write embeddings are synchronous and current at commit. A separate
+document-centric reconciliation pass may repair historical drift, but it is not
+part of normal Remember acknowledgement and does not restore a placement or
+embedding queue.
 
 ## Host And Service Responsibilities
 
@@ -487,9 +490,9 @@ change relies on it.
     and physical search-index contracts; its migration cannot re-embed Evidence.
 17. Relationship vector fusion is team-gated until a complete projection
     generation is current.
-18. One placement claim reserves one assessor conversation with at most five
-    malformed-response turns; every retry after a valid persisted assessment
-makes zero provider calls.
+18. One Remember request owns one assessor conversation with at most three total
+    provider turns; every retry after a valid persisted assessment makes zero
+    provider calls.
 19. Stored support must cover every submitted evidence item before source or
     supersession activation; unsupported hints are not client errors when this
     coverage remains true.

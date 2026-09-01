@@ -10,6 +10,13 @@ the bounded system Conflict reviewer may close a losing team Relationship episod
 after an evidence-backed case resolution. Evidence bytes, observations, support
 links, and author attribution remain immutable.
 
+Remember and correction writes are synchronous in v2.6.1. Required vectors are
+obtained before the atomic semantic transaction, so a provider or embedding
+failure is visible in the originating MCP call and cannot leave canonical state
+without its current search vector. Ambiguous correction candidates return a
+normal `awaiting_confirmation` structured result; confirmation returns its
+terminal result. `get_submission_status` is removed.
+
 This page is the single source of truth for conflict and correction
 interaction. Relationship lifecycle is in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle), identity
@@ -37,8 +44,8 @@ sequenceDiagram
   DM-->>Host: Trace and explicit decision choices
   Host->>User: Ask the exact conflict question
   User-->>Host: Decision plus evidence
-  Host->>DM: get_submission_status(submission_id)
-  DM-->>Host: Bounded terminal/search state, with no client review decision
+  Host->>DM: correct_relationship(confirm)
+  DM-->>Host: Direct terminal correction result, with no client review decision
 ```
 
 An unresolved same-owner conflicting observation is not an active edge. The
@@ -352,14 +359,15 @@ Multi-instance workers use durable daily run reservation plus team-local `FOR
 UPDATE SKIP LOCKED` claims, bounded retries, and lease recovery.
 
 The job may update conflict workflow rows, losing Relationship `status` and
-`valid_to`, append Relationship transition events, and enqueue rebuildable search
-state. For a successfully resolved overdue case it may also retract a losing
-evidence fragment with an audited system actor and stage an inferred,
-deletion-only replacement through the normal placement queue, but only when that
-fragment has no support path outside the active case. A shared fragment remains
-searchable and keeps its unrelated support; the losing Relationship is still
-suppressed. The replacement is not searchable and cannot project a Relationship
-or vote in a future conflict. If staging it fails, the old evidence remains
+`valid_to`, append Relationship transition events, and embed affected search
+documents before the fenced semantic commit. For a successfully resolved
+overdue case it may also retract a losing evidence fragment with an audited
+system actor and create an inferred, deletion-only replacement through the
+bounded derived-evidence retry path, but only when that fragment has no support
+path outside the active case. A shared fragment remains searchable and keeps
+its unrelated support; the losing Relationship is still suppressed. The
+replacement is not searchable and cannot project a Relationship or vote in a
+future conflict. If derived-evidence creation fails, the old evidence remains
 inactive and the failure is durably visible. The job never rewrites raw evidence
 text, observations, verification events, ownership, author attribution, Entity
 resolution, or source history. Operators inspect an overdue case or submit new
@@ -397,9 +405,9 @@ An opaque “accept or reject?” prompt is insufficient.
 ## Server-side ambiguity handling
 
 Entity, predicate, scope, and temporal ambiguity remain isolated in the
-assessment ledger. The client receives only the bounded submission state from
-`get_submission_status`; it cannot select a candidate, release a quarantine, or
-append a decision to an existing submission.
+terminal attempt history. The client receives only the bounded structured
+result; it cannot select a candidate, release a quarantine, or append a
+decision to an existing submission.
 
 When new source material resolves the ambiguity, submit one complete,
 authenticated `remember` request with exact evidence, logical Relationships,
@@ -416,7 +424,7 @@ dream output using an already registered predicate. See [Dreaming](Dreaming).
 ## Correct With New Evidence
 
 A correction appends evidence; it is not an in-place text edit. Submit a fresh
-complete request and poll its returned `submission_id`:
+complete request and use its direct terminal result:
 
 ```json
 {
@@ -460,7 +468,7 @@ correction with unowned evidence retirement.
 | supported prior Relationship stays current | prior record is superseded or retracted only when registry behavior and evidence permit |
 | new conflict is held and has no active edge | eligible replacement is exposed as one SemanticEdge |
 | prior evidence and decisions are append-only | both old and new provenance remain traceable |
-| vector search may still represent the prior version | source/full-text/adjacency reads change at commit; version-matched embedding job updates vector search |
+| vector search may still represent the prior version | source/full-text/adjacency reads and the required vector change together at commit |
 
 For a cross-profile correction, the target record does not enter the right-hand
 column during placement. The caller creates a separately owned Relationship and
@@ -523,15 +531,15 @@ this page owns how the client sees and resolves uncertainty.
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Wrong review target | a decision for one conflict applies to another | require ingest/item/Relationship IDs, idempotency key, and echo an impact summary |
-| Accept bypasses policy | a client click writes an active Relationship directly | require exact new evidence and route its new placement item through one assessment plus deterministic lifecycle |
+| Wrong review target | a decision for one conflict applies to another | require ingest/Relationship IDs, idempotency key, and echo an impact summary |
+| Accept bypasses policy | a client click writes an active Relationship outside the write contract | require exact new evidence and route the correction through one assessment plus deterministic lifecycle |
 | Correction erases history | old evidence is edited to match new truth | immutable evidence plus append-only observations, decisions, support, and transitions |
 | Homonym split corrupts history | finance-team Mark causes all Mark edges to move | client-confirmed impact preview and caller-owned observation-ID-level reassignment |
 | Unknown predicate expands vocabulary | assessor invents `dogfoods` as a durable key | structured registry allowlist and separate authorized vocabulary workflow |
 | Wrong supersession | a many-valued predicate is treated as single-current | explicit `current_cardinality`, scope/time comparison, and before/after preview |
 | Forget becomes data loss | deleting an edge also removes source and audit history | transactional retraction status; nodes and append-only ledger remain |
 | Stale vector confuses review | vector search surfaces meaning from before correction | source-version checks, exact trace by ID, and explicit search freshness |
-| Cross-profile correction becomes immediate mutation | B's placement marks A's Relationship superseded before review | placement can write only B's Relationship, cross-reference, and open/update case; non-owner supersession is allowed only in the nightly reviewer transaction |
+| Cross-profile correction becomes immediate mutation | B's request marks A's Relationship superseded before review | the request can write only B's Relationship, cross-reference, and open/update case; non-owner supersession is allowed only in the nightly reviewer transaction |
 | Majority becomes truth | several profiles copy one weak source and outvote stronger evidence | preserve source groups, deduplicate common origins, and rank evidence rather than author count alone |
 | Correction impersonates source revision | a profile-local `correct` request invalidates evidence adopted by other owners | reserve team-wide invalidation for the immutable source owner and exact prior-revision contract |
 | Deadline becomes truth | an unresolved case automatically chooses B after seven days | TTL only switches thresholds; require one unique temporally applicable position above the applicable evidence floor, otherwise mark `overdue` and escalate |
@@ -570,7 +578,7 @@ this page owns how the client sees and resolves uncertainty.
     the corresponding historical view
 17. another writer's response creates that writer's evidence-backed
     Relationship and cannot act as a bare vote
-18. placement creates or updates Conflict cases but does not resolve them
+18. a semantic write creates or updates Conflict cases but does not resolve them
 19. nightly review is the only automatic Conflict resolver; it uses a bounded
     verifier proposal only for unchanged overdue cases and server policy remains
     the durable authority
@@ -581,10 +589,10 @@ this page owns how the client sees and resolves uncertainty.
     `status=superseded` and `valid_to` updates, retract only case-exclusive
     losing evidence through the lifecycle ledger, and atomically persist one
     leased, retryable deletion-only derivation task for each retracted fragment;
-    the task stages the inferred replacement through normal placement. It cannot
+    the task stages the inferred replacement through the normal semantic write. It cannot
     rewrite raw evidence, ownership, author attribution, Entity resolution, or
     source history
 22. selecting a server-supplied Entity or predicate option reuses the persisted
     assessment and makes zero assessor calls
 23. accept, correct, and confirm-new-Entity actions require exact new evidence;
-    each creates one new placement item with one bounded assessor conversation
+    each creates one new semantic request with one bounded assessor conversation

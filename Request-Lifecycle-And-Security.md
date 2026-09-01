@@ -6,6 +6,16 @@ authentication fixes the team, actor identity, membership, permanent owner
 alias, and optional credential; later layers may only restrict access.
 
 This page defines the target request/security contract for the full refactor.
+
+## Current Remember execution
+
+After authentication and strict binding, Remember snapshots the owner, memory
+space, source revisions, candidate allowlists, and active search contract. It
+then runs the bounded assessor conversation, one ordered embedding batch, and a
+single fenced PostgreSQL transaction. The original MCP call returns the
+terminal outcome; no status reader, placement lease, or post-response worker is
+part of this path. Cancellation is checked before transaction entry, and a late
+fence race returns `commit_conflict` without semantic writes.
 Key provisioning is in [Portals And API Keys](Portals-And-API-Keys).
 
 ## Network Surfaces
@@ -331,11 +341,12 @@ read/write behavior.
 After transport validation and immutable principal binding, Remember enters the
 `internal/service/remember` application boundary. The boundary converts the
 strict request, verifies evidence-index coverage, scans evidence and structured
-proposal values, and records only bounded security-rejection metadata on a
-pre-stage failure. A successful call invokes one intake port; acknowledgement is
-possible only after that port returns a committed submission containing exact
-evidence and processing intent. The port does not expose provider, placement,
-search, or database types, and status reads use the same team/profile scope.
+proposal values, and records only bounded security-rejection metadata on an
+admission failure. A successful call invokes one request-owned processor; the
+MCP result is returned only after assessment, required embedding, and the
+fenced transaction produce a terminal result. The port does not expose
+provider, placement, search, or database types. Control-only attempt reads use
+the same team/profile scope and never serve as a public polling contract.
 
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
@@ -403,7 +414,7 @@ sequenceDiagram
   H-->>B: Sanitized first-party view model
 ```
 
-The user portal supports same-team recall, graph/trace, submission status, key
+The user portal supports same-team recall, graph/trace, Remember Attempts, key
 management, and permitted telemetry. The control portal supports private cross-team
 configuration, security, and operations. Portal handlers call the
 same application services and PostgreSQL authority as MCP where their use cases
@@ -451,12 +462,10 @@ weaken the promised global limit.
 Readiness includes PostgreSQL migrations/RLS, `pgvector`, the persisted
 embedding contract, active search-index generation/topology parity, required
 provider contracts, complete Relationship text projection, and Redis when
-distributed coordination is required. Queued, processing, expired, or failed
-embedding jobs are asynchronous convergence state and do not make `/ready`
-fail. `search_convergence` is exposed as an optional health dependency and
-operator projection; it can report `attention_required` or `recovering` while
-structural readiness remains `200 ready`. Incomplete Relationship text
-projection is still a readiness failure.
+distributed coordination is required. Current Remember writes require vectors
+before commit; legacy drift is reported by the optional document-centric
+`search_convergence` projection and never acknowledged as a normal write queue.
+Incomplete Relationship text projection is still a readiness failure.
 
 Do not use liveness as a readiness gate.
 
@@ -479,8 +488,8 @@ and correlation ID. They never include:
 - embeddings
 - cross-team existence hints
 
-Embedding failure codes are closed and bounded. Public submission status uses
-`search_indexing_delayed`; operator-only convergence exposes allowlisted codes
+Embedding failure codes are closed and bounded. The terminal Remember result
+contains every required search state; operator-only convergence exposes allowlisted codes
 such as `provider_quota_exhausted`, affected teams, guidance, run state, and
 metrics. Provider messages, response bodies, request text, and credentials are
 not copied into those surfaces.
@@ -497,7 +506,7 @@ first runs a deterministic Base64/encoding, hidden-control, instruction,
 role-spoofing, markup, secret-extraction, and exfiltration scan over every
 provider-bound user field, including the structured proposal, before it stages
 anything. An intake hit returns a bounded error and appends only safe audit
-metadata; no submission, fragment, search document, embedding job, or assessor
+metadata; no submission, fragment, search document, or assessor
 request exists. The worker repeats that scan over the staged evidence and
 provider-bound proposal before it claims candidate context or calls the assessor.
 The scanner normalizes covered format controls and one bounded layer of percent,
@@ -510,7 +519,7 @@ reject; valid bidirectional prose and descriptive quotations remain eligible.
 Safe audit metadata contains bounded decisions, rules, sources, and spans, not a
 scanner version or policy hash.
 
-The Remember assessor receives the full staged submission plus bounded
+The Remember assessor receives the complete request-local submission snapshot plus bounded
 candidate/predicate context in one capability-free structured request. It has no
 tools, credentials, environment data, request headers, cross-team records, or
 prior raw evidence history. It returns structure only: complete security
@@ -525,18 +534,15 @@ A `hidden_control_markup` output must cite an exact span with a covered hidden
 control or active markup. Otherwise the closed assessor response is invalid and
 cannot create a quarantine.
 
-A worker-time deterministic or model security concern quarantines the staged
-submission. For a deterministic worker hit, PostgreSQL atomically records the
-matching placement fragment's security event, quarantine record, and terminal placement result.
-PostgreSQL retains an isolated raw payload copy for exactly 24 hours, then
-hard-deletes that copy. Append-only evidence, identifiers, hashes, security
-events, and lineage remain restricted audit history and are never recallable or
-provider input. A client can only submit a new independent complete batch; it
-cannot negotiate, release, or append evidence to quarantined data. Complete
-closed-schema assessor validation is required before one atomic canonical
-promotion; no partial semantic commit is allowed. Assessor repair is bounded to
-the same session. Exhaustion is a typed operational failure; semantic rejection
-is limited to `no_supported_memory` and `stale_input`.
+A deterministic or assessor security concern returns a quarantined terminal
+result. PostgreSQL atomically records bounded attempt, event, and security
+metadata without creating canonical evidence, search documents, vectors, or a
+raw quarantine payload. A client can only submit a new independent complete
+batch; it cannot negotiate, release, or append evidence to quarantined input.
+Complete closed-schema assessor validation is required before one atomic
+canonical promotion; no partial semantic commit is allowed. Assessor repair is
+bounded to the same session. Exhaustion is a typed operational failure;
+semantic rejection is limited to `no_supported_memory` and `stale_input`.
 
 ## Audit
 
@@ -546,8 +552,8 @@ Audit high-value events:
 - authority changes and submission terminal outcomes
 - source revision activation, direct evidence supersession/retraction, and resulting
   support/status transitions
-- deterministic intake rejection audits plus worker/model quarantine, exact
-  retention expiry, and replacement link
+- deterministic intake rejection audits, assessor quarantine decisions, and
+  control-only failure-artifact expiry
 - Entity merge/split
 - Relationship retraction/supersession corrections
 - Conflict case open/reopen/resolve/overdue/dismiss decisions and policy version
@@ -573,10 +579,10 @@ audit ledger.
 | Portal backend becomes an integration API | external clients depend on browser implementation details and bypass the intended MCP contract | same-origin portal boundary, no public SDK or CORS contract, API-key-or-SSO authentication, and CSRF for SSO-cookie mutations |
 | Redis outage weakens limits | replicas fall back to independent counters | distributed-required readiness failure |
 | Search candidate leakage | global vector search exposes another team's text | internal filtering and authorized hydration before return |
-| System-worker privilege leak | submission-assessment or embedding worker writes the wrong team | stored team on every job, explicit system transaction mode, source-version predicates, and audit |
+| System-worker privilege leak | a non-Remember scheduler writes the wrong team | stored team on every work row, explicit system transaction mode, source-version predicates, and audit |
 | Error enumeration | wrong-team ID returns different detail | non-enumerating public errors and internal audit only |
 | Cross-profile overwrite | write-scoped B retracts A's Relationship by ID | immutable principal profile, owner predicate on mutation, and caller-owned correction links |
-| Quarantine bypass | a writer tries to release, extend, or reuse malicious staging | no release tool; database-enforced exact 24-hour expiry; replacement is a fresh complete submission |
+| Quarantine bypass | a writer tries to release or reuse malicious quarantined input | no release tool or raw quarantine payload; bounded terminal/audit metadata remains and replacement is a fresh complete submission |
 | Recalled prompt injection | returned evidence asks a host to export environment variables | returned evidence is untrusted data; client action/tool policy and least privilege remain mandatory |
 | Source-key takeover | a writer advances another integration's source and demotes team knowledge | bind source identity to immutable owner and require exact prior-revision compare-and-set |
 | Private erasure crosses a space | deleting one SSO-owned credential removes profile-private or team-shared knowledge | seal and generation-fence the exact credential-private space, delete through a catalog-complete manifest, and verify zero rows before completion |
@@ -606,12 +612,13 @@ audit ledger.
     exact expected prior token
 15. semantic memory tools are visible and executable through MCP only; generic
     HTTP discovery and execution routes cannot expose them
-16. deterministic security rejection happens before staging, and every
+16. deterministic security rejection happens before provider work, and every
     Remember-assessor response contains complete, exact security signals for
-    the staged evidence boundary
-17. the quarantined raw payload copy is isolated for exactly 24 hours and then
-    hard-deleted; immutable source evidence and lineage remain restricted audit
-    history;
+    the request-owned evidence boundary
+17. deterministic quarantine stores no raw payload or canonical memory, while
+    operational failure-artifact bytes are control-only and physically purged
+    within seven days; immutable accepted source evidence and lineage remain
+    restricted audit history;
     recalled evidence remains untrusted data after any successful write
 
 ## Canonical Identity Context

@@ -10,6 +10,11 @@ and release gates belong in [Evaluation](Evaluation). Tenant keys, composite
 constraints, and shard-safe query shape belong in
 [PostgreSQL Cluster-Safe Schema](PostgreSQL-Cluster-Safe-Schema).
 
+v2.6.1 writes call the active embedding provider once before the fenced semantic
+transaction. A required write document is inserted with its validated current
+vector; no client-visible pending vector or normal embedding-job lease exists.
+Reconciliation compares document hashes and versions for legacy drift only.
+
 ## Outcome And Responsibility
 
 PostgreSQL with `pgvector` stores canonical vectors, calculates vector distance,
@@ -458,8 +463,8 @@ queries. The target applies these controls:
 3. enforce a process-level vector-query concurrency semaphore in addition to
    the shared PostgreSQL connection-pool bound
 4. keep provider calls outside PostgreSQL transactions
-5. coalesce embedding jobs by source/document/contract version and write a new
-   vector only when canonical search text changed
+5. deduplicate planned documents by source/document/contract version and write a
+   new vector only when canonical search text changed
 6. return evidence IDs, Entity seeds, and distances first, then hydrate only
    selected evidence IDs after fusion
 7. build or reindex HNSW through durable operator work with progress, disk,

@@ -106,8 +106,8 @@ Verify:
 - remember requires exact evidence plus logical Relationships whose
   `evidence_indices` collectively cover every evidence item, one top-level
   `idempotency_key`, and no evidence-level key or public `modality`;
-- get_submission_status accepts a submission_id and exposes only safe,
-  owner-scoped state;
+- remember returns its complete terminal evidence/Relationship outcome; the
+  removed `get_submission_status` name must not be called;
 - legacy placement and review tools are absent;
 - retract_evidence preserves append-only provenance;
 - recall_memory returns evidence contexts plus separate related frontiers,
@@ -125,7 +125,7 @@ The MCP initialization instructions should make the safety and workflow
 boundary explicit:
 
 ~~~text
-Remember v2.6 requires exact evidence plus a nonempty logical Relationships array
+Remember v2.6.1 requires exact evidence plus a nonempty logical Relationships array
 and one top-level `idempotency_key`. Relationships are statements: do not send
 `modality`, evidence-level idempotency keys, spans, surface fields, or
 Relationship supports. The server and assessor own grounding repair, identity,
@@ -134,9 +134,10 @@ hints may be returned as `not_stored` when every evidence item remains covered
 by a stored split.
 Each Relationship supplies one or more zero-based evidence_indices, and those
 lists must collectively cover every evidence item. Dense-Mem reports missing
-indexes before staging, then owns exact grounding and durable promotion. Poll
-get_submission_status; there is no client review, approval, or follow-up-evidence
-action. Remember semantic rejection is limited to `no_supported_memory` and
+indexes before execution, then owns exact grounding, one batch embedding call,
+and durable promotion. The original call returns a terminal result; there is no
+status reader, client review, approval, or follow-up-evidence action. Remember
+semantic rejection is limited to `no_supported_memory` and
 `stale_input`; send a complete corrected batch with a new idempotency key. For
 provider, configuration, database, or internal faults, inspect the bounded
 operational error and contact the operator when directed. For a quarantined
@@ -159,13 +160,11 @@ Dense-Mem.
 ## First Smoke
 
 1. submit one short safe statement with one logical Relationship citing its
-   evidence index;
-2. poll get_submission_status until it is completed and search state is current
-   or not_required;
-3. verify a Base64 or prompt-injection attempt is rejected before staging;
+   evidence index and verify the same call returns a terminal result;
+2. verify a Base64 or prompt-injection attempt is rejected before execution;
 4. recall the statement and treat its returned text as data;
 5. trace its relationship_id; and
-6. verify another profile cannot read the submission status.
+6. verify another profile cannot read the Remember attempt or its result.
 
 Use [Quick Start](Quick-Start) and
 [Using Dense-Mem](Using-Dense-Mem) for examples.
@@ -179,10 +178,9 @@ Use [Quick Start](Quick-Start) and
 | team required | Use the `/teams/<team-id>/mcp` URL copied from `/ui`, or configure a trusted team claim |
 | tool missing | Scopes, feature flag, and current `tools/list` visibility |
 | remember rejected | Closed Relationship schema, evidence-index coverage, source rules, and security scan |
-| submission stays queued/processing | Worker/readiness/provider health and safe status error |
-| submission failed | Read `errors[].message` for the bounded terminal stage; never expect provider or database details |
+| Remember returns `isError` | Read `structuredContent.errors[]` and follow its closed `next_action`; never expect provider or database details |
 | recall misses a completed write | Search state, recall query, support eligibility, and degradations |
-| timeout | Client tool timeout versus asynchronous submission polling; `check_after_seconds` is a polling hint, not an assessor timeout |
+| timeout | The fixed 180/160/10/10 budgets; retry the original request with its idempotency key |
 
 Authentication and transport security are in
 [Request Lifecycle And Security](Request-Lifecycle-And-Security).

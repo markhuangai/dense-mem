@@ -171,9 +171,10 @@ For each implementation change:
 7. inspect migration/query plans and the diff
 8. record schema/config/API/migration implications
 
-For this v2.6 Remember reliability change, the deterministic 1k
+For this v2.6.1 synchronous Remember change, the deterministic 1k
 evaluation/comparison is explicitly deferred because the data structure is
-unchanged. The acceptance gate is the complete no-skip Compose/UAT matrix and
+unchanged for retrieval quality. The maintainer explicitly waived the 1k gate;
+the acceptance evidence is the complete no-skip Compose/UAT matrix and
 the focused real-PostgreSQL/service tests below. Restore the 1k evaluation gate
 for later changes that alter retrieval quality, ranking, placement accuracy,
 assessor behavior, embeddings, search documents, or performance.
@@ -266,7 +267,7 @@ the relevant uniqueness constraints.
 | JSON contract | closed schemas, conditionals, bounds, exact enums, bounded security signals, and no removed/unknown fields |
 | PostgreSQL integration | migrations, RLS, constraints, atomic source activation, append-only security/support history, queues/leases, partial indexes, vector operators |
 | repository/service integration | actual transactions, concurrent create recheck, idempotency, current-state/transition consistency |
-| provider-adapter protocol | malformed JSON, full-history correction messages, five-turn exhaustion, extra/missing/duplicate results, wrong IDs/spans, model security signals, provider protocol failures, timeouts, 429/`Retry-After`, durable claim retry, and persisted-result reuse |
+| provider-adapter protocol | malformed JSON, full-history correction messages, three-turn exhaustion, extra/missing/duplicate results, wrong IDs/spans, model security signals, provider protocol failures, timeouts, 429/`Retry-After`, durable claim retry, and persisted-result reuse |
 | recall evaluation | exact/full-text/vector/adjacency relevance, RRF/priority profiles, deterministic reranking, exact-vs-HNSW Recall@K, temporal/tenant/profile-conflict slices |
 | MCP contract | `tools/list` visibility, `tools/call` schema/scope enforcement, current contract semantics, and safe errors |
 | browser UAT | ambiguity, trace, correction, forget, quarantine release, Hypothesis styling, role/scope behavior |
@@ -349,23 +350,24 @@ valid complete response
 Assert that every malformed-content case appends the invalid assistant response
 and exact validation errors to the same in-memory history, requests a complete
 replacement, and causes zero semantic commit until a valid whole response
-exists. Assert five total semantic turns at most, typed operational failure
-after the fifth malformed response, and token-budget failure before an
+exists. Assert three total provider calls at most, typed operational failure
+after the third malformed response, and token-budget failure before an
 oversized next turn.
 
 Separately assert that every HTTP status, timeout, transport error, invalid
 provider envelope, missing choice, or empty assistant message makes no
-same-session semantic repair. It must release the reservation transactionally,
-persist only bounded failure class/status, and requeue through placement
-`max_attempts`; 429 honors bounded `Retry-After`. A valid non-empty
+same-session semantic repair. It must release the request path, persist only
+bounded failure class/status, and return a replayable operational failure for
+retry with the same idempotency key; 429 is a bounded provider failure, not a
+background retry. A valid non-empty
 security-signal array quarantines the complete submission and creates no
 `VerificationEvent` or other semantic subset.
 
-Persist a valid response, then force process exit, lease loss, pause/resume, and
-semantic transaction failure before commit. Each resumed path must load the
-same run-scoped assessment row, create the same material decisions, and make
-zero further assessor calls. A unique stable run identity must prevent two
-workers from persisting different valid responses.
+Force cancellation, a late source/search fence change, and semantic transaction
+failure before commit. Each path must leave zero semantic partial state, return
+a bounded retryable error, and make no second assessor or embedding call. A
+stable idempotency key must allow a later identical request to converge on one
+canonical winner.
 
 ### Submission-wide assessment
 
@@ -410,18 +412,18 @@ workers from persisting different valid responses.
   action
 - a complete resubmission uses a new top-level idempotency key and follows the
   same scanner, assessor, policy, and atomic commit path
-- accept/correct with exact new evidence creates one new placement claim and
-  one bounded assessor conversation
+- Remember/correction with exact new evidence creates request-local IDs and one
+  bounded assessor conversation before the fenced commit
 - security quarantine and cross-profile Conflict cases are unaffected
 
 ### Injection boundary
 
 - the same scanner rules and bytes produce the same bounded signals/decision
-- intake rejection appends safe audit metadata only and reaches no staging or
-  model
-- worker-time deterministic and assessor signals quarantine staged evidence and
-  retain exact original spans
-- quarantine release follows the separately authorized staged-data workflow
+- intake rejection appends safe audit metadata only and reaches no provider or
+  canonical write
+- deterministic and assessor signals quarantine request evidence in a terminal
+  transaction and retain exact original spans
+- quarantine has no release workflow; a replacement is a fresh complete request
 - Windows paths, harmless escape notation, quotes, and brackets pass unchanged
 - descriptive quoted attacks and direct quoted/bracketed directives measure
   false positives and bypasses separately
@@ -522,20 +524,19 @@ Run real concurrent tests for:
 - profile B correcting profile A while profile C recalls the conflict
 - two profiles attempting identity correction on their own observations at once
 - source owner advancing a revision while another profile adopts the old one
-- old-revision placement completion racing a newer source activation
+- old-revision document reconciliation racing a newer source activation
 - duplicate/current-token revision retries with equal and conflicting content
 - source activation at, below, and above the server-defined hard dependency
   fanout bound
 - quarantine release racing a repeated model security signal
-- valid assessor response persistence followed by placement lease loss; the
-  reclaimed worker must not call again
-- correction racing recall and embedding work
+- valid assessor response followed by request cancellation; no background retry
+- correction racing recall and document reconciliation
 - C's conflict response racing a nightly claim and a newer case version
 - two nightly workers claiming the same due case and one losing/recovering lease
-- old embedding job racing a newer source version
+- stale reconciliation snapshot racing a newer source version
 - Redis failure in one-process and multi-instance modes
 - PostgreSQL deadlock/serialization retry boundaries
-- process restart at each placement and embedding state
+- process restart at each Remember assessment, embedding, and commit phase
 - standby replay lag/cancellation and primary failover without stale
   freshness-sensitive reads
 - distributed-by-team routing with one shard missing or lagging the active
@@ -552,7 +553,7 @@ Measure at representative team sizes and concurrency:
 | Path | Required evidence |
 | --- | --- |
 | remember intake | p50/p95/p99 latency, transaction/lock time, throughput |
-| placement | stage latency, assessor calls/claim, input/output tokens, model time, persisted-result reuse, commit time, queue age |
+| Remember | end-to-end/phase latency, assessor calls and turns, input/output tokens, model time, terminal-result replay, commit time |
 | full text | plan, rows, buffers, p95/p99 |
 | exact vector | eligible row count and latency |
 | HNSW vector | Recall@K versus exact, tuples scanned, p95/p99 |
@@ -560,8 +561,8 @@ Measure at representative team sizes and concurrency:
 | RRF/rerank | enabled/disabled profiles, nDCG/MRR, conflict preference/clarification accuracy |
 | adjacency | seed/degree/depth distributions, stopped reason, p95/p99 |
 | trace | joins/bytes versus support/history size |
-| embedding jobs | throughput, oldest age, stale-job ratio |
-| Relationship projection | text-batch resume, foreground/generation fairness, vector-gate activation, and Evidence hash parity |
+| document reconciliation | bounded drift snapshot, provider batch duration, source/hash fence updates, and unchanged rows on failure |
+| Relationship projection | text rendering, vector-gate activation, and Evidence hash parity |
 | Conflict resolver/job | preference/overdue accuracy, false-suppression rate, case age, throughput, lease recovery, and current/historical recall parity |
 
 Do not approve a graph/vector change on a synthetic single-tenant latency
@@ -572,7 +573,7 @@ number alone. Include concurrent reads/writes and tenant-filter selectivity.
 - domain term has one canonical owner in the wiki
 - no active pending Relationship or Hypothesis path
 - Remember-assessor response remains closed and atomic; malformed responses are
-  repaired in one history for at most five turns, while provider failures use
+  repaired in one history for at most three total turns, while provider failures use
   durable retry
 - the first valid assessor response is persisted and reused before semantic
   policy/commit
@@ -614,25 +615,25 @@ The implementation is release-ready only when:
 1. every target domain/storage/API acceptance invariant passes
 2. PostgreSQL and `pgvector` integration tests run in CI
 3. strict assessor fixtures prove zero partial commits, same-session complete
-   repair with five-turn exhaustion, and separate durable provider retry
+   repair with three-turn exhaustion, and separate durable provider retry
 4. exact-vs-ANN recall and concurrent load meet release gates
 5. server, Compose, configuration, readiness, documentation, and dependencies
    contain no secondary durable knowledge-store path
 6. PostgreSQL backup/PITR and vector rebuild are proven
 7. MCP discovery/execution, first-party portal, and evaluation fixtures agree
    on current contract semantics where their bounded use cases overlap
-8. populated-database migration tests prove Relationship-only re-embedding,
-   resumable text convergence, fair queue drain, whole-team vector activation,
-   and unchanged Evidence/index contracts
-9. V2.4 migration tests start after the projection migration and prove zero model calls, rescoring,
-   lifecycle/search mutation, embedding jobs, or re-embedding
+8. populated-database migration tests prove Relationship-only document
+   convergence, whole-team vector activation, and unchanged Evidence/index
+   contracts
+9. V2.4 migration tests start after the projection migration and prove zero model
+   calls, rescoring, lifecycle/search mutation, or re-embedding
 10. restart-migration tests prove unfinished Remember work is terminalized with
     zero promotion and complete resubmission guidance
 11. paired multi-round scripted and real-host evaluation reports placement
     quality, confidence reliability, call/token/latency savings, and review
     burden
 
-## v2.6 Remember Reliability Release Gate
+## v2.6.1 Synchronous Remember Release Gate
 
 The v2.6 gate is the complete no-skip Compose/UAT matrix. `all` runs the
 disposable PostgreSQL prechecks once, then schedules scenarios with bounded
@@ -643,8 +644,9 @@ marks pending work canceled, and prints a pass/fail/canceled summary.
 
 Run with prechecks and Playwright explicitly enabled; do not run the
 deterministic 1k evaluation for this change. The matrix covers the current
-Remember contract, assessor repair, relationship dispositions, idempotency,
-source/supersession intent, status projection, isolation, and the surrounding
+Remember contract, assessor repair, inline embeddings, relationship dispositions,
+idempotency, source-revision and supersession fences, terminal attempt diagnostics, isolation,
+and the surrounding
 MCP/portal/runtime paths.
 
 ```bash

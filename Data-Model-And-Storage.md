@@ -100,27 +100,28 @@ flowchart LR
   Entity --> Search["SearchDocument"]
   Relationship --> Search
   Fragment --> Search
-  Search --> Job["EmbeddingJob"]
+  Search --> Vector["validated current vector"]
 ```
 
 ### Knowledge and workflow tables
 
 | Logical table | One responsibility |
 | --- | --- |
-| `knowledge_ingests` | one accepted `remember` submission, idempotency identity, provenance, and processing state |
+| `knowledge_ingests` | historical ingest lineage retained for migration and canonical provenance |
+| `remember_attempts` | append-only terminal Remember outcome, idempotency identity, safe replay result, counts, and failure metadata |
+| `remember_attempt_events` | append-only chronological validation, assessor, embedding, and commit events |
+| `remember_failure_artifacts` | failure-only control artifacts with seven-day physical retention |
 | `evidence_sources` | one stable team/source-owner-scoped source identity and its current revision pointer |
 | `evidence_source_revisions` | append-only immutable source snapshots linked by expected previous-revision tokens |
 | `evidence_fragments` | immutable verbatim evidence slices and their source envelope |
-| `evidence_security_events` | append-only pass scans for accepted fragments plus worker-time deterministic/assessor signals, quarantine, and authorized release history; pre-stage rejections live only as safe audit events |
-| `submission_quarantine_payloads` | system-only retention of exact quarantined proposal/evidence/assessor payloads for the fixed 24-hour security-retention window |
-| `submission_quarantine_tombstones` | append-only hashes and fragment references proving quarantined payload deletion without retaining the raw payload |
+| `evidence_security_events` | append-only scan and assessor-signal metadata for accepted or quarantined request-local evidence; deterministic pre-provider rejection records only a bounded safe audit event and there is no raw quarantine payload or release path |
 | `entity_records` | canonical team-scoped identities and current identity state |
 | `entity_names` | canonical, alias, and former names attached to an Entity |
 | `value_records` | canonical typed scalar endpoints |
 | `entity_resolution_events` | append-only assessor and server decisions for evidence-local mentions |
 | `entity_correction_events` | append-only merge, split, and reassignment decisions |
 | `relationship_observations` | immutable extracted statements tied to exact evidence spans |
-| `placement_assessments` | append-once validated Remember response for one legacy item claim or one submission-wide run; scope-bound uniqueness makes restart and commit retry reuse it |
+| `semantic_assessments` | append-only complete assessor response history keyed by a terminal Remember attempt |
 | `predicate_registration_events` | append-only provenance for server-controlled predicate creation or reuse during a submission-wide semantic transaction |
 | `verification_events` | append-only Relationship judgments derived from persisted schema-valid assessor results |
 | `relationship_records` | one authored Relationship episode's current status, effective support, validity, author, and version |
@@ -139,72 +140,59 @@ flowchart LR
 | `relationship_conflict_derived_evidence_tasks` | durable leased retry state, atomically created with a resolution for each retracted losing fragment before its deletion-only replacement is staged |
 | `hypotheses` | dream output isolated from active knowledge |
 | `search_documents` | rebuildable compact text and vector-ready metadata for authorized retrieval |
-| `embedding_jobs` | durable, leased work to bring a search document to the current embedding contract |
 | `embedding_contracts` | versioned provider/model/dimension/normalization/query meaning shared by compatible query and document vectors |
 | `search_projection_generations` | per-team, per-source-kind text projection convergence and vector activation state |
 | `search_index_generations` | versioned pgvector physical index compatibility, build state, and active pointer |
-| `placement_runs` / `placement_items` | observable v2.6 Remember workflow, stable claim identity, retry, rejected/failed state, and bounded status guidance |
-| `remember_source_revision_intents` | staged source identity/revision intent applied only by an accepted atomic commit |
-| `remember_supersession_intents` | staged owned evidence-replacement targets applied only by an accepted atomic commit |
+| `placement_runs` / `placement_items` | historical migration input only; never created by current Remember |
+| `remember_attempts` / `remember_attempt_events` | append-only terminal Remember outcome and safe chronological event history |
+| `semantic_assessments` | immutable accepted assessor response history keyed by the request ingest |
 | `submission_relationship_results` | one stored/not_stored disposition per submitted Relationship ref, including canonical split mappings |
 
-Terminal embedding jobs are coordination history, not canonical memory. A
-system-context retention pass deletes only `completed`, `stale`, and
-`cancelled` rows whose `completed_at` is older than 14 days. It claims at most
-1,000 rows at a time in deterministic completion/team/job order with
-`FOR UPDATE SKIP LOCKED`. `queued`, `processing`, and `failed` jobs are never
-removed by this retention path.
+Current writes do not create embedding jobs. Search documents and their
+validated vectors are committed together with canonical semantics. The retained
+document-centric reconciliation history compares expected/current hashes and
+versions for legacy drift without restoring a normal queue or worker.
 
-Quarantined payloads are isolated from normal profile reads. Only system or
-migration transactions may purge the raw JSON after its database-enforced
-expiry; the purge appends a bounded `submission_quarantine_purged` outcome and
-retains tombstone hashes for audit. This retention path is separate from
-Remember processing failures and is never exposed as raw provider or evidence
-payload.
+Failure artifacts are isolated from normal profile reads. Only audited control
+or migration transactions may read or purge their bytes after seven days;
+attempt/event metadata and hashes remain. This path never exposes raw provider,
+credential, or evidence payloads to a normal profile request.
 
 ### Persisted assessment and semantic review shape
 
-`placement_assessments` is an append-once boundary between provider work and
-authoritative commit:
+`semantic_assessments` is the current append-only boundary between provider
+work and authoritative commit. The older `placement_assessments` shape is
+retained only as migration input. The current row is keyed by the request
+ingest and stores the complete validated response history:
 
 ```text
-assessment_id
 team_id
-assessment_scope: item | submission
-placement_item_id / claim_key        (required only for legacy item scope)
-placement_run_id / ingest_id         (required only for submission scope)
-request_id
-assessor_contract_version
+semantic_assessment_id
+attempt_id = ingest_id
+owner_profile_id
+response_history: JSON array of complete validated responses
+accepted_revision
+provider_turns
 model
-prompt_revision
-normalized_response
+tokenizer
+input_tokens / output_tokens / candidate_context_tokens
+candidate_context_truncated
 response_hash
 validated_at
 created_at
 
-UNIQUE (team_id, placement_item_id)  for the non-null item scope
-UNIQUE (team_id, claim_key)          for the non-null item scope
-UNIQUE (team_id, placement_run_id)   WHERE assessment_scope = submission
+UNIQUE (team_id, attempt_id)
 ```
 
-`normalized_response` contains only fields accepted by the closed assessor
+Each history entry contains only fields accepted by the closed assessor
 schema. It does not repeat request evidence, provider transport metadata, or
-secrets. Legacy `claim_key` is allocated with the immutable placement item. A
-submission assessment instead binds to the immutable team, owner, ingest, and
-placement run. The worker inserts the first valid result. A conflict on the
-scope's unique key reloads that row; it never calls the model to produce a
-replacement. `VerificationEvent` and Entity-resolution rows reference the
-persisted assessment so a restart, lease reclaim, or semantic transaction retry
-applies the same decision.
-
-Current v2.6 writes use `assessment_scope = submission`: one persisted response covers every
-evidence item and relationship ref in that run, including multiple
-relationships that cite the same evidence index. Commit verifies that the
-assessment belongs to the exact team/owner/ingest/run before it writes any
-semantic row. The v2.6 worker accepts only the current assessor contract;
-unfinished older Remember placements are historical migration rows marked
-with an internal `contract_superseded` stage, so they cannot be reinterpreted by
-the current worker or hydrated by public v2.6 submission status.
+secrets. One response history covers every evidence item and relationship ref
+in the request, including multiple relationships that cite the same evidence
+index. The terminal commit verifies immutable team/profile/ingest and search
+fences before writing semantic rows; no placement worker or public status reader
+is involved. Historical placement assessments and response revisions are copied
+into this shape by the stopped-service cutover and are never reinterpreted by
+the current write path.
 
 V2.4 adds nullable audit fields to `verification_events` for
 `assessment_id`, `assessment_policy_version`, `threshold_used`, and
@@ -222,16 +210,16 @@ as `rejected` (`no_supported_memory` or `stale_input`) or a typed operational
 `failed` outcome. There is no `submission_holds` table, hold projection,
 approval state, replacement slot, or successor link.
 
-### Historical v2.5 restart and v2.6 staging boundary
+### Historical v2.5 restart and pre-v2.6.1 staging boundary
 
-Migration `20260821160001_remember_normalizer` is historical upgrade
-archaeology. It terminalized unfinished old Remember work and preserved
-completed canonical state; v2.6 does not resume those rows. New v2.6 staging
-inserts exact evidence plus source and supersession intent, but does not move a
-source pointer, supersede evidence, create lifecycle events, activate a
-Relationship, write search documents, or enqueue embeddings. Those effects are
-performed together only after stored support covers every evidence item. A
-rejected or failed submission leaves the staged rows non-recallable.
+Migration `20260821160001_remember_normalizer` and the pre-v2.6.1 staging
+boundary are historical upgrade archaeology. They terminalized unfinished old
+Remember work and preserved completed canonical state; the current release does
+not resume those rows. The old implementation inserted evidence plus source and
+supersession intent before provider work, then deferred lifecycle, Relationship,
+search, and embedding effects. v2.6.1 removes those intent tables and performs
+the complete provider/plan/embed/fenced-commit sequence in the originating
+request.
 
 The exact Relationship identity, fields, and lifecycle belong only in
 [Relationship Model And Lifecycle](Relationship-Model-And-Lifecycle). Entity
@@ -366,16 +354,15 @@ impact belong in
 Each source aggregate exposes:
 
 ```text
-search_state: not_required | pending | current | failed
+search_state: not_required | current
 search_document_version
 projection_format_version
 embedding_contract_version
 ```
 
-`search_state` describes derived retrieval readiness, not whether the knowledge
-write committed. A Relationship can be authoritative and immediately
-available to exact/full-text/adjacency reads while its new embedding is
-pending.
+`search_state` is part of the canonical write fence. A completed Remember or
+correction never exposes a required document as pending or failed; a late fence
+race returns `commit_conflict` with zero semantic commit.
 
 ### Write and embedding sequence
 
@@ -383,39 +370,26 @@ pending.
 %%{init: {"sequence": {"rightAngles": true}}}%%
 sequenceDiagram
   autonumber
-  participant W as Placement worker
+  participant W as Request-scoped Remember
   participant P as PostgreSQL
-  participant E as Embedding worker
+  participant E as Embedding provider
 
-  W->>P: Begin transaction
+  W->>W: Validate, snapshot, and build deterministic plan
+  W->>E: One ordered batch embedding request (≤256, 10s)
+  E-->>W: Validate count, model, dimensions, finite values
+  W->>P: Begin fenced transaction (≤10s)
   W->>P: Append evidence, decisions, support, and transitions
   W->>P: Update Entity / Relationship current state
-  W->>P: Upsert search document with search_state=pending
-  W->>P: Insert or coalesce embedding job
+  W->>P: Upsert search document and validated current vector
+  W->>P: Record terminal attempt and chronological events
   W->>P: Commit
-  P-->>W: Authoritative write complete
-
-  E->>P: Claim job batch with SKIP LOCKED leases
-  E->>E: Build ordered batch embeddings under declared contract
-  E->>P: Update vectors only if source versions still match
-  E->>P: Mark matching documents current and finish jobs
+  P-->>W: Complete structured result
 ```
 
-An older embedding job cannot overwrite a newer source version. A provider
-failure records `failed` plus retry state; it does not roll back committed
-knowledge or get hidden behind an in-memory fallback.
-
-Embedding workers prefer bounded batching before worker parallelism. A batch
-claim selects queued jobs for one team/work profile with `FOR UPDATE SKIP
-LOCKED`, marks them processing with renewable leases, calls the provider's
-ordered batch embedding API, and completes vector/document/job state in one
-transaction. If a batch fails, the worker recursively splits the batch to
-isolate bad or oversized documents instead of retrying every good document
-together, but only for the typed input-rejection failure. Every renewal and
-completion includes the worker ID and expected attempt; a reclaimed or expired
-job is fenced and cannot be revived by the previous worker. Upserting an
-unchanged search document must not clear an existing current vector or enqueue
-another embedding job.
+Provider failure prevents canonical commit and is returned as a structured
+operational error. Version fences ensure a concurrent writer cannot overwrite a
+newer source or vector. Reconciliation is document-centric and repairs legacy
+drift only; it does not recreate a normal embedding queue.
 
 ### Relationship projection generation
 
@@ -464,18 +438,22 @@ state: projecting_text | embedding | current | failed
 eligible_count
 projected_count
 current_vector_count
-failed_job_count
+drifted_count
 last_projected_relationship_id
 last_error
 started_at
 activated_at
 ```
 
-`embedding_jobs.projection_generation_id` is nullable. Release backfill jobs
-carry the generation ID; ordinary Relationship writes after cutover leave it
-null and follow normal foreground freshness rules.
+Current writes do not create `embedding_jobs`. Historical projection generations
+may retain migration metadata, but current convergence compares document hashes,
+source versions, vector presence, and dimensions directly.
 
-#### Upgrade sequence
+#### Historical upgrade sequence
+
+The following V2.4 projection migration is retained for historical recovery
+and does not describe current v2.6.1 writes. Current writes use the inline
+plan → embed → fenced-commit boundary above; they do not enqueue jobs.
 
 The migration is text-first and vector-async:
 
@@ -641,7 +619,7 @@ the actor profile when client-triggered.
 ```mermaid
 %%{init: {"sequence": {"rightAngles": true}}}%%
 sequenceDiagram
-  participant W as Placement worker
+  participant W as Semantic writer
   participant P as PostgreSQL
   participant N as Nightly Conflict worker
 
@@ -682,16 +660,15 @@ time last-write-wins. Failure leaves the case due and unresolved until that
 bounded fallback applies. A resolved case updates the case row, appends the case
 event, sets losing Relationship `status=superseded` and `valid_to`, retracts a
 losing fragment through the lifecycle ledger only when it has no support path
-outside the active case, appends Relationship transition events, and enqueues
-rebuildable search/read-model work plus a leased deletion-only derivation task in
-one transaction. The task is retried by the nightly job until it stages the
-inferred replacement through the normal placement queue; that fragment is not
-searchable and cannot form a Relationship. A shared fragment remains in its
-existing search/support paths while the losing Relationship is suppressed. Final
-recall checks current Relationship eligibility and the current Conflict case
-during support-path hydration so a stale vector cannot reintroduce a suppressed
-current path. The job never rewrites raw evidence, ownership, author attribution,
-Entity resolution, or source history.
+outside the active case, and embeds affected search documents before the fenced
+semantic commit. The deletion-only derivation task remains a bounded retry
+boundary for derived evidence, but it does not enter a placement or embedding
+queue. A shared fragment remains in its existing search/support paths while the
+losing Relationship is suppressed. Final recall checks current Relationship
+eligibility and the current Conflict case during support-path hydration so a
+stale vector cannot reintroduce a suppressed current path. The task never
+rewrites raw evidence, ownership, author attribution, Entity resolution, or
+source history.
 
 Conflict-case lifecycle and evidence policy belong in
 [Conflicts And Corrections](Conflicts-And-Corrections#durable-team-conflict-cases).
@@ -708,23 +685,22 @@ One PostgreSQL transaction commits each accepted semantic change:
 3. Entity/Value resolution events
 4. Relationship observations, immutable support links, and support decisions
 5. Relationship current-state changes and transition events
-6. Conflict case/case-event changes when placement opens or updates a material
-   disagreement
-7. review work, search-document intent, and durable embedding jobs
+6. Conflict case/case-event changes when a semantic write opens or updates a
+   material disagreement
+7. search documents and their validated vectors
 
-If that transaction fails, none of the semantic change commits. Embedding
-generation remains asynchronous because it is derived and can be retried.
+If that transaction fails, none of the semantic change commits. The one
+request-owned embedding batch has already completed before this transaction;
+there is no normal write queue to retry.
 
 A source-revision activation is a separate authoritative transaction. It
 validates immutable source ownership and the exact prior-revision token, appends
-the new revision, advances the current pointer, stages new fragments and their
+the new revision, advances the current pointer, records new fragments and their
 scan assessment, revokes supports from the previous revision, recomputes every
-affected Relationship status/effective-support state and transition, supersedes
-outstanding prior-revision placement/search intent, and updates current search
-intent. The new
-evidence may remain queued or quarantined after commit; the prior revision is
-already ineffective. Placement and search writes require a matching current
-source revision so an in-flight stale worker cannot restore it.
+affected Relationship status/effective-support state and transition, and updates
+the current search projection. The new evidence is either committed with its
+required vector or quarantined; no placement/search intent or background write
+remains that could restore a stale revision.
 
 Source activation discovers affected Relationships through indexed
 fragment/support dependencies. The service precomputes a server-defined hard
@@ -889,7 +865,7 @@ Recovery order:
 7. enable traffic after write, recall, and tenant-isolation smoke tests pass
 
 Operational maintenance includes PostgreSQL vacuum/analyze, vector-index
-health, job backlog, failed embeddings, query latency, and backup restore
+health, document drift, query latency, and backup restore
 drills. Runbook commands belong in
 [Operations Runbook](Operations-Runbook), not here.
 
@@ -901,21 +877,21 @@ drills. Runbook commands belong in
 | Hot adjacency query | a high-degree Entity produces too many rows and exhausts latency or memory | partial adjacency indexes plus strict seed, fan-out, depth, and result caps |
 | Duplicate identity | two people named Mark are merged because name text is treated as an ID | opaque IDs, non-unique name lookup, contextual verification, ambiguity review, and client-confirmed split |
 | Duplicate Relationship | repeated same-owner evidence inserts parallel semantic edges | owner-scoped canonical identity uniqueness plus transactional upsert and deduplicated support |
-| Async search gap | a committed correction is missing from vector recall while embedding is pending | exact/full-text/adjacency eligibility immediately, explicit `search_state`, job SLOs, and version checks |
+| Historical search drift | a migrated document lacks the active-contract vector or has a stale hash | document-centric convergence, source/document/contract fences, and bounded repair before vector recall is enabled |
 | Tenant leak | a shared vector or adjacency query returns another team's row | RLS, team-leading indexes, transaction-local actor context, and authorization again on hydration |
 | Redis becomes hidden storage | a restart loses an identity decision held only in cache | coordination-only interfaces and restart tests proving all memory survives Redis loss |
 | Caller invalidates another profile's basis | an unowned source key or evidence ID revokes adopted support | immutable source/profile ownership, composite evidence checks, exact prior-revision compare-and-set, and append-only audit |
 | Source activation partially demotes knowledge | a large dependency set commits some revocations before failure | precompute indexed dependencies, enforce a fanout bound, and advance the source pointer only in the all-or-nothing transaction |
-| Stale placement resurrects an old revision | an in-flight provider result commits after a newer source pointer advances | supersede prior placement/search intent atomically and predicate later commits on the current source revision |
+| Stale provider result resurrects an old revision | an embedding result arrives after a newer source pointer advances | revalidate source/document fences immediately before the single semantic transaction and reject stale commits |
 | Security audit leaks detector internals | public placement or metrics reveal exact rules and attacker payloads | keep detailed signals in authorized audit rows and expose only bounded categories externally |
 | Conflict lease decides truth | a timed-out worker marks B preferred while its lease/version is stale | lease/version predicates, deterministic recomputation, and append event only with the matching current case |
-| Search refresh races disposition | an older vector job makes A primary after B resolves | authoritative Conflict filtering at hydration plus versioned rebuildable refresh work |
-| Partial Relationship vector generation biases RRF | rebuilt Relationships receive both lexical and vector rank while unrebuilt rows receive lexical rank only | disable the complete team Relationship vector branch until the generation activates transactionally |
-| Projection migration re-embeds Evidence | a broad document-format version bump queues every Evidence row and changes primary recall during rollout | keep projection format per source kind; compare Evidence counts/hashes before and after; reject non-Relationship generation jobs |
-| Backfill starves foreground writes | a large generation occupies every embedding claim slot | reserve work-class capacity, fill foreground-first, and alert on age for both classes |
-| Stale worker completes an old projection | an old node writes a vector for an earlier document after format-2 text commits | exclusive restart plus source/document/contract version predicates on completion |
+| Search refresh races disposition | a historical repair uses an older document version after B resolves | source/document version predicates and authoritative Conflict filtering at hydration |
+| Partial historical vector convergence biases RRF | some migrated Relationships have current vectors while others do not | keep the affected vector branch gated until document-centric convergence activates it transactionally |
+| Projection migration re-embeds Evidence | a broad document-format version bump changes primary recall during rollout | keep projection format per source kind; compare Evidence counts/hashes before and after; repair only the selected document set |
+| Reconciliation starves foreground writes | a large historical repair occupies every provider slot | bound repair batches, preserve request-scoped provider capacity, and alert on repair age |
+| Stale repair completes an old projection | a repair result arrives for an earlier document after format-2 text commits | source/document/contract version predicates on completion |
 | Mixed-version rollback corrupts search state | old workers interpret new generation fields or new workers run against restored old schema | treat application release and database backup as one rollback unit and prohibit mixed-version operation |
-| Restart causes a second assessor decision | a worker receives a valid response, loses its lease before semantic commit, then calls the model again | persist the first valid normalized response under a unique stable claim key and reload it on every retry |
+| Retry repeats provider work | the caller retries after an operational failure | terminal attempt idempotency and request-hash fences replay a matching result without another provider call |
 | V2.4 migration silently changes existing knowledge | a backfill applies the new threshold to legacy events and demotes active Relationships | keep new audit fields nullable, prohibit rescoring/status/support updates, and reconcile lifecycle counts before opening traffic |
 | Retired review metadata is treated as current approval | an operator or new worker interprets an old expiry field as permission to promote | v2.6 creates no review task or expiry worker; historical unfinished work remains internal audit data and any new work starts as an independent v2.6 submission |
 
@@ -948,7 +924,7 @@ drills. Runbook commands belong in
     and search intent commit atomically or not at all.
 19. Evidence security history is append-only, and quarantined evidence has no
     semantic or search document.
-20. A non-current source revision cannot commit placement or search state after
+20. A non-current source revision cannot commit canonical or search state after
     a newer revision activates.
 21. Conflict cases are team-scoped workflow state and never own or mutate a
     member Relationship's evidence/lifecycle.
@@ -964,12 +940,15 @@ drills. Runbook commands belong in
     creates no HNSW generation.
 27. Relationship lexical recall opens only after complete text convergence;
     vector RRF opens only after the team generation is transactionally current.
-28. Generation and foreground embedding work share leases, version fences, and
-    starvation-free claim capacity.
-29. A placement claim stores at most one valid normalized assessment and every
-    restart, lease reclaim, and commit retry reuses it.
-30. V2.4 migration makes no model or embedding call and changes no existing
-    Relationship status, support, search text, vector, or embedding job.
+28. Document-centric reconciliation and foreground write embedding use bounded
+    selection, version/hash fences, and starvation-free capacity without a
+    normal embedding queue.
+29. One Remember attempt stores at most one complete validated assessment
+    history; retrying a failed request reuses the idempotency key but never
+    starts a background lease or worker.
+30. The historical V2.4 migration makes no model or embedding call and changes
+    no existing Relationship status, support, search text, vector, or current
+    search contract.
 31. Retained legacy review rows are audit-only and never grant support or create
     active knowledge.
 
@@ -1021,7 +1000,7 @@ team and optional `profile_private` or `credential_private` rows owned by the
 corresponding identity or credential. Every memory-owned canonical and derived
 row stores `space_id` with a team/space composite foreign key. Coverage includes
 source fragments, evidence, entities, values, relationships and supports,
-conflicts and lifecycle decisions, search documents, embedding jobs,
+conflicts and lifecycle decisions, search documents and vectors,
 communities, hypotheses, trace references, and deletion metadata. Existing rows
 and writes from an older binary are placed in the team-shared row by an
 idempotent compatible migration.

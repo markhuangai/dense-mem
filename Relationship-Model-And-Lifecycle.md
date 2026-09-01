@@ -467,9 +467,9 @@ One bounded assessor conversation returns separate `entity_results` and
 selection, Relationship normalization, and evidence support judgment share that
 conversation.
 A malformed HTTP 200 response may be replaced in the same history for at most
-five provider turns; provider failures instead use the durable placement retry
-budget with fresh history. The closed response schema, persisted-response rule,
-and no-coercion rule are defined in
+three total provider calls; provider failures end the request and remain
+retryable with the same idempotency key. The closed response schema, transient
+history rule, and no-coercion rule are defined in
 [Memory Write Pipeline](Write-Pipeline#server-owned-assessment).
 
 For Remember, the assessor returns bounded structural selections: one grounded
@@ -483,18 +483,18 @@ A non-empty valid array quarantines the complete submission and creates no
 `VerificationEvent` or semantic subset.
 
 Stored Relationships are not assessor inputs. The request contains only the
-complete staged submission, server-generated Entity occurrence groundings,
+complete request-local submission snapshot, server-generated Entity occurrence groundings,
 complete same-team candidate sets for the submitted names and active aliases,
 all exact active predicate key/alias matches, and bounded evidence-relevant
 predicate options. Exact candidate or predicate overflow is terminal before a
 provider call and is never silently truncated. The assessor cannot invent a
-range, predicate, or stored Relationship. After the first schema-valid response
-is persisted, the
-server recomputes canonical identity and loads bounded current state for
-deduplication, conflict, update, and cross-reference policy. A same-owner match
-attaches support to the existing record. A cross-owner conflict creates an
-append-only cross-reference and opens or updates a team Conflict case; placement
-never changes the referenced owner's record.
+range, predicate, or stored Relationship. After one complete response passes
+closed-schema validation, deterministic planning uses the snapshot and bounded
+current state for deduplication, conflict, update, and cross-reference policy.
+The accepted assessment is persisted only with the terminal fenced commit. A
+same-owner match attaches support to the existing record. A cross-owner
+conflict creates an append-only cross-reference and opens or updates a team
+Conflict case; the semantic commit never changes the referenced owner's record.
 
 ```text
 VerificationEvent
@@ -508,18 +508,19 @@ VerificationEvent
 ```
 
 Legacy verdict, confidence, rationale, temporal, and policy columns remain
-internal nullable audit data for older Dream/correction records. Public
-submission status returns only bounded processing, search, error, and
+internal nullable audit data for older Dream/correction records. The terminal
+Remember result returns only bounded processing, search, error, and
 disposition fields.
 
 Transport, rate-limit, HTTP-status, and provider-protocol failures remain
-operational telemetry and consume durable placement attempts. A malformed HTTP
-200 response triggers a same-history correction turn but creates no material
-event. Five malformed turns exhaust that conversation with zero partial commit.
+operational telemetry and are recorded on the terminal Remember attempt. A
+malformed HTTP 200 response triggers a same-history correction turn but creates
+no material event. Five malformed turns exhaust that conversation with zero
+partial commit.
 
-One submission placement run appends at most one material `VerificationEvent`
-per observation, derived from its first valid persisted assessment. Worker
-restart, lease reclaim, and commit retry reuse that assessment. V2.4 migration
+One synchronous Remember transaction appends at most one material
+`VerificationEvent` per observation, derived from its validated assessment.
+Retries replay the terminal attempt by idempotency key. V2.4 migration
 preserves legacy events as written and does not rescore them.
 
 ## Status And Effective Support
@@ -692,15 +693,14 @@ flowchart TD
   Previous -- No --> Reject
   Previous -- Yes --> Tx["One source-activation transaction"]
   Tx --> Effects["Atomically append and advance,<br/>revoke prior support, recompute,<br/>and stage new evidence"]
-  Effects --> Place["Continue asynchronous placement"]
+  Effects --> Remember["Complete synchronous remember plan and commit"]
 ```
 
-Activation occurs at authenticated intake. A quarantined, later
-placement-failed, or insufficient replacement does not reactivate the prior
-revision. A structurally invalid `remember` request is rejected before this
-transaction. This favors source freshness over uninterrupted knowledge and may
-intentionally create a temporary gap until the new evidence is assessed and
-accepted.
+Activation occurs at authenticated intake. A quarantined, failed, or
+insufficient synchronous `remember` result does not reactivate the prior
+revision. A structurally invalid request is rejected before the transaction.
+This favors source freshness over uninterrupted knowledge and can intentionally
+create a temporary gap until a complete replacement request is accepted.
 
 Every affected Relationship that is otherwise lifecycle-eligible is
 reevaluated from effective support. Explicit `retracted`, `rejected`,
@@ -870,14 +870,14 @@ referential and audit integrity.
 
 | Failure | Required result |
 | --- | --- |
-| Evidence transaction fails | Create no ingest or semantic state. |
-| Assessor response is unavailable or invalid | Preserve staged evidence; expose failure; create no support, VerificationEvent, or SemanticEdge. |
+| Evidence or fenced commit fails | Create no canonical semantic, search, or vector state. |
+| Assessor response is unavailable or invalid | Return a bounded operational result; create no support, VerificationEvent, or SemanticEdge. |
 | Entity endpoint is ambiguous | Repair identity in-session; create a new grounded Entity when reuse is unsafe or mark the dependent hint `not_stored`. |
 | Predicate cannot be resolved or registered safely | Mark that ref `not_stored`; reject the complete run only when stored support cannot cover every evidence item. |
 | Predicate key/alias is ambiguous, colliding, or kind-incompatible | Reconcile under the server catalog lock or use `not_stored`; never expose a client repair code. |
 | Remember assessor cannot support a hint | Record that ref as `not_stored`; reject only when stored support cannot cover every evidence item. |
-| Entity, predicate, Value, support, or Relationship grounding cannot be proven | Preserve staged evidence and use `not_stored` or `rejected/no_supported_memory`; model confidence is not a public input. |
-| Search embedding fails | Preserve authoritative Relationship; expose degraded search state and retry the derived embedding job. |
+| Entity, predicate, Value, support, or Relationship grounding cannot be proven | Use `not_stored` or `rejected/no_supported_memory`; model confidence is not a public input. |
+| Required search embedding fails | Return `embedding_unavailable` or `embedding_response_invalid`; commit no canonical Relationship or vector. |
 | Same-owner knowledge conflicts with new evidence | Hold review or apply owner-authorized supersession; never use stored knowledge as self-supporting evidence. |
 | Another profile's knowledge conflicts with new evidence | Preserve both eligible authored records during placement, append a challenge/correction cross-reference, and create/update the team Conflict case in the same transaction. |
 | Source owner or prior revision does not match | Reject the revision update and change no source, support, status, or search state. |
@@ -962,11 +962,10 @@ The refactor is incomplete until tests prove:
     current interval
 29. every suppressed current position remains reconstructable through trace and
     historical `valid_at`/`known_at` recall
-30. one submission placement-run attempt opens one assessor conversation over
-    every staged evidence item and relationship ref, with at most five
-    same-history malformed-response turns; provider failures use durable
-    attempts, while restart, lease reclaim, or commit retry reuses the first
-    valid persisted assessment
+30. one Remember request opens one assessor conversation over every submitted
+    evidence item and relationship ref, with at most three total provider turns;
+    provider failures are terminal for that request, and a retry reuses the first
+    valid persisted assessment when one exists
 31. only exact support selected by a schema-valid Remember assessor result and
     accepted by deterministic server policy may grant support; no model
     confidence or verdict gate can override structural, security, or conflict

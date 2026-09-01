@@ -294,11 +294,11 @@ For identity, the server enforces:
   predicate resolve
 
 Malformed or incomplete assistant content is returned in the same transient
-history with exact validation errors for at most five total turns. A fifth
-malformed response is a typed operational failure. Provider failures instead
-use durable placement retry and a later claim starts one fresh conversation
-only when no valid assessment was persisted. No subset commits and application
-code does not coerce provider JSON.
+history with exact validation errors for at most three total provider calls. A
+third malformed response is a typed operational failure. Provider failures end
+the request and leave a replayable failed attempt for retry with the same
+idempotency key; no later claim or background conversation starts. No subset
+commits and application code does not coerce provider JSON.
 
 ## Build Relationships After Resolution
 

@@ -3,6 +3,12 @@
 This wiki is the current project manual and architecture contract. It describes
 the supported current behavior, not a changelog.
 
+For v2.6.1, current pages must describe synchronous terminal Remember and
+direct correction results, the ten-tool catalog, fixed 180/160/10/10 budgets,
+structured MCP `isError` remediation, inline write embeddings, terminal attempt
+diagnostics, and the stopped-service cutover. Any placement, status-reader, or
+embedding-job wording must be explicitly labeled historical migration context.
+
 ## Status Classes
 
 Every deep technical page uses one status:
@@ -204,12 +210,12 @@ recovery tests.
 Ask:
 
 - Can the authenticated role and scope perform this operation?
-- Does an async response mean staged, semantically committed, vector-current,
-  or processing-completed?
+- Does the response prove a terminal semantic commit with current vectors, or is
+  it a bounded operational `isError` with no canonical write?
 - Can an empty candidate set be confused with a retrieval error?
-- Can two workers create duplicate Entities or Relationships?
+- Can two request-scoped writers create duplicate Entities or Relationships?
 - Can graph context accidentally count as evidence?
-- What remains readable when embedding work fails?
+- What remains readable when a required embedding call fails?
 - Does Redis contain the only copy of anything important?
 - Can a same-name Entity cross a team boundary?
 - Can same-team visibility mutate another profile's knowledge?

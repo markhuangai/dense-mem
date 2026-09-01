@@ -21,11 +21,7 @@ sequenceDiagram
   User->>Host: Share source material
   Host->>Host: Identify logical Relationships and supporting evidence items
   Host->>DM: remember(evidence, relationships)
-  DM-->>Host: submission_id and queued
-  loop until terminal
-    Host->>DM: get_submission_status(submission_id)
-    DM-->>Host: processing/search/outcome state
-  end
+  DM-->>Host: terminal outcome, evidence, Relationships, and errors
   Host->>DM: recall_memory(query)
   DM-->>Host: Evidence contexts plus related frontiers
   opt support or history needed
@@ -34,17 +30,18 @@ sequenceDiagram
   end
 ~~~
 
-remember acknowledges durable staging only. completed means canonical promotion
-succeeded. A completed submission can still have search_state=pending while
-derived embeddings finish; canonical full-text and adjacency reads remain
-distinct from vector freshness.
+`remember` is synchronous in v2.6.1. The originating MCP call performs the
+bounded assessor conversation, one required embedding batch, and the fenced
+semantic transaction before returning. `processing_state` is always
+`completed`, `rejected`, or `quarantined`; `search_state` is `current` or
+`not_required`. There is no status reader or normal embedding queue to poll.
 
 ## What to Ask
 
 | Goal | Example prompt |
 | --- | --- |
 | Save knowledge | “Remember this evidence about the project database architecture.” |
-| Check a submission | “Check whether my latest memory submission completed.” |
+| Handle a failed write | “Retry the same request or resubmit the corrected complete batch using the returned error guidance.” |
 | Recall context | “Before editing, recall Dense-Mem’s database architecture.” |
 | Follow Relationships | “Show Relationships connected to Dense-Mem.” |
 | Inspect support | “Trace the database Relationship and show accepted evidence.” |
@@ -110,46 +107,42 @@ Do not:
 - make an alias a Relationship; or
 - assume a same-team Entity candidate is canonical without server assessment.
 
-## Submission Status
+## Remember Result
 
-remember returns a submission_id. Poll get_submission_status until a terminal
-processing state:
+`remember` returns a complete terminal result in the same MCP call. The fixed
+budgets are 180 seconds total, 160 seconds for validation and assessor work,
+10 seconds for one batch embedding call, and 10 seconds for the fenced commit.
 
 | State | Meaning | Safe next step |
 | --- | --- | --- |
-| queued | Isolated staging is waiting for the worker. | Poll later. |
-| processing | The worker holds a current assessment lease. | Poll later. |
 | completed | Canonical evidence/semantic state promoted atomically. | Recall or trace normally. |
 | rejected | Server semantic policy rejected the submission. | Submit a new complete request if new evidence exists. |
 | quarantined | Security concern; data is isolated. | Do not use it. Submit a separate replacement only if appropriate. |
-| failed | Required work exhausted bounded retry policy. | Use safe error/correlation context, then submit anew if appropriate. |
 
-The status response carries the original `correlation_id`, durable `attempts`
-and `max_attempts`, and lifecycle times: `submitted_at`, `updated_at`, and, when
-applicable, `next_attempt_at`, `started_at`, and `completed_at`.
-`next_attempt_at` appears only for a scheduled future retry. Each bounded error
-includes `retryable`, one closed `next_action`, and a concrete `remediation`.
-Clients should execute that guidance instead of inferring recovery from the
-message text.
+The result includes `correlation_id`, per-evidence search readiness, one
+`relationship_results` entry for every submitted `ref`, and an always-present
+`errors` array. A result is either `stored` with canonical split IDs or
+`not_stored` with a bounded reason; the latter is allowed only when all evidence
+remains covered by stored splits. Operational failures use MCP `isError: true`
+with structured JSON content and a closed `next_action`.
 
-Status also includes per-evidence search readiness, one `relationship_results`
+The result also includes per-evidence search readiness, one `relationship_results`
 entry for every submitted `ref`, and bounded reason codes. A result is either
 `stored` with canonical split IDs or `not_stored` with a bounded reason; the
 latter is allowed only when all evidence remains covered by stored splits.
 There is no `awaiting_review` state, `semantic_hold` object, replacement slot,
-or approval action. Assessor, provider, and persistence failures return closed
-error guidance. Remember semantic rejection is limited to
+or approval action. Assessor, provider, embedding, and persistence failures
+return closed error guidance. Remember semantic rejection is limited to
 `no_supported_memory` and `stale_input`; both mean send one complete corrected
-batch with a new idempotency key. Status does not include placement IDs,
+batch with a new idempotency key. The current result does not include placement IDs,
 assessor prompts, raw responses, review tasks, or a control that overrides
 server policy.
 
-quarantined submissions retain an isolated raw payload copy for exactly 24
-hours, then that copy is hard-deleted. The append-only evidence, identifiers,
-hashes, security events, and lineage remain as restricted audit history; they
-are never recallable or provider input. If corrected safe source material
-exists, submit it as a new independent complete batch. That submission never
-releases, reuses, or extends quarantined content.
+Quarantined submissions retain only bounded terminal and audit metadata. They
+create no canonical evidence, search document, vector, or raw quarantine
+payload. If corrected safe source material exists, submit it as a new
+independent complete batch. That submission never releases, reuses, or extends
+quarantined input.
 
 ## Replace or Retract Evidence
 
@@ -198,7 +191,7 @@ remains advisory. The Remember assessor returns only evidence-grounded
 structure using bounded candidates and the team predicate catalog.
 Complete-response validation and bounded same-session repair happen before the
 atomic commit path. The server, not the model, owns support disposition,
-ownership, lifecycle, and promotion policy. v2.6 Remember emits no model
+ownership, lifecycle, and promotion policy. v2.6.1 Remember emits no model
 confidence or rationale; Dream and correction workflows retain their separate
 assessment contracts.
 
@@ -235,9 +228,10 @@ lineage, and records the correction link. It cannot change another profile's
 Relationship. Ambiguous Entity names require one owner confirmation and do not
 retire the original before confirmation succeeds. Missing, inactive, and
 cross-team Entity IDs produce the same bounded rejection. An expired
-confirmation remains rejected when you poll `get_submission_status`; a
-completed correction may still report successor `search_state=pending` while
-its embedding job runs.
+confirmation is returned directly as a bounded rejected result. A completed
+correction embeds its old and successor documents before the atomic correction
+transaction, so its required search state is already `current` (or
+`not_required`).
 
 A normal correction that introduces different evidence still uses a fresh
 complete remember submission. It never edits a prior submission or treats a

@@ -9,6 +9,11 @@ public result shape remain in [Recall Ranking](Recall-Ranking). Runtime settings
 and defaults remain in
 [Configuration](Configuration#postgresql-search-and-recall).
 
+For v2.6.1 writes, every required search document is embedded inline before
+the semantic transaction. A completed Remember or correction therefore exposes
+only `current` or `not_required`; `pending` and `failed` are legacy drift states
+used by document-centric reconciliation, not client-visible write outcomes.
+
 ## Why Ranking Has Stages
 
 Full-text search and vector search return different score scales. A PostgreSQL
@@ -368,12 +373,13 @@ The active ranking contract declares required and optional branches:
 | Relationship generation is `embedding` | disable the complete team Relationship vector branch, use lexical Relationship ranking, and return `relationship_vector_warming` degradation |
 | Relationship generation is `failed` | keep lexical Relationship ranking, keep the complete vector branch disabled, and return `relationship_vector_failed` degradation |
 | one foreground Relationship vector is pending after generation activation | keep that document lexical-eligible and vector-ineligible under its individual `search_state` |
-| an Evidence or Relationship embedding job is `failed` | keep valid document text in lexical recall, exclude the missing vector, and report `evidence_vector_failed`/`relationship_vector_failed` degradation while daily reconciliation attempts recovery |
+| an Evidence or Relationship document is drifted or missing its current vector | keep valid document text in lexical recall, exclude the missing vector, and report the bounded drift class while document-centric reconciliation attempts recovery |
 
 The failed-vector path is intentionally asymmetric: lexical text is durable
 and independently queryable, but a failed or stale vector cannot be treated as
-current. The daily recovery canary uses the active provider/model/dimensions;
-it never changes ranking contract or silently compares mixed vector versions.
+current. Reconciliation uses the active provider/model/dimensions and fenced
+source/document hashes; it never changes the ranking contract or compares mixed
+vector versions.
 
 ## Evaluation
 

@@ -60,19 +60,18 @@ fresh install 2.2.0+ -----------------------> current release
 ```
 
 The Relationship projection upgrade is an exclusive restart: complete the
-blocking format-2 text projection before traffic, then allow
-Relationship-only vectors to warm asynchronously behind the team-wide vector
-gate. Follow
+blocking format-2 text projection and verify the active-contract vectors before
+traffic. Follow
 [Relationship projection upgrade](Operations-Runbook#relationship-projection-upgrade).
 
 Only after that prerequisite is complete, apply the V2.4 secure-submission
-upgrade and then the current v2.6 Remember reliability migration. The v2.6
+upgrade and then the current v2.6.1 synchronous Remember migration. The v2.6.1
 migration is a hard restart boundary: it preserves accepted canonical state,
 terminalizes unfinished pre-v2.6 Remember work with an internal
 `contract_superseded` migration stage, and does not create a cutover marker or a
 queue/hold table. Stop every Dense-Mem service before applying it, then start
-only the v2.6 API, workers, and control service. Do not run mixed-version nodes,
-retain a fallback reader, or expose historical submissions through v2.6 status.
+only the v2.6.1 API and control service. Do not run mixed-version nodes, retain
+a fallback reader, or expose historical submissions through the current contract.
 
 ## 2. Configure Required Values
 
@@ -158,7 +157,8 @@ the server and calls `tools/list`; verify:
 - one current closed schema discovered through `tools/list`; callers cannot select a contract version
 - `remember` requires evidence plus logical Relationships whose
   `evidence_indices` cover every evidence item
-- `get_submission_status` returns owner-scoped processing and search state
+- `remember` returns a complete terminal outcome; `get_submission_status` is
+  removed and calls to it return method/tool not found
 - legacy placement and review tools are absent
 - `retract_evidence` is visible to a write-scoped key
 - `recall_memory` returns ranked Evidence contexts plus
@@ -184,34 +184,28 @@ Remember that I prefer concise explanations with concrete examples.
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Ask["remember with logical Relationships<br/>and evidence_indices"] --> Intake["submission_id + queued"]
-  Intake --> Poll["get_submission_status"]
-  Poll --> State{"processing_state"}
-  State -- queued/processing --> Poll
-  State -- failed --> Diagnose["Read typed operational error;<br/>retry or contact operator"]
-  State -- rejected --> New["Submit new complete evidence-and-Relationships batch if appropriate"]
-  State -- quarantined --> Isolated["Do not use content; optional fresh independent batch"]
-  State -- completed --> Search{"search_state"}
-  Search -- pending --> Recall["Recall may use current<br/>full-text/adjacency state"]
-  Search -- current --> Recall
-  Search -- failed --> Degraded["Vector freshness degraded;<br/>knowledge remains committed"]
-  Degraded --> Recall
+  Ask["remember with logical Relationships<br/>and evidence_indices"] --> Execute["validate → assessor (≤3 calls)<br/>→ embed batch → fenced commit"]
+  Execute --> State{"terminal result"}
+  State -- completed --> Recall["Recall or trace"]
+  State -- rejected --> New["Correct input and resubmit<br/>complete batch with a new key"]
+  State -- quarantined --> Isolated["Do not use content;<br/>follow bounded guidance"]
+  Execute -- operational failure --> Retry["Read structured isError;<br/>retry or contact operator"]
 ```
 
-Valid v2.6 outcomes:
+Valid v2.6.1 outcomes:
 
 - completed canonical promotion with active eligible support
 - a rejected terminal run with zero semantic commit and either
   `no_supported_memory` or `stale_input`
-- a failed terminal run with zero semantic commit and a typed operational error
-- explicit rejected, quarantined, or failed terminal outcome
-- a separate search state: pending/current/not_required/failed
+- an MCP `isError` result with a typed operational error and no semantic commit
+- explicit rejected or quarantined terminal outcome
+- `search_state` is only `current` or `not_required`
 - no client approval task, placement selection, or quarantine-release action;
   unsupported Relationship hints are reported as `not_stored` when stored
   splits still cover every evidence item
 
-The authoritative submission contract is in
-[Technical Reference](Technical-Reference#get_submission_status).
+The authoritative terminal contract is in
+[Technical Reference](Technical-Reference#response). Do not add a polling loop.
 
 ## 7. Recall And Trace
 
@@ -292,7 +286,7 @@ data destruction is explicitly intended, backed up, and approved.
 | moving `main` uses a different schema/runtime | pin a release and verify discovery/version |
 | example secrets reach production | replace every template value and keep files private |
 | destructive Compose flag deletes memory | omit `-v`; back up and confirm before destructive cleanup |
-| vector pending is mistaken for failed remember | poll both processing and search state; trace source state |
+| required vector work fails | read the original structured `isError` result and retry with the same idempotency key |
 
 ## Next
 

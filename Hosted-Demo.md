@@ -67,8 +67,9 @@ https://demo-dense-mem.markhuang.ai/mcp
 Run tool discovery. Verify that the current closed schema is returned, that
 `remember` requires logical Relationships with `evidence_indices`, one
 top-level `idempotency_key`, and no evidence-level key or public `modality`; the
-server/assessor own grounding and repair. `get_submission_status` is present
-while the retired placement/review tools are absent.
+server/assessor own grounding and repair. The catalog contains ten current
+tools; `get_submission_status` is removed and the retired placement/review
+tools are absent.
 
 ## Step 3: Test Shared Memory
 
@@ -84,9 +85,8 @@ Client B, using the same key:
 Before answering, use Dense-Mem to recall the demo codename and response style.
 ```
 
-Poll the returned submission ID until it is completed before testing recall. A
-new chat with the same key should then recall from Dense-Mem rather than the
-old chat transcript.
+Use the terminal Remember result before testing recall. A new chat with the
+same key should then recall from Dense-Mem rather than the old chat transcript.
 
 ## Step 4: Test Trace
 
@@ -116,10 +116,9 @@ evidence. The safe behavior is:
 
 1. preserve prior evidence/history
 2. re-enter the integrated assessment and deterministic policy
-3. commit the durable decision
-4. update PostgreSQL SemanticEdge/current rows atomically
-5. rebuild the versioned vector asynchronously
-6. expose processing and search state separately
+3. make the required embedding batch before commit
+4. update PostgreSQL SemanticEdge/current rows and vectors atomically
+5. return the terminal correction result directly
 
 ## Troubleshooting
 
@@ -127,7 +126,7 @@ evidence. The safe behavior is:
 | --- | --- |
 | tool names/fields differ | reconnect and compare the current `tools/list` schema |
 | another client sees nothing | both clients use exactly the same key |
-| submission is not searchable | inspect submission processing outcome and search freshness |
+| submission is not searchable | inspect the original terminal result and bounded error guidance |
 | rejected or quarantined status | do not use the content; submit a new complete request only when appropriate |
 | quota/expiry error | current limits on demo page/runtime response |
 | deployed behavior differs from this page | check the current release tag and `tools/list` schema |

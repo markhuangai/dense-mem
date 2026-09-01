@@ -145,11 +145,12 @@ in `remember`.
 | `reinforced` | still useful after explicit same-team feedback; automatic generation never reinforces a duplicate |
 | `stale` | a same-team reviewer marked the idea no longer current |
 | `rejected` | explicitly rejected |
-| `submitted` | new evidence was sent to `remember`; submission status remains separate |
+| `submitted` | new evidence was sent to `remember`; the terminal result remains separate |
 
-`submitted` does not mean accepted or factual. The linked `submission_id` can be
-polled with `get_submission_status`; status remains bounded and does not expose
-placement questions or provider output.
+`submitted` does not mean accepted or factual. The linked `submission_id` is
+reconciled with the terminal `remember` result; there is no status alias, and
+the result remains bounded and does not expose placement questions or provider
+output.
 
 ## Generation Flow
 

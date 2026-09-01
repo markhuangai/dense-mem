@@ -6,6 +6,19 @@ This manual describes the current PostgreSQL + `pgvector` architecture and
 supported product behavior. A code/design mismatch is implementation work, not
 a second valid architecture.
 
+## Current v2.6.1 Remember boundary
+
+`remember` is synchronous: the originating MCP call validates and snapshots
+the request, runs at most three complete assessor calls, makes one required
+batch embedding request, and commits canonical semantics plus current vectors
+atomically. The fixed budgets are 180 seconds total, 160 seconds for the
+assessor phase, 10 seconds for embedding, and 10 seconds for commit. The result
+is terminal (`completed`, `rejected`, or `quarantined`) and includes every
+evidence and Relationship disposition. `get_submission_status`, placement
+workers, and the normal embedding queue are removed from the supported catalog.
+Operational failures are structured MCP `isError` results with bounded
+remediation; clients do not poll.
+
 ## What Dense-Mem Remembers
 
 Dense-Mem is suited to:
@@ -39,18 +52,15 @@ sequenceDiagram
     DM->>PG: Append safe rejection audit metadata
     DM-->>Host: Bounded error, nothing staged
   else Intake pass
-    DM->>PG: Stage isolated submission
-    DM-->>Host: submission_id
-    DM->>PG: Build bounded Entity groundings, candidates, and predicates
-    DM->>DM: One capability-free assessor request
-    DM->>PG: Persist first valid assessment
-    alt Worker or assessor security concern
-      DM->>PG: Quarantine isolated submission for exactly 24 hours
+    DM->>DM: Snapshot fences and build bounded groundings/candidates
+    DM->>DM: Assessor conversation (≤3 complete calls)
+    DM->>DM: One ordered embedding batch (≤256 documents)
+    alt Assessor security concern
+      DM->>PG: Quarantine terminal attempt
     else Clean validated assessment
-      DM->>PG: Atomically commit state, history, predicates, and search jobs
+      DM->>PG: Atomically commit state, history, predicates, documents, and vectors
     end
-    Host->>DM: get_submission_status(submission_id)
-    DM-->>Host: Safe owner-scoped processing/search outcomes
+    DM-->>Host: Terminal structured outcome and per-ref dispositions
     Host->>DM: recall_memory(query)
     DM->>PG: Evidence and Relationship search with optional derived frontiers
     DM-->>Host: Ranked Evidence plus separate related frontiers and degradations

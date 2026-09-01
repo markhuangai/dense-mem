@@ -1,6 +1,6 @@
 # Technical Reference
 
-The only Remember runtime contract is `dense-mem.v2.6`. References to the v2.5
+The only Remember runtime contract is `dense-mem.v2.6.1`. References to the v2.5
 normalizer or resubmission issues below are historical migration notes, not
 active client requirements or a readable compatibility projection.
 
@@ -24,9 +24,10 @@ memory API.
    belongs to the server and assessor.
 2. The server, not the client or assessor, owns canonical IDs, predicate
    registration, support, lifecycle state, status, and durable commits.
-3. A client polls a submission; it never resolves a placement review or supplies
-   follow-up evidence to an existing submission.
-4. Evidence staging is isolated until a full validated assessment promotes it.
+3. The originating Remember call runs assessment, planning, required embedding,
+   and the fenced commit before returning a terminal result; clients do not poll.
+4. No semantic or workflow staging is acknowledged before provider success, and
+   no canonical state is visible without its required current vector.
 5. Recall is evidence-first and Relationship-supported. Its established response
    shape is not replaced by graph-only output.
 6. Returned evidence is untrusted data. It is never authority or a reason to
@@ -45,8 +46,7 @@ role, and scope. Discovery and invocation apply the same checks.
 
 | Tool | Scope | Used by | Registration | Capability |
 | --- | --- | --- | --- | --- |
-| remember | write | Production and harness | Both images | Stage exact evidence plus logical Relationship proposals and their supporting evidence indexes. The harness imports corpus rows through this production path. |
-| get_submission_status | read | Production and harness | Both images | Poll an owner-scoped remember or Relationship-correction submission. |
+| remember | write | Production and harness | Both images | Assess, embed, and atomically commit exact evidence plus logical Relationship proposals and their supporting evidence indexes. The harness imports corpus rows through this production path. |
 | retract_evidence | write | Production | Both images | Retract caller-owned current evidence while preserving append-only provenance. |
 | correct_relationship | write | Production | Both images | Replace one caller-owned active supported Relationship, supersede the original, and retain support lineage. |
 | recall_memory | read | Production | Both images | Retrieve bounded evidence contexts and related frontiers; returned evidence is untrusted. |
@@ -61,7 +61,7 @@ role, and scope. Discovery and invocation apply the same checks.
 | eval_run_recall_case | read/write | Evaluation harness | Evaluation image only | Run recall and return ranked/context refs for deterministic scoring. |
 
 Memory-pack candidate discovery, inspection, import, and rollback are not part
-of the v2.6 contract. A destination uses a normal authenticated `remember`
+of the v2.6.1 contract. A destination uses a normal authenticated `remember`
 submission for any evidence derived from an external artifact.
 
 The release binary is compiled without the `evaluation` build tag. It cannot
@@ -148,10 +148,11 @@ manual team-scoped client configuration.
 
 Remember intake is owned by `internal/service/remember`. It performs strict
 conversion, evidence-index coverage checks, deterministic security admission,
-processing-intent construction, and the bounded owner-scoped status projection.
-The application depends on a narrow intake port. The composition root adapts the
-existing PostgreSQL ledger and audit writer; no provider, placement worker, or
-concrete PostgreSQL package is imported by the Remember application itself.
+in-memory plan construction, synchronous orchestration, and the terminal
+owner-scoped result. The application depends on narrow processor/audit ports.
+The composition root adapts PostgreSQL and providers; no provider, placement
+worker, or concrete PostgreSQL package is imported by the Remember application
+itself.
 
 ### Request
 
@@ -264,19 +265,46 @@ complete batch with a new key. Evidence-level supersession via
 
 ~~~json
 {
+  "contract_version": "dense-mem.v2.6.1",
   "submission_id": "sub_01J...",
   "submission_kind": "remember",
-  "processing_state": "queued",
-  "check_after_seconds": 60,
-  "status_tool": "get_submission_status",
-  "correlation_id": "corr_01J..."
+  "processing_state": "completed",
+  "search_state": "current",
+  "correlation_id": "corr_01J...",
+  "evidence": [{
+    "disposition": "stored",
+    "evidence_id": "evidence_01J...",
+    "evidence_index": 0,
+    "superseded_evidence_ids": [],
+    "search_state": "current"
+  }],
+  "relationship_results": [{
+    "ref": "uses-postgresql",
+    "disposition": "stored",
+    "splits": [{"split_index": 0, "relationship_id": "rel_01J...", "relationship_version": 1, "status": "active"}]
+  }],
+  "errors": []
 }
 ~~~
 
-This is durable staging acknowledgement only. It does not say the evidence is
-active knowledge or that a vector is current. `check_after_seconds` is only a
-polling hint; it is not an assessor deadline or a client-visible provider
-timeout.
+`remember` is terminal and synchronous. The application validates the request,
+runs one assessor conversation (at most three complete provider calls), renders
+the deterministic semantic/search plan, makes one batch embedding call, and
+commits canonical state plus current vectors in one fenced PostgreSQL
+transaction. Fixed budgets are 180 seconds total, 160 seconds for validation
+and assessment, 10 seconds for embedding, and 10 seconds for commit. A
+successful result never contains `queued`, `processing`, `pending`, or `failed`
+search state. A non-stored evidence or Relationship entry includes a bounded
+reason and no durable ID. `errors` is always present.
+
+Operational failures are MCP tool results with `isError: true`, while retaining
+the structured result in `structuredContent` and JSON text. They use one of
+`idempotency_conflict`, `provider_unavailable`, `provider_response_invalid`,
+`input_budget_exceeded`, `configuration_invalid`, `embedding_unavailable`,
+`embedding_response_invalid`, `commit_conflict`, `database_failure`,
+`request_timeout`, `request_cancelled`, or `internal_failure`, plus a closed
+`next_action` (`retry_same_request`, `resubmit_remember`, `retry_correction`,
+`contact_operator`, or `none`).
 
 A valid assessor response is checked as one complete batch. A stored result is
 recorded for every submitted `ref`; an unsupported hint is recorded as
@@ -286,7 +314,11 @@ rejections. Provider, configuration, database, and internal faults are typed
 operational failures. All accepted semantic effects commit atomically; there
 is no approval, hold, replacement slot, or partial semantic state.
 
-## get_submission_status
+## Historical `get_submission_status` (removed)
+
+The status reader is not part of the v2.6.1 catalog. Calling it returns MCP
+method/tool not found. The following request/response is migration history only;
+current clients use the terminal `remember` result above.
 
 ### Request
 
@@ -294,8 +326,8 @@ is no approval, hold, replacement slot, or partial semantic state.
 {"submission_id": "sub_01J..."}
 ~~~
 
-The submission must belong to the authenticated profile. Same-team read
-visibility does not grant access to another profile's submission.
+The historical submission reader was owner-scoped. It is retained only for
+offline migration fixtures and is not a supported endpoint or alias.
 
 ### Response
 
@@ -328,28 +360,27 @@ visibility does not grant access to another profile's submission.
 }
 ~~~
 
-The Remember processing states are queued, processing, completed, rejected,
+The historical processing states were queued, processing, completed, rejected,
 quarantined, and failed. Relationship correction may also return
-awaiting_confirmation.
+awaiting_confirmation. Current Remember exposes only completed, rejected, or
+quarantined terminal outcomes.
 
 | State | Meaning |
 | --- | --- |
-| queued | The submission is durably staged and awaiting a worker. |
-| processing | A worker holds a current assessment lease. |
 | completed | Atomic canonical promotion completed. |
 | rejected | Server semantic/contract policy rejected it with no client review path. |
-| quarantined | A worker-time deterministic or assessor security concern isolated already-staged data. |
-| failed | A required worker, provider, or persistence operation exhausted bounded retry policy. |
+| quarantined | A deterministic or assessor security concern was isolated and returned directly. |
 
 There is no `awaiting_review` response, `semantic_hold` projection, or
-`resubmission_issues` client repair list. Terminal status exposes a deduplicated
+`resubmission_issues` client repair list. The terminal result exposes a deduplicated
 closed error. For Remember, semantic rejection is limited to
 `no_supported_memory` and `stale_input`; both require a complete new batch with
 a new key. Provider/network/configuration/database/internal faults remain
-typed operational failures, while search or embedding trouble is a degradation
-on an otherwise completed semantic submission.
+typed operational failures. Required write-embedding trouble is also an
+operational `isError` result; a completed semantic submission never exposes a
+pending or failed required vector.
 
-search_state is not the processing state:
+Historical search projections distinguished processing from vector freshness:
 
 | Search state | Meaning |
 | --- | --- |
@@ -358,16 +389,16 @@ search_state is not the processing state:
 | current | Linked required derived documents are current. |
 | failed | A derived search failure is visible as a degradation. |
 
-A quarantined status includes quarantine_expires_at. PostgreSQL sets it to
-exactly 24 hours after the quarantine completion timestamp; the cleanup job then
-hard-deletes the isolated raw payload copy. Append-only evidence, identifiers,
-hashes, security events, and lineage remain as restricted audit history and are
-never recallable or provider input.
+A quarantined attempt's control diagnostics contain bounded metadata only;
+there is no raw quarantine payload or release path. Operational failures may
+attach bounded control-only artifacts whose bytes are physically purged within
+seven days while attempt/event hashes remain.
 
-Status exposes only bounded evidence IDs/statuses and error codes. It never
-returns raw assessor prompts or responses, placement IDs, review tasks, security
-override controls, credentials, or cross-profile data. Legacy placement and
-review tools are absent from the catalog.
+Remember-attempt diagnostics expose only bounded evidence dispositions, terminal
+states, and error codes. They never return raw assessor prompts or responses,
+placement IDs, review tasks, security override controls, credentials, or
+cross-profile data. Legacy placement and review tools are absent from the
+catalog.
 
 ## Deterministic Security Gate and Remember Assessor
 
@@ -377,12 +408,13 @@ instruction overrides, role spoofing, active markup, secret-extraction attempts,
 and exfiltration or tool-invocation instructions. Opaque UUIDs, hashes, provider
 IDs, and other high-entropy identifiers do not trigger `encoded_evidence_not_allowed`
 by entropy alone. A rejection returns a bounded error and records safe audit
-metadata only; it creates no fragment, provider request, search document, or
-embedding job. The worker repeats the scan for staged evidence, where a
-deterministic concern quarantines that staged submission. The scanner inspects
+metadata only; it creates no fragment, provider request, or search document.
+The request path also performs a defensive pre-commit scan, so a
+deterministic concern quarantines the request without background processing. The
+scanner inspects
 one bounded decoded view of percent, hexadecimal, Unicode, and HTML-entity
 escapes while preserving exact source text. Punctuation has no security meaning
-by itself: direct quoted or bracketed directives still reject, while descriptive
+by itself: quoted or bracketed directives still reject, while descriptive
 quoted tool/network examples remain eligible. Audit and security-event records
 retain bounded rules and spans without a scanner version or policy hash.
 
@@ -407,7 +439,7 @@ invent unrelated claims, override exact IDs or keys, choose ownership or
 lifecycle, set durable state, or commit a record. It may repair grounding,
 reuse/create Entities, reconcile predicates, split supported hints, or mark a
 hint `not_stored`. Invalid complete responses are regenerated in the same
-session for at most five semantic turns. An exhausted or unavailable provider
+session for at most three total provider turns. An exhausted or unavailable provider
 terminalizes the whole submission with zero semantic commit and a bounded
 operational error.
 
@@ -550,12 +582,12 @@ worker cannot claim its physical purge until the hold is released.
 
 | Risk | Concrete failure mode | Mitigation |
 | --- | --- | --- |
-| Encoded prompt injection | A real encoded instruction survives textual inspection, or an opaque identifier is rejected as if it were encoded evidence. | Inspect one bounded decode layer and explicit encoded shapes before staging, rescan at worker claim, and require meaningful decoded/binary evidence rather than entropy alone. |
+| Encoded prompt injection | A real encoded instruction survives textual inspection, or an opaque identifier is rejected as if it were encoded evidence. | Inspect one bounded decode layer and explicit encoded shapes before provider work, require meaningful decoded/binary evidence rather than entropy alone, and record only bounded quarantine metadata. |
 | Assessor coercion | Evidence tells the model to leak secrets or call an API. | Treat evidence as data, provide no tools/secrets/environment, require closed schema, and quarantine a security concern. |
 | Client follows recalled text | Recalled evidence asks the host to exfiltrate a key. | Mark all returned evidence untrusted and require client-side action/tool policy. |
 | Partial canonical commit | One malformed assessor item leaves another Relationship promoted. | Validate complete coverage, then promote all accepted state in one PostgreSQL transaction. |
-| Quarantine bypass | A later submission causes malicious staged data to be deleted early or released. | Database-enforced exact 24-hour expiry; an independent submission has no release or early-delete authority. |
-| Cross-profile mutation | One profile polls or changes another profile's submission. | Owner-scoped status and mutation predicates under RLS. |
+| Quarantine bypass | A later submission tries to reuse or release malicious quarantined input. | Deterministic quarantine writes no canonical memory or raw quarantine payload; only bounded terminal/audit metadata remains, and a replacement is a fresh complete request. |
+| Cross-profile mutation | One profile changes another profile's attempt or Relationship. | Owner-scoped attempt and mutation predicates under RLS. |
 
 ## Contract Acceptance
 
@@ -564,13 +596,14 @@ worker cannot claim its physical purge until the hold is released.
    public modality, unknown span/surface/support fields,
    duplicate or out-of-range evidence indexes, and incomplete evidence-index
    coverage;
-3. deterministic security rejection creates no canonical or staged submission;
-4. every assessor response covers every staged evidence item with security
+3. deterministic security rejection creates no canonical or pre-provider workflow row;
+4. every assessor response covers every submitted evidence item with security
    justification;
-5. only an atomic server transaction promotes staged evidence;
+5. only one fenced server transaction promotes planned evidence and current vectors;
 6. no public review/resolution tool exists;
-7. the quarantined raw payload copy is isolated for exactly 24 hours, then
-   hard-deleted; immutable source evidence and lineage remain restricted audit
+7. deterministic quarantine retains no raw payload, while operational
+   failure-artifact bytes are control-only and physically purged within seven
+   days; immutable accepted source evidence and lineage remain restricted audit
    history;
 8. recall remains evidence-first and returned evidence cannot authorize actions;
 9. provider output never overrides authentication, server policy, or durable
@@ -579,23 +612,25 @@ worker cannot claim its physical purge until the hold is released.
 
 ## Submission Errors And MCP Versions
 
-Every terminal `rejected`, `quarantined`, or `failed` submission exposes at
+Every terminal `rejected` or `quarantined` result exposes at
 least one `errors[]` item. Each item has a closed `code`, bounded `message`,
-boolean `retryable`, closed `next_action`, and bounded `remediation`. The
-allowed actions are `poll_status`, `resubmit_submission`,
+boolean `retryable`, closed `next_action`, and bounded `remediation`. Operational
+execution failures use MCP `isError: true` with the same structured fields. The
+allowed actions are `retry_same_request`, `resubmit_remember`,
 `retry_correction`, `contact_operator`, and `none`.
 For Remember, semantic rejection codes are only `no_supported_memory` and
 `stale_input`. Operational codes are `provider_unavailable`,
 `provider_response_invalid`, `input_budget_exceeded`,
-`configuration_invalid`, `database_failure`, and
-`internal_failure`; `search_indexing_delayed` is a degradation. Item errors and the aggregate list are
+`configuration_invalid`, `embedding_unavailable`, `embedding_response_invalid`,
+`commit_conflict`, `database_failure`, `request_timeout`,
+`request_cancelled`, and `internal_failure`. Item errors and the aggregate list are
 deterministically deduplicated. Provider output, SQL, prompts, credentials,
 stack traces, and cross-owner existence are never returned.
 
-A submission whose stored contract is not exactly `dense-mem.v2.6` is outside
+A submission whose stored contract is not exactly `dense-mem.v2.6.1` is outside
 the runtime contract and returns the same bounded not-found response as an
 unavailable submission. Its historical migration stage remains internal audit
-data; it is not negotiated, relabeled as v2.6, or exposed as a public error.
+data; it is not negotiated, relabeled as v2.6.1, or exposed as a public error.
 
 The correction-only rejection code is `submission_policy_rejected`. The
 remaining closed correction codes are `relationship_version_stale`,

@@ -3,6 +3,11 @@
 Dense-Mem has a team/user portal on the main listener and a deployment control
 portal on a separate private listener.
 
+The control portal lists terminal Remember attempts and their chronological
+events. It does not expose placement-worker receipts, normal embedding-job
+queues, or client polling controls. Attempt detail is owner/team-isolated and
+failure artifacts are fetched lazily only through audited control access.
+
 | Portal | Local URL | Authentication | Purpose |
 | --- | --- | --- | --- |
 | user | `http://127.0.0.1:8080/ui` | Dense-Mem key or configured SSO | same-team recall, graph/trace, reviews, keys, and self telemetry |
@@ -135,12 +140,11 @@ The control portal manages:
   atomic activation/rollback
 - provider/embedding and search-index generation visibility without exposing
   secret values
-- placement and embedding backlog/search freshness
+- search document convergence and terminal Remember-attempt diagnostics
 - private-space inventory, legal holds, retention policy/runs, and erasure
   operation status
-- Search convergence: structural readiness versus asynchronous embedding recovery,
-  allowlisted failure codes, affected teams, guidance, run/canary state, logs,
-  and metrics
+- Search convergence: expected/current/drifted documents, allowlisted failure
+  codes, affected teams, guidance, and the latest reconciliation run
 - PostgreSQL, pgvector, query, and backup health
 - operation/audit/security views
 - telemetry and feedback summaries
@@ -171,18 +175,19 @@ Changing a scope or window cancels the previous request, and manual refresh is
 kept available without allowing overlapping requests.
 
 The Search convergence view is read-only. It has no retry button or provider
-credential editor. Quota, authentication, access, and transient provider
-failure groups are retried by the daily scheduler after one raw-provider canary;
-input, contract, and unknown failures remain blocked. Public users see only the
-bounded `search_indexing_delayed` status error, while operators see the exact
-allowlisted code and guidance. A provider change is guidance only and must keep
-the active model and dimensions compatible.
+credential editor. It reports expected/current/drifted documents and the latest
+document-centric reconciliation run. Legacy quota, authentication, access, and
+provider failure groups may be shown for migration diagnostics only; they are
+not a normal Remember queue. Public users see only bounded terminal errors,
+while operators see the exact allowlisted code and guidance. A provider change
+is guidance only and must keep the active model and dimensions compatible.
 
 The corresponding operator endpoint is `GET /control/api/search/convergence`.
 It is protected by the control-plane authentication boundary and returns only
-the active contract summary, bounded queue/failure data, current failure groups
-derived from `embedding_jobs`, team names, guidance, and durable run state. It
-does not expose or mutate a separate incident lifecycle.
+the active contract summary, bounded expected/current/drifted document data,
+team names, guidance, and durable run state. Legacy queue/failure projections
+are historical migration diagnostics and do not expose or mutate a separate
+incident lifecycle.
 
 ## Credentials And API Keys
 
@@ -199,7 +204,7 @@ credential.
 | Scope | Purpose |
 | --- | --- |
 | `read` | recall, trace, Entity/Relationship inspection |
-| `write` | remember and placement/dream decisions; merge/split/supersede only caller-owned knowledge; create evidence-backed cross-profile corrections |
+| `write` | remember and supported lifecycle/dream decisions; merge/split/supersede only caller-owned knowledge; create evidence-backed cross-profile corrections |
 | `feedback:read` | stored recall-feedback details |
 
 Role does not imply scope. A manager key without `write` cannot remember.
