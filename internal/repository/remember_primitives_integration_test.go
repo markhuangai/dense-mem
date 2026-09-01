@@ -277,6 +277,65 @@ func TestRememberPolicyArtifactLegalHoldReleaseAndErasure(t *testing.T) {
 	require.ErrorIs(t, err, ErrRememberFailureArtifactNotFound)
 }
 
+func TestRememberFailureArtifactHoldSkipsNoopUpdates(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamUUID := uuid.MustParse(createLedgerTeam(t, adminDB, rls, "remember-primitives-hold-noop"))
+	ownerIdentityID := createLedgerSSOIdentity(t, adminDB, rls, teamUUID)
+	credentialRepo := NewCredentialRepository(appDB, rls)
+	credential := createOwnedCredential(t, credentialRepo, teamUUID, ownerIdentityID, "remember-primitives-hold-noop", domain.CredentialBindingCredentialPrivate)
+	repo := NewLedgerRepository(appDB, rls)
+	privateRepo := NewPrivateMemoryRepository(appDB, rls)
+	require.NoError(t, privateRepo.Prepare(ctx))
+
+	attemptID, artifactID := uuid.NewString(), uuid.NewString()
+	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		Attempt: RememberAttemptRecordInput{
+			TeamID: teamUUID.String(), OwnerProfileID: credential.ID.String(), AttemptID: attemptID,
+			SpaceID: credential.MemorySpaceID.String(), SpaceGeneration: credential.MemorySpaceGeneration,
+			IdempotencyKey: "remember-primitives-hold-noop", RequestHash: "remember-primitives-hold-noop-hash",
+			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed",
+			FailedPhase: "preflight", ErrorCode: "provider_unavailable", PublicResult: map[string]any{},
+		},
+		Artifacts: []RememberFailureArtifactInput{{
+			ArtifactID: artifactID, ArtifactKind: "failure", ContentType: "application/json",
+			Content: []byte(`{"noop":true}`), CapturedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+		}},
+	}))
+
+	tuple := func() [2]string {
+		var value [2]string
+		require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			return tx.Raw(`
+				SELECT xmin::text, ctid::text
+				FROM remember_failure_artifacts
+				WHERE team_id = ?::uuid AND artifact_id = ?::uuid
+			`, teamUUID.String(), artifactID).Row().Scan(&value[0], &value[1])
+		}))
+		return value
+	}
+
+	freeBefore := tuple()
+	require.NoError(t, repo.synchronizeRememberFailureArtifactHold(ctx, credential.MemorySpaceID.String()))
+	require.Equal(t, freeBefore, tuple(), "repeating a released hold must not update artifacts")
+
+	_, created, err := privateRepo.PlaceLegalHold(ctx, credential.MemorySpaceID, "remember-primitives-hold-noop")
+	require.NoError(t, err)
+	require.True(t, created)
+	heldBefore := tuple()
+	require.NoError(t, repo.synchronizeRememberFailureArtifactHold(ctx, credential.MemorySpaceID.String()))
+	require.Equal(t, heldBefore, tuple(), "repeating an active hold must not update artifacts")
+
+	_, released, err := privateRepo.ReleaseLegalHold(ctx, credential.MemorySpaceID)
+	require.NoError(t, err)
+	require.True(t, released)
+	releasedBefore := tuple()
+	require.NoError(t, repo.synchronizeRememberFailureArtifactHold(ctx, credential.MemorySpaceID.String()))
+	require.Equal(t, releasedBefore, tuple(), "repeating a released hold must not update artifacts")
+}
+
 func TestRememberFailureArtifactHoldAndPurgeSerializeOnPrivateSpace(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

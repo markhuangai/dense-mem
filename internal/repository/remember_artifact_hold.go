@@ -59,7 +59,8 @@ func setRememberFailureArtifactHoldStateTx(ctx context.Context, tx *gorm.DB, spa
 		  AND attempt.attempt_id = artifact.attempt_id
 		  AND attempt.owner_profile_id = artifact.owner_profile_id
 		  AND attempt.space_id = ?::uuid
-	`, retained, spaceID)
+		  AND artifact.retained_by_legal_hold IS DISTINCT FROM ?
+	`, retained, spaceID, retained)
 	if result.Error != nil {
 		return result.Error
 	}
