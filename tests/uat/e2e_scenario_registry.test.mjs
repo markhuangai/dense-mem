@@ -126,6 +126,21 @@ test("production E2E jobs use the runner that matches their capability", async (
   assert.match(reusable, /^    runs-on: rootless-docker$/m);
   assert.doesNotMatch(workflow, /rootless-docker-shared/);
   assert.doesNotMatch(reusable, /rootless-docker-shared/);
+  assert.doesNotMatch(workflow, /workflow_dispatch/);
+  for (const obsolete of [
+    "source_revision",
+    "source_repository",
+    "main_revision",
+    "pull_request_author",
+    "preview_run_id",
+    "preview_run_attempt",
+    "caller_workflow",
+  ]) {
+    assert.doesNotMatch(workflow, new RegExp(`inputs\\.${obsolete}|outputs\\.${obsolete}`));
+  }
+  assert.match(workflow, /validatePinnedProductionImageReference/);
+  assert.match(workflow, /test_repository/);
+  assert.match(workflow, /test_revision/);
   assert.match(workflow, /^      max-parallel: 4$/m);
   assert.match(workflowJob(workflow, "stale-cleanup"), /^    if: needs\.authorize\.outputs\.authorized == 'true'$/m);
   assertWorkflowOrchestration(workflow);
@@ -133,10 +148,10 @@ test("production E2E jobs use the runner that matches their capability", async (
   assert.match(workflow, /passed \(cleanup failed\)/);
   assert.match(workflow, /e2e_host_controller_real\.sh/);
   assert.match(workflow, /ref: main[\s\S]*path: \.ci-controller-contract/);
-  assert.match(workflow, /source_repository: \$\{\{ needs\.authorize\.outputs\.source_repository \}\}/);
-  assert.match(reusable, /repository: \$\{\{ inputs\.source_repository \}\}/);
-  assert.match(workflow, /ref: \$\{\{ steps\.resolve\.outputs\.source_revision \}\}/);
-  assert.doesNotMatch(workflow, /ref: \$\{\{ inputs\.source_revision \|\| 'main' \}\}/);
+  assert.match(workflow, /test_repository: \$\{\{ needs\.authorize\.outputs\.test_repository \}\}/);
+  assert.match(reusable, /repository: \$\{\{ inputs\.test_repository \}\}/);
+  assert.match(workflow, /ref: \$\{\{ steps\.resolve\.outputs\.test_revision \}\}/);
+  assert.doesNotMatch(workflow, /ref: \$\{\{ inputs\.test_revision \|\| 'main' \}\}/);
   assert.match(controller, /docker compose/);
   assert.match(controller, /run --rm/);
   assert.doesNotMatch(compose, /^\s+ports:/m);

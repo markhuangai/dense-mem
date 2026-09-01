@@ -131,7 +131,10 @@ async function authorize(method, path, rawURL, requestBody) {
     if (!["json", "logs", "start", "stop", "restart", "wait", "stats", "top", "changes", "archive", "exec"].includes(action)) {
       deny("Docker container operation is not permitted");
     }
-    await authorizeResource("containers", containerMatch[1]);
+    const labels = await authorizeResource("containers", containerMatch[1]);
+    if (action === "exec" && labels["com.docker.compose.service"] === "server") {
+      deny("scenario exec is not permitted for server containers");
+    }
     return;
   }
 
@@ -296,11 +299,12 @@ async function authorizeResource(kind, id) {
   if (options.mode === "precheck") {
     assertPrecheckLabels(labels);
     precheckResources[kind].add(id);
-    return;
+    return labels;
   }
   if (!hasManagedLabels(labels)) {
     deny(`Docker ${kind} resource ${basename(id)} is outside the assigned CI project`);
   }
+  return labels;
 }
 
 function parseJSONBody(body, label) {

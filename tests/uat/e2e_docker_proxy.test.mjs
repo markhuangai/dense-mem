@@ -28,7 +28,9 @@ test("restricted Docker proxy permits scoped lifecycle and exec upgrade only", a
     "io.dense-mem.ci.image-digest": digest,
     "io.dense-mem.ci.created-at": new Date().toISOString(),
     "com.docker.compose.project": project,
+    "com.docker.compose.service": "postgres",
   };
+  const serverLabels = { ...labels, "com.docker.compose.service": "server" };
   const target = createServer((request, response) => {
     requests.push(`${request.method} ${request.url}`);
     const path = new URL(request.url || "/", "http://docker").pathname;
@@ -38,6 +40,14 @@ test("restricted Docker proxy permits scoped lifecycle and exec upgrade only", a
         Id: "demo",
         Config: { Labels: labels, Env: ["CONTROL_PORTAL_TOKEN=top-secret", "PATH=/usr/bin"] },
         Mounts: [{ Type: "volume", Name: "fixture", Destination: "/data" }],
+      }));
+      return;
+    }
+    if (path === "/v1.45/containers/server/json") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        Id: "server",
+        Config: { Labels: serverLabels, Env: ["AI_API_KEY=server-secret"] },
       }));
       return;
     }
@@ -96,10 +106,15 @@ test("restricted Docker proxy permits scoped lifecycle and exec upgrade only", a
   assert.equal(upgraded.status, 101);
   assert.match(upgraded.body, /exec-ready/);
 
+  const serverExec = await requestProxy(proxySocket, "POST", "/v1.45/containers/server/exec", JSON.stringify({ Cmd: ["env"] }));
+  assert.equal(serverExec.status, 403);
+  assert.match(serverExec.body, /server containers/);
+
   const foreign = await requestProxy(proxySocket, "GET", "/v1.45/containers/foreign/logs");
   assert.equal(foreign.status, 403);
   assert.equal((await requestProxy(proxySocket, "GET", "/v1.45/images/json")).status, 403);
   assert.ok(requests.includes("POST /v1.45/containers/demo/exec"));
+  assert.ok(!requests.includes("POST /v1.45/containers/server/exec"));
 });
 
 test("shared Docker proxy exposes the shared stack and only the assigned row", async (t) => {

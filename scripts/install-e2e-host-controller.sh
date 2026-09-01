@@ -28,4 +28,9 @@ if [[ ! -e "${DESTINATION}/.env" ]]; then
   exit 1
 fi
 chmod 600 "${DESTINATION}/.env"
+if [[ ! -f "${DESTINATION}/telemetry-scrape-token" ]]; then
+  printf '%s\n' "Create ${DESTINATION}/telemetry-scrape-token with the CI-only telemetry token and mode 0600." >&2
+  exit 1
+fi
+chmod 600 "${DESTINATION}/telemetry-scrape-token"
 printf '%s\n' "Installed dense-mem-ci-e2e.v1 controller in ${DESTINATION}."

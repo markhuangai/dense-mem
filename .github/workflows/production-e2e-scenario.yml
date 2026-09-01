@@ -9,10 +9,10 @@ on:
       digest:
         required: true
         type: string
-      source_revision:
+      test_revision:
         required: true
         type: string
-      source_repository:
+      test_repository:
         required: true
         type: string
       scenario:
@@ -64,8 +64,8 @@ jobs:
           clean: true
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ inputs.source_revision }}
-          repository: ${{ inputs.source_repository }}
+          ref: ${{ inputs.test_revision }}
+          repository: ${{ inputs.test_repository }}
 
       - name: Validate rootless controller
         shell: bash
@@ -79,11 +79,11 @@ jobs:
           IMAGE: ${{ inputs.image }}
           DIGEST: ${{ inputs.digest }}
           HELPERS: ${{ inputs.helper_profiles }}
-          SOURCE_REVISION: ${{ inputs.source_revision }}
+          TEST_REVISION: ${{ inputs.test_revision }}
         run: |
           set -euo pipefail
           helpers="$(printf '%s' "${HELPERS}" | node -e 'const fs=require("node:fs"); const values=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(values.join(","));')"
-          manifest="$("${HOME}/dense-mem-ci/e2e-stack.sh" start "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" exclusive "${SCENARIO}" "${IMAGE}" "${DIGEST}" "${SOURCE_REVISION}" "${helpers}" "${GITHUB_WORKSPACE}")"
+          manifest="$("${HOME}/dense-mem-ci/e2e-stack.sh" start "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" exclusive "${SCENARIO}" "${IMAGE}" "${DIGEST}" "${TEST_REVISION}" "${helpers}" "${GITHUB_WORKSPACE}")"
           {
             echo "manifest<<DENSE_MEM_MANIFEST"
             echo "${manifest}"

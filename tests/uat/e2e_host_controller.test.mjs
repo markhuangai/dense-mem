@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -18,6 +18,7 @@ const controller = (
 const compose = await readFile(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url), "utf8");
 const adapter = await readFile(new URL("../../scripts/e2e-runtime-adapter.mjs", import.meta.url), "utf8");
 const installer = await readFile(new URL("../../scripts/install-e2e-host-controller.sh", import.meta.url), "utf8");
+const installerPath = fileURLToPath(new URL("../../scripts/install-e2e-host-controller.sh", import.meta.url));
 const redactorPath = fileURLToPath(new URL("../../scripts/e2e-redact-diagnostics.mjs", import.meta.url));
 const controllerPath = fileURLToPath(new URL("../../scripts/e2e-host-controller.sh", import.meta.url));
 const execFileAsync = promisify(execFile);
@@ -97,11 +98,36 @@ test("host installer never creates or copies a credential file", () => {
   assert.match(installer, /e2e-redact-diagnostics\.mjs/);
   assert.match(installer, /examples\/prometheus\.yml/);
   assert.match(installer, /chmod 600/);
+  assert.match(installer, /telemetry-scrape-token/);
+  assert.match(installer, /Create \$\{DESTINATION\}\/telemetry-scrape-token/);
   assert.doesNotMatch(installer, /AI_API_KEY|AI_VERIFIER_API_KEY|PASSWORD=/);
   assert.match(realControllerTest, /DENSE_MEM_E2E_REAL_DOCKER_TESTS/);
   assert.match(realControllerTest, /controller-contract/);
   assert.match(realControllerTest, /rootless Docker daemon/);
   assert.match(realControllerTest, /stale helper image/);
+});
+
+test("host installer requires the telemetry token before reporting success", async () => {
+  const destination = await mkdtemp(join(tmpdir(), "dense-mem-installer-"));
+  try {
+    await writeFile(join(destination, ".env"), "AI_API_KEY=test\n");
+    await assert.rejects(
+      execFileAsync("bash", [installerPath, destination]),
+      (error) => {
+        assert.equal(error.code, 1);
+        assert.match(error.stderr, /Create .*telemetry-scrape-token/);
+        return true;
+      },
+    );
+
+    const tokenPath = join(destination, "telemetry-scrape-token");
+    await writeFile(tokenPath, "telemetry-test-token\n");
+    const result = await execFileAsync("bash", [installerPath, destination]);
+    assert.match(result.stdout, /Installed dense-mem-ci-e2e\.v1 controller/);
+    assert.equal((await stat(tokenPath)).mode & 0o777, 0o600);
+  } finally {
+    await rm(destination, { recursive: true, force: true });
+  }
 });
 
 test("identity cleanup seed formats IPv6 PostgreSQL authorities safely", async () => {

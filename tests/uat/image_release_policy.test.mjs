@@ -10,12 +10,13 @@ import policy from "../../.github/scripts/image-release-policy.cjs";
 
 const {
   compareContainsMain,
-  decideAutomaticProductionE2E,
-  decideManualProductionE2E,
+  decideAutomaticPreview,
+  decideLabelApproval,
   decidePreviewEvent,
   decideRcPreview,
   parseSuccessfulPolicyStatus,
   selectMergedPull,
+  validatePinnedProductionImageReference,
   validateProductionImageReference,
 } = policy;
 const execFileAsync = promisify(execFile);
@@ -24,48 +25,60 @@ const ociImageScript = fileURLToPath(new URL("../../.github/scripts/oci-image.sh
 const baseEvent = {
   action: "synchronize",
   eventLabel: "",
-  hasPreviewLabel: true,
+  hasPreviewLabel: false,
   isFork: false,
   triggerHeadMatches: true,
-  actorPermission: "write",
+  actorPermission: "none",
+  pullRequestAuthor: "other",
+  pullRequestAuthorPermission: "none",
+  pullRequestState: "open",
+  pullRequestBase: "main",
 };
 
-test("manual production E2E authorization is owner and main gated", () => {
-  const allowed = decideManualProductionE2E({
-    actor: "Z-M-Huang",
-    triggeringActor: "Z-M-Huang",
-    ref: "refs/heads/main",
-    image: "ghcr.io/markhuangai/dense-mem:v2.6.1",
-    repository: "markhuangai/dense-mem",
-  });
-  assert.equal(allowed.authorized, true);
-  assert.equal(
-    decideManualProductionE2E({
-      actor: "other",
-      triggeringActor: "Z-M-Huang",
-      ref: "refs/heads/main",
-      image: "ghcr.io/markhuangai/dense-mem:v2.6.1",
-      repository: "markhuangai/dense-mem",
-    }).authorized,
-    false,
-  );
-});
-
-test("manual production E2E rejects malformed image, trigger, and workflow inputs", () => {
+test("automatic preview builds require the owner and repository-admin permission", () => {
   const input = {
-    actor: "Z-M-Huang",
-    triggeringActor: "Z-M-Huang",
-    ref: "refs/heads/main",
-    image: "ghcr.io/markhuangai/dense-mem:v2.6.1",
-    repository: "markhuangai/dense-mem",
+    pullRequestAuthor: "Z-M-Huang",
+    pullRequestAuthorPermission: "admin",
+    pullRequestState: "open",
+    pullRequestBase: "main",
   };
+  assert.deepEqual(decideAutomaticPreview(input), {
+    authorized: true,
+    reason: "owner_admin_pr",
+  });
   for (const [label, overrides, reason] of [
-    ["image", { image: "ghcr.io/other/project:v2.6.1" }, "the image is outside the Dense-Mem GHCR repository"],
-    ["triggering actor", { triggeringActor: "other" }, "manual production E2E is restricted to the owner"],
-    ["workflow ref", { ref: "refs/heads/feature" }, "manual production E2E must use the main workflow definition"],
+    ["author", { pullRequestAuthor: "other" }, "automatic preview builds are restricted to the owner admin PR"],
+    ["permission", { pullRequestAuthorPermission: "write" }, "automatic preview builds are restricted to the owner admin PR"],
+    ["state", { pullRequestState: "closed" }, "the pull request is not open against main"],
+    ["base", { pullRequestBase: "release" }, "the pull request is not open against main"],
   ]) {
     assert.deepEqual(
-      decideManualProductionE2E({ ...input, ...overrides }),
+      decideAutomaticPreview({ ...input, ...overrides }),
+      { authorized: false, reason },
+      `${label} must be rejected`,
+    );
+  }
+});
+
+test("deploy-test-image approval is one-shot and admin-only", () => {
+  const input = {
+    eventLabel: "deploy-test-image",
+    actorPermission: "admin",
+    pullRequestState: "open",
+    pullRequestBase: "main",
+  };
+  assert.deepEqual(decideLabelApproval(input), {
+    authorized: true,
+    reason: "admin_label",
+  });
+  for (const [label, overrides, reason] of [
+    ["label", { eventLabel: "documentation" }, "irrelevant_label"],
+    ["permission", { actorPermission: "maintain" }, "deploy-test-image approval requires a repository admin"],
+    ["state", { pullRequestState: "closed" }, "the pull request is not open against main"],
+    ["base", { pullRequestBase: "release" }, "the pull request is not open against main"],
+  ]) {
+    assert.deepEqual(
+      decideLabelApproval({ ...input, ...overrides }),
       { authorized: false, reason },
       `${label} must be rejected`,
     );
@@ -86,97 +99,21 @@ test("production image reference validation rejects malformed inputs directly", 
   }
 });
 
-test("automatic production E2E authorization fences PR, head, main, label, and receipt", () => {
+test("automatic preview authorization rejects every authorization boundary", () => {
   const input = {
-    actor: "Z-M-Huang",
     pullRequestAuthor: "Z-M-Huang",
-    pullRequestNumber: 42,
+    pullRequestAuthorPermission: "admin",
     pullRequestState: "open",
     pullRequestBase: "main",
-    hasPreviewLabel: true,
-    currentHead: "a".repeat(40),
-    expectedHead: "a".repeat(40),
-    currentMain: "b".repeat(40),
-    expectedMain: "b".repeat(40),
-    previewRunId: "123",
-    previewRunAttempt: "1",
-    image: "ghcr.io/markhuangai/dense-mem:test-42",
-    repository: "markhuangai/dense-mem",
-    workflowRun: {
-      id: 123,
-      run_attempt: 1,
-      head_sha: "a".repeat(40),
-      event: "pull_request_target",
-      status: "in_progress",
-      conclusion: null,
-      path: ".github/workflows/pr-test-image.yml",
-      display_title: "PR test image: PR #42",
-    },
-    publishJob: {
-      name: "Publish trusted preview",
-      run_id: 123,
-      run_attempt: 1,
-      head_sha: "a".repeat(40),
-      status: "completed",
-      conclusion: "success",
-    },
-  };
-  assert.equal(decideAutomaticProductionE2E(input).authorized, true);
-  assert.equal(decideAutomaticProductionE2E({ ...input, currentHead: "c".repeat(40) }).authorized, false);
-  assert.equal(decideAutomaticProductionE2E({ ...input, hasPreviewLabel: false }).authorized, false);
-  assert.equal(decideAutomaticProductionE2E({ ...input, publishJob: { ...input.publishJob, conclusion: "failure" } }).authorized, false);
-  assert.equal(decideAutomaticProductionE2E({ ...input, workflowRun: { ...input.workflowRun, status: "completed", conclusion: "failure" } }).authorized, false);
-  assert.equal(decideAutomaticProductionE2E({ ...input, workflowRun: { ...input.workflowRun, head_sha: "c".repeat(40) } }).authorized, false);
-});
-
-test("automatic production E2E rejects every authorization boundary", () => {
-  const input = {
-    actor: "Z-M-Huang",
-    pullRequestAuthor: "Z-M-Huang",
-    pullRequestNumber: 42,
-    pullRequestState: "open",
-    pullRequestBase: "main",
-    hasPreviewLabel: true,
-    currentHead: "a".repeat(40),
-    expectedHead: "a".repeat(40),
-    currentMain: "b".repeat(40),
-    expectedMain: "b".repeat(40),
-    previewRunId: "123",
-    previewRunAttempt: "1",
-    image: "ghcr.io/markhuangai/dense-mem:test-42",
-    repository: "markhuangai/dense-mem",
-    workflowRun: {
-      id: 123,
-      run_attempt: 1,
-      head_sha: "a".repeat(40),
-      event: "pull_request_target",
-      status: "completed",
-      conclusion: "success",
-      path: ".github/workflows/pr-test-image.yml",
-      display_title: "PR test image: PR #42",
-    },
-    publishJob: {
-      name: "Publish trusted preview",
-      run_id: 123,
-      run_attempt: 1,
-      head_sha: "a".repeat(40),
-      status: "completed",
-      conclusion: "success",
-    },
   };
   for (const [label, overrides, reason] of [
-    ["image", { image: "docker.io/example/dense-mem:latest" }, "the image is outside the Dense-Mem GHCR repository"],
-    ["actor", { actor: "other" }, "automatic production E2E is restricted to the owner PR"],
-    ["PR author", { pullRequestAuthor: "other" }, "automatic production E2E is restricted to the owner PR"],
+    ["PR image", { pullRequestAuthor: "other" }, "automatic preview builds are restricted to the owner admin PR"],
+    ["PR permission", { pullRequestAuthorPermission: "write" }, "automatic preview builds are restricted to the owner admin PR"],
     ["PR state", { pullRequestState: "closed" }, "the pull request is not open against main"],
     ["PR base", { pullRequestBase: "feature" }, "the pull request is not open against main"],
-    ["receipt format", { previewRunId: "0" }, "the preview workflow receipt is invalid"],
-    ["workflow attributes", { workflowRun: { ...input.workflowRun, event: "push" } }, "the preview workflow run receipt is invalid"],
-    ["workflow completion", { workflowRun: { ...input.workflowRun, status: "in_progress", conclusion: "success" } }, "the preview workflow run receipt is invalid"],
-    ["publish job attributes", { publishJob: { ...input.publishJob, status: "in_progress" } }, "the preview publication job receipt is invalid"],
   ]) {
     assert.deepEqual(
-      decideAutomaticProductionE2E({ ...input, ...overrides }),
+      decideAutomaticPreview({ ...input, ...overrides }),
       { authorized: false, reason },
       `${label} must be rejected`,
     );
@@ -201,6 +138,33 @@ test("low-trust preview builds do not export an Actions cache", async () => {
 
   assert.match(workflow, /^\s+pull_request_target:/m);
   assert.doesNotMatch(workflow, /^\s+cache-to:/m);
+});
+
+test("PR preview workflow gates owner/admin and one-shot approval before digest handoff", async () => {
+  const workflow = await readFile(
+    new URL("../../.github/workflows/pr-test-image.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /types: \[opened, synchronize, reopened, labeled\]/);
+  assert.doesNotMatch(workflow, /unlabeled/);
+  assert.match(workflow, /group: pr-test-image-\$\{\{ github\.event\.pull_request\.number \}\}/);
+  assert.match(workflow, /cancel-in-progress: \$\{\{ github\.event\.action == 'synchronize' \}\}/);
+  assert.match(workflow, /authorPermission: process\.env\.AUTHOR_PERMISSION/);
+  assert.match(workflow, /removeLabel/);
+  assert.match(workflow, /Production image E2E/);
+  assert.match(workflow, /digest="\$\(\.github\/scripts\/oci-image\.sh publish-preview/);
+  assert.match(workflow, /printf 'image=%s@%s\\n'/);
+  assert.match(workflow, /image: \$\{\{ needs\.publish\.outputs\.image \}\}/);
+  assert.match(workflow, /test_repository: \$\{\{ needs\.resolve\.outputs\.head_repository \}\}/);
+  assert.match(workflow, /test_revision: \$\{\{ needs\.resolve\.outputs\.head_sha \}\}/);
+  for (const obsolete of [
+    "pull_request_author",
+    "preview_run_id",
+    "preview_run_attempt",
+    "caller_workflow",
+  ]) {
+    assert.doesNotMatch(workflow, new RegExp(obsolete));
+  }
 });
 
 test("OCI promotion avoids jq 1.6 reserved variable names", async () => {
@@ -511,46 +475,39 @@ test("staging deployment rehearses before an always-pull healthy startup", async
   assert.doesNotMatch(deploy, /docker compose logs/);
 });
 
-test("same-repository pushes rebuild while the preview label remains", () => {
+test("owner-admin PR pushes run automatically without an approval label", () => {
+  assert.deepEqual(
+    decidePreviewEvent({
+      ...baseEvent,
+      pullRequestAuthor: "Z-M-Huang",
+      pullRequestAuthorPermission: "admin",
+    }),
+    { mode: "attempt", reason: "owner_admin_pr" },
+  );
+});
+
+test("non-owner pushes wait for a fresh approval", () => {
   assert.deepEqual(decidePreviewEvent(baseEvent), {
-    mode: "attempt",
-    reason: "requested",
+    mode: "skipped",
+    reason: "approval_required",
   });
 });
 
-test("fork pushes are rejected while runner isolation is unavailable", () => {
-  assert.deepEqual(
-    decidePreviewEvent({ ...baseEvent, isFork: true }),
-    {
-      mode: "skipped",
-      reason: "fork_isolation_unavailable",
-      removeLabel: true,
-    },
-  );
-});
-
-test("unlabeled fork events remain ordinary no-preview requests", () => {
-  assert.deepEqual(
-    decidePreviewEvent({ ...baseEvent, isFork: true, hasPreviewLabel: false }),
-    { mode: "skipped", reason: "label_absent" },
-  );
-});
-
-test("a maintainer-applied fork label starts an attempt", () => {
+test("an admin-applied label starts a fork attempt and is consumed", () => {
   assert.deepEqual(
     decidePreviewEvent({
       ...baseEvent,
       action: "labeled",
       eventLabel: "deploy-test-image",
       isFork: true,
-      actorPermission: "maintain",
-      allowForkBuilds: true,
+      actorPermission: "admin",
+      hasPreviewLabel: true,
     }),
-    { mode: "attempt", reason: "requested" },
+    { mode: "attempt", reason: "admin_label", removeLabel: true },
   );
 });
 
-test("an untrusted fork label is removed", () => {
+test("a non-admin label is removed without authorizing a build", () => {
   assert.deepEqual(
     decidePreviewEvent({
       ...baseEvent,
@@ -558,11 +515,11 @@ test("an untrusted fork label is removed", () => {
       eventLabel: "deploy-test-image",
       isFork: true,
       actorPermission: "read",
-      allowForkBuilds: true,
+      hasPreviewLabel: true,
     }),
     {
       mode: "skipped",
-      reason: "fork_reapproval_required",
+      reason: "deploy-test-image approval requires a repository admin",
       removeLabel: true,
     },
   );
@@ -718,7 +675,7 @@ test("deleted fork repositories resolve as unbuildable fork events", () => {
   );
 });
 
-test("RC reuse API policy requires the retained label and trusted run", () => {
+test("RC reuse API policy requires the trusted preview run", () => {
   const pull = { number: 42 };
   const policyStatus = { runId: "123456", runAttempt: "2" };
   const workflowRun = {
@@ -737,7 +694,7 @@ test("RC reuse API policy requires the retained label and trusted run", () => {
   };
 
   assert.deepEqual(decideRcPreview(input), { eligible: true, reason: "" });
-  assert.equal(decideRcPreview({ ...input, hasPreviewLabel: false }).eligible, false);
+  assert.equal(decideRcPreview({ ...input, hasPreviewLabel: false }).eligible, true);
   assert.equal(
     decideRcPreview({
       ...input,

@@ -1,58 +1,23 @@
 name: Production image E2E
 
 on:
-  workflow_dispatch:
-    inputs:
-      image:
-        description: "Production Dense-Mem image tag or digest"
-        required: true
-        type: string
   workflow_call:
     inputs:
       image:
-        description: "Immutable preview or production image reference"
+        description: "Immutable production image reference pinned by digest"
         required: true
         type: string
-      source_revision:
-        description: "Expected source revision for an automatic preview"
-        required: false
+      test_repository:
+        description: "Repository containing the pull request test harness"
+        required: true
         type: string
-        default: ""
-      main_revision:
-        description: "Expected tested main revision for an automatic preview"
-        required: false
+      test_revision:
+        description: "Exact pull request revision containing the test harness"
+        required: true
         type: string
-        default: ""
-      pull_request:
-        description: "Expected pull request number for an automatic preview"
-        required: false
-        type: string
-        default: ""
-      pull_request_author:
-        description: "Expected pull request author for an automatic preview"
-        required: false
-        type: string
-        default: ""
-      preview_run_id:
-        description: "Trusted preview publication workflow run ID"
-        required: false
-        type: string
-        default: ""
-      preview_run_attempt:
-        description: "Trusted preview publication workflow run attempt"
-        required: false
-        type: string
-        default: ""
-      caller_workflow:
-        description: "Trusted caller workflow path"
-        required: false
-        type: string
-        default: ""
 permissions:
-  actions: read
   contents: read
   packages: read
-  pull-requests: read
 
 env:
   E2E_REPOSITORY: ${{ github.repository }}
@@ -66,9 +31,8 @@ jobs:
       authorized: ${{ steps.resolve.outputs.authorized }}
       image: ${{ steps.resolve.outputs.image }}
       digest: ${{ steps.resolve.outputs.digest }}
-      source_revision: ${{ steps.resolve.outputs.source_revision }}
-      source_repository: ${{ steps.resolve.outputs.source_repository }}
-      main_revision: ${{ steps.resolve.outputs.main_revision }}
+      test_revision: ${{ steps.resolve.outputs.test_revision }}
+      test_repository: ${{ steps.resolve.outputs.test_repository }}
       exclusive_matrix: ${{ steps.matrix.outputs.exclusive_matrix }}
       shared_matrix: ${{ steps.matrix.outputs.shared_matrix }}
       shared_helpers: ${{ steps.matrix.outputs.shared_helpers }}
@@ -86,176 +50,39 @@ jobs:
             scripts/e2e-scenarios.json
             scripts/e2e-scenario-registry.mjs
 
-      - name: Install pinned regctl
-        shell: bash
-        env:
-          REGCTL_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
-        run: |
-          set -euo pipefail
-          export REGCTL_CONFIG="${RUNNER_TEMP}/regctl-config.json"
-          echo "REGCTL_CONFIG=${REGCTL_CONFIG}" >> "${GITHUB_ENV}"
-          curl -fsSL -o "${RUNNER_TEMP}/regctl" \
-            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
-          printf '%s  %s\n' "${REGCTL_SHA256}" "${RUNNER_TEMP}/regctl" | sha256sum -c -
-          chmod +x "${RUNNER_TEMP}/regctl"
-          "${RUNNER_TEMP}/regctl" config set --docker-cred=false --docker-cert=false
-
-      - name: Log in to GHCR for metadata inspection
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: echo "${GITHUB_TOKEN}" | "${RUNNER_TEMP}/regctl" registry login ghcr.io -u "${GITHUB_ACTOR}" --pass-stdin
-
-      - name: Validate request authorization
-        id: request
+      - name: Validate immutable image and test revision
+        id: resolve
         uses: actions/github-script@v9
         env:
           IMAGE: ${{ inputs.image }}
           REPOSITORY: ${{ github.repository }}
-          SOURCE_REVISION: ${{ inputs.source_revision }}
-          MAIN_REVISION: ${{ inputs.main_revision }}
-          PULL_REQUEST: ${{ inputs.pull_request }}
-          PULL_REQUEST_AUTHOR: ${{ inputs.pull_request_author }}
-          PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
-          PREVIEW_RUN_ATTEMPT: ${{ inputs.preview_run_attempt }}
-          CALLER_WORKFLOW: ${{ inputs.caller_workflow }}
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          TEST_REPOSITORY: ${{ inputs.test_repository }}
+          TEST_REVISION: ${{ inputs.test_revision }}
         with:
           script: |
             const policy = require("./.ci-policy/.github/scripts/image-release-policy.cjs");
-            const repository = process.env.REPOSITORY;
-            const image = process.env.IMAGE;
-            let decision;
-            let sourceRepository = repository;
-            const automaticCall = context.eventName === "pull_request_target" &&
-              process.env.CALLER_WORKFLOW === ".github/workflows/pr-test-image.yml";
-            if (context.eventName === "workflow_dispatch") {
-              decision = policy.decideManualProductionE2E({
-                actor: context.actor,
-                triggeringActor: process.env.TRIGGERING_ACTOR,
-                ref: context.ref,
-                image,
-                repository,
-              });
-            } else if (automaticCall) {
-              const pullNumber = Number(process.env.PULL_REQUEST);
-              const { data: pull } = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pullNumber,
-              });
-              sourceRepository = pull.head?.repo?.full_name || repository;
-              const { data: main } = await github.rest.repos.getBranch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                branch: "main",
-              });
-              const workflowRun = await (async () => {
-                  try {
-                    const { data: run } = await github.rest.actions.getWorkflowRun({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      run_id: Number(process.env.PREVIEW_RUN_ID),
-                    });
-                    return run;
-                  } catch (error) {
-                    if (error.status === 404) return null;
-                    throw error;
-                  }
-              })();
-              const workflowJobs = workflowRun ? await github.paginate(
-                github.rest.actions.listJobsForWorkflowRun,
-                {
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  run_id: Number(process.env.PREVIEW_RUN_ID),
-                  per_page: 100,
-                },
-              ) : [];
-              const publishJob = workflowJobs.find((job) =>
-                job.name === "Publish trusted preview" &&
-                job.run_id === Number(process.env.PREVIEW_RUN_ID) &&
-                job.run_attempt === Number(process.env.PREVIEW_RUN_ATTEMPT),
-              ) || null;
-              decision = policy.decideAutomaticProductionE2E({
-                actor: context.actor,
-                pullRequestAuthor: pull.user?.login,
-                pullRequestNumber: pull.number,
-                pullRequestState: pull.state,
-                pullRequestBase: pull.base?.ref,
-                hasPreviewLabel: pull.labels.some((label) => label.name === policy.PREVIEW_LABEL),
-                currentHead: pull.head?.sha,
-                expectedHead: process.env.SOURCE_REVISION,
-                currentMain: main.commit?.sha,
-                expectedMain: process.env.MAIN_REVISION,
-                previewRunId: process.env.PREVIEW_RUN_ID,
-                previewRunAttempt: process.env.PREVIEW_RUN_ATTEMPT,
-                workflowRun,
-                publishJob,
-                image,
-                repository,
-              });
-            } else {
-              decision = { authorized: false, reason: `unsupported event: ${context.eventName}` };
-            }
-            if (!decision.authorized) {
-              core.setFailed(decision.reason);
+            const imageDecision = policy.validatePinnedProductionImageReference(
+              process.env.IMAGE,
+              process.env.REPOSITORY,
+            );
+            if (!imageDecision.valid) {
+              core.setFailed(imageDecision.reason);
               return;
             }
+            if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(process.env.TEST_REPOSITORY)) {
+              core.setFailed("the test repository is invalid");
+              return;
+            }
+            if (!/^[0-9a-f]{40}$/.test(process.env.TEST_REVISION)) {
+              core.setFailed("the test revision must be a 40-character commit SHA");
+              return;
+            }
+            const at = process.env.IMAGE.lastIndexOf("@");
             core.setOutput("authorized", "true");
-            core.setOutput("source_repository", sourceRepository);
-
-      - name: Resolve and verify immutable production metadata
-        id: resolve
-        if: steps.request.outcome == 'success'
-        shell: bash
-        env:
-          IMAGE: ${{ inputs.image }}
-          SOURCE_REVISION: ${{ inputs.source_revision }}
-          MAIN_REVISION: ${{ inputs.main_revision }}
-          SOURCE_REPOSITORY: ${{ steps.request.outputs.source_repository }}
-          PULL_REQUEST: ${{ inputs.pull_request }}
-          PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
-          PREVIEW_RUN_ATTEMPT: ${{ inputs.preview_run_attempt }}
-          CALLER_WORKFLOW: ${{ inputs.caller_workflow }}
-          REGCTL_BIN: ${{ runner.temp }}/regctl
-        run: |
-          set -euo pipefail
-          repository="${GITHUB_REPOSITORY,,}"
-          source_repository="${SOURCE_REPOSITORY:-${repository}}"
-          [[ "${source_repository}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
-          image="${IMAGE}"
-          resolved_image="${image}"
-          if [[ -n "${CALLER_WORKFLOW}" ]]; then
-            [[ "${PULL_REQUEST}" =~ ^[1-9][0-9]*$ ]]
-            [[ "${SOURCE_REVISION}" =~ ^[0-9a-f]{40}$ ]]
-            [[ "${MAIN_REVISION}" =~ ^[0-9a-f]{40}$ ]]
-            [[ "${PREVIEW_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
-            [[ "${PREVIEW_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
-            preview_digest="$("${REGCTL_BIN}" manifest head "${image}")"
-            [[ "${preview_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
-            .ci-policy/.github/scripts/oci-image.sh validate-preview \
-              "${image%@*}@${preview_digest}" "${PULL_REQUEST}" "${SOURCE_REVISION}" "${MAIN_REVISION}" \
-              "${PREVIEW_RUN_ID}" "${PREVIEW_RUN_ATTEMPT}"
-            resolved_image="${image%@*}@${preview_digest}"
-          fi
-          receipt="$(.ci-policy/.github/scripts/oci-image.sh production-receipt "${resolved_image}" "${GITHUB_REPOSITORY}")"
-          IFS=$'\t' read -r digest source_revision <<<"${receipt}"
-          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "${source_revision}" =~ ^[0-9a-f]{40}$ ]]
-          if [[ -n "${CALLER_WORKFLOW}" && "${source_revision}" != "${SOURCE_REVISION}" ]]; then
-            echo "image revision does not match the fenced preview head" >&2
-            exit 1
-          fi
-          main_revision="${MAIN_REVISION:-${source_revision}}"
-          {
-            echo "authorized=true"
-            echo "image=${image%@*}"
-            echo "digest=${digest}"
-            echo "source_revision=${source_revision}"
-            echo "source_repository=${source_repository}"
-            echo "main_revision=${main_revision}"
-          } >> "${GITHUB_OUTPUT}"
+            core.setOutput("image", process.env.IMAGE.slice(0, at));
+            core.setOutput("digest", process.env.IMAGE.slice(at + 1));
+            core.setOutput("test_repository", process.env.TEST_REPOSITORY);
+            core.setOutput("test_revision", process.env.TEST_REVISION);
 
       - name: Checkout exact tested scenario registry
         id: source
@@ -265,8 +92,8 @@ jobs:
           clean: true
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ steps.resolve.outputs.source_revision }}
-          repository: ${{ steps.resolve.outputs.source_repository }}
+          ref: ${{ steps.resolve.outputs.test_revision }}
+          repository: ${{ steps.resolve.outputs.test_repository }}
           path: .ci-source
           sparse-checkout: |
             scripts/e2e-scenarios.json
@@ -333,17 +160,17 @@ jobs:
           clean: true
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ needs.authorize.outputs.source_revision }}
-          repository: ${{ needs.authorize.outputs.source_repository }}
+          ref: ${{ needs.authorize.outputs.test_revision }}
+          repository: ${{ needs.authorize.outputs.test_repository }}
 
       - name: Run disposable PostgreSQL regressions in the trusted controller
         shell: bash
         env:
-          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          TEST_REVISION: ${{ needs.authorize.outputs.test_revision }}
         run: |
           set -euo pipefail
           "${HOME}/dense-mem-ci/e2e-stack.sh" precheck \
-            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${SOURCE_REVISION}" \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${TEST_REVISION}" \
             "${{ needs.authorize.outputs.digest }}" "${GITHUB_WORKSPACE}"
 
   stale-cleanup:
@@ -378,90 +205,6 @@ jobs:
         shell: bash
         run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
 
-      - name: Checkout trusted authorization policy
-        if: inputs.caller_workflow != ''
-        uses: actions/checkout@v7
-        with:
-          clean: true
-          fetch-depth: 1
-          persist-credentials: false
-          ref: main
-          path: .ci-policy
-          sparse-checkout: |
-            .github/scripts/image-release-policy.cjs
-
-      - name: Revalidate PR authorization immediately before acquire
-        if: inputs.caller_workflow != ''
-        uses: actions/github-script@v9
-        env:
-          IMAGE: ${{ needs.authorize.outputs.image }}
-          REPOSITORY: ${{ github.repository }}
-          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
-          MAIN_REVISION: ${{ needs.authorize.outputs.main_revision }}
-          PULL_REQUEST: ${{ inputs.pull_request }}
-          PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
-          PREVIEW_RUN_ATTEMPT: ${{ inputs.preview_run_attempt }}
-          CALLER_WORKFLOW: ${{ inputs.caller_workflow }}
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-        with:
-          script: |
-            const policy = require("./.ci-policy/.github/scripts/image-release-policy.cjs");
-            const pullNumber = Number(process.env.PULL_REQUEST);
-            const { data: pull } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pullNumber,
-            });
-            const { data: main } = await github.rest.repos.getBranch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              branch: "main",
-            });
-            let workflowRun = null;
-            try {
-              const { data: run } = await github.rest.actions.getWorkflowRun({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: Number(process.env.PREVIEW_RUN_ID),
-              });
-              workflowRun = run;
-            } catch (error) {
-              if (error.status !== 404) throw error;
-            }
-            const workflowJobs = workflowRun ? await github.paginate(
-              github.rest.actions.listJobsForWorkflowRun,
-              {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: Number(process.env.PREVIEW_RUN_ID),
-                per_page: 100,
-              },
-            ) : [];
-            const publishJob = workflowJobs.find((job) =>
-              job.name === "Publish trusted preview" &&
-              job.run_id === Number(process.env.PREVIEW_RUN_ID) &&
-              job.run_attempt === Number(process.env.PREVIEW_RUN_ATTEMPT),
-            ) || null;
-            const decision = policy.decideAutomaticProductionE2E({
-              actor: context.actor,
-              pullRequestAuthor: pull.user?.login,
-              pullRequestNumber: pull.number,
-              pullRequestState: pull.state,
-              pullRequestBase: pull.base?.ref,
-              hasPreviewLabel: pull.labels.some((label) => label.name === policy.PREVIEW_LABEL),
-              currentHead: pull.head?.sha,
-              expectedHead: process.env.SOURCE_REVISION,
-              currentMain: main.commit?.sha,
-              expectedMain: process.env.MAIN_REVISION,
-              previewRunId: process.env.PREVIEW_RUN_ID,
-              previewRunAttempt: process.env.PREVIEW_RUN_ATTEMPT,
-              workflowRun,
-              publishJob,
-              image: process.env.IMAGE,
-              repository: process.env.REPOSITORY,
-            });
-            if (!decision.authorized) core.setFailed(decision.reason);
-
       - name: Pull candidate and create digest lease
         id: acquire
         shell: bash
@@ -485,8 +228,8 @@ jobs:
     with:
       image: ${{ needs.authorize.outputs.image }}
       digest: ${{ needs.authorize.outputs.digest }}
-      source_revision: ${{ needs.authorize.outputs.source_revision }}
-      source_repository: ${{ needs.authorize.outputs.source_repository }}
+      test_revision: ${{ needs.authorize.outputs.test_revision }}
+      test_repository: ${{ needs.authorize.outputs.test_repository }}
       scenario: ${{ matrix.name }}
       phase: exclusive
       timeout_minutes: ${{ matrix.timeout_minutes }}
@@ -516,8 +259,8 @@ jobs:
           clean: true
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ needs.authorize.outputs.source_revision }}
-          repository: ${{ needs.authorize.outputs.source_repository }}
+          ref: ${{ needs.authorize.outputs.test_revision }}
+          repository: ${{ needs.authorize.outputs.test_repository }}
 
       - name: Start one shared stack
         id: start
@@ -525,12 +268,12 @@ jobs:
         env:
           IMAGE: ${{ needs.authorize.outputs.image }}
           DIGEST: ${{ needs.authorize.outputs.digest }}
-          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          TEST_REVISION: ${{ needs.authorize.outputs.test_revision }}
           HELPERS: ${{ needs.authorize.outputs.shared_helpers }}
         run: |
           set -euo pipefail
           helpers="$(printf '%s' "${HELPERS}" | node -e 'const fs=require("node:fs"); const values=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(values.join(","));')"
-          manifest="$("${HOME}/dense-mem-ci/e2e-stack.sh" start "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" shared shared "${IMAGE}" "${DIGEST}" "${SOURCE_REVISION}" "${helpers}" "${GITHUB_WORKSPACE}")"
+          manifest="$("${HOME}/dense-mem-ci/e2e-stack.sh" start "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" shared shared "${IMAGE}" "${DIGEST}" "${TEST_REVISION}" "${helpers}" "${GITHUB_WORKSPACE}")"
           printf 'manifest=%s\n' "${manifest}" >> "${GITHUB_OUTPUT}"
 
   shared:
@@ -545,8 +288,8 @@ jobs:
     with:
       image: ${{ needs.authorize.outputs.image }}
       digest: ${{ needs.authorize.outputs.digest }}
-      source_revision: ${{ needs.authorize.outputs.source_revision }}
-      source_repository: ${{ needs.authorize.outputs.source_repository }}
+      test_revision: ${{ needs.authorize.outputs.test_revision }}
+      test_repository: ${{ needs.authorize.outputs.test_repository }}
       scenario: ${{ matrix.name }}
       phase: shared
       timeout_minutes: ${{ matrix.timeout_minutes }}
@@ -637,7 +380,7 @@ jobs:
           RUN_CLEANUP_RESULT: ${{ needs.cleanup-run.result }}
           IMAGE: ${{ needs.authorize.outputs.image }}
           DIGEST: ${{ needs.authorize.outputs.digest }}
-          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          TEST_REVISION: ${{ needs.authorize.outputs.test_revision }}
           EXCLUSIVE_MATRIX: ${{ needs.authorize.outputs.exclusive_matrix }}
           SHARED_MATRIX: ${{ needs.authorize.outputs.shared_matrix }}
         run: |
@@ -647,7 +390,7 @@ jobs:
             echo
             echo "- Image: \`${IMAGE:-unresolved}\`"
             echo "- Digest: \`${DIGEST:-unresolved}\`"
-            echo "- Source revision: \`${SOURCE_REVISION:-unresolved}\`"
+            echo "- Test revision: \`${TEST_REVISION:-unresolved}\`"
             echo
             echo "| Phase | Result |"
             echo "| --- | --- |"
@@ -707,3 +450,16 @@ jobs:
           if (rows.length === 0) process.stdout.write("| unavailable | no scenario registry output |\n");
           NODE
           } >> "${GITHUB_STEP_SUMMARY}"
+          for result in \
+            "${AUTH_RESULT}" \
+            "${PRECHECK_RESULT}" \
+            "${STALE_CLEANUP_RESULT}" \
+            "${ACQUIRE_RESULT}" \
+            "${EXCLUSIVE_RESULT}" \
+            "${SHARED_START_RESULT}" \
+            "${SHARED_RESULT}" \
+            "${SHARED_STOP_RESULT}" \
+            "${RELEASE_RESULT}" \
+            "${RUN_CLEANUP_RESULT}"; do
+            [[ "${result}" == "success" ]] || exit 1
+          done
