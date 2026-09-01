@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { promisify } from "node:util";
 
 const controller = (
   await Promise.all([
@@ -17,6 +19,8 @@ const compose = await readFile(new URL("../../scripts/e2e-ci-compose.yml", impor
 const adapter = await readFile(new URL("../../scripts/e2e-runtime-adapter.mjs", import.meta.url), "utf8");
 const installer = await readFile(new URL("../../scripts/install-e2e-host-controller.sh", import.meta.url), "utf8");
 const redactorPath = fileURLToPath(new URL("../../scripts/e2e-redact-diagnostics.mjs", import.meta.url));
+const controllerPath = fileURLToPath(new URL("../../scripts/e2e-host-controller.sh", import.meta.url));
+const execFileAsync = promisify(execFile);
 const realControllerTest = await readFile(new URL("./e2e_host_controller_real.sh", import.meta.url), "utf8");
 const productionWorkflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
 const scenarioWorkflow = await readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8");
@@ -169,4 +173,93 @@ test("diagnostic redaction follows supported Compose env syntax and fails closed
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+async function runReleaseWithFakeDocker(mode) {
+  const directory = await mkdtemp(join(tmpdir(), "dense-mem-release-"));
+  const ciHome = join(directory, "dense-mem-ci");
+  const leaseDirectory = join(ciHome, "leases");
+  const digest = `sha256:${"a".repeat(64)}`;
+  const leasePath = join(leaseDirectory, `${digest.slice("sha256:".length)}.1.1.lease`);
+  const dockerPath = join(directory, "docker");
+  await mkdir(leaseDirectory, { recursive: true });
+  await writeFile(leasePath, [
+    "contract=dense-mem-ci-e2e.v1",
+    "repository=markhuangai/dense-mem",
+    "run_id=1",
+    "run_attempt=1",
+    "image=ghcr.io/markhuangai/dense-mem",
+    `digest=${digest}`,
+    "created_at=2026-01-01T00:00:00Z",
+    "",
+  ].join("\n"));
+  await writeFile(dockerPath, `#!/usr/bin/env bash
+set -euo pipefail
+mode=${JSON.stringify(mode)}
+if [[ "\${1:-}" == "image" && "\${2:-}" == "inspect" ]]; then
+  case "$mode" in
+    missing)
+      printf '%s\\n' 'Error response from daemon: No such image: candidate' >&2
+      exit 1
+      ;;
+    daemon)
+      printf '%s\\n' 'Cannot connect to the Docker daemon' >&2
+      exit 1
+      ;;
+    present)
+      if [[ " $* " == *" --format "* ]]; then printf '%s\\n' 'sha256:fixture'; else printf '%s\\n' '{}'; fi
+      exit 0
+      ;;
+  esac
+fi
+if [[ "\${1:-}" == "image" && "\${2:-}" == "rm" ]]; then
+  if [[ "$mode" == "missing" ]]; then
+    printf '%s\\n' 'Error response from daemon: No such image: candidate' >&2
+    exit 1
+  fi
+  if [[ "$mode" == "present" ]]; then
+    printf '%s\\n' 'Error response from daemon: image is in use' >&2
+    exit 1
+  fi
+fi
+exit 0
+`);
+  await chmod(dockerPath, 0o755);
+  try {
+    let result;
+    try {
+      result = await execFileAsync(
+        controllerPath,
+        ["release", leasePath],
+        {
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            DENSE_MEM_CI_HOME: ciHome,
+            DENSE_MEM_CI_REPOSITORY: "markhuangai/dense-mem",
+          },
+          maxBuffer: 1024 * 1024,
+        },
+      );
+    } catch (error) {
+      result = error;
+    }
+    return { code: result.code ?? 0, leaseExists: existsSync(leasePath) };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+test("release distinguishes absent images from Docker inspection failures", async () => {
+  const missing = await runReleaseWithFakeDocker("missing");
+  assert.equal(missing.code, 0);
+  assert.equal(missing.leaseExists, false);
+
+  const daemonFailure = await runReleaseWithFakeDocker("daemon");
+  assert.notEqual(daemonFailure.code, 0);
+  assert.equal(daemonFailure.leaseExists, true);
+
+  const stillPresent = await runReleaseWithFakeDocker("present");
+  assert.notEqual(stillPresent.code, 0);
+  assert.equal(stillPresent.leaseExists, true);
 });

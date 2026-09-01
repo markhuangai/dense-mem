@@ -77,6 +77,8 @@ async function handleRequest(request, response) {
       ? filterPrecheckContainerList(body)
       : path === "/containers/json"
         ? filterScenarioContainerList(body)
+      : /^\/containers\/[^/]+\/json$/.test(path)
+        ? sanitizeContainerInspect(body)
       : options.mode === "precheck" && path === "/networks"
         ? filterPrecheckNetworkList(body)
         : body;
@@ -181,10 +183,12 @@ async function authorizePrecheck(method, path, rawURL, requestBody) {
       hostConfig.IpcMode === "host" ||
       hostConfig.UTSMode === "host" ||
       hostConfig.UsernsMode === "host" ||
-      (Array.isArray(hostConfig.Binds) && hostConfig.Binds.length > 0) ||
-      (Array.isArray(hostConfig.Mounts) && hostConfig.Mounts.some((mount) => mount?.Type === "bind")) ||
-      (Array.isArray(payload.Mounts) && payload.Mounts.some((mount) => mount?.Type === "bind"))
-    ) deny("precheck containers cannot use host privileges or binds");
+      hasConfiguredEntries(hostConfig.Binds) ||
+      hasConfiguredEntries(hostConfig.Mounts) ||
+      hasConfiguredEntries(hostConfig.VolumesFrom) ||
+      hasConfiguredEntries(hostConfig.Tmpfs) ||
+      hasConfiguredEntries(payload.Mounts)
+    ) deny("precheck containers cannot use host privileges or mounts");
     assertSafePortBindings(hostConfig.PortBindings);
     if (typeof payload.Image !== "string" || payload.Image !== "pgvector/pgvector:0.8.2-pg18-trixie") {
       deny("precheck container image is not permitted");
@@ -262,6 +266,27 @@ function assertSafePortBindings(bindings) {
       if (hostIP && hostIP !== "127.0.0.1" && hostIP !== "::1") deny("precheck port bindings must stay on loopback");
       if (hostPort && !/^0$|^[1-9][0-9]{0,4}$/.test(hostPort)) deny("precheck port binding is invalid");
     }
+  }
+}
+
+function hasConfiguredEntries(value) {
+  if (value === undefined || value === null) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return String(value).length > 0;
+}
+
+function sanitizeContainerInspect(body) {
+  try {
+    const inspected = JSON.parse(body || "{}");
+    if (inspected && typeof inspected === "object" && inspected.Config && typeof inspected.Config === "object") {
+      delete inspected.Config.Env;
+    }
+    return JSON.stringify(inspected);
+  } catch {
+    const error = new Error("Docker container inspection response was invalid");
+    error.statusCode = 502;
+    throw error;
   }
 }
 

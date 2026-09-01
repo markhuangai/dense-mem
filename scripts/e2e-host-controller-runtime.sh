@@ -394,10 +394,24 @@ release() {
 
 remove_candidate_image() {
   local image="$1" digest="$2"
-  local image_id
-  image_id="$(docker image inspect "${image}@${digest}" --format '{{.Id}}' 2>/dev/null || true)"
+  local image_id image_inspect_error
+  if image_id="$(docker image inspect "${image}@${digest}" --format '{{.Id}}' 2>&1)"; then
+    :
+  else
+    image_inspect_error="$image_id"
+    case "$image_inspect_error" in
+      *"No such image"*|*"No such object"*) image_id="" ;;
+      *) return 1 ;;
+    esac
+  fi
   if ! docker image rm "${image}@${digest}" >/dev/null 2>&1; then
-    docker image inspect "${image}@${digest}" >/dev/null 2>&1 && return 1
+    if image_inspect_error="$(docker image inspect "${image}@${digest}" 2>&1 >/dev/null)"; then
+      return 1
+    fi
+    case "$image_inspect_error" in
+      *"No such image"*|*"No such object"*) ;;
+      *) return 1 ;;
+    esac
   fi
   if [[ -n "$image_id" ]]; then
     local tag current_id
@@ -408,7 +422,14 @@ remove_candidate_image() {
       docker image rm "$tag" >/dev/null 2>&1 || return 1
     done < <(docker image inspect "$image_id" --format '{{range .RepoTags}}{{println .}}{{end}}' 2>/dev/null || true)
   fi
-  ! docker image inspect "${image}@${digest}" >/dev/null 2>&1
+  if docker image inspect "${image}@${digest}" >/dev/null 2>&1; then
+    return 1
+  fi
+  image_inspect_error="$(docker image inspect "${image}@${digest}" 2>&1 >/dev/null || true)"
+  case "$image_inspect_error" in
+    *"No such image"*|*"No such object"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 stale_cleanup() {

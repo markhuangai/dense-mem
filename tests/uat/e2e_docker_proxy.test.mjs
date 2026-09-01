@@ -34,7 +34,11 @@ test("restricted Docker proxy permits scoped lifecycle and exec upgrade only", a
     const path = new URL(request.url || "/", "http://docker").pathname;
     if (path === "/v1.45/containers/demo/json") {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ Id: "demo", Config: { Labels: labels } }));
+      response.end(JSON.stringify({
+        Id: "demo",
+        Config: { Labels: labels, Env: ["CONTROL_PORTAL_TOKEN=top-secret", "PATH=/usr/bin"] },
+        Mounts: [{ Type: "volume", Name: "fixture", Destination: "/data" }],
+      }));
       return;
     }
     if (path === "/v1.45/containers/foreign/json") {
@@ -79,6 +83,12 @@ test("restricted Docker proxy permits scoped lifecycle and exec upgrade only", a
   });
   await waitForSocket(proxySocket);
 
+  const inspected = await requestProxy(proxySocket, "GET", "/v1.45/containers/demo/json");
+  assert.equal(inspected.status, 200);
+  assert.doesNotMatch(inspected.body, /top-secret/);
+  const inspectedPayload = JSON.parse(inspected.body);
+  assert.equal(inspectedPayload.Config.Env, undefined);
+  assert.deepEqual(inspectedPayload.Config.Labels, labels);
   assert.equal((await requestProxy(proxySocket, "GET", "/v1.45/containers/demo/logs")).status, 200);
   assert.equal((await requestProxy(proxySocket, "POST", "/v1.45/containers/demo/restart")).status, 204);
   assert.equal((await requestProxy(proxySocket, "POST", "/v1.45/containers/demo/exec", JSON.stringify({ Cmd: ["true"] }))).status, 201);
@@ -241,6 +251,21 @@ test("precheck proxy scopes resource creation and filters listings", async (t) =
     HostConfig: { Mounts: [{ Type: "bind", Source: "/etc", Target: "/host" }] },
   }));
   assert.equal(unsafeMount.status, 403);
+  const unsafeVolume = await requestProxy(proxySocket, "POST", "/v1.45/containers/create", JSON.stringify({
+    Image: "pgvector/pgvector:0.8.2-pg18-trixie", Labels: precheckLabels,
+    HostConfig: { Mounts: [{ Type: "volume", Source: "foreign", Target: "/host" }] },
+  }));
+  assert.equal(unsafeVolume.status, 403);
+  const unsafeInherited = await requestProxy(proxySocket, "POST", "/v1.45/containers/create", JSON.stringify({
+    Image: "pgvector/pgvector:0.8.2-pg18-trixie", Labels: precheckLabels,
+    HostConfig: { VolumesFrom: ["foreign"] },
+  }));
+  assert.equal(unsafeInherited.status, 403);
+  const unsafePayloadMount = await requestProxy(proxySocket, "POST", "/v1.45/containers/create", JSON.stringify({
+    Image: "pgvector/pgvector:0.8.2-pg18-trixie", Labels: precheckLabels,
+    Mounts: [{ Type: "bind", Source: "/etc", Target: "/host" }],
+  }));
+  assert.equal(unsafePayloadMount.status, 403);
 });
 
 async function requestProxy(socketPath, method, path, body = "") {
