@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { test } from "node:test";
+import { promisify } from "node:util";
 import policy from "../../.github/scripts/image-release-policy.cjs";
 
 const {
@@ -13,6 +18,8 @@ const {
   selectMergedPull,
   validateProductionImageReference,
 } = policy;
+const execFileAsync = promisify(execFile);
+const ociImageScript = fileURLToPath(new URL("../../.github/scripts/oci-image.sh", import.meta.url));
 
 const baseEvent = {
   action: "synchronize",
@@ -214,6 +221,94 @@ test("production image receipts require both platform production metadata", asyn
   assert.match(script, /org\.opencontainers\.image\.variant.*production/);
   assert.match(script, /production-receipt/);
   assert.doesNotMatch(dockerfile, /FROM runtime-base AS e2e/);
+});
+
+async function runProductionReceipt(platforms) {
+  const directory = await mkdtemp(join(tmpdir(), "dense-mem-production-receipt-"));
+  const fixturePath = join(directory, "fixture.json");
+  const regctlPath = join(directory, "regctl");
+  const digest = `sha256:${"a".repeat(64)}`;
+  const indexManifests = Object.keys(platforms).map((platform, index) => {
+    const [os, architecture] = platform.split("/");
+    return {
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      digest: `sha256:${String(index + 1).padStart(64, "0")}`,
+      platform: { os, architecture },
+    };
+  });
+  await writeFile(fixturePath, JSON.stringify({ digest, platforms }));
+  await writeFile(regctlPath, `#!/usr/bin/env node
+const fs = require("node:fs");
+const fixture = JSON.parse(fs.readFileSync(process.env.REGCTL_FIXTURE, "utf8"));
+const args = process.argv.slice(2);
+if (args[0] === "manifest" && args[1] === "head") {
+  process.stdout.write(fixture.digest + "\\n");
+  process.exit(0);
+}
+if (args[0] === "manifest" && args[1] === "get") {
+  process.stdout.write(JSON.stringify({
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    manifests: ${JSON.stringify(indexManifests)},
+  }));
+  process.exit(0);
+}
+if (args[0] === "image" && args[1] === "inspect") {
+  const platformIndex = args.indexOf("--platform");
+  const platform = platformIndex === -1 ? "" : args[platformIndex + 1];
+  const labels = fixture.platforms[platform];
+  if (!labels) process.exit(1);
+  process.stdout.write(JSON.stringify({ config: { Labels: labels } }));
+  process.exit(0);
+}
+process.exit(2);
+`);
+  await chmod(regctlPath, 0o755);
+  try {
+    return await execFileAsync(
+      ociImageScript,
+      ["production-receipt", "ghcr.io/markhuangai/dense-mem:v2.6.1", "markhuangai/dense-mem"],
+      {
+        env: { ...process.env, REGCTL_BIN: regctlPath, REGCTL_FIXTURE: fixturePath },
+        maxBuffer: 1024 * 1024,
+      },
+    );
+  } catch (error) {
+    return error;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+test("production image receipts execute both-platform metadata validation", async () => {
+  const revision = "b".repeat(40);
+  const valid = {
+    "linux/amd64": {
+      "org.opencontainers.image.variant": "production",
+      "org.opencontainers.image.source": "https://github.com/markhuangai/dense-mem",
+      "org.opencontainers.image.revision": revision,
+    },
+    "linux/arm64": {
+      "org.opencontainers.image.variant": "production",
+      "org.opencontainers.image.source": "https://github.com/markhuangai/dense-mem",
+      "org.opencontainers.image.revision": revision,
+    },
+  };
+  const success = await runProductionReceipt(valid);
+  assert.equal(success.code ?? 0, 0);
+  assert.match(success.stdout, new RegExp(`^sha256:[0-9a-f]{64}\\t${revision}\\n$`));
+
+  const cases = [
+    ["wrong variant", { ...valid, "linux/amd64": { ...valid["linux/amd64"], "org.opencontainers.image.variant": "development" } }],
+    ["missing variant", { ...valid, "linux/arm64": { ...valid["linux/arm64"], "org.opencontainers.image.variant": undefined } }],
+    ["wrong source", { ...valid, "linux/amd64": { ...valid["linux/amd64"], "org.opencontainers.image.source": "https://example.invalid/dense-mem" } }],
+    ["malformed revision", { ...valid, "linux/amd64": { ...valid["linux/amd64"], "org.opencontainers.image.revision": "not-a-revision" } }],
+    ["platform revision drift", { ...valid, "linux/arm64": { ...valid["linux/arm64"], "org.opencontainers.image.revision": "c".repeat(40) } }],
+    ["missing platform", { "linux/amd64": valid["linux/amd64"] }],
+  ];
+  for (const [label, platforms] of cases) {
+    const result = await runProductionReceipt(platforms);
+    assert.notEqual(result.code, 0, `${label} must be rejected`);
+  }
 });
 
 test("prerelease publication waits for the staging migration rehearsal", async () => {

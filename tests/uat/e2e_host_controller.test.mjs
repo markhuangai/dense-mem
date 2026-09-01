@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const controller = (
   await Promise.all([
@@ -33,6 +35,8 @@ test("controller exposes the versioned lifecycle and lease contract", () => {
   assert.match(controller, /redact_diagnostics/);
   assert.match(controller, /e2e-redact-diagnostics\.mjs/);
   assert.match(controller, /cleanup-run/);
+  assert.match(controller, /local-all RUN_ID ATTEMPT IMAGE_REF DIGEST SOURCE_REVISION SOURCE_DIR/);
+  assert.match(controller, /BASH_VERSINFO\[0\]/);
   assert.match(controller, /manifest\.image_digest/);
   assert.match(controller, /source_revision digest client_volume helpers/);
   assert.match(controller, /validate_runtime_manifest "\$manifest"/);
@@ -74,6 +78,9 @@ test("production scenarios preserve Playwright handoff values", () => {
   assert.match(scenarioScript, /parse_json_dream_statement/);
   assert.match(scenarioScript, /OAuth scenario result handoff is missing/);
   assert.match(scenarioScript, /--connect-timeout 5 --max-time 10/);
+  assert.match(scenarioWorkflow, /^      SCENARIO: \$\{\{ inputs\.scenario \}\}$/m);
+  assert.match(scenarioWorkflow, /scenario input must contain only lowercase letters, digits, and underscores/);
+  assert.doesNotMatch(scenarioWorkflow, /RUNNER_TEMP[^\n]*inputs\.scenario/);
 });
 
 test("host installer never creates or copies a credential file", () => {
@@ -134,4 +141,32 @@ test("diagnostic redaction protects secrets split across input chunks", async ()
     }, 10);
   });
   assert.equal(output, "prefix xx[REDACTED]yy suffix");
+});
+
+test("diagnostic redaction follows supported Compose env syntax and fails closed", async () => {
+  const { valuesFromEnvFile } = await import("../../scripts/e2e-redact-diagnostics.mjs");
+  const directory = await mkdtemp(join(tmpdir(), "dense-mem-redact-env-"));
+  const envFile = join(directory, ".env");
+  try {
+    await writeFile(envFile, [
+      "# ignored comment",
+      "export PLAIN=plain-secret # inline comment",
+      "DOUBLE=\"double\\\"quote\" # trailing comment",
+      "SINGLE='single # literal'",
+      "HASH=abc#def",
+    ].join("\n"));
+    assert.deepEqual(valuesFromEnvFile(envFile), [
+      "plain-secret",
+      'double"quote',
+      "single # literal",
+      "abc#def",
+    ]);
+
+    await writeFile(envFile, 'TOKEN="unterminated\n');
+    assert.throws(() => valuesFromEnvFile(envFile), /unsupported Compose env syntax/);
+    await writeFile(envFile, 'TOKEN="secret${OTHER}"\n');
+    assert.throws(() => valuesFromEnvFile(envFile), /variable interpolation is unsupported/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

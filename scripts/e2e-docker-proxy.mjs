@@ -182,6 +182,7 @@ async function authorizePrecheck(method, path, rawURL, requestBody) {
       hostConfig.UTSMode === "host" ||
       hostConfig.UsernsMode === "host" ||
       (Array.isArray(hostConfig.Binds) && hostConfig.Binds.length > 0) ||
+      (Array.isArray(hostConfig.Mounts) && hostConfig.Mounts.some((mount) => mount?.Type === "bind")) ||
       (Array.isArray(payload.Mounts) && payload.Mounts.some((mount) => mount?.Type === "bind"))
     ) deny("precheck containers cannot use host privileges or binds");
     assertSafePortBindings(hostConfig.PortBindings);

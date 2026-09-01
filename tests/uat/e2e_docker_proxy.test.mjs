@@ -236,6 +236,11 @@ test("precheck proxy scopes resource creation and filters listings", async (t) =
     Image: "pgvector/pgvector:0.8.2-pg18-trixie", Labels: precheckLabels, HostConfig: { Binds: ["/etc:/host"] },
   }));
   assert.equal(unsafe.status, 403);
+  const unsafeMount = await requestProxy(proxySocket, "POST", "/v1.45/containers/create", JSON.stringify({
+    Image: "pgvector/pgvector:0.8.2-pg18-trixie", Labels: precheckLabels,
+    HostConfig: { Mounts: [{ Type: "bind", Source: "/etc", Target: "/host" }] },
+  }));
+  assert.equal(unsafeMount.status, 403);
 });
 
 async function requestProxy(socketPath, method, path, body = "") {

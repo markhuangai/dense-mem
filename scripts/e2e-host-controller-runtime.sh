@@ -31,6 +31,8 @@ docker_cli_mount_args() {
 
 run_scenario() {
   local manifest="$1" source_dir="$2" scenario="$3"
+  local scenario_prev_traps
+  scenario_prev_traps="$(trap -p EXIT INT TERM)"
   [[ -f "$manifest" ]] || fail "missing runtime manifest: $manifest"
   [[ -d "$source_dir" && "$source_dir" == /* ]] || fail "scenario source directory must be an absolute directory"
   validate_runtime_manifest "$manifest"
@@ -260,6 +262,9 @@ NODE
   fi
   stop_scenario_proxy
   trap - EXIT INT TERM
+  if [[ -n "$scenario_prev_traps" ]]; then
+    eval "$scenario_prev_traps"
+  fi
   return "$scenario_status"
 }
 
@@ -391,7 +396,9 @@ remove_candidate_image() {
   local image="$1" digest="$2"
   local image_id
   image_id="$(docker image inspect "${image}@${digest}" --format '{{.Id}}' 2>/dev/null || true)"
-  docker image rm "${image}@${digest}" >/dev/null 2>&1 || return 1
+  if ! docker image rm "${image}@${digest}" >/dev/null 2>&1; then
+    docker image inspect "${image}@${digest}" >/dev/null 2>&1 && return 1
+  fi
   if [[ -n "$image_id" ]]; then
     local tag current_id
     while IFS= read -r tag; do
@@ -502,6 +509,9 @@ cleanup_run() {
 
 local_all() {
   local run_id="$1" attempt="$2" image_ref="$3" digest="$4" source_revision="$5" source_dir="$6"
+  if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 1) )); then
+    fail "local-all requires Bash 5.1 or newer"
+  fi
   validate_decimal "$run_id"
   validate_decimal "$attempt"
   validate_digest "$digest"
@@ -596,7 +606,11 @@ local_all() {
     done
     if wait -n -p finished_pid "${active_pids[@]}"; then finished_status=0; else finished_status=$?; fi
     local -a remaining_pids=()
-    for pid in "${active_pids[@]}"; do [[ "$pid" != "$finished_pid" ]] && remaining_pids+=("$pid"); done
+    for pid in "${active_pids[@]}"; do
+      if [[ "$pid" != "$finished_pid" ]]; then
+        remaining_pids+=("$pid")
+      fi
+    done
     active_pids=("${remaining_pids[@]}")
     if ((finished_status != 0)); then
       printf 'shared scenario %s failed; stopping remaining rows\n' "${pid_scenario[$finished_pid]-unknown}" >&2

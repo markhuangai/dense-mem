@@ -36,6 +36,7 @@ usage() {
     '  e2e-stack.sh stale-cleanup [MAX_AGE_SECONDS]' \
     '  e2e-stack.sh cleanup-run RUN_ID ATTEMPT' \
     '  e2e-stack.sh precheck RUN_ID ATTEMPT SOURCE_REVISION IMAGE_DIGEST SOURCE_DIR' \
+    '  e2e-stack.sh local-all RUN_ID ATTEMPT IMAGE_REF DIGEST SOURCE_REVISION SOURCE_DIR' \
     '  e2e-stack.sh validate MANIFEST' >&2
   exit 2
 }
@@ -166,6 +167,9 @@ cleanup_scenario_proxy_on_exit() {
   local status=$?
   trap - EXIT INT TERM
   stop_scenario_proxy
+  if [[ -n "${scenario_prev_traps:-}" ]]; then
+    eval "${scenario_prev_traps}"
+  fi
   exit "$status"
 }
 
@@ -366,6 +370,9 @@ precheck() {
     sleep 0.1
   done
   if [[ ! -S "$proxy_socket" ]]; then
+    if [[ -f "$proxy_log" ]]; then
+      redact_diagnostics "$ENV_FILE" < "$proxy_log" >&2 || true
+    fi
     fail "the precheck Docker proxy did not start"
   fi
 
@@ -703,7 +710,7 @@ fs.writeFileSync(path, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
 process.stdout.write(`${JSON.stringify(manifest)}\n`);
 NODE
   stack_started=0
-  trap - EXIT
+  trap - EXIT INT TERM
 }
 
 

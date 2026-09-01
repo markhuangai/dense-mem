@@ -9,20 +9,69 @@ const REDACTION = "[REDACTED]";
 function valuesFromEnvFile(path) {
   const values = [];
   const add = (value) => {
-    if (typeof value !== "string" || value.length < 4 || /[\r\n]/.test(value)) return;
+    if (typeof value !== "string" || value.length < 4) return;
+    if (/[\r\n]/.test(value)) throw new Error("multiline Compose env values are unsupported for diagnostics redaction");
     values.push(value);
   };
+  if (!path) return values;
+  let source;
   try {
-    for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
-      const match = line.match(/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/);
-      if (!match) continue;
-      let value = match[1].trim();
-      if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
-      add(value);
+    source = readFileSync(path, "utf8");
+  } catch {
+    throw new Error("unable to read the diagnostics redaction env file");
+  }
+  const unsupported = (lineNumber, reason) => {
+    throw new Error(`unsupported Compose env syntax at line ${lineNumber}: ${reason}`);
+  };
+  const parseValue = (raw, lineNumber) => {
+    const valueText = raw.trim();
+    if (valueText === "") return "";
+    if (valueText.startsWith("'")) {
+      const closing = valueText.indexOf("'", 1);
+      if (closing === -1) unsupported(lineNumber, "unterminated single-quoted value");
+      const suffix = valueText.slice(closing + 1).trim();
+      if (suffix && !suffix.startsWith("#")) unsupported(lineNumber, "unexpected text after quoted value");
+      return valueText.slice(1, closing);
     }
-  } catch {}
+    if (valueText.startsWith('"')) {
+      let value = "";
+      let closing = -1;
+      for (let index = 1; index < valueText.length; index += 1) {
+        const character = valueText[index];
+        if (character === '"') {
+          closing = index;
+          break;
+        }
+        if (character === "\\") {
+          const escaped = valueText[++index];
+          const escapes = { n: "\n", r: "\r", t: "\t", "\\": "\\", '"': '"' };
+          if (escaped === undefined || !Object.hasOwn(escapes, escaped)) {
+            unsupported(lineNumber, "unsupported double-quote escape");
+          }
+          value += escapes[escaped];
+        } else {
+          value += character;
+        }
+      }
+      if (closing === -1) unsupported(lineNumber, "unterminated double-quoted value");
+      const suffix = valueText.slice(closing + 1).trim();
+      if (suffix && !suffix.startsWith("#")) unsupported(lineNumber, "unexpected text after quoted value");
+      if (value.includes("$")) unsupported(lineNumber, "variable interpolation is unsupported");
+      return value;
+    }
+    const comment = valueText.search(/[\t ]#/);
+    const value = (comment === -1 ? valueText : valueText.slice(0, comment)).trimEnd();
+    if (value.includes("$")) unsupported(lineNumber, "variable interpolation is unsupported");
+    return value;
+  };
+  for (const [index, sourceLine] of source.split(/\r?\n/).entries()) {
+    const lineNumber = index + 1;
+    const line = lineNumber === 1 ? sourceLine.replace(/^\uFEFF/, "") : sourceLine;
+    if (/^\s*$/.test(line) || /^\s*#/.test(line)) continue;
+    const match = line.match(/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/);
+    if (!match) unsupported(lineNumber, "expected KEY=VALUE assignment");
+    add(parseValue(match[1], lineNumber));
+  }
   return values;
 }
 

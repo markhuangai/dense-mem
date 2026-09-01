@@ -161,8 +161,10 @@ check_dns() {
 assert_container_labels() {
   local project="$1" run_id="$2"
   local container labels
+  local inspected=0
   while IFS= read -r container; do
     [[ -n "$container" ]] || continue
+    inspected=$((inspected + 1))
     labels="$(docker inspect --format '{{json .Config.Labels}}' "$container")"
     node - "$labels" "$project" "$run_id" "$digest" <<'NODE'
 const [raw, project, runId, digest] = process.argv.slice(2);
@@ -180,6 +182,7 @@ for (const [key, value] of Object.entries({
 if (typeof labels["io.dense-mem.ci.created-at"] !== "string" || labels["io.dense-mem.ci.created-at"].length === 0) process.exit(1);
 NODE
   done < <(docker ps -q --filter "label=com.docker.compose.project=${project}")
+  ((inspected > 0)) || fail "no containers were inspected for $project"
 }
 
 source_revision="$(git -C "$ROOT_DIR" rev-parse HEAD)"

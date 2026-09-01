@@ -15,12 +15,38 @@ import {
 const registry = readRegistry();
 
 function workflowJob(workflow, name) {
-  const marker = `  ${name}:`;
-  const start = workflow.indexOf(marker);
-  assert.notEqual(start, -1, `workflow job ${name} is missing`);
-  const remainder = workflow.slice(start + marker.length);
+  const marker = new RegExp(`^  ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:\\n`, "m");
+  const match = workflow.match(marker);
+  assert.ok(match, `workflow job ${name} is missing`);
+  const start = match.index + match[0].length;
+  const remainder = workflow.slice(start);
   const nextJob = remainder.search(/\n  [a-z0-9-]+:\n/);
   return nextJob === -1 ? remainder : remainder.slice(0, nextJob);
+}
+
+function assertWorkflowOrchestration(workflow) {
+  const exclusive = workflowJob(workflow, "exclusive");
+  const sharedStart = workflowJob(workflow, "shared-start");
+  const shared = workflowJob(workflow, "shared");
+  const sharedStop = workflowJob(workflow, "shared-stop");
+  const release = workflowJob(workflow, "release");
+  const cleanup = workflowJob(workflow, "cleanup-run");
+  const report = workflowJob(workflow, "report");
+
+  assert.match(exclusive, /^    needs: \[authorize, acquire\]$/m);
+  assert.match(exclusive, /^    strategy:\n      fail-fast: true\n      max-parallel: 1$/m);
+  assert.match(sharedStart, /^    needs: \[authorize, acquire, exclusive\]$/m);
+  assert.match(sharedStart, /^    if: needs\.exclusive\.result == 'success'$/m);
+  assert.match(shared, /^    needs: \[authorize, acquire, shared-start\]$/m);
+  assert.match(shared, /^    strategy:\n      fail-fast: true\n      max-parallel: 4$/m);
+  assert.match(sharedStop, /^    needs: \[shared-start, shared\]$/m);
+  assert.match(sharedStop, /^    if: always\(\) && needs\.shared-start\.result == 'success'$/m);
+  assert.match(release, /^    needs: \[authorize, acquire, exclusive, shared-start, shared, shared-stop\]$/m);
+  assert.match(release, /^    if: always\(\) && needs\.acquire\.result == 'success' && needs\.acquire\.outputs\.lease != ''$/m);
+  assert.match(cleanup, /^    needs: \[authorize, prechecks, stale-cleanup, acquire, exclusive, shared-start, shared, shared-stop, release\]$/m);
+  assert.match(cleanup, /^    if: always\(\)$/m);
+  assert.match(report, /^    needs: \[authorize, prechecks, stale-cleanup, acquire, exclusive, shared-start, shared, shared-stop, release, cleanup-run\]$/m);
+  assert.match(report, /^    if: always\(\)$/m);
 }
 
 test("production E2E registry is complete and valid", () => {
@@ -92,29 +118,17 @@ test("production E2E jobs use the runner that matches their capability", async (
   ]);
   const controller = [controllerMain, controllerStack, controllerRuntime].join("\n");
   for (const job of ["authorize:", "report:"]) {
-    const start = workflow.indexOf(`  ${job}`);
-    assert.notEqual(start, -1);
-    const remainder = workflow.slice(start + job.length);
-    const nextJob = remainder.search(/\n  [a-z0-9-]+:\n/);
-    const block = nextJob === -1 ? remainder : remainder.slice(0, nextJob);
-    assert.match(block, /runs-on: docker-runner/);
+    assert.match(workflowJob(workflow, job.slice(0, -1)), /^    runs-on: docker-runner$/m);
   }
   for (const job of ["prechecks:", "acquire:", "shared-start:", "shared-stop:", "release:"]) {
-    const start = workflow.indexOf(`  ${job}`);
-    assert.notEqual(start, -1);
-    const remainder = workflow.slice(start + job.length);
-    const nextJob = remainder.search(/\n  [a-z0-9-]+:\n/);
-    const block = nextJob === -1 ? remainder : remainder.slice(0, nextJob);
-    assert.match(block, /runs-on:\s*(?:rootless-docker|\[rootless-docker(?:,|\]))/);
+    assert.match(workflowJob(workflow, job.slice(0, -1)), /^    runs-on: rootless-docker$/m);
   }
-  assert.match(reusable, /runs-on:\s*(?:rootless-docker|\[rootless-docker(?:,|\]))/);
-  assert.match(workflow, /max-parallel: 4/);
-  assert.match(workflowJob(workflow, "exclusive"), /max-parallel: 1/);
-  assert.match(workflowJob(workflow, "shared"), /max-parallel: 4/);
-  assert.match(workflowJob(workflow, "stale-cleanup"), /if: needs\.authorize\.outputs\.authorized == 'true'/);
-  assert.match(workflowJob(workflow, "shared-start"), /runs-on: rootless-docker/);
-  assert.match(workflowJob(workflow, "shared-stop"), /runs-on: rootless-docker/);
-  assert.match(reusable, /runs-on: rootless-docker/);
+  assert.match(reusable, /^    runs-on: rootless-docker$/m);
+  assert.doesNotMatch(workflow, /rootless-docker-shared/);
+  assert.doesNotMatch(reusable, /rootless-docker-shared/);
+  assert.match(workflow, /^      max-parallel: 4$/m);
+  assert.match(workflowJob(workflow, "stale-cleanup"), /^    if: needs\.authorize\.outputs\.authorized == 'true'$/m);
+  assertWorkflowOrchestration(workflow);
   assert.match(workflow, /SHARED_STOP_RESULT/);
   assert.match(workflow, /passed \(cleanup failed\)/);
   assert.match(workflow, /e2e_host_controller_real\.sh/);
@@ -127,4 +141,15 @@ test("production E2E jobs use the runner that matches their capability", async (
   assert.match(controller, /run --rm/);
   assert.doesNotMatch(compose, /^\s+ports:/m);
   assert.doesNotMatch(workflow, /runs-on:\s*\[pc|runs-on:.*docker-runner.*e2e/i);
+});
+
+test("production E2E orchestration assertions reject a missing matrix dependency", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
+  assert.doesNotThrow(() => assertWorkflowOrchestration(workflow));
+  const mutated = workflow.replace(
+    /^    needs: \[authorize, acquire, shared-start\]$/m,
+    "    needs: [authorize, acquire]",
+  );
+  assert.notEqual(mutated, workflow);
+  assert.throws(() => assertWorkflowOrchestration(mutated));
 });

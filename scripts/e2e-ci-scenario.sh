@@ -37,7 +37,7 @@ wait_for_url() {
 }
 
 wait_for_url "Dense-Mem readiness" "${DENSE_MEM_USER_URL%/}/ready"
-curl -fsS -H "Authorization: Bearer ${DENSE_MEM_CONTROL_TOKEN}" \
+curl --connect-timeout 5 --max-time 10 -fsS -H "Authorization: Bearer ${DENSE_MEM_CONTROL_TOKEN}" \
   "${DENSE_MEM_CONTROL_URL%/}/control/api/session" >/dev/null || fail "control portal is not ready"
 if [[ -n "${DENSE_MEM_E2E_OAUTH_FIXTURE_TOKEN:-}" ]]; then
   wait_for_url "OAuth provider mock" "${DENSE_MEM_E2E_OAUTH_MOCK_URL%/}/health" "${NODE_EXTRA_CA_CERTS:-}"
