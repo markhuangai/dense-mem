@@ -151,6 +151,9 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	} else if lookupErr != nil && !errors.Is(lookupErr, repository.ErrRememberAttemptNotFound) {
 		return fail(lookupErr, "commit")
 	}
+	if input.SecurityRejected {
+		return fail(rememberapp.ErrRememberPolicyRejected, "assessment")
+	}
 	prepared, err := memoryservice.AssessSynchronousRemember(ctx, memoryservice.SynchronousAssessmentDependencies{
 		Catalog: p.catalog, Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
 	}, memoryservice.SynchronousAssessmentInput{Scope: scope, Snapshot: snapshot})

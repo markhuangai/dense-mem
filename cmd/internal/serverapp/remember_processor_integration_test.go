@@ -81,6 +81,74 @@ func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres(t *testing.T) {
 	}
 }
 
+func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupRememberProcessorIntegrationDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	teamName := "remember migrated conflict " + uuid.NewString()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO teams (id, name, description, metadata, config)
+			VALUES (?::uuid, ?, '', '{}'::jsonb, '{}'::jsonb)
+		`, teamID, teamName).Error
+	}))
+	credential := &domain.Credential{
+		ID: ownerID, TeamID: teamID, Name: "remember migrated conflict owner",
+		KeyHash: "remember-migrated-conflict-hash", KeyPrefix: strings.ReplaceAll(teamID.String(), "-", "")[:24],
+		KeySuffix: "owner", Scopes: []string{"read", "write"},
+	}
+	require.NoError(t, repository.NewCredentialRepository(adminDB, rls).CreateCredential(ctx, credential))
+
+	ledger := repository.NewLedgerRepository(appDB, rls)
+	evidence := []rememberapp.RememberEvidenceInput{{Content: "A migrated Remember attempt."}}
+	key := "migrated-conflict-" + uuid.NewString()
+	requestHash, err := rememberapp.CanonicalRequestBodyHash(evidence, nil, nil)
+	require.NoError(t, err)
+	attemptID := uuid.New()
+	require.NoError(t, ledger.RecordRememberAttempt(ctx, repository.RememberAttemptRecordInput{
+		TeamID: teamID.String(), OwnerProfileID: ownerID.String(), AttemptID: attemptID.String(),
+		IdempotencyKey: key, RequestHash: requestHash, ContractVersion: "remember_request_hash_v1",
+		SubmissionKind: "remember", Outcome: "completed", PublicResult: map[string]any{
+			"contract_version": "dense-mem.v2.6.1", "submission_id": attemptID.String(),
+			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
+			"correlation_id": attemptID.String(), "evidence": []any{map[string]any{
+				"disposition": "stored", "evidence_id": uuid.NewString(), "evidence_index": 0,
+				"superseded_evidence_ids": []any{}, "search_state": "current",
+			}}, "relationship_results": []any{}, "errors": []any{},
+		},
+	}))
+
+	processor := newRememberSynchronousProcessor(
+		ledger, nil, nil, nil, assessor.DefaultSemanticAssessmentLimits(),
+		observability.NoopDiscoverabilityMetrics(), nil,
+	)
+	service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: processor})
+	actorCtx := requestctx.WithActor(ctx, requestctx.Actor{
+		TeamID: teamID, OwnerID: ownerID, Role: "member", AuthMethod: "api_key",
+		Grants: []string{"read", "write"},
+	})
+
+	result, err := service.Remember(actorCtx, rememberapp.RememberRequest{Evidence: evidence, IdempotencyKey: key})
+	require.Nil(t, result)
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberConflict)
+	require.Equal(t, string(rememberapp.SubmissionErrorIdempotencyConflict), processErr.Status.Errors[0].Code)
+	require.Equal(t, "failed", processErr.Status.ProcessingState)
+
+	var totalCount int
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*) FROM remember_attempts
+			WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
+		`, teamID, ownerID, key).Scan(&totalCount).Error
+	}))
+	require.Equal(t, 1, totalCount)
+}
+
 func insertHistoricalRememberOutcome(
 	t *testing.T,
 	ctx context.Context,

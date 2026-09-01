@@ -323,6 +323,23 @@ func TestRememberProcessorWaiterRejectsRequestHashMismatch(t *testing.T) {
 	require.Equal(t, processErr.Status, status)
 }
 
+func TestRememberProcessorRejectsScannerFailureBeforeAssessor(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	input := rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "scanner-rejected", RequestHash: "request-hash",
+		Evidence: []rememberapp.EvidenceInput{{Content: "unsafe"}}, SecurityRejected: true,
+	}
+
+	_, err := processor.ProcessRemember(context.Background(), input)
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberPolicyRejected)
+	require.Equal(t, string(rememberapp.SubmissionErrorPolicyRejected), processErr.Status.Errors[0].Code)
+	require.Equal(t, "assessment", ledger.failure.Attempt.FailedPhase)
+	require.False(t, ledger.failure.Attempt.Retryable)
+}
+
 func TestRememberProcessorFailureProjectsEverySubmittedItem(t *testing.T) {
 	ledger := &rememberFailureLedgerStub{}
 	processor := &rememberSynchronousProcessor{ledger: ledger}
