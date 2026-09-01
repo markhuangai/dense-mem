@@ -68,6 +68,17 @@ test("controller rejects broad projects, host ports, and weak environment files"
   assert.doesNotMatch(compose, /^\s+ports:/m);
 });
 
+test("database helpers receive only their required credentials", () => {
+  const postgres = compose.slice(compose.indexOf("  postgres:"), compose.indexOf("\n  redis:"));
+  const redis = compose.slice(compose.indexOf("  redis:"), compose.indexOf("\n  server:"));
+  assert.doesNotMatch(postgres, /env_file:/);
+  assert.match(postgres, /POSTGRES_USER:/);
+  assert.match(postgres, /POSTGRES_PASSWORD:/);
+  assert.match(postgres, /POSTGRES_DB:/);
+  assert.doesNotMatch(redis, /env_file:/);
+  assert.match(redis, /REDIS_PASSWORD:/);
+});
+
 test("runtime adapter uses stable service DNS and rejects inspected IPs", () => {
   assert.match(adapter, /http:\/\/server:8080/);
   assert.match(adapter, /http:\/\/server:8090/);
