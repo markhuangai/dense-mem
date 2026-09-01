@@ -255,6 +255,43 @@ func TestResolveFeedbackReplaysPreUpgradeSubmittedRememberWithoutCallingRemember
 	require.Empty(t, repo.submitInput)
 }
 
+func TestResolveFeedbackReplaysV261SubmittedRememberWithoutCallingRemember(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	hypothesisID := uuid.NewString()
+	ingestID := uuid.NewString()
+	record := repository.HypothesisRecord{
+		TeamID:                        teamID.String(),
+		HypothesisID:                  hypothesisID,
+		CreatedByProfileID:            ownerID.String(),
+		Status:                        string(domain.DreamStatusSubmitted),
+		Statement:                     "Dense-Mem may use PostgreSQL.",
+		InvalidatedReason:             "v2.6.1 confirmation reason",
+		SubmittedIngestID:             ingestID,
+		SubmittedIngestIdempotencyKey: "v261-dream-replay",
+		SubmittedDecision:             "confirm_true",
+	}
+	request := ResolveFeedbackRequest{
+		DreamID: hypothesisID, Decision: "confirm_true", Feedback: record.InvalidatedReason,
+		IdempotencyKey: record.SubmittedIngestIdempotencyKey,
+		Evidence:       []rememberapp.RememberEvidenceInput{{Content: "Independent v2.6.1 deployment evidence."}},
+	}
+	evidence, err := dreamSubmissionEvidence(request, &record)
+	require.NoError(t, err)
+	record.SubmittedIngestRequestHash, err = rememberapp.CanonicalLegacyRequestBodyHash(evidence, request.EntityHints, request.RelationshipHints)
+	require.NoError(t, err)
+	repo := &dreamRepositoryStub{getRecord: record}
+	remember := &rememberServiceStub{err: errors.New("v2.6.1 replay must not call Remember")}
+	svc := New(Dependencies{Store: repo, Remember: remember})
+
+	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", request)
+	require.NoError(t, err)
+	require.Equal(t, domain.DreamStatusSubmitted, result.Dream.Status)
+	require.Equal(t, ingestID, result.Memory.IngestID)
+	require.Empty(t, remember.requests)
+	require.Empty(t, repo.submitInput)
+}
+
 func TestResolveFeedbackRejectsConflictingSubmittedConfirmationBeforeRemember(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()

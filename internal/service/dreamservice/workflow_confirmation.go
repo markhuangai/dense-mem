@@ -288,6 +288,13 @@ func dreamSubmittedConfirmationReplay(
 	if strings.TrimSpace(record.SubmittedIngestRequestHash) == requestHash {
 		return true, nil
 	}
+	legacyHash, err := rememberapp.CanonicalLegacyRequestBodyHash(evidence, req.EntityHints, req.RelationshipHints)
+	if err != nil {
+		return false, fmt.Errorf("resolve dream feedback: legacy replay request hash: %w", err)
+	}
+	if strings.TrimSpace(record.SubmittedIngestRequestHash) == legacyHash {
+		return true, nil
+	}
 	for _, statusBefore := range domain.HypothesisStatuses() {
 		legacyEvidence, err := dreamSubmissionEvidenceWithStatus(req, record, statusBefore, true)
 		if err != nil {
