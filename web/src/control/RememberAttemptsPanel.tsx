@@ -11,7 +11,7 @@ import {
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
 
-const OUTCOMES = ["", "completed", "rejected", "quarantined", "failed", "replayed"] as const;
+const OUTCOMES = ["", "completed", "failed"] as const;
 const PAGE_SIZE = 50;
 
 export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Team }) {
@@ -45,7 +45,7 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
     try {
       const page = await api.listRememberAttemptDiagnostics({
         team_id: team.id,
-        outcome: nextOutcome as "" | "completed" | "rejected" | "quarantined" | "failed" | "replayed",
+        outcome: nextOutcome as "" | "completed" | "failed",
         limit: PAGE_SIZE,
         offset: nextOffset,
       });
@@ -287,8 +287,6 @@ function attemptOutcomeClass(outcome: string): string {
   switch (outcome) {
     case "completed": return "status-pill success";
     case "failed": return "status-pill error";
-    case "rejected":
-    case "quarantined": return "status-pill warning";
     default: return "status-pill";
   }
 }

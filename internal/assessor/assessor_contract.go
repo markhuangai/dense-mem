@@ -7,25 +7,39 @@ import "github.com/markhuangai/dense-mem/internal/domain"
 // intentionally validated after decoding against the frozen request.
 func SemanticAssessmentResponseSchema() map[string]any {
 	return closedObject(
-		[]string{"request_id", "security_signals", "security_results", "entity_results", "relationship_results"},
+		[]string{"request_id", "evidence_security_results", "entity_results", "relationship_results"},
 		map[string]any{
-			"request_id":           stringSchema(1, 128),
-			"security_signals":     semanticAssessmentSecuritySignalSchema(),
-			"security_results":     semanticAssessmentSecurityResultSchema(),
-			"entity_results":       semanticAssessmentEntityResultSchema(),
-			"relationship_results": semanticAssessmentRelationshipResultSchema(),
+			"request_id":                stringSchema(1, 128),
+			"evidence_security_results": semanticAssessmentEvidenceSecurityResultSchema(),
+			"entity_results":            semanticAssessmentEntityResultSchema(),
+			"relationship_results":      semanticAssessmentRelationshipResultSchema(),
 		},
 	)
 }
 
-func semanticAssessmentSecurityResultSchema() map[string]any {
+func semanticAssessmentEvidenceSecurityResultSchema() map[string]any {
 	return map[string]any{
 		"type": "array", "maxItems": SemanticAssessmentMaxEvidenceSpans,
 		"items": closedObject(
-			[]string{"evidence_id", "decision"},
+			[]string{"evidence_id", "decision", "signals"},
 			map[string]any{
 				"evidence_id": stringSchema(1, 128),
-				"decision":    enumSchema([]string{"pass", "quarantine"}),
+				"decision":    enumSchema([]string{"pass", "reject"}),
+				"signals":     semanticAssessmentEvidenceSecuritySignalsSchema(),
+			},
+		),
+	}
+}
+
+func semanticAssessmentEvidenceSecuritySignalsSchema() map[string]any {
+	return map[string]any{
+		"type": "array", "maxItems": 64,
+		"items": closedObject(
+			[]string{"kind", "start_ref", "end_ref"},
+			map[string]any{
+				"kind":      enumSchema(semanticSecurityKinds()),
+				"start_ref": stringSchema(1, 128),
+				"end_ref":   stringSchema(1, 128),
 			},
 		),
 	}
@@ -134,21 +148,6 @@ func semanticAssessmentGroundedRangeSchema() map[string]any {
 			"end_ref":     stringSchema(1, 128),
 		},
 	)
-}
-
-func semanticAssessmentSecuritySignalSchema() map[string]any {
-	return map[string]any{
-		"type": "array", "maxItems": 64,
-		"items": closedObject(
-			[]string{"evidence_id", "kind", "start_ref", "end_ref"},
-			map[string]any{
-				"evidence_id": stringSchema(1, 128),
-				"kind":        enumSchema(semanticSecurityKinds()),
-				"start_ref":   stringSchema(1, 128),
-				"end_ref":     stringSchema(1, 128),
-			},
-		),
-	}
 }
 
 func nullableIntegerSchema(minimum int) map[string]any {

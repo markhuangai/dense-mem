@@ -356,7 +356,7 @@ func applyDreamTerminalRetryGuidance(result *rememberapp.RememberResult, dreamID
 		retryKey = "dream-feedback:" + dreamID + ":" + decision + ":retry"
 	}
 	for index := range result.Terminal.Errors {
-		if result.Terminal.Errors[index].NextAction != string(rememberapp.TerminalNextActionResubmitRemember) {
+		if !result.Terminal.Errors[index].Retryable || result.Terminal.Errors[index].NextAction != string(rememberapp.TerminalNextActionResubmitRemember) {
 			continue
 		}
 		result.Terminal.Errors[index].NextAction = string(rememberapp.TerminalNextActionRetryDreamFeedback)
@@ -378,9 +378,7 @@ func dreamRememberCompletion(result *rememberapp.RememberResult) (bool, string, 
 			return false, "", errors.New("resolve dream feedback: completed Remember result has no canonical ingest")
 		}
 		return true, ingestID, nil
-	case string(rememberapp.TerminalProcessingRejected),
-		string(rememberapp.TerminalProcessingQuarantined),
-		string(rememberapp.TerminalProcessingFailed):
+	case string(rememberapp.TerminalProcessingFailed):
 		return false, "", nil
 	default:
 		return false, "", errors.New("resolve dream feedback: terminal Remember result has an unsupported processing state")

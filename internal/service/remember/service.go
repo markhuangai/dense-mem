@@ -4,10 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,12 +18,13 @@ import (
 )
 
 const (
-	requestHashContractVersion = "dense-mem.v2.6.1"
+	requestHashContractVersion = "dense-mem.v2.6.2"
 )
 
 var (
 	ErrRememberAuthContext             = errors.New("remember: authenticated actor context is required")
 	ErrRememberConflict                = errors.New("remember: conflict")
+	ErrRememberPolicyRejected          = errors.New("remember: submission rejected by semantic policy")
 	ErrRememberStaleInput              = errors.New("remember: stale input")
 	ErrRememberPersistence             = errors.New("remember: persistence failed")
 	ErrRememberProcessor               = errors.New("remember: synchronous processor is unavailable")
@@ -38,6 +37,12 @@ var (
 	ErrRememberDatabaseFailure         = errors.New("remember: database failure")
 	ErrRememberRequestTimeout          = errors.New("remember: request timeout")
 	ErrRememberRequestCancelled        = errors.New("remember: request cancelled")
+)
+
+const (
+	maxRememberEvidenceItems = 20
+	maxRememberEvidenceRunes = 999
+	maxRememberRelationships = 200
 )
 
 // Service is the public application boundary for synchronous Remember.
@@ -180,11 +185,19 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if len(req.Evidence) == 0 {
 		return nil, errors.New("remember: evidence is required")
 	}
+	if len(req.Evidence) > maxRememberEvidenceItems {
+		return nil, fmt.Errorf("remember: evidence must contain at most %d entries", maxRememberEvidenceItems)
+	}
+	if len(req.RelationshipHints) > maxRememberRelationships {
+		return nil, fmt.Errorf("remember: relationships must contain at most %d entries", maxRememberRelationships)
+	}
+	for index, evidence := range req.Evidence {
+		if len([]rune(evidence.Content)) == 0 || len([]rune(evidence.Content)) > maxRememberEvidenceRunes {
+			return nil, fmt.Errorf("remember: evidence[%d].content must contain between 1 and %d characters", index, maxRememberEvidenceRunes)
+		}
+	}
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return nil, errors.New("remember: idempotency_key is required")
-	}
-	if err := validateRememberRelationshipCoverage(len(req.Evidence), req.RelationshipHints); err != nil {
-		return nil, err
 	}
 	contents := make([]string, 0, len(req.Evidence))
 	for _, evidence := range req.Evidence {
@@ -327,89 +340,6 @@ func rememberSpace(actor requestctx.Actor) domain.MemorySpaceAccess {
 		return space
 	}
 	return shared
-}
-
-func validateRememberRelationshipCoverage(evidenceCount int, relationships []map[string]any) error {
-	covered := make([]bool, evidenceCount)
-	for _, relationship := range relationships {
-		for _, rawIndex := range rememberArrayValues(relationship["evidence_indices"]) {
-			index, ok := rememberEvidenceIndex(rawIndex)
-			if ok && index >= 0 && index < len(covered) {
-				covered[index] = true
-			}
-		}
-	}
-	missing := make([]int, 0)
-	for index, present := range covered {
-		if !present {
-			missing = append(missing, index)
-		}
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("remember: relationship evidence_indices must cover every evidence item; missing evidence indexes: %v", missing)
-	}
-	return nil
-}
-
-func rememberArrayValues(raw any) []any {
-	switch values := raw.(type) {
-	case []any:
-		return values
-	case []map[string]any:
-		out := make([]any, 0, len(values))
-		for _, value := range values {
-			out = append(out, value)
-		}
-		return out
-	case []string:
-		out := make([]any, 0, len(values))
-		for _, value := range values {
-			out = append(out, value)
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-func rememberEvidenceIndex(raw any) (int, bool) {
-	switch value := raw.(type) {
-	case int:
-		return value, true
-	case int8:
-		return int(value), true
-	case int16:
-		return int(value), true
-	case int32:
-		return int(value), true
-	case int64:
-		return int(value), true
-	case uint:
-		return int(value), true
-	case uint8:
-		return int(value), true
-	case uint16:
-		return int(value), true
-	case uint32:
-		return int(value), true
-	case uint64:
-		return int(value), true
-	case float64:
-		if value == float64(int(value)) {
-			return int(value), true
-		}
-	case float32:
-		if value == float32(int(value)) {
-			return int(value), true
-		}
-	case json.Number:
-		index, err := strconv.Atoi(string(value))
-		return index, err == nil
-	case string:
-		index, err := strconv.Atoi(strings.TrimSpace(value))
-		return index, err == nil
-	}
-	return 0, false
 }
 
 func sourceRevisionContentHashes(evidence []RememberEvidenceInput) map[string]string {

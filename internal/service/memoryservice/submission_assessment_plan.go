@@ -97,7 +97,6 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 	if len(rawRelationships) > assessor.SemanticAssessmentMaxRelationshipResults {
 		return submissionAssessmentPlan{}, errors.New("submission assessment relationships exceed the configured bound")
 	}
-	coveredEvidence := make(map[string]struct{}, len(items))
 	for index, raw := range rawRelationships {
 		target, entities, err := submissionAssessmentRelationshipTargetFromProposal(raw, index, plan.itemsByEvidenceID)
 		if err != nil {
@@ -105,9 +104,6 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 		}
 		if _, exists := plan.relationshipsByRef[target.Target.ProposalID]; exists {
 			return submissionAssessmentPlan{}, errors.New("submission assessment relationship ref is duplicated")
-		}
-		for _, evidenceID := range target.Target.EvidenceIDs {
-			coveredEvidence[evidenceID] = struct{}{}
 		}
 		for _, entity := range entities {
 			if _, exists := plan.entityTargetsByRef[entity.Target.Ref]; exists {
@@ -125,9 +121,6 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 	if len(plan.EntityTargets) > assessor.SemanticAssessmentMaxEntityResults {
 		return submissionAssessmentPlan{}, errors.New("submission assessment entity targets must be present and bounded")
 	}
-	if len(plan.RelationshipTargets) > 0 && len(coveredEvidence) != len(items) {
-		return submissionAssessmentPlan{}, errors.New("submission assessment relationships must cover every staged evidence item")
-	}
 	sort.Slice(plan.EntityTargets, func(i, j int) bool {
 		return plan.EntityTargets[i].Target.Ref < plan.EntityTargets[j].Target.Ref
 	})
@@ -144,7 +137,7 @@ func submissionAssessmentEvidenceID(index int) string {
 func submissionAssessmentObjectArray(raw map[string]any, keys ...string) ([]map[string]any, error) {
 	for _, key := range keys {
 		value, exists := raw[key]
-		if !exists {
+		if !exists || value == nil {
 			continue
 		}
 		switch typed := value.(type) {

@@ -87,10 +87,8 @@ type TerminalEvidenceResult struct {
 type TerminalProcessingState string
 
 const (
-	TerminalProcessingCompleted   TerminalProcessingState = "completed"
-	TerminalProcessingRejected    TerminalProcessingState = "rejected"
-	TerminalProcessingQuarantined TerminalProcessingState = "quarantined"
-	TerminalProcessingFailed      TerminalProcessingState = "failed"
+	TerminalProcessingCompleted TerminalProcessingState = "completed"
+	TerminalProcessingFailed    TerminalProcessingState = "failed"
 )
 
 type TerminalSearchState string
@@ -103,7 +101,7 @@ const (
 type TerminalErrorCode string
 
 const (
-	TerminalErrorNoSupportedMemory        TerminalErrorCode = "no_supported_memory"
+	TerminalErrorPolicyRejected           TerminalErrorCode = "submission_policy_rejected"
 	TerminalErrorStaleInput               TerminalErrorCode = "stale_input"
 	TerminalErrorProviderUnavailable      TerminalErrorCode = "provider_unavailable"
 	TerminalErrorProviderResponseInvalid  TerminalErrorCode = "provider_response_invalid"
@@ -117,11 +115,10 @@ const (
 	TerminalErrorRequestTimeout           TerminalErrorCode = "request_timeout"
 	TerminalErrorRequestCancelled         TerminalErrorCode = "request_cancelled"
 	TerminalErrorInternalFailure          TerminalErrorCode = "internal_failure"
-	TerminalErrorQuarantined              TerminalErrorCode = "submission_quarantined"
 )
 
 var terminalErrorCodes = []TerminalErrorCode{
-	TerminalErrorNoSupportedMemory,
+	TerminalErrorPolicyRejected,
 	TerminalErrorStaleInput,
 	TerminalErrorProviderUnavailable,
 	TerminalErrorProviderResponseInvalid,
@@ -135,7 +132,6 @@ var terminalErrorCodes = []TerminalErrorCode{
 	TerminalErrorRequestTimeout,
 	TerminalErrorRequestCancelled,
 	TerminalErrorInternalFailure,
-	TerminalErrorQuarantined,
 }
 
 const (
@@ -286,11 +282,9 @@ func terminalErrorGuidance(code TerminalErrorCode) (bool, TerminalNextAction) {
 		TerminalErrorRequestTimeout, TerminalErrorRequestCancelled,
 		TerminalErrorInternalFailure:
 		return true, TerminalNextActionRetrySameRequest
-	case TerminalErrorNoSupportedMemory, TerminalErrorStaleInput,
-		TerminalErrorIdempotencyConflict, TerminalErrorQuarantined:
-		return true, TerminalNextActionResubmitRemember
-	case TerminalErrorInputBudgetExceeded:
-		return true, TerminalNextActionResubmitRemember
+	case TerminalErrorPolicyRejected, TerminalErrorStaleInput,
+		TerminalErrorIdempotencyConflict, TerminalErrorInputBudgetExceeded:
+		return false, TerminalNextActionResubmitRemember
 	case TerminalErrorConfigurationInvalid:
 		return false, TerminalNextActionContactOperator
 	default:
@@ -300,8 +294,8 @@ func terminalErrorGuidance(code TerminalErrorCode) (bool, TerminalNextAction) {
 
 func terminalErrorMessage(code TerminalErrorCode) string {
 	switch code {
-	case TerminalErrorNoSupportedMemory:
-		return "no supported memory could be stored from this submission"
+	case TerminalErrorPolicyRejected:
+		return "submission was rejected by semantic policy"
 	case TerminalErrorStaleInput:
 		return "an exact client-owned input changed before commit"
 	case TerminalErrorProviderUnavailable:
@@ -326,8 +320,6 @@ func terminalErrorMessage(code TerminalErrorCode) string {
 		return "the bounded Remember request deadline was reached"
 	case TerminalErrorRequestCancelled:
 		return "the Remember request was cancelled before commit"
-	case TerminalErrorQuarantined:
-		return "the submission was quarantined by security policy"
 	default:
 		return "Dense-Mem could not complete the submission"
 	}
@@ -368,8 +360,6 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		return errors.New("remember: terminal result submission_id is invalid")
 	}
 	if result.ProcessingState != string(TerminalProcessingCompleted) &&
-		result.ProcessingState != string(TerminalProcessingRejected) &&
-		result.ProcessingState != string(TerminalProcessingQuarantined) &&
 		result.ProcessingState != string(TerminalProcessingFailed) {
 		return fmt.Errorf("remember: invalid terminal processing state %q", result.ProcessingState)
 	}
@@ -529,7 +519,7 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 		if !storedResult {
 			return errors.New("remember: completed terminal result has no stored result")
 		}
-	case string(TerminalProcessingRejected), string(TerminalProcessingQuarantined), string(TerminalProcessingFailed):
+	case string(TerminalProcessingFailed):
 		if len(result.Errors) == 0 {
 			return fmt.Errorf("remember: %s terminal result requires an error", result.ProcessingState)
 		}
@@ -553,7 +543,7 @@ func terminalNotStoredReasonAllowed(reason string) bool {
 		return false
 	}
 	switch trimmed {
-	case "not_supported_by_evidence", "stale_input", "security_quarantine", "internal_failure":
+	case "not_supported_by_evidence", "stale_input", "submission_policy_rejected", "security_quarantine", "internal_failure":
 		return true
 	default:
 		return false
@@ -610,12 +600,10 @@ func TerminalResultWithError(result *TerminalRememberResult, code TerminalErrorC
 
 func terminalNotStoredReasonForError(code TerminalErrorCode) string {
 	switch normalizeTerminalErrorCode(code) {
-	case TerminalErrorNoSupportedMemory:
-		return "not_supported_by_evidence"
+	case TerminalErrorPolicyRejected:
+		return "submission_policy_rejected"
 	case TerminalErrorStaleInput:
 		return "stale_input"
-	case TerminalErrorQuarantined:
-		return "security_quarantine"
 	default:
 		return "internal_failure"
 	}
@@ -623,10 +611,8 @@ func terminalNotStoredReasonForError(code TerminalErrorCode) string {
 
 func terminalProcessingStateForError(code TerminalErrorCode) TerminalProcessingState {
 	switch normalizeTerminalErrorCode(code) {
-	case TerminalErrorQuarantined:
-		return TerminalProcessingQuarantined
-	case TerminalErrorNoSupportedMemory, TerminalErrorStaleInput:
-		return TerminalProcessingRejected
+	case TerminalErrorPolicyRejected, TerminalErrorStaleInput:
+		return TerminalProcessingFailed
 	default:
 		return TerminalProcessingFailed
 	}

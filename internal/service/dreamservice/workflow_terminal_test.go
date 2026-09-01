@@ -42,16 +42,6 @@ func TestResolveFeedbackUsesExplicitRememberResultKind(t *testing.T) {
 			wantSubmit: true,
 		},
 		{
-			name:       "terminal rejected stays reviewable",
-			result:     dreamTerminalRememberResult(string(rememberapp.TerminalProcessingRejected), uuid.NewString()),
-			wantStatus: domain.DreamStatusProposed, wantMemory: true,
-		},
-		{
-			name:       "terminal quarantined stays reviewable",
-			result:     dreamTerminalRememberResult(string(rememberapp.TerminalProcessingQuarantined), uuid.NewString()),
-			wantStatus: domain.DreamStatusProposed, wantMemory: true,
-		},
-		{
 			name:         "operational terminal failure stays reviewable",
 			result:       dreamTerminalRememberResult(string(rememberapp.TerminalProcessingFailed), uuid.NewString()),
 			processError: true,
@@ -293,7 +283,7 @@ func TestResolveFeedbackRejectsConflictingSubmittedConfirmationBeforeRemember(t 
 	require.Empty(t, repo.submitInput)
 }
 
-func TestResolveFeedbackAddsDreamRetryIdentityToTerminalResubmission(t *testing.T) {
+func TestResolveFeedbackPreservesNonRetryablePolicyGuidance(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()
 	hypothesisID := uuid.NewString()
@@ -305,8 +295,8 @@ func TestResolveFeedbackAddsDreamRetryIdentityToTerminalResubmission(t *testing.
 		Status:             string(domain.DreamStatusProposed),
 		Statement:          "Dense-Mem may use PostgreSQL.",
 	}}
-	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingRejected), attemptID)}
-	remember.result.Terminal.Errors = []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusError(rememberapp.TerminalErrorNoSupportedMemory)}
+	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingFailed), attemptID)}
+	remember.result.Terminal.Errors = []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusError(rememberapp.TerminalErrorPolicyRejected)}
 	svc := New(Dependencies{Store: repo, Remember: remember})
 
 	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
@@ -315,10 +305,9 @@ func TestResolveFeedbackAddsDreamRetryIdentityToTerminalResubmission(t *testing.
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result.Memory)
-	require.Equal(t, string(rememberapp.TerminalNextActionRetryDreamFeedback), result.Memory.Terminal.Errors[0].NextAction)
-	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, "resolve_dream_feedback")
-	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, "idempotency_key")
-	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, attemptID)
+	require.Equal(t, string(rememberapp.TerminalNextActionResubmitRemember), result.Memory.Terminal.Errors[0].NextAction)
+	require.NotContains(t, result.Memory.Terminal.Errors[0].Remediation, "resolve_dream_feedback")
+	require.NotContains(t, result.Memory.Terminal.Errors[0].Remediation, attemptID)
 }
 
 func TestResolveFeedbackUsesCanonicalDreamIDForDefaultRetryKey(t *testing.T) {
@@ -342,9 +331,9 @@ func TestResolveFeedbackUsesCanonicalDreamIDForDefaultRetryKey(t *testing.T) {
 	require.Len(t, remember.requests, 1)
 	require.Equal(t, "dream-feedback:"+canonicalID+":confirm_true", remember.requests[0].IdempotencyKey)
 
-	remember.result = dreamTerminalRememberResult(string(rememberapp.TerminalProcessingRejected), uuid.NewString())
+	remember.result = dreamTerminalRememberResult(string(rememberapp.TerminalProcessingFailed), uuid.NewString())
 	remember.result.Terminal.Errors = []rememberapp.SubmissionStatusError{
-		rememberapp.TerminalStatusError(rememberapp.TerminalErrorNoSupportedMemory),
+		rememberapp.TerminalStatusError(rememberapp.TerminalErrorPolicyRejected),
 	}
 	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
 		DreamID: aliasID, Decision: "confirm_true",
@@ -353,7 +342,8 @@ func TestResolveFeedbackUsesCanonicalDreamIDForDefaultRetryKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, remember.requests, 2)
 	require.Contains(t, remember.requests[1].IdempotencyKey, canonicalID)
-	require.Contains(t, result.Memory.Terminal.Errors[0].Remediation, canonicalID)
+	require.Equal(t, string(rememberapp.TerminalNextActionResubmitRemember), result.Memory.Terminal.Errors[0].NextAction)
+	require.NotContains(t, result.Memory.Terminal.Errors[0].Remediation, canonicalID)
 	require.NotContains(t, result.Memory.Terminal.Errors[0].Remediation, aliasID)
 }
 

@@ -3,6 +3,7 @@ package serverapp
 import (
 	"strings"
 
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
@@ -50,12 +51,28 @@ func reorderRememberRelationshipResults(status *rememberapp.SubmissionStatusResu
 }
 
 func rememberAttemptReplay(attempt *repository.RememberAttempt, input rememberapp.RememberProcessRequest) (*rememberapp.SubmissionStatusResult, error) {
+	if attempt == nil {
+		return nil, rememberConflictProcessError(input, "", rememberapp.ErrRememberConflict)
+	}
+	if contract := strings.TrimSpace(attempt.ContractVersion); contract != "" && contract != domain.ContractVersion {
+		return nil, rememberConflictProcessError(input, attempt.AttemptID, rememberapp.ErrRememberConflict)
+	}
 	status, err := rememberAttemptStatusForRequest(attempt, input)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(attempt.Outcome) != "failed" && strings.TrimSpace(status.ProcessingState) != "failed" {
-		return status, nil
+	switch strings.TrimSpace(attempt.Outcome) {
+	case "completed":
+		if strings.TrimSpace(status.ProcessingState) == "completed" {
+			return status, nil
+		}
+	case "failed":
+		if strings.TrimSpace(status.ProcessingState) == "failed" {
+			return nil, &rememberapp.RememberProcessError{Status: status, Err: rememberapp.ErrRememberPersistence}
+		}
 	}
-	return nil, &rememberapp.RememberProcessError{Status: status, Err: rememberapp.ErrRememberPersistence}
+	// Historical rejected, quarantined, and replayed rows are retained for
+	// audit, but they are not a supported Remember result and must never be
+	// replayed or used to authorize a retry.
+	return nil, rememberConflictProcessError(input, attempt.AttemptID, rememberapp.ErrRememberConflict)
 }

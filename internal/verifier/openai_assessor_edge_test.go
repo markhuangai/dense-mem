@@ -78,7 +78,7 @@ func TestOpenAIVerifierAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 		}
 		assert.Equal(t, "assessor-model", request.Model)
 		assert.Equal(t, "dense_mem_semantic_assessment_response", request.ResponseFormat.JSONSchema.Name)
-		assert.Contains(t, request.Messages[0].Content, "integrated structure and support assessor")
+		assert.Contains(t, request.Messages[0].Content, "structure, normalization, and evidence-security assessor")
 		assert.Contains(t, request.Messages[0].Content, "registration_required predicate requires null predicate_key and predicate_version")
 		var payload map[string]any
 		if !assert.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &payload)) {
@@ -480,7 +480,7 @@ func TestSemanticAssessmentValidationFieldFamilyIsBounded(t *testing.T) {
 		want  string
 	}{
 		{field: "request_id", want: "request_id"},
-		{field: "security_signals[4].evidence_id", want: "security_signals"},
+		{field: "evidence_security_results[4].signals[0].evidence_id", want: "evidence_security_results"},
 		{field: "entity_results[12].surface", want: "entity_results.span"},
 		{field: "entity_results[12].candidate_entity_id", want: "entity_results.selection"},
 		{field: "entity_results[12].invented_field", want: "entity_results.other"},

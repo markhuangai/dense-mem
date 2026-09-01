@@ -2,7 +2,6 @@ package serverapp
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,11 +34,13 @@ type rememberSynchronousProcessor struct {
 
 type rememberSynchronousLedger interface {
 	LoadRememberAttempt(context.Context, repository.RememberAttemptLookupInput) (*repository.RememberAttempt, error)
-	CommitRememberPreflightQuarantine(context.Context, repository.SynchronousRememberCommitInput, repository.RememberTerminalErrorInput) (*repository.SynchronousRememberCommitResult, error)
-	CommitRememberTerminal(context.Context, repository.SynchronousRememberCommitInput, string, repository.RememberTerminalErrorInput, []repository.SubmissionAssessmentSecurityQuarantineInput) (*repository.SynchronousRememberCommitResult, error)
 	PlanRememberEmbeddings(context.Context, repository.SynchronousRememberCommitInput) (*repository.InlineEmbeddingPlan, error)
 	CommitRememberWithEmbeddings(context.Context, repository.SynchronousRememberCommitInput, []repository.InlineEmbeddingResult) (*repository.SynchronousRememberCommitResult, error)
 	RecordRememberFailure(context.Context, repository.RememberFailureRecordInput) error
+}
+
+type rememberSynchronousIdempotencyLocker interface {
+	WithRememberAttemptLock(context.Context, string, string, string, func() error) error
 }
 
 var _ rememberapp.SynchronousProcessor = (*rememberSynchronousProcessor)(nil)
@@ -71,6 +72,45 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	if p == nil || p.ledger == nil {
 		return nil, errors.New("remember processor: ledger is required")
 	}
+	locker, hasLocker := p.ledger.(rememberSynchronousIdempotencyLocker)
+	if !hasLocker {
+		return p.processRememberUnlocked(ctx, input)
+	}
+	var ownerResult *rememberapp.SubmissionStatusResult
+	var ownerErr error
+	owner := false
+	lockErr := locker.WithRememberAttemptLock(ctx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, func() error {
+		owner = true
+		ownerResult, ownerErr = p.processRememberUnlocked(ctx, input)
+		return ownerErr
+	})
+	if owner {
+		if ownerErr != nil {
+			return ownerResult, ownerErr
+		}
+		if lockErr != nil {
+			return ownerResult, lockErr
+		}
+		return ownerResult, nil
+	}
+	// A waiter must replay the owner's durable result, including a retryable
+	// failure. It may retry only after the lock owner has returned and a later
+	// call acquires the key.
+	if replay, err := p.loadRememberReplay(ctx, input, ""); err == nil {
+		return replay, nil
+	} else if processErr := new(rememberapp.RememberProcessError); errors.As(err, &processErr) && processErr.Status != nil {
+		return processErr.Status, err
+	}
+	return nil, lockErr
+}
+
+func (p *rememberSynchronousProcessor) processRememberUnlocked(
+	ctx context.Context,
+	input rememberapp.RememberProcessRequest,
+) (*rememberapp.SubmissionStatusResult, error) {
+	if p == nil || p.ledger == nil {
+		return nil, errors.New("remember processor: ledger is required")
+	}
 	started := time.Now()
 	ingestID := uuid.NewString()
 	snapshot, scope := rememberAssessmentSnapshot(input, ingestID)
@@ -85,41 +125,24 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		if !rememberAttemptMatchesRequest(attempt, input) {
 			return nil, rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
 		}
-		if attempt.Outcome == "completed" || attempt.Outcome == "rejected" || attempt.Outcome == "quarantined" || attempt.Outcome == "replayed" {
+		if strings.TrimSpace(attempt.ContractVersion) != domain.ContractVersion {
+			return nil, rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
+		}
+		if attempt.Outcome == "completed" || (attempt.Outcome == "failed" && !attempt.Retryable) {
 			replay, replayErr := rememberAttemptStatusForRequest(attempt, input)
 			if replayErr != nil {
 				return nil, replayErr
 			}
+			if attempt.Outcome == "failed" {
+				return nil, &rememberapp.RememberProcessError{Status: replay, Err: rememberapp.ErrRememberPersistence}
+			}
 			return replay, nil
+		}
+		if attempt.Outcome != "failed" {
+			return nil, rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
 		}
 	} else if lookupErr != nil && !errors.Is(lookupErr, repository.ErrRememberAttemptNotFound) {
 		return fail(lookupErr, "commit")
-	}
-	if input.SecurityRejected {
-		commitInput := repository.SynchronousRememberCommitInput{
-			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID,
-			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
-			RequestHash:   input.RequestHash,
-			SourceSummary: input.SourceSummary, Proposal: input.Proposal,
-			Metadata: input.Metadata, Evidence: rememberEvidenceInputsForCommit(input, snapshot), StartedAt: started, Duration: time.Since(started),
-		}
-		if err := ctx.Err(); err != nil {
-			return fail(err, "commit")
-		}
-		commitCtx, commitCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseCommit)
-		terminal, terminalErr := p.ledger.CommitRememberPreflightQuarantine(commitCtx, commitInput, rememberTerminalErrorInput(rememberapp.TerminalErrorQuarantined))
-		commitCancel()
-		if errors.Is(terminalErr, repository.ErrRememberReplay) {
-			return p.loadRememberReplay(ctx, input, ingestID)
-		}
-		if errors.Is(terminalErr, repository.ErrRememberFailureRetentionDegraded) && terminal != nil {
-			p.logRememberFailureRetentionDegraded(input, terminal.IngestID, "commit")
-			return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult}, input)
-		}
-		if terminalErr != nil {
-			return fail(terminalErr, "commit")
-		}
-		return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult}, input)
 	}
 	prepared, err := memoryservice.AssessSynchronousRemember(ctx, memoryservice.SynchronousAssessmentDependencies{
 		Catalog: p.catalog, Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
@@ -138,65 +161,14 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 		Duration: time.Since(started),
 	})
 	commitInput.StartedAt = started
-	var noSupported *memoryservice.NoSupportedMemoryError
 	if buildErr != nil {
-		if !errors.As(buildErr, &noSupported) {
-			if memoryservice.IsRememberStaleInputError(buildErr) {
-				return fail(fmt.Errorf("%w: %v", rememberapp.ErrRememberStaleInput, buildErr), "assessment")
-			}
-			return fail(buildErr, "assessment")
+		if memoryservice.IsRememberStaleInputError(buildErr) {
+			return fail(fmt.Errorf("%w: %v", rememberapp.ErrRememberStaleInput, buildErr), "assessment")
 		}
+		return fail(buildErr, "assessment")
 	}
-	terminalOutcome := rememberAssessmentTerminalOutcome(prepared, noSupported != nil)
-	if terminalOutcome == "quarantined" {
-		quarantines, quarantineErr := memoryservice.BuildSynchronousRememberSecurityQuarantines(prepared)
-		if quarantineErr != nil {
-			return fail(quarantineErr, "assessment")
-		}
-		if err := ctx.Err(); err != nil {
-			return fail(err, "commit")
-		}
-		commitCtx, commitCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseCommit)
-		if err := commitCtx.Err(); err != nil {
-			commitCancel()
-			return fail(err, "commit")
-		}
-		terminal, terminalErr := p.ledger.CommitRememberTerminal(commitCtx, commitInput, "quarantined", rememberTerminalErrorInput(rememberapp.TerminalErrorQuarantined), quarantines)
-		commitCancel()
-		if errors.Is(terminalErr, repository.ErrRememberReplay) {
-			return p.loadRememberReplay(ctx, input, ingestID)
-		}
-		if errors.Is(terminalErr, repository.ErrRememberFailureRetentionDegraded) && terminal != nil {
-			p.logRememberFailureRetentionDegraded(input, terminal.IngestID, "commit")
-			return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult}, input)
-		}
-		if terminalErr != nil {
-			return fail(terminalErr, "commit")
-		}
-		return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult}, input)
-	}
-	if terminalOutcome == "rejected" {
-		if err := ctx.Err(); err != nil {
-			return fail(err, "commit")
-		}
-		commitCtx, commitCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseCommit)
-		if err := commitCtx.Err(); err != nil {
-			commitCancel()
-			return fail(err, "commit")
-		}
-		terminal, terminalErr := p.ledger.CommitRememberTerminal(commitCtx, commitInput, "rejected", rememberTerminalErrorInput(rememberapp.TerminalErrorNoSupportedMemory), nil)
-		commitCancel()
-		if errors.Is(terminalErr, repository.ErrRememberReplay) {
-			return p.loadRememberReplay(ctx, input, ingestID)
-		}
-		if errors.Is(terminalErr, repository.ErrRememberFailureRetentionDegraded) && terminal != nil {
-			p.logRememberFailureRetentionDegraded(input, terminal.IngestID, "commit")
-			return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult}, input)
-		}
-		if terminalErr != nil {
-			return fail(terminalErr, "commit")
-		}
-		return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: terminal.IngestID, Outcome: terminal.Outcome, PublicResult: terminal.PublicResult}, input)
+	if input.SecurityRejected || rememberAssessmentSecurityRejected(prepared) {
+		return fail(rememberapp.ErrRememberPolicyRejected, "assessment")
 	}
 	embeddingCtx, embeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
 	defer embeddingCancel()
@@ -245,14 +217,16 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	return rememberAttemptStatusForRequest(&repository.RememberAttempt{AttemptID: committed.IngestID, Outcome: committed.Outcome, PublicResult: committed.PublicResult}, input)
 }
 
-func rememberAssessmentTerminalOutcome(prepared *memoryservice.SynchronousAssessmentResult, noSupported bool) string {
-	if prepared != nil && len(prepared.Response.SecuritySignals) > 0 {
-		return "quarantined"
+func rememberAssessmentSecurityRejected(prepared *memoryservice.SynchronousAssessmentResult) bool {
+	if prepared == nil {
+		return false
 	}
-	if noSupported {
-		return "rejected"
+	for _, result := range prepared.Response.EvidenceSecurityResults {
+		if strings.EqualFold(strings.TrimSpace(result.Decision), "reject") {
+			return true
+		}
 	}
-	return ""
+	return false
 }
 
 func rememberAttemptMatchesRequest(attempt *repository.RememberAttempt, input rememberapp.RememberProcessRequest) bool {
@@ -280,12 +254,6 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	publicError := rememberapp.TerminalStatusError(rememberapp.TerminalErrorCode(code))
 	correlationID := rememberProcessCorrelationID(input.Metadata)
 	processingState := "failed"
-	switch code {
-	case rememberapp.SubmissionErrorNoSupportedMemory, rememberapp.SubmissionErrorStaleInput:
-		processingState = "rejected"
-	case rememberapp.SubmissionErrorQuarantined:
-		processingState = "quarantined"
-	}
 	notStoredReason := rememberFailureNotStoredReason(code)
 	evidence, relationshipResults := rememberFailureResults(input, notStoredReason)
 	status := &rememberapp.SubmissionStatusResult{
@@ -320,7 +288,10 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	artifacts := []repository.RememberFailureArtifactInput{
 		{ArtifactKind: "failure", ContentType: "application/json", Content: []byte(fmt.Sprintf(`{"phase":%q,"code":%q}`, phase, publicError.Code))},
 	}
-	if artifact, ok := rememberFailureRequestArtifact(attemptID, snapshot.Evidence); ok {
+	if artifact, ok := rememberFailureRequestArtifact(input, attemptID, snapshot.Evidence); ok {
+		if code == rememberapp.SubmissionErrorPolicyRejected {
+			artifact.ArtifactKind = "policy_rejected_request"
+		}
 		artifacts = append(artifacts, artifact)
 	}
 	recoveryCtx, cancel := rememberFailureRecoveryContext(ctx)
@@ -382,12 +353,10 @@ func rememberConflictProcessError(
 
 func rememberFailureNotStoredReason(code rememberapp.SubmissionErrorCode) string {
 	switch code {
-	case rememberapp.SubmissionErrorNoSupportedMemory:
-		return "not_supported_by_evidence"
+	case rememberapp.SubmissionErrorPolicyRejected:
+		return "submission_policy_rejected"
 	case rememberapp.SubmissionErrorStaleInput:
 		return "stale_input"
-	case rememberapp.SubmissionErrorQuarantined:
-		return "security_quarantine"
 	default:
 		return "internal_failure"
 	}
@@ -606,31 +575,14 @@ func rememberCommitFailureMetadata(err error) (string, string) {
 	}
 }
 
-func rememberFailureRequestArtifact(attemptID string, evidence []repository.EvidenceFragment) (repository.RememberFailureArtifactInput, bool) {
-	if len(evidence) == 0 {
-		return repository.RememberFailureArtifactInput{}, false
-	}
-	evidencePayload := make([]map[string]any, 0, len(evidence))
-	for _, item := range evidence {
-		digest := sha256.Sum256([]byte(item.Content))
-		evidencePayload = append(evidencePayload, map[string]any{
-			"index":        item.EvidenceIndex,
-			"content_hash": fmt.Sprintf("sha256:%x", digest[:]),
-		})
-	}
-	requestPayload := map[string]any{"submission_id": attemptID, "evidence": evidencePayload}
-	encoded, err := json.Marshal(requestPayload)
-	if err != nil || len(encoded) > 256*1024 {
-		return repository.RememberFailureArtifactInput{}, false
-	}
-	return repository.RememberFailureArtifactInput{ArtifactKind: "request", ContentType: "application/json", Content: encoded}, true
-}
-
-func rememberFailureRecoveryContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), rememberapp.RememberFailurePersistenceBudget)
-}
-
+// rememberFailureRequestArtifact deliberately serializes a separate,
+// allowlisted representation instead of copying the request proposal. The
+// artifact is control-only, but its bytes still need to be safe if exported or
+// inspected outside the request process.
 func rememberFailureCode(phase string, err error) rememberapp.SubmissionErrorCode {
+	if errors.Is(err, rememberapp.ErrRememberPolicyRejected) || errors.Is(err, rememberapp.ErrEvidenceSecurityRejected) || errors.Is(err, rememberapp.ErrEncodedEvidenceNotAllowed) {
+		return rememberapp.SubmissionErrorPolicyRejected
+	}
 	if errors.Is(err, rememberapp.ErrRememberRequestTimeout) || errors.Is(err, context.DeadlineExceeded) {
 		return rememberapp.SubmissionErrorRequestTimeout
 	}

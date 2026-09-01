@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
@@ -21,7 +22,7 @@ func TestRememberToolResultErrorProjectsTerminalAndFailureResults(t *testing.T) 
 	require.Nil(t, rememberToolResultError(ctx, nil))
 
 	terminal := &rememberapp.TerminalRememberResult{
-		ContractVersion: "dense-mem.v2.6.1", SubmissionID: "terminal-submission",
+		ContractVersion: domain.ContractVersion, SubmissionID: "terminal-submission",
 		SubmissionKind: "remember", ProcessingState: "failed", SearchState: "not_required",
 	}
 	processErr := &rememberapp.RememberProcessError{
@@ -36,10 +37,10 @@ func TestRememberToolResultErrorProjectsTerminalAndFailureResults(t *testing.T) 
 	require.Equal(t, "failed", result["processing_state"])
 
 	security := structuredToolResult(t, rememberToolResultError(ctx, rememberapp.ErrEvidenceSecurityRejected))
-	require.Equal(t, "quarantined", security["processing_state"])
+	require.Equal(t, "failed", security["processing_state"])
 	require.Equal(t, "request-correlation", security["correlation_id"])
 	securityErrors := security["errors"].([]any)
-	require.Equal(t, string(rememberapp.SubmissionErrorQuarantined), securityErrors[0].(map[string]any)["code"])
+	require.Equal(t, string(rememberapp.SubmissionErrorPolicyRejected), securityErrors[0].(map[string]any)["code"])
 
 	statusFailure := &rememberapp.RememberProcessError{
 		Status: &rememberapp.SubmissionStatusResult{
@@ -57,13 +58,13 @@ func TestRememberToolResultErrorProjectsTerminalAndFailureResults(t *testing.T) 
 
 	statusRejection := &rememberapp.RememberProcessError{
 		Status: &rememberapp.SubmissionStatusResult{
-			SubmissionID: "rejected-submission", ProcessingState: "rejected",
+			SubmissionID: "rejected-submission", ProcessingState: "failed",
 			Errors: []rememberapp.SubmissionStatusError{{Code: string(rememberapp.SubmissionErrorStaleInput)}},
 		},
 		Err: rememberapp.ErrRememberStaleInput,
 	}
 	rejection := structuredToolResult(t, rememberToolResultError(ctx, statusRejection))
-	require.Equal(t, "rejected", rejection["processing_state"])
+	require.Equal(t, "failed", rejection["processing_state"])
 	rejectionErrors := rejection["errors"].([]any)
 	require.Equal(t, string(rememberapp.SubmissionErrorStaleInput), rejectionErrors[0].(map[string]any)["code"])
 }

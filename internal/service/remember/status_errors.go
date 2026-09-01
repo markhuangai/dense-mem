@@ -10,9 +10,7 @@ import (
 type SubmissionErrorCode string
 
 const (
-	// Remember semantic rejection is intentionally limited to these two codes.
-	SubmissionErrorNoSupportedMemory SubmissionErrorCode = "no_supported_memory"
-	SubmissionErrorStaleInput        SubmissionErrorCode = "stale_input"
+	SubmissionErrorStaleInput SubmissionErrorCode = "stale_input"
 
 	SubmissionErrorProviderUnavailable      SubmissionErrorCode = "provider_unavailable"
 	SubmissionErrorProviderResponseInvalid  SubmissionErrorCode = "provider_response_invalid"
@@ -27,13 +25,12 @@ const (
 	SubmissionErrorRequestCancelled         SubmissionErrorCode = "request_cancelled"
 	SubmissionErrorInternalFailure          SubmissionErrorCode = "internal_failure"
 
-	// These aliases are retained for correction and internal call sites; the
-	// v2.6 Remember status projection emits the canonical codes above.
+	// Policy rejection is a canonical v2.6.2 Remember failure. The remaining
+	// names are compatibility aliases used by correction/internal callers.
 	SubmissionErrorPolicyRejected      SubmissionErrorCode = "submission_policy_rejected"
 	SubmissionErrorAssessorInvalid     SubmissionErrorCode = SubmissionErrorProviderResponseInvalid
 	SubmissionErrorAssessorUnavailable SubmissionErrorCode = SubmissionErrorProviderUnavailable
 	SubmissionErrorProcessingFailed    SubmissionErrorCode = SubmissionErrorInternalFailure
-	SubmissionErrorQuarantined         SubmissionErrorCode = "submission_quarantined"
 
 	SubmissionErrorRelationshipVersionStale      SubmissionErrorCode = "relationship_version_stale"
 	SubmissionErrorRelationshipNotActive         SubmissionErrorCode = "relationship_not_active"
@@ -53,7 +50,6 @@ const (
 )
 
 var submissionErrorCodes = []SubmissionErrorCode{
-	SubmissionErrorNoSupportedMemory,
 	SubmissionErrorStaleInput,
 	SubmissionErrorProviderUnavailable,
 	SubmissionErrorProviderResponseInvalid,
@@ -67,7 +63,6 @@ var submissionErrorCodes = []SubmissionErrorCode{
 	SubmissionErrorRequestTimeout,
 	SubmissionErrorRequestCancelled,
 	SubmissionErrorInternalFailure,
-	SubmissionErrorQuarantined,
 	SubmissionErrorPolicyRejected,
 	SubmissionErrorRelationshipVersionStale,
 	SubmissionErrorRelationshipNotActive,
@@ -130,7 +125,6 @@ func SubmissionNextActions() []string {
 }
 
 var submissionErrorMessages = map[SubmissionErrorCode]string{
-	SubmissionErrorNoSupportedMemory:        "no supported memory could be stored from this submission",
 	SubmissionErrorStaleInput:               "an exact client-owned input changed before commit",
 	SubmissionErrorProviderUnavailable:      "the semantic assessor was unavailable",
 	SubmissionErrorProviderResponseInvalid:  "the semantic assessor returned an invalid response",
@@ -145,7 +139,6 @@ var submissionErrorMessages = map[SubmissionErrorCode]string{
 	SubmissionErrorRequestCancelled:         "the Remember request was cancelled before commit",
 	SubmissionErrorInternalFailure:          "Dense-Mem could not complete the submission",
 	SubmissionErrorPolicyRejected:           "submission was rejected by semantic policy",
-	SubmissionErrorQuarantined:              "submission was quarantined by security policy",
 
 	SubmissionErrorRelationshipVersionStale:      "relationship version is stale",
 	SubmissionErrorRelationshipNotActive:         "relationship must be active, supported, and canonical",
@@ -205,9 +198,9 @@ func submissionErrorGuidance(code SubmissionErrorCode) (bool, SubmissionNextActi
 		SubmissionErrorRequestTimeout, SubmissionErrorRequestCancelled,
 		SubmissionErrorInternalFailure:
 		return true, SubmissionNextActionRetrySameRequest
-	case SubmissionErrorNoSupportedMemory, SubmissionErrorStaleInput,
-		SubmissionErrorIdempotencyConflict:
-		return true, SubmissionNextActionResubmitRemember
+	case SubmissionErrorPolicyRejected, SubmissionErrorStaleInput,
+		SubmissionErrorIdempotencyConflict, SubmissionErrorInputBudgetExceeded:
+		return false, SubmissionNextActionResubmitRemember
 	case SubmissionErrorNoChange:
 		return false, SubmissionNextActionNone
 	case SubmissionErrorRelationshipVersionStale, SubmissionErrorRelationshipNotActive,
@@ -246,7 +239,7 @@ func submissionStatusErrorForCode(rawCode string, fallbackState string) Submissi
 		}
 	}
 	if fallbackState == "rejected" {
-		return submissionStatusError(SubmissionErrorNoSupportedMemory)
+		return submissionStatusError(SubmissionErrorPolicyRejected)
 	}
 	return submissionStatusError(SubmissionErrorInternalFailure)
 }

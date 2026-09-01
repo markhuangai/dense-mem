@@ -16,7 +16,7 @@ func contractInput(required []string, properties map[string]any) map[string]any 
 }
 
 func rememberInputSchema() map[string]any {
-	return contractInput([]string{"evidence", "relationships", "idempotency_key"}, map[string]any{
+	return contractInput([]string{"evidence", "idempotency_key"}, map[string]any{
 		"evidence":        evidenceArraySchema(),
 		"relationships":   relationshipSubmissionArraySchema(),
 		"idempotency_key": nonEmptyStringSchema("One batch retry key scoped to team and profile.", 128),
@@ -62,9 +62,9 @@ func dreamEvidenceArraySchema() map[string]any {
 func relationshipSubmissionArraySchema() map[string]any {
 	return map[string]any{
 		"type":        "array",
-		"minItems":    1,
+		"minItems":    0,
 		"maxItems":    200,
-		"description": "Each Relationship must cite submitted evidence_indices. Every submitted evidence item must be cited across the submission. The server and assessor own exact grounding.",
+		"description": "Optional Relationship proposals. Each proposal must cite submitted evidence_indices; the server and assessor own exact grounding.",
 		"items":       relationshipSubmissionSchema(),
 	}
 }
@@ -390,7 +390,7 @@ func rememberOutputSchema() map[string]any {
 		"contract_version":     schemaEnum([]string{domain.ContractVersion}),
 		"submission_id":        schemaString("Submission ID.", 128),
 		"submission_kind":      schemaEnum([]string{"remember"}),
-		"processing_state":     schemaEnum([]string{"completed", "rejected", "quarantined", "failed"}),
+			"processing_state":     schemaEnum([]string{"completed", "failed"}),
 		"search_state":         schemaEnum([]string{"current", "not_required"}),
 		"correlation_id":       schemaString("Request correlation ID.", 128),
 		"evidence":             array(rememberEvidenceStatusSchema(), 0, 100),

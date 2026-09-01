@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// CanonicalRequestBodyHash hashes the normalized v2.6.1 Remember body. Evidence
+// CanonicalRequestBodyHash hashes the normalized v2.6.2 Remember body. Evidence
 // and Value text remain byte-exact; ordering changes only for contract sets and
 // relationship refs.
 func CanonicalRequestBodyHash(

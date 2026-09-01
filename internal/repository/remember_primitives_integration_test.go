@@ -119,46 +119,27 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 	require.Zero(t, counts["relationship_records"])
 
 	unsafe := evidenceOnlyRememberInput(teamID, ownerID, "remember-primitives-evidence-only-unsafe")
-	unsafeFragmentID := uuid.NewString()
-	unsafeContent := "Dense-Mem must quarantine this second evidence item."
+	unsafeContent := "Dense-Mem must reject this unsafe evidence item."
 	unsafe.Evidence = append(unsafe.Evidence, EvidenceInput{
-		FragmentID: unsafeFragmentID, Content: unsafeContent, ContentHash: sha256Hex(unsafeContent), SourceType: "manual", Authority: "primary",
+		FragmentID: uuid.NewString(), Content: unsafeContent, ContentHash: sha256Hex(unsafeContent), SourceType: "manual", Authority: "primary",
 	})
-	unsafe.EvidenceSecurityResults[0].Decision = "quarantine"
-	unsafe.EvidenceSecurityResults[0].Safe = false
-	unsafe.EvidenceSecurityResults = append(unsafe.EvidenceSecurityResults, EvidenceSecurityResult{
-		FragmentID: unsafeFragmentID, EvidenceID: "evidence:1", EvidenceIndex: 1, Decision: "pass", Safe: true,
-	})
-	unsafe.Commit.Items = append(unsafe.Commit.Items, SubmissionAssessmentItemInput{FragmentID: unsafeFragmentID})
-	unsafeResult, err := repo.CommitRememberTerminal(ctx, unsafe, "quarantined", RememberTerminalErrorInput{
-		Code: "submission_quarantined", Message: "submission was quarantined", NextAction: "none", Remediation: "correct the request",
-	}, []SubmissionAssessmentSecurityQuarantineInput{{
-		FragmentID:         unsafe.Evidence[0].FragmentID,
-		SecurityEventDraft: SecurityEventDraft{EventKind: "verifier_signal", Decision: "quarantine", Reason: "unsafe evidence"},
-	}})
-	require.NoError(t, err)
-	require.NotNil(t, unsafeResult)
-	require.Equal(t, "quarantined", unsafeResult.Outcome)
-	unsafeCounts := rememberPrimitiveCounts(t, ctx, adminDB, rls, teamID, unsafe.IngestID)
-	require.EqualValues(t, 1, unsafeCounts["knowledge_ingests"])
-	require.EqualValues(t, 2, unsafeCounts["evidence_fragments"])
-	require.EqualValues(t, 1, unsafeCounts["semantic_assessments"])
-	require.Zero(t, unsafeCounts["search_documents"], "unsafe evidence must not create search documents for the safe sibling")
-	require.EqualValues(t, 1, unsafeCounts["remember_attempts"])
-	require.Zero(t, unsafeCounts["relationship_observations"], "unsafe evidence must not create relationship observations for the safe sibling")
-	require.Zero(t, unsafeCounts["relationship_records"], "unsafe evidence must not create relationship records for the safe sibling")
-	unsafeDetail, err := repo.GetRememberAttemptDiagnostic(ctx, teamID, unsafe.IngestID)
-	require.NoError(t, err)
-	require.Empty(t, unsafeDetail.Artifacts, "semantic verifier quarantine must not expose a failure artifact")
-	var safeSiblingSearchDocuments int64
-	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
-		return tx.Raw(`
-			SELECT count(*)
-			FROM search_documents
-			WHERE team_id = ?::uuid AND source_kind = 'evidence' AND source_id = ?::uuid
-		`, teamID, unsafeFragmentID).Row().Scan(&safeSiblingSearchDocuments)
+	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		Attempt: RememberAttemptRecordInput{
+			TeamID: teamID, OwnerProfileID: ownerID, AttemptID: unsafe.IngestID,
+			IdempotencyKey: unsafe.IdempotencyKey, RequestHash: unsafe.RequestHash,
+			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed",
+			FailedPhase: "assessment", ErrorCode: "submission_policy_rejected", Retryable: false, RetryabilitySet: true,
+			PublicResult: map[string]any{"processing_state": "failed"}, EvidenceCount: len(unsafe.Evidence),
+		},
 	}))
-	require.Zero(t, safeSiblingSearchDocuments, "safe sibling must not receive a search document after whole-batch quarantine")
+	unsafeCounts := rememberPrimitiveCounts(t, ctx, adminDB, rls, teamID, unsafe.IngestID)
+	for name, count := range unsafeCounts {
+		if name == "remember_attempts" {
+			require.EqualValues(t, 1, count)
+			continue
+		}
+		require.Zero(t, count, "unsafe batch must not create %s", name)
+	}
 
 	rollback := evidenceOnlyRememberInput(teamID, ownerID, "remember-primitives-evidence-only-rollback")
 	rollbackPlan, err := repo.PlanRememberEmbeddings(ctx, rollback)
@@ -181,11 +162,18 @@ func TestRememberPolicyArtifactLegalHoldReleaseAndErasure(t *testing.T) {
 	repo := NewLedgerRepository(appDB, rls)
 
 	policyInput := evidenceOnlyRememberInput(teamID, ownerID, "remember-primitives-policy-artifact")
-	policyResult, err := repo.CommitRememberPreflightQuarantine(ctx, policyInput, RememberTerminalErrorInput{
-		Code: "submission_policy_rejected", Message: "submission was rejected by policy", NextAction: "none", Remediation: "correct the request",
+	policyArtifactContent := []byte(`{"submission_id":"policy","evidence":[]}`)
+	err := repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		Attempt: RememberAttemptRecordInput{
+			TeamID: teamID, OwnerProfileID: ownerID, AttemptID: policyInput.IngestID,
+			IdempotencyKey: policyInput.IdempotencyKey, RequestHash: policyInput.RequestHash,
+			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed",
+			FailedPhase: "assessment", ErrorCode: "submission_policy_rejected", Retryable: false, RetryabilitySet: true,
+			PublicResult: map[string]any{"processing_state": "failed"}, EvidenceCount: len(policyInput.Evidence),
+		},
+		Artifacts: []RememberFailureArtifactInput{{ArtifactKind: "policy_rejected_request", ContentType: "application/json", Content: policyArtifactContent}},
 	})
 	require.NoError(t, err)
-	require.Equal(t, "quarantined", policyResult.Outcome)
 	policyDetail, err := repo.GetRememberAttemptDiagnostic(ctx, teamID, policyInput.IngestID)
 	require.NoError(t, err)
 	require.Len(t, policyDetail.Artifacts, 1)

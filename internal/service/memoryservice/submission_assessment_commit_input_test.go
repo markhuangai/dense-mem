@@ -299,32 +299,36 @@ func TestSubmissionAssessmentCommitInputRestoresRelationshipTargetOrder(t *testi
 	}
 }
 
-func TestSubmissionAssessmentCommitInputReturnsNoSupportedMemoryForUncoveredEvidence(t *testing.T) {
+func TestSubmissionAssessmentCommitInputReturnsNotStoredWarningsForUnsupportedRelationships(t *testing.T) {
 	prepared, scope := preparedCommitAssessment(t)
 	for index := range prepared.Response.RelationshipResults {
 		if index == 0 {
 			prepared.Response.RelationshipResults[index].Disposition = "not_supported"
-			prepared.Response.RelationshipResults[index].Reason = nil
+			reason := "not_supported_by_evidence"
+			prepared.Response.RelationshipResults[index].Reason = &reason
+			prepared.Response.RelationshipResults[index].Splits = nil
 		}
 	}
-	_, err := submissionAssessmentCommitInput(scope, prepared.Plan, prepared.Response, &prepared.Assessment, false)
-	var noSupported *submissionAssessmentNoSupportedMemoryError
-	require.ErrorAs(t, err, &noSupported)
-	require.Len(t, noSupported.RelationshipResults, 2)
-	for _, result := range noSupported.RelationshipResults {
-		require.Equal(t, "not_stored", result.Disposition)
-		require.Equal(t, "not_supported_by_evidence", result.Reason)
-	}
+	commit, err := submissionAssessmentCommitInput(scope, prepared.Plan, prepared.Response, &prepared.Assessment, false)
+	require.NoError(t, err)
+	require.Len(t, commit.RelationshipResults, 2)
+	require.Equal(t, "not_stored", commit.RelationshipResults[0].Disposition)
+	require.Equal(t, "not_supported_by_evidence", commit.RelationshipResults[0].Reason)
+	require.Equal(t, "stored", commit.RelationshipResults[1].Disposition)
 
 	prepared, scope = preparedCommitAssessment(t)
 	for index := range prepared.Response.RelationshipResults {
 		prepared.Response.RelationshipResults[index].Disposition = "not_supported"
-		prepared.Response.RelationshipResults[index].Reason = nil
+		reason := "not_supported_by_evidence"
+		prepared.Response.RelationshipResults[index].Reason = &reason
 		prepared.Response.RelationshipResults[index].Splits = nil
 	}
-	_, err = submissionAssessmentCommitInput(scope, prepared.Plan, prepared.Response, &prepared.Assessment, false)
-	require.ErrorAs(t, err, &noSupported)
-	require.Len(t, noSupported.RelationshipResults, 2)
+	commit, err = submissionAssessmentCommitInput(scope, prepared.Plan, prepared.Response, &prepared.Assessment, false)
+	require.NoError(t, err)
+	for _, result := range commit.RelationshipResults {
+		require.Equal(t, "not_stored", result.Disposition)
+		require.Equal(t, "not_supported_by_evidence", result.Reason)
+	}
 }
 
 func preparedCommitAssessment(t *testing.T) (*SynchronousAssessmentResult, repository.RememberCommitScope) {

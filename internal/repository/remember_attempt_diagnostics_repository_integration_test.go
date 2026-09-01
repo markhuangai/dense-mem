@@ -189,8 +189,11 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 
 	full, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: teamA, Limit: 100})
 	require.NoError(t, err)
-	require.Equal(t, int64(5), full.Total)
-	require.Len(t, full.Records, 5)
+	// Remember diagnostics expose only the v2.6.2 terminal outcomes. The
+	// retained rejected and quarantined rows above are historical audit data,
+	// not supported diagnostic records.
+	require.Equal(t, int64(3), full.Total)
+	require.Len(t, full.Records, 3)
 	for index, record := range full.Records {
 		require.Equal(t, teamA, record.TeamID)
 		require.NotEqual(t, teamC, record.TeamID)
@@ -208,14 +211,13 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 	require.NoError(t, err)
 	pageTwo, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: teamA, Limit: 2, Offset: 2})
 	require.NoError(t, err)
-	require.Equal(t, int64(5), pageOne.Total)
-	require.Equal(t, int64(5), pageTwo.Total)
+	require.Equal(t, int64(3), pageOne.Total)
+	require.Equal(t, int64(3), pageTwo.Total)
 	require.Len(t, pageOne.Records, 2)
-	require.Len(t, pageTwo.Records, 2)
+	require.Len(t, pageTwo.Records, 1)
 	require.Equal(t, full.Records[0].AttemptID, pageOne.Records[0].AttemptID)
 	require.Equal(t, full.Records[1].AttemptID, pageOne.Records[1].AttemptID)
 	require.Equal(t, full.Records[2].AttemptID, pageTwo.Records[0].AttemptID)
-	require.Equal(t, full.Records[3].AttemptID, pageTwo.Records[1].AttemptID)
 
 	failed, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: teamA, Outcome: "failed", Limit: 100})
 	require.NoError(t, err)
@@ -223,8 +225,8 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 
 	global, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{Limit: 100})
 	require.NoError(t, err)
-	require.Equal(t, int64(6), global.Total)
-	require.Len(t, global.Records, 6)
+	require.Equal(t, int64(4), global.Total)
+	require.Len(t, global.Records, 4)
 	for index, record := range global.Records {
 		require.Contains(t, []string{teamA, teamC}, record.TeamID)
 		require.Nil(t, record.PublicResult)
@@ -245,8 +247,8 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 	require.NoError(t, err)
 	globalPageTwo, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: "", Limit: 2, Offset: 2})
 	require.NoError(t, err)
-	require.Equal(t, int64(6), globalPageOne.Total)
-	require.Equal(t, int64(6), globalPageTwo.Total)
+	require.Equal(t, int64(4), globalPageOne.Total)
+	require.Equal(t, int64(4), globalPageTwo.Total)
 	require.Len(t, globalPageOne.Records, 2)
 	require.Len(t, globalPageTwo.Records, 2)
 	require.Equal(t, global.Records[0].AttemptID, globalPageOne.Records[0].AttemptID)

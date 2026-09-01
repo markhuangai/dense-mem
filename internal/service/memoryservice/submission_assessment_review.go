@@ -12,16 +12,6 @@ import (
 
 var errSubmissionAssessmentStaleInput = errors.New("submission assessment exact input is stale")
 
-type submissionAssessmentNoSupportedMemoryError struct {
-	RelationshipResults []repository.SubmissionRelationshipResultInput
-}
-
-type NoSupportedMemoryError = submissionAssessmentNoSupportedMemoryError
-
-func (e *submissionAssessmentNoSupportedMemoryError) Error() string {
-	return "submission assessment contains no supported memory"
-}
-
 func isRememberStaleInputError(err error) bool {
 	return errors.Is(err, errSubmissionAssessmentStaleInput) ||
 		errors.Is(err, repository.ErrSourceRevisionConflict) ||

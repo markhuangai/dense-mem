@@ -12,7 +12,7 @@ import (
 )
 
 func newEvalHarnessServer(t *testing.T, handler http.Handler) *httptest.Server {
-	return newEvalHarnessServerWithContract(t, contractModeV261, handler)
+	return newEvalHarnessServerWithContract(t, contractModeV262, handler)
 }
 
 func newEvalHarnessServerWithContract(t *testing.T, mode contractMode, handler http.Handler) *httptest.Server {

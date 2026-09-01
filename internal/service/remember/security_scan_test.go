@@ -189,6 +189,47 @@ func TestScanSubmissionBatchPrioritizesEncodedRejectionAndBoundsAuditSignals(t *
 	require.LessOrEqual(t, len(batch.Signals), submissionSecurityMaxBatchSignals)
 }
 
+func TestSubmissionSecurityBatchWrappersPreserveBoundedEventMetadata(t *testing.T) {
+	safe, err := ScanSubmissionWithProviderProposal([]string{"safe evidence"}, map[string]any{})
+	require.NoError(t, err)
+	require.Equal(t, 1, safe.EvidenceCount)
+
+	_, err = ScanSubmissionWithProviderProposal([]string{"safe evidence"}, map[string]any{"invalid": func() {}})
+	require.ErrorIs(t, err, ErrEvidenceSecurityRejected)
+
+	signal := SubmissionSecuritySignal{Kind: "instruction_override", RuleID: "rule-1", Severity: "high", Start: 2, End: 8, Encoded: true}
+	pass := SubmissionSecurityPassEvent()
+	require.Equal(t, "deterministic_scan", pass.EventKind)
+	require.Equal(t, "pass", pass.Decision)
+	require.Empty(t, pass.Signals)
+
+	scan := SubmissionSecurityScan{Signals: []SubmissionSecuritySignal{signal}, SignalsTruncated: true}
+	single := submissionSecurityQuarantineEvent(scan)
+	require.Equal(t, "quarantine", single.Decision)
+	require.Len(t, single.Signals, 1)
+	require.Equal(t, signal.Kind, single.Signals[0].Kind)
+	require.Equal(t, signal.Start, single.Signals[0].SpanStart)
+	require.Equal(t, signal.End, single.Signals[0].SpanEnd)
+	require.Equal(t, true, single.Metadata["signals_truncated"])
+
+	batch := SubmissionSecurityBatchScan{
+		Signals: []SubmissionSecurityBatchSignal{
+			{EvidenceIndex: 0, Source: SecuritySourceEvidence, SubmissionSecuritySignal: signal},
+			{EvidenceIndex: -1, Source: SecuritySourceProposal, SubmissionSecuritySignal: signal},
+		},
+		SignalsTruncated: true,
+	}
+	batched := SubmissionSecurityBatchQuarantineEvent(batch)
+	require.Equal(t, "quarantine", batched.Decision)
+	require.Len(t, batched.Signals, 2)
+	require.Equal(t, SecuritySourceEvidence, batched.Signals[0].Metadata["source"])
+	require.Equal(t, SecuritySourceProposal, batched.Signals[1].Metadata["source"])
+	require.Equal(t, true, batched.Metadata["signals_truncated"])
+
+	custom := SubmissionSecurityQuarantineEventForSignals([]SubmissionSecuritySignal{signal}, false, []string{"custom"})
+	require.Equal(t, "custom", custom.Signals[0].Metadata["source"])
+}
+
 func TestSubmissionSecurityErrorIsBounded(t *testing.T) {
 	var nilError *SubmissionSecurityError
 	require.Equal(t, SubmissionSecurityErrorRejected, nilError.Error())

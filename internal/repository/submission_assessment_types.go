@@ -93,7 +93,8 @@ type CommitSubmissionAssessmentInput struct {
 
 // EvidenceSecurityResult is the assessor's complete security disposition for
 // one submitted evidence fragment. Accepted commits require exactly one safe
-// result per fragment; unsafe results are routed to a terminal quarantine.
+// result per fragment; unsafe results fail the whole Remember batch before any
+// semantic or search write.
 type EvidenceSecurityResult struct {
 	FragmentID    string
 	EvidenceID    string

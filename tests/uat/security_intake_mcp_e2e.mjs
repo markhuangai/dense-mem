@@ -90,7 +90,11 @@ for (const testCase of rejectedCases) {
   assertSafeAuditRecord(audit, testCase, teamID);
 }
 
-let verifierAfterAccepted = await assertVerifierStable(verifierBeforeRejects, teamID);
+let verifierAfterRejects = verifierBeforeRejects;
+for (const testCase of rejectedCases) {
+  verifierAfterRejects = await waitForExactlyOneVerifierRequest(verifierAfterRejects, teamID);
+}
+let verifierAfterAccepted = verifierAfterRejects;
 const acceptedResults = [];
 for (const testCase of acceptedCases) {
   const input = relationshipRememberInput(
@@ -113,6 +117,7 @@ for (const testCase of acceptedCases) {
     processing_state: accepted.processing_state,
   });
 }
+verifierAfterAccepted = await assertVerifierStable(verifierAfterAccepted, teamID);
 
 function assertTerminalRelationshipDisposition(placement, label) {
   const results = Array.isArray(placement.relationship_results) ? placement.relationship_results : [];
@@ -123,12 +128,9 @@ function assertTerminalRelationshipDisposition(placement, label) {
   if (placement.processing_state === "completed" && result.disposition !== "stored") {
     throw new Error(`${label} completed without a stored Relationship disposition`);
   }
-  if (placement.processing_state === "quarantined" &&
-      (result.disposition !== "not_stored" || result.reason !== "security_quarantine" || result.splits?.length !== 0)) {
-    throw new Error(`${label} quarantine did not return not_stored/security_quarantine`);
-  }
-  if (placement.processing_state === "rejected" && result.disposition !== "not_stored") {
-    throw new Error(`${label} rejection did not return a not_stored Relationship disposition`);
+  if (placement.processing_state === "failed" &&
+      (result.disposition !== "not_stored" || result.reason !== "submission_policy_rejected" || result.splits?.length !== 0)) {
+    throw new Error(`${label} policy rejection did not return not_stored/submission_policy_rejected`);
   }
 }
 
@@ -143,7 +145,7 @@ console.log(JSON.stringify({
   status: "ok",
   run_id: runID,
   verifier_requests_before_rejects: verifierBeforeRejects,
-  verifier_requests_after_rejects: verifierBeforeRejects,
+  verifier_requests_after_rejects: verifierAfterRejects,
   verifier_requests_after_accepted: verifierAfterAccepted,
   rejected_cases: rejectedCases.map((testCase) => ({
     name: testCase.name,
@@ -199,8 +201,8 @@ function assertRejectedResponse(response, expectedCode) {
     try { payload = JSON.parse(text); } catch { payload = null; }
   }
   const actual = payload?.errors?.[0]?.code;
-  if (actual !== "submission_quarantined") {
-    throw new Error(`rejected remember returned ${actual || "missing code"} instead of terminal quarantine for scanner code ${expectedCode}`);
+  if (actual !== "submission_policy_rejected" || payload?.processing_state !== "failed") {
+    throw new Error(`rejected remember returned ${actual || "missing code"} instead of terminal policy rejection for scanner code ${expectedCode}`);
   }
 }
 
@@ -268,7 +270,7 @@ async function assertVerifierStable(expected, targetTeamID) {
     await delay(5_000);
     observed = await prometheusValue("densemem_verifier_requests_total", targetTeamID);
     if (observed !== expected) {
-      throw new Error("rejected evidence caused an unexpected verifier request");
+      throw new Error("Remember produced an unexpected verifier request after its terminal result");
     }
   }
   return observed;

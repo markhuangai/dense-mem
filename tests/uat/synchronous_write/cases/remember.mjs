@@ -190,13 +190,20 @@ async function runTerminalDomainCase({ rpc, expect, fault }) {
   const args = singleItemArguments(`domain-${fault}`, `[fixture-fault:${fault}]`);
   const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
   assertStrictTerminalRemember(result, expect);
-  const expectedState = fault === "security" ? "quarantined" : "rejected";
-  const expectedCode = fault === "security" ? "submission_quarantined" : "no_supported_memory";
+  const expectedState = fault === "security" ? "failed" : "completed";
+  const expectedCode = fault === "security" ? "submission_policy_rejected" : "";
   expect(result.processing_state === expectedState, `${fault} must return ${expectedState}`);
-  expect(result.search_state === "not_required", `${fault} must not require search`);
-  expect(result.errors[0]?.code === expectedCode, `${fault} must return ${expectedCode}: ${JSON.stringify(result)}`);
-  expect(result.evidence.every((item) => item.disposition === "not_stored"), `${fault} must not store evidence`);
-  expect(result.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), `${fault} must not store relationships`);
+  if (fault === "security") {
+    expect(result.search_state === "not_required", `${fault} must not require search`);
+    expect(result.errors[0]?.code === expectedCode, `${fault} must return ${expectedCode}: ${JSON.stringify(result)}`);
+    expect(result.evidence.every((item) => item.disposition === "not_stored"), `${fault} must not store evidence`);
+    expect(result.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), `${fault} must not store relationships`);
+  } else {
+    expect(result.search_state === "current", `${fault} must index safe evidence`);
+    expect(result.errors.length === 0, `${fault} must not return a batch error`);
+    expect(result.evidence.every((item) => item.disposition === "stored"), `${fault} must store safe evidence`);
+    expect(result.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), `${fault} must return unsupported relationship warnings`);
+  }
   const replay = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
   assertStrictTerminalRemember(replay, expect);
   expect(stableJSON(replay) === stableJSON(result), `${fault} terminal replay must be byte-equivalent`);
@@ -221,10 +228,14 @@ async function runCancellationCase({ rpc, rawRPC, expect }) {
   const request = rawRPC("tools/call", { name: "remember", arguments: args }, controller.signal);
   setTimeout(() => controller.abort(), 100);
   await assert.rejects(request, (error) => error?.name === "AbortError");
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  const retry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
-  assertStrictTerminalRemember(retry, expect);
-  expect(retry.processing_state === "completed", "a cancelled request must be retryable with the same key");
+  let retry;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    retry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
+    assertStrictTerminalRemember(retry, expect);
+    if (retry.processing_state === "completed") break;
+    expect(retry.errors[0]?.retryable === true, `a cancelled request returned a non-retryable failure: ${JSON.stringify(retry)}`);
+  }
+  expect(retry?.processing_state === "completed", `a cancelled request must be retryable with the same key: ${JSON.stringify(retry)}`);
   return { fault: "embedding-cancel", processing_state: retry.processing_state };
 }
 
@@ -277,7 +288,7 @@ async function runSupersessionFenceCase({ rpc, expect }) {
   staleArgs.evidence[0].supersedes_evidence_ids = [targetEvidenceID];
   const stale = terminalPayload(await rpc("tools/call", { name: "remember", arguments: staleArgs }));
   assertStrictTerminalRemember(stale, expect);
-  expect(stale.processing_state === "rejected", `stale supersession must reject: ${JSON.stringify(stale)}`);
+  expect(stale.processing_state === "failed", `stale supersession must fail: ${JSON.stringify(stale)}`);
   expect(stale.search_state === "not_required", "stale supersession must not require search");
   expect(stale.errors[0]?.code === "stale_input", `stale supersession must return stale_input: ${JSON.stringify(stale)}`);
   expect(stale.evidence.every((item) => item.disposition === "not_stored"), "stale supersession must not store evidence");

@@ -216,7 +216,7 @@ func TestSemanticAssessmentSubmissionContractRequiresExactCompleteResponse(t *te
 	}
 }
 
-func TestSemanticAssessmentSecurityResultsRequireCompleteEvidenceCoverage(t *testing.T) {
+func TestSemanticAssessmentEvidenceSecurityResultsRequireCompleteEvidenceCoverage(t *testing.T) {
 	request, limits := semanticAssessmentSubmissionContractTestRequest(t)
 	prepared, errs := PrepareSemanticAssessmentRequest(request, limits)
 	if len(errs) != 0 {
@@ -228,13 +228,13 @@ func TestSemanticAssessmentSecurityResultsRequireCompleteEvidenceCoverage(t *tes
 		mutate func(*SemanticAssessmentResponse)
 		want   string
 	}{
-		{name: "missing result", mutate: func(response *SemanticAssessmentResponse) { response.SecurityResults = nil }, want: "security_results: is required"},
+		{name: "missing result", mutate: func(response *SemanticAssessmentResponse) { response.EvidenceSecurityResults = nil }, want: "evidence_security_results: is required"},
 		{name: "duplicate result", mutate: func(response *SemanticAssessmentResponse) {
-			response.SecurityResults = append(response.SecurityResults, response.SecurityResults[0])
-		}, want: "security_results[1].evidence_id: is duplicated"},
-		{name: "unknown evidence", mutate: func(response *SemanticAssessmentResponse) { response.SecurityResults[0].EvidenceID = "missing" }, want: "security_results[0].evidence_id: is unknown"},
-		{name: "unsupported decision", mutate: func(response *SemanticAssessmentResponse) { response.SecurityResults[0].Decision = "unknown" }, want: "security_results[0].decision: is unsupported"},
-		{name: "quarantine requires signal", mutate: func(response *SemanticAssessmentResponse) { response.SecurityResults[0].Decision = "quarantine" }, want: "quarantine requires a security signal"},
+			response.EvidenceSecurityResults = append(response.EvidenceSecurityResults, response.EvidenceSecurityResults[0])
+		}, want: "evidence_security_results[1].evidence_id: is duplicated"},
+		{name: "unknown evidence", mutate: func(response *SemanticAssessmentResponse) { response.EvidenceSecurityResults[0].EvidenceID = "missing" }, want: "evidence_security_results[0].evidence_id: is unknown"},
+		{name: "unsupported decision", mutate: func(response *SemanticAssessmentResponse) { response.EvidenceSecurityResults[0].Decision = "unknown" }, want: "evidence_security_results[0].decision: is unsupported"},
+		{name: "reject requires signal", mutate: func(response *SemanticAssessmentResponse) { response.EvidenceSecurityResults[0].Decision = "reject" }, want: "reject requires at least one security signal"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -250,12 +250,13 @@ func TestSemanticAssessmentSecurityResultsRequireCompleteEvidenceCoverage(t *tes
 	response := semanticAssessmentTestResponse()
 	startRef, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 0)
 	endRef, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 4)
-	response.SecuritySignals = []SemanticAssessmentSecuritySignal{{EvidenceID: "ev-1", Kind: "instruction_override", StartRef: startRef, EndRef: endRef}}
+	response.EvidenceSecurityResults[0].Signals = []SemanticAssessmentSecuritySignal{{EvidenceID: "ev-1", Kind: "instruction_override", StartRef: startRef, EndRef: endRef}}
+	response.EvidenceSecurityResults[0].Decision = "reject"
 	_, validationErrors := PrepareSemanticAssessmentResponse(prepared, response, limits)
-	require.Contains(t, semanticAssessmentJoinedErrors(validationErrors), "must be quarantine when security_signals cite the evidence")
+	require.Empty(t, validationErrors)
 }
 
-func TestSemanticAssessmentSecurityResultErrorsUseMatchingResultIndex(t *testing.T) {
+func TestSemanticAssessmentEvidenceSecurityResultErrorsUseMatchingResultIndex(t *testing.T) {
 	request, limits := semanticAssessmentTestRequest(t)
 	request.Evidence = append(request.Evidence, SemanticReviewEvidence{
 		EvidenceID: "ev-2", FragmentID: "fragment-2", Content: "A second evidence item.",
@@ -264,20 +265,19 @@ func TestSemanticAssessmentSecurityResultErrorsUseMatchingResultIndex(t *testing
 	require.Empty(t, errs)
 
 	response := semanticAssessmentTestResponse()
-	response.SecurityResults = []SemanticAssessmentSecurityResult{
-		{EvidenceID: "ev-2", Decision: "pass"},
-		{EvidenceID: "ev-1", Decision: "pass"},
+	response.EvidenceSecurityResults = []SemanticAssessmentEvidenceSecurityResult{
+		{EvidenceID: "ev-2", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}},
+		{EvidenceID: "ev-1", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}},
 	}
 	startRef, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 0)
 	endRef, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 4)
-	response.SecuritySignals = []SemanticAssessmentSecuritySignal{{
+	response.EvidenceSecurityResults[1].Decision = "reject"
+	response.EvidenceSecurityResults[1].Signals = []SemanticAssessmentSecuritySignal{{
 		EvidenceID: "ev-1", Kind: "instruction_override", StartRef: startRef, EndRef: endRef,
 	}}
 
 	_, validationErrors := PrepareSemanticAssessmentResponse(prepared, response, limits)
-	joined := semanticAssessmentJoinedErrors(validationErrors)
-	require.Contains(t, joined, "security_results[1].decision: must be quarantine when security_signals cite the evidence")
-	require.NotContains(t, joined, "security_results[0].decision: must be quarantine when security_signals cite the evidence")
+	require.Empty(t, validationErrors)
 }
 
 func TestSemanticAssessmentRelationshipDispositionsAndSplits(t *testing.T) {
@@ -457,10 +457,10 @@ func TestSemanticAssessmentResponseNormalizesSecurityTimeAndValue(t *testing.T) 
 	response := semanticAssessmentTestResponse()
 	securityStartRef, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 0)
 	securityEndRef, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 4)
-	response.SecuritySignals = []SemanticAssessmentSecuritySignal{{
+	response.EvidenceSecurityResults[0].Decision = "reject"
+	response.EvidenceSecurityResults[0].Signals = []SemanticAssessmentSecuritySignal{{
 		EvidenceID: "ev-1", Kind: "instruction_override", StartRef: securityStartRef, EndRef: securityEndRef,
 	}}
-	response.SecurityResults[0].Decision = "quarantine"
 	relationship := &response.RelationshipResults[0].Splits[0]
 	relationship.PredicateStatus = "registration_required"
 	relationship.PredicateKey = nil
@@ -546,16 +546,16 @@ func TestDecodeSemanticAssessmentResponseRejectsRawShapeBoundaries(t *testing.T)
 		{
 			name: "null required array",
 			mutate: func(payload map[string]any) {
-				payload["security_signals"] = nil
+				payload["evidence_security_results"] = nil
 			},
-			want: "security_signals: must not be null",
+			want: "evidence_security_results: must not be null",
 		},
 		{
 			name: "missing security result array",
 			mutate: func(payload map[string]any) {
-				delete(payload, "security_results")
+				delete(payload, "evidence_security_results")
 			},
-			want: "security_results: is required",
+			want: "evidence_security_results: is required",
 		},
 		{
 			name: "non-object entity result",
@@ -656,38 +656,39 @@ func TestSemanticAssessmentResponseRejectsSemanticBoundaryViolations(t *testing.
 		{
 			name: "required result arrays",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.SecuritySignals = nil
+				response.EvidenceSecurityResults = nil
 				response.EntityResults = nil
 				response.RelationshipResults = nil
 			},
-			want: "security_signals: is required",
+			want: "evidence_security_results: is required",
 		},
 		{
 			name: "result arrays are bounded",
 			mutate: func(response *SemanticAssessmentResponse) {
 				response.RequestID = ""
-				response.SecuritySignals = make([]SemanticAssessmentSecuritySignal, 65)
+				response.EvidenceSecurityResults = make([]SemanticAssessmentEvidenceSecurityResult, SemanticAssessmentMaxEvidenceSpans+1)
 				response.EntityResults = make([]SemanticAssessmentEntityResult, SemanticAssessmentMaxEntityResults+1)
 				response.RelationshipResults = make([]SemanticAssessmentRelationshipResult, SemanticAssessmentMaxRelationshipResults+1)
 			},
-			want: "security_signals: must contain at most 64 entries",
+			want: "evidence_security_results: must contain at most",
 		},
 		{
 			name: "security signals must use authorized boundary references",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.SecuritySignals = []SemanticAssessmentSecuritySignal{
-					{EvidenceID: "missing", Kind: "instruction_override", StartRef: validStartRef, EndRef: validEndRef},
+				response.EvidenceSecurityResults[0].Decision = "reject"
+				response.EvidenceSecurityResults[0].Signals = []SemanticAssessmentSecuritySignal{
 					{EvidenceID: "ev-1", Kind: "unsupported", StartRef: "invalid", EndRef: "invalid"},
 					{EvidenceID: "ev-1", Kind: "instruction_override", StartRef: validStartRef, EndRef: validEndRef},
 					{EvidenceID: "ev-1", Kind: "instruction_override", StartRef: validStartRef, EndRef: validEndRef},
 				}
 			},
-			want: "security_signals[1].kind: is unsupported",
+			want: "evidence_security_results[0].signals[0].kind: is unsupported",
 		},
 		{
 			name: "hidden control markup signal requires a matching span",
 			mutate: func(response *SemanticAssessmentResponse) {
-				response.SecuritySignals = []SemanticAssessmentSecuritySignal{{EvidenceID: "ev-1", Kind: "hidden_control_markup", StartRef: validStartRef, EndRef: validEndRef}}
+				response.EvidenceSecurityResults[0].Decision = "reject"
+				response.EvidenceSecurityResults[0].Signals = []SemanticAssessmentSecuritySignal{{EvidenceID: "ev-1", Kind: "hidden_control_markup", StartRef: validStartRef, EndRef: validEndRef}}
 			},
 			want: "hidden_control_markup requires a hidden control or active markup",
 		},

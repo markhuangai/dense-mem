@@ -10,8 +10,7 @@ export async function run({ rpc, expect }) {
   const idempotencyKeys = {};
   for (const [label, marker, expectedState, expectedCode] of [
     ["completed", "", "completed", ""],
-    ["rejected", "[fixture-fault:no-supported]", "rejected", "no_supported_memory"],
-    ["quarantined", "[fixture-fault:security]", "quarantined", "submission_quarantined"],
+    ["policy", "[fixture-fault:security]", "failed", "submission_policy_rejected"],
     ["failed", "[fixture-fault:unavailable]", "failed", "provider_unavailable"],
   ]) {
     const request = rememberArguments(label, marker);
@@ -51,16 +50,20 @@ export async function run({ rpc, expect }) {
   }
 
   for (const [label, result] of Object.entries(attempts)) {
-    const list = await controlJSON(controlURL, token, `/control/api/remember-attempts?team_id=${encodeURIComponent(teamID)}&outcome=${label}&limit=100`);
+    const list = await controlJSON(controlURL, token, `/control/api/remember-attempts?team_id=${encodeURIComponent(teamID)}&outcome=${result?.processing_state}&limit=100`);
     const item = (list.data || []).find((candidate) => candidate.attempt_id === diagnosticAttemptIDs[label]);
     expect(item, `control list must expose the ${label} Remember attempt`);
     expect(!Object.hasOwn(item, "public_result") && !Object.hasOwn(item, "artifacts"), `${label} list must not expose result or artifact bytes`);
     expect(item.outcome === result?.processing_state, `${label} list must preserve the terminal outcome`);
   }
 
-  for (const label of ["completed", "rejected", "quarantined"]) {
+  for (const label of ["completed", "policy"]) {
     const terminalDetail = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs[label]}`);
-    expect(Array.isArray(terminalDetail.data?.artifacts) && terminalDetail.data.artifacts.length === 0, `${label} attempt detail must not expose failure artifacts`);
+    if (label === "completed") {
+      expect(Array.isArray(terminalDetail.data?.artifacts) && terminalDetail.data.artifacts.length === 0, `${label} attempt detail must not expose failure artifacts`);
+    } else {
+      expect(Array.isArray(terminalDetail.data?.artifacts) && terminalDetail.data.artifacts.length >= 1, `${label} attempt detail must expose policy artifacts`);
+    }
     if (label === "completed") {
       const publicResult = terminalDetail.data?.public_result || {};
       const allowedKeys = new Set(["contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"]);
