@@ -426,7 +426,7 @@ write_import_gate_result() {
 
 write_status() {
   local phase="$1" fragments="$2" latest="$3" completed="$4" failed="$5" attempts="$6"
-  local import_pid="${8:-}" rate_per_minute="${9:-}" eta_seconds="${10:-}"
+  local import_pid="${7:-}" rate_per_minute="${8:-}" eta_seconds="${9:-}"
   local tmp
   tmp="$(mktemp "${STATUS_JSON}.tmp.XXXXXX")"
   jq -n \

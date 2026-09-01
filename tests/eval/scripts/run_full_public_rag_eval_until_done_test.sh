@@ -95,12 +95,15 @@ if [[ "$(sha256sum "${RUNNER}" | awk '{print $1}')" != "${runner_hash_before}" ]
   exit 1
 fi
 
-write_status "test" 991 991 990 0 0 "" "" ""
+write_status "test" 991 991 990 0 0 "import-123" "17.5" "42"
 jq -e '
   .terminal == 990 and
   .completed == 990 and
   .failed == 0 and
   .percent_complete < 100 and
+  .import_pid == "import-123" and
+  .rate_per_minute == 17.5 and
+  .eta_seconds == 42 and
   (.import_gate_result | endswith("import_gate_result.json")) and
   (.failed_source_doc_ids | endswith("failed_source_doc_ids.txt"))
 ' "${STATUS_JSON}" >/dev/null
