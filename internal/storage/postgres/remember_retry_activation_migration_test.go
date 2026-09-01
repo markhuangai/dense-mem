@@ -18,6 +18,7 @@ func TestRememberRetryActivationMigrationContainsForwardOnlyIndexRecovery(t *tes
 
 	for _, required := range []string{
 		"-- +goose NO TRANSACTION",
+		"SET lock_timeout = '30s';",
 		"remember_attempts_failed_retryable_idx_invalid",
 		"state.indisvalid IS FALSE",
 		"DROP INDEX CONCURRENTLY IF EXISTS remember_attempts_failed_retryable_idx",
@@ -27,5 +28,6 @@ func TestRememberRetryActivationMigrationContainsForwardOnlyIndexRecovery(t *tes
 	} {
 		require.Contains(t, migration, required)
 	}
+	require.NotContains(t, migration, "set_config('lock_timeout', '30s', true)")
 	require.Equal(t, 1, strings.Count(migration, "CREATE INDEX CONCURRENTLY IF NOT EXISTS remember_attempts_failed_retryable_idx\n"))
 }

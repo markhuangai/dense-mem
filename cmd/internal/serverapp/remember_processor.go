@@ -40,7 +40,7 @@ type rememberSynchronousLedger interface {
 }
 
 type rememberSynchronousIdempotencyLocker interface {
-	WithRememberAttemptLock(context.Context, string, string, string, func() error) error
+	WithRememberAttemptLock(context.Context, string, string, string, func(waited bool) error) error
 }
 
 var _ rememberapp.SynchronousProcessor = (*rememberSynchronousProcessor)(nil)
@@ -79,7 +79,10 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	var ownerResult *rememberapp.SubmissionStatusResult
 	var ownerErr error
 	owner := false
-	lockErr := locker.WithRememberAttemptLock(ctx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, func() error {
+	lockErr := locker.WithRememberAttemptLock(ctx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, func(waited bool) error {
+		if waited {
+			return nil
+		}
 		owner = true
 		ownerResult, ownerErr = p.processRememberUnlocked(ctx, input)
 		return ownerErr

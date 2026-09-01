@@ -19,7 +19,8 @@
 -- Rollback: the index is derived state; the migration is forward-only and a
 -- verified snapshot is required to restore a prior catalog definition.
 SELECT set_config('app.tx_mode', 'migration', true);
-SELECT set_config('lock_timeout', '30s', true);
+-- NO TRANSACTION migrations need a session-scoped timeout for every DDL statement.
+SET lock_timeout = '30s';
 
 DROP INDEX CONCURRENTLY IF EXISTS remember_attempts_failed_retryable_idx_invalid;
 

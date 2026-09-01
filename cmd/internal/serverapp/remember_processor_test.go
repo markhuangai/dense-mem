@@ -213,6 +213,48 @@ func TestRememberAttemptReplayAcceptsOnlyCurrentTerminalOutcomes(t *testing.T) {
 	require.Nil(t, status)
 }
 
+func TestRememberProcessorWaiterReplaysWithoutProcessing(t *testing.T) {
+	base := &rememberFailureLedgerStub{load: &repository.RememberAttempt{
+		AttemptID:       "77777777-7777-7777-7777-777777777777",
+		RequestHash:     "request-hash",
+		ContractVersion: domain.ContractVersion,
+		Outcome:         "failed",
+		Retryable:       true,
+		PublicResult: map[string]any{
+			"contract_version":     domain.ContractVersion,
+			"submission_id":        "77777777-7777-7777-7777-777777777777",
+			"submission_kind":      "remember",
+			"processing_state":     "failed",
+			"search_state":         "not_required",
+			"evidence":             []any{},
+			"relationship_results": []any{},
+			"errors": []any{map[string]any{
+				"code":        "provider_unavailable",
+				"message":     "the semantic assessor was unavailable",
+				"retryable":   true,
+				"next_action": "retry_same_request",
+				"remediation": "Retry the same request with the same idempotency_key after the transient failure clears.",
+			}},
+		},
+	}}
+	ledger := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: base, waited: true}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+
+	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+	})
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
+	require.NotNil(t, status)
+	require.Equal(t, processErr.Status, status)
+	require.Equal(t, "77777777-7777-7777-7777-777777777777", processErr.Status.SubmissionID)
+	require.Equal(t, string(rememberapp.SubmissionErrorProviderUnavailable), processErr.Status.Errors[0].Code)
+	require.Equal(t, 1, ledger.lockCalls)
+	require.Len(t, base.loadContexts, 1)
+	require.Empty(t, base.failure.Attempt.AttemptID, "a distributed waiter must not run a second processing attempt")
+}
+
 func TestRememberProcessorFailureProjectsEverySubmittedItem(t *testing.T) {
 	ledger := &rememberFailureLedgerStub{}
 	processor := &rememberSynchronousProcessor{ledger: ledger}
@@ -378,6 +420,17 @@ type rememberFailureLedgerStub struct {
 	loadContexts      []context.Context
 	loadContextErrors []error
 	loadDeadlines     []time.Time
+}
+
+type rememberWaitAwareLedgerStub struct {
+	*rememberFailureLedgerStub
+	waited    bool
+	lockCalls int
+}
+
+func (s *rememberWaitAwareLedgerStub) WithRememberAttemptLock(_ context.Context, _, _, _ string, fn func(bool) error) error {
+	s.lockCalls++
+	return fn(s.waited)
 }
 
 type rememberProcessorLogCapture struct {

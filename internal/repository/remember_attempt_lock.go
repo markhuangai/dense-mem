@@ -39,6 +39,21 @@ func (r *LedgerRepositoryImpl) WithRememberIdempotencyLock(
 	idempotencyKey string,
 	fn func() error,
 ) error {
+	if fn == nil {
+		return errors.New("remember idempotency lock: callback is required")
+	}
+	return r.withRememberIdempotencyLock(ctx, teamID, ownerProfileID, idempotencyKey, func(bool) error {
+		return fn()
+	})
+}
+
+func (r *LedgerRepositoryImpl) withRememberIdempotencyLock(
+	ctx context.Context,
+	teamID string,
+	ownerProfileID string,
+	idempotencyKey string,
+	fn func(bool) error,
+) error {
 	if r == nil || r.db == nil {
 		return errors.New("remember idempotency lock: database is required")
 	}
@@ -112,7 +127,7 @@ func (r *LedgerRepositoryImpl) WithRememberIdempotencyLock(
 			_ = lockConn.Close()
 		}
 	}()
-	acquired, err := acquireRememberSessionAdvisoryLock(ctx, lockConn, localKey)
+	acquired, waited, err := acquireRememberSessionAdvisoryLock(ctx, lockConn, localKey)
 	if err != nil {
 		if discardErr := discardAdvisoryLockConnection(lockConn); discardErr != nil {
 			err = errors.Join(err, discardErr)
@@ -140,7 +155,7 @@ func (r *LedgerRepositoryImpl) WithRememberIdempotencyLock(
 		finish(errors.Join(errRememberIdempotencyCallbackPanic, cleanupErr))
 		panic(panicValue)
 	}()
-	callbackErr := fn()
+	callbackErr := fn(waited)
 	callbackReturned = true
 	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rememberIdempotencyLockCleanupTimeout)
 	var released bool
@@ -170,17 +185,19 @@ func (r *LedgerRepositoryImpl) WithRememberIdempotencyLock(
 	return err
 }
 
-func acquireRememberSessionAdvisoryLock(ctx context.Context, conn *sql.Conn, key string) (bool, error) {
+func acquireRememberSessionAdvisoryLock(ctx context.Context, conn *sql.Conn, key string) (bool, bool, error) {
+	waited := false
 	for {
 		var acquired bool
 		if err := conn.QueryRowContext(ctx,
 			"SELECT pg_try_advisory_lock(hashtextextended($1, $2))", key, rememberIdempotencyLockHashSeed,
 		).Scan(&acquired); err != nil {
-			return false, err
+			return false, waited, err
 		}
 		if acquired {
-			return true, nil
+			return true, waited, nil
 		}
+		waited = true
 		timer := time.NewTimer(rememberIdempotencyLockPollInterval)
 		select {
 		case <-timer.C:
@@ -188,7 +205,7 @@ func acquireRememberSessionAdvisoryLock(ctx context.Context, conn *sql.Conn, key
 			if !timer.Stop() {
 				<-timer.C
 			}
-			return false, ctx.Err()
+			return false, waited, ctx.Err()
 		}
 	}
 }
@@ -209,14 +226,15 @@ func discardAdvisoryLockConnection(lockConn *sql.Conn) error {
 	return errors.New("advisory lock discard: connection was not discarded")
 }
 
-// WithRememberAttemptLock is a descriptive alias for callers that use the
-// attempt terminology; both names share the same implementation and scope.
+// WithRememberAttemptLock is the attempt-aware lock entry point. The callback
+// receives true when this caller waited for an existing distributed owner;
+// such callers must replay the owner's durable result instead of processing.
 func (r *LedgerRepositoryImpl) WithRememberAttemptLock(
 	ctx context.Context,
 	teamID string,
 	ownerProfileID string,
 	idempotencyKey string,
-	fn func() error,
+	fn func(waited bool) error,
 ) error {
-	return r.WithRememberIdempotencyLock(ctx, teamID, ownerProfileID, idempotencyKey, fn)
+	return r.withRememberIdempotencyLock(ctx, teamID, ownerProfileID, idempotencyKey, fn)
 }
