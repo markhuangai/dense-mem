@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 const controller = (
   await Promise.all([
@@ -12,6 +14,7 @@ const controller = (
 const compose = await readFile(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url), "utf8");
 const adapter = await readFile(new URL("../../scripts/e2e-runtime-adapter.mjs", import.meta.url), "utf8");
 const installer = await readFile(new URL("../../scripts/install-e2e-host-controller.sh", import.meta.url), "utf8");
+const redactorPath = fileURLToPath(new URL("../../scripts/e2e-redact-diagnostics.mjs", import.meta.url));
 const realControllerTest = await readFile(new URL("./e2e_host_controller_real.sh", import.meta.url), "utf8");
 const productionWorkflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
 const scenarioWorkflow = await readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8");
@@ -28,6 +31,7 @@ test("controller exposes the versioned lifecycle and lease contract", () => {
   assert.match(controller, /stale_failed=0/);
   assert.match(controller, /--mode precheck/);
   assert.match(controller, /redact_diagnostics/);
+  assert.match(controller, /e2e-redact-diagnostics\.mjs/);
   assert.match(controller, /cleanup-run/);
   assert.match(controller, /manifest\.image_digest/);
   assert.match(controller, /source_revision digest client_volume helpers/);
@@ -79,6 +83,7 @@ test("host installer never creates or copies a credential file", () => {
   assert.match(installer, /e2e-scenario-registry\.mjs/);
   assert.match(installer, /e2e-host-controller-stack\.sh/);
   assert.match(installer, /e2e-host-controller-runtime\.sh/);
+  assert.match(installer, /e2e-redact-diagnostics\.mjs/);
   assert.match(installer, /examples\/prometheus\.yml/);
   assert.match(installer, /chmod 600/);
   assert.doesNotMatch(installer, /AI_API_KEY|AI_VERIFIER_API_KEY|PASSWORD=/);
@@ -94,4 +99,39 @@ test("identity cleanup seed formats IPv6 PostgreSQL authorities safely", async (
     "utf8",
   );
   assert.match(source, /net\.JoinHostPort\(host,/);
+});
+
+test("diagnostic redaction protects secrets split across input chunks", async () => {
+  const { redactChunks } = await import("../../scripts/e2e-redact-diagnostics.mjs");
+  assert.equal(
+    redactChunks(["prefix xxABC", "DEFyy suffix"], ["ABCDEF"]),
+    "prefix xx[REDACTED]yy suffix",
+  );
+  assert.equal(
+    redactChunks(["prefix zzabc", "defyy suffix"], ["a", "abcdef"]),
+    "prefix zz[REDACTED]yy suffix",
+  );
+  assert.equal(redactChunks(["ordinary", " text"], ["ABCDEF"]), "ordinary text");
+  const output = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [redactorPath], {
+      env: {
+        ...process.env,
+        DENSE_MEM_CI_REDACT_ENV_FILE: "/dev/null",
+        DENSE_MEM_CI_REDACT_EXTRA_VALUES: "ABCDEF",
+      },
+    });
+    let text = "";
+    let error = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { text += chunk; });
+    child.stderr.on("data", (chunk) => { error += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => code === 0 ? resolve(text) : reject(new Error(`${code}: ${error}`)));
+    child.stdin.write("prefix xxABC");
+    setTimeout(() => {
+      child.stdin.end("DEFyy suffix");
+    }, 10);
+  });
+  assert.equal(output, "prefix xx[REDACTED]yy suffix");
 });

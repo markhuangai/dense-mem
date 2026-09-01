@@ -146,42 +146,7 @@ redact_diagnostics() {
   shift
   DENSE_MEM_CI_REDACT_ENV_FILE="$env_file" \
     DENSE_MEM_CI_REDACT_EXTRA_VALUES="$(printf '%s\n' "$@")" \
-    node <<'NODE'
-const fs = require("node:fs");
-const envFile = process.env.DENSE_MEM_CI_REDACT_ENV_FILE;
-const values = [];
-const add = (value) => {
-  if (typeof value !== "string" || value.length < 4 || /[\r\n]/.test(value)) return;
-  values.push(value);
-};
-try {
-  for (const line of fs.readFileSync(envFile, "utf8").split(/\r?\n/)) {
-    const match = line.match(/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/);
-    if (!match) continue;
-    let value = match[1].trim();
-    if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-    add(value);
-  }
-} catch {}
-for (const value of (process.env.DENSE_MEM_CI_REDACT_EXTRA_VALUES || "").split("\n")) add(value);
-const patterns = [...new Set(values)].sort((left, right) => right.length - left.length).map((value) => new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"));
-const maxPatternLength = values.reduce((max, value) => Math.max(max, value.length), 0);
-let carry = "";
-const redact = (input) => {
-  for (const pattern of patterns) input = input.replace(pattern, "[REDACTED]");
-  return input;
-};
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  const input = carry + chunk;
-  const cutoff = Math.max(0, input.length - Math.max(0, maxPatternLength - 1));
-  if (cutoff > 0) process.stdout.write(redact(input.slice(0, cutoff)));
-  carry = input.slice(cutoff);
-});
-process.stdin.on("end", () => {
-  process.stdout.write(redact(carry));
-});
-NODE
+    node "${CONTROLLER_DIR}/e2e-redact-diagnostics.mjs"
 }
 
 stop_scenario_proxy() {
