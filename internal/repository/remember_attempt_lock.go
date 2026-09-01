@@ -21,6 +21,8 @@ const (
 
 var ErrRememberIdempotencyBusy = errors.New("remember idempotency key is busy")
 
+var errRememberIdempotencyCallbackPanic = errors.New("remember idempotency lock callback panicked")
+
 type rememberIdempotencyLockEntry struct {
 	ready chan struct{}
 	err   error
@@ -127,7 +129,19 @@ func (r *LedgerRepositoryImpl) WithRememberIdempotencyLock(
 		return err
 	}
 
+	callbackReturned := false
+	defer func() {
+		if callbackReturned {
+			return
+		}
+		panicValue := recover()
+		cleanupErr := discardAdvisoryLockConnection(lockConn)
+		closed = true
+		finish(errors.Join(errRememberIdempotencyCallbackPanic, cleanupErr))
+		panic(panicValue)
+	}()
 	callbackErr := fn()
+	callbackReturned = true
 	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rememberIdempotencyLockCleanupTimeout)
 	var released bool
 	releaseErr := lockConn.QueryRowContext(releaseCtx,

@@ -282,6 +282,8 @@ func validateSemanticAssessmentRequestBasics(req *SemanticAssessmentRequest) []S
 	}
 	if len(req.Evidence) == 0 {
 		errs = append(errs, semanticErr("evidence", "is required"))
+	} else if len(req.Evidence) > SemanticAssessmentMaxEvidenceSpans {
+		errs = append(errs, semanticErr("evidence", fmt.Sprintf("must contain at most %d entries", SemanticAssessmentMaxEvidenceSpans)))
 	}
 	seen := map[string]struct{}{}
 	for i := range req.Evidence {
@@ -688,6 +690,7 @@ func validateSemanticAssessmentSecurityResults(
 	evidenceByID map[string]SemanticReviewEvidence,
 ) []SemanticValidationError {
 	seen := make(map[string]struct{}, len(results))
+	resultIndexes := make(map[string]int, len(results))
 	decisions := make(map[string]string, len(results))
 	var errs []SemanticValidationError
 	for index, result := range results {
@@ -699,6 +702,9 @@ func validateSemanticAssessmentSecurityResults(
 		if _, ok := evidenceByID[result.EvidenceID]; !ok {
 			errs = append(errs, semanticErr(field+".evidence_id", "is unknown"))
 			continue
+		}
+		if _, exists := resultIndexes[result.EvidenceID]; !exists {
+			resultIndexes[result.EvidenceID] = index
 		}
 		if _, duplicate := seen[result.EvidenceID]; duplicate {
 			errs = append(errs, semanticErr(field+".evidence_id", "is duplicated"))
@@ -718,13 +724,13 @@ func validateSemanticAssessmentSecurityResults(
 			errs = append(errs, semanticErr("security_results", "is missing an evidence result"))
 		}
 	}
-	for index, signal := range signals {
+	for _, signal := range signals {
 		decision, ok := decisions[signal.EvidenceID]
 		if !ok {
 			continue
 		}
 		if decision != "quarantine" {
-			errs = append(errs, semanticErr(fmt.Sprintf("security_results[%d].decision", index), "must be quarantine when security_signals cite the evidence"))
+			errs = append(errs, semanticErr(fmt.Sprintf("security_results[%d].decision", resultIndexes[signal.EvidenceID]), "must be quarantine when security_signals cite the evidence"))
 		}
 	}
 	for evidenceID, decision := range decisions {

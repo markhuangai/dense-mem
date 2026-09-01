@@ -118,7 +118,7 @@ func validateEvidenceSecurityResults(evidence []EvidenceInput, results []Evidenc
 		}
 		seen[fragmentID] = struct{}{}
 		decision := strings.ToLower(strings.TrimSpace(result.Decision))
-		if decision == "safe" || decision == "allow" || decision == "" {
+		if decision == "safe" || decision == "allow" {
 			decision = "pass"
 		}
 		switch decision {

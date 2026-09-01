@@ -41,6 +41,17 @@ func TestSemanticAssessmentRequestRejectsInvalidCandidateContext(t *testing.T) {
 			want: "must contain at most",
 		},
 		{
+			name: "too many evidence items",
+			mutate: func(req *SemanticAssessmentRequest, _ SemanticAssessmentLimits) {
+				for index := len(req.Evidence); index <= SemanticAssessmentMaxEvidenceSpans; index++ {
+					req.Evidence = append(req.Evidence, SemanticReviewEvidence{
+						EvidenceID: fmt.Sprintf("ev-%d", index+1), FragmentID: fmt.Sprintf("fragment-%d", index+1), Content: "additional evidence",
+					})
+				}
+			},
+			want: "evidence: must contain at most",
+		},
+		{
 			name: "duplicate candidate span with different context",
 			mutate: func(req *SemanticAssessmentRequest, _ SemanticAssessmentLimits) {
 				duplicate := req.EntityCandidateGroups[0]
@@ -242,6 +253,31 @@ func TestSemanticAssessmentSecurityResultsRequireCompleteEvidenceCoverage(t *tes
 	response.SecuritySignals = []SemanticAssessmentSecuritySignal{{EvidenceID: "ev-1", Kind: "instruction_override", StartRef: startRef, EndRef: endRef}}
 	_, validationErrors := PrepareSemanticAssessmentResponse(prepared, response, limits)
 	require.Contains(t, semanticAssessmentJoinedErrors(validationErrors), "must be quarantine when security_signals cite the evidence")
+}
+
+func TestSemanticAssessmentSecurityResultErrorsUseMatchingResultIndex(t *testing.T) {
+	request, limits := semanticAssessmentTestRequest(t)
+	request.Evidence = append(request.Evidence, SemanticReviewEvidence{
+		EvidenceID: "ev-2", FragmentID: "fragment-2", Content: "A second evidence item.",
+	})
+	prepared, errs := PrepareSemanticAssessmentRequest(request, limits)
+	require.Empty(t, errs)
+
+	response := semanticAssessmentTestResponse()
+	response.SecurityResults = []SemanticAssessmentSecurityResult{
+		{EvidenceID: "ev-2", Decision: "pass"},
+		{EvidenceID: "ev-1", Decision: "pass"},
+	}
+	startRef, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 0)
+	endRef, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 4)
+	response.SecuritySignals = []SemanticAssessmentSecuritySignal{{
+		EvidenceID: "ev-1", Kind: "instruction_override", StartRef: startRef, EndRef: endRef,
+	}}
+
+	_, validationErrors := PrepareSemanticAssessmentResponse(prepared, response, limits)
+	joined := semanticAssessmentJoinedErrors(validationErrors)
+	require.Contains(t, joined, "security_results[1].decision: must be quarantine when security_signals cite the evidence")
+	require.NotContains(t, joined, "security_results[0].decision: must be quarantine when security_signals cite the evidence")
 }
 
 func TestSemanticAssessmentRelationshipDispositionsAndSplits(t *testing.T) {

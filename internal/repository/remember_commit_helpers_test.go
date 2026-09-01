@@ -37,6 +37,10 @@ func TestValidateEvidenceSecurityResultsRequiresCompleteSafeSet(t *testing.T) {
 			results[0].Signals = []SecuritySignalInput{{Kind: "signal"}}
 			return results
 		}, want: "contains unsafe signals"},
+		{name: "missing decision", mutate: func(results []EvidenceSecurityResult) []EvidenceSecurityResult {
+			results[0].Decision = ""
+			return results
+		}, want: "has unsupported decision"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

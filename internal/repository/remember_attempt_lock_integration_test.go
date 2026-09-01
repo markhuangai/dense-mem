@@ -173,6 +173,75 @@ func TestRememberIdempotencyLockCancellationDiscardsConnection(t *testing.T) {
 	require.NoError(t, repo.WithRememberIdempotencyLock(externalCtx, teamID, ownerID, key, func() error { return nil }))
 }
 
+func TestRememberIdempotencyLockPanicCleansUpAndAllowsRetry(t *testing.T) {
+	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	sqlDB, err := appDB.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(4)
+	sqlDB.SetMaxIdleConns(4)
+	firstRepo := NewLedgerRepository(appDB, nil)
+	secondRepo := NewLedgerRepository(appDB, nil)
+	teamID, ownerID, key := uuid.NewString(), uuid.NewString(), "remember-lock-panic"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	firstEntered := make(chan struct{})
+	firstRelease := make(chan struct{})
+	panicValue := make(chan any, 1)
+	go func() {
+		defer func() { panicValue <- recover() }()
+		_ = firstRepo.WithRememberIdempotencyLock(ctx, teamID, ownerID, key, func() error {
+			close(firstEntered)
+			<-firstRelease
+			panic("remember callback panic")
+		})
+	}()
+	<-firstEntered
+
+	waiterErr := make(chan error, 1)
+	var waiterCallbackCalled atomic.Bool
+	go func() {
+		waiterErr <- firstRepo.WithRememberIdempotencyLock(ctx, teamID, ownerID, key, func() error {
+			waiterCallbackCalled.Store(true)
+			return nil
+		})
+	}()
+
+	secondEntered := make(chan struct{})
+	secondRelease := make(chan struct{})
+	secondErr := make(chan error, 1)
+	go func() {
+		secondErr <- secondRepo.WithRememberIdempotencyLock(ctx, teamID, ownerID, "remember-lock-panic-different", func() error {
+			close(secondEntered)
+			<-secondRelease
+			return nil
+		})
+	}()
+	select {
+	case <-secondEntered:
+	case <-ctx.Done():
+		t.Fatal("distinct-key callback did not acquire a distinct session")
+	}
+
+	var advisoryLockPIDs int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(DISTINCT pid)
+		FROM pg_locks
+		WHERE locktype = 'advisory' AND granted
+	`).Scan(&advisoryLockPIDs))
+	require.GreaterOrEqual(t, advisoryLockPIDs, 2, "distinct repositories must hold session locks on distinct backend sessions")
+
+	close(firstRelease)
+	close(secondRelease)
+	require.Equal(t, "remember callback panic", <-panicValue)
+	require.ErrorIs(t, <-waiterErr, errRememberIdempotencyCallbackPanic)
+	require.False(t, waiterCallbackCalled.Load(), "same-key waiter callback must not run after owner panic")
+	require.NoError(t, <-secondErr)
+	require.NoError(t, firstRepo.WithRememberIdempotencyLock(ctx, teamID, ownerID, key, func() error { return nil }))
+}
+
 func TestRememberIdempotencyLockDoesNotConsumeDreamAdmission(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
