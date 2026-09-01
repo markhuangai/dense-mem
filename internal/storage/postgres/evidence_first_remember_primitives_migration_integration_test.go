@@ -106,9 +106,18 @@ func TestEvidenceFirstRememberPrimitivesMigrationEnforcesDurableContract(t *test
 	legacyHeldSpaceID, legacyFreeSpaceID := uuid.NewString(), uuid.NewString()
 	legacyHeldAttemptID, legacyFreeAttemptID := uuid.NewString(), uuid.NewString()
 	legacyHeldArtifactID, legacyFreeArtifactID := uuid.NewString(), uuid.NewString()
+	legacyLargeArtifactID := uuid.NewString()
 	legacyCapturedAt := "now() - interval '8 days'"
 	legacyExpiresAt := "now() - interval '1 day'"
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		// Cutover accepts legacy quarantine artifacts up to 1 MiB. Drop the
+		// foundation cap here to model a database carrying that cutover data.
+		if _, err := tx.ExecContext(ctx, `
+			ALTER TABLE remember_failure_artifacts
+			DROP CONSTRAINT remember_failure_artifacts_size_check
+		`); err != nil {
+			return err
+		}
 		for _, space := range []struct {
 			id string
 		}{
@@ -153,6 +162,17 @@ func TestEvidenceFirstRememberPrimitivesMigrationEnforcesDurableContract(t *test
 			`, teamID, row.artifactID, row.attemptID, profileID); err != nil {
 				return err
 			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_failure_artifacts (
+			    team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind,
+			    content_type, content_bytes, byte_count, content_sha256, captured_at, expires_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'legacy_submission_quarantine_payload', 'application/json',
+			          convert_to(repeat('x', 300000), 'UTF8'), 300000,
+			          'sha256:' || encode(digest(convert_to(repeat('x', 300000), 'UTF8'), 'sha256'), 'hex'),
+			          `+legacyCapturedAt+`, `+legacyExpiresAt+`)
+		`, teamID, legacyLargeArtifactID, legacyHeldAttemptID, profileID); err != nil {
+			return err
 		}
 		return nil
 	}))
@@ -203,6 +223,13 @@ func TestEvidenceFirstRememberPrimitivesMigrationEnforcesDurableContract(t *test
 	`, teamID, legacyFreeArtifactID).Scan(&freeRetained))
 	assert.True(t, heldRetained)
 	assert.False(t, freeRetained)
+	var legacyLargeByteCount int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT byte_count
+		FROM remember_failure_artifacts
+		WHERE team_id = $1::uuid AND artifact_id = $2::uuid
+	`, teamID, legacyLargeArtifactID).Scan(&legacyLargeByteCount))
+	assert.Equal(t, 300000, legacyLargeByteCount)
 
 	err := execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
@@ -216,6 +243,20 @@ func TestEvidenceFirstRememberPrimitivesMigrationEnforcesDurableContract(t *test
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "remember_attempts_retryable_outcome_check")
+
+	err = execPostgresTxModeRollback(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_failure_artifacts (
+			    team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind,
+			    content_type, content_bytes, byte_count, content_sha256, captured_at, expires_at
+			) VALUES ($1::uuid, gen_random_uuid(), $2::uuid, $3::uuid, 'failure', 'application/json',
+			          convert_to(repeat('x', 300000), 'UTF8'), 300000,
+			          'sha256:' || encode(digest(convert_to(repeat('x', 300000), 'UTF8'), 'sha256'), 'hex'), now(), now() + interval '1 day')
+		`, teamID, legacyFailedID, profileID)
+		return err
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "remember_failure_artifacts_retention_size_check")
 
 	err = migrationDownTo(ctx, db, 20260831010001)
 	require.Error(t, err)

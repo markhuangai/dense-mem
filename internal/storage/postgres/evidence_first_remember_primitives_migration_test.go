@@ -25,6 +25,8 @@ func TestEvidenceFirstRememberPrimitivesMigrationContainsContract(t *testing.T) 
 		"CREATE INDEX CONCURRENTLY IF NOT EXISTS remember_attempts_failed_retryable_idx",
 		"ADD COLUMN IF NOT EXISTS retained_by_legal_hold BOOLEAN NOT NULL DEFAULT false",
 		"remember_failure_artifacts_retention_size_check",
+		"legacy_submission_quarantine_payload",
+		"byte_count <= 1048576",
 		"CREATE POLICY remember_failure_artifacts_update ON remember_failure_artifacts",
 		"evidence-first Remember primitives are append-only after deployment",
 	} {

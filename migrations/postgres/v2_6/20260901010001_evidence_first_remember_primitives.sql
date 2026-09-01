@@ -83,7 +83,13 @@ ALTER TABLE remember_failure_artifacts
     DROP CONSTRAINT IF EXISTS remember_failure_artifacts_retention_size_check;
 ALTER TABLE remember_failure_artifacts
     ADD CONSTRAINT remember_failure_artifacts_retention_size_check
-    CHECK (byte_count <= 262144 AND expires_at <= captured_at + interval '7 days') NOT VALID;
+    CHECK (
+        (
+            (artifact_kind = 'legacy_submission_quarantine_payload' AND byte_count <= 1048576)
+            OR (artifact_kind <> 'legacy_submission_quarantine_payload' AND byte_count <= 262144)
+        )
+        AND expires_at <= captured_at + interval '7 days'
+    ) NOT VALID;
 
 -- +goose StatementEnd
 
