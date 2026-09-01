@@ -20,6 +20,7 @@ type SemanticAssessmentRelationshipSplit = assessor.SemanticAssessmentRelationsh
 type SemanticAssessmentEvidenceSpan = assessor.SemanticAssessmentEvidenceSpan
 type SemanticAssessmentGroundedRange = assessor.SemanticAssessmentGroundedRange
 type SemanticAssessmentSecuritySignal = assessor.SemanticAssessmentSecuritySignal
+type SemanticAssessmentSecurityResult = assessor.SemanticAssessmentSecurityResult
 type SemanticAssessmentValue = assessor.SemanticAssessmentValue
 type SemanticAssessmentPredicateRegistration = assessor.SemanticAssessmentPredicateRegistration
 type SemanticAssessmentRequiredEntityRef = assessor.SemanticAssessmentRequiredEntityRef
@@ -120,6 +121,7 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 	evidence := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "ev-1", Content: "Mark works on Dense-Mem."})
 	return SemanticAssessmentResponse{
 		RequestID: "assess-1", SecuritySignals: []SemanticAssessmentSecuritySignal{},
+		SecurityResults: []SemanticAssessmentSecurityResult{{EvidenceID: "ev-1", Decision: "pass"}},
 		EntityResults: []assessor.SemanticAssessmentEntityResult{
 			{Ref: "person-1", GroundingRef: &markGrounding, Surface: "Mark", Kind: "person", EvidenceID: "ev-1", Start: 0, End: 4, Action: "reuse", CandidateEntityID: &mark},
 			{Ref: "product-1", GroundingRef: &denseMemGrounding, Surface: "Dense-Mem", Kind: "product", EvidenceID: "ev-1", Start: 14, End: 23, Action: "reuse", CandidateEntityID: &denseMem},

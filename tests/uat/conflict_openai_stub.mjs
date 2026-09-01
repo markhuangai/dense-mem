@@ -160,10 +160,16 @@ function semanticAssessmentResponse(input, repairTurn) {
       ...groundedTextRange(evidence, "[remember-provider-quarantine]"),
     });
   }
+  const securitySignalEvidenceIDs = new Set(securitySignals.map((signal) => signal.evidence_id));
+  const securityResults = (input.evidence ?? []).map((evidence) => ({
+    evidence_id: evidence.evidence_id,
+    decision: securitySignalEvidenceIDs.has(evidence.evidence_id) ? "quarantine" : "pass",
+  }));
 
   return {
     request_id: input.request_id,
     security_signals: securitySignals,
+    security_results: securityResults,
     entity_results: entityResults,
     relationship_results: relationshipResults,
   };

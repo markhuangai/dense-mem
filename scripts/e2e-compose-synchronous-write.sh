@@ -1,7 +1,7 @@
 SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE=""
 
 prepare_synchronous_write_files() {
-  if [[ "$E2E_SCENARIO" != "synchronous_write" ]]; then
+  if [[ "$E2E_SCENARIO" != "synchronous_write" && "$E2E_SCENARIO" != "synchronous_write_primitives" ]]; then
     return
   fi
 
@@ -13,12 +13,15 @@ prepare_synchronous_write_files() {
   fi
 
   SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE="${ROOT_DIR}/docker-compose.synchronous-write-e2e-${E2E_FILE_ID}.yml"
-  node - "$SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE" "${DENSE_MEM_E2E_WRITE_CASE:-}" "$provider_dimensions" "$E2E_MARKER" <<'NODE'
+  node - "$SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE" "${DENSE_MEM_E2E_WRITE_CASE:-}" "$provider_dimensions" "$E2E_MARKER" "$E2E_CONFLICT_PROVIDER_PORT" <<'NODE'
 const fs = require("node:fs");
 
-const [destination, caseName, providerDimensions, marker] = process.argv.slice(2);
+const [destination, caseName, providerDimensions, marker, providerHostPort] = process.argv.slice(2);
 const quote = (value) => JSON.stringify(value);
 const providerURL = caseName === "conflict" ? "http://conflict-provider:8081/v1" : "http://synchronous-write-provider:8787/v1";
+const providerPorts = caseName === "primitives" ? `
+    ports:
+      - "127.0.0.1:${providerHostPort}:8787"` : "";
 const contents = `${marker}
 services:
   server:
@@ -41,6 +44,7 @@ services:
       DENSE_MEM_E2E_PROVIDER_FAULT: "\${DENSE_MEM_E2E_PROVIDER_FAULT:-none}"
       DENSE_MEM_E2E_PROVIDER_DIMENSIONS: ${quote(providerDimensions)}
       DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: "5000"
+${providerPorts}
     volumes:
       - e2e-synchronous-write-provider-files:/e2e
     healthcheck:
@@ -56,7 +60,7 @@ NODE
 }
 
 prepare_synchronous_write_provider_fixture_volume() {
-  if [[ "$E2E_SCENARIO" != "synchronous_write" ]]; then
+  if [[ "$E2E_SCENARIO" != "synchronous_write" && "$E2E_SCENARIO" != "synchronous_write_primitives" ]]; then
     return
   fi
 
@@ -69,6 +73,27 @@ prepare_synchronous_write_provider_fixture_volume() {
   docker cp \
     "$ROOT_DIR/tests/uat/synchronous_write/provider-fixture.mjs" \
     "${container_id}:/e2e/provider-fixture.mjs"
+}
+
+run_synchronous_write_primitives_e2e() {
+  local runtime_postgres_database
+  local database_url
+  runtime_postgres_database="$(compose_server_environment_value POSTGRES_DB)"
+  database_url="$(node - "densemem_e2e_bootstrap" "dense-mem-e2e-bootstrap-password" "$runtime_postgres_database" "$POSTGRES_HOST_PORT" <<'NODE'
+const [user, password, database, port] = process.argv.slice(2);
+process.stdout.write(`postgres://${encodeURIComponent(user)}:${encodeURIComponent(password)}@127.0.0.1:${port}/${encodeURIComponent(database)}?sslmode=disable`);
+NODE
+)"
+  echo "Running Compose-backed internal Remember primitive integration cases."
+  DENSE_MEM_E2E_PRIMITIVES_PROVIDER_URL="http://127.0.0.1:${E2E_CONFLICT_PROVIDER_PORT}/v1" \
+  DATABASE_URL="$database_url" \
+  DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1 \
+  DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 \
+  go test -tags=compose_e2e ./internal/service/memoryservice -run '^TestComposeSynchronousEvidenceOnlyAssessorBatch$' -count=1
+  DATABASE_URL="$database_url" \
+  DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1 \
+  DENSE_MEM_REQUIRE_POSTGRES_TESTS=1 \
+  go test -tags=compose_e2e ./internal/repository -run '^TestComposeRememberPrimitives$' -count=1
 }
 
 run_synchronous_write_e2e() {
@@ -119,6 +144,10 @@ run_synchronous_write_e2e() {
     return
   fi
 
+  local public_case_name="$case_name"
+  if [[ "$public_case_name" == "primitives" ]]; then
+    public_case_name="remember"
+  fi
   DENSE_MEM_USER_URL="$USER_URL" \
   DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
   DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
@@ -127,7 +156,7 @@ run_synchronous_write_e2e() {
   DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
   DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
   DENSE_MEM_E2E_PROVIDER_FAULT="$configured_fault" \
-  DENSE_MEM_E2E_WRITE_CASE="$case_name" \
+  DENSE_MEM_E2E_WRITE_CASE="$public_case_name" \
   node "$ROOT_DIR/tests/uat/synchronous_write/runner.mjs"
   if [[ "$case_name" == "diagnostics" && "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" != "1" ]]; then
     export DENSE_MEM_E2E_TEAM_NAME="E2E Team"

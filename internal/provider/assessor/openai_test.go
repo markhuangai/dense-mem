@@ -43,7 +43,7 @@ func TestOpenAIAssessorUsesClosedRememberContract(t *testing.T) {
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"choices": []any{map[string]any{"message": map[string]string{
-				"content": "{\"request_id\":\"request-1\",\"security_signals\":[],\"entity_results\":[],\"relationship_results\":[]}",
+				"content": "{\"request_id\":\"request-1\",\"security_signals\":[],\"security_results\":[{\"evidence_id\":\"evidence-1\",\"decision\":\"pass\"}],\"entity_results\":[],\"relationship_results\":[]}",
 			}}},
 			"usage": map[string]int{"prompt_tokens": 12, "completion_tokens": 7, "total_tokens": 19},
 		})

@@ -319,7 +319,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 			RequestHash:     input.RequestHash,
 			ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
-			FailedPhase: phase, ErrorCode: publicError.Code, CorrelationID: correlationID, PublicResult: publicResult,
+			FailedPhase: phase, ErrorCode: publicError.Code, Retryable: publicError.Retryable, RetryabilitySet: true, CorrelationID: correlationID, PublicResult: publicResult,
 			EvidenceCount: len(input.Evidence), AssessorTurns: assessorTurns, Duration: time.Since(started),
 		},
 		Artifacts: artifacts,

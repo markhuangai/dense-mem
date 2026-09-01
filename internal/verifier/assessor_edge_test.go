@@ -385,6 +385,7 @@ func TestSemanticAssessmentResponseNormalizesSecurityTimeAndValue(t *testing.T) 
 	response.SecuritySignals = []SemanticAssessmentSecuritySignal{{
 		EvidenceID: "ev-1", Kind: "instruction_override", StartRef: securityStartRef, EndRef: securityEndRef,
 	}}
+	response.SecurityResults[0].Decision = "quarantine"
 	relationship := &response.RelationshipResults[0].Splits[0]
 	relationship.PredicateStatus = "registration_required"
 	relationship.PredicateKey = nil

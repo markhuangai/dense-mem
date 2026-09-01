@@ -49,6 +49,7 @@ export type RememberAttemptDiagnosticSummary = {
   outcome: RememberAttemptOutcome;
   failed_phase?: string;
   error_code?: string;
+  retryable: boolean;
   correlation_id?: string;
   evidence_count: number;
   relationship_count: number;
@@ -76,6 +77,7 @@ export type RememberFailureArtifactDescriptor = {
   content_sha256: string;
   captured_at: string;
   expires_at: string;
+  retained_by_legal_hold: boolean;
 };
 
 export type RememberAttemptPublicResult = {

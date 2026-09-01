@@ -52,11 +52,17 @@ type SemanticAssessmentPredicateOption struct {
 type SemanticAssessmentResponse struct {
 	RequestID           string                                 `json:"request_id"`
 	SecuritySignals     []SemanticAssessmentSecuritySignal     `json:"security_signals"`
+	SecurityResults     []SemanticAssessmentSecurityResult     `json:"security_results"`
 	EntityResults       []SemanticAssessmentEntityResult       `json:"entity_results"`
 	RelationshipResults []SemanticAssessmentRelationshipResult `json:"relationship_results"`
 	OutputTokens        int                                    `json:"-"`
 	InputTokens         int                                    `json:"-"`
 	ProviderTurns       int                                    `json:"-"`
+}
+
+type SemanticAssessmentSecurityResult struct {
+	EvidenceID string `json:"evidence_id"`
+	Decision   string `json:"decision"`
 }
 
 type SemanticAssessmentEntityResult struct {

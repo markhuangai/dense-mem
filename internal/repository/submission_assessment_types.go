@@ -91,32 +91,49 @@ type CommitSubmissionAssessmentInput struct {
 	Payload                  map[string]any
 }
 
+// EvidenceSecurityResult is the assessor's complete security disposition for
+// one submitted evidence fragment. Accepted commits require exactly one safe
+// result per fragment; unsafe results are routed to a terminal quarantine.
+type EvidenceSecurityResult struct {
+	FragmentID    string
+	EvidenceID    string
+	EvidenceIndex int
+	Decision      string
+	Safe          bool
+	Signals       []SecuritySignalInput
+}
+
+// EvidenceSecurityResultInput is retained as a descriptive alias for callers
+// that use input terminology at the repository boundary.
+type EvidenceSecurityResultInput = EvidenceSecurityResult
+
 // SynchronousRememberCommitInput contains all request-owned state needed to make
 // one final Remember transaction. Provider work happens before this input is
 // committed; no field represents a pre-provider reservation.
 type SynchronousRememberCommitInput struct {
-	TeamID          string
-	OwnerProfileID  string
-	IngestID        string
-	SpaceID         string
-	SpaceGeneration int64
-	IdempotencyKey  string
-	RequestHash     string
-	SourceSummary   string
-	Proposal        map[string]any
-	Metadata        map[string]any
-	Evidence        []EvidenceInput
-	AssessmentID    string
-	AssessmentJSON  json.RawMessage
-	ProviderTurns   int
-	InputTokens     int
-	OutputTokens    int
-	AssessorTurns   int
-	Duration        time.Duration
-	StartedAt       time.Time
-	CorrelationID   string
-	PublicResult    map[string]any
-	Commit          CommitSubmissionAssessmentInput
+	TeamID                  string
+	OwnerProfileID          string
+	IngestID                string
+	SpaceID                 string
+	SpaceGeneration         int64
+	IdempotencyKey          string
+	RequestHash             string
+	SourceSummary           string
+	Proposal                map[string]any
+	Metadata                map[string]any
+	Evidence                []EvidenceInput
+	AssessmentID            string
+	AssessmentJSON          json.RawMessage
+	EvidenceSecurityResults []EvidenceSecurityResult
+	ProviderTurns           int
+	InputTokens             int
+	OutputTokens            int
+	AssessorTurns           int
+	Duration                time.Duration
+	StartedAt               time.Time
+	CorrelationID           string
+	PublicResult            map[string]any
+	Commit                  CommitSubmissionAssessmentInput
 }
 
 type CommitSubmissionAssessmentResult struct {

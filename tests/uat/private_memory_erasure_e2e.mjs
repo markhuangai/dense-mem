@@ -86,8 +86,10 @@ async function runScenario() {
 
   await assertStrictErasureContract(ownerA.apiKey);
   await placeHold(ownerASpace.id, "owner_hold");
+  assertPolicyArtifactRetention(ownerAFixture, true);
   await expectStatus(ownerRequest(ownerA.apiKey, "owner-held"), 409, "owner erasure bypassed legal hold");
   await releaseHold(ownerASpace.id);
+  assertPolicyArtifactRetention(ownerAFixture, false);
   const ownerQueued = await ownerRequest(ownerA.apiKey, "owner-erase-1");
   assert(ownerQueued.status === 202, "credential owner erasure did not return 202");
   assertOwnerOperationShape(ownerQueued.payload.data);
@@ -240,6 +242,7 @@ async function runScenario() {
   setPrivateContentAge(retentionEligibleSpace.id, 60);
   setPrivateContentAge(retentionHeldSpace.id, 60);
   await placeHold(retentionHeldSpace.id, "retention_hold");
+  assertPolicyArtifactRetention(retentionHeldFixture, true);
   await updateRetentionDays(30);
   const retentionRun = await runRetention("retention-run-1");
   assert(retentionRun.status === 202 && retentionRun.payload.data?.queued_count === 1, "retention did not queue only the eligible space");
@@ -252,6 +255,7 @@ async function runScenario() {
   assertSpaceState(retentionHeldSpace.id, "active", 1);
 
   await releaseHold(retentionHeldSpace.id);
+  assertPolicyArtifactRetention(retentionHeldFixture, false);
   const heldRetentionRun = await runRetention("retention-run-2");
   assert(heldRetentionRun.status === 202 && heldRetentionRun.payload.data?.queued_count === 1, "released retention hold did not queue the expired space");
   const heldOperationID = waitForSpaceOperationID(retentionHeldSpace.id, "retention");
@@ -652,6 +656,16 @@ function assertSpaceState(spaceID, lifecycle, generation) {
   assert(state[0] === lifecycle && Number(state[1]) === generation, `memory space state was ${state.join("/")}; expected ${lifecycle}/${generation}`);
 }
 
+function assertPolicyArtifactRetention(fixture, retained) {
+  const row = postgresRow(`
+    SELECT retained_by_legal_hold, expires_at <= clock_timestamp()
+    FROM remember_failure_artifacts
+    WHERE team_id = ${sqlLiteral(fixture.teamID)}::uuid
+      AND artifact_id = ${sqlLiteral(fixture.failureArtifactID)}::uuid
+  `);
+  assert(row.length === 2 && row[0] === (retained ? "t" : "f") && row[1] === "t", `policy rejection artifact retention state was ${row.join("/")}; expected ${retained ? "held" : "released"}`);
+}
+
 function assertPreserved(spaceID, fixture) {
   const row = postgresRow(`
     SELECT ingest.source_summary, fragment.content
@@ -708,9 +722,11 @@ function seedSpaceContent({ teamID, ownerID, keyID, spaceID, label, rich = false
     relationshipID: randomUUID(), observationID: randomUUID(), verificationID: randomUUID(), supportID: randomUUID(),
     conflictID: randomUUID(), positionID: randomUUID(), dreamRunID: randomUUID(), hypothesisID: randomUUID(),
     communityRunID: randomUUID(), communityID: randomUUID(), logicalCommunityID: randomUUID(), searchDocumentID: randomUUID(),
-    evidenceSearchDocumentID: randomUUID(), recallID: `${runID}-${label}-${randomUUID()}`,
+    evidenceSearchDocumentID: randomUUID(), failureArtifactID: randomUUID(), recallID: `${runID}-${label}-${randomUUID()}`,
   };
   const sentinel = `${runID}-${label}-private-content`;
+  const policyArtifactContent = JSON.stringify({ submission_id: ids.ingestID, evidence: [] });
+  const policyArtifactHash = createHash("sha256").update(policyArtifactContent).digest("hex");
   if (label !== "team-shared") privateSentinels.add(sentinel);
   const sql = [
     "BEGIN",
@@ -723,6 +739,29 @@ function seedSpaceContent({ teamID, ownerID, keyID, spaceID, label, rich = false
        ${sqlLiteral(`${runID}-${label}`)}, ${sqlLiteral(`sha256:${ids.ingestID}`)}, ${sqlLiteral(sentinel)},
        'completed', '{}'::jsonb, '{}'::jsonb, now(), ${sqlLiteral(spaceID)}::uuid
      )`,
+    ...(label === "team-shared" ? [] : [
+      `INSERT INTO remember_attempts (
+         team_id, attempt_id, owner_profile_id, space_id, space_generation,
+         idempotency_key, request_hash, contract_version, submission_kind, outcome,
+         failed_phase, error_code, public_result, evidence_count, relationship_count,
+         document_count, assessor_turns, duration_ms, created_at, completed_at
+       ) VALUES (
+         ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ids.ingestID)}::uuid, ${sqlLiteral(ownerID)}::uuid,
+         ${sqlLiteral(spaceID)}::uuid, (SELECT generation FROM memory_spaces WHERE id = ${sqlLiteral(spaceID)}::uuid),
+         ${sqlLiteral(`${runID}-${label}-policy`)}, ${sqlLiteral(`sha256:${ids.ingestID}`)},
+         'dense-mem.v2.6.1', 'remember', 'failed', 'preflight', 'submission_policy_rejected',
+         '{}'::jsonb, 0, 0, 0, 0, 0, now() - interval '8 days', now() - interval '8 days'
+       )`,
+      `INSERT INTO remember_failure_artifacts (
+         team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind,
+         content_type, content_bytes, byte_count, content_sha256, captured_at, expires_at
+       ) VALUES (
+         ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(ids.failureArtifactID)}::uuid, ${sqlLiteral(ids.ingestID)}::uuid,
+         ${sqlLiteral(ownerID)}::uuid, 'policy_rejected_request', 'application/json',
+         convert_to(${sqlLiteral(policyArtifactContent)}, 'UTF8'), ${Buffer.byteLength(policyArtifactContent)},
+         ${sqlLiteral(`sha256:${policyArtifactHash}`)}, now() - interval '8 days', now() - interval '1 day'
+       )`,
+    ]),
     `INSERT INTO evidence_fragments (
        team_id, fragment_id, ingest_id, owner_profile_id, evidence_index, content,
        content_hash, source_type, authority, source_ref, space_id
@@ -742,7 +781,7 @@ function seedSpaceContent({ teamID, ownerID, keyID, spaceID, label, rich = false
   if (rich) sql.push(...richSpaceStatements({ ...ids, teamID, ownerID, keyID, spaceID, sentinel, label }));
   sql.push("COMMIT");
   postgresExec(sql.join(";\n"));
-  return { ...ids, sentinel };
+  return { ...ids, teamID, spaceID, sentinel };
 }
 
 function richSpaceStatements(ids) {

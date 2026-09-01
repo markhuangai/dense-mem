@@ -123,11 +123,14 @@ func normalizeSemanticAssessmentSubmissionContract(
 		contract.Relationships = []SemanticAssessmentRequiredRelationshipRef{}
 	}
 	var errs []SemanticValidationError
-	if len(contract.Entities) == 0 || len(contract.Entities) > SemanticAssessmentMaxEntityResults {
-		errs = append(errs, semanticErr("submission_contract.entities", fmt.Sprintf("must contain between 1 and %d entries", SemanticAssessmentMaxEntityResults)))
+	if len(contract.Entities) > SemanticAssessmentMaxEntityResults {
+		errs = append(errs, semanticErr("submission_contract.entities", fmt.Sprintf("must contain at most %d entries", SemanticAssessmentMaxEntityResults)))
 	}
-	if len(contract.Relationships) == 0 || len(contract.Relationships) > SemanticAssessmentMaxRelationshipResults {
-		errs = append(errs, semanticErr("submission_contract.relationships", fmt.Sprintf("must contain between 1 and %d entries", SemanticAssessmentMaxRelationshipResults)))
+	if len(contract.Relationships) > SemanticAssessmentMaxRelationshipResults {
+		errs = append(errs, semanticErr("submission_contract.relationships", fmt.Sprintf("must contain at most %d entries", SemanticAssessmentMaxRelationshipResults)))
+	}
+	if (len(contract.Entities) == 0) != (len(contract.Relationships) == 0) {
+		errs = append(errs, semanticErr("submission_contract", "entities and relationships must both be empty or both be non-empty"))
 	}
 
 	entityRefs := make(map[string]SemanticAssessmentRequiredEntityRef, len(contract.Entities))

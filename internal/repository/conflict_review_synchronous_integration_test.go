@@ -103,6 +103,9 @@ func commitConflictRememberFixture(
 			FragmentID: fragmentID, Content: content, ContentHash: sha256Hex(content),
 			SourceType: "conversation", Authority: "primary",
 		}},
+		EvidenceSecurityResults: []EvidenceSecurityResult{{
+			FragmentID: fragmentID, EvidenceIndex: 0, Decision: "pass", Safe: true,
+		}},
 		AssessmentID: assessmentID, AssessmentJSON: json.RawMessage(`{"request_id":"` + key + `"}`), ProviderTurns: 1,
 		Commit: CommitSubmissionAssessmentInput{
 			AssessmentID: assessmentID,

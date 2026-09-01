@@ -259,7 +259,7 @@ function RememberAttemptDetailView({
         <h3>Failure artifacts</h3>
         {detail.artifacts.length === 0 ? <div className="table-placeholder compact">No unexpired failure artifacts.</div> : detail.artifacts.map((artifact) => (
           <article className="remember-artifact" key={artifact.artifact_id}>
-            <div><strong>{artifact.artifact_kind}</strong><small>{artifact.content_type} · {artifact.byte_count} bytes · {artifact.content_sha256}</small><small>Expires {formatDate(artifact.expires_at)}</small></div>
+            <div><strong>{artifact.artifact_kind}</strong><small>{artifact.content_type} · {artifact.byte_count} bytes · {artifact.content_sha256}</small><small>{artifact.retained_by_legal_hold ? "Retained by active legal hold" : `Expires ${formatDate(artifact.expires_at)}`}</small></div>
             <button className="ghost-button" type="button" onClick={() => void loadArtifact(artifact)} disabled={artifactLoading && artifactID === artifact.artifact_id}><Download size={14} aria-hidden="true" />{artifactLoading && artifactID === artifact.artifact_id ? "Loading" : "View"}</button>
             {artifactID === artifact.artifact_id && artifactError && <p className="field-error" role="alert">{artifactError}</p>}
             {artifactID === artifact.artifact_id && artifactText && <pre className="remember-artifact-content">{artifactText}</pre>}

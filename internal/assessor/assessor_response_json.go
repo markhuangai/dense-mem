@@ -10,11 +10,12 @@ import (
 )
 
 func validateSemanticAssessmentResponseRaw(raw []byte) []SemanticValidationError {
-	top, errs := assessmentRawObject(raw, "", []string{"request_id", "security_signals", "entity_results", "relationship_results"}, nil)
+	top, errs := assessmentRawObject(raw, "", []string{"request_id", "security_signals", "security_results", "entity_results", "relationship_results"}, nil)
 	if len(errs) > 0 {
 		return errs
 	}
 	errs = append(errs, assessmentRawArrayObjects(top["security_signals"], "security_signals", []string{"evidence_id", "kind", "start_ref", "end_ref"}, nil)...)
+	errs = append(errs, assessmentRawArrayObjects(top["security_results"], "security_results", []string{"evidence_id", "decision"}, nil)...)
 	errs = append(errs, assessmentRawArrayObjects(top["entity_results"], "entity_results", []string{"ref", "grounding_ref", "action", "candidate_entity_id"}, map[string]bool{"grounding_ref": true, "candidate_entity_id": true})...)
 
 	var relationships []json.RawMessage

@@ -29,6 +29,15 @@ func normalizeSynchronousRememberCommitInput(input SynchronousRememberCommitInpu
 	for index := range input.Evidence {
 		input.Evidence[index].FragmentID = strings.TrimSpace(input.Evidence[index].FragmentID)
 	}
+	for index := range input.EvidenceSecurityResults {
+		result := &input.EvidenceSecurityResults[index]
+		result.FragmentID = strings.TrimSpace(result.FragmentID)
+		result.EvidenceID = strings.TrimSpace(result.EvidenceID)
+		result.Decision = strings.ToLower(strings.TrimSpace(result.Decision))
+		if result.Decision == "safe" || result.Decision == "allow" {
+			result.Decision = "pass"
+		}
+	}
 	return input
 }
 func rememberAttemptDuration(input SynchronousRememberCommitInput) time.Duration {
@@ -41,6 +50,14 @@ func rememberAttemptDuration(input SynchronousRememberCommitInput) time.Duration
 }
 
 func validateSynchronousRememberCommitInput(input SynchronousRememberCommitInput) error {
+	return validateSynchronousRememberCommitInputWithSecurity(input, false)
+}
+
+func validateSynchronousRememberTerminalInput(input SynchronousRememberCommitInput) error {
+	return validateSynchronousRememberCommitInputWithSecurity(input, true)
+}
+
+func validateSynchronousRememberCommitInputWithSecurity(input SynchronousRememberCommitInput, allowUnsafe bool) error {
 	for label, value := range map[string]string{"team_id": input.TeamID, "owner_profile_id": input.OwnerProfileID, "ingest_id": input.IngestID} {
 		if _, err := uuid.Parse(value); err != nil {
 			return fmt.Errorf("%s is required: %w", label, err)
@@ -67,8 +84,63 @@ func validateSynchronousRememberCommitInput(input SynchronousRememberCommitInput
 		}
 		seen[evidence.FragmentID] = struct{}{}
 	}
+	if err := validateEvidenceSecurityResults(input.Evidence, input.EvidenceSecurityResults, allowUnsafe); err != nil {
+		return err
+	}
 	commit := normalizeCommitSubmissionAssessmentInput(input.Commit)
 	return validateCommitSubmissionAssessmentInput(commit)
+}
+
+func validateEvidenceSecurityResults(evidence []EvidenceInput, results []EvidenceSecurityResult, allowUnsafe bool) error {
+	if len(results) != len(evidence) {
+		return fmt.Errorf("remember evidence security results must contain exactly one result per evidence item")
+	}
+	byIndex := make(map[int]EvidenceInput, len(evidence))
+	byFragment := make(map[string]struct{}, len(evidence))
+	for index, item := range evidence {
+		byIndex[index] = item
+		byFragment[item.FragmentID] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(results))
+	for index, result := range results {
+		fragmentID := strings.TrimSpace(result.FragmentID)
+		if fragmentID == "" && result.EvidenceIndex >= 0 {
+			fragmentID = byIndex[result.EvidenceIndex].FragmentID
+		}
+		if fragmentID == "" {
+			return fmt.Errorf("remember evidence security result[%d] must identify evidence", index)
+		}
+		if _, ok := byFragment[fragmentID]; !ok {
+			return fmt.Errorf("remember evidence security result[%d] is outside the Remember request", index)
+		}
+		if _, ok := seen[fragmentID]; ok {
+			return fmt.Errorf("remember evidence security result for %s is duplicated", fragmentID)
+		}
+		seen[fragmentID] = struct{}{}
+		decision := strings.ToLower(strings.TrimSpace(result.Decision))
+		if decision == "safe" || decision == "allow" || decision == "" {
+			decision = "pass"
+		}
+		switch decision {
+		case "pass":
+			if !result.Safe {
+				return fmt.Errorf("remember evidence security result[%d] pass must be marked safe", index)
+			}
+			if len(result.Signals) != 0 {
+				return fmt.Errorf("remember evidence security result[%d] contains unsafe signals", index)
+			}
+		case "quarantine":
+			if !allowUnsafe || result.Safe {
+				return fmt.Errorf("remember evidence security result[%d] is not safe", index)
+			}
+		default:
+			return fmt.Errorf("remember evidence security result[%d] has unsupported decision", index)
+		}
+	}
+	if len(seen) != len(evidence) {
+		return errors.New("remember evidence security results omit an evidence item")
+	}
+	return nil
 }
 
 func rememberCreateIngestInput(input SynchronousRememberCommitInput) CreateIngestInput {
@@ -157,14 +229,15 @@ func loadRememberAttemptInTx(ctx context.Context, tx *gorm.DB, input Synchronous
 	var attempt RememberAttempt
 	var publicJSON []byte
 	err := tx.WithContext(ctx).Raw(`
-		SELECT attempt_id::text, request_hash, contract_version, outcome, public_result
+		SELECT attempt_id::text, request_hash, contract_version, outcome,
+		       COALESCE(retryable, outcome = 'failed'), public_result
 		FROM remember_attempts
 		WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
 		  AND outcome IN ('completed', 'rejected', 'quarantined', 'replayed')
 		ORDER BY created_at DESC, attempt_id DESC
 		LIMIT 1
 	`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Row().Scan(
-		&attempt.AttemptID, &attempt.RequestHash, &attempt.ContractVersion, &attempt.Outcome, &publicJSON,
+		&attempt.AttemptID, &attempt.RequestHash, &attempt.ContractVersion, &attempt.Outcome, &attempt.Retryable, &publicJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

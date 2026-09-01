@@ -51,6 +51,7 @@ type RememberAttemptDiagnosticSummary struct {
 	Outcome            string     `json:"outcome"`
 	FailedPhase        string     `json:"failed_phase,omitempty"`
 	ErrorCode          string     `json:"error_code,omitempty"`
+	Retryable          bool       `json:"retryable"`
 	CorrelationID      string     `json:"correlation_id,omitempty"`
 	EvidenceCount      int        `json:"evidence_count"`
 	RelationshipCount  int        `json:"relationship_count"`
@@ -83,24 +84,26 @@ type RememberAttemptDiagnosticEvent struct {
 }
 
 type RememberFailureArtifactDescriptor struct {
-	ArtifactID    string    `json:"artifact_id"`
-	ArtifactKind  string    `json:"artifact_kind"`
-	ContentType   string    `json:"content_type"`
-	ByteCount     int64     `json:"byte_count"`
-	ContentSHA256 string    `json:"content_sha256"`
-	CapturedAt    time.Time `json:"captured_at"`
-	ExpiresAt     time.Time `json:"expires_at"`
+	ArtifactID          string    `json:"artifact_id"`
+	ArtifactKind        string    `json:"artifact_kind"`
+	ContentType         string    `json:"content_type"`
+	ByteCount           int64     `json:"byte_count"`
+	ContentSHA256       string    `json:"content_sha256"`
+	CapturedAt          time.Time `json:"captured_at"`
+	ExpiresAt           time.Time `json:"expires_at"`
+	RetainedByLegalHold bool      `json:"retained_by_legal_hold"`
 }
 
 type RememberFailureArtifact struct {
-	ArtifactID    string
-	ArtifactKind  string
-	ContentType   string
-	Content       []byte
-	ByteCount     int64
-	ContentSHA256 string
-	CapturedAt    time.Time
-	ExpiresAt     time.Time
+	ArtifactID          string
+	ArtifactKind        string
+	ContentType         string
+	Content             []byte
+	ByteCount           int64
+	ContentSHA256       string
+	CapturedAt          time.Time
+	ExpiresAt           time.Time
+	RetainedByLegalHold bool
 }
 
 type RememberAttemptDiagnosticsService struct {
@@ -187,13 +190,14 @@ func (s *RememberAttemptDiagnosticsService) GetRememberAttemptDiagnostic(
 	artifacts := make([]RememberFailureArtifactDescriptor, 0, len(record.Artifacts))
 	for _, artifact := range record.Artifacts {
 		artifacts = append(artifacts, RememberFailureArtifactDescriptor{
-			ArtifactID:    artifact.ArtifactID,
-			ArtifactKind:  artifact.ArtifactKind,
-			ContentType:   artifact.ContentType,
-			ByteCount:     artifact.ByteCount,
-			ContentSHA256: artifact.ContentSHA256,
-			CapturedAt:    artifact.CapturedAt.UTC(),
-			ExpiresAt:     artifact.ExpiresAt.UTC(),
+			ArtifactID:          artifact.ArtifactID,
+			ArtifactKind:        artifact.ArtifactKind,
+			ContentType:         artifact.ContentType,
+			ByteCount:           artifact.ByteCount,
+			ContentSHA256:       artifact.ContentSHA256,
+			CapturedAt:          artifact.CapturedAt.UTC(),
+			ExpiresAt:           artifact.ExpiresAt.UTC(),
+			RetainedByLegalHold: artifact.RetainedByLegalHold,
 		})
 	}
 	return &RememberAttemptDiagnosticDetail{
@@ -226,14 +230,15 @@ func (s *RememberAttemptDiagnosticsService) GetRememberFailureArtifact(
 		return nil, ErrRememberAttemptDiagnosticsUnavailable
 	}
 	return &RememberFailureArtifact{
-		ArtifactID:    artifact.ArtifactID,
-		ArtifactKind:  artifact.ArtifactKind,
-		ContentType:   artifact.ContentType,
-		Content:       append([]byte(nil), artifact.Content...),
-		ByteCount:     artifact.ByteCount,
-		ContentSHA256: artifact.ContentSHA256,
-		CapturedAt:    artifact.CapturedAt.UTC(),
-		ExpiresAt:     artifact.ExpiresAt.UTC(),
+		ArtifactID:          artifact.ArtifactID,
+		ArtifactKind:        artifact.ArtifactKind,
+		ContentType:         artifact.ContentType,
+		Content:             append([]byte(nil), artifact.Content...),
+		ByteCount:           artifact.ByteCount,
+		ContentSHA256:       artifact.ContentSHA256,
+		CapturedAt:          artifact.CapturedAt.UTC(),
+		ExpiresAt:           artifact.ExpiresAt.UTC(),
+		RetainedByLegalHold: artifact.RetainedByLegalHold,
 	}, nil
 }
 
@@ -251,6 +256,7 @@ func rememberAttemptDiagnosticSummary(record repository.RememberAttemptDiagnosti
 		Outcome:            record.Outcome,
 		FailedPhase:        record.FailedPhase,
 		ErrorCode:          record.ErrorCode,
+		Retryable:          record.Retryable,
 		CorrelationID:      record.CorrelationID,
 		EvidenceCount:      record.EvidenceCount,
 		RelationshipCount:  record.RelationshipCount,

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"gorm.io/gorm"
 
@@ -119,6 +120,9 @@ type LedgerRepositoryImpl struct {
 	rls                    rLSHelper
 	conflictReviewTTLDays  int
 	conflictReviewTimezone string
+
+	rememberIdempotencyLockMu sync.Mutex
+	rememberIdempotencyLocks  map[string]*rememberIdempotencyLockEntry
 }
 
 var _ LedgerRepository = (*LedgerRepositoryImpl)(nil)
