@@ -849,9 +849,6 @@ fi
 
 if [[ ( "$E2E_SCENARIO" == "synchronous_write" || "$E2E_SCENARIO" == "synchronous_write_primitives" ) && "${DENSE_MEM_E2E_WRITE_CASE:-}" == "primitives" ]]; then
   run_synchronous_write_primitives_e2e
-  if [[ "$E2E_SCENARIO" == "synchronous_write_primitives" ]]; then
-    exit 0
-  fi
 fi
 
 if [[ "$E2E_SCENARIO" == "infrastructure_credentials" ]]; then
@@ -930,7 +927,7 @@ if [[ "$E2E_SCENARIO" == "security_intake" ]]; then
 fi
 
 if [[ "$E2E_SCENARIO" == "submission_terminal_errors" ]]; then echo "Running compose-backed terminal submission error completeness e2e with the configured live verifier."; DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_E2E_API_KEY="$api_key" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" node "$ROOT_DIR/tests/uat/submission_terminal_errors_e2e.mjs"; exit 0; fi
-if [[ "$E2E_SCENARIO" == "synchronous_write" ]]; then
+if [[ "$E2E_SCENARIO" == "synchronous_write" || "$E2E_SCENARIO" == "synchronous_write_primitives" ]]; then
   run_synchronous_write_e2e "$team_id" "$api_key"
   exit 0
 fi

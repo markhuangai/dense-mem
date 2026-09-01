@@ -1,11 +1,14 @@
+-- +goose NO TRANSACTION
+
 -- +goose Up
 -- +goose StatementBegin
 
 -- Issue #317 adds only durable foundations. Retry/replay activation remains
 -- owned by #318. Existing attempts are append-only and retain NULL retryability
 -- so the legacy effective semantics can be derived without rewriting history.
--- Lock/rewrite impact: additive columns, constraints, indexes, and policies use
--- short DDL locks; validation fails closed if deployed data is out of bounds.
+-- Lock/rewrite impact: additive columns, constraints, and policies use short DDL
+-- locks; validation fails closed if deployed data is out of bounds, and the
+-- retryability index is built concurrently outside a transaction.
 -- RLS impact: held artifact reads remain system/control-only; retention updates
 -- are allowed only through a lock-scoped system transaction.
 -- Backfill: active legal holds reconcile their existing Remember artifacts in
@@ -31,12 +34,22 @@ ALTER TABLE remember_attempts
 ALTER TABLE remember_attempts
     ADD CONSTRAINT remember_attempts_retryable_outcome_check
     CHECK (retryable IS NULL OR retryable = false OR (retryable = true AND outcome = 'failed')) NOT VALID;
+
+-- +goose StatementEnd
+
+-- Keep constraint validation in its own statement so its table scan does not
+-- share a transaction with unrelated migration work.
+-- +goose StatementBegin
+SELECT set_config('lock_timeout', '30s', true);
 ALTER TABLE remember_attempts
     VALIDATE CONSTRAINT remember_attempts_retryable_outcome_check;
-CREATE INDEX IF NOT EXISTS remember_attempts_failed_retryable_idx
+-- +goose StatementEnd
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS remember_attempts_failed_retryable_idx
     ON remember_attempts(team_id, owner_profile_id, idempotency_key, created_at DESC, attempt_id DESC)
     WHERE outcome = 'failed';
 
+-- +goose StatementBegin
 ALTER TABLE remember_failure_artifacts
     ADD COLUMN IF NOT EXISTS retained_by_legal_hold BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE remember_failure_artifacts
@@ -44,9 +57,17 @@ ALTER TABLE remember_failure_artifacts
 ALTER TABLE remember_failure_artifacts
     ADD CONSTRAINT remember_failure_artifacts_retention_size_check
     CHECK (byte_count <= 262144 AND expires_at <= captured_at + interval '7 days') NOT VALID;
+
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+SELECT set_config('lock_timeout', '30s', true);
 ALTER TABLE remember_failure_artifacts
     VALIDATE CONSTRAINT remember_failure_artifacts_retention_size_check;
 
+-- +goose StatementEnd
+
+-- +goose StatementBegin
 DROP POLICY IF EXISTS remember_failure_artifacts_update ON remember_failure_artifacts;
 CREATE POLICY remember_failure_artifacts_update ON remember_failure_artifacts
     FOR UPDATE

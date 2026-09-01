@@ -67,6 +67,8 @@ test("compose primitives case runs the internal PostgreSQL driver and public Rem
   assert.match(overlay, /public_case_name="remember"/);
   assert.match(compose, /DENSE_MEM_E2E_WRITE_CASE:-\}.*primitives/);
   assert.match(compose, /run_synchronous_write_primitives_e2e/);
+  assert.doesNotMatch(compose, /if \[\[ "\$E2E_SCENARIO" == "synchronous_write_primitives" \]\]; then\s+exit 0/);
+  assert.match(compose, /if \[\[ "\$E2E_SCENARIO" == "synchronous_write" \|\| "\$E2E_SCENARIO" == "synchronous_write_primitives" \]\]; then[\s\S]*run_synchronous_write_e2e "\$team_id" "\$api_key"/);
   assert.match(driver, /go:build compose_e2e/);
   assert.match(driver, /TestComposeRememberPrimitives/);
   assert.match(overlay, /TestComposeSynchronousEvidenceOnlyAssessorBatch/);
