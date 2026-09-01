@@ -21,7 +21,6 @@ const DefaultRecallFeedbackRetentionDays = 30
 const DefaultCommunityDetectionStartTimeLocal = "03:30"
 const DefaultCommunityDetectionMaxConcurrency = 1
 const DefaultCommunityDetectionJitterSeconds = 600
-const DefaultEmbeddingReconciliationStartTimeLocal = "04:30"
 
 var ErrInvalidAppConfig = errors.New("invalid app config")
 
@@ -415,15 +414,10 @@ func generalRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry) (
 	}
 
 	timezone := configString(normalized[domain.AppConfigTimezone], DefaultAppTimezone)
-	reconciliationStart := configString(normalized[domain.AppConfigEmbeddingReconciliationStartTimeLocal], DefaultEmbeddingReconciliationStartTimeLocal)
-	runtime := domain.GeneralRuntimeConfig{
-		Timezone:                              timezone,
-		EmbeddingReconciliationStartTimeLocal: reconciliationStart,
-	}
+	runtime := domain.GeneralRuntimeConfig{Timezone: timezone}
 	updateTime := entries[domain.AppConfigUpdateTimeKey].Value
 	items := []domain.GeneralConfigItem{
 		generalConfigItem(entries, domain.AppConfigTimezone, timezone),
-		generalConfigItem(entries, domain.AppConfigEmbeddingReconciliationStartTimeLocal, reconciliationStart),
 	}
 	return domain.GeneralConfigSettings{UpdateTime: updateTime, Items: items, Effective: runtime}, nil
 }
@@ -711,15 +705,6 @@ func normalizeGeneralConfigValues(values map[string]string) (map[string]string, 
 			if _, err := time.LoadLocation(trimmed); err != nil {
 				return nil, fmt.Errorf("%w: APP_TIMEZONE must be a valid IANA timezone or Local", ErrInvalidAppConfig)
 			}
-		case domain.AppConfigEmbeddingReconciliationStartTimeLocal:
-			if trimmed == "" {
-				trimmed = DefaultEmbeddingReconciliationStartTimeLocal
-			}
-			var err error
-			trimmed, err = normalizeStrictHHMM(key, trimmed)
-			if err != nil {
-				return nil, err
-			}
 		}
 		normalized[key] = trimmed
 	}
@@ -800,7 +785,6 @@ func normalizeSSOConfigValues(values map[string]string) (map[string]string, erro
 func editableGeneralConfigKeys() []string {
 	return []string{
 		domain.AppConfigTimezone,
-		domain.AppConfigEmbeddingReconciliationStartTimeLocal,
 	}
 }
 

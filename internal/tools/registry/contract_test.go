@@ -155,7 +155,6 @@ func TestContractCatalogMetadata(t *testing.T) {
 	}
 	for _, name := range []string{
 		ToolRemember,
-		ToolGetSubmissionStatus,
 		ToolCorrectRelationship,
 		ToolRecallMemory,
 		ToolTraceMemory,
@@ -175,7 +174,7 @@ func TestContractExcludesStandaloneCommunityTool(t *testing.T) {
 	}
 }
 
-func TestToolVisibleHidesDormantContractTools(t *testing.T) {
+func TestToolVisibleExposesCutoverContractTools(t *testing.T) {
 	if !ToolVisible(context.Background(), Tool{Name: "recall_memory"}, RuntimeToolPolicy{}) {
 		t.Fatal("ordinary tools should remain visible")
 	}
@@ -183,12 +182,8 @@ func TestToolVisibleHidesDormantContractTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ToolVisible(context.Background(), remember, RuntimeToolPolicy{}) {
-		t.Fatal("dormant contract tool is visible before cutover")
-	}
-	remember.Visibility = "active"
 	if !ToolVisible(context.Background(), remember, RuntimeToolPolicy{}) {
-		t.Fatal("non-dormant contract tool should be visible to cutover wiring")
+		t.Fatal("cutover contract tool should be visible")
 	}
 }
 
@@ -214,31 +209,6 @@ func TestRememberRejectsMixedSourceRevisionBatch(t *testing.T) {
 	}), []string{"write"})
 	if err == nil || !strings.Contains(err.Error(), "revision fields must match") {
 		t.Fatalf("ValidateContractInput err = %v, want mixed source revision rejection", err)
-	}
-}
-
-func TestRememberRejectsSourceRevisionPairsAfterTrimming(t *testing.T) {
-	remember, err := requireTool(toolMap(t), ToolRemember)
-	require.NoError(t, err)
-	for _, test := range []struct {
-		name           string
-		sourceKey      string
-		sourceRevision string
-		want           string
-	}{
-		{name: "blank source key", sourceKey: " \t", sourceRevision: "rev-1", want: "evidence[0].source_key"},
-		{name: "blank source revision", sourceKey: "wiki://write-pipeline", sourceRevision: " \t", want: "evidence[0].source_revision"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			input := validFlatRelationshipSubmission()
-			evidence := input["evidence"].([]any)[0].(map[string]any)
-			evidence["source_key"] = test.sourceKey
-			evidence["source_revision"] = test.sourceRevision
-
-			err := ValidateContractInput(remember, input, []string{"write"})
-
-			require.ErrorContains(t, err, test.want)
-		})
 	}
 }
 
@@ -508,7 +478,6 @@ func TestCanonicalInputFieldNames(t *testing.T) {
 		forbidden      []string
 	}{
 		{ToolRemember, []string{"evidence", "relationships"}, nil, []string{"contract_version", "entity_hints", "relationship_hints", "proposal"}},
-		{ToolGetSubmissionStatus, []string{"submission_id"}, []string{"submission_id"}, []string{"ingest_id", "placement_item_id", "items", "review_tasks"}},
 		{ToolCorrectRelationship, []string{"action", "relationship_id", "expected_version", "patch", "supports", "reason", "submission_id", "confirmation_token", "selection"}, []string{"action", "idempotency_key"}, []string{"operation", "source_entity_id", "target_entity_id", "owned_observation_ids", "dry_run", "impact_token", "evidence"}},
 		{ToolRecallMemory, []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"}, nil, []string{"include_evidence", "use_communities"}},
 		{ToolTraceMemory, []string{"include_verification", "include_transitions", "max_depth", "predicate_keys", "topic", "min_relevance"}, nil, []string{"max_chars"}},
@@ -666,8 +635,8 @@ func TestOutputSchemasAreClosed(t *testing.T) {
 	}
 }
 
-func TestSubmissionStatusEvidenceErrorsUseTheClosedCodeEnum(t *testing.T) {
-	schema := submissionStatusOutputSchema()
+func TestRememberEvidenceErrorsUseTheClosedCodeEnum(t *testing.T) {
+	schema := rememberOutputSchema()
 	expectedCodes := append([]string(nil), memoryservice.SubmissionErrorCodes()...)
 	slices.Sort(expectedCodes)
 	assertExactCodeEnum := func(label string, codeSchema map[string]any) {

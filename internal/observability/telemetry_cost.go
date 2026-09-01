@@ -9,12 +9,12 @@ import (
 )
 
 const (
-	AIOperationPlacementAssessment = "placement_assessment"
-	AIOperationConflictReview      = "conflict_review"
-	AIOperationDreamGeneration     = "dream_generation"
-	AIOperationRecallEmbedding     = "recall_embedding"
-	AIOperationBackgroundEmbedding = "background_embedding"
-	AIOperationCommunitySummary    = "community_summary"
+	AIOperationSemanticAssessment      = "semantic_assessment"
+	AIOperationConflictReview          = "conflict_review"
+	AIOperationDreamGeneration         = "dream_generation"
+	AIOperationRecallEmbedding         = "recall_embedding"
+	AIOperationSearchDocumentEmbedding = "search_document_embedding"
+	AIOperationCommunitySummary        = "community_summary"
 
 	AIComponentVerifier  = "verifier"
 	AIComponentEmbedding = "embedding"
@@ -72,7 +72,6 @@ type AIOperationMetrics interface {
 	ObserveAIOperationUsage(ctx context.Context, usage AIOperationUsage)
 	ObserveAIOperationUnpriced(ctx context.Context, component, model, reason string)
 	ObserveRememberAcknowledgement(ctx context.Context, durationSeconds float64, outcome string)
-	ObserveRememberFirstDisposition(ctx context.Context, durationSeconds float64, status string)
 }
 
 // WithMetricIdentity attaches a verified internal worker identity. Request
@@ -125,7 +124,7 @@ func metricUUIDLabel(value string) string {
 
 func normalizeAIOperation(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case AIOperationPlacementAssessment, AIOperationConflictReview, AIOperationDreamGeneration, AIOperationRecallEmbedding, AIOperationBackgroundEmbedding, AIOperationCommunitySummary:
+	case AIOperationSemanticAssessment, AIOperationConflictReview, AIOperationDreamGeneration, AIOperationRecallEmbedding, AIOperationSearchDocumentEmbedding, AIOperationCommunitySummary:
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return unknownMetricLabel
@@ -168,15 +167,6 @@ func normalizeRememberOutcome(value string) string {
 	}
 }
 
-func normalizePlacementStatus(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "completed", "failed", "quarantined", "rejected":
-		return strings.ToLower(strings.TrimSpace(value))
-	default:
-		return unknownMetricLabel
-	}
-}
-
 func RecordAIOperationUsage(ctx context.Context, metrics DiscoverabilityMetrics, usage AIOperationUsage) {
 	if metrics == nil {
 		return
@@ -201,14 +191,5 @@ func RecordRememberAcknowledgement(ctx context.Context, metrics DiscoverabilityM
 	}
 	if recorder, ok := metrics.(AIOperationMetrics); ok {
 		recorder.ObserveRememberAcknowledgement(ctx, duration.Seconds(), outcome)
-	}
-}
-
-func RecordRememberFirstDisposition(ctx context.Context, metrics DiscoverabilityMetrics, duration time.Duration, status string) {
-	if metrics == nil || duration < 0 {
-		return
-	}
-	if recorder, ok := metrics.(AIOperationMetrics); ok {
-		recorder.ObserveRememberFirstDisposition(ctx, duration.Seconds(), status)
 	}
 }

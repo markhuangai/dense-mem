@@ -9,6 +9,8 @@ import (
 	"gorm.io/gorm"
 )
 
+type CreateIngestResult = EvidenceIngestResult
+
 func correctRelationshipWithTestEmbeddings(ctx context.Context, semantic *SemanticRepositoryImpl, input CorrectRelationshipInput) (*CorrectRelationshipResult, error) {
 	plan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, input)
 	if err != nil {
@@ -104,6 +106,10 @@ func createSemanticIngest(
 	return result
 }
 
+func createTestIngest(ctx context.Context, repo *LedgerRepositoryImpl, input CreateIngestInput) (*EvidenceIngestResult, error) {
+	return repo.CreateIngest(ctx, input)
+}
+
 func applySemanticDecision(
 	t *testing.T,
 	ctx context.Context,
@@ -114,96 +120,6 @@ func applySemanticDecision(
 	result, err := repo.ApplyRelationshipDecision(ctx, input)
 	require.NoError(t, err)
 	return result
-}
-
-func commitAcceptedSubmissionFixture(
-	t *testing.T,
-	ctx context.Context,
-	repo *LedgerRepositoryImpl,
-	input CommitPlacementSemanticInput,
-) (*CommitSubmissionAssessmentResult, error) {
-	t.Helper()
-	status, err := repo.GetPlacementRun(ctx, GetPlacementRunInput{
-		TeamID:         input.TeamID,
-		OwnerProfileID: input.OwnerProfileID,
-		IngestID:       input.IngestID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	assessment := persistSubmissionAssessment(t, ctx, repo, PlacementRun{
-		TeamID:         input.TeamID,
-		OwnerProfileID: input.OwnerProfileID,
-		IngestID:       input.IngestID,
-		PlacementRunID: input.PlacementRunID,
-		Attempts:       input.ExpectedAttempts,
-	})
-	fragmentByItemID := make(map[string]EvidenceFragment, len(status.Items))
-	for index, item := range status.Items {
-		if index < len(status.Evidence) {
-			fragmentByItemID[item.PlacementItemID] = status.Evidence[index]
-		}
-	}
-	itemID := input.PlacementItemID
-	fragment, ok := fragmentByItemID[itemID]
-	if !ok {
-		return nil, ErrPlacementLeaseLost
-	}
-	entityResolutions := make([]SubmissionAssessmentEntityResolutionInput, 0, len(input.EntityResolutions))
-	for _, resolution := range input.EntityResolutions {
-		if resolution.FragmentID == "" {
-			resolution.FragmentID = fragment.FragmentID
-		}
-		resolution.AssessmentID = assessment.AssessmentID
-		entityResolutions = append(entityResolutions, SubmissionAssessmentEntityResolutionInput{
-			PlacementItemID: itemID,
-			Resolution:      resolution,
-		})
-	}
-	relationships := make([]SubmissionAssessmentRelationshipObservationInput, 0, len(input.RelationshipObservations))
-	for _, observation := range input.RelationshipObservations {
-		observation = normalizePlacementRelationshipDecisionInput(observation)
-		observation.AssessorAccepted = true
-		observation.EvidenceVerdict = ""
-		observation.Confidence = nil
-		observation.Rationale = ""
-		observation.AssessmentID = assessment.AssessmentID
-		observation.AssessmentPolicyVersion = ""
-		observation.ThresholdUsed = nil
-		observation.GateResult = ""
-		relationships = append(relationships, SubmissionAssessmentRelationshipObservationInput{
-			PlacementItemID: itemID,
-			RelationshipRef: observation.Ref,
-			SplitIndex:      0,
-			Observation:     observation,
-		})
-	}
-	relationshipResults := make([]SubmissionRelationshipResultInput, 0, len(relationships))
-	for _, relationship := range relationships {
-		relationshipResults = append(relationshipResults, SubmissionRelationshipResultInput{
-			RelationshipRef: relationship.Observation.Ref,
-			Disposition:     "stored",
-		})
-	}
-	return repo.CommitSubmissionAssessment(ctx, CommitSubmissionAssessmentInput{
-		SubmissionAssessmentRunScope: SubmissionAssessmentRunScope{
-			TeamID:           input.TeamID,
-			OwnerProfileID:   input.OwnerProfileID,
-			IngestID:         input.IngestID,
-			PlacementRunID:   input.PlacementRunID,
-			WorkerID:         input.WorkerID,
-			ExpectedAttempts: input.ExpectedAttempts,
-		},
-		AssessmentID: assessment.AssessmentID,
-		Items: []SubmissionAssessmentItemInput{{
-			PlacementItemID: itemID,
-			FragmentID:      fragment.FragmentID,
-		}},
-		EntityResolutions:        entityResolutions,
-		RelationshipObservations: relationships,
-		RelationshipResults:      relationshipResults,
-		Payload:                  input.Payload,
-	})
 }
 
 func assertSameTeamCanReadSemanticEdge(

@@ -281,7 +281,7 @@ func TestOpenAIStructuredChatRecordsProviderUsageBeforeRejectingContent(t *testi
 
 	v := NewOpenAIAssessor(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	v.SetMetrics(metrics)
-	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationPlacementAssessment, 1)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
 	_, err := v.openAIStructuredChatJSONWithUsage(ctx, "assessor-model", "schema", map[string]any{}, "system", map[string]any{})
 	require.ErrorIs(t, err, ErrVerifierProvider)
 
@@ -292,7 +292,7 @@ func TestOpenAIStructuredChatRecordsProviderUsageBeforeRejectingContent(t *testi
 		if !strings.HasPrefix(line, "densemem_ai_operation_cost_usd_total{") {
 			continue
 		}
-		assert.Contains(t, line, `operation="placement_assessment"`)
+		assert.Contains(t, line, `operation="semantic_assessment"`)
 		assert.Contains(t, line, `component="verifier"`)
 		assert.Contains(t, line, `model="assessor-model"`)
 		assert.True(t, strings.HasSuffix(line, " 15"), "cost line = %q; want 15 USD", line)
@@ -310,7 +310,7 @@ func TestOpenAIStructuredChatMarksMissingUsageBeforeRejectingContent(t *testing.
 
 	v := NewOpenAIAssessor(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	v.SetMetrics(metrics)
-	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationPlacementAssessment, 1)
+	ctx := observability.WithAIOperation(context.Background(), observability.AIOperationSemanticAssessment, 1)
 	_, err := v.openAIStructuredChatJSONWithUsage(ctx, "assessor-model", "schema", map[string]any{}, "system", map[string]any{})
 	require.ErrorIs(t, err, ErrVerifierProvider)
 
@@ -320,7 +320,7 @@ func TestOpenAIStructuredChatMarksMissingUsageBeforeRejectingContent(t *testing.
 		if !strings.HasPrefix(line, "densemem_ai_operation_unpriced_total{") {
 			continue
 		}
-		if strings.Contains(line, `operation="placement_assessment"`) &&
+		if strings.Contains(line, `operation="semantic_assessment"`) &&
 			strings.Contains(line, `component="verifier"`) &&
 			strings.Contains(line, `model="assessor-model"`) &&
 			strings.Contains(line, `reason="missing_usage"`) {

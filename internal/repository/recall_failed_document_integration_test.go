@@ -115,3 +115,45 @@ func TestRecallFailedDocumentsRemainLexicalAndTeamScopedWhileVectorsAreExcluded(
 	require.NoError(t, err)
 	require.Empty(t, otherRelationshipRecall.Results)
 }
+
+func TestRecallExcludesConflictResolutionDeletionOnlyEvidence(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "recall-deletion-only")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-deletion-only-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "recall-deletion-only", 2, "exact", "")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	searchRepo := NewSearchRepository(appDB, rls)
+	marker := map[string]any{"conflict_resolution_deletion_only": true}
+	content := "overdue conflict deletion-only derivation recall sentinel"
+	ingest, err := createTestIngest(ctx, ledgerRepo, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "recall-deletion-only",
+		RequestHash: sha256Hex(content), Status: "completed", Metadata: marker,
+		Evidence: []EvidenceInput{{Content: content, Metadata: marker}},
+	})
+	require.NoError(t, err)
+	require.Len(t, ingest.Evidence, 1)
+	document, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence",
+		SourceID: ingest.Evidence[0].FragmentID, SourceVersion: 1,
+		DocumentText: content, EmbeddingContractID: contractID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE search_documents
+			SET search_state = 'current', embedding = '[1,0]'::vector,
+			    embedding_updated_at = clock_timestamp()
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, document.SearchDocumentID).Error
+	}))
+
+	recall, err := searchRepo.RecallEvidence(ctx, RecallEvidenceInput{
+		TeamID: teamID, Query: "deletion-only derivation recall sentinel",
+		QueryEmbedding: []float32{1, 0}, Limit: 5,
+	})
+	require.NoError(t, err)
+	require.Empty(t, recall.Results)
+	require.Equal(t, string(domain.SearchProjectionCurrent), recall.SearchState)
+}

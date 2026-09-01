@@ -178,16 +178,6 @@ func validateRetractEvidenceInput(input RetractEvidenceInput) error {
 	return nil
 }
 
-func lockDirectSupersessionIdempotencyKeys(ctx context.Context, tx *gorm.DB, input CreateIngestInput) error {
-	keys := make([]string, 0)
-	for _, item := range input.Evidence {
-		if len(item.SupersedesEvidenceIDs) > 0 {
-			keys = append(keys, item.IdempotencyKey)
-		}
-	}
-	return lockEvidenceLifecycleIdempotencyKeys(ctx, tx, input.TeamID, input.OwnerProfileID, keys)
-}
-
 func lockEvidenceLifecycleIdempotencyKeys(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -210,48 +200,6 @@ func lockEvidenceLifecycleIdempotencyKeys(
 		}
 	}
 	return nil
-}
-
-func loadDirectSupersessionReplay(ctx context.Context, tx *gorm.DB, input CreateIngestInput) (*CreateIngestResult, error) {
-	if err := lockDirectSupersessionIdempotencyKeys(ctx, tx, input); err != nil {
-		return nil, err
-	}
-	keys := make([]string, 0)
-	for _, item := range input.Evidence {
-		if len(item.SupersedesEvidenceIDs) > 0 {
-			keys = append(keys, item.IdempotencyKey)
-		}
-	}
-	if len(keys) == 0 {
-		return nil, nil
-	}
-	var replacementIngestID string
-	existingCount := 0
-	for _, key := range keys {
-		op, err := loadEvidenceLifecycleOperation(ctx, tx, input.TeamID, input.OwnerProfileID, key)
-		if err != nil {
-			return nil, err
-		}
-		if op == nil {
-			continue
-		}
-		existingCount++
-		if op.Action != "supersede" || op.RequestHash != input.RequestHash || op.ReplacementIngestID == "" {
-			return nil, fmt.Errorf("%w: evidence lifecycle idempotency key reused with a different request", ErrIdempotencyConflict)
-		}
-		if replacementIngestID == "" {
-			replacementIngestID = op.ReplacementIngestID
-		} else if replacementIngestID != op.ReplacementIngestID {
-			return nil, fmt.Errorf("%w: direct supersession replay does not resolve to one ingest", ErrIdempotencyConflict)
-		}
-	}
-	if existingCount == 0 {
-		return nil, nil
-	}
-	if existingCount != len(keys) {
-		return nil, fmt.Errorf("%w: direct supersession retry must include every original replacement", ErrIdempotencyConflict)
-	}
-	return loadCreateIngestResult(ctx, tx, input.TeamID, replacementIngestID, true)
 }
 
 type storedEvidenceLifecycleOperation struct {
@@ -294,7 +242,7 @@ func loadEvidenceLifecycleOperation(
 	return &stored, nil
 }
 
-func applyDirectEvidenceSupersessions(
+func applyEvidenceSupersessions(
 	ctx context.Context,
 	tx *gorm.DB,
 	input CreateIngestInput,
@@ -787,18 +735,5 @@ func retireEvidenceLifecycleSearchDocuments(
 	`, teamID, spaceID, sourceKind, pq.Array(sourceIDs)).Error; err != nil {
 		return err
 	}
-	return tx.WithContext(ctx).Exec(`
-		UPDATE embedding_jobs
-		SET status = 'stale',
-		    error = 'evidence lifecycle changed before embedding completion',
-		    completed_at = now(),
-		    lease_until = NULL,
-		    worker_id = '',
-		    updated_at = now()
-		WHERE team_id = ?::uuid
-		  AND space_id = ?::uuid
-		  AND source_kind = ?
-		  AND source_id = ANY(?::uuid[])
-		  AND status IN ('queued', 'processing')
-	`, teamID, spaceID, sourceKind, pq.Array(sourceIDs)).Error
+	return nil
 }

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestRunValidateWritesArtifacts(t *testing.T) {
@@ -193,9 +192,7 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 		"eval:doc-beta":  "frag-beta",
 	}
 	var rememberCalls int
-	var statusPolls int
 	var recallCalls int
-	statusSubmissions := map[string]bool{}
 	var callsMu sync.Mutex
 
 	server := newEvalHarnessServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -212,28 +209,16 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 			callsMu.Lock()
 			rememberCalls++
 			callsMu.Unlock()
+			submissionID := strings.TrimPrefix(idempotencyKey, "eval:")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    strings.TrimPrefix(idempotencyKey, "eval:"),
-				"processing_state": "queued",
-			})
-		case "tool:get_submission_status":
-			var input map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				t.Fatalf("decode submission status body: %v", err)
-			}
-			submissionID, _ := input["submission_id"].(string)
-			if submissionID != "doc-alpha" && submissionID != "doc-beta" {
-				t.Fatalf("status input = %#v", input)
-			}
-			callsMu.Lock()
-			statusSubmissions[submissionID] = true
-			statusPolls++
-			callsMu.Unlock()
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"submission_id":    submissionID,
-				"processing_state": "completed",
-				"search_state":     "current",
-				"evidence":         []map[string]any{{"evidence_id": rememberIDs["eval:"+submissionID], "search_state": "current"}},
+				"contract_version":     "dense-mem.v2.6.1",
+				"submission_id":        submissionID,
+				"submission_kind":      "remember",
+				"processing_state":     "completed",
+				"search_state":         "current",
+				"correlation_id":       "correlation-" + submissionID,
+				"evidence":             []map[string]any{{"disposition": "stored", "evidence_id": rememberIDs["eval:"+submissionID], "evidence_index": 0, "superseded_evidence_ids": []string{}, "search_state": "current"}},
+				"relationship_results": []map[string]any{}, "errors": []map[string]any{},
 			})
 		case "tool:eval_list_knowledge_refs":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -289,15 +274,10 @@ func TestRunBaselineLiveHTTPFlow(t *testing.T) {
 		t.Fatalf("summary = %+v", summary)
 	}
 	callsMu.Lock()
-	gotRememberCalls, gotStatusPolls, gotRecallCalls := rememberCalls, statusPolls, recallCalls
-	gotAlpha, gotBeta := statusSubmissions["doc-alpha"], statusSubmissions["doc-beta"]
-	gotStatusSubmissions := map[string]bool{"doc-alpha": gotAlpha, "doc-beta": gotBeta}
+	gotRememberCalls, gotRecallCalls := rememberCalls, recallCalls
 	callsMu.Unlock()
-	if gotRememberCalls != 2 || gotStatusPolls != 2 || gotRecallCalls != 2 {
-		t.Fatalf("remember/status/recall calls = %d/%d/%d", gotRememberCalls, gotStatusPolls, gotRecallCalls)
-	}
-	if !gotAlpha || !gotBeta {
-		t.Fatalf("status submissions = %#v; want doc-alpha and doc-beta", gotStatusSubmissions)
+	if gotRememberCalls != 2 || gotRecallCalls != 2 {
+		t.Fatalf("remember/recall calls = %d/%d", gotRememberCalls, gotRecallCalls)
 	}
 }
 
@@ -310,12 +290,6 @@ func TestRunRejectsInvalidOptionsAndSuite(t *testing.T) {
 		{name: "bad mode", opts: RunOptions{Mode: "smoke"}},
 		{name: "missing seed", opts: RunOptions{Mode: "validate", SuitePath: filepath.Join(dir, "suite.jsonl")}},
 		{name: "missing suite", opts: RunOptions{Mode: "validate", SeedManifestPath: filepath.Join(dir, "seed_manifest.json")}},
-		{name: "negative placement timeout", opts: RunOptions{
-			Mode:             "validate",
-			SeedManifestPath: filepath.Join(dir, "seed_manifest.json"),
-			SuitePath:        filepath.Join(dir, "suite.jsonl"),
-			PlacementTimeout: -time.Second,
-		}},
 		{name: "import concurrency over provider cap", opts: RunOptions{
 			Mode:              "validate",
 			SeedManifestPath:  filepath.Join(dir, "seed_manifest.json"),

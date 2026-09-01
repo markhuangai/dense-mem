@@ -17,7 +17,6 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/conflictassessment"
 	"github.com/markhuangai/dense-mem/internal/crypto"
@@ -37,11 +36,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
-	"github.com/markhuangai/dense-mem/internal/service/embeddingservice"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
-	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -103,18 +100,13 @@ func RunActiveServer(
 	ledgerRepo := repository.NewLedgerRepositoryWithRuntimeConfig(
 		pgDB.GetDB(),
 		rlsHelper,
-		cfg.GetEmbeddingJobMaxAttempts(),
 		repository.ConflictRuntimeConfig{
 			ReviewTTLDays: cfg.GetConflictReviewTTLDays(),
 			Timezone:      cfg.GetAppTimezone(),
 		},
 	)
 	conflictQueueService := conflictqueue.New(ledgerRepo)
-	searchRepo := repository.NewSearchRepositoryWithEmbeddingJobMaxAttempts(
-		pgDB.GetDB(),
-		rlsHelper,
-		cfg.GetEmbeddingJobMaxAttempts(),
-	)
+	searchRepo := repository.NewSearchRepository(pgDB.GetDB(), rlsHelper)
 	if err := checkActiveAuthority(authority); err != nil {
 		log.Fatalf("active boot blocked: %v", err)
 	}
@@ -174,12 +166,11 @@ func RunActiveServer(
 	}
 	discoverabilityMetrics := observability.NoopDiscoverabilityMetrics()
 	var (
-		telemetryReader                service.TelemetryReader
-		telemetryPrometheusService     *service.PrometheusTelemetryService
-		telemetryHTTPMetrics           observability.HTTPMetrics
-		telemetryScrapeHandler         nethttp.Handler
-		pricingRefreshCancel           context.CancelFunc
-		firstDispositionBackfillCancel context.CancelFunc
+		telemetryReader            service.TelemetryReader
+		telemetryPrometheusService *service.PrometheusTelemetryService
+		telemetryHTTPMetrics       observability.HTTPMetrics
+		telemetryScrapeHandler     nethttp.Handler
+		pricingRefreshCancel       context.CancelFunc
 	)
 	if cfg.GetTelemetryEnabled() {
 		if err := refreshTelemetryPricingCache(startupCtx, appConfigService); err != nil {
@@ -188,9 +179,6 @@ func RunActiveServer(
 		pricingRefreshCtx, cancel := context.WithCancel(context.Background())
 		pricingRefreshCancel = cancel
 		go refreshTelemetryPricingCacheUntilCanceled(pricingRefreshCtx, appConfigService, logger)
-		firstDispositionBackfillCtx, cancel := context.WithCancel(context.Background())
-		firstDispositionBackfillCancel = cancel
-		service.NewPlacementFirstDispositionBackfillService(ledgerRepo, logger).Start(firstDispositionBackfillCtx)
 		prometheusMetrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(ctx context.Context) (observability.AIPricing, error) {
 			pricing, ok := appConfigService.CachedTelemetryPricingRuntimeConfig()
 			if !ok {
@@ -230,7 +218,7 @@ func RunActiveServer(
 	assessorProvider.SetMetrics(discoverabilityMetrics)
 	conflictReviewRunner, err := conflictreview.NewRunner(
 		ledgerRepo,
-		legacyConflictProvider{provider: verifierProvider},
+		verifierProvider,
 		retryEmbedder,
 		time.Duration(cfg.GetAIEmbeddingTimeoutSeconds())*time.Second,
 		cfg.GetAppTimezone(),
@@ -240,25 +228,21 @@ func RunActiveServer(
 	if err != nil {
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
-	rememberIntake := newRememberLedgerAdapter(ledgerRepo)
 	rememberAuditor := newRememberSecurityRejectionAuditAdapter(auditService)
+	rememberProcessor := newRememberSynchronousProcessor(
+		ledgerRepo,
+		semanticRepo,
+		assessorProvider,
+		openaiProvider,
+		assessmentLimits,
+		discoverabilityMetrics,
+		logger,
+	)
 	rememberCore := rememberapp.NewService(rememberapp.Dependencies{
-		Intake:  rememberIntake,
-		Auditor: rememberAuditor,
-		Metrics: discoverabilityMetrics,
-		Logger:  logger,
+		Synchronous: rememberProcessor, Auditor: rememberAuditor,
+		Metrics: discoverabilityMetrics, Logger: logger,
 	})
-	writeRuntime := &WriteRuntime{Remember: rememberCore}
-	installSynchronousRememberFactory(writeRuntime, ledgerRepo, semanticRepo, assessorProvider, assessmentLimits, openaiProvider, rememberIntake, rememberAuditor, discoverabilityMetrics, logger)
-	if options.WriteRuntimeOverride != nil {
-		if err := options.WriteRuntimeOverride(startupCtx, runtimeCtx, writeRuntime); err != nil {
-			log.Fatalf("failed to configure write runtime: %v", err)
-		}
-	}
-	if writeRuntime.Remember == nil {
-		log.Fatal("write runtime override removed Remember service")
-	}
-	rememberSvc := newRememberServiceCompat(writeRuntime.Remember)
+	rememberSvc := rememberCore
 	recallSvc := memoryservice.NewRecallService(memoryservice.RecallDependencies{
 		Search:          searchRepo,
 		Provider:        retryEmbedder,
@@ -276,19 +260,19 @@ func RunActiveServer(
 	lifecycleSvc := memoryservice.NewLifecycleService(memoryservice.LifecycleDependencies{
 		Semantic:                   semanticRepo,
 		Evidence:                   ledgerRepo,
-		CorrectionExecutor:         semanticwrite.NewExecutor(semanticWriteProvider{provider: openaiProvider}),
+		CorrectionExecutor:         newSemanticwriteEmbeddingExecutor(openaiProvider),
 		CorrectionEmbeddingTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
-		Remember: writeRuntime.Remember, RememberIngests: ledgerRepo,
+		Remember:       rememberSvc,
 		Store:          semanticRepo,
 		ScheduledStore: semanticRepo,
 		AppConfig:      appConfigService,
 		Teams:          teamService,
 		Locker:         dreamservice.NewPostgresCycleLocker(),
 		Postgres:       pgDB.GetDB(),
-		Generator:      dreamservice.NewProviderGenerator(legacyDreamProvider{provider: verifierProvider}),
+		Generator:      dreamservice.NewProviderGenerator(verifierProvider),
 		Metrics:        discoverabilityMetrics,
 		ProviderCycleLease: time.Duration(cfg.GetAIVerifierTimeoutSeconds())*
 			time.Second*time.Duration(verifier.SemanticAssessmentMaxProviderTurns) + time.Minute,
@@ -313,7 +297,6 @@ func RunActiveServer(
 		EvaluationAudit:      auditService,
 		Context:              contextSvc,
 		Remember:             rememberSvc,
-		SubmissionStatus:     rememberSvc,
 		Recall:               recallSvc,
 		Lifecycle:            lifecycleSvc,
 		Evaluation:           semanticRepo,
@@ -328,15 +311,6 @@ func RunActiveServer(
 		toolRegistry, err = options.ConfigureRegistry(startupCtx, runtimeCtx, toolRegistry)
 		if err != nil {
 			log.Fatalf("failed to configure runtime tool registry: %v", err)
-		}
-	}
-	if writeRuntime.RegistryOverride != nil {
-		toolRegistry, err = writeRuntime.RegistryOverride(startupCtx, runtimeCtx, toolRegistry)
-		if err != nil {
-			log.Fatalf("failed to configure write runtime registry: %v", err)
-		}
-		if toolRegistry == nil {
-			log.Fatal("write runtime registry override returned nil registry")
 		}
 	}
 	streamLifecycle := sse.NewStreamLifecycleWithConfig(
@@ -363,7 +337,6 @@ func RunActiveServer(
 		{Name: "search_readiness", Check: func(ctx context.Context) error {
 			return checkSearchReadiness(ctx, searchRepo)
 		}},
-		{Name: "search_convergence", Optional: true, Check: searchConvergenceHealthCheck(searchRepo, logger)},
 	}
 	if backend.redisPingFn != nil {
 		checks = append(checks, http.HealthCheck{Name: "redis", Check: backend.redisPingFn})
@@ -462,7 +435,6 @@ func RunActiveServer(
 				Communities:      communitySvc,
 				ConflictQueue:    conflictQueueService,
 				Convergence:      service.NewSearchConvergenceService(searchRepo),
-				Submissions:      service.NewSubmissionDiagnosticsService(ledgerRepo),
 				RememberAttempts: service.NewRememberAttemptDiagnosticsService(ledgerRepo),
 				PrivateMemory:    privateMemoryService,
 			},
@@ -506,38 +478,12 @@ func RunActiveServer(
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 	privateMemoryService.Start(workerCtx)
-	searchRepairSvc := newSearchRepairService(
-		searchRepo, openaiProvider, appConfigService, logger, discoverabilityMetrics,
-		time.Duration(cfg.GetAIEmbeddingTimeoutSeconds())*time.Second,
-		cfg.GetDistributedCoordinationRequired(),
-	)
-	searchRepairSvc.Start(workerCtx)
-	defer searchRepairSvc.Stop()
-	var quarantinePurgeMetrics repository.SubmissionQuarantinePurgeMetrics
-	if metrics, ok := discoverabilityMetrics.(repository.SubmissionQuarantinePurgeMetrics); ok {
-		quarantinePurgeMetrics = metrics
-	}
-	ledgerRepo.StartSubmissionQuarantinePurger(workerCtx, time.Minute, slog.Default(), quarantinePurgeMetrics)
-	searchRepo.StartTerminalEmbeddingJobRetention(workerCtx, time.Hour, slog.Default())
-	startActiveWorkers(
-		workerCtx,
-		logger,
-		teamService,
-		ledgerRepo,
-		searchRepo,
-		semanticRepo,
-		retryEmbedder,
-		assessorProvider,
-		discoverabilityMetrics,
-		assessmentLimits,
-		activePlacementLease(cfg.GetAIVerifierTimeoutSeconds(), cfg.GetPromoteTxTimeoutSeconds()),
-		cfg.GetMemoryPlacementWorkerCount(),
-		time.Duration(cfg.GetMemoryPlacementPollSeconds())*time.Second,
-		cfg.GetEmbeddingWorkerCount(),
-		cfg.GetEmbeddingBatchSize(),
-		activeEmbeddingLease(cfg.GetAIEmbeddingTimeoutSeconds()),
-		time.Duration(cfg.GetEmbeddingJobPollSeconds())*time.Second,
-	)
+	searchReconciliationCtx, cancelSearchReconciliation := context.WithCancel(workerCtx)
+	go startSearchReconciliation(searchReconciliationCtx, service.NewSearchReconciliationService(service.SearchReconciliationDependencies{
+		Repository: searchRepo, Provider: openaiProvider, ProviderTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
+	}), logger)
+	defer cancelSearchReconciliation()
+	ledgerRepo.StartRememberFailureArtifactPurger(workerCtx, time.Hour, slog.Default())
 	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
 	defer dreamSchedulerCancel()
 	go dreamservice.NewScheduler(dreamSvc, teamService, slog.Default()).Start(dreamSchedulerCtx)
@@ -570,9 +516,6 @@ func RunActiveServer(
 	conflictReviewCancel()
 	if pricingRefreshCancel != nil {
 		pricingRefreshCancel()
-	}
-	if firstDispositionBackfillCancel != nil {
-		firstDispositionBackfillCancel()
 	}
 	if err := http.ShutdownServer(e, logger); err != nil {
 		logger.Error("server shutdown error", err)
@@ -922,75 +865,6 @@ func checkActiveAuthority(authority authorityBootstrap) error {
 	return nil
 }
 
-func startActiveWorkers(
-	ctx context.Context,
-	logger observability.LogProvider,
-	teams service.TeamService,
-	ledger *repository.LedgerRepositoryImpl,
-	search repository.SearchRepository,
-	semantic *repository.SemanticRepositoryImpl,
-	embedder *embedding.RetryEmbeddingProvider,
-	assessorPort assessor.Provider,
-	metrics observability.DiscoverabilityMetrics,
-	assessmentLimits assessor.SemanticAssessmentLimits,
-	placementLease time.Duration,
-	placementWorkerCount int,
-	placementPollInterval time.Duration,
-	embeddingWorkerCount int,
-	embeddingBatchSize int,
-	embeddingLease time.Duration,
-	embeddingPollInterval time.Duration,
-) {
-	hostname, _ := os.Hostname()
-	baseWorkerID := fmt.Sprintf("active-%s-%d", hostname, os.Getpid())
-	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
-		name:         "placement",
-		baseWorkerID: baseWorkerID,
-		count:        placementWorkerCount,
-		pollInterval: placementPollInterval,
-		teams:        teams,
-		logger:       logger,
-		workerError:  errSemanticPlacementWorkerFailed,
-		work: func(ctx context.Context, teamID string, workerID string) (bool, error) {
-			worker := memoryservice.NewSubmissionAssessmentPlacementWorkerService(memoryservice.SubmissionAssessmentPlacementWorkerDependencies{
-				Ledger:      ledger,
-				Assessments: ledger,
-				Catalog:     semantic,
-				Provider:    assessorPort,
-				Limits:      assessmentLimits,
-				Metrics:     metrics,
-				Logger:      logger,
-				TeamID:      teamID,
-				WorkerID:    workerID,
-				Lease:       placementLease,
-			})
-			return worker.ProcessNextSubmissionAssessmentPlacement(ctx)
-		},
-	})
-	startActiveTeamWorkerPool(ctx, activeTeamWorkerPoolConfig{
-		name:         "embedding",
-		baseWorkerID: baseWorkerID,
-		count:        embeddingWorkerCount,
-		pollInterval: embeddingPollInterval,
-		teams:        teams,
-		logger:       logger,
-		workerError:  errEmbeddingWorkerFailed,
-		work: func(ctx context.Context, teamID string, workerID string) (bool, error) {
-			worker := embeddingservice.NewEmbeddingWorkerService(embeddingservice.EmbeddingWorkerDependencies{
-				Search:    search,
-				Provider:  embedder,
-				Metrics:   metrics,
-				Logger:    logger,
-				TeamID:    teamID,
-				WorkerID:  workerID,
-				BatchSize: embeddingBatchSize,
-				Lease:     embeddingLease,
-			})
-			result, err := worker.ProcessNextBatch(ctx)
-			return result.Claimed > 0, err
-		},
-	})
-}
 func logServerStartError(logger observability.LogProvider, message string, err error) {
 	if errors.Is(err, nethttp.ErrServerClosed) {
 		return

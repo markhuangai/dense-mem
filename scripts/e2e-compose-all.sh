@@ -7,17 +7,13 @@ E2E_ALL_SCENARIOS=(
   private_memory_erasure
   security_runtime
   infrastructure_credentials
-  submission_status
   submission_terminal_errors
   security_intake
-  submission_assessment
   synchronous_write
   identity_cleanup
   community
   conflict
   conflict_queue
-  embedding_reconciliation
-  embedding_resilience
   memory_space_backfill
   memory_space_isolation
   space_aware_recall
@@ -84,7 +80,7 @@ run_all_e2e_scenarios() {
   local base_project_name
   local log_dir
   local scenario_count="${#E2E_ALL_SCENARIOS[@]}"
-  local ports_per_scenario=12
+	local ports_per_scenario=9
   local port_count=$((scenario_count * ports_per_scenario))
   local reserved_raw
   local next_index=0
@@ -172,14 +168,11 @@ run_all_e2e_scenarios() {
         DENSE_MEM_E2E_CONTROL_PORT="${reserved_ports[$((offset + 1))]}" \
         DENSE_MEM_E2E_PROMETHEUS_PORT="${reserved_ports[$((offset + 2))]}" \
         DENSE_MEM_E2E_POSTGRES_PORT="${reserved_ports[$((offset + 3))]}" \
-        DENSE_MEM_E2E_NEO4J_HTTP_PORT="${reserved_ports[$((offset + 4))]}" \
-        DENSE_MEM_E2E_NEO4J_BOLT_PORT="${reserved_ports[$((offset + 5))]}" \
-        DENSE_MEM_E2E_REDIS_PORT="${reserved_ports[$((offset + 6))]}" \
-        DENSE_MEM_E2E_ENTRA_PORT="${reserved_ports[$((offset + 7))]}" \
-        DENSE_MEM_E2E_CONFLICT_PROVIDER_PORT="${reserved_ports[$((offset + 8))]}" \
-        DENSE_MEM_E2E_OAUTH_PROVIDER_PORT="${reserved_ports[$((offset + 9))]}" \
-        DENSE_MEM_E2E_OAUTH_HARNESS_PORT="${reserved_ports[$((offset + 10))]}" \
-        DENSE_MEM_E2E_EMBEDDING_PROXY_PORT="${reserved_ports[$((offset + 11))]}" \
+        DENSE_MEM_E2E_REDIS_PORT="${reserved_ports[$((offset + 4))]}" \
+        DENSE_MEM_E2E_ENTRA_PORT="${reserved_ports[$((offset + 5))]}" \
+        DENSE_MEM_E2E_CONFLICT_PROVIDER_PORT="${reserved_ports[$((offset + 6))]}" \
+        DENSE_MEM_E2E_OAUTH_PROVIDER_PORT="${reserved_ports[$((offset + 7))]}" \
+	        DENSE_MEM_E2E_OAUTH_HARNESS_PORT="${reserved_ports[$((offset + 8))]}" \
         "${ROOT_DIR}/scripts/e2e-compose.sh" >"$log_file" 2>&1 &
       pid=$!
       active_pids+=("$pid")

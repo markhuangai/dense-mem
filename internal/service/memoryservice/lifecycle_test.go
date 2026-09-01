@@ -10,12 +10,23 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 )
+
+func authenticatedRememberContext(teamID, profileID, credentialID uuid.UUID) context.Context {
+	ctx := correlation.WithID(context.Background(), "corr-canonical")
+	return requestctx.WithActor(ctx, requestctx.Actor{
+		TeamID: teamID, TeamName: "team", IdentityID: credentialID, MembershipID: credentialID,
+		OwnerID: profileID, OwnerName: "owner", CredentialID: &credentialID,
+		AuthMethod: "api_key", Role: "member", Grants: []string{"read", "write"},
+	})
+}
 
 func TestLifecycleCorrectRelationshipUsesAuthenticatedOwner(t *testing.T) {
 	teamID := uuid.New()
@@ -37,11 +48,32 @@ func TestLifecycleCorrectRelationshipUsesAuthenticatedOwner(t *testing.T) {
 	require.Equal(t, semantic.correctResult.SubmissionID, result.SubmissionID)
 	require.Equal(t, "relationship_correction", result.SubmissionKind)
 	require.Equal(t, "completed", result.ProcessingState)
-	require.Equal(t, rememberStatusTool, result.StatusTool)
+	require.Equal(t, string(domain.SearchProjectionNotRequired), result.SearchState)
 	require.Equal(t, teamID.String(), semantic.correctInput.TeamID)
 	require.Equal(t, profileID.String(), semantic.correctInput.OwnerProfileID)
 	require.Equal(t, relationshipID, semantic.correctInput.RelationshipID)
 	require.Equal(t, 3, semantic.correctInput.ExpectedVersion)
+}
+
+func TestLifecycleCorrectRelationshipNormalizesOversizedCorrelationID(t *testing.T) {
+	teamID, profileID := uuid.New(), uuid.New()
+	semantic := &lifecycleSemanticStub{correctResult: &repository.CorrectRelationshipResult{
+		SubmissionID: uuid.NewString(), ProcessingState: "completed",
+	}}
+	ctx := correlation.WithID(authenticatedRememberContext(teamID, profileID, uuid.New()), strings.Repeat("x", 129))
+
+	result, err := NewLifecycleService(LifecycleDependencies{Semantic: semantic}).CorrectRelationship(ctx, CorrectRelationshipRequest{
+		Action: "submit", RelationshipID: uuid.NewString(), ExpectedVersion: 1,
+		Patch:    repository.RelationshipCorrectionPatch{Predicate: &repository.RelationshipCorrectionPredicatePatch{Key: "works_with"}},
+		Supports: []repository.RelationshipCorrectionSupport{{EvidenceID: uuid.NewString(), Start: 0, End: 8}},
+		Reason:   "predicate was resolved incorrectly", IdempotencyKey: "oversized-correlation",
+	})
+
+	require.NoError(t, err)
+	require.NotEqual(t, strings.Repeat("x", 129), result.CorrelationID)
+	require.LessOrEqual(t, len([]rune(result.CorrelationID)), 128)
+	_, parseErr := uuid.Parse(result.CorrelationID)
+	require.NoError(t, parseErr)
 }
 
 func TestLifecycleCorrectRelationshipExecutesOnePlannedBatchBeforeCommit(t *testing.T) {
@@ -144,31 +176,6 @@ func TestLifecycleCorrectRelationshipPreservesCallerDeadline(t *testing.T) {
 	var publicErr *httperr.APIError
 	require.NotErrorAs(t, err, &publicErr)
 	require.Zero(t, semantic.commitCalls)
-}
-
-func TestLifecycleRelationshipCorrectionStatusPreservesConfirmationWorkflow(t *testing.T) {
-	teamID := uuid.New()
-	profileID := uuid.New()
-	submissionID := uuid.NewString()
-	expiresAt := time.Now().UTC().Add(time.Hour)
-	semantic := &lifecycleSemanticStub{statusResult: &repository.RelationshipCorrectionStatus{
-		SubmissionID: submissionID, ProcessingState: "awaiting_confirmation", SearchState: string(domain.SearchProjectionPending),
-		Confirmation: &repository.RelationshipCorrectionConfirmation{Token: uuid.NewString(), ExpiresAt: expiresAt},
-	}}
-	svc := NewLifecycleService(LifecycleDependencies{Semantic: semantic})
-
-	result, err := svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{SubmissionID: submissionID})
-	require.NoError(t, err)
-	require.Equal(t, "awaiting_confirmation", result.ProcessingState)
-	require.Equal(t, string(domain.SearchProjectionPending), result.SearchState)
-	require.NotNil(t, result.AwaitingConfirmation)
-	require.Equal(t, teamID.String(), semantic.statusInput.TeamID)
-	require.Equal(t, profileID.String(), semantic.statusInput.OwnerProfileID)
-
-	_, err = svc.GetRelationshipCorrectionStatus(authenticatedRememberContext(teamID, profileID, uuid.New()), GetSubmissionStatusRequest{SubmissionID: "not-a-uuid"})
-	var publicErr *httperr.APIError
-	require.ErrorAs(t, err, &publicErr)
-	require.Equal(t, httperr.NOT_FOUND, publicErr.Code)
 }
 
 func TestLifecycleRelationshipCorrectionErrorsAreBounded(t *testing.T) {
@@ -316,9 +323,7 @@ func TestLifecycleRetractEvidenceMapsRepositoryErrors(t *testing.T) {
 
 type lifecycleSemanticStub struct {
 	correctInput  repository.CorrectRelationshipInput
-	statusInput   repository.GetRelationshipCorrectionInput
 	correctResult *repository.CorrectRelationshipResult
-	statusResult  *repository.RelationshipCorrectionStatus
 	err           error
 	plan          *repository.RelationshipCorrectionEmbeddingPlan
 	embeddings    []repository.RelationshipCorrectionEmbedding
@@ -355,17 +360,6 @@ func (s *lifecycleSemanticStub) CorrectRelationshipWithEmbeddings(ctx context.Co
 		return nil, s.commitErr
 	}
 	return s.CorrectRelationship(ctx, input)
-}
-
-func (s *lifecycleSemanticStub) GetRelationshipCorrection(_ context.Context, input repository.GetRelationshipCorrectionInput) (*repository.RelationshipCorrectionStatus, error) {
-	s.statusInput = input
-	if s.err != nil {
-		return nil, s.err
-	}
-	if s.statusResult == nil {
-		return nil, repository.ErrRelationshipCorrectionNotFound
-	}
-	return s.statusResult, nil
 }
 
 type lifecycleEvidenceStub struct {

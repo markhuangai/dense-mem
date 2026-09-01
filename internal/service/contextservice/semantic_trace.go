@@ -45,7 +45,6 @@ type SemanticTrace struct {
 	IdentityCorrections           []repository.EntityCorrectionEventRecord       `json:"identity_corrections,omitempty"`
 	SupersessionLineage           []repository.RelationshipTraceRecord           `json:"supersession_lineage,omitempty"`
 	SearchDocuments               []repository.TraceSearchDocument               `json:"search_documents,omitempty"`
-	EmbeddingJobs                 []repository.TraceEmbeddingJob                 `json:"embedding_jobs,omitempty"`
 	SemanticNodes                 []repository.SemanticGraphNode                 `json:"semantic_nodes,omitempty"`
 	SemanticEdges                 []repository.SemanticGraphEdge                 `json:"semantic_edges,omitempty"`
 	VisitedEntityIDs              []string                                       `json:"visited_entity_ids,omitempty"`
@@ -117,7 +116,6 @@ func semanticTraceFromRepository(trace *repository.RelationshipTraceResult) *Sem
 		IdentityCorrections:           trace.IdentityCorrections,
 		SupersessionLineage:           trace.SupersessionLineage,
 		SearchDocuments:               trace.SearchDocuments,
-		EmbeddingJobs:                 trace.EmbeddingJobs,
 		SemanticNodes:                 trace.SemanticNodes,
 		SemanticEdges:                 trace.SemanticEdges,
 		VisitedEntityIDs:              trace.VisitedEntityIDs,

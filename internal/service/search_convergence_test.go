@@ -4,62 +4,35 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/stretchr/testify/require"
 )
 
-type searchConvergenceRepositoryStub struct {
+type searchConvergenceRepoStub struct {
 	value *repository.SearchConvergence
 	err   error
 }
 
-func (searchConvergenceRepositoryStub) GetEmbeddingReconciliationTime(context.Context) (time.Time, error) {
-	return time.Time{}, nil
-}
-
-func (s searchConvergenceRepositoryStub) GetSearchConvergence(context.Context, repository.SearchConvergenceInput) (*repository.SearchConvergence, error) {
+func (s searchConvergenceRepoStub) GetSearchConvergence(context.Context, repository.SearchConvergenceInput) (*repository.SearchConvergence, error) {
 	return s.value, s.err
 }
 
-func (searchConvergenceRepositoryStub) ReserveEmbeddingReconciliationRun(context.Context, repository.ReserveEmbeddingReconciliationRunInput) (*repository.EmbeddingReconciliationRun, bool, error) {
-	return nil, false, nil
-}
-func (searchConvergenceRepositoryStub) SelectEmbeddingReconciliationCanary(context.Context, repository.SelectEmbeddingReconciliationCanaryInput) (*repository.EmbeddingJob, error) {
-	return nil, nil
-}
-func (searchConvergenceRepositoryStub) MarkEmbeddingReconciliationCanaryAttempt(context.Context, repository.MarkEmbeddingReconciliationCanaryAttemptInput) error {
-	return nil
-}
-func (searchConvergenceRepositoryStub) CompleteEmbeddingReconciliationCanary(context.Context, repository.CompleteEmbeddingReconciliationCanaryInput) error {
-	return nil
-}
-func (searchConvergenceRepositoryStub) ResetEmbeddingReconciliationCanary(context.Context, repository.ResetEmbeddingReconciliationCanaryInput) error {
-	return nil
-}
-func (searchConvergenceRepositoryStub) RequeueEmbeddingReconciliationJobs(context.Context, repository.RequeueEmbeddingReconciliationJobsInput) (int64, error) {
-	return 0, nil
-}
-func (searchConvergenceRepositoryStub) CompleteEmbeddingReconciliationRun(context.Context, repository.CompleteEmbeddingReconciliationRunInput) error {
-	return nil
-}
-
 func TestSearchConvergenceServiceDelegatesAndFailsClosed(t *testing.T) {
-	ctx := context.Background()
-	var nilService *searchConvergenceService
-	_, err := nilService.GetSearchConvergence(ctx)
-	require.ErrorIs(t, err, ErrSearchConvergenceUnavailable)
-
-	_, err = NewSearchConvergenceService(nil).GetSearchConvergence(ctx)
-	require.ErrorIs(t, err, ErrSearchConvergenceUnavailable)
-
-	want := &repository.SearchConvergence{Status: "recovering"}
-	got, err := NewSearchConvergenceService(searchConvergenceRepositoryStub{value: want}).GetSearchConvergence(ctx)
+	value := &repository.SearchConvergence{Status: "converged"}
+	reader := NewSearchConvergenceService(searchConvergenceRepoStub{value: value})
+	got, err := reader.GetSearchConvergence(context.Background())
 	require.NoError(t, err)
-	require.Same(t, want, got)
+	require.Same(t, value, got)
 
-	upstreamErr := errors.New("projection unavailable")
-	_, err = NewSearchConvergenceService(searchConvergenceRepositoryStub{err: upstreamErr}).GetSearchConvergence(ctx)
-	require.ErrorIs(t, err, upstreamErr)
+	reader = NewSearchConvergenceService(searchConvergenceRepoStub{err: errors.New("database details")})
+	_, err = reader.GetSearchConvergence(context.Background())
+	require.EqualError(t, err, "database details")
+	_, err = (*searchConvergenceService)(nil).GetSearchConvergence(context.Background())
+	require.ErrorIs(t, err, ErrSearchConvergenceUnavailable)
+	reader = NewSearchConvergenceService(nil)
+	_, err = reader.GetSearchConvergence(context.Background())
+	require.ErrorIs(t, err, ErrSearchConvergenceUnavailable)
+	require.EqualError(t, ErrSearchConvergenceUnavailable, "search convergence unavailable")
 }

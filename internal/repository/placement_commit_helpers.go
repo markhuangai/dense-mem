@@ -2,12 +2,10 @@ package repository
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 	"unicode"
 
 	"gorm.io/gorm"
@@ -15,26 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-const placementRetryMaxDelay = 300 * time.Second
-
-const placementRunGuardedStatusCase = `
-	CASE
-	    WHEN EXISTS (
-	        SELECT 1
-	        FROM placement_items AS item
-	        JOIN evidence_security_events AS event
-	          ON event.team_id = item.team_id
-	         AND event.fragment_id = item.fragment_id
-	         AND event.owner_profile_id = item.owner_profile_id
-	        WHERE item.team_id = placement_runs.team_id
-	          AND item.placement_run_id = placement_runs.placement_run_id
-	          AND item.status IN ('queued', 'processing')
-	          AND event.decision = 'guarded'
-	    ) THEN 'guarded'
-	    ELSE 'queued'
-	END`
-
-func appendPlacementSearchDocument(result *submissionSemanticCommitState, document *SearchDocumentResult) {
+func appendSemanticSearchDocument(result *submissionSemanticCommitState, document *SearchDocumentResult) {
 	if result == nil || document == nil || document.SearchDocumentID == "" {
 		return
 	}
@@ -46,15 +25,14 @@ func appendPlacementSearchDocument(result *submissionSemanticCommitState, docume
 	result.SearchDocuments = append(result.SearchDocuments, *document)
 }
 
-func applyPlacementRelationshipDecision(
+func applySemanticRelationshipDecision(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
+	commit CommitSemanticInput,
 	decision ApplyRelationshipDecisionInput,
-	correctionTarget *PlacementCorrectionTargetInput,
-	conflictContext *PlacementConflictContextInput,
-	placementFragmentID string,
-	embeddingJobMaxAttempts int,
+	correctionTarget *SemanticCorrectionTargetInput,
+	conflictContext *SemanticConflictContextInput,
+	semanticFragmentID string,
 	conflictConfig ConflictRuntimeConfig,
 	result *submissionSemanticCommitState,
 ) error {
@@ -76,7 +54,7 @@ func applyPlacementRelationshipDecision(
 		return nil
 	}
 	if correctionTarget != nil {
-		if err := appendPlacementCorrectionTarget(ctx, tx, commit, applied, *correctionTarget); err != nil {
+		if err := appendSemanticCorrectionTarget(ctx, tx, commit, applied, *correctionTarget); err != nil {
 			return err
 		}
 	}
@@ -85,62 +63,60 @@ func applyPlacementRelationshipDecision(
 		if index >= len(applied.SupportIDs) || applied.SupportIDs[index] == "" || support.FragmentID == "" {
 			continue
 		}
-		if placementFragmentID == "" {
+		if semanticFragmentID == "" {
 			var err error
-			placementFragmentID, err = loadPlacementItemFragmentID(ctx, tx, commit)
+			semanticFragmentID, err = loadSemanticItemFragmentID(ctx, tx, commit)
 			if err != nil {
 				return err
 			}
 		}
-		if support.FragmentID != placementFragmentID {
-			document, err := upsertPlacementEvidenceSearchDocument(
+		if support.FragmentID != semanticFragmentID {
+			document, err := upsertSemanticEvidenceSearchDocument(
 				ctx,
 				tx,
 				commit,
 				support.FragmentID,
 				map[string]any{
-					"supporting_placement_item_id": commit.PlacementItemID,
-					"support_id":                   applied.SupportIDs[index],
-					"relationship_id":              applied.Relationship.RelationshipID,
+					"supporting_fragment_id": semanticFragmentID,
+					"support_id":             applied.SupportIDs[index],
+					"relationship_id":        applied.Relationship.RelationshipID,
 				},
-				embeddingJobMaxAttempts,
 			)
 			if err != nil {
 				return err
 			}
-			appendPlacementSearchDocument(result, document)
+			appendSemanticSearchDocument(result, document)
 		}
 	}
-	document, err := upsertPlacementRelationshipSearchDocument(
+	document, err := upsertRelationshipSearchDocument(
 		ctx,
 		tx,
 		commit,
 		applied.Relationship,
-		embeddingJobMaxAttempts,
 	)
 	if err != nil {
 		return err
 	}
-	appendPlacementSearchDocument(result, document)
+	appendSemanticSearchDocument(result, document)
 	if err := applyRelationshipConflictPlacement(ctx, tx, commit, applied, conflictConfig); err != nil {
 		return err
 	}
 	return nil
 }
 
-type placementCorrectionTargetRecord struct {
+type semanticCorrectionTargetRecord struct {
 	SubjectEntityID string
 	PredicateKey    string
 	ObjectEntityID  string
 	ObjectValueID   string
 }
 
-func appendPlacementCorrectionTarget(
+func appendSemanticCorrectionTarget(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
+	commit CommitSemanticInput,
 	applied *RelationshipDecisionResult,
-	target PlacementCorrectionTargetInput,
+	target SemanticCorrectionTargetInput,
 ) error {
 	if applied == nil || applied.Relationship == nil || applied.VerificationEventID == "" {
 		return errors.New("correction target requires an applied source relationship and verification event")
@@ -162,11 +138,11 @@ func appendPlacementCorrectionTarget(
 	if err != nil {
 		return err
 	}
-	targetRecord, err := loadPlacementCorrectionTarget(ctx, tx, commit.TeamID, target)
+	targetRecord, err := loadSemanticCorrectionTarget(ctx, tx, commit.TeamID, target)
 	if err != nil {
 		return err
 	}
-	if !placementCorrectionTargetRelated(source, targetRecord) {
+	if !semanticCorrectionTargetRelated(source, targetRecord) {
 		return errors.New("correction target is not semantically related to the source relationship")
 	}
 	metadata, err := marshalJSON(map[string]any{
@@ -202,12 +178,12 @@ func appendPlacementCorrectionTarget(
 	return rows.Err()
 }
 
-func loadPlacementCorrectionTarget(
+func loadSemanticCorrectionTarget(
 	ctx context.Context,
 	tx *gorm.DB,
 	teamID string,
-	target PlacementCorrectionTargetInput,
-) (placementCorrectionTargetRecord, error) {
+	target SemanticCorrectionTargetInput,
+) (semanticCorrectionTargetRecord, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT subject_entity_id::text,
 		       predicate_key,
@@ -219,23 +195,23 @@ func loadPlacementCorrectionTarget(
 		  AND version = ?
 	`, teamID, target.RelationshipID, target.ExpectedVersion).Rows()
 	if err != nil {
-		return placementCorrectionTargetRecord{}, err
+		return semanticCorrectionTargetRecord{}, err
 	}
 	defer rows.Close()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
-			return placementCorrectionTargetRecord{}, err
+			return semanticCorrectionTargetRecord{}, err
 		}
-		return placementCorrectionTargetRecord{}, sql.ErrNoRows
+		return semanticCorrectionTargetRecord{}, sql.ErrNoRows
 	}
-	var record placementCorrectionTargetRecord
+	var record semanticCorrectionTargetRecord
 	if err := rows.Scan(&record.SubjectEntityID, &record.PredicateKey, &record.ObjectEntityID, &record.ObjectValueID); err != nil {
-		return placementCorrectionTargetRecord{}, err
+		return semanticCorrectionTargetRecord{}, err
 	}
 	return record, rows.Err()
 }
 
-func placementCorrectionTargetRelated(source *RelationshipRecord, target placementCorrectionTargetRecord) bool {
+func semanticCorrectionTargetRelated(source *RelationshipRecord, target semanticCorrectionTargetRecord) bool {
 	if source == nil || source.PredicateKey == "" || source.PredicateKey != target.PredicateKey {
 		return false
 	}
@@ -248,13 +224,13 @@ func placementCorrectionTargetRelated(source *RelationshipRecord, target placeme
 	return source.ObjectValueID != "" && source.ObjectValueID == target.ObjectValueID
 }
 
-func insertPlacementEntity(
+func insertSemanticEntity(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
-	input PlacementEntityResolutionInput,
+	commit CommitSemanticInput,
+	input SemanticEntityResolutionInput,
 ) (string, error) {
-	existingEntityID, err := loadPlacementCreatedEntity(ctx, tx, commit, input.MentionRef)
+	existingEntityID, err := loadSemanticCreatedEntity(ctx, tx, commit, input.MentionRef)
 	if err == nil {
 		return existingEntityID, nil
 	}
@@ -268,7 +244,7 @@ func insertPlacementEntity(
 			identityFields[key] = value
 		}
 	}
-	identityFields["source"] = "semantic_placement"
+	identityFields["source"] = "semantic_commit"
 	identityFields["mention_ref"] = input.MentionRef
 	identityContext, err := marshalJSON(identityFields)
 	if err != nil {
@@ -315,14 +291,14 @@ func insertPlacementEntity(
 	return entityID, nil
 }
 
-func loadPlacementCreatedEntity(
+func loadSemanticCreatedEntity(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
+	commit CommitSemanticInput,
 	mentionRef string,
 ) (string, error) {
 	var entityID string
-	err := tx.WithContext(ctx).Raw(`
+	query := `
 		SELECT event.entity_id::text
 		FROM entity_resolution_events AS event
 		JOIN entity_records AS entity
@@ -331,28 +307,30 @@ func loadPlacementCreatedEntity(
 		 AND entity.status = 'active'
 		WHERE event.team_id = ?::uuid
 		  AND event.owner_profile_id = ?::uuid
-		  AND event.placement_item_id = ?::uuid
 		  AND event.mention_ref = ?
 		  AND event.action = 'create'
 		  AND event.entity_id IS NOT NULL
+		  AND %s
 		ORDER BY event.created_at, event.resolution_event_id
-		LIMIT 1
-	`, commit.TeamID, commit.OwnerProfileID, commit.PlacementItemID, mentionRef).Row().Scan(&entityID)
+		LIMIT 1`
+	query = fmt.Sprintf(query, "event.ingest_id = ?::uuid AND event.fragment_id = ?::uuid")
+	args := []any{commit.TeamID, commit.OwnerProfileID, mentionRef, commit.IngestID, commit.FragmentID}
+	err := tx.WithContext(ctx).Raw(query, args...).Row().Scan(&entityID)
 	if err != nil {
 		return "", err
 	}
 	return entityID, nil
 }
 
-func resolvePlacementPredicateCandidate(
+func resolveSemanticPredicateCandidate(
 	ctx context.Context,
 	tx *gorm.DB,
 	decision ApplyRelationshipDecisionInput,
-	candidate PlacementPredicateCandidateInput,
+	candidate SemanticPredicateCandidateInput,
 ) (ApplyRelationshipDecisionInput, error) {
 	canonicalKey := canonicalGeneratedPredicateKey(candidate.PredicateKey)
 	canonicalOriginal := canonicalGeneratedPredicateKey(decision.OriginalPredicate)
-	matches, err := loadPlacementPredicateMatches(
+	matches, err := loadSemanticPredicateMatches(
 		ctx,
 		tx,
 		decision.TeamID,
@@ -370,7 +348,7 @@ func resolvePlacementPredicateCandidate(
 		).Error; err != nil {
 			return ApplyRelationshipDecisionInput{}, err
 		}
-		matches, err = loadPlacementPredicateMatches(
+		matches, err = loadSemanticPredicateMatches(
 			ctx,
 			tx,
 			decision.TeamID,
@@ -385,23 +363,23 @@ func resolvePlacementPredicateCandidate(
 	if len(matches) > 1 {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate %q resolves to multiple team definitions",
-			errPlacementPredicateUnresolved,
+			errSemanticPredicateUnresolved,
 			decision.OriginalPredicate,
 		)
 	}
-	if len(matches) == 0 && !placementNovelPredicateSafe(
+	if len(matches) == 0 && !semanticNovelPredicateSafe(
 		candidate.PredicateKey,
 		canonicalKey,
 		decision.OriginalPredicate,
 	) {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate candidate %q is not a safe canonical key",
-			errPlacementPredicateUnresolved,
+			errSemanticPredicateUnresolved,
 			candidate.PredicateKey,
 		)
 	}
 
-	subjectKind, objectKind, err := loadPlacementPredicateEndpointKinds(ctx, tx, decision)
+	subjectKind, objectKind, err := loadSemanticPredicateEndpointKinds(ctx, tx, decision)
 	if err != nil {
 		return ApplyRelationshipDecisionInput{}, err
 	}
@@ -418,10 +396,9 @@ func resolvePlacementPredicateCandidate(
 			ObjectKind:       objectKind,
 			Origin:           "provider_generated",
 			Metadata: map[string]any{
-				"source":                   "semantic_placement",
+				"source":                   "semantic_commit",
 				"predicate_policy_version": domain.PredicatePolicyVersion,
 				"ingest_id":                decision.IngestID,
-				"placement_item_id":        decision.PlacementItemID,
 			},
 		}, canonicalKey, false)
 		if err != nil {
@@ -432,7 +409,7 @@ func resolvePlacementPredicateCandidate(
 	if resolved.LifecycleState != string(domain.PredicateLifecycleActive) {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate %q lifecycle is %q",
-			errPlacementPredicateUnresolved,
+			errSemanticPredicateUnresolved,
 			resolved.PredicateKey,
 			resolved.LifecycleState,
 		)
@@ -440,24 +417,24 @@ func resolvePlacementPredicateCandidate(
 	if resolved.RelationshipKind != candidate.RelationshipKind {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate %q relationship_kind is %q, candidate requested %q",
-			errPlacementPredicateUnresolved,
+			errSemanticPredicateUnresolved,
 			resolved.PredicateKey,
 			resolved.RelationshipKind,
 			candidate.RelationshipKind,
 		)
 	}
-	if !placementPredicateKindAllowed(resolved.AllowedSubjectKinds, subjectKind) {
+	if !semanticPredicateKindAllowed(resolved.AllowedSubjectKinds, subjectKind) {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate %q does not allow subject kind %q",
-			errPlacementPredicateUnresolved,
+			errSemanticPredicateUnresolved,
 			resolved.PredicateKey,
 			subjectKind,
 		)
 	}
-	if !placementPredicateKindAllowed(resolved.AllowedObjectKinds, objectKind) {
+	if !semanticPredicateKindAllowed(resolved.AllowedObjectKinds, objectKind) {
 		return ApplyRelationshipDecisionInput{}, fmt.Errorf(
 			"%w: predicate %q does not allow object kind %q",
-			errPlacementPredicateUnresolved,
+			errSemanticPredicateUnresolved,
 			resolved.PredicateKey,
 			objectKind,
 		)
@@ -467,7 +444,7 @@ func resolvePlacementPredicateCandidate(
 	return decision, nil
 }
 
-func loadPlacementPredicateMatches(
+func loadSemanticPredicateMatches(
 	ctx context.Context,
 	tx *gorm.DB,
 	teamID string,
@@ -507,7 +484,7 @@ func loadPlacementPredicateMatches(
 	return scanSemanticReviewPredicateCandidates(rows)
 }
 
-func loadPlacementPredicateEndpointKinds(
+func loadSemanticPredicateEndpointKinds(
 	ctx context.Context,
 	tx *gorm.DB,
 	decision ApplyRelationshipDecisionInput,
@@ -524,11 +501,11 @@ func loadPlacementPredicateEndpointKinds(
 	return subjectKind, objectKind, err
 }
 
-func placementPredicateKindAllowed(allowed []string, actual string) bool {
+func semanticPredicateKindAllowed(allowed []string, actual string) bool {
 	return len(allowed) == 0 || contains(allowed, actual)
 }
 
-func placementNovelPredicateSafe(candidateKey string, canonicalKey string, originalPredicate string) bool {
+func semanticNovelPredicateSafe(candidateKey string, canonicalKey string, originalPredicate string) bool {
 	candidateKey = strings.TrimSpace(candidateKey)
 	originalPredicate = strings.TrimSpace(originalPredicate)
 	if candidateKey == "" || candidateKey != canonicalKey || originalPredicate == "" ||
@@ -627,12 +604,11 @@ func applyRelationshipDecisionInTx(
 	}, nil
 }
 
-func upsertPlacementRelationshipSearchDocument(
+func upsertRelationshipSearchDocument(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
+	commit CommitSemanticInput,
 	relationship *RelationshipRecord,
-	embeddingJobMaxAttempts int,
 ) (*SearchDocumentResult, error) {
 	if !relationshipSearchEligible(relationship) {
 		return markRelationshipSearchDocumentNotRequired(ctx, tx, commit, relationship)
@@ -641,7 +617,7 @@ func upsertPlacementRelationshipSearchDocument(
 	if err != nil {
 		return nil, err
 	}
-	text, err := placementRelationshipSearchText(ctx, tx, relationship)
+	text, err := semanticRelationshipSearchText(ctx, tx, relationship)
 	if err != nil {
 		return nil, err
 	}
@@ -674,7 +650,7 @@ func upsertPlacementRelationshipSearchDocument(
 	if err := validateUpsertSearchDocumentInput(input); err != nil {
 		return nil, err
 	}
-	result, err := upsertSearchDocumentInTx(ctx, tx, input, contract, embeddingJobMaxAttempts)
+	result, err := upsertSearchDocumentInTx(ctx, tx, input, contract)
 	if err != nil {
 		return nil, err
 	}
@@ -684,7 +660,7 @@ func upsertPlacementRelationshipSearchDocument(
 	return result, nil
 }
 
-func placementCommitPayload(base map[string]any, result *submissionSemanticCommitState) map[string]any {
+func semanticCommitPayload(base map[string]any, result *submissionSemanticCommitState) map[string]any {
 	payload := map[string]any{
 		"contract_version": domain.ContractVersion,
 	}
@@ -698,17 +674,12 @@ func placementCommitPayload(base map[string]any, result *submissionSemanticCommi
 		}
 	}
 	searchDocuments := make([]string, 0, len(result.SearchDocuments))
-	embeddingJobs := make([]string, 0, len(result.SearchDocuments))
 	for _, item := range result.SearchDocuments {
 		searchDocuments = append(searchDocuments, item.SearchDocumentID)
-		if item.QueuedJobID != "" {
-			embeddingJobs = append(embeddingJobs, item.QueuedJobID)
-		}
 	}
 	payload["relationship_ids"] = relationships
-	payload["relationship_outcomes"] = placementRelationshipOutcomePayload(result.RelationshipResults)
+	payload["relationship_outcomes"] = semanticRelationshipOutcomePayload(result.RelationshipResults)
 	payload["search_document_ids"] = searchDocuments
-	payload["embedding_job_ids"] = embeddingJobs
 	payload["entity_resolution_ids"] = append([]string(nil), result.EntityResolutionIDs...)
 	return payload
 }
@@ -749,7 +720,7 @@ func relationshipOutcomeReason(decision ApplyRelationshipDecisionInput, result *
 	}
 }
 
-func placementRelationshipOutcomePayload(results []RelationshipDecisionResult) []map[string]any {
+func semanticRelationshipOutcomePayload(results []RelationshipDecisionResult) []map[string]any {
 	out := make([]map[string]any, 0, len(results))
 	for _, result := range results {
 		item := map[string]any{
@@ -775,41 +746,6 @@ func placementRelationshipOutcomePayload(results []RelationshipDecisionResult) [
 		out = append(out, item)
 	}
 	return out
-}
-
-func placementRetryDelay(attempt int, placementItemID string) time.Duration {
-	if attempt < 1 {
-		attempt = 1
-	}
-	base := 15 * time.Second
-	for i := 1; i < attempt; i++ {
-		base *= 2
-		if base >= placementRetryMaxDelay {
-			base = placementRetryMaxDelay
-			break
-		}
-	}
-	delay := base + time.Duration(placementRetryJitterSeconds(placementItemID))*time.Second
-	if delay > placementRetryMaxDelay {
-		return placementRetryMaxDelay
-	}
-	return delay
-}
-
-func placementEffectiveRetryDelay(attempt int, placementItemID string, retryAfter time.Duration) time.Duration {
-	delay := placementRetryDelay(attempt, placementItemID)
-	if retryAfter > delay {
-		delay = retryAfter
-	}
-	if delay > placementRetryMaxDelay {
-		return placementRetryMaxDelay
-	}
-	return delay
-}
-
-func placementRetryJitterSeconds(placementItemID string) int {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(placementItemID)))
-	return int(sum[0] % 15)
 }
 
 func intPointerArg(value *int) any {

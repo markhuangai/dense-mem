@@ -18,6 +18,7 @@ user-dist/
 docker-compose.yml
 docker-compose.override.yml
 docker-compose.e2e-*.yml
+docker-compose.*-e2e-*.yml
 
 # IDE
 .vscode/
@@ -61,5 +62,6 @@ temp/
 telemetry-scrape-token
 prometheus.yml
 densemem-e2e-prometheus-*/
+densemem-e2e-oauth-*/
 # Codex local state and credentials; only the staging-test workflow is shared.
 .codex/*

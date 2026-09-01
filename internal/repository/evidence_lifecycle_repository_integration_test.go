@@ -348,14 +348,7 @@ func TestLedgerDirectEvidenceSupersessionRetiresTargetWhenReplacementIsQuarantin
 	replacement, err := ledger.CreateIngest(ctx, replacementInput)
 	require.NoError(t, err)
 	require.Len(t, replacement.Evidence, 1)
-	loaded, err := ledger.GetPlacementRun(ctx, GetPlacementRunInput{
-		TeamID:         teamID,
-		OwnerProfileID: ownerID,
-		IngestID:       replacement.IngestID,
-	})
-	require.NoError(t, err)
-	require.Len(t, loaded.Evidence, 1)
-	assert.Equal(t, []string{original.Evidence[0].FragmentID}, loaded.Evidence[0].SupersededEvidenceIDs)
+	assert.Equal(t, []string{original.Evidence[0].FragmentID}, replacement.Evidence[0].SupersededEvidenceIDs)
 
 	trace, err := semantic.TraceRelationship(ctx, TraceRelationshipInput{
 		TeamID:         teamID,

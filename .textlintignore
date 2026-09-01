@@ -1,5 +1,7 @@
 package-lock.json
 **/package-lock.json
+# This stopped-service cutover must remain one transactional SQL unit.
+migrations/postgres/v2_6/20260831010001_synchronous_remember_cutover.sql
 .env
 .env.*
 tests/eval/cache/**

@@ -20,7 +20,7 @@ type submissionRelationshipAppliedSplit struct {
 func defaultSubmissionRelationshipResults(
 	ctx context.Context,
 	tx *gorm.DB,
-	scope SubmissionAssessmentRunScope,
+	scope RememberCommitScope,
 	reason string,
 ) ([]SubmissionRelationshipResultInput, error) {
 	reason = strings.TrimSpace(reason)
@@ -73,7 +73,7 @@ func defaultSubmissionRelationshipResults(
 func insertSubmissionRelationshipResults(
 	ctx context.Context,
 	tx *gorm.DB,
-	scope SubmissionAssessmentRunScope,
+	scope RememberCommitScope,
 	results []SubmissionRelationshipResultInput,
 	applied []submissionRelationshipAppliedSplit,
 ) error {
@@ -167,17 +167,20 @@ func insertSubmissionRelationshipResults(
 		}
 		if err := tx.WithContext(ctx).Exec(`
 			INSERT INTO submission_relationship_results (
-			    team_id, ingest_id, placement_run_id, owner_profile_id,
+			    team_id, ingest_id, owner_profile_id,
 			    relationship_ref, disposition, reason, splits,
 			    space_id, space_generation
 			) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb,
-			    (SELECT space_id FROM placement_runs WHERE team_id = ?::uuid AND placement_run_id = ?::uuid),
-			    (SELECT space_generation FROM placement_runs WHERE team_id = ?::uuid AND placement_run_id = ?::uuid)
+			    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb,
+			    (SELECT space_id FROM knowledge_ingests
+			     WHERE team_id = ?::uuid AND ingest_id = ?::uuid AND owner_profile_id = ?::uuid),
+			    (SELECT space_generation FROM knowledge_ingests
+			     WHERE team_id = ?::uuid AND ingest_id = ?::uuid AND owner_profile_id = ?::uuid)
 			)
-		`, scope.TeamID, scope.IngestID, scope.PlacementRunID, scope.OwnerProfileID,
+		`, scope.TeamID, scope.IngestID, scope.OwnerProfileID,
 			result.RelationshipRef, result.Disposition, strings.TrimSpace(result.Reason), string(splits),
-			scope.TeamID, scope.PlacementRunID, scope.TeamID, scope.PlacementRunID).Error; err != nil {
+			scope.TeamID, scope.IngestID, scope.OwnerProfileID,
+			scope.TeamID, scope.IngestID, scope.OwnerProfileID).Error; err != nil {
 			return err
 		}
 	}

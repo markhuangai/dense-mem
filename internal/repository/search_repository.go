@@ -13,24 +13,43 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-const (
-	embeddingJobAttemptsExhaustedMessage = "embedding attempts exhausted after lease expiration"
-	defaultEmbeddingJobMaxAttempts       = 20
-)
+type inlineEmbeddingResultsContextKey struct{}
+
+// WithInlineEmbeddingResults carries provider vectors into a fenced semantic
+// transaction. The provider must have completed before this context is used.
+func WithInlineEmbeddingResults(ctx context.Context, results []InlineEmbeddingResult) context.Context {
+	copyResults := make([]InlineEmbeddingResult, len(results))
+	for index, result := range results {
+		copyResults[index] = InlineEmbeddingResult{
+			DocumentHash:            result.DocumentHash,
+			Embedding:               append([]float32(nil), result.Embedding...),
+			EmbeddingContractID:     result.EmbeddingContractID,
+			EmbeddingDimensions:     result.EmbeddingDimensions,
+			EmbeddingModel:          result.EmbeddingModel,
+			SearchIndexGenerationID: result.SearchIndexGenerationID,
+			IndexGeneration:         result.IndexGeneration,
+		}
+	}
+	return context.WithValue(ctx, inlineEmbeddingResultsContextKey{}, copyResults)
+}
+
+func inlineEmbeddingResults(ctx context.Context) []InlineEmbeddingResult {
+	value, _ := ctx.Value(inlineEmbeddingResultsContextKey{}).([]InlineEmbeddingResult)
+	return value
+}
 
 var (
-	ErrSearchStaleVersion                   = errors.New("search stale source or document version")
-	ErrSearchContractMismatch               = errors.New("search contract mismatch")
-	ErrSearchEmbeddingRequired              = errors.New("search embedding is required")
-	ErrSearchConvergenceAttentionRequired   = errors.New("search convergence is attention_required")
-	ErrEmbeddingLeaseLost                   = errors.New("embedding lease lost")
-	ErrEmbeddingReconciliationCanarySkipped = errors.New("embedding reconciliation canary was no longer claimable")
+	ErrSearchStaleVersion                 = errors.New("search stale source or document version")
+	ErrSearchContractMismatch             = errors.New("search contract mismatch")
+	ErrSearchEmbeddingRequired            = errors.New("synchronous semantic write requires inline embeddings")
+	ErrSearchConvergenceAttentionRequired = errors.New("search convergence is attention_required")
+	ErrInlineEmbeddingPlanMismatch        = errors.New("inline embedding plan does not match rendered search documents")
+	ErrInlineEmbeddingPlanTooLarge        = errors.New("inline embedding plan exceeds the document bound")
 )
 
 type SearchRepositoryImpl struct {
-	db                      *gorm.DB
-	rls                     rLSHelper
-	embeddingJobMaxAttempts int
+	db  *gorm.DB
+	rls rLSHelper
 }
 
 var _ SearchRepository = (*SearchRepositoryImpl)(nil)
@@ -69,18 +88,9 @@ func loadSearchPhysicalIndexState(
 }
 
 func NewSearchRepository(db *gorm.DB, rls *postgres.RLS) *SearchRepositoryImpl {
-	return NewSearchRepositoryWithEmbeddingJobMaxAttempts(db, rls, defaultEmbeddingJobMaxAttempts)
-}
-
-func NewSearchRepositoryWithEmbeddingJobMaxAttempts(
-	db *gorm.DB,
-	rls *postgres.RLS,
-	maxAttempts int,
-) *SearchRepositoryImpl {
 	return &SearchRepositoryImpl{
-		db:                      db,
-		rls:                     rls,
-		embeddingJobMaxAttempts: normalizeEmbeddingJobMaxAttempts(maxAttempts),
+		db:  db,
+		rls: rls,
 	}
 }
 
@@ -416,14 +426,6 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 		if err := rows.Close(); err != nil {
 			return err
 		}
-		if err := retireSupersededEmbeddingJobs(ctx, tx, loaded); err != nil {
-			return err
-		}
-		jobID, err := enqueueEmbeddingJob(ctx, tx, loaded, r.embeddingJobMaxAttempts)
-		if err != nil {
-			return err
-		}
-		loaded.QueuedJobID = jobID
 		result = &loaded
 		return nil
 	})
@@ -666,78 +668,6 @@ func (r *SearchRepositoryImpl) contractForVectorSearch(ctx context.Context, inpu
 	return contract, nil
 }
 
-func enqueueEmbeddingJob(
-	ctx context.Context,
-	tx *gorm.DB,
-	document SearchDocumentResult,
-	maxAttempts int,
-) (string, error) {
-	if document.SearchState != string(domain.SearchProjectionPending) {
-		return "", nil
-	}
-	maxAttempts = normalizeEmbeddingJobMaxAttempts(maxAttempts)
-	var jobID string
-	err := tx.WithContext(ctx).Raw(`
-			INSERT INTO embedding_jobs (
-			    team_id, search_document_id, owner_profile_id, space_id, space_generation, source_kind, source_id,
-			    source_version, projection_format_version, projection_generation_id,
-			    document_version, embedding_contract_id, embedding_dimensions,
-			    max_attempts
-			) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, COALESCE(NULLIF(?, '')::uuid, dense_mem_team_shared_space(?::uuid)), NULLIF(?, 0)::bigint, ?, ?::uuid,
-			    ?, ?, NULLIF(?, '')::uuid, ?, ?::uuid, ?, ?
-			)
-		ON CONFLICT (
-		    team_id, source_kind, source_id, source_version,
-		    document_version, embedding_contract_id
-		) DO NOTHING
-		RETURNING embedding_job_id::text
-			`, document.TeamID, document.SearchDocumentID, document.OwnerProfileID, document.SpaceID, document.TeamID, document.SpaceGeneration,
-		document.SourceKind, document.SourceID, document.SourceVersion,
-		document.ProjectionFormat, document.ProjectionGenerationID, document.DocumentVersion, document.EmbeddingContractID,
-		document.EmbeddingDimensions, maxAttempts).Scan(&jobID).Error
-	if err != nil {
-		return "", err
-	}
-	return jobID, nil
-}
-
-func retireSupersededEmbeddingJobs(ctx context.Context, tx *gorm.DB, document SearchDocumentResult) error {
-	return tx.WithContext(ctx).Exec(`
-		UPDATE embedding_jobs AS job
-		SET status = 'stale',
-		    error = 'superseded by newer document version',
-		    completed_at = COALESCE(job.completed_at, now()),
-		    lease_until = NULL,
-		    worker_id = '',
-		    updated_at = now()
-		WHERE job.team_id = ?::uuid
-		  AND job.source_kind = ?
-		  AND job.source_id = ?::uuid
-		  AND job.embedding_contract_id = ?::uuid
-		  AND job.space_id = ?::uuid
-		  AND job.space_generation = ?
-		  AND (
-		      job.document_version < ?
-		      OR (
-		          job.document_version = ?
-		          AND job.source_version < ?
-		      )
-		  )
-		  AND job.worker_id NOT LIKE ?
-		  AND job.status IN ('queued', 'processing', 'failed')
-	`, document.TeamID, document.SourceKind, document.SourceID,
-		document.EmbeddingContractID, document.SpaceID, document.SpaceGeneration, document.DocumentVersion,
-		document.DocumentVersion, document.SourceVersion, EmbeddingReconciliationWorkerIDPrefix+"%").Error
-}
-
-func normalizeEmbeddingJobMaxAttempts(maxAttempts int) int {
-	if maxAttempts <= 0 {
-		return defaultEmbeddingJobMaxAttempts
-	}
-	return maxAttempts
-}
-
 type searchHitScanner interface {
 	Scan(dest ...any) error
 }
@@ -829,16 +759,6 @@ func (r *SearchRepositoryImpl) withSystemTx(ctx context.Context, fn func(tx *gor
 		return errors.New("search: rls helper is required")
 	}
 	return r.rls.WithSystemTx(ctx, r.db, fn)
-}
-
-func (r *SearchRepositoryImpl) withSystemReadOnlyRepeatableTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
-	if _, err := r.database(); err != nil {
-		return err
-	}
-	if r.rls == nil {
-		return errors.New("search: rls helper is required")
-	}
-	return r.rls.WithSystemReadOnlyRepeatableTx(ctx, r.db, fn)
 }
 
 func (r *SearchRepositoryImpl) database() (*gorm.DB, error) {

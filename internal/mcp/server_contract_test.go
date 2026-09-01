@@ -40,10 +40,14 @@ func TestServerRejectsProfileOverrideForContractTools(t *testing.T) {
 	}
 }
 
-func TestMCP_ToolsListHidesDormantContractTools(t *testing.T) {
+func TestMCP_ToolsListExposesCutoverContractTools(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
-	if err := reg.Register(registry.ContractTools()[0]); err != nil {
+	tool := registry.ContractTools()[0]
+	tool.Invoke = func(context.Context, string, map[string]any) (map[string]any, error) {
+		return map[string]any{}, nil
+	}
+	if err := reg.Register(tool); err != nil {
 		t.Fatalf("register contract tool: %v", err)
 	}
 	s := NewServerWithScopes(reg, "pA", []string{"read", "write"}, logger)
@@ -64,8 +68,8 @@ func TestMCP_ToolsListHidesDormantContractTools(t *testing.T) {
 	if err := json.Unmarshal(listResp.Result, &listPayload); err != nil {
 		t.Fatalf("result unmarshal: %v", err)
 	}
-	if len(listPayload.Tools) != 0 {
-		t.Fatalf("tools/list exposed dormant contract tools: %+v", listPayload.Tools)
+	if len(listPayload.Tools) != 1 || listPayload.Tools[0].Name != "remember" {
+		t.Fatalf("tools/list = %+v; want remember", listPayload.Tools)
 	}
 
 	out = runRPC(t, s, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"remember","arguments":{"evidence":[{"content":"hello"}]}}}`)
@@ -73,8 +77,8 @@ func TestMCP_ToolsListHidesDormantContractTools(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &callResp); err != nil {
 		t.Fatalf("unmarshal call: %v", err)
 	}
-	if callResp.Error == nil || callResp.Error.Code != errCodeMethodNotFound {
-		t.Fatalf("tools/call error = %+v; want method not found", callResp.Error)
+	if callResp.Error == nil || callResp.Error.Code != errCodeInvalidParams {
+		t.Fatalf("tools/call error = %+v; want contract validation error", callResp.Error)
 	}
 }
 

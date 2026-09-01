@@ -7,15 +7,14 @@ dedicated local Dense-Mem stack. Corpus ingestion uses the same public
 ```text
 corpus row
   -> POST /mcp, JSON-RPC tools/call remember
-  -> asynchronous processing
-  -> POST /mcp, JSON-RPC tools/call get_submission_status
+  -> synchronous assessment, embedding, and commit
   -> recall suite
   -> qrel-based retrieval metrics
 ```
 
 The evaluation harness does not use legacy memory-pack import tools or an
-answer-judge model. It measures retrieval against deterministic qrels and waits
-for the bounded submission status projection before scoring.
+answer-judge model. It measures retrieval against deterministic qrels after the
+terminal Remember result has been returned.
 
 The normal release image contains no evaluation MCP tools. The committed
 `examples/docker-compose.evaluation.yml` builds the separate `evaluation`
@@ -62,9 +61,10 @@ tests/eval/
 | `qasper` | QASPER train/dev v0.3 | Paper QA evidence retrieval. |
 | `longmem_oracle` | LongMemEval-S cleaned | Long-memory chat recall over non-abstention oracle rows. |
 
-The post-cutover evaluation flow uses `public_6axis_1k_v1` as the hard deterministic
-release gate. `public_6axis_5k_v1` is diagnostic only unless a later roadmap
-issue promotes it.
+The post-cutover release procedure retains `public_6axis_1k_v1` as a historical
+deterministic comparison. Issue #291 explicitly waives that comparison for this
+cutover; `public_6axis_5k_v1` remains diagnostic unless a later roadmap issue
+promotes it.
 
 The approved gate policy is committed at:
 
@@ -76,7 +76,7 @@ A seed corpus row is plain evidence: `source_doc_id`, `content`, and optional
 source metadata. Content is split rather than truncated, and the Go harness
 rejects any corpus row above 999 Unicode code points. Legacy `claims` and
 `auto_promote` fields are rejected because they bypass production extraction
-and placement.
+and synchronous Remember.
 
 ## Issue #149 V2 relationship derivation
 
@@ -210,10 +210,10 @@ export MAX_UNMAPPED_SOURCE_REFS=0
 tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 ```
 
-These retrieval floors mirror the existing public gate only to catch smoke
-regressions. This run is not release evidence and does not replace the approved
-1k comparison. The monitor requires all 100 latest placements and fragments to
-be terminal with no failed/pending/quarantined rows before passing. Its ignored
+These retrieval floors mirror the historical public gate only to catch smoke
+regressions. This run is not release evidence and does not replace the waived
+1k comparison. The monitor requires all 100 latest Remember attempts and
+fragments to be terminal with no failed or quarantined rows before passing. Its ignored
 `dataset_identity.json` binds the seed/suite hashes, runner hash, server image
 ID, team, and model configuration; `gate_result.json` records the smoke
 thresholds and metrics.
@@ -294,40 +294,41 @@ stack or import work begins.
 The long-running monitor is local and on-demand; nothing starts it
 automatically or from remote CI. It builds the current runner, validates the
 selected seed against the policy, imports through MCP `tools/call` `remember`,
-waits for terminal placement, and then runs the baseline recall suite:
+and then runs the baseline recall suite after each Remember call has returned a
+terminal result:
 
 ```bash
 SEED="${SEED}" \
 SUITE="${SUITE}" \
 RELEASE_GATE_POLICY="${RELEASE_GATE}" \
 IMPORT_CONCURRENCY=10 \
-PLACEMENT_TIMEOUT=10m \
 tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 ```
 
 The runner and monitor default to 10 concurrent import requests and reject a
-higher value. The eval-only Compose overlay also limits embedding requests and
-embedding workers to 10.
+higher value. The eval-only Compose overlay also limits embedding requests to
+10.
 
 The monitor polls every 60 seconds by default. `SLEEP_SECONDS` changes only
-the monitor cadence; it does not cap graph relationships or placement work.
+the monitor cadence; it does not control terminal Remember processing.
 
-Resume behavior is based on the latest placement attempt for each
+Resume behavior is based on the latest Remember attempt for each
 `eval:<source_doc_id>`:
 
 | Latest state | Resume action |
 | --- | --- |
 | `completed` and live fragment exists | Skip the corpus row. |
-| `failed` | Stop the monitor; investigate the failed placement before using a fresh isolated team/runtime. |
+| `failed` | Stop the monitor; investigate the failed Remember result before using a fresh isolated team/runtime. |
 | No attempt | Import the corpus row. |
-| `queued` or `processing` | Wait for the placement worker; do not duplicate it. |
+| `queued` or `processing` | Invalid v2.6.1 result; the originating Remember call must be terminal. |
 | Completed checkpoint but fragment is missing | Retry the corpus row. |
 | `quarantined` | Skip the corpus row and report it as comparison-only input. |
 
 One failed concurrent request stops scheduling new rows but allows already
 active requests to finish. The monitor then fails instead of retrying the
 stable idempotency key. After correcting the cause, use a fresh isolated
-team/runtime; non-failed interruptions still resume from the latest placements.
+team/runtime; non-failed interruptions still resume from the latest Remember
+attempts.
 
 The runtime identity contains the seed and suite hashes, release-policy hash,
 MCP contract, runner binary hash, local server image ID, reviewer/verifier and
@@ -336,23 +337,22 @@ artifacts also contain a canonical mapping hash. Any mismatch is a hard error.
 If data exists without an identity file, the monitor refuses to adopt or erase
 it.
 
-Progress and placement analysis are written to:
+Progress and Remember-import analysis are written to:
 
 ```text
 tests/eval/runtime/v1/monitor/status.json
-tests/eval/runtime/v1/monitor/placement_summary.json
+tests/eval/runtime/v1/monitor/attempt_summary.json
 tests/eval/runtime/v1/monitor/completed_source_doc_ids.txt
 tests/eval/runtime/v1/monitor/failed_source_doc_ids.txt
 tests/eval/runtime/v1/runs/import/knowledge_mapping.json
 tests/eval/runtime/v1/runs/baseline/summary.json
 ```
 
-`placement_summary.json` reports latest completed/awaiting-review/failed/pending
-counts, category and item-status counts, promotion rate, rejection rate, review
-burden, and historical retry attempts. Recall starts only when all latest
-placements are terminal (`completed` or `quarantined` with a live fragment),
-there are no failed or pending latest attempts, the team-scoped eval fragment
-count equals `counts.corpus`, and the remember-only import artifacts exist.
+`attempt_summary.json` reports latest completed/quarantined/failed/rejected
+counts and historical retry attempts. Recall starts only when all latest
+Remember attempts are terminal (`completed` or `quarantined` with a live
+fragment), there are no failed latest attempts, the team-scoped eval fragment
+count equals `counts.corpus`, and the Remember-only import artifacts exist.
 
 ## Run recall again without reimporting
 

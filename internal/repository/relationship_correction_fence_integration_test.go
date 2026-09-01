@@ -47,16 +47,13 @@ func TestRelationshipCorrectionRejectsStaleVersionAfterPlan(t *testing.T) {
 	require.Equal(t, "pending", sourceDocument.SearchState)
 
 	var beforeSearchState, beforeDocumentHash string
-	var beforeJobCount, beforeRelationshipCount int64
+	var beforeRelationshipCount int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT search_state, document_hash FROM search_documents
 			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ?::uuid
 			ORDER BY updated_at DESC LIMIT 1
 		`, teamID, original.RelationshipID).Row().Scan(&beforeSearchState, &beforeDocumentHash); err != nil {
-			return err
-		}
-		if err := tx.Raw(`SELECT COUNT(*) FROM embedding_jobs WHERE team_id = ?::uuid`, teamID).Scan(&beforeJobCount).Error; err != nil {
 			return err
 		}
 		return tx.Raw(`SELECT COUNT(*) FROM relationship_records WHERE team_id = ?::uuid`, teamID).Scan(&beforeRelationshipCount).Error
@@ -78,16 +75,13 @@ func TestRelationshipCorrectionRejectsStaleVersionAfterPlan(t *testing.T) {
 	require.Nil(t, result.Correction)
 
 	var afterSearchState, afterDocumentHash, originalStatus string
-	var afterJobCount, afterRelationshipCount int64
+	var afterRelationshipCount int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT search_state, document_hash FROM search_documents
 			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ?::uuid
 			ORDER BY updated_at DESC LIMIT 1
 		`, teamID, original.RelationshipID).Row().Scan(&afterSearchState, &afterDocumentHash); err != nil {
-			return err
-		}
-		if err := tx.Raw(`SELECT COUNT(*) FROM embedding_jobs WHERE team_id = ?::uuid`, teamID).Scan(&afterJobCount).Error; err != nil {
 			return err
 		}
 		if err := tx.Raw(`SELECT COUNT(*) FROM relationship_records WHERE team_id = ?::uuid`, teamID).Scan(&afterRelationshipCount).Error; err != nil {
@@ -98,7 +92,6 @@ func TestRelationshipCorrectionRejectsStaleVersionAfterPlan(t *testing.T) {
 	require.Equal(t, "active", originalStatus)
 	require.Equal(t, beforeSearchState, afterSearchState)
 	require.Equal(t, beforeDocumentHash, afterDocumentHash)
-	require.Equal(t, beforeJobCount, afterJobCount)
 	require.Equal(t, beforeRelationshipCount, afterRelationshipCount)
 }
 
@@ -155,16 +148,13 @@ func TestRelationshipCorrectionRejectsSupportRevisionChangeAfterPlan(t *testing.
 	require.Equal(t, "pending", sourceDocument.SearchState)
 
 	var beforeSearchState, beforeDocumentHash string
-	var beforeJobCount, beforeRelationshipCount int64
+	var beforeRelationshipCount int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT search_state, document_hash FROM search_documents
 			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ?::uuid
 			ORDER BY updated_at DESC LIMIT 1
 		`, teamID, original.RelationshipID).Row().Scan(&beforeSearchState, &beforeDocumentHash); err != nil {
-			return err
-		}
-		if err := tx.Raw(`SELECT COUNT(*) FROM embedding_jobs WHERE team_id = ?::uuid`, teamID).Scan(&beforeJobCount).Error; err != nil {
 			return err
 		}
 		return tx.Raw(`SELECT COUNT(*) FROM relationship_records WHERE team_id = ?::uuid`, teamID).Scan(&beforeRelationshipCount).Error
@@ -184,16 +174,13 @@ func TestRelationshipCorrectionRejectsSupportRevisionChangeAfterPlan(t *testing.
 	require.Nil(t, result.Correction)
 
 	var afterSearchState, afterDocumentHash, originalStatus string
-	var afterJobCount, afterRelationshipCount int64
+	var afterRelationshipCount int64
 	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
 		if err := tx.Raw(`
 			SELECT search_state, document_hash FROM search_documents
 			WHERE team_id = ?::uuid AND source_kind = 'relationship' AND source_id = ?::uuid
 			ORDER BY updated_at DESC LIMIT 1
 		`, teamID, original.RelationshipID).Row().Scan(&afterSearchState, &afterDocumentHash); err != nil {
-			return err
-		}
-		if err := tx.Raw(`SELECT COUNT(*) FROM embedding_jobs WHERE team_id = ?::uuid`, teamID).Scan(&afterJobCount).Error; err != nil {
 			return err
 		}
 		if err := tx.Raw(`SELECT COUNT(*) FROM relationship_records WHERE team_id = ?::uuid`, teamID).Scan(&afterRelationshipCount).Error; err != nil {
@@ -204,6 +191,5 @@ func TestRelationshipCorrectionRejectsSupportRevisionChangeAfterPlan(t *testing.
 	require.Equal(t, "active", originalStatus)
 	require.Equal(t, beforeSearchState, afterSearchState)
 	require.Equal(t, beforeDocumentHash, afterDocumentHash)
-	require.Equal(t, beforeJobCount, afterJobCount)
 	require.Equal(t, beforeRelationshipCount, afterRelationshipCount)
 }

@@ -177,9 +177,8 @@ func traceObservationOutputs(records []repository.RelationshipObservationRecord)
 	out := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		item := map[string]any{
-			"observation_id":    record.ObservationID,
-			"submission_id":     record.IngestID,
-			"placement_item_id": record.PlacementItemID,
+			"observation_id": record.ObservationID,
+			"submission_id":  record.IngestID,
 		}
 		putNullableString(item, "relationship_id", record.RelationshipID)
 		putString(item, "subject_ref", record.SubjectRef)

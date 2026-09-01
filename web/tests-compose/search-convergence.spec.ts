@@ -15,7 +15,7 @@ test("control panel renders document-authoritative search convergence", async ({
   await expect(summary).toContainText("Expected");
   await expect(summary).toContainText("Current");
   await expect(summary).toContainText("Drifted");
-  await expect(panel.getByLabel("Legacy embedding job diagnostics")).toBeVisible();
+  await expect(panel).not.toContainText("Legacy embedding jobs");
   await expectNoShellOverlap(page);
 });
 
@@ -56,7 +56,6 @@ test("control panel renders converged empty document drift", async ({ page }) =>
   await expect(panel).toBeVisible();
   await expect(panel.getByText("converged", { exact: true })).toBeVisible();
   await expect(panel.getByText("No outstanding drift", { exact: true })).toBeVisible();
-  await expect(panel.getByText("No unresolved failure groups.", { exact: true })).toBeVisible();
   await expect(panel).not.toContainText("missing_document");
   await expect(panel).not.toContainText("stale");
   await expectNoShellOverlap(page);
@@ -105,26 +104,10 @@ function convergedSnapshot() {
       index_generation: 2,
       index_strategy: "exact",
     },
-    queue: {
-      queued: 0,
-      processing: 0,
-      failed: 0,
-      expired_leases: 0,
-      affected_team_count: 0,
-      oldest_pending_age_seconds: 0,
-      oldest_failure_age_seconds: 0,
-    },
-    failures: [],
-    failure_groups: [],
-    failure_group_count: 0,
-    failure_groups_truncated: false,
     latest_run: {
       run_id: "22222222-2222-4222-8222-222222222222",
       local_run_date: "2026-08-11",
       status: "completed",
-      canary_outcome: "not_run",
-      requeued_count: 0,
-      recovered_count: 0,
       selected_count: 0,
       embedded_count: 0,
       updated_count: 0,

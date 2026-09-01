@@ -24,7 +24,7 @@ E2E_FILE_ID=""
 E2E_SERVER_IMAGE=""
 E2E_PLAYWRIGHT_CONTAINER=""
 
-source "${ROOT_DIR}/scripts/e2e-compose-json.sh"; source "${ROOT_DIR}/scripts/e2e-compose-all.sh"; source "${ROOT_DIR}/scripts/e2e-compose-conflict.sh"; source "${ROOT_DIR}/scripts/e2e-compose-embedding-reconciliation.sh"; source "${ROOT_DIR}/scripts/e2e-compose-submission-status.sh"; source "${ROOT_DIR}/scripts/e2e-compose-security.sh"; source "${ROOT_DIR}/scripts/e2e-compose-prometheus.sh"
+source "${ROOT_DIR}/scripts/e2e-compose-json.sh"; source "${ROOT_DIR}/scripts/e2e-compose-all.sh"; source "${ROOT_DIR}/scripts/e2e-compose-conflict.sh"; source "${ROOT_DIR}/scripts/e2e-compose-security.sh"; source "${ROOT_DIR}/scripts/e2e-compose-prometheus.sh"
 source "${ROOT_DIR}/scripts/e2e-compose-identity-cleanup.sh"; source "${ROOT_DIR}/scripts/e2e-compose-memory-spaces.sh"; source "${ROOT_DIR}/scripts/e2e-compose-oauth.sh"; source "${ROOT_DIR}/scripts/e2e-compose-private-memory.sh"; source "${ROOT_DIR}/scripts/e2e-compose-synchronous-write.sh"
 sanitize_project_name() {
   local raw="$1"
@@ -195,7 +195,7 @@ compose() {
   fi
   if [[ -n "$E2E_COMPOSE_OVERLAY_FILE" ]]; then
     compose_args+=(-f "$E2E_COMPOSE_OVERLAY_FILE")
-  fi; append_embedding_proxy_compose_args compose_args
+  fi
   if [[ -n "$SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE" ]]; then
     compose_args+=(-f "$SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE")
   fi
@@ -235,22 +235,19 @@ prepare_e2e_environment() {
       "AI_API_EMBEDDING_MODEL=dense-mem-e2e-embedding" \
       "AI_API_EMBEDDING_DIMENSIONS=1536" \
       "AI_VERIFIER_MODEL=dense-mem-e2e-verifier" \
-      "EMBEDDING_WORKER_COUNT=1" \
-      "MEMORY_PLACEMENT_WORKER_COUNT=1" >> "$E2E_ENV_FILE"
+      "AI_VERIFIER_API_URL=http://127.0.0.1:65535/v1" \
+      "AI_VERIFIER_API_KEY=dense-mem-e2e-verifier-key" >> "$E2E_ENV_FILE"
   else
     if [[ ! -f "$ROOT_ENV_SOURCE_FILE" ]]; then
       echo "Missing environment source at ${ROOT_ENV_SOURCE_FILE}; compose e2e uses the supplied local environment file." >&2
       return 1
     fi
-    awk '
-      /^[[:space:]]*(export[[:space:]]+)?NEO4J_[A-Za-z0-9_]*[[:space:]]*=/ { next }
-      { print }
-    ' "$ROOT_ENV_SOURCE_FILE" >> "$E2E_ENV_FILE"
+    cat "$ROOT_ENV_SOURCE_FILE" >> "$E2E_ENV_FILE"
   fi
   printf '%s\n' \
     "CONFLICT_REVIEW_START_TIME_LOCAL=00:00" \
     "CONFLICT_REVIEW_JITTER_SECONDS=0" >> "$E2E_ENV_FILE"
-  append_conflict_e2e_environment && append_embedding_reconciliation_environment && prepare_embedding_proxy_files && ROOT_ENV_FILE="$E2E_ENV_FILE"
+  append_conflict_e2e_environment && ROOT_ENV_FILE="$E2E_ENV_FILE"
 }
 
 prepare_e2e_compose_files() {
@@ -596,8 +593,6 @@ run_compose_playwright_tests() {
       -g
       "remembered API-key login uses a seven-day server session"
     )
-  elif [[ "${1:-}" == "submission_status" ]]; then
-    set_submission_status_playwright_args
   elif [[ "${1:-}" == "remember_attempts" ]]; then test_args=("tests-compose/remember-attempts.spec.ts"); if [[ -n "${DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE:-}" && -f "$DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE" ]]; then diagnostics_attempt_id="$(node -e 'const fs = require("node:fs"); const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(value.failed_attempt_id || "");' "$DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE")"; fi
   elif [[ "${1:-}" == "community" ]]; then test_args=("tests-compose/community-recall.spec.ts");
   elif [[ "${1:-}" == "conflict_queue" ]]; then test_args=("tests-compose/compose-conflict-queue.spec.ts");
@@ -630,11 +625,11 @@ run_compose_playwright_tests() {
     -e "DENSE_MEM_E2E_API_KEY=$api_key" -e "DENSE_MEM_E2E_DIAGNOSTIC_ATTEMPT_ID=$diagnostics_attempt_id" \
     -e "DENSE_MEM_E2E_DREAM_STATEMENT=${dream_statement:-}" \
     -e "DENSE_MEM_PROMETHEUS_URL=$PROMETHEUS_URL" \
-    -e "DENSE_MEM_E2E_GRAPH_ANCHOR_ENTITY_ID=$E2E_GRAPH_ANCHOR_ENTITY_ID" \
-    -e "DENSE_MEM_E2E_GRAPH_ORIGINAL_OBJECT_ENTITY_ID=$E2E_GRAPH_ORIGINAL_OBJECT_ENTITY_ID" \
-    -e "DENSE_MEM_E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID=$E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID" \
-    -e "DENSE_MEM_E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID=$E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID" \
-    -e "DENSE_MEM_E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID=$E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID" \
+    -e "DENSE_MEM_E2E_GRAPH_ANCHOR_ENTITY_ID=${E2E_GRAPH_ANCHOR_ENTITY_ID:-}" \
+    -e "DENSE_MEM_E2E_GRAPH_ORIGINAL_OBJECT_ENTITY_ID=${E2E_GRAPH_ORIGINAL_OBJECT_ENTITY_ID:-}" \
+    -e "DENSE_MEM_E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID=${E2E_GRAPH_CORRECTED_OBJECT_ENTITY_ID:-}" \
+    -e "DENSE_MEM_E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID=${E2E_GRAPH_ORIGINAL_RELATIONSHIP_ID:-}" \
+    -e "DENSE_MEM_E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID=${E2E_GRAPH_SUCCESSOR_RELATIONSHIP_ID:-}" \
     -e "DENSE_MEM_E2E_OAUTH_SECOND_TEAM_ID=${E2E_OAUTH_SECOND_TEAM_ID:-}" \
     -e "DENSE_MEM_E2E_SSO_SESSION_TOKEN=${E2E_OAUTH_SESSION_TOKEN:-}" \
     -e "DENSE_MEM_E2E_SSO_CSRF_TOKEN=${E2E_OAUTH_CSRF_TOKEN:-}" \
@@ -672,7 +667,7 @@ cleanup() {
   fi
   if [[ -n "$E2E_POSTGRES_COMPOSE_OVERLAY_FILE" && -f "$E2E_POSTGRES_COMPOSE_OVERLAY_FILE" ]] && is_generated_marker_file "$E2E_POSTGRES_COMPOSE_OVERLAY_FILE"; then
     rm -- "$E2E_POSTGRES_COMPOSE_OVERLAY_FILE"
-  fi; cleanup_embedding_proxy_files; cleanup_oauth_compatibility_files
+  fi; cleanup_oauth_compatibility_files
   if [[ -n "$E2E_ENTRA_DIR" && -f "${E2E_ENTRA_DIR}/.dense-mem-e2e-marker" ]] && is_generated_marker_file "${E2E_ENTRA_DIR}/.dense-mem-e2e-marker"; then
     rm -r "$E2E_ENTRA_DIR"
   fi
@@ -691,8 +686,8 @@ if [[ "$E2E_MODE" != "standard" && "$E2E_MODE" != "entra_scim" ]]; then
   echo "DENSE_MEM_E2E_MODE must be standard or entra_scim." >&2
   exit 1
 fi
-if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "mcp_sdk_parity" && "$E2E_SCENARIO" != "mcp_sdk_transport" && "$E2E_SCENARIO" != "oauth_provider_compatibility" && "$E2E_SCENARIO" != "mcp_oauth" && "$E2E_SCENARIO" != "private_memory_erasure" && "$E2E_SCENARIO" != "security_runtime" && "$E2E_SCENARIO" != "infrastructure_credentials" && "$E2E_SCENARIO" != "submission_status" && "$E2E_SCENARIO" != "submission_terminal_errors" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "submission_assessment" && "$E2E_SCENARIO" != "identity_cleanup" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && "$E2E_SCENARIO" != "embedding_reconciliation" && "$E2E_SCENARIO" != "embedding_resilience" && "$E2E_SCENARIO" != "memory_space_backfill" && "$E2E_SCENARIO" != "memory_space_isolation" && "$E2E_SCENARIO" != "space_aware_recall" && "$E2E_SCENARIO" != "credential_memory_binding" && "$E2E_SCENARIO" != "synchronous_write" && "$E2E_SCENARIO" != "all" ]]; then
-  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, mcp_sdk_parity, mcp_sdk_transport, oauth_provider_compatibility, mcp_oauth, private_memory_erasure, security_runtime, infrastructure_credentials, submission_status, submission_terminal_errors, security_intake, submission_assessment, identity_cleanup, community, conflict, conflict_queue, embedding_reconciliation, embedding_resilience, memory_space_backfill, memory_space_isolation, space_aware_recall, credential_memory_binding, synchronous_write, or all." >&2
+if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "mcp_sdk_parity" && "$E2E_SCENARIO" != "mcp_sdk_transport" && "$E2E_SCENARIO" != "oauth_provider_compatibility" && "$E2E_SCENARIO" != "mcp_oauth" && "$E2E_SCENARIO" != "private_memory_erasure" && "$E2E_SCENARIO" != "security_runtime" && "$E2E_SCENARIO" != "infrastructure_credentials" && "$E2E_SCENARIO" != "submission_terminal_errors" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "identity_cleanup" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && "$E2E_SCENARIO" != "memory_space_backfill" && "$E2E_SCENARIO" != "memory_space_isolation" && "$E2E_SCENARIO" != "space_aware_recall" && "$E2E_SCENARIO" != "credential_memory_binding" && "$E2E_SCENARIO" != "synchronous_write" && "$E2E_SCENARIO" != "all" ]]; then
+  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, mcp_sdk_parity, mcp_sdk_transport, oauth_provider_compatibility, mcp_oauth, private_memory_erasure, security_runtime, infrastructure_credentials, submission_terminal_errors, security_intake, identity_cleanup, community, conflict, conflict_queue, memory_space_backfill, memory_space_isolation, space_aware_recall, credential_memory_binding, synchronous_write, or all." >&2
   exit 1
 fi
 
@@ -733,19 +728,15 @@ read -r \
   generated_control_port \
   generated_prometheus_port \
   generated_postgres_port \
-  generated_neo4j_http_port \
-  generated_neo4j_bolt_port \
   generated_redis_port \
   generated_entra_port \
   generated_conflict_provider_port \
   generated_oauth_provider_port \
-  generated_oauth_harness_port < <(pick_ports 11)
+  generated_oauth_harness_port < <(pick_ports 9)
 DENSE_MEM_PORT="${DENSE_MEM_E2E_API_PORT:-$generated_api_port}"
 CONTROL_PORTAL_PORT="${DENSE_MEM_E2E_CONTROL_PORT:-$generated_control_port}"
 PROMETHEUS_PORT="${DENSE_MEM_E2E_PROMETHEUS_PORT:-$generated_prometheus_port}"
 POSTGRES_HOST_PORT="${DENSE_MEM_E2E_POSTGRES_PORT:-$generated_postgres_port}"
-NEO4J_HTTP_HOST_PORT="${DENSE_MEM_E2E_NEO4J_HTTP_PORT:-$generated_neo4j_http_port}"
-NEO4J_BOLT_HOST_PORT="${DENSE_MEM_E2E_NEO4J_BOLT_PORT:-$generated_neo4j_bolt_port}"
 REDIS_PORT="${DENSE_MEM_E2E_REDIS_PORT:-$generated_redis_port}"
 E2E_ENTRA_PORT="${DENSE_MEM_E2E_ENTRA_PORT:-$generated_entra_port}"
 E2E_CONFLICT_PROVIDER_PORT="${DENSE_MEM_E2E_CONFLICT_PROVIDER_PORT:-$generated_conflict_provider_port}"
@@ -758,7 +749,7 @@ CONTROL_URL="${DENSE_MEM_CONTROL_URL:-http://127.0.0.1:${CONTROL_PORTAL_PORT}}"
 USER_URL="${DENSE_MEM_USER_URL:-http://127.0.0.1:${DENSE_MEM_PORT}}"
 PROMETHEUS_URL="${DENSE_MEM_PROMETHEUS_URL:-http://127.0.0.1:${PROMETHEUS_PORT}}"
 export DENSE_MEM_PORT CONTROL_PORTAL_PORT PROMETHEUS_PORT PROMETHEUS_CONTAINER_NAME
-export POSTGRES_HOST_PORT NEO4J_HTTP_HOST_PORT NEO4J_BOLT_HOST_PORT REDIS_PORT
+export POSTGRES_HOST_PORT REDIS_PORT
 
 TEMP_DIR="$(mktemp -d)"; export DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE="${TEMP_DIR}/densemem-e2e-diagnostics-${E2E_FILE_ID}.json"
 cd "$ROOT_DIR"
@@ -770,7 +761,7 @@ require_env_value AI_API_URL >/dev/null
 require_env_value AI_API_KEY >/dev/null
 require_env_value AI_API_EMBEDDING_MODEL >/dev/null
 require_env_value AI_API_EMBEDDING_DIMENSIONS >/dev/null
-if [[ "$E2E_MODE" != "entra_scim" && ( "$E2E_SCENARIO" == "full" || "$E2E_SCENARIO" == "submission_status" || "$E2E_SCENARIO" == "submission_terminal_errors" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "submission_assessment" || "$E2E_SCENARIO" == "community" || "$E2E_SCENARIO" == "conflict_queue" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ) ]]; then
+if [[ "$E2E_MODE" != "entra_scim" && ( "$E2E_SCENARIO" == "full" || "$E2E_SCENARIO" == "submission_terminal_errors" || "$E2E_SCENARIO" == "security_intake" || "$E2E_SCENARIO" == "community" || "$E2E_SCENARIO" == "conflict_queue" || "${DENSE_MEM_E2E_REQUIRE_LIVE_DREAM_PROVIDER:-0}" == "1" ) ]]; then
   require_env_value AI_VERIFIER_API_URL >/dev/null
   require_env_value AI_VERIFIER_API_KEY >/dev/null
   require_env_value AI_VERIFIER_MODEL >/dev/null
@@ -841,7 +832,6 @@ if docker ps -a --format '{{.Names}}' | grep -Fxq "$PROMETHEUS_CONTAINER_NAME"; 
 fi
 prepare_e2e_prometheus_volume
 prepare_oauth_fixture_volume; prepare_conflict_provider_volume
-prepare_embedding_proxy_volume
 prepare_synchronous_write_provider_fixture_volume
 
 echo "Starting e2e compose stack on ${USER_URL}, ${CONTROL_URL}, and ${PROMETHEUS_URL}."
@@ -932,23 +922,7 @@ if [[ "$E2E_SCENARIO" == "security_intake" ]]; then
   exit 0
 fi
 
-if [[ "$E2E_SCENARIO" == "submission_status" ]]; then
-  run_submission_status_e2e "$team_id"
-  exit 0
-fi
 if [[ "$E2E_SCENARIO" == "submission_terminal_errors" ]]; then echo "Running compose-backed terminal submission error completeness e2e with the configured live verifier."; DENSE_MEM_USER_URL="$USER_URL" DENSE_MEM_E2E_API_KEY="$api_key" DENSE_MEM_E2E_TEAM_ID="$team_id" DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" node "$ROOT_DIR/tests/uat/submission_terminal_errors_e2e.mjs"; exit 0; fi
-if [[ "$E2E_SCENARIO" == "submission_assessment" ]]; then
-  echo "Running compose-backed submission-wide assessor e2e with the configured live verifier."
-  DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
-  DENSE_MEM_USER_URL="$USER_URL" \
-  DENSE_MEM_E2E_TEAM_ID="$team_id" \
-  DENSE_MEM_E2E_API_KEY="$api_key" \
-  DENSE_MEM_PROMETHEUS_URL="$PROMETHEUS_URL" \
-  DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
-  DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
-  node "$ROOT_DIR/tests/uat/submission_assessment_mcp_e2e.mjs"
-  exit 0
-fi
 if [[ "$E2E_SCENARIO" == "synchronous_write" ]]; then
   run_synchronous_write_e2e "$team_id" "$api_key"
   exit 0
@@ -963,13 +937,7 @@ if [[ "$E2E_SCENARIO" == "conflict" ]]; then
   exit 0
 fi
 if [[ "$E2E_SCENARIO" == "conflict_queue" ]]; then run_conflict_queue_e2e "$team_id"; exit 0; fi
-if [[ "$E2E_SCENARIO" == "embedding_reconciliation" ]]; then run_embedding_reconciliation_e2e "$team_id"; exit 0; fi
-if [[ "$E2E_SCENARIO" == "embedding_resilience" ]]; then run_embedding_resilience_e2e "$team_id"; exit 0; fi
 if [[ "$E2E_SCENARIO" == "memory_space_backfill" || "$E2E_SCENARIO" == "memory_space_isolation" || "$E2E_SCENARIO" == "space_aware_recall" || "$E2E_SCENARIO" == "credential_memory_binding" ]]; then run_memory_spaces_e2e "$team_id" "$api_key"; exit 0; fi
-if [[ "$E2E_SCENARIO" == "full" ]]; then
-  echo "Seeding the submission-status graph fixture for the full portal suite."
-  run_submission_status_e2e "$team_id" 1
-fi
 echo "Running compose-backed scheduled team dreaming e2e."
 dream_json="$(DENSE_MEM_CONTROL_URL="$CONTROL_URL" \
 DENSE_MEM_USER_URL="$USER_URL" \

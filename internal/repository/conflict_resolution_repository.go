@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -93,7 +92,7 @@ func (r *LedgerRepositoryImpl) CommitRelationshipConflictResolution(
 			WorkerID: resolution.WorkerID, Now: resolution.Now,
 		})
 		if err != nil {
-			if errors.Is(err, ErrPlacementLeaseLost) || errors.Is(err, ErrConflictAssessmentStale) {
+			if errors.Is(err, ErrConflictReviewLeaseLost) || errors.Is(err, ErrConflictAssessmentStale) {
 				return ErrConflictAssessmentStale
 			}
 			return err
@@ -209,7 +208,7 @@ func buildRelationshipConflictResolutionPlan(
 	}
 	record, err := loadRelationshipConflictCaseForResolution(ctx, tx, input, reviewInput)
 	if err != nil {
-		if errors.Is(err, ErrPlacementLeaseLost) || errors.Is(err, ErrConflictAssessmentStale) {
+		if errors.Is(err, ErrConflictReviewLeaseLost) || errors.Is(err, ErrConflictAssessmentStale) {
 			plan.Stale = true
 			return plan, nil
 		}
@@ -727,7 +726,7 @@ func loadConflictResolutionDocuments(
 		if err != nil {
 			return nil, err
 		}
-		text, err := placementRelationshipSearchText(ctx, tx, relationship)
+		text, err := semanticRelationshipSearchText(ctx, tx, relationship)
 		if err != nil {
 			return nil, err
 		}
@@ -892,26 +891,7 @@ func applyConflictResolutionEmbedding(
 	if err != nil {
 		return err
 	}
-	if err := staleConflictRelationshipEmbeddingJobs(ctx, tx, document.TeamID, fence.EmbeddingContractID, []string{document.RelationshipID}); err != nil {
-		return err
-	}
 	return refreshPreviousRelationshipProjectionGeneration(ctx, tx, document.TeamID, previousGenerationID)
-}
-
-func staleConflictRelationshipEmbeddingJobs(ctx context.Context, tx *gorm.DB, teamID, embeddingContractID string, relationshipIDs []string) error {
-	if len(relationshipIDs) == 0 {
-		return nil
-	}
-	return tx.WithContext(ctx).Exec(`
-		UPDATE embedding_jobs
-		SET status = 'stale', error = 'conflict resolution superseded embedding work', completed_at = now(),
-		    lease_until = NULL, worker_id = '', updated_at = now()
-		WHERE team_id = ?::uuid
-		  AND source_kind = 'relationship'
-		  AND source_id = ANY(?::uuid[])
-		  AND embedding_contract_id = ?::uuid
-		  AND status IN ('queued', 'processing', 'failed')
-	`, teamID, pq.Array(relationshipIDs), embeddingContractID).Error
 }
 
 func relationshipConflictResolutionPlansEqual(left, right RelationshipConflictResolutionPlan) bool {

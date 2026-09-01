@@ -30,17 +30,6 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 		{"zero embedding timeout", func() { os.Setenv("AI_API_EMBEDDING_TIMEOUT_SECONDS", "0") }, "AI_API_EMBEDDING_TIMEOUT_SECONDS"},
 		{"invalid embedding concurrency", func() { os.Setenv("AI_API_EMBEDDING_MAX_CONCURRENCY", "bad") }, "AI_API_EMBEDDING_MAX_CONCURRENCY"},
 		{"zero embedding concurrency", func() { os.Setenv("AI_API_EMBEDDING_MAX_CONCURRENCY", "0") }, "AI_API_EMBEDDING_MAX_CONCURRENCY"},
-		{"invalid embedding worker count", func() { os.Setenv("EMBEDDING_WORKER_COUNT", "bad") }, "EMBEDDING_WORKER_COUNT"},
-		{"embedding workers exceed provider", func() {
-			os.Setenv("AI_API_EMBEDDING_MAX_CONCURRENCY", "1")
-			os.Setenv("EMBEDDING_WORKER_COUNT", "2")
-		}, "EMBEDDING_WORKER_COUNT"},
-		{"invalid embedding batch size", func() { os.Setenv("EMBEDDING_BATCH_SIZE", "bad") }, "EMBEDDING_BATCH_SIZE"},
-		{"excessive embedding batch size", func() { os.Setenv("EMBEDDING_BATCH_SIZE", "257") }, "EMBEDDING_BATCH_SIZE"},
-		{"invalid embedding poll", func() { os.Setenv("EMBEDDING_JOB_POLL_SECONDS", "bad") }, "EMBEDDING_JOB_POLL_SECONDS"},
-		{"invalid embedding job attempts", func() { os.Setenv("EMBEDDING_JOB_MAX_ATTEMPTS", "bad") }, "EMBEDDING_JOB_MAX_ATTEMPTS"},
-		{"zero embedding job attempts", func() { os.Setenv("EMBEDDING_JOB_MAX_ATTEMPTS", "0") }, "EMBEDDING_JOB_MAX_ATTEMPTS"},
-		{"excessive embedding job attempts", func() { os.Setenv("EMBEDDING_JOB_MAX_ATTEMPTS", "101") }, "EMBEDDING_JOB_MAX_ATTEMPTS"},
 		{"invalid verifier disable temperature", func() { os.Setenv("AI_VERIFIER_DISABLE_TEMPERATURE", "bad") }, "AI_VERIFIER_DISABLE_TEMPERATURE"},
 		{"invalid verifier timeout", func() { os.Setenv("AI_VERIFIER_TIMEOUT_SECONDS", "bad") }, "AI_VERIFIER_TIMEOUT_SECONDS"},
 		{"invalid verifier concurrency", func() { os.Setenv("AI_VERIFIER_MAX_CONCURRENCY", "bad") }, "AI_VERIFIER_MAX_CONCURRENCY"},
@@ -52,13 +41,6 @@ func TestLoadValidation_RemainingInvalidEnvironmentBranches(t *testing.T) {
 			os.Setenv("AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", "11")
 		}, "AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS"},
 		{"unsupported verifier tokenizer", func() { os.Setenv("AI_VERIFIER_TOKENIZER", "unknown") }, "AI_VERIFIER_TOKENIZER"},
-		{"invalid placement worker count", func() { os.Setenv("MEMORY_PLACEMENT_WORKER_COUNT", "bad") }, "MEMORY_PLACEMENT_WORKER_COUNT"},
-		{"placement workers exceed verifier", func() {
-			os.Setenv("AI_VERIFIER_MAX_CONCURRENCY", "1")
-			os.Setenv("MEMORY_PLACEMENT_WORKER_COUNT", "2")
-		}, "MEMORY_PLACEMENT_WORKER_COUNT"},
-		{"invalid placement poll", func() { os.Setenv("MEMORY_PLACEMENT_POLL_SECONDS", "bad") }, "MEMORY_PLACEMENT_POLL_SECONDS"},
-		{"invalid promote timeout", func() { os.Setenv("PROMOTE_TX_TIMEOUT_SECONDS", "bad") }, "PROMOTE_TX_TIMEOUT_SECONDS"},
 		{"invalid conflict ttl", func() { os.Setenv("CONFLICT_REVIEW_TTL_DAYS", "bad") }, "CONFLICT_REVIEW_TTL_DAYS"},
 		{"zero conflict ttl", func() { os.Setenv("CONFLICT_REVIEW_TTL_DAYS", "0") }, "CONFLICT_REVIEW_TTL_DAYS"},
 		{"excessive conflict ttl", func() { os.Setenv("CONFLICT_REVIEW_TTL_DAYS", "31") }, "CONFLICT_REVIEW_TTL_DAYS"},

@@ -2,26 +2,17 @@ package repository
 
 import "time"
 
-type CommitPlacementSemanticInput struct {
-	TeamID           string
-	OwnerProfileID   string
-	IngestID         string
-	PlacementRunID   string
-	PlacementItemID  string
-	WorkerID         string
-	ExpectedAttempts int
-	OutcomeKind      string
-	Status           string
-	Category         string
-	Payload          map[string]any
-	RetryAfter       time.Duration
+type CommitSemanticInput struct {
+	TeamID         string
+	OwnerProfileID string
+	IngestID       string
+	FragmentID     string
 
-	EntityResolutions        []PlacementEntityResolutionInput
-	RelationshipObservations []PlacementRelationshipDecisionInput
-	RelationshipDecisions    []ApplyRelationshipDecisionInput
+	EntityResolutions        []SemanticEntityResolutionInput
+	RelationshipObservations []SemanticRelationshipDecisionInput
 }
 
-type PlacementEntityResolutionInput struct {
+type SemanticEntityResolutionInput struct {
 	MentionRef      string
 	Action          string
 	EntityID        string
@@ -37,16 +28,16 @@ type PlacementEntityResolutionInput struct {
 	AssessmentID    string
 }
 
-type PlacementRelationshipDecisionInput struct {
+type SemanticRelationshipDecisionInput struct {
 	Ref                string
 	SubjectRef         string
 	OriginalPredicate  string
 	PredicateKey       string
 	PredicateVersion   int
 	ExactPredicateKey  string
-	PredicateCandidate *PlacementPredicateCandidateInput
+	PredicateCandidate *SemanticPredicateCandidateInput
 	ObjectRef          string
-	ObjectValue        *PlacementValueInput
+	ObjectValue        *SemanticValueInput
 	Polarity           string
 	ScopeKey           string
 	ValidFrom          *time.Time
@@ -63,8 +54,8 @@ type PlacementRelationshipDecisionInput struct {
 	ResponseHash            string
 	Support                 *EvidenceSupportInput
 	Supports                []EvidenceSupportInput
-	CorrectionTarget        *PlacementCorrectionTargetInput
-	ConflictContext         *PlacementConflictContextInput
+	CorrectionTarget        *SemanticCorrectionTargetInput
+	ConflictContext         *SemanticConflictContextInput
 	ObservationMetadata     map[string]any
 	RelationshipMetadata    map[string]any
 	AssessmentID            string
@@ -74,23 +65,23 @@ type PlacementRelationshipDecisionInput struct {
 	SuppressSupport         bool
 }
 
-type PlacementPredicateCandidateInput struct {
+type SemanticPredicateCandidateInput struct {
 	PredicateKey     string
 	PredicateVersion int
 	RelationshipKind string
 }
 
-type PlacementCorrectionTargetInput struct {
+type SemanticCorrectionTargetInput struct {
 	RelationshipID  string
 	ExpectedVersion int
 }
 
-type PlacementConflictContextInput struct {
+type SemanticConflictContextInput struct {
 	ConflictID      string
 	ExpectedVersion int
 }
 
-type PlacementValueInput struct {
+type SemanticValueInput struct {
 	Ref                  string
 	ValueType            string
 	CanonicalValue       string
@@ -103,17 +94,7 @@ type PlacementValueInput struct {
 type submissionSemanticCommitState struct {
 	Status              string
 	OutcomeID           string
-	FirstDisposition    *PlacementFirstDisposition
 	RelationshipResults []RelationshipDecisionResult
 	SearchDocuments     []SearchDocumentResult
 	EntityResolutionIDs []string
-}
-
-// PlacementFirstDisposition is produced once, in the transaction that first
-// moves a placement run to a terminal disposition.
-type PlacementFirstDisposition struct {
-	Status      string
-	CreatedAt   time.Time
-	CompletedAt time.Time
-	IsRemember  bool
 }

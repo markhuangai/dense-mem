@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -46,7 +47,6 @@ func loadActiveSearchContractInTx(ctx context.Context, tx *gorm.DB) (*ActiveSear
 		  AND contract.distance_metric = ?
 		ORDER BY contract.version DESC, generation.generation DESC, generation.created_at DESC
 		LIMIT 1
-		FOR SHARE OF generation, contract
 	`, string(domain.VectorDistanceCosine)).Row().Scan(
 		&contract.EmbeddingContractID,
 		&contract.EmbeddingDimensions,
@@ -80,33 +80,6 @@ func loadActiveSearchContractInTx(ctx context.Context, tx *gorm.DB) (*ActiveSear
 }
 
 func upsertSearchDocumentInTx(
-	ctx context.Context,
-	tx *gorm.DB,
-	input UpsertSearchDocumentInput,
-	contract *ActiveSearchContract,
-	embeddingJobMaxAttempts int,
-) (*SearchDocumentResult, error) {
-	loaded, err := upsertSearchDocumentRecordInTx(ctx, tx, input, contract)
-	if err != nil {
-		return nil, err
-	}
-	if err := retireSupersededEmbeddingJobs(ctx, tx, *loaded); err != nil {
-		return nil, err
-	}
-	if synchronousInlineEmbeddingEnabled(ctx) {
-		return loaded, nil
-	}
-	jobID, err := enqueueEmbeddingJob(ctx, tx, *loaded, embeddingJobMaxAttempts)
-	if err != nil {
-		return nil, err
-	}
-	loaded.QueuedJobID = jobID
-	return loaded, nil
-}
-
-// upsertSearchDocumentRecordInTx writes the fenced document record only.
-// Callers that require asynchronous embedding must enqueue separately.
-func upsertSearchDocumentRecordInTx(
 	ctx context.Context,
 	tx *gorm.DB,
 	input UpsertSearchDocumentInput,
@@ -192,12 +165,8 @@ func upsertSearchDocumentRecordInTx(
 		return nil, err
 	}
 	if !rows.Next() {
-		err := rows.Err()
 		_ = rows.Close()
-		if err != nil {
-			return nil, err
-		}
-		return nil, ErrSearchStaleVersion
+		return nil, rows.Err()
 	}
 	loaded := SearchDocumentResult{}
 	if err := rows.Scan(
@@ -226,10 +195,16 @@ func upsertSearchDocumentRecordInTx(
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	// A semantic writer must carry provider results when the rendered text
+	// changed or no current vector exists. A same-hash current document already
+	// has the required vector, so retaining it does not recreate queue work.
+	if inlineEmbeddingResults(ctx) == nil && loaded.SearchState != string(domain.SearchProjectionCurrent) {
+		return nil, ErrSearchEmbeddingRequired
+	}
 	return &loaded, nil
 }
 
-func placementRelationshipSearchText(ctx context.Context, tx *gorm.DB, relationship *RelationshipRecord) (string, error) {
+func semanticRelationshipSearchText(ctx context.Context, tx *gorm.DB, relationship *RelationshipRecord) (string, error) {
 	if relationship == nil {
 		return "", errors.New("relationship is required")
 	}
@@ -414,7 +389,7 @@ func refreshPreviousRelationshipProjectionGeneration(ctx context.Context, tx *go
 func markRelationshipSearchDocumentNotRequired(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
+	commit CommitSemanticInput,
 	relationship *RelationshipRecord,
 ) (*SearchDocumentResult, error) {
 	if relationship == nil || relationship.RelationshipID == "" {
@@ -493,37 +468,34 @@ func markRelationshipSearchDocumentNotRequired(
 	return &loaded, nil
 }
 
-func upsertPlacementEvidenceSearchDocument(
+func upsertSemanticEvidenceSearchDocument(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
+	commit CommitSemanticInput,
 	fragmentID string,
 	metadata map[string]any,
-	embeddingJobMaxAttempts int,
 ) (*SearchDocumentResult, error) {
 	contract, err := loadActiveSearchContractInTx(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
-	return upsertPlacementEvidenceSearchDocumentWithContract(
+	return upsertSemanticEvidenceSearchDocumentWithContract(
 		ctx,
 		tx,
 		commit,
 		fragmentID,
 		metadata,
 		contract,
-		embeddingJobMaxAttempts,
 	)
 }
 
-func upsertPlacementEvidenceSearchDocumentWithContract(
+func upsertSemanticEvidenceSearchDocumentWithContract(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
+	commit CommitSemanticInput,
 	fragmentID string,
 	metadata map[string]any,
 	contract *ActiveSearchContract,
-	embeddingJobMaxAttempts int,
 ) (*SearchDocumentResult, error) {
 	if contract == nil {
 		return nil, errors.New("active search contract is required")
@@ -555,20 +527,15 @@ func upsertPlacementEvidenceSearchDocumentWithContract(
 	if err := validateUpsertSearchDocumentInput(input); err != nil {
 		return nil, err
 	}
-	return upsertSearchDocumentInTx(ctx, tx, input, contract, embeddingJobMaxAttempts)
+	return upsertSearchDocumentInTx(ctx, tx, input, contract)
 }
 
-func loadPlacementItemFragmentID(ctx context.Context, tx *gorm.DB, commit CommitPlacementSemanticInput) (string, error) {
-	var fragmentID string
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT fragment_id::text
-		FROM placement_items
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND placement_item_id = ?::uuid
-		LIMIT 1
-	`, commit.TeamID, commit.OwnerProfileID, commit.PlacementItemID).Row().Scan(&fragmentID); err != nil {
-		return "", err
+func loadSemanticItemFragmentID(ctx context.Context, tx *gorm.DB, commit CommitSemanticInput) (string, error) {
+	_ = ctx
+	_ = tx
+	fragmentID := strings.TrimSpace(commit.FragmentID)
+	if _, err := uuid.Parse(fragmentID); err != nil {
+		return "", fmt.Errorf("semantic commit fragment_id is required: %w", err)
 	}
 	return fragmentID, nil
 }
@@ -606,21 +573,17 @@ func isConflictResolutionDeletionOnlyFragment(
 	return deletionOnly, nil
 }
 
-func upsertPlacementItemEvidenceSearchDocument(
+func upsertSemanticItemEvidenceSearchDocument(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
+	commit CommitSemanticInput,
 	fragmentID string,
-	embeddingJobMaxAttempts int,
 ) (*SearchDocumentResult, error) {
-	return upsertPlacementEvidenceSearchDocument(
+	return upsertSemanticEvidenceSearchDocument(
 		ctx,
 		tx,
 		commit,
 		fragmentID,
-		map[string]any{
-			"placement_item_id": commit.PlacementItemID,
-		},
-		embeddingJobMaxAttempts,
+		nil,
 	)
 }

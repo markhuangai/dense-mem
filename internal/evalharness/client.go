@@ -16,12 +16,11 @@ import (
 )
 
 type HTTPClient struct {
-	BaseURL          string
-	APIKey           string
-	PlacementTimeout time.Duration
-	Client           *http.Client
-	contractMu       sync.Mutex
-	contractMode     contractMode
+	BaseURL      string
+	APIKey       string
+	Client       *http.Client
+	contractMu   sync.Mutex
+	contractMode contractMode
 }
 
 type HTTPStatusError struct {
@@ -441,8 +440,7 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 		input["relationships"] = item.Relationships
 	}
 	var out map[string]any
-	mode, err := c.ensureContract(ctx)
-	if err != nil {
+	if _, err := c.ensureContract(ctx); err != nil {
 		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
 	}
 	if err := c.callToolWithRetry(ctx, "remember", input, &out); err != nil {
@@ -452,25 +450,7 @@ func (c *HTTPClient) importCorpusItem(ctx context.Context, item CorpusItem) (Kno
 	if submissionID == "" {
 		return mapping, fmt.Errorf("import %s: remember response missing submission_id", item.SourceDocID)
 	}
-	if mode == contractModeV261 {
-		return c.importTerminalRememberResult(item, out, mapping)
-	}
-	status, err := c.WaitForSubmissionStatusResult(ctx, submissionID, c.placementTimeout())
-	if err != nil {
-		return mapping, fmt.Errorf("import %s: %w", item.SourceDocID, err)
-	}
-	if processing := submissionProcessingState(status); processing != "completed" {
-		if cause := submissionErrorMessage(status); cause != "" {
-			return mapping, fmt.Errorf("import %s: submission status %s: %s", item.SourceDocID, processing, cause)
-		}
-		return mapping, fmt.Errorf("import %s: submission status %s", item.SourceDocID, processing)
-	}
-	fragmentID := evidenceIDFromSubmission(status)
-	if fragmentID == "" {
-		return mapping, fmt.Errorf("import %s: submission status missing evidence id", item.SourceDocID)
-	}
-	addSourceMapping(&mapping, Ref{Type: "fragment", ID: fragmentID, SourceDocID: item.SourceDocID}, true)
-	return mapping, nil
+	return c.importTerminalRememberResult(item, out, mapping)
 }
 
 func corpusImportGroups(corpus []CorpusItem) [][]CorpusItem {
@@ -500,84 +480,6 @@ func corpusImportGroupKey(item CorpusItem) string {
 		return "item:" + item.Content
 	}
 	return "item:" + sourceDocID
-}
-
-func (c *HTTPClient) WaitForSubmissionStatus(ctx context.Context, submissionID string, timeout time.Duration) error {
-	_, err := c.WaitForSubmissionStatusResult(ctx, submissionID, timeout)
-	return err
-}
-
-func (c *HTTPClient) WaitForSubmissionStatusResult(ctx context.Context, submissionID string, timeout time.Duration) (map[string]any, error) {
-	if strings.TrimSpace(submissionID) == "" {
-		return nil, nil
-	}
-	if timeout <= 0 {
-		timeout = 2 * time.Minute
-	}
-	waitCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	for {
-		var out map[string]any
-		if err := c.callToolWithRetry(waitCtx, "get_submission_status", map[string]any{"submission_id": submissionID}, &out); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				return nil, fmt.Errorf("submission %s did not complete within %s", submissionID, timeout)
-			}
-			return nil, err
-		}
-		status := submissionProcessingState(out)
-		switch status {
-		case "completed":
-			searchState := submissionSearchState(out)
-			switch searchState {
-			case "", "current", "not_required":
-				return out, nil
-			case "pending":
-			case "failed":
-				if cause := submissionErrorMessage(out); cause != "" {
-					return nil, fmt.Errorf("submission %s search_state failed: %s", submissionID, cause)
-				}
-				return nil, fmt.Errorf("submission %s search_state failed", submissionID)
-			default:
-				return nil, fmt.Errorf("submission %s returned unknown search_state %q", submissionID, searchState)
-			}
-		case "queued", "processing":
-		case "rejected":
-			if evidenceIDFromSubmission(out) != "" {
-				return out, nil
-			}
-			if cause := submissionErrorMessage(out); cause != "" {
-				return nil, fmt.Errorf("submission %s %s: %s", submissionID, status, cause)
-			}
-			return nil, fmt.Errorf("submission %s %s", submissionID, status)
-		case "quarantined":
-			if cause := submissionErrorMessage(out); cause != "" {
-				return nil, fmt.Errorf("submission %s quarantined: %s", submissionID, cause)
-			}
-			return nil, fmt.Errorf("submission %s quarantined", submissionID)
-		case "failed":
-			if cause := submissionErrorMessage(out); cause != "" {
-				return nil, fmt.Errorf("submission %s %s: %s", submissionID, status, cause)
-			}
-			return nil, fmt.Errorf("submission %s %s", submissionID, status)
-		default:
-			return nil, fmt.Errorf("submission %s returned unknown processing_state %q", submissionID, status)
-		}
-		select {
-		case <-waitCtx.Done():
-			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-				return nil, fmt.Errorf("submission %s did not complete within %s", submissionID, timeout)
-			}
-			return nil, waitCtx.Err()
-		case <-time.After(time.Second):
-		}
-	}
-}
-
-func (c *HTTPClient) placementTimeout() time.Duration {
-	if c.PlacementTimeout > 0 {
-		return c.PlacementTimeout
-	}
-	return 2 * time.Minute
 }
 
 func (c *HTTPClient) ExportEvidenceMapping(ctx context.Context, limit int) (KnowledgeMapping, error) {

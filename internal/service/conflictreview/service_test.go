@@ -579,6 +579,25 @@ func TestServiceStopsBeforeOverdueAssessmentWhenReviewCannotProceed(t *testing.T
 		assert.Empty(t, repo.reserveInputs)
 	})
 
+	t.Run("repository-applied deterministic resolution does not require a plan", func(t *testing.T) {
+		repo := newConflictReviewRepositoryStub(t)
+		repo.reviewResult = &repository.ReviewRelationshipConflictCaseResult{
+			ConflictID:          conflictReviewTestConflictID,
+			Outcome:             repository.ConflictReviewOutcomeResolve,
+			Stage:               repository.ConflictReviewStageDueMajority,
+			PreferredPositionID: conflictReviewTestPositionAID,
+			UpdatedRelationships: []string{
+				conflictReviewTestConflictID,
+			},
+		}
+		result, err := newConflictReviewService(t, repo, &conflictReviewProviderStub{}).ReviewRelationshipConflictCase(context.Background(), conflictReviewInput())
+		require.NoError(t, err)
+		assert.Equal(t, repository.ConflictReviewOutcomeResolve, result.Outcome)
+		assert.Equal(t, conflictReviewTestPositionAID, result.PreferredPositionID)
+		assert.Empty(t, repo.applyInputs)
+		assert.Empty(t, repo.reserveInputs)
+	})
+
 	t.Run("pending resolution lookup error", func(t *testing.T) {
 		repo := newConflictReviewRepositoryStub(t)
 		repo.resumeErr = errors.New("resume failed")

@@ -5,16 +5,6 @@ prepare_synchronous_write_files() {
     return
   fi
 
-  local slice="${DENSE_MEM_E2E_WRITE_SLICE:-legacy}"
-  case "$slice" in
-    legacy|remember|correction|conflict|dream|reconciliation|diagnostics|contract)
-      ;;
-    *)
-      echo "DENSE_MEM_E2E_WRITE_SLICE must be one of legacy, remember, correction, conflict, dream, reconciliation, diagnostics, or contract." >&2
-      return 1
-      ;;
-  esac
-
   local provider_dimensions
   provider_dimensions="$(compose_server_environment_value AI_API_EMBEDDING_DIMENSIONS)"
   if [[ -z "$provider_dimensions" || ! "$provider_dimensions" =~ ^[1-9][0-9]*$ ]]; then
@@ -23,12 +13,12 @@ prepare_synchronous_write_files() {
   fi
 
   SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE="${ROOT_DIR}/docker-compose.synchronous-write-e2e-${E2E_FILE_ID}.yml"
-  node - "$SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE" "$slice" "$provider_dimensions" "$E2E_MARKER" <<'NODE'
+  node - "$SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE" "${DENSE_MEM_E2E_WRITE_CASE:-}" "$provider_dimensions" "$E2E_MARKER" <<'NODE'
 const fs = require("node:fs");
 
-const [destination, slice, providerDimensions, marker] = process.argv.slice(2);
+const [destination, caseName, providerDimensions, marker] = process.argv.slice(2);
 const quote = (value) => JSON.stringify(value);
-const providerURL = slice === "conflict" ? "http://conflict-provider:8081/v1" : "http://synchronous-write-provider:8787/v1";
+const providerURL = caseName === "conflict" ? "http://conflict-provider:8081/v1" : "http://synchronous-write-provider:8787/v1";
 const contents = `${marker}
 services:
   server:
@@ -38,7 +28,6 @@ services:
       synchronous-write-provider:
         condition: service_healthy
     environment:
-      DENSE_MEM_E2E_WRITE_SLICE: ${quote(slice)}
       AI_API_EMBEDDING_TIMEOUT_SECONDS: "2"
       AI_VERIFIER_TIMEOUT_SECONDS: "2"
       AI_API_URL: ${providerURL}
@@ -50,7 +39,6 @@ services:
     command: ["node", "/e2e/provider-fixture.mjs"]
     environment:
       DENSE_MEM_E2E_PROVIDER_FAULT: "\${DENSE_MEM_E2E_PROVIDER_FAULT:-none}"
-      DENSE_MEM_E2E_WRITE_SLICE: ${quote(slice)}
       DENSE_MEM_E2E_PROVIDER_DIMENSIONS: ${quote(providerDimensions)}
       DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: "5000"
     volumes:
@@ -86,18 +74,24 @@ prepare_synchronous_write_provider_fixture_volume() {
 run_synchronous_write_e2e() {
   local team_id="$1"
   local api_key="$2"
-  local slice="${DENSE_MEM_E2E_WRITE_SLICE:-legacy}"
+  local case_name="${DENSE_MEM_E2E_WRITE_CASE:-}"
   local configured_fault="${DENSE_MEM_E2E_PROVIDER_FAULT:-none}"
+  local server_embedding_model
+  local server_embedding_dimensions
   local runtime_postgres_user
   local runtime_postgres_password
   local runtime_postgres_database
-  echo "Running compose-backed synchronous-write contract cases with slice ${slice}."
-  if [[ "$slice" == "conflict" ]]; then
+  echo "Running compose-backed synchronous-write contract cases${case_name:+ case ${case_name}}."
+  if [[ -z "$case_name" || "$case_name" == "conflict" ]]; then
+    server_embedding_model="$(compose_server_environment_value AI_API_EMBEDDING_MODEL)"
+    server_embedding_dimensions="$(compose_server_environment_value AI_API_EMBEDDING_DIMENSIONS)"
     runtime_postgres_user="$(compose_server_environment_value POSTGRES_USER)"
     runtime_postgres_password="$(compose_server_environment_value POSTGRES_PASSWORD)"
     runtime_postgres_database="$(compose_server_environment_value POSTGRES_DB)"
     DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER="$E2E_CONFLICT_REVIEW_DRIVER" \
     DENSE_MEM_E2E_CONFLICT_PROVIDER_URL="http://127.0.0.1:${E2E_CONFLICT_PROVIDER_PORT}/v1" \
+    DENSE_MEM_E2E_SERVER_EMBEDDING_MODEL="$server_embedding_model" \
+    DENSE_MEM_E2E_SERVER_EMBEDDING_DIMENSIONS="$server_embedding_dimensions" \
     DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
     DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
     DENSE_MEM_E2E_POSTGRES_HOST="127.0.0.1" \
@@ -120,7 +114,7 @@ run_synchronous_write_e2e() {
     DENSE_MEM_CONTROL_TOKEN="$CONTROL_TOKEN" \
     DENSE_MEM_E2E_TEAM_ID="$team_id" \
     DENSE_MEM_E2E_API_KEY="$api_key" \
-    DENSE_MEM_E2E_WRITE_CASE="$slice" \
+    DENSE_MEM_E2E_WRITE_CASE="$case_name" \
     node "$ROOT_DIR/tests/uat/synchronous_write/runner.mjs"
     return
   fi
@@ -133,9 +127,9 @@ run_synchronous_write_e2e() {
   DENSE_MEM_E2E_COMPOSE_PROJECT="$COMPOSE_PROJECT_NAME" \
   DENSE_MEM_E2E_COMPOSE_FILE="$COMPOSE_FILE" \
   DENSE_MEM_E2E_PROVIDER_FAULT="$configured_fault" \
-  DENSE_MEM_E2E_WRITE_CASE="$slice" \
+  DENSE_MEM_E2E_WRITE_CASE="$case_name" \
   node "$ROOT_DIR/tests/uat/synchronous_write/runner.mjs"
-  if [[ "$slice" == "diagnostics" && "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" != "1" ]]; then
+  if [[ "$case_name" == "diagnostics" && "${DENSE_MEM_E2E_SKIP_PLAYWRIGHT:-0}" != "1" ]]; then
     export DENSE_MEM_E2E_TEAM_NAME="E2E Team"
     echo "Running compose-backed Remember-attempt diagnostics Playwright tests."
     run_compose_playwright_tests remember_attempts

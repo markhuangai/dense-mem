@@ -176,7 +176,10 @@ func (s *Service) ReviewRelationshipConflictCase(
 	if result.Outcome != repository.ConflictReviewOutcomeOverdue {
 		if result.Outcome == repository.ConflictReviewOutcomeResolve {
 			if result.Resolution == nil {
-				return nil, errors.New("conflict review service: deterministic resolution plan is required")
+				// Deterministic majority resolution is committed by the repository
+				// review transaction; there is no provider-backed plan to execute.
+				s.observeConflictResolution(input.TeamID, "deterministic", "resolved")
+				return result, nil
 			}
 			applied, err := s.executeResolution(ctx, *result.Resolution)
 			if err != nil {
@@ -513,7 +516,7 @@ func (s *Service) releaseRetryableConflictClaim(
 		TeamID: input.TeamID, ConflictID: input.ConflictID, WorkerID: input.WorkerID,
 		ReviewRunID: input.ReviewRunID, Now: input.Now,
 	}); err != nil {
-		if errors.Is(err, repository.ErrPlacementLeaseLost) {
+		if errors.Is(err, repository.ErrConflictReviewLeaseLost) {
 			return nil
 		}
 		return err

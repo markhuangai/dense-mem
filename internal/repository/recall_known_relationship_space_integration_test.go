@@ -87,7 +87,7 @@ func TestRecallRelationshipsScopesKnownRelationshipGroupsToActiveSpace(t *testin
 		DocumentText:   "relationship\nsubject: Morgan\npredicate: works on\nobject: Dense Mem\npolarity: positive",
 	})
 	require.NoError(t, err)
-	completeSearchJobsForTest(t, searchRepo, teamID.String(), map[string][]float32{
+	completeSearchDocumentsForTest(t, searchRepo, teamID.String(), map[string][]float32{
 		firstDoc.SearchDocumentID:  {1, 0, 0},
 		secondDoc.SearchDocumentID: {1, 0, 0},
 	})

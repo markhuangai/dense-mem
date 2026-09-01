@@ -12,7 +12,6 @@ const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 const reviewDriver = requiredEnv("DENSE_MEM_E2E_CONFLICT_REVIEW_DRIVER");
 const prometheusURL = requiredEnv("DENSE_MEM_E2E_PROMETHEUS_URL").replace(/\/$/, "");
 const runID = `conflict-queue-e2e-${Date.now()}`;
-const submissionTimeoutSeconds = positiveIntEnv("DENSE_MEM_E2E_PLACEMENT_TIMEOUT_SECONDS", 240, 30, 900);
 
 let rpcID = 0;
 
@@ -142,9 +141,9 @@ async function submitRelationship(apiKey, teamID, input) {
   });
   const submissionID = String(receipt.submission_id ?? "");
   assert(submissionID, `remember ${input.label} omitted submission ID`);
-  const status = await waitForSubmission(apiKey, submissionID);
-  assert(status.processing_state === "completed", `submission ${input.label} was ${status.processing_state}`);
-  const evidenceID = String(status.evidence?.[0]?.evidence_id ?? "");
+  const result = receipt;
+  assert(result.processing_state === "completed", `submission ${input.label} was ${result.processing_state}`);
+  const evidenceID = String(result.evidence?.[0]?.evidence_id ?? "");
   assert(evidenceID, `submission ${input.label} omitted evidence lineage`);
   const relationshipID = postgresQuery(`
     SELECT observation.relationship_id::text
@@ -189,16 +188,6 @@ async function currentConflict(apiKey, relationshipID, status) {
     await delay(250);
   }
   throw new Error(`timed out waiting for ${status} conflict`);
-}
-
-async function waitForSubmission(apiKey, submissionID) {
-  const attempts = Math.ceil((submissionTimeoutSeconds * 1_000) / 250);
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const status = await mcpSuccess(apiKey, "get_submission_status", { submission_id: submissionID });
-    if (["completed", "rejected", "failed", "quarantined"].includes(status.processing_state)) return status;
-    await delay(250);
-  }
-  throw new Error(`timed out waiting for submission ${submissionID}`);
 }
 
 async function waitForPrometheusMetric(query, predicate, timeoutMs) {

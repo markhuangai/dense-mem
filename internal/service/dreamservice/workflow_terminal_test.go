@@ -36,18 +36,6 @@ func TestResolveFeedbackUsesExplicitRememberResultKind(t *testing.T) {
 		wantError    string
 	}{
 		{
-			name: "legacy receipt preserves queued behavior",
-			result: func() *rememberapp.RememberResult {
-				ingestID := uuid.NewString()
-				return &rememberapp.RememberResult{
-					IngestID: ingestID, SubmissionID: ingestID,
-					ProcessingState: string(domain.PlacementRunQueued),
-					Kind:            rememberapp.ResultKindLegacyReceipt,
-				}
-			}(),
-			wantStatus: domain.DreamStatusSubmitted, wantSubmit: true,
-		},
-		{
 			name:       "terminal completed submits committed ingest",
 			result:     dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), uuid.NewString()),
 			wantStatus: domain.DreamStatusSubmitted,
@@ -73,7 +61,7 @@ func TestResolveFeedbackUsesExplicitRememberResultKind(t *testing.T) {
 		{
 			name:      "unknown kind fails closed",
 			result:    &rememberapp.RememberResult{Kind: rememberapp.ResultKind("future")},
-			wantError: "Remember result kind is required",
+			wantError: "terminal Remember result is required",
 		},
 		{
 			name:      "terminal result is required",
@@ -198,62 +186,6 @@ func TestResolveFeedbackRetriesHypothesisFinalizationAfterTransientFailure(t *te
 	require.Equal(t, domain.DreamStatusSubmitted, result.Dream.Status)
 	require.Equal(t, ingestID, result.Memory.IngestID)
 	require.Equal(t, 2, repo.submitCalls)
-}
-
-func TestResolveFeedbackReplaysLegacyRememberForProposedHypothesis(t *testing.T) {
-	teamID := uuid.New()
-	ownerID := uuid.New()
-	hypothesisID := uuid.NewString()
-	ingestID := uuid.NewString()
-	repo := &dreamRepositoryStub{getRecord: repository.HypothesisRecord{
-		TeamID: teamID.String(), HypothesisID: hypothesisID, CreatedByProfileID: ownerID.String(),
-		Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
-	}}
-	remember := &sequencedRememberServiceStub{responses: []sequencedRememberResponse{
-		{err: rememberapp.ErrRememberConflict},
-		{result: &rememberapp.RememberResult{
-			IngestID: ingestID, SubmissionID: ingestID,
-			ProcessingState: string(domain.PlacementRunQueued),
-			Kind:            rememberapp.ResultKindLegacyReceipt,
-		}},
-	}}
-	svc := New(Dependencies{Store: repo, Remember: remember})
-
-	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
-		DreamID:  hypothesisID,
-		Decision: "confirm_true",
-		Feedback: "legacy feedback",
-		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
-	})
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, domain.DreamStatusSubmitted, result.Dream.Status)
-	require.Equal(t, ingestID, result.Memory.IngestID)
-	require.Len(t, remember.requests, 2)
-	require.NotContains(t, remember.requests[0].Evidence[0].Metadata, "hypothesis_status_before")
-	require.Equal(t, string(domain.DreamStatusProposed), remember.requests[1].Evidence[0].Metadata["hypothesis_status_before"])
-	require.Equal(t, 1, repo.submitCalls)
-}
-
-type sequencedRememberResponse struct {
-	result *rememberapp.RememberResult
-	err    error
-}
-
-type sequencedRememberServiceStub struct {
-	requests  []rememberapp.RememberRequest
-	responses []sequencedRememberResponse
-}
-
-func (s *sequencedRememberServiceStub) Remember(_ context.Context, req rememberapp.RememberRequest) (*rememberapp.RememberResult, error) {
-	s.requests = append(s.requests, req)
-	if len(s.responses) == 0 {
-		return nil, errors.New("unexpected Remember call")
-	}
-	response := s.responses[0]
-	s.responses = s.responses[1:]
-	return response.result, response.err
 }
 
 func TestResolveFeedbackReplaysCompletedRememberResult(t *testing.T) {
@@ -487,70 +419,6 @@ func TestResolveFeedbackReplaysAliasWithLegacyDefaultKey(t *testing.T) {
 	require.Equal(t, ingestID, result.Memory.IngestID)
 	require.Empty(t, remember.requests)
 	require.Empty(t, repo.submitInput)
-}
-
-func TestResolveFeedbackRecoversProposedAliasKeyedRememberOrphan(t *testing.T) {
-	teamID := uuid.New()
-	ownerID := uuid.New()
-	canonicalID := uuid.NewString()
-	aliasID := uuid.NewString()
-	ingestID := uuid.NewString()
-	legacyKey := "dream-feedback:" + aliasID + ":confirm_true"
-	repo := &dreamRepositoryStub{getRecord: repository.HypothesisRecord{
-		TeamID: teamID.String(), HypothesisID: canonicalID, CreatedByProfileID: ownerID.String(),
-		Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
-	}}
-	lookup := &rememberIngestLookupStub{existing: map[string]bool{legacyKey: true}}
-	remember := &sequencedRememberServiceStub{responses: []sequencedRememberResponse{
-		{err: rememberapp.ErrRememberConflict},
-		{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), ingestID)},
-	}}
-	svc := New(Dependencies{Store: repo, Remember: remember, RememberIngests: lookup})
-
-	result, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
-		DreamID:  aliasID,
-		Decision: "confirm_true",
-		Feedback: "legacy feedback",
-		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
-	})
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, domain.DreamStatusSubmitted, result.Dream.Status)
-	require.Equal(t, ingestID, result.Memory.IngestID)
-	require.Len(t, lookup.calls, 1)
-	require.Equal(t, legacyKey, lookup.calls[0].IdempotencyKey)
-	require.Len(t, remember.requests, 2)
-	require.Equal(t, legacyKey, remember.requests[0].IdempotencyKey)
-	require.Equal(t, legacyKey, remember.requests[1].IdempotencyKey)
-	require.NotContains(t, remember.requests[0].Evidence[0].Metadata, "hypothesis_status_before")
-	require.Equal(t, string(domain.DreamStatusProposed), remember.requests[1].Evidence[0].Metadata["hypothesis_status_before"])
-	require.Equal(t, ingestID, repo.submitInput.SubmittedIngestID)
-}
-
-func TestResolveFeedbackFailsClosedWhenLegacyRememberLookupFails(t *testing.T) {
-	teamID := uuid.New()
-	ownerID := uuid.New()
-	canonicalID := uuid.NewString()
-	aliasID := uuid.NewString()
-	repo := &dreamRepositoryStub{getRecord: repository.HypothesisRecord{
-		TeamID: teamID.String(), HypothesisID: canonicalID, CreatedByProfileID: ownerID.String(),
-		Status: string(domain.DreamStatusProposed), Statement: "Dense-Mem may use PostgreSQL.",
-	}}
-	lookupErr := errors.New("lookup unavailable")
-	lookup := &rememberIngestLookupStub{err: lookupErr}
-	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), uuid.NewString())}
-	svc := New(Dependencies{Store: repo, Remember: remember, RememberIngests: lookup})
-
-	_, err := svc.ResolveFeedback(dreamTestContext(teamID, ownerID), "ignored-profile", ResolveFeedbackRequest{
-		DreamID:  aliasID,
-		Decision: "confirm_true",
-		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent deployment evidence."}},
-	})
-
-	require.ErrorIs(t, err, lookupErr)
-	require.ErrorContains(t, err, "legacy Remember lookup")
-	require.Empty(t, remember.requests)
 }
 
 func TestResolveFeedbackWrapsConfirmationBusyWithTypedError(t *testing.T) {

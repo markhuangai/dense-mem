@@ -92,10 +92,9 @@ ${EDITOR:-vi} .env
 docker compose up -d
 ```
 
-The base stack uses PostgreSQL with pgvector as the durable authority. Current
-releases reject every `NEO4J_*` setting. If an installation still has a legacy
-Neo4j corpus, run the guided migration with v2.1.2 first, then upgrade with
-those variables unset. Neo4j is migration input, not a runtime fallback. The
+The base stack uses PostgreSQL with pgvector as the only durable authority.
+The v2.6.1 release requires the compatible cutover marker created by the
+stopped-service migration; it has no legacy database runtime or fallback. The
 local ports are:
 
 ```text
@@ -126,10 +125,13 @@ The release image contains one project executable, `/app/server`. It applies
 pending PostgreSQL migrations under a database session lock before serving, so
 the Compose stack does not need a separate migration container. Multiple server
 replicas that share one writable primary serialize this startup step. Keep
-rolling-deployment migrations backward compatible with the previous app version;
-independent databases must each be migrated by a server connected to that
-database. Administration stays on the private control portal/API, while dreaming
-and automatic conflict review run as server background workers.
+ordinary rolling-deployment migrations backward compatible with the previous app
+version. The v2.6.1 synchronous Remember migration is the exception: stop every
+server instance, take the required PostgreSQL snapshot, and apply the
+stopped-service boundary before starting the new binary. Independent databases
+must each be migrated by a server connected to that database. Administration
+stays on the private control portal/API, while dreaming and automatic conflict
+review run as server background workers.
 
 The image healthcheck allows the default 30-minute migration window and becomes
 active after its first success. If `POSTGRES_MIGRATION_TIMEOUT_SECONDS` is set
@@ -175,16 +177,16 @@ startup validation requires a complete provider configuration.
 - Set `AI_VERIFIER_MODEL` to a model that exists on the selected chat endpoint.
   Startup validates the model configuration before the service accepts memory
   writes. A 7B-8B class model works for local smoke tests; larger models can
-  exceed the default 60-second timeout while they load. Retryable processing
-  stays within the durable placement-attempt budget and becomes terminal after
-  that budget is exhausted.
+  exceed the default 60-second timeout while they load. Remember runs
+  synchronously within the request deadline; use the idempotency key to retry
+  after a client timeout or transient provider failure.
 
 ## Evidence Lifecycle
 
-`remember` durably stages exact evidence and returns a `submission_id`; provider
-calls and processing happen after acknowledgement. Poll `get_submission_status`
-with that ID for the owner-scoped processing and search state. The status
-projection omits placement questions, provider output, and internal run IDs.
+`remember` durably stages exact evidence, completes provider validation and the
+semantic commit, then returns a terminal result. The response includes the
+owner-scoped processing and search state; it does not expose provider output or
+internal run IDs.
 
 Callers submit logical Entity, predicate, and Value proposals rather than text
 offsets. `remember` does not accept `span`, `surface`, or relationship `supports`
@@ -311,7 +313,7 @@ default memory results.
 remember evidence (+ optional Entity/Relationship proposals)
         |
         v
-durable staging -> validated placement -> active eligible Relationships
+durable staging -> validated terminal commit -> active eligible Relationships
         |                                      |
         +-- lifecycle event -------------------+
                                                |
@@ -328,7 +330,6 @@ visibility checks to `tools/call`.
 | Tool | Used by | Registration | Use case and capability |
 |------|---------|--------------|-------------------------|
 | `remember` | Both | Production and evaluation images | Production evidence intake; the harness also imports corpus rows through this real intake path. |
-| `get_submission_status` | Both | Production and evaluation images | Poll owner-scoped `remember` and `correct_relationship` processing; the harness waits for imported corpus placement. |
 | `retract_evidence` | Production | Production and evaluation images | Retire caller-owned evidence while preserving append-only provenance. |
 | `correct_relationship` | Production | Production and evaluation images | Owner-only replacement of an active supported Relationship; supersedes the original and preserves support lineage. |
 | `recall_memory` | Production | Production and evaluation images | Recall active evidence contexts and Relationship handles. When enabled features produce an actionable follow-up, the result includes `suggested_actions`. |

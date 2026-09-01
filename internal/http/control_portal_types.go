@@ -26,7 +26,6 @@ type ControlPortalTelemetry struct {
 	Communities      communityservice.Service
 	ConflictQueue    conflictqueue.Reader
 	Convergence      service.SearchConvergenceReader
-	Submissions      service.SubmissionDiagnosticsReader
 	RememberAttempts service.RememberAttemptDiagnosticsReader
 	PrivateMemory    PrivateMemoryServiceInterface
 }
@@ -43,7 +42,6 @@ type controlPortalHandler struct {
 	communities      communityservice.Service
 	conflictQueue    conflictqueue.Reader
 	convergence      service.SearchConvergenceReader
-	submissions      service.SubmissionDiagnosticsReader
 	rememberAttempts service.RememberAttemptDiagnosticsReader
 	privateMemory    PrivateMemoryServiceInterface
 	health           HealthConfig

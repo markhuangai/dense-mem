@@ -10,42 +10,44 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
 const (
-	rememberCheckAfterSeconds  = 60
-	rememberStatusTool         = "get_submission_status"
-	requestHashContractVersion = "dense-mem.v2.6"
+	requestHashContractVersion = "dense-mem.v2.6.1"
 )
 
 var (
-	ErrRememberAuthContext = errors.New("remember: authenticated actor context is required")
-	ErrRememberConflict    = errors.New("remember: conflict")
-	ErrRememberPersistence = errors.New("remember: persistence failed")
+	ErrRememberAuthContext             = errors.New("remember: authenticated actor context is required")
+	ErrRememberConflict                = errors.New("remember: conflict")
+	ErrRememberStaleInput              = errors.New("remember: stale input")
+	ErrRememberPersistence             = errors.New("remember: persistence failed")
+	ErrRememberProcessor               = errors.New("remember: synchronous processor is unavailable")
+	ErrRememberProviderUnavailable     = errors.New("remember: provider unavailable")
+	ErrRememberProviderResponseInvalid = errors.New("remember: provider response invalid")
+	ErrRememberInputBudgetExceeded     = errors.New("remember: input budget exceeded")
+	ErrRememberEmbeddingUnavailable    = errors.New("remember: embedding unavailable")
+	ErrRememberEmbeddingInvalid        = errors.New("remember: embedding response invalid")
+	ErrRememberCommitConflict          = errors.New("remember: commit conflict")
+	ErrRememberDatabaseFailure         = errors.New("remember: database failure")
+	ErrRememberRequestTimeout          = errors.New("remember: request timeout")
+	ErrRememberRequestCancelled        = errors.New("remember: request cancelled")
 )
 
-// Service is the public application boundary for Remember and submission
-// status. Its only durable dependency is the intake port above.
+// Service is the public application boundary for synchronous Remember.
 type Service interface {
 	Remember(context.Context, RememberRequest) (*RememberResult, error)
-	GetSubmissionStatus(context.Context, GetSubmissionStatusRequest) (*SubmissionStatusResult, error)
 }
 
 type RememberService = Service
 
 type Dependencies struct {
-	Intake IntakePort
-	// Synchronous is installed only by an explicit composition owner. Leaving it
-	// nil preserves the release intake-and-worker path.
 	Synchronous SynchronousProcessor
 	// Auditor is required for security-rejected submissions. A nil auditor
 	// fails closed as ErrRememberPersistence instead of staging the input.
@@ -55,7 +57,6 @@ type Dependencies struct {
 }
 
 type service struct {
-	intake      IntakePort
 	synchronous SynchronousProcessor
 	auditor     SecurityRejectionAuditor
 	metrics     observability.DiscoverabilityMetrics
@@ -67,7 +68,8 @@ func NewService(deps Dependencies) *service {
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
-	return &service{intake: deps.Intake, synchronous: deps.Synchronous, auditor: deps.Auditor, metrics: metrics, logger: deps.Logger}
+	synchronous := deps.Synchronous
+	return &service{synchronous: synchronous, auditor: deps.Auditor, metrics: metrics, logger: deps.Logger}
 }
 
 type RememberRequest struct {
@@ -75,10 +77,6 @@ type RememberRequest struct {
 	EntityHints       []map[string]any        `json:"entity_hints,omitempty"`
 	RelationshipHints []map[string]any        `json:"relationship_hints,omitempty"`
 	IdempotencyKey    string                  `json:"idempotency_key,omitempty"`
-}
-
-type GetSubmissionStatusRequest struct {
-	SubmissionID string `json:"submission_id"`
 }
 
 type RememberEvidenceInput struct {
@@ -96,16 +94,20 @@ type RememberEvidenceInput struct {
 }
 
 type RememberResult struct {
-	ContractVersion   string                  `json:"contract_version"`
-	IngestID          string                  `json:"-"`
-	SubmissionID      string                  `json:"submission_id"`
-	SubmissionKind    string                  `json:"submission_kind"`
-	ProcessingState   string                  `json:"processing_state"`
-	CheckAfterSeconds int                     `json:"check_after_seconds"`
-	StatusTool        string                  `json:"status_tool"`
-	CorrelationID     string                  `json:"correlation_id"`
-	Kind              ResultKind              `json:"-"`
-	Terminal          *TerminalRememberResult `json:"-"`
+	ContractVersion      string                          `json:"contract_version"`
+	IngestID             string                          `json:"-"`
+	SubmissionID         string                          `json:"submission_id"`
+	SubmissionKind       string                          `json:"submission_kind"`
+	ProcessingState      string                          `json:"processing_state"`
+	SearchState          string                          `json:"search_state"`
+	CorrelationID        string                          `json:"correlation_id,omitempty"`
+	Evidence             []SubmissionEvidenceStatus      `json:"evidence"`
+	Errors               []SubmissionStatusError         `json:"errors"`
+	RelationshipResults  []SubmissionRelationshipResult  `json:"relationship_results"`
+	AwaitingConfirmation *SubmissionAwaitingConfirmation `json:"awaiting_confirmation,omitempty"`
+	CorrectionResult     *RelationshipCorrectionResult   `json:"correction_result,omitempty"`
+	Kind                 ResultKind                      `json:"-"`
+	Terminal             *TerminalRememberResult         `json:"-"`
 }
 
 type SubmissionStatusResult struct {
@@ -114,31 +116,15 @@ type SubmissionStatusResult struct {
 	SubmissionKind       string                          `json:"submission_kind"`
 	ProcessingState      string                          `json:"processing_state"`
 	SearchState          string                          `json:"search_state"`
-	CheckAfterSeconds    int                             `json:"check_after_seconds"`
 	CorrelationID        string                          `json:"correlation_id,omitempty"`
-	Attempts             *int                            `json:"attempts,omitempty"`
-	MaxAttempts          *int                            `json:"max_attempts,omitempty"`
-	SubmittedAt          *time.Time                      `json:"submitted_at,omitempty"`
-	NextAttemptAt        *time.Time                      `json:"next_attempt_at,omitempty"`
-	StartedAt            *time.Time                      `json:"started_at,omitempty"`
-	UpdatedAt            *time.Time                      `json:"updated_at,omitempty"`
-	CompletedAt          *time.Time                      `json:"completed_at,omitempty"`
 	Evidence             []SubmissionEvidenceStatus      `json:"evidence"`
 	Errors               []SubmissionStatusError         `json:"errors"`
-	Degradations         []SubmissionStatusDegradation   `json:"degradations"`
-	RelationshipResults  []SubmissionRelationshipResult  `json:"relationship_results,omitempty"`
-	QuarantineExpiresAt  *time.Time                      `json:"quarantine_expires_at,omitempty"`
+	RelationshipResults  []SubmissionRelationshipResult  `json:"relationship_results"`
+	QuarantineExpiresAt  *time.Time                      `json:"-"`
 	AwaitingConfirmation *SubmissionAwaitingConfirmation `json:"awaiting_confirmation,omitempty"`
 	CorrectionResult     *RelationshipCorrectionResult   `json:"correction_result,omitempty"`
 	Kind                 ResultKind                      `json:"-"`
 	Terminal             *TerminalRememberResult         `json:"-"`
-}
-
-type SubmissionStatusDegradation struct {
-	Frontier string `json:"frontier"`
-	Optional bool   `json:"optional"`
-	Code     string `json:"code"`
-	Message  string `json:"message"`
 }
 
 type SubmissionAwaitingConfirmation struct {
@@ -163,16 +149,24 @@ type RelationshipCorrectionResult struct {
 }
 
 type SubmissionEvidenceStatus struct {
-	EvidenceID            string                 `json:"evidence_id"`
+	Disposition           string                 `json:"disposition"`
+	EvidenceID            string                 `json:"evidence_id,omitempty"`
 	EvidenceIndex         int                    `json:"evidence_index"`
 	SupersededEvidenceIDs []string               `json:"superseded_evidence_ids"`
 	SearchState           string                 `json:"search_state"`
+	Reason                string                 `json:"reason,omitempty"`
 	Error                 *SubmissionStatusError `json:"error,omitempty"`
 }
 
 func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberResult, error) {
-	if s == nil || (s.intake == nil && s.synchronous == nil) {
-		return nil, errors.New("remember: intake port is required")
+	started := time.Now()
+	ctx = correlation.WithID(ctx, NormalizeTerminalCorrelationID(correlation.FromContext(ctx)))
+	ctx = WithRememberDeadlines(ctx, started)
+	operationCtx, cancel := context.WithDeadline(ctx, started.Add(RememberTotalBudget))
+	defer cancel()
+	ctx = operationCtx
+	if s == nil {
+		return nil, errors.New("remember: service is required")
 	}
 	actor, ok := requestctx.ActorFromContext(ctx)
 	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
@@ -192,18 +186,6 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if err := validateRememberRelationshipCoverage(len(req.Evidence), req.RelationshipHints); err != nil {
 		return nil, err
 	}
-	relationshipRefs, err := rememberRelationshipRefs(req.RelationshipHints)
-	if err != nil {
-		return nil, err
-	}
-	started := time.Now()
-	if s.synchronous != nil {
-		ctx = correlation.WithID(ctx, normalizeSynchronousCorrelationID(correlation.FromContext(ctx)))
-		ctx = WithRememberDeadlines(ctx, started)
-		operationCtx, cancel := context.WithDeadline(ctx, started.Add(RememberTotalBudget))
-		defer cancel()
-		ctx = operationCtx
-	}
 	contents := make([]string, 0, len(req.Evidence))
 	for _, evidence := range req.Evidence {
 		contents = append(contents, evidence.Content)
@@ -213,27 +195,18 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		"relationship_hints": req.RelationshipHints,
 	}
 	scan, scanErr := scanSubmissionWithProviderProposal(contents, proposal)
-	var securityAudit *SecurityRejectionAuditInput
 	if scanErr != nil {
+		if err := recordSubmissionSecurityRejection(ctx, s.auditor, s.logger, actor, "remember", scan, scanErr); err != nil {
+			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
+			return nil, rememberSecurityAuditPersistenceError(req, correlation.FromContext(ctx))
+		}
 		if s.synchronous == nil {
-			if err := recordSubmissionSecurityRejection(ctx, s.auditor, s.logger, actor, "remember", scan, scanErr); err != nil {
-				observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
-				return nil, ErrRememberPersistence
-			}
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
 			return nil, scanErr
 		}
 	}
 
 	requestHash, err := canonicalRequestHash(req)
-	if err != nil {
-		return nil, err
-	}
-	if scanErr != nil {
-		input := securityRejectionAuditInput(ctx, actor, "remember", scan, scanErr)
-		securityAudit = &input
-	}
-	migratedRequestHash, err := canonicalRequestHashForVersion(req, domain.MigratedRememberRequestHashVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -249,297 +222,93 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		actorMetadata["credential_id"] = actor.CredentialID.String()
 	}
 	metadata := map[string]any{"contract_version": domain.ContractVersion, "actor": actorMetadata}
+	processInput := RememberProcessRequest{
+		TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
+		SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash,
+		SourceSummary: sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata,
+		Evidence: repositoryEvidenceInputs(req.Evidence),
+	}
+	if scanErr != nil {
+		processInput.SecuritySignals = append([]SubmissionSecurityBatchSignal(nil), scan.Signals...)
+		processInput.SecuritySignalsTruncated = scan.SignalsTruncated
+		processInput.SecurityRejected = true
+	}
 	if s.synchronous != nil {
-		terminal, err := s.synchronous.ProcessRemember(ctx, RememberProcessRequest{
-			TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
-			SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash, MigratedRequestHash: migratedRequestHash,
-			SourceSummary: sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata, Evidence: repositoryEvidenceInputs(req.Evidence),
-			SecuritySignals:          append([]SubmissionSecurityBatchSignal(nil), scan.Signals...),
-			SecuritySignalsTruncated: scan.SignalsTruncated, SecurityRejected: scanErr != nil, SecurityRejectionAudit: securityAudit,
-		})
+		terminal, err := s.synchronous.ProcessRemember(ctx, processInput)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				err = preserveProcessStatus(err, ErrRememberRequestTimeout)
+			} else if errors.Is(err, context.Canceled) {
+				err = preserveProcessStatus(err, ErrRememberRequestCancelled)
+			}
+			err = preserveProcessResult(err)
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
 			return nil, err
 		}
 		if terminal == nil {
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
-			return nil, ErrRememberPersistence
-		}
-		result, resultErr := rememberResultFromTerminal(terminal, len(req.Evidence), relationshipRefs)
-		if resultErr != nil {
-			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
-			return nil, ErrRememberPersistence
+			return nil, ErrRememberProcessor
 		}
 		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "ok")
-		return result, nil
+		return rememberResultFromStatus(terminal, terminal.SubmissionID), nil
 	}
-	created, err := s.intake.Stage(ctx, StageRequest{
-		TeamID:            actor.TeamID.String(),
-		OwnerProfileID:    actor.OwnerID.String(),
-		SpaceID:           rememberSpaceID(space),
-		SpaceGeneration:   space.Generation,
-		IdempotencyKey:    strings.TrimSpace(req.IdempotencyKey),
-		RequestHash:       requestHash,
-		SourceSummary:     sourceSummary(req.Evidence),
-		Status:            string(domain.PlacementRunQueued),
-		TelemetryRemember: true,
-		Proposal:          proposal,
-		Metadata:          metadata,
-		Evidence:          repositoryEvidenceInputs(req.Evidence),
-	})
-	if err != nil {
-		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
-		return nil, translateRememberLedgerError(err)
-	}
-	if created == nil {
-		observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
-		return nil, ErrRememberPersistence
-	}
-	observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "ok")
-	if !created.Existing {
-		logSubmissionLifecycle(s.logger, submissionLifecycleEvent{
-			Event: "submission_accepted", TeamID: actor.TeamID.String(), ProfileID: actor.OwnerID.String(),
-			CorrelationID: correlationID, SubmissionID: created.SubmissionID, From: "none",
-			To: publicSubmissionProcessingState(created.Status), Stage: "intake", ReasonCode: "durably_staged",
-			Attempts: created.Attempts, MaxAttempts: created.MaxAttempts,
-		})
-	}
-	if disposition := created.FirstDisposition; disposition != nil && disposition.IsRemember {
-		observability.RecordRememberFirstDisposition(ctx, s.metrics, disposition.CompletedAt.Sub(disposition.CreatedAt), disposition.Status)
-	}
-	return rememberResultFromLedger(created, correlationID), nil
+	observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
+	return nil, ErrRememberProcessor
 }
 
-func normalizeSynchronousCorrelationID(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || utf8.RuneCountInString(value) > maxTerminalCorrelationIDRunes {
-		return uuid.NewString()
+func rememberSecurityAuditPersistenceError(req RememberRequest, correlationID string) *RememberProcessError {
+	status := &SubmissionStatusResult{
+		ContractVersion:     domain.ContractVersion,
+		SubmissionID:        uuid.NewString(),
+		SubmissionKind:      "remember",
+		ProcessingState:     string(TerminalProcessingFailed),
+		SearchState:         string(TerminalSearchNotRequired),
+		CorrelationID:       correlationID,
+		Evidence:            make([]SubmissionEvidenceStatus, len(req.Evidence)),
+		RelationshipResults: make([]SubmissionRelationshipResult, len(req.RelationshipHints)),
+		Errors:              []SubmissionStatusError{StatusError(SubmissionErrorDatabaseFailure)},
 	}
-	return value
+	for index := range status.Evidence {
+		status.Evidence[index] = SubmissionEvidenceStatus{
+			Disposition:           "not_stored",
+			EvidenceIndex:         index,
+			SupersededEvidenceIDs: []string{},
+			SearchState:           string(TerminalSearchNotRequired),
+			Reason:                "internal_failure",
+		}
+	}
+	for index, hint := range req.RelationshipHints {
+		ref, _ := hint["ref"].(string)
+		status.RelationshipResults[index] = SubmissionRelationshipResult{
+			RelationshipRef: strings.TrimSpace(ref),
+			Disposition:     "not_stored",
+			Reason:          "internal_failure",
+			Splits:          []SubmissionRelationshipSplit{},
+		}
+	}
+	result := rememberResultFromStatus(status, status.SubmissionID)
+	return &RememberProcessError{Status: status, Result: result.Terminal, Err: ErrRememberPersistence}
 }
 
-func rememberResultFromTerminal(status *SubmissionStatusResult, evidenceCount int, relationshipRefs []string) (*RememberResult, error) {
-	if status == nil {
-		return nil, errors.New("remember: terminal status is required")
+func preserveProcessStatus(err error, mapped error) error {
+	var processErr *RememberProcessError
+	if errors.As(err, &processErr) && processErr.Status != nil {
+		return &RememberProcessError{Status: processErr.Status, Result: processErr.Result, Err: mapped}
 	}
-	terminal := status.Terminal
-	if terminal == nil {
-		var err error
-		terminal, err = terminalRememberResultFromStatus(status, evidenceCount, relationshipRefs)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err := ValidateTerminalRememberResult(terminal, evidenceCount, relationshipRefs); err != nil {
-		return nil, err
-	}
-	return &RememberResult{
-		ContractVersion: terminal.ContractVersion, IngestID: terminal.SubmissionID, SubmissionID: terminal.SubmissionID,
-		SubmissionKind: terminal.SubmissionKind, ProcessingState: terminal.ProcessingState,
-		CorrelationID: terminal.CorrelationID, Kind: ResultKindTerminal, Terminal: terminal,
-	}, nil
+	return mapped
 }
 
-func terminalRememberResultFromStatus(status *SubmissionStatusResult, evidenceCount int, relationshipRefs []string) (*TerminalRememberResult, error) {
-	if status == nil {
-		return nil, errors.New("remember: terminal status is required")
+func preserveProcessResult(err error) error {
+	var processErr *RememberProcessError
+	if !errors.As(err, &processErr) || processErr == nil || processErr.Result != nil || processErr.Status == nil {
+		return err
 	}
-	if evidenceCount < 0 {
-		return nil, errors.New("remember: terminal evidence count cannot be negative")
+	result := rememberResultFromStatus(processErr.Status, processErr.Status.SubmissionID)
+	if result != nil {
+		processErr.Result = result.Terminal
 	}
-	if len(status.Evidence) != 0 && len(status.Evidence) != evidenceCount {
-		return nil, fmt.Errorf("remember: terminal status evidence count %d, expected %d", len(status.Evidence), evidenceCount)
-	}
-	if len(status.RelationshipResults) != 0 && len(status.RelationshipResults) != len(relationshipRefs) {
-		return nil, fmt.Errorf("remember: terminal status relationship count %d, expected %d", len(status.RelationshipResults), len(relationshipRefs))
-	}
-	processingState := status.ProcessingState
-	terminal := &TerminalRememberResult{
-		ContractVersion: status.ContractVersion, SubmissionID: status.SubmissionID,
-		SubmissionKind: status.SubmissionKind, ProcessingState: processingState,
-		SearchState: string(TerminalSearchNotRequired), CorrelationID: status.CorrelationID, Kind: ResultKindTerminal,
-		Evidence:            make([]TerminalEvidenceResult, 0, len(status.Evidence)),
-		RelationshipResults: make([]SubmissionRelationshipResult, 0, len(relationshipRefs)),
-		Errors:              append([]SubmissionStatusError{}, status.Errors...),
-	}
-	if processingState != string(TerminalProcessingCompleted) && len(terminal.Errors) == 0 {
-		terminal.Errors = []SubmissionStatusError{TerminalStatusError(terminalErrorForTerminalState(processingState))}
-	}
-	notStoredReason := terminalNotStoredReasonForStatus(processingState, terminal.Errors)
-	for index := 0; index < evidenceCount; index++ {
-		var evidence SubmissionEvidenceStatus
-		if len(status.Evidence) > 0 {
-			evidence = status.Evidence[index]
-			if evidence.EvidenceIndex != index {
-				return nil, fmt.Errorf("remember: terminal status evidence index %d is out of order", evidence.EvidenceIndex)
-			}
-		}
-		terminal.Evidence = append(terminal.Evidence, terminalEvidenceFromStatus(evidence, index, processingState, notStoredReason))
-	}
-	for index, ref := range relationshipRefs {
-		relationship := SubmissionRelationshipResult{RelationshipRef: ref, Disposition: "not_stored", Reason: notStoredReason, Splits: []SubmissionRelationshipSplit{}}
-		if len(status.RelationshipResults) > 0 {
-			candidate := status.RelationshipResults[index]
-			if candidate.RelationshipRef != ref {
-				return nil, fmt.Errorf("remember: terminal status relationship ref %q is out of order", candidate.RelationshipRef)
-			}
-			if processingState == string(TerminalProcessingCompleted) && candidate.Disposition == "stored" && len(candidate.Splits) > 0 && terminalSplitsValid(candidate.Splits) && strings.TrimSpace(candidate.Reason) == "" {
-				relationship.Disposition = "stored"
-				relationship.Reason = ""
-				relationship.Splits = append([]SubmissionRelationshipSplit{}, candidate.Splits...)
-			}
-		}
-		terminal.RelationshipResults = append(terminal.RelationshipResults, relationship)
-	}
-	if terminal.Errors == nil {
-		terminal.Errors = []SubmissionStatusError{}
-	}
-	for _, evidence := range terminal.Evidence {
-		if evidence.Disposition == "stored" {
-			terminal.SearchState = string(TerminalSearchCurrent)
-			break
-		}
-	}
-	if terminal.SearchState != string(TerminalSearchCurrent) {
-		for _, relationship := range terminal.RelationshipResults {
-			if relationship.Disposition == "stored" {
-				terminal.SearchState = string(TerminalSearchCurrent)
-				break
-			}
-		}
-	}
-	return terminal, nil
+	return err
 }
-
-func terminalEvidenceFromStatus(status SubmissionEvidenceStatus, index int, processingState, notStoredReason string) TerminalEvidenceResult {
-	notStored := TerminalEvidenceResult{
-		Disposition: "not_stored", EvidenceIndex: index, SupersededEvidenceIDs: []string{},
-		SearchState: string(TerminalSearchNotRequired), Reason: notStoredReason,
-	}
-	if processingState != string(TerminalProcessingCompleted) || status.Error != nil || status.SearchState != string(TerminalSearchCurrent) {
-		return notStored
-	}
-	if _, err := uuid.Parse(status.EvidenceID); err != nil {
-		return notStored
-	}
-	superseded, ok := terminalSupersededEvidenceIDs(status.SupersededEvidenceIDs, status.EvidenceID)
-	if !ok {
-		return notStored
-	}
-	return TerminalEvidenceResult{Disposition: "stored", EvidenceID: status.EvidenceID, EvidenceIndex: index, SupersededEvidenceIDs: superseded, SearchState: string(TerminalSearchCurrent)}
-}
-
-func terminalNotStoredReasonForStatus(state string, terminalErrors []SubmissionStatusError) string {
-	for _, terminalError := range terminalErrors {
-		code := TerminalErrorCode(terminalError.Code)
-		if terminalProcessingStateForError(code) == TerminalProcessingState(state) {
-			return terminalNotStoredReasonForError(code)
-		}
-	}
-	return terminalNotStoredReasonForTerminalState(state)
-}
-
-func terminalSupersededEvidenceIDs(values []string, evidenceID string) ([]string, bool) {
-	current, err := uuid.Parse(evidenceID)
-	if err != nil {
-		return nil, false
-	}
-	result := make([]string, 0, len(values))
-	seen := make(map[uuid.UUID]struct{}, len(values))
-	for _, value := range values {
-		parsed, err := uuid.Parse(value)
-		if err != nil || parsed == current {
-			return nil, false
-		}
-		if _, exists := seen[parsed]; exists {
-			return nil, false
-		}
-		seen[parsed] = struct{}{}
-		result = append(result, value)
-	}
-	return result, true
-}
-
-func terminalSplitsValid(splits []SubmissionRelationshipSplit) bool {
-	for index, split := range splits {
-		if split.SplitIndex != index || split.RelationshipVersion < 1 || split.Status != "active" {
-			return false
-		}
-		if _, err := uuid.Parse(split.RelationshipID); err != nil {
-			return false
-		}
-	}
-	return true
-}
-
-func terminalNotStoredReasonForTerminalState(state string) string {
-	switch state {
-	case string(TerminalProcessingCompleted):
-		return "not_supported_by_evidence"
-	case string(TerminalProcessingRejected):
-		return "not_supported_by_evidence"
-	case string(TerminalProcessingQuarantined):
-		return "security_quarantine"
-	default:
-		return "internal_failure"
-	}
-}
-
-func terminalErrorForTerminalState(state string) TerminalErrorCode {
-	switch state {
-	case string(TerminalProcessingRejected):
-		return TerminalErrorNoSupportedMemory
-	case string(TerminalProcessingQuarantined):
-		return TerminalErrorQuarantined
-	default:
-		return TerminalErrorInternalFailure
-	}
-}
-
-func rememberRelationshipRefs(relationships []map[string]any) ([]string, error) {
-	refs := make([]string, len(relationships))
-	seen := make(map[string]struct{}, len(relationships))
-	for index, relationship := range relationships {
-		ref, _ := relationship["ref"].(string)
-		ref = strings.TrimSpace(ref)
-		if ref == "" {
-			ref = fmt.Sprintf("relationship:%d", index)
-		}
-		if _, exists := seen[ref]; exists {
-			return nil, fmt.Errorf("remember: relationship ref %q is duplicated", ref)
-		}
-		seen[ref] = struct{}{}
-		refs[index] = ref
-	}
-	return refs, nil
-}
-
-func (s *service) GetSubmissionStatus(ctx context.Context, req GetSubmissionStatusRequest) (*SubmissionStatusResult, error) {
-	if s == nil || s.intake == nil {
-		return nil, errors.New("submission status: intake port is required")
-	}
-	actor, ok := requestctx.ActorFromContext(ctx)
-	if !ok || actor.TeamID == uuid.Nil || actor.OwnerID == uuid.Nil {
-		return nil, ErrRememberAuthContext
-	}
-	submissionID := strings.TrimSpace(req.SubmissionID)
-	if submissionID == "" {
-		return nil, errors.New("submission status: submission_id is required")
-	}
-	if _, err := uuid.Parse(submissionID); err != nil {
-		return nil, httperr.New(httperr.NOT_FOUND, "submission not found")
-	}
-	placement, err := s.intake.Status(ctx, StatusRequest{TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SubmissionID: submissionID})
-	if err != nil {
-		if errors.Is(err, ErrPlacementNotFound) {
-			return nil, httperr.New(httperr.NOT_FOUND, "submission not found")
-		}
-		return nil, ErrRememberPersistence
-	}
-	return submissionStatusResultFromLedger(placement), nil
-}
-
-var ErrPlacementNotFound = errors.New("remember: placement not found")
 
 func rememberSpaceID(space domain.MemorySpaceAccess) string {
 	if space.ID == uuid.Nil {
@@ -643,25 +412,6 @@ func rememberEvidenceIndex(raw any) (int, bool) {
 	return 0, false
 }
 
-func publicSubmissionProcessingState(status string) string {
-	switch strings.TrimSpace(status) {
-	case string(domain.PlacementRunQueued), string(domain.PlacementRunGuarded):
-		return "queued"
-	case string(domain.PlacementRunProcessing):
-		return "processing"
-	case string(domain.PlacementRunCompleted):
-		return "completed"
-	case string(domain.PlacementRunQuarantined):
-		return "quarantined"
-	case string(domain.PlacementRunRejected):
-		return "rejected"
-	case string(domain.PlacementRunFailed):
-		return "failed"
-	default:
-		return "failed"
-	}
-}
-
 func sourceRevisionContentHashes(evidence []RememberEvidenceInput) map[string]string {
 	groups := make(map[string][]string)
 	for _, item := range evidence {
@@ -702,26 +452,108 @@ func canonicalRequestHash(req RememberRequest) (string, error) {
 	return hash, nil
 }
 
-func rememberResultFromLedger(created *StageResult, correlationID string) *RememberResult {
-	if created.Existing && strings.TrimSpace(created.CorrelationID) != "" {
-		correlationID = created.CorrelationID
+func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *RememberResult {
+	if status == nil {
+		return nil
 	}
-	return &RememberResult{ContractVersion: domain.ContractVersion, IngestID: created.SubmissionID, SubmissionID: created.SubmissionID, SubmissionKind: "remember", ProcessingState: publicSubmissionProcessingState(created.Status), CheckAfterSeconds: rememberCheckAfterSeconds, StatusTool: rememberStatusTool, CorrelationID: correlationID, Kind: ResultKindLegacyReceipt}
-}
-
-func translateRememberLedgerError(err error) error {
-	var validation *RememberValidationError
-	if errors.As(err, &validation) {
-		return validation
+	copyStatus := *status
+	copyStatus.Evidence = append([]SubmissionEvidenceStatus(nil), status.Evidence...)
+	copyStatus.RelationshipResults = append([]SubmissionRelationshipResult(nil), status.RelationshipResults...)
+	copyStatus.Errors = append([]SubmissionStatusError(nil), status.Errors...)
+	if copyStatus.Evidence == nil {
+		copyStatus.Evidence = []SubmissionEvidenceStatus{}
 	}
-	switch {
-	case errors.Is(err, ErrIdempotencyConflict), errors.Is(err, ErrSourceRevisionConflict):
-		return fmt.Errorf("%w: duplicate or stale intake request", ErrRememberConflict)
-	case errors.Is(err, ErrTeamInactive):
-		return httperr.New(httperr.NOT_FOUND, "team not found")
-	default:
-		return ErrRememberPersistence
+	if copyStatus.RelationshipResults == nil {
+		copyStatus.RelationshipResults = []SubmissionRelationshipResult{}
 	}
+	if copyStatus.Errors == nil {
+		copyStatus.Errors = []SubmissionStatusError{}
+	}
+	for index := range copyStatus.Evidence {
+		if copyStatus.Evidence[index].Disposition == "not_stored" {
+			copyStatus.Evidence[index].EvidenceID = ""
+		}
+	}
+	result := &RememberResult{
+		ContractVersion:      copyStatus.ContractVersion,
+		IngestID:             ingestID,
+		SubmissionID:         copyStatus.SubmissionID,
+		SubmissionKind:       copyStatus.SubmissionKind,
+		ProcessingState:      copyStatus.ProcessingState,
+		SearchState:          copyStatus.SearchState,
+		CorrelationID:        copyStatus.CorrelationID,
+		Evidence:             copyStatus.Evidence,
+		Errors:               copyStatus.Errors,
+		RelationshipResults:  copyStatus.RelationshipResults,
+		AwaitingConfirmation: copyStatus.AwaitingConfirmation,
+		CorrectionResult:     copyStatus.CorrectionResult,
+		Kind:                 copyStatus.Kind,
+		Terminal:             copyStatus.Terminal,
+	}
+	if result.SubmissionID == "" {
+		result.SubmissionID = ingestID
+	}
+	if result.SubmissionKind == "" {
+		result.SubmissionKind = "remember"
+	}
+	if result.ContractVersion == "" {
+		result.ContractVersion = domain.ContractVersion
+	}
+	if result.SearchState == "" {
+		result.SearchState = string(domain.SearchProjectionNotRequired)
+	}
+	for index := range result.Evidence {
+		if result.Evidence[index].SupersededEvidenceIDs == nil {
+			result.Evidence[index].SupersededEvidenceIDs = []string{}
+		}
+		if result.Evidence[index].SearchState == "" {
+			result.Evidence[index].SearchState = result.SearchState
+		}
+	}
+	for index := range result.RelationshipResults {
+		if result.RelationshipResults[index].Splits == nil {
+			result.RelationshipResults[index].Splits = []SubmissionRelationshipSplit{}
+		}
+	}
+	terminal := &TerminalRememberResult{
+		ContractVersion:     result.ContractVersion,
+		SubmissionID:        result.SubmissionID,
+		SubmissionKind:      result.SubmissionKind,
+		ProcessingState:     result.ProcessingState,
+		SearchState:         result.SearchState,
+		CorrelationID:       result.CorrelationID,
+		Evidence:            make([]TerminalEvidenceResult, 0, len(result.Evidence)),
+		RelationshipResults: append([]SubmissionRelationshipResult(nil), result.RelationshipResults...),
+		Errors:              append([]SubmissionStatusError(nil), result.Errors...),
+		Kind:                ResultKindTerminal,
+	}
+	for _, evidence := range result.Evidence {
+		terminal.Evidence = append(terminal.Evidence, TerminalEvidenceResult{
+			Disposition:           evidence.Disposition,
+			EvidenceID:            evidence.EvidenceID,
+			EvidenceIndex:         evidence.EvidenceIndex,
+			SupersededEvidenceIDs: append([]string(nil), evidence.SupersededEvidenceIDs...),
+			SearchState:           evidence.SearchState,
+			Reason:                evidence.Reason,
+		})
+	}
+	if terminal.Evidence == nil {
+		terminal.Evidence = []TerminalEvidenceResult{}
+	}
+	for index := range terminal.Evidence {
+		if terminal.Evidence[index].SupersededEvidenceIDs == nil {
+			terminal.Evidence[index].SupersededEvidenceIDs = []string{}
+		}
+	}
+	if terminal.RelationshipResults == nil {
+		terminal.RelationshipResults = []SubmissionRelationshipResult{}
+	}
+	if terminal.Errors == nil {
+		terminal.Errors = []SubmissionStatusError{}
+	}
+	result.Kind = ResultKindTerminal
+	result.Terminal = terminal
+	return result
 }
 
 func evidenceSourceType(value string) string {
@@ -770,36 +602,4 @@ func sourceSummary(evidence []RememberEvidenceInput) string {
 		}
 	}
 	return fmt.Sprintf("remember evidence_count=%d", len(evidence))
-}
-
-// The lifecycle logger is deliberately kept local to this boundary. Worker
-// lifecycle logging uses its own application package and does not depend on
-// this intake service.
-type submissionLifecycleEvent struct {
-	Event, TeamID, ProfileID, CorrelationID, SubmissionID, From, To, Stage, ReasonCode string
-	Attempts, MaxAttempts                                                              int
-}
-
-func logSubmissionLifecycle(logger observability.LogProvider, event submissionLifecycleEvent) {
-	if logger == nil {
-		return
-	}
-	attrs := []observability.LogAttr{
-		observability.String("event", event.Event), observability.String("team_id", event.TeamID), observability.ProfileID(event.ProfileID),
-		observability.String("reference_type", "submission"), observability.String("reference_id", event.SubmissionID),
-		observability.String("from", event.From), observability.String("to", event.To), observability.Int("attempts", event.Attempts),
-	}
-	if event.MaxAttempts > 0 {
-		attrs = append(attrs, observability.Int("max_attempts", event.MaxAttempts))
-	}
-	if event.CorrelationID != "" {
-		attrs = append(attrs, observability.CorrelationID(event.CorrelationID))
-	}
-	if event.Stage != "" {
-		attrs = append(attrs, observability.String("stage", event.Stage))
-	}
-	if event.ReasonCode != "" {
-		attrs = append(attrs, observability.String("reason_code", event.ReasonCode))
-	}
-	logger.Info(event.Event, attrs...)
 }

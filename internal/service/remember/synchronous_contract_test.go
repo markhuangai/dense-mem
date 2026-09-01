@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func TestTerminalStatusErrorUsesOnlyClosedVocabulary(t *testing.T) {
@@ -22,7 +24,7 @@ func TestTerminalStatusErrorUsesOnlyClosedVocabulary(t *testing.T) {
 
 func TestValidateTerminalRememberResultRejectsUnclosedErrorProjection(t *testing.T) {
 	result := &TerminalRememberResult{
-		ContractVersion: "dense-mem.v2.6",
+		ContractVersion: domain.ContractVersion,
 		SubmissionID:    "11111111-1111-1111-1111-111111111111",
 		SubmissionKind:  "remember",
 		CorrelationID:   "correlation",
@@ -67,7 +69,7 @@ func TestValidateTerminalRememberResultBoundsAndDeduplicatesErrors(t *testing.T)
 }
 
 func TestTerminalResultWithErrorForcesTerminalFailureKind(t *testing.T) {
-	result := &TerminalRememberResult{Kind: ResultKindLegacyReceipt, ProcessingState: "queued"}
+	result := &TerminalRememberResult{ProcessingState: "completed"}
 	failure := TerminalResultWithError(result, TerminalErrorEmbeddingResponseInvalid)
 	require.NotNil(t, failure)
 	require.Equal(t, ResultKindTerminal, failure.Result.Kind)
@@ -102,7 +104,7 @@ func TestTerminalNextActionsAreClosedAndCopied(t *testing.T) {
 
 func validTerminalResultForTest() *TerminalRememberResult {
 	return &TerminalRememberResult{
-		ContractVersion: "dense-mem.v2.6", SubmissionID: "11111111-1111-1111-1111-111111111111", SubmissionKind: "remember",
+		ContractVersion: domain.ContractVersion, SubmissionID: "11111111-1111-1111-1111-111111111111", SubmissionKind: "remember",
 		ProcessingState: string(TerminalProcessingCompleted), SearchState: string(TerminalSearchCurrent),
 		CorrelationID: "correlation", Kind: ResultKindTerminal,
 		Evidence: []TerminalEvidenceResult{
@@ -125,7 +127,7 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 		edit func(*TerminalRememberResult)
 	}{
 		{"missing result", nil},
-		{"non-terminal kind", func(result *TerminalRememberResult) { result.Kind = ResultKindLegacyReceipt }},
+		{"non-terminal kind", func(result *TerminalRememberResult) { result.Kind = ResultKind("future") }},
 		{"contract version", func(result *TerminalRememberResult) { result.ContractVersion = "dense-mem.v2.future" }},
 		{"submission kind", func(result *TerminalRememberResult) { result.SubmissionKind = "relationship_correction" }},
 		{"missing identity", func(result *TerminalRememberResult) { result.CorrelationID = "" }},
@@ -414,7 +416,7 @@ func TestTerminalResultWithErrorUsesSemanticProcessingStates(t *testing.T) {
 		{TerminalErrorProviderUnavailable, TerminalProcessingFailed},
 	} {
 		result := &TerminalRememberResult{
-			ContractVersion: "dense-mem.v2.6", SubmissionID: "11111111-1111-1111-1111-111111111111",
+			ContractVersion: domain.ContractVersion, SubmissionID: "11111111-1111-1111-1111-111111111111",
 			SubmissionKind: "remember", CorrelationID: "correlation", SearchState: string(TerminalSearchNotRequired),
 		}
 		failure := TerminalResultWithError(result, test.code)

@@ -14,17 +14,17 @@ import (
 )
 
 var (
-	ErrPlacementLeaseLost                = errors.New("placement lease lost")
-	ErrPlacementStaleSource              = errors.New("placement stale source")
+	ErrConflictReviewLeaseLost           = errors.New("conflict review lease lost")
+	ErrSemanticStaleSource               = errors.New("semantic source is stale")
 	ErrConflictContextStale              = errors.New("conflict context stale")
 	ErrRememberExactReferenceStale       = errors.New("remember exact reference stale")
 	ErrCorrectionTargetStale             = errors.New("correction target stale")
-	errPlacementUnresolvedEndpoint       = errors.New("placement unresolved relationship endpoint")
-	errPlacementPredicateUnresolved      = errors.New("placement predicate cannot be resolved safely")
+	errSemanticUnresolvedEndpoint        = errors.New("semantic relationship endpoint is unresolved")
+	errSemanticPredicateUnresolved       = errors.New("semantic predicate cannot be resolved safely")
 	errRelationshipDecisionNonPromotable = errors.New("relationship decision is not promotable")
 )
 
-func validatePlacementEntityResolutionInput(input PlacementEntityResolutionInput) error {
+func validateSemanticEntityResolutionInput(input SemanticEntityResolutionInput) error {
 	if input.AssessmentID != "" {
 		if _, err := uuid.Parse(input.AssessmentID); err != nil {
 			return fmt.Errorf("entity resolution assessment_id is invalid: %w", err)
@@ -61,7 +61,7 @@ func validatePlacementEntityResolutionInput(input PlacementEntityResolutionInput
 	return nil
 }
 
-func normalizePlacementRelationshipDecisionInput(input PlacementRelationshipDecisionInput) PlacementRelationshipDecisionInput {
+func normalizeSemanticRelationshipDecisionInput(input SemanticRelationshipDecisionInput) SemanticRelationshipDecisionInput {
 	input.Ref = strings.TrimSpace(input.Ref)
 	input.SubjectRef = strings.TrimSpace(input.SubjectRef)
 	input.OriginalPredicate = strings.TrimSpace(input.OriginalPredicate)
@@ -96,7 +96,7 @@ func normalizePlacementRelationshipDecisionInput(input PlacementRelationshipDeci
 		input.EvidenceVerdict = string(domain.VerificationEntailed)
 	}
 	if input.ObjectValue != nil {
-		value := normalizePlacementValueInput(*input.ObjectValue)
+		value := normalizeSemanticValueInput(*input.ObjectValue)
 		input.ObjectValue = &value
 	}
 	input.Support, input.Supports = normalizeEvidenceSupports(input.Support, input.Supports)
@@ -113,7 +113,7 @@ func normalizePlacementRelationshipDecisionInput(input PlacementRelationshipDeci
 	return input
 }
 
-func validatePlacementRelationshipDecisionInput(input PlacementRelationshipDecisionInput) error {
+func validateSemanticRelationshipDecisionInput(input SemanticRelationshipDecisionInput) error {
 	if input.AssessorAccepted {
 		if _, err := uuid.Parse(input.AssessmentID); err != nil {
 			return fmt.Errorf("assessor accepted relationship assessment_id is required: %w", err)
@@ -156,7 +156,7 @@ func validatePlacementRelationshipDecisionInput(input PlacementRelationshipDecis
 		return errors.New("relationship observation requires exactly one object endpoint")
 	}
 	if input.ObjectValue != nil {
-		if err := validatePlacementValueInput(*input.ObjectValue); err != nil {
+		if err := validateSemanticValueInput(*input.ObjectValue); err != nil {
 			return err
 		}
 	}
@@ -183,19 +183,19 @@ func validatePlacementRelationshipDecisionInput(input PlacementRelationshipDecis
 		return err
 	}
 	if input.CorrectionTarget != nil {
-		if err := validatePlacementCorrectionTargetInput(*input.CorrectionTarget); err != nil {
+		if err := validateSemanticCorrectionTargetInput(*input.CorrectionTarget); err != nil {
 			return err
 		}
 	}
 	if input.ConflictContext != nil {
-		if err := validatePlacementConflictContextInput(*input.ConflictContext); err != nil {
+		if err := validateSemanticConflictContextInput(*input.ConflictContext); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validatePlacementCorrectionTargetInput(input PlacementCorrectionTargetInput) error {
+func validateSemanticCorrectionTargetInput(input SemanticCorrectionTargetInput) error {
 	if _, err := uuid.Parse(input.RelationshipID); err != nil {
 		return fmt.Errorf("correction target relationship_id is required: %w", err)
 	}
@@ -205,7 +205,7 @@ func validatePlacementCorrectionTargetInput(input PlacementCorrectionTargetInput
 	return nil
 }
 
-func validatePlacementConflictContextInput(input PlacementConflictContextInput) error {
+func validateSemanticConflictContextInput(input SemanticConflictContextInput) error {
 	if _, err := uuid.Parse(input.ConflictID); err != nil {
 		return fmt.Errorf("conflict context conflict_id is required: %w", err)
 	}
@@ -215,7 +215,7 @@ func validatePlacementConflictContextInput(input PlacementConflictContextInput) 
 	return nil
 }
 
-func normalizePlacementValueInput(input PlacementValueInput) PlacementValueInput {
+func normalizeSemanticValueInput(input SemanticValueInput) SemanticValueInput {
 	input.Ref = strings.TrimSpace(input.Ref)
 	input.ValueType = strings.TrimSpace(input.ValueType)
 	input.CanonicalValue = strings.TrimSpace(input.CanonicalValue)
@@ -230,7 +230,7 @@ func normalizePlacementValueInput(input PlacementValueInput) PlacementValueInput
 	return input
 }
 
-func validatePlacementValueInput(input PlacementValueInput) error {
+func validateSemanticValueInput(input SemanticValueInput) error {
 	if !contains(domain.ValueTypes(), input.ValueType) {
 		return fmt.Errorf("unsupported placement value_type %q", input.ValueType)
 	}
@@ -243,11 +243,11 @@ func validatePlacementValueInput(input PlacementValueInput) error {
 	return nil
 }
 
-func insertPlacementEntityResolution(
+func insertSemanticEntityResolution(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
-	input PlacementEntityResolutionInput,
+	commit CommitSemanticInput,
+	input SemanticEntityResolutionInput,
 ) (string, string, error) {
 	if input.ExactEntityID != "" {
 		var status string
@@ -271,7 +271,7 @@ func insertPlacementEntityResolution(
 	}
 	entityID := input.EntityID
 	if input.Action == string(domain.EntityResolutionCreate) {
-		created, err := insertPlacementEntity(ctx, tx, commit, input)
+		created, err := insertSemanticEntity(ctx, tx, commit, input)
 		if err != nil {
 			return "", "", err
 		}
@@ -287,26 +287,26 @@ func insertPlacementEntityResolution(
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO entity_resolution_events (
-		    team_id, ingest_id, placement_item_id, owner_profile_id, mention_ref,
+		    team_id, ingest_id, owner_profile_id, mention_ref,
 		    action, entity_id, fragment_id, span_start, span_end, verifier_result, metadata,
 		    assessment_id, space_id, space_generation
 		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, NULLIF(?, '')::uuid,
+		    ?::uuid, ?::uuid, ?::uuid, ?, ?, NULLIF(?, '')::uuid,
 		    NULLIF(?, '')::uuid, ?, ?, ?::jsonb, ?::jsonb, NULLIF(?, '')::uuid,
-		    (SELECT item.space_id FROM placement_items AS item
-		     WHERE item.team_id = ?::uuid AND item.placement_item_id = ?::uuid
-		       AND item.ingest_id = ?::uuid AND item.owner_profile_id = ?::uuid),
-		    (SELECT item.space_generation FROM placement_items AS item
-		     WHERE item.team_id = ?::uuid AND item.placement_item_id = ?::uuid
-		       AND item.ingest_id = ?::uuid AND item.owner_profile_id = ?::uuid)
+		    (SELECT ingest.space_id FROM knowledge_ingests AS ingest
+		     WHERE ingest.team_id = ?::uuid AND ingest.ingest_id = ?::uuid
+		       AND ingest.owner_profile_id = ?::uuid),
+		    (SELECT ingest.space_generation FROM knowledge_ingests AS ingest
+		     WHERE ingest.team_id = ?::uuid AND ingest.ingest_id = ?::uuid
+		       AND ingest.owner_profile_id = ?::uuid)
 		)
 		RETURNING resolution_event_id::text
-	`, commit.TeamID, commit.IngestID, commit.PlacementItemID, commit.OwnerProfileID,
+	`, commit.TeamID, commit.IngestID, commit.OwnerProfileID,
 		input.MentionRef, input.Action, entityID, input.FragmentID,
 		intPointerArg(input.SpanStart), intPointerArg(input.SpanEnd),
 		string(verifierResult), string(metadata), input.AssessmentID,
-		commit.TeamID, commit.PlacementItemID, commit.IngestID, commit.OwnerProfileID,
-		commit.TeamID, commit.PlacementItemID, commit.IngestID, commit.OwnerProfileID).Rows()
+		commit.TeamID, commit.IngestID, commit.OwnerProfileID,
+		commit.TeamID, commit.IngestID, commit.OwnerProfileID).Rows()
 	if err != nil {
 		return "", "", err
 	}
@@ -321,22 +321,21 @@ func insertPlacementEntityResolution(
 	return resolutionID, entityID, rows.Err()
 }
 
-func relationshipDecisionFromPlacementObservation(
+func relationshipDecisionFromSemanticObservation(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
-	input PlacementRelationshipDecisionInput,
+	commit CommitSemanticInput,
+	input SemanticRelationshipDecisionInput,
 	entitiesByRef map[string]string,
 ) (ApplyRelationshipDecisionInput, error) {
 	subjectID := entitiesByRef[input.SubjectRef]
 	if subjectID == "" {
-		return ApplyRelationshipDecisionInput{}, fmt.Errorf("%w: relationship observation %q references subject_ref %q", errPlacementUnresolvedEndpoint, input.Ref, input.SubjectRef)
+		return ApplyRelationshipDecisionInput{}, fmt.Errorf("%w: relationship observation %q references subject_ref %q", errSemanticUnresolvedEndpoint, input.Ref, input.SubjectRef)
 	}
 	decision := ApplyRelationshipDecisionInput{
 		TeamID:                  commit.TeamID,
 		OwnerProfileID:          commit.OwnerProfileID,
 		IngestID:                commit.IngestID,
-		PlacementItemID:         commit.PlacementItemID,
 		ProposalRef:             input.Ref,
 		SubjectRef:              input.SubjectRef,
 		SubjectEntityID:         subjectID,
@@ -365,7 +364,7 @@ func relationshipDecisionFromPlacementObservation(
 		SuppressSupport:         input.SuppressSupport,
 	}
 	if input.ObjectValue != nil {
-		value, err := upsertPlacementValue(ctx, tx, commit, *input.ObjectValue)
+		value, err := upsertSemanticValue(ctx, tx, commit, *input.ObjectValue)
 		if err != nil {
 			return ApplyRelationshipDecisionInput{}, err
 		}
@@ -377,13 +376,13 @@ func relationshipDecisionFromPlacementObservation(
 	} else {
 		objectID := entitiesByRef[input.ObjectRef]
 		if objectID == "" {
-			return ApplyRelationshipDecisionInput{}, fmt.Errorf("%w: relationship observation %q references object_ref %q", errPlacementUnresolvedEndpoint, input.Ref, input.ObjectRef)
+			return ApplyRelationshipDecisionInput{}, fmt.Errorf("%w: relationship observation %q references object_ref %q", errSemanticUnresolvedEndpoint, input.Ref, input.ObjectRef)
 		}
 		decision.ObjectRef = input.ObjectRef
 		decision.ObjectEntityID = objectID
 	}
 	if input.PredicateCandidate != nil {
-		resolved, err := resolvePlacementPredicateCandidate(ctx, tx, decision, *input.PredicateCandidate)
+		resolved, err := resolveSemanticPredicateCandidate(ctx, tx, decision, *input.PredicateCandidate)
 		if err != nil {
 			return ApplyRelationshipDecisionInput{}, err
 		}
@@ -396,11 +395,11 @@ func relationshipDecisionFromPlacementObservation(
 	return decision, nil
 }
 
-func upsertPlacementValue(
+func upsertSemanticValue(
 	ctx context.Context,
 	tx *gorm.DB,
-	commit CommitPlacementSemanticInput,
-	input PlacementValueInput,
+	commit CommitSemanticInput,
+	input SemanticValueInput,
 ) (*ValueRecord, error) {
 	metadata, err := marshalJSON(input.Metadata)
 	if err != nil {

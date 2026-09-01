@@ -45,7 +45,7 @@ func TestBuildActiveWiresExecutableRemember(t *testing.T) {
 	if out["submission_id"] != "ingest-canonical" {
 		t.Fatalf("submission_id = %#v, want ingest-canonical", out["submission_id"])
 	}
-	if out["processing_state"] != string(domain.PlacementRunQueued) || out["correlation_id"] != "corr-canonical" {
+	if out["processing_state"] != "completed" || out["correlation_id"] != "corr-canonical" {
 		t.Fatalf("output = %#v", out)
 	}
 	if len(stub.req.Evidence) != 1 {
@@ -346,7 +346,7 @@ func TestBuildActiveWiresExecutableTraceMemory(t *testing.T) {
 	if err := ValidateInput(Tool{InputSchema: trace.OutputSchema}, out); err != nil {
 		t.Fatalf("trace output contract validation failed: %v; output = %#v", err, out)
 	}
-	for _, forbidden := range []string{"search_documents", "embedding_jobs", "truncated"} {
+	for _, forbidden := range []string{"search_documents", "embedding_jobs", "placement_item_id", "truncated"} {
 		if _, ok := out[forbidden]; ok {
 			t.Fatalf("trace_memory exposed internal field %s in public output: %#v", forbidden, out)
 		}

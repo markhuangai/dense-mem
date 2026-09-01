@@ -126,7 +126,7 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), httpmw.TelemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	control := &controlPortalHandler{teams: teamSvc, credentials: credentialSvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, convergence: telemetry.Convergence, submissions: telemetry.Submissions, rememberAttempts: telemetry.RememberAttempts, privateMemory: telemetry.PrivateMemory, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
+	control := &controlPortalHandler{teams: teamSvc, credentials: credentialSvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, dreams: telemetry.Dreams, communities: telemetry.Communities, conflictQueue: telemetry.ConflictQueue, convergence: telemetry.Convergence, rememberAttempts: telemetry.RememberAttempts, privateMemory: telemetry.PrivateMemory, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
 	if telemetry.ControlIdentity != nil {
 		registerControlIdentityRoutes(e, control)
 	}
@@ -141,10 +141,6 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	}
 	if telemetry.Logs != nil {
 		api.GET("/logs", control.listOperationLogs)
-	}
-	if telemetry.Submissions != nil {
-		api.GET("/submissions", control.listSubmissionDiagnostics)
-		api.GET("/teams/:teamId/submissions/:submissionId", control.getSubmissionDiagnostic)
 	}
 	if telemetry.RememberAttempts != nil {
 		api.GET("/remember-attempts", control.listRememberAttemptDiagnostics)

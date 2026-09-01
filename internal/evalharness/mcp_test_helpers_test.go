@@ -12,7 +12,7 @@ import (
 )
 
 func newEvalHarnessServer(t *testing.T, handler http.Handler) *httptest.Server {
-	return newEvalHarnessServerWithContract(t, contractModeLegacy, handler)
+	return newEvalHarnessServerWithContract(t, contractModeV261, handler)
 }
 
 func newEvalHarnessServerWithContract(t *testing.T, mode contractMode, handler http.Handler) *httptest.Server {
@@ -37,9 +37,6 @@ func newEvalHarnessServerWithContract(t *testing.T, mode contractMode, handler h
 		}
 		if req.Method == "tools/list" {
 			tools := registry.ContractTools()
-			if mode == contractModeV261 {
-				tools = registry.ContractV261Tools()
-			}
 			listed := make([]map[string]any, 0, len(tools))
 			for _, tool := range tools {
 				listed = append(listed, map[string]any{

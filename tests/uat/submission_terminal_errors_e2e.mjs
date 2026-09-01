@@ -13,16 +13,13 @@ const predicatePrefix = runID.replace(/[^A-Za-z0-9]+/g, "_").toLowerCase();
 let rpcID = 0;
 
 seedOverflowPredicates();
-const receipt = await mcpSuccess("remember", overflowFixture());
-const submissionID = requiredString(receipt.submission_id, "submission_id");
-const terminal = await waitForTerminal(submissionID);
-const repeated = await mcpSuccess("get_submission_status", { submission_id: submissionID });
-if (stableJSON(terminal) !== stableJSON(repeated)) throw new Error("terminal status changed between polls");
+const terminal = await mcpOperationalResult("remember", overflowFixture());
+const submissionID = requiredString(terminal.submission_id, "submission_id");
 assertTerminalErrors(terminal);
 
-const missing = await mcpRaw("get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
-if (!missing.error || missing.result !== undefined || typeof missing.error.message !== "string" || missing.error.message.length > 512) {
-  throw new Error("missing submission did not return a bounded error");
+const removed = await mcpRaw("get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
+if (removed.error?.code !== -32601 || removed.result !== undefined) {
+  throw new Error("removed get_submission_status remained callable");
 }
 console.log(JSON.stringify({
   status: "ok",
@@ -30,20 +27,13 @@ console.log(JSON.stringify({
   tested_commit: requiredEnv("DENSE_MEM_E2E_COMMIT_SHA"),
   submission_id: submissionID,
   processing_state: terminal.processing_state,
+  error_code: terminal.errors[0]?.code,
   terminal_errors_nonempty: true,
   closed_codes: true,
-  stable_polling: true,
-  missing_owner_bounded: true,
+  structured_content_matches_text: true,
+  operational_is_error: true,
+  removed_status_tool: true,
 }, null, 2));
-
-async function waitForTerminal(id) {
-  for (let attempt = 0; attempt < 360; attempt += 1) {
-    const status = await mcpSuccess("get_submission_status", { submission_id: id });
-    if (["completed", "rejected", "failed", "quarantined"].includes(status.processing_state)) return status;
-    await delay(2_000);
-  }
-  throw new Error("submission did not reach a terminal state");
-}
 
 function assertTerminalErrors(status) {
   if (!["rejected", "failed", "quarantined"].includes(status.processing_state) || !Array.isArray(status.errors) || status.errors.length === 0) {
@@ -51,7 +41,6 @@ function assertTerminalErrors(status) {
   }
   const allowedCodes = new Set([
     "provider_unavailable", "provider_response_invalid", "input_budget_exceeded", "configuration_invalid", "database_failure", "internal_failure",
-    "search_indexing_delayed",
     "submission_quarantined", "submission_policy_rejected",
     "relationship_version_stale", "relationship_not_active", "object_kind_change_forbidden",
     "support_set_mismatch", "entity_not_found", "too_many_entity_candidates",
@@ -68,7 +57,7 @@ function assertTerminalErrors(status) {
     "Dense-Mem could not complete the submission",
     "search indexing is delayed",
     "submission was quarantined by security policy",
-    "submission was rejected by semantic placement policy",
+    "submission was rejected by semantic policy",
     "relationship version is stale",
     "relationship must be active, supported, and canonical",
     "a Value object cannot be replaced with an Entity",
@@ -88,7 +77,7 @@ function assertTerminalErrors(status) {
     "Semantic search indexing is delayed; check the control portal for recovery guidance.",
   ]);
   const allowedActions = new Set([
-    "poll_status", "resubmit_submission", "retry_correction", "contact_operator", "none",
+    "retry_same_request", "resubmit_remember", "retry_correction", "retry_dream_feedback", "contact_operator", "none",
   ]);
   const seen = new Set();
   for (const item of status.errors) {
@@ -111,12 +100,17 @@ function assertTerminalErrors(status) {
   }
 }
 
-async function mcpSuccess(name, args) {
+async function mcpOperationalResult(name, args) {
   const response = await mcpRaw(name, args);
-  if (response.error || response.result === undefined) throw new Error(`MCP ${name} failed with a bounded error`);
+  if (response.error || response.result === undefined) throw new Error(`MCP ${name} returned a protocol error`);
+  if (response.result.isError !== true) throw new Error(`MCP ${name} operational failure omitted isError`);
   const text = response.result?.content?.[0]?.text;
   if (typeof text !== "string") throw new Error(`MCP ${name} returned no JSON content`);
-  return JSON.parse(text);
+  const result = JSON.parse(text);
+  if (stableJSON(result) !== stableJSON(response.result.structuredContent)) {
+    throw new Error(`MCP ${name} text and structured content differed`);
+  }
+  return result;
 }
 
 async function mcpRaw(name, args) {

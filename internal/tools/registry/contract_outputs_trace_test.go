@@ -20,7 +20,7 @@ func TestTraceContractOutputPreservesPublicSubmissionAndLineageIDs(t *testing.T)
 			ValidFrom: &validFrom, ValidTo: &validTo, CreatedAt: now, UpdatedAt: now,
 		},
 		Observations: []repository.RelationshipObservationRecord{{
-			ObservationID: "observation-1", IngestID: "submission-1", PlacementItemID: "internal-item", RelationshipID: "relationship-1",
+			ObservationID: "observation-1", IngestID: "submission-1", RelationshipID: "relationship-1",
 			SubjectRef: "subject", OriginalPredicate: "uses", ObjectRef: "object", Polarity: "+", CreatedAt: now,
 		}},
 		EvidenceSupports: []repository.RelationshipEvidenceSupportRecord{{
@@ -60,6 +60,9 @@ func TestTraceContractOutputPreservesPublicSubmissionAndLineageIDs(t *testing.T)
 	}
 	if _, forbidden := observations[0]["ingest_id"]; forbidden {
 		t.Fatal("trace exposed internal ingest_id")
+	}
+	if _, forbidden := observations[0]["placement_item_id"]; forbidden {
+		t.Fatal("trace exposed retired placement_item_id")
 	}
 	if trace["stopped_reason"] != "bounded" {
 		t.Fatalf("stopped reason = %#v", trace["stopped_reason"])

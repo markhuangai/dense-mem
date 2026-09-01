@@ -15,8 +15,7 @@ import (
 type contractMode string
 
 const (
-	contractModeLegacy contractMode = "legacy"
-	contractModeV261   contractMode = "v2.6.1"
+	contractModeV261 contractMode = "v2.6.1"
 )
 
 type mcpToolsListResponse struct {
@@ -88,14 +87,10 @@ func classifyContract(tools []mcpToolDefinition) (contractMode, error) {
 		return "", errors.New("MCP tools/list did not describe remember")
 	}
 	version := contractVersionFromSchema(rememberSchema)
-	_, statusPresent := names[registry.ToolGetSubmissionStatus]
-	if statusPresent && version == domain.ContractVersion && matchesContractToolSet(names, registry.ContractToolNames()) {
-		return contractModeLegacy, nil
-	}
-	if !statusPresent && version == registry.ContractVersionV261 && matchesContractToolSet(names, registry.ContractV261ToolNames()) {
+	if version == domain.ContractVersion && matchesContractToolSet(names, registry.ContractToolNames()) {
 		return contractModeV261, nil
 	}
-	return "", fmt.Errorf("unsupported or mixed MCP contract: remember=%q status_present=%t", version, statusPresent)
+	return "", fmt.Errorf("unsupported or mixed MCP contract: remember=%q", version)
 }
 
 func matchesContractToolSet(names map[string]struct{}, expected []string) bool {
@@ -112,9 +107,6 @@ func matchesContractToolSet(names map[string]struct{}, expected []string) bool {
 		}
 	}
 	for _, name := range expected {
-		if registry.ContractToolRuntimeOptional(name) {
-			continue
-		}
 		if _, ok := names[name]; !ok {
 			return false
 		}

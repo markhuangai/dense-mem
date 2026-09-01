@@ -76,7 +76,6 @@ type RememberService interface {
 
 type Dependencies struct {
 	Remember           RememberService
-	RememberIngests    repository.RememberIngestLookup
 	Store              repository.DreamRepository
 	ScheduledStore     repository.ScheduledDreamRepository
 	AppConfig          AppConfig

@@ -110,46 +110,32 @@ func TestHTTPClientRetriesOnlyStructuredRetrySameRequest(t *testing.T) {
 	require.Equal(t, int32(2), atomic.LoadInt32(&calls))
 }
 
-func TestClassifyContractFailsClosedForMixedVersionAndStatus(t *testing.T) {
-	tools := registry.ContractV261Tools()
+func TestClassifyContractFailsClosedForRemovedStatusTool(t *testing.T) {
+	tools := registry.ContractTools()
 	definitions := make([]mcpToolDefinition, 0, len(tools)+1)
 	for _, tool := range tools {
 		definitions = append(definitions, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
 	}
-	definitions = append(definitions, mcpToolDefinition{Name: registry.ToolGetSubmissionStatus})
+	definitions = append(definitions, mcpToolDefinition{Name: "get_submission_status"})
 	_, err := classifyContract(definitions)
 	require.ErrorContains(t, err, "unsupported or mixed MCP contract")
 }
 
-func TestClassifyContractAllowsGatedOmissionsAndRejectsUnknownTools(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		mode contractMode
-		list func() []registry.Tool
-	}{
-		{name: "legacy", mode: contractModeLegacy, list: registry.ContractTools},
-		{name: "terminal", mode: contractModeV261, list: registry.ContractV261Tools},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			definitions := make([]mcpToolDefinition, 0)
-			for _, tool := range test.list() {
-				if registry.ContractToolRuntimeOptional(tool.Name) {
-					continue
-				}
-				definitions = append(definitions, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
-			}
-			for _, name := range []string{"eval_list_knowledge_refs", "eval_run_dream_cycle", "eval_run_recall_case"} {
-				definitions = append(definitions, mcpToolDefinition{Name: name})
-			}
-			mode, err := classifyContract(definitions)
-			require.NoError(t, err)
-			require.Equal(t, test.mode, mode)
-
-			definitions = append(definitions, mcpToolDefinition{Name: "unexpected_tool"})
-			_, err = classifyContract(definitions)
-			require.ErrorContains(t, err, "unsupported or mixed MCP contract")
-		})
+func TestClassifyContractAllowsEvaluationToolsAndRejectsUnknownTools(t *testing.T) {
+	definitions := make([]mcpToolDefinition, 0)
+	for _, tool := range registry.ContractTools() {
+		definitions = append(definitions, mcpToolDefinition{Name: tool.Name, OutputSchema: tool.OutputSchema})
 	}
+	for _, name := range []string{"eval_list_knowledge_refs", "eval_run_dream_cycle", "eval_run_recall_case"} {
+		definitions = append(definitions, mcpToolDefinition{Name: name})
+	}
+	mode, err := classifyContract(definitions)
+	require.NoError(t, err)
+	require.Equal(t, contractModeV261, mode)
+
+	definitions = append(definitions, mcpToolDefinition{Name: "unexpected_tool"})
+	_, err = classifyContract(definitions)
+	require.ErrorContains(t, err, "unsupported or mixed MCP contract")
 }
 
 func TestHTTPClientRetriesContractDiscoveryAfterFailure(t *testing.T) {
@@ -162,7 +148,7 @@ func TestHTTPClientRetriesContractDiscoveryAfterFailure(t *testing.T) {
 			http.Error(w, "temporary", http.StatusServiceUnavailable)
 			return
 		}
-		tools := registry.ContractV261Tools()
+		tools := registry.ContractTools()
 		listed := make([]map[string]any, 0, len(tools))
 		for _, tool := range tools {
 			listed = append(listed, map[string]any{"name": tool.Name, "outputSchema": tool.OutputSchema})
@@ -199,9 +185,6 @@ func TestDiscoverContractDoesNotExposeServerErrorMessage(t *testing.T) {
 func newRawContractTestServer(t *testing.T, mode contractMode, call func(http.ResponseWriter, string, map[string]any)) *httptest.Server {
 	t.Helper()
 	tools := registry.ContractTools()
-	if mode == contractModeV261 {
-		tools = registry.ContractV261Tools()
-	}
 	listed := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
 		listed = append(listed, map[string]any{"name": tool.Name, "inputSchema": tool.InputSchema, "outputSchema": tool.OutputSchema})

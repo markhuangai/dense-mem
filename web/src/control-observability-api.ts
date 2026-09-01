@@ -26,98 +26,12 @@ export type OperationLogQuery = {
   to?: string;
 };
 
-export type SubmissionStatusError = {
+export type RememberError = {
   code: string;
   message: string;
   retryable: boolean;
-  next_action: "poll_status" | "resubmit_submission" | "retry_correction" | "contact_operator" | "none";
+  next_action: "retry_same_request" | "resubmit_remember" | "retry_dream_feedback" | "retry_correction" | "contact_operator" | "none";
   remediation: string;
-};
-
-export type SubmissionDiagnosticSummary = {
-  team_id: string;
-  team_name: string;
-  owner_profile_id: string;
-  submission_id: string;
-  processing_state: string;
-  correlation_id?: string;
-  source_summary: string;
-  source_summary_truncated: boolean;
-  attempts: number;
-  max_attempts: number;
-  evidence_count: number;
-  submitted_at: string;
-  next_attempt_at?: string | null;
-  started_at?: string | null;
-  updated_at?: string | null;
-  completed_at?: string | null;
-  error?: SubmissionStatusError | null;
-  operator_diagnostic?: SubmissionOperatorDiagnostic | null;
-};
-
-export type SubmissionOperatorDiagnostic = {
-  id?: string;
-  placement_item_id?: string;
-  outcome_kind?: string;
-  status?: string;
-  occurred_at?: string | null;
-  failure_reason_code?: string;
-  failure_stage?: string;
-  failure_class?: string;
-  validation_stage?: string;
-  validation_field_families?: string[];
-  failure_measurement?: {
-    unit: string;
-    observed?: number;
-    observed_at_least?: number;
-    limit: number;
-  } | null;
-  provider_status?: number;
-  assessor_turns?: number;
-  assessor_provider_attempted?: boolean;
-  message?: string;
-};
-
-export type SubmissionEvidenceStatus = {
-  evidence_id: string;
-  evidence_index: number;
-  superseded_evidence_ids: string[];
-  search_state: string;
-  error?: SubmissionStatusError | null;
-};
-
-export type SubmissionDiagnosticDetail = {
-  team_id: string;
-  team_name: string;
-  owner_profile_id: string;
-  evidence_count: number;
-  submission_id: string;
-  submission_kind: "remember";
-  processing_state: string;
-  search_state: string;
-  check_after_seconds: number;
-  correlation_id?: string;
-  source_summary: string;
-  source_summary_truncated: boolean;
-  attempts?: number;
-  max_attempts?: number;
-  submitted_at?: string;
-  next_attempt_at?: string | null;
-  started_at?: string | null;
-  updated_at?: string | null;
-  completed_at?: string | null;
-  evidence: SubmissionEvidenceStatus[];
-  errors: SubmissionStatusError[];
-  quarantine_expires_at?: string | null;
-	operator_diagnostic?: SubmissionOperatorDiagnostic | null;
-	operator_diagnostics: SubmissionOperatorDiagnostic[];
-};
-
-export type SubmissionDiagnosticQuery = {
-  team_id?: string;
-  processing_state?: string;
-  limit?: number;
-  offset?: number;
 };
 
 export type RememberAttemptOutcome = "completed" | "rejected" | "quarantined" | "failed" | "replayed";
@@ -185,7 +99,7 @@ export type RememberAttemptPublicResult = {
     reason?: string;
     splits: Array<{ split_index: number; relationship_id: string; relationship_version: number; status: string }>;
   }>;
-  errors: SubmissionStatusError[];
+  errors: RememberError[];
 };
 
 export type RememberAttemptDiagnosticDetail = RememberAttemptDiagnosticSummary & {
@@ -215,19 +129,6 @@ export function buildOperationLogsPath(query: OperationLogQuery): string {
   appendParam(params, "from", query.from);
   appendParam(params, "to", query.to);
   return pathWithQuery("/logs", params);
-}
-
-export function buildSubmissionDiagnosticsPath(query: SubmissionDiagnosticQuery): string {
-  const params = new URLSearchParams();
-  appendParam(params, "team_id", query.team_id);
-  appendParam(params, "processing_state", query.processing_state);
-  appendParam(params, "limit", query.limit);
-  appendParam(params, "offset", query.offset);
-  return pathWithQuery("/submissions", params);
-}
-
-export function buildSubmissionDiagnosticPath(teamId: string, submissionId: string): string {
-  return `/teams/${encodeURIComponent(teamId)}/submissions/${encodeURIComponent(submissionId)}`;
 }
 
 export function buildRememberAttemptDiagnosticsPath(query: RememberAttemptDiagnosticQuery): string {

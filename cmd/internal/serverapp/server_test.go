@@ -15,30 +15,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
-func TestActivePlacementLeaseCoversVerifierAndCommitWindow(t *testing.T) {
-	if got := activePlacementLease(60, 10); got != 5*time.Minute+40*time.Second {
-		t.Fatalf("lease = %s, want five assessor turns plus commit and buffer", got)
-	}
-	if got := activePlacementLease(400, 20); got != 2050*time.Second {
-		t.Fatalf("lease = %s, want five assessor turns plus commit and buffer", got)
-	}
-	if got := activePlacementLease(1, 1); got != 5*time.Minute {
-		t.Fatalf("lease = %s, want 5m minimum", got)
-	}
-}
-
-func TestActiveEmbeddingLeaseCoversRetryWindow(t *testing.T) {
-	if got := activeEmbeddingLease(30); got != 17*time.Minute+30*time.Second {
-		t.Fatalf("lease = %s, want four embedding attempts plus three maximum retry backoffs and buffer", got)
-	}
-	if got := activeEmbeddingLease(120); got != 23*time.Minute+30*time.Second {
-		t.Fatalf("lease = %s, want four embedding attempts plus three maximum retry backoffs and buffer", got)
-	}
-	if got := activeEmbeddingLease(600); got != 55*time.Minute+30*time.Second {
-		t.Fatalf("lease = %s, want four embedding attempts plus three maximum retry backoffs and buffer", got)
-	}
-}
-
 type searchConvergenceHealthStub struct {
 	err error
 }

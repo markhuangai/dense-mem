@@ -60,20 +60,6 @@ type dreamRepositoryStub struct {
 	confirmationLockCalls int
 }
 
-type rememberIngestLookupStub struct {
-	existing map[string]bool
-	err      error
-	calls    []repository.RememberIngestLookupInput
-}
-
-func (s *rememberIngestLookupStub) RememberIngestExists(_ context.Context, input repository.RememberIngestLookupInput) (bool, error) {
-	s.calls = append(s.calls, input)
-	if s.err != nil {
-		return false, s.err
-	}
-	return s.existing[input.IdempotencyKey], nil
-}
-
 func (s *dreamRepositoryStub) ClaimDreamCycle(_ context.Context, input repository.DreamCycleClaimInput) (*repository.DreamCycleRun, error) {
 	s.claimInput = input
 	if s.claimErr != nil {
@@ -367,10 +353,5 @@ func (s *rememberServiceStub) Remember(_ context.Context, req rememberapp.Rememb
 		return s.result, nil
 	}
 	ingestID := uuid.NewString()
-	return &rememberapp.RememberResult{
-		IngestID:        ingestID,
-		SubmissionID:    ingestID,
-		ProcessingState: string(domain.PlacementRunQueued),
-		Kind:            rememberapp.ResultKindLegacyReceipt,
-	}, nil
+	return dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), ingestID), nil
 }

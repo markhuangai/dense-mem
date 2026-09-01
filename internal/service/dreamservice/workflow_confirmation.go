@@ -171,15 +171,6 @@ func (s *service) resolveConfirmation(
 		IdempotencyKey:    idempotencyKey,
 	}
 	remember, err := s.deps.Remember.Remember(ctx, rememberRequest)
-	if ctx.Err() == nil && dreamLegacyReplayConflict(err) {
-		legacyEvidence, legacyErr := dreamSubmissionEvidenceWithStatus(req, record, record.Status, true)
-		if legacyErr != nil {
-			s.recordDreamFeedback(ctx, decision, dream, "error")
-			return nil, legacyErr
-		}
-		rememberRequest.Evidence = legacyEvidence
-		remember, err = s.deps.Remember.Remember(ctx, rememberRequest)
-	}
 	if err != nil {
 		var processErr *rememberapp.RememberProcessError
 		if !errors.As(err, &processErr) || processErr.Result == nil {
@@ -207,22 +198,6 @@ func (s *service) resolveConfirmation(
 		InvalidatedReason: req.Feedback,
 	})
 	return s.feedbackResult(ctx, decision, dream, updated, remember, err)
-}
-
-func dreamLegacyReplayConflict(err error) bool {
-	if errors.Is(err, rememberapp.ErrRememberConflict) {
-		return true
-	}
-	var processErr *rememberapp.RememberProcessError
-	if !errors.As(err, &processErr) || processErr == nil || processErr.Result == nil {
-		return false
-	}
-	for _, statusErr := range processErr.Result.Errors {
-		if statusErr.Code == string(rememberapp.TerminalErrorIdempotencyConflict) {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *service) submitDreamHypothesisWithRetry(
@@ -333,14 +308,26 @@ func dreamReplayRememberResult(record *repository.HypothesisRecord) *rememberapp
 	if record == nil {
 		return nil
 	}
+	terminal := &rememberapp.TerminalRememberResult{
+		ContractVersion:     domain.ContractVersion,
+		SubmissionID:        record.SubmittedIngestID,
+		SubmissionKind:      "remember",
+		ProcessingState:     string(rememberapp.TerminalProcessingCompleted),
+		SearchState:         string(rememberapp.TerminalSearchCurrent),
+		Evidence:            []rememberapp.TerminalEvidenceResult{},
+		RelationshipResults: []rememberapp.SubmissionRelationshipResult{},
+		Errors:              []rememberapp.SubmissionStatusError{},
+		Kind:                rememberapp.ResultKindTerminal,
+	}
 	return &rememberapp.RememberResult{
 		ContractVersion: domain.ContractVersion,
 		IngestID:        record.SubmittedIngestID,
 		SubmissionID:    record.SubmittedIngestID,
 		SubmissionKind:  "remember",
-		ProcessingState: string(domain.PlacementRunQueued),
-		StatusTool:      "get_submission_status",
-		Kind:            rememberapp.ResultKindLegacyReceipt,
+		ProcessingState: terminal.ProcessingState,
+		SearchState:     terminal.SearchState,
+		Kind:            rememberapp.ResultKindTerminal,
+		Terminal:        terminal,
 	}
 }
 
@@ -381,34 +368,22 @@ func dreamRememberCompletion(result *rememberapp.RememberResult) (bool, string, 
 	if result == nil {
 		return false, "", errors.New("resolve dream feedback: Remember result is required")
 	}
-	switch result.Kind {
-	// TODO(#307): remove legacy receipt compatibility when all callers use terminal outcomes.
-	case rememberapp.ResultKindLegacyReceipt:
-		ingestID := strings.TrimSpace(result.IngestID)
+	if result.Kind != rememberapp.ResultKindTerminal || result.Terminal == nil {
+		return false, "", errors.New("resolve dream feedback: terminal Remember result is required")
+	}
+	switch result.Terminal.ProcessingState {
+	case string(rememberapp.TerminalProcessingCompleted):
+		ingestID := strings.TrimSpace(result.Terminal.SubmissionID)
 		if _, err := uuid.Parse(ingestID); err != nil {
-			return false, "", errors.New("resolve dream feedback: legacy Remember result has no canonical ingest")
+			return false, "", errors.New("resolve dream feedback: completed Remember result has no canonical ingest")
 		}
 		return true, ingestID, nil
-	case rememberapp.ResultKindTerminal:
-		if result.Terminal == nil {
-			return false, "", errors.New("resolve dream feedback: terminal Remember result is required")
-		}
-		switch result.Terminal.ProcessingState {
-		case string(rememberapp.TerminalProcessingCompleted):
-			ingestID := strings.TrimSpace(result.Terminal.SubmissionID)
-			if _, err := uuid.Parse(ingestID); err != nil {
-				return false, "", errors.New("resolve dream feedback: completed Remember result has no canonical ingest")
-			}
-			return true, ingestID, nil
-		case string(rememberapp.TerminalProcessingRejected),
-			string(rememberapp.TerminalProcessingQuarantined),
-			string(rememberapp.TerminalProcessingFailed):
-			return false, "", nil
-		default:
-			return false, "", errors.New("resolve dream feedback: terminal Remember result has an unsupported processing state")
-		}
+	case string(rememberapp.TerminalProcessingRejected),
+		string(rememberapp.TerminalProcessingQuarantined),
+		string(rememberapp.TerminalProcessingFailed):
+		return false, "", nil
 	default:
-		return false, "", errors.New("resolve dream feedback: Remember result kind is required")
+		return false, "", errors.New("resolve dream feedback: terminal Remember result has an unsupported processing state")
 	}
 }
 
@@ -439,9 +414,9 @@ func dreamDefaultFeedbackIdempotency(dreamID, decision string) string {
 }
 
 func (s *service) confirmationIdempotencyKey(
-	ctx context.Context,
-	teamID string,
-	actorProfileID string,
+	_ context.Context,
+	_ string,
+	_ string,
 	req ResolveFeedbackRequest,
 	record *repository.HypothesisRecord,
 	decision string,
@@ -449,26 +424,5 @@ func (s *service) confirmationIdempotencyKey(
 	if record == nil {
 		return "", errors.New("resolve dream feedback: hypothesis record is required")
 	}
-	canonicalKey := dreamFeedbackIdempotency(req, record.HypothesisID, decision)
-	if strings.TrimSpace(req.IdempotencyKey) != "" ||
-		record.Status == string(domain.DreamStatusSubmitted) ||
-		s.deps.RememberIngests == nil {
-		return canonicalKey, nil
-	}
-	requestedID := strings.TrimSpace(req.DreamID)
-	canonicalID := strings.TrimSpace(record.HypothesisID)
-	if requestedID == "" || canonicalID == "" || requestedID == canonicalID {
-		return canonicalKey, nil
-	}
-	legacyKey := dreamDefaultFeedbackIdempotency(requestedID, decision)
-	exists, err := s.deps.RememberIngests.RememberIngestExists(ctx, repository.RememberIngestLookupInput{
-		TeamID: teamID, OwnerProfileID: actorProfileID, IdempotencyKey: legacyKey,
-	})
-	if err != nil {
-		return "", fmt.Errorf("resolve dream feedback: legacy Remember lookup: %w", err)
-	}
-	if exists {
-		return legacyKey, nil
-	}
-	return canonicalKey, nil
+	return dreamFeedbackIdempotency(req, record.HypothesisID, decision), nil
 }

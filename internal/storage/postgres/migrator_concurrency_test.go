@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -180,6 +181,129 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 	}))
 	insertMigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "primary")
 
+	// Keep the legacy embedding assertion before the final cutover drops the
+	// queue table that held this historical row.
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 20260829030001))
+	assertMigratedEmbeddingJob(t, ctx, sqlDB, legacyFailure.jobID, migratedEmbeddingJobExpectation{
+		status: "failed", totalAttempts: 20,
+		failureClass: "provider_action_required", failureCode: "provider_quota_exhausted", failedTimestamps: true,
+	})
+
+	lineageIngestID := uuid.NewString()
+	lineageRunID := uuid.NewString()
+	lineageItemID := uuid.NewString()
+	lineageFragmentID := uuid.NewString()
+	lineageAssessmentID := uuid.NewString()
+	lineageObservationID := uuid.NewString()
+	lineageResolutionID := uuid.NewString()
+	lineageVerificationID := uuid.NewString()
+	lineagePredicateID := uuid.NewString()
+	lineageEntityID := uuid.NewString()
+	lineageClaimKey := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (
+				team_id, ingest_id, owner_profile_id,
+				idempotency_key, request_hash, status, proposal, metadata, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid,
+			          'runtime-cutover-lineage', 'runtime-cutover-lineage-request',
+			          'completed', '{"relationship_hints":[]}'::jsonb,
+			          '{"_dense_mem_telemetry_origin":"remember"}'::jsonb, now())
+		`, teamID, lineageIngestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_fragments (
+				team_id, fragment_id, ingest_id, owner_profile_id,
+				evidence_index, content, content_hash
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          0, 'runtime cutover lineage evidence', 'sha256:runtime-cutover-lineage')
+		`, teamID, lineageFragmentID, lineageIngestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_runs (
+				team_id, placement_run_id, ingest_id, owner_profile_id,
+				status, attempts, max_attempts, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          'completed', 1, 5, now())
+		`, teamID, lineageRunID, lineageIngestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_items (
+				team_id, placement_item_id, placement_run_id, ingest_id,
+				owner_profile_id, fragment_id, evidence_index, claim_key,
+				status, category, result
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          $5::uuid, $6::uuid, 0, $7::uuid,
+			          'completed', 'validated_claim', '{"accepted":true}'::jsonb)
+		`, teamID, lineageItemID, lineageRunID, lineageIngestID, profileID, lineageFragmentID, lineageClaimKey); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_assessments (
+				team_id, assessment_id, owner_profile_id,
+				request_id, assessor_contract_version, model, tokenizer,
+				input_tokens, output_tokens, candidate_context_tokens,
+				normalized_response, response_hash, validated_at, provider_turns,
+				assessment_scope, placement_run_id, ingest_id
+			) VALUES ($1::uuid, $2::uuid, $3::uuid,
+			          'runtime-cutover-lineage-request', 'dense-mem.v2.6',
+			          'runtime-lineage-model', 'runtime-lineage-tokenizer',
+			          1, 1, 0, '{"accepted":true}'::jsonb,
+			          'sha256:' || repeat('c', 64), now(), 1,
+			          'submission', $4::uuid, $5::uuid)
+		`, teamID, lineageAssessmentID, profileID, lineageRunID, lineageIngestID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO entity_records (team_id, entity_id, entity_kind)
+			VALUES ($1::uuid, $2::uuid, 'project')
+		`, teamID, lineageEntityID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO relationship_observations (
+				team_id, observation_id, ingest_id, placement_item_id, owner_profile_id,
+				subject_ref, original_predicate, object_ref
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+			          'runtime-subject', 'runtime_predicate', 'runtime-object')
+		`, teamID, lineageObservationID, lineageIngestID, lineageItemID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO entity_resolution_events (
+				team_id, resolution_event_id, ingest_id, placement_item_id,
+				owner_profile_id, mention_ref, action, entity_id, fragment_id,
+				verifier_result, assessment_id
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          $5::uuid, 'runtime-entity', 'reuse', $6::uuid, $7::uuid,
+			          '{}'::jsonb, $8::uuid)
+		`, teamID, lineageResolutionID, lineageIngestID, lineageItemID, profileID, lineageEntityID, lineageFragmentID, lineageAssessmentID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO verification_events (
+				team_id, verification_event_id, observation_id, owner_profile_id,
+				evidence_verdict, rationale, model, response_hash, assessment_id
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          'entailed', 'runtime lineage verification',
+			          'runtime-lineage-model', 'sha256:' || repeat('d', 64), $5::uuid)
+		`, teamID, lineageVerificationID, lineageObservationID, profileID, lineageAssessmentID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO predicate_registration_events (
+				team_id, predicate_registration_event_id, placement_run_id,
+				assessment_id, owner_profile_id, relationship_ref,
+				registration_action, predicate_key, predicate_version
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+			          'runtime-predicate-ref', 'created', 'runtime_predicate', 1)
+		`, teamID, lineagePredicateID, lineageRunID, lineageAssessmentID, profileID)
+		return err
+	}))
+
 	require.NoError(t, NewMigratorWithDB(sqlDB).RunUp(ctx))
 	var revisionCount, sharedRevisionCount int
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
@@ -206,10 +330,64 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 		)
 	`).Scan(&temporaryBackfillPolicyCount))
 	require.Zero(t, temporaryBackfillPolicyCount)
-	assertMigratedEmbeddingJob(t, ctx, sqlDB, legacyFailure.jobID, migratedEmbeddingJobExpectation{
-		status: "failed", totalAttempts: 20,
-		failureClass: "provider_action_required", failureCode: "provider_quota_exhausted", failedTimestamps: true,
-	})
+	var semanticAssessmentID string
+	var mappedIngestID string
+	var temporaryAssessmentPolicies, appendOnlyTriggerCount int
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT semantic_assessment_id::text
+			FROM semantic_assessments
+			WHERE team_id = $1::uuid AND attempt_id = $2::uuid
+		`, teamID, lineageIngestID).Scan(&semanticAssessmentID); err != nil {
+			return err
+		}
+		for _, check := range []struct {
+			name, query, eventID string
+		}{
+			{"entity resolution", `SELECT assessment_id::text FROM entity_resolution_events WHERE team_id = $1::uuid AND resolution_event_id = $2::uuid`, lineageResolutionID},
+			{"verification", `SELECT assessment_id::text FROM verification_events WHERE team_id = $1::uuid AND verification_event_id = $2::uuid`, lineageVerificationID},
+			{"predicate registration", `SELECT assessment_id::text FROM predicate_registration_events WHERE team_id = $1::uuid AND predicate_registration_event_id = $2::uuid`, lineagePredicateID},
+		} {
+			var mappedAssessmentID string
+			if err := tx.QueryRowContext(ctx, check.query, teamID, check.eventID).Scan(&mappedAssessmentID); err != nil {
+				return fmt.Errorf("%s: %w", check.name, err)
+			}
+			if mappedAssessmentID != semanticAssessmentID {
+				return fmt.Errorf("%s assessment = %s, want %s", check.name, mappedAssessmentID, semanticAssessmentID)
+			}
+		}
+		if err := tx.QueryRowContext(ctx, `
+			SELECT ingest_id::text
+			FROM predicate_registration_events
+			WHERE team_id = $1::uuid AND predicate_registration_event_id = $2::uuid
+		`, teamID, lineagePredicateID).Scan(&mappedIngestID); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `
+			SELECT count(*) FROM pg_policies
+			WHERE policyname LIKE 'dense_mem_20260831010001_%'
+		`).Scan(&temporaryAssessmentPolicies); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `
+			SELECT count(*)
+			FROM pg_trigger
+			WHERE tgrelid IN (
+				'entity_resolution_events'::regclass,
+				'verification_events'::regclass,
+				'predicate_registration_events'::regclass
+			)
+			  AND tgname IN (
+				'entity_resolution_events_append_only',
+				'verification_events_append_only',
+				'predicate_registration_events_append_only'
+			)
+			  AND NOT tgisinternal
+		`).Scan(&appendOnlyTriggerCount)
+	}))
+	require.Equal(t, lineageIngestID, mappedIngestID)
+	require.Zero(t, temporaryAssessmentPolicies)
+	require.Equal(t, 3, appendOnlyTriggerCount)
 
 	var cleanupApplied, temporaryCleanupPolicyExists bool
 	require.NoError(t, sqlDB.QueryRowContext(ctx, `

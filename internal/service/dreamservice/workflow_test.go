@@ -485,12 +485,7 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 			UpdatedAt:          time.Now().UTC(),
 		},
 	}
-	remember := &rememberServiceStub{result: &rememberapp.RememberResult{
-		IngestID:        ingestID,
-		SubmissionID:    ingestID,
-		ProcessingState: string(domain.PlacementRunQueued),
-		Kind:            rememberapp.ResultKindLegacyReceipt,
-	}}
+	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), ingestID)}
 	svc := New(Dependencies{
 		Store:     repo,
 		Remember:  remember,
@@ -630,12 +625,7 @@ func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &dreamRepositoryStub{getRecord: baseRecord}
 			ingestID := uuid.NewString()
-			remember := &rememberServiceStub{result: &rememberapp.RememberResult{
-				IngestID:        ingestID,
-				SubmissionID:    ingestID,
-				ProcessingState: string(domain.PlacementRunQueued),
-				Kind:            rememberapp.ResultKindLegacyReceipt,
-			}}
+			remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), ingestID)}
 			svc := New(Dependencies{
 				Store:     repo,
 				Remember:  remember,

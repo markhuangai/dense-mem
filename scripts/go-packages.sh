@@ -81,6 +81,15 @@ mapfile -t tracked_dirs < <(
 	printf '%s\n' "${tracked_files[@]}" |
 	awk '{ file = $0; if (file ~ /\//) { sub(/\/[^\/]+$/, "", file) } else { file = "." }; print file }' |
 	while IFS= read -r dir; do
+		# During a staged cleanup, git ls-files can still report a directory whose
+		# tracked Go files have been deleted from the worktree. It is not a package.
+		if [[ "${dir}" == "." ]]; then
+			if ! find . -maxdepth 1 -type f -name '*.go' -print -quit | grep -q .; then
+				continue
+			fi
+		elif ! find "${dir}" -maxdepth 1 -type f -name '*.go' -print -quit 2>/dev/null | grep -q .; then
+			continue
+		fi
 		if [[ "${PRODUCTION_ONLY}" == true ]] && is_excluded "${dir}"; then
 			continue
 		fi
