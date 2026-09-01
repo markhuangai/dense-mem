@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"net"
 	"net/url"
 	"os"
 	"testing"
@@ -51,7 +52,7 @@ func openIdentitySeedDB(t *testing.T) *sql.DB {
 			requiredIdentitySeedEnv(t, "DENSE_MEM_E2E_POSTGRES_USER"),
 			requiredIdentitySeedEnv(t, "DENSE_MEM_E2E_POSTGRES_PASSWORD"),
 		),
-		Host: host + ":" + requiredIdentitySeedEnv(t, "DENSE_MEM_E2E_POSTGRES_PORT"),
+		Host: net.JoinHostPort(host, requiredIdentitySeedEnv(t, "DENSE_MEM_E2E_POSTGRES_PORT")),
 		Path: requiredIdentitySeedEnv(t, "DENSE_MEM_E2E_POSTGRES_DB"),
 	}
 	query := connectionURL.Query()

@@ -41,8 +41,8 @@ permissions:
 jobs:
   scenario:
     name: Run ${{ inputs.scenario }}
-    # This label is assigned only to runners sharing the CI user's rootless daemon and home.
-    runs-on: [rootless-docker, rootless-docker-shared]
+    # The rootless-docker pool shares the CI user's daemon and home for shared-stack jobs.
+    runs-on: rootless-docker
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
@@ -59,7 +59,7 @@ jobs:
 
       - name: Validate rootless controller
         shell: bash
-        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
 
       - name: Start isolated stack
         id: isolated

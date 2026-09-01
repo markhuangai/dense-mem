@@ -24,6 +24,8 @@ test("controller exposes the versioned lifecycle and lease contract", () => {
   }
   assert.match(controller, /docker pull/);
   assert.match(controller, /docker image rm/);
+  assert.match(controller, /docker "\$\{docker_args\[@\]\}"/);
+  assert.match(controller, /stale_failed=0/);
   assert.match(controller, /--mode precheck/);
   assert.match(controller, /redact_diagnostics/);
   assert.match(controller, /cleanup-run/);
@@ -48,6 +50,7 @@ test("controller rejects broad projects, host ports, and weak environment files"
   assert.match(controller, /mode 0600/);
   assert.match(controller, /assert_no_host_ports/);
   assert.match(compose, /io\.dense-mem\.ci\.contract/);
+  assert.match(compose, /command: \["sh", "-c", "exec redis-server/);
   assert.match(compose, /name: \$\{DENSE_MEM_CI_NETWORK_NAME/);
   assert.doesNotMatch(compose, /^\s+ports:/m);
 });
@@ -66,6 +69,7 @@ test("production scenarios preserve Playwright handoff values", () => {
   assert.match(scenarioScript, /DENSE_MEM_E2E_DREAM_STATEMENT/);
   assert.match(scenarioScript, /parse_json_dream_statement/);
   assert.match(scenarioScript, /OAuth scenario result handoff is missing/);
+  assert.match(scenarioScript, /--connect-timeout 5 --max-time 10/);
 });
 
 test("host installer never creates or copies a credential file", () => {
@@ -75,10 +79,19 @@ test("host installer never creates or copies a credential file", () => {
   assert.match(installer, /e2e-scenario-registry\.mjs/);
   assert.match(installer, /e2e-host-controller-stack\.sh/);
   assert.match(installer, /e2e-host-controller-runtime\.sh/);
+  assert.match(installer, /examples\/prometheus\.yml/);
   assert.match(installer, /chmod 600/);
   assert.doesNotMatch(installer, /AI_API_KEY|AI_VERIFIER_API_KEY|PASSWORD=/);
   assert.match(realControllerTest, /DENSE_MEM_E2E_REAL_DOCKER_TESTS/);
   assert.match(realControllerTest, /controller-contract/);
   assert.match(realControllerTest, /rootless Docker daemon/);
   assert.match(realControllerTest, /stale helper image/);
+});
+
+test("identity cleanup seed formats IPv6 PostgreSQL authorities safely", async () => {
+  const source = await readFile(
+    new URL("../../internal/storage/postgres/identity_cleanup_migration_integration_test.go", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /net\.JoinHostPort\(host,/);
 });

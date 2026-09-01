@@ -293,13 +293,13 @@ jobs:
     name: Rootless controller and PostgreSQL prechecks
     needs: authorize
     if: needs.authorize.outputs.authorized == 'true'
-    # All controller jobs use the shared daemon/home pool so leases and run manifests remain reachable.
-    runs-on: [rootless-docker, rootless-docker-shared]
+    # The rootless-docker pool shares the CI user's daemon and home so leases and manifests remain reachable.
+    runs-on: rootless-docker
     timeout-minutes: 30
     steps:
       - name: Validate rootless host controller
         shell: bash
-        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
 
       - name: Checkout trusted controller contract test
         uses: actions/checkout@v7
@@ -349,25 +349,25 @@ jobs:
   stale-cleanup:
     name: Reclaim stale CI resources
     needs: authorize
-    if: always()
-    runs-on: [rootless-docker, rootless-docker-shared]
+    if: needs.authorize.outputs.authorized == 'true'
+    runs-on: rootless-docker
     timeout-minutes: 15
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
     steps:
       - name: Validate rootless host controller
         shell: bash
-        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
 
       - name: Reclaim stale stacks and leases
         shell: bash
-        run: "${HOME}/dense-mem-ci/e2e-stack.sh stale-cleanup 86400"
+        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" stale-cleanup 86400'
 
   acquire:
     name: Acquire immutable image lease
     needs: [authorize, prechecks, stale-cleanup]
     if: needs.prechecks.result == 'success' && needs.stale-cleanup.result == 'success'
-    runs-on: [rootless-docker, rootless-docker-shared]
+    runs-on: rootless-docker
     timeout-minutes: 15
     outputs:
       lease: ${{ steps.acquire.outputs.lease }}
@@ -376,7 +376,7 @@ jobs:
     steps:
       - name: Validate rootless host controller
         shell: bash
-        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
 
       - name: Checkout trusted authorization policy
         if: inputs.caller_workflow != ''
@@ -499,7 +499,7 @@ jobs:
     name: Start shared production stack
     needs: [authorize, acquire, exclusive]
     if: needs.exclusive.result == 'success'
-    runs-on: [rootless-docker, rootless-docker-shared]
+    runs-on: rootless-docker
     timeout-minutes: 20
     outputs:
       manifest: ${{ steps.start.outputs.manifest }}
@@ -508,7 +508,7 @@ jobs:
     steps:
       - name: Validate rootless host controller
         shell: bash
-        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
 
       - name: Checkout exact source revision for helper provisioning
         uses: actions/checkout@v7
@@ -559,14 +559,14 @@ jobs:
     name: Stop shared production stack
     needs: [shared-start, shared]
     if: always() && needs.shared-start.result == 'success'
-    runs-on: [rootless-docker, rootless-docker-shared]
+    runs-on: rootless-docker
     timeout-minutes: 15
     env:
       MANIFEST: ${{ needs.shared-start.outputs.manifest }}
     steps:
       - name: Validate rootless host controller
         shell: bash
-        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
 
       - name: Stop exact shared project
         shell: bash
@@ -579,7 +579,7 @@ jobs:
     name: Release image lease
     needs: [authorize, acquire, exclusive, shared-start, shared, shared-stop]
     if: always() && needs.acquire.result == 'success' && needs.acquire.outputs.lease != ''
-    runs-on: [rootless-docker, rootless-docker-shared]
+    runs-on: rootless-docker
     timeout-minutes: 15
     steps:
       - name: Validate rootless host controller
@@ -590,22 +590,22 @@ jobs:
         shell: bash
         env:
           LEASE: ${{ needs.acquire.outputs.lease }}
-        run: '${HOME}/dense-mem-ci/e2e-stack.sh release "${LEASE}"'
+        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" release "${LEASE}"'
 
   cleanup-run:
     name: Remove workflow run directory
     needs: [authorize, prechecks, stale-cleanup, acquire, exclusive, shared-start, shared, shared-stop, release]
     if: always()
-    runs-on: [rootless-docker, rootless-docker-shared]
+    runs-on: rootless-docker
     timeout-minutes: 15
     steps:
       - name: Validate rootless host controller
         shell: bash
-        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
 
       - name: Remove exact run directory
         shell: bash
-        run: '${HOME}/dense-mem-ci/e2e-stack.sh cleanup-run "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}"'
+        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" cleanup-run "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}"'
 
   report:
     name: Aggregate production E2E results

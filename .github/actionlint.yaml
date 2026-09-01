@@ -2,7 +2,6 @@ self-hosted-runner:
   labels:
     - docker-runner
     - rootless-docker
-    - rootless-docker-shared
     - home-server
     - bash
     - non-root

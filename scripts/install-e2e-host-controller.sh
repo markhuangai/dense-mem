@@ -19,7 +19,9 @@ install -m 700 "${SOURCE_DIR}/e2e-runtime-adapter.mjs" "${DESTINATION}/e2e-runti
 install -m 700 "${SOURCE_DIR}/e2e-scenario-registry.mjs" "${DESTINATION}/e2e-scenario-registry.mjs"
 install -m 600 "${SOURCE_DIR}/e2e-scenarios.json" "${DESTINATION}/e2e-scenarios.json"
 install -m 600 "${SOURCE_DIR}/e2e-ci-compose.yml" "${DESTINATION}/docker-compose.yml"
-install -m 644 "${SOURCE_DIR}/prometheus.yml" "${DESTINATION}/prometheus.yml"
+PROMETHEUS_SOURCE="${SOURCE_DIR}/../examples/prometheus.yml"
+[[ -f "${PROMETHEUS_SOURCE}" ]] || { echo "missing tracked Prometheus configuration: ${PROMETHEUS_SOURCE}" >&2; exit 1; }
+install -m 644 "${PROMETHEUS_SOURCE}" "${DESTINATION}/prometheus.yml"
 if [[ ! -e "${DESTINATION}/.env" ]]; then
   printf '%s\n' "Create ${DESTINATION}/.env with CI-only provider credentials and mode 0600." >&2
   exit 1

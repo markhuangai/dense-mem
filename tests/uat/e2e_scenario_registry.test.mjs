@@ -72,6 +72,15 @@ test("registry CLI classifies unknown scenarios without sharing them", async () 
   assert.equal(classified.audited, false);
 });
 
+test("scenario classification fails closed for invalid registry metadata", () => {
+  const invalid = structuredClone(registry);
+  invalid.scenarios[0].runtime = "development";
+  assert.throws(
+    () => classifyScenario(invalid, invalid.scenarios[0].name),
+    /invalid E2E scenario registry:.*runtime=production/s,
+  );
+});
+
 test("production E2E jobs use the runner that matches their capability", async () => {
   const [workflow, reusable, controllerMain, controllerStack, controllerRuntime, compose] = await Promise.all([
     readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8"),
@@ -102,9 +111,10 @@ test("production E2E jobs use the runner that matches their capability", async (
   assert.match(workflow, /max-parallel: 4/);
   assert.match(workflowJob(workflow, "exclusive"), /max-parallel: 1/);
   assert.match(workflowJob(workflow, "shared"), /max-parallel: 4/);
-  assert.match(workflowJob(workflow, "shared-start"), /runs-on: \[rootless-docker, rootless-docker-shared\]/);
-  assert.match(workflowJob(workflow, "shared-stop"), /runs-on: \[rootless-docker, rootless-docker-shared\]/);
-  assert.match(reusable, /runs-on: \[rootless-docker, rootless-docker-shared\]/);
+  assert.match(workflowJob(workflow, "stale-cleanup"), /if: needs\.authorize\.outputs\.authorized == 'true'/);
+  assert.match(workflowJob(workflow, "shared-start"), /runs-on: rootless-docker/);
+  assert.match(workflowJob(workflow, "shared-stop"), /runs-on: rootless-docker/);
+  assert.match(reusable, /runs-on: rootless-docker/);
   assert.match(workflow, /SHARED_STOP_RESULT/);
   assert.match(workflow, /passed \(cleanup failed\)/);
   assert.match(workflow, /e2e_host_controller_real\.sh/);

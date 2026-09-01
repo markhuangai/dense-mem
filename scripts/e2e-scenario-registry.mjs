@@ -149,6 +149,7 @@ function scenarioFor(registry, name) {
 }
 
 function classifyScenario(registry, name) {
+  assertValidRegistry(registry);
   if (typeof name !== "string" || !/^[a-z0-9_]+$/.test(name)) {
     throw new Error(`invalid scenario: ${String(name)}`);
   }

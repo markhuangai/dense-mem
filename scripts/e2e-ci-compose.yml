@@ -27,9 +27,7 @@ services:
     image: redis:7-alpine
     env_file:
       - .env
-    command: >-
-      redis-server --appendonly yes
-      $${REDIS_PASSWORD:+--requirepass $${REDIS_PASSWORD}}
+    command: ["sh", "-c", "exec redis-server --appendonly yes $${REDIS_PASSWORD:+--requirepass \"$$REDIS_PASSWORD\"}"]
     volumes:
       - redis-data:/data
     networks:

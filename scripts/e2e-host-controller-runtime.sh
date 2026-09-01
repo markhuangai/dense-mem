@@ -250,7 +250,7 @@ NODE
   fi
   docker_args+=("$test_image" bash /workspace/scripts/e2e-ci-scenario.sh "$scenario")
   set +e
-  "${docker_args[@]}" 2>&1 |
+  docker "${docker_args[@]}" 2>&1 |
     redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token"
   local -a scenario_pipeline_status=("${PIPESTATUS[@]}")
   set -e
@@ -455,8 +455,9 @@ process.stdin.on("end", () => {
       docker image ls -q --no-trunc --filter "label=io.dense-mem.ci.contract=${CONTRACT_VERSION}" --filter "label=io.dense-mem.ci.repository=${REPOSITORY}";
     } | sort -u
   )
+  local stale_failed=0
   for project in "${!stale_projects[@]}"; do
-    stop_stack "$project"
+    stop_stack "$project" || stale_failed=1
   done
 
   while IFS= read -r path; do
@@ -476,6 +477,10 @@ process.stdin.on("end", () => {
         rm -r -- "$path"
       fi
     done < <(find "$RUN_DIR" -mindepth 1 -maxdepth 1 -type d -print0)
+  fi
+  if ((stale_failed)); then
+    printf '%s\n' "stale lease cleanup completed with resource failures" >&2
+    return 1
   fi
   printf '%s\n' "stale lease cleanup complete"
 }

@@ -12,7 +12,8 @@ prepare_stack_helpers() {
 
   local oauth_token=""
   local harness_image=""
-  local provider_dimensions="$(env_value AI_API_EMBEDDING_DIMENSIONS 2>/dev/null || printf '%s' 1536)"
+  local provider_dimensions
+  provider_dimensions="$(env_value AI_API_EMBEDDING_DIMENSIONS 2>/dev/null || printf '%s' 1536)"
   if has_helper "$helpers" oauth || has_helper "$helpers" oauth_compatibility; then
     require_command openssl
     [[ -f "${source_dir}/tests/uat/oauth_provider_mock.mjs" ]] || fail "missing OAuth provider fixture"
@@ -269,7 +270,7 @@ NODE
   local go_image
   go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
   local -a args=(
-    run --rm
+    docker run --rm
     --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}"
     --label "io.dense-mem.ci.repository=${REPOSITORY}"
     --label "io.dense-mem.ci.run-id=${run_id}"

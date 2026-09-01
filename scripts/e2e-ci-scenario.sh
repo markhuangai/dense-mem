@@ -27,8 +27,8 @@ wait_for_url() {
   local label="$1" url="$2" ca_file="${3:-}"
   for _ in $(seq 1 90); do
     if [[ -n "$ca_file" ]]; then
-      if curl --cacert "$ca_file" -fsS "$url" >/dev/null 2>&1; then return 0; fi
-    elif curl -fsS "$url" >/dev/null 2>&1; then
+      if curl --connect-timeout 5 --max-time 10 --cacert "$ca_file" -fsS "$url" >/dev/null 2>&1; then return 0; fi
+    elif curl --connect-timeout 5 --max-time 10 -fsS "$url" >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
