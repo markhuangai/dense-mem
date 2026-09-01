@@ -7,11 +7,12 @@ import {
   RememberAttemptDiagnosticSummary,
   RememberFailureArtifactDescriptor,
   Team,
+  type RememberAttemptOutcome,
 } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
 
-const OUTCOMES = ["", "completed", "failed"] as const;
+const OUTCOMES = ["", "completed", "rejected", "quarantined", "failed", "replayed"] as const;
 const PAGE_SIZE = 50;
 
 export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Team }) {
@@ -45,7 +46,7 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
     try {
       const page = await api.listRememberAttemptDiagnostics({
         team_id: team.id,
-        outcome: nextOutcome as "" | "completed" | "failed",
+        outcome: nextOutcome as "" | RememberAttemptOutcome,
         limit: PAGE_SIZE,
         offset: nextOffset,
       });

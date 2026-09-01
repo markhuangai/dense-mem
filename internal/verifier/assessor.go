@@ -12,10 +12,13 @@ import (
 const (
 	SemanticAssessmentSchemaName = assessor.SemanticAssessmentSchemaName
 
-	// The assessor owns the complete response contract and turn bound. Verifier
-	// aliases these values so both provider entry points share one policy.
-	SemanticAssessmentMaxProviderTurns    = assessor.SemanticAssessmentMaxProviderTurns
-	SemanticAssessmentMaxCorrectionErrors = assessor.SemanticAssessmentMaxCorrectionErrors
+	// SemanticAssessmentMaxProviderTurns preserves the legacy verifier
+	// conversation bound used by Dream and conflict assessment.
+	SemanticAssessmentMaxProviderTurns = 5
+	// Remember uses the shorter evidence-first assessor bound: one initial
+	// response plus at most two complete-response corrections.
+	SemanticAssessmentMaxRememberProviderTurns = assessor.SemanticAssessmentMaxProviderTurns
+	SemanticAssessmentMaxCorrectionErrors      = assessor.SemanticAssessmentMaxCorrectionErrors
 
 	SemanticAssessmentMaxEntityCandidatesPerSurface = assessor.SemanticAssessmentMaxEntityCandidatesPerSurface
 	SemanticAssessmentMaxPredicateOptions           = assessor.SemanticAssessmentMaxPredicateOptions

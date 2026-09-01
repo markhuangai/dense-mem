@@ -41,7 +41,7 @@ func runSemanticAssessmentSessionForTest(
 		if len(turn.ValidationErrors) == 0 {
 			return turn.Response, nil
 		}
-		if turn.Turn >= SemanticAssessmentMaxProviderTurns {
+		if turn.Turn >= SemanticAssessmentMaxRememberProviderTurns {
 			return SemanticAssessmentResponse{}, &MalformedResponseError{
 				Provider:                openAIVerifierProvider,
 				Message:                 "semantic assessment response remained invalid after bounded correction",
@@ -217,7 +217,7 @@ func TestOpenAIVerifierRememberSessionRejectsInvalidRepairState(t *testing.T) {
 	require.ErrorAs(t, err, &providerErr)
 	assert.Equal(t, ProviderFailureClassRequestInvalid, providerErr.FailureClass)
 
-	maxed := &openAISemanticAssessmentSession{id: "maxed", turn: SemanticAssessmentMaxProviderTurns}
+	maxed := &openAISemanticAssessmentSession{id: "maxed", turn: SemanticAssessmentMaxRememberProviderTurns}
 	_, err = v.Repair(context.Background(), maxed, SemanticAssessmentRepairRequest{Request: prepared})
 	var malformed *MalformedResponseError
 	require.ErrorAs(t, err, &malformed)
@@ -645,8 +645,8 @@ func TestOpenAIVerifierAssessSemanticRejectsProviderBoundaries(t *testing.T) {
 			}),
 			wantType:     &MalformedResponseError{},
 			wantDetail:   "remained invalid after bounded correction",
-			wantCalls:    SemanticAssessmentMaxProviderTurns,
-			wantAttempts: SemanticAssessmentMaxProviderTurns,
+			wantCalls:    SemanticAssessmentMaxRememberProviderTurns,
+			wantAttempts: SemanticAssessmentMaxRememberProviderTurns,
 			wantClass:    "malformed_exhausted",
 		},
 		{
@@ -654,8 +654,8 @@ func TestOpenAIVerifierAssessSemanticRejectsProviderBoundaries(t *testing.T) {
 			handler:      assessorRawResponseHandler(t, "not-json", nil),
 			wantType:     &MalformedResponseError{},
 			wantDetail:   "remained invalid after bounded correction",
-			wantCalls:    SemanticAssessmentMaxProviderTurns,
-			wantAttempts: SemanticAssessmentMaxProviderTurns,
+			wantCalls:    SemanticAssessmentMaxRememberProviderTurns,
+			wantAttempts: SemanticAssessmentMaxRememberProviderTurns,
 			wantClass:    "malformed_exhausted",
 		},
 		{
@@ -667,8 +667,8 @@ func TestOpenAIVerifierAssessSemanticRejectsProviderBoundaries(t *testing.T) {
 			}(),
 			wantType:     &MalformedResponseError{},
 			wantDetail:   "remained invalid after bounded correction",
-			wantCalls:    SemanticAssessmentMaxProviderTurns,
-			wantAttempts: SemanticAssessmentMaxProviderTurns,
+			wantCalls:    SemanticAssessmentMaxRememberProviderTurns,
+			wantAttempts: SemanticAssessmentMaxRememberProviderTurns,
 			wantClass:    "malformed_exhausted",
 		},
 		{

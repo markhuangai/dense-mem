@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -87,6 +88,59 @@ func TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes(t 
 	require.NoError(t, err)
 	require.Len(t, remaining.Events, 1)
 	require.Empty(t, remaining.Artifacts)
+}
+
+func TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndArtifacts(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-replayed")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostics-replayed-owner")
+	repo := NewLedgerRepository(appDB, rls)
+	canonicalID := uuidForDiagnostics(330)
+	replayedID := uuidForDiagnostics(331)
+	require.NoError(t, repo.RecordRememberAttempt(ctx, RememberAttemptRecordInput{
+		TeamID: teamID, OwnerProfileID: ownerID, AttemptID: canonicalID,
+		IdempotencyKey: "diagnostics-replayed", RequestHash: "diagnostics-replayed-hash",
+		ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "completed",
+		PublicResult: map[string]any{"processing_state": "completed"},
+	}))
+	artifactID := uuidForDiagnostics(332)
+	content := []byte(`{"historical":true}`)
+	digest := sha256.Sum256(content)
+	capturedAt := time.Now().UTC()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).Exec(`
+			INSERT INTO remember_attempts (
+				team_id, attempt_id, owner_profile_id, idempotency_key, request_hash,
+				contract_version, submission_kind, outcome, canonical_attempt_id, public_result, completed_at
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?, ?, ?, 'remember', 'replayed', ?::uuid, ?::jsonb, now())
+		`, teamID, replayedID, ownerID, "diagnostics-replayed", "diagnostics-replayed-hash", domain.ContractVersion, canonicalID, `{}`).Error; err != nil {
+			return err
+		}
+		return tx.WithContext(ctx).Exec(`
+			INSERT INTO remember_failure_artifacts (
+				team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind, content_type,
+				content_bytes, byte_count, content_sha256, captured_at, expires_at
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, 'failure', 'application/json', ?, ?, ?, ?, ?)
+		`, teamID, artifactID, replayedID, ownerID, content, len(content), "sha256:"+fmt.Sprintf("%x", digest[:]), capturedAt, capturedAt.Add(time.Hour)).Error
+	}))
+
+	page, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: teamID, Outcome: "replayed", Limit: 20})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), page.Total)
+	require.Len(t, page.Records, 1)
+	require.Equal(t, replayedID, page.Records[0].AttemptID)
+
+	detail, err := repo.GetRememberAttemptDiagnostic(ctx, teamID, replayedID)
+	require.NoError(t, err)
+	require.Equal(t, "replayed", detail.Outcome)
+	require.Len(t, detail.Artifacts, 1)
+	require.Equal(t, artifactID, detail.Artifacts[0].ArtifactID)
+
+	artifact, err := repo.GetRememberFailureArtifact(ctx, teamID, replayedID, artifactID)
+	require.NoError(t, err)
+	require.Equal(t, content, artifact.Content)
 }
 
 func TestRememberFailureArtifactPurgeClaimsConcurrentBatches(t *testing.T) {
@@ -189,11 +243,8 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 
 	full, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: teamA, Limit: 100})
 	require.NoError(t, err)
-	// Remember diagnostics expose only the v2.6.2 terminal outcomes. The
-	// retained rejected and quarantined rows above are historical audit data,
-	// not supported diagnostic records.
-	require.Equal(t, int64(3), full.Total)
-	require.Len(t, full.Records, 3)
+	require.Equal(t, int64(5), full.Total)
+	require.Len(t, full.Records, 5)
 	for index, record := range full.Records {
 		require.Equal(t, teamA, record.TeamID)
 		require.NotEqual(t, teamC, record.TeamID)
@@ -211,13 +262,14 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 	require.NoError(t, err)
 	pageTwo, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: teamA, Limit: 2, Offset: 2})
 	require.NoError(t, err)
-	require.Equal(t, int64(3), pageOne.Total)
-	require.Equal(t, int64(3), pageTwo.Total)
+	require.Equal(t, int64(5), pageOne.Total)
+	require.Equal(t, int64(5), pageTwo.Total)
 	require.Len(t, pageOne.Records, 2)
-	require.Len(t, pageTwo.Records, 1)
+	require.Len(t, pageTwo.Records, 2)
 	require.Equal(t, full.Records[0].AttemptID, pageOne.Records[0].AttemptID)
 	require.Equal(t, full.Records[1].AttemptID, pageOne.Records[1].AttemptID)
 	require.Equal(t, full.Records[2].AttemptID, pageTwo.Records[0].AttemptID)
+	require.Equal(t, full.Records[3].AttemptID, pageTwo.Records[1].AttemptID)
 
 	failed, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: teamA, Outcome: "failed", Limit: 100})
 	require.NoError(t, err)
@@ -225,8 +277,8 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 
 	global, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{Limit: 100})
 	require.NoError(t, err)
-	require.Equal(t, int64(4), global.Total)
-	require.Len(t, global.Records, 4)
+	require.Equal(t, int64(6), global.Total)
+	require.Len(t, global.Records, 6)
 	for index, record := range global.Records {
 		require.Contains(t, []string{teamA, teamC}, record.TeamID)
 		require.Nil(t, record.PublicResult)
@@ -247,8 +299,8 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 	require.NoError(t, err)
 	globalPageTwo, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: "", Limit: 2, Offset: 2})
 	require.NoError(t, err)
-	require.Equal(t, int64(4), globalPageOne.Total)
-	require.Equal(t, int64(4), globalPageTwo.Total)
+	require.Equal(t, int64(6), globalPageOne.Total)
+	require.Equal(t, int64(6), globalPageTwo.Total)
 	require.Len(t, globalPageOne.Records, 2)
 	require.Len(t, globalPageTwo.Records, 2)
 	require.Equal(t, global.Records[0].AttemptID, globalPageOne.Records[0].AttemptID)

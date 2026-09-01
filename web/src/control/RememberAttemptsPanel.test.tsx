@@ -90,6 +90,9 @@ describe("RememberAttemptsPanel", () => {
 
     render(<RememberAttemptsPanel api={api} team={team()} />);
     expect(await screen.findByRole("button", { name: "Inspect Remember attempt attempt-a" })).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Remember attempt outcome")).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "All outcomes", "Completed", "Rejected", "Quarantined", "Failed", "Replayed",
+    ]);
     await userEvent.selectOptions(screen.getByLabelText("Remember attempt outcome"), "failed");
     await waitFor(() => expect(listRememberAttemptDiagnostics).toHaveBeenLastCalledWith({ team_id: "team-1", outcome: "failed", limit: 50, offset: 0 }));
     expect(await screen.findByRole("button", { name: "Inspect Remember attempt failed-attempt" })).toBeInTheDocument();

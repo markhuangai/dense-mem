@@ -487,7 +487,6 @@ func (r *LedgerRepositoryImpl) ListRememberAttemptDiagnostics(
 			SELECT count(*)
 			FROM remember_attempts AS attempt
 			WHERE (NULLIF(?, '')::uuid IS NULL OR attempt.team_id = NULLIF(?, '')::uuid)
-			  AND attempt.outcome IN ('completed', 'failed')
 			  AND (? = '' OR attempt.outcome = ?)
 		`, teamID, teamID, filter.Outcome, filter.Outcome).Scan(&page.Total).Error; err != nil {
 			return err
@@ -505,7 +504,6 @@ func (r *LedgerRepositoryImpl) ListRememberAttemptDiagnostics(
 			FROM remember_attempts AS attempt
 			JOIN teams AS team ON team.id = attempt.team_id
 			WHERE (NULLIF(?, '')::uuid IS NULL OR attempt.team_id = NULLIF(?, '')::uuid)
-			  AND attempt.outcome IN ('completed', 'failed')
 			  AND (? = '' OR attempt.outcome = ?)
 			ORDER BY attempt.created_at DESC, attempt.attempt_id DESC
 			LIMIT ? OFFSET ?
@@ -552,7 +550,6 @@ func (r *LedgerRepositoryImpl) GetRememberAttemptDiagnostic(ctx context.Context,
 			FROM remember_attempts AS attempt
 			JOIN teams AS team ON team.id = attempt.team_id
 			WHERE attempt.team_id = ?::uuid AND attempt.attempt_id = ?::uuid
-			  AND attempt.outcome IN ('completed', 'failed')
 		`, teamID, attemptID).Rows()
 		if err != nil {
 			return err
@@ -696,7 +693,6 @@ func loadRememberFailureArtifactDescriptors(ctx context.Context, tx *gorm.DB, te
 			LEFT JOIN private_memory_legal_holds AS hold
 			  ON hold.space_id = attempt.space_id AND hold.released_at IS NULL
 			WHERE artifact.team_id = ?::uuid AND artifact.attempt_id = ?::uuid
-			  AND attempt.outcome IN ('completed', 'failed')
 			  AND (artifact.expires_at > clock_timestamp() OR hold.id IS NOT NULL)
 			ORDER BY artifact.captured_at ASC, artifact.artifact_id ASC
 		`, teamID, attemptID).Rows()
@@ -736,7 +732,6 @@ func (r *LedgerRepositoryImpl) GetRememberFailureArtifact(ctx context.Context, t
 			LEFT JOIN private_memory_legal_holds AS hold
 			  ON hold.space_id = attempt.space_id AND hold.released_at IS NULL
 			WHERE artifact.team_id = ?::uuid AND artifact.attempt_id = ?::uuid AND artifact.artifact_id = ?::uuid
-			  AND attempt.outcome IN ('completed', 'failed')
 			  AND (artifact.expires_at > clock_timestamp() OR hold.id IS NOT NULL)
 		`, teamID, attemptID, artifactID).Row().Scan(
 			&artifact.TeamID, &artifact.ArtifactID, &artifact.AttemptID, &artifact.ArtifactKind,

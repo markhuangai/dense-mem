@@ -127,7 +127,7 @@ func controlRememberAttemptDiagnosticFilter(c echo.Context) (service.RememberAtt
 	}
 	outcome := strings.TrimSpace(c.QueryParam("outcome"))
 	switch outcome {
-	case "", "completed", "failed":
+	case "", "completed", "rejected", "quarantined", "failed", "replayed":
 	default:
 		return service.RememberAttemptDiagnosticFilter{}, httperr.New(httperr.VALIDATION_ERROR, "outcome is unsupported")
 	}

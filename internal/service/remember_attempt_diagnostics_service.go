@@ -302,7 +302,7 @@ func normalizeRememberAttemptDiagnosticServiceFilter(filter RememberAttemptDiagn
 		}
 	}
 	switch filter.Outcome {
-	case "", "completed", "failed":
+	case "", "completed", "rejected", "quarantined", "failed", "replayed":
 	default:
 		return RememberAttemptDiagnosticFilter{}, fmt.Errorf("outcome is unsupported")
 	}

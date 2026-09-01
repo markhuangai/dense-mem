@@ -88,7 +88,7 @@ func (v *OpenAIVerifier) Repair(ctx context.Context, sessionRef SemanticAssessme
 			FailureClass: ProviderFailureClassRequestInvalid,
 		}
 	}
-	if session.turn >= SemanticAssessmentMaxProviderTurns {
+	if session.turn >= SemanticAssessmentMaxRememberProviderTurns {
 		return SemanticAssessmentTurn{}, &MalformedResponseError{
 			Provider:     openAIVerifierProvider,
 			Message:      "semantic assessment session exceeded its turn bound",

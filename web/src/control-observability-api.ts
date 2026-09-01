@@ -34,7 +34,7 @@ export type RememberError = {
   remediation: string;
 };
 
-export type RememberAttemptOutcome = "completed" | "failed";
+export type RememberAttemptOutcome = "completed" | "rejected" | "quarantined" | "failed" | "replayed";
 
 export type RememberAttemptDiagnosticSummary = {
   team_id: string;
