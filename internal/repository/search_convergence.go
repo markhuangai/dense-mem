@@ -324,6 +324,9 @@ func addMissingCanonicalSearchStats(
 			 AND ingest.ingest_id = fragment.ingest_id
 			 AND ingest.owner_profile_id = fragment.owner_profile_id
 			 AND ingest.status = 'completed'
+			LEFT JOIN evidence_sources AS source
+			  ON source.team_id = fragment.team_id
+			 AND source.source_id = fragment.source_id
 			WHERE NOT EXISTS (
 			          SELECT 1
 			          FROM evidence_quarantines AS quarantine
@@ -337,6 +340,8 @@ func addMissingCanonicalSearchStats(
 			          WHERE lifecycle.team_id = fragment.team_id
 			            AND lifecycle.target_fragment_id = fragment.fragment_id
 			      )
+			  AND fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
+			  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
 			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 			UNION ALL
 			SELECT relationship.team_id, relationship.relationship_id AS source_id,

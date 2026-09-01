@@ -392,9 +392,16 @@ func TestSearchReconciliationRetiresLifecycleTerminalEvidence(t *testing.T) {
 		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 256,
 	})
 	require.NoError(t, err)
-	require.Len(t, selected, 1)
-	require.Equal(t, document.SearchDocumentID, selected[0].SearchDocumentID)
-	require.True(t, selected[0].Retired)
+	require.Empty(t, selected)
+	var state string
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT search_state
+			FROM search_documents
+			WHERE team_id = ?::uuid AND search_document_id = ?::uuid
+		`, teamID, document.SearchDocumentID).Row().Scan(&state)
+	}))
+	require.Equal(t, "not_required", state)
 
 	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{
 		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
@@ -426,6 +433,101 @@ func TestSearchReconciliationExcludesLifecycleTerminalEvidenceWithoutDocument(t 
 		RequestHash: "sha256:retract-lifecycle-reconciliation-missing",
 	})
 	require.NoError(t, err)
+
+	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 256,
+	})
+	require.NoError(t, err)
+	require.Empty(t, selected)
+
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+	})
+	require.NoError(t, err)
+	require.Zero(t, convergence.ExpectedDocuments)
+	require.Zero(t, convergence.DriftedDocuments)
+}
+
+func TestSearchReconciliationExcludesSupersededSourceRevisionWithoutDocument(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-source-revision")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-source-revision-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-source-revision", 2, "exact", "")
+	ledger := NewLedgerRepository(appDB, rls)
+	repo := NewSearchRepository(appDB, rls)
+	const sourceKey = "doc://search-reconciliation-source-revision"
+
+	first, err := ledger.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID,
+		IdempotencyKey: "search-reconciliation-source-revision-first",
+		RequestHash:    sha256Hex("source revision one"),
+		Evidence: []EvidenceInput{{
+			Content:                   "source revision one",
+			SourceKey:                 sourceKey,
+			SourceRevisionToken:       "rev-1",
+			SourceRevisionContentHash: sha256Hex("source revision one"),
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, first.Evidence, 1)
+
+	advanced, err := ledger.AdvanceSourceRevision(ctx, AdvanceSourceRevisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKey: sourceKey,
+		RevisionToken: "rev-2", ExpectedPreviousRevisionToken: "rev-1",
+		ContentHash: sha256Hex("source revision two"),
+	})
+	require.NoError(t, err)
+	require.Equal(t, first.Evidence[0].SourceID, advanced.SourceID)
+	require.NotEqual(t, first.Evidence[0].SourceRevisionID, advanced.SourceRevisionID)
+
+	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 256,
+	})
+	require.NoError(t, err)
+	require.Empty(t, selected)
+
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+	})
+	require.NoError(t, err)
+	require.Zero(t, convergence.ExpectedDocuments)
+	require.Zero(t, convergence.DriftedDocuments)
+}
+
+func TestSearchReconciliationExcludesSealedSpaceEvidenceWithoutDocument(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "search-reconciliation-sealed-space")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "search-reconciliation-sealed-space-owner")
+	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-sealed-space", 2, "exact", "")
+	ledger := NewLedgerRepository(appDB, rls)
+	repo := NewSearchRepository(appDB, rls)
+	space, err := NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamID), uuid.New())
+	require.NoError(t, err)
+	var generation int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT generation FROM memory_spaces WHERE id = ?::uuid`, space.ID).Row().Scan(&generation)
+	}))
+
+	ingest, err := ledger.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: space.ID.String(), SpaceGeneration: generation,
+		IdempotencyKey: "search-reconciliation-sealed-space",
+		RequestHash:    sha256Hex("sealed private evidence"),
+		Evidence:       []EvidenceInput{{Content: "sealed private evidence"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, ingest.Evidence, 1)
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE memory_spaces
+			SET generation = generation + 1, lifecycle_state = 'sealed', sealed_at = now(), updated_at = now()
+			WHERE id = ?::uuid AND team_id = ?::uuid AND generation = ? AND lifecycle_state = 'active'
+		`, space.ID, teamID, generation).Error
+	}))
 
 	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
 		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 256,
