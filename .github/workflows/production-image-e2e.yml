@@ -1,0 +1,708 @@
+name: Production image E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Production Dense-Mem image tag or digest"
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      image:
+        description: "Immutable preview or production image reference"
+        required: true
+        type: string
+      source_revision:
+        description: "Expected source revision for an automatic preview"
+        required: false
+        type: string
+        default: ""
+      main_revision:
+        description: "Expected tested main revision for an automatic preview"
+        required: false
+        type: string
+        default: ""
+      pull_request:
+        description: "Expected pull request number for an automatic preview"
+        required: false
+        type: string
+        default: ""
+      pull_request_author:
+        description: "Expected pull request author for an automatic preview"
+        required: false
+        type: string
+        default: ""
+      preview_run_id:
+        description: "Trusted preview publication workflow run ID"
+        required: false
+        type: string
+        default: ""
+      preview_run_attempt:
+        description: "Trusted preview publication workflow run attempt"
+        required: false
+        type: string
+        default: ""
+      caller_workflow:
+        description: "Trusted caller workflow path"
+        required: false
+        type: string
+        default: ""
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  pull-requests: read
+
+env:
+  E2E_REPOSITORY: ${{ github.repository }}
+
+jobs:
+  authorize:
+    name: Authorize and resolve production image
+    runs-on: docker-runner
+    timeout-minutes: 15
+    outputs:
+      authorized: ${{ steps.resolve.outputs.authorized }}
+      image: ${{ steps.resolve.outputs.image }}
+      digest: ${{ steps.resolve.outputs.digest }}
+      source_revision: ${{ steps.resolve.outputs.source_revision }}
+      source_repository: ${{ steps.resolve.outputs.source_repository }}
+      main_revision: ${{ steps.resolve.outputs.main_revision }}
+      exclusive_matrix: ${{ steps.matrix.outputs.exclusive_matrix }}
+      shared_matrix: ${{ steps.matrix.outputs.shared_matrix }}
+      shared_helpers: ${{ steps.matrix.outputs.shared_helpers }}
+    steps:
+      - name: Checkout trusted policy and registry
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          ref: main
+          path: .ci-policy
+          sparse-checkout: |
+            .github/scripts
+            scripts/e2e-scenarios.json
+            scripts/e2e-scenario-registry.mjs
+
+      - name: Install pinned regctl
+        shell: bash
+        env:
+          REGCTL_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
+        run: |
+          set -euo pipefail
+          export REGCTL_CONFIG="${RUNNER_TEMP}/regctl-config.json"
+          echo "REGCTL_CONFIG=${REGCTL_CONFIG}" >> "${GITHUB_ENV}"
+          curl -fsSL -o "${RUNNER_TEMP}/regctl" \
+            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
+          printf '%s  %s\n' "${REGCTL_SHA256}" "${RUNNER_TEMP}/regctl" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/regctl"
+          "${RUNNER_TEMP}/regctl" config set --docker-cred=false --docker-cert=false
+
+      - name: Log in to GHCR for metadata inspection
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: echo "${GITHUB_TOKEN}" | "${RUNNER_TEMP}/regctl" registry login ghcr.io -u "${GITHUB_ACTOR}" --pass-stdin
+
+      - name: Validate request authorization
+        id: request
+        uses: actions/github-script@v9
+        env:
+          IMAGE: ${{ inputs.image }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          MAIN_REVISION: ${{ inputs.main_revision }}
+          PULL_REQUEST: ${{ inputs.pull_request }}
+          PULL_REQUEST_AUTHOR: ${{ inputs.pull_request_author }}
+          PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
+          PREVIEW_RUN_ATTEMPT: ${{ inputs.preview_run_attempt }}
+          CALLER_WORKFLOW: ${{ inputs.caller_workflow }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const policy = require("./.ci-policy/.github/scripts/image-release-policy.cjs");
+            const repository = process.env.REPOSITORY;
+            const image = process.env.IMAGE;
+            let decision;
+            let sourceRepository = repository;
+            const automaticCall = context.eventName === "pull_request_target" &&
+              process.env.CALLER_WORKFLOW === ".github/workflows/pr-test-image.yml";
+            if (context.eventName === "workflow_dispatch") {
+              decision = policy.decideManualProductionE2E({
+                actor: context.actor,
+                triggeringActor: process.env.TRIGGERING_ACTOR,
+                ref: context.ref,
+                image,
+                repository,
+              });
+            } else if (automaticCall) {
+              const pullNumber = Number(process.env.PULL_REQUEST);
+              const { data: pull } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pullNumber,
+              });
+              sourceRepository = pull.head?.repo?.full_name || repository;
+              const { data: main } = await github.rest.repos.getBranch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: "main",
+              });
+              const workflowRun = await (async () => {
+                  try {
+                    const { data: run } = await github.rest.actions.getWorkflowRun({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      run_id: Number(process.env.PREVIEW_RUN_ID),
+                    });
+                    return run;
+                  } catch (error) {
+                    if (error.status === 404) return null;
+                    throw error;
+                  }
+              })();
+              const workflowJobs = workflowRun ? await github.paginate(
+                github.rest.actions.listJobsForWorkflowRun,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: Number(process.env.PREVIEW_RUN_ID),
+                  per_page: 100,
+                },
+              ) : [];
+              const publishJob = workflowJobs.find((job) =>
+                job.name === "Publish trusted preview" &&
+                job.run_id === Number(process.env.PREVIEW_RUN_ID) &&
+                job.run_attempt === Number(process.env.PREVIEW_RUN_ATTEMPT),
+              ) || null;
+              decision = policy.decideAutomaticProductionE2E({
+                actor: context.actor,
+                pullRequestAuthor: pull.user?.login,
+                pullRequestNumber: pull.number,
+                pullRequestState: pull.state,
+                pullRequestBase: pull.base?.ref,
+                hasPreviewLabel: pull.labels.some((label) => label.name === policy.PREVIEW_LABEL),
+                currentHead: pull.head?.sha,
+                expectedHead: process.env.SOURCE_REVISION,
+                currentMain: main.commit?.sha,
+                expectedMain: process.env.MAIN_REVISION,
+                previewRunId: process.env.PREVIEW_RUN_ID,
+                previewRunAttempt: process.env.PREVIEW_RUN_ATTEMPT,
+                workflowRun,
+                publishJob,
+                image,
+                repository,
+              });
+            } else {
+              decision = { authorized: false, reason: `unsupported event: ${context.eventName}` };
+            }
+            if (!decision.authorized) {
+              core.setFailed(decision.reason);
+              return;
+            }
+            core.setOutput("authorized", "true");
+            core.setOutput("source_repository", sourceRepository);
+
+      - name: Resolve and verify immutable production metadata
+        id: resolve
+        if: steps.request.outcome == 'success'
+        shell: bash
+        env:
+          IMAGE: ${{ inputs.image }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          MAIN_REVISION: ${{ inputs.main_revision }}
+          SOURCE_REPOSITORY: ${{ steps.request.outputs.source_repository }}
+          PULL_REQUEST: ${{ inputs.pull_request }}
+          PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
+          PREVIEW_RUN_ATTEMPT: ${{ inputs.preview_run_attempt }}
+          CALLER_WORKFLOW: ${{ inputs.caller_workflow }}
+          REGCTL_BIN: ${{ runner.temp }}/regctl
+        run: |
+          set -euo pipefail
+          repository="${GITHUB_REPOSITORY,,}"
+          source_repository="${SOURCE_REPOSITORY:-${repository}}"
+          [[ "${source_repository}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          image="${IMAGE}"
+          resolved_image="${image}"
+          if [[ -n "${CALLER_WORKFLOW}" ]]; then
+            [[ "${PULL_REQUEST}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${SOURCE_REVISION}" =~ ^[0-9a-f]{40}$ ]]
+            [[ "${MAIN_REVISION}" =~ ^[0-9a-f]{40}$ ]]
+            [[ "${PREVIEW_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${PREVIEW_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+            preview_digest="$("${REGCTL_BIN}" manifest head "${image}")"
+            [[ "${preview_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            .ci-policy/.github/scripts/oci-image.sh validate-preview \
+              "${image%@*}@${preview_digest}" "${PULL_REQUEST}" "${SOURCE_REVISION}" "${MAIN_REVISION}" \
+              "${PREVIEW_RUN_ID}" "${PREVIEW_RUN_ATTEMPT}"
+            resolved_image="${image%@*}@${preview_digest}"
+          fi
+          receipt="$(.ci-policy/.github/scripts/oci-image.sh production-receipt "${resolved_image}" "${GITHUB_REPOSITORY}")"
+          IFS=$'\t' read -r digest source_revision <<<"${receipt}"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${source_revision}" =~ ^[0-9a-f]{40}$ ]]
+          if [[ -n "${CALLER_WORKFLOW}" && "${source_revision}" != "${SOURCE_REVISION}" ]]; then
+            echo "image revision does not match the fenced preview head" >&2
+            exit 1
+          fi
+          main_revision="${MAIN_REVISION:-${source_revision}}"
+          {
+            echo "authorized=true"
+            echo "image=${image%@*}"
+            echo "digest=${digest}"
+            echo "source_revision=${source_revision}"
+            echo "source_repository=${source_repository}"
+            echo "main_revision=${main_revision}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout exact tested scenario registry
+        id: source
+        if: steps.resolve.outcome == 'success'
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ steps.resolve.outputs.source_revision }}
+          repository: ${{ steps.resolve.outputs.source_repository }}
+          path: .ci-source
+          sparse-checkout: |
+            scripts/e2e-scenarios.json
+
+      - name: Resolve exact-source scenario matrix
+        id: matrix
+        if: steps.source.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry="${GITHUB_WORKSPACE}/.ci-source/scripts/e2e-scenarios.json"
+          [[ -f "${registry}" ]]
+          export DENSE_MEM_E2E_SCENARIO_REGISTRY="${registry}"
+          exclusive_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix exclusive)"
+          shared_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix shared_team)"
+          shared_helpers="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --helpers shared_team)"
+          {
+            echo "exclusive_matrix=${exclusive_matrix}"
+            echo "shared_matrix=${shared_matrix}"
+            echo "shared_helpers=${shared_helpers}"
+          } >> "${GITHUB_OUTPUT}"
+
+  prechecks:
+    name: Rootless controller and PostgreSQL prechecks
+    needs: authorize
+    if: needs.authorize.outputs.authorized == 'true'
+    runs-on: rootless-docker
+    timeout-minutes: 30
+    steps:
+      - name: Validate rootless host controller
+        shell: bash
+        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+
+      - name: Checkout trusted controller contract test
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          ref: main
+          path: .ci-controller-contract
+          sparse-checkout: |
+            scripts/e2e-docker-proxy.mjs
+            scripts/e2e-runtime-adapter.mjs
+            scripts/e2e-scenario-registry.mjs
+            scripts/e2e-host-controller.sh
+            scripts/e2e-host-controller-stack.sh
+            scripts/e2e-host-controller-runtime.sh
+            tests/uat/e2e_host_controller_real.sh
+
+      - name: Exercise real rootless controller contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          DENSE_MEM_E2E_REAL_DOCKER_TESTS=1 \
+            DENSE_MEM_CI_TEST_REPOSITORY="${GITHUB_REPOSITORY}-controller-contract" \
+            DENSE_MEM_CI_CONTROLLER="${HOME}/dense-mem-ci/e2e-stack.sh" \
+            bash .ci-controller-contract/tests/uat/e2e_host_controller_real.sh
+
+      - name: Checkout exact source revision
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          repository: ${{ needs.authorize.outputs.source_repository }}
+
+      - name: Run disposable PostgreSQL regressions in the trusted controller
+        shell: bash
+        env:
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+        run: |
+          set -euo pipefail
+          "${HOME}/dense-mem-ci/e2e-stack.sh" precheck \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${SOURCE_REVISION}" \
+            "${{ needs.authorize.outputs.digest }}" "${GITHUB_WORKSPACE}"
+
+  stale-cleanup:
+    name: Reclaim stale CI resources
+    needs: authorize
+    if: always()
+    runs-on: rootless-docker
+    timeout-minutes: 15
+    env:
+      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Validate rootless host controller
+        shell: bash
+        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+
+      - name: Reclaim stale stacks and leases
+        shell: bash
+        run: "${HOME}/dense-mem-ci/e2e-stack.sh stale-cleanup 86400"
+
+  acquire:
+    name: Acquire immutable image lease
+    needs: [authorize, prechecks, stale-cleanup]
+    if: needs.prechecks.result == 'success' && needs.stale-cleanup.result == 'success'
+    runs-on: rootless-docker
+    timeout-minutes: 15
+    outputs:
+      lease: ${{ steps.acquire.outputs.lease }}
+    env:
+      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Validate rootless host controller
+        shell: bash
+        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+
+      - name: Checkout trusted authorization policy
+        if: inputs.caller_workflow != ''
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          ref: main
+          path: .ci-policy
+          sparse-checkout: |
+            .github/scripts/image-release-policy.cjs
+
+      - name: Revalidate PR authorization immediately before acquire
+        if: inputs.caller_workflow != ''
+        uses: actions/github-script@v9
+        env:
+          IMAGE: ${{ needs.authorize.outputs.image }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          MAIN_REVISION: ${{ needs.authorize.outputs.main_revision }}
+          PULL_REQUEST: ${{ inputs.pull_request }}
+          PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
+          PREVIEW_RUN_ATTEMPT: ${{ inputs.preview_run_attempt }}
+          CALLER_WORKFLOW: ${{ inputs.caller_workflow }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const policy = require("./.ci-policy/.github/scripts/image-release-policy.cjs");
+            const pullNumber = Number(process.env.PULL_REQUEST);
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pullNumber,
+            });
+            const { data: main } = await github.rest.repos.getBranch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              branch: "main",
+            });
+            let workflowRun = null;
+            try {
+              const { data: run } = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: Number(process.env.PREVIEW_RUN_ID),
+              });
+              workflowRun = run;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            const workflowJobs = workflowRun ? await github.paginate(
+              github.rest.actions.listJobsForWorkflowRun,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: Number(process.env.PREVIEW_RUN_ID),
+                per_page: 100,
+              },
+            ) : [];
+            const publishJob = workflowJobs.find((job) =>
+              job.name === "Publish trusted preview" &&
+              job.run_id === Number(process.env.PREVIEW_RUN_ID) &&
+              job.run_attempt === Number(process.env.PREVIEW_RUN_ATTEMPT),
+            ) || null;
+            const decision = policy.decideAutomaticProductionE2E({
+              actor: context.actor,
+              pullRequestAuthor: pull.user?.login,
+              pullRequestNumber: pull.number,
+              pullRequestState: pull.state,
+              pullRequestBase: pull.base?.ref,
+              hasPreviewLabel: pull.labels.some((label) => label.name === policy.PREVIEW_LABEL),
+              currentHead: pull.head?.sha,
+              expectedHead: process.env.SOURCE_REVISION,
+              currentMain: main.commit?.sha,
+              expectedMain: process.env.MAIN_REVISION,
+              previewRunId: process.env.PREVIEW_RUN_ID,
+              previewRunAttempt: process.env.PREVIEW_RUN_ATTEMPT,
+              workflowRun,
+              publishJob,
+              image: process.env.IMAGE,
+              repository: process.env.REPOSITORY,
+            });
+            if (!decision.authorized) core.setFailed(decision.reason);
+
+      - name: Pull candidate and create digest lease
+        id: acquire
+        shell: bash
+        env:
+          IMAGE: ${{ needs.authorize.outputs.image }}
+          DIGEST: ${{ needs.authorize.outputs.digest }}
+        run: |
+          set -euo pipefail
+          lease="$("${HOME}/dense-mem-ci/e2e-stack.sh" acquire "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${DIGEST}")"
+          printf 'lease=%s\n' "${lease}" >> "${GITHUB_OUTPUT}"
+
+  exclusive:
+    name: Exclusive ${{ matrix.name }}
+    needs: [authorize, acquire]
+    if: needs.acquire.result == 'success'
+    strategy:
+      fail-fast: true
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.authorize.outputs.exclusive_matrix) }}
+    uses: ./.github/workflows/production-e2e-scenario.yml
+    with:
+      image: ${{ needs.authorize.outputs.image }}
+      digest: ${{ needs.authorize.outputs.digest }}
+      source_revision: ${{ needs.authorize.outputs.source_revision }}
+      source_repository: ${{ needs.authorize.outputs.source_repository }}
+      scenario: ${{ matrix.name }}
+      phase: exclusive
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      helper_profiles: ${{ toJSON(matrix.helper_profiles) }}
+      playwright: ${{ matrix.playwright }}
+      manifest: ""
+    secrets: inherit
+
+  shared-start:
+    name: Start shared production stack
+    needs: [authorize, acquire, exclusive]
+    if: needs.exclusive.result == 'success'
+    runs-on: rootless-docker
+    timeout-minutes: 20
+    outputs:
+      manifest: ${{ steps.start.outputs.manifest }}
+    env:
+      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Validate rootless host controller
+        shell: bash
+        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+
+      - name: Checkout exact source revision for helper provisioning
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ needs.authorize.outputs.source_revision }}
+          repository: ${{ needs.authorize.outputs.source_repository }}
+
+      - name: Start one shared stack
+        id: start
+        shell: bash
+        env:
+          IMAGE: ${{ needs.authorize.outputs.image }}
+          DIGEST: ${{ needs.authorize.outputs.digest }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          HELPERS: ${{ needs.authorize.outputs.shared_helpers }}
+        run: |
+          set -euo pipefail
+          helpers="$(printf '%s' "${HELPERS}" | node -e 'const fs=require("node:fs"); const values=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(values.join(","));')"
+          manifest="$("${HOME}/dense-mem-ci/e2e-stack.sh" start "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" shared shared "${IMAGE}" "${DIGEST}" "${SOURCE_REVISION}" "${helpers}" "${GITHUB_WORKSPACE}")"
+          printf 'manifest=%s\n' "${manifest}" >> "${GITHUB_OUTPUT}"
+
+  shared:
+    name: Shared ${{ matrix.name }}
+    needs: [authorize, acquire, shared-start]
+    if: needs.shared-start.result == 'success'
+    strategy:
+      fail-fast: true
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.authorize.outputs.shared_matrix) }}
+    uses: ./.github/workflows/production-e2e-scenario.yml
+    with:
+      image: ${{ needs.authorize.outputs.image }}
+      digest: ${{ needs.authorize.outputs.digest }}
+      source_revision: ${{ needs.authorize.outputs.source_revision }}
+      source_repository: ${{ needs.authorize.outputs.source_repository }}
+      scenario: ${{ matrix.name }}
+      phase: shared
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      helper_profiles: ${{ toJSON(matrix.helper_profiles) }}
+      playwright: ${{ matrix.playwright }}
+      manifest: ${{ needs.shared-start.outputs.manifest }}
+    secrets: inherit
+
+  shared-stop:
+    name: Stop shared production stack
+    needs: [shared-start, shared]
+    if: always() && needs.shared-start.result == 'success'
+    runs-on: rootless-docker
+    timeout-minutes: 15
+    env:
+      MANIFEST: ${{ needs.shared-start.outputs.manifest }}
+    steps:
+      - name: Validate rootless host controller
+        shell: bash
+        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+
+      - name: Stop exact shared project
+        shell: bash
+        run: |
+          set -euo pipefail
+          project="$(node -e 'const value=JSON.parse(process.env.MANIFEST); process.stdout.write(value.compose_project);')"
+          "${HOME}/dense-mem-ci/e2e-stack.sh" stop "${project}"
+
+  release:
+    name: Release image lease
+    needs: [authorize, acquire, exclusive, shared-start, shared, shared-stop]
+    if: always() && needs.acquire.result == 'success' && needs.acquire.outputs.lease != ''
+    runs-on: rootless-docker
+    timeout-minutes: 15
+    steps:
+      - name: Validate rootless host controller
+        shell: bash
+        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+
+      - name: Release exact digest lease
+        shell: bash
+        env:
+          LEASE: ${{ needs.acquire.outputs.lease }}
+        run: '${HOME}/dense-mem-ci/e2e-stack.sh release "${LEASE}"'
+
+  cleanup-run:
+    name: Remove workflow run directory
+    needs: [authorize, prechecks, stale-cleanup, acquire, exclusive, shared-start, shared, shared-stop, release]
+    if: always()
+    runs-on: rootless-docker
+    timeout-minutes: 15
+    steps:
+      - name: Validate rootless host controller
+        shell: bash
+        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
+
+      - name: Remove exact run directory
+        shell: bash
+        run: '${HOME}/dense-mem-ci/e2e-stack.sh cleanup-run "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}"'
+
+  report:
+    name: Aggregate production E2E results
+    needs: [authorize, prechecks, stale-cleanup, acquire, exclusive, shared-start, shared, shared-stop, release, cleanup-run]
+    if: always()
+    runs-on: docker-runner
+    timeout-minutes: 15
+    steps:
+      - name: Download bounded scenario artifacts
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: dense-mem-e2e-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/dense-mem-e2e-results
+
+      - name: Publish workflow summary
+        shell: bash
+        env:
+          AUTH_RESULT: ${{ needs.authorize.result }}
+          PRECHECK_RESULT: ${{ needs.prechecks.result }}
+          STALE_CLEANUP_RESULT: ${{ needs.stale-cleanup.result }}
+          ACQUIRE_RESULT: ${{ needs.acquire.result }}
+          EXCLUSIVE_RESULT: ${{ needs.exclusive.result }}
+          SHARED_START_RESULT: ${{ needs.shared-start.result }}
+          SHARED_RESULT: ${{ needs.shared.result }}
+          SHARED_STOP_RESULT: ${{ needs.shared-stop.result }}
+          RELEASE_RESULT: ${{ needs.release.result }}
+          RUN_CLEANUP_RESULT: ${{ needs.cleanup-run.result }}
+          IMAGE: ${{ needs.authorize.outputs.image }}
+          DIGEST: ${{ needs.authorize.outputs.digest }}
+          SOURCE_REVISION: ${{ needs.authorize.outputs.source_revision }}
+          EXCLUSIVE_MATRIX: ${{ needs.authorize.outputs.exclusive_matrix }}
+          SHARED_MATRIX: ${{ needs.authorize.outputs.shared_matrix }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Production-image E2E"
+            echo
+            echo "- Image: \`${IMAGE:-unresolved}\`"
+            echo "- Digest: \`${DIGEST:-unresolved}\`"
+            echo "- Source revision: \`${SOURCE_REVISION:-unresolved}\`"
+            echo
+            echo "| Phase | Result |"
+            echo "| --- | --- |"
+            echo "| Authorization | ${AUTH_RESULT} |"
+            echo "| Controller/PostgreSQL prechecks | ${PRECHECK_RESULT} |"
+            echo "| Stale CI cleanup | ${STALE_CLEANUP_RESULT} |"
+            echo "| Image lease | ${ACQUIRE_RESULT} |"
+            echo "| Exclusive matrix | ${EXCLUSIVE_RESULT} |"
+            echo "| Shared stack start | ${SHARED_START_RESULT} |"
+            echo "| Shared matrix | ${SHARED_RESULT} |"
+            echo "| Shared cleanup | ${SHARED_STOP_RESULT} |"
+            echo "| Image release | ${RELEASE_RESULT} |"
+            echo "| Run directory cleanup | ${RUN_CLEANUP_RESULT} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          {
+            echo
+            echo "### Scenario results"
+            echo
+            echo "| Scenario | Result |"
+            echo "| --- | --- |"
+            mkdir -p "${RUNNER_TEMP}/dense-mem-e2e-results"
+            exclusive_matrix="${EXCLUSIVE_MATRIX:-}"
+            shared_matrix="${SHARED_MATRIX:-}"
+            [[ -n "${exclusive_matrix}" ]] || exclusive_matrix='{"include":[]}'
+            [[ -n "${shared_matrix}" ]] || shared_matrix='{"include":[]}'
+            node - "${RUNNER_TEMP}/dense-mem-e2e-results" "${exclusive_matrix}" "${shared_matrix}" "${EXCLUSIVE_RESULT}" "${SHARED_RESULT}" "${SHARED_START_RESULT}" "${SHARED_STOP_RESULT}" <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const root = process.argv[2];
+          const exclusive = JSON.parse(process.argv[3]).include || [];
+          const shared = JSON.parse(process.argv[4]).include || [];
+          const exclusiveResult = process.argv[5];
+          const sharedResult = process.argv[6];
+          const sharedStartResult = process.argv[7];
+          const sharedStopResult = process.argv[8];
+          const files = new Map(fs.readdirSync(root).filter((name) => name.endsWith(".status")).map((file) => [
+            file.replace(/^dense-mem-e2e-/, "").replace(/\.status$/, ""),
+            fs.readFileSync(path.join(root, file), "utf8").trim(),
+          ]));
+          const rows = [
+            ...exclusive.map(({ name }) => [name, "exclusive", exclusiveResult]),
+            ...shared.map(({ name }) => [name, "shared", sharedResult]),
+          ];
+          for (const [scenario, phase, phaseResult] of rows) {
+            const result = files.get(scenario);
+            let display;
+            if (result !== undefined) {
+              if (result !== "0") display = `failed (${result || "unknown"})`;
+              else if (phase === "shared" && sharedStopResult !== "success") display = "passed (cleanup failed)";
+              else display = "passed";
+            }
+            else if (phaseResult === "success") display = "unavailable (no status artifact)";
+            else if (phase === "shared" && sharedStartResult !== "success") display = `skipped (${sharedStartResult || "unknown"})`;
+            else display = `skipped (${phaseResult || "unknown"})`;
+            process.stdout.write(`| ${scenario} | ${display} |\n`);
+          }
+          if (rows.length === 0) process.stdout.write("| unavailable | no scenario registry output |\n");
+          NODE
+          } >> "${GITHUB_STEP_SUMMARY}"

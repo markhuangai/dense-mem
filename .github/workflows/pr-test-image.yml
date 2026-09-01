@@ -289,7 +289,6 @@ jobs:
         needs.build.result == 'success'
       }}
     permissions:
-      actions: read
       contents: read
       packages: write
       pull-requests: write
@@ -465,6 +464,32 @@ jobs:
               issue_number: pullNumber,
               body,
             });
+
+  production-e2e:
+    name: Run production-image E2E
+    needs: [resolve, build, publish]
+    if: >-
+      ${{
+        needs.resolve.outputs.should_build == 'true' &&
+        needs.build.result == 'success' &&
+        needs.publish.result == 'success'
+      }}
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+      pull-requests: read
+    uses: ./.github/workflows/production-image-e2e.yml
+    with:
+      image: ghcr.io/${{ github.repository }}:test-${{ needs.resolve.outputs.pr_number }}
+      source_revision: ${{ needs.resolve.outputs.head_sha }}
+      main_revision: ${{ needs.resolve.outputs.main_sha }}
+      pull_request: ${{ needs.resolve.outputs.pr_number }}
+      pull_request_author: ${{ github.event.pull_request.user.login }}
+      preview_run_id: ${{ github.run_id }}
+      preview_run_attempt: ${{ github.run_attempt }}
+      caller_workflow: .github/workflows/pr-test-image.yml
+    secrets: inherit
 
   resolve-failure:
     name: Report controller failure

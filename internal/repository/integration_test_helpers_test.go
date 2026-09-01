@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -88,26 +89,76 @@ func setupLedgerRepositoryDSN(t *testing.T) (string, func()) {
 	}
 
 	ctx := context.Background()
-	container, err := tcpostgres.Run(ctx,
-		"pgvector/pgvector:0.8.2-pg18-trixie",
+	containerOptions := []testcontainers.ContainerCustomizer{
 		tcpostgres.WithDatabase("testdb"),
 		tcpostgres.WithUsername("testuser"),
 		tcpostgres.WithPassword("testpass"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second),
+				WithStartupTimeout(30 * time.Second),
 		),
-	)
+	}
+	containerOptions = append(containerOptions, precheckContainerLabels()...)
+	containerOptions = append(containerOptions, precheckNetworkOptions()...)
+	container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", containerOptions...)
 	if err != nil {
 		t.Fatalf("start Postgres test container: %v", err)
 	}
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
+	dsn, err := postgresContainerDSN(ctx, container)
 	if err != nil {
 		_ = container.Terminate(ctx)
 		t.Fatalf("get Postgres test container DSN: %v", err)
 	}
 	return dsn, func() { _ = container.Terminate(ctx) }
+}
+
+func postgresContainerDSN(ctx context.Context, container *tcpostgres.PostgresContainer) (string, error) {
+	host := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"))
+	if host == "" {
+		return container.ConnectionString(ctx, "sslmode=disable")
+	}
+	connectionURL := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword("testuser", "testpass"),
+		Host:   "postgres:5432",
+		Path:   "/testdb",
+	}
+	query := connectionURL.Query()
+	query.Set("sslmode", "disable")
+	connectionURL.RawQuery = query.Encode()
+	return connectionURL.String(), nil
+}
+
+func precheckContainerLabels() []testcontainers.ContainerCustomizer {
+	contract := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_CONTRACT"))
+	repository := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_REPOSITORY"))
+	runID := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_RUN_ID"))
+	attempt := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_RUN_ATTEMPT"))
+	project := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_PROJECT"))
+	imageDigest := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_IMAGE_DIGEST"))
+	if contract == "" || repository == "" || runID == "" || attempt == "" || project == "" || imageDigest == "" {
+		return nil
+	}
+	return []testcontainers.ContainerCustomizer{testcontainers.WithLabels(map[string]string{
+		"io.dense-mem.ci.contract":     contract,
+		"io.dense-mem.ci.repository":   repository,
+		"io.dense-mem.ci.run-id":       runID,
+		"io.dense-mem.ci.run-attempt":  attempt,
+		"io.dense-mem.ci.phase":        "precheck",
+		"io.dense-mem.ci.scenario":     "precheck",
+		"io.dense-mem.ci.image-digest": imageDigest,
+		"io.dense-mem.ci.created-at":   time.Now().UTC().Format(time.RFC3339),
+		"com.docker.compose.project":   project,
+	})}
+}
+
+func precheckNetworkOptions() []testcontainers.ContainerCustomizer {
+	networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK"))
+	if networkName == "" {
+		return nil
+	}
+	return []testcontainers.ContainerCustomizer{tcnetwork.WithNetworkName([]string{"postgres"}, networkName)}
 }
 
 func ledgerAppDSN(t *testing.T, dsn string) string {

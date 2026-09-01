@@ -1,26 +1,32 @@
-E2E_ALL_SCENARIOS=(
-  mcp_boundaries
-  mcp_sdk_parity
-  mcp_sdk_transport
-  oauth_provider_compatibility
-  mcp_oauth
-  private_memory_erasure
-  security_runtime
-  infrastructure_credentials
-  submission_terminal_errors
-  security_intake
-  synchronous_write
-  synchronous_write_primitives
-  identity_cleanup
-  community
-  conflict
-  conflict_queue
-  memory_space_backfill
-  memory_space_isolation
-  space_aware_recall
-  credential_memory_binding
-  full
-)
+E2E_ALL_SCENARIOS=()
+E2E_SCENARIO_REGISTRY_FILE="${DENSE_MEM_E2E_SCENARIO_REGISTRY:-${ROOT_DIR}/scripts/e2e-scenarios.json}"
+
+if [[ "${DENSE_MEM_E2E_SCENARIO:-}" == "all" && "${DENSE_MEM_E2E_LEGACY_ALL:-0}" != "1" ]]; then
+  exec "${ROOT_DIR}/scripts/e2e-local-production-all.sh"
+fi
+
+load_e2e_scenario_registry() {
+  local scenario
+  if [[ ! -f "$E2E_SCENARIO_REGISTRY_FILE" ]]; then
+    echo "Missing E2E scenario registry at ${E2E_SCENARIO_REGISTRY_FILE}." >&2
+    return 1
+  fi
+  export DENSE_MEM_E2E_SCENARIO_REGISTRY="$E2E_SCENARIO_REGISTRY_FILE"
+  E2E_ALL_SCENARIOS=()
+  while IFS= read -r scenario; do
+    E2E_ALL_SCENARIOS+=("$scenario")
+  done < <(node "${ROOT_DIR}/scripts/e2e-scenario-registry.mjs" --matrix all | node -e '
+const fs = require("node:fs");
+const matrix = JSON.parse(fs.readFileSync(0, "utf8"));
+for (const scenario of matrix.include || []) process.stdout.write(`${scenario.name}\n`);
+')
+  if [[ "${#E2E_ALL_SCENARIOS[@]}" -ne 21 ]]; then
+    echo "The E2E scenario registry must contain exactly 21 scenarios." >&2
+    return 1
+  fi
+}
+
+load_e2e_scenario_registry
 
 E2E_ALL_ACTIVE_PIDS=()
 

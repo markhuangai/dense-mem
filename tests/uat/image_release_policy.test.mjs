@@ -5,6 +5,8 @@ import policy from "../../.github/scripts/image-release-policy.cjs";
 
 const {
   compareContainsMain,
+  decideAutomaticProductionE2E,
+  decideManualProductionE2E,
   decidePreviewEvent,
   decideRcPreview,
   parseSuccessfulPolicyStatus,
@@ -19,6 +21,70 @@ const baseEvent = {
   triggerHeadMatches: true,
   actorPermission: "write",
 };
+
+test("manual production E2E authorization is owner and main gated", () => {
+  const allowed = decideManualProductionE2E({
+    actor: "Z-M-Huang",
+    triggeringActor: "Z-M-Huang",
+    ref: "refs/heads/main",
+    image: "ghcr.io/markhuangai/dense-mem:v2.6.1",
+    repository: "markhuangai/dense-mem",
+  });
+  assert.equal(allowed.authorized, true);
+  assert.equal(
+    decideManualProductionE2E({
+      actor: "other",
+      triggeringActor: "Z-M-Huang",
+      ref: "refs/heads/main",
+      image: "ghcr.io/markhuangai/dense-mem:v2.6.1",
+      repository: "markhuangai/dense-mem",
+    }).authorized,
+    false,
+  );
+});
+
+test("automatic production E2E authorization fences PR, head, main, label, and receipt", () => {
+  const input = {
+    actor: "Z-M-Huang",
+    pullRequestAuthor: "Z-M-Huang",
+    pullRequestNumber: 42,
+    pullRequestState: "open",
+    pullRequestBase: "main",
+    hasPreviewLabel: true,
+    currentHead: "a".repeat(40),
+    expectedHead: "a".repeat(40),
+    currentMain: "b".repeat(40),
+    expectedMain: "b".repeat(40),
+    previewRunId: "123",
+    previewRunAttempt: "1",
+    image: "ghcr.io/markhuangai/dense-mem:test-42",
+    repository: "markhuangai/dense-mem",
+    workflowRun: {
+      id: 123,
+      run_attempt: 1,
+      head_sha: "a".repeat(40),
+      event: "pull_request_target",
+      status: "in_progress",
+      conclusion: null,
+      path: ".github/workflows/pr-test-image.yml",
+      display_title: "PR test image: PR #42",
+    },
+    publishJob: {
+      name: "Publish trusted preview",
+      run_id: 123,
+      run_attempt: 1,
+      head_sha: "a".repeat(40),
+      status: "completed",
+      conclusion: "success",
+    },
+  };
+  assert.equal(decideAutomaticProductionE2E(input).authorized, true);
+  assert.equal(decideAutomaticProductionE2E({ ...input, currentHead: "c".repeat(40) }).authorized, false);
+  assert.equal(decideAutomaticProductionE2E({ ...input, hasPreviewLabel: false }).authorized, false);
+  assert.equal(decideAutomaticProductionE2E({ ...input, publishJob: { ...input.publishJob, conclusion: "failure" } }).authorized, false);
+  assert.equal(decideAutomaticProductionE2E({ ...input, workflowRun: { ...input.workflowRun, status: "completed", conclusion: "failure" } }).authorized, false);
+  assert.equal(decideAutomaticProductionE2E({ ...input, workflowRun: { ...input.workflowRun, head_sha: "c".repeat(40) } }).authorized, false);
+});
 
 function workflowJob(workflow, name) {
   const marker = `  ${name}:`;
@@ -47,6 +113,17 @@ test("OCI promotion avoids jq 1.6 reserved variable names", async () => {
   );
 
   assert.doesNotMatch(script, /\bas \$label\b/);
+});
+
+test("production image receipts require both platform production metadata", async () => {
+  const [script, dockerfile] = await Promise.all([
+    readFile(new URL("../../.github/scripts/oci-image.sh", import.meta.url), "utf8"),
+    readFile(new URL("../../Dockerfile", import.meta.url), "utf8"),
+  ]);
+  assert.match(script, /production_receipt\(\)/);
+  assert.match(script, /org\.opencontainers\.image\.variant.*production/);
+  assert.match(script, /production-receipt/);
+  assert.doesNotMatch(dockerfile, /FROM runtime-base AS e2e/);
 });
 
 test("prerelease publication waits for the staging migration rehearsal", async () => {

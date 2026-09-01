@@ -76,6 +76,74 @@ require_preview() {
 		"${run_attempt}"
 }
 
+validate_preview() {
+	local ref="$1"
+	local pull_number="$2"
+	local head_revision="$3"
+	local main_revision="$4"
+	local run_id="$5"
+	local run_attempt="$6"
+	local digest
+
+	digest="$("${REGCTL_BIN}" manifest head "${ref}")"
+	[[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "${ref} returned an invalid manifest digest"
+	require_preview \
+		"${ref%@*}@${digest}" \
+		"${pull_number}" \
+		"${head_revision}" \
+		"${main_revision}" \
+		"${run_id}" \
+		"${run_attempt}"
+}
+
+require_production() {
+	local ref="$1"
+	local repository="$2"
+	local resolved_digest="${3:-}"
+	local expected_source="https://github.com/${repository}"
+	local digest
+	local inspect_ref
+	local revision=""
+	local platform
+
+	if [[ -n "${resolved_digest}" ]]; then
+		digest="${resolved_digest}"
+	else
+		digest="$("${REGCTL_BIN}" manifest head "${ref}")"
+	fi
+	[[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "${ref} returned an invalid manifest digest"
+	inspect_ref="${ref%@*}@${digest}"
+	require_platforms "${inspect_ref}"
+	for platform in linux/amd64 linux/arm64; do
+		local platform_revision
+		platform_revision="$(${REGCTL_BIN} image inspect "${inspect_ref}" --platform "${platform}" --format '{{json .}}' | jq -er '.config.Labels["org.opencontainers.image.revision"]')" ||
+			fail "${ref} has no valid ${platform} revision label"
+		[[ "${platform_revision}" =~ ^[0-9a-f]{40}$ ]] || fail "${ref} has an invalid ${platform} revision label"
+		if [[ -z "${revision}" ]]; then
+			revision="${platform_revision}"
+		elif [[ "${revision}" != "${platform_revision}" ]]; then
+			fail "${ref} has platform revision drift"
+		fi
+		"${REGCTL_BIN}" image inspect "${inspect_ref}" --platform "${platform}" --format '{{json .}}' |
+			jq -e --arg expected_source "${expected_source}" '
+				.config.Labels["org.opencontainers.image.variant"] == "production" and
+				.config.Labels["org.opencontainers.image.source"] == $expected_source
+			' >/dev/null || fail "${ref} has invalid ${platform} production metadata"
+	done
+}
+
+production_receipt() {
+	local ref="$1"
+	local repository="$2"
+	local digest
+	local revision
+	digest="$("${REGCTL_BIN}" manifest head "${ref}")"
+	[[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "${ref} returned an invalid manifest digest"
+	require_production "${ref}" "${repository}" "${digest}"
+	revision="$(${REGCTL_BIN} image inspect "${ref%@*}@${digest}" --platform linux/amd64 --format '{{json .}}' | jq -er '.config.Labels["org.opencontainers.image.revision"]')"
+	printf '%s\t%s\n' "${digest}" "${revision}"
+}
+
 platform_layers() {
 	local ref="$1"
 	local platform="$2"
@@ -214,7 +282,8 @@ usage() {
 		"  $0 validate-preview REF PR HEAD MAIN RUN_ID RUN_ATTEMPT" \
 		"  $0 preview-receipt REF PR HEAD RUN_ID RUN_ATTEMPT" \
 		"  $0 publish-preview LAYOUT TARGET_REF PR HEAD MAIN RUN_ID RUN_ATTEMPT" \
-		"  $0 promote-preview SOURCE_REF TARGET_REF VERSION REVISION CREATED" >&2
+		"  $0 promote-preview SOURCE_REF TARGET_REF VERSION REVISION CREATED" \
+		"  $0 production-receipt REF REPOSITORY" >&2
 	exit 2
 }
 
@@ -223,7 +292,7 @@ require_tools
 case "${1:-}" in
 validate-preview)
 	[[ "$#" -eq 7 ]] || usage
-	require_preview "$2" "$3" "$4" "$5" "$6" "$7"
+	validate_preview "$2" "$3" "$4" "$5" "$6" "$7"
 	;;
 publish-preview)
 	[[ "$#" -eq 8 ]] || usage
@@ -236,6 +305,10 @@ preview-receipt)
 promote-preview)
 	[[ "$#" -eq 6 ]] || usage
 	promote_preview "$2" "$3" "$4" "$5" "$6"
+	;;
+production-receipt)
+	[[ "$#" -eq 3 ]] || usage
+	production_receipt "$2" "$3"
 	;;
 *)
 	usage

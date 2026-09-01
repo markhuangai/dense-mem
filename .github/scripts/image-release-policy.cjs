@@ -3,6 +3,7 @@
 const PREVIEW_LABEL = "deploy-test-image";
 const POLICY_STATUS_CONTEXT = "PR test image policy";
 const TRUSTED_LABEL_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+const PRODUCTION_E2E_ACTOR = "Z-M-Huang";
 
 function normalizeLabelName(label) {
   return typeof label === "string" ? label : label?.name;
@@ -10,6 +11,102 @@ function normalizeLabelName(label) {
 
 function hasLabel(labels, name) {
   return labels.some((label) => normalizeLabelName(label) === name);
+}
+
+function validateProductionImageReference(image, repository) {
+  if (typeof repository !== "string" || repository.trim() !== repository || repository.length === 0) {
+    return { valid: false, reason: "the image repository is invalid" };
+  }
+  const expected = `ghcr.io/${repository.toLowerCase()}`;
+  if (typeof image !== "string" || image.trim() !== image || image.length === 0) {
+    return { valid: false, reason: "the image reference is empty or contains whitespace" };
+  }
+  if (!image.startsWith(`${expected}:`) && !image.startsWith(`${expected}@`)) {
+    return { valid: false, reason: "the image is outside the Dense-Mem GHCR repository" };
+  }
+  const tag = image.slice(expected.length + 1);
+  if (image.startsWith(`${expected}:`) && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(tag)) {
+    return { valid: false, reason: "the image tag is invalid" };
+  }
+  if (image.startsWith(`${expected}@`) && !/^sha256:[0-9a-f]{64}$/.test(tag)) {
+    return { valid: false, reason: "the image digest is invalid" };
+  }
+  return { valid: true, repository: expected, reference: image };
+}
+
+function decideManualProductionE2E({ actor, triggeringActor, ref, image, repository }) {
+  const imageDecision = validateProductionImageReference(image, repository);
+  if (!imageDecision.valid) return { authorized: false, reason: imageDecision.reason };
+  if (actor !== PRODUCTION_E2E_ACTOR || triggeringActor !== PRODUCTION_E2E_ACTOR) {
+    return { authorized: false, reason: "manual production E2E is restricted to the owner" };
+  }
+  if (ref !== "refs/heads/main") {
+    return { authorized: false, reason: "manual production E2E must use the main workflow definition" };
+  }
+  return { authorized: true, reason: "", ...imageDecision };
+}
+
+function decideAutomaticProductionE2E({
+  actor,
+  pullRequestAuthor,
+  pullRequestNumber,
+  pullRequestState,
+  pullRequestBase,
+  hasPreviewLabel,
+  currentHead,
+  expectedHead,
+  currentMain,
+  expectedMain,
+  previewRunId,
+  previewRunAttempt,
+  workflowRun,
+  publishJob,
+  image,
+  repository,
+}) {
+  const imageDecision = validateProductionImageReference(image, repository);
+  if (!imageDecision.valid) return { authorized: false, reason: imageDecision.reason };
+  if (actor !== PRODUCTION_E2E_ACTOR || pullRequestAuthor !== PRODUCTION_E2E_ACTOR) {
+    return { authorized: false, reason: "automatic production E2E is restricted to the owner PR" };
+  }
+  if (pullRequestState !== "open" || pullRequestBase !== "main") {
+    return { authorized: false, reason: "the pull request is not open against main" };
+  }
+  if (!hasPreviewLabel) return { authorized: false, reason: "the preview label is absent" };
+  if (currentHead !== expectedHead || currentMain !== expectedMain) {
+    return { authorized: false, reason: "the preview or main revision advanced" };
+  }
+  if (!/^[1-9][0-9]*$/.test(String(previewRunId)) || !/^[1-9][0-9]*$/.test(String(previewRunAttempt))) {
+    return { authorized: false, reason: "the preview workflow receipt is invalid" };
+  }
+  if (
+    !workflowRun ||
+    workflowRun.id !== Number(previewRunId) ||
+    workflowRun.run_attempt !== Number(previewRunAttempt) ||
+    workflowRun.head_sha !== expectedHead ||
+    workflowRun.event !== "pull_request_target" ||
+    workflowRun.path !== ".github/workflows/pr-test-image.yml" ||
+    workflowRun.display_title !== `PR test image: PR #${pullRequestNumber}`
+  ) {
+    return { authorized: false, reason: "the preview workflow run receipt is invalid" };
+  }
+  const workflowStillPublishing = workflowRun.status === "in_progress" && workflowRun.conclusion == null;
+  const workflowCompletedSuccessfully = workflowRun.status === "completed" && workflowRun.conclusion === "success";
+  if (!workflowStillPublishing && !workflowCompletedSuccessfully) {
+    return { authorized: false, reason: "the preview workflow run receipt is invalid" };
+  }
+  if (
+    !publishJob ||
+    publishJob.name !== "Publish trusted preview" ||
+    publishJob.run_id !== Number(previewRunId) ||
+    publishJob.run_attempt !== Number(previewRunAttempt) ||
+    publishJob.head_sha !== expectedHead ||
+    publishJob.status !== "completed" ||
+    publishJob.conclusion !== "success"
+  ) {
+    return { authorized: false, reason: "the preview publication job receipt is invalid" };
+  }
+  return { authorized: true, reason: "", ...imageDecision };
 }
 
 function decidePreviewEvent({
@@ -295,9 +392,12 @@ async function resolveRcPreview({ github, context, mainCommit }) {
 }
 
 module.exports = {
+  PRODUCTION_E2E_ACTOR,
   POLICY_STATUS_CONTEXT,
   PREVIEW_LABEL,
   compareContainsMain,
+  decideAutomaticProductionE2E,
+  decideManualProductionE2E,
   decidePreviewEvent,
   decideRcPreview,
   parseSuccessfulPolicyStatus,
@@ -305,4 +405,5 @@ module.exports = {
   resolvePullRequestEvent,
   resolveRcPreview,
   selectMergedPull,
+  validateProductionImageReference,
 };

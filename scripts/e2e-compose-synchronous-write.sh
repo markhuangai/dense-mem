@@ -26,7 +26,7 @@ const contents = `${marker}
 services:
   server:
     build:
-      target: e2e
+      target: production
     depends_on:
       synchronous-write-provider:
         condition: service_healthy
