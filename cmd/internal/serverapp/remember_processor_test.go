@@ -255,6 +255,32 @@ func TestRememberProcessorWaiterReplaysWithoutProcessing(t *testing.T) {
 	require.Empty(t, base.failure.Attempt.AttemptID, "a distributed waiter must not run a second processing attempt")
 }
 
+func TestRememberProcessorPreservesCompletedResultWhenLockCleanupFails(t *testing.T) {
+	attemptID := "77777777-7777-7777-7777-777777777777"
+	ledger := &rememberFailureLedgerStub{load: &repository.RememberAttempt{
+		AttemptID: attemptID, RequestHash: "request-hash", ContractVersion: domain.ContractVersion, Outcome: "completed",
+		PublicResult: map[string]any{
+			"contract_version": domain.ContractVersion, "submission_id": attemptID,
+			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
+			"evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+		},
+	}}
+	cleanupErr := errors.New("lock cleanup failed")
+	logger := &rememberProcessorLogCapture{}
+	locker := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: ledger, lockErr: cleanupErr}
+	processor := &rememberSynchronousProcessor{ledger: locker, logger: logger}
+
+	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	require.Equal(t, attemptID, status.SubmissionID)
+	require.Equal(t, "completed", status.ProcessingState)
+	require.Equal(t, []string{"remember_idempotency_lock_cleanup_failed"}, logger.warns)
+}
+
 func TestRememberProcessorFailureProjectsEverySubmittedItem(t *testing.T) {
 	ledger := &rememberFailureLedgerStub{}
 	processor := &rememberSynchronousProcessor{ledger: ledger}
@@ -426,11 +452,13 @@ type rememberWaitAwareLedgerStub struct {
 	*rememberFailureLedgerStub
 	waited    bool
 	lockCalls int
+	lockErr   error
 }
 
 func (s *rememberWaitAwareLedgerStub) WithRememberAttemptLock(_ context.Context, _, _, _ string, fn func(bool) error) error {
 	s.lockCalls++
-	return fn(s.waited)
+	callbackErr := fn(s.waited)
+	return errors.Join(callbackErr, s.lockErr)
 }
 
 type rememberProcessorLogCapture struct {

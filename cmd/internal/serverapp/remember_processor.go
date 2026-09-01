@@ -92,6 +92,10 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 			return ownerResult, ownerErr
 		}
 		if lockErr != nil {
+			if ownerResult != nil {
+				p.logRememberIdempotencyLockCleanupFailure(input, ownerResult.SubmissionID)
+				return ownerResult, nil
+			}
 			return ownerResult, lockErr
 		}
 		return ownerResult, nil
