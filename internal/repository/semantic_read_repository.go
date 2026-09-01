@@ -29,6 +29,8 @@ const (
 	maxSemanticGraphDepth     = 5
 )
 
+var ErrTraceRelationshipNotFound = errors.New("trace relationship not found")
+
 func (r *SemanticRepositoryImpl) TraceRelationship(
 	ctx context.Context,
 	input TraceRelationshipInput,
@@ -40,6 +42,9 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 	result := &RelationshipTraceResult{}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		relationship, err := loadTraceRelationship(ctx, tx, input.TeamID, input.RelationshipID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTraceRelationshipNotFound
+		}
 		if err != nil {
 			return err
 		}
@@ -357,6 +362,9 @@ func loadTraceRelationship(
 	}
 	defer rows.Close()
 	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
 		return nil, sql.ErrNoRows
 	}
 	var record RelationshipTraceRecord

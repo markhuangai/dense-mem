@@ -2,6 +2,7 @@ package skillpackservice
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -61,6 +62,9 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 			MaxFragmentContentRunes: 8000,
 		})
 		if err != nil {
+			if errors.Is(err, repository.ErrTraceRelationshipNotFound) {
+				return nil, sql.ErrNoRows
+			}
 			return nil, err
 		}
 		if trace.Relationship == nil {
