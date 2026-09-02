@@ -55,6 +55,7 @@ BEGIN
     END LOOP;
 END $$;
 
+SELECT set_config('app.tx_mode', 'system', true);
 UPDATE app_config
 SET value = regexp_replace(
         to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),

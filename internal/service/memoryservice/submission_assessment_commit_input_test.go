@@ -427,6 +427,52 @@ func TestSubmissionAssessmentCommitInputFencesAnchorOnlyKnownEvidence(t *testing
 	}
 }
 
+func TestSubmissionAssessmentCommitInputFencesAnchorForUnsupportedRelationship(t *testing.T) {
+	fixture := synchronousAssessmentFixture(t)
+	knownID := uuid.NewString()
+	knownOwnerID := uuid.NewString()
+	known := repository.SubmissionAssessmentKnownEvidence{
+		TeamID: fixture.input.Scope.TeamID, EvidenceID: knownID, FragmentID: knownID,
+		IngestID: uuid.NewString(), OwnerProfileID: knownOwnerID,
+		Content: "Alpha is the system described by the submitted sentence.", ContentHash: "known-anchor-unsupported-hash", Authority: "primary",
+		SpaceID: uuid.NewString(), SpaceGeneration: 1,
+	}
+	fixture.input.Snapshot.Evidence[0].Content = "It uses Beta."
+	relationship := fixture.input.Snapshot.Proposal["relationship_hints"].([]any)[0].(map[string]any)
+	relationship["known_evidence_ids"] = []any{knownID}
+	fixture.catalog.knownEvidence = []repository.SubmissionAssessmentKnownEvidence{known}
+	fixture.provider.response = func(request assessor.SemanticAssessmentRequest, _ int) assessor.SemanticAssessmentResponse {
+		response := validSynchronousAssessmentResponse(request)
+		for index := range response.EntityResults {
+			for _, entity := range request.SubmittedEntities {
+				if entity.Ref != response.EntityResults[index].Ref || len(entity.Groundings) == 0 || entity.Groundings[0].AnchorRef == "" {
+					continue
+				}
+				anchorRef := entity.Groundings[0].AnchorRef
+				response.EntityResults[index].AnchorRef = &anchorRef
+			}
+		}
+		for index := range response.RelationshipResults {
+			response.RelationshipResults[index].Disposition = "not_supported"
+			reason := "not_supported_by_evidence"
+			response.RelationshipResults[index].Reason = &reason
+			response.RelationshipResults[index].Splits = nil
+		}
+		return response
+	}
+
+	prepared, err := AssessSynchronousRemember(context.Background(), fixture.deps, fixture.input)
+	require.NoError(t, err)
+	commit, err := submissionAssessmentCommitInput(repository.RememberCommitScope{
+		TeamID: fixture.input.Scope.TeamID, OwnerProfileID: fixture.input.Scope.OwnerProfileID, IngestID: fixture.input.Scope.IngestID,
+	}, prepared.Plan, prepared.Response, &prepared.Assessment, false)
+	require.NoError(t, err)
+	require.NotEmpty(t, commit.EntityResolutions, "anchored entity grounding remains durable when its relationship is unsupported")
+	require.Empty(t, commit.RelationshipObservations)
+	require.Len(t, commit.KnownEvidenceSnapshot, 1)
+	require.Equal(t, knownID, commit.KnownEvidenceSnapshot[0].EvidenceID)
+}
+
 func TestSubmissionAssessmentCommitInputDoesNotFenceUnusedKnownEvidence(t *testing.T) {
 	fixture := synchronousAssessmentFixture(t)
 	knownID := uuid.NewString()

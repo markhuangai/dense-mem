@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	knownEvidenceSupportOwnershipMigrationVersion int64 = 20260902010002
-	knownEvidenceSupportOwnershipMigrationBase    int64 = 20260901020001
+	knownEvidenceSupportOwnershipMigrationVersion          int64 = 20260902010002
+	knownEvidenceSupportOwnershipMigrationOwnershipVersion int64 = 20260902010001
+	knownEvidenceSupportOwnershipMigrationBase             int64 = 20260901020001
 )
 
 func TestKnownEvidenceSupportOwnershipMigrationBackfillsForeignKeys(t *testing.T) {
@@ -66,6 +67,174 @@ func TestKnownEvidenceSupportOwnershipMigrationBackfillsForeignKeys(t *testing.T
 
 	require.NoError(t, migrationDownTo(ctx, db, knownEvidenceSupportOwnershipMigrationBase))
 	assert.False(t, columnExists(t, ctx, db, "relationship_evidence_supports", "evidence_owner_profile_id"))
+}
+
+func TestKnownEvidenceSupportOwnershipMigrationUpdatesMarkerWithNOBYPASSRLS(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, knownEvidenceSupportOwnershipMigrationBase)
+	runGooseUpTo(t, ctx, db, knownEvidenceSupportOwnershipMigrationOwnershipVersion)
+
+	var updateTimeBefore string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT value
+		FROM app_config
+		WHERE key = 'update_time'
+	`).Scan(&updateTimeBefore))
+
+	roleName := "dense_mem_known_evidence_migration_rls_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	quotedRole := quoteMigrationIdentifier(roleName)
+	if _, err := db.ExecContext(ctx, "CREATE ROLE "+quotedRole+" NOLOGIN NOSUPERUSER NOBYPASSRLS"); err != nil {
+		if isPostgresInsufficientPrivilege(err) {
+			t.Skipf("known-evidence migration RLS test requires role administration: %v", err)
+		}
+		require.NoError(t, err)
+	}
+	defer func() {
+		_, _ = db.ExecContext(ctx, "RESET ROLE")
+		_, _ = db.ExecContext(ctx, "REASSIGN OWNED BY "+quotedRole+" TO CURRENT_USER")
+		_, _ = db.ExecContext(ctx, "DROP OWNED BY "+quotedRole)
+		_, _ = db.ExecContext(ctx, "DROP ROLE IF EXISTS "+quotedRole)
+	}()
+
+	for _, statement := range []string{
+		"GRANT USAGE ON SCHEMA public TO " + quotedRole,
+		"ALTER TABLE app_config OWNER TO " + quotedRole,
+		"ALTER TABLE relationship_evidence_supports OWNER TO " + quotedRole,
+		"ALTER TABLE goose_db_version OWNER TO " + quotedRole,
+	} {
+		require.NoError(t, func() error {
+			_, err := db.ExecContext(ctx, statement)
+			return err
+		}(), statement)
+	}
+
+	// Keep SET ROLE and the migration on one pooled connection so the migration
+	// runs with the same NOBYPASSRLS role that owns the affected tables.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	_, err := db.ExecContext(ctx, "SET ROLE "+quotedRole)
+	require.NoError(t, err)
+	require.NoError(t, migrationUpTo(ctx, db, knownEvidenceSupportOwnershipMigrationVersion))
+
+	_, err = db.ExecContext(ctx, "RESET ROLE")
+	require.NoError(t, err)
+	var updateTimeAfter string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT value
+		FROM app_config
+		WHERE key = 'update_time'
+	`).Scan(&updateTimeAfter))
+	assert.NotEqual(t, updateTimeBefore, updateTimeAfter)
+}
+
+func TestKnownEvidenceSupportOwnershipMigrationPreservesAppendOnlyExceptions(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, knownEvidenceSupportOwnershipMigrationBase)
+	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
+	heldSpaceID, freeSpaceID := uuid.NewString(), uuid.NewString()
+	freeCredentialID := uuid.NewString()
+	heldAttemptID, freeAttemptID := uuid.NewString(), uuid.NewString()
+	heldArtifactID, freeArtifactID := uuid.NewString(), uuid.NewString()
+	const generation int64 = 1
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO memory_spaces (id, team_id, kind, owner_profile_id, generation, lifecycle_state)
+			VALUES ($1::uuid, $2::uuid, 'profile_private', $3::uuid, $4, 'active')
+		`, heldSpaceID, teamID, profileID, generation); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO memory_spaces (id, team_id, kind, owner_credential_id, generation, lifecycle_state)
+			VALUES ($1::uuid, $2::uuid, 'credential_private', $3::uuid, $4, 'active')
+		`, freeSpaceID, teamID, freeCredentialID, generation); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO private_memory_legal_holds (team_id, space_id, reason_code, actor_class)
+			VALUES ($1::uuid, $2::uuid, 'known-evidence-migration-test', 'control')
+		`, teamID, heldSpaceID); err != nil {
+			return err
+		}
+		for _, attempt := range []struct {
+			id, spaceID, key string
+		}{
+			{heldAttemptID, heldSpaceID, "known-evidence-held-attempt"},
+			{freeAttemptID, freeSpaceID, "known-evidence-free-attempt"},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO remember_attempts (
+					team_id, attempt_id, owner_profile_id, space_id, space_generation,
+					idempotency_key, request_hash, contract_version, outcome
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5,
+				          $6, $6, 'dense-mem.v2.6', 'failed')
+			`, teamID, attempt.id, profileID, attempt.spaceID, generation, attempt.key); err != nil {
+				return err
+			}
+		}
+		for _, artifact := range []struct {
+			id, attemptID, contentHex, contentHash string
+		}{
+			{heldArtifactID, heldAttemptID, "61", "sha256:ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"},
+			{freeArtifactID, freeAttemptID, "62", "sha256:3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d"},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO remember_failure_artifacts (
+					team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind,
+					content_type, content_bytes, byte_count, content_sha256, expires_at
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'migration-test',
+				          'text/plain', decode($5, 'hex'), 1, $6,
+				          now() + interval '1 hour')
+			`, teamID, artifact.id, artifact.attemptID, profileID, artifact.contentHex, artifact.contentHash); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	runGooseUpTo(t, ctx, db, knownEvidenceSupportOwnershipMigrationOwnershipVersion)
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			SELECT set_config('app.remember_failure_artifact_retention_space_id', $1, true),
+			       set_config('app.remember_failure_artifact_retention_value', 'true', true)
+		`, heldSpaceID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			UPDATE remember_failure_artifacts
+			SET retained_by_legal_hold = true
+			WHERE team_id = $1::uuid AND artifact_id = $2::uuid
+		`, teamID, heldArtifactID)
+		return err
+	}))
+	var retained bool
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT retained_by_legal_hold
+		FROM remember_failure_artifacts
+		WHERE team_id = $1::uuid AND artifact_id = $2::uuid
+	`, teamID, heldArtifactID).Scan(&retained))
+	assert.True(t, retained)
+
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.private_erasure_space_id', $1, true)`, freeSpaceID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			DELETE FROM remember_failure_artifacts
+			WHERE team_id = $1::uuid AND artifact_id = $2::uuid
+		`, teamID, freeArtifactID)
+		return err
+	}))
+	var freeArtifactCount int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM remember_failure_artifacts
+		WHERE team_id = $1::uuid AND artifact_id = $2::uuid
+	`, teamID, freeArtifactID).Scan(&freeArtifactCount))
+	assert.Zero(t, freeArtifactCount)
 }
 
 func TestKnownEvidenceSupportOwnershipMigrationDownRejectsCrossOwnerRows(t *testing.T) {

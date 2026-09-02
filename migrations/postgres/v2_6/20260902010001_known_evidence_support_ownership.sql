@@ -46,23 +46,90 @@ CREATE TRIGGER relationship_supports_evidence_owner_defaults
 
 -- +goose StatementEnd
 
--- The append-only support ledger admits only this migration's narrowly gated
--- NULL-to-relationship-owner backfill. The transaction-local flag is set by
--- the procedure below and cannot authorize ordinary runtime updates.
+-- Preserve the existing legal-hold and private-erasure exceptions while adding
+-- this migration's narrowly gated NULL-to-relationship-owner backfill. The
+-- transaction-local flag is set by the procedure below and cannot authorize
+-- ordinary runtime updates.
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION prevent_append_only_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' AND TG_TABLE_NAME = 'remember_failure_artifacts' THEN
+        IF current_setting('app.tx_mode', true) = 'system'
+           AND NULLIF(current_setting('app.remember_failure_artifact_retention_space_id', true), '')::uuid IS NOT NULL
+           AND COALESCE((to_jsonb(NEW)->>'retained_by_legal_hold')::boolean, false) =
+               (current_setting('app.remember_failure_artifact_retention_value', true) = 'true')
+           AND (
+               to_jsonb(NEW) - ARRAY['retained_by_legal_hold']
+           ) = (
+               to_jsonb(OLD) - ARRAY['retained_by_legal_hold']
+           )
+           AND EXISTS (
+               SELECT 1
+               FROM remember_attempts AS attempt
+               WHERE attempt.team_id = NEW.team_id
+                 AND attempt.attempt_id = NEW.attempt_id
+                 AND attempt.owner_profile_id = NEW.owner_profile_id
+                 AND attempt.space_id = NULLIF(current_setting('app.remember_failure_artifact_retention_space_id', true), '')::uuid
+           )
+           AND (
+               (COALESCE((to_jsonb(NEW)->>'retained_by_legal_hold')::boolean, false) AND EXISTS (
+                   SELECT 1 FROM private_memory_legal_holds AS hold
+                   WHERE hold.space_id = NULLIF(current_setting('app.remember_failure_artifact_retention_space_id', true), '')::uuid
+                     AND hold.released_at IS NULL
+               ))
+               OR
+               (NOT COALESCE((to_jsonb(NEW)->>'retained_by_legal_hold')::boolean, false) AND NOT EXISTS (
+                   SELECT 1 FROM private_memory_legal_holds AS hold
+                   WHERE hold.space_id = NULLIF(current_setting('app.remember_failure_artifact_retention_space_id', true), '')::uuid
+                     AND hold.released_at IS NULL
+               ))
+           ) THEN
+            RETURN NEW;
+        END IF;
+    END IF;
     IF TG_TABLE_NAME = 'relationship_evidence_supports'
        AND TG_OP = 'UPDATE'
        AND current_setting('app.tx_mode', true) = 'migration'
        AND current_setting('app.known_evidence_support_ownership_backfill', true) = 'true'
-       AND OLD.evidence_owner_profile_id IS NULL
-       AND NEW.evidence_owner_profile_id IS NOT NULL
-       AND NEW.evidence_owner_profile_id IS NOT DISTINCT FROM OLD.owner_profile_id
+       AND (to_jsonb(OLD)->>'evidence_owner_profile_id') IS NULL
+       AND (to_jsonb(NEW)->>'evidence_owner_profile_id') IS NOT NULL
+       AND (to_jsonb(NEW)->>'evidence_owner_profile_id') IS NOT DISTINCT FROM (to_jsonb(OLD)->>'owner_profile_id')
        AND (to_jsonb(NEW) - 'evidence_owner_profile_id') = (to_jsonb(OLD) - 'evidence_owner_profile_id')
     THEN
         RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE'
+       AND current_setting('app.tx_mode', true) = 'system'
+       AND (
+           NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid
+               = NULLIF(to_jsonb(OLD)->>'space_id', '')::uuid
+           OR (
+               TG_TABLE_NAME IN ('remember_attempt_events', 'remember_failure_artifacts', 'semantic_assessments')
+               AND EXISTS (
+                   SELECT 1
+                   FROM remember_attempts AS attempt
+                   WHERE attempt.team_id = NULLIF(to_jsonb(OLD)->>'team_id', '')::uuid
+                     AND attempt.attempt_id = NULLIF(to_jsonb(OLD)->>'attempt_id', '')::uuid
+                     AND attempt.owner_profile_id = NULLIF(to_jsonb(OLD)->>'owner_profile_id', '')::uuid
+                     AND attempt.space_id = NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid
+               )
+           )
+           OR (
+               TG_TABLE_NAME = 'remember_failure_artifacts'
+               AND current_setting('app.remember_failure_artifact_purge', true) = 'true'
+           )
+           OR (
+               TG_TABLE_NAME = 'relationship_cross_references'
+               AND NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid = (
+                   SELECT target.space_id
+                   FROM relationship_records AS target
+                   WHERE target.team_id = NULLIF(to_jsonb(OLD)->>'team_id', '')::uuid
+                     AND target.relationship_id = NULLIF(to_jsonb(OLD)->>'target_relationship_id', '')::uuid
+               )
+           )
+       ) THEN
+        RETURN OLD;
     END IF;
     RAISE EXCEPTION '% is append-only: % operations are not allowed', TG_TABLE_NAME, TG_OP;
 END;
@@ -279,6 +346,72 @@ DROP FUNCTION IF EXISTS dense_mem_relationship_support_evidence_owner_defaults()
 CREATE OR REPLACE FUNCTION prevent_append_only_mutation()
 RETURNS TRIGGER AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' AND TG_TABLE_NAME = 'remember_failure_artifacts' THEN
+        IF current_setting('app.tx_mode', true) = 'system'
+           AND NULLIF(current_setting('app.remember_failure_artifact_retention_space_id', true), '')::uuid IS NOT NULL
+           AND COALESCE((to_jsonb(NEW)->>'retained_by_legal_hold')::boolean, false) =
+               (current_setting('app.remember_failure_artifact_retention_value', true) = 'true')
+           AND (
+               to_jsonb(NEW) - ARRAY['retained_by_legal_hold']
+           ) = (
+               to_jsonb(OLD) - ARRAY['retained_by_legal_hold']
+           )
+           AND EXISTS (
+               SELECT 1
+               FROM remember_attempts AS attempt
+               WHERE attempt.team_id = NEW.team_id
+                 AND attempt.attempt_id = NEW.attempt_id
+                 AND attempt.owner_profile_id = NEW.owner_profile_id
+                 AND attempt.space_id = NULLIF(current_setting('app.remember_failure_artifact_retention_space_id', true), '')::uuid
+           )
+           AND (
+               (COALESCE((to_jsonb(NEW)->>'retained_by_legal_hold')::boolean, false) AND EXISTS (
+                   SELECT 1 FROM private_memory_legal_holds AS hold
+                   WHERE hold.space_id = NULLIF(current_setting('app.remember_failure_artifact_retention_space_id', true), '')::uuid
+                     AND hold.released_at IS NULL
+               ))
+               OR
+               (NOT COALESCE((to_jsonb(NEW)->>'retained_by_legal_hold')::boolean, false) AND NOT EXISTS (
+                   SELECT 1 FROM private_memory_legal_holds AS hold
+                   WHERE hold.space_id = NULLIF(current_setting('app.remember_failure_artifact_retention_space_id', true), '')::uuid
+                     AND hold.released_at IS NULL
+               ))
+           ) THEN
+            RETURN NEW;
+        END IF;
+    END IF;
+    IF TG_OP = 'DELETE'
+       AND current_setting('app.tx_mode', true) = 'system'
+       AND (
+           NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid
+               = NULLIF(to_jsonb(OLD)->>'space_id', '')::uuid
+           OR (
+               TG_TABLE_NAME IN ('remember_attempt_events', 'remember_failure_artifacts', 'semantic_assessments')
+               AND EXISTS (
+                   SELECT 1
+                   FROM remember_attempts AS attempt
+                   WHERE attempt.team_id = NULLIF(to_jsonb(OLD)->>'team_id', '')::uuid
+                     AND attempt.attempt_id = NULLIF(to_jsonb(OLD)->>'attempt_id', '')::uuid
+                     AND attempt.owner_profile_id = NULLIF(to_jsonb(OLD)->>'owner_profile_id', '')::uuid
+                     AND attempt.space_id = NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid
+               )
+           )
+           OR (
+               TG_TABLE_NAME = 'remember_failure_artifacts'
+               AND current_setting('app.remember_failure_artifact_purge', true) = 'true'
+           )
+           OR (
+               TG_TABLE_NAME = 'relationship_cross_references'
+               AND NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid = (
+                   SELECT target.space_id
+                   FROM relationship_records AS target
+                   WHERE target.team_id = NULLIF(to_jsonb(OLD)->>'team_id', '')::uuid
+                     AND target.relationship_id = NULLIF(to_jsonb(OLD)->>'target_relationship_id', '')::uuid
+               )
+           )
+       ) THEN
+        RETURN OLD;
+    END IF;
     RAISE EXCEPTION '% is append-only: % operations are not allowed', TG_TABLE_NAME, TG_OP;
 END;
 $$ LANGUAGE plpgsql;

@@ -38,15 +38,25 @@ func submissionAssessmentCommitInput(
 		mentionRef    string
 	}, len(response.EntityResults))
 	entityRefAliases := make(map[string]string, len(response.EntityResults))
-	entityResultsByRef := make(map[string]assessor.SemanticAssessmentEntityResult, len(response.EntityResults))
 	for _, result := range response.EntityResults {
-		entityResultsByRef[result.Ref] = result
 		target, ok := plan.entityTargetsByRef[result.Ref]
 		if !ok {
 			return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor entity result is outside the contract")
 		}
 		if _, unsupported := unsupportedEntities[result.Ref]; unsupported {
 			continue
+		}
+		if result.AnchorRef != nil && strings.TrimSpace(*result.AnchorRef) != "" {
+			anchorRef := strings.TrimSpace(*result.AnchorRef)
+			for _, anchor := range target.Target.Anchors {
+				if anchor.AnchorRef != anchorRef {
+					continue
+				}
+				if _, known := plan.knownEvidenceByID[anchor.EvidenceID]; known {
+					usedKnownEvidenceIDs[anchor.EvidenceID] = struct{}{}
+				}
+				break
+			}
 		}
 		if target.KnownEntityID != "" && result.Action == string(domain.EntityResolutionCreate) {
 			return repository.CommitSubmissionAssessmentInput{}, fmt.Errorf("%w: assessor changed exact entity constraint for %s", errSubmissionAssessmentStaleInput, result.Ref)
@@ -209,29 +219,6 @@ func submissionAssessmentCommitInput(
 			for _, span := range split.Evidence {
 				if _, known := plan.knownEvidenceByID[span.EvidenceID]; known {
 					usedKnownEvidenceIDs[span.EvidenceID] = struct{}{}
-				}
-			}
-			endpointRefs := []string{split.SubjectRef}
-			if split.ObjectRef != nil {
-				endpointRefs = append(endpointRefs, *split.ObjectRef)
-			}
-			for _, endpointRef := range endpointRefs {
-				entityResult, ok := entityResultsByRef[endpointRef]
-				if !ok || entityResult.AnchorRef == nil || strings.TrimSpace(*entityResult.AnchorRef) == "" {
-					continue
-				}
-				target, ok := plan.entityTargetsByRef[endpointRef]
-				if !ok {
-					continue
-				}
-				for _, anchor := range target.Target.Anchors {
-					if anchor.AnchorRef != strings.TrimSpace(*entityResult.AnchorRef) {
-						continue
-					}
-					if _, known := plan.knownEvidenceByID[anchor.EvidenceID]; known {
-						usedKnownEvidenceIDs[anchor.EvidenceID] = struct{}{}
-					}
-					break
 				}
 			}
 			supports, err := submissionAssessmentSupports(plan, assessment.AssessmentID, split.Evidence)
