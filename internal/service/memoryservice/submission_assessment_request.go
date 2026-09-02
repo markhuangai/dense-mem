@@ -80,6 +80,10 @@ func (s *assessmentEngine) buildRequest(
 	}
 	contractEntities, entityGroups, err := submissionAssessmentGroundedEntities(plan, entityCatalog, evidence, knownEvidenceByID)
 	if err != nil {
+		var preflightErr *semanticAssessmentPreflightError
+		if errors.As(err, &preflightErr) {
+			return assessor.SemanticAssessmentRequest{}, err
+		}
 		return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithCause("catalog_context_validation", "submission entity catalog is invalid", err)
 	}
 	// Keep the derived, evidence-backed grounding catalog on the plan as well
@@ -521,7 +525,11 @@ func submissionAssessmentGroundedEntities(
 					End:          occurrence.End,
 				})
 				if len(target.Groundings) > assessor.SemanticAssessmentMaxEntityGroundings {
-					return nil, nil, errors.New("submission assessment entity grounding bound is exceeded")
+					return nil, nil, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+						"catalog_context",
+						"submission assessment entity grounding bound is exceeded",
+						assessor.FailureMeasurement{Unit: "groundings", Observed: len(target.Groundings), Limit: assessor.SemanticAssessmentMaxEntityGroundings},
+					)
 				}
 				candidateIDs := make([]string, 0, len(occurrence.Candidates))
 				for candidateID := range occurrence.Candidates {
@@ -602,7 +610,11 @@ func submissionAssessmentGroundedEntities(
 					Start: occurrence.Start, End: occurrence.End,
 				})
 				if len(target.Anchors) > assessor.SemanticAssessmentMaxEntityGroundings {
-					return nil, nil, errors.New("submission assessment entity anchor bound is exceeded")
+					return nil, nil, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+						"catalog_context",
+						"submission assessment entity anchor bound is exceeded",
+						assessor.FailureMeasurement{Unit: "anchors", Observed: len(target.Anchors), Limit: assessor.SemanticAssessmentMaxEntityGroundings},
+					)
 				}
 			}
 		}
@@ -634,7 +646,11 @@ func submissionAssessmentGroundedEntities(
 					Start: pronoun[0], End: pronoun[1], Candidates: append([]assessor.SemanticAssessmentEntityCandidate(nil), candidateGroupCandidatesForAnchor(anchor, catalogGroup.Candidates)...),
 				})
 				if len(target.Groundings) > assessor.SemanticAssessmentMaxEntityGroundings {
-					return nil, nil, errors.New("submission assessment entity grounding bound is exceeded")
+					return nil, nil, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+						"catalog_context",
+						"submission assessment entity grounding bound is exceeded",
+						assessor.FailureMeasurement{Unit: "groundings", Observed: len(target.Groundings), Limit: assessor.SemanticAssessmentMaxEntityGroundings},
+					)
 				}
 			}
 		}

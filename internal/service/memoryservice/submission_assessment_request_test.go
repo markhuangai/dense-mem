@@ -398,6 +398,22 @@ func TestSubmissionAssessmentRejectsAggregateKnownEvidenceContentBeforeCatalogCo
 	require.Zero(t, fixture.provider.calls, "provider must not receive an over-budget request")
 }
 
+func TestSubmissionAssessmentRejectsExcessiveKnownEvidenceAnchorsAsInputBudget(t *testing.T) {
+	fixture := synchronousAssessmentFixture(t)
+	knownID := uuid.NewString()
+	fixture.input.Snapshot.Proposal["relationship_hints"].([]any)[0].(map[string]any)["known_evidence_ids"] = []any{knownID}
+	fixture.catalog.knownEvidence = []repository.SubmissionAssessmentKnownEvidence{{
+		TeamID: fixture.input.Scope.TeamID, EvidenceID: knownID, FragmentID: knownID,
+		IngestID: uuid.NewString(), OwnerProfileID: uuid.NewString(),
+		Content:     strings.Repeat("Alpha ", assessor.SemanticAssessmentMaxEntityGroundings+1),
+		ContentHash: "known-hash", Authority: "primary", SpaceID: uuid.NewString(), SpaceGeneration: 1,
+	}}
+
+	_, err := AssessSynchronousRemember(t.Context(), fixture.deps, fixture.input)
+	require.ErrorIs(t, err, rememberapp.ErrRememberInputBudgetExceeded)
+	require.Zero(t, fixture.provider.calls, "anchor-bound requests must not reach the provider")
+}
+
 func TestSubmissionAssessmentAnchorCandidateAndPronounHelpers(t *testing.T) {
 	candidate := repository.SemanticReviewEntityCandidate{
 		EntityID: "entity-a", EntityKind: "person", CanonicalName: "A Person",
