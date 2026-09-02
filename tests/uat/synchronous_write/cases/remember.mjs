@@ -676,7 +676,7 @@ function postgresCommand(sql) {
 function postgresExec(sql, label) {
   const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
   const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
-  const composeOverlay = process.env.DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE || "";
+  const composeOverlay = requiredEnv("DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE");
   const scopedSQL = [
     "BEGIN",
     "SET LOCAL app.tx_mode = 'system'",
@@ -687,7 +687,7 @@ function postgresExec(sql, label) {
     "COMMIT",
   ].join(";\n");
   const composeArgs = ["compose", "-p", composeProject, "-f", composeFile];
-  if (composeOverlay) composeArgs.push("-f", composeOverlay);
+  composeArgs.push("-f", composeOverlay);
   composeArgs.push(
     "exec", "-T", "postgres", "sh", "-ec",
     'psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',

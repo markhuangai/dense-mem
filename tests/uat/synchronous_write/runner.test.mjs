@@ -87,6 +87,8 @@ test("remember case covers mixed object success and idempotency conflict behavio
 test("remember PostgreSQL fixtures follow the production runner handoff", async () => {
   const remember = await readFile(new URL("./cases/remember.mjs", import.meta.url), "utf8");
   const localOverlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");
+  const scenario = await readFile(new URL("../../../scripts/e2e-ci-scenario.sh", import.meta.url), "utf8");
+  const controller = await readFile(new URL("../../../scripts/e2e-host-controller-runtime.sh", import.meta.url), "utf8");
   assert.match(remember, /fileURLToPath\(new URL\("\.\.\/\.\.\/\.\.\/\.\.", import\.meta\.url\)\)/);
   assert.match(remember, /DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE/);
   assert.match(remember, /SET LOCAL app\.tx_mode = 'system'/);
@@ -94,7 +96,10 @@ test("remember PostgreSQL fixtures follow the production runner handoff", async 
   assert.match(remember, /only permits alias setup/);
   assert.match(remember, /psql -X -q -v ON_ERROR_STOP=1/);
   assert.match(remember, /Remember PostgreSQL fixture failed \(\$\{result\.status\}\):/);
+  assert.match(remember, /requiredEnv\("DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE"\)/);
   assert.match(localOverlay, /DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE="\$SYNCHRONOUS_WRITE_COMPOSE_OVERLAY_FILE"/);
+  assert.match(scenario, /export DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE=/);
+  assert.match(controller, /DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE=\/ci\/helper-compose\.yml/);
 });
 
 test("correction slice contains executable success and provider-failure assertions", async () => {
