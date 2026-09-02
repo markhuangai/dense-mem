@@ -32,6 +32,7 @@ jobs:
           path: .ci-policy
           sparse-checkout: |
             .github/scripts
+            scripts/e2e-scenario-registry.mjs
 
       - name: Validate immutable image
         id: resolve
@@ -75,8 +76,8 @@ jobs:
           registry="${GITHUB_WORKSPACE}/.ci-source/scripts/e2e-scenarios.json"
           [[ -f "${registry}" ]]
           export DENSE_MEM_E2E_SCENARIO_REGISTRY="${registry}"
-          exclusive_matrix="$(node .ci-source/scripts/e2e-scenario-registry.mjs --matrix exclusive)"
-          shared_matrix="$(node .ci-source/scripts/e2e-scenario-registry.mjs --matrix shared_team)"
+          exclusive_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix exclusive)"
+          shared_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix shared_team)"
           {
             echo "exclusive_matrix=${exclusive_matrix}"
             echo "shared_matrix=${shared_matrix}"

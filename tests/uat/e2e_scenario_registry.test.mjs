@@ -107,7 +107,9 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   assert.match(workflow, /max-parallel: 4/);
   assert.match(workflow, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
   assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
-  assert.match(workflow, /path: \.ci-source[\s\S]*?sparse-checkout:\s*\|\n\s+scripts\/e2e-scenarios\.json\n\s+scripts\/e2e-scenario-registry\.mjs/);
+  assert.match(workflow, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenario-registry\.mjs/);
+  assert.match(workflow, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --matrix exclusive/);
+  assert.doesNotMatch(workflow, /node \.ci-source\/scripts\/e2e-scenario-registry\.mjs --matrix/);
   assert.match(reusable, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
   assert.match(reusable, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
   assert.match(controller, /DENSE_MEM_CI_PROMETHEUS_FILE/);

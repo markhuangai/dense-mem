@@ -132,6 +132,7 @@ test("conflict review drivers receive the provider settings used by their stack"
   assert.match(controllerRuntime, /AI_API_URL=http:\/\/conflict-provider:8081\/v1/);
   assert.match(controllerRuntime, /AI_VERIFIER_API_URL=http:\/\/conflict-provider:8081\/v1/);
   assert.match(controllerRuntime, /for provider_field in[\s\S]*AI_API_URL[\s\S]*AI_VERIFIER_TIMEOUT_SECONDS/);
+  assert.match(controllerRuntime, /if \[\[ -n \"\$provider_value\" \]\]; then[\s\S]*conflict_driver_env\+=/);
   assert.match(controllerRuntime, /docker_args\+=\(-e \"\$provider_env\"\)/);
 });
 

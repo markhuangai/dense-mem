@@ -123,7 +123,9 @@ run_scenario() {
         AI_VERIFIER_API_URL AI_VERIFIER_API_KEY AI_VERIFIER_MODEL \
         AI_VERIFIER_DISABLE_TEMPERATURE AI_API_EMBEDDING_TIMEOUT_SECONDS AI_VERIFIER_TIMEOUT_SECONDS; do
         provider_value="$(env_value "$provider_field" 2>/dev/null || true)"
-        [[ -n "$provider_value" ]] && conflict_driver_env+=("${provider_field}=${provider_value}")
+        if [[ -n "$provider_value" ]]; then
+          conflict_driver_env+=("${provider_field}=${provider_value}")
+        fi
       done
     fi
   fi
