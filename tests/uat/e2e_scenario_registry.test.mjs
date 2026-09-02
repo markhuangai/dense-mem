@@ -120,6 +120,9 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   assert.doesNotMatch(controller, /DENSE_MEM_CI_DAEMON_ID|LEASE_DIR|RUN_DIR|DENSE_MEM_E2E_SOURCE_REVISION|e2e-docker-proxy|e2e-runtime-adapter/);
   assert.doesNotMatch(compose, /^\s+ports:/m);
   assertWorkflowOrchestration(workflow);
+  const authorize = workflowJob(workflow, "authorize");
+  assert.match(authorize, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenario-registry\.mjs/);
+  assert.match(authorize, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --matrix exclusive/);
 });
 
 test("production orchestration assertions detect a missing shared dependency", async () => {

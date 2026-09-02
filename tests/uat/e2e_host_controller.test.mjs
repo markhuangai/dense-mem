@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -11,6 +11,7 @@ const [controllerMain, controllerStack, controllerRuntime] = await Promise.all([
   readFile(new URL("../../scripts/e2e-host-controller-stack.sh", import.meta.url), "utf8"),
   readFile(new URL("../../scripts/e2e-host-controller-runtime.sh", import.meta.url), "utf8"),
 ]);
+const controllerPath = fileURLToPath(new URL("../../scripts/e2e-host-controller.sh", import.meta.url));
 const controller = [controllerMain, controllerStack, controllerRuntime].join("\n");
 const compose = await readFile(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url), "utf8");
 const redactorPath = fileURLToPath(new URL("../../scripts/e2e-redact-diagnostics.mjs", import.meta.url));
@@ -18,6 +19,61 @@ const realControllerTest = await readFile(new URL("./e2e_host_controller_real.sh
 const productionWorkflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
 const scenarioWorkflow = await readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8");
 const scenarioScript = await readFile(new URL("../../scripts/e2e-ci-scenario.sh", import.meta.url), "utf8");
+
+async function runDoctor({ omit = "" } = {}) {
+  const directory = await mkdtemp(join(tmpdir(), "dense-mem-doctor-"));
+  const configDirectory = join(directory, "dense-mem-ci");
+  const binDirectory = join(directory, "bin");
+  const envFile = join(configDirectory, ".env");
+  const telemetryTokenFile = join(configDirectory, "telemetry-scrape-token");
+  const dockerPath = join(binDirectory, "docker");
+  try {
+    await mkdir(configDirectory, { recursive: true });
+    await mkdir(binDirectory, { recursive: true });
+    const envLines = [
+      "POSTGRES_USER=densemem",
+      "POSTGRES_PASSWORD=postgres-secret",
+      "POSTGRES_DB=densemem",
+      "AI_API_KEY=provider-secret",
+      "CONTROL_PORTAL_TOKEN=control-secret",
+    ].filter((line) => !omit || !line.startsWith(`${omit}=`));
+    await writeFile(envFile, `${envLines.join("\n")}\n`);
+    await chmod(envFile, 0o600);
+    await writeFile(telemetryTokenFile, "telemetry-secret\n");
+    await chmod(telemetryTokenFile, 0o600);
+    await writeFile(dockerPath, `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  info)
+    if [[ "\${2:-}" == "--format" ]]; then
+      printf '%s\\n' '["rootless"]'
+    fi
+    ;;
+  compose)
+    if [[ "\$*" == *"--format json"* ]]; then
+      printf '%s\\n' '{"services":{}}'
+    fi
+    ;;
+esac
+`);
+    await chmod(dockerPath, 0o700);
+    return spawnSync("bash", [controllerPath, "doctor"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: directory,
+        PATH: `${binDirectory}:${process.env.PATH}`,
+        DENSE_MEM_CI_ENV_FILE: envFile,
+        DENSE_MEM_CI_TELEMETRY_TOKEN_FILE: telemetryTokenFile,
+        DENSE_MEM_CI_COMPOSE_FILE: fileURLToPath(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url)),
+        DENSE_MEM_CI_PROMETHEUS_FILE: fileURLToPath(new URL("../../examples/prometheus.yml", import.meta.url)),
+        DENSE_MEM_CI_REGISTRY_SCRIPT: fileURLToPath(new URL("../../scripts/e2e-scenario-registry.mjs", import.meta.url)),
+      },
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
 
 test("controller is PR-owned and has no persistent lease or manifest contract", () => {
   assert.match(controller, /CONTRACT_VERSION="dense-mem-ci-e2e\.v1"/);
@@ -39,6 +95,17 @@ test("controller is PR-owned and has no persistent lease or manifest contract", 
   assert.match(controller, /docker "\$\{docker_args\[@\]\}"/);
   assert.doesNotMatch(controller, /DENSE_MEM_CI_DAEMON_ID|LEASE_DIR|RUN_DIR|DENSE_MEM_E2E_SOURCE_REVISION|e2e-docker-proxy|e2e-runtime-adapter/);
   assert.doesNotMatch(controller, /docker system prune|docker image rm[^\n]*--force/);
+});
+
+test("validate_bundle rejects missing database identity and accepts a valid runner bundle", async () => {
+  const valid = await runDoctor();
+  assert.equal(valid.status, 0, valid.stderr);
+  assert.match(valid.stdout, /dense-mem-ci-e2e\.v1/);
+  for (const field of ["POSTGRES_USER", "POSTGRES_DB"]) {
+    const invalid = await runDoctor({ omit: field });
+    assert.notEqual(invalid.status, 0, `${field} unexpectedly passed validation`);
+    assert.match(invalid.stderr, new RegExp(`${field} must be configured`));
+  }
 });
 
 test("Compose consumes fixed runner config and PR Prometheus input without host ports", () => {
