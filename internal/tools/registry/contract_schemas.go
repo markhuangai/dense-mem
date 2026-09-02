@@ -74,17 +74,18 @@ func relationshipSubmissionSchema() map[string]any {
 		"type":     "object",
 		"required": []string{"ref", "subject", "predicate", "object", "polarity", "evidence_indices"},
 		"properties": map[string]any{
-			"ref":               nonEmptyStringSchema("Client-local Relationship proposal ref.", 128),
-			"subject":           inlineRelationshipEntitySchema("Proposed subject Entity."),
-			"predicate":         relationshipPredicateSchema(),
-			"object":            relationshipObjectSchema(),
-			"polarity":          schemaEnum([]string{"+", "-"}),
-			"valid_from":        nullableDateTime("Evidence-supported validity start."),
-			"valid_to":          nullableDateTime("Evidence-supported validity end."),
-			"correction_target": relationshipCorrectionTargetSchema(),
-			"conflict_context":  relationshipConflictContextSchema(),
-			"client_comment":    nullableString("Non-authoritative extraction note.", 1000),
-			"evidence_indices":  relationshipEvidenceIndexArraySchema(),
+			"ref":                nonEmptyStringSchema("Client-local Relationship proposal ref.", 128),
+			"subject":            inlineRelationshipEntitySchema("Proposed subject Entity."),
+			"predicate":          relationshipPredicateSchema(),
+			"object":             relationshipObjectSchema(),
+			"polarity":           schemaEnum([]string{"+", "-"}),
+			"valid_from":         nullableDateTime("Evidence-supported validity start."),
+			"valid_to":           nullableDateTime("Evidence-supported validity end."),
+			"correction_target":  relationshipCorrectionTargetSchema(),
+			"conflict_context":   relationshipConflictContextSchema(),
+			"client_comment":     nullableString("Non-authoritative extraction note.", 1000),
+			"evidence_indices":   relationshipEvidenceIndexArraySchema(),
+			"known_evidence_ids": stringArraySchema("Explicit visible evidence UUID supporting this Relationship.", 20, 128),
 		},
 		"additionalProperties": false,
 	}
@@ -359,6 +360,7 @@ func dreamRelationshipSubmissionArraySchema() map[string]any {
 		item["properties"] = properties
 	}
 	properties["modality"] = schemaEnum([]string{"statement", "question", "proposal", "speculation", "quoted"})
+	delete(properties, "known_evidence_ids")
 	if subject, ok := properties["subject"].(map[string]any); ok {
 		subject["required"] = []string{"name", "entity_kind"}
 	}
@@ -390,7 +392,7 @@ func rememberOutputSchema() map[string]any {
 		"contract_version":     schemaEnum([]string{domain.ContractVersion}),
 		"submission_id":        schemaString("Submission ID.", 128),
 		"submission_kind":      schemaEnum([]string{"remember"}),
-			"processing_state":     schemaEnum([]string{"completed", "failed"}),
+		"processing_state":     schemaEnum([]string{"completed", "failed"}),
 		"search_state":         schemaEnum([]string{"current", "not_required"}),
 		"correlation_id":       schemaString("Request correlation ID.", 128),
 		"evidence":             array(rememberEvidenceStatusSchema(), 0, 100),

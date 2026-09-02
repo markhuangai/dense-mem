@@ -108,6 +108,10 @@ const server = createServer(async (request, response) => {
       sendJSON(response, 200, { choices: [{ message: { content: "not-json" } }] });
       return;
     }
+    if (assessmentFault === "ambiguous-pronoun" && ambiguousPronounGroundingPresent(assessmentRequest)) {
+      sendJSON(response, 200, { choices: [{ message: { content: "not-json" } }] });
+      return;
+    }
     const assessment = fixtureAssessment(assessmentRequest, assessmentFault, attempt);
     sendJSON(response, 200, {
       choices: [{ message: { content: JSON.stringify(assessment) } }],
@@ -132,25 +136,60 @@ function assessmentInput(payload) {
   return { request_id: "fixture", submitted_entities: [], submitted_relationships: [], evidence: [] };
 }
 
+function ambiguousPronounGroundingPresent(request) {
+  return (request.submitted_entities || []).some((entity) =>
+    (entity.groundings || []).some((grounding) => grounding.surface === "It"));
+}
+
 function fixtureAssessment(request, requestFault, attempt) {
-  const evidenceByID = new Map((request.evidence || []).map((item) => [item.evidence_id, item]));
+  const evidenceByID = new Map([
+    ...(request.evidence || []),
+    ...(request.known_evidence || []),
+  ].map((item) => [item.evidence_id, item]));
+  const proposalRelationships = Array.isArray(request.client_proposal?.relationship_hints)
+    ? request.client_proposal.relationship_hints
+    : Array.isArray(request.client_proposal?.relationships)
+      ? request.client_proposal.relationships
+      : [];
+  const proposalByRef = new Map(proposalRelationships.map((relationship) => [relationship?.ref, relationship]));
   const entities = (request.submitted_entities || []).map((entity) => {
-    const groundingRef = entity.groundings?.[0]?.grounding_ref ?? null;
+    const selectedGrounding = requestFault === "ambiguous-pronoun"
+      ? entity.groundings?.find((grounding) => grounding.surface === "It") || entity.groundings?.[0]
+      : entity.groundings?.[0];
+    const groundingRef = selectedGrounding?.grounding_ref ?? null;
     const group = (request.entity_candidate_groups || []).find((candidate) => candidate.grounding_ref === groundingRef);
     const candidates = (group?.candidates || []).filter((candidate) => candidate.kind === entity.kind);
     const reusable = candidates.length === 1 ? candidates[0] : null;
-    return {
+    const ambiguous = !groundingRef && (requestFault === "unanchored-pronoun" || requestFault === "ambiguous-pronoun");
+    const result = {
       ref: entity.ref,
       grounding_ref: groundingRef,
-      action: reusable ? "reuse" : "create",
+      action: ambiguous ? "ambiguous" : reusable ? "reuse" : "create",
       candidate_entity_id: reusable?.entity_id ?? null,
     };
+    if (selectedGrounding?.anchor_ref) result.anchor_ref = selectedGrounding.anchor_ref;
+    return result;
   });
   const relationships = (request.submitted_relationships || []).map((relationship, index) => {
     const evidenceIDs = Array.isArray(relationship.evidence_ids) ? relationship.evidence_ids : [];
-    const ranges = evidenceIDs.map((evidenceID) => wholeEvidenceRange(evidenceByID.get(evidenceID))).filter(Boolean);
+    const knownEvidenceIDs = Array.isArray(relationship.known_evidence_ids) ? relationship.known_evidence_ids : [];
+    const requestedKnownEvidenceIDs = Array.isArray(proposalByRef.get(relationship.ref)?.known_evidence_ids)
+      ? proposalByRef.get(relationship.ref).known_evidence_ids
+      : knownEvidenceIDs;
+    const unavailableKnownEvidence = requestedKnownEvidenceIDs.some((evidenceID) => !evidenceByID.has(evidenceID));
+    const ranges = [...evidenceIDs, ...knownEvidenceIDs]
+      .map((evidenceID) => wholeEvidenceRange(evidenceByID.get(evidenceID)))
+      .filter(Boolean);
+    if (requestFault === "unreferenced-known" && index > 0 && request.known_evidence?.[0]) {
+      ranges.push(wholeEvidenceRange(request.known_evidence[0]));
+    }
     const range = ranges[0] || wholeEvidenceRange(request.evidence?.[0]);
-    const unsupported = requestFault === "no-supported" || (requestFault === "mixed" && index > 0);
+    const subject = (request.submitted_entities || []).find((entity) => entity.ref === relationship.subject_ref);
+    const noGrounding = !subject?.groundings?.length;
+    const unsupported = requestFault === "no-supported" || (requestFault === "mixed" && index > 0) ||
+      unavailableKnownEvidence ||
+      (requestFault === "ambiguous-pronoun") ||
+      (requestFault === "unanchored-pronoun" && noGrounding);
     if (unsupported) {
       return { ref: relationship.ref, disposition: "not_supported", reason: "not_supported_by_evidence", splits: [] };
     }

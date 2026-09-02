@@ -10,6 +10,8 @@ import (
 
 type submissionAssessmentWorkerCatalogStub struct {
 	entityInputs           []repository.SubmissionAssessmentEntityCatalogInput
+	knownEvidenceInputs    []repository.SubmissionAssessmentKnownEvidenceInput
+	knownEvidence          []repository.SubmissionAssessmentKnownEvidence
 	entityCandidates       map[string][]repository.SemanticReviewEntityCandidate
 	predicateInputs        []repository.SemanticReviewPredicateResolutionInput
 	predicateOptionInputs  []repository.SemanticAssessmentPredicateOptionsInput
@@ -19,6 +21,15 @@ type submissionAssessmentWorkerCatalogStub struct {
 	entityErr              error
 	predicateResolutionErr error
 	predicateOptionsErr    error
+	knownEvidenceErr       error
+}
+
+func (s *submissionAssessmentWorkerCatalogStub) ListSubmissionAssessmentKnownEvidence(_ context.Context, input repository.SubmissionAssessmentKnownEvidenceInput) (repository.SubmissionAssessmentKnownEvidenceResult, error) {
+	s.knownEvidenceInputs = append(s.knownEvidenceInputs, input)
+	if s.knownEvidenceErr != nil {
+		return repository.SubmissionAssessmentKnownEvidenceResult{}, s.knownEvidenceErr
+	}
+	return repository.SubmissionAssessmentKnownEvidenceResult{Evidence: append([]repository.SubmissionAssessmentKnownEvidence(nil), s.knownEvidence...)}, nil
 }
 
 func (s *submissionAssessmentWorkerCatalogStub) ListSubmissionAssessmentEntityCatalog(_ context.Context, input repository.SubmissionAssessmentEntityCatalogInput) (repository.SubmissionAssessmentEntityCatalogResult, error) {

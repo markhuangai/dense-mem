@@ -19,7 +19,8 @@ func isRememberStaleInputError(err error) bool {
 		errors.Is(err, repository.ErrConflictContextStale) ||
 		errors.Is(err, repository.ErrRememberExactReferenceStale) ||
 		errors.Is(err, repository.ErrCorrectionTargetStale) ||
-		errors.Is(err, repository.ErrSemanticStaleSource)
+		errors.Is(err, repository.ErrSemanticStaleSource) ||
+		errors.Is(err, repository.ErrSubmissionAssessmentKnownEvidenceStale)
 }
 
 // IsRememberStaleInputError exposes the narrow stale-input classification to
@@ -36,37 +37,64 @@ func submissionAssessmentSupports(
 	if len(spans) == 0 {
 		return nil, errors.New("submission assessor relationship has no evidence span")
 	}
-	supports := make([]repository.EvidenceSupportInput, 0, len(spans))
+	submittedSupports := make([]repository.EvidenceSupportInput, 0, len(spans))
+	knownSupports := make([]repository.EvidenceSupportInput, 0, len(spans))
 	for _, span := range spans {
-		item, ok := plan.itemsByEvidenceID[span.EvidenceID]
-		if !ok {
+		content := ""
+		authorityValue := ""
+		sourceID := ""
+		sourceRevisionID := ""
+		fragmentID := ""
+		evidenceOwnerProfileID := ""
+		submitted := false
+		if item, ok := plan.itemsByEvidenceID[span.EvidenceID]; ok {
+			submitted = true
+			content = item.Fragment.Content
+			authorityValue = item.Fragment.Authority
+			sourceID = item.Fragment.SourceID
+			sourceRevisionID = item.Fragment.SourceRevisionID
+			fragmentID = item.Fragment.FragmentID
+		} else if known, ok := plan.knownEvidenceByID[span.EvidenceID]; ok {
+			content = known.Content
+			authorityValue = known.Authority
+			sourceID = known.SourceID
+			sourceRevisionID = known.SourceRevisionID
+			fragmentID = known.FragmentID
+			evidenceOwnerProfileID = known.OwnerProfileID
+		} else {
 			return nil, errors.New("submission assessor evidence span is outside the run")
 		}
-		quote, err := assessor.SemanticEvidenceSpan(item.Fragment.Content, span.Start, span.End)
+		quote, err := assessor.SemanticEvidenceSpan(content, span.Start, span.End)
 		if err != nil {
 			return nil, err
 		}
-		authority, err := semanticSupportAuthority(item.Fragment.Authority)
+		authority, err := semanticSupportAuthority(authorityValue)
 		if err != nil {
 			return nil, err
 		}
-		supports = append(supports, repository.EvidenceSupportInput{
-			FragmentID:       item.Fragment.FragmentID,
-			SourceGroupKey:   fmt.Sprintf("semantic_assessment:%s:%s:%d:%d", assessmentID, span.EvidenceID, span.Start, span.End),
-			SourceID:         item.Fragment.SourceID,
-			SourceRevisionID: item.Fragment.SourceRevisionID,
-			SpanStart:        span.Start,
-			SpanEnd:          span.End,
-			Quote:            quote,
-			Authority:        authority,
+		support := repository.EvidenceSupportInput{
+			FragmentID:             fragmentID,
+			EvidenceOwnerProfileID: evidenceOwnerProfileID,
+			SourceGroupKey:         fmt.Sprintf("semantic_assessment:%s:%s:%d:%d", assessmentID, span.EvidenceID, span.Start, span.End),
+			SourceID:               sourceID,
+			SourceRevisionID:       sourceRevisionID,
+			SpanStart:              span.Start,
+			SpanEnd:                span.End,
+			Quote:                  quote,
+			Authority:              authority,
 			Metadata: map[string]any{
 				"semantic_contract": domain.ContractVersion,
 				"assessment_id":     assessmentID,
 				"evidence_id":       span.EvidenceID,
 			},
-		})
+		}
+		if submitted {
+			submittedSupports = append(submittedSupports, support)
+		} else {
+			knownSupports = append(knownSupports, support)
+		}
 	}
-	return supports, nil
+	return append(submittedSupports, knownSupports...), nil
 }
 
 func submissionAssessmentItemForFragment(plan submissionAssessmentPlan, fragmentID string) (submissionAssessmentItem, bool) {

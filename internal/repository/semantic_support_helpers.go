@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -113,6 +116,10 @@ func validateSingleSupportOwnership(ctx context.Context, tx *gorm.DB, input Appl
 	if (support.SourceID == "") != (support.SourceRevisionID == "") {
 		return errors.New("support source and source revision must be provided together")
 	}
+	evidenceOwnerProfileID := strings.TrimSpace(support.EvidenceOwnerProfileID)
+	if evidenceOwnerProfileID != "" {
+		return validateKnownSupportOwnership(ctx, tx, input, support, evidenceOwnerProfileID, evidenceOwnerProfileID != input.OwnerProfileID)
+	}
 	query := `
 		SELECT EXISTS (
 			SELECT 1
@@ -158,6 +165,128 @@ func validateSingleSupportOwnership(ctx context.Context, tx *gorm.DB, input Appl
 		return ErrSemanticOwnerMismatch
 	}
 	return nil
+}
+
+func validateKnownSupportOwnership(
+	ctx context.Context,
+	tx *gorm.DB,
+	input ApplyRelationshipDecisionInput,
+	support EvidenceSupportInput,
+	evidenceOwnerProfileID string,
+	requireSharedSpace bool,
+) error {
+	if _, err := uuid.Parse(evidenceOwnerProfileID); err != nil {
+		return fmt.Errorf("support.evidence_owner_profile_id is invalid: %w", err)
+	}
+	if err := lockKnownEvidenceSource(ctx, tx, input.TeamID, support.SourceID, evidenceOwnerProfileID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrSemanticOwnerMismatch
+		}
+		if isPostgresLockNotAvailable(err) {
+			return ErrSubmissionAssessmentKnownEvidenceStale
+		}
+		return err
+	}
+	query := `
+		SELECT EXISTS (
+			SELECT 1
+			FROM evidence_fragments AS fragment
+			JOIN knowledge_ingests AS ingest
+			  ON ingest.team_id = fragment.team_id
+			 AND ingest.ingest_id = fragment.ingest_id
+			 AND ingest.owner_profile_id = fragment.owner_profile_id
+			JOIN memory_spaces AS space
+			  ON space.team_id = fragment.team_id
+			 AND space.id = fragment.space_id
+			WHERE fragment.team_id = ?::uuid
+			  AND fragment.fragment_id = ?::uuid
+			  AND fragment.owner_profile_id = ?::uuid
+			  AND ingest.status = 'completed'
+			  AND (space.kind = 'team_shared' OR (NOT ? AND dense_mem_space_allowed(space.id)))
+			  AND space.lifecycle_state = 'active'
+			  AND fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
+			  AND NOT EXISTS (
+			      SELECT 1
+			      FROM evidence_quarantines AS quarantine
+			      WHERE quarantine.team_id = fragment.team_id
+			        AND quarantine.fragment_id = fragment.fragment_id
+			        AND quarantine.status = 'active'
+			  )
+			  AND NOT (
+			      ingest.source_summary = 'overdue conflict deletion-only derivation'
+			      AND ingest.metadata ->> 'conflict_resolution_deletion_only' = 'true'
+			  )
+			  AND NOT EXISTS (
+			      SELECT 1
+			      FROM evidence_lifecycle_events AS lifecycle
+			      WHERE lifecycle.team_id = fragment.team_id
+			        AND lifecycle.target_fragment_id = fragment.fragment_id
+			  )
+		)
+	`
+	args := []any{input.TeamID, support.FragmentID, evidenceOwnerProfileID, requireSharedSpace}
+	if support.SourceID != "" {
+		query = `
+			SELECT EXISTS (
+				SELECT 1
+				FROM evidence_fragments AS fragment
+				JOIN knowledge_ingests AS ingest
+				  ON ingest.team_id = fragment.team_id
+				 AND ingest.ingest_id = fragment.ingest_id
+				 AND ingest.owner_profile_id = fragment.owner_profile_id
+				JOIN memory_spaces AS space
+				  ON space.team_id = fragment.team_id
+				 AND space.id = fragment.space_id
+				JOIN evidence_sources AS source
+				  ON source.team_id = fragment.team_id
+				 AND source.source_id = fragment.source_id
+				 AND source.owner_profile_id = fragment.owner_profile_id
+				WHERE fragment.team_id = ?::uuid
+				  AND fragment.fragment_id = ?::uuid
+				  AND fragment.owner_profile_id = ?::uuid
+				  AND ingest.status = 'completed'
+				  AND fragment.source_id = ?::uuid
+				  AND fragment.source_revision_id = ?::uuid
+				  AND source.current_revision_id = fragment.source_revision_id
+				  AND (space.kind = 'team_shared' OR (NOT ? AND dense_mem_space_allowed(space.id)))
+				  AND space.lifecycle_state = 'active'
+				  AND fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
+				  AND NOT EXISTS (
+				      SELECT 1
+				      FROM evidence_quarantines AS quarantine
+				      WHERE quarantine.team_id = fragment.team_id
+				        AND quarantine.fragment_id = fragment.fragment_id
+				        AND quarantine.status = 'active'
+				  )
+				  AND NOT (
+				      ingest.source_summary = 'overdue conflict deletion-only derivation'
+				      AND ingest.metadata ->> 'conflict_resolution_deletion_only' = 'true'
+				  )
+				  AND NOT EXISTS (
+				      SELECT 1
+				      FROM evidence_lifecycle_events AS lifecycle
+				      WHERE lifecycle.team_id = fragment.team_id
+				        AND lifecycle.target_fragment_id = fragment.fragment_id
+				  )
+			)
+		`
+		args = []any{input.TeamID, support.FragmentID, evidenceOwnerProfileID, support.SourceID, support.SourceRevisionID, requireSharedSpace}
+	}
+	ok, err := existsOwnerReference(ctx, tx, query, args...)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrSemanticOwnerMismatch
+	}
+	return nil
+}
+
+func effectiveEvidenceOwnerProfileID(input ApplyRelationshipDecisionInput, support EvidenceSupportInput) string {
+	if owner := strings.TrimSpace(support.EvidenceOwnerProfileID); owner != "" {
+		return owner
+	}
+	return strings.TrimSpace(input.OwnerProfileID)
 }
 
 func existsOwnerReference(ctx context.Context, tx *gorm.DB, query string, args ...any) (bool, error) {
@@ -298,10 +427,10 @@ func insertRelationshipSupport(
 		WITH inserted AS (
 			INSERT INTO relationship_evidence_supports (
 			    team_id, relationship_id, observation_id, verification_event_id,
-			    fragment_id, owner_profile_id, source_group_key, source_id,
+			    fragment_id, owner_profile_id, evidence_owner_profile_id, source_group_key, source_id,
 			    source_revision_id, span_start, span_end, quote, authority, metadata, space_id
 			) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
+			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
 			    ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?, ?, ?, ?::jsonb,
 			(SELECT relationship.space_id
 			 FROM relationship_records AS relationship
@@ -323,7 +452,7 @@ func insertRelationshipSupport(
 		  AND span_end = ?
 		LIMIT 1
 	`, input.TeamID, relationshipID, observationID, verificationID,
-		input.Support.FragmentID, input.OwnerProfileID, input.Support.SourceGroupKey,
+		input.Support.FragmentID, input.OwnerProfileID, effectiveEvidenceOwnerProfileID(input, *input.Support), input.Support.SourceGroupKey,
 		input.Support.SourceID, input.Support.SourceRevisionID, input.Support.SpanStart,
 		input.Support.SpanEnd, input.Support.Quote, input.Support.Authority, string(metadata),
 		input.TeamID, relationshipID,

@@ -17,6 +17,9 @@ import (
 )
 
 func insertEvidenceQuarantine(ctx context.Context, tx *gorm.DB, input CreateIngestInput, ingestID string, fragmentID string, reason string) error {
+	if err := lockEvidenceLifecycleTarget(ctx, tx, input.TeamID, fragmentID); err != nil {
+		return err
+	}
 	return tx.WithContext(ctx).Exec(`
 		INSERT INTO evidence_quarantines (
 		    team_id, fragment_id, ingest_id, owner_profile_id, reason,

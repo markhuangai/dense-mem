@@ -917,32 +917,6 @@ func columnExists(t *testing.T, ctx context.Context, db *sql.DB, tableName, colu
 	return exists
 }
 
-func insertMigrationTeamProfile(t *testing.T, ctx context.Context, db *sql.DB) (string, string) {
-	t.Helper()
-	teamID, profileID := uuid.NewString(), uuid.NewString()
-	keyPrefix := strings.ReplaceAll(uuid.NewString(), "-", "")[:24]
-	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_team_id', $1, true), set_config('app.current_profile_id', $2, true)`, teamID, profileID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO teams (id, name, description, metadata, config)
-			VALUES ($1::uuid, $2, '', '{}'::jsonb, '{}'::jsonb)
-		`, teamID, "migration-team-"+teamID); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO team_profiles (
-				id, team_id, key_hash, key_prefix, key_suffix, name, scopes, role
-			) VALUES (
-				$1::uuid, $2::uuid, $3, $4, $5, $6, ARRAY['read','write']::text[], 'member'
-			)
-		`, profileID, teamID, "hash-"+profileID, keyPrefix, keyPrefix[:6], "migration-profile-"+profileID)
-		return err
-	}))
-	return teamID, profileID
-}
-
 func insertMigrationAuthorityFixture(t *testing.T, ctx context.Context, db *sql.DB, teamID, profileID, authority string) {
 	t.Helper()
 	sourceID := uuid.NewString()

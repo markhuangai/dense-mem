@@ -203,6 +203,7 @@ func traceEvidenceSupportOutputs(records []repository.RelationshipEvidenceSuppor
 		}
 		putString(item, "observation_id", record.ObservationID)
 		putString(item, "verification_event_id", record.VerificationEventID)
+		putString(item, "evidence_owner_profile_id", record.EvidenceOwnerProfileID)
 		putString(item, "source_group_key", record.SourceGroupKey)
 		putString(item, "quote", record.Quote)
 		putString(item, "authority", record.Authority)

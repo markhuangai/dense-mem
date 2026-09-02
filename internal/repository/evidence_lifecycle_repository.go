@@ -305,10 +305,7 @@ func planEvidenceLifecycle(
 func lockEvidenceLifecycleTargetIDs(ctx context.Context, tx *gorm.DB, teamID string, evidenceIDs []string) error {
 	evidenceIDs = sortedEvidenceIDs(evidenceIDs)
 	for _, evidenceID := range evidenceIDs {
-		if err := tx.WithContext(ctx).Exec(
-			"SELECT pg_advisory_xact_lock(hashtextextended(?::text, 0))",
-			strings.Join([]string{teamID, "evidence-lifecycle-target", evidenceID}, ":"),
-		).Error; err != nil {
+		if err := lockEvidenceLifecycleTarget(ctx, tx, teamID, evidenceID); err != nil {
 			return err
 		}
 	}

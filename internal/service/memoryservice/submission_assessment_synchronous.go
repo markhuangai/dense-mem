@@ -205,6 +205,9 @@ func AssessSynchronousRemember(
 		return nil, err
 	}
 	concrete := newSynchronousAssessmentEngine(deps, input.Scope.TeamID, input.Scope.OwnerProfileID)
+	if err := concrete.loadKnownEvidence(ctx, input.Scope, &plan); err != nil {
+		return nil, normalizeSynchronousAssessmentPreflightError(err)
+	}
 	request, err := concrete.buildRequest(ctx, input.Scope, plan, input.Snapshot.Proposal)
 	if err != nil {
 		return nil, normalizeSynchronousAssessmentPreflightError(err)

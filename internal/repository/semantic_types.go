@@ -96,6 +96,36 @@ type SemanticAssessmentKnownEntityInput struct {
 	EntityIDs      []string
 }
 
+// SubmissionAssessmentKnownEvidence is an immutable, request-scoped snapshot
+// of explicitly requested evidence that passed the authenticated visibility
+// and lifecycle eligibility fence. It is read-only assessment context; it is
+// never treated as submitted evidence or security input.
+type SubmissionAssessmentKnownEvidence struct {
+	TeamID                  string
+	EvidenceID              string
+	FragmentID              string
+	IngestID                string
+	OwnerProfileID          string
+	Content                 string
+	ContentHash             string
+	Authority               string
+	SourceID                string
+	SourceRevisionID        string
+	CurrentSourceRevisionID string
+	SpaceID                 string
+	SpaceGeneration         int64
+}
+
+type SubmissionAssessmentKnownEvidenceInput struct {
+	TeamID         string
+	OwnerProfileID string
+	EvidenceIDs    []string
+}
+
+type SubmissionAssessmentKnownEvidenceResult struct {
+	Evidence []SubmissionAssessmentKnownEvidence
+}
+
 type SemanticReviewPredicateCandidateInput struct {
 	TeamID         string
 	OwnerProfileID string
@@ -160,6 +190,9 @@ type SemanticAssessmentPredicateOptionsInput struct {
 type SubmissionAssessmentEntityCatalogInput struct {
 	TeamID         string
 	OwnerProfileID string
+	// SpaceID scopes candidates to the memory space receiving the submission.
+	// Empty retains the historical team-shared default for direct repository callers.
+	SpaceID        string
 	Entities       []SubmissionAssessmentEntityCatalogTarget
 	CandidateLimit int
 }
@@ -205,15 +238,16 @@ type ValueRecord struct {
 }
 
 type EvidenceSupportInput struct {
-	FragmentID       string
-	SourceGroupKey   string
-	SourceID         string
-	SourceRevisionID string
-	SpanStart        int
-	SpanEnd          int
-	Quote            string
-	Authority        string
-	Metadata         map[string]any
+	FragmentID             string
+	EvidenceOwnerProfileID string
+	SourceGroupKey         string
+	SourceID               string
+	SourceRevisionID       string
+	SpanStart              int
+	SpanEnd                int
+	Quote                  string
+	Authority              string
+	Metadata               map[string]any
 }
 
 type ApplyRelationshipDecisionInput struct {
@@ -562,21 +596,22 @@ type RelationshipVerificationEvent struct {
 }
 
 type RelationshipEvidenceSupportRecord struct {
-	SupportID           string         `json:"evidence_support_id,omitempty"`
-	RelationshipID      string         `json:"relationship_id,omitempty"`
-	ObservationID       string         `json:"observation_id,omitempty"`
-	VerificationEventID string         `json:"verification_event_id,omitempty"`
-	FragmentID          string         `json:"evidence_id,omitempty"`
-	OwnerProfileID      string         `json:"owner_profile_id,omitempty"`
-	SourceGroupKey      string         `json:"source_group_key,omitempty"`
-	SourceID            string         `json:"source_id,omitempty"`
-	SourceRevisionID    string         `json:"source_revision_id,omitempty"`
-	SpanStart           int            `json:"span_start,omitempty"`
-	SpanEnd             int            `json:"span_end,omitempty"`
-	Quote               string         `json:"quote,omitempty"`
-	Authority           string         `json:"authority,omitempty"`
-	Metadata            map[string]any `json:"metadata,omitempty"`
-	CreatedAt           time.Time      `json:"created_at,omitempty"`
+	SupportID              string         `json:"evidence_support_id,omitempty"`
+	RelationshipID         string         `json:"relationship_id,omitempty"`
+	ObservationID          string         `json:"observation_id,omitempty"`
+	VerificationEventID    string         `json:"verification_event_id,omitempty"`
+	FragmentID             string         `json:"evidence_id,omitempty"`
+	OwnerProfileID         string         `json:"owner_profile_id,omitempty"`
+	EvidenceOwnerProfileID string         `json:"evidence_owner_profile_id,omitempty"`
+	SourceGroupKey         string         `json:"source_group_key,omitempty"`
+	SourceID               string         `json:"source_id,omitempty"`
+	SourceRevisionID       string         `json:"source_revision_id,omitempty"`
+	SpanStart              int            `json:"span_start,omitempty"`
+	SpanEnd                int            `json:"span_end,omitempty"`
+	Quote                  string         `json:"quote,omitempty"`
+	Authority              string         `json:"authority,omitempty"`
+	Metadata               map[string]any `json:"metadata,omitempty"`
+	CreatedAt              time.Time      `json:"created_at,omitempty"`
 }
 
 type RelationshipSupportDecisionEvent struct {

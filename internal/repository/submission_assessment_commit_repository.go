@@ -15,11 +15,12 @@ import (
 )
 
 var (
-	ErrSubmissionAssessmentNotFound        = errors.New("submission assessment not found")
-	ErrSubmissionAssessorAttemptConsumed   = errors.New("submission assessor attempt already consumed")
-	ErrSubmissionAssessmentScopeMismatch   = errors.New("submission assessment scope mismatch")
-	ErrSubmissionPredicateRegistrationHeld = errors.New("submission predicate registration requires review")
-	ErrSubmissionAssessmentNonPromotable   = errors.New("submission assessment is not promotable")
+	ErrSubmissionAssessmentNotFound           = errors.New("submission assessment not found")
+	ErrSubmissionAssessorAttemptConsumed      = errors.New("submission assessor attempt already consumed")
+	ErrSubmissionAssessmentScopeMismatch      = errors.New("submission assessment scope mismatch")
+	ErrSubmissionPredicateRegistrationHeld    = errors.New("submission predicate registration requires review")
+	ErrSubmissionAssessmentNonPromotable      = errors.New("submission assessment is not promotable")
+	ErrSubmissionAssessmentKnownEvidenceStale = errors.New("submission known evidence snapshot is stale")
 )
 
 func normalizeRememberCommitScope(scope RememberCommitScope) RememberCommitScope {
@@ -46,6 +47,20 @@ func normalizeCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentIn
 	input.AssessmentID = strings.TrimSpace(input.AssessmentID)
 	for i := range input.Items {
 		input.Items[i].FragmentID = strings.TrimSpace(input.Items[i].FragmentID)
+	}
+	for i := range input.KnownEvidenceSnapshot {
+		item := &input.KnownEvidenceSnapshot[i]
+		item.TeamID = strings.TrimSpace(item.TeamID)
+		item.EvidenceID = strings.TrimSpace(item.EvidenceID)
+		item.FragmentID = strings.TrimSpace(item.FragmentID)
+		item.IngestID = strings.TrimSpace(item.IngestID)
+		item.OwnerProfileID = strings.TrimSpace(item.OwnerProfileID)
+		item.ContentHash = strings.TrimSpace(item.ContentHash)
+		item.Authority = strings.TrimSpace(item.Authority)
+		item.SourceID = strings.TrimSpace(item.SourceID)
+		item.SourceRevisionID = strings.TrimSpace(item.SourceRevisionID)
+		item.CurrentSourceRevisionID = strings.TrimSpace(item.CurrentSourceRevisionID)
+		item.SpaceID = strings.TrimSpace(item.SpaceID)
 	}
 	for i := range input.EntityResolutions {
 		entry := &input.EntityResolutions[i]
@@ -84,12 +99,18 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 	if err := validateRememberCommitScope(input.RememberCommitScope); err != nil {
 		return err
 	}
+	if err := validateKnownEvidenceSnapshots(input); err != nil {
+		return err
+	}
 	if _, err := uuid.Parse(input.AssessmentID); err != nil {
 		if len(input.Items) > 0 {
 			return fmt.Errorf("assessment_id is required: %w", err)
 		}
 	}
 	if len(input.Items) == 0 {
+		if len(input.KnownEvidenceSnapshot) != 0 {
+			return errors.New("terminal synchronous result cannot carry known evidence")
+		}
 		if len(input.EntityResolutions) != 0 || len(input.RelationshipObservations) != 0 || len(input.PredicateRegistrations) != 0 {
 			return errors.New("terminal synchronous result cannot carry semantic decisions")
 		}
@@ -226,6 +247,62 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 			return errors.New("submission predicate registration relationship_ref is duplicated")
 		}
 		seenRegistrations[registration.RelationshipRef] = struct{}{}
+	}
+	return nil
+}
+
+func validateKnownEvidenceSnapshots(input CommitSubmissionAssessmentInput) error {
+	seen := make(map[string]struct{}, len(input.KnownEvidenceSnapshot))
+	for index, item := range input.KnownEvidenceSnapshot {
+		if item.TeamID != input.TeamID {
+			return fmt.Errorf("known evidence snapshot[%d] team_id does not match the Remember team", index)
+		}
+		for label, value := range map[string]string{
+			"evidence_id": item.EvidenceID, "fragment_id": item.FragmentID,
+			"ingest_id": item.IngestID, "owner_profile_id": item.OwnerProfileID,
+		} {
+			if _, err := uuid.Parse(value); err != nil {
+				return fmt.Errorf("known evidence snapshot[%d] %s is required: %w", index, label, err)
+			}
+		}
+		if item.EvidenceID != item.FragmentID {
+			return fmt.Errorf("known evidence snapshot[%d] evidence_id and fragment_id must match", index)
+		}
+		if _, exists := seen[item.EvidenceID]; exists {
+			return errors.New("known evidence snapshot identity is duplicated")
+		}
+		seen[item.EvidenceID] = struct{}{}
+		if item.Content == "" || item.ContentHash == "" {
+			return fmt.Errorf("known evidence snapshot[%d] content and content_hash are required", index)
+		}
+		if !domain.Authority(item.Authority).IsValid() {
+			return fmt.Errorf("known evidence snapshot[%d] authority is unsupported", index)
+		}
+		if _, err := uuid.Parse(item.SpaceID); err != nil {
+			return fmt.Errorf("known evidence snapshot[%d] space_id is required: %w", index, err)
+		}
+		if item.SpaceGeneration < 1 {
+			return fmt.Errorf("known evidence snapshot[%d] space_generation must be positive", index)
+		}
+		if (item.SourceID == "") != (item.SourceRevisionID == "") {
+			return fmt.Errorf("known evidence snapshot[%d] source and source revision must be provided together", index)
+		}
+		if item.SourceID != "" {
+			if _, err := uuid.Parse(item.SourceID); err != nil {
+				return fmt.Errorf("known evidence snapshot[%d] source_id is invalid: %w", index, err)
+			}
+			if _, err := uuid.Parse(item.SourceRevisionID); err != nil {
+				return fmt.Errorf("known evidence snapshot[%d] source_revision_id is invalid: %w", index, err)
+			}
+			if item.CurrentSourceRevisionID == "" || item.CurrentSourceRevisionID != item.SourceRevisionID {
+				return fmt.Errorf("known evidence snapshot[%d] source revision is not current", index)
+			}
+			if _, err := uuid.Parse(item.CurrentSourceRevisionID); err != nil {
+				return fmt.Errorf("known evidence snapshot[%d] current_source_revision_id is invalid: %w", index, err)
+			}
+		} else if item.CurrentSourceRevisionID != "" {
+			return fmt.Errorf("known evidence snapshot[%d] current source revision requires a source", index)
+		}
 	}
 	return nil
 }

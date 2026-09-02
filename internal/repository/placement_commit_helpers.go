@@ -63,6 +63,12 @@ func applySemanticRelationshipDecision(
 		if index >= len(applied.SupportIDs) || applied.SupportIDs[index] == "" || support.FragmentID == "" {
 			continue
 		}
+		// Explicit known evidence may belong to another profile. Its existing
+		// search projection is read-only context; do not rewrite that projection's
+		// owner while recording support for the caller's Relationship.
+		if support.EvidenceOwnerProfileID != "" && support.EvidenceOwnerProfileID != commit.OwnerProfileID {
+			continue
+		}
 		if semanticFragmentID == "" {
 			var err error
 			semanticFragmentID, err = loadSemanticItemFragmentID(ctx, tx, commit)

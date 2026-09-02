@@ -3,6 +3,7 @@ package memoryservice
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -20,6 +21,7 @@ func submissionAssessmentCommitInput(
 	if assessment == nil || strings.TrimSpace(assessment.AssessmentID) == "" {
 		return repository.CommitSubmissionAssessmentInput{}, errors.New("persisted submission assessment is required before semantic commit")
 	}
+	usedKnownEvidenceIDs := make(map[string]struct{}, len(plan.knownEvidenceByID))
 	unsupportedEntities := repairSubmissionAssessmentResponse(&plan, &response)
 	items := make([]repository.SubmissionAssessmentItemInput, 0, len(plan.Items))
 	for _, item := range plan.Items {
@@ -36,7 +38,9 @@ func submissionAssessmentCommitInput(
 		mentionRef    string
 	}, len(response.EntityResults))
 	entityRefAliases := make(map[string]string, len(response.EntityResults))
+	entityResultsByRef := make(map[string]assessor.SemanticAssessmentEntityResult, len(response.EntityResults))
 	for _, result := range response.EntityResults {
+		entityResultsByRef[result.Ref] = result
 		target, ok := plan.entityTargetsByRef[result.Ref]
 		if !ok {
 			return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor entity result is outside the contract")
@@ -156,6 +160,9 @@ func submissionAssessmentCommitInput(
 		default:
 			return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor returned unsupported relationship disposition")
 		}
+		if target.KnownEvidenceUnavailable {
+			return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor stored relationship with unavailable known evidence")
+		}
 		if len(result.Splits) == 0 {
 			return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor stored relationship has no split")
 		}
@@ -172,6 +179,60 @@ func submissionAssessmentCommitInput(
 			validFrom, validTo, err := semanticAssessmentValidity(split)
 			if err != nil {
 				return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor validity is invalid")
+			}
+			allowedEvidence := make(map[string]struct{}, len(target.Target.EvidenceIDs)+len(target.Target.KnownEvidenceIDs))
+			submittedEvidence := make(map[string]struct{}, len(target.Target.EvidenceIDs))
+			for _, evidenceID := range target.Target.EvidenceIDs {
+				allowedEvidence[evidenceID] = struct{}{}
+				submittedEvidence[evidenceID] = struct{}{}
+			}
+			for _, evidenceID := range target.Target.KnownEvidenceIDs {
+				allowedEvidence[evidenceID] = struct{}{}
+			}
+			hasSubmittedSupport := false
+			for _, span := range split.Evidence {
+				if _, ok := allowedEvidence[span.EvidenceID]; !ok {
+					if _, submitted := plan.itemsByEvidenceID[span.EvidenceID]; !submitted {
+						if _, known := plan.knownEvidenceByID[span.EvidenceID]; !known {
+							return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor evidence span is outside the run")
+						}
+					}
+					return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor support is outside the relationship allowlist")
+				}
+				if _, ok := submittedEvidence[span.EvidenceID]; ok {
+					hasSubmittedSupport = true
+				}
+			}
+			if !hasSubmittedSupport {
+				return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor relationship must retain submitted support")
+			}
+			for _, span := range split.Evidence {
+				if _, known := plan.knownEvidenceByID[span.EvidenceID]; known {
+					usedKnownEvidenceIDs[span.EvidenceID] = struct{}{}
+				}
+			}
+			endpointRefs := []string{split.SubjectRef}
+			if split.ObjectRef != nil {
+				endpointRefs = append(endpointRefs, *split.ObjectRef)
+			}
+			for _, endpointRef := range endpointRefs {
+				entityResult, ok := entityResultsByRef[endpointRef]
+				if !ok || entityResult.AnchorRef == nil || strings.TrimSpace(*entityResult.AnchorRef) == "" {
+					continue
+				}
+				target, ok := plan.entityTargetsByRef[endpointRef]
+				if !ok {
+					continue
+				}
+				for _, anchor := range target.Target.Anchors {
+					if anchor.AnchorRef != strings.TrimSpace(*entityResult.AnchorRef) {
+						continue
+					}
+					if _, known := plan.knownEvidenceByID[anchor.EvidenceID]; known {
+						usedKnownEvidenceIDs[anchor.EvidenceID] = struct{}{}
+					}
+					break
+				}
 			}
 			supports, err := submissionAssessmentSupports(plan, assessment.AssessmentID, split.Evidence)
 			if err != nil {
@@ -263,6 +324,15 @@ func submissionAssessmentCommitInput(
 			Disposition:     "stored",
 		}
 	}
+	knownEvidenceIDs := make([]string, 0, len(usedKnownEvidenceIDs))
+	for evidenceID := range usedKnownEvidenceIDs {
+		knownEvidenceIDs = append(knownEvidenceIDs, evidenceID)
+	}
+	sort.Strings(knownEvidenceIDs)
+	knownEvidenceSnapshot := make([]repository.SubmissionAssessmentKnownEvidence, 0, len(knownEvidenceIDs))
+	for _, evidenceID := range knownEvidenceIDs {
+		knownEvidenceSnapshot = append(knownEvidenceSnapshot, plan.knownEvidenceByID[evidenceID])
+	}
 	if len(seenRelationshipRefs) != len(plan.RelationshipTargets) {
 		return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor omitted a relationship result")
 	}
@@ -279,6 +349,7 @@ func submissionAssessmentCommitInput(
 		RememberCommitScope:      scope,
 		AssessmentID:             assessment.AssessmentID,
 		Items:                    items,
+		KnownEvidenceSnapshot:    knownEvidenceSnapshot,
 		EntityResolutions:        entityResolutions,
 		RelationshipObservations: observations,
 		PredicateRegistrations:   registrations,

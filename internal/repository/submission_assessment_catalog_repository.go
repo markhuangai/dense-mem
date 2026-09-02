@@ -45,6 +45,8 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 				               FROM entity_names AS active_name
 				               WHERE active_name.team_id = rec.team_id
 				                 AND active_name.entity_id = rec.entity_id
+				                 AND active_name.space_id = rec.space_id
+				                 AND `+activeSemanticSpaceGenerationSQL("active_name")+`
 				                 AND active_name.valid_to IS NULL
 				                 AND active_name.name_kind IN ('canonical', 'alias')
 				               ORDER BY active_name.name_kind, active_name.created_at, active_name.entity_name_id
@@ -56,15 +58,21 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 				    LEFT JOIN entity_names AS name
 				      ON name.team_id = rec.team_id
 				     AND name.entity_id = rec.entity_id
+				     AND name.space_id = rec.space_id
+				     AND `+activeSemanticSpaceGenerationSQL("name")+`
 				     AND name.valid_to IS NULL
 				     AND name.name_kind IN ('canonical', 'alias')
 				    LEFT JOIN entity_names AS canonical
 				      ON canonical.team_id = rec.team_id
 				     AND canonical.entity_id = rec.entity_id
+				     AND canonical.space_id = rec.space_id
+				     AND `+activeSemanticSpaceGenerationSQL("canonical")+`
 				     AND canonical.name_kind = 'canonical'
 				     AND canonical.valid_to IS NULL
 				    WHERE rec.team_id = ?::uuid
 				      AND rec.status = 'active'
+				      AND rec.space_id = COALESCE(NULLIF(?, '')::uuid, dense_mem_team_shared_space(?::uuid))
+				      AND `+activeSemanticSpaceGenerationSQL("rec")+`
 				      AND (? = '' OR rec.entity_kind = ?)
 				      AND (
 				          rec.entity_id = NULLIF(?, '')::uuid
@@ -76,6 +84,8 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 				                  WHERE exact.team_id = rec.team_id
 				                    AND exact.entity_id = NULLIF(?, '')::uuid
 				                    AND exact.status = 'active'
+				                    AND exact.space_id = rec.space_id
+				                    AND `+activeSemanticSpaceGenerationSQL("exact")+`
 				              )
 				          )
 				      )
@@ -85,8 +95,8 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 				FROM candidates
 				ORDER BY known_rank, name_rank, entity_id
 				LIMIT ?
-			`, target.KnownEntityID, normalizedSurface, input.TeamID, target.EntityKind, target.EntityKind,
-				target.KnownEntityID, normalizedSurface, target.KnownEntityID, input.CandidateLimit+1).Rows()
+			`, target.KnownEntityID, normalizedSurface, input.TeamID, input.SpaceID, input.TeamID,
+				target.EntityKind, target.EntityKind, target.KnownEntityID, normalizedSurface, target.KnownEntityID, input.CandidateLimit+1).Rows()
 			if err != nil {
 				return err
 			}
@@ -138,6 +148,7 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentEntityCatalog(
 func normalizeSubmissionAssessmentEntityCatalogInput(input SubmissionAssessmentEntityCatalogInput) SubmissionAssessmentEntityCatalogInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	if input.CandidateLimit <= 0 {
 		input.CandidateLimit = submissionAssessmentMaxCandidateSet
 	}
@@ -167,6 +178,11 @@ func validateSubmissionAssessmentEntityCatalogInput(input SubmissionAssessmentEn
 	}
 	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
 		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	if input.SpaceID != "" {
+		if _, err := uuid.Parse(input.SpaceID); err != nil {
+			return fmt.Errorf("space_id is invalid: %w", err)
+		}
 	}
 	if len(input.Entities) > submissionAssessmentMaxEntityTargets {
 		return fmt.Errorf("entities must contain at most %d entries", submissionAssessmentMaxEntityTargets)

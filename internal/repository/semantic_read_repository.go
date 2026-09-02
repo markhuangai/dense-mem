@@ -446,6 +446,7 @@ func loadTraceSupports(
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT support_id::text, relationship_id::text, observation_id::text,
 		       verification_event_id::text, fragment_id::text, owner_profile_id::text,
+		       evidence_owner_profile_id::text,
 		       source_group_key, COALESCE(source_id::text, ''),
 		       COALESCE(source_revision_id::text, ''), span_start, span_end,
 		       quote, authority, metadata::text, created_at
@@ -468,6 +469,7 @@ func loadTraceSupports(
 		if err := rows.Scan(
 			&row.SupportID, &row.RelationshipID, &row.ObservationID,
 			&row.VerificationEventID, &row.FragmentID, &row.OwnerProfileID,
+			&row.EvidenceOwnerProfileID,
 			&row.SourceGroupKey, &row.SourceID, &row.SourceRevisionID,
 			&row.SpanStart, &row.SpanEnd, &row.Quote, &row.Authority,
 			&metadataJSON, &row.CreatedAt,

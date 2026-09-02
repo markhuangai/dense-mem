@@ -1,6 +1,7 @@
 package memoryservice
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
@@ -329,6 +330,134 @@ func TestSubmissionAssessmentCommitInputReturnsNotStoredWarningsForUnsupportedRe
 		require.Equal(t, "not_stored", result.Disposition)
 		require.Equal(t, "not_supported_by_evidence", result.Reason)
 	}
+}
+
+func TestSubmissionAssessmentCommitInputCarriesKnownEvidenceSnapshotAndOwner(t *testing.T) {
+	fixture := synchronousAssessmentFixture(t)
+	knownID := uuid.NewString()
+	knownOwnerID := uuid.NewString()
+	known := repository.SubmissionAssessmentKnownEvidence{
+		TeamID: fixture.input.Scope.TeamID, EvidenceID: knownID, FragmentID: knownID,
+		IngestID: uuid.NewString(), OwnerProfileID: knownOwnerID,
+		Content: "Known context confirms Alpha uses Beta.", ContentHash: "known-hash", Authority: "primary",
+		SpaceID: uuid.NewString(), SpaceGeneration: 1,
+	}
+	fixture.input.Snapshot.Proposal["relationship_hints"].([]any)[0].(map[string]any)["known_evidence_ids"] = []any{knownID}
+	fixture.catalog.knownEvidence = []repository.SubmissionAssessmentKnownEvidence{known}
+	prepared := validPreparedSynchronousAssessment(t, fixture)
+	knownRange := assessor.SemanticAssessmentGroundedRange{
+		EvidenceID: knownID, Start: 0, End: len([]rune(known.Content)),
+	}
+	knownRange.StartRef, _ = assessor.SemanticAssessmentBoundaryRef(assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{EvidenceID: knownID, Content: known.Content}), 0)
+	knownRange.EndRef, _ = assessor.SemanticAssessmentBoundaryRef(assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{EvidenceID: knownID, Content: known.Content}), len([]rune(known.Content)))
+	var split *assessor.SemanticAssessmentRelationshipSplit
+	for index := range prepared.Response.RelationshipResults {
+		if prepared.Response.RelationshipResults[index].Ref == "r:uses" && len(prepared.Response.RelationshipResults[index].Splits) > 0 {
+			split = &prepared.Response.RelationshipResults[index].Splits[0]
+			break
+		}
+	}
+	require.NotNil(t, split)
+	split.SupportRanges = append(split.SupportRanges, knownRange)
+	split.Evidence = append(split.Evidence, assessor.SemanticAssessmentEvidenceSpan{EvidenceID: knownID, Start: 0, End: len([]rune(known.Content))})
+
+	commit, err := submissionAssessmentCommitInput(repository.RememberCommitScope{
+		TeamID: fixture.input.Scope.TeamID, OwnerProfileID: fixture.input.Scope.OwnerProfileID, IngestID: fixture.input.Scope.IngestID,
+	}, prepared.Plan, prepared.Response, &prepared.Assessment, false)
+	require.NoError(t, err)
+	require.Len(t, commit.KnownEvidenceSnapshot, 1)
+	require.Equal(t, knownOwnerID, commit.KnownEvidenceSnapshot[0].OwnerProfileID)
+	require.Len(t, commit.RelationshipObservations, 2)
+	var knownSupport *repository.EvidenceSupportInput
+	for index := range commit.RelationshipObservations {
+		observation := commit.RelationshipObservations[index].Observation
+		for supportIndex := range observation.Supports {
+			if observation.Supports[supportIndex].FragmentID == knownID {
+				knownSupport = &observation.Supports[supportIndex]
+			}
+		}
+	}
+	if knownSupport == nil {
+		t.Fatal("known evidence support was not carried into the commit")
+	}
+	require.Equal(t, knownOwnerID, knownSupport.EvidenceOwnerProfileID)
+}
+
+func TestSubmissionAssessmentCommitInputFencesAnchorOnlyKnownEvidence(t *testing.T) {
+	fixture := synchronousAssessmentFixture(t)
+	knownID := uuid.NewString()
+	knownOwnerID := uuid.NewString()
+	known := repository.SubmissionAssessmentKnownEvidence{
+		TeamID: fixture.input.Scope.TeamID, EvidenceID: knownID, FragmentID: knownID,
+		IngestID: uuid.NewString(), OwnerProfileID: knownOwnerID,
+		Content: "Alpha is the system described by the submitted sentence.", ContentHash: "known-anchor-hash", Authority: "primary",
+		SpaceID: uuid.NewString(), SpaceGeneration: 1,
+	}
+	fixture.input.Snapshot.Evidence[0].Content = "It uses Beta."
+	relationship := fixture.input.Snapshot.Proposal["relationship_hints"].([]any)[0].(map[string]any)
+	relationship["known_evidence_ids"] = []any{knownID}
+	fixture.catalog.knownEvidence = []repository.SubmissionAssessmentKnownEvidence{known}
+	fixture.provider.response = func(request assessor.SemanticAssessmentRequest, _ int) assessor.SemanticAssessmentResponse {
+		response := validSynchronousAssessmentResponse(request)
+		for index := range response.EntityResults {
+			for _, entity := range request.SubmittedEntities {
+				if entity.Ref != response.EntityResults[index].Ref || len(entity.Groundings) == 0 || entity.Groundings[0].AnchorRef == "" {
+					continue
+				}
+				anchorRef := entity.Groundings[0].AnchorRef
+				response.EntityResults[index].AnchorRef = &anchorRef
+			}
+		}
+		return response
+	}
+
+	prepared, err := AssessSynchronousRemember(context.Background(), fixture.deps, fixture.input)
+	require.NoError(t, err)
+	commit, err := submissionAssessmentCommitInput(repository.RememberCommitScope{
+		TeamID: fixture.input.Scope.TeamID, OwnerProfileID: fixture.input.Scope.OwnerProfileID, IngestID: fixture.input.Scope.IngestID,
+	}, prepared.Plan, prepared.Response, &prepared.Assessment, false)
+	require.NoError(t, err)
+	require.Len(t, commit.KnownEvidenceSnapshot, 1)
+	require.Equal(t, knownID, commit.KnownEvidenceSnapshot[0].EvidenceID)
+	require.Equal(t, knownOwnerID, commit.KnownEvidenceSnapshot[0].OwnerProfileID)
+	for _, relationship := range commit.RelationshipObservations {
+		for _, span := range relationship.Observation.Supports {
+			require.NotEqual(t, knownID, span.FragmentID, "anchor-only known evidence must not be promoted to support")
+		}
+	}
+}
+
+func TestSubmissionAssessmentCommitInputDoesNotFenceUnusedKnownEvidence(t *testing.T) {
+	fixture := synchronousAssessmentFixture(t)
+	knownID := uuid.NewString()
+	known := repository.SubmissionAssessmentKnownEvidence{
+		TeamID: fixture.input.Scope.TeamID, EvidenceID: knownID, FragmentID: knownID,
+		IngestID: uuid.NewString(), OwnerProfileID: uuid.NewString(),
+		Content: "Known context is intentionally unused.", ContentHash: "unused-known-hash", Authority: "primary",
+		SpaceID: uuid.NewString(), SpaceGeneration: 1,
+	}
+	relationship := fixture.input.Snapshot.Proposal["relationship_hints"].([]any)[0].(map[string]any)
+	relationship["known_evidence_ids"] = []any{knownID}
+	fixture.catalog.knownEvidence = []repository.SubmissionAssessmentKnownEvidence{known}
+	prepared := validPreparedSynchronousAssessment(t, fixture)
+	var first *assessor.SemanticAssessmentRelationshipResult
+	for index := range prepared.Response.RelationshipResults {
+		if prepared.Response.RelationshipResults[index].Ref == "r:uses" {
+			first = &prepared.Response.RelationshipResults[index]
+			break
+		}
+	}
+	require.NotNil(t, first)
+	first.Disposition = "not_supported"
+	reason := "not_supported_by_evidence"
+	first.Reason = &reason
+	first.Splits = nil
+
+	commit, err := submissionAssessmentCommitInput(repository.RememberCommitScope{
+		TeamID: fixture.input.Scope.TeamID, OwnerProfileID: fixture.input.Scope.OwnerProfileID, IngestID: fixture.input.Scope.IngestID,
+	}, prepared.Plan, prepared.Response, &prepared.Assessment, false)
+	require.NoError(t, err)
+	require.Empty(t, commit.KnownEvidenceSnapshot, "known evidence used only by a not-supported relationship must not be fenced")
 }
 
 func preparedCommitAssessment(t *testing.T) (*SynchronousAssessmentResult, repository.RememberCommitScope) {

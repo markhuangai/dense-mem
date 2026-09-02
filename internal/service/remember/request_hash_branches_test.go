@@ -46,22 +46,28 @@ func TestCanonicalRememberHashNormalizesNestedSetsAndReferences(t *testing.T) {
 	}
 	relationships := []map[string]any{{
 		"ref": " rel ", "polarity": " + ", "valid_from": " 2026-01-01 ", "valid_to": " 2026-01-02 ",
-		"evidence_indices":  []any{2, 1},
-		"subject":           map[string]any{"ref": " subject ", "entity_kind": " concept "},
-		"predicate":         map[string]any{"proposed_key": " uses ", "known_predicate_key": " exact "},
-		"object":            map[string]any{"entity": map[string]any{"ref": " object "}},
-		"correction_target": map[string]any{"relationship_id": " relationship "},
-		"conflict_context":  map[string]any{"conflict_id": " conflict "},
-		"client_comment":    nil,
+		"evidence_indices":   []any{2, 1},
+		"known_evidence_ids": []any{" known-b ", "known-a"},
+		"subject":            map[string]any{"ref": " subject ", "entity_kind": " concept "},
+		"predicate":          map[string]any{"proposed_key": " uses ", "known_predicate_key": " exact "},
+		"object":             map[string]any{"entity": map[string]any{"ref": " object "}},
+		"correction_target":  map[string]any{"relationship_id": " relationship "},
+		"conflict_context":   map[string]any{"conflict_id": " conflict "},
+		"client_comment":     nil,
 	}}
 	hash, err := canonicalRequestBodyHashForContract("contract", evidence, entities, relationships)
 	require.NoError(t, err)
 	reorderedEntities := []map[string]any{entities[1], entities[0]}
 	reorderedRelationships := []map[string]any{relationships[0]}
 	reorderedRelationships[0]["evidence_indices"] = []any{1, 2}
+	reorderedRelationships[0]["known_evidence_ids"] = []any{"known-a", " known-b "}
 	reorderedHash, err := canonicalRequestBodyHashForContract("contract", evidence, reorderedEntities, reorderedRelationships)
 	require.NoError(t, err)
 	require.Equal(t, hash, reorderedHash)
+	reorderedRelationships[0]["known_evidence_ids"] = []any{"known-a", "known-c"}
+	differentHash, err := canonicalRequestBodyHashForContract("contract", evidence, reorderedEntities, reorderedRelationships)
+	require.NoError(t, err)
+	require.NotEqual(t, hash, differentHash)
 
 	valueRelationship := map[string]any{
 		"ref": "value", "object": map[string]any{"value": map[string]any{"type": " string "}},

@@ -238,7 +238,7 @@ func validateDreamFeedback(args map[string]any) error {
 		if err := validateRequiredFields(args, "relationships"); err != nil {
 			return err
 		}
-		return validateSubmittedRelationships(args["relationships"], evidence, "relationships")
+		return validateSubmittedRelationships(args["relationships"], evidence, "relationships", false)
 	case "reject", "stale", "reinforce":
 		if value, ok := args["idempotency_key"]; ok && strings.TrimSpace(stringInput(value)) != "" {
 			return errors.New("idempotency_key is only supported for confirmation decisions")
@@ -249,7 +249,7 @@ func validateDreamFeedback(args map[string]any) error {
 	}
 }
 
-func validateSubmittedRelationships(raw any, evidence []any, path string) error {
+func validateSubmittedRelationships(raw any, evidence []any, path string, allowKnownEvidence ...bool) error {
 	relationships, ok := raw.([]any)
 	if !ok {
 		return nil
@@ -269,17 +269,56 @@ func validateSubmittedRelationships(raw any, evidence []any, path string) error 
 			return fmt.Errorf("%s[%d].ref: duplicate ref", path, index)
 		}
 		seenRefs[normalizedRef] = struct{}{}
-		if err := validateSubmittedRelationship(relationship, evidence, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+		allowKnown := true
+		if len(allowKnownEvidence) > 0 {
+			allowKnown = allowKnownEvidence[0]
+		}
+		if err := validateSubmittedRelationship(relationship, evidence, fmt.Sprintf("%s[%d]", path, index), allowKnown); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateSubmittedRelationship(relationship map[string]any, evidence []any, path string) error {
+func validateSubmittedRelationship(relationship map[string]any, evidence []any, path string, allowKnownEvidence ...bool) error {
 	_, err := submittedRelationshipEvidenceIndices(relationship["evidence_indices"], len(evidence), path+".evidence_indices")
 	if err != nil {
 		return err
+	}
+	allowKnown := true
+	if len(allowKnownEvidence) > 0 {
+		allowKnown = allowKnownEvidence[0]
+	}
+	if !allowKnown {
+		if _, exists := relationship["known_evidence_ids"]; exists {
+			return fmt.Errorf("%s.known_evidence_ids is not accepted for this tool", path)
+		}
+	} else if rawIDs, exists := relationship["known_evidence_ids"]; exists {
+		ids, ok := rawIDs.([]any)
+		if !ok {
+			return fmt.Errorf("%s.known_evidence_ids must be an array", path)
+		}
+		if len(ids) > 20 {
+			return fmt.Errorf("%s.known_evidence_ids must contain at most 20 IDs", path)
+		}
+		seenIDs := make(map[string]struct{}, len(ids))
+		for index, rawID := range ids {
+			id, ok := rawID.(string)
+			if !ok {
+				return fmt.Errorf("%s.known_evidence_ids[%d] must be a UUID", path, index)
+			}
+			id = strings.TrimSpace(id)
+			parsed, err := uuid.Parse(id)
+			if err != nil {
+				return fmt.Errorf("%s.known_evidence_ids[%d] must be a UUID", path, index)
+			}
+			id = parsed.String()
+			ids[index] = id
+			if _, exists := seenIDs[id]; exists {
+				return fmt.Errorf("%s.known_evidence_ids[%d] duplicates evidence ID", path, index)
+			}
+			seenIDs[id] = struct{}{}
+		}
 	}
 
 	if _, ok := objectFields(relationship["subject"]); !ok {
