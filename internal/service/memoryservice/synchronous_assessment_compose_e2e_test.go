@@ -49,7 +49,7 @@ func TestComposeSynchronousEvidenceOnlyAssessorBatch(t *testing.T) {
 	require.Equal(t, 1, prepared.Assessment.ProviderTurns)
 	require.Empty(t, prepared.Request.SubmittedEntities)
 	require.Empty(t, prepared.Request.SubmittedRelationships)
-	require.Len(t, prepared.Response.SecurityResults, len(evidence))
+	require.Len(t, prepared.Response.EvidenceSecurityResults, len(evidence))
 	require.Empty(t, prepared.Response.SecuritySignals)
 
 	commitEvidence := make([]repository.EvidenceInput, 0, len(evidence))

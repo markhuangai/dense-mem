@@ -68,33 +68,25 @@ export async function run({ rpc, rawRPC, expect }) {
   expect(hypothesisIngestCount(teamID, scenarios.completed.hypothesisID) === completedIngestCount, "conflicting Dream confirmation must not create a Remember ingest");
   expect(feedbackEventCount(teamID, scenarios.completed.hypothesisID) === completedFeedbackEvents, "conflicting Dream confirmation must not append a feedback event");
 
-	const rejectedResponse = await rawRPC("tools/call", {
-		name: "resolve_dream_feedback",
-		arguments: resolveArguments(scenarios.rejected),
-	});
-	expect(rejectedResponse.result?.isError === true, "rejected Remember must be a structured tool error");
-	const rejected = rejectedResponse.result?.structuredContent;
-	expect(rejected?.processing_state === "rejected", "rejected Remember must expose terminal state");
-	expect(Array.isArray(rejected?.errors) && rejected.errors.length > 0, "rejected Remember must expose typed errors");
-	requireString(rejected?.submission_id, "rejected submission ID");
-	expect(hypothesisRow(teamID, scenarios.rejected.hypothesisID).status === "proposed", "rejected confirmation must not advance Dream state");
-	const rejectedAttempt = attemptRow(teamID, scenarios.rejected.idempotencyKey);
-	expect(rejectedAttempt.outcome === "rejected" && rejectedAttempt.count === 1, "rejected confirmation must persist one rejected terminal attempt");
-	assertDreamRetryGuidance(rejected, scenarios.rejected, "rejected", "retry_dream_feedback", expect);
+	const unsupported = await resolve(rpc, scenarios.unsupported, expect);
+	expect(unsupported.status === "submitted", "unsupported Relationships must not block Dream submission when evidence is safe");
+	expect(hypothesisRow(teamID, scenarios.unsupported.hypothesisID).status === "submitted", "unsupported Relationship warning must still submit the Dream");
+	const unsupportedAttempt = attemptRow(teamID, scenarios.unsupported.idempotencyKey);
+	expect(unsupportedAttempt.outcome === "completed" && unsupportedAttempt.count === 1, "unsupported Relationship warning must persist one completed attempt");
 
-	const quarantinedResponse = await rawRPC("tools/call", {
+	const securityResponse = await rawRPC("tools/call", {
 		name: "resolve_dream_feedback",
-		arguments: resolveArguments(scenarios.quarantined),
+		arguments: resolveArguments(scenarios.security),
 	});
-	expect(quarantinedResponse.result?.isError === true, "quarantined Remember must be a structured tool error");
-	const quarantined = quarantinedResponse.result?.structuredContent;
-	expect(quarantined?.processing_state === "quarantined", "quarantined Remember must expose terminal state");
-	expect(Array.isArray(quarantined?.errors) && quarantined.errors.length > 0, "quarantined Remember must expose typed errors");
-	requireString(quarantined?.submission_id, "quarantined submission ID");
-	expect(hypothesisRow(teamID, scenarios.quarantined.hypothesisID).status === "proposed", "quarantined confirmation must not advance Dream state");
-	const quarantinedAttempt = attemptRow(teamID, scenarios.quarantined.idempotencyKey);
-	expect(quarantinedAttempt.outcome === "quarantined" && quarantinedAttempt.count === 1, "quarantined confirmation must persist one quarantined terminal attempt");
-	assertDreamRetryGuidance(quarantined, scenarios.quarantined, "quarantined", "retry_dream_feedback", expect);
+	expect(securityResponse.result?.isError === true, "unsafe Remember must be a structured tool error");
+	const security = securityResponse.result?.structuredContent;
+	expect(security?.processing_state === "failed", "unsafe Remember must expose failed terminal state");
+	expect(security?.errors?.[0]?.code === "submission_policy_rejected" && security?.errors?.[0]?.retryable === false, "unsafe Remember must expose non-retryable policy rejection");
+	requireString(security?.submission_id, "security rejection submission ID");
+	expect(hypothesisRow(teamID, scenarios.security.hypothesisID).status === "proposed", "unsafe confirmation must not advance Dream state");
+	const securityAttempt = attemptRow(teamID, scenarios.security.idempotencyKey);
+	expect(securityAttempt.outcome === "failed" && securityAttempt.count === 1, "unsafe confirmation must persist one failed terminal attempt");
+	expect(security.errors[0]?.next_action === "resubmit_remember", "unsafe Remember must advertise resubmission rather than retrying the same request");
 
 	const failedResponse = await rawRPC("tools/call", {
 		name: "resolve_dream_feedback",
@@ -160,8 +152,8 @@ export async function run({ rpc, rawRPC, expect }) {
     mode: name,
     completed_submission_id: completedSubmissionID,
     replay_reused_submission: true,
-    rejected_reviewable: true,
-    quarantined_reviewable: true,
+    unsupported_relationship_warning: true,
+    security_rejection_reviewable: true,
     failed_reviewable: true,
     contention_busy_reviewable: true,
     independent_evidence_provenance: true,
@@ -196,14 +188,14 @@ async function enableDreaming() {
 }
 
 function makeScenarios() {
-  const labels = ["completed", "rejected", "quarantined", "failed", "contention"];
+  const labels = ["completed", "unsupported", "security", "failed", "contention"];
   const scenarios = {};
   for (const label of labels) {
     const hypothesisID = randomUUID();
     const statement = `Dream ${label}: Dense-Mem may use PostgreSQL for durable memory.`;
-    const evidence = label === "rejected"
+    const evidence = label === "unsupported"
       ? `[fixture-fault:no-supported] Dense-Mem uses PostgreSQL; independent ${label} evidence.`
-      : label === "quarantined"
+      : label === "security"
         ? `[fixture-fault:security] Dense-Mem uses PostgreSQL; independent ${label} evidence.`
         : label === "failed"
           ? `[fixture-fault:assessment-unavailable] Independent ${label} evidence.`

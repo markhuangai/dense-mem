@@ -150,15 +150,15 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 				result.RelationshipResults[index].Disposition = "not_stored"
 			}
 		}},
-		{"rejected without error", func(result *TerminalRememberResult) {
-			result.ProcessingState = string(TerminalProcessingRejected)
+		{"legacy rejected without error", func(result *TerminalRememberResult) {
+			result.ProcessingState = "rejected"
 		}},
 		{"failed without error", func(result *TerminalRememberResult) {
 			result.ProcessingState = string(TerminalProcessingFailed)
 		}},
-		{"rejected with stored result", func(result *TerminalRememberResult) {
-			result.ProcessingState = string(TerminalProcessingRejected)
-			result.Errors = []SubmissionStatusError{TerminalStatusError(TerminalErrorNoSupportedMemory)}
+		{"legacy rejected with policy error", func(result *TerminalRememberResult) {
+			result.ProcessingState = "rejected"
+			result.Errors = []SubmissionStatusError{TerminalStatusError(TerminalErrorPolicyRejected)}
 		}},
 		{"stored relationship without split", func(result *TerminalRememberResult) {
 			result.RelationshipResults[0].Splits = nil
@@ -248,7 +248,7 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 			result.RelationshipResults[1].Reason = " stale_input "
 		}},
 		{"terminal error state", func(result *TerminalRememberResult) {
-			result.ProcessingState = string(TerminalProcessingRejected)
+			result.ProcessingState = string(TerminalProcessingFailed)
 			result.Evidence[0].Disposition = "not_stored"
 			result.Evidence[0].EvidenceID = ""
 			result.RelationshipResults[0].Disposition = "not_stored"
@@ -256,8 +256,8 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 			result.RelationshipResults[0].Reason = "not_supported_by_evidence"
 			result.Errors = []SubmissionStatusError{TerminalStatusError(TerminalErrorProviderUnavailable)}
 		}},
-		{"rejected current search state", func(result *TerminalRememberResult) {
-			result.ProcessingState = string(TerminalProcessingRejected)
+		{"failed current search state", func(result *TerminalRememberResult) {
+			result.ProcessingState = string(TerminalProcessingFailed)
 			result.SearchState = string(TerminalSearchCurrent)
 			result.Evidence[0].Disposition = "not_stored"
 			result.Evidence[0].EvidenceID = ""
@@ -265,7 +265,7 @@ func TestValidateTerminalRememberResultRejectsMalformedOutput(t *testing.T) {
 			result.RelationshipResults[0].Disposition = "not_stored"
 			result.RelationshipResults[0].Splits = nil
 			result.RelationshipResults[0].Reason = "not_supported_by_evidence"
-			result.Errors = []SubmissionStatusError{TerminalStatusError(TerminalErrorNoSupportedMemory)}
+			result.Errors = []SubmissionStatusError{TerminalStatusError(TerminalErrorPolicyRejected)}
 		}},
 	}
 	for _, test := range tests {
@@ -303,8 +303,8 @@ func TestValidateTerminalRememberResultAcceptsContextualNotStoredReasons(t *test
 		code   TerminalErrorCode
 		reason string
 	}{
-		{"stale input", string(TerminalProcessingRejected), TerminalErrorStaleInput, "stale_input"},
-		{"quarantine", string(TerminalProcessingQuarantined), TerminalErrorQuarantined, "security_quarantine"},
+		{"stale input", string(TerminalProcessingFailed), TerminalErrorStaleInput, "stale_input"},
+		{"policy rejection", string(TerminalProcessingFailed), TerminalErrorPolicyRejected, "submission_policy_rejected"},
 		{"failure", string(TerminalProcessingFailed), TerminalErrorProviderUnavailable, "internal_failure"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -325,8 +325,8 @@ func TestValidateTerminalRememberResultRejectsMismatchedNotStoredReasons(t *test
 		{"completed relationship reason", func(result *TerminalRememberResult) {
 			result.RelationshipResults[1].Reason = "internal_failure"
 		}},
-		{"rejected evidence reason", func(result *TerminalRememberResult) {
-			failure := terminalFailureResultForTest(string(TerminalProcessingRejected), TerminalErrorNoSupportedMemory, "stale_input")
+		{"policy-rejected evidence reason", func(result *TerminalRememberResult) {
+			failure := terminalFailureResultForTest(string(TerminalProcessingFailed), TerminalErrorPolicyRejected, "stale_input")
 			*result = *failure
 		}},
 		{"failed relationship reason", func(result *TerminalRememberResult) {
@@ -387,32 +387,13 @@ func TestValidateTerminalStatusErrorRejectsMalformedOutput(t *testing.T) {
 	}
 }
 
-func TestDreamFeedbackRetryGuidanceUsesClosedAction(t *testing.T) {
-	value := TerminalStatusError(TerminalErrorNoSupportedMemory)
-	value.NextAction = string(TerminalNextActionRetryDreamFeedback)
-	value.Remediation = DreamFeedbackRetryRemediation("dream-feedback-retry")
-	require.NoError(t, ValidateTerminalStatusError(value))
-
-	value.Retryable = false
-	require.Error(t, ValidateTerminalStatusError(value))
-
-	value = TerminalStatusError(TerminalErrorNoSupportedMemory)
-	value.NextAction = string(TerminalNextActionRetryDreamFeedback)
-	value.Remediation = DreamFeedbackRetryRemediation(strings.Repeat("x", maxTerminalCorrelationIDRunes+1))
-	require.Error(t, ValidateTerminalStatusError(value))
-
-	value.Remediation = DreamFeedbackRetryRemediation("dream-feedback-retry") + " extra"
-	require.Error(t, ValidateTerminalStatusError(value))
-}
-
 func TestTerminalResultWithErrorUsesSemanticProcessingStates(t *testing.T) {
 	for _, test := range []struct {
 		code  TerminalErrorCode
 		state TerminalProcessingState
 	}{
-		{TerminalErrorNoSupportedMemory, TerminalProcessingRejected},
-		{TerminalErrorStaleInput, TerminalProcessingRejected},
-		{TerminalErrorQuarantined, TerminalProcessingQuarantined},
+		{TerminalErrorPolicyRejected, TerminalProcessingFailed},
+		{TerminalErrorStaleInput, TerminalProcessingFailed},
 		{TerminalErrorProviderUnavailable, TerminalProcessingFailed},
 	} {
 		result := &TerminalRememberResult{

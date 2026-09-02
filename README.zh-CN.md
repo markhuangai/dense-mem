@@ -82,7 +82,7 @@ ${EDITOR:-vi} .env
 docker compose up -d
 ```
 
-基础 stack 使用带 pgvector 的 PostgreSQL 作为唯一持久权威。v2.6.1 发布要求先由
+基础 stack 使用带 pgvector 的 PostgreSQL 作为唯一持久权威。v2.6.2 发布要求先由
 停服迁移写入兼容 cutover marker；运行时不再包含旧数据库或回退路径。默认本机端口：
 
 ```text
@@ -112,8 +112,8 @@ curl -fsS -X POST http://127.0.0.1:8090/control/api/teams/<team-id>/credentials 
 session lock 自动执行待处理的 PostgreSQL migration，因此 Compose 不需要单独的
 migration 容器。共享同一个可写 primary 的多个 server replica 会串行执行该启动步骤。
 普通滚动发布期间，migration 必须与上一版应用保持向后兼容。v2.6.1 同步 Remember
-迁移是例外：必须停止所有 server 实例、完成所需的 PostgreSQL 快照，并在启动新二进制
-前应用停服边界。彼此独立的数据库仍需分别由连接到该数据库的 server 完成 migration。
+迁移仍是停服边界：必须停止所有 server 实例、完成所需的 PostgreSQL 快照，并在启动新二进制
+前应用停服边界；v2.6.2 的 evidence-first 激活在该边界之后进行。彼此独立的数据库仍需分别由连接到该数据库的 server 完成 migration。
 管理操作通过私有控制门户/API 完成；dreaming 和自动 conflict review 仍由 server 后台
 worker 执行。
 
@@ -166,10 +166,11 @@ AI_VERIFIER_TIMEOUT_SECONDS=300
 隔离的终态处理与搜索状态，不会暴露 provider 输出或内部 run ID。
 
 调用方提交逻辑层的 Entity、predicate 和 Value 提议，不提交文本 offset。
-`remember` 不接受 `span`、`surface` 或 Relationship 的 `supports` 字段。每条
-Relationship 改为列出支持它的从零开始的 `evidence_indices`，且这些列表合起来必须
-覆盖本次提交的全部证据。assessor 负责定位精确证据范围；闭合 Schema 校验和确定性
-服务端策略决定这些范围能否安全提交。
+`remember` 不接受 `span`、`surface` 或 Relationship 的 `supports` 字段。Relationship
+提议是可选的；若提交，则列出支持它的从零开始的 `evidence_indices`，但不要求覆盖全部证据。
+单个 assessor 会话会审查每条 evidence 的安全性（包括 evidence-only 提交），并且只针对调用方
+提交的 Relationship、依据其引用的 evidence 做 grounding 或规范化，不搜索 memory，也不发现新
+Relationship。闭合 Schema 校验和确定性服务端策略决定哪些内容可以安全提交。
 
 若要替换自己拥有的一条当前证据，把其 UUID 放入新证据的
 `supersedes_evidence_ids`。直接指定目标与通过 `previous_source_revision` 推进
@@ -209,15 +210,15 @@ Relationship 改为列出支持它的从零开始的 `evidence_indices`，且这
 ```
 
 直接 supersession 会随完整 batch 暂存。只有在语义提交被接受的同一事务中，目标才会
-退役；被拒绝、失败或隔离的提交会让目标继续有效。这样，未成为受支持记忆的替换不会
-使当前证据失效。
+退役；失败的提交会让目标继续有效。这样，未成为受支持记忆的替换不会使当前证据失效。
 
-Remember 使用一个覆盖完整 batch 的 assessor 会话。assessor 负责 grounding 修复、
-身份选择、predicate 协调、support 决策和可修复的竞态；确定性服务端策略仍负责
-授权、生命周期和持久化状态。每个提交的 Relationship ref 都会得到 `stored` 或
-`not_stored` disposition。当已存储的 support 仍覆盖每条 evidence 时，不支持的 hint
-不是客户端错误；否则提交会以 `no_supported_memory` 拒绝。暂存后发生的客户端自有
-约束变化会以 `stale_input` 拒绝。provider、配置、数据库和内部故障使用有界的运维
+Remember 使用一个覆盖完整 batch 的 assessor 会话。每条 evidence（包括 evidence-only 提交）
+都会得到安全结果；任何不安全 evidence 都以 `submission_policy_rejected` 使整个 batch 失败，
+且不写入语义、搜索或 embedding。安全 evidence 即使没有 Relationship 提议或没有提议被接受，
+仍会存储并建立索引。assessor 只对调用方提交的 Relationship、依据其引用的 evidence 做
+grounding 和规范化，不搜索 memory、寻找 evidence 支持或发现新 Relationship。每个 Relationship
+ref 都会得到 `stored` 或 `not_stored` disposition；不支持的提议是完成结果中的警告。暂存后发生的
+客户端自有约束变化会以 `stale_input` 报告。provider、配置、数据库和内部故障使用有界的运维
 错误码。所有接受的语义效果原子提交，不提供部分替换或交互式 placement review。
 
 Remember 只接受一个顶层 `idempotency_key`，不接受 evidence 级或派生 key。若完整

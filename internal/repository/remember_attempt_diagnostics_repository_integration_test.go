@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -87,6 +88,59 @@ func TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes(t 
 	require.NoError(t, err)
 	require.Len(t, remaining.Events, 1)
 	require.Empty(t, remaining.Artifacts)
+}
+
+func TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndArtifacts(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-replayed")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostics-replayed-owner")
+	repo := NewLedgerRepository(appDB, rls)
+	canonicalID := uuidForDiagnostics(330)
+	replayedID := uuidForDiagnostics(331)
+	require.NoError(t, repo.RecordRememberAttempt(ctx, RememberAttemptRecordInput{
+		TeamID: teamID, OwnerProfileID: ownerID, AttemptID: canonicalID,
+		IdempotencyKey: "diagnostics-replayed", RequestHash: "diagnostics-replayed-hash",
+		ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "completed",
+		PublicResult: map[string]any{"processing_state": "completed"},
+	}))
+	artifactID := uuidForDiagnostics(332)
+	content := []byte(`{"historical":true}`)
+	digest := sha256.Sum256(content)
+	capturedAt := time.Now().UTC()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).Exec(`
+			INSERT INTO remember_attempts (
+				team_id, attempt_id, owner_profile_id, idempotency_key, request_hash,
+				contract_version, submission_kind, outcome, canonical_attempt_id, public_result, completed_at
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?, ?, ?, 'remember', 'replayed', ?::uuid, ?::jsonb, now())
+		`, teamID, replayedID, ownerID, "diagnostics-replayed", "diagnostics-replayed-hash", domain.ContractVersion, canonicalID, `{}`).Error; err != nil {
+			return err
+		}
+		return tx.WithContext(ctx).Exec(`
+			INSERT INTO remember_failure_artifacts (
+				team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind, content_type,
+				content_bytes, byte_count, content_sha256, captured_at, expires_at
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, 'failure', 'application/json', ?, ?, ?, ?, ?)
+		`, teamID, artifactID, replayedID, ownerID, content, len(content), "sha256:"+fmt.Sprintf("%x", digest[:]), capturedAt, capturedAt.Add(time.Hour)).Error
+	}))
+
+	page, err := repo.ListRememberAttemptDiagnostics(ctx, RememberAttemptDiagnosticFilter{TeamID: teamID, Outcome: "replayed", Limit: 20})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), page.Total)
+	require.Len(t, page.Records, 1)
+	require.Equal(t, replayedID, page.Records[0].AttemptID)
+
+	detail, err := repo.GetRememberAttemptDiagnostic(ctx, teamID, replayedID)
+	require.NoError(t, err)
+	require.Equal(t, "replayed", detail.Outcome)
+	require.Len(t, detail.Artifacts, 1)
+	require.Equal(t, artifactID, detail.Artifacts[0].ArtifactID)
+
+	artifact, err := repo.GetRememberFailureArtifact(ctx, teamID, replayedID, artifactID)
+	require.NoError(t, err)
+	require.Equal(t, content, artifact.Content)
 }
 
 func TestRememberFailureArtifactPurgeClaimsConcurrentBatches(t *testing.T) {

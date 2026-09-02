@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestRememberRequiresSpanlessRelationships(t *testing.T) {
+func TestRememberAllowsOmittedOrEmptyRelationships(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	if err != nil {
 		t.Fatal(err)
@@ -18,30 +18,34 @@ func TestRememberRequiresSpanlessRelationships(t *testing.T) {
 
 	missing := cloneMap(input)
 	delete(missing, "relationships")
-	err = ValidateContractInput(remember, missing, []string{"write"})
-	if err == nil || !strings.Contains(err.Error(), "relationships is required") {
-		t.Fatalf("missing relationships error = %v", err)
+	if err := ValidateContractInput(remember, missing, []string{"write"}); err != nil {
+		t.Fatalf("omitted relationships rejected: %v", err)
 	}
 
 	legacy := cloneMap(input)
 	delete(legacy, "relationships")
 	legacy["proposal"] = map[string]any{}
 	err = ValidateContractInput(remember, legacy, []string{"write"})
-	if err == nil || !strings.Contains(err.Error(), "relationships is required") {
-		t.Fatalf("legacy proposal error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "proposal") {
+		t.Fatalf("legacy proposal error = %v, want unknown field", err)
+	}
+
+	empty := cloneMap(input)
+	empty["relationships"] = []any{}
+	if err := ValidateContractInput(remember, empty, []string{"write"}); err != nil {
+		t.Fatalf("empty relationships rejected: %v", err)
 	}
 }
 
-func TestRememberRequiresRelationshipCoverageForEverySubmittedEvidenceItem(t *testing.T) {
+func TestRememberDoesNotRequireRelationshipCoverageForEveryEvidenceItem(t *testing.T) {
 	remember, err := requireTool(toolMap(t), ToolRemember)
 	if err != nil {
 		t.Fatal(err)
 	}
 	input := validFlatRelationshipSubmission()
 	input["evidence"] = append(input["evidence"].([]any), map[string]any{"content": "A second source."})
-	err = ValidateContractInput(remember, input, []string{"write"})
-	if err == nil || !strings.Contains(err.Error(), "missing evidence indexes: [1]") {
-		t.Fatalf("coverage error = %v", err)
+	if err := ValidateContractInput(remember, input, []string{"write"}); err != nil {
+		t.Fatalf("incomplete relationship coverage rejected: %v", err)
 	}
 }
 

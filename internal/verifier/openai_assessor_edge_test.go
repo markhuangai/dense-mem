@@ -41,7 +41,7 @@ func runSemanticAssessmentSessionForTest(
 		if len(turn.ValidationErrors) == 0 {
 			return turn.Response, nil
 		}
-		if turn.Turn >= SemanticAssessmentMaxProviderTurns {
+		if turn.Turn >= SemanticAssessmentMaxRememberProviderTurns {
 			return SemanticAssessmentResponse{}, &MalformedResponseError{
 				Provider:                openAIVerifierProvider,
 				Message:                 "semantic assessment response remained invalid after bounded correction",
@@ -78,7 +78,7 @@ func TestOpenAIVerifierAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 		}
 		assert.Equal(t, "assessor-model", request.Model)
 		assert.Equal(t, "dense_mem_semantic_assessment_response", request.ResponseFormat.JSONSchema.Name)
-		assert.Contains(t, request.Messages[0].Content, "integrated structure and support assessor")
+		assert.Contains(t, request.Messages[0].Content, "structure, normalization, and evidence-security assessor")
 		assert.Contains(t, request.Messages[0].Content, "registration_required predicate requires null predicate_key and predicate_version")
 		var payload map[string]any
 		if !assert.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &payload)) {
@@ -217,7 +217,7 @@ func TestOpenAIVerifierRememberSessionRejectsInvalidRepairState(t *testing.T) {
 	require.ErrorAs(t, err, &providerErr)
 	assert.Equal(t, ProviderFailureClassRequestInvalid, providerErr.FailureClass)
 
-	maxed := &openAISemanticAssessmentSession{id: "maxed", turn: SemanticAssessmentMaxProviderTurns}
+	maxed := &openAISemanticAssessmentSession{id: "maxed", turn: SemanticAssessmentMaxRememberProviderTurns}
 	_, err = v.Repair(context.Background(), maxed, SemanticAssessmentRepairRequest{Request: prepared})
 	var malformed *MalformedResponseError
 	require.ErrorAs(t, err, &malformed)
@@ -480,7 +480,7 @@ func TestSemanticAssessmentValidationFieldFamilyIsBounded(t *testing.T) {
 		want  string
 	}{
 		{field: "request_id", want: "request_id"},
-		{field: "security_signals[4].evidence_id", want: "security_signals"},
+		{field: "evidence_security_results[4].signals[0].evidence_id", want: "evidence_security_results"},
 		{field: "entity_results[12].surface", want: "entity_results.span"},
 		{field: "entity_results[12].candidate_entity_id", want: "entity_results.selection"},
 		{field: "entity_results[12].invented_field", want: "entity_results.other"},
@@ -645,8 +645,8 @@ func TestOpenAIVerifierAssessSemanticRejectsProviderBoundaries(t *testing.T) {
 			}),
 			wantType:     &MalformedResponseError{},
 			wantDetail:   "remained invalid after bounded correction",
-			wantCalls:    SemanticAssessmentMaxProviderTurns,
-			wantAttempts: SemanticAssessmentMaxProviderTurns,
+			wantCalls:    SemanticAssessmentMaxRememberProviderTurns,
+			wantAttempts: SemanticAssessmentMaxRememberProviderTurns,
 			wantClass:    "malformed_exhausted",
 		},
 		{
@@ -654,8 +654,8 @@ func TestOpenAIVerifierAssessSemanticRejectsProviderBoundaries(t *testing.T) {
 			handler:      assessorRawResponseHandler(t, "not-json", nil),
 			wantType:     &MalformedResponseError{},
 			wantDetail:   "remained invalid after bounded correction",
-			wantCalls:    SemanticAssessmentMaxProviderTurns,
-			wantAttempts: SemanticAssessmentMaxProviderTurns,
+			wantCalls:    SemanticAssessmentMaxRememberProviderTurns,
+			wantAttempts: SemanticAssessmentMaxRememberProviderTurns,
 			wantClass:    "malformed_exhausted",
 		},
 		{
@@ -667,8 +667,8 @@ func TestOpenAIVerifierAssessSemanticRejectsProviderBoundaries(t *testing.T) {
 			}(),
 			wantType:     &MalformedResponseError{},
 			wantDetail:   "remained invalid after bounded correction",
-			wantCalls:    SemanticAssessmentMaxProviderTurns,
-			wantAttempts: SemanticAssessmentMaxProviderTurns,
+			wantCalls:    SemanticAssessmentMaxRememberProviderTurns,
+			wantAttempts: SemanticAssessmentMaxRememberProviderTurns,
 			wantClass:    "malformed_exhausted",
 		},
 		{

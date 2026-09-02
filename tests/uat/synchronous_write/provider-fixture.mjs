@@ -184,19 +184,22 @@ function fixtureAssessment(request, requestFault, attempt) {
     };
   });
   const securitySignals = requestFault === "security" && request.evidence?.length > 0 ? [{
-    evidence_id: request.evidence[0].evidence_id,
     kind: "instruction_override",
-    ...wholeEvidenceRange(request.evidence[0]),
+    start_ref: wholeEvidenceRange(request.evidence[0]).start_ref,
+    end_ref: wholeEvidenceRange(request.evidence[0]).end_ref,
   }] : [];
-  const securitySignalEvidenceIDs = new Set(securitySignals.map((signal) => signal.evidence_id));
+  const securitySignalEvidenceIDs = requestFault === "security" && request.evidence?.length > 0
+    ? new Set([request.evidence[0].evidence_id])
+    : new Set();
   const securityResults = (request.evidence || []).map((evidence) => ({
     evidence_id: evidence.evidence_id,
-    decision: securitySignalEvidenceIDs.has(evidence.evidence_id) ? "quarantine" : "pass",
+    decision: securitySignalEvidenceIDs.has(evidence.evidence_id) ? "reject" : "pass",
+    signals: securitySignalEvidenceIDs.has(evidence.evidence_id) ? securitySignals : [],
   }));
   if (requestFault === "repair" && attempt === 1) {
-    return { request_id: request.request_id || "fixture", security_signals: [], security_results: securityResults, entity_results: [], relationship_results: relationships };
+    return { request_id: request.request_id || "fixture", evidence_security_results: securityResults, entity_results: [], relationship_results: relationships };
   }
-  return { request_id: request.request_id || "fixture", security_signals: securitySignals, security_results: securityResults, entity_results: entities, relationship_results: relationships };
+  return { request_id: request.request_id || "fixture", evidence_security_results: securityResults, entity_results: entities, relationship_results: relationships };
 }
 
 function wholeEvidenceRange(evidence) {

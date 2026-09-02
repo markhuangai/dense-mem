@@ -3,7 +3,7 @@
     "name": "terminal remember success",
     "tool": "remember",
     "output": {
-      "contract_version": "dense-mem.v2.6.1",
+      "contract_version": "dense-mem.v2.6.2",
       "submission_id": "11111111-1111-1111-1111-111111111111",
       "submission_kind": "remember",
       "processing_state": "completed",
@@ -39,7 +39,7 @@
     "name": "direct correction awaiting confirmation",
     "tool": "correct_relationship",
     "output": {
-      "contract_version": "dense-mem.v2.6.1",
+      "contract_version": "dense-mem.v2.6.2",
       "submission_id": "44444444-4444-4444-4444-444444444444",
       "submission_kind": "relationship_correction",
       "processing_state": "awaiting_confirmation",
@@ -70,7 +70,7 @@
     "name": "direct correction structured rejection",
     "tool": "correct_relationship",
     "output": {
-      "contract_version": "dense-mem.v2.6.1",
+      "contract_version": "dense-mem.v2.6.2",
       "submission_id": "77777777-7777-7777-7777-777777777777",
       "submission_kind": "relationship_correction",
       "processing_state": "rejected",

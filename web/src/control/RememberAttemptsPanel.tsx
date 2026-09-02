@@ -7,6 +7,7 @@ import {
   RememberAttemptDiagnosticSummary,
   RememberFailureArtifactDescriptor,
   Team,
+  type RememberAttemptOutcome,
 } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
@@ -45,7 +46,7 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
     try {
       const page = await api.listRememberAttemptDiagnostics({
         team_id: team.id,
-        outcome: nextOutcome as "" | "completed" | "rejected" | "quarantined" | "failed" | "replayed",
+        outcome: nextOutcome as "" | RememberAttemptOutcome,
         limit: PAGE_SIZE,
         offset: nextOffset,
       });
@@ -287,8 +288,6 @@ function attemptOutcomeClass(outcome: string): string {
   switch (outcome) {
     case "completed": return "status-pill success";
     case "failed": return "status-pill error";
-    case "rejected":
-    case "quarantined": return "status-pill warning";
     default: return "status-pill";
   }
 }

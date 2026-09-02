@@ -18,7 +18,7 @@ func terminalRememberOutputSchemaForActions(version string, nextActions []string
 			"contract_version":     schemaEnum([]string{version}),
 			"submission_id":        schemaString("Submission ID.", 128),
 			"submission_kind":      schemaEnum([]string{"remember"}),
-			"processing_state":     schemaEnum([]string{"completed", "rejected", "quarantined", "failed"}),
+			"processing_state":     schemaEnum([]string{"completed", "failed"}),
 			"search_state":         schemaEnum([]string{"current", "not_required"}),
 			"correlation_id":       schemaString("Request correlation ID.", 128),
 			"evidence":             array(terminalEvidenceSchema(), 0, 20),
@@ -67,7 +67,7 @@ func terminalErrorSchemaForActions(nextActions []string) map[string]any {
 	return closedObject(
 		[]string{"code", "message", "retryable", "next_action", "remediation"},
 		map[string]any{
-			"code":        schemaEnum(contractV261ErrorCodes()),
+			"code":        schemaEnum(contractErrorCodes()),
 			"message":     schemaString("Bounded safe submission error.", 512),
 			"retryable":   map[string]any{"type": "boolean"},
 			"next_action": schemaEnum(nextActions),
@@ -90,7 +90,7 @@ func terminalErrorNextActions(includeDreamFeedback bool) []string {
 	return result
 }
 
-func contractV261ErrorCodes() []string {
+func contractErrorCodes() []string {
 	seen := map[string]struct{}{}
 	result := make([]string, 0)
 	add := func(values []string) {

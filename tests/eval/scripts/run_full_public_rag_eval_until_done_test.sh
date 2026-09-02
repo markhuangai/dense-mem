@@ -17,12 +17,12 @@ export V1_DATA_DIR="${tmp_dir}/runtime"
 # shellcheck source=run_full_public_rag_eval_until_done.sh
 source "${ROOT_DIR}/tests/eval/scripts/run_full_public_rag_eval_until_done.sh"
 
-if [[ "$(terminal_attempt_outcomes_sql)" != "'completed', 'quarantined'" ]]; then
-  echo "terminal attempt outcome list excludes quarantined" >&2
+if [[ "$(terminal_attempt_outcomes_sql)" != "'completed'" ]]; then
+  echo "terminal attempt outcome list is not v2.6.2" >&2
   exit 1
 fi
-if [[ "$(terminal_attempt_count 413 578)" != "991" ]]; then
-  echo "terminal attempt count excludes quarantined" >&2
+if [[ "$(terminal_attempt_count 991)" != "991" ]]; then
+  echo "terminal attempt count does not use completed attempts" >&2
   exit 1
 fi
 
@@ -40,26 +40,29 @@ if [[ "${attempt_query}" != *"attempt.idempotency_key LIKE 'eval:%'"* ]]; then
   exit 1
 fi
 
-write_import_gate_result 991 991 413 578 0 0
+write_import_gate_result 991 991 991 0 0
 jq -e '
   .schema_version == 1 and
-  .status == "comparison_only" and
-  .passed == false and
-  .terminal == 991 and
-  .quarantined == 578 and
-  .reasons == ["quarantined_attempts"]
-' "${IMPORT_GATE_RESULT}" >/dev/null
-
-write_import_gate_result 991 991 991 0 0 0
-jq -e '
   .status == "passed" and
   .passed == true and
   .terminal == 991 and
-  .quarantined == 0 and
+  .completed == 991 and
+  .failed == 0 and
   .reasons == []
 ' "${IMPORT_GATE_RESULT}" >/dev/null
 
-write_import_gate_result "" "" "" "" "" "" "attempt_or_fragment_count_failed"
+write_import_gate_result 991 991 990 1 2
+jq -e '
+  .status == "failed" and
+  .passed == false and
+  .terminal == 990 and
+  .completed == 990 and
+  .failed == 1 and
+  .historical_attempts == 2 and
+  .reasons == ["incomplete_or_failed_attempts"]
+' "${IMPORT_GATE_RESULT}" >/dev/null
+
+write_import_gate_result "" "" "" "" "" "attempt_or_fragment_count_failed"
 jq -e '
   .status == "failed" and
   .passed == false and
@@ -70,7 +73,7 @@ jq -e '
   .reasons == ["attempt_or_fragment_count_failed"]
 ' "${IMPORT_GATE_RESULT}" >/dev/null
 
-write_import_gate_result 992 992 413 578 0 2 "dataset_count_exceeds_target"
+write_import_gate_result 992 992 991 1 2 "dataset_count_exceeds_target"
 jq -e '
   .status == "failed" and
   .passed == false and
@@ -92,11 +95,15 @@ if [[ "$(sha256sum "${RUNNER}" | awk '{print $1}')" != "${runner_hash_before}" ]
   exit 1
 fi
 
-write_status "test" 991 991 990 1 0 0 "" "" ""
+write_status "test" 991 991 990 0 0 "import-123" "17.5" "42"
 jq -e '
-  .quarantined == 1 and
-  .terminal == 991 and
-  .percent_complete == 100 and
+  .terminal == 990 and
+  .completed == 990 and
+  .failed == 0 and
+  .percent_complete < 100 and
+  .import_pid == "import-123" and
+  .rate_per_minute == 17.5 and
+  .eta_seconds == 42 and
   (.import_gate_result | endswith("import_gate_result.json")) and
-  (.quarantined_source_doc_ids | endswith("quarantined_source_doc_ids.txt"))
+  (.failed_source_doc_ids | endswith("failed_source_doc_ids.txt"))
 ' "${STATUS_JSON}" >/dev/null

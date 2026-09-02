@@ -50,12 +50,12 @@ func TestValidateEvidenceSecurityResultsRequiresCompleteSafeSet(t *testing.T) {
 		})
 	}
 
-	quarantine := []EvidenceSecurityResult{
-		{FragmentID: firstID, EvidenceIndex: 0, Decision: "quarantine", Safe: false},
+	rejected := []EvidenceSecurityResult{
+		{FragmentID: firstID, EvidenceIndex: 0, Decision: "reject", Safe: false, Signals: []SecuritySignalInput{{Kind: "instruction_override", SpanStart: 0, SpanEnd: 1}}},
 		{FragmentID: secondID, EvidenceIndex: 1, Decision: "pass", Safe: true},
 	}
-	require.ErrorContains(t, validateEvidenceSecurityResults(evidence, quarantine, false), "is not safe")
-	require.NoError(t, validateEvidenceSecurityResults(evidence, quarantine, true))
+	require.ErrorContains(t, validateEvidenceSecurityResults(evidence, rejected, false), "is not safe")
+	require.NoError(t, validateEvidenceSecurityResults(evidence, rejected, true))
 }
 
 func TestValidateSynchronousRememberCommitInputAllowsZeroRelationshipsOnlyWithSecurityResults(t *testing.T) {

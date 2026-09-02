@@ -32,38 +32,15 @@ func rememberToolResultError(ctx context.Context, err error) error {
 			return NewToolResultError(result)
 		}
 	}
-	if errors.Is(err, rememberapp.ErrEvidenceSecurityRejected) {
-		value := rememberapp.StatusError(rememberapp.SubmissionErrorQuarantined)
-		return NewToolResultError(map[string]any{
-			"contract_version":     domainContractVersion(),
-			"submission_id":        submissionID,
-			"submission_kind":      "remember",
-			"processing_state":     "quarantined",
-			"search_state":         "not_required",
-			"correlation_id":       correlationID,
-			"evidence":             []any{},
-			"relationship_results": []any{},
-			"errors": []any{map[string]any{
-				"code":        value.Code,
-				"message":     value.Message,
-				"retryable":   value.Retryable,
-				"next_action": value.NextAction,
-				"remediation": value.Remediation,
-			}},
-		})
-	}
 	code := rememberErrorCode(err)
+	if errors.Is(err, rememberapp.ErrEvidenceSecurityRejected) || errors.Is(err, rememberapp.ErrEncodedEvidenceNotAllowed) {
+		code = rememberapp.SubmissionErrorPolicyRejected
+	}
 	if processErr != nil && processErr.Status != nil && len(processErr.Status.Errors) > 0 {
 		code = rememberapp.SubmissionErrorCode(rememberapp.StatusErrorForCode(processErr.Status.Errors[0].Code, processErr.Status.ProcessingState).Code)
 	}
 	value := rememberapp.StatusError(code)
 	processingState := "failed"
-	switch code {
-	case rememberapp.SubmissionErrorNoSupportedMemory, rememberapp.SubmissionErrorStaleInput:
-		processingState = "rejected"
-	case rememberapp.SubmissionErrorQuarantined:
-		processingState = "quarantined"
-	}
 	return NewToolResultError(map[string]any{
 		"contract_version":     domainContractVersion(),
 		"submission_id":        submissionID,
@@ -84,6 +61,8 @@ func rememberErrorCode(err error) rememberapp.SubmissionErrorCode {
 	switch {
 	case errors.Is(err, memoryservice.ErrRememberConflict), errors.Is(err, rememberapp.ErrRememberConflict):
 		return rememberapp.SubmissionErrorIdempotencyConflict
+	case errors.Is(err, rememberapp.ErrRememberPolicyRejected), errors.Is(err, rememberapp.ErrEvidenceSecurityRejected), errors.Is(err, rememberapp.ErrEncodedEvidenceNotAllowed):
+		return rememberapp.SubmissionErrorPolicyRejected
 	case errors.Is(err, rememberapp.ErrRememberStaleInput):
 		return rememberapp.SubmissionErrorStaleInput
 	case errors.Is(err, rememberapp.ErrRememberEmbeddingUnavailable):

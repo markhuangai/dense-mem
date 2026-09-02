@@ -11,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func normalizeSynchronousRememberCommitInput(input SynchronousRememberCommitInput) SynchronousRememberCommitInput {
@@ -51,10 +53,6 @@ func rememberAttemptDuration(input SynchronousRememberCommitInput) time.Duration
 
 func validateSynchronousRememberCommitInput(input SynchronousRememberCommitInput) error {
 	return validateSynchronousRememberCommitInputWithSecurity(input, false)
-}
-
-func validateSynchronousRememberTerminalInput(input SynchronousRememberCommitInput) error {
-	return validateSynchronousRememberCommitInputWithSecurity(input, true)
 }
 
 func validateSynchronousRememberCommitInputWithSecurity(input SynchronousRememberCommitInput, allowUnsafe bool) error {
@@ -129,7 +127,7 @@ func validateEvidenceSecurityResults(evidence []EvidenceInput, results []Evidenc
 			if len(result.Signals) != 0 {
 				return fmt.Errorf("remember evidence security result[%d] contains unsafe signals", index)
 			}
-		case "quarantine":
+		case "reject":
 			if !allowUnsafe || result.Safe {
 				return fmt.Errorf("remember evidence security result[%d] is not safe", index)
 			}
@@ -150,15 +148,6 @@ func rememberCreateIngestInput(input SynchronousRememberCommitInput) CreateInges
 		RequestHash: input.RequestHash, SourceSummary: input.SourceSummary, Status: "completed",
 		Proposal: input.Proposal, Metadata: input.Metadata, Evidence: append([]EvidenceInput(nil), input.Evidence...),
 	})
-}
-
-func rememberIngestStatus(outcome string) string {
-	switch outcome {
-	case "rejected", "quarantined":
-		return outcome
-	default:
-		return "completed"
-	}
 }
 
 func insertRememberKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestInput) (bool, error) {
@@ -247,6 +236,12 @@ func loadRememberAttemptInTx(ctx context.Context, tx *gorm.DB, input Synchronous
 	}
 	if strings.TrimSpace(attempt.RequestHash) != strings.TrimSpace(input.RequestHash) {
 		return nil, fmt.Errorf("%w: idempotency key reused with a different request hash", ErrIdempotencyConflict)
+	}
+	if strings.TrimSpace(attempt.ContractVersion) != "" && strings.TrimSpace(attempt.ContractVersion) != domain.ContractVersion {
+		return nil, fmt.Errorf("%w: historical Remember contract is not replayable", ErrIdempotencyConflict)
+	}
+	if attempt.Outcome == "rejected" || attempt.Outcome == "quarantined" {
+		return nil, fmt.Errorf("%w: historical Remember outcome is not replayable", ErrIdempotencyConflict)
 	}
 	if len(publicJSON) == 0 {
 		attempt.PublicResult = map[string]any{}

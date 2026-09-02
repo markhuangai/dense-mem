@@ -28,7 +28,7 @@ func TestSubmissionStatusErrorsExposeClosedGuidance(t *testing.T) {
 
 	require.Equal(t, string(SubmissionErrorInternalFailure), StatusError("provider-secret-detail").Code)
 	require.Equal(t, "safe override", StatusErrorWithMessage(SubmissionErrorInternalFailure, "safe override").Message)
-	require.Equal(t, string(SubmissionErrorNoSupportedMemory), StatusErrorForCode("unknown", "rejected").Code)
+	require.Equal(t, string(SubmissionErrorPolicyRejected), StatusErrorForCode("unknown", "rejected").Code)
 	require.Equal(t, string(SubmissionErrorInternalFailure), StatusErrorForCode("unknown", "failed").Code)
 
 	for _, test := range []struct {

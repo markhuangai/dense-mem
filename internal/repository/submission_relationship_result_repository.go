@@ -189,7 +189,7 @@ func insertSubmissionRelationshipResults(
 
 func submissionRelationshipNotStoredReasonAllowed(reason string) bool {
 	switch strings.TrimSpace(reason) {
-	case "not_supported_by_evidence", "stale_input", "security_quarantine", "internal_failure":
+	case "not_supported_by_evidence", "stale_input", "submission_policy_rejected", "security_quarantine", "internal_failure":
 		return true
 	default:
 		return false

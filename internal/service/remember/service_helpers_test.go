@@ -2,7 +2,6 @@ package remember
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 
@@ -39,31 +38,6 @@ func TestRememberServiceHelpersCoverTypedInputAndSpaceBranches(t *testing.T) {
 	shared := rememberSpace(requestctx.Actor{AllowedSpaces: []domain.MemorySpaceAccess{{Kind: domain.MemorySpaceTeamShared, ID: spaceID}}})
 	require.Equal(t, spaceID, shared.ID)
 
-	for _, raw := range []any{
-		[]any{"0"}, []map[string]any{{"index": 0}}, []string{"1"}, "invalid",
-	} {
-		values := rememberArrayValues(raw)
-		if raw == "invalid" {
-			require.Nil(t, values)
-		} else {
-			require.NotNil(t, values)
-		}
-	}
-	for _, raw := range []any{
-		int(1), int8(1), int16(1), int32(1), int64(1), uint(1), uint8(1), uint16(1), uint32(1), uint64(1),
-		float64(1), float32(1), json.Number("1"), " 1 ",
-	} {
-		index, ok := rememberEvidenceIndex(raw)
-		require.True(t, ok)
-		require.Equal(t, 1, index)
-	}
-	for _, raw := range []any{1.5, float32(1.5), json.Number("not-an-index"), "not-an-index", struct{}{}} {
-		_, ok := rememberEvidenceIndex(raw)
-		require.False(t, ok)
-	}
-
-	require.NoError(t, validateRememberRelationshipCoverage(2, []map[string]any{{"evidence_indices": []any{int8(0), "1"}}}))
-	require.ErrorContains(t, validateRememberRelationshipCoverage(2, []map[string]any{{"evidence_indices": []map[string]any{{"index": 0}}}}), "missing evidence indexes")
 }
 
 func TestRememberServiceHelpersCoverRevisionMetadataAndSummaries(t *testing.T) {

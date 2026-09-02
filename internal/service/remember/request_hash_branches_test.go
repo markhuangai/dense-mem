@@ -26,6 +26,14 @@ func TestCanonicalRememberHashRejectsInvalidContractInputs(t *testing.T) {
 	require.Empty(t, objects)
 }
 
+func TestCanonicalRememberHashDistinguishesLegacyContractVersion(t *testing.T) {
+	current, err := CanonicalRequestBodyHash(nil, nil, nil)
+	require.NoError(t, err)
+	legacy, err := CanonicalLegacyRequestBodyHash(nil, nil, nil)
+	require.NoError(t, err)
+	require.NotEqual(t, current, legacy)
+}
+
 func TestCanonicalRememberHashNormalizesNestedSetsAndReferences(t *testing.T) {
 	evidence := []map[string]any{{
 		"source_type": " document ", "source": " notes ", "source_group": " group ", "authority": " primary ",

@@ -50,9 +50,12 @@ type SemanticAssessmentPredicateOption struct {
 }
 
 type SemanticAssessmentResponse struct {
-	RequestID           string                                 `json:"request_id"`
-	SecuritySignals     []SemanticAssessmentSecuritySignal     `json:"security_signals"`
-	SecurityResults     []SemanticAssessmentSecurityResult     `json:"security_results"`
+	RequestID               string                                     `json:"request_id"`
+	EvidenceSecurityResults []SemanticAssessmentEvidenceSecurityResult `json:"evidence_security_results"`
+	// SecuritySignals and SecurityResults are in-process compatibility aliases
+	// for callers that construct responses directly. They are never serialized.
+	SecuritySignals     []SemanticAssessmentSecuritySignal     `json:"-"`
+	SecurityResults     []SemanticAssessmentSecurityResult     `json:"-"`
 	EntityResults       []SemanticAssessmentEntityResult       `json:"entity_results"`
 	RelationshipResults []SemanticAssessmentRelationshipResult `json:"relationship_results"`
 	OutputTokens        int                                    `json:"-"`
@@ -60,10 +63,15 @@ type SemanticAssessmentResponse struct {
 	ProviderTurns       int                                    `json:"-"`
 }
 
-type SemanticAssessmentSecurityResult struct {
-	EvidenceID string `json:"evidence_id"`
-	Decision   string `json:"decision"`
+type SemanticAssessmentEvidenceSecurityResult struct {
+	EvidenceID string                             `json:"evidence_id"`
+	Decision   string                             `json:"decision"`
+	Signals    []SemanticAssessmentSecuritySignal `json:"signals"`
 }
+
+// SemanticAssessmentSecurityResult remains an in-process alias for the
+// evidence-scoped security result type.
+type SemanticAssessmentSecurityResult = SemanticAssessmentEvidenceSecurityResult
 
 type SemanticAssessmentEntityResult struct {
 	Ref               string  `json:"ref"`
@@ -92,7 +100,7 @@ type SemanticAssessmentGroundedRange struct {
 }
 
 type SemanticAssessmentSecuritySignal struct {
-	EvidenceID string `json:"evidence_id"`
+	EvidenceID string `json:"-"`
 	Kind       string `json:"kind"`
 	StartRef   string `json:"start_ref"`
 	EndRef     string `json:"end_ref"`

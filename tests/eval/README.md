@@ -213,7 +213,7 @@ tests/eval/scripts/run_full_public_rag_eval_until_done.sh
 These retrieval floors mirror the historical public gate only to catch smoke
 regressions. This run is not release evidence and does not replace the waived
 1k comparison. The monitor requires all 100 latest Remember attempts and
-fragments to be terminal with no failed or quarantined rows before passing. Its ignored
+fragments to be terminal with no failed rows before passing. Its ignored
 `dataset_identity.json` binds the seed/suite hashes, runner hash, server image
 ID, team, and model configuration; `gate_result.json` records the smoke
 thresholds and metrics.
@@ -318,11 +318,9 @@ Resume behavior is based on the latest Remember attempt for each
 | Latest state | Resume action |
 | --- | --- |
 | `completed` and live fragment exists | Skip the corpus row. |
-| `failed` | Stop the monitor; investigate the failed Remember result before using a fresh isolated team/runtime. |
+| `failed` | Stop the monitor; retry the same idempotency key only when the failure is marked retryable, otherwise investigate before using a fresh isolated team/runtime. |
 | No attempt | Import the corpus row. |
-| `queued` or `processing` | Invalid v2.6.1 result; the originating Remember call must be terminal. |
 | Completed checkpoint but fragment is missing | Retry the corpus row. |
-| `quarantined` | Skip the corpus row and report it as comparison-only input. |
 
 One failed concurrent request stops scheduling new rows but allows already
 active requests to finish. The monitor then fails instead of retrying the
@@ -348,11 +346,11 @@ tests/eval/runtime/v1/runs/import/knowledge_mapping.json
 tests/eval/runtime/v1/runs/baseline/summary.json
 ```
 
-`attempt_summary.json` reports latest completed/quarantined/failed/rejected
-counts and historical retry attempts. Recall starts only when all latest
-Remember attempts are terminal (`completed` or `quarantined` with a live
-fragment), there are no failed latest attempts, the team-scoped eval fragment
-count equals `counts.corpus`, and the Remember-only import artifacts exist.
+`attempt_summary.json` reports latest completed/failed counts and historical
+retry attempts. Recall starts only when all latest Remember attempts are
+completed with a live fragment, there are no failed latest attempts, the
+team-scoped eval fragment count equals `counts.corpus`, and the Remember-only
+import artifacts exist.
 
 ## Run recall again without reimporting
 

@@ -275,30 +275,6 @@ func submissionAssessmentCommitInput(
 		}
 		relationshipResults = append(relationshipResults, result)
 	}
-	coveredEvidence := make(map[string]struct{})
-	for _, observation := range observations {
-		if observation.Observation.Support != nil {
-			coveredEvidence[observation.Observation.Support.FragmentID] = struct{}{}
-		}
-		for _, support := range observation.Observation.Supports {
-			coveredEvidence[support.FragmentID] = struct{}{}
-		}
-	}
-	if len(plan.RelationshipTargets) > 0 && len(observations) == 0 {
-		return repository.CommitSubmissionAssessmentInput{}, &submissionAssessmentNoSupportedMemoryError{
-			RelationshipResults: relationshipResults,
-		}
-	}
-	if len(plan.RelationshipTargets) > 0 && len(coveredEvidence) < len(plan.Items) {
-		for index := range relationshipResults {
-			relationshipResults[index].Disposition = "not_stored"
-			relationshipResults[index].Reason = "not_supported_by_evidence"
-			relationshipResults[index].Splits = nil
-		}
-		return repository.CommitSubmissionAssessmentInput{}, &submissionAssessmentNoSupportedMemoryError{
-			RelationshipResults: relationshipResults,
-		}
-	}
 	return repository.CommitSubmissionAssessmentInput{
 		RememberCommitScope:      scope,
 		AssessmentID:             assessment.AssessmentID,

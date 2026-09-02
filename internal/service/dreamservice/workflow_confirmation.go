@@ -288,12 +288,19 @@ func dreamSubmittedConfirmationReplay(
 	if strings.TrimSpace(record.SubmittedIngestRequestHash) == requestHash {
 		return true, nil
 	}
+	legacyHash, err := rememberapp.CanonicalLegacyRequestBodyHash(evidence, req.EntityHints, req.RelationshipHints)
+	if err != nil {
+		return false, fmt.Errorf("resolve dream feedback: legacy replay request hash: %w", err)
+	}
+	if strings.TrimSpace(record.SubmittedIngestRequestHash) == legacyHash {
+		return true, nil
+	}
 	for _, statusBefore := range domain.HypothesisStatuses() {
 		legacyEvidence, err := dreamSubmissionEvidenceWithStatus(req, record, statusBefore, true)
 		if err != nil {
 			return false, err
 		}
-		legacyHash, err := rememberapp.CanonicalRequestBodyHash(legacyEvidence, req.EntityHints, req.RelationshipHints)
+		legacyHash, err := rememberapp.CanonicalLegacyRequestBodyHash(legacyEvidence, req.EntityHints, req.RelationshipHints)
 		if err != nil {
 			return false, fmt.Errorf("resolve dream feedback: legacy replay request hash: %w", err)
 		}
@@ -356,7 +363,7 @@ func applyDreamTerminalRetryGuidance(result *rememberapp.RememberResult, dreamID
 		retryKey = "dream-feedback:" + dreamID + ":" + decision + ":retry"
 	}
 	for index := range result.Terminal.Errors {
-		if result.Terminal.Errors[index].NextAction != string(rememberapp.TerminalNextActionResubmitRemember) {
+		if !result.Terminal.Errors[index].Retryable || result.Terminal.Errors[index].NextAction != string(rememberapp.TerminalNextActionResubmitRemember) {
 			continue
 		}
 		result.Terminal.Errors[index].NextAction = string(rememberapp.TerminalNextActionRetryDreamFeedback)
@@ -378,9 +385,7 @@ func dreamRememberCompletion(result *rememberapp.RememberResult) (bool, string, 
 			return false, "", errors.New("resolve dream feedback: completed Remember result has no canonical ingest")
 		}
 		return true, ingestID, nil
-	case string(rememberapp.TerminalProcessingRejected),
-		string(rememberapp.TerminalProcessingQuarantined),
-		string(rememberapp.TerminalProcessingFailed):
+	case string(rememberapp.TerminalProcessingFailed):
 		return false, "", nil
 	default:
 		return false, "", errors.New("resolve dream feedback: terminal Remember result has an unsupported processing state")

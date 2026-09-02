@@ -66,6 +66,7 @@ func TestRememberIdempotencyLockSerializesAcrossRepositoryInstances(t *testing.T
 	firstEntered := make(chan struct{})
 	secondEntered := make(chan struct{})
 	release := make(chan struct{})
+	var secondWaited atomic.Bool
 	firstErr := make(chan error, 1)
 	go func() {
 		firstErr <- firstRepo.WithRememberIdempotencyLock(ctx, teamID, ownerID, key, func() error {
@@ -78,7 +79,8 @@ func TestRememberIdempotencyLockSerializesAcrossRepositoryInstances(t *testing.T
 
 	secondErr := make(chan error, 1)
 	go func() {
-		secondErr <- secondRepo.WithRememberIdempotencyLock(ctx, teamID, ownerID, key, func() error {
+		secondErr <- secondRepo.WithRememberAttemptLock(ctx, teamID, ownerID, key, func(waited bool) error {
+			secondWaited.Store(waited)
 			close(secondEntered)
 			return nil
 		})
@@ -95,6 +97,7 @@ func TestRememberIdempotencyLockSerializesAcrossRepositoryInstances(t *testing.T
 	case <-ctx.Done():
 		t.Fatal("cross-instance waiter did not acquire after release")
 	}
+	require.True(t, secondWaited.Load(), "cross-instance callback must identify that it waited")
 	require.NoError(t, <-secondErr)
 }
 
@@ -327,7 +330,7 @@ func TestRememberIdempotencyLockDifferentKeysUseIndependentCallbacks(t *testing.
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			errorsCh <- repo.WithRememberAttemptLock(ctx, teamID, ownerID, uuid.NewString(), func() error { return nil })
+			errorsCh <- repo.WithRememberAttemptLock(ctx, teamID, ownerID, uuid.NewString(), func(bool) error { return nil })
 		}()
 	}
 	group.Wait()

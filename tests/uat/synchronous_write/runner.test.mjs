@@ -62,6 +62,7 @@ test("compose primitives case runs the internal PostgreSQL driver and public Rem
   const overlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");
   const compose = await readFile(new URL("../../../scripts/e2e-compose.sh", import.meta.url), "utf8");
   const driver = await readFile(new URL("../../../internal/repository/remember_primitives_compose_e2e_test.go", import.meta.url), "utf8");
+  const processor = await readFile(new URL("../../../cmd/internal/serverapp/remember_processor_integration_test.go", import.meta.url), "utf8");
   const assessorDriver = await readFile(new URL("../../../internal/service/memoryservice/synchronous_assessment_compose_e2e_test.go", import.meta.url), "utf8");
   assert.match(overlay, /run_synchronous_write_primitives_e2e\(\)/);
   assert.match(overlay, /public_case_name="remember"/);
@@ -73,6 +74,8 @@ test("compose primitives case runs the internal PostgreSQL driver and public Rem
   assert.match(driver, /TestComposeRememberPrimitives/);
   assert.match(overlay, /TestComposeSynchronousEvidenceOnlyAssessorBatch/);
   assert.match(assessorDriver, /TestComposeSynchronousEvidenceOnlyAssessorBatch/);
+  assert.match(overlay, /TestRememberServiceRejectsHistoricalOutcomesThroughPostgres/);
+  assert.match(processor, /TestRememberServiceRejectsHistoricalOutcomesThroughPostgres/);
 });
 
 test("remember case covers mixed object success and idempotency conflict behavior", async () => {

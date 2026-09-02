@@ -72,7 +72,7 @@ if (!submissionID) {
 }
 
 const rememberStatus = String(remember.processing_state ?? "");
-if (!["completed", "rejected", "quarantined"].includes(rememberStatus)) {
+if (!["completed", "failed"].includes(rememberStatus)) {
   throw new Error(`remember did not return a terminal result: ${JSON.stringify(remember)}`);
 }
 await mcpTool("recall_memory", {

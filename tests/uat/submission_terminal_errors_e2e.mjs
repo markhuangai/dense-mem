@@ -36,12 +36,12 @@ console.log(JSON.stringify({
 }, null, 2));
 
 function assertTerminalErrors(status) {
-  if (!["rejected", "failed", "quarantined"].includes(status.processing_state) || !Array.isArray(status.errors) || status.errors.length === 0) {
+  if (!["failed"].includes(status.processing_state) || !Array.isArray(status.errors) || status.errors.length === 0) {
     throw new Error("terminal failure returned an empty errors array");
   }
   const allowedCodes = new Set([
     "provider_unavailable", "provider_response_invalid", "input_budget_exceeded", "configuration_invalid", "database_failure", "internal_failure",
-    "submission_quarantined", "submission_policy_rejected",
+    "submission_policy_rejected",
     "relationship_version_stale", "relationship_not_active", "object_kind_change_forbidden",
     "support_set_mismatch", "entity_not_found", "too_many_entity_candidates",
     "predicate_not_found", "predicate_subject_kind_mismatch", "predicate_object_kind_mismatch",
@@ -56,7 +56,6 @@ function assertTerminalErrors(status) {
     "Dense-Mem could not persist the submission",
     "Dense-Mem could not complete the submission",
     "search indexing is delayed",
-    "submission was quarantined by security policy",
     "submission was rejected by semantic policy",
     "relationship version is stale",
     "relationship must be active, supported, and canonical",

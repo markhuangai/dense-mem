@@ -11,7 +11,7 @@ export const TERMINAL_TOOLS = Object.freeze([
   "export_memory_pack",
 ]);
 
-const TERMINAL_PROCESSING_STATES = new Set(["completed", "rejected", "quarantined", "failed"]);
+const TERMINAL_PROCESSING_STATES = new Set(["completed", "failed"]);
 const CORRECTION_PROCESSING_STATES = new Set(["awaiting_confirmation", "completed", "rejected", "failed"]);
 const TERMINAL_SEARCH_STATES = new Set(["current", "not_required"]);
 

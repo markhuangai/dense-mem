@@ -1,8 +1,11 @@
 package serverapp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,25 +28,53 @@ func TestRememberFailureCodeMapsEmbeddingProviderResponseInvalid(t *testing.T) {
 	require.Equal(t, rememberapp.SubmissionErrorEmbeddingResponseInvalid, rememberFailureCode("embedding", failure))
 }
 
+func TestRememberFailureRequestArtifactIsCanonicalAndRedacted(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{
+		RequestHash:    "sha256:" + strings.Repeat("a", 64),
+		IdempotencyKey: "client-key-that-must-not-be-retained",
+		Proposal: map[string]any{
+			"entity_hints": []map[string]any{{"name": "private entity name", "entity_kind": "project"}},
+			"relationship_hints": []map[string]any{{
+				"ref":              "relationship-ref",
+				"evidence_indices": []any{1, 0, 1, 99},
+				"subject":          map[string]any{"name": "private subject", "entity_kind": "project"},
+				"predicate":        map[string]any{"proposed_key": "uses"},
+				"object":           map[string]any{"value": map[string]any{"type": "string", "value": "private object", "display": "private display", "unit": "private unit"}},
+				"polarity":         "+",
+				"client_comment":   "provider prompt and secret should not be retained",
+				"metadata":         map[string]any{"authorization": "Bearer secret-token"},
+			}},
+			"provider_response": "raw provider response must not be retained",
+		},
+	}
+	evidence := []repository.EvidenceFragment{{EvidenceIndex: 0, Content: "evidence content with secret-token"}}
+
+	first, ok := rememberFailureRequestArtifact(input, "11111111-1111-4111-8111-111111111111", evidence)
+	require.True(t, ok)
+	second, ok := rememberFailureRequestArtifact(input, "11111111-1111-4111-8111-111111111111", evidence)
+	require.True(t, ok)
+	require.True(t, bytes.Equal(first.Content, second.Content), "artifact JSON must be deterministic")
+	require.LessOrEqual(t, len(first.Content), rememberFailureArtifactMaxBytes)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(first.Content, &payload))
+	require.NotContains(t, string(first.Content), evidence[0].Content)
+	for _, secret := range []string{"client-key-that-must-not-be-retained", "provider prompt", "secret-token", "private entity name", "private subject", "private object", "private display", "private unit", "authorization", "provider_response", "client_comment", "metadata"} {
+		require.NotContains(t, string(first.Content), secret)
+	}
+	require.Equal(t, input.RequestHash, payload["request_hash"])
+	require.NotEmpty(t, payload["idempotency_key_hash"])
+	require.Len(t, payload["evidence"], 1)
+	require.Len(t, payload["relationships"], 1)
+	relationship := payload["relationships"].([]any)[0].(map[string]any)
+	require.Equal(t, []any{float64(0), float64(1)}, relationship["evidence_indices"])
+	require.NotEmpty(t, relationship["ref_hash"])
+}
+
 func TestRememberFailureCodeMapsAssessmentDatabaseFailure(t *testing.T) {
 	failure := errors.Join(rememberapp.ErrRememberDatabaseFailure, errors.New("catalog unavailable"))
 
 	require.Equal(t, rememberapp.SubmissionErrorDatabaseFailure, rememberFailureCode("assessment", failure))
-}
-
-func TestRememberTerminalErrorInputUsesCanonicalStatus(t *testing.T) {
-	for _, code := range []rememberapp.TerminalErrorCode{
-		rememberapp.TerminalErrorNoSupportedMemory,
-		rememberapp.TerminalErrorQuarantined,
-	} {
-		want := rememberapp.TerminalStatusError(code)
-		got := rememberTerminalErrorInput(code)
-		require.Equal(t, want.Code, got.Code)
-		require.Equal(t, want.Message, got.Message)
-		require.Equal(t, want.Retryable, got.Retryable)
-		require.Equal(t, want.NextAction, got.NextAction)
-		require.Equal(t, want.Remediation, got.Remediation)
-	}
 }
 
 func TestRememberFailureRecoveryContextUsesPersistenceBudget(t *testing.T) {
@@ -127,6 +158,206 @@ func TestRememberAttemptStatusForRequestRestoresRelationshipOrder(t *testing.T) 
 		status.RelationshipResults[0].RelationshipRef,
 		status.RelationshipResults[1].RelationshipRef,
 	})
+}
+
+func TestRememberAttemptReplayRejectsLegacyOutcomes(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{
+		RequestHash: "request-hash",
+		Proposal:    map[string]any{"relationship_hints": []map[string]any{{"ref": "rel-a"}}},
+	}
+	publicResult := map[string]any{
+		"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
+		"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
+		"correlation_id": "correlation", "evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+	}
+	for _, outcome := range []string{"rejected", "quarantined", "replayed"} {
+		t.Run(outcome, func(t *testing.T) {
+			_, err := rememberAttemptReplay(&repository.RememberAttempt{
+				AttemptID: "77777777-7777-7777-7777-777777777777", ContractVersion: domain.ContractVersion,
+				Outcome: outcome, PublicResult: publicResult,
+			}, input)
+			var processErr *rememberapp.RememberProcessError
+			require.ErrorAs(t, err, &processErr)
+			require.ErrorIs(t, err, rememberapp.ErrRememberConflict)
+			require.Equal(t, string(rememberapp.SubmissionErrorIdempotencyConflict), processErr.Status.Errors[0].Code)
+		})
+	}
+}
+
+func TestRememberAttemptReplayAcceptsOnlyCurrentTerminalOutcomes(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{RequestHash: "request-hash"}
+	completed := &repository.RememberAttempt{
+		AttemptID: "77777777-7777-7777-7777-777777777777", RequestHash: "request-hash", ContractVersion: domain.ContractVersion, Outcome: "completed",
+		PublicResult: map[string]any{
+			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
+			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
+			"correlation_id": "correlation", "evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+		},
+	}
+	status, err := rememberAttemptReplay(completed, input)
+	require.NoError(t, err)
+	require.Equal(t, "completed", status.ProcessingState)
+
+	failed := *completed
+	failed.Outcome = "failed"
+	failed.PublicResult = map[string]any{
+		"contract_version": domain.ContractVersion, "submission_id": completed.AttemptID,
+		"submission_kind": "remember", "processing_state": "failed", "search_state": "not_required",
+		"correlation_id": "correlation", "evidence": []any{}, "relationship_results": []any{},
+		"errors": []any{map[string]any{"code": "provider_unavailable", "retryable": true, "next_action": "retry_same_request", "message": "the semantic assessor was unavailable", "remediation": "Retry the same request with the same idempotency_key after the transient failure clears."}},
+	}
+	status, err = rememberAttemptReplay(&failed, input)
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
+	require.Nil(t, status)
+}
+
+func TestRememberAttemptReplayRejectsRequestHashMismatch(t *testing.T) {
+	attempt := &repository.RememberAttempt{
+		AttemptID: "77777777-7777-7777-7777-777777777777", RequestHash: "stored-request-hash",
+		ContractVersion: domain.ContractVersion, Outcome: "completed",
+		PublicResult: map[string]any{
+			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
+			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
+			"evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+		},
+	}
+	_, err := rememberAttemptReplay(attempt, rememberapp.RememberProcessRequest{RequestHash: "different-request-hash"})
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberConflict)
+	require.Equal(t, string(rememberapp.SubmissionErrorIdempotencyConflict), processErr.Status.Errors[0].Code)
+}
+
+func TestRememberProcessorWaiterReplaysWithoutProcessing(t *testing.T) {
+	base := &rememberFailureLedgerStub{load: &repository.RememberAttempt{
+		AttemptID:       "77777777-7777-7777-7777-777777777777",
+		RequestHash:     "request-hash",
+		ContractVersion: domain.ContractVersion,
+		Outcome:         "failed",
+		Retryable:       true,
+		PublicResult: map[string]any{
+			"contract_version":     domain.ContractVersion,
+			"submission_id":        "77777777-7777-7777-7777-777777777777",
+			"submission_kind":      "remember",
+			"processing_state":     "failed",
+			"search_state":         "not_required",
+			"evidence":             []any{},
+			"relationship_results": []any{},
+			"errors": []any{map[string]any{
+				"code":        "provider_unavailable",
+				"message":     "the semantic assessor was unavailable",
+				"retryable":   true,
+				"next_action": "retry_same_request",
+				"remediation": "Retry the same request with the same idempotency_key after the transient failure clears.",
+			}},
+		},
+	}}
+	ledger := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: base, waited: true}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+
+	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+	})
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
+	require.NotNil(t, status)
+	require.Equal(t, processErr.Status, status)
+	require.Equal(t, "77777777-7777-7777-7777-777777777777", processErr.Status.SubmissionID)
+	require.Equal(t, string(rememberapp.SubmissionErrorProviderUnavailable), processErr.Status.Errors[0].Code)
+	require.Equal(t, 1, ledger.lockCalls)
+	require.Len(t, base.loadContexts, 1)
+	require.Empty(t, base.failure.Attempt.AttemptID, "a distributed waiter must not run a second processing attempt")
+}
+
+func TestRememberProcessorPreservesCompletedResultWhenLockCleanupFails(t *testing.T) {
+	attemptID := "77777777-7777-7777-7777-777777777777"
+	ledger := &rememberFailureLedgerStub{load: &repository.RememberAttempt{
+		AttemptID: attemptID, RequestHash: "request-hash", ContractVersion: domain.ContractVersion, Outcome: "completed",
+		PublicResult: map[string]any{
+			"contract_version": domain.ContractVersion, "submission_id": attemptID,
+			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
+			"evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+		},
+	}}
+	cleanupErr := errors.New("lock cleanup failed")
+	logger := &rememberProcessorLogCapture{}
+	locker := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: ledger, lockErr: cleanupErr}
+	processor := &rememberSynchronousProcessor{ledger: locker, logger: logger}
+
+	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, status)
+	require.Equal(t, attemptID, status.SubmissionID)
+	require.Equal(t, "completed", status.ProcessingState)
+	require.Equal(t, []string{"remember_idempotency_lock_cleanup_failed"}, logger.warns)
+}
+
+func TestRememberProcessorWaiterRejectsRequestHashMismatch(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{load: &repository.RememberAttempt{
+		AttemptID: "77777777-7777-7777-7777-777777777777", RequestHash: "stored-request-hash",
+		ContractVersion: domain.ContractVersion, Outcome: "completed",
+		PublicResult: map[string]any{
+			"contract_version": domain.ContractVersion, "submission_id": "77777777-7777-7777-7777-777777777777",
+			"submission_kind": "remember", "processing_state": "completed", "search_state": "current",
+			"evidence": []any{}, "relationship_results": []any{}, "errors": []any{},
+		},
+	}}
+	locker := &rememberWaitAwareLedgerStub{rememberFailureLedgerStub: ledger, waited: true}
+	processor := &rememberSynchronousProcessor{ledger: locker}
+
+	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "different-request-hash",
+	})
+
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberConflict)
+	require.NotNil(t, status)
+	require.Equal(t, string(rememberapp.SubmissionErrorIdempotencyConflict), processErr.Status.Errors[0].Code)
+	require.Equal(t, processErr.Status, status)
+}
+
+func TestRememberProcessorWaiterLockCancellationReturnsBeforeReplayLoad(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{}
+	locker := &rememberWaitAwareLedgerStub{
+		rememberFailureLedgerStub: ledger,
+		waited:                    true,
+		lockErr:                   context.DeadlineExceeded,
+	}
+	processor := &rememberSynchronousProcessor{ledger: locker}
+
+	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+	})
+
+	var processErr *rememberapp.RememberProcessError
+	require.Nil(t, status)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorAs(t, err, &processErr)
+	require.Empty(t, ledger.loadContexts, "a cancelled lock waiter must not load a replay")
+}
+
+func TestRememberProcessorRejectsScannerFailureBeforeAssessor(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{}
+	processor := &rememberSynchronousProcessor{ledger: ledger}
+	input := rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "scanner-rejected", RequestHash: "request-hash",
+		Evidence: []rememberapp.EvidenceInput{{Content: "unsafe"}}, SecurityRejected: true,
+	}
+
+	_, err := processor.ProcessRemember(context.Background(), input)
+	var processErr *rememberapp.RememberProcessError
+	require.ErrorAs(t, err, &processErr)
+	require.ErrorIs(t, err, rememberapp.ErrRememberPolicyRejected)
+	require.Equal(t, string(rememberapp.SubmissionErrorPolicyRejected), processErr.Status.Errors[0].Code)
+	require.Equal(t, "assessment", ledger.failure.Attempt.FailedPhase)
+	require.False(t, ledger.failure.Attempt.Retryable)
 }
 
 func TestRememberProcessorFailureProjectsEverySubmittedItem(t *testing.T) {
@@ -296,6 +527,19 @@ type rememberFailureLedgerStub struct {
 	loadDeadlines     []time.Time
 }
 
+type rememberWaitAwareLedgerStub struct {
+	*rememberFailureLedgerStub
+	waited    bool
+	lockCalls int
+	lockErr   error
+}
+
+func (s *rememberWaitAwareLedgerStub) WithRememberAttemptLock(_ context.Context, _, _, _ string, fn func(bool) error) error {
+	s.lockCalls++
+	callbackErr := fn(s.waited)
+	return errors.Join(callbackErr, s.lockErr)
+}
+
 type rememberProcessorLogCapture struct {
 	infos  []string
 	warns  []string
@@ -338,14 +582,6 @@ func (s *rememberFailureLedgerStub) LoadRememberAttempt(ctx context.Context, _ r
 		return nil, s.loadErr
 	}
 	return nil, repository.ErrRememberAttemptNotFound
-}
-
-func (*rememberFailureLedgerStub) CommitRememberPreflightQuarantine(context.Context, repository.SynchronousRememberCommitInput, repository.RememberTerminalErrorInput) (*repository.SynchronousRememberCommitResult, error) {
-	return nil, errors.New("unused")
-}
-
-func (*rememberFailureLedgerStub) CommitRememberTerminal(context.Context, repository.SynchronousRememberCommitInput, string, repository.RememberTerminalErrorInput, []repository.SubmissionAssessmentSecurityQuarantineInput) (*repository.SynchronousRememberCommitResult, error) {
-	return nil, errors.New("unused")
 }
 
 func (*rememberFailureLedgerStub) PlanRememberEmbeddings(context.Context, repository.SynchronousRememberCommitInput) (*repository.InlineEmbeddingPlan, error) {

@@ -39,7 +39,7 @@
       ]
     },
     "output": {
-      "contract_version": "dense-mem.v2.6.1",
+      "contract_version": "dense-mem.v2.6.2",
       "submission_id": "ing-1",
       "submission_kind": "remember",
       "processing_state": "completed",
@@ -86,7 +86,7 @@
       "idempotency_key": "relationship-correction-1"
     },
     "output": {
-      "contract_version": "dense-mem.v2.6.1",
+      "contract_version": "dense-mem.v2.6.2",
       "submission_id": "correction-1",
       "submission_kind": "relationship_correction",
       "processing_state": "completed",
@@ -108,7 +108,7 @@
       "idempotency_key": "relationship-correction-confirm-1"
     },
     "output": {
-      "contract_version": "dense-mem.v2.6.1",
+      "contract_version": "dense-mem.v2.6.2",
       "submission_id": "correction-1",
       "submission_kind": "relationship_correction",
       "processing_state": "completed",

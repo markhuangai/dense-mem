@@ -104,6 +104,14 @@ func TestControlPortalRememberFailureArtifactAuditIncludesSSOIdentity(t *testing
 }
 
 func TestControlPortalRememberAttemptValidationAndNotFound(t *testing.T) {
+	for _, outcome := range []string{"completed", "rejected", "quarantined", "failed", "replayed"} {
+		req := httptest.NewRequest(http.MethodGet, "/control/api/remember-attempts?outcome="+outcome, nil)
+		ctx := echo.New().NewContext(req, httptest.NewRecorder())
+		filter, err := controlRememberAttemptDiagnosticFilter(ctx)
+		require.NoError(t, err)
+		require.Equal(t, outcome, filter.Outcome)
+	}
+
 	rec := httptest.NewRecorder()
 	e := httptest.NewRequest(http.MethodGet, "/control/api/remember-attempts?outcome=unknown", nil)
 	ctx := echo.New().NewContext(e, rec)

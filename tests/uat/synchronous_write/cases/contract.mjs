@@ -13,14 +13,14 @@ export async function run({ rpc, expect }) {
   const listed = await rpc("tools/list", {});
   const tools = listed.tools || [];
   const names = tools.map((tool) => tool.name);
-  expect(names.length === TERMINAL_TOOLS.length && TERMINAL_TOOLS.every((tool) => names.includes(tool)), "v2.6.1 catalog must expose exactly ten tools");
-  expect(!names.includes("get_submission_status"), "v2.6.1 catalog must remove get_submission_status");
+  expect(names.length === TERMINAL_TOOLS.length && TERMINAL_TOOLS.every((tool) => names.includes(tool)), "v2.6.2 catalog must expose exactly ten tools");
+  expect(!names.includes("get_submission_status"), "v2.6.2 catalog must remove get_submission_status");
 
   const rememberTool = tools.find((tool) => tool.name === "remember");
   const rememberSchema = rememberTool?.outputSchema || rememberTool?.output_schema || {};
   const rememberProperties = rememberSchema.properties || {};
-  expect(JSON.stringify(rememberProperties.contract_version?.enum) === JSON.stringify(["dense-mem.v2.6.1"]), "Remember schema must identify v2.6.1");
-  expect(!Object.hasOwn(rememberProperties, "status_tool") && !Object.hasOwn(rememberProperties, "check_after_seconds"), "v2.6.1 Remember schema must not expose polling fields");
+  expect(JSON.stringify(rememberProperties.contract_version?.enum) === JSON.stringify(["dense-mem.v2.6.2"]), "Remember schema must identify v2.6.2");
+  expect(!Object.hasOwn(rememberProperties, "status_tool") && !Object.hasOwn(rememberProperties, "check_after_seconds"), "v2.6.2 Remember schema must not expose polling fields");
 
   const runID = `synchronous-write-contract-${randomUUID()}`;
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
@@ -28,7 +28,7 @@ export async function run({ rpc, expect }) {
   const sourceRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "remember", arguments: rememberArguments(runID, "none") });
   const source = successfulToolResult(sourceRaw, expect);
   assertTerminalRememberResult(source);
-  expect(source.contract_version === "dense-mem.v2.6.1", "terminal Remember must return v2.6.1");
+  expect(source.contract_version === "dense-mem.v2.6.2", "terminal Remember must return v2.6.2");
   expect(source.processing_state === "completed", `terminal Remember must complete: ${JSON.stringify(source)}`);
   expect(source.relationship_results?.[0]?.splits?.[0]?.relationship_id, "terminal Remember must return a relationship split");
   assertTextStructuredParity(sourceRaw, expect);
@@ -36,12 +36,14 @@ export async function run({ rpc, expect }) {
   const removed = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "get_submission_status", arguments: { submission_id: source.submission_id } });
   expect(removed.error?.code === -32601 && !removed.result, "removed get_submission_status must return bounded method-not-found");
 
-  const rejectedRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "remember", arguments: rememberArguments(`${runID}-rejected`, "no-supported") });
-  const rejected = structuredToolResult(rejectedRaw, expect);
-  assertTerminalRememberResult(rejected);
-  expect(rejected.contract_version === "dense-mem.v2.6.1" && rejected.processing_state === "rejected", "terminal rejection must preserve target state");
-  expect(rejected.errors?.[0]?.code === "no_supported_memory", "terminal rejection must preserve bounded error code");
-  assertTextStructuredParity(rejectedRaw, expect);
+  const evidenceOnlyArguments = rememberArguments(`${runID}-evidence-only`, "none");
+  delete evidenceOnlyArguments.relationships;
+  const evidenceOnlyRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "remember", arguments: evidenceOnlyArguments });
+  const evidenceOnly = successfulToolResult(evidenceOnlyRaw, expect);
+  assertTerminalRememberResult(evidenceOnly);
+  expect(evidenceOnly.contract_version === "dense-mem.v2.6.2" && evidenceOnly.processing_state === "completed", "evidence-only Remember must complete");
+  expect(evidenceOnly.evidence?.[0]?.disposition === "stored" && evidenceOnly.relationship_results?.length === 0, "evidence-only Remember must store evidence without relationship results");
+  assertTextStructuredParity(evidenceOnlyRaw, expect);
 
   const split = source.relationship_results[0].splits[0];
   const traceRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "trace_memory", arguments: { relationship_id: split.relationship_id } });
@@ -66,7 +68,7 @@ export async function run({ rpc, expect }) {
   });
   const correction = successfulToolResult(correctionRaw, expect);
   assertTerminalCorrectionResult(correction);
-  expect(correction.contract_version === "dense-mem.v2.6.1", "direct correction must return v2.6.1");
+  expect(correction.contract_version === "dense-mem.v2.6.2", "direct correction must return v2.6.2");
   expect(!Object.hasOwn(correction, "status_tool") && !Object.hasOwn(correction, "check_after_seconds"), "direct correction must not return polling metadata");
   assertTextStructuredParity(correctionRaw, expect);
 
@@ -84,14 +86,14 @@ export async function run({ rpc, expect }) {
   });
   const stale = structuredToolResult(staleRaw, expect);
   assertTerminalCorrectionResult(stale);
-  expect(stale.contract_version === "dense-mem.v2.6.1" && stale.processing_state === "rejected", "stale correction must return a terminal rejection");
+  expect(stale.contract_version === "dense-mem.v2.6.2" && stale.processing_state === "rejected", "stale correction must return a terminal rejection");
   expect(stale.errors?.[0]?.code === "relationship_version_stale", `stale correction must preserve version classification: ${JSON.stringify(stale)}`);
   assertTextStructuredParity(staleRaw, expect);
 
   // Keep the intermediate confirmation branch exercised even when this
   // disposable seed resolves the correction directly to completed.
   assertTerminalCorrectionResult({
-    contract_version: "dense-mem.v2.6.1",
+    contract_version: "dense-mem.v2.6.2",
     submission_id: "fixture-confirmation",
     submission_kind: "relationship_correction",
     processing_state: "awaiting_confirmation",
@@ -113,7 +115,7 @@ export async function run({ rpc, expect }) {
     tools: names.length,
     removed_status: true,
     remember_state: source.processing_state,
-    rejection_is_error: rejectedRaw.result?.isError === true,
+    evidence_only_state: evidenceOnly.processing_state,
     correction_state: correction.processing_state,
     ownership_isolation: ownership,
     text_structured_parity: true,

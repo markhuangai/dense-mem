@@ -14,14 +14,32 @@ func ValidateSemanticAssessmentResponseRaw(raw []byte) []SemanticValidationError
 	return validateSemanticAssessmentResponseRaw(raw)
 }
 
-// ValidateSemanticAssessmentSecurityResults validates the complete security
-// disposition table against the submitted evidence and security signals.
-func ValidateSemanticAssessmentSecurityResults(
-	results []SemanticAssessmentSecurityResult,
-	signals []SemanticAssessmentSecuritySignal,
+// ValidateSemanticAssessmentEvidenceSecurityResults validates the assessor's
+// nested, evidence-scoped security table. It is the single security-result
+// policy entry point shared by all provider adapters.
+func ValidateSemanticAssessmentEvidenceSecurityResults(
+	results []SemanticAssessmentEvidenceSecurityResult,
 	evidenceByID map[string]SemanticReviewEvidence,
 ) []SemanticValidationError {
-	return validateSemanticAssessmentSecurityResults(results, signals, evidenceByID)
+	return validateSemanticAssessmentEvidenceSecurityResults(results, evidenceByID)
+}
+
+// ResolveSemanticAssessmentRange converts a provider boundary range into
+// canonical rune offsets after checking the submitted evidence allowlist.
+func ResolveSemanticAssessmentRange(
+	evidenceByID map[string]SemanticReviewEvidence,
+	value *SemanticAssessmentGroundedRange,
+) error {
+	return resolveSemanticAssessmentRange(evidenceByID, value)
+}
+
+// ValidateSemanticAssessmentSubmissionResponse validates the complete
+// submitted Entity and Relationship contract against an assessor response.
+func ValidateSemanticAssessmentSubmissionResponse(
+	contract *SemanticAssessmentSubmissionContract,
+	response SemanticAssessmentResponse,
+) []SemanticValidationError {
+	return validateSemanticAssessmentSubmissionResponse(contract, response)
 }
 
 // NormalizeSemanticAssessmentLimits applies the contract defaults to an

@@ -119,9 +119,8 @@ func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 	valueRange := semanticAssessmentTestRange(evidence, 11, 13)
 	supportRange := semanticAssessmentTestRange(evidence, 0, 13)
 	response := SemanticAssessmentResponse{
-		RequestID:       prepared.RequestID,
-		SecuritySignals: []SemanticAssessmentSecuritySignal{},
-		SecurityResults: []SemanticAssessmentSecurityResult{{EvidenceID: "ev-1", Decision: "pass"}},
+		RequestID:               prepared.RequestID,
+		EvidenceSecurityResults: []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "ev-1", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}},
 		EntityResults: []SemanticAssessmentEntityResult{{
 			Ref: "entity:latency", GroundingRef: &groundingRef, Action: "create",
 		}},
@@ -202,13 +201,6 @@ func TestSemanticAssessmentSubmissionContractRejectsUntrustedTargets(t *testing.
 				request.SubmittedEntities = []SemanticAssessmentSubmittedEntity{{Ref: "untrusted"}}
 			},
 			want: "submission_contract",
-		},
-		{
-			name: "empty contract",
-			mutate: func(request *SemanticAssessmentRequest) {
-				request.SubmissionContract = &SemanticAssessmentSubmissionContract{}
-			},
-			want: "must contain between 1",
 		},
 		{
 			name: "duplicate entity ref",
@@ -679,9 +671,8 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 	denseMemGrounding := "grounding-dense-mem"
 	evidence := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "ev-1", Content: "Mark works on Dense-Mem."})
 	return SemanticAssessmentResponse{
-		RequestID:       "assess-1",
-		SecuritySignals: []SemanticAssessmentSecuritySignal{},
-		SecurityResults: []SemanticAssessmentSecurityResult{{EvidenceID: "ev-1", Decision: "pass"}},
+		RequestID:               "assess-1",
+		EvidenceSecurityResults: []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "ev-1", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}},
 		EntityResults: []SemanticAssessmentEntityResult{
 			{
 				Ref:               "person-1",

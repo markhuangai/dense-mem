@@ -46,7 +46,7 @@ func ContractTools() []Tool {
 	return []Tool{
 		contractTool(
 			ToolRemember,
-			"Submit exact evidence and relationship proposals for one synchronous atomic semantic commit; every submitted evidence item must be cited by evidence_index. The server and assessor own exact grounding. Use exactly one object shape: {\"object\":{\"entity\":{\"name\":\"PostgreSQL\",\"entity_kind\":\"product\"}}} or {\"object\":{\"value\":{\"type\":\"string\",\"value\":\"PostgreSQL\"}}}.",
+			"Submit exact evidence and optional relationship proposals for one synchronous atomic semantic commit. Each proposal cites its submitted evidence; safe evidence is stored even when no relationship is accepted. The server and assessor own exact grounding. Use exactly one object shape: {\"object\":{\"entity\":{\"name\":\"PostgreSQL\",\"entity_kind\":\"product\"}}} or {\"object\":{\"value\":{\"type\":\"string\",\"value\":\"PostgreSQL\"}}}.",
 			[]string{"write"},
 			rememberInputSchema(),
 			rememberOutputSchema(),
@@ -148,7 +148,7 @@ func contractTools(deps Dependencies) []Tool {
 					return nil, err
 				}
 				state := strings.TrimSpace(fmt.Sprint(result["processing_state"]))
-				if state == "rejected" || state == "quarantined" || state == "failed" {
+				if state == "failed" {
 					return nil, NewToolResultError(result)
 				}
 				return result, nil
@@ -409,9 +409,6 @@ func ValidateContractInput(tool Tool, args map[string]any, scopes []string) erro
 		if _, ok := args["evidence"]; !ok {
 			return fmt.Errorf("evidence is required")
 		}
-		if _, ok := args["relationships"]; !ok {
-			return fmt.Errorf("relationships is required")
-		}
 	}
 	if err := ValidateInput(tool, args); err != nil {
 		return err
@@ -475,7 +472,7 @@ func validateRemember(args map[string]any) error {
 	if err := validateSubmittedRelationships(args["relationships"], evidence, "relationships"); err != nil {
 		return err
 	}
-	return validateSubmittedEvidenceCoverage(args["relationships"], evidence, "relationships")
+	return nil
 }
 
 func validateRecall(args map[string]any) error {

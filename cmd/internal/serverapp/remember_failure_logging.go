@@ -39,6 +39,23 @@ func (p *rememberSynchronousProcessor) logRememberFailureRetentionDegraded(
 	p.logger.Warn("remember_failure_retention_degraded", attrs...)
 }
 
+func (p *rememberSynchronousProcessor) logRememberIdempotencyLockCleanupFailure(
+	input rememberapp.RememberProcessRequest,
+	submissionID string,
+) {
+	if p == nil || p.logger == nil {
+		return
+	}
+	attrs := rememberFailureLogAttrs(
+		input,
+		submissionID,
+		"idempotency_lock_cleanup",
+		"coordination_cleanup_failed",
+		rememberProcessCorrelationID(input.Metadata),
+	)
+	p.logger.Warn("remember_idempotency_lock_cleanup_failed", attrs...)
+}
+
 func rememberFailureRecoveryLogError(err error) error {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):

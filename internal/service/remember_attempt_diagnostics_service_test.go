@@ -70,6 +70,12 @@ func TestRememberAttemptDiagnosticsServiceValidatesScopeAndMapsNotFound(t *testi
 
 	_, err := svc.ListRememberAttemptDiagnostics(context.Background(), RememberAttemptDiagnosticFilter{TeamID: "not-a-uuid"})
 	require.Error(t, err)
+	repo.listErr = nil
+	for _, outcome := range []string{"completed", "rejected", "quarantined", "failed", "replayed"} {
+		_, err = svc.ListRememberAttemptDiagnostics(context.Background(), RememberAttemptDiagnosticFilter{Outcome: outcome})
+		require.NoError(t, err)
+		require.Equal(t, outcome, repo.listFilter.Outcome)
+	}
 	_, err = svc.ListRememberAttemptDiagnostics(context.Background(), RememberAttemptDiagnosticFilter{Outcome: "unknown"})
 	require.Error(t, err)
 	_, err = svc.GetRememberAttemptDiagnostic(context.Background(), "not-a-uuid", uuid.NewString())

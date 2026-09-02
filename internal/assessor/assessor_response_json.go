@@ -10,12 +10,23 @@ import (
 )
 
 func validateSemanticAssessmentResponseRaw(raw []byte) []SemanticValidationError {
-	top, errs := assessmentRawObject(raw, "", []string{"request_id", "security_signals", "security_results", "entity_results", "relationship_results"}, nil)
+	top, errs := assessmentRawObject(raw, "", []string{"request_id", "evidence_security_results", "entity_results", "relationship_results"}, nil)
 	if len(errs) > 0 {
 		return errs
 	}
-	errs = append(errs, assessmentRawArrayObjects(top["security_signals"], "security_signals", []string{"evidence_id", "kind", "start_ref", "end_ref"}, nil)...)
-	errs = append(errs, assessmentRawArrayObjects(top["security_results"], "security_results", []string{"evidence_id", "decision"}, nil)...)
+	var securityResults []json.RawMessage
+	if err := json.Unmarshal(top["evidence_security_results"], &securityResults); err != nil {
+		return append(errs, semanticErr("evidence_security_results", "must be an array"))
+	}
+	for i, resultRaw := range securityResults {
+		path := fmt.Sprintf("evidence_security_results[%d]", i)
+		result, resultErrs := assessmentRawObject(resultRaw, path, []string{"evidence_id", "decision", "signals"}, nil)
+		errs = append(errs, resultErrs...)
+		if len(resultErrs) > 0 {
+			continue
+		}
+		errs = append(errs, assessmentRawArrayObjects(result["signals"], path+".signals", []string{"kind", "start_ref", "end_ref"}, nil)...)
+	}
 	errs = append(errs, assessmentRawArrayObjects(top["entity_results"], "entity_results", []string{"ref", "grounding_ref", "action", "candidate_entity_id"}, map[string]bool{"grounding_ref": true, "candidate_entity_id": true})...)
 
 	var relationships []json.RawMessage

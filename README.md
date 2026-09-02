@@ -93,7 +93,7 @@ docker compose up -d
 ```
 
 The base stack uses PostgreSQL with pgvector as the only durable authority.
-The v2.6.1 release requires the compatible cutover marker created by the
+The v2.6.2 release requires the compatible cutover marker created by the
 stopped-service migration; it has no legacy database runtime or fallback. The
 local ports are:
 
@@ -126,9 +126,10 @@ pending PostgreSQL migrations under a database session lock before serving, so
 the Compose stack does not need a separate migration container. Multiple server
 replicas that share one writable primary serialize this startup step. Keep
 ordinary rolling-deployment migrations backward compatible with the previous app
-version. The v2.6.1 synchronous Remember migration is the exception: stop every
-server instance, take the required PostgreSQL snapshot, and apply the
-stopped-service boundary before starting the new binary. Independent databases
+version. The v2.6.1 synchronous Remember migration remains the stopped-service
+boundary; v2.6.2 evidence-first activation runs after it. For the v2.6.1
+migration, stop every server instance, take the required PostgreSQL snapshot,
+and apply the stopped-service boundary before starting the new binary. Independent databases
 must each be migrated by a server connected to that database. Administration
 stays on the private control portal/API, while dreaming and automatic conflict
 review run as server background workers.
@@ -190,11 +191,12 @@ internal run IDs.
 
 Callers submit logical Entity, predicate, and Value proposals rather than text
 offsets. `remember` does not accept `span`, `surface`, or relationship `supports`
-fields. Each Relationship instead lists the zero-based `evidence_indices` that
-support it, and those lists must collectively cover every evidence item in the
-submission. The assessor locates the exact evidence ranges; closed-schema
-validation and deterministic server policy decide whether those ranges are safe
-to commit.
+fields. Each optional Relationship lists the zero-based `evidence_indices` that
+support it; proposals may be omitted, and their indices do not need to cover every
+evidence item. The single assessor session reviews every evidence item for security
+and grounds or normalizes only submitted Relationship proposals against their
+cited evidence. It never searches memory or discovers Relationships. Closed-schema
+validation and deterministic server policy decide what is safe to commit.
 
 To replace a specific current evidence item you own, put its UUID in the new
 item's `supersedes_evidence_ids`. Direct targeting is separate from advancing a
@@ -234,21 +236,22 @@ source revision with `previous_source_revision`; do not combine them.
 ```
 
 Direct supersession is staged with the complete batch. The target is retired
-only inside the accepted semantic transaction; a rejected, failed, or
-quarantined submission leaves it active. This prevents a replacement that never
-becomes supported memory from invalidating current evidence.
+only inside the accepted semantic transaction; a failed submission leaves it
+active. This prevents a replacement that never becomes supported memory from
+invalidating current evidence.
 
-Remember uses one assessor conversation for the complete batch. The assessor
-owns grounding repair, identity choice, predicate reconciliation, support
-decisions, and repairable races; deterministic server policy still owns
-authorization, lifecycle, and durable state. Every submitted Relationship ref
-gets a `stored` or `not_stored` disposition. Unsupported hints are not client
-errors when stored support still covers every evidence item; otherwise the
-submission is rejected with `no_supported_memory`. Exact client-owned changes
-after staging are rejected with `stale_input`. Provider, configuration,
-database, and internal faults are typed operational failures. All accepted
-semantic effects commit atomically, with no partial replacement or interactive
-placement review.
+Remember uses one assessor conversation for the complete batch. Every evidence
+item receives a security result, including evidence-only submissions. Unsafe
+evidence fails the complete batch with `submission_policy_rejected` and no
+semantic, search, or embedding writes. Safe evidence is stored and indexed even
+when no Relationship is proposed or accepted. The assessor may ground and
+normalize only submitted Relationship proposals against their cited evidence; it
+does not search memory, find support for evidence, or discover Relationships.
+Every submitted Relationship ref gets a `stored` or `not_stored` disposition;
+unsupported proposals are completed-result warnings. Exact client-owned changes
+after staging are reported as `stale_input`. Provider, configuration, database,
+and internal faults are typed operational failures. All accepted semantic effects
+commit atomically, with no partial replacement or interactive placement review.
 
 Remember requires one top-level `idempotency_key`; evidence-level and derived
 keys are not accepted. If a complete batch needs correction, submit the entire

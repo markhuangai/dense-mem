@@ -15,8 +15,7 @@ type SubmissionNextAction = rememberapp.SubmissionNextAction
 const submissionStatusMaxIssueMessageLength = 512
 
 const (
-	SubmissionErrorNoSupportedMemory = rememberapp.SubmissionErrorNoSupportedMemory
-	SubmissionErrorStaleInput        = rememberapp.SubmissionErrorStaleInput
+	SubmissionErrorStaleInput = rememberapp.SubmissionErrorStaleInput
 
 	SubmissionErrorProviderUnavailable      = rememberapp.SubmissionErrorProviderUnavailable
 	SubmissionErrorProviderResponseInvalid  = rememberapp.SubmissionErrorProviderResponseInvalid
@@ -35,7 +34,6 @@ const (
 	SubmissionErrorAssessorInvalid     = rememberapp.SubmissionErrorAssessorInvalid
 	SubmissionErrorAssessorUnavailable = rememberapp.SubmissionErrorAssessorUnavailable
 	SubmissionErrorProcessingFailed    = rememberapp.SubmissionErrorProcessingFailed
-	SubmissionErrorQuarantined         = rememberapp.SubmissionErrorQuarantined
 
 	SubmissionErrorRelationshipVersionStale      = rememberapp.SubmissionErrorRelationshipVersionStale
 	SubmissionErrorRelationshipNotActive         = rememberapp.SubmissionErrorRelationshipNotActive

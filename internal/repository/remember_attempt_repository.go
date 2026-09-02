@@ -14,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 // ErrRememberReplay identifies a terminal attempt that owns an idempotency
@@ -239,7 +241,7 @@ func loadTerminalRememberAttemptInTx(ctx context.Context, tx *gorm.DB, teamID, o
 		       COALESCE(retryable, outcome = 'failed'), public_result
 		FROM remember_attempts
 		WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid AND idempotency_key = ?
-		  AND outcome IN ('completed', 'rejected', 'quarantined')
+		  AND outcome IN ('completed', 'rejected', 'quarantined', 'replayed')
 		ORDER BY created_at DESC, attempt_id DESC LIMIT 1
 	`, teamID, ownerProfileID, key).Row().Scan(&result.AttemptID, &result.RequestHash, &result.ContractVersion, &result.Outcome, &result.Retryable, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -250,6 +252,12 @@ func loadTerminalRememberAttemptInTx(ctx context.Context, tx *gorm.DB, teamID, o
 	}
 	if strings.TrimSpace(result.RequestHash) != strings.TrimSpace(requestHash) {
 		return nil, fmt.Errorf("%w: idempotency key reused with a different request hash", ErrIdempotencyConflict)
+	}
+	if strings.TrimSpace(result.ContractVersion) != "" && strings.TrimSpace(result.ContractVersion) != domain.ContractVersion {
+		return nil, fmt.Errorf("%w: historical Remember contract is not replayable", ErrIdempotencyConflict)
+	}
+	if result.Outcome == "rejected" || result.Outcome == "quarantined" {
+		return nil, fmt.Errorf("%w: historical Remember outcome is not replayable", ErrIdempotencyConflict)
 	}
 	result.PublicResult = map[string]any{}
 	if len(raw) != 0 {
@@ -405,6 +413,20 @@ func insertRememberAttemptInTx(ctx context.Context, tx *gorm.DB, input RememberA
 		return err
 	}
 	if err := validateRememberFailureRetryInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash); err != nil {
+		return err
+	}
+	var previousFailedRetryable bool
+	err := tx.WithContext(ctx).Raw(`
+		SELECT COALESCE(retryable, true)
+		FROM remember_attempts
+		WHERE team_id = ?::uuid AND owner_profile_id = ?::uuid
+		  AND idempotency_key = ? AND outcome = 'failed'
+		ORDER BY created_at DESC, attempt_id DESC LIMIT 1
+	`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Row().Scan(&previousFailedRetryable)
+	if err == nil && !previousFailedRetryable {
+		return ErrRememberReplay
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if existing, err := loadTerminalRememberAttemptInTx(ctx, tx, input.TeamID, input.OwnerProfileID, input.IdempotencyKey, input.RequestHash); err != nil {

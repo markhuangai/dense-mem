@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 
 import { assertTerminalRememberResult } from "../surface.mjs";
 
@@ -187,16 +188,58 @@ async function runRepairCase({ rpc, expect, fault }) {
 }
 
 async function runTerminalDomainCase({ rpc, expect, fault }) {
-  const args = singleItemArguments(`domain-${fault}`, `[fixture-fault:${fault}]`);
+  const args = fault === "security"
+    ? multiEvidenceSecurityArguments(`domain-${fault}`)
+    : singleItemArguments(`domain-${fault}`, `[fixture-fault:${fault}]`);
   const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
   assertStrictTerminalRemember(result, expect);
-  const expectedState = fault === "security" ? "quarantined" : "rejected";
-  const expectedCode = fault === "security" ? "submission_quarantined" : "no_supported_memory";
+  const expectedState = fault === "security" ? "failed" : "completed";
+  const expectedCode = fault === "security" ? "submission_policy_rejected" : "";
   expect(result.processing_state === expectedState, `${fault} must return ${expectedState}`);
-  expect(result.search_state === "not_required", `${fault} must not require search`);
-  expect(result.errors[0]?.code === expectedCode, `${fault} must return ${expectedCode}: ${JSON.stringify(result)}`);
-  expect(result.evidence.every((item) => item.disposition === "not_stored"), `${fault} must not store evidence`);
-  expect(result.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), `${fault} must not store relationships`);
+  if (fault === "security") {
+    expect(result.search_state === "not_required", `${fault} must not require search`);
+    expect(result.errors[0]?.code === expectedCode, `${fault} must return ${expectedCode}: ${JSON.stringify(result)}`);
+    expect(result.evidence.length === 2, `${fault} must return every submitted evidence disposition`);
+    expect(result.evidence.every((item) => item.disposition === "not_stored"), `${fault} must not store evidence`);
+    expect(result.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), `${fault} must not store relationships`);
+    const zeroWriteCounts = postgresQuery(`
+      SELECT count(*) FROM knowledge_ingests
+      WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+        AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+      UNION ALL
+      SELECT count(*) FROM evidence_fragments
+      WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+        AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+      UNION ALL
+      SELECT count(*) FROM semantic_assessments
+      WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+        AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid
+      UNION ALL
+      SELECT count(*) FROM relationship_observations
+      WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+        AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+      UNION ALL
+      SELECT count(*)
+      FROM search_documents AS document
+      WHERE document.team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+        AND document.source_id IN (
+          SELECT fragment_id FROM evidence_fragments
+          WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+            AND ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+          UNION ALL
+          SELECT observation.relationship_id
+          FROM relationship_observations AS observation
+          WHERE observation.team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+            AND observation.ingest_id = '${sqlLiteral(result.submission_id)}'::uuid
+        );
+    `).split(/\r?\n/).filter(Boolean).map(Number);
+    expect(zeroWriteCounts.length === 5 && zeroWriteCounts.every((count) => count === 0), `${fault} must not create semantic or search rows: ${zeroWriteCounts.join(",")}`);
+  } else {
+    expect(result.search_state === "current", `${fault} must index safe evidence`);
+    expect(result.errors.length === 0, `${fault} must not return a batch error`);
+    expect(result.evidence.every((item) => item.disposition === "stored"), `${fault} must store safe evidence`);
+    expect(result.relationship_results.every((item) => item.disposition === "not_stored" && item.splits.length === 0), `${fault} must return unsupported relationship warnings`);
+  }
   const replay = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
   assertStrictTerminalRemember(replay, expect);
   expect(stableJSON(replay) === stableJSON(result), `${fault} terminal replay must be byte-equivalent`);
@@ -221,10 +264,14 @@ async function runCancellationCase({ rpc, rawRPC, expect }) {
   const request = rawRPC("tools/call", { name: "remember", arguments: args }, controller.signal);
   setTimeout(() => controller.abort(), 100);
   await assert.rejects(request, (error) => error?.name === "AbortError");
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  const retry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
-  assertStrictTerminalRemember(retry, expect);
-  expect(retry.processing_state === "completed", "a cancelled request must be retryable with the same key");
+  let retry;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    retry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: args }));
+    assertStrictTerminalRemember(retry, expect);
+    if (retry.processing_state === "completed") break;
+    expect(retry.errors[0]?.retryable === true, `a cancelled request returned a non-retryable failure: ${JSON.stringify(retry)}`);
+  }
+  expect(retry?.processing_state === "completed", `a cancelled request must be retryable with the same key: ${JSON.stringify(retry)}`);
   return { fault: "embedding-cancel", processing_state: retry.processing_state };
 }
 
@@ -277,7 +324,7 @@ async function runSupersessionFenceCase({ rpc, expect }) {
   staleArgs.evidence[0].supersedes_evidence_ids = [targetEvidenceID];
   const stale = terminalPayload(await rpc("tools/call", { name: "remember", arguments: staleArgs }));
   assertStrictTerminalRemember(stale, expect);
-  expect(stale.processing_state === "rejected", `stale supersession must reject: ${JSON.stringify(stale)}`);
+  expect(stale.processing_state === "failed", `stale supersession must fail: ${JSON.stringify(stale)}`);
   expect(stale.search_state === "not_required", "stale supersession must not require search");
   expect(stale.errors[0]?.code === "stale_input", `stale supersession must return stale_input: ${JSON.stringify(stale)}`);
   expect(stale.evidence.every((item) => item.disposition === "not_stored"), "stale supersession must not store evidence");
@@ -292,6 +339,16 @@ function singleItemArguments(label, marker) {
     relationships: [relationship("durable-store", "Dense-Mem", "project", { value: { type: "string", value: "PostgreSQL" } }, [0])],
     idempotency_key: `synchronous-write-remember-${label}-${Date.now()}-${Math.random()}`,
   };
+}
+
+function multiEvidenceSecurityArguments(label) {
+  const args = singleItemArguments(label, "[fixture-fault:security]");
+  args.evidence.push({
+    content: "A second safe evidence item must not be partially committed.",
+    source_type: "manual",
+  });
+  args.relationships[0].evidence_indices = [0, 1];
+  return args;
 }
 
 function relationship(ref, subjectName, subjectKind, object, evidenceIndices, predicateKey = "stores_memory_in") {
@@ -332,4 +389,26 @@ function stableJSON(value) {
   if (Array.isArray(value)) return `[${value.map(stableJSON).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJSON(value[key])}`).join(",")}}`;
   return JSON.stringify(value);
+}
+
+function requiredEnv(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function postgresQuery(sql) {
+  const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
+  const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
+  const result = spawnSync("docker", [
+    "compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "postgres", "sh", "-ec",
+    'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
+    "synchronous-write-remember", sql,
+  ], { cwd: process.cwd(), encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`Remember PostgreSQL fixture failed (${result.status})`);
+  return result.stdout.trim();
+}
+
+function sqlLiteral(value) {
+  return String(value).replaceAll("'", "''");
 }

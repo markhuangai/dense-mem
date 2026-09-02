@@ -190,9 +190,6 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 			collector.add("/"+jsonPointerToken(key), "unknown_field", "unknown field: "+key)
 		}
 	}
-	if _, ok := args["relationships"]; !ok {
-		collector.add("/relationships", "required", "relationships is required")
-	}
 	if _, ok := args["idempotency_key"]; !ok {
 		collector.add("/idempotency_key", "required", "idempotency_key is required")
 	}
@@ -251,15 +248,11 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 		collector.add("/relationships", "type", "relationships must be an array")
 		return
 	}
-	if len(relationships) == 0 && args["relationships"] != nil {
-		collector.add("/relationships", "required", "relationships must contain at least one item")
-	}
 	if len(relationships) > maxRememberRelationshipItems {
 		collector.add("/relationships", "too_many_items", fmt.Sprintf("relationships exceeds maximum item count of %d", maxRememberRelationshipItems))
 		relationships = relationships[:maxRememberRelationshipItems]
 	}
 	seenRefs := map[string]struct{}{}
-	covered := make([]bool, len(evidence))
 	for index, item := range relationships {
 		path := fmt.Sprintf("/relationships/%d", index)
 		relationship, ok := objectFields(item)
@@ -313,22 +306,10 @@ func collectRememberContractIssues(tool Tool, args map[string]any, collector *co
 		}
 		indices := collectAnyArray(relationship["evidence_indices"])
 		for position, rawIndex := range indices {
-			number, ok := schemaNumber(rawIndex)
-			if ok && number == float64(int(number)) && int(number) >= 0 && int(number) < len(covered) {
-				covered[int(number)] = true
-			} else if !ok {
+			if _, ok := schemaNumber(rawIndex); !ok {
 				collector.add(fmt.Sprintf("%s/evidence_indices/%d", path, position), "type", "evidence index must be an integer")
 			}
 		}
-	}
-	missing := make([]string, 0)
-	for index, present := range covered {
-		if !present {
-			missing = append(missing, fmt.Sprintf("%d", index))
-		}
-	}
-	if len(missing) > 0 {
-		collector.add("/relationships", "coverage", "relationships must cover every submitted evidence item; missing evidence indexes: ["+strings.Join(missing, ", ")+"]")
 	}
 	if err := ValidateInput(tool, args); err != nil {
 		collector.add("", classifyContractIssue(err.Error()), err.Error())

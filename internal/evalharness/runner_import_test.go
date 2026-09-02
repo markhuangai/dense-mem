@@ -48,7 +48,7 @@ func TestRunImportModeImportsWithoutRecall(t *testing.T) {
 			rememberCalls++
 			submissionID := strings.TrimPrefix(idempotencyKey, "eval:")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"contract_version":     "dense-mem.v2.6.1",
+				"contract_version":     "dense-mem.v2.6.2",
 				"submission_id":        submissionID,
 				"submission_kind":      "remember",
 				"processing_state":     "completed",
@@ -154,7 +154,7 @@ func TestRunImportResumeSkipsOnlyCompletedDocumentsWithLiveEvidence(t *testing.T
 			sourceDocID := strings.TrimPrefix(input["idempotency_key"].(string), "eval:")
 			remembered = append(remembered, sourceDocID)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"contract_version":     "dense-mem.v2.6.1",
+				"contract_version":     "dense-mem.v2.6.2",
 				"submission_id":        "submission-" + sourceDocID,
 				"submission_kind":      "remember",
 				"processing_state":     "completed",
