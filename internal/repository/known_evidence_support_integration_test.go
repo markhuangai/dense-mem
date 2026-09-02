@@ -411,6 +411,84 @@ func TestKnownEvidenceFenceFailsClosedWhenSourceRevisionIsLocked(t *testing.T) {
 	require.NoError(t, <-lockErr)
 }
 
+func TestKnownEvidenceFenceFailsClosedWhenPrivateSpaceSeals(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "known-support-space-lock")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "known-support-space-lock-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	privateSpace, err := NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	require.NoError(t, err)
+	generation := privateSpaceGeneration(t, ctx, adminDB, rls, privateSpace.ID)
+	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: privateSpace.ID, Kind: domain.MemorySpaceProfilePrivate}})
+	known, err := createTestIngest(privateCtx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: privateSpace.ID.String(), SpaceGeneration: generation,
+		IdempotencyKey: "known-space-lock", RequestHash: "known-space-lock-hash",
+		Evidence: []EvidenceInput{{Content: "Private known evidence becomes stale when its space seals."}},
+	})
+	require.NoError(t, err)
+	require.Len(t, known.Evidence, 1)
+	loaded, err := semantic.ListSubmissionAssessmentKnownEvidence(privateCtx, SubmissionAssessmentKnownEvidenceInput{
+		TeamID: teamID, OwnerProfileID: ownerID, EvidenceIDs: []string{known.Evidence[0].FragmentID},
+	})
+	require.NoError(t, err)
+	require.Len(t, loaded.Evidence, 1)
+	commitInput := CommitSubmissionAssessmentInput{
+		RememberCommitScope:   RememberCommitScope{TeamID: teamID, OwnerProfileID: ownerID, IngestID: uuid.NewString()},
+		KnownEvidenceSnapshot: loaded.Evidence,
+	}
+	require.NoError(t, rls.WithTeamProfileTx(privateCtx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return reauthorizeSubmissionKnownEvidence(ctx, tx, commitInput)
+	}), "visible private known evidence must reauthorize before the space race")
+
+	sealReady := make(chan struct{})
+	releaseSeal := make(chan struct{})
+	sealErr := make(chan error, 1)
+	released := false
+	defer func() {
+		if !released {
+			close(releaseSeal)
+		}
+	}()
+	go func() {
+		sealErr <- rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			result := tx.Exec(`
+				UPDATE memory_spaces
+				SET lifecycle_state = 'sealed', generation = generation + 1,
+				    sealed_at = now(), updated_at = now()
+				WHERE team_id = ?::uuid AND id = ?::uuid AND lifecycle_state = 'active'
+			`, teamID, privateSpace.ID)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return errors.New("private known-evidence space was not sealed")
+			}
+			close(sealReady)
+			<-releaseSeal
+			return nil
+		})
+	}()
+	select {
+	case <-sealReady:
+	case err := <-sealErr:
+		require.NoError(t, err)
+		return
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for private-space seal")
+	}
+
+	commitErr := rls.WithTeamProfileTx(privateCtx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return reauthorizeSubmissionKnownEvidence(ctx, tx, commitInput)
+	})
+	close(releaseSeal)
+	released = true
+	require.ErrorIs(t, commitErr, ErrSubmissionAssessmentKnownEvidenceStale)
+	require.NoError(t, <-sealErr)
+}
+
 func privateSpaceGeneration(t *testing.T, ctx context.Context, db *gorm.DB, rls *storagepostgres.RLS, spaceID uuid.UUID) int64 {
 	t.Helper()
 	var generation int64

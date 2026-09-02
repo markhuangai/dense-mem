@@ -122,6 +122,72 @@ func TestSubmissionAssessmentProvidesAnchorsForEarlierCanonicalAndAliasMentions(
 	require.Equal(t, "DENSE Memory", aliasEntities[0].Anchors[0].Surface)
 }
 
+func TestSubmissionAssessmentGroundsPronounAfterRepeatedEntityMentions(t *testing.T) {
+	evidence := []assessor.SemanticReviewEvidence{
+		assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
+			EvidenceID: "evidence:0", EvidenceIndex: 0, Content: "Alice met Alice.",
+		}),
+		assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
+			EvidenceID: "evidence:1", EvidenceIndex: 1, Content: "She deployed PostgreSQL.",
+		}),
+	}
+	candidate := repository.SemanticReviewEntityCandidate{
+		EntityID: "entity-alice", EntityKind: "person", CanonicalName: "Alice", ActiveNames: []string{"Alice"}, Status: "active",
+	}
+	plan := submissionAssessmentPlan{EntityTargets: []submissionAssessmentEntityTarget{{
+		Target: assessor.SemanticAssessmentRequiredEntityRef{
+			Ref: "entity:subject", Name: "Alice", Kind: "person", EvidenceIDs: []string{"evidence:0", "evidence:1"},
+		},
+	}}}
+	entities, groups, err := submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{
+		Complete: true,
+		Groups: []repository.SubmissionAssessmentEntityCatalogGroup{{
+			Ref: "entity:subject", Candidates: []repository.SemanticReviewEntityCandidate{candidate}, Complete: true,
+		}},
+	}, evidence)
+	require.NoError(t, err)
+	require.Len(t, entities, 1)
+	require.Len(t, entities[0].Anchors, 2)
+	require.Len(t, groups, 3)
+	var pronoun *assessor.SemanticAssessmentEntityGrounding
+	for index := range entities[0].Groundings {
+		if entities[0].Groundings[index].Surface == "She" {
+			pronoun = &entities[0].Groundings[index]
+			break
+		}
+	}
+	require.NotNil(t, pronoun)
+	require.Equal(t, entities[0].Anchors[1].AnchorRef, pronoun.AnchorRef)
+}
+
+func TestSubmissionAssessmentLeavesPronounAmbiguousAcrossAnchorNames(t *testing.T) {
+	evidence := []assessor.SemanticReviewEvidence{assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
+		EvidenceID: "evidence:0", EvidenceIndex: 0, Content: "Dense-Mem met Dense Memory. It deployed PostgreSQL.",
+	})}
+	candidate := repository.SemanticReviewEntityCandidate{
+		EntityID: "entity-dense-mem", EntityKind: "project", CanonicalName: "Dense-Mem", ActiveNames: []string{"Dense-Mem", "Dense Memory"}, Status: "active",
+	}
+	plan := submissionAssessmentPlan{EntityTargets: []submissionAssessmentEntityTarget{{
+		Target: assessor.SemanticAssessmentRequiredEntityRef{
+			Ref: "entity:subject", Name: "Dense-Mem", Kind: "project", EvidenceIDs: []string{"evidence:0"},
+		},
+	}}}
+	entities, groups, err := submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{
+		Complete: true,
+		Groups: []repository.SubmissionAssessmentEntityCatalogGroup{{
+			Ref: "entity:subject", Candidates: []repository.SemanticReviewEntityCandidate{candidate}, Complete: true,
+		}},
+	}, evidence)
+	require.NoError(t, err)
+	require.Len(t, entities, 1)
+	require.Len(t, entities[0].Anchors, 2)
+	require.Len(t, entities[0].Groundings, 2)
+	require.Len(t, groups, 2)
+	for _, grounding := range entities[0].Groundings {
+		require.NotEqual(t, "It", grounding.Surface)
+	}
+}
+
 func TestSubmissionAssessmentProvidesKnownEvidenceAnchorForSubmittedPronoun(t *testing.T) {
 	fixture := synchronousAssessmentFixture(t)
 	fixture.input.Snapshot.Evidence[0].Content = "It uses Beta."

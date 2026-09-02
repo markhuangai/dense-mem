@@ -51,6 +51,7 @@ func setupLedgerRepositoryDB(t *testing.T) (*gorm.DB, *gorm.DB, *storagepostgres
 			GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %[1]s;
 			GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %[1]s;
 			GRANT EXECUTE ON FUNCTION dense_mem_active_space_generation(UUID, UUID) TO %[1]s;
+			GRANT EXECUTE ON FUNCTION dense_mem_lock_memory_space(UUID, UUID) TO %[1]s;
 		`, ledgerTestRole, ledgerTestPassword)).Error
 	}))
 

@@ -601,19 +601,10 @@ func submissionAssessmentGroundedEntities(
 				continue
 			}
 			for _, pronoun := range submissionAssessmentPronounOccurrences(evidenceItem.Content) {
-				matchingAnchors := make([]assessor.SemanticAssessmentEntityAnchor, 0, len(target.Anchors))
-				for _, anchor := range target.Anchors {
-					anchorEvidence := evidenceByID[anchor.EvidenceID]
-					if anchorEvidence.EvidenceIndex < evidenceItem.EvidenceIndex || (anchorEvidence.EvidenceIndex == evidenceItem.EvidenceIndex && anchor.End <= pronoun[0]) {
-						if len(anchor.CandidateEntityIDs) > 0 {
-							matchingAnchors = append(matchingAnchors, anchor)
-						}
-					}
-				}
-				if len(matchingAnchors) != 1 {
+				anchor, ok := submissionAssessmentPronounAnchor(target.Anchors, evidenceByID, evidenceItem, pronoun[0])
+				if !ok {
 					continue
 				}
-				anchor := matchingAnchors[0]
 				startRef, startOK := assessor.SemanticAssessmentBoundaryRef(evidenceItem, pronoun[0])
 				endRef, endOK := assessor.SemanticAssessmentBoundaryRef(evidenceItem, pronoun[1])
 				if !startOK || !endOK {
@@ -680,6 +671,46 @@ func candidateGroupCandidatesForAnchor(
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].EntityID < result[j].EntityID })
 	return result
+}
+
+func submissionAssessmentPronounAnchor(
+	anchors []assessor.SemanticAssessmentEntityAnchor,
+	evidenceByID map[string]assessor.SemanticReviewEvidence,
+	pronounEvidence assessor.SemanticReviewEvidence,
+	pronounStart int,
+) (assessor.SemanticAssessmentEntityAnchor, bool) {
+	candidateIDs := make(map[string]struct{})
+	anchorSurfaces := make(map[string]struct{})
+	var selected assessor.SemanticAssessmentEntityAnchor
+	var selectedEvidence assessor.SemanticReviewEvidence
+	found := false
+	for _, anchor := range anchors {
+		anchorEvidence, ok := evidenceByID[anchor.EvidenceID]
+		if !ok || len(anchor.CandidateEntityIDs) == 0 {
+			continue
+		}
+		if anchorEvidence.EvidenceIndex > pronounEvidence.EvidenceIndex || (anchorEvidence.EvidenceIndex == pronounEvidence.EvidenceIndex && anchor.End > pronounStart) {
+			continue
+		}
+		for _, candidateID := range anchor.CandidateEntityIDs {
+			candidateIDs[candidateID] = struct{}{}
+		}
+		anchorSurfaces[submissionAssessmentNormalizedEntityName(anchor.Surface)] = struct{}{}
+		if !found || anchorEvidence.EvidenceIndex > selectedEvidence.EvidenceIndex ||
+			(anchorEvidence.EvidenceIndex == selectedEvidence.EvidenceIndex && anchor.End > selected.End) ||
+			(anchorEvidence.EvidenceIndex == selectedEvidence.EvidenceIndex && anchor.End == selected.End && anchor.Start > selected.Start) ||
+			(anchorEvidence.EvidenceIndex == selectedEvidence.EvidenceIndex && anchor.End == selected.End && anchor.Start == selected.Start && anchor.AnchorRef > selected.AnchorRef) {
+			selected = anchor
+			selectedEvidence = anchorEvidence
+			found = true
+		}
+	}
+	// Repeated mentions of one normalized name share an antecedent; distinct
+	// canonical or alias names remain ambiguous even when they resolve alike.
+	if !found || len(candidateIDs) != 1 || len(anchorSurfaces) != 1 {
+		return assessor.SemanticAssessmentEntityAnchor{}, false
+	}
+	return selected, true
 }
 
 func submissionAssessmentNormalizedEntityName(value string) string {
