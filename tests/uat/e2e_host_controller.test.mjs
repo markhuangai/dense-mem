@@ -29,6 +29,8 @@ test("controller is PR-owned and has no persistent lease or manifest contract", 
   assert.match(controller, /DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
   assert.match(controller, /redact_diagnostics/);
   assert.match(controller, /must contain at least two characters/);
+  assert.match(controller, /\[\[ \$\{#secret_value\} -ge 2 \]\]/);
+  assert.doesNotMatch(controller, /\$\{#secret_value\} -ne 1/);
   assert.match(controller, /docker "\$\{docker_args\[@\]\}"/);
   assert.doesNotMatch(controller, /DENSE_MEM_CI_DAEMON_ID|LEASE_DIR|RUN_DIR|DENSE_MEM_E2E_SOURCE_REVISION|e2e-docker-proxy|e2e-runtime-adapter/);
   assert.doesNotMatch(controller, /docker system prune|docker image rm[^\n]*--force/);
@@ -68,6 +70,10 @@ test("scenario workflow derives the stack from shared_project and executes PR sc
   assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh stop/);
   assert.match(scenarioWorkflow, /tail -c 262144/);
   assert.doesNotMatch(scenarioWorkflow, /manifest|e2e-stack\.sh|dense-mem-ci\/e2e-stack|e2e-runtime-adapter/);
+});
+
+test("runtime Compose view declares the OAuth helper volume", () => {
+  assert.match(controllerStack, /"volumes:", "  oauth-provider-files:", `    name: \$\{project\}_oauth-provider-files`, "    external: true"/);
 });
 
 test("conflict review drivers receive the provider settings used by their stack", () => {

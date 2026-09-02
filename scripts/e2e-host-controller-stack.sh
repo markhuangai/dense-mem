@@ -248,6 +248,7 @@ const lines = [
   "  oauth-provider-mock:", "    image: node:26-alpine", "    networks: [ci]",
   "  oauth-compat-harness:", "    image: alpine:3.24", "    networks: [ci]",
   "  synchronous-write-provider:", "    image: node:22-alpine", "    networks: [ci]",
+  "volumes:", "  oauth-provider-files:", `    name: ${project}_oauth-provider-files`, "    external: true",
   "networks:", "  ci:", "    external: true", `    name: ${project}_ci`, "",
 ];
 fs.writeFileSync(path, `${lines.join("\n")}\n`, { mode: 0o600 });
