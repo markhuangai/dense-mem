@@ -100,6 +100,13 @@ test("production scenarios preserve Playwright handoff values", () => {
   assert.match(controller, /shared_playwright/);
 });
 
+test("scenario control bootstrap runs through the Compose network", () => {
+  assert.match(controller, /control_api_request\(\)/);
+  assert.match(controller, /ci_compose exec -T -e[\s\S]*client-env[\s\S]*wget -q -O -/);
+  assert.doesNotMatch(controller, /team_response=.*curl/);
+  assert.doesNotMatch(controller, /credential_response=.*curl/);
+});
+
 test("host installer never creates or copies a credential file", () => {
   assert.match(installer, /install -m 600/);
   assert.match(installer, /e2e-docker-proxy\.mjs/);

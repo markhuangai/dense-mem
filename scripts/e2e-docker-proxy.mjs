@@ -182,6 +182,15 @@ async function authorizePrecheck(method, path, rawURL, requestBody) {
     const payload = parseJSONBody(requestBody, "container create");
     assertPrecheckLabels(payload.Labels);
     const hostConfig = payload.HostConfig || {};
+    const restrictedSecurityFields = [
+      "CapAdd",
+      "Devices",
+      "DeviceCgroupRules",
+      "SecurityOpt",
+      "Sysctls",
+      "CgroupParent",
+      "Runtime",
+    ];
     if (
       hostConfig.Privileged === true ||
       hasForeignNetworkMode(hostConfig.NetworkMode) ||
@@ -189,6 +198,7 @@ async function authorizePrecheck(method, path, rawURL, requestBody) {
       hasUnsafeNamespaceMode(hostConfig.IpcMode) ||
       hasUnsafeNamespaceMode(hostConfig.UTSMode) ||
       hasUnsafeNamespaceMode(hostConfig.UsernsMode) ||
+      restrictedSecurityFields.some((field) => hasConfiguredEntries(hostConfig[field])) ||
       hasConfiguredEntries(hostConfig.Binds) ||
       hasConfiguredEntries(hostConfig.Mounts) ||
       hasConfiguredEntries(hostConfig.VolumesFrom) ||

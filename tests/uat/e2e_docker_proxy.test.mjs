@@ -311,6 +311,21 @@ test("precheck proxy scopes resource creation and filters listings", async (t) =
     }));
     assert.equal(unsafeNamespace.status, 403, `${field} namespace joins must be rejected`);
   }
+  for (const [field, value] of [
+    ["CapAdd", ["SYS_ADMIN"]],
+    ["Devices", [{ PathOnHost: "/dev/null", PathInContainer: "/dev/null", CgroupPermissions: "rwm" }]],
+    ["DeviceCgroupRules", ["c 1:3 rwm"]],
+    ["SecurityOpt", ["apparmor=unconfined"]],
+    ["Sysctls", { "kernel.msgmax": "65536" }],
+    ["CgroupParent", "foreign-cgroup"],
+    ["Runtime", "runc"],
+  ]) {
+    const unsafeSecurity = await requestProxy(proxySocket, "POST", "/v1.45/containers/create", JSON.stringify({
+      Image: "pgvector/pgvector:0.8.2-pg18-trixie", Labels: precheckLabels,
+      HostConfig: { [field]: value },
+    }));
+    assert.equal(unsafeSecurity.status, 403, `${field} security settings must be rejected`);
+  }
   for (const networkingConfig of [
     { ["other-project_ci"]: { Aliases: ["server"] } },
     { [precheckNetwork]: { NetworkID: "foreign-network-id", Aliases: ["postgres"] } },

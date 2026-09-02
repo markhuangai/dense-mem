@@ -298,6 +298,6 @@ docker image inspect "$lease_ref" >/dev/null
 if docker image inspect "$lease_ref" >/dev/null 2>&1; then
   fail "the final lease did not remove the fixture image"
 fi
-"$CONTROLLER" release "${TEST_ROOT}/missing.lease"
-"$CONTROLLER" release "${TEST_ROOT}/missing.lease"
+"$CONTROLLER" release "${CI_HOME}/leases/missing.lease"
+"$CONTROLLER" release "${CI_HOME}/leases/missing.lease"
 printf '%s\n' 'real rootless Docker controller tests passed'

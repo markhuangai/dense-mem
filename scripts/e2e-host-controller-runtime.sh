@@ -43,10 +43,11 @@ run_scenario() {
 const fs = require("node:fs");
 const manifest = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 if (manifest.contract_version !== "dense-mem-ci-e2e.v1" || manifest.runtime !== "production") process.exit(1);
-for (const key of ["compose_project", "network", "urls", "run_id", "run_attempt", "phase", "scenario", "source_revision", "image_digest", "helper_profiles", "client_env_volume"]) {
+for (const key of ["image", "compose_project", "network", "urls", "run_id", "run_attempt", "phase", "scenario", "source_revision", "image_digest", "helper_profiles", "client_env_volume"]) {
   if (manifest[key] === undefined) process.exit(1);
 }
 process.stdout.write([
+  manifest.image,
   manifest.compose_project,
   manifest.network,
   manifest.urls.user,
@@ -63,8 +64,9 @@ process.stdout.write([
 ].join("\t"));
 NODE
 )" || fail "invalid runtime manifest"
-  local project network user_url control_url prometheus_url run_id attempt manifest_phase manifest_scenario source_revision digest client_volume helpers
-  IFS=$'\t' read -r project network user_url control_url prometheus_url run_id attempt manifest_phase manifest_scenario source_revision digest client_volume helpers <<<"$values"
+  local image_ref project network user_url control_url prometheus_url run_id attempt manifest_phase manifest_scenario source_revision digest client_volume helpers
+  IFS=$'\t' read -r image_ref project network user_url control_url prometheus_url run_id attempt manifest_phase manifest_scenario source_revision digest client_volume helpers <<<"$values"
+  image_ref="$(canonical_image_ref "$image_ref")"
   validate_project "$project"
   validate_phase "$manifest_phase"
   validate_scenario "$manifest_scenario"
@@ -81,6 +83,10 @@ NODE
   local run_root="${RUN_DIR}/${run_id}-${attempt}"
   local runtime_compose_host="${run_root}/${manifest_phase}-${manifest_scenario}.runtime-compose.yml"
   local helper_dir="${run_root}/${manifest_phase}-${manifest_scenario}-helpers"
+  local helper_overlay=""
+  if [[ -f "${helper_dir}/compose.yml" ]]; then
+    helper_overlay="${helper_dir}/compose.yml"
+  fi
   [[ -f "$runtime_compose_host" ]] || fail "missing non-secret runtime Compose view"
   if [[ -n "$helpers" ]]; then
     [[ -f "${helper_dir}/compose.yml" ]] || fail "missing helper Compose view"
@@ -117,10 +123,10 @@ NODE
   local team_name="Dense-Mem CI ${run_id}-${attempt}-${scenario}"
   local team_payload team_response team_id credential_payload credential_response api_key credential_id
   team_payload="$(node -e 'process.stdout.write(JSON.stringify({name: process.argv[1], description: "production-image E2E scenario"}))' "$team_name")"
-  team_response="$(curl -fsS -H "Authorization: Bearer ${control_token}" -H "Content-Type: application/json" --data "$team_payload" "${control_url%/}/control/api/teams")"
+  team_response="$(control_api_request "$project" "$manifest_phase" "$manifest_scenario" "$digest" "$run_id" "$attempt" "$image_ref" "$helper_overlay" "$control_token" "${control_url%/}/control/api/teams" "$team_payload")" || fail "control portal did not return a team"
   team_id="$(printf '%s' "$team_response" | node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const value=JSON.parse(input).data?.id;if(!value)process.exit(1);process.stdout.write(value);});')" || fail "control portal did not return a team"
   credential_payload='{"name":"production-image-e2e","role":"manager","scopes":["read","write"],"rate_limit":300}'
-  credential_response="$(curl -fsS -H "Authorization: Bearer ${control_token}" -H "Content-Type: application/json" --data "$credential_payload" "${control_url%/}/control/api/teams/${team_id}/credentials")"
+  credential_response="$(control_api_request "$project" "$manifest_phase" "$manifest_scenario" "$digest" "$run_id" "$attempt" "$image_ref" "$helper_overlay" "$control_token" "${control_url%/}/control/api/teams/${team_id}/credentials" "$credential_payload")" || fail "control portal did not return a credential"
   api_key="$(printf '%s' "$credential_response" | node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const value=JSON.parse(input).data?.api_key;if(!value)process.exit(1);process.stdout.write(value);});')" || fail "control portal did not return a credential"
   credential_id="$(printf '%s' "$credential_response" | node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const value=JSON.parse(input).data?.credential?.id;if(!value)process.exit(1);process.stdout.write(value);});')" || fail "control portal did not return a credential ID"
 
@@ -150,7 +156,6 @@ NODE
   local proxy_socket_gid
   proxy_socket_gid="$(stat -c '%g' "$E2E_SCENARIO_PROXY_SOCKET" 2>/dev/null || stat -f '%g' "$E2E_SCENARIO_PROXY_SOCKET")"
 
-  local helper_overlay="${helper_dir}/compose.yml"
   local helper_runtime="${helper_dir}/runtime.env"
   local oauth_token="" oauth_harness=""
   local oauth_session_token="oauth-session-${run_id}-${scenario}"
@@ -266,6 +271,17 @@ NODE
     eval "$scenario_prev_traps"
   fi
   return "$scenario_status"
+}
+
+control_api_request() {
+  local project="$1" phase="$2" scenario="$3" digest="$4" run_id="$5" attempt="$6" image_ref="$7" overlay="$8" token="$9" url="${10}" payload="${11}"
+  (
+    compose_base_env "$project" "$phase" "$scenario" "$digest" "$run_id" "$attempt" "1970-01-01T00:00:00Z" "${image_ref}@${digest}"
+    DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="$overlay"
+    ci_compose exec -T -e "DENSE_MEM_CI_CONTROL_TOKEN=${token}" client-env \
+      sh -ec 'wget -q -O - --header="Authorization: Bearer ${DENSE_MEM_CI_CONTROL_TOKEN}" --header="Content-Type: application/json" --post-data="$1" "$2"' \
+      sh "$payload" "$url"
+  )
 }
 
 stop_stack() {
