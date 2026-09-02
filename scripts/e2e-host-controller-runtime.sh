@@ -103,6 +103,31 @@ run_scenario() {
     identity_upgrade_api_key="$(helper_env_value "$identity_file" DENSE_MEM_E2E_UPGRADE_API_KEY)" || fail "identity cleanup seed credential is missing"
   fi
 
+  local -a conflict_driver_env=()
+  if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
+    if [[ "$scenario" == "conflict" ]]; then
+      conflict_driver_env=(
+        "AI_API_URL=http://conflict-provider:8081/v1"
+        "AI_API_KEY=dense-mem-conflict-e2e-key"
+        "AI_API_EMBEDDING_MODEL=dense-mem-conflict-e2e-embedding"
+        "AI_API_EMBEDDING_DIMENSIONS=1536"
+        "AI_VERIFIER_API_URL=http://conflict-provider:8081/v1"
+        "AI_VERIFIER_API_KEY=dense-mem-conflict-e2e-key"
+        "AI_VERIFIER_MODEL=dense-mem-conflict-e2e-verifier"
+        "AI_VERIFIER_DISABLE_TEMPERATURE=true"
+      )
+    else
+      local provider_field provider_value
+      for provider_field in \
+        AI_API_URL AI_API_KEY AI_API_EMBEDDING_MODEL AI_API_EMBEDDING_DIMENSIONS \
+        AI_VERIFIER_API_URL AI_VERIFIER_API_KEY AI_VERIFIER_MODEL \
+        AI_VERIFIER_DISABLE_TEMPERATURE AI_API_EMBEDDING_TIMEOUT_SECONDS AI_VERIFIER_TIMEOUT_SECONDS; do
+        provider_value="$(env_value "$provider_field" 2>/dev/null || true)"
+        [[ -n "$provider_value" ]] && conflict_driver_env+=("${provider_field}=${provider_value}")
+      done
+    fi
+  fi
+
   docker_cli_mount_args
   if [[ "$scenario" == "synchronous_write_primitives" ]]; then
     run_synchronous_primitives_driver "$source_dir" "$project" "$postgres_user" "$postgres_password" "$postgres_db" "$run_id" "$attempt" "$phase" "$scenario" "$digest" ||
@@ -201,6 +226,10 @@ run_scenario() {
   fi
   if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
     docker_args+=(--volume "${helper_dir}/conflict-review-driver:/helpers/conflict-review-driver:ro")
+    local provider_env
+    for provider_env in "${conflict_driver_env[@]}"; do
+      docker_args+=(-e "$provider_env")
+    done
   fi
   if [[ -f "${helper_dir}/ca.pem" ]]; then
     docker_args+=(--volume "${helper_dir}/ca.pem:/oauth/ca.pem:ro" -e "NODE_EXTRA_CA_CERTS=/oauth/ca.pem")

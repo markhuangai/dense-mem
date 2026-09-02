@@ -69,6 +69,13 @@ test("scenario workflow derives the stack from shared_project and executes PR sc
   assert.doesNotMatch(scenarioWorkflow, /manifest|e2e-stack\.sh|dense-mem-ci\/e2e-stack|e2e-runtime-adapter/);
 });
 
+test("conflict review drivers receive the provider settings used by their stack", () => {
+  assert.match(controllerRuntime, /AI_API_URL=http:\/\/conflict-provider:8081\/v1/);
+  assert.match(controllerRuntime, /AI_VERIFIER_API_URL=http:\/\/conflict-provider:8081\/v1/);
+  assert.match(controllerRuntime, /for provider_field in[\s\S]*AI_API_URL[\s\S]*AI_VERIFIER_TIMEOUT_SECONDS/);
+  assert.match(controllerRuntime, /docker_args\+=\(-e \"\$provider_env\"\)/);
+});
+
 test("production scenarios preserve Playwright handoff values", () => {
   assert.match(scenarioScript, /DENSE_MEM_E2E_OAUTH_SECOND_TEAM_ID/);
   assert.match(scenarioScript, /DENSE_MEM_E2E_DREAM_STATEMENT/);
@@ -84,6 +91,7 @@ test("real controller fixtures use workflow-scoped names and leave no local stat
   assert.match(realControllerTest, /DENSE_MEM_CI_JOB_DIR/);
   assert.match(realControllerTest, /controller created persistent lease\/run state/);
   assert.doesNotMatch(realControllerTest, /DENSE_MEM_CI_DAEMON_ID|e2e-docker-proxy|e2e-runtime-adapter|release.*lease/);
+  assert.match(realControllerTest, /\"io\.dense-mem\.ci\.run-attempt\": attempt/);
 });
 
 test("diagnostic redaction protects secrets split across input chunks", async () => {

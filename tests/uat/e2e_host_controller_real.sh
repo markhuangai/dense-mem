@@ -179,14 +179,14 @@ assert_container_labels() {
     [[ -n "$container" ]] || continue
     inspected=$((inspected + 1))
     labels="$(docker inspect --format '{{json .Config.Labels}}' "$container")"
-    node - "$labels" "$project" "$run_id" "$digest" <<'NODE'
-const [raw, project, runId, digest] = process.argv.slice(2);
+    node - "$labels" "$project" "$run_id" "$fixture_attempt" "$digest" <<'NODE'
+const [raw, project, runId, attempt, digest] = process.argv.slice(2);
 const labels = JSON.parse(raw);
 for (const [key, value] of Object.entries({
   "io.dense-mem.ci.contract": "dense-mem-ci-e2e.v1",
   "io.dense-mem.ci.repository": process.env.DENSE_MEM_CI_REPOSITORY,
   "io.dense-mem.ci.run-id": runId,
-  "io.dense-mem.ci.run-attempt": "1",
+  "io.dense-mem.ci.run-attempt": attempt,
   "io.dense-mem.ci.phase": "shared",
   "io.dense-mem.ci.scenario": "shared",
   "io.dense-mem.ci.image-digest": digest,
