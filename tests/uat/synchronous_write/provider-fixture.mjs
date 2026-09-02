@@ -108,10 +108,6 @@ const server = createServer(async (request, response) => {
       sendJSON(response, 200, { choices: [{ message: { content: "not-json" } }] });
       return;
     }
-    if (assessmentFault === "ambiguous-pronoun" && ambiguousPronounGroundingPresent(assessmentRequest)) {
-      sendJSON(response, 200, { choices: [{ message: { content: "not-json" } }] });
-      return;
-    }
     const assessment = fixtureAssessment(assessmentRequest, assessmentFault, attempt);
     sendJSON(response, 200, {
       choices: [{ message: { content: JSON.stringify(assessment) } }],
@@ -134,11 +130,6 @@ function assessmentInput(payload) {
     }
   }
   return { request_id: "fixture", submitted_entities: [], submitted_relationships: [], evidence: [] };
-}
-
-function ambiguousPronounGroundingPresent(request) {
-  return (request.submitted_entities || []).some((entity) =>
-    (entity.groundings || []).some((grounding) => grounding.surface === "It"));
 }
 
 function fixtureAssessment(request, requestFault, attempt) {

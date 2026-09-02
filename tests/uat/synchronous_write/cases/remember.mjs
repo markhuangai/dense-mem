@@ -179,7 +179,9 @@ async function runKnownEvidenceCase({ expect }) {
   twentyOneArgs.relationships[0].known_evidence_ids = [...twentyIDs, randomUUID()];
   const twentyOne = await rawRPCWithKey(actorB.apiKey, "tools/call", { name: "remember", arguments: twentyOneArgs });
   expect(twentyOne.error?.code === -32602, "21 known evidence IDs must fail contract validation");
-  expect((twentyOne.error?.data?.issues ?? []).some((issue) => issue.path.includes("known_evidence_ids") && issue.message.includes("at most 20")), "21-ID validation must identify the known_evidence_ids bound");
+  const twentyOneIssues = twentyOne.error?.data?.issues ?? [];
+  expect(twentyOneIssues.some((issue) => issue.message.includes("exceeds maximum item count of 20")), "21-ID validation must report the maximum item count");
+  expect(twentyOneIssues.some((issue) => issue.path.includes("known_evidence_ids")), "21-ID validation must identify the known_evidence_ids bound");
 
   const unreferencedArgs = {
     evidence: [{
