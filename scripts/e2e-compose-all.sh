@@ -1,10 +1,6 @@
 E2E_ALL_SCENARIOS=()
 E2E_SCENARIO_REGISTRY_FILE="${DENSE_MEM_E2E_SCENARIO_REGISTRY:-${ROOT_DIR}/scripts/e2e-scenarios.json}"
 
-if [[ "${DENSE_MEM_E2E_SCENARIO:-}" == "all" && "${DENSE_MEM_E2E_LEGACY_ALL:-0}" != "1" ]]; then
-  exec "${ROOT_DIR}/scripts/e2e-local-production-all.sh"
-fi
-
 load_e2e_scenario_registry() {
   local scenario
   if [[ ! -f "$E2E_SCENARIO_REGISTRY_FILE" ]]; then

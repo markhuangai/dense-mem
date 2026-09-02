@@ -32,7 +32,6 @@ jobs:
           path: .ci-policy
           sparse-checkout: |
             .github/scripts
-            scripts/e2e-scenario-registry.mjs
 
       - name: Validate immutable image
         id: resolve
@@ -66,6 +65,7 @@ jobs:
           path: .ci-source
           sparse-checkout: |
             scripts/e2e-scenarios.json
+            scripts/e2e-scenario-registry.mjs
 
       - name: Resolve exact-source scenario matrix
         id: matrix
@@ -75,8 +75,8 @@ jobs:
           registry="${GITHUB_WORKSPACE}/.ci-source/scripts/e2e-scenarios.json"
           [[ -f "${registry}" ]]
           export DENSE_MEM_E2E_SCENARIO_REGISTRY="${registry}"
-          exclusive_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix exclusive)"
-          shared_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix shared_team)"
+          exclusive_matrix="$(node .ci-source/scripts/e2e-scenario-registry.mjs --matrix exclusive)"
+          shared_matrix="$(node .ci-source/scripts/e2e-scenario-registry.mjs --matrix shared_team)"
           {
             echo "exclusive_matrix=${exclusive_matrix}"
             echo "shared_matrix=${shared_matrix}"
@@ -85,41 +85,12 @@ jobs:
   prechecks:
     name: Rootless controller and PostgreSQL prechecks
     needs: authorize
-    # The rootless-docker pool shares the CI user's daemon and home so leases and manifests remain reachable.
     runs-on: rootless-docker
     timeout-minutes: 30
+    env:
+      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
     steps:
-      - name: Validate rootless host controller
-        shell: bash
-        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
-
-      - name: Checkout trusted controller contract test
-        uses: actions/checkout@v7
-        with:
-          clean: true
-          fetch-depth: 1
-          persist-credentials: false
-          ref: main
-          path: .ci-controller-contract
-          sparse-checkout: |
-            scripts/e2e-docker-proxy.mjs
-            scripts/e2e-runtime-adapter.mjs
-            scripts/e2e-scenario-registry.mjs
-            scripts/e2e-host-controller.sh
-            scripts/e2e-host-controller-stack.sh
-            scripts/e2e-host-controller-runtime.sh
-            tests/uat/e2e_host_controller_real.sh
-
-      - name: Exercise real rootless controller contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          DENSE_MEM_E2E_REAL_DOCKER_TESTS=1 \
-            DENSE_MEM_CI_TEST_REPOSITORY="${GITHUB_REPOSITORY}-controller-contract" \
-            DENSE_MEM_CI_CONTROLLER="${HOME}/dense-mem-ci/e2e-stack.sh" \
-            bash .ci-controller-contract/tests/uat/e2e_host_controller_real.sh
-
-      - name: Checkout exact source revision
+      - name: Checkout exact pull request source
         uses: actions/checkout@v7
         with:
           clean: true
@@ -128,15 +99,23 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
 
-      - name: Run disposable PostgreSQL regressions in the trusted controller
+      - name: Validate PR-owned rootless controller
         shell: bash
-        env:
-          TEST_REVISION: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          "${HOME}/dense-mem-ci/e2e-stack.sh" precheck \
-            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${TEST_REVISION}" \
-            "${{ needs.authorize.outputs.digest }}" "${GITHUB_WORKSPACE}"
+          scripts/e2e-host-controller.sh doctor
+          DENSE_MEM_E2E_REAL_DOCKER_TESTS=1 \
+            DENSE_MEM_CI_TEST_REPOSITORY="${GITHUB_REPOSITORY}-controller-contract" \
+            bash tests/uat/e2e_host_controller_real.sh
+
+      - name: Run disposable PostgreSQL regressions
+        shell: bash
+        env:
+          IMAGE: ${{ needs.authorize.outputs.image }}@${{ needs.authorize.outputs.digest }}
+        run: |
+          set -euo pipefail
+          scripts/e2e-host-controller.sh precheck \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}"
 
   stale-cleanup:
     name: Reclaim stale CI resources
@@ -146,72 +125,7 @@ jobs:
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
     steps:
-      - name: Validate rootless host controller
-        shell: bash
-        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
-
-      - name: Reclaim stale stacks and leases
-        shell: bash
-        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" stale-cleanup 86400'
-
-  acquire:
-    name: Acquire immutable image lease
-    needs: [authorize, prechecks, stale-cleanup]
-    if: needs.prechecks.result == 'success' && needs.stale-cleanup.result == 'success'
-    runs-on: rootless-docker
-    timeout-minutes: 15
-    outputs:
-      lease: ${{ steps.acquire.outputs.lease }}
-    env:
-      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
-    steps:
-      - name: Validate rootless host controller
-        shell: bash
-        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
-
-      - name: Pull candidate and create digest lease
-        id: acquire
-        shell: bash
-        env:
-          IMAGE: ${{ needs.authorize.outputs.image }}
-          DIGEST: ${{ needs.authorize.outputs.digest }}
-        run: |
-          set -euo pipefail
-          lease="$("${HOME}/dense-mem-ci/e2e-stack.sh" acquire "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${DIGEST}")"
-          printf 'lease=%s\n' "${lease}" >> "${GITHUB_OUTPUT}"
-
-  exclusive:
-    name: Exclusive ${{ matrix.name }}
-    needs: [authorize, acquire]
-    if: needs.acquire.result == 'success'
-    strategy:
-      fail-fast: true
-      max-parallel: 1
-      matrix: ${{ fromJSON(needs.authorize.outputs.exclusive_matrix) }}
-    uses: ./.github/workflows/production-e2e-scenario.yml
-    with:
-      image: ${{ needs.authorize.outputs.image }}@${{ needs.authorize.outputs.digest }}
-      scenario: ${{ matrix.name }}
-      timeout_minutes: ${{ matrix.timeout_minutes }}
-      manifest: ""
-    secrets: inherit
-
-  shared-start:
-    name: Start shared production stack
-    needs: [authorize, acquire, exclusive]
-    if: needs.exclusive.result == 'success'
-    runs-on: rootless-docker
-    timeout-minutes: 20
-    outputs:
-      manifest: ${{ steps.start.outputs.manifest }}
-    env:
-      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
-    steps:
-      - name: Validate rootless host controller
-        shell: bash
-        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
-
-      - name: Checkout exact source revision for helper provisioning
+      - name: Checkout exact pull request source
         uses: actions/checkout@v7
         with:
           clean: true
@@ -220,15 +134,53 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
 
-      - name: Resolve shared helper profiles
-        id: helpers
+      - name: Validate PR-owned rootless controller
         shell: bash
-        env:
-          DENSE_MEM_E2E_SCENARIO_REGISTRY: ${{ github.workspace }}/scripts/e2e-scenarios.json
-        run: |
-          set -euo pipefail
-          helpers="$(node "${HOME}/dense-mem-ci/e2e-scenario-registry.mjs" --helpers shared_team)"
-          printf 'helpers=%s\n' "${helpers}" >> "${GITHUB_OUTPUT}"
+        run: scripts/e2e-host-controller.sh doctor
+
+      - name: Reclaim stale Docker resources
+        shell: bash
+        run: scripts/e2e-host-controller.sh stale-cleanup 86400
+
+  exclusive:
+    name: Exclusive ${{ matrix.name }}
+    needs: [authorize, prechecks, stale-cleanup]
+    if: needs.prechecks.result == 'success' && needs.stale-cleanup.result == 'success'
+    strategy:
+      fail-fast: true
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.authorize.outputs.exclusive_matrix) }}
+    uses: ./.github/workflows/production-e2e-scenario.yml
+    with:
+      image: ${{ needs.authorize.outputs.image }}@${{ needs.authorize.outputs.digest }}
+      scenario: ${{ matrix.name }}
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      shared_project: ""
+    secrets: inherit
+
+  shared-start:
+    name: Start shared production stack
+    needs: [authorize, prechecks, stale-cleanup, exclusive]
+    if: needs.exclusive.result == 'success'
+    runs-on: rootless-docker
+    timeout-minutes: 20
+    outputs:
+      shared_project: ${{ steps.start.outputs.shared_project }}
+    env:
+      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Checkout exact pull request source
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Validate PR-owned rootless controller
+        shell: bash
+        run: scripts/e2e-host-controller.sh doctor
 
       - name: Start one shared stack
         id: start
@@ -236,17 +188,14 @@ jobs:
         env:
           IMAGE: ${{ needs.authorize.outputs.image }}
           DIGEST: ${{ needs.authorize.outputs.digest }}
-          TEST_REVISION: ${{ github.event.pull_request.head.sha }}
-          HELPERS: ${{ steps.helpers.outputs.helpers }}
         run: |
           set -euo pipefail
-          helpers="$(printf '%s' "${HELPERS}" | node -e 'const fs=require("node:fs"); const values=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(values.join(","));')"
-          manifest="$("${HOME}/dense-mem-ci/e2e-stack.sh" start "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" shared shared "${IMAGE}" "${DIGEST}" "${TEST_REVISION}" "${helpers}" "${GITHUB_WORKSPACE}")"
-          printf 'manifest=%s\n' "${manifest}" >> "${GITHUB_OUTPUT}"
+          project="$(scripts/e2e-host-controller.sh start "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" shared shared "${IMAGE}@${DIGEST}" "${GITHUB_WORKSPACE}")"
+          printf 'shared_project=%s\n' "${project}" >> "${GITHUB_OUTPUT}"
 
   shared:
     name: Shared ${{ matrix.name }}
-    needs: [authorize, acquire, shared-start]
+    needs: [authorize, shared-start]
     if: needs.shared-start.result == 'success'
     strategy:
       fail-fast: true
@@ -257,7 +206,7 @@ jobs:
       image: ${{ needs.authorize.outputs.image }}@${{ needs.authorize.outputs.digest }}
       scenario: ${{ matrix.name }}
       timeout_minutes: ${{ matrix.timeout_minutes }}
-      manifest: ${{ needs.shared-start.outputs.manifest }}
+      shared_project: ${{ needs.shared-start.outputs.shared_project }}
     secrets: inherit
 
   shared-stop:
@@ -267,54 +216,32 @@ jobs:
     runs-on: rootless-docker
     timeout-minutes: 15
     env:
-      MANIFEST: ${{ needs.shared-start.outputs.manifest }}
+      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
+      SHARED_PROJECT: ${{ needs.shared-start.outputs.shared_project }}
     steps:
-      - name: Validate rootless host controller
+      - name: Checkout exact pull request source
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Validate PR-owned rootless controller
         shell: bash
-        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
+        run: scripts/e2e-host-controller.sh doctor
 
       - name: Stop exact shared project
         shell: bash
         run: |
           set -euo pipefail
-          project="$(node -e 'const value=JSON.parse(process.env.MANIFEST); process.stdout.write(value.compose_project);')"
-          "${HOME}/dense-mem-ci/e2e-stack.sh" stop "${project}"
-
-  release:
-    name: Release image lease
-    needs: [authorize, acquire, exclusive, shared-start, shared, shared-stop]
-    if: always() && needs.acquire.result == 'success' && needs.acquire.outputs.lease != ''
-    runs-on: rootless-docker
-    timeout-minutes: 15
-    steps:
-      - name: Validate rootless host controller
-        shell: bash
-        run: "${HOME}/dense-mem-ci/e2e-stack.sh doctor"
-
-      - name: Release exact digest lease
-        shell: bash
-        env:
-          LEASE: ${{ needs.acquire.outputs.lease }}
-        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" release "${LEASE}"'
-
-  cleanup-run:
-    name: Remove workflow run directory
-    needs: [authorize, prechecks, stale-cleanup, acquire, exclusive, shared-start, shared, shared-stop, release]
-    if: always()
-    runs-on: rootless-docker
-    timeout-minutes: 15
-    steps:
-      - name: Validate rootless host controller
-        shell: bash
-        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
-
-      - name: Remove exact run directory
-        shell: bash
-        run: '"${HOME}/dense-mem-ci/e2e-stack.sh" cleanup-run "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}"'
+          [[ "${SHARED_PROJECT}" =~ ^densemem-ci-[a-z0-9][a-z0-9-]{0,50}$ ]]
+          scripts/e2e-host-controller.sh stop "${SHARED_PROJECT}"
 
   report:
     name: Aggregate production E2E results
-    needs: [authorize, prechecks, stale-cleanup, acquire, exclusive, shared-start, shared, shared-stop, release, cleanup-run]
+    needs: [authorize, prechecks, stale-cleanup, exclusive, shared-start, shared, shared-stop]
     if: always()
     runs-on: docker-runner
     timeout-minutes: 15
@@ -333,16 +260,12 @@ jobs:
           AUTH_RESULT: ${{ needs.authorize.result }}
           PRECHECK_RESULT: ${{ needs.prechecks.result }}
           STALE_CLEANUP_RESULT: ${{ needs.stale-cleanup.result }}
-          ACQUIRE_RESULT: ${{ needs.acquire.result }}
           EXCLUSIVE_RESULT: ${{ needs.exclusive.result }}
           SHARED_START_RESULT: ${{ needs.shared-start.result }}
           SHARED_RESULT: ${{ needs.shared.result }}
           SHARED_STOP_RESULT: ${{ needs.shared-stop.result }}
-          RELEASE_RESULT: ${{ needs.release.result }}
-          RUN_CLEANUP_RESULT: ${{ needs.cleanup-run.result }}
           IMAGE: ${{ needs.authorize.outputs.image }}
           DIGEST: ${{ needs.authorize.outputs.digest }}
-          TEST_REVISION: ${{ github.event.pull_request.head.sha }}
           EXCLUSIVE_MATRIX: ${{ needs.authorize.outputs.exclusive_matrix }}
           SHARED_MATRIX: ${{ needs.authorize.outputs.shared_matrix }}
         run: |
@@ -352,20 +275,16 @@ jobs:
             echo
             echo "- Image: \`${IMAGE:-unresolved}\`"
             echo "- Digest: \`${DIGEST:-unresolved}\`"
-            echo "- Test revision: \`${TEST_REVISION:-unresolved}\`"
             echo
             echo "| Phase | Result |"
             echo "| --- | --- |"
             echo "| Authorization | ${AUTH_RESULT} |"
             echo "| Controller/PostgreSQL prechecks | ${PRECHECK_RESULT} |"
             echo "| Stale CI cleanup | ${STALE_CLEANUP_RESULT} |"
-            echo "| Image lease | ${ACQUIRE_RESULT} |"
             echo "| Exclusive matrix | ${EXCLUSIVE_RESULT} |"
             echo "| Shared stack start | ${SHARED_START_RESULT} |"
             echo "| Shared matrix | ${SHARED_RESULT} |"
             echo "| Shared cleanup | ${SHARED_STOP_RESULT} |"
-            echo "| Image release | ${RELEASE_RESULT} |"
-            echo "| Run directory cleanup | ${RUN_CLEANUP_RESULT} |"
           } >> "${GITHUB_STEP_SUMMARY}"
           {
             echo
@@ -416,12 +335,9 @@ jobs:
             "${AUTH_RESULT}" \
             "${PRECHECK_RESULT}" \
             "${STALE_CLEANUP_RESULT}" \
-            "${ACQUIRE_RESULT}" \
             "${EXCLUSIVE_RESULT}" \
             "${SHARED_START_RESULT}" \
             "${SHARED_RESULT}" \
-            "${SHARED_STOP_RESULT}" \
-            "${RELEASE_RESULT}" \
-            "${RUN_CLEANUP_RESULT}"; do
+            "${SHARED_STOP_RESULT}"; do
             [[ "${result}" == "success" ]] || exit 1
           done

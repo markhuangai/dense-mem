@@ -9,15 +9,19 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONTROLLER="${DENSE_MEM_CI_CONTROLLER:-${ROOT_DIR}/scripts/e2e-host-controller.sh}"
 TEST_ROOT="$(mktemp -d "${RUNNER_TEMP:-/tmp}/dense-mem-controller-real.XXXXXX")"
-CI_HOME="${TEST_ROOT}/ci-home"
+CONFIG_DIR="${TEST_ROOT}/config"
+JOB_DIR="${TEST_ROOT}/job"
 COMPOSE_FILE="${TEST_ROOT}/docker-compose.yml"
 ENV_FILE="${TEST_ROOT}/.env"
-mkdir -p "$CI_HOME"
+PROMETHEUS_FILE="${TEST_ROOT}/prometheus.yml"
+mkdir -p "$CONFIG_DIR" "$JOB_DIR"
 
 project_one=""
 project_two=""
 project_failed=""
 stale_container=""
+stale_network=""
+stale_volume=""
 
 fail() {
   printf 'real rootless controller test: %s\n' "$*" >&2
@@ -32,8 +36,6 @@ run_one="${fixture_prefix}1"
 run_two="${fixture_prefix}2"
 run_failed="${fixture_prefix}3"
 run_stale="${fixture_prefix}4"
-lease_run_one="${fixture_prefix}5"
-lease_run_two="${fixture_prefix}6"
 
 cleanup() {
   local status=$?
@@ -43,6 +45,8 @@ cleanup() {
     [[ -n "$project" ]] && "$CONTROLLER" stop "$project" >/dev/null 2>&1 || true
   done
   [[ -n "$stale_container" ]] && docker rm -f "$stale_container" >/dev/null 2>&1 || true
+  [[ -n "$stale_network" ]] && docker network rm "$stale_network" >/dev/null 2>&1 || true
+  [[ -n "$stale_volume" ]] && docker volume rm "$stale_volume" >/dev/null 2>&1 || true
   rm -r -- "$TEST_ROOT"
   exit "$status"
 }
@@ -52,25 +56,23 @@ trap cleanup EXIT INT TERM
 command -v docker >/dev/null 2>&1 || fail "docker is unavailable"
 command -v node >/dev/null 2>&1 || fail "node is unavailable"
 command -v git >/dev/null 2>&1 || fail "git is unavailable"
-command -v flock >/dev/null 2>&1 || fail "flock is unavailable"
 
 security_options="$(docker info --format '{{json .SecurityOptions}}')"
 [[ "$security_options" == *rootless* ]] || fail "the test requires a rootless Docker daemon"
-daemon_id="$(docker info --format '{{.ID}}')"
-[[ "$daemon_id" =~ ^[A-Za-z0-9:_-]{8,128}$ ]] || fail "the Docker daemon ID is invalid"
 
-printf 'DENSE_MEM_CI_DAEMON_ID=%s\n' "$daemon_id" > "$ENV_FILE"
+printf '%s\n' 'CI_TEST=1' > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 printf '%s\n' 'dense-mem-ci-real-test-token' > "${TEST_ROOT}/telemetry-scrape-token"
 chmod 600 "${TEST_ROOT}/telemetry-scrape-token"
-printf '%s\n' 'global: {}' > "${TEST_ROOT}/prometheus.yml"
+cp "${ROOT_DIR}/examples/prometheus.yml" "$PROMETHEUS_FILE"
 chmod 644 "${TEST_ROOT}/prometheus.yml"
 
-export DENSE_MEM_CI_HOME="$CI_HOME"
+export DENSE_MEM_CI_CONFIG_DIR="$CONFIG_DIR"
+export DENSE_MEM_CI_JOB_DIR="$JOB_DIR"
 export DENSE_MEM_CI_COMPOSE_FILE="$COMPOSE_FILE"
 export DENSE_MEM_CI_ENV_FILE="$ENV_FILE"
-export DENSE_MEM_CI_PROXY_SCRIPT="${ROOT_DIR}/scripts/e2e-docker-proxy.mjs"
-export DENSE_MEM_CI_RUNTIME_ADAPTER_SCRIPT="${ROOT_DIR}/scripts/e2e-runtime-adapter.mjs"
+export DENSE_MEM_CI_PROMETHEUS_FILE="$PROMETHEUS_FILE"
+export DENSE_MEM_CI_TELEMETRY_TOKEN_FILE="${TEST_ROOT}/telemetry-scrape-token"
 export DENSE_MEM_CI_REGISTRY_SCRIPT="${ROOT_DIR}/scripts/e2e-scenario-registry.mjs"
 export DENSE_MEM_CI_REPOSITORY="${DENSE_MEM_CI_TEST_REPOSITORY:-markhuangai/dense-mem-controller-contract}"
 
@@ -196,8 +198,6 @@ NODE
   ((inspected > 0)) || fail "no containers were inspected for $project"
 }
 
-source_revision="$(git -C "$ROOT_DIR" rev-parse HEAD)"
-[[ "$source_revision" =~ ^[0-9a-f]{40}$ ]] || fail "source revision is invalid"
 digest="sha256:$(printf '%064d' 1)"
 image="ghcr.io/markhuangai/dense-mem:controller-contract-test"
 
@@ -210,11 +210,7 @@ write_compose ports
 expect_failure "$CONTROLLER" doctor
 write_compose normal
 
-manifest_one="$("$CONTROLLER" start "$run_one" "$fixture_attempt" shared shared "$image" "$digest" "$source_revision" "" "$ROOT_DIR")"
-manifest_one_path="${TEST_ROOT}/manifest-one.json"
-printf '%s\n' "$manifest_one" > "$manifest_one_path"
-"$CONTROLLER" validate "$manifest_one_path" >/dev/null
-project_one="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).compose_project)' "$manifest_one")"
+project_one="$("$CONTROLLER" start "$run_one" "$fixture_attempt" shared shared "${image}@${digest}" "$ROOT_DIR")"
 network_one="${project_one}_ci"
 check_dns "$network_one"
 assert_container_labels "$project_one" "$run_one"
@@ -223,8 +219,7 @@ server_one="$(docker ps -q --filter "label=com.docker.compose.project=${project_
 docker restart "$server_one" >/dev/null
 check_dns "$network_one"
 
-manifest_two="$("$CONTROLLER" start "$run_two" "$fixture_attempt" shared shared "$image" "$digest" "$source_revision" "" "$ROOT_DIR")"
-project_two="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).compose_project)' "$manifest_two")"
+project_two="$("$CONTROLLER" start "$run_two" "$fixture_attempt" shared shared "${image}@${digest}" "$ROOT_DIR")"
 network_two="${project_two}_ci"
 [[ "$project_one" != "$project_two" && "$network_one" != "$network_two" ]] || fail "concurrent stacks reused a project or network"
 check_dns "$network_two"
@@ -241,12 +236,14 @@ assert_no_project_resources "$project_two"
 
 write_compose fail
 project_failed="densemem-ci-${run_failed}-${fixture_attempt}-shared-shared"
-expect_failure "$CONTROLLER" start "$run_failed" "$fixture_attempt" shared shared "$image" "$digest" "$source_revision" "" "$ROOT_DIR"
+expect_failure "$CONTROLLER" start "$run_failed" "$fixture_attempt" shared shared "${image}@${digest}" "$ROOT_DIR"
 write_compose normal
 assert_no_project_resources "$project_failed"
 
 stale_project="densemem-ci-${run_stale}-${fixture_attempt}-shared-stale"
 stale_container="dense-mem-controller-stale-${fixture_prefix}-${fixture_attempt}-$$"
+stale_network="${stale_project}_ci"
+stale_volume="${stale_project}_data"
 docker run -d --name "$stale_container" \
   --label io.dense-mem.ci.contract=dense-mem-ci-e2e.v1 \
   --label io.dense-mem.ci.repository="${DENSE_MEM_CI_REPOSITORY}" \
@@ -258,11 +255,41 @@ docker run -d --name "$stale_container" \
   --label io.dense-mem.ci.created-at=2000-01-01T00:00:00Z \
   --label io.dense-mem.ci.compose-project="$stale_project" \
   alpine:3.24 sh -c 'while :; do sleep 3600; done' >/dev/null
+docker network create \
+  --label io.dense-mem.ci.contract=dense-mem-ci-e2e.v1 \
+  --label io.dense-mem.ci.repository="${DENSE_MEM_CI_REPOSITORY}" \
+  --label io.dense-mem.ci.run-id="$run_stale" \
+  --label io.dense-mem.ci.run-attempt="$fixture_attempt" \
+  --label io.dense-mem.ci.phase=shared \
+  --label io.dense-mem.ci.scenario=stale \
+  --label io.dense-mem.ci.image-digest="$digest" \
+  --label io.dense-mem.ci.created-at=2000-01-01T00:00:00Z \
+  --label io.dense-mem.ci.compose-project="$stale_project" \
+  "$stale_network" >/dev/null
+docker volume create \
+  --label io.dense-mem.ci.contract=dense-mem-ci-e2e.v1 \
+  --label io.dense-mem.ci.repository="${DENSE_MEM_CI_REPOSITORY}" \
+  --label io.dense-mem.ci.run-id="$run_stale" \
+  --label io.dense-mem.ci.run-attempt="$fixture_attempt" \
+  --label io.dense-mem.ci.phase=shared \
+  --label io.dense-mem.ci.scenario=stale \
+  --label io.dense-mem.ci.image-digest="$digest" \
+  --label io.dense-mem.ci.created-at=2000-01-01T00:00:00Z \
+  --label io.dense-mem.ci.compose-project="$stale_project" \
+  "$stale_volume" >/dev/null
 "$CONTROLLER" stale-cleanup 1 >/dev/null
 if docker inspect "$stale_container" >/dev/null 2>&1; then
   fail "stale controller container was not reclaimed"
 fi
 stale_container=""
+if docker network inspect "$stale_network" >/dev/null 2>&1; then
+  fail "stale controller network was not reclaimed"
+fi
+stale_network=""
+if docker volume inspect "$stale_volume" >/dev/null 2>&1; then
+  fail "stale controller volume was not reclaimed"
+fi
+stale_volume=""
 
 helper_image="${stale_project}-oauth-compat-harness:latest"
 printf '%s\n' 'FROM alpine:3.24' > "${TEST_ROOT}/Dockerfile"
@@ -282,35 +309,5 @@ if docker image inspect "$helper_image" >/dev/null 2>&1; then
   fail "stale helper image was not reclaimed"
 fi
 
-lease_ref="$(docker image inspect alpine:3.24 --format '{{index .RepoDigests 0}}')"
-[[ "$lease_ref" == *@sha256:* ]] || fail "the fixture image has no immutable repository digest"
-docker image rm alpine:3.24 >/dev/null 2>&1 || true
-docker pull "$lease_ref" >/dev/null
-lease_image="${lease_ref%@*}"
-lease_digest="${lease_ref##*@}"
-lease_one="${CI_HOME}/leases/${lease_digest#sha256:}.${lease_run_one}.${fixture_attempt}.lease"
-lease_two="${CI_HOME}/leases/${lease_digest#sha256:}.${lease_run_two}.${fixture_attempt}.lease"
-mkdir -p "${CI_HOME}/leases"
-for lease in "$lease_one" "$lease_two"; do
-  lease_run="$lease_run_one"
-  [[ "$lease" == "$lease_two" ]] && lease_run="$lease_run_two"
-  {
-    printf '%s\n' 'contract=dense-mem-ci-e2e.v1'
-    printf '%s\n' "repository=${DENSE_MEM_CI_REPOSITORY}"
-    printf '%s\n' "run_id=$lease_run"
-    printf '%s\n' "run_attempt=$fixture_attempt"
-    printf '%s\n' "image=${lease_image}"
-    printf '%s\n' "digest=${lease_digest}"
-    printf '%s\n' 'created_at=2000-01-01T00:00:00Z'
-  } > "$lease"
-  chmod 600 "$lease"
-done
-"$CONTROLLER" release "$lease_one"
-docker image inspect "$lease_ref" >/dev/null
-"$CONTROLLER" release "$lease_two"
-if docker image inspect "$lease_ref" >/dev/null 2>&1; then
-  fail "the final lease did not remove the fixture image"
-fi
-"$CONTROLLER" release "${CI_HOME}/leases/missing.lease"
-"$CONTROLLER" release "${CI_HOME}/leases/missing.lease"
+[[ ! -e "${TEST_ROOT}/leases" && ! -e "${TEST_ROOT}/runs" ]] || fail "controller created persistent lease/run state"
 printf '%s\n' 'real rootless Docker controller tests passed'

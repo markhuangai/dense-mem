@@ -45,7 +45,7 @@ services:
   server:
     image: ${DENSE_MEM_IMAGE:?DENSE_MEM_IMAGE is required}
     env_file:
-      - .env
+      - ${DENSE_MEM_CI_ENV_FILE:?DENSE_MEM_CI_ENV_FILE is required}
     environment:
       CONTROL_HTTP_ADDR: :8090
       HTTP_ADDR: :8080
@@ -53,6 +53,7 @@ services:
       POSTGRES_PORT: "5432"
       REDIS_ADDR: redis:6379
       TELEMETRY_PROMETHEUS_URL: http://prometheus:9090
+      TELEMETRY_SCRAPE_TOKEN: ${DENSE_MEM_CI_TELEMETRY_SCRAPE_TOKEN:?DENSE_MEM_CI_TELEMETRY_SCRAPE_TOKEN is required}
       SSL_CERT_FILE: ${DENSE_MEM_CI_SSL_CERT_FILE:-}
     depends_on:
       postgres:
@@ -67,6 +68,24 @@ services:
     volumes:
       - oauth-provider-files:/e2e/oauth-files:ro
 
+  prometheus-config:
+    image: alpine:3.24
+    command:
+      - sh
+      - -ec
+      - >-
+        cp /input/prometheus.yml /config/prometheus.yml;
+        cp /input/telemetry-scrape-token /token/telemetry-scrape-token;
+        chmod 0444 /config/prometheus.yml /token/telemetry-scrape-token
+    volumes:
+      - ${DENSE_MEM_CI_PROMETHEUS_FILE:?DENSE_MEM_CI_PROMETHEUS_FILE is required}:/input/prometheus.yml:ro
+      - ${DENSE_MEM_CI_TELEMETRY_TOKEN_FILE:?DENSE_MEM_CI_TELEMETRY_TOKEN_FILE is required}:/input/telemetry-scrape-token:ro
+      - prometheus-config:/config
+      - telemetry-scrape-token:/token
+    networks:
+      - ci
+    labels: *ci-labels
+
   prometheus:
     image: prom/prometheus:v3.12.0
     command:
@@ -74,11 +93,13 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=30d
       - --web.listen-address=0.0.0.0:9090
+    depends_on:
+      prometheus-config:
+        condition: service_completed_successfully
     volumes:
       - prometheus-data:/prometheus
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    secrets:
-      - telemetry-scrape-token
+      - prometheus-config:/etc/prometheus:ro
+      - telemetry-scrape-token:/run/secrets:ro
     networks:
       - ci
     labels: *ci-labels
@@ -148,6 +169,12 @@ volumes:
   prometheus-data:
     name: ${DENSE_MEM_CI_PROMETHEUS_VOLUME_NAME:?DENSE_MEM_CI_PROMETHEUS_VOLUME_NAME is required}
     labels: *ci-labels
+  prometheus-config:
+    name: ${DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME:?DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME is required}
+    labels: *ci-labels
+  telemetry-scrape-token:
+    name: ${DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME:?DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME is required}
+    labels: *ci-labels
   client-env:
     name: ${DENSE_MEM_CI_CLIENT_VOLUME_NAME:?DENSE_MEM_CI_CLIENT_VOLUME_NAME is required}
     labels: *ci-labels
@@ -160,7 +187,3 @@ volumes:
   synchronous-write-provider-files:
     name: ${DENSE_MEM_CI_SYNCHRONOUS_WRITE_VOLUME_NAME:?DENSE_MEM_CI_SYNCHRONOUS_WRITE_VOLUME_NAME is required}
     labels: *ci-labels
-
-secrets:
-  telemetry-scrape-token:
-    file: ./telemetry-scrape-token

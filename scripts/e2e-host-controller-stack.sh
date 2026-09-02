@@ -3,8 +3,8 @@
 
 prepare_stack_helpers() {
   local project="$1" source_dir="$2" helpers="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7"
-  DENSE_MEM_CI_HELPER_DIR="${RUN_DIR}/${run_id}-${attempt}/${phase}-${scenario}-helpers"
-  DENSE_MEM_CI_PRIVATE_DIR="${RUN_DIR}/${run_id}-${attempt}/${phase}-${scenario}-private"
+  DENSE_MEM_CI_HELPER_DIR="${JOB_DIR}/${run_id}-${attempt}/${phase}-${scenario}-helpers"
+  DENSE_MEM_CI_PRIVATE_DIR="${JOB_DIR}/${run_id}-${attempt}/${phase}-${scenario}-private"
   DENSE_MEM_CI_COMPOSE_OVERLAY_FILE=""
   mkdir -p "$DENSE_MEM_CI_HELPER_DIR" "$DENSE_MEM_CI_PRIVATE_DIR"
   chmod 700 "$DENSE_MEM_CI_HELPER_DIR" "$DENSE_MEM_CI_PRIVATE_DIR"
@@ -310,7 +310,6 @@ run_mcp_sdk_parity_driver() {
   local source_dir="$1" project="$2" run_id="$3" attempt="$4" phase="$5" scenario="$6" digest="$7"
   local go_image
   go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
-  set +e
   set +e
   docker run --rm \
     --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}" \
