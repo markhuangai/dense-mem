@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 
 const REDACTION = "[REDACTED]";
 
-function valuesFromEnvFile(path, field = "") {
+function valuesFromEnvFile(path, field = "", minimumLength = 4) {
   const values = [];
   let selected;
   const add = (value) => {
@@ -16,7 +16,7 @@ function valuesFromEnvFile(path, field = "") {
       selected = value;
       return;
     }
-    if (value.length >= 4) values.push(value);
+    if (value.length >= minimumLength) values.push(value);
   };
   if (!path) return values;
   let source;
@@ -85,9 +85,9 @@ function valueFromEnvFile(path, field) {
   return valuesFromEnvFile(path, field);
 }
 
-function createRedactor(values, write) {
+function createRedactor(values, write, minimumLength = 4) {
   const patterns = [...new Set(values)]
-    .filter((value) => typeof value === "string" && value.length >= 4 && !/[\r\n]/.test(value))
+    .filter((value) => typeof value === "string" && value.length >= minimumLength && !/[\r\n]/.test(value))
     .sort((left, right) => right.length - left.length);
   const maxPatternLength = patterns.reduce((max, value) => Math.max(max, value.length), 0);
   let pending = "";
@@ -163,11 +163,12 @@ function redactChunks(chunks, values) {
 }
 
 function run() {
+  const minimumLength = process.env.DENSE_MEM_CI_REDACT_ALLOW_SHORT === "1" ? 1 : 4;
   const values = [
-    ...valuesFromEnvFile(process.env.DENSE_MEM_CI_REDACT_ENV_FILE || ""),
+    ...valuesFromEnvFile(process.env.DENSE_MEM_CI_REDACT_ENV_FILE || "", "", minimumLength),
     ...(process.env.DENSE_MEM_CI_REDACT_EXTRA_VALUES || "").split("\n"),
-  ].filter((value) => typeof value === "string" && value.length >= 4 && !/[\r\n]/.test(value));
-  const redactor = createRedactor(values, (chunk) => process.stdout.write(chunk));
+  ].filter((value) => typeof value === "string" && value.length >= minimumLength && !/[\r\n]/.test(value));
+  const redactor = createRedactor(values, (chunk) => process.stdout.write(chunk), minimumLength);
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk) => redactor.write(chunk));
   process.stdin.on("end", () => redactor.end());

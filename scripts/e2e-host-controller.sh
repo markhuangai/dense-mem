@@ -130,6 +130,7 @@ redact_diagnostics() {
   local env_file="$1"
   shift
   DENSE_MEM_CI_REDACT_ENV_FILE="$env_file" \
+    DENSE_MEM_CI_REDACT_ALLOW_SHORT=1 \
     DENSE_MEM_CI_REDACT_EXTRA_VALUES="$(printf '%s\n' "$@")" \
     node "${CONTROLLER_DIR}/e2e-redact-diagnostics.mjs"
 }

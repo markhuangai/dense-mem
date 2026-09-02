@@ -117,6 +117,35 @@ test("diagnostic redaction protects secrets split across input chunks", async ()
   assert.equal(output, "prefix xx[REDACTED]yy suffix");
 });
 
+test("controller diagnostics redact short credentials", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dense-mem-redact-short-"));
+  const envFile = join(directory, ".env");
+  try {
+    await writeFile(envFile, "POSTGRES_PASSWORD=abc\n");
+    const output = await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [redactorPath], {
+        env: {
+          ...process.env,
+          DENSE_MEM_CI_REDACT_ALLOW_SHORT: "1",
+          DENSE_MEM_CI_REDACT_ENV_FILE: envFile,
+        },
+      });
+      let text = "";
+      let error = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => { text += chunk; });
+      child.stderr.on("data", (chunk) => { error += chunk; });
+      child.on("error", reject);
+      child.on("close", (code) => code === 0 ? resolve(text) : reject(new Error(`${code}: ${error}`)));
+      child.stdin.end("prefix abc suffix");
+    });
+    assert.equal(output, "prefix [REDACTED] suffix");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("diagnostic redaction parses supported Compose env syntax and rejects interpolation", async () => {
   const { valueFromEnvFile, valuesFromEnvFile } = await import("../../scripts/e2e-redact-diagnostics.mjs");
   const directory = await mkdtemp(join(tmpdir(), "dense-mem-redact-env-"));
