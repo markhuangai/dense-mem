@@ -690,14 +690,16 @@ function postgresExec(sql, label) {
   if (composeOverlay) composeArgs.push("-f", composeOverlay);
   composeArgs.push(
     "exec", "-T", "postgres", "sh", "-ec",
-    'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
+    'psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
     label,
     scopedSQL,
   );
   const result = spawnSync("docker", [
     ...composeArgs,
   ], { cwd: repositoryRoot, encoding: "utf8" });
-  if (result.status !== 0) throw new Error(`Remember PostgreSQL fixture failed (${result.status})`);
+  if (result.status !== 0) {
+    throw new Error(`Remember PostgreSQL fixture failed (${result.status}): ${(result.stderr || "").trim()}`);
+  }
   return result.stdout;
 }
 
