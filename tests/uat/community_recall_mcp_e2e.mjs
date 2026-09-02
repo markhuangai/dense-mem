@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import { nextScheduledUTCMinute } from "./team_dreaming_schedule.mjs";
 
@@ -46,6 +47,7 @@ const recalled = await mcpSuccess("recall_memory", {
   community_relationship_limit: 2,
 });
 assertCommunityContract(recalled);
+assertRelationshipArrayContract(recalled, "community recall");
 const coveredEvidenceIDs = [...new Set(recalled.related_communities.flatMap((community) => community.relationships.flatMap((relationship) => relationship.evidence_ids ?? [])))];
 if (coveredEvidenceIDs.length === 0) throw new Error("community recall returned no nested evidence IDs for suppression coverage");
 const covered = await mcpSuccess("recall_memory", { query: "Dense-Mem Runtime PostgreSQL", limit: 5, community_limit: 3, known_evidence_ids: coveredEvidenceIDs });
@@ -63,11 +65,14 @@ if ((fullyCovered.related_communities ?? []).length !== 0 || (fullyCovered.relat
 const disabled = await mcpSuccess("recall_memory", {
   query: "Dense-Mem Runtime PostgreSQL",
   limit: 5,
+  relationship_limit: 5,
   community_limit: 0,
+  expand_from_entity_ids: [seeded.entities[0]],
 });
 if (!Array.isArray(disabled.related_communities) || disabled.related_communities.length !== 0) {
   throw new Error("community_limit=0 did not disable community recall");
 }
+assertRelationshipArrayContract(disabled, "direct relationship recall");
 if ((disabled.degradations ?? []).some((item) => item?.code === "community_temporal_not_supported")) {
   throw new Error("disabled community recall reported an unrelated temporal degradation");
 }
@@ -158,6 +163,7 @@ async function waitForCommunityRun() {
 function seedCommunityGraph(ownerProfileID) {
   const entities = ["Dense-Mem", "Runtime service", "PostgreSQL"].map(() => randomUUID());
   const relationships = [randomUUID(), randomUUID(), randomUUID()];
+  const searchDocuments = [randomUUID(), randomUUID(), randomUUID()];
   const observations = [randomUUID(), randomUUID(), randomUUID()];
   const fragments = [randomUUID(), randomUUID(), randomUUID()];
   const verifications = [randomUUID(), randomUUID(), randomUUID()];
@@ -200,6 +206,23 @@ function seedCommunityGraph(ownerProfileID) {
       (${sqlLiteral(teamID)}::uuid, ${sqlLiteral(supports[index])}::uuid, ${sqlLiteral(relationshipID)}::uuid,
        ${sqlLiteral(ownerProfileID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 'grant', 'compose community support', '{}'::jsonb)`
   ).join(",\n");
+  const searchDocumentsSQL = relationships.map((relationshipID, index) => `
+      SELECT ${sqlLiteral(teamID)}::uuid, ${sqlLiteral(searchDocuments[index])}::uuid, ${sqlLiteral(ownerProfileID)}::uuid,
+             'relationship', ${sqlLiteral(relationshipID)}::uuid, 1, 1,
+             contract.embedding_contract_id, contract.dimensions, 'pending', ${sqlLiteral(quotes[index])},
+             ${sqlLiteral(`sha256:community-search-document-${index}`)}, 2, '{}'::jsonb
+      FROM (
+        SELECT embedding_contract.embedding_contract_id, embedding_contract.dimensions
+        FROM search_index_generations AS generation
+        JOIN embedding_contracts AS embedding_contract
+          ON embedding_contract.embedding_contract_id = generation.embedding_contract_id
+         AND embedding_contract.dimensions = generation.embedding_dimensions
+        WHERE generation.activation_state = 'active'
+          AND embedding_contract.lifecycle_state = 'active'
+        ORDER BY embedding_contract.version DESC, generation.generation DESC, generation.created_at DESC
+        LIMIT 1
+      ) AS contract`
+  ).join("\n      UNION ALL\n");
   postgresQuery(`
     BEGIN;
     SELECT set_config('app.tx_mode', 'system', true);
@@ -224,6 +247,11 @@ function seedCommunityGraph(ownerProfileID) {
       team_id, relationship_id, owner_profile_id, semantic_group_key, subject_entity_id, predicate_key, predicate_version,
       object_entity_id, relationship_kind, current_cardinality, status, polarity, support_count, source_group_count
     ) VALUES ${inserts};
+    INSERT INTO search_documents (
+      team_id, search_document_id, owner_profile_id, source_kind, source_id, source_version,
+      document_version, embedding_contract_id, embedding_dimensions, search_state,
+      document_text, document_hash, projection_format_version, metadata
+    ) ${searchDocumentsSQL};
     INSERT INTO relationship_observations (
       team_id, observation_id, relationship_id, ingest_id, owner_profile_id, subject_ref, original_predicate, object_ref,
       subject_entity_id, predicate_key, predicate_version, object_entity_id, evidence, metadata
@@ -269,6 +297,22 @@ function assertCommunityContract(payload) {
   for (const field of ["provider_model", "source_fingerprint", "summary_input_hash"]) if (serialized.includes(field)) throw new Error(`public recall leaked ${field}`);
 }
 
+function assertRelationshipArrayContract(payload, label) {
+  const relationships = [
+    ...(payload.related_relationships ?? []),
+    ...(payload.related_communities ?? []).flatMap((community) => community.relationships ?? []),
+  ];
+  if (relationships.length === 0) throw new Error(`${label} did not return a relationship for array-contract coverage`);
+  for (const relationship of relationships) {
+    if (!Array.isArray(relationship.equivalent_relationship_ids)) {
+      throw new Error(`${label} returned non-array equivalent_relationship_ids: ${JSON.stringify(relationship)}`);
+    }
+  }
+  if (!relationships.some((relationship) => relationship.equivalent_relationship_ids.length === 0)) {
+    throw new Error(`${label} did not exercise an empty equivalent_relationship_ids array`);
+  }
+}
+
 function assertKnownEvidenceSuppressed(payload, knownEvidenceIDs) {
   const known = new Set(knownEvidenceIDs);
   for (const community of payload.related_communities ?? []) {
@@ -298,7 +342,11 @@ async function mcpSuccessWithKey(key, name, args) {
   if (response.error || response.result === undefined) throw new Error(`MCP ${name} returned a bounded error`);
   const text = response.result?.content?.[0]?.text;
   if (typeof text !== "string") throw new Error(`MCP ${name} did not return JSON content`);
-  return JSON.parse(text);
+  const textPayload = JSON.parse(text);
+  const structuredPayload = response.result?.structuredContent;
+  if (!structuredPayload || typeof structuredPayload !== "object" || Array.isArray(structuredPayload)) throw new Error(`MCP ${name} did not return structured content`);
+  if (!isDeepStrictEqual(textPayload, structuredPayload)) throw new Error(`MCP ${name} text and structured content differed`);
+  return structuredPayload;
 }
 async function controlJSON(path, options = {}) { return httpJSON(`${controlURL}/control/api${path}`, { ...options, headers: { Authorization: `Bearer ${controlToken}`, "Content-Type": "application/json", ...(options.headers ?? {}) } }); }
 async function prometheusValue(query) {

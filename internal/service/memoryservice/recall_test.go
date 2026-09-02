@@ -495,6 +495,7 @@ func TestRecallReturnsRelatedRelationshipsAndVectorDegradation(t *testing.T) {
 	profileID := uuid.New()
 	keyID := uuid.New()
 	entityRelationshipID := uuid.NewString()
+	equivalentRelationshipID := uuid.NewString()
 	valueRelationshipID := uuid.NewString()
 	subjectID := uuid.NewString()
 	objectEntityID := uuid.NewString()
@@ -517,7 +518,7 @@ func TestRecallReturnsRelatedRelationshipsAndVectorDegradation(t *testing.T) {
 			Results: []repository.RecallRelationshipHit{
 				{
 					RelationshipID:            entityRelationshipID,
-					EquivalentRelationshipIDs: []string{uuid.NewString()},
+					EquivalentRelationshipIDs: []string{equivalentRelationshipID},
 					SubjectEntityID:           subjectID,
 					SubjectName:               "Dense-Mem",
 					PredicateKey:              "uses",
@@ -553,9 +554,13 @@ func TestRecallReturnsRelatedRelationshipsAndVectorDegradation(t *testing.T) {
 	require.Len(t, result.RelatedRelationships, 2)
 	require.Equal(t, entityRelationshipID, result.RelatedRelationships[0].RelationshipID)
 	require.Equal(t, search.relationshipResult.Results[0].EquivalentRelationshipIDs, result.RelatedRelationships[0].EquivalentRelationshipIDs)
+	search.relationshipResult.Results[0].EquivalentRelationshipIDs[0] = uuid.NewString()
+	require.Equal(t, []string{equivalentRelationshipID}, result.RelatedRelationships[0].EquivalentRelationshipIDs)
 	require.Equal(t, objectEntityID, result.RelatedRelationships[0].Object.EntityID)
 	require.Equal(t, "PostgreSQL", result.RelatedRelationships[0].Object.Name)
 	require.Equal(t, valueRelationshipID, result.RelatedRelationships[1].RelationshipID)
+	require.NotNil(t, result.RelatedRelationships[1].EquivalentRelationshipIDs)
+	require.Empty(t, result.RelatedRelationships[1].EquivalentRelationshipIDs)
 	require.Equal(t, objectValueID, result.RelatedRelationships[1].Object.ValueID)
 	require.Equal(t, "string", result.RelatedRelationships[1].Object.Type)
 	require.Equal(t, "v2.3", result.RelatedRelationships[1].Object.Value)

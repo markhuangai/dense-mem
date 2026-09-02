@@ -85,6 +85,8 @@ func TestRecallUsesCurrentCommunitySnapshotAndCoverage(t *testing.T) {
 	require.Len(t, result.RelatedCommunities, 1)
 	require.Equal(t, communityID, result.RelatedCommunities[0].CommunityID)
 	require.Equal(t, relationshipID, result.RelatedCommunities[0].CommunityRelationships[0].RelationshipID)
+	require.NotNil(t, result.RelatedCommunities[0].CommunityRelationships[0].EquivalentRelationshipIDs)
+	require.Empty(t, result.RelatedCommunities[0].CommunityRelationships[0].EquivalentRelationshipIDs)
 	require.Empty(t, result.DiscoveryPaths)
 	require.Equal(t, []string{"covered-group", "direct-group"}, communities.snapshotInput.ExcludedGroupKeys)
 	require.Equal(t, communities.snapshotInput.ExcludedGroupKeys, communities.snapshotInput.CoveredGroupKeys)
@@ -97,6 +99,7 @@ func TestRecallUsesCurrentCommunitySnapshotAndCoverage(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(encoded), `"related_communities"`)
 	require.Contains(t, string(encoded), `"relationships"`)
+	require.Contains(t, string(encoded), `"equivalent_relationship_ids":[]`)
 }
 
 func TestRecallCommunitiesReportsTemporalDegradation(t *testing.T) {

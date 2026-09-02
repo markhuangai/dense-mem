@@ -690,7 +690,7 @@ func recallCommunitiesFromRepository(records []repository.CommunityRecallRecord)
 		for _, relationship := range record.Relationships {
 			community.CommunityRelationships = append(community.CommunityRelationships, RelatedRelationshipSummary{
 				RelationshipID:            relationship.RelationshipID,
-				EquivalentRelationshipIDs: append([]string(nil), relationship.EquivalentRelationshipIDs...),
+				EquivalentRelationshipIDs: append([]string{}, relationship.EquivalentRelationshipIDs...),
 				SemanticGroupKey:          relationship.SemanticGroupKey,
 				Subject:                   EntityHandle{EntityID: relationship.SubjectEntityID, Name: relationship.SubjectName},
 				Predicate:                 relationship.PredicateKey, Object: recallRelationshipObject(relationship),
@@ -711,7 +711,7 @@ func relatedRelationshipSummaries(recalled *repository.RecallRelationshipsResult
 	for _, record := range recalled.Results {
 		out = append(out, RelatedRelationshipSummary{
 			RelationshipID:            record.RelationshipID,
-			EquivalentRelationshipIDs: append([]string(nil), record.EquivalentRelationshipIDs...),
+			EquivalentRelationshipIDs: append([]string{}, record.EquivalentRelationshipIDs...),
 			SemanticGroupKey:          record.SemanticGroupKey,
 			Subject: EntityHandle{
 				EntityID: record.SubjectEntityID,

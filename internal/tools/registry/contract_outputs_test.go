@@ -38,6 +38,52 @@ func TestRecallContractOutputValidatesSpaceBranchDegradation(t *testing.T) {
 	}
 }
 
+func TestRecallContractOutputValidatesEmptyEquivalentRelationshipIDs(t *testing.T) {
+	recall, err := requireTool(toolMap(t), ToolRecallMemory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := recallContractOutput(&memoryservice.RecallResult{
+		RecallID: "rec-empty-equivalents",
+		RelatedRelationships: []memoryservice.RelatedRelationshipSummary{{
+			RelationshipID:            "relationship-1",
+			EquivalentRelationshipIDs: []string{},
+			Subject:                   memoryservice.EntityHandle{EntityID: "entity-1", Name: "Dense-Mem"},
+			Predicate:                 "uses",
+			Object:                    memoryservice.SemanticObject{EntityID: "entity-2", Name: "PostgreSQL"},
+			Polarity:                  "+",
+			EvidenceIDs:               []string{"evidence-1"},
+			SpaceKind:                 string(domain.MemorySpaceTeamShared),
+		}},
+		SearchStates: memoryservice.RecallSearchStates{
+			Evidence: string(domain.SearchProjectionCurrent), Relationships: string(domain.SearchProjectionCurrent),
+		},
+	})
+	encoded, err := json.Marshal(output)
+	if err != nil {
+		t.Fatalf("marshal output: %v", err)
+	}
+	var wireOutput map[string]any
+	if err := json.Unmarshal(encoded, &wireOutput); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	if err := ValidateInput(Tool{InputSchema: recall.OutputSchema}, wireOutput); err != nil {
+		t.Fatalf("validate output: %v", err)
+	}
+	relationships, ok := wireOutput["related_relationships"].([]any)
+	if !ok || len(relationships) != 1 {
+		t.Fatalf("related_relationships = %#v", wireOutput["related_relationships"])
+	}
+	relationship, ok := relationships[0].(map[string]any)
+	if !ok {
+		t.Fatalf("related_relationship = %#v", relationships[0])
+	}
+	equivalentIDs, ok := relationship["equivalent_relationship_ids"].([]any)
+	if !ok || len(equivalentIDs) != 0 {
+		t.Fatalf("equivalent_relationship_ids = %#v; want empty array", relationship["equivalent_relationship_ids"])
+	}
+}
+
 func TestFirstNonEmptyReturnsTrimmedNonNilValue(t *testing.T) {
 	if got := firstNonEmpty("  ", " "+uuid.Nil.String()+" ", " canonical "); got != "canonical" {
 		t.Fatalf("firstNonEmpty = %q; want canonical", got)
