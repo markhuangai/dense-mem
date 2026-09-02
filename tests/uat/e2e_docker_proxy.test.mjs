@@ -18,6 +18,7 @@ test("restricted Docker proxy permits scoped lifecycle and exec upgrade but deni
   const targetSocket = join(directory, "target.sock");
   const proxySocket = join(directory, "proxy.sock");
   const requests = [];
+  const framedLogs = Buffer.from([0x01, 0x00, 0x00, 0x04, 0xff, 0xfe, 0x00, 0x41]);
   const labels = {
     "io.dense-mem.ci.contract": contract,
     "io.dense-mem.ci.repository": repository,
@@ -57,8 +58,8 @@ test("restricted Docker proxy permits scoped lifecycle and exec upgrade but deni
       return;
     }
     if (path === "/v1.45/containers/demo/logs") {
-      response.writeHead(200, { "content-type": "text/plain" });
-      response.end("scoped logs\n");
+      response.writeHead(200, { "content-type": "application/vnd.docker.raw-stream" });
+      response.end(framedLogs);
       return;
     }
     if (path === "/v1.45/containers/demo/restart") {
@@ -99,7 +100,12 @@ test("restricted Docker proxy permits scoped lifecycle and exec upgrade but deni
   const inspectedPayload = JSON.parse(inspected.body);
   assert.equal(inspectedPayload.Config.Env, undefined);
   assert.deepEqual(inspectedPayload.Config.Labels, labels);
-  assert.equal((await requestProxy(proxySocket, "GET", "/v1.45/containers/demo/logs")).status, 200);
+  const logs = await requestProxy(proxySocket, "GET", "/v1.45/containers/demo/logs", "", null);
+  assert.equal(logs.status, 200);
+  assert.deepEqual(logs.body, framedLogs);
+  const unsafeTop = await requestProxy(proxySocket, "GET", "/v1.45/containers/demo/top?ps_args=eww");
+  assert.equal(unsafeTop.status, 403);
+  assert.ok(!requests.some((request) => request.includes("/containers/demo/top")));
   assert.equal((await requestProxy(proxySocket, "POST", "/v1.45/containers/demo/restart")).status, 204);
   assert.equal((await requestProxy(proxySocket, "POST", "/v1.45/containers/demo/exec", JSON.stringify({ Cmd: ["true"] }))).status, 201);
   const upgraded = await requestUpgrade(proxySocket, "/v1.45/exec/exec-1/start");
@@ -282,16 +288,31 @@ test("precheck proxy scopes resource creation and filters listings", async (t) =
     Mounts: [{ Type: "bind", Source: "/etc", Target: "/host" }],
   }));
   assert.equal(unsafePayloadMount.status, 403);
+  for (const [field, value] of [
+    ["NetworkMode", "container:foreign"],
+    ["PidMode", "container:foreign"],
+    ["IpcMode", "ns:/proc/1/ns/ipc"],
+    ["UTSMode", "container:foreign"],
+    ["UsernsMode", "container:foreign"],
+  ]) {
+    const unsafeNamespace = await requestProxy(proxySocket, "POST", "/v1.45/containers/create", JSON.stringify({
+      Image: "pgvector/pgvector:0.8.2-pg18-trixie", Labels: precheckLabels,
+      HostConfig: { [field]: value },
+    }));
+    assert.equal(unsafeNamespace.status, 403, `${field} namespace joins must be rejected`);
+  }
   assert.equal((await requestProxy(proxySocket, "GET", "/v1.45/containers/precheck-container/archive?path=/etc/passwd")).status, 403);
 });
 
-async function requestProxy(socketPath, method, path, body = "") {
+async function requestProxy(socketPath, method, path, body = "", encoding = "utf8") {
   return new Promise((resolve, reject) => {
     const request = httpRequest({ socketPath, method, path, headers: body ? { "content-type": "application/json", "content-length": Buffer.byteLength(body) } : {} }, (response) => {
-      let text = "";
-      response.setEncoding("utf8");
-      response.on("data", (chunk) => { text += chunk; });
-      response.on("end", () => resolve({ status: response.statusCode, body: text }));
+      const chunks = [];
+      response.on("data", (chunk) => { chunks.push(Buffer.from(chunk)); });
+      response.on("end", () => {
+        const value = Buffer.concat(chunks);
+        resolve({ status: response.statusCode, body: encoding === null ? value : value.toString(encoding) });
+      });
     });
     request.on("error", reject);
     request.end(body);

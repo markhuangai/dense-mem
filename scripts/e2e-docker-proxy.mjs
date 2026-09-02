@@ -131,6 +131,9 @@ async function authorize(method, path, rawURL, requestBody) {
     if (!["json", "logs", "start", "stop", "restart", "wait", "stats", "top", "changes", "exec"].includes(action)) {
       deny("Docker container operation is not permitted");
     }
+    if (action === "top" && new URL(rawURL || "/", "http://docker").searchParams.has("ps_args")) {
+      deny("Docker top ps_args are not permitted");
+    }
     const labels = await authorizeResource("containers", containerMatch[1]);
     if (action === "exec" && labels["com.docker.compose.service"] === "server") {
       deny("scenario exec is not permitted for server containers");
@@ -181,11 +184,11 @@ async function authorizePrecheck(method, path, rawURL, requestBody) {
     const hostConfig = payload.HostConfig || {};
     if (
       hostConfig.Privileged === true ||
-      hostConfig.NetworkMode === "host" ||
-      hostConfig.PidMode === "host" ||
-      hostConfig.IpcMode === "host" ||
-      hostConfig.UTSMode === "host" ||
-      hostConfig.UsernsMode === "host" ||
+      hasUnsafeNamespaceMode(hostConfig.NetworkMode) ||
+      hasUnsafeNamespaceMode(hostConfig.PidMode) ||
+      hasUnsafeNamespaceMode(hostConfig.IpcMode) ||
+      hasUnsafeNamespaceMode(hostConfig.UTSMode) ||
+      hasUnsafeNamespaceMode(hostConfig.UsernsMode) ||
       hasConfiguredEntries(hostConfig.Binds) ||
       hasConfiguredEntries(hostConfig.Mounts) ||
       hasConfiguredEntries(hostConfig.VolumesFrom) ||
@@ -277,6 +280,10 @@ function hasConfiguredEntries(value) {
   if (Array.isArray(value)) return value.length > 0;
   if (typeof value === "object") return Object.keys(value).length > 0;
   return String(value).length > 0;
+}
+
+function hasUnsafeNamespaceMode(value) {
+  return value === "host" || (typeof value === "string" && /^(?:container|ns):/i.test(value));
 }
 
 function sanitizeContainerInspect(body) {
@@ -447,10 +454,9 @@ function requestTarget(method, path, headers = {}) {
   const request = createRequest(method, path, headers);
   const response = new Promise((resolve, reject) => {
     request.once("response", (incoming) => {
-      let body = "";
-      incoming.setEncoding("utf8");
-      incoming.on("data", (chunk) => { body += chunk; });
-      incoming.on("end", () => resolve({ statusCode: incoming.statusCode, headers: incoming.headers, body }));
+      const chunks = [];
+      incoming.on("data", (chunk) => { chunks.push(Buffer.from(chunk)); });
+      incoming.on("end", () => resolve({ statusCode: incoming.statusCode, headers: incoming.headers, body: Buffer.concat(chunks) }));
       incoming.on("error", reject);
     });
     request.once("error", reject);
