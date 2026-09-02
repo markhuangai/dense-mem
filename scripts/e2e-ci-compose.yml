@@ -1,0 +1,189 @@
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.2-pg18-trixie
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-densemem}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-densemem}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - ci
+    labels: &ci-labels
+      io.dense-mem.ci.contract: ${DENSE_MEM_CI_CONTRACT:?DENSE_MEM_CI_CONTRACT is required}
+      io.dense-mem.ci.repository: ${DENSE_MEM_CI_REPOSITORY:?DENSE_MEM_CI_REPOSITORY is required}
+      io.dense-mem.ci.run-id: ${DENSE_MEM_CI_RUN_ID:?DENSE_MEM_CI_RUN_ID is required}
+      io.dense-mem.ci.run-attempt: ${DENSE_MEM_CI_RUN_ATTEMPT:?DENSE_MEM_CI_RUN_ATTEMPT is required}
+      io.dense-mem.ci.phase: ${DENSE_MEM_CI_PHASE:?DENSE_MEM_CI_PHASE is required}
+      io.dense-mem.ci.scenario: ${DENSE_MEM_CI_SCENARIO:?DENSE_MEM_CI_SCENARIO is required}
+      io.dense-mem.ci.image-digest: ${DENSE_MEM_CI_IMAGE_DIGEST:?DENSE_MEM_CI_IMAGE_DIGEST is required}
+      io.dense-mem.ci.created-at: ${DENSE_MEM_CI_CREATED_AT:?DENSE_MEM_CI_CREATED_AT is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER:-densemem}\" -d \"$${POSTGRES_DB:-densemem}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command: ["sh", "-c", "exec redis-server --appendonly yes $${REDIS_PASSWORD:+--requirepass \"$$REDIS_PASSWORD\"}"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - ci
+    labels: *ci-labels
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD:-}\" redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  server:
+    image: ${DENSE_MEM_IMAGE:?DENSE_MEM_IMAGE is required}
+    env_file:
+      - ${DENSE_MEM_CI_ENV_FILE:?DENSE_MEM_CI_ENV_FILE is required}
+    environment:
+      CONTROL_HTTP_ADDR: :8090
+      HTTP_ADDR: :8080
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      REDIS_ADDR: redis:6379
+      TELEMETRY_PROMETHEUS_URL: http://prometheus:9090
+      TELEMETRY_SCRAPE_TOKEN: ${DENSE_MEM_CI_TELEMETRY_SCRAPE_TOKEN:?DENSE_MEM_CI_TELEMETRY_SCRAPE_TOKEN is required}
+      SSL_CERT_FILE: ${DENSE_MEM_CI_SSL_CERT_FILE:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    networks:
+      - ci
+    labels: *ci-labels
+    volumes:
+      - oauth-provider-files:/e2e/oauth-files:ro
+
+  prometheus-config:
+    image: alpine:3.24
+    command:
+      - sh
+      - -ec
+      - >-
+        cp /input/prometheus.yml /config/prometheus.yml;
+        cp /input/telemetry-scrape-token /token/telemetry-scrape-token;
+        chmod 0444 /config/prometheus.yml /token/telemetry-scrape-token
+    volumes:
+      - ${DENSE_MEM_CI_PROMETHEUS_FILE:?DENSE_MEM_CI_PROMETHEUS_FILE is required}:/input/prometheus.yml:ro
+      - ${DENSE_MEM_CI_TELEMETRY_TOKEN_FILE:?DENSE_MEM_CI_TELEMETRY_TOKEN_FILE is required}:/input/telemetry-scrape-token:ro
+      - prometheus-config:/config
+      - telemetry-scrape-token:/token
+    networks:
+      - ci
+    labels: *ci-labels
+
+  prometheus:
+    image: prom/prometheus:v3.12.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.listen-address=0.0.0.0:9090
+    depends_on:
+      prometheus-config:
+        condition: service_completed_successfully
+    volumes:
+      - prometheus-data:/prometheus
+      - prometheus-config:/etc/prometheus:ro
+      - telemetry-scrape-token:/run/secrets:ro
+    networks:
+      - ci
+    labels: *ci-labels
+
+  conflict-provider:
+    image: node:24-alpine
+    command: ["sh", "-c", "sleep infinity"]
+    volumes:
+      - conflict-provider-files:/e2e
+    networks:
+      - ci
+    labels: *ci-labels
+    profiles: [conflict_provider, conflict_review]
+
+  oauth-provider-mock:
+    image: node:26-alpine
+    command: ["sh", "-c", "sleep infinity"]
+    volumes:
+      - oauth-provider-files:/e2e
+    networks:
+      - ci
+    labels: *ci-labels
+    profiles: [oauth, oauth_compatibility]
+
+  oauth-compat-harness:
+    image: alpine:3.24
+    command: ["sh", "-c", "sleep infinity"]
+    volumes:
+      - oauth-provider-files:/e2e
+    networks:
+      - ci
+    labels: *ci-labels
+    profiles: [oauth_compatibility]
+
+  synchronous-write-provider:
+    image: node:22-alpine
+    command: ["sh", "-c", "sleep infinity"]
+    volumes:
+      - synchronous-write-provider-files:/e2e
+    networks:
+      - ci
+    labels: *ci-labels
+    profiles: [synchronous_write]
+
+  client-env:
+    image: alpine:3.24
+    command: ["sh", "-c", "sleep infinity"]
+    volumes:
+      - client-env:/client
+    networks:
+      - ci
+    labels: *ci-labels
+    profiles: [client_env]
+
+networks:
+  ci:
+    name: ${DENSE_MEM_CI_NETWORK_NAME:?DENSE_MEM_CI_NETWORK_NAME is required}
+    labels: *ci-labels
+
+volumes:
+  postgres-data:
+    name: ${DENSE_MEM_CI_POSTGRES_VOLUME_NAME:?DENSE_MEM_CI_POSTGRES_VOLUME_NAME is required}
+    labels: *ci-labels
+  redis-data:
+    name: ${DENSE_MEM_CI_REDIS_VOLUME_NAME:?DENSE_MEM_CI_REDIS_VOLUME_NAME is required}
+    labels: *ci-labels
+  prometheus-data:
+    name: ${DENSE_MEM_CI_PROMETHEUS_VOLUME_NAME:?DENSE_MEM_CI_PROMETHEUS_VOLUME_NAME is required}
+    labels: *ci-labels
+  prometheus-config:
+    name: ${DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME:?DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME is required}
+    labels: *ci-labels
+  telemetry-scrape-token:
+    name: ${DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME:?DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME is required}
+    labels: *ci-labels
+  client-env:
+    name: ${DENSE_MEM_CI_CLIENT_VOLUME_NAME:?DENSE_MEM_CI_CLIENT_VOLUME_NAME is required}
+    labels: *ci-labels
+  conflict-provider-files:
+    name: ${DENSE_MEM_CI_CONFLICT_VOLUME_NAME:?DENSE_MEM_CI_CONFLICT_VOLUME_NAME is required}
+    labels: *ci-labels
+  oauth-provider-files:
+    name: ${DENSE_MEM_CI_OAUTH_VOLUME_NAME:?DENSE_MEM_CI_OAUTH_VOLUME_NAME is required}
+    labels: *ci-labels
+  synchronous-write-provider-files:
+    name: ${DENSE_MEM_CI_SYNCHRONOUS_WRITE_VOLUME_NAME:?DENSE_MEM_CI_SYNCHRONOUS_WRITE_VOLUME_NAME is required}
+    labels: *ci-labels

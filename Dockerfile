@@ -106,11 +106,6 @@ FROM runtime-base AS evaluation
 LABEL org.opencontainers.image.variant="evaluation"
 COPY --from=evaluation-builder --chown=densemem:densemem /out/server /app/server
 
-FROM runtime-base AS e2e
-
-LABEL org.opencontainers.image.variant="e2e"
-COPY --from=production-builder --chown=densemem:densemem /out/server /app/server
-
 # Preview and production contain the same runtime; only preview carries the
 # trusted receipt that authorizes later release-candidate layer reuse.
 FROM runtime-base AS production-base

@@ -42,13 +42,17 @@ func TestIdentityCleanupComposeSeed(t *testing.T) {
 
 func openIdentitySeedDB(t *testing.T) *sql.DB {
 	t.Helper()
+	host := os.Getenv("DENSE_MEM_E2E_POSTGRES_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
 	connectionURL := &url.URL{
 		Scheme: "postgresql",
 		User: url.UserPassword(
 			requiredIdentitySeedEnv(t, "DENSE_MEM_E2E_POSTGRES_USER"),
 			requiredIdentitySeedEnv(t, "DENSE_MEM_E2E_POSTGRES_PASSWORD"),
 		),
-		Host: net.JoinHostPort("127.0.0.1", requiredIdentitySeedEnv(t, "DENSE_MEM_E2E_POSTGRES_PORT")),
+		Host: net.JoinHostPort(host, requiredIdentitySeedEnv(t, "DENSE_MEM_E2E_POSTGRES_PORT")),
 		Path: requiredIdentitySeedEnv(t, "DENSE_MEM_E2E_POSTGRES_DB"),
 	}
 	query := connectionURL.Query()

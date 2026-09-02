@@ -155,6 +155,7 @@ export async function run({ rpc, rawRPC, expect }) {
 
   return {
     mode: name,
+    dream_statement: scenarios.completed.statement,
     completed_submission_id: completedSubmissionID,
     replay_reused_submission: true,
     unsupported_relationship_warning: true,

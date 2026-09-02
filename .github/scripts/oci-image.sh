@@ -76,6 +76,26 @@ require_preview() {
 		"${run_attempt}"
 }
 
+validate_preview() {
+	local ref="$1"
+	local pull_number="$2"
+	local head_revision="$3"
+	local main_revision="$4"
+	local run_id="$5"
+	local run_attempt="$6"
+	local digest
+
+	digest="$("${REGCTL_BIN}" manifest head "${ref}")"
+	[[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "${ref} returned an invalid manifest digest"
+	require_preview \
+		"${ref%@*}@${digest}" \
+		"${pull_number}" \
+		"${head_revision}" \
+		"${main_revision}" \
+		"${run_id}" \
+		"${run_attempt}"
+}
+
 platform_layers() {
 	local ref="$1"
 	local platform="$2"
@@ -223,7 +243,7 @@ require_tools
 case "${1:-}" in
 validate-preview)
 	[[ "$#" -eq 7 ]] || usage
-	require_preview "$2" "$3" "$4" "$5" "$6" "$7"
+	validate_preview "$2" "$3" "$4" "$5" "$6" "$7"
 	;;
 publish-preview)
 	[[ "$#" -eq 8 ]] || usage

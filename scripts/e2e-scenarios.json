@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "runtime": "production",
+  "scenarios": [
+    {
+      "name": "mcp_boundaries",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 30,
+      "playwright": false
+    },
+    {
+      "name": "oauth_provider_compatibility",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["oauth_compatibility"],
+      "timeout_minutes": 35,
+      "playwright": false
+    },
+    {
+      "name": "mcp_oauth",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["oauth", "playwright"],
+      "timeout_minutes": 45,
+      "playwright": true
+    },
+    {
+      "name": "private_memory_erasure",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 35,
+      "playwright": false
+    },
+    {
+      "name": "synchronous_write",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["conflict_provider", "conflict_review", "synchronous_write", "playwright"],
+      "timeout_minutes": 60,
+      "playwright": true
+    },
+    {
+      "name": "synchronous_write_primitives",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["synchronous_write"],
+      "timeout_minutes": 60,
+      "playwright": false
+    },
+    {
+      "name": "identity_cleanup",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 35,
+      "playwright": false
+    },
+    {
+      "name": "community",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["verifier", "playwright"],
+      "timeout_minutes": 60,
+      "playwright": true
+    },
+    {
+      "name": "conflict",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["conflict_provider"],
+      "timeout_minutes": 45,
+      "playwright": false
+    },
+    {
+      "name": "conflict_queue",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["conflict_review", "verifier", "playwright"],
+      "timeout_minutes": 60,
+      "playwright": true
+    },
+    {
+      "name": "full",
+      "isolation": "exclusive",
+      "runtime": "production",
+      "helper_profiles": ["verifier", "playwright"],
+      "timeout_minutes": 90,
+      "playwright": true
+    },
+    {
+      "name": "mcp_sdk_parity",
+      "isolation": "shared_team",
+      "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 30,
+      "playwright": false
+    },
+    {
+      "name": "mcp_sdk_transport",
+      "isolation": "shared_team",
+      "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 30,
+      "playwright": false
+    },
+    {
+      "name": "security_runtime",
+      "isolation": "shared_team",
+      "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 35,
+      "playwright": false
+    },
+    {
+      "name": "infrastructure_credentials",
+      "isolation": "shared_team",
+      "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 35,
+      "playwright": false
+    },
+    {
+      "name": "submission_terminal_errors",
+      "isolation": "shared_team",
+      "runtime": "production",
+      "helper_profiles": ["verifier"],
+      "timeout_minutes": 60,
+      "playwright": false
+    },
+    {
+      "name": "security_intake",
+      "isolation": "shared_team",
+      "runtime": "production",
+      "helper_profiles": ["verifier"],
+      "timeout_minutes": 60,
+      "playwright": false
+    },
+    {
+      "name": "memory_space_backfill",
+      "isolation": "shared_team",
+      "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 40,
+      "playwright": false
+    },
+    {
+      "name": "memory_space_isolation",
+      "isolation": "shared_team",
+      "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 40,
+      "playwright": false
+    },
+    {
+      "name": "space_aware_recall",
+      "isolation": "shared_team",
+      "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 40,
+      "playwright": false
+    },
+    {
+      "name": "credential_memory_binding",
+      "isolation": "shared_team",
+      "runtime": "production",
+      "helper_profiles": [],
+      "timeout_minutes": 40,
+      "playwright": false
+    }
+  ]
+}

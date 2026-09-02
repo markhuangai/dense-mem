@@ -2,7 +2,8 @@
 
 const PREVIEW_LABEL = "deploy-test-image";
 const POLICY_STATUS_CONTEXT = "PR test image policy";
-const TRUSTED_LABEL_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+const TRUSTED_LABEL_PERMISSIONS = new Set(["admin"]);
+const PRODUCTION_E2E_ACTOR = "Z-M-Huang";
 
 function normalizeLabelName(label) {
   return typeof label === "string" ? label : label?.name;
@@ -12,14 +13,94 @@ function hasLabel(labels, name) {
   return labels.some((label) => normalizeLabelName(label) === name);
 }
 
+function validateProductionImageReference(image, repository) {
+  if (typeof repository !== "string" || repository.trim() !== repository || repository.length === 0) {
+    return { valid: false, reason: "the image repository is invalid" };
+  }
+  const expected = `ghcr.io/${repository.toLowerCase()}`;
+  if (typeof image !== "string" || image.trim() !== image || image.length === 0) {
+    return { valid: false, reason: "the image reference is empty or contains whitespace" };
+  }
+  if (!image.startsWith(`${expected}:`) && !image.startsWith(`${expected}@`)) {
+    return { valid: false, reason: "the image is outside the Dense-Mem GHCR repository" };
+  }
+  if (image.startsWith(`${expected}:`)) {
+    const taggedReference = image.slice(expected.length + 1);
+    const at = taggedReference.indexOf("@");
+    const tag = at === -1 ? taggedReference : taggedReference.slice(0, at);
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(tag)) {
+      return { valid: false, reason: "the image tag is invalid" };
+    }
+    if (at !== -1 && !/^sha256:[0-9a-f]{64}$/.test(taggedReference.slice(at + 1))) {
+      return { valid: false, reason: "the image digest is invalid" };
+    }
+  } else if (image.startsWith(`${expected}@`) && !/^sha256:[0-9a-f]{64}$/.test(image.slice(expected.length + 1))) {
+    return { valid: false, reason: "the image digest is invalid" };
+  }
+  return { valid: true, repository: expected, reference: image };
+}
+
+function decideAutomaticPreview({
+  pullRequestAuthor,
+  pullRequestAuthorPermission,
+  pullRequestState,
+  pullRequestBase,
+}) {
+  if (pullRequestState !== "open" || pullRequestBase !== "main") {
+    return { authorized: false, reason: "the pull request is not open against main" };
+  }
+  if (
+    pullRequestAuthor !== PRODUCTION_E2E_ACTOR ||
+    pullRequestAuthorPermission !== "admin"
+  ) {
+    return {
+      authorized: false,
+      reason: "automatic preview builds are restricted to the owner admin PR",
+    };
+  }
+  return { authorized: true, reason: "owner_admin_pr" };
+}
+
+function decideLabelApproval({
+  eventLabel,
+  actorPermission,
+  pullRequestState,
+  pullRequestBase,
+}) {
+  if (eventLabel !== PREVIEW_LABEL) {
+    return { authorized: false, reason: "irrelevant_label" };
+  }
+  if (pullRequestState !== "open" || pullRequestBase !== "main") {
+    return { authorized: false, reason: "the pull request is not open against main" };
+  }
+  if (!TRUSTED_LABEL_PERMISSIONS.has(actorPermission)) {
+    return {
+      authorized: false,
+      reason: "deploy-test-image approval requires a repository admin",
+    };
+  }
+  return { authorized: true, reason: "admin_label" };
+}
+
+function validatePinnedProductionImageReference(image, repository) {
+  const decision = validateProductionImageReference(image, repository);
+  if (!decision.valid) return decision;
+  if (!image.includes("@")) {
+    return { valid: false, reason: "the E2E image must be pinned by digest" };
+  }
+  return decision;
+}
+
 function decidePreviewEvent({
   action,
   eventLabel,
   hasPreviewLabel,
-  isFork,
   triggerHeadMatches,
   actorPermission,
-  allowForkBuilds = false,
+  pullRequestAuthor,
+  pullRequestAuthorPermission,
+  pullRequestState,
+  pullRequestBase,
 }) {
   if (!triggerHeadMatches) {
     return { mode: "noop", reason: "stale_event" };
@@ -28,44 +109,43 @@ function decidePreviewEvent({
   if (action === "labeled" && eventLabel !== PREVIEW_LABEL) {
     return { mode: "noop", reason: "irrelevant_label" };
   }
-  if (action === "unlabeled" && eventLabel !== PREVIEW_LABEL) {
-    return { mode: "noop", reason: "irrelevant_label" };
-  }
-
-  if (action === "unlabeled") {
-    return { mode: "skipped", reason: "label_absent" };
-  }
-
-  if (!hasPreviewLabel) {
-    return { mode: "skipped", reason: "label_absent" };
-  }
-
-  if (isFork && !allowForkBuilds) {
+  const automatic = decideAutomaticPreview({
+    pullRequestAuthor,
+    pullRequestAuthorPermission,
+    pullRequestState,
+    pullRequestBase,
+  });
+  if (automatic.authorized && ["opened", "reopened", "synchronize", "labeled"].includes(action)) {
     return {
-      mode: "skipped",
-      reason: "fork_isolation_unavailable",
-      removeLabel: true,
+      mode: "attempt",
+      reason: automatic.reason,
+      ...(hasPreviewLabel ? { removeLabel: true } : {}),
     };
   }
 
-  if (isFork && action !== "labeled") {
+  if (action === "labeled") {
+    const approval = decideLabelApproval({
+      eventLabel,
+      actorPermission,
+      pullRequestState,
+      pullRequestBase,
+    });
+    if (approval.authorized) {
+      return { mode: "attempt", reason: approval.reason, removeLabel: true };
+    }
     return {
       mode: "skipped",
-      reason: "fork_reapproval_required",
-      removeLabel: true,
+      reason: approval.reason,
+      ...(hasPreviewLabel ? { removeLabel: true } : {}),
     };
   }
 
-  if (isFork && !TRUSTED_LABEL_PERMISSIONS.has(actorPermission)) {
+  if (["opened", "reopened", "synchronize"].includes(action)) {
     return {
       mode: "skipped",
-      reason: "fork_reapproval_required",
-      removeLabel: true,
+      reason: "approval_required",
+      ...(hasPreviewLabel ? { removeLabel: true } : {}),
     };
-  }
-
-  if (["opened", "reopened", "synchronize", "labeled"].includes(action)) {
-    return { mode: "attempt", reason: "requested" };
   }
 
   return { mode: "noop", reason: "unsupported_action" };
@@ -140,12 +220,9 @@ function parseSuccessfulPolicyStatus({
   };
 }
 
-function decideRcPreview({ pull, hasPreviewLabel, policyStatus, workflowRun }) {
+function decideRcPreview({ pull, policyStatus, workflowRun }) {
   if (!pull) {
     return { eligible: false, reason: "no unique merged pull request" };
-  }
-  if (!hasPreviewLabel) {
-    return { eligible: false, reason: `pull request #${pull.number} is not labeled` };
   }
   if (!policyStatus) {
     return { eligible: false, reason: "the final PR head has no valid preview receipt" };
@@ -180,7 +257,6 @@ function resolvePullRequestEvent(payload, actorPermission) {
     eventLabel: payload.label?.name || "",
     triggerHead,
     pullNumber: pull.number,
-    isFork: pull.head.repo?.full_name !== pull.base.repo.full_name,
     actorPermission,
   };
 }
@@ -189,7 +265,7 @@ async function resolvePreviewAttempt({
   github,
   context,
   actorPermission,
-  allowForkBuilds = false,
+  authorPermission,
 }) {
   const event = resolvePullRequestEvent(context.payload, actorPermission);
   const { data: pull } = await github.rest.pulls.get({
@@ -205,19 +281,19 @@ async function resolvePreviewAttempt({
   const hasPreviewLabel = hasLabel(pull.labels, PREVIEW_LABEL);
   const decision = decidePreviewEvent({
     ...event,
-    allowForkBuilds,
     hasPreviewLabel,
+    pullRequestAuthor: pull.user?.login || "",
+    pullRequestAuthorPermission: authorPermission,
+    pullRequestState: pull.state,
+    pullRequestBase: pull.base.ref,
     triggerHeadMatches: pull.head.sha === event.triggerHead,
   });
 
   return {
     ...decision,
-    pull,
     pullNumber: pull.number,
     headSha: pull.head.sha,
     headRepository: pull.head.repo?.full_name || "",
-    isFork: event.isFork,
-    hasPreviewLabel,
   };
 }
 
@@ -241,7 +317,6 @@ async function resolveRcPreview({ github, context, mainCommit }) {
     repo: context.repo.repo,
     pull_number: selected.pull.number,
   });
-  const hasPreviewLabel = hasLabel(pull.labels, PREVIEW_LABEL);
   const statuses = await github.paginate(
     github.rest.repos.listCommitStatusesForRef,
     {
@@ -276,7 +351,6 @@ async function resolveRcPreview({ github, context, mainCommit }) {
 
   const workflowValid = decideRcPreview({
     pull,
-    hasPreviewLabel,
     policyStatus: receipt.status,
     workflowRun,
   });
@@ -298,6 +372,8 @@ module.exports = {
   POLICY_STATUS_CONTEXT,
   PREVIEW_LABEL,
   compareContainsMain,
+  decideAutomaticPreview,
+  decideLabelApproval,
   decidePreviewEvent,
   decideRcPreview,
   parseSuccessfulPolicyStatus,
@@ -305,4 +381,6 @@ module.exports = {
   resolvePullRequestEvent,
   resolveRcPreview,
   selectMergedPull,
+  validatePinnedProductionImageReference,
+  validateProductionImageReference,
 };

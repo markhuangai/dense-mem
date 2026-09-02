@@ -1,0 +1,186 @@
+name: Production E2E scenario
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        required: true
+        type: string
+      scenario:
+        required: true
+        type: string
+      timeout_minutes:
+        required: true
+        type: number
+      shared_project:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  scenario:
+    name: Run ${{ inputs.scenario }}
+    runs-on: rootless-docker
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    env:
+      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
+      PHASE: ${{ inputs.shared_project != '' && 'shared' || 'exclusive' }}
+      SCENARIO: ${{ inputs.scenario }}
+      SHARED_PROJECT: ${{ inputs.shared_project }}
+    steps:
+      - name: Validate scenario input
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SCENARIO}" =~ ^[a-z0-9_]+$ ]] || {
+            printf '%s\n' "scenario input must contain only lowercase letters, digits, and underscores" >&2
+            exit 1
+          }
+
+      - name: Checkout exact tested revision
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Validate rootless controller
+        shell: bash
+        run: scripts/e2e-host-controller.sh doctor
+
+      - name: Resolve scenario configuration
+        id: configuration
+        shell: bash
+        env:
+          DENSE_MEM_E2E_SCENARIO_REGISTRY: ${{ github.workspace }}/scripts/e2e-scenarios.json
+        run: |
+          set -euo pipefail
+          classification="$(node scripts/e2e-scenario-registry.mjs --scenario "${SCENARIO}")"
+          node - "${classification}" "${PHASE}" <<'NODE'
+          const classification = JSON.parse(process.argv[2]);
+          const phase = process.argv[3];
+          const isolation = phase === "shared" ? "shared_team" : "exclusive";
+          if (
+            classification.audited !== true ||
+            classification.runtime !== "production" ||
+            classification.isolation !== isolation
+          ) {
+            process.stderr.write("scenario is not audited for the requested production phase\n");
+            process.exit(1);
+          }
+          NODE
+          helpers="$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(value.helper_profiles.join(","));' "${classification}")"
+          playwright="$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(value.playwright ? "1" : "0");' "${classification}")"
+          {
+            printf 'helpers=%s\n' "${helpers}"
+            printf 'playwright=%s\n' "${playwright}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Start exclusive stack
+        id: isolated
+        if: env.PHASE == 'exclusive'
+        shell: bash
+        env:
+          IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          [[ "${IMAGE}" =~ ^(.+)@(sha256:[0-9a-f]{64})$ ]] || {
+            printf '%s\n' "image must be pinned by digest" >&2
+            exit 1
+          }
+          project="$(scripts/e2e-host-controller.sh start "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" exclusive "${SCENARIO}" "${IMAGE}" "${GITHUB_WORKSPACE}")"
+          printf 'project=%s\n' "${project}" >> "${GITHUB_OUTPUT}"
+
+      - name: Use shared stack
+        id: shared
+        if: env.PHASE == 'shared'
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${SHARED_PROJECT}" =~ ^densemem-ci-[a-z0-9][a-z0-9-]{0,50}$ ]]
+
+      - name: Run scenario
+        id: run
+        if: always()
+        continue-on-error: true
+        env:
+          DENSE_MEM_CI_RUN_PLAYWRIGHT: ${{ steps.configuration.outputs.playwright }}
+          IMAGE: ${{ inputs.image }}
+          ISOLATED_PROJECT: ${{ steps.isolated.outputs.project }}
+        shell: bash
+        run: |
+          set +e
+          log="${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.log"
+          : > "${log}"
+          status=1
+          project="${SHARED_PROJECT:-${ISOLATED_PROJECT}}"
+          stack_scenario="${SHARED_PROJECT:+shared}"
+          stack_scenario="${stack_scenario:-${SCENARIO}}"
+          if [[ -n "${project}" ]]; then
+            scripts/e2e-host-controller.sh run \
+              "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${PHASE}" "${stack_scenario}" \
+              "${SCENARIO}" "${IMAGE}" "${GITHUB_WORKSPACE}" 2>&1 |
+              tail -c 262144 > "${log}"
+            status=${PIPESTATUS[0]}
+          else
+            echo "scenario setup did not produce a Compose project" > "${log}"
+          fi
+          printf '%s\n' "${status}" > "${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.status"
+          exit "${status}"
+
+      - name: Bound scenario diagnostics
+        if: always()
+        env:
+          SCENARIO: ${{ inputs.scenario }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.log"
+          if [[ -f "${log}" ]]; then
+            tail -c 262144 "${log}" > "${log}.bounded"
+            mv -- "${log}.bounded" "${log}"
+          fi
+
+      - name: Stop isolated stack
+        if: always() && env.PHASE == 'exclusive' && steps.isolated.outputs.project != ''
+        env:
+          PROJECT: ${{ steps.isolated.outputs.project }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! scripts/e2e-host-controller.sh stop "${PROJECT}"; then
+            printf '%s\n' 1 > "${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.status"
+            exit 1
+          fi
+
+      - name: Preserve scenario result
+        if: always()
+        env:
+          SCENARIO: ${{ inputs.scenario }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          status_file="${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.status"
+          if [[ ! -f "${status_file}" ]]; then
+            printf '%s\n' 1 > "${status_file}"
+          fi
+          status="$(cat "${status_file}")"
+          [[ "${status}" =~ ^[0-9]+$ ]] || exit 1
+          [[ "${status}" == "0" ]] || exit "${status}"
+
+      - name: Upload bounded scenario diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dense-mem-e2e-${{ env.PHASE }}-${{ env.SCENARIO }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/dense-mem-e2e-${{ env.SCENARIO }}.log
+            ${{ runner.temp }}/dense-mem-e2e-${{ env.SCENARIO }}.status
+          if-no-files-found: warn
+          retention-days: 3

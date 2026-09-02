@@ -686,9 +686,17 @@ if [[ "$E2E_MODE" != "standard" && "$E2E_MODE" != "entra_scim" ]]; then
   echo "DENSE_MEM_E2E_MODE must be standard or entra_scim." >&2
   exit 1
 fi
-if [[ "$E2E_SCENARIO" != "full" && "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "mcp_boundaries" && "$E2E_SCENARIO" != "mcp_sdk_parity" && "$E2E_SCENARIO" != "mcp_sdk_transport" && "$E2E_SCENARIO" != "oauth_provider_compatibility" && "$E2E_SCENARIO" != "mcp_oauth" && "$E2E_SCENARIO" != "private_memory_erasure" && "$E2E_SCENARIO" != "security_runtime" && "$E2E_SCENARIO" != "infrastructure_credentials" && "$E2E_SCENARIO" != "submission_terminal_errors" && "$E2E_SCENARIO" != "security_intake" && "$E2E_SCENARIO" != "identity_cleanup" && "$E2E_SCENARIO" != "community" && "$E2E_SCENARIO" != "conflict" && "$E2E_SCENARIO" != "conflict_queue" && "$E2E_SCENARIO" != "memory_space_backfill" && "$E2E_SCENARIO" != "memory_space_isolation" && "$E2E_SCENARIO" != "space_aware_recall" && "$E2E_SCENARIO" != "credential_memory_binding" && "$E2E_SCENARIO" != "synchronous_write" && "$E2E_SCENARIO" != "synchronous_write_primitives" && "$E2E_SCENARIO" != "all" ]]; then
-  echo "DENSE_MEM_E2E_SCENARIO must be full, portal, mcp_boundaries, mcp_sdk_parity, mcp_sdk_transport, oauth_provider_compatibility, mcp_oauth, private_memory_erasure, security_runtime, infrastructure_credentials, submission_terminal_errors, security_intake, identity_cleanup, community, conflict, conflict_queue, memory_space_backfill, memory_space_isolation, space_aware_recall, credential_memory_binding, synchronous_write, synchronous_write_primitives, or all." >&2
+if [[ "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "all" ]] &&
+  ! node "${ROOT_DIR}/scripts/e2e-scenario-registry.mjs" --scenario "$E2E_SCENARIO" >/dev/null 2>&1; then
+  echo "DENSE_MEM_E2E_SCENARIO is not present in the production E2E scenario registry: ${E2E_SCENARIO}." >&2
   exit 1
+fi
+if [[ "$E2E_SCENARIO" != "portal" && "$E2E_SCENARIO" != "all" ]]; then
+  if ! node "${ROOT_DIR}/scripts/e2e-scenario-registry.mjs" --scenario "$E2E_SCENARIO" |
+    node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const value=JSON.parse(input);process.exit(value.audited === true ? 0 : 1);});'; then
+    echo "DENSE_MEM_E2E_SCENARIO=${E2E_SCENARIO} is not audited; it is isolated by default and cannot run until it is registered." >&2
+    exit 1
+  fi
 fi
 
 if [[ "$E2E_MODE" == "entra_scim" && "$E2E_SCENARIO" != "full" ]]; then

@@ -12,6 +12,8 @@ node --test tests/uat/synchronous_write/*.test.mjs
 scripts/static-analysis.sh
 node --test tests/uat/team_dreaming_schedule.test.mjs
 node --test tests/uat/image_release_policy.test.mjs
+node --test tests/uat/e2e_scenario_registry.test.mjs
+node --test tests/uat/e2e_host_controller.test.mjs
 node --test tests/uat/prerelease_version.test.mjs
 node --test tests/uat/go_vulnerability_scan_policy.test.mjs
 node --test tests/uat/ai_pr_review_policy.test.mjs
