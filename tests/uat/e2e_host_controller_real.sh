@@ -24,6 +24,17 @@ fail() {
   exit 1
 }
 
+fixture_prefix="${GITHUB_RUN_ID:-${BASHPID}}"
+fixture_attempt="${GITHUB_RUN_ATTEMPT:-1}"
+[[ "$fixture_prefix" =~ ^[1-9][0-9]*$ ]] || fail "workflow run ID is invalid"
+[[ "$fixture_attempt" =~ ^[1-9][0-9]*$ ]] || fail "workflow run attempt is invalid"
+run_one="${fixture_prefix}1"
+run_two="${fixture_prefix}2"
+run_failed="${fixture_prefix}3"
+run_stale="${fixture_prefix}4"
+lease_run_one="${fixture_prefix}5"
+lease_run_two="${fixture_prefix}6"
+
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
@@ -199,20 +210,20 @@ write_compose ports
 expect_failure "$CONTROLLER" doctor
 write_compose normal
 
-manifest_one="$("$CONTROLLER" start 100001 1 shared shared "$image" "$digest" "$source_revision" "" "$ROOT_DIR")"
+manifest_one="$("$CONTROLLER" start "$run_one" "$fixture_attempt" shared shared "$image" "$digest" "$source_revision" "" "$ROOT_DIR")"
 manifest_one_path="${TEST_ROOT}/manifest-one.json"
 printf '%s\n' "$manifest_one" > "$manifest_one_path"
 "$CONTROLLER" validate "$manifest_one_path" >/dev/null
 project_one="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).compose_project)' "$manifest_one")"
 network_one="${project_one}_ci"
 check_dns "$network_one"
-assert_container_labels "$project_one" 100001
+assert_container_labels "$project_one" "$run_one"
 server_one="$(docker ps -q --filter "label=com.docker.compose.project=${project_one}" --filter "label=com.docker.compose.service=server")"
 [[ -n "$server_one" ]] || fail "the first stack server container is missing"
 docker restart "$server_one" >/dev/null
 check_dns "$network_one"
 
-manifest_two="$("$CONTROLLER" start 100002 1 shared shared "$image" "$digest" "$source_revision" "" "$ROOT_DIR")"
+manifest_two="$("$CONTROLLER" start "$run_two" "$fixture_attempt" shared shared "$image" "$digest" "$source_revision" "" "$ROOT_DIR")"
 project_two="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).compose_project)' "$manifest_two")"
 network_two="${project_two}_ci"
 [[ "$project_one" != "$project_two" && "$network_one" != "$network_two" ]] || fail "concurrent stacks reused a project or network"
@@ -229,18 +240,18 @@ assert_no_project_resources "$project_one"
 assert_no_project_resources "$project_two"
 
 write_compose fail
-project_failed="densemem-ci-100003-1-shared-shared"
-expect_failure "$CONTROLLER" start 100003 1 shared shared "$image" "$digest" "$source_revision" "" "$ROOT_DIR"
+project_failed="densemem-ci-${run_failed}-${fixture_attempt}-shared-shared"
+expect_failure "$CONTROLLER" start "$run_failed" "$fixture_attempt" shared shared "$image" "$digest" "$source_revision" "" "$ROOT_DIR"
 write_compose normal
 assert_no_project_resources "$project_failed"
 
-stale_project="densemem-ci-100004-1-shared-stale"
-stale_container="dense-mem-controller-stale-$$"
+stale_project="densemem-ci-${run_stale}-${fixture_attempt}-shared-stale"
+stale_container="dense-mem-controller-stale-${fixture_prefix}-${fixture_attempt}-$$"
 docker run -d --name "$stale_container" \
   --label io.dense-mem.ci.contract=dense-mem-ci-e2e.v1 \
   --label io.dense-mem.ci.repository="${DENSE_MEM_CI_REPOSITORY}" \
-  --label io.dense-mem.ci.run-id=100004 \
-  --label io.dense-mem.ci.run-attempt=1 \
+  --label io.dense-mem.ci.run-id="$run_stale" \
+  --label io.dense-mem.ci.run-attempt="$fixture_attempt" \
   --label io.dense-mem.ci.phase=shared \
   --label io.dense-mem.ci.scenario=stale \
   --label io.dense-mem.ci.image-digest="$digest" \
@@ -258,8 +269,8 @@ printf '%s\n' 'FROM alpine:3.24' > "${TEST_ROOT}/Dockerfile"
 docker build \
   --label io.dense-mem.ci.contract=dense-mem-ci-e2e.v1 \
   --label io.dense-mem.ci.repository="${DENSE_MEM_CI_REPOSITORY}" \
-  --label io.dense-mem.ci.run-id=100004 \
-  --label io.dense-mem.ci.run-attempt=1 \
+  --label io.dense-mem.ci.run-id="$run_stale" \
+  --label io.dense-mem.ci.run-attempt="$fixture_attempt" \
   --label io.dense-mem.ci.phase=shared \
   --label io.dense-mem.ci.scenario=stale \
   --label io.dense-mem.ci.image-digest="$digest" \
@@ -277,15 +288,17 @@ docker image rm alpine:3.24 >/dev/null 2>&1 || true
 docker pull "$lease_ref" >/dev/null
 lease_image="${lease_ref%@*}"
 lease_digest="${lease_ref##*@}"
-lease_one="${CI_HOME}/leases/${lease_digest#sha256:}.100005.1.lease"
-lease_two="${CI_HOME}/leases/${lease_digest#sha256:}.100006.1.lease"
+lease_one="${CI_HOME}/leases/${lease_digest#sha256:}.${lease_run_one}.${fixture_attempt}.lease"
+lease_two="${CI_HOME}/leases/${lease_digest#sha256:}.${lease_run_two}.${fixture_attempt}.lease"
 mkdir -p "${CI_HOME}/leases"
 for lease in "$lease_one" "$lease_two"; do
+  lease_run="$lease_run_one"
+  [[ "$lease" == "$lease_two" ]] && lease_run="$lease_run_two"
   {
     printf '%s\n' 'contract=dense-mem-ci-e2e.v1'
     printf '%s\n' "repository=${DENSE_MEM_CI_REPOSITORY}"
-    printf '%s\n' 'run_id=100005'
-    printf '%s\n' 'run_attempt=1'
+    printf '%s\n' "run_id=$lease_run"
+    printf '%s\n' "run_attempt=$fixture_attempt"
     printf '%s\n' "image=${lease_image}"
     printf '%s\n' "digest=${lease_digest}"
     printf '%s\n' 'created_at=2000-01-01T00:00:00Z'

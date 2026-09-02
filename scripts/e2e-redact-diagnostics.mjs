@@ -6,12 +6,17 @@ import { resolve } from "node:path";
 
 const REDACTION = "[REDACTED]";
 
-function valuesFromEnvFile(path) {
+function valuesFromEnvFile(path, field = "") {
   const values = [];
+  let selected;
   const add = (value) => {
-    if (typeof value !== "string" || value.length < 4) return;
+    if (typeof value !== "string") return;
     if (/[\r\n]/.test(value)) throw new Error("multiline Compose env values are unsupported for diagnostics redaction");
-    values.push(value);
+    if (field) {
+      selected = value;
+      return;
+    }
+    if (value.length >= 4) values.push(value);
   };
   if (!path) return values;
   let source;
@@ -68,11 +73,16 @@ function valuesFromEnvFile(path) {
     const lineNumber = index + 1;
     const line = lineNumber === 1 ? sourceLine.replace(/^\uFEFF/, "") : sourceLine;
     if (/^\s*$/.test(line) || /^\s*#/.test(line)) continue;
-    const match = line.match(/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/);
+    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
     if (!match) unsupported(lineNumber, "expected KEY=VALUE assignment");
-    add(parseValue(match[1], lineNumber));
+    const value = parseValue(match[2], lineNumber);
+    if (!field || match[1] === field) add(value);
   }
-  return values;
+  return field ? selected : values;
+}
+
+function valueFromEnvFile(path, field) {
+  return valuesFromEnvFile(path, field);
 }
 
 function createRedactor(values, write) {
@@ -165,4 +175,4 @@ function run() {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) run();
 
-export { createRedactor, redactChunks, valuesFromEnvFile };
+export { createRedactor, redactChunks, valueFromEnvFile, valuesFromEnvFile };

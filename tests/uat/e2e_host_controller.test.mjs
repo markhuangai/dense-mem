@@ -107,6 +107,14 @@ test("scenario control bootstrap runs through the Compose network", () => {
   assert.doesNotMatch(controller, /credential_response=.*curl/);
 });
 
+test("real controller fixtures are scoped to the workflow run", () => {
+  assert.match(realControllerTest, /GITHUB_RUN_ID/);
+  assert.match(realControllerTest, /GITHUB_RUN_ATTEMPT/);
+  assert.match(realControllerTest, /fixture_prefix/);
+  assert.doesNotMatch(realControllerTest, /start 100001|start 100002|start 100003/);
+  assert.doesNotMatch(realControllerTest, /run-id=10000[1-6]/);
+});
+
 test("host installer never creates or copies a credential file", () => {
   assert.match(installer, /install -m 600/);
   assert.match(installer, /e2e-docker-proxy\.mjs/);
@@ -193,7 +201,8 @@ test("diagnostic redaction protects secrets split across input chunks", async ()
 });
 
 test("diagnostic redaction follows supported Compose env syntax and fails closed", async () => {
-  const { valuesFromEnvFile } = await import("../../scripts/e2e-redact-diagnostics.mjs");
+  const { valueFromEnvFile, valuesFromEnvFile } = await import("../../scripts/e2e-redact-diagnostics.mjs");
+  assert.match(controller, /valueFromEnvFile/);
   const directory = await mkdtemp(join(tmpdir(), "dense-mem-redact-env-"));
   const envFile = join(directory, ".env");
   try {
@@ -210,6 +219,9 @@ test("diagnostic redaction follows supported Compose env syntax and fails closed
       "single # literal",
       "abc#def",
     ]);
+    assert.equal(valueFromEnvFile(envFile, "PLAIN"), "plain-secret");
+    await writeFile(envFile, "TOKEN=secret-value # inline comment\n");
+    assert.equal(valueFromEnvFile(envFile, "TOKEN"), "secret-value");
 
     await writeFile(envFile, 'TOKEN="unterminated\n');
     assert.throws(() => valuesFromEnvFile(envFile), /unsupported Compose env syntax/);

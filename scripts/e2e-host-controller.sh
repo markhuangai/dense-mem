@@ -126,20 +126,14 @@ validate_bundle() {
 
 env_value() {
   local field="$1"
-  node - "$ENV_FILE" "$field" <<'NODE'
-const fs = require("node:fs");
-const [path, field] = process.argv.slice(2);
-let found;
-for (const line of fs.readFileSync(path, "utf8").split(/\r?\n/)) {
-  const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-  if (!match || match[1] !== field) continue;
-  let value = match[2].trim();
-  if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-  found = value;
-}
+  node --input-type=module - "$CONTROLLER_DIR/e2e-redact-diagnostics.mjs" "$ENV_FILE" "$field" <<'NODE'
+import { pathToFileURL } from "node:url";
 
-if (!found) process.exit(1);
-process.stdout.write(found);
+const [modulePath, envPath, field] = process.argv.slice(2);
+const { valueFromEnvFile } = await import(pathToFileURL(modulePath).href);
+const value = valueFromEnvFile(envPath, field);
+if (typeof value !== "string" || value.length === 0) process.exit(1);
+process.stdout.write(value);
 NODE
 }
 
