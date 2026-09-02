@@ -105,7 +105,7 @@ func TestSearchReconciliationSelectionAndHashFence(t *testing.T) {
 	}))
 }
 
-func TestSearchReconciliationExcludesRejectedEvidence(t *testing.T) {
+func TestSearchReconciliationProjectsSafeHistoricalRejectedEvidence(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -126,15 +126,75 @@ func TestSearchReconciliationExcludesRejectedEvidence(t *testing.T) {
 		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 256,
 	})
 	require.NoError(t, err)
-	require.Empty(t, selected)
+	require.Len(t, selected, 1)
+	require.Equal(t, rejected.Evidence[0].FragmentID, selected[0].SourceID)
+	require.Empty(t, selected[0].SearchDocumentID)
 
 	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{
 		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
 	})
 	require.NoError(t, err)
-	require.Zero(t, convergence.ExpectedDocuments)
-	require.Zero(t, convergence.DriftedDocuments)
+	require.EqualValues(t, 1, convergence.ExpectedDocuments)
+	require.EqualValues(t, 1, convergence.DriftedDocuments)
 	require.Zero(t, convergence.CurrentDocuments)
+	require.Contains(t, convergence.DriftClasses, SearchDocumentDriftCount{Class: "canonical_document_missing", Count: 1})
+
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE teams
+			SET status = 'deleted', deleted_at = clock_timestamp(), updated_at = clock_timestamp()
+			WHERE id = ?::uuid
+		`, teamID).Error
+	}))
+	selectedEmbedding := SearchDocumentEmbedding{
+		TeamID: selected[0].TeamID, SearchDocumentID: selected[0].SearchDocumentID,
+		OwnerProfileID: selected[0].OwnerProfileID, SourceKind: selected[0].SourceKind,
+		SourceID: selected[0].SourceID, DocumentText: selected[0].DocumentText,
+		DocumentHash: selected[0].DocumentHash, StoredDocumentHash: selected[0].StoredDocumentHash,
+		SourceVersion: selected[0].SourceVersion, ProjectionFormat: selected[0].ProjectionFormat,
+		ProjectionGenerationID: selected[0].ProjectionGenerationID, DocumentVersion: selected[0].DocumentVersion,
+		EmbeddingContractID: selected[0].EmbeddingContractID, EmbeddingDimensions: selected[0].EmbeddingDimensions,
+		Embedding: []float32{0.6, 0.8}, SpaceID: selected[0].SpaceID, SpaceGeneration: selected[0].SpaceGeneration,
+	}
+	deletedTeamApply, err := repo.CompleteSearchReconciliationDocuments(ctx, ApplySearchReconciliationInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+		Documents: []SearchDocumentEmbedding{selectedEmbedding},
+	})
+	require.NoError(t, err)
+	require.Zero(t, deletedTeamApply.UpdatedCount)
+	require.EqualValues(t, 1, deletedTeamApply.SkippedCount)
+	var deletedTeamDocumentCount int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM search_documents
+			WHERE team_id = ?::uuid AND source_kind = 'evidence' AND source_id = ?::uuid
+		`, teamID, selected[0].SourceID).Scan(&deletedTeamDocumentCount).Error
+	}))
+	require.Zero(t, deletedTeamDocumentCount)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			UPDATE teams
+			SET status = 'active', deleted_at = NULL, updated_at = clock_timestamp()
+			WHERE id = ?::uuid
+		`, teamID).Error
+	}))
+
+	apply, err := repo.CompleteSearchReconciliationDocuments(ctx, ApplySearchReconciliationInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+		Documents: []SearchDocumentEmbedding{selectedEmbedding},
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, apply.UpdatedCount)
+	require.Zero(t, apply.RemainingDriftedCount)
+
+	convergence, err = repo.GetSearchConvergence(ctx, SearchConvergenceInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, convergence.ExpectedDocuments)
+	require.EqualValues(t, 1, convergence.CurrentDocuments)
+	require.Zero(t, convergence.DriftedDocuments)
 }
 
 func TestSearchReconciliationSelectionAdvancesDurableCursorPastHealthyDocuments(t *testing.T) {

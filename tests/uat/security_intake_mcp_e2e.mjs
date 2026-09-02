@@ -90,25 +90,33 @@ for (const testCase of rejectedCases) {
   assertSafeAuditRecord(audit, testCase, teamID);
 }
 
-let verifierAfterRejects = verifierBeforeRejects;
-for (const testCase of rejectedCases) {
-  verifierAfterRejects = await waitForExactlyOneVerifierRequest(verifierAfterRejects, teamID);
-}
+const verifierAfterRejects = await assertVerifierStable(verifierBeforeRejects, teamID);
 let verifierAfterAccepted = verifierAfterRejects;
 const acceptedResults = [];
 for (const testCase of acceptedCases) {
+  const correlationID = `${runID}:${testCase.name}`;
   const input = relationshipRememberInput(
     testCase.payload,
     `${runID}:${testCase.name}`,
     `security-intake:${runID}:${testCase.name}`,
     testCase.clientComment,
   );
-  const accepted = await mcpSuccess(apiKey, "remember", input, `${runID}:${testCase.name}`);
+  const accepted = await mcpSuccess(apiKey, "remember", input, correlationID);
   const submissionID = stringValue(accepted.submission_id);
   if (!submissionID) {
     throw new Error(`${testCase.name} remember did not return a submission_id`);
   }
-  assertAcceptedIngest(submissionID, input.evidence[0].content);
+  if (accepted.processing_state === "failed") {
+    if (!testCase.allowProviderQuarantine || accepted.errors?.[0]?.code !== "submission_policy_rejected" || accepted.search_state !== "not_required") {
+      throw new Error(`${testCase.name} provider rejection returned an unexpected terminal result: ${JSON.stringify(accepted)}`);
+    }
+    assertNoCorrelatedIngest(correlationID);
+  } else {
+    if (accepted.processing_state !== "completed") {
+      throw new Error(`${testCase.name} remember returned an unexpected processing state: ${JSON.stringify(accepted)}`);
+    }
+    assertAcceptedIngest(submissionID, input.evidence[0].content);
+  }
   verifierAfterAccepted = await waitForExactlyOneVerifierRequest(verifierAfterAccepted, teamID);
   assertTerminalRelationshipDisposition(accepted, testCase.name);
   acceptedResults.push({

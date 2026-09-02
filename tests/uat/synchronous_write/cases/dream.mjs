@@ -51,7 +51,12 @@ export async function run({ rpc, rawRPC, expect }) {
       relationships: [dreamRelationship(scenarios.completed)],
     },
   });
-  expect(String(changedReason.error?.message || "").includes("remember: conflict"), "changed Dream feedback reason must conflict under the same retry identity");
+  expect(
+    changedReason.result?.isError === true &&
+      changedReason.result?.structuredContent?.processing_state === "failed" &&
+      changedReason.result?.structuredContent?.errors?.[0]?.code === "idempotency_conflict",
+    `changed Dream feedback reason must conflict under the same retry identity: ${JSON.stringify(changedReason)}`,
+  );
   expect(attemptRow(teamID, scenarios.completed.idempotencyKey).count === 1, "changed Dream feedback reason must not create another Remember attempt");
   expect(feedbackEventCount(teamID, scenarios.completed.hypothesisID) === completedFeedbackEvents, "changed Dream feedback reason must not append a feedback event");
   const unchangedHypothesis = hypothesisRow(teamID, scenarios.completed.hypothesisID);

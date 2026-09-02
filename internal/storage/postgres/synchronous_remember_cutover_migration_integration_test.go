@@ -17,6 +17,31 @@ import (
 
 const synchronousRememberCutoverMigrationVersion int64 = 20260831010001
 
+func requireLegacyV261RememberResult(t *testing.T, result remember.TerminalRememberResult, submissionID, processingState, searchState string,
+	evidenceCount, relationshipCount int, errorCode string) {
+	t.Helper()
+	require.Equal(t, "dense-mem.v2.6.1", result.ContractVersion)
+	require.Equal(t, submissionID, result.SubmissionID)
+	require.Equal(t, "remember", result.SubmissionKind)
+	require.Equal(t, processingState, result.ProcessingState)
+	require.Equal(t, searchState, result.SearchState)
+	require.Equal(t, submissionID, result.CorrelationID)
+	require.NotNil(t, result.Evidence)
+	require.Len(t, result.Evidence, evidenceCount)
+	require.NotNil(t, result.RelationshipResults)
+	require.Len(t, result.RelationshipResults, relationshipCount)
+	require.NotNil(t, result.Errors)
+	if errorCode == "" {
+		require.Empty(t, result.Errors)
+		return
+	}
+	require.Len(t, result.Errors, 1)
+	require.Equal(t, errorCode, result.Errors[0].Code)
+	require.True(t, result.Errors[0].Retryable)
+	require.Equal(t, "resubmit_remember", result.Errors[0].NextAction)
+	require.Equal(t, "Submit the complete batch again with remember and a new idempotency_key after correcting the input.", result.Errors[0].Remediation)
+}
+
 func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
@@ -251,8 +276,20 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	`, teamID, ingestID).Scan(&migratedCompletedJSON))
 	var migratedCompleted remember.TerminalRememberResult
 	require.NoError(t, json.Unmarshal(migratedCompletedJSON, &migratedCompleted))
-	migratedCompleted.Kind = remember.ResultKindTerminal
-	require.NoError(t, remember.ValidateTerminalRememberResult(&migratedCompleted, 1, []string{"legacy-ref"}))
+	requireLegacyV261RememberResult(t, migratedCompleted, ingestID.String(), "completed", "current", 1, 1, "")
+	require.Equal(t, 0, migratedCompleted.Evidence[0].EvidenceIndex)
+	require.NotNil(t, migratedCompleted.Evidence[0].SupersededEvidenceIDs)
+	require.Empty(t, migratedCompleted.Evidence[0].SupersededEvidenceIDs)
+	require.Equal(t, "current", migratedCompleted.Evidence[0].SearchState)
+	require.Empty(t, migratedCompleted.Evidence[0].Reason)
+	require.Equal(t, "legacy-ref", migratedCompleted.RelationshipResults[0].RelationshipRef)
+	require.Equal(t, "stored", migratedCompleted.RelationshipResults[0].Disposition)
+	require.Empty(t, migratedCompleted.RelationshipResults[0].Reason)
+	require.Len(t, migratedCompleted.RelationshipResults[0].Splits, 1)
+	require.Equal(t, 0, migratedCompleted.RelationshipResults[0].Splits[0].SplitIndex)
+	require.Equal(t, relationshipID.String(), migratedCompleted.RelationshipResults[0].Splits[0].RelationshipID)
+	require.Equal(t, 1, migratedCompleted.RelationshipResults[0].Splits[0].RelationshipVersion)
+	require.Equal(t, "active", migratedCompleted.RelationshipResults[0].Splits[0].Status)
 
 	var rejectedDisposition, rejectedReason, rejectedErrorCode string
 	require.NoError(t, db.QueryRowContext(ctx, `
@@ -273,8 +310,13 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	`, teamID, rejectedIngestID).Scan(&migratedRejectedJSON))
 	var migratedRejected remember.TerminalRememberResult
 	require.NoError(t, json.Unmarshal(migratedRejectedJSON, &migratedRejected))
-	migratedRejected.Kind = remember.ResultKindTerminal
-	require.NoError(t, remember.ValidateTerminalRememberResult(&migratedRejected, 1, nil))
+	requireLegacyV261RememberResult(t, migratedRejected, rejectedIngestID.String(), "rejected", "not_required", 1, 0, "no_supported_memory")
+	require.Equal(t, 0, migratedRejected.Evidence[0].EvidenceIndex)
+	require.Empty(t, migratedRejected.Evidence[0].EvidenceID)
+	require.NotNil(t, migratedRejected.Evidence[0].SupersededEvidenceIDs)
+	require.Empty(t, migratedRejected.Evidence[0].SupersededEvidenceIDs)
+	require.Equal(t, "not_required", migratedRejected.Evidence[0].SearchState)
+	require.Equal(t, "no supported memory could be stored from this submission", migratedRejected.Errors[0].Message)
 
 	var expiredErrorCode string
 	require.NoError(t, db.QueryRowContext(ctx, `
@@ -291,8 +333,10 @@ func TestRememberSynchronousCutoverPreservesTerminalHistoryBeforeRetirement(t *t
 	`, teamID, expiredIngestID).Scan(&migratedQuarantinedJSON))
 	var migratedQuarantined remember.TerminalRememberResult
 	require.NoError(t, json.Unmarshal(migratedQuarantinedJSON, &migratedQuarantined))
-	migratedQuarantined.Kind = remember.ResultKindTerminal
-	require.NoError(t, remember.ValidateTerminalRememberResult(&migratedQuarantined, 0, nil))
+	requireLegacyV261RememberResult(
+		t, migratedQuarantined, expiredIngestID.String(), "quarantined", "not_required", 0, 0, "submission_quarantined",
+	)
+	require.Equal(t, "the submission was quarantined by security policy", migratedQuarantined.Errors[0].Message)
 
 	var eventCount, itemEvents, outcomeEvents int
 	require.NoError(t, db.QueryRowContext(ctx, `
