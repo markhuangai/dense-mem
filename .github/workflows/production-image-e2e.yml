@@ -180,10 +180,12 @@ jobs:
         shell: bash
         run: scripts/e2e-host-controller.sh doctor
 
-      - name: Reclaim this run's exclusive Docker resources
+      - name: Reclaim this run's precheck and exclusive Docker resources
         shell: bash
         run: |
           set -euo pipefail
+          scripts/e2e-host-controller.sh stale-cleanup 1 \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" precheck
           scripts/e2e-host-controller.sh stale-cleanup 1 \
             "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" exclusive
 

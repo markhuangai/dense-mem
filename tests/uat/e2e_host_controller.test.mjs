@@ -28,6 +28,7 @@ test("controller is PR-owned and has no persistent lease or manifest contract", 
   assert.match(controller, /JOB_DIR=.*RUNNER_TEMP/);
   assert.match(controller, /DENSE_MEM_CI_PROMETHEUS_FILE/);
   assert.match(controller, /DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
+  assert.match(controller, /for database_field in POSTGRES_USER POSTGRES_DB/);
   assert.match(controller, /redact_diagnostics/);
   assert.match(controller, /must contain at least two characters/);
   assert.match(controller, /\[\[ \$\{#secret_value\} -ge 2 \]\]/);
@@ -149,6 +150,7 @@ test("real controller fixtures use workflow-scoped names and leave no local stat
   assert.match(realControllerTest, /DENSE_MEM_CI_JOB_DIR/);
   assert.match(realControllerTest, /controller created persistent lease\/run state/);
   assert.match(realControllerTest, /stale-cleanup 1 "\$run_stale" "\$fixture_attempt" shared/);
+  assert.match(realControllerTest, /io\.dense-mem\.ci\.phase=exclusive/);
   assert.doesNotMatch(realControllerTest, /DENSE_MEM_CI_DAEMON_ID|e2e-docker-proxy|e2e-runtime-adapter|release.*lease/);
   assert.match(realControllerTest, /\"io\.dense-mem\.ci\.run-attempt\": attempt/);
 });

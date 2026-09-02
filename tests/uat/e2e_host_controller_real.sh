@@ -21,6 +21,7 @@ project_two=""
 project_failed=""
 stale_container=""
 protected_container=""
+protected_phase_container=""
 stale_network=""
 stale_volume=""
 
@@ -47,6 +48,7 @@ cleanup() {
   done
   [[ -n "$stale_container" ]] && docker rm -f "$stale_container" >/dev/null 2>&1 || true
   [[ -n "$protected_container" ]] && docker rm -f "$protected_container" >/dev/null 2>&1 || true
+  [[ -n "$protected_phase_container" ]] && docker rm -f "$protected_phase_container" >/dev/null 2>&1 || true
   [[ -n "$stale_network" ]] && docker network rm "$stale_network" >/dev/null 2>&1 || true
   [[ -n "$stale_volume" ]] && docker volume rm "$stale_volume" >/dev/null 2>&1 || true
   rm -r -- "$TEST_ROOT"
@@ -62,7 +64,7 @@ command -v git >/dev/null 2>&1 || fail "git is unavailable"
 security_options="$(docker info --format '{{json .SecurityOptions}}')"
 [[ "$security_options" == *rootless* ]] || fail "the test requires a rootless Docker daemon"
 
-printf '%s\n' 'CI_TEST=1' 'POSTGRES_PASSWORD=controller-test-password' 'AI_API_KEY=controller-test-key' 'CONTROL_PORTAL_TOKEN=controller-test-token' > "$ENV_FILE"
+printf '%s\n' 'CI_TEST=1' 'POSTGRES_USER=densemem' 'POSTGRES_DB=densemem' 'POSTGRES_PASSWORD=controller-test-password' 'AI_API_KEY=controller-test-key' 'CONTROL_PORTAL_TOKEN=controller-test-token' > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 printf '%s\n' 'dense-mem-ci-real-test-token' > "${TEST_ROOT}/telemetry-scrape-token"
 chmod 600 "${TEST_ROOT}/telemetry-scrape-token"
@@ -293,6 +295,18 @@ docker run -d --name "$protected_container" \
   --label io.dense-mem.ci.created-at=2000-01-01T00:00:00Z \
   --label io.dense-mem.ci.compose-project="$protected_project" \
   alpine:3.24 sh -c 'while :; do sleep 3600; done' >/dev/null
+protected_phase_container="dense-mem-controller-protected-phase-${fixture_prefix}-${fixture_attempt}-$$"
+docker run -d --name "$protected_phase_container" \
+  --label io.dense-mem.ci.contract=dense-mem-ci-e2e.v1 \
+  --label io.dense-mem.ci.repository="${DENSE_MEM_CI_REPOSITORY}" \
+  --label io.dense-mem.ci.run-id="$run_stale" \
+  --label io.dense-mem.ci.run-attempt="$fixture_attempt" \
+  --label io.dense-mem.ci.phase=exclusive \
+  --label io.dense-mem.ci.scenario=protected_phase \
+  --label io.dense-mem.ci.image-digest="$digest" \
+  --label io.dense-mem.ci.created-at=2000-01-01T00:00:00Z \
+  --label io.dense-mem.ci.compose-project="densemem-ci-${run_stale}-${fixture_attempt}-exclusive-protected" \
+  alpine:3.24 sh -c 'while :; do sleep 3600; done' >/dev/null
 "$CONTROLLER" stale-cleanup 1 "$run_stale" "$fixture_attempt" shared >/dev/null
 if docker inspect "$stale_container" >/dev/null 2>&1; then
   fail "targeted stale cleanup did not reclaim the selected run"
@@ -311,6 +325,11 @@ if ! docker inspect "$protected_container" >/dev/null 2>&1; then
 fi
 docker rm -f "$protected_container" >/dev/null
 protected_container=""
+if ! docker inspect "$protected_phase_container" >/dev/null 2>&1; then
+  fail "targeted stale cleanup reclaimed a different phase"
+fi
+docker rm -f "$protected_phase_container" >/dev/null
+protected_phase_container=""
 
 helper_image="${stale_project}-oauth-compat-harness:latest"
 printf '%s\n' 'FROM alpine:3.24' > "${TEST_ROOT}/Dockerfile"
