@@ -111,19 +111,21 @@ jobs:
         continue-on-error: true
         env:
           DENSE_MEM_CI_RUN_PLAYWRIGHT: ${{ steps.configuration.outputs.playwright }}
+          IMAGE: ${{ inputs.image }}
+          ISOLATED_PROJECT: ${{ steps.isolated.outputs.project }}
         shell: bash
         run: |
           set +e
           log="${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.log"
           : > "${log}"
           status=1
-          project="${SHARED_PROJECT:-${{ steps.isolated.outputs.project }}}"
+          project="${SHARED_PROJECT:-${ISOLATED_PROJECT}}"
           stack_scenario="${SHARED_PROJECT:+shared}"
           stack_scenario="${stack_scenario:-${SCENARIO}}"
           if [[ -n "${project}" ]]; then
             scripts/e2e-host-controller.sh run \
               "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${PHASE}" "${stack_scenario}" \
-              "${SCENARIO}" "${{ inputs.image }}" "${GITHUB_WORKSPACE}" 2>&1 |
+              "${SCENARIO}" "${IMAGE}" "${GITHUB_WORKSPACE}" 2>&1 |
               tail -c 262144 > "${log}"
             status=${PIPESTATUS[0]}
           else

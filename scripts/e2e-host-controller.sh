@@ -93,7 +93,7 @@ NODE
 }
 
 validate_image_ref() {
-  [[ "$1" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+((:[A-Za-z0-9_.-]+)|(@sha256:[0-9a-f]{64}))?$ ]] || fail "image must be a GHCR repository reference"
+  [[ "$1" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+(:[A-Za-z0-9][A-Za-z0-9_.-]{0,127})?(@sha256:[0-9a-f]{64})?$ ]] || fail "image must be a GHCR repository reference"
 }
 
 validate_bundle() {
@@ -155,7 +155,8 @@ compose_base_env() {
   export DENSE_MEM_CI_CREATED_AT="$created_at"
   export DENSE_MEM_CI_PROMETHEUS_FILE="$PROMETHEUS_FILE"
   export DENSE_MEM_CI_TELEMETRY_TOKEN_FILE="$TELEMETRY_TOKEN_FILE"
-  export DENSE_MEM_CI_TELEMETRY_SCRAPE_TOKEN="$(cat "$TELEMETRY_TOKEN_FILE")"
+  DENSE_MEM_CI_TELEMETRY_SCRAPE_TOKEN="$(cat "$TELEMETRY_TOKEN_FILE")"
+  export DENSE_MEM_CI_TELEMETRY_SCRAPE_TOKEN
   export DENSE_MEM_CI_NETWORK_NAME="${project}_ci"
   export DENSE_MEM_CI_POSTGRES_VOLUME_NAME="${project}_postgres-data"
   export DENSE_MEM_CI_REDIS_VOLUME_NAME="${project}_redis-data"
@@ -336,11 +337,10 @@ precheck() {
   fi
   set -e
   trap - EXIT INT TERM
+  docker network rm "$precheck_network" >/dev/null 2>&1 || true
   if ((test_status != 0)); then
     return "$test_status"
   fi
-  trap - EXIT INT TERM
-  docker network rm "$precheck_network" >/dev/null 2>&1 || true
   printf '%s\n' "precheck passed"
 }
 
@@ -378,11 +378,7 @@ start_stack() {
     validate_registered_scenario "$source_dir" "$scenario" "$phase"
   fi
   local helpers
-  if [[ "$phase" == "shared" ]]; then
-    helpers="$(DENSE_MEM_E2E_SCENARIO_REGISTRY="$source_dir/scripts/e2e-scenarios.json" node "$REGISTRY_SCRIPT" --helpers shared_team | node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).join(","));')"
-  else
-    helpers="$(DENSE_MEM_E2E_SCENARIO_REGISTRY="$source_dir/scripts/e2e-scenarios.json" node "$REGISTRY_SCRIPT" --scenario "$scenario" | node -e 'const fs=require("node:fs");process.stdout.write((JSON.parse(fs.readFileSync(0,"utf8")).helper_profiles||[]).join(","));')"
-  fi
+  helpers="$(scenario_helpers "$source_dir" "$phase" "$scenario")" || fail "scenario helper profiles are unavailable"
   [[ "$helpers" =~ ^[a-z0-9_,]*$ ]] || fail "invalid helper profile list"
   local created_at
   created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

@@ -67,7 +67,8 @@ run_scenario() {
   local helpers
   helpers="$(scenario_helpers "$source_dir" "$phase" "$scenario")" || fail "scenario helper profiles are unavailable"
   [[ "$helpers" =~ ^[a-z0-9_,]*$ ]] || fail "invalid helper profile list"
-  local created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local created_at
+  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   compose_base_env "$project" "$phase" "$stack_scenario" "$digest" "$run_id" "$attempt" "$created_at" "${image_ref}@${digest}"
 
   local run_root="${JOB_DIR}/${run_id}-${attempt}/${phase}-${stack_scenario}"
@@ -104,10 +105,12 @@ run_scenario() {
 
   docker_cli_mount_args
   if [[ "$scenario" == "synchronous_write_primitives" ]]; then
-    run_synchronous_primitives_driver "$source_dir" "$project" "$postgres_user" "$postgres_password" "$postgres_db" "$run_id" "$attempt" "$phase" "$scenario" "$digest"
+    run_synchronous_primitives_driver "$source_dir" "$project" "$postgres_user" "$postgres_password" "$postgres_db" "$run_id" "$attempt" "$phase" "$scenario" "$digest" ||
+      fail "synchronous-write primitive drivers failed"
   fi
   if [[ "$scenario" == "mcp_sdk_parity" ]]; then
-    run_mcp_sdk_parity_driver "$source_dir" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest"
+    run_mcp_sdk_parity_driver "$source_dir" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" ||
+      fail "MCP SDK parity driver failed"
   fi
 
   local team_name="Dense-Mem CI ${run_id}-${attempt}-${scenario}"
