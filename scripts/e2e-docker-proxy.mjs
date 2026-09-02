@@ -193,6 +193,7 @@ async function authorizePrecheck(method, path, rawURL, requestBody) {
     ];
     if (
       hostConfig.Privileged === true ||
+      hostConfig.PublishAllPorts === true ||
       hasForeignNetworkMode(hostConfig.NetworkMode) ||
       hasUnsafeNamespaceMode(hostConfig.PidMode) ||
       hasUnsafeNamespaceMode(hostConfig.IpcMode) ||

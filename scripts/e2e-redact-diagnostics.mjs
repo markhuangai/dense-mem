@@ -73,8 +73,8 @@ function valuesFromEnvFile(path, field = "") {
     const lineNumber = index + 1;
     const line = lineNumber === 1 ? sourceLine.replace(/^\uFEFF/, "") : sourceLine;
     if (/^\s*$/.test(line) || /^\s*#/.test(line)) continue;
-    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-    if (!match) unsupported(lineNumber, "expected KEY=VALUE assignment");
+    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|:)\s*(.*)$/);
+    if (!match) unsupported(lineNumber, "expected KEY=VALUE or KEY: VALUE assignment");
     const value = parseValue(match[2], lineNumber);
     if (!field || match[1] === field) add(value);
   }

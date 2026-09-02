@@ -209,17 +209,35 @@ test("diagnostic redaction follows supported Compose env syntax and fails closed
     await writeFile(envFile, [
       "# ignored comment",
       "export PLAIN=plain-secret # inline comment",
+      "COLON: colon-secret # inline comment",
       "DOUBLE=\"double\\\"quote\" # trailing comment",
       "SINGLE='single # literal'",
       "HASH=abc#def",
     ].join("\n"));
     assert.deepEqual(valuesFromEnvFile(envFile), [
       "plain-secret",
+      "colon-secret",
       'double"quote',
       "single # literal",
       "abc#def",
     ]);
     assert.equal(valueFromEnvFile(envFile, "PLAIN"), "plain-secret");
+    assert.equal(valueFromEnvFile(envFile, "COLON"), "colon-secret");
+    const redacted = await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [redactorPath], {
+        env: { ...process.env, DENSE_MEM_CI_REDACT_ENV_FILE: envFile, DENSE_MEM_CI_REDACT_EXTRA_VALUES: "" },
+      });
+      let output = "";
+      let error = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => { output += chunk; });
+      child.stderr.on("data", (chunk) => { error += chunk; });
+      child.on("error", reject);
+      child.on("close", (code) => code === 0 ? resolve(output) : reject(new Error(`${code}: ${error}`)));
+      child.stdin.end("prefix colon-secret suffix");
+    });
+    assert.equal(redacted, "prefix [REDACTED] suffix");
     await writeFile(envFile, "TOKEN=secret-value # inline comment\n");
     assert.equal(valueFromEnvFile(envFile, "TOKEN"), "secret-value");
 
