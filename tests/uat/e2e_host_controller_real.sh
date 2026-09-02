@@ -20,6 +20,7 @@ project_one=""
 project_two=""
 project_failed=""
 stale_container=""
+protected_container=""
 stale_network=""
 stale_volume=""
 
@@ -45,6 +46,7 @@ cleanup() {
     [[ -n "$project" ]] && "$CONTROLLER" stop "$project" >/dev/null 2>&1 || true
   done
   [[ -n "$stale_container" ]] && docker rm -f "$stale_container" >/dev/null 2>&1 || true
+  [[ -n "$protected_container" ]] && docker rm -f "$protected_container" >/dev/null 2>&1 || true
   [[ -n "$stale_network" ]] && docker network rm "$stale_network" >/dev/null 2>&1 || true
   [[ -n "$stale_volume" ]] && docker volume rm "$stale_volume" >/dev/null 2>&1 || true
   rm -r -- "$TEST_ROOT"
@@ -277,9 +279,23 @@ docker volume create \
   --label io.dense-mem.ci.created-at=2000-01-01T00:00:00Z \
   --label io.dense-mem.ci.compose-project="$stale_project" \
   "$stale_volume" >/dev/null
-"$CONTROLLER" stale-cleanup 1 >/dev/null
+protected_run="${fixture_prefix}5"
+protected_project="densemem-ci-${protected_run}-${fixture_attempt}-shared-protected"
+protected_container="dense-mem-controller-protected-${fixture_prefix}-${fixture_attempt}-$$"
+docker run -d --name "$protected_container" \
+  --label io.dense-mem.ci.contract=dense-mem-ci-e2e.v1 \
+  --label io.dense-mem.ci.repository="${DENSE_MEM_CI_REPOSITORY}" \
+  --label io.dense-mem.ci.run-id="$protected_run" \
+  --label io.dense-mem.ci.run-attempt="$fixture_attempt" \
+  --label io.dense-mem.ci.phase=shared \
+  --label io.dense-mem.ci.scenario=protected \
+  --label io.dense-mem.ci.image-digest="$digest" \
+  --label io.dense-mem.ci.created-at=2000-01-01T00:00:00Z \
+  --label io.dense-mem.ci.compose-project="$protected_project" \
+  alpine:3.24 sh -c 'while :; do sleep 3600; done' >/dev/null
+"$CONTROLLER" stale-cleanup 1 "$run_stale" "$fixture_attempt" shared >/dev/null
 if docker inspect "$stale_container" >/dev/null 2>&1; then
-  fail "stale controller container was not reclaimed"
+  fail "targeted stale cleanup did not reclaim the selected run"
 fi
 stale_container=""
 if docker network inspect "$stale_network" >/dev/null 2>&1; then
@@ -290,6 +306,11 @@ if docker volume inspect "$stale_volume" >/dev/null 2>&1; then
   fail "stale controller volume was not reclaimed"
 fi
 stale_volume=""
+if ! docker inspect "$protected_container" >/dev/null 2>&1; then
+  fail "targeted stale cleanup reclaimed a different run"
+fi
+docker rm -f "$protected_container" >/dev/null
+protected_container=""
 
 helper_image="${stale_project}-oauth-compat-harness:latest"
 printf '%s\n' 'FROM alpine:3.24' > "${TEST_ROOT}/Dockerfile"

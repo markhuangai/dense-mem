@@ -158,10 +158,39 @@ jobs:
       shared_project: ""
     secrets: inherit
 
+  exclusive-cleanup:
+    name: Reclaim exclusive production stacks
+    needs: [authorize, prechecks, stale-cleanup, exclusive]
+    if: always() && needs.authorize.result == 'success'
+    runs-on: rootless-docker
+    timeout-minutes: 15
+    env:
+      DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Checkout exact pull request source
+        uses: actions/checkout@v7
+        with:
+          clean: true
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Validate PR-owned rootless controller
+        shell: bash
+        run: scripts/e2e-host-controller.sh doctor
+
+      - name: Reclaim this run's exclusive Docker resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/e2e-host-controller.sh stale-cleanup 1 \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" exclusive
+
   shared-start:
     name: Start shared production stack
-    needs: [authorize, prechecks, stale-cleanup, exclusive]
-    if: needs.exclusive.result == 'success'
+    needs: [authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup]
+    if: needs.exclusive.result == 'success' && needs.exclusive-cleanup.result == 'success'
     runs-on: rootless-docker
     timeout-minutes: 20
     outputs:
@@ -241,7 +270,7 @@ jobs:
 
   report:
     name: Aggregate production E2E results
-    needs: [authorize, prechecks, stale-cleanup, exclusive, shared-start, shared, shared-stop]
+    needs: [authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup, shared-start, shared, shared-stop]
     if: always()
     runs-on: docker-runner
     timeout-minutes: 15
@@ -261,6 +290,7 @@ jobs:
           PRECHECK_RESULT: ${{ needs.prechecks.result }}
           STALE_CLEANUP_RESULT: ${{ needs.stale-cleanup.result }}
           EXCLUSIVE_RESULT: ${{ needs.exclusive.result }}
+          EXCLUSIVE_CLEANUP_RESULT: ${{ needs.exclusive-cleanup.result }}
           SHARED_START_RESULT: ${{ needs.shared-start.result }}
           SHARED_RESULT: ${{ needs.shared.result }}
           SHARED_STOP_RESULT: ${{ needs.shared-stop.result }}
@@ -282,6 +312,7 @@ jobs:
             echo "| Controller/PostgreSQL prechecks | ${PRECHECK_RESULT} |"
             echo "| Stale CI cleanup | ${STALE_CLEANUP_RESULT} |"
             echo "| Exclusive matrix | ${EXCLUSIVE_RESULT} |"
+            echo "| Exclusive cleanup | ${EXCLUSIVE_CLEANUP_RESULT} |"
             echo "| Shared stack start | ${SHARED_START_RESULT} |"
             echo "| Shared matrix | ${SHARED_RESULT} |"
             echo "| Shared cleanup | ${SHARED_STOP_RESULT} |"
@@ -336,6 +367,7 @@ jobs:
             "${PRECHECK_RESULT}" \
             "${STALE_CLEANUP_RESULT}" \
             "${EXCLUSIVE_RESULT}" \
+            "${EXCLUSIVE_CLEANUP_RESULT}" \
             "${SHARED_START_RESULT}" \
             "${SHARED_RESULT}" \
             "${SHARED_STOP_RESULT}"; do

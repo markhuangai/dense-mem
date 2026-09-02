@@ -26,6 +26,7 @@ function workflowJob(workflow, name) {
 
 function assertWorkflowOrchestration(workflow) {
   const exclusive = workflowJob(workflow, "exclusive");
+  const exclusiveCleanup = workflowJob(workflow, "exclusive-cleanup");
   const sharedStart = workflowJob(workflow, "shared-start");
   const shared = workflowJob(workflow, "shared");
   const sharedStop = workflowJob(workflow, "shared-stop");
@@ -33,13 +34,17 @@ function assertWorkflowOrchestration(workflow) {
 
   assert.match(exclusive, /^    needs: \[authorize, prechecks, stale-cleanup\]$/m);
   assert.match(exclusive, /^    strategy:\n      fail-fast: true\n      max-parallel: 4$/m);
-  assert.match(sharedStart, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive\]$/m);
-  assert.match(sharedStart, /^    if: needs\.exclusive\.result == 'success'$/m);
+  assert.match(exclusiveCleanup, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive\]$/m);
+  assert.match(exclusiveCleanup, /^    if: always\(\) && needs\.authorize\.result == 'success'$/m);
+  assert.match(exclusiveCleanup, /^    runs-on: rootless-docker$/m);
+  assert.match(exclusiveCleanup, /scripts\/e2e-host-controller\.sh stale-cleanup 1 \\\n\s+"\$\{GITHUB_RUN_ID\}" "\$\{GITHUB_RUN_ATTEMPT\}" exclusive/);
+  assert.match(sharedStart, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup\]$/m);
+  assert.match(sharedStart, /^    if: needs\.exclusive\.result == 'success' && needs\.exclusive-cleanup\.result == 'success'$/m);
   assert.match(shared, /^    needs: \[authorize, shared-start\]$/m);
   assert.match(shared, /^    strategy:\n      fail-fast: true\n      max-parallel: 4$/m);
   assert.match(sharedStop, /^    needs: \[shared-start, shared\]$/m);
   assert.match(sharedStop, /^    if: always\(\) && needs\.shared-start\.result == 'success'$/m);
-  assert.match(report, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive, shared-start, shared, shared-stop\]$/m);
+  assert.match(report, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup, shared-start, shared, shared-stop\]$/m);
   assert.match(report, /^    if: always\(\)$/m);
 }
 
@@ -89,7 +94,7 @@ test("production jobs use capability-matched runners and PR-owned assets", async
     readFile(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url), "utf8"),
   ]);
   for (const job of ["authorize", "report"]) assert.match(workflowJob(workflow, job), /^    runs-on: docker-runner$/m);
-  for (const job of ["prechecks", "stale-cleanup", "shared-start", "shared-stop"]) assert.match(workflowJob(workflow, job), /^    runs-on: rootless-docker$/m);
+  for (const job of ["prechecks", "stale-cleanup", "exclusive-cleanup", "shared-start", "shared-stop"]) assert.match(workflowJob(workflow, job), /^    runs-on: rootless-docker$/m);
   assert.match(workflowJob(reusable, "scenario"), /^    runs-on: rootless-docker$/m);
   assert.doesNotMatch(workflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch/);
   const workflowCall = workflow.slice(workflow.indexOf("on:\n  workflow_call:"), workflow.indexOf("\npermissions:"));
@@ -115,7 +120,7 @@ test("production jobs use capability-matched runners and PR-owned assets", async
 test("production orchestration assertions detect a missing shared dependency", async () => {
   const workflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
   assert.doesNotThrow(() => assertWorkflowOrchestration(workflow));
-  const mutated = workflow.replace(/^    needs: \[authorize, prechecks, stale-cleanup, exclusive\]$/m, "    needs: [authorize, prechecks]");
+  const mutated = workflow.replace(/^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup\]$/m, "    needs: [authorize, prechecks]");
   assert.notEqual(mutated, workflow);
   assert.throws(() => assertWorkflowOrchestration(mutated));
 });

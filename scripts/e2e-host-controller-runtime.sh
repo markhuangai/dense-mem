@@ -326,7 +326,14 @@ stop_stack() {
 
 stale_cleanup() {
   local max_age="${1:-86400}"
+  local target_run_id="${2:-}" target_attempt="${3:-}" target_phase="${4:-}"
   validate_decimal "$max_age"
+  if [[ -n "$target_run_id" || -n "$target_attempt" || -n "$target_phase" ]]; then
+    [[ -n "$target_run_id" && -n "$target_attempt" && -n "$target_phase" ]] || fail "targeted stale cleanup requires run ID, attempt, and phase"
+    validate_decimal "$target_run_id"
+    validate_decimal "$target_attempt"
+    validate_phase "$target_phase"
+  fi
   local now cutoff resource metadata created_at project managed created_epoch
   now="$(date +%s)"
   cutoff=$((now - max_age))
@@ -334,7 +341,7 @@ stale_cleanup() {
   while IFS= read -r resource; do
     [[ -n "$resource" ]] || continue
     metadata="$(docker inspect --format '{{json .}}' "$resource" 2>/dev/null | node -e '
-let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{try{const value=JSON.parse(input);const labels=value.Config?.Labels||value.Labels||{};const project=labels["com.docker.compose.project"]||labels["io.dense-mem.ci.compose-project"]||"";const managed=labels["io.dense-mem.ci.contract"]===process.argv[1]&&labels["io.dense-mem.ci.repository"]===process.argv[2]&&/^[1-9][0-9]*$/.test(labels["io.dense-mem.ci.run-id"]||"")&&/^[1-9][0-9]*$/.test(labels["io.dense-mem.ci.run-attempt"]||"")&&/^(precheck|exclusive|shared)$/.test(labels["io.dense-mem.ci.phase"]||"")&&/^[a-z0-9_]+$/.test(labels["io.dense-mem.ci.scenario"]||"")&&/^sha256:[0-9a-f]{64}$/.test(labels["io.dense-mem.ci.image-digest"]||"")&&typeof labels["io.dense-mem.ci.created-at"]==="string"&&/^densemem-ci-[a-z0-9][a-z0-9-]{0,50}$/.test(project);process.stdout.write(`${labels["io.dense-mem.ci.created-at"]||""}\t${project}\t${managed?"1":"0"}`)}catch{}});' "$CONTRACT_VERSION" "$REPOSITORY" || true)"
+let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{try{const value=JSON.parse(input);const labels=value.Config?.Labels||value.Labels||{};const project=labels["com.docker.compose.project"]||labels["io.dense-mem.ci.compose-project"]||"";const managed=labels["io.dense-mem.ci.contract"]===process.argv[1]&&labels["io.dense-mem.ci.repository"]===process.argv[2]&&/^[1-9][0-9]*$/.test(labels["io.dense-mem.ci.run-id"]||"")&&/^[1-9][0-9]*$/.test(labels["io.dense-mem.ci.run-attempt"]||"")&&/^(precheck|exclusive|shared)$/.test(labels["io.dense-mem.ci.phase"]||"")&&/^[a-z0-9_]+$/.test(labels["io.dense-mem.ci.scenario"]||"")&&/^sha256:[0-9a-f]{64}$/.test(labels["io.dense-mem.ci.image-digest"]||"")&&typeof labels["io.dense-mem.ci.created-at"]==="string"&&/^densemem-ci-[a-z0-9][a-z0-9-]{0,50}$/.test(project)&&(!process.argv[3]||labels["io.dense-mem.ci.run-id"]===process.argv[3])&&(!process.argv[4]||labels["io.dense-mem.ci.run-attempt"]===process.argv[4])&&(!process.argv[5]||labels["io.dense-mem.ci.phase"]===process.argv[5]);process.stdout.write(`${labels["io.dense-mem.ci.created-at"]||""}\t${project}\t${managed?"1":"0"}`)}catch{}});' "$CONTRACT_VERSION" "$REPOSITORY" "$target_run_id" "$target_attempt" "$target_phase" || true)"
     IFS=$'\t' read -r created_at project managed <<<"$metadata"
     [[ "$managed" == "1" ]] || continue
     created_epoch="$(date -d "$created_at" +%s 2>/dev/null || true)"

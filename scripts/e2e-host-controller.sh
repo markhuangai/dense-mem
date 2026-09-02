@@ -28,7 +28,7 @@ usage() {
     '  e2e-host-controller.sh start RUN_ID ATTEMPT PHASE SCENARIO IMAGE_REF SOURCE_DIR' \
     '  e2e-host-controller.sh run RUN_ID ATTEMPT PHASE STACK_SCENARIO SCENARIO IMAGE_REF SOURCE_DIR' \
     '  e2e-host-controller.sh stop PROJECT' \
-    '  e2e-host-controller.sh stale-cleanup [MAX_AGE_SECONDS]' \
+    '  e2e-host-controller.sh stale-cleanup [MAX_AGE_SECONDS] [RUN_ID ATTEMPT PHASE]' \
     '  e2e-host-controller.sh precheck RUN_ID ATTEMPT IMAGE_REF SOURCE_DIR' >&2
   exit 2
 }
@@ -509,8 +509,8 @@ case "${1:-}" in
     stop_stack "$2"
     ;;
   stale-cleanup)
-    [[ "$#" -le 2 ]] || usage
-    stale_cleanup "${2:-86400}"
+    [[ "$#" -le 5 ]] || usage
+    stale_cleanup "${2:-86400}" "${3:-}" "${4:-}" "${5:-}"
     ;;
   precheck)
     [[ "$#" -eq 5 ]] || usage
