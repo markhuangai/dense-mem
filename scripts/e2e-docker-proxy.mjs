@@ -128,7 +128,7 @@ async function authorize(method, path, rawURL, requestBody) {
   const containerMatch = path.match(/^\/containers\/([^/]+)(?:\/([^/]+))?$/);
   if (containerMatch && ["GET", "POST"].includes(method)) {
     const action = containerMatch[2] || "";
-    if (!["json", "logs", "start", "stop", "restart", "wait", "stats", "top", "changes", "archive", "exec"].includes(action)) {
+    if (!["json", "logs", "start", "stop", "restart", "wait", "stats", "top", "changes", "exec"].includes(action)) {
       deny("Docker container operation is not permitted");
     }
     const labels = await authorizeResource("containers", containerMatch[1]);
@@ -212,7 +212,7 @@ async function authorizePrecheck(method, path, rawURL, requestBody) {
   const containerMatch = path.match(/^\/containers\/([^/]+)(?:\/([^/]+))?$/);
   if (containerMatch && ["GET", "POST", "DELETE"].includes(method)) {
     const action = containerMatch[2] || "";
-    if (!["json", "logs", "start", "stop", "restart", "wait", "stats", "top", "changes", "archive", "exec", "kill"].includes(action) && method !== "DELETE") {
+    if (!["json", "logs", "start", "stop", "restart", "wait", "stats", "top", "changes", "exec", "kill"].includes(action) && method !== "DELETE") {
       deny("precheck container operation is not permitted");
     }
     await authorizeResource("containers", containerMatch[1]);
@@ -491,8 +491,6 @@ function parseArgs(args) {
   if (values.mode === "precheck" && !values.network) usage();
   values.runId = values["run-id"];
   values.network = values.network || "";
-  values.phase = values.phase;
-  values.scenario = values.scenario;
   values.imageDigest = values["image-digest"];
   return values;
 }

@@ -251,7 +251,6 @@ function resolvePullRequestEvent(payload, actorPermission) {
     eventLabel: payload.label?.name || "",
     triggerHead,
     pullNumber: pull.number,
-    isFork: pull.head.repo?.full_name !== pull.base.repo.full_name,
     actorPermission,
   };
 }
@@ -286,12 +285,9 @@ async function resolvePreviewAttempt({
 
   return {
     ...decision,
-    pull,
     pullNumber: pull.number,
     headSha: pull.head.sha,
     headRepository: pull.head.repo?.full_name || "",
-    isFork: event.isFork,
-    hasPreviewLabel,
   };
 }
 
@@ -367,7 +363,6 @@ async function resolveRcPreview({ github, context, mainCommit }) {
 }
 
 module.exports = {
-  PRODUCTION_E2E_ACTOR,
   POLICY_STATUS_CONTEXT,
   PREVIEW_LABEL,
   compareContainsMain,

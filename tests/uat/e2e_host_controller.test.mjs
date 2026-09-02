@@ -97,6 +97,7 @@ test("production scenarios preserve Playwright handoff values", () => {
   assert.match(scenarioWorkflow, /^      SCENARIO: \$\{\{ inputs\.scenario \}\}$/m);
   assert.match(scenarioWorkflow, /scenario input must contain only lowercase letters, digits, and underscores/);
   assert.doesNotMatch(scenarioWorkflow, /RUNNER_TEMP[^\n]*inputs\.scenario/);
+  assert.match(controller, /shared_playwright/);
 });
 
 test("host installer never creates or copies a credential file", () => {

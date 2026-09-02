@@ -576,9 +576,10 @@ local_all() {
   lease="$(acquire "$run_id" "$attempt" "$image_ref" "$digest")"
 
   local matrix_status=0
-  local scenario helpers manifest project scenario_log
-  while IFS= read -r scenario; do
+  local scenario helpers playwright manifest project scenario_log
+  while IFS=$'\t' read -r scenario playwright; do
     [[ -n "$scenario" ]] || continue
+    [[ "$playwright" == "0" || "$playwright" == "1" ]] || fail "invalid Playwright flag for local scenario: ${scenario}"
     helpers="$(node "$registry_script" --scenario "$scenario" | node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const value=JSON.parse(input);if(value.audited!==true)process.exit(1);process.stdout.write((value.helper_profiles||[]).join(","));});')" || fail "unregistered scenario cannot enter the local matrix: ${scenario}"
     project="$(managed_project_name "$run_id" "$attempt" exclusive "$scenario")"
     active_project="$project"
@@ -586,6 +587,7 @@ local_all() {
     printf 'exclusive %s\n' "$scenario"
     manifest="$(start_stack "$run_id" "$attempt" exclusive "$scenario" "$image_ref" "$digest" "$source_revision" "$helpers" "$source_dir")"
     printf '%s\n' "$manifest" > "${run_root}/exclusive-${scenario}.manifest.json"
+    export DENSE_MEM_CI_RUN_PLAYWRIGHT="$playwright"
     if run_scenario "${run_root}/exclusive-${scenario}.json" "$source_dir" "$scenario" >"$scenario_log" 2>&1; then
       :
     else
@@ -594,9 +596,10 @@ local_all() {
       printf 'exclusive %s failed; shared matrix was not started\n' "$scenario" >&2
       exit "$matrix_status"
     fi
+    unset DENSE_MEM_CI_RUN_PLAYWRIGHT
     stop_stack "$project"
     active_project=""
-  done < <(node "$registry_script" --matrix exclusive | node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(0,"utf8"));for(const row of value.include||[])process.stdout.write(`${row.name}\n`);')
+  done < <(node "$registry_script" --matrix exclusive | node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(0,"utf8"));for(const row of value.include||[])process.stdout.write(`${row.name}\t${row.playwright ? 1 : 0}\n`);')
 
   local shared_helpers
   shared_helpers="$(node "$registry_script" --helpers shared_team | node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).join(","));')"
@@ -609,7 +612,13 @@ local_all() {
   printf '%s\n' "$manifest" > "${run_root}/shared-shared.manifest.json"
 
   local -a shared_names=()
-  while IFS= read -r scenario; do [[ -n "$scenario" ]] && shared_names+=("$scenario"); done < <(node "$registry_script" --matrix shared_team | node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(0,"utf8"));for(const row of value.include||[])process.stdout.write(`${row.name}\n`);')
+  local -A shared_playwright=()
+  while IFS=$'\t' read -r scenario playwright; do
+    [[ -n "$scenario" ]] || continue
+    [[ "$playwright" == "0" || "$playwright" == "1" ]] || fail "invalid Playwright flag for shared scenario: ${scenario}"
+    shared_names+=("$scenario")
+    shared_playwright["$scenario"]="$playwright"
+  done < <(node "$registry_script" --matrix shared_team | node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(0,"utf8"));for(const row of value.include||[])process.stdout.write(`${row.name}\t${row.playwright ? 1 : 0}\n`);')
   local next_index=0
   local finished_pid=""
   local finished_status=0
@@ -619,7 +628,8 @@ local_all() {
     while ((next_index < ${#shared_names[@]} && ${#active_pids[@]} < 4)); do
       scenario="${shared_names[$next_index]}"
       scenario_log="${log_dir}/shared-${scenario}.log"
-      setsid --wait "$controller_path" run "${run_root}/shared-shared.json" "$source_dir" "$scenario" >"$scenario_log" 2>&1 &
+      DENSE_MEM_CI_RUN_PLAYWRIGHT="${shared_playwright[$scenario]}" \
+        setsid --wait "$controller_path" run "${run_root}/shared-shared.json" "$source_dir" "$scenario" >"$scenario_log" 2>&1 &
       pid=$!
       active_pids+=("$pid")
       pid_scenario["$pid"]="$scenario"

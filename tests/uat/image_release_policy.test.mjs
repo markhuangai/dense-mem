@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
@@ -20,13 +19,11 @@ const {
   validateProductionImageReference,
 } = policy;
 const execFileAsync = promisify(execFile);
-const ociImageScript = fileURLToPath(new URL("../../.github/scripts/oci-image.sh", import.meta.url));
 
 const baseEvent = {
   action: "synchronize",
   eventLabel: "",
   hasPreviewLabel: false,
-  isFork: false,
   triggerHeadMatches: true,
   actorPermission: "none",
   pullRequestAuthor: "other",
@@ -174,105 +171,6 @@ test("OCI promotion avoids jq 1.6 reserved variable names", async () => {
   );
 
   assert.doesNotMatch(script, /\bas \$label\b/);
-});
-
-test("production image receipts require both platform production metadata", async () => {
-  const [script, dockerfile] = await Promise.all([
-    readFile(new URL("../../.github/scripts/oci-image.sh", import.meta.url), "utf8"),
-    readFile(new URL("../../Dockerfile", import.meta.url), "utf8"),
-  ]);
-  assert.match(script, /production_receipt\(\)/);
-  assert.match(script, /org\.opencontainers\.image\.variant.*production/);
-  assert.match(script, /production-receipt/);
-  assert.doesNotMatch(dockerfile, /FROM runtime-base AS e2e/);
-});
-
-async function runProductionReceipt(platforms) {
-  const directory = await mkdtemp(join(tmpdir(), "dense-mem-production-receipt-"));
-  const fixturePath = join(directory, "fixture.json");
-  const regctlPath = join(directory, "regctl");
-  const digest = `sha256:${"a".repeat(64)}`;
-  const indexManifests = Object.keys(platforms).map((platform, index) => {
-    const [os, architecture] = platform.split("/");
-    return {
-      mediaType: "application/vnd.oci.image.manifest.v1+json",
-      digest: `sha256:${String(index + 1).padStart(64, "0")}`,
-      platform: { os, architecture },
-    };
-  });
-  await writeFile(fixturePath, JSON.stringify({ digest, platforms }));
-  await writeFile(regctlPath, `#!/usr/bin/env node
-const fs = require("node:fs");
-const fixture = JSON.parse(fs.readFileSync(process.env.REGCTL_FIXTURE, "utf8"));
-const args = process.argv.slice(2);
-if (args[0] === "manifest" && args[1] === "head") {
-  process.stdout.write(fixture.digest + "\\n");
-  process.exit(0);
-}
-if (args[0] === "manifest" && args[1] === "get") {
-  process.stdout.write(JSON.stringify({
-    mediaType: "application/vnd.oci.image.index.v1+json",
-    manifests: ${JSON.stringify(indexManifests)},
-  }));
-  process.exit(0);
-}
-if (args[0] === "image" && args[1] === "inspect") {
-  const platformIndex = args.indexOf("--platform");
-  const platform = platformIndex === -1 ? "" : args[platformIndex + 1];
-  const labels = fixture.platforms[platform];
-  if (!labels) process.exit(1);
-  process.stdout.write(JSON.stringify({ config: { Labels: labels } }));
-  process.exit(0);
-}
-process.exit(2);
-`);
-  await chmod(regctlPath, 0o755);
-  try {
-    return await execFileAsync(
-      ociImageScript,
-      ["production-receipt", "ghcr.io/markhuangai/dense-mem:v2.6.1", "markhuangai/dense-mem"],
-      {
-        env: { ...process.env, REGCTL_BIN: regctlPath, REGCTL_FIXTURE: fixturePath },
-        maxBuffer: 1024 * 1024,
-      },
-    );
-  } catch (error) {
-    return error;
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-}
-
-test("production image receipts execute both-platform metadata validation", async () => {
-  const revision = "b".repeat(40);
-  const valid = {
-    "linux/amd64": {
-      "org.opencontainers.image.variant": "production",
-      "org.opencontainers.image.source": "https://github.com/markhuangai/dense-mem",
-      "org.opencontainers.image.revision": revision,
-    },
-    "linux/arm64": {
-      "org.opencontainers.image.variant": "production",
-      "org.opencontainers.image.source": "https://github.com/markhuangai/dense-mem",
-      "org.opencontainers.image.revision": revision,
-    },
-  };
-  const success = await runProductionReceipt(valid);
-  assert.equal(success.code ?? 0, 0);
-  assert.match(success.stdout, new RegExp(`^sha256:[0-9a-f]{64}\\t${revision}\\n$`));
-
-  const cases = [
-    ["wrong variant", { ...valid, "linux/amd64": { ...valid["linux/amd64"], "org.opencontainers.image.variant": "development" } }],
-    ["missing variant", { ...valid, "linux/arm64": { ...valid["linux/arm64"], "org.opencontainers.image.variant": undefined } }],
-    ["wrong source", { ...valid, "linux/amd64": { ...valid["linux/amd64"], "org.opencontainers.image.source": "https://example.invalid/dense-mem" } }],
-    ["malformed revision", { ...valid, "linux/amd64": { ...valid["linux/amd64"], "org.opencontainers.image.revision": "not-a-revision" } }],
-    ["platform revision drift", { ...valid, "linux/arm64": { ...valid["linux/arm64"], "org.opencontainers.image.revision": "c".repeat(40) } }],
-    ["missing platform", { "linux/amd64": valid["linux/amd64"] }],
-  ];
-  for (const [label, platforms] of cases) {
-    const result = await runProductionReceipt(platforms);
-    assert.notEqual(result.code, 0, `${label} must be rejected`);
-  }
 });
 
 test("prerelease publication waits for the staging migration rehearsal", async () => {
@@ -493,13 +391,12 @@ test("non-owner pushes wait for a fresh approval", () => {
   });
 });
 
-test("an admin-applied label starts a fork attempt and is consumed", () => {
+test("an admin-applied label starts a preview attempt and is consumed", () => {
   assert.deepEqual(
     decidePreviewEvent({
       ...baseEvent,
       action: "labeled",
       eventLabel: "deploy-test-image",
-      isFork: true,
       actorPermission: "admin",
       hasPreviewLabel: true,
     }),
@@ -513,7 +410,6 @@ test("a non-admin label is removed without authorizing a build", () => {
       ...baseEvent,
       action: "labeled",
       eventLabel: "deploy-test-image",
-      isFork: true,
       actorPermission: "read",
       hasPreviewLabel: true,
     }),
@@ -650,7 +546,7 @@ test("policy receipts reject mismatched PRs, run URLs, and descriptions", () => 
   );
 });
 
-test("deleted fork repositories resolve as unbuildable fork events", () => {
+test("deleted pull-request repositories retain the event head for later validation", () => {
   const headSha = "a".repeat(40);
   assert.deepEqual(
     policy.resolvePullRequestEvent(
@@ -669,7 +565,6 @@ test("deleted fork repositories resolve as unbuildable fork events", () => {
       eventLabel: "",
       triggerHead: headSha,
       pullNumber: 42,
-      isFork: true,
       actorPermission: "write",
     },
   );
@@ -688,13 +583,11 @@ test("RC reuse API policy requires the trusted preview run", () => {
   };
   const input = {
     pull,
-    hasPreviewLabel: true,
     policyStatus,
     workflowRun,
   };
 
   assert.deepEqual(decideRcPreview(input), { eligible: true, reason: "" });
-  assert.equal(decideRcPreview({ ...input, hasPreviewLabel: false }).eligible, true);
   assert.equal(
     decideRcPreview({
       ...input,

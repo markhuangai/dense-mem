@@ -13,7 +13,7 @@ const repository = "markhuangai/dense-mem";
 const project = "densemem-ci-123-1-exclusive-mcp-boundaries";
 const digest = `sha256:${"a".repeat(64)}`;
 
-test("restricted Docker proxy permits scoped lifecycle and exec upgrade only", async (t) => {
+test("restricted Docker proxy permits scoped lifecycle and exec upgrade but denies archive", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "dense-mem-proxy-"));
   const targetSocket = join(directory, "target.sock");
   const proxySocket = join(directory, "proxy.sock");
@@ -109,6 +109,7 @@ test("restricted Docker proxy permits scoped lifecycle and exec upgrade only", a
   const serverExec = await requestProxy(proxySocket, "POST", "/v1.45/containers/server/exec", JSON.stringify({ Cmd: ["env"] }));
   assert.equal(serverExec.status, 403);
   assert.match(serverExec.body, /server containers/);
+  assert.equal((await requestProxy(proxySocket, "GET", "/v1.45/containers/demo/archive?path=/etc/passwd")).status, 403);
 
   const foreign = await requestProxy(proxySocket, "GET", "/v1.45/containers/foreign/logs");
   assert.equal(foreign.status, 403);
@@ -281,6 +282,7 @@ test("precheck proxy scopes resource creation and filters listings", async (t) =
     Mounts: [{ Type: "bind", Source: "/etc", Target: "/host" }],
   }));
   assert.equal(unsafePayloadMount.status, 403);
+  assert.equal((await requestProxy(proxySocket, "GET", "/v1.45/containers/precheck-container/archive?path=/etc/passwd")).status, 403);
 });
 
 async function requestProxy(socketPath, method, path, body = "") {

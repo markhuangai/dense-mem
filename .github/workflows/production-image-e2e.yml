@@ -19,9 +19,6 @@ permissions:
   contents: read
   packages: read
 
-env:
-  E2E_REPOSITORY: ${{ github.repository }}
-
 jobs:
   authorize:
     name: Authorize and resolve production image
