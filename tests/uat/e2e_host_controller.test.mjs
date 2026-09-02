@@ -156,6 +156,7 @@ test("real controller fixtures use workflow-scoped names and leave no local stat
   assert.match(realControllerTest, /fixture_prefix/);
   assert.match(realControllerTest, /DENSE_MEM_CI_JOB_DIR/);
   assert.match(realControllerTest, /controller created persistent lease\/run state/);
+  assert.match(realControllerTest, /for state_dir in "\$JOB_DIR" "\$CONFIG_DIR"/);
   assert.match(realControllerTest, /stale-cleanup 1 "\$run_stale" "\$fixture_attempt" shared/);
   assert.match(realControllerTest, /io\.dense-mem\.ci\.phase=exclusive/);
   assert.doesNotMatch(realControllerTest, /DENSE_MEM_CI_DAEMON_ID|e2e-docker-proxy|e2e-runtime-adapter|release.*lease/);

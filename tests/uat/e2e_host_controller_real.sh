@@ -349,5 +349,7 @@ if docker image inspect "$helper_image" >/dev/null 2>&1; then
   fail "stale helper image was not reclaimed"
 fi
 
-[[ ! -e "${TEST_ROOT}/leases" && ! -e "${TEST_ROOT}/runs" ]] || fail "controller created persistent lease/run state"
+for state_dir in "$JOB_DIR" "$CONFIG_DIR"; do
+  [[ ! -e "${state_dir}/leases" && ! -e "${state_dir}/runs" ]] || fail "controller created persistent lease/run state in ${state_dir}"
+done
 printf '%s\n' 'real rootless Docker controller tests passed'
