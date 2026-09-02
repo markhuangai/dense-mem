@@ -24,11 +24,17 @@ function validateProductionImageReference(image, repository) {
   if (!image.startsWith(`${expected}:`) && !image.startsWith(`${expected}@`)) {
     return { valid: false, reason: "the image is outside the Dense-Mem GHCR repository" };
   }
-  const tag = image.slice(expected.length + 1);
-  if (image.startsWith(`${expected}:`) && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(tag)) {
-    return { valid: false, reason: "the image tag is invalid" };
-  }
-  if (image.startsWith(`${expected}@`) && !/^sha256:[0-9a-f]{64}$/.test(tag)) {
+  if (image.startsWith(`${expected}:`)) {
+    const taggedReference = image.slice(expected.length + 1);
+    const at = taggedReference.indexOf("@");
+    const tag = at === -1 ? taggedReference : taggedReference.slice(0, at);
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(tag)) {
+      return { valid: false, reason: "the image tag is invalid" };
+    }
+    if (at !== -1 && !/^sha256:[0-9a-f]{64}$/.test(taggedReference.slice(at + 1))) {
+      return { valid: false, reason: "the image digest is invalid" };
+    }
+  } else if (image.startsWith(`${expected}@`) && !/^sha256:[0-9a-f]{64}$/.test(image.slice(expected.length + 1))) {
     return { valid: false, reason: "the image digest is invalid" };
   }
   return { valid: true, repository: expected, reference: image };

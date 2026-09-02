@@ -96,6 +96,28 @@ test("production image reference validation rejects malformed inputs directly", 
   }
 });
 
+test("production E2E image handoff requires a digest-pinned reference", () => {
+  const digest = `sha256:${"a".repeat(64)}`;
+  assert.deepEqual(
+    validatePinnedProductionImageReference(
+      "ghcr.io/markhuangai/dense-mem:test-42",
+      "markhuangai/dense-mem",
+    ),
+    { valid: false, reason: "the E2E image must be pinned by digest" },
+  );
+  assert.deepEqual(
+    validatePinnedProductionImageReference(
+      `ghcr.io/markhuangai/dense-mem:test-42@${digest}`,
+      "markhuangai/dense-mem",
+    ),
+    {
+      valid: true,
+      repository: "ghcr.io/markhuangai/dense-mem",
+      reference: `ghcr.io/markhuangai/dense-mem:test-42@${digest}`,
+    },
+  );
+});
+
 test("automatic preview authorization rejects every authorization boundary", () => {
   const input = {
     pullRequestAuthor: "Z-M-Huang",

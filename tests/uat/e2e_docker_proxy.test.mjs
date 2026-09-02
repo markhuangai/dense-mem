@@ -207,12 +207,19 @@ test("precheck proxy scopes resource creation and filters listings", async (t) =
     "com.docker.compose.project": precheckProject,
   };
   const forwardedBodies = [];
+  const forwardedContainerCreates = [];
   const target = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     if (chunks.length > 0) forwardedBodies.push(Buffer.concat(chunks).toString("utf8"));
     const path = new URL(request.url || "/", "http://docker").pathname;
+    if (path === `/v1.45/networks/${precheckNetwork}`) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ Id: "precheck-network-id", Labels: precheckLabels }));
+      return;
+    }
     if (path === "/v1.45/containers/create") {
+      forwardedContainerCreates.push(Buffer.concat(chunks).toString("utf8"));
       response.writeHead(201, { "content-type": "application/json" });
       response.end(JSON.stringify({ Id: "precheck-container" }));
       return;
@@ -254,10 +261,11 @@ test("precheck proxy scopes resource creation and filters listings", async (t) =
 
   const create = await requestProxy(proxySocket, "POST", "/v1.45/containers/create", JSON.stringify({
     Image: "pgvector/pgvector:0.8.2-pg18-trixie", Labels: precheckLabels,
+    NetworkingConfig: { EndpointsConfig: { [precheckNetwork]: { NetworkID: "precheck-network-id", Aliases: ["postgres"] } } },
     HostConfig: { PortBindings: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "0" }] } },
   }));
   assert.equal(create.status, 201);
-  assert.deepEqual(JSON.parse(forwardedBodies[0]).HostConfig, {});
+  assert.deepEqual(JSON.parse(forwardedContainerCreates[0]).HostConfig, {});
   const network = await requestProxy(proxySocket, "POST", "/v1.45/networks/create", JSON.stringify({
     Name: precheckNetwork, Driver: "bridge", Attachable: true,
   }));
@@ -289,8 +297,10 @@ test("precheck proxy scopes resource creation and filters listings", async (t) =
   }));
   assert.equal(unsafePayloadMount.status, 403);
   for (const [field, value] of [
+    ["NetworkMode", "other-project_ci"],
     ["NetworkMode", "container:foreign"],
     ["PidMode", "container:foreign"],
+    ["PidMode", "private"],
     ["IpcMode", "ns:/proc/1/ns/ipc"],
     ["UTSMode", "container:foreign"],
     ["UsernsMode", "container:foreign"],
@@ -301,6 +311,17 @@ test("precheck proxy scopes resource creation and filters listings", async (t) =
     }));
     assert.equal(unsafeNamespace.status, 403, `${field} namespace joins must be rejected`);
   }
+  for (const networkingConfig of [
+    { ["other-project_ci"]: { Aliases: ["server"] } },
+    { [precheckNetwork]: { NetworkID: "foreign-network-id", Aliases: ["postgres"] } },
+  ]) {
+    const unsafeNetwork = await requestProxy(proxySocket, "POST", "/v1.45/containers/create", JSON.stringify({
+      Image: "pgvector/pgvector:0.8.2-pg18-trixie", Labels: precheckLabels,
+      NetworkingConfig: { EndpointsConfig: networkingConfig },
+    }));
+    assert.equal(unsafeNetwork.status, 403, "foreign network attachments must be rejected");
+  }
+  assert.equal(forwardedContainerCreates.length, 1);
   assert.equal((await requestProxy(proxySocket, "GET", "/v1.45/containers/precheck-container/archive?path=/etc/passwd")).status, 403);
 });
 

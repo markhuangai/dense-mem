@@ -184,7 +184,7 @@ async function authorizePrecheck(method, path, rawURL, requestBody) {
     const hostConfig = payload.HostConfig || {};
     if (
       hostConfig.Privileged === true ||
-      hasUnsafeNamespaceMode(hostConfig.NetworkMode) ||
+      hasForeignNetworkMode(hostConfig.NetworkMode) ||
       hasUnsafeNamespaceMode(hostConfig.PidMode) ||
       hasUnsafeNamespaceMode(hostConfig.IpcMode) ||
       hasUnsafeNamespaceMode(hostConfig.UTSMode) ||
@@ -195,6 +195,7 @@ async function authorizePrecheck(method, path, rawURL, requestBody) {
       hasConfiguredEntries(hostConfig.Tmpfs) ||
       hasConfiguredEntries(payload.Mounts)
     ) deny("precheck containers cannot use host privileges or mounts");
+    await validatePrecheckNetworkAttachment(payload, hostConfig);
     assertSafePortBindings(hostConfig.PortBindings);
     if (typeof payload.Image !== "string" || payload.Image !== "pgvector/pgvector:0.8.2-pg18-trixie") {
       deny("precheck container image is not permitted");
@@ -283,7 +284,44 @@ function hasConfiguredEntries(value) {
 }
 
 function hasUnsafeNamespaceMode(value) {
-  return value === "host" || (typeof value === "string" && /^(?:container|ns):/i.test(value));
+  return value !== undefined && value !== null && String(value).length > 0;
+}
+
+function hasForeignNetworkMode(value) {
+  return value !== undefined && value !== null && value !== "" && value !== options.network;
+}
+
+async function validatePrecheckNetworkAttachment(payload, hostConfig) {
+  if (hostConfig.NetworkMode && hostConfig.NetworkMode !== options.network) {
+    deny("precheck containers must use the assigned network");
+  }
+  const endpoints = payload.NetworkingConfig?.EndpointsConfig;
+  if (endpoints === undefined || endpoints === null) return;
+  if (typeof endpoints !== "object" || Array.isArray(endpoints)) {
+    deny("precheck network endpoints are invalid");
+  }
+  const names = Object.keys(endpoints);
+  if (names.length === 0) return;
+  if (names.length !== 1 || names[0] !== options.network) {
+    deny("precheck containers must use only the assigned network");
+  }
+  const endpoint = endpoints[options.network];
+  if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) {
+    deny("precheck network endpoint is invalid");
+  }
+  if (hasConfiguredEntries(endpoint.Links)) {
+    deny("precheck network links are not permitted");
+  }
+  if (
+    endpoint.Aliases !== undefined &&
+    (!Array.isArray(endpoint.Aliases) || endpoint.Aliases.some((alias) => alias !== "postgres"))
+  ) {
+    deny("precheck network aliases are not permitted");
+  }
+  if (endpoint.NetworkID !== undefined && endpoint.NetworkID !== null) {
+    const inspected = await inspectResource("networks", options.network);
+    if (endpoint.NetworkID !== inspected?.Id) deny("precheck network ID does not match the assigned network");
+  }
 }
 
 function sanitizeContainerInspect(body) {
