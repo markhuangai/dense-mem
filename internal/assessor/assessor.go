@@ -30,6 +30,9 @@ const (
 	SemanticAssessmentMaxRelationshipSplits         = 50
 	SemanticAssessmentMaxEvidenceSpans              = 20
 	SemanticAssessmentMaxKnownEvidence              = 4000
+	// SemanticAssessmentMaxKnownEvidenceRunes bounds the aggregate known
+	// evidence content before request-local boundary expansion.
+	SemanticAssessmentMaxKnownEvidenceRunes = 20000
 )
 
 const (

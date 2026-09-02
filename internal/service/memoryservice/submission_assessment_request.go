@@ -193,6 +193,7 @@ func (s *assessmentEngine) loadKnownEvidence(
 		plan.knownEvidenceByID = map[string]repository.SubmissionAssessmentKnownEvidence{}
 	}
 	loadedIDs := make(map[string]struct{}, len(loaded.Evidence))
+	knownEvidenceRunes := 0
 	for _, item := range loaded.Evidence {
 		item.EvidenceID = strings.TrimSpace(item.EvidenceID)
 		item.FragmentID = strings.TrimSpace(item.FragmentID)
@@ -202,6 +203,16 @@ func (s *assessmentEngine) loadKnownEvidence(
 		if item.EvidenceID == "" || item.FragmentID == "" || item.EvidenceID != item.FragmentID || strings.TrimSpace(item.Content) == "" {
 			return deterministicSemanticAssessmentPreflightError("known_evidence_catalog", "submission known evidence catalog is invalid")
 		}
+		contentRunes := len([]rune(item.Content))
+		if contentRunes > assessor.SemanticAssessmentMaxKnownEvidenceRunes-knownEvidenceRunes {
+			observed := knownEvidenceRunes + contentRunes
+			return deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+				"known_evidence_context",
+				"submission known evidence exceeds its configured aggregate content bound",
+				assessor.FailureMeasurement{Unit: "runes", Observed: observed, Limit: assessor.SemanticAssessmentMaxKnownEvidenceRunes},
+			)
+		}
+		knownEvidenceRunes += contentRunes
 		if _, duplicate := loadedIDs[item.EvidenceID]; duplicate {
 			return deterministicSemanticAssessmentPreflightError("known_evidence_catalog", "submission known evidence catalog returned a duplicate item")
 		}

@@ -416,6 +416,52 @@ func TestKnownEvidenceFenceAllowsVisibleCrossOwnerEvidenceUnderRLS(t *testing.T)
 	require.NoError(t, err)
 }
 
+func TestKnownEvidenceFenceRejectsSnapshotAfterSameTransactionSourceAdvance(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "known-support-source-advance")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "known-support-source-advance-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	const sourceKey = "document://known-support-source-advance"
+
+	knownContent := "Known evidence belongs to source revision one."
+	known, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "known-support-source-advance-rev-1",
+		RequestHash: sha256Hex(knownContent),
+		Evidence: []EvidenceInput{{
+			Content: knownContent, SourceType: "document", Authority: "primary", SourceKey: sourceKey,
+			SourceRevisionToken: "rev-1", SourceRevisionContentHash: sha256Hex(knownContent),
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, known.Evidence, 1)
+	loaded, err := semantic.ListSubmissionAssessmentKnownEvidence(ctx, SubmissionAssessmentKnownEvidenceInput{
+		TeamID: teamID, OwnerProfileID: ownerID, EvidenceIDs: []string{known.Evidence[0].FragmentID},
+	})
+	require.NoError(t, err)
+	require.Len(t, loaded.Evidence, 1)
+
+	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		advancedContent := "The source now belongs to revision two."
+		_, err := advanceSourceRevisionInTx(ctx, tx, AdvanceSourceRevisionInput{
+			TeamID: teamID, OwnerProfileID: ownerID, SourceKey: sourceKey,
+			RevisionToken: "rev-2", ExpectedPreviousRevisionToken: "rev-1",
+			ContentHash: sha256Hex(advancedContent),
+		}, nil)
+		if err != nil {
+			return err
+		}
+		return reauthorizeSubmissionKnownEvidence(ctx, tx, CommitSubmissionAssessmentInput{
+			RememberCommitScope:   RememberCommitScope{TeamID: teamID, OwnerProfileID: ownerID, IngestID: uuid.NewString()},
+			KnownEvidenceSnapshot: loaded.Evidence,
+		})
+	})
+	require.ErrorIs(t, err, ErrSubmissionAssessmentKnownEvidenceStale,
+		"a source advance in the same transaction must not make superseded known evidence supportable")
+}
+
 func TestKnownEvidenceFenceFailsClosedWhenSourceRevisionIsLocked(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

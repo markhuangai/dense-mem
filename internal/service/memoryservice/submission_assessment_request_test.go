@@ -3,6 +3,7 @@ package memoryservice
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 func TestSubmissionAssessmentGroundsActiveAliasWithFlexibleWhitespace(t *testing.T) {
@@ -372,6 +374,28 @@ func TestSubmissionAssessmentKnownEvidenceCatalogValidation(t *testing.T) {
 		require.NotNil(t, target)
 		require.True(t, target.KnownEvidenceUnavailable)
 	})
+}
+
+func TestSubmissionAssessmentRejectsAggregateKnownEvidenceContentBeforeCatalogConstruction(t *testing.T) {
+	fixture := synchronousAssessmentFixture(t)
+	knownID := uuid.NewString()
+	fixture.input.Snapshot.Proposal["relationship_hints"].([]any)[0].(map[string]any)["known_evidence_ids"] = []any{knownID}
+	fixture.catalog.knownEvidence = []repository.SubmissionAssessmentKnownEvidence{{
+		TeamID: fixture.input.Scope.TeamID, EvidenceID: knownID, FragmentID: knownID,
+		IngestID: uuid.NewString(), OwnerProfileID: uuid.NewString(),
+		Content:     strings.Repeat("x", assessor.SemanticAssessmentMaxKnownEvidenceRunes+1),
+		ContentHash: "known-hash", Authority: "primary", SpaceID: uuid.NewString(), SpaceGeneration: 1,
+	}}
+
+	plan, err := buildSubmissionAssessmentPlan(fixture.input.Snapshot)
+	require.NoError(t, err)
+	engine := newAssessmentEngine(fixture.deps, fixture.input.Scope.TeamID, fixture.input.Scope.OwnerProfileID)
+	err = engine.loadKnownEvidence(t.Context(), fixture.input.Scope, &plan)
+	require.Equal(t, "known_evidence_context", mustPreflightStage(err))
+	_, err = AssessSynchronousRemember(t.Context(), fixture.deps, fixture.input)
+	require.ErrorIs(t, err, rememberapp.ErrRememberInputBudgetExceeded)
+	require.Empty(t, fixture.catalog.entityInputs, "aggregate known evidence bound must run before entity catalog construction")
+	require.Zero(t, fixture.provider.calls, "provider must not receive an over-budget request")
 }
 
 func TestSubmissionAssessmentAnchorCandidateAndPronounHelpers(t *testing.T) {

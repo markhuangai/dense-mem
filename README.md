@@ -204,8 +204,10 @@ context; they do not receive security results. A stored Relationship must still 
 at least one submitted `evidence_indices` span. Entity grounding accepts current
 canonical or alias names, and a pronoun only when the assessor is given a server-issued
 anchor for an earlier exact name span. Inaccessible or stale known evidence leaves the
-Relationship unsupported without revealing whether an ID exists. The public contract
-remains `dense-mem.v2.6.2`.
+Relationship unsupported without revealing whether an ID exists. The aggregate known
+evidence content in one request is bounded to 20,000 Unicode code points before
+assessor boundary expansion; larger requests return `input_budget_exceeded`. The
+public contract remains `dense-mem.v2.6.2`.
 
 To replace a specific current evidence item you own, put its UUID in the new
 item's `supersedes_evidence_ids`. Direct targeting is separate from advancing a
