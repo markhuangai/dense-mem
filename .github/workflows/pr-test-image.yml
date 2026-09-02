@@ -470,7 +470,6 @@ jobs:
     uses: ./.github/workflows/production-image-e2e.yml
     with:
       image: ${{ needs.publish.outputs.image }}
-    secrets: inherit
 
   report-e2e:
     name: Report production-image E2E

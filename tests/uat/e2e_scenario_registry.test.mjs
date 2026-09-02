@@ -87,9 +87,10 @@ test("scenario classification fails closed for invalid registry metadata", () =>
 });
 
 test("production jobs use capability-matched runners and PR-owned assets", async () => {
-  const [workflow, reusable, controller, compose] = await Promise.all([
+  const [workflow, reusable, caller, controller, compose] = await Promise.all([
     readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8"),
     readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8"),
+    readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/e2e-host-controller.sh", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url), "utf8"),
   ]);
@@ -97,6 +98,8 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   for (const job of ["prechecks", "stale-cleanup", "exclusive-cleanup", "shared-start", "shared-stop"]) assert.match(workflowJob(workflow, job), /^    runs-on: rootless-docker$/m);
   assert.match(workflowJob(reusable, "scenario"), /^    runs-on: rootless-docker$/m);
   assert.doesNotMatch(workflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch/);
+  assert.doesNotMatch(workflow, /secrets:\s*inherit/);
+  assert.doesNotMatch(caller, /secrets:\s*inherit/);
   const workflowCall = workflow.slice(workflow.indexOf("on:\n  workflow_call:"), workflow.indexOf("\npermissions:"));
   const scenarioCall = reusable.slice(reusable.indexOf("on:\n  workflow_call:"), reusable.indexOf("\npermissions:"));
   assert.match(workflowCall, /^      image:$/m);

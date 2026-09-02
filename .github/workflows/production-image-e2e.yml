@@ -157,7 +157,6 @@ jobs:
       scenario: ${{ matrix.name }}
       timeout_minutes: ${{ matrix.timeout_minutes }}
       shared_project: ""
-    secrets: inherit
 
   exclusive-cleanup:
     name: Reclaim exclusive production stacks
@@ -239,7 +238,6 @@ jobs:
       scenario: ${{ matrix.name }}
       timeout_minutes: ${{ matrix.timeout_minutes }}
       shared_project: ${{ needs.shared-start.outputs.shared_project }}
-    secrets: inherit
 
   shared-stop:
     name: Stop shared production stack
