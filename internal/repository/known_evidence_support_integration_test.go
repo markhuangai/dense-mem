@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -175,6 +176,79 @@ func TestKnownEvidenceSupportPreservesABCOwnershipAndIsolation(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrSemanticOwnerMismatch), err)
+}
+
+func TestKnownEvidenceSupportDoesNotRequireInlineEmbeddingProjection(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "known-support-inline-embedding", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "known-support-inline-embedding")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "known-support-inline-embedding-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+
+	sharedSpace, err := NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamID))
+	require.NoError(t, err)
+	known := createSemanticIngest(t, ctx, ledger, teamID, ownerID,
+		"known-support-inline-embedding-known", "Known evidence is read-only embedding context.")
+	loaded, err := semantic.ListSubmissionAssessmentKnownEvidence(ctx, SubmissionAssessmentKnownEvidenceInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: sharedSpace.ID.String(), EvidenceIDs: []string{known.Evidence[0].FragmentID},
+	})
+	require.NoError(t, err)
+	require.Len(t, loaded.Evidence, 1)
+
+	submittedFragmentID, ingestID, assessmentID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	submittedContent := "The submitted evidence states the relationship explicitly."
+	relationshipRef := "known-support-inline-embedding-relationship"
+	knownEvidence := loaded.Evidence[0]
+	input := SynchronousRememberCommitInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID,
+		IdempotencyKey: "known-support-inline-embedding-submit", RequestHash: sha256Hex(submittedContent),
+		SourceSummary: "known-support-inline-embedding-submit",
+		Evidence: []EvidenceInput{{
+			FragmentID: submittedFragmentID, Content: submittedContent, ContentHash: sha256Hex(submittedContent),
+			SourceType: "manual", Authority: "primary",
+		}},
+		AssessmentID: assessmentID, AssessmentJSON: json.RawMessage(`{"request_id":"known-support-inline-embedding"}`), ProviderTurns: 1,
+		EvidenceSecurityResults: []EvidenceSecurityResult{{
+			FragmentID: submittedFragmentID, EvidenceID: "evidence:0", EvidenceIndex: 0, Decision: "pass", Safe: true,
+		}},
+		Commit: CommitSubmissionAssessmentInput{
+			AssessmentID:          assessmentID,
+			Items:                 []SubmissionAssessmentItemInput{{FragmentID: submittedFragmentID}},
+			KnownEvidenceSnapshot: []SubmissionAssessmentKnownEvidence{knownEvidence},
+			EntityResolutions: []SubmissionAssessmentEntityResolutionInput{
+				{Resolution: SemanticEntityResolutionInput{MentionRef: "subject", Action: string(domain.EntityResolutionCreate), EntityKind: "project", CanonicalName: "Known support subject", FragmentID: submittedFragmentID, AssessmentID: assessmentID}},
+				{Resolution: SemanticEntityResolutionInput{MentionRef: "object", Action: string(domain.EntityResolutionCreate), EntityKind: "product", CanonicalName: "Known support object", FragmentID: submittedFragmentID, AssessmentID: assessmentID}},
+			},
+			RelationshipObservations: []SubmissionAssessmentRelationshipObservationInput{{
+				RelationshipRef: relationshipRef,
+				Observation: SemanticRelationshipDecisionInput{
+					Ref: relationshipRef, SubjectRef: "subject", OriginalPredicate: "uses", PredicateKey: "uses", PredicateVersion: 1,
+					ObjectRef: "object", Polarity: "+", AssessorAccepted: true, AssessmentID: assessmentID,
+					Support: &EvidenceSupportInput{FragmentID: submittedFragmentID, SourceGroupKey: "known-support-inline-embedding-submitted", SpanStart: 0, SpanEnd: len([]rune(submittedContent)), Quote: submittedContent, Authority: "primary"},
+					Supports: []EvidenceSupportInput{{
+						FragmentID: knownEvidence.FragmentID, EvidenceOwnerProfileID: knownEvidence.OwnerProfileID,
+						SourceGroupKey: "known-support-inline-embedding-known", SourceID: knownEvidence.SourceID, SourceRevisionID: knownEvidence.SourceRevisionID,
+						SpanStart: 0, SpanEnd: len([]rune(knownEvidence.Content)), Quote: knownEvidence.Content, Authority: knownEvidence.Authority,
+					}},
+				},
+			}},
+			RelationshipResults: []SubmissionRelationshipResultInput{{RelationshipRef: relationshipRef, Disposition: "stored"}},
+			Payload:             map[string]any{"response_hash": sha256Hex(relationshipRef), "model": "test-model", "tokenizer": "o200k_base", "candidate_context_tokens": 0, "candidate_context_truncated": false},
+		},
+	}
+
+	plan, err := ledger.PlanRememberEmbeddings(ctx, input)
+	require.NoError(t, err)
+	require.Len(t, plan.Documents, 2, "only submitted evidence and the relationship require embeddings")
+	result, err := ledger.CommitRememberWithEmbeddings(ctx, input, rememberTestEmbeddings(plan, false))
+	require.NoError(t, err)
+	require.Len(t, result.SearchDocuments, 2, "known evidence must not add an inline embedding document")
+	for _, document := range result.SearchDocuments {
+		require.NotEqual(t, knownEvidence.FragmentID, document.SourceID)
+	}
 }
 
 func TestKnownEvidenceSupportRejectsCrossSpacePrivateRelationship(t *testing.T) {
