@@ -88,6 +88,14 @@ run_scenario() {
   telemetry_token="$(env_value TELEMETRY_SCRAPE_TOKEN 2>/dev/null || cat "$TELEMETRY_TOKEN_FILE")"
   embedding_model="$(env_value AI_API_EMBEDDING_MODEL 2>/dev/null || true)"
   embedding_dimensions="$(env_value AI_API_EMBEDDING_DIMENSIONS 2>/dev/null || true)"
+  if has_helper "$helpers" conflict_provider; then
+    embedding_model="$CONFLICT_PROVIDER_EMBEDDING_MODEL"
+    if has_helper "$helpers" synchronous_write; then
+      embedding_dimensions="${embedding_dimensions:-1536}"
+    else
+      embedding_dimensions="1536"
+    fi
+  fi
   postgres_user="$(env_value POSTGRES_USER 2>/dev/null || true)"
   postgres_password="$(env_value POSTGRES_PASSWORD 2>/dev/null || true)"
   postgres_db="$(env_value POSTGRES_DB 2>/dev/null || true)"
@@ -109,8 +117,8 @@ run_scenario() {
       conflict_driver_env=(
         "AI_API_URL=http://conflict-provider:8081/v1"
         "AI_API_KEY=dense-mem-conflict-e2e-key"
-        "AI_API_EMBEDDING_MODEL=dense-mem-conflict-e2e-embedding"
-        "AI_API_EMBEDDING_DIMENSIONS=1536"
+        "AI_API_EMBEDDING_MODEL=${embedding_model}"
+        "AI_API_EMBEDDING_DIMENSIONS=${embedding_dimensions}"
         "AI_VERIFIER_API_URL=http://conflict-provider:8081/v1"
         "AI_VERIFIER_API_KEY=dense-mem-conflict-e2e-key"
         "AI_VERIFIER_MODEL=dense-mem-conflict-e2e-verifier"
@@ -122,7 +130,13 @@ run_scenario() {
         AI_API_URL AI_API_KEY AI_API_EMBEDDING_MODEL AI_API_EMBEDDING_DIMENSIONS \
         AI_VERIFIER_API_URL AI_VERIFIER_API_KEY AI_VERIFIER_MODEL \
         AI_VERIFIER_DISABLE_TEMPERATURE AI_API_EMBEDDING_TIMEOUT_SECONDS AI_VERIFIER_TIMEOUT_SECONDS; do
-        provider_value="$(env_value "$provider_field" 2>/dev/null || true)"
+        if has_helper "$helpers" conflict_provider && [[ "$provider_field" == "AI_API_EMBEDDING_MODEL" ]]; then
+          provider_value="$embedding_model"
+        elif has_helper "$helpers" conflict_provider && [[ "$provider_field" == "AI_API_EMBEDDING_DIMENSIONS" ]]; then
+          provider_value="$embedding_dimensions"
+        else
+          provider_value="$(env_value "$provider_field" 2>/dev/null || true)"
+        fi
         if [[ -n "$provider_value" ]]; then
           conflict_driver_env+=("${provider_field}=${provider_value}")
         fi

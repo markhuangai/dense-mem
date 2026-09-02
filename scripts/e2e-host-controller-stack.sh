@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Sourced by e2e-host-controller.sh.
 
+CONFLICT_PROVIDER_EMBEDDING_MODEL="dense-mem-conflict-e2e-embedding"
+
 prepare_stack_helpers() {
   local project="$1" source_dir="$2" helpers="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7"
   DENSE_MEM_CI_HELPER_DIR="${JOB_DIR}/${run_id}-${attempt}/${phase}-${scenario}-helpers"
@@ -114,9 +116,9 @@ NODE
 
   if [[ -n "$helpers" ]]; then
     DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="${DENSE_MEM_CI_HELPER_DIR}/compose.yml"
-    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_dimensions" <<'NODE'
+    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_dimensions" "$CONFLICT_PROVIDER_EMBEDDING_MODEL" <<'NODE'
 const fs = require("node:fs");
-const [destination, helpers, oauthToken, harnessImage, providerDimensions] = process.argv.slice(2);
+const [destination, helpers, oauthToken, harnessImage, providerDimensions, conflictProviderEmbeddingModel] = process.argv.slice(2);
 const has = (name) => new Set(helpers.split(",").filter(Boolean)).has(name);
 const conflictProviderDimensions = has("synchronous_write") ? (providerDimensions || "1536") : "1536";
 const lines = ["# dense-mem-ci-e2e.v1 generated helper overlay", "services:"];
@@ -127,7 +129,7 @@ if (has("conflict_provider")) {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://conflict-provider:8081/v1",
     AI_API_KEY: "dense-mem-conflict-e2e-key",
-    AI_API_EMBEDDING_MODEL: "dense-mem-conflict-e2e-embedding",
+    AI_API_EMBEDDING_MODEL: conflictProviderEmbeddingModel,
     AI_API_EMBEDDING_DIMENSIONS: conflictProviderDimensions,
     AI_VERIFIER_API_URL: "http://conflict-provider:8081/v1",
     AI_VERIFIER_API_KEY: "dense-mem-conflict-e2e-key",

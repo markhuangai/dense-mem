@@ -78,7 +78,7 @@ test("runtime Compose view declares the OAuth helper volume", () => {
   assert.match(controllerStack, /"volumes:", "  oauth-provider-files:", `    name: \$\{project\}_oauth-provider-files`, "    external: true"/);
 });
 
-test("combined synchronous-write helpers align the conflict provider dimensions", async () => {
+test("conflict-provider helpers align the effective embedding settings", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dense-mem-helper-dimensions-"));
   try {
     const result = spawnSync("bash", ["-e", "-u", "-o", "pipefail", "-c", `
@@ -120,6 +120,7 @@ test("combined synchronous-write helpers align the conflict provider dimensions"
       },
     });
     assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /AI_API_EMBEDDING_MODEL: "dense-mem-conflict-e2e-embedding"/);
     assert.match(result.stdout, /AI_API_EMBEDDING_DIMENSIONS: "3072"/);
     assert.match(result.stdout, /DENSE_MEM_E2E_PROVIDER_DIMENSIONS: "3072"/);
     assert.match(result.stdout, /standalone[\s\S]*AI_API_EMBEDDING_DIMENSIONS: "1536"/);
@@ -129,6 +130,11 @@ test("combined synchronous-write helpers align the conflict provider dimensions"
 });
 
 test("conflict review drivers receive the provider settings used by their stack", () => {
+  assert.match(controllerRuntime, /CONFLICT_PROVIDER_EMBEDDING_MODEL/);
+  assert.match(controllerRuntime, /if has_helper "\$helpers" conflict_provider; then[\s\S]*embedding_model="\$CONFLICT_PROVIDER_EMBEDDING_MODEL"/);
+  assert.match(controllerRuntime, /AI_API_EMBEDDING_MODEL=\$\{embedding_model\}/);
+  assert.match(controllerRuntime, /AI_API_EMBEDDING_DIMENSIONS=\$\{embedding_dimensions\}/);
+  assert.match(controllerRuntime, /provider_field in[\s\S]*AI_API_EMBEDDING_MODEL AI_API_EMBEDDING_DIMENSIONS/);
   assert.match(controllerRuntime, /AI_API_URL=http:\/\/conflict-provider:8081\/v1/);
   assert.match(controllerRuntime, /AI_VERIFIER_API_URL=http:\/\/conflict-provider:8081\/v1/);
   assert.match(controllerRuntime, /for provider_field in[\s\S]*AI_API_URL[\s\S]*AI_VERIFIER_TIMEOUT_SECONDS/);
