@@ -25,6 +25,12 @@ func TestKnownEvidenceSupportOwnershipMigrationBackfillsForeignKeys(t *testing.T
 	runGooseUpTo(t, ctx, db, knownEvidenceSupportOwnershipMigrationBase)
 	teamID, ownerID := insertMigrationTeamProfile(t, ctx, db)
 	fixture := insertKnownEvidenceSupportOwnershipFixture(t, ctx, db, teamID, ownerID, ownerID)
+	var updateTimeBefore string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT value
+		FROM app_config
+		WHERE key = 'update_time'
+	`).Scan(&updateTimeBefore))
 
 	runGooseUpTo(t, ctx, db, knownEvidenceSupportOwnershipMigrationVersion)
 	var evidenceOwner string
@@ -34,6 +40,23 @@ func TestKnownEvidenceSupportOwnershipMigrationBackfillsForeignKeys(t *testing.T
 		WHERE team_id = $1::uuid AND support_id = $2::uuid
 	`, teamID, fixture.supportID).Scan(&evidenceOwner))
 	assert.Equal(t, ownerID, evidenceOwner)
+	var nullable string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+		  AND table_name = 'relationship_evidence_supports'
+		  AND column_name = 'evidence_owner_profile_id'
+	`).Scan(&nullable))
+	assert.Equal(t, "NO", nullable)
+	assert.False(t, indexExists(t, ctx, db, "relationship_supports_evidence_owner_backfill_null_idx"))
+	var updateTimeAfter string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT value
+		FROM app_config
+		WHERE key = 'update_time'
+	`).Scan(&updateTimeAfter))
+	assert.NotEqual(t, updateTimeBefore, updateTimeAfter)
 	assert.True(t, relationshipSupportConstraintExists(t, ctx, db, "relationship_supports_fragment_evidence_owner_fkey"))
 	assert.True(t, relationshipSupportConstraintExists(t, ctx, db, "relationship_supports_source_evidence_owner_fkey"))
 	assert.False(t, relationshipSupportConstraintDefinitionExists(t, ctx, db, "FOREIGN KEY (team_id, fragment_id, owner_profile_id) REFERENCES evidence_fragments%"))

@@ -46,6 +46,13 @@ CREATE TRIGGER relationship_supports_evidence_owner_defaults
 
 -- +goose StatementEnd
 
+-- Keep the resumable backfill bounded by the remaining NULL rows instead of
+-- rescanning every already-processed support row on each batch.
+DROP INDEX CONCURRENTLY IF EXISTS relationship_supports_evidence_owner_backfill_null_idx;
+CREATE INDEX CONCURRENTLY relationship_supports_evidence_owner_backfill_null_idx
+    ON relationship_evidence_supports(team_id, support_id)
+    WHERE evidence_owner_profile_id IS NULL;
+
 -- The support ledger is append-only at runtime. Each batch disables the
 -- mutation guard only for its own update transaction, then commits before the
 -- next batch is selected. A failed batch rolls back its trigger and row work;
@@ -70,7 +77,7 @@ BEGIN
             SELECT support.ctid
             FROM relationship_evidence_supports AS support
             WHERE support.evidence_owner_profile_id IS NULL
-            ORDER BY support.ctid
+            ORDER BY support.team_id, support.support_id
             LIMIT 500
             FOR UPDATE SKIP LOCKED
         )
@@ -94,8 +101,34 @@ $procedure$;
 CALL dense_mem_backfill_known_evidence_support_ownership_20260902010001();
 DROP PROCEDURE dense_mem_backfill_known_evidence_support_ownership_20260902010001();
 
+DROP INDEX CONCURRENTLY IF EXISTS relationship_supports_evidence_owner_backfill_null_idx;
+
+-- A validated check lets PostgreSQL prove the invariant without holding an
+-- ACCESS EXCLUSIVE lock for a second full-table verification scan.
+-- +goose StatementBegin
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'relationship_evidence_supports'::regclass
+          AND conname = 'relationship_supports_evidence_owner_not_null_check'
+    ) THEN
+        ALTER TABLE relationship_evidence_supports
+            ADD CONSTRAINT relationship_supports_evidence_owner_not_null_check
+            CHECK (evidence_owner_profile_id IS NOT NULL) NOT VALID;
+    END IF;
+END $$;
+-- +goose StatementEnd
+
+ALTER TABLE relationship_evidence_supports
+    VALIDATE CONSTRAINT relationship_supports_evidence_owner_not_null_check;
+
 ALTER TABLE relationship_evidence_supports
     ALTER COLUMN evidence_owner_profile_id SET NOT NULL;
+
+ALTER TABLE relationship_evidence_supports
+    DROP CONSTRAINT relationship_supports_evidence_owner_not_null_check;
 
 ALTER TABLE relationship_evidence_supports
     DROP CONSTRAINT IF EXISTS relationship_evidence_supports_team_id_fragment_id_owner_profile_id_fkey,
@@ -160,6 +193,10 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS relationship_supports_evidence_owner_fra
     ON relationship_evidence_supports(team_id, evidence_owner_profile_id, fragment_id);
 DROP INDEX CONCURRENTLY IF EXISTS relationship_supports_evidence_owner_fragment_idx_invalid;
 
+-- app_config is protected by a system-only RLS policy. Keep this setting and
+-- update in one statement so NO TRANSACTION migrations do not lose the mode.
+-- +goose StatementBegin
+SELECT set_config('app.tx_mode', 'system', true);
 UPDATE app_config
 SET value = regexp_replace(
         to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
@@ -168,6 +205,7 @@ SET value = regexp_replace(
     ),
     updated_at = clock_timestamp()
 WHERE key = 'update_time';
+-- +goose StatementEnd
 
 RESET lock_timeout;
 
@@ -211,6 +249,9 @@ ALTER TABLE relationship_evidence_supports
     DROP CONSTRAINT IF EXISTS relationship_supports_revision_evidence_owner_fkey,
     DROP CONSTRAINT IF EXISTS relationship_supports_source_revision_evidence_owner_fkey;
 
+ALTER TABLE relationship_evidence_supports
+    DROP CONSTRAINT IF EXISTS relationship_supports_evidence_owner_not_null_check;
+
 DROP TRIGGER IF EXISTS relationship_supports_evidence_owner_defaults ON relationship_evidence_supports;
 DROP FUNCTION IF EXISTS dense_mem_relationship_support_evidence_owner_defaults();
 
@@ -246,6 +287,8 @@ ALTER TABLE relationship_evidence_supports
 ALTER TABLE relationship_evidence_supports
     VALIDATE CONSTRAINT relationship_evidence_supports_team_id_source_id_source_revision_id_owner_profile_id_fkey;
 
+-- +goose StatementBegin
+SELECT set_config('app.tx_mode', 'system', true);
 UPDATE app_config
 SET value = regexp_replace(
         to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
@@ -254,5 +297,6 @@ SET value = regexp_replace(
     ),
     updated_at = clock_timestamp()
 WHERE key = 'update_time';
+-- +goose StatementEnd
 
 RESET lock_timeout;
