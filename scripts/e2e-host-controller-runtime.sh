@@ -566,6 +566,7 @@ local_all() {
   local registry_script="$REGISTRY_SCRIPT"
   [[ -r "$registry_script" ]] || fail "trusted scenario registry is unavailable"
   [[ -f "${source_dir}/scripts/e2e-scenario-registry.mjs" ]] || fail "scenario registry is unavailable in the tested source"
+  [[ -f "${source_dir}/scripts/e2e-scenarios.json" ]] || fail "scenario registry data is unavailable in the tested source"
   require_command setsid
   local controller_path
   controller_path="$(readlink -f "$0")"
@@ -596,7 +597,7 @@ local_all() {
   while IFS=$'\t' read -r scenario playwright; do
     [[ -n "$scenario" ]] || continue
     [[ "$playwright" == "0" || "$playwright" == "1" ]] || fail "invalid Playwright flag for local scenario: ${scenario}"
-    helpers="$(node "$registry_script" --scenario "$scenario" | node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const value=JSON.parse(input);if(value.audited!==true)process.exit(1);process.stdout.write((value.helper_profiles||[]).join(","));});')" || fail "unregistered scenario cannot enter the local matrix: ${scenario}"
+    helpers="$(DENSE_MEM_E2E_SCENARIO_REGISTRY="${source_dir}/scripts/e2e-scenarios.json" node "$registry_script" --scenario "$scenario" | node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const value=JSON.parse(input);if(value.audited!==true)process.exit(1);process.stdout.write((value.helper_profiles||[]).join(","));});')" || fail "unregistered scenario cannot enter the local matrix: ${scenario}"
     project="$(managed_project_name "$run_id" "$attempt" exclusive "$scenario")"
     active_project="$project"
     scenario_log="${log_dir}/exclusive-${scenario}.log"
@@ -615,10 +616,10 @@ local_all() {
     unset DENSE_MEM_CI_RUN_PLAYWRIGHT
     stop_stack "$project"
     active_project=""
-  done < <(node "$registry_script" --matrix exclusive | node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(0,"utf8"));for(const row of value.include||[])process.stdout.write(`${row.name}\t${row.playwright ? 1 : 0}\n`);')
+  done < <(DENSE_MEM_E2E_SCENARIO_REGISTRY="${source_dir}/scripts/e2e-scenarios.json" node "$registry_script" --matrix exclusive | node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(0,"utf8"));for(const row of value.include||[])process.stdout.write(`${row.name}\t${row.playwright ? 1 : 0}\n`);')
 
   local shared_helpers
-  shared_helpers="$(node "$registry_script" --helpers shared_team | node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).join(","));')"
+  shared_helpers="$(DENSE_MEM_E2E_SCENARIO_REGISTRY="${source_dir}/scripts/e2e-scenarios.json" node "$registry_script" --helpers shared_team | node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(0,"utf8")).join(","));')"
   local shared_scenario="shared"
   local shared_project
   shared_project="$(managed_project_name "$run_id" "$attempt" shared shared)"
@@ -634,7 +635,7 @@ local_all() {
     [[ "$playwright" == "0" || "$playwright" == "1" ]] || fail "invalid Playwright flag for shared scenario: ${scenario}"
     shared_names+=("$scenario")
     shared_playwright["$scenario"]="$playwright"
-  done < <(node "$registry_script" --matrix shared_team | node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(0,"utf8"));for(const row of value.include||[])process.stdout.write(`${row.name}\t${row.playwright ? 1 : 0}\n`);')
+  done < <(DENSE_MEM_E2E_SCENARIO_REGISTRY="${source_dir}/scripts/e2e-scenarios.json" node "$registry_script" --matrix shared_team | node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(0,"utf8"));for(const row of value.include||[])process.stdout.write(`${row.name}\t${row.playwright ? 1 : 0}\n`);')
   local next_index=0
   local finished_pid=""
   local finished_status=0

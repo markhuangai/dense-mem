@@ -89,9 +89,10 @@ validate_scenario() {
 validate_registered_scenario() {
   local source_dir="$1" scenario="$2" phase="$3"
   [[ -f "$source_dir/scripts/e2e-scenario-registry.mjs" ]] || fail "scenario registry is unavailable in the tested source"
+  [[ -f "$source_dir/scripts/e2e-scenarios.json" ]] || fail "scenario registry data is unavailable in the tested source"
   [[ -r "$REGISTRY_SCRIPT" ]] || fail "trusted scenario registry is unavailable: $REGISTRY_SCRIPT"
   local classification
-  classification="$(node "$REGISTRY_SCRIPT" --scenario "$scenario")" || fail "scenario is not in the trusted registry: $scenario"
+  classification="$(DENSE_MEM_E2E_SCENARIO_REGISTRY="$source_dir/scripts/e2e-scenarios.json" node "$REGISTRY_SCRIPT" --scenario "$scenario")" || fail "scenario is not in the tested registry: $scenario"
   node - "$classification" "$phase" <<'NODE' || fail "scenario is not audited for the requested production phase"
 const classification = JSON.parse(process.argv[2]);
 const phase = process.argv[3];

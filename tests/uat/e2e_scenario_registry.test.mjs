@@ -166,6 +166,7 @@ test("production E2E jobs use the runner that matches their capability", async (
   assert.match(reusable, /PHASE: \$\{\{ inputs\.manifest != '' && 'shared' \|\| 'exclusive' \}\}/);
   assert.match(controller, /docker compose/);
   assert.match(controller, /run --rm/);
+  assert.match(controller, /DENSE_MEM_E2E_SCENARIO_REGISTRY=.*source_dir.*e2e-scenarios\.json/);
   assert.doesNotMatch(compose, /^\s+ports:/m);
   assert.doesNotMatch(workflow, /runs-on:\s*\[pc|runs-on:.*docker-runner.*e2e/i);
 });
