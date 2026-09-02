@@ -23,6 +23,9 @@ func TestSubmissionAssessmentKnownEvidenceCatalogEnforcesVisibilityAndEligibilit
 	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "known-evidence-catalog-owner-c")
 	ledger := NewLedgerRepository(appDB, rls)
 	repo := NewSemanticRepository(appDB, rls)
+	sharedSpace, err := NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamA))
+	require.NoError(t, err)
+	require.NotNil(t, sharedSpace)
 
 	shared := createSemanticIngest(t, ctx, ledger, teamA, ownerA, "known-shared", "shared known evidence")
 	otherTeam := createSemanticIngest(t, ctx, ledger, teamC, ownerC, "known-other-team", "other team known evidence")
@@ -33,7 +36,10 @@ func TestSubmissionAssessmentKnownEvidenceCatalogEnforcesVisibilityAndEligibilit
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Raw(`SELECT generation FROM memory_spaces WHERE id = ?::uuid`, privateSpace.ID).Row().Scan(&privateGeneration)
 	}))
-	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: privateSpace.ID, Kind: domain.MemorySpaceProfilePrivate}})
+	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{
+		{ID: sharedSpace.ID, Kind: domain.MemorySpaceTeamShared},
+		{ID: privateSpace.ID, Kind: domain.MemorySpaceProfilePrivate},
+	})
 	private, err := createTestIngest(privateCtx, ledger, CreateIngestInput{
 		TeamID: teamA, OwnerProfileID: ownerA, SpaceID: privateSpace.ID.String(), SpaceGeneration: privateGeneration,
 		IdempotencyKey: "known-private", RequestHash: "known-private-hash",
@@ -60,16 +66,22 @@ func TestSubmissionAssessmentKnownEvidenceCatalogEnforcesVisibilityAndEligibilit
 
 	requested := []string{shared.Evidence[0].FragmentID, private.Evidence[0].FragmentID, otherTeam.Evidence[0].FragmentID, quarantined.Evidence[0].FragmentID, retracted.Evidence[0].FragmentID}
 	visibleToB, err := repo.ListSubmissionAssessmentKnownEvidence(ctx, SubmissionAssessmentKnownEvidenceInput{
-		TeamID: teamA, OwnerProfileID: ownerB, EvidenceIDs: requested,
+		TeamID: teamA, OwnerProfileID: ownerB, SpaceID: sharedSpace.ID.String(), EvidenceIDs: requested,
 	})
 	require.NoError(t, err)
 	require.Len(t, visibleToB.Evidence, 1)
 	require.Equal(t, shared.Evidence[0].FragmentID, visibleToB.Evidence[0].EvidenceID)
 
 	visibleToA, err := repo.ListSubmissionAssessmentKnownEvidence(privateCtx, SubmissionAssessmentKnownEvidenceInput{
-		TeamID: teamA, OwnerProfileID: ownerA, EvidenceIDs: []string{private.Evidence[0].FragmentID},
+		TeamID: teamA, OwnerProfileID: ownerA, SpaceID: privateSpace.ID.String(), EvidenceIDs: []string{private.Evidence[0].FragmentID},
 	})
 	require.NoError(t, err)
 	require.Len(t, visibleToA.Evidence, 1)
 	require.Equal(t, private.Evidence[0].FragmentID, visibleToA.Evidence[0].EvidenceID)
+
+	visibleToPrivateTarget, err := repo.ListSubmissionAssessmentKnownEvidence(privateCtx, SubmissionAssessmentKnownEvidenceInput{
+		TeamID: teamA, OwnerProfileID: ownerA, SpaceID: privateSpace.ID.String(), EvidenceIDs: []string{shared.Evidence[0].FragmentID},
+	})
+	require.NoError(t, err)
+	require.Empty(t, visibleToPrivateTarget.Evidence, "known evidence from the shared space must not enter a private-space assessment")
 }

@@ -330,9 +330,12 @@ func TestKnownEvidenceFenceSerializesConcurrentQuarantine(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "known-support-quarantine-owner")
 	ledger := NewLedgerRepository(appDB, rls)
 	semantic := NewSemanticRepository(appDB, rls)
+	sharedSpace, err := NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamID))
+	require.NoError(t, err)
+	require.NotNil(t, sharedSpace)
 	known := createSemanticIngest(t, ctx, ledger, teamID, ownerID, "known-support-quarantine-source", "Evidence held by the known-evidence fence.")
 	loaded, err := semantic.ListSubmissionAssessmentKnownEvidence(ctx, SubmissionAssessmentKnownEvidenceInput{
-		TeamID: teamID, OwnerProfileID: ownerID, EvidenceIDs: []string{known.Evidence[0].FragmentID},
+		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: sharedSpace.ID.String(), EvidenceIDs: []string{known.Evidence[0].FragmentID},
 	})
 	require.NoError(t, err)
 	require.Len(t, loaded.Evidence, 1)
@@ -398,10 +401,13 @@ func TestKnownEvidenceFenceAllowsVisibleCrossOwnerEvidenceUnderRLS(t *testing.T)
 	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "known-support-cross-owner-fence-owner-b")
 	ledger := NewLedgerRepository(appDB, rls)
 	semantic := NewSemanticRepository(appDB, rls)
+	sharedSpace, err := NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamID))
+	require.NoError(t, err)
+	require.NotNil(t, sharedSpace)
 	known := createSemanticIngest(t, ctx, ledger, teamID, ownerA, "known-support-cross-owner-fence-known", "Visible shared evidence belongs to owner A.")
 
 	loaded, err := semantic.ListSubmissionAssessmentKnownEvidence(ctx, SubmissionAssessmentKnownEvidenceInput{
-		TeamID: teamID, OwnerProfileID: ownerB, EvidenceIDs: []string{known.Evidence[0].FragmentID},
+		TeamID: teamID, OwnerProfileID: ownerB, SpaceID: sharedSpace.ID.String(), EvidenceIDs: []string{known.Evidence[0].FragmentID},
 	})
 	require.NoError(t, err)
 	require.Len(t, loaded.Evidence, 1)
@@ -424,6 +430,9 @@ func TestKnownEvidenceFenceRejectsSnapshotAfterSameTransactionSourceAdvance(t *t
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "known-support-source-advance-owner")
 	ledger := NewLedgerRepository(appDB, rls)
 	semantic := NewSemanticRepository(appDB, rls)
+	sharedSpace, err := NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamID))
+	require.NoError(t, err)
+	require.NotNil(t, sharedSpace)
 	const sourceKey = "document://known-support-source-advance"
 
 	knownContent := "Known evidence belongs to source revision one."
@@ -438,7 +447,7 @@ func TestKnownEvidenceFenceRejectsSnapshotAfterSameTransactionSourceAdvance(t *t
 	require.NoError(t, err)
 	require.Len(t, known.Evidence, 1)
 	loaded, err := semantic.ListSubmissionAssessmentKnownEvidence(ctx, SubmissionAssessmentKnownEvidenceInput{
-		TeamID: teamID, OwnerProfileID: ownerID, EvidenceIDs: []string{known.Evidence[0].FragmentID},
+		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: sharedSpace.ID.String(), EvidenceIDs: []string{known.Evidence[0].FragmentID},
 	})
 	require.NoError(t, err)
 	require.Len(t, loaded.Evidence, 1)
@@ -470,6 +479,9 @@ func TestKnownEvidenceFenceFailsClosedWhenSourceRevisionIsLocked(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "known-support-source-lock-owner")
 	ledger := NewLedgerRepository(appDB, rls)
 	semantic := NewSemanticRepository(appDB, rls)
+	sharedSpace, err := NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamID))
+	require.NoError(t, err)
+	require.NotNil(t, sharedSpace)
 	known, err := createTestIngest(ctx, ledger, CreateIngestInput{
 		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "known-source-lock", RequestHash: "known-source-lock-hash",
 		Evidence: []EvidenceInput{{
@@ -479,7 +491,7 @@ func TestKnownEvidenceFenceFailsClosedWhenSourceRevisionIsLocked(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, known.Evidence, 1)
 	loaded, err := semantic.ListSubmissionAssessmentKnownEvidence(ctx, SubmissionAssessmentKnownEvidenceInput{
-		TeamID: teamID, OwnerProfileID: ownerID, EvidenceIDs: []string{known.Evidence[0].FragmentID},
+		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: sharedSpace.ID.String(), EvidenceIDs: []string{known.Evidence[0].FragmentID},
 	})
 	require.NoError(t, err)
 	require.Len(t, loaded.Evidence, 1)
@@ -535,7 +547,7 @@ func TestKnownEvidenceFenceFailsClosedWhenPrivateSpaceSeals(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, known.Evidence, 1)
 	loaded, err := semantic.ListSubmissionAssessmentKnownEvidence(privateCtx, SubmissionAssessmentKnownEvidenceInput{
-		TeamID: teamID, OwnerProfileID: ownerID, EvidenceIDs: []string{known.Evidence[0].FragmentID},
+		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: privateSpace.ID.String(), EvidenceIDs: []string{known.Evidence[0].FragmentID},
 	})
 	require.NoError(t, err)
 	require.Len(t, loaded.Evidence, 1)

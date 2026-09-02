@@ -62,6 +62,7 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentKnownEvidence(
 			  ON lifecycle.team_id = fragment.team_id
 			 AND lifecycle.target_fragment_id = fragment.fragment_id
 			WHERE fragment.team_id = ?::uuid
+			  AND fragment.space_id = COALESCE(NULLIF(?, '')::uuid, dense_mem_team_shared_space(?::uuid))
 			  AND fragment.fragment_id = ANY(?::uuid[])
 			  AND ingest.status = 'completed'
 			  AND space.lifecycle_state = 'active'
@@ -75,7 +76,7 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentKnownEvidence(
 			      AND ingest.metadata ->> 'conflict_resolution_deletion_only' = 'true'
 			  )
 			ORDER BY fragment.fragment_id
-		`, input.TeamID, pq.Array(input.EvidenceIDs)).Rows()
+		`, input.TeamID, input.SpaceID, input.TeamID, pq.Array(input.EvidenceIDs)).Rows()
 		if err != nil {
 			return err
 		}
@@ -112,6 +113,7 @@ func (r *SemanticRepositoryImpl) ListSubmissionAssessmentKnownEvidence(
 func normalizeSubmissionAssessmentKnownEvidenceInput(input SubmissionAssessmentKnownEvidenceInput) SubmissionAssessmentKnownEvidenceInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.SpaceID = strings.TrimSpace(input.SpaceID)
 	seen := make(map[string]struct{}, len(input.EvidenceIDs))
 	ids := make([]string, 0, len(input.EvidenceIDs))
 	for _, evidenceID := range input.EvidenceIDs {
@@ -138,6 +140,11 @@ func validateSubmissionAssessmentKnownEvidenceInput(input SubmissionAssessmentKn
 	}
 	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
 		return fmt.Errorf("owner_profile_id is required: %w", err)
+	}
+	if input.SpaceID != "" {
+		if _, err := uuid.Parse(input.SpaceID); err != nil {
+			return fmt.Errorf("space_id is invalid: %w", err)
+		}
 	}
 	if len(input.EvidenceIDs) > submissionAssessmentMaxKnownEvidenceIDs {
 		return fmt.Errorf("evidence_ids must contain at most %d entries", submissionAssessmentMaxKnownEvidenceIDs)

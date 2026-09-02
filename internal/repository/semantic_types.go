@@ -119,7 +119,10 @@ type SubmissionAssessmentKnownEvidence struct {
 type SubmissionAssessmentKnownEvidenceInput struct {
 	TeamID         string
 	OwnerProfileID string
-	EvidenceIDs    []string
+	// SpaceID scopes known evidence to the memory space receiving the submission.
+	// Empty retains the team-shared default for direct repository callers.
+	SpaceID     string
+	EvidenceIDs []string
 }
 
 type SubmissionAssessmentKnownEvidenceResult struct {

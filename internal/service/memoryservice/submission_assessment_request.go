@@ -188,7 +188,7 @@ func (s *assessmentEngine) loadKnownEvidence(
 	}
 	sort.Strings(ids)
 	loaded, err := knownCatalog.ListSubmissionAssessmentKnownEvidence(ctx, repository.SubmissionAssessmentKnownEvidenceInput{
-		TeamID: scope.TeamID, OwnerProfileID: scope.OwnerProfileID, EvidenceIDs: ids,
+		TeamID: scope.TeamID, OwnerProfileID: scope.OwnerProfileID, SpaceID: scope.SpaceID, EvidenceIDs: ids,
 	})
 	if err != nil {
 		return submissionAssessmentDatabaseError("load submission known evidence", err)

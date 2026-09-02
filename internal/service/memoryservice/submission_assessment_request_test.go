@@ -271,6 +271,7 @@ func TestSubmissionAssessmentLoadsKnownEvidenceAsImmutableSeparateContext(t *tes
 	require.NoError(t, engine.loadKnownEvidence(t.Context(), fixture.input.Scope, &plan))
 	require.Len(t, fixture.catalog.knownEvidenceInputs, 1)
 	require.Equal(t, []string{knownID}, fixture.catalog.knownEvidenceInputs[0].EvidenceIDs)
+	require.Equal(t, fixture.input.Scope.SpaceID, fixture.catalog.knownEvidenceInputs[0].SpaceID)
 	require.Equal(t, known, plan.knownEvidenceByID[knownID])
 
 	request, err := engine.buildRequest(t.Context(), fixture.input.Scope, plan, fixture.input.Snapshot.Proposal)
