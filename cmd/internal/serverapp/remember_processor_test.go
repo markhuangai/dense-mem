@@ -323,6 +323,26 @@ func TestRememberProcessorWaiterRejectsRequestHashMismatch(t *testing.T) {
 	require.Equal(t, processErr.Status, status)
 }
 
+func TestRememberProcessorWaiterLockCancellationReturnsBeforeReplayLoad(t *testing.T) {
+	ledger := &rememberFailureLedgerStub{}
+	locker := &rememberWaitAwareLedgerStub{
+		rememberFailureLedgerStub: ledger,
+		waited:                    true,
+		lockErr:                   context.DeadlineExceeded,
+	}
+	processor := &rememberSynchronousProcessor{ledger: locker}
+
+	status, err := processor.ProcessRemember(context.Background(), rememberapp.RememberProcessRequest{
+		TeamID: "team", OwnerProfileID: "owner", IdempotencyKey: "remember-key", RequestHash: "request-hash",
+	})
+
+	var processErr *rememberapp.RememberProcessError
+	require.Nil(t, status)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorAs(t, err, &processErr)
+	require.Empty(t, ledger.loadContexts, "a cancelled lock waiter must not load a replay")
+}
+
 func TestRememberProcessorRejectsScannerFailureBeforeAssessor(t *testing.T) {
 	ledger := &rememberFailureLedgerStub{}
 	processor := &rememberSynchronousProcessor{ledger: ledger}

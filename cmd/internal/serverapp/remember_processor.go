@@ -103,6 +103,9 @@ func (p *rememberSynchronousProcessor) ProcessRemember(
 	// A waiter must replay the owner's durable result, including a retryable
 	// failure. It may retry only after the lock owner has returned and a later
 	// call acquires the key.
+	if errors.Is(lockErr, context.Canceled) || errors.Is(lockErr, context.DeadlineExceeded) {
+		return nil, lockErr
+	}
 	if replay, err := p.loadRememberReplay(ctx, input, ""); err == nil {
 		return replay, nil
 	} else if processErr := new(rememberapp.RememberProcessError); errors.As(err, &processErr) && processErr.Status != nil {
