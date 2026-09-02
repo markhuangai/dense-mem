@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import policy from "../../.github/scripts/image-release-policy.cjs";
 
 const {
@@ -19,6 +20,7 @@ const {
   validateProductionImageReference,
 } = policy;
 const execFileAsync = promisify(execFile);
+const ociImageScript = fileURLToPath(new URL("../../.github/scripts/oci-image.sh", import.meta.url));
 
 const baseEvent = {
   action: "synchronize",
@@ -198,6 +200,92 @@ test("OCI promotion avoids jq 1.6 reserved variable names", async () => {
   );
 
   assert.doesNotMatch(script, /\bas \$label\b/);
+});
+
+test("validate-preview accepts only a reachable valid manifest digest", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dense-mem-oci-validate-"));
+  const regctl = join(directory, "regctl");
+  const digest = `sha256:${"a".repeat(64)}`;
+  const headRevision = "b".repeat(40);
+  const mainRevision = "c".repeat(40);
+  const index = JSON.stringify({
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    manifests: [
+      { platform: { os: "linux", architecture: "amd64" }, digest },
+      { platform: { os: "linux", architecture: "arm64" }, digest },
+    ],
+  });
+  const labels = JSON.stringify({
+    config: {
+      Labels: {
+        "org.opencontainers.image.version": "test-42",
+        "org.opencontainers.image.revision": headRevision,
+        "org.opencontainers.image.variant": "production",
+        "io.dense-mem.preview.pr": "42",
+        "io.dense-mem.preview.head": headRevision,
+        "io.dense-mem.preview.main": mainRevision,
+        "io.dense-mem.preview.run-id": "123",
+        "io.dense-mem.preview.run-attempt": "1",
+      },
+    },
+  });
+  await writeFile(regctl, `#!/usr/bin/env bash
+set -eo pipefail
+if [[ "$1" == "manifest" && "$2" == "head" ]]; then
+  if [[ "$STUB_REGCTL_HEAD_FAILURE" == "1" ]]; then
+    printf '%s\n' 'stub manifest head failure' >&2
+    exit 1
+  fi
+  printf '%s\n' "$STUB_REGCTL_DIGEST"
+  exit 0
+fi
+if [[ "$1" == "manifest" && "$2" == "get" ]]; then
+  cat <<'JSON'
+${index}
+JSON
+  exit 0
+fi
+if [[ "$1" == "image" && "$2" == "inspect" ]]; then
+  cat <<'JSON'
+${labels}
+JSON
+  exit 0
+fi
+exit 2
+`);
+  await chmod(regctl, 0o755);
+
+  const invoke = async (extraEnvironment) => {
+    try {
+      await execFileAsync(
+        "bash",
+        [ociImageScript, "validate-preview", "ghcr.io/markhuangai/dense-mem:test-42", "42", headRevision, mainRevision, "123", "1"],
+        {
+          env: {
+            ...process.env,
+            REGCTL_BIN: regctl,
+            STUB_REGCTL_DIGEST: digest,
+            STUB_REGCTL_HEAD_FAILURE: "0",
+            ...extraEnvironment,
+          },
+        },
+      );
+      return { status: 0, stderr: "" };
+    } catch (error) {
+      return { status: error.code ?? 1, stderr: error.stderr ?? "" };
+    }
+  };
+
+  try {
+    assert.equal((await invoke({})).status, 0);
+    const invalidDigest = await invoke({ STUB_REGCTL_DIGEST: "sha256:not-a-digest" });
+    assert.notEqual(invalidDigest.status, 0);
+    assert.match(invalidDigest.stderr, /invalid manifest digest/);
+    const unavailable = await invoke({ STUB_REGCTL_HEAD_FAILURE: "1" });
+    assert.notEqual(unavailable.status, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("prerelease publication waits for the staging migration rehearsal", async () => {

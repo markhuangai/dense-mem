@@ -111,6 +111,13 @@ validate_bundle() {
   [[ "$token_mode" == "600" ]] || fail "telemetry scrape token must have mode 0600"
   token_owner="$(stat -c '%u' "$TELEMETRY_TOKEN_FILE" 2>/dev/null || stat -f '%u' "$TELEMETRY_TOKEN_FILE")"
   [[ "$token_owner" == "$(id -u)" ]] || fail "telemetry scrape token is not owned by the runner user"
+  local secret_field secret_value telemetry_secret
+  for secret_field in POSTGRES_PASSWORD REDIS_PASSWORD AI_API_KEY AI_VERIFIER_API_KEY CONTROL_PORTAL_TOKEN; do
+    secret_value="$(env_value "$secret_field" 2>/dev/null || true)"
+    [[ ${#secret_value} -ne 1 ]] || fail "${secret_field} must contain at least two characters"
+  done
+  telemetry_secret="$(cat "$TELEMETRY_TOKEN_FILE")"
+  [[ ${#telemetry_secret} -ne 1 ]] || fail "telemetry scrape token must contain at least two characters"
 }
 
 env_value() {

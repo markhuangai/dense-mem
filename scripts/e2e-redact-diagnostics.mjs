@@ -163,7 +163,7 @@ function redactChunks(chunks, values) {
 }
 
 function run() {
-  const minimumLength = process.env.DENSE_MEM_CI_REDACT_ALLOW_SHORT === "1" ? 1 : 4;
+  const minimumLength = process.env.DENSE_MEM_CI_REDACT_ALLOW_SHORT === "1" ? 2 : 4;
   const values = [
     ...valuesFromEnvFile(process.env.DENSE_MEM_CI_REDACT_ENV_FILE || "", "", minimumLength),
     ...(process.env.DENSE_MEM_CI_REDACT_EXTRA_VALUES || "").split("\n"),
