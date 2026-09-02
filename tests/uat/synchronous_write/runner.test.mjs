@@ -84,6 +84,15 @@ test("remember case covers mixed object success and idempotency conflict behavio
   assert.match(remember, /changed-hash/);
 });
 
+test("remember PostgreSQL fixtures follow the production runner handoff", async () => {
+  const remember = await readFile(new URL("./cases/remember.mjs", import.meta.url), "utf8");
+  assert.match(remember, /fileURLToPath\(new URL\("\.\.\/\.\.\/\.\.\/\.\.", import\.meta\.url\)\)/);
+  assert.match(remember, /DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE/);
+  assert.match(remember, /SET LOCAL app\.tx_mode = 'system'/);
+  assert.match(remember, /only permits read queries/);
+  assert.match(remember, /only permits alias setup/);
+});
+
 test("correction slice contains executable success and provider-failure assertions", async () => {
   const correction = await readFile(new URL("./cases/correction.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(correction, /reserved-for-adoption/);

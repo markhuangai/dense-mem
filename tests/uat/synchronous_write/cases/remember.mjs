@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import { assertTerminalRememberResult } from "../surface.mjs";
 
 export const name = "remember";
+
+const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 
 export async function run({ rpc, rawRPC = rpc, expect }) {
   const selectedFault = (process.env.DENSE_MEM_E2E_PROVIDER_FAULT || "none").trim();
@@ -657,26 +660,45 @@ function groundingSurfaceCount(teamID, submissionID, surface) {
 }
 
 function postgresQuery(sql) {
-  const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
-  const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
-  const result = spawnSync("docker", [
-    "compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "postgres", "sh", "-ec",
-    'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
-    "synchronous-write-remember", sql,
-  ], { cwd: process.cwd(), encoding: "utf8" });
-  if (result.status !== 0) throw new Error(`Remember PostgreSQL fixture failed (${result.status})`);
-  return result.stdout.trim();
+  if (!/^(SELECT|WITH)\b/i.test(sql.trim())) {
+    throw new Error("known-evidence PostgreSQL query helper only permits read queries");
+  }
+  return postgresExec(sql, "synchronous-write-remember-query").trim();
 }
 
 function postgresCommand(sql) {
+  if (!/^INSERT\s+INTO\s+entity_names\b/i.test(sql.trim())) {
+    throw new Error("known-evidence PostgreSQL mutation helper only permits alias setup");
+  }
+  postgresExec(sql, "synchronous-write-remember-command");
+}
+
+function postgresExec(sql, label) {
   const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
   const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
+  const composeOverlay = process.env.DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE || "";
+  const scopedSQL = [
+    "BEGIN",
+    "SET LOCAL app.tx_mode = 'system'",
+    "SET LOCAL app.current_team_id = ''",
+    "SET LOCAL app.current_profile_id = ''",
+    "SET LOCAL app.allowed_space_ids = ''",
+    sql,
+    "COMMIT",
+  ].join(";\n");
+  const composeArgs = ["compose", "-p", composeProject, "-f", composeFile];
+  if (composeOverlay) composeArgs.push("-f", composeOverlay);
+  composeArgs.push(
+    "exec", "-T", "postgres", "sh", "-ec",
+    'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
+    label,
+    scopedSQL,
+  );
   const result = spawnSync("docker", [
-    "compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "postgres", "sh", "-ec",
-    'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
-    "synchronous-write-remember", sql,
-  ], { cwd: process.cwd(), encoding: "utf8" });
-  if (result.status !== 0) throw new Error(`Remember PostgreSQL fixture command failed (${result.status})`);
+    ...composeArgs,
+  ], { cwd: repositoryRoot, encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`Remember PostgreSQL fixture failed (${result.status})`);
+  return result.stdout;
 }
 
 function sqlLiteral(value) {
