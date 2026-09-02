@@ -118,7 +118,7 @@ func validateSingleSupportOwnership(ctx context.Context, tx *gorm.DB, input Appl
 	}
 	evidenceOwnerProfileID := strings.TrimSpace(support.EvidenceOwnerProfileID)
 	if evidenceOwnerProfileID != "" {
-		return validateKnownSupportOwnership(ctx, tx, input, support, evidenceOwnerProfileID, evidenceOwnerProfileID != input.OwnerProfileID)
+		return validateKnownSupportOwnership(ctx, tx, input, support, evidenceOwnerProfileID, evidenceOwnerProfileID != input.OwnerProfileID, spaceID)
 	}
 	query := `
 		SELECT EXISTS (
@@ -174,6 +174,7 @@ func validateKnownSupportOwnership(
 	support EvidenceSupportInput,
 	evidenceOwnerProfileID string,
 	requireSharedSpace bool,
+	spaceID string,
 ) error {
 	if _, err := uuid.Parse(evidenceOwnerProfileID); err != nil {
 		return fmt.Errorf("support.evidence_owner_profile_id is invalid: %w", err)
@@ -201,6 +202,7 @@ func validateKnownSupportOwnership(
 			WHERE fragment.team_id = ?::uuid
 			  AND fragment.fragment_id = ?::uuid
 			  AND fragment.owner_profile_id = ?::uuid
+			  AND fragment.space_id = ?::uuid
 			  AND ingest.status = 'completed'
 			  AND (space.kind = 'team_shared' OR (NOT ? AND dense_mem_space_allowed(space.id)))
 			  AND space.lifecycle_state = 'active'
@@ -224,7 +226,7 @@ func validateKnownSupportOwnership(
 			  )
 		)
 	`
-	args := []any{input.TeamID, support.FragmentID, evidenceOwnerProfileID, requireSharedSpace}
+	args := []any{input.TeamID, support.FragmentID, evidenceOwnerProfileID, spaceID, requireSharedSpace}
 	if support.SourceID != "" {
 		query = `
 			SELECT EXISTS (
@@ -244,6 +246,7 @@ func validateKnownSupportOwnership(
 				WHERE fragment.team_id = ?::uuid
 				  AND fragment.fragment_id = ?::uuid
 				  AND fragment.owner_profile_id = ?::uuid
+				  AND fragment.space_id = ?::uuid
 				  AND ingest.status = 'completed'
 				  AND fragment.source_id = ?::uuid
 				  AND fragment.source_revision_id = ?::uuid
@@ -270,7 +273,7 @@ func validateKnownSupportOwnership(
 				  )
 			)
 		`
-		args = []any{input.TeamID, support.FragmentID, evidenceOwnerProfileID, support.SourceID, support.SourceRevisionID, requireSharedSpace}
+		args = []any{input.TeamID, support.FragmentID, evidenceOwnerProfileID, spaceID, support.SourceID, support.SourceRevisionID, requireSharedSpace}
 	}
 	ok, err := existsOwnerReference(ctx, tx, query, args...)
 	if err != nil {

@@ -177,6 +177,64 @@ func TestKnownEvidenceSupportPreservesABCOwnershipAndIsolation(t *testing.T) {
 	require.True(t, errors.Is(err, ErrSemanticOwnerMismatch), err)
 }
 
+func TestKnownEvidenceSupportRejectsCrossSpacePrivateRelationship(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "known-support-cross-space")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "known-support-cross-space-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "known-support-cross-space-owner-b")
+	ledger := NewLedgerRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	sharedSpace, err := NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamID))
+	require.NoError(t, err)
+	require.NotNil(t, sharedSpace)
+	privateSpace, err := NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerB))
+	require.NoError(t, err)
+	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{
+		{ID: sharedSpace.ID, Kind: domain.MemorySpaceTeamShared},
+		{ID: privateSpace.ID, Kind: domain.MemorySpaceProfilePrivate},
+	})
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerB, "project", "Cross-space Subject")
+	object := createSemanticEntity(t, ctx, semantic, teamID, ownerB, "product", "Cross-space Object")
+	known := createSemanticIngest(t, ctx, ledger, teamID, ownerA,
+		"known-support-cross-space-known", "Shared known evidence must not support a private relationship.")
+	submitted, err := createTestIngest(privateCtx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerB, SpaceID: privateSpace.ID.String(),
+		SpaceGeneration: privateSpaceGeneration(t, ctx, adminDB, rls, privateSpace.ID),
+		IdempotencyKey:  "known-support-cross-space-submitted", RequestHash: "known-support-cross-space-submitted-hash",
+		Evidence: []EvidenceInput{{Content: "Private submitted evidence for the relationship."}},
+	})
+	require.NoError(t, err)
+	require.Len(t, submitted.Evidence, 1)
+
+	_, err = semantic.ApplyRelationshipDecision(privateCtx, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerB, IngestID: submitted.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "uses", ObjectEntityID: object.EntityID,
+		EvidenceVerdict: string(domain.VerificationEntailed),
+		Support: &EvidenceSupportInput{
+			FragmentID: submitted.Evidence[0].FragmentID, SourceGroupKey: "known-support-cross-space-submitted",
+			SpanStart: 0, SpanEnd: len([]rune(submitted.Evidence[0].Content)), Authority: "primary",
+		},
+		Supports: []EvidenceSupportInput{{
+			FragmentID: known.Evidence[0].FragmentID, EvidenceOwnerProfileID: ownerA,
+			SourceGroupKey: "known-support-cross-space-known", SpanStart: 0,
+			SpanEnd: len([]rune(known.Evidence[0].Content)), Authority: "primary",
+		}},
+	})
+	require.ErrorIs(t, err, ErrSemanticOwnerMismatch)
+
+	var supportCount int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM relationship_evidence_supports
+			WHERE team_id = ?::uuid AND fragment_id = ?::uuid
+		`, teamID, known.Evidence[0].FragmentID).Scan(&supportCount).Error
+	}))
+	require.Zero(t, supportCount, "cross-space known evidence must not be attached")
+}
+
 func TestKnownEvidenceSupportAllowsOwnerCorrection(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
