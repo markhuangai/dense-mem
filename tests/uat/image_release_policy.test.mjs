@@ -151,9 +151,9 @@ test("PR preview workflow gates owner/admin and one-shot approval before digest 
   assert.match(workflow, /Production image E2E/);
   assert.match(workflow, /digest="\$\(\.github\/scripts\/oci-image\.sh publish-preview/);
   assert.match(workflow, /printf 'image=%s@%s\\n'/);
-  assert.match(workflow, /image: \$\{\{ needs\.publish\.outputs\.image \}\}/);
-  assert.match(workflow, /test_repository: \$\{\{ needs\.resolve\.outputs\.head_repository \}\}/);
-  assert.match(workflow, /test_revision: \$\{\{ needs\.resolve\.outputs\.head_sha \}\}/);
+  const productionE2E = workflowJob(workflow, "production-e2e");
+  assert.match(productionE2E, /image: \$\{\{ needs\.publish\.outputs\.image \}\}/);
+  assert.doesNotMatch(productionE2E, /test_repository|test_revision/);
   for (const obsolete of [
     "pull_request_author",
     "preview_run_id",

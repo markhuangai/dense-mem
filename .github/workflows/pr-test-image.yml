@@ -450,8 +450,6 @@ jobs:
     uses: ./.github/workflows/production-image-e2e.yml
     with:
       image: ${{ needs.publish.outputs.image }}
-      test_repository: ${{ needs.resolve.outputs.head_repository }}
-      test_revision: ${{ needs.resolve.outputs.head_sha }}
     secrets: inherit
 
   report-e2e:

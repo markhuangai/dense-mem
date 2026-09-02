@@ -6,30 +6,12 @@ on:
       image:
         required: true
         type: string
-      digest:
-        required: true
-        type: string
-      test_revision:
-        required: true
-        type: string
-      test_repository:
-        required: true
-        type: string
       scenario:
-        required: true
-        type: string
-      phase:
         required: true
         type: string
       timeout_minutes:
         required: true
         type: number
-      helper_profiles:
-        required: true
-        type: string
-      playwright:
-        required: true
-        type: boolean
       manifest:
         required: false
         type: string
@@ -46,7 +28,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
-      DENSE_MEM_CI_RUN_PLAYWRIGHT: ${{ inputs.playwright && '1' || '0' }}
+      PHASE: ${{ inputs.manifest != '' && 'shared' || 'exclusive' }}
       SCENARIO: ${{ inputs.scenario }}
     steps:
       - name: Validate scenario input
@@ -64,26 +46,56 @@ jobs:
           clean: true
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ inputs.test_revision }}
-          repository: ${{ inputs.test_repository }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Validate rootless controller
         shell: bash
         run: '"${HOME}/dense-mem-ci/e2e-stack.sh" doctor'
 
+      - name: Resolve scenario configuration
+        id: configuration
+        shell: bash
+        env:
+          DENSE_MEM_E2E_SCENARIO_REGISTRY: ${{ github.workspace }}/scripts/e2e-scenarios.json
+        run: |
+          set -euo pipefail
+          classification="$(node "${HOME}/dense-mem-ci/e2e-scenario-registry.mjs" --scenario "${SCENARIO}")"
+          node - "${classification}" "${PHASE}" <<'NODE'
+          const classification = JSON.parse(process.argv[2]);
+          const phase = process.argv[3];
+          const isolation = phase === "shared" ? "shared_team" : "exclusive";
+          if (
+            classification.audited !== true ||
+            classification.runtime !== "production" ||
+            classification.isolation !== isolation
+          ) {
+            process.stderr.write("scenario is not audited for the requested production phase\n");
+            process.exit(1);
+          }
+          NODE
+          helpers="$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(value.helper_profiles.join(","));' "${classification}")"
+          playwright="$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(value.playwright ? "1" : "0");' "${classification}")"
+          {
+            printf 'helpers=%s\n' "${helpers}"
+            printf 'playwright=%s\n' "${playwright}"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Start isolated stack
         id: isolated
-        if: inputs.phase == 'exclusive'
+        if: env.PHASE == 'exclusive'
         shell: bash
         env:
           IMAGE: ${{ inputs.image }}
-          DIGEST: ${{ inputs.digest }}
-          HELPERS: ${{ inputs.helper_profiles }}
-          TEST_REVISION: ${{ inputs.test_revision }}
+          HELPERS: ${{ steps.configuration.outputs.helpers }}
+          TEST_REVISION: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          helpers="$(printf '%s' "${HELPERS}" | node -e 'const fs=require("node:fs"); const values=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(values.join(","));')"
-          manifest="$("${HOME}/dense-mem-ci/e2e-stack.sh" start "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" exclusive "${SCENARIO}" "${IMAGE}" "${DIGEST}" "${TEST_REVISION}" "${helpers}" "${GITHUB_WORKSPACE}")"
+          [[ "${IMAGE}" =~ ^(.+)@(sha256:[0-9a-f]{64})$ ]] || {
+            printf '%s\n' "image must be pinned by digest" >&2
+            exit 1
+          }
+          manifest="$("${HOME}/dense-mem-ci/e2e-stack.sh" start "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" exclusive "${SCENARIO}" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${TEST_REVISION}" "${HELPERS}" "${GITHUB_WORKSPACE}")"
           {
             echo "manifest<<DENSE_MEM_MANIFEST"
             echo "${manifest}"
@@ -92,7 +104,7 @@ jobs:
 
       - name: Use shared stack manifest
         id: shared
-        if: inputs.phase == 'shared'
+        if: env.PHASE == 'shared'
         env:
           MANIFEST: ${{ inputs.manifest }}
         shell: bash
@@ -119,6 +131,7 @@ jobs:
         if: always()
         continue-on-error: true
         env:
+          DENSE_MEM_CI_RUN_PLAYWRIGHT: ${{ steps.configuration.outputs.playwright }}
           MANIFEST: ${{ steps.isolated.outputs.manifest || steps.shared.outputs.manifest }}
         shell: bash
         run: |
@@ -151,7 +164,7 @@ jobs:
           fi
 
       - name: Stop isolated stack
-        if: always() && inputs.phase == 'exclusive' && steps.isolated.outputs.manifest != ''
+        if: always() && env.PHASE == 'exclusive' && steps.isolated.outputs.manifest != ''
         env:
           MANIFEST: ${{ steps.isolated.outputs.manifest }}
         shell: bash
@@ -182,7 +195,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: dense-mem-e2e-${{ inputs.phase }}-${{ env.SCENARIO }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: dense-mem-e2e-${{ env.PHASE }}-${{ env.SCENARIO }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/dense-mem-e2e-${{ env.SCENARIO }}.log
             ${{ runner.temp }}/dense-mem-e2e-${{ env.SCENARIO }}.status

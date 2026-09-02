@@ -127,6 +127,8 @@ test("production E2E jobs use the runner that matches their capability", async (
   assert.doesNotMatch(workflow, /rootless-docker-shared/);
   assert.doesNotMatch(reusable, /rootless-docker-shared/);
   assert.doesNotMatch(workflow, /workflow_dispatch/);
+  const workflowCall = workflow.slice(workflow.indexOf("on:\n  workflow_call:"), workflow.indexOf("\npermissions:"));
+  const scenarioCall = reusable.slice(reusable.indexOf("on:\n  workflow_call:"), reusable.indexOf("\npermissions:"));
   for (const obsolete of [
     "source_revision",
     "source_repository",
@@ -139,19 +141,29 @@ test("production E2E jobs use the runner that matches their capability", async (
     assert.doesNotMatch(workflow, new RegExp(`inputs\\.${obsolete}|outputs\\.${obsolete}`));
   }
   assert.match(workflow, /validatePinnedProductionImageReference/);
-  assert.match(workflow, /test_repository/);
-  assert.match(workflow, /test_revision/);
+  assert.match(workflowCall, /^      image:$/m);
+  for (const input of ["test_repository", "test_revision"]) {
+    assert.doesNotMatch(workflowCall, new RegExp(`^      ${input}:$`, "m"));
+  }
+  for (const input of ["image", "scenario", "timeout_minutes", "manifest"]) {
+    assert.match(scenarioCall, new RegExp(`^      ${input}:$`, "m"));
+  }
+  for (const input of ["digest", "test_repository", "test_revision", "phase", "helper_profiles", "playwright"]) {
+    assert.doesNotMatch(scenarioCall, new RegExp(`^      ${input}:$`, "m"));
+  }
   assert.match(workflow, /^      max-parallel: 4$/m);
-  assert.match(workflowJob(workflow, "stale-cleanup"), /^    if: needs\.authorize\.outputs\.authorized == 'true'$/m);
+  assert.doesNotMatch(workflowJob(workflow, "stale-cleanup"), /^    if:/m);
   assertWorkflowOrchestration(workflow);
   assert.match(workflow, /SHARED_STOP_RESULT/);
   assert.match(workflow, /passed \(cleanup failed\)/);
   assert.match(workflow, /e2e_host_controller_real\.sh/);
   assert.match(workflow, /ref: main[\s\S]*path: \.ci-controller-contract/);
-  assert.match(workflow, /test_repository: \$\{\{ needs\.authorize\.outputs\.test_repository \}\}/);
-  assert.match(reusable, /repository: \$\{\{ inputs\.test_repository \}\}/);
-  assert.match(workflow, /ref: \$\{\{ steps\.resolve\.outputs\.test_revision \}\}/);
-  assert.doesNotMatch(workflow, /ref: \$\{\{ inputs\.test_revision \|\| 'main' \}\}/);
+  assert.match(workflow, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
+  assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+  assert.match(reusable, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
+  assert.match(reusable, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+  assert.match(reusable, /DENSE_MEM_E2E_SCENARIO_REGISTRY: \$\{\{ github\.workspace \}\}\/scripts\/e2e-scenarios\.json/);
+  assert.match(reusable, /PHASE: \$\{\{ inputs\.manifest != '' && 'shared' \|\| 'exclusive' \}\}/);
   assert.match(controller, /docker compose/);
   assert.match(controller, /run --rm/);
   assert.doesNotMatch(compose, /^\s+ports:/m);

@@ -7,14 +7,6 @@ on:
         description: "Immutable production image reference pinned by digest"
         required: true
         type: string
-      test_repository:
-        description: "Repository containing the pull request test harness"
-        required: true
-        type: string
-      test_revision:
-        description: "Exact pull request revision containing the test harness"
-        required: true
-        type: string
 permissions:
   contents: read
   packages: read
@@ -25,14 +17,10 @@ jobs:
     runs-on: docker-runner
     timeout-minutes: 15
     outputs:
-      authorized: ${{ steps.resolve.outputs.authorized }}
       image: ${{ steps.resolve.outputs.image }}
       digest: ${{ steps.resolve.outputs.digest }}
-      test_revision: ${{ steps.resolve.outputs.test_revision }}
-      test_repository: ${{ steps.resolve.outputs.test_repository }}
       exclusive_matrix: ${{ steps.matrix.outputs.exclusive_matrix }}
       shared_matrix: ${{ steps.matrix.outputs.shared_matrix }}
-      shared_helpers: ${{ steps.matrix.outputs.shared_helpers }}
     steps:
       - name: Checkout trusted policy and registry
         uses: actions/checkout@v7
@@ -44,17 +32,14 @@ jobs:
           path: .ci-policy
           sparse-checkout: |
             .github/scripts
-            scripts/e2e-scenarios.json
             scripts/e2e-scenario-registry.mjs
 
-      - name: Validate immutable image and test revision
+      - name: Validate immutable image
         id: resolve
         uses: actions/github-script@v9
         env:
           IMAGE: ${{ inputs.image }}
           REPOSITORY: ${{ github.repository }}
-          TEST_REPOSITORY: ${{ inputs.test_repository }}
-          TEST_REVISION: ${{ inputs.test_revision }}
         with:
           script: |
             const policy = require("./.ci-policy/.github/scripts/image-release-policy.cjs");
@@ -66,38 +51,24 @@ jobs:
               core.setFailed(imageDecision.reason);
               return;
             }
-            if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(process.env.TEST_REPOSITORY)) {
-              core.setFailed("the test repository is invalid");
-              return;
-            }
-            if (!/^[0-9a-f]{40}$/.test(process.env.TEST_REVISION)) {
-              core.setFailed("the test revision must be a 40-character commit SHA");
-              return;
-            }
             const at = process.env.IMAGE.lastIndexOf("@");
-            core.setOutput("authorized", "true");
             core.setOutput("image", process.env.IMAGE.slice(0, at));
             core.setOutput("digest", process.env.IMAGE.slice(at + 1));
-            core.setOutput("test_repository", process.env.TEST_REPOSITORY);
-            core.setOutput("test_revision", process.env.TEST_REVISION);
 
       - name: Checkout exact tested scenario registry
-        id: source
-        if: steps.resolve.outcome == 'success'
         uses: actions/checkout@v7
         with:
           clean: true
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ steps.resolve.outputs.test_revision }}
-          repository: ${{ steps.resolve.outputs.test_repository }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
           path: .ci-source
           sparse-checkout: |
             scripts/e2e-scenarios.json
 
       - name: Resolve exact-source scenario matrix
         id: matrix
-        if: steps.source.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -106,17 +77,14 @@ jobs:
           export DENSE_MEM_E2E_SCENARIO_REGISTRY="${registry}"
           exclusive_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix exclusive)"
           shared_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix shared_team)"
-          shared_helpers="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --helpers shared_team)"
           {
             echo "exclusive_matrix=${exclusive_matrix}"
             echo "shared_matrix=${shared_matrix}"
-            echo "shared_helpers=${shared_helpers}"
           } >> "${GITHUB_OUTPUT}"
 
   prechecks:
     name: Rootless controller and PostgreSQL prechecks
     needs: authorize
-    if: needs.authorize.outputs.authorized == 'true'
     # The rootless-docker pool shares the CI user's daemon and home so leases and manifests remain reachable.
     runs-on: rootless-docker
     timeout-minutes: 30
@@ -157,13 +125,13 @@ jobs:
           clean: true
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ needs.authorize.outputs.test_revision }}
-          repository: ${{ needs.authorize.outputs.test_repository }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
 
       - name: Run disposable PostgreSQL regressions in the trusted controller
         shell: bash
         env:
-          TEST_REVISION: ${{ needs.authorize.outputs.test_revision }}
+          TEST_REVISION: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           "${HOME}/dense-mem-ci/e2e-stack.sh" precheck \
@@ -173,7 +141,6 @@ jobs:
   stale-cleanup:
     name: Reclaim stale CI resources
     needs: authorize
-    if: needs.authorize.outputs.authorized == 'true'
     runs-on: rootless-docker
     timeout-minutes: 15
     env:
@@ -223,15 +190,9 @@ jobs:
       matrix: ${{ fromJSON(needs.authorize.outputs.exclusive_matrix) }}
     uses: ./.github/workflows/production-e2e-scenario.yml
     with:
-      image: ${{ needs.authorize.outputs.image }}
-      digest: ${{ needs.authorize.outputs.digest }}
-      test_revision: ${{ needs.authorize.outputs.test_revision }}
-      test_repository: ${{ needs.authorize.outputs.test_repository }}
+      image: ${{ needs.authorize.outputs.image }}@${{ needs.authorize.outputs.digest }}
       scenario: ${{ matrix.name }}
-      phase: exclusive
       timeout_minutes: ${{ matrix.timeout_minutes }}
-      helper_profiles: ${{ toJSON(matrix.helper_profiles) }}
-      playwright: ${{ matrix.playwright }}
       manifest: ""
     secrets: inherit
 
@@ -256,8 +217,18 @@ jobs:
           clean: true
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ needs.authorize.outputs.test_revision }}
-          repository: ${{ needs.authorize.outputs.test_repository }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Resolve shared helper profiles
+        id: helpers
+        shell: bash
+        env:
+          DENSE_MEM_E2E_SCENARIO_REGISTRY: ${{ github.workspace }}/scripts/e2e-scenarios.json
+        run: |
+          set -euo pipefail
+          helpers="$(node "${HOME}/dense-mem-ci/e2e-scenario-registry.mjs" --helpers shared_team)"
+          printf 'helpers=%s\n' "${helpers}" >> "${GITHUB_OUTPUT}"
 
       - name: Start one shared stack
         id: start
@@ -265,8 +236,8 @@ jobs:
         env:
           IMAGE: ${{ needs.authorize.outputs.image }}
           DIGEST: ${{ needs.authorize.outputs.digest }}
-          TEST_REVISION: ${{ needs.authorize.outputs.test_revision }}
-          HELPERS: ${{ needs.authorize.outputs.shared_helpers }}
+          TEST_REVISION: ${{ github.event.pull_request.head.sha }}
+          HELPERS: ${{ steps.helpers.outputs.helpers }}
         run: |
           set -euo pipefail
           helpers="$(printf '%s' "${HELPERS}" | node -e 'const fs=require("node:fs"); const values=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(values.join(","));')"
@@ -283,15 +254,9 @@ jobs:
       matrix: ${{ fromJSON(needs.authorize.outputs.shared_matrix) }}
     uses: ./.github/workflows/production-e2e-scenario.yml
     with:
-      image: ${{ needs.authorize.outputs.image }}
-      digest: ${{ needs.authorize.outputs.digest }}
-      test_revision: ${{ needs.authorize.outputs.test_revision }}
-      test_repository: ${{ needs.authorize.outputs.test_repository }}
+      image: ${{ needs.authorize.outputs.image }}@${{ needs.authorize.outputs.digest }}
       scenario: ${{ matrix.name }}
-      phase: shared
       timeout_minutes: ${{ matrix.timeout_minutes }}
-      helper_profiles: ${{ toJSON(matrix.helper_profiles) }}
-      playwright: ${{ matrix.playwright }}
       manifest: ${{ needs.shared-start.outputs.manifest }}
     secrets: inherit
 
@@ -377,7 +342,7 @@ jobs:
           RUN_CLEANUP_RESULT: ${{ needs.cleanup-run.result }}
           IMAGE: ${{ needs.authorize.outputs.image }}
           DIGEST: ${{ needs.authorize.outputs.digest }}
-          TEST_REVISION: ${{ needs.authorize.outputs.test_revision }}
+          TEST_REVISION: ${{ github.event.pull_request.head.sha }}
           EXCLUSIVE_MATRIX: ${{ needs.authorize.outputs.exclusive_matrix }}
           SHARED_MATRIX: ${{ needs.authorize.outputs.shared_matrix }}
         run: |
