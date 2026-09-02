@@ -380,6 +380,8 @@ func submissionAssessmentGroundedEntities(
 	}
 	contractEntities := make([]assessor.SemanticAssessmentRequiredEntityRef, 0, len(plan.EntityTargets))
 	groups := make([]assessor.SemanticAssessmentEntityCandidateGroup, 0, len(plan.EntityTargets))
+	pronounCandidates := make([]submissionAssessmentPronounCandidate, 0)
+	pronounCandidateIDs := make(map[string]map[string]struct{})
 	for entityIndex, entity := range plan.EntityTargets {
 		catalogGroup, ok := groupsByRef[entity.Target.Ref]
 		if !ok {
@@ -628,33 +630,60 @@ func submissionAssessmentGroundedEntities(
 				if !ok {
 					continue
 				}
-				startRef, startOK := assessor.SemanticAssessmentBoundaryRef(evidenceItem, pronoun[0])
-				endRef, endOK := assessor.SemanticAssessmentBoundaryRef(evidenceItem, pronoun[1])
-				if !startOK || !endOK {
-					return nil, nil, errors.New("entity coreference boundary is missing")
+				spanKey := fmt.Sprintf("%s:%d:%d", evidenceID, pronoun[0], pronoun[1])
+				candidateIDs := pronounCandidateIDs[spanKey]
+				if candidateIDs == nil {
+					candidateIDs = make(map[string]struct{})
+					pronounCandidateIDs[spanKey] = candidateIDs
 				}
-				groundingRef := fmt.Sprintf("g%d_coref_%d", entityIndex, groundingIndex)
-				groundingIndex++
-				surface := string([]rune(evidenceItem.Content)[pronoun[0]:pronoun[1]])
-				target.Groundings = append(target.Groundings, assessor.SemanticAssessmentEntityGrounding{
-					GroundingRef: groundingRef, EvidenceID: evidenceID, Surface: surface,
-					StartRef: startRef, EndRef: endRef, AnchorRef: anchor.AnchorRef,
-					Start: pronoun[0], End: pronoun[1],
-				})
-				groups = append(groups, assessor.SemanticAssessmentEntityCandidateGroup{
-					Surface: surface, EvidenceID: evidenceID, GroundingRef: groundingRef,
-					Start: pronoun[0], End: pronoun[1], Candidates: append([]assessor.SemanticAssessmentEntityCandidate(nil), candidateGroupCandidatesForAnchor(anchor, catalogGroup.Candidates)...),
-				})
-				if len(target.Groundings) > assessor.SemanticAssessmentMaxEntityGroundings {
-					return nil, nil, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
-						"catalog_context",
-						"submission assessment entity grounding bound is exceeded",
-						assessor.FailureMeasurement{Unit: "groundings", Observed: len(target.Groundings), Limit: assessor.SemanticAssessmentMaxEntityGroundings},
-					)
+				for _, candidateID := range anchor.CandidateEntityIDs {
+					candidateIDs[candidateID] = struct{}{}
 				}
+				pronounCandidates = append(pronounCandidates, submissionAssessmentPronounCandidate{
+					targetIndex: entityIndex,
+					evidenceID:  evidenceID,
+					start:       pronoun[0],
+					end:         pronoun[1],
+					anchor:      anchor,
+					candidates:  candidateGroupCandidatesForAnchor(anchor, catalogGroup.Candidates),
+				})
 			}
 		}
 		contractEntities = append(contractEntities, target)
+	}
+	for _, candidate := range pronounCandidates {
+		spanKey := fmt.Sprintf("%s:%d:%d", candidate.evidenceID, candidate.start, candidate.end)
+		if len(pronounCandidateIDs[spanKey]) != 1 {
+			continue
+		}
+		evidenceItem, ok := evidenceByID[candidate.evidenceID]
+		if !ok {
+			continue
+		}
+		startRef, startOK := assessor.SemanticAssessmentBoundaryRef(evidenceItem, candidate.start)
+		endRef, endOK := assessor.SemanticAssessmentBoundaryRef(evidenceItem, candidate.end)
+		if !startOK || !endOK {
+			return nil, nil, errors.New("entity coreference boundary is missing")
+		}
+		target := &contractEntities[candidate.targetIndex]
+		groundingRef := fmt.Sprintf("g%d_coref_%d", candidate.targetIndex, len(target.Groundings))
+		surface := string([]rune(evidenceItem.Content)[candidate.start:candidate.end])
+		target.Groundings = append(target.Groundings, assessor.SemanticAssessmentEntityGrounding{
+			GroundingRef: groundingRef, EvidenceID: candidate.evidenceID, Surface: surface,
+			StartRef: startRef, EndRef: endRef, AnchorRef: candidate.anchor.AnchorRef,
+			Start: candidate.start, End: candidate.end,
+		})
+		groups = append(groups, assessor.SemanticAssessmentEntityCandidateGroup{
+			Surface: surface, EvidenceID: candidate.evidenceID, GroundingRef: groundingRef,
+			Start: candidate.start, End: candidate.end, Candidates: append([]assessor.SemanticAssessmentEntityCandidate(nil), candidate.candidates...),
+		})
+		if len(target.Groundings) > assessor.SemanticAssessmentMaxEntityGroundings {
+			return nil, nil, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+				"catalog_context",
+				"submission assessment entity grounding bound is exceeded",
+				assessor.FailureMeasurement{Unit: "groundings", Observed: len(target.Groundings), Limit: assessor.SemanticAssessmentMaxEntityGroundings},
+			)
+		}
 	}
 	if len(groupsByRef) != len(contractEntities) {
 		return nil, nil, errors.New("entity catalog includes an unknown target")
@@ -672,6 +701,15 @@ type submissionAssessmentGroundingOccurrence struct {
 	End        int
 	Surface    string
 	Candidates map[string]repository.SemanticReviewEntityCandidate
+}
+
+type submissionAssessmentPronounCandidate struct {
+	targetIndex int
+	evidenceID  string
+	start       int
+	end         int
+	anchor      assessor.SemanticAssessmentEntityAnchor
+	candidates  []assessor.SemanticAssessmentEntityCandidate
 }
 
 func candidateGroupCandidatesForAnchor(

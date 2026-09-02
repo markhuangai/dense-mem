@@ -190,6 +190,63 @@ func TestSubmissionAssessmentLeavesPronounAmbiguousAcrossAnchorNames(t *testing.
 	}
 }
 
+func TestSubmissionAssessmentOmitsPronounsAmbiguousAcrossEntityTargets(t *testing.T) {
+	evidence := []assessor.SemanticReviewEvidence{
+		assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
+			EvidenceID: "evidence:0", EvidenceIndex: 0, Content: "Alice met Bob.",
+		}),
+		assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
+			EvidenceID: "evidence:1", EvidenceIndex: 1, Content: "She thanked him.",
+		}),
+	}
+	plan := submissionAssessmentPlan{EntityTargets: []submissionAssessmentEntityTarget{
+		{Target: assessor.SemanticAssessmentRequiredEntityRef{
+			Ref: "entity:subject", Name: "Alice", Kind: "person", EvidenceIDs: []string{"evidence:0", "evidence:1"},
+		}},
+		{Target: assessor.SemanticAssessmentRequiredEntityRef{
+			Ref: "entity:object", Name: "Bob", Kind: "person", EvidenceIDs: []string{"evidence:0", "evidence:1"},
+		}},
+	}}
+	candidateA := repository.SemanticReviewEntityCandidate{
+		EntityID: "entity-alice", EntityKind: "person", CanonicalName: "Alice", ActiveNames: []string{"Alice"}, Status: "active",
+	}
+	candidateB := repository.SemanticReviewEntityCandidate{
+		EntityID: "entity-bob", EntityKind: "person", CanonicalName: "Bob", ActiveNames: []string{"Bob"}, Status: "active",
+	}
+	entities, groups, err := submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{
+		Complete: true,
+		Groups: []repository.SubmissionAssessmentEntityCatalogGroup{
+			{Ref: "entity:subject", Candidates: []repository.SemanticReviewEntityCandidate{candidateA}, Complete: true},
+			{Ref: "entity:object", Candidates: []repository.SemanticReviewEntityCandidate{candidateB}, Complete: true},
+		},
+	}, evidence)
+	require.NoError(t, err)
+	require.Len(t, entities, 2)
+	for _, entity := range entities {
+		for _, grounding := range entity.Groundings {
+			require.NotContains(t, []string{"She", "him"}, grounding.Surface)
+		}
+	}
+	for _, group := range groups {
+		require.NotContains(t, []string{"She", "him"}, group.Surface)
+	}
+
+	objectRef := "entity:object"
+	request := assessor.SemanticAssessmentRequest{
+		RequestID: "ambiguous-pronoun-request", TeamID: "team-a", OwnerProfileID: "owner-a", Evidence: evidence,
+		EntityCandidateGroups: groups,
+		SubmissionContract: &assessor.SemanticAssessmentSubmissionContract{
+			Entities: entities,
+			Relationships: []assessor.SemanticAssessmentRequiredRelationshipRef{{
+				ProposalID: "relationship:uses", PredicateHint: "uses", SubjectRef: "entity:subject", ObjectRef: &objectRef,
+				EvidenceIDs: []string{"evidence:0", "evidence:1"}, Polarity: "+",
+			}},
+		},
+	}
+	_, validationErrors := assessor.PrepareSemanticAssessmentRequest(request, assessor.DefaultSemanticAssessmentLimits())
+	require.Empty(t, validationErrors)
+}
+
 func TestSubmissionAssessmentProvidesKnownEvidenceAnchorForSubmittedPronoun(t *testing.T) {
 	fixture := synchronousAssessmentFixture(t)
 	fixture.input.Snapshot.Evidence[0].Content = "It uses Beta."
