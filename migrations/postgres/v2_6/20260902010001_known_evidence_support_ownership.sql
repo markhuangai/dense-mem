@@ -46,6 +46,29 @@ CREATE TRIGGER relationship_supports_evidence_owner_defaults
 
 -- +goose StatementEnd
 
+-- The append-only support ledger admits only this migration's narrowly gated
+-- NULL-to-relationship-owner backfill. The transaction-local flag is set by
+-- the procedure below and cannot authorize ordinary runtime updates.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION prevent_append_only_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'relationship_evidence_supports'
+       AND TG_OP = 'UPDATE'
+       AND current_setting('app.tx_mode', true) = 'migration'
+       AND current_setting('app.known_evidence_support_ownership_backfill', true) = 'true'
+       AND OLD.evidence_owner_profile_id IS NULL
+       AND NEW.evidence_owner_profile_id IS NOT NULL
+       AND NEW.evidence_owner_profile_id IS NOT DISTINCT FROM OLD.owner_profile_id
+       AND (to_jsonb(NEW) - 'evidence_owner_profile_id') = (to_jsonb(OLD) - 'evidence_owner_profile_id')
+    THEN
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION '% is append-only: % operations are not allowed', TG_TABLE_NAME, TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- +goose StatementEnd
+
 -- Keep the resumable backfill bounded by the remaining NULL rows instead of
 -- rescanning every already-processed support row on each batch.
 DROP INDEX CONCURRENTLY IF EXISTS relationship_supports_evidence_owner_backfill_null_idx;
@@ -53,10 +76,10 @@ CREATE INDEX CONCURRENTLY relationship_supports_evidence_owner_backfill_null_idx
     ON relationship_evidence_supports(team_id, support_id)
     WHERE evidence_owner_profile_id IS NULL;
 
--- The support ledger is append-only at runtime. Each batch disables the
--- mutation guard only for its own update transaction, then commits before the
--- next batch is selected. A failed batch rolls back its trigger and row work;
--- rerunning the migration continues from the remaining NULL values.
+-- The support ledger remains append-only at runtime. Each batch enables the
+-- transaction-local backfill gate, then commits before the next batch is
+-- selected. A failed batch rolls back its row work; rerunning the migration
+-- continues from the remaining NULL values.
 -- +goose StatementBegin
 CREATE OR REPLACE PROCEDURE dense_mem_backfill_known_evidence_support_ownership_20260902010001()
 LANGUAGE plpgsql
@@ -69,9 +92,7 @@ BEGIN
         PERFORM set_config('app.current_team_id', '', true);
         PERFORM set_config('app.current_profile_id', '', true);
         PERFORM set_config('app.allowed_space_ids', '', true);
-
-        ALTER TABLE relationship_evidence_supports
-            DISABLE TRIGGER relationship_supports_append_only;
+        PERFORM set_config('app.known_evidence_support_ownership_backfill', 'true', true);
 
         WITH batch AS MATERIALIZED (
             SELECT support.ctid
@@ -87,9 +108,6 @@ BEGIN
         WHERE support.ctid = batch.ctid
           AND support.evidence_owner_profile_id IS NULL;
         GET DIAGNOSTICS updated_rows = ROW_COUNT;
-
-        ALTER TABLE relationship_evidence_supports
-            ENABLE TRIGGER relationship_supports_append_only;
 
         COMMIT;
         EXIT WHEN updated_rows = 0;
@@ -254,6 +272,17 @@ ALTER TABLE relationship_evidence_supports
 
 DROP TRIGGER IF EXISTS relationship_supports_evidence_owner_defaults ON relationship_evidence_supports;
 DROP FUNCTION IF EXISTS dense_mem_relationship_support_evidence_owner_defaults();
+
+-- Restore the strict append-only guard before removing the migration-only
+-- column it references.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION prevent_append_only_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION '% is append-only: % operations are not allowed', TG_TABLE_NAME, TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 DROP INDEX CONCURRENTLY IF EXISTS relationship_supports_evidence_owner_fragment_idx;
 
