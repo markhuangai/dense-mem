@@ -8,13 +8,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 
-const controller = (
-  await Promise.all([
-    readFile(new URL("../../scripts/e2e-host-controller.sh", import.meta.url), "utf8"),
-    readFile(new URL("../../scripts/e2e-host-controller-stack.sh", import.meta.url), "utf8"),
-    readFile(new URL("../../scripts/e2e-host-controller-runtime.sh", import.meta.url), "utf8"),
-  ])
-).join("\n");
+const [controllerMain, controllerStack, controllerRuntime] = await Promise.all([
+  readFile(new URL("../../scripts/e2e-host-controller.sh", import.meta.url), "utf8"),
+  readFile(new URL("../../scripts/e2e-host-controller-stack.sh", import.meta.url), "utf8"),
+  readFile(new URL("../../scripts/e2e-host-controller-runtime.sh", import.meta.url), "utf8"),
+]);
+const controller = [controllerMain, controllerStack, controllerRuntime].join("\n");
 const compose = await readFile(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url), "utf8");
 const adapter = await readFile(new URL("../../scripts/e2e-runtime-adapter.mjs", import.meta.url), "utf8");
 const installer = await readFile(new URL("../../scripts/install-e2e-host-controller.sh", import.meta.url), "utf8");
@@ -101,10 +100,11 @@ test("production scenarios preserve Playwright handoff values", () => {
 });
 
 test("scenario control bootstrap runs through the Compose network", () => {
-  assert.match(controller, /control_api_request\(\)/);
-  assert.match(controller, /ci_compose exec -T -e[\s\S]*client-env[\s\S]*wget -q -O -/);
-  assert.doesNotMatch(controller, /team_response=.*curl/);
-  assert.doesNotMatch(controller, /credential_response=.*curl/);
+  assert.match(controllerRuntime, /team_response=.*control_api_request/);
+  assert.match(controllerRuntime, /credential_response=.*control_api_request/);
+  assert.match(controllerRuntime, /ci_compose exec -T -e[\s\S]*client-env[\s\S]*wget -q -O -/);
+  assert.doesNotMatch(controllerRuntime, /team_response=.*curl/);
+  assert.doesNotMatch(controllerRuntime, /credential_response=.*curl/);
 });
 
 test("real controller fixtures are scoped to the workflow run", () => {

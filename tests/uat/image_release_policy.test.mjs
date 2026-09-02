@@ -172,6 +172,11 @@ test("PR preview workflow gates owner/admin and one-shot approval before digest 
   assert.match(workflow, /removeLabel/);
   assert.match(workflow, /Production image E2E/);
   assert.match(workflow, /digest="\$\(\.github\/scripts\/oci-image\.sh publish-preview/);
+  const publish = workflowJob(workflow, "publish");
+  assert.match(publish, /Revalidate pull request eligibility/);
+  assert.match(publish, /pull\.state !== "open"/);
+  assert.match(publish, /pull\.base\.ref !== "main"/);
+  assert.match(publish, /pull\.head\.sha !== process\.env\.EXPECTED_HEAD/);
   assert.match(workflow, /printf 'image=%s@%s\\n'/);
   const productionE2E = workflowJob(workflow, "production-e2e");
   assert.match(productionE2E, /image: \$\{\{ needs\.publish\.outputs\.image \}\}/);

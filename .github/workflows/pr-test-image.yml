@@ -341,6 +341,26 @@ jobs:
           name: preview-oci-${{ needs.resolve.outputs.head_sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/preview-oci
 
+      - name: Revalidate pull request eligibility
+        uses: actions/github-script@v9
+        env:
+          EXPECTED_HEAD: ${{ needs.resolve.outputs.head_sha }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+        with:
+          script: |
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: Number(process.env.PR_NUMBER),
+            });
+            if (
+              pull.state !== "open" ||
+              pull.base.ref !== "main" ||
+              pull.head.sha !== process.env.EXPECTED_HEAD
+            ) {
+              core.setFailed("the pull request is no longer open against main at the approved head");
+            }
+
       - name: Install pinned regctl
         shell: bash
         env:
