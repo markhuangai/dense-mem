@@ -24,6 +24,13 @@ function workflowJob(workflow, name) {
   return nextJob === -1 ? remainder : remainder.slice(0, nextJob);
 }
 
+function assertNode24Setup(job) {
+  assert.match(
+    job,
+    /- name: Set up Node\.js\n\s+uses: actions\/setup-node@v7\n\s+with:\n\s+node-version: 24\n\s+package-manager-cache: false/,
+  );
+}
+
 function assertWorkflowOrchestration(workflow) {
   const exclusive = workflowJob(workflow, "exclusive");
   const exclusiveCleanup = workflowJob(workflow, "exclusive-cleanup");
@@ -94,9 +101,19 @@ test("production jobs use capability-matched runners and PR-owned assets", async
     readFile(new URL("../../scripts/e2e-host-controller.sh", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url), "utf8"),
   ]);
-  for (const job of ["authorize", "report"]) assert.match(workflowJob(workflow, job), /^    runs-on: docker-runner$/m);
-  for (const job of ["prechecks", "stale-cleanup", "exclusive-cleanup", "shared-start", "shared-stop"]) assert.match(workflowJob(workflow, job), /^    runs-on: rootless-docker$/m);
-  assert.match(workflowJob(reusable, "scenario"), /^    runs-on: rootless-docker$/m);
+  for (const job of ["authorize", "report"]) {
+    const definition = workflowJob(workflow, job);
+    assert.match(definition, /^    runs-on: docker-runner$/m);
+    assertNode24Setup(definition);
+  }
+  for (const job of ["prechecks", "stale-cleanup", "exclusive-cleanup", "shared-start", "shared-stop"]) {
+    const definition = workflowJob(workflow, job);
+    assert.match(definition, /^    runs-on: rootless-docker$/m);
+    assertNode24Setup(definition);
+  }
+  const scenario = workflowJob(reusable, "scenario");
+  assert.match(scenario, /^    runs-on: rootless-docker$/m);
+  assertNode24Setup(scenario);
   assert.doesNotMatch(workflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch/);
   assert.doesNotMatch(workflow, /secrets:\s*inherit/);
   assert.doesNotMatch(caller, /secrets:\s*inherit/);

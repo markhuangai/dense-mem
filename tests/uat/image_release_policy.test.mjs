@@ -193,6 +193,21 @@ test("PR preview workflow gates owner/admin and one-shot approval before digest 
   }
 });
 
+test("PR preview reporting does not claim skipped production E2E failed", async () => {
+  const workflow = await readFile(
+    new URL("../../.github/workflows/pr-test-image.yml", import.meta.url),
+    "utf8",
+  );
+  const reportE2E = workflowJob(workflow, "report-e2e");
+  const statusCall = reportE2E.indexOf("github.rest.repos.createCommitStatus");
+  const publishedImageGuard = reportE2E.indexOf("if (imagePublished)");
+  const commentCall = reportE2E.indexOf("github.rest.issues.createComment");
+
+  assert.match(reportE2E, /const imagePublished = process\.env\.BUILD_RESULT === "success"/);
+  assert.ok(statusCall !== -1 && statusCall < publishedImageGuard);
+  assert.ok(publishedImageGuard < commentCall);
+});
+
 test("OCI promotion avoids jq 1.6 reserved variable names", async () => {
   const script = await readFile(
     new URL("../../.github/scripts/oci-image.sh", import.meta.url),
