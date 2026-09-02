@@ -73,6 +73,10 @@ validate_phase() {
   [[ "$1" == "exclusive" || "$1" == "shared" ]] || fail "invalid phase: $1"
 }
 
+validate_cleanup_phase() {
+  [[ "$1" == "precheck" || "$1" == "exclusive" || "$1" == "shared" ]] || fail "invalid cleanup phase: $1"
+}
+
 validate_scenario() {
   [[ "$1" =~ ^[a-z0-9_]+$ ]] || fail "invalid scenario: $1"
 }

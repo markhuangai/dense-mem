@@ -28,6 +28,9 @@ test("controller is PR-owned and has no persistent lease or manifest contract", 
   assert.match(controller, /JOB_DIR=.*RUNNER_TEMP/);
   assert.match(controller, /DENSE_MEM_CI_PROMETHEUS_FILE/);
   assert.match(controller, /DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
+  assert.match(controller, /validate_cleanup_phase\(\)/);
+  assert.match(controller, /validate_cleanup_phase "\$target_phase"/);
+  assert.match(controller, /validate_cleanup_phase[\s\S]*precheck/);
   assert.match(controller, /for database_field in POSTGRES_USER POSTGRES_DB/);
   assert.match(controller, /redact_diagnostics/);
   assert.match(controller, /must contain at least two characters/);

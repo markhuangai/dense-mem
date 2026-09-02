@@ -348,7 +348,7 @@ stale_cleanup() {
     [[ -n "$target_run_id" && -n "$target_attempt" && -n "$target_phase" ]] || fail "targeted stale cleanup requires run ID, attempt, and phase"
     validate_decimal "$target_run_id"
     validate_decimal "$target_attempt"
-    validate_phase "$target_phase"
+    validate_cleanup_phase "$target_phase"
   fi
   local now cutoff resource metadata created_at project managed created_epoch
   now="$(date +%s)"
