@@ -202,7 +202,7 @@ test("OCI promotion avoids jq 1.6 reserved variable names", async () => {
   assert.doesNotMatch(script, /\bas \$label\b/);
 });
 
-test("validate-preview accepts only a reachable valid manifest digest", async () => {
+test("OCI preview helpers preserve the manifest digest output contract", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dense-mem-oci-validate-"));
   const regctl = join(directory, "regctl");
   const digest = `sha256:${"a".repeat(64)}`;
@@ -251,38 +251,78 @@ ${labels}
 JSON
   exit 0
 fi
+if [[ "$1" == "image" && "$2" == "copy" ]]; then
+  if [[ "$STUB_REGCTL_COPY_FAILURE" == "1" ]]; then
+    printf '%s\n' 'stub image copy failure' >&2
+    exit 1
+  fi
+  printf '%s\n' "$5"
+  exit 0
+fi
 exit 2
 `);
   await chmod(regctl, 0o755);
 
-  const invoke = async (extraEnvironment) => {
+  const invoke = async (args, extraEnvironment = {}) => {
     try {
-      await execFileAsync(
+      const result = await execFileAsync(
         "bash",
-        [ociImageScript, "validate-preview", "ghcr.io/markhuangai/dense-mem:test-42", "42", headRevision, mainRevision, "123", "1"],
+        [ociImageScript, ...args],
         {
           env: {
             ...process.env,
             REGCTL_BIN: regctl,
+            STUB_REGCTL_COPY_FAILURE: "0",
             STUB_REGCTL_DIGEST: digest,
             STUB_REGCTL_HEAD_FAILURE: "0",
             ...extraEnvironment,
           },
         },
       );
-      return { status: 0, stderr: "" };
+      return { status: 0, ...result };
     } catch (error) {
-      return { status: error.code ?? 1, stderr: error.stderr ?? "" };
+      return {
+        status: error.code ?? 1,
+        stdout: error.stdout ?? "",
+        stderr: error.stderr ?? "",
+      };
     }
   };
 
   try {
-    assert.equal((await invoke({})).status, 0);
-    const invalidDigest = await invoke({ STUB_REGCTL_DIGEST: "sha256:not-a-digest" });
+    const validateArgs = [
+      "validate-preview",
+      "ghcr.io/markhuangai/dense-mem:test-42",
+      "42",
+      headRevision,
+      mainRevision,
+      "123",
+      "1",
+    ];
+    assert.equal((await invoke(validateArgs)).status, 0);
+    const invalidDigest = await invoke(validateArgs, { STUB_REGCTL_DIGEST: "sha256:not-a-digest" });
     assert.notEqual(invalidDigest.status, 0);
     assert.match(invalidDigest.stderr, /invalid manifest digest/);
-    const unavailable = await invoke({ STUB_REGCTL_HEAD_FAILURE: "1" });
+    const unavailable = await invoke(validateArgs, { STUB_REGCTL_HEAD_FAILURE: "1" });
     assert.notEqual(unavailable.status, 0);
+
+    const publishArgs = [
+      "publish-preview",
+      join(directory, "layout"),
+      "ghcr.io/markhuangai/dense-mem:test-42",
+      "42",
+      headRevision,
+      mainRevision,
+      "123",
+      "1",
+    ];
+    const published = await invoke(publishArgs);
+    assert.equal(published.status, 0);
+    assert.equal(published.stdout, `${digest}\n`);
+
+    const copyFailure = await invoke(publishArgs, { STUB_REGCTL_COPY_FAILURE: "1" });
+    assert.notEqual(copyFailure.status, 0);
+    assert.match(copyFailure.stderr, /stub image copy failure/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

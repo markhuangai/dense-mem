@@ -134,7 +134,7 @@ publish_preview() {
 		"${run_id}" \
 		"${run_attempt}"
 	source_digest="$("${REGCTL_BIN}" manifest head "${source_ref}")"
-	"${REGCTL_BIN}" image copy --force-recursive "${source_ref}@${source_digest}" "${target_ref}"
+	"${REGCTL_BIN}" image copy --force-recursive "${source_ref}@${source_digest}" "${target_ref}" >/dev/null
 	target_digest="$("${REGCTL_BIN}" manifest head "${target_ref}")"
 	[[ "${target_digest}" == "${source_digest}" ]] ||
 		fail "published digest ${target_digest} does not match artifact ${source_digest}"
