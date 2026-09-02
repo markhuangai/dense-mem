@@ -118,6 +118,7 @@ NODE
 const fs = require("node:fs");
 const [destination, helpers, oauthToken, harnessImage, providerDimensions] = process.argv.slice(2);
 const has = (name) => new Set(helpers.split(",").filter(Boolean)).has(name);
+const conflictProviderDimensions = has("synchronous_write") ? (providerDimensions || "1536") : "1536";
 const lines = ["# dense-mem-ci-e2e.v1 generated helper overlay", "services:"];
 const serverEnvironment = new Map();
 const serverVolumes = [];
@@ -127,7 +128,7 @@ if (has("conflict_provider")) {
     AI_API_URL: "http://conflict-provider:8081/v1",
     AI_API_KEY: "dense-mem-conflict-e2e-key",
     AI_API_EMBEDDING_MODEL: "dense-mem-conflict-e2e-embedding",
-    AI_API_EMBEDDING_DIMENSIONS: "1536",
+    AI_API_EMBEDDING_DIMENSIONS: conflictProviderDimensions,
     AI_VERIFIER_API_URL: "http://conflict-provider:8081/v1",
     AI_VERIFIER_API_KEY: "dense-mem-conflict-e2e-key",
     AI_VERIFIER_MODEL: "dense-mem-conflict-e2e-verifier",

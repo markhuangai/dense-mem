@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import { join } from "node:path";
@@ -74,6 +74,56 @@ test("scenario workflow derives the stack from shared_project and executes PR sc
 
 test("runtime Compose view declares the OAuth helper volume", () => {
   assert.match(controllerStack, /"volumes:", "  oauth-provider-files:", `    name: \$\{project\}_oauth-provider-files`, "    external: true"/);
+});
+
+test("combined synchronous-write helpers align the conflict provider dimensions", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dense-mem-helper-dimensions-"));
+  try {
+    const result = spawnSync("bash", ["-e", "-u", "-o", "pipefail", "-c", `
+      set -euo pipefail
+      CONTRACT_VERSION=dense-mem-ci-e2e.v1
+      REPOSITORY=markhuangai/dense-mem
+      DENSE_MEM_CI_IMAGE_DIGEST=sha256:0000000000000000000000000000000000000000000000000000000000000000
+      JOB_DIR="$DENSE_MEM_TEST_JOB_DIR"
+      fail() { printf '%s\\n' "$*" >&2; exit 1; }
+      require_command() { :; }
+      has_helper() {
+        local helpers=",$1,"
+        [[ "$helpers" == *",$2,"* ]]
+      }
+      env_value() {
+        [[ "$1" == "AI_API_EMBEDDING_DIMENSIONS" ]] || return 1
+        printf '%s' "$DENSE_MEM_TEST_DIMENSIONS"
+      }
+      go() {
+        if [[ "$1" == "build" && "$2" == "-o" ]]; then
+          : > "$3"
+        fi
+      }
+      source "$DENSE_MEM_TEST_STACK"
+      prepare_stack_helpers densemem-ci-test "$DENSE_MEM_TEST_SOURCE_DIR" conflict_provider,synchronous_write 1 1 exclusive synchronous_write >/dev/null
+      printf '%s\\n' combined
+      cat "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE"
+      prepare_stack_helpers densemem-ci-test "$DENSE_MEM_TEST_SOURCE_DIR" conflict_provider 1 1 exclusive conflict >/dev/null
+      printf '%s\\n' standalone
+      cat "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE"
+    `], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DENSE_MEM_TEST_JOB_DIR: join(directory, "job"),
+        DENSE_MEM_TEST_SOURCE_DIR: directory,
+        DENSE_MEM_TEST_STACK: fileURLToPath(new URL("../../scripts/e2e-host-controller-stack.sh", import.meta.url)),
+        DENSE_MEM_TEST_DIMENSIONS: "3072",
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /AI_API_EMBEDDING_DIMENSIONS: "3072"/);
+    assert.match(result.stdout, /DENSE_MEM_E2E_PROVIDER_DIMENSIONS: "3072"/);
+    assert.match(result.stdout, /standalone[\s\S]*AI_API_EMBEDDING_DIMENSIONS: "1536"/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("conflict review drivers receive the provider settings used by their stack", () => {
