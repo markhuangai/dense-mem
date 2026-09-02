@@ -25,11 +25,14 @@ func canonicalSearchDocument(ctx context.Context, tx *gorm.DB, document SearchDo
 		err := tx.WithContext(ctx).Raw(`
 			SELECT fragment.content, fragment.space_id::text, COALESCE(fragment.space_generation, 0)
 			FROM evidence_fragments AS fragment
+			JOIN teams AS team
+			  ON team.id = fragment.team_id
+			 AND team.status = 'active'
+			 AND team.deleted_at IS NULL
 			JOIN knowledge_ingests AS ingest
 			  ON ingest.team_id = fragment.team_id
 			 AND ingest.ingest_id = fragment.ingest_id
 			 AND ingest.owner_profile_id = fragment.owner_profile_id
-			 AND ingest.status = 'completed'
 			LEFT JOIN evidence_sources AS source
 			  ON source.team_id = fragment.team_id
 			 AND source.source_id = fragment.source_id
@@ -141,7 +144,6 @@ func selectMissingCanonicalSearchDocuments(
 		  ON ingest.team_id = fragment.team_id
 		 AND ingest.ingest_id = fragment.ingest_id
 		 AND ingest.owner_profile_id = fragment.owner_profile_id
-		 AND ingest.status = 'completed'
 		LEFT JOIN evidence_sources AS source
 		  ON source.team_id = fragment.team_id
 		 AND source.source_id = fragment.source_id

@@ -242,7 +242,7 @@ async function provenanceAndIsolationScenario() {
     authority: "primary",
     conflictContext: { conflict_id: fixture.conflictID, expected_version: observedVersion },
   });
-  assert(stale.processing_state === "rejected" && stale.errors?.[0]?.code === "stale_input", `stale conflict submission did not fail exact preflight: ${JSON.stringify(stale)}`);
+  assert(stale.processing_state === "failed" && stale.errors?.[0]?.code === "stale_input", `stale conflict submission did not fail exact preflight: ${JSON.stringify(stale)}`);
   const semanticAfterStale = conflictSemanticSnapshot(fixture.teamID, fixture.conflictID);
   assert(stableJSON(semanticAfterStale) === stableJSON(semanticBeforeStale), `stale conflict submission changed semantic state: before=${JSON.stringify(semanticBeforeStale)} after=${JSON.stringify(semanticAfterStale)}`);
 
@@ -426,7 +426,7 @@ async function submitRelationshipExpectValidationError(apiKey, input) {
     }
   }
   assert(
-    response.error || (response.result?.isError === true && terminal?.processing_state === "rejected"),
+    response.error || (response.result?.isError === true && terminal?.processing_state === "failed"),
     `stale remember unexpectedly staged: ${JSON.stringify(response)}`,
   );
   const staged = Number(postgresQuery(`
