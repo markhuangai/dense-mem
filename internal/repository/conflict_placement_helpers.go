@@ -60,7 +60,7 @@ func lockRelationshipConflictSnapshotScope(
 	teamID string,
 	semanticScopeKey string,
 ) error {
-	// Remember placement and review refresh this scope before locking case, position, or member rows.
+	// Writers and conflict review acquire this scope before relationship or snapshot rows.
 	if strings.TrimSpace(semanticScopeKey) == "" {
 		return errors.New("relationship conflict snapshot requires a semantic scope key")
 	}
@@ -68,6 +68,39 @@ func lockRelationshipConflictSnapshotScope(
 		"SELECT pg_advisory_xact_lock(hashtextextended(?::text, 0))",
 		teamID+":relationship-conflict-snapshot:"+semanticScopeKey,
 	).Error
+}
+
+func lockRelationshipConflictSnapshotScopeForDecision(
+	ctx context.Context,
+	tx *gorm.DB,
+	input ApplyRelationshipDecisionInput,
+	predicate *predicateDefinition,
+	status string,
+) error {
+	if status != string(domain.RelationshipStatusActive) ||
+		predicate.RelationshipKind != string(domain.RelationshipKindState) ||
+		predicate.CurrentCardinality != string(domain.CurrentCardinalityOne) {
+		return nil
+	}
+	spaceID, err := loadSemanticInputSpaceID(ctx, tx, input)
+	if err != nil {
+		return err
+	}
+	source := &RelationshipRecord{
+		TeamID:             input.TeamID,
+		SpaceID:            spaceID,
+		SubjectEntityID:    input.SubjectEntityID,
+		PredicateKey:       input.PredicateKey,
+		RelationshipKind:   predicate.RelationshipKind,
+		CurrentCardinality: predicate.CurrentCardinality,
+		Polarity:           input.Polarity,
+		ScopeKey:           input.ScopeKey,
+	}
+	_, spaceKind, err := loadRelationshipConflictSpace(ctx, tx, input.TeamID, source)
+	if err != nil {
+		return err
+	}
+	return lockRelationshipConflictSnapshotScope(ctx, tx, input.TeamID, relationshipConflictScopeKey(source, spaceID, spaceKind))
 }
 
 func lockRelationshipConflictCaseSnapshotScope(

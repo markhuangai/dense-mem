@@ -460,7 +460,7 @@ NODE
     "DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1" \
     "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
     go test -tags=compose_e2e ./internal/repository \
-      -run '^TestComposeRememberPrimitives$' -count=1 || return $?
+      -run '^(TestComposeRememberPrimitives|TestConflictSnapshotScopeSerializesPlacementReviewAndWrite)$' -count=1 || return $?
 
   run_go_source_container \
     "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "" "$ENV_FILE" \

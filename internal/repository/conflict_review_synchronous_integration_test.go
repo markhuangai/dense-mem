@@ -88,11 +88,17 @@ func TestConflictReviewRetiresLosingSearchProjectionWithoutEmbedding(t *testing.
 	require.Equal(t, string(domain.SearchProjectionNotRequired), searchState)
 }
 
-func TestConflictSnapshotScopeSerializesPlacementAndReview(t *testing.T) {
+func TestConflictSnapshotScopeSerializesPlacementReviewAndWrite(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	adminSQL, err := adminDB.DB()
+	require.NoError(t, err)
+	appSQL, err := appDB.DB()
+	require.NoError(t, err)
+	appSQL.SetMaxOpenConns(8)
+	appSQL.SetMaxIdleConns(8)
 	insertSearchTestContract(t, adminDB, rls, "conflict-snapshot-scope-lock", 3, "exact", "")
 	teamID := createLedgerTeam(t, adminDB, rls, "conflict-snapshot-scope-lock-team")
 	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "conflict-snapshot-scope-lock-owner-a")
@@ -212,6 +218,64 @@ func TestConflictSnapshotScopeSerializesPlacementAndReview(t *testing.T) {
 	assertBlocked("conflict review", reviewDone)
 	releaseReview()
 	require.NoError(t, <-reviewDone)
+
+	input := conflictRememberFixtureInput(teamID, ownerA, subject.EntityID, objectA.EntityID, "Conflict scope ordering adds more support.", "conflict-snapshot-scope-write", nil)
+	vectors := conflictRememberFixtureVectors(t, ctx, ledger, input)
+	releaseWrite := holdScopeLock()
+	defer releaseWrite()
+	rememberDone := make(chan error, 1)
+	go func() {
+		_, rememberErr := ledger.CommitRememberWithEmbeddings(ctx, input, vectors)
+		rememberDone <- rememberErr
+	}()
+
+	scopeLockKey := teamID + ":relationship-conflict-snapshot:" + scopeKey
+	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer waitCancel()
+	for {
+		var waiting bool
+		err := adminSQL.QueryRowContext(waitCtx, `
+			WITH scope AS (
+				SELECT hashtextextended($1::text, 0) AS advisory_key
+			)
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_locks, scope
+				WHERE locktype = 'advisory'
+				  AND NOT granted
+				  AND objsubid = 1
+				  AND classid::bigint = ((scope.advisory_key >> 32) & 4294967295)
+				  AND objid::bigint = (scope.advisory_key & 4294967295)
+			)
+		`, scopeLockKey).Scan(&waiting)
+		require.NoError(t, err)
+		if waiting {
+			break
+		}
+		select {
+		case rememberErr := <-rememberDone:
+			require.NoError(t, rememberErr, "Remember returned before waiting for the conflict snapshot scope")
+			t.Fatal("Remember returned before waiting for the conflict snapshot scope")
+		case <-waitCtx.Done():
+			t.Fatal("Remember did not wait for the conflict snapshot scope")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	var lockedRelationshipID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT relationship_id::text
+			FROM relationship_records
+			WHERE team_id = ?::uuid
+			  AND relationship_id = ?::uuid
+			FOR UPDATE NOWAIT
+		`, teamID, first.RelationshipResults[0].Relationship.RelationshipID).Row().Scan(&lockedRelationshipID)
+	}))
+	require.Equal(t, first.RelationshipResults[0].Relationship.RelationshipID, lockedRelationshipID)
+
+	releaseWrite()
+	require.NoError(t, <-rememberDone)
 }
 
 func TestOverdueConflictResolutionRetainsEvidenceUsedByAnotherOwner(t *testing.T) {
@@ -499,9 +563,20 @@ func commitConflictRememberFixtureWithSupports(
 	supports []EvidenceSupportInput,
 ) *SynchronousRememberCommitResult {
 	t.Helper()
+	input := conflictRememberFixtureInput(teamID, ownerID, subjectID, objectID, content, key, supports)
+	vectors := conflictRememberFixtureVectors(t, ctx, repo, input)
+	result, err := repo.CommitRememberWithEmbeddings(ctx, input, vectors)
+	require.NoError(t, err)
+	return result
+}
+
+func conflictRememberFixtureInput(
+	teamID, ownerID, subjectID, objectID, content, key string,
+	supports []EvidenceSupportInput,
+) SynchronousRememberCommitInput {
 	fragmentID, ingestID, assessmentID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	relationshipRef := key + ":relationship"
-	input := SynchronousRememberCommitInput{
+	return SynchronousRememberCommitInput{
 		TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID,
 		IdempotencyKey: key, RequestHash: sha256Hex(content), SourceSummary: key,
 		Evidence: []EvidenceInput{{
@@ -532,6 +607,15 @@ func commitConflictRememberFixtureWithSupports(
 			Payload:             map[string]any{"response_hash": sha256Hex(key), "model": "test-model", "tokenizer": "o200k_base", "candidate_context_tokens": 0, "candidate_context_truncated": false},
 		},
 	}
+}
+
+func conflictRememberFixtureVectors(
+	t *testing.T,
+	ctx context.Context,
+	repo *LedgerRepositoryImpl,
+	input SynchronousRememberCommitInput,
+) []InlineEmbeddingResult {
+	t.Helper()
 	plan, err := repo.PlanRememberEmbeddings(ctx, input)
 	require.NoError(t, err)
 	vectors := make([]InlineEmbeddingResult, 0, len(plan.Documents))
@@ -546,7 +630,5 @@ func commitConflictRememberFixtureWithSupports(
 			EmbeddingModel: plan.EmbeddingModel, SearchIndexGenerationID: plan.SearchIndexGenerationID, IndexGeneration: plan.IndexGeneration,
 		})
 	}
-	result, err := repo.CommitRememberWithEmbeddings(ctx, input, vectors)
-	require.NoError(t, err)
-	return result
+	return vectors
 }

@@ -96,6 +96,7 @@ test("synchronous-write provider remains a project-scoped Compose helper", async
   assert.match(compose, /profiles: \[synchronous_write, verifier\]/);
   assert.match(stack, /provider-fixture\.mjs/);
   assert.match(stack, /DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS/);
+  assert.match(stack, /TestConflictSnapshotScopeSerializesPlacementReviewAndWrite/);
   assert.match(stack, /TestRememberServiceRejectsHistoricalOutcomesThroughPostgres/);
   assert.match(processor, /func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres/);
 });
