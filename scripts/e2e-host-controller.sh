@@ -196,7 +196,7 @@ copy_worktree_source() {
     node -e '
       let input = "";
       const blocked = [
-        /^(?:\.env|\.env\..*)$/,
+        /(?:^|\/)\.env(?:\..*)?$/,
         /(?:^|\/)telemetry-scrape-token$/,
         /(?:^|\/)coverage(?:\.out)?$/,
         /(?:^|\/)(?:test-results|playwright-report)(?:\/|$)/,
@@ -210,8 +210,8 @@ copy_worktree_source() {
         }
       });
     ' |
-    tar --null --verbatim-files-from --files-from=- -C "$source_dir" \
-      --transform='s,^,workspace/,' -cf - |
+    tar --null --verbatim-files-from -C "$source_dir" \
+      --transform='s,^,workspace/,' --files-from=- -cf - |
     docker cp - "$container:/"
 }
 

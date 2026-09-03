@@ -19,6 +19,7 @@ mkdir -p "$CONFIG_DIR" "$JOB_DIR"
 project_one=""
 project_two=""
 project_failed=""
+project_adverse=""
 stale_container=""
 protected_container=""
 protected_phase_container=""
@@ -45,7 +46,7 @@ cleanup() {
   local status=$?
   trap - EXIT INT TERM
   set +e
-  for project in "$project_one" "$project_two" "$project_failed"; do
+  for project in "$project_one" "$project_two" "$project_failed" "$project_adverse"; do
     [[ -n "$project" ]] && "$CONTROLLER" stop "$project" >/dev/null 2>&1 || true
   done
   [[ -n "$stale_container" ]] && docker rm -f "$stale_container" >/dev/null 2>&1 || true
@@ -93,19 +94,36 @@ write_compose() {
 const fs = require("node:fs");
 const [destination, mode] = process.argv.slice(2);
 const serverCommand = mode === "fail" ? ["sh", "-c", "exit 1"] : ["sh", "-c", "while :; do sleep 3600; done"];
+const runtimeUser = mode === "bootstrap-role"
+  ? "densemem_e2e_bootstrap"
+  : mode === "owner-role"
+    ? "densemem_e2e_database_owner"
+    : "densemem";
+const gooseStatements = [
+  "CREATE TABLE IF NOT EXISTS public.goose_db_version (version_id bigint PRIMARY KEY, is_applied boolean NOT NULL);",
+  "INSERT INTO public.goose_db_version (version_id, is_applied) VALUES (2026080603, TRUE) ON CONFLICT (version_id) DO UPDATE SET is_applied = EXCLUDED.is_applied;",
+];
+const rlsStatements = [
+  "CREATE TABLE IF NOT EXISTS public.user_portal_sessions (id integer PRIMARY KEY, key_id text NOT NULL);",
+  "ALTER TABLE public.user_portal_sessions ENABLE ROW LEVEL SECURITY;",
+  "ALTER TABLE public.user_portal_sessions FORCE ROW LEVEL SECURITY;",
+  "DROP POLICY IF EXISTS user_portal_sessions_system_access ON public.user_portal_sessions;",
+  "CREATE POLICY user_portal_sessions_system_access ON public.user_portal_sessions AS PERMISSIVE FOR ALL TO PUBLIC USING (current_setting('app.tx_mode', true) = 'system') WITH CHECK (current_setting('app.tx_mode', true) = 'system');",
+];
+const stateStatements = mode === "missing-state"
+  ? ["SELECT 1;"]
+  : mode === "missing-migration"
+    ? rlsStatements
+    : mode === "missing-rls"
+      ? gooseStatements
+      : [...gooseStatements, ...rlsStatements];
 const postgresInitCommand = [
   "sh",
   "-ec",
   [
     'until pg_isready -h "$${POSTGRES_HOST}" -U "$${POSTGRES_BOOTSTRAP_USER}" -d "$${POSTGRES_BOOTSTRAP_DB}"; do sleep 1; done',
     'PGPASSWORD="$${POSTGRES_RUNTIME_PASSWORD}" psql -h "$${POSTGRES_HOST}" -U "$${POSTGRES_RUNTIME_USER}" -d "$${POSTGRES_RUNTIME_DB}" -v ON_ERROR_STOP=1 <<\'SQL\'',
-    "CREATE TABLE IF NOT EXISTS public.goose_db_version (version_id bigint PRIMARY KEY, is_applied boolean NOT NULL);",
-    "INSERT INTO public.goose_db_version (version_id, is_applied) VALUES (2026080603, TRUE) ON CONFLICT (version_id) DO UPDATE SET is_applied = EXCLUDED.is_applied;",
-    "CREATE TABLE IF NOT EXISTS public.user_portal_sessions (id integer PRIMARY KEY, key_id text NOT NULL);",
-    "ALTER TABLE public.user_portal_sessions ENABLE ROW LEVEL SECURITY;",
-    "ALTER TABLE public.user_portal_sessions FORCE ROW LEVEL SECURITY;",
-    "DROP POLICY IF EXISTS user_portal_sessions_system_access ON public.user_portal_sessions;",
-    "CREATE POLICY user_portal_sessions_system_access ON public.user_portal_sessions AS PERMISSIVE FOR ALL TO PUBLIC USING (current_setting('app.tx_mode', true) = 'system') WITH CHECK (current_setting('app.tx_mode', true) = 'system');",
+    ...stateStatements,
     "SQL",
   ].join("\n"),
 ];
@@ -139,7 +157,7 @@ const lines = [
   "      POSTGRES_HOST: postgres",
   "      POSTGRES_BOOTSTRAP_USER: densemem_e2e_bootstrap",
   "      POSTGRES_BOOTSTRAP_DB: densemem",
-  "      POSTGRES_RUNTIME_USER: densemem",
+  "      POSTGRES_RUNTIME_USER: " + runtimeUser,
   "      POSTGRES_RUNTIME_PASSWORD: controller-test-password",
   "      POSTGRES_RUNTIME_DB: densemem",
   "    command: " + JSON.stringify(postgresInitCommand),
@@ -157,7 +175,7 @@ const lines = [
   "    image: alpine:3.24",
   "    command: " + JSON.stringify(serverCommand),
   "    environment:",
-  "      POSTGRES_USER: densemem",
+  "      POSTGRES_USER: " + runtimeUser,
   "      POSTGRES_PASSWORD: controller-test-password",
   "      POSTGRES_DB: densemem",
   "    depends_on:",
@@ -297,6 +315,18 @@ project_failed="densemem-ci-${run_failed}-${fixture_attempt}-shared-shared"
 expect_failure "$CONTROLLER" start "$run_failed" "$fixture_attempt" shared shared "${image}@${digest}" "$ROOT_DIR"
 write_compose normal
 assert_no_project_resources "$project_failed"
+
+adverse_index=6
+for adverse_mode in bootstrap-role owner-role missing-state missing-migration missing-rls; do
+  run_adverse="${fixture_prefix}${adverse_index}"
+  project_adverse="densemem-ci-${run_adverse}-${fixture_attempt}-shared-shared"
+  write_compose "$adverse_mode"
+  expect_failure "$CONTROLLER" start "$run_adverse" "$fixture_attempt" shared shared "${image}@${digest}" "$ROOT_DIR"
+  assert_no_project_resources "$project_adverse"
+  project_adverse=""
+  adverse_index=$((adverse_index + 1))
+done
+write_compose normal
 
 stale_project="densemem-ci-${run_stale}-${fixture_attempt}-shared-stale"
 stale_container="dense-mem-controller-stale-${fixture_prefix}-${fixture_attempt}-$$"

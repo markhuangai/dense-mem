@@ -44,6 +44,7 @@ services:
 
   server:
     image: ${DENSE_MEM_IMAGE:?DENSE_MEM_IMAGE is required}
+    restart: on-failure
     env_file:
       - ${DENSE_MEM_CI_ENV_FILE:?DENSE_MEM_CI_ENV_FILE is required}
     environment:

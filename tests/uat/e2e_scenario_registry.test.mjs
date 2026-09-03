@@ -32,6 +32,27 @@ function assertNode24Setup(job) {
   );
 }
 
+function assertPreviewBuildPolicy(workflow) {
+  const build = workflowJob(workflow, "build");
+  for (const line of [
+    "docker buildx build \\",
+    "--target preview",
+    "--platform linux/amd64,linux/arm64/v8",
+    "--provenance=false",
+    "--output \"type=oci,dest=${RUNNER_TEMP}/preview-oci,tar=false,name=dense-mem:test-${PR_NUMBER}\"",
+    '--build-arg "IMAGE_VERSION=test-${PR_NUMBER}"',
+    '--build-arg "IMAGE_REVISION=${HEAD_SHA}"',
+    '--build-arg "IMAGE_CREATED=${HEAD_CREATED}"',
+    '--build-arg "PREVIEW_PR=${PR_NUMBER}"',
+    '--build-arg "PREVIEW_HEAD=${HEAD_SHA}"',
+    '--build-arg "PREVIEW_MAIN=${MAIN_SHA}"',
+    '--build-arg "PREVIEW_RUN_ID=${RUN_ID}"',
+    '--build-arg "PREVIEW_RUN_ATTEMPT=${RUN_ATTEMPT}"',
+  ]) {
+    assert.ok(build.includes(line), `preview build is missing ${line}`);
+  }
+}
+
 function assertWorkflowOrchestration(workflow) {
   const exclusive = workflowJob(workflow, "exclusive");
   const exclusiveCleanup = workflowJob(workflow, "exclusive-cleanup");
@@ -124,6 +145,14 @@ test("scenario classification fails closed for invalid registry metadata", () =>
   assert.throws(() => classifyScenario(invalid, invalid.scenarios[0].name), /invalid E2E scenario registry:.*runtime=production/s);
 });
 
+test("preview Buildx policy rejects weakened output settings", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8");
+  assert.doesNotThrow(() => assertPreviewBuildPolicy(workflow));
+  const mutated = workflow.replace("--provenance=false", "--provenance=true");
+  assert.notEqual(mutated, workflow);
+  assert.throws(() => assertPreviewBuildPolicy(mutated), /preview build is missing --provenance=false/);
+});
+
 test("production jobs use capability-matched runners and PR-owned assets", async () => {
   const [workflow, reusable, caller, controller, compose, envExample] = await Promise.all([
     readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8"),
@@ -152,6 +181,7 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   assert.doesNotMatch(workflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch/);
   assert.doesNotMatch(workflow, /secrets:\s*inherit/);
   assert.doesNotMatch(caller, /secrets:\s*inherit/);
+  assert.doesNotThrow(() => assertPreviewBuildPolicy(caller));
   const workflowCall = workflow.slice(workflow.indexOf("on:\n  workflow_call:"), workflow.indexOf("\npermissions:"));
   const scenarioCall = reusable.slice(reusable.indexOf("on:\n  workflow_call:"), reusable.indexOf("\npermissions:"));
   assert.match(workflowCall, /^      image:$/m);

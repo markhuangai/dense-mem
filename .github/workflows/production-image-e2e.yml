@@ -85,7 +85,84 @@ jobs:
           [[ -f "${registry}" ]]
           [[ -f "${baseline}" ]]
           export DENSE_MEM_E2E_SCENARIO_REGISTRY="${registry}"
-          node .ci-policy/scripts/e2e-scenario-registry.mjs --validate-compatible "${baseline}"
+          node --input-type=module - "${registry}" "${baseline}" <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const [registryPath, baselinePath] = process.argv.slice(2);
+          const candidate = JSON.parse(readFileSync(registryPath, "utf8"));
+          const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
+          const isolations = new Set(["exclusive", "shared_team"]);
+          const helpers = new Set([
+            "conflict_provider",
+            "conflict_review",
+            "oauth",
+            "oauth_compatibility",
+            "playwright",
+            "synchronous_write",
+            "verifier",
+          ]);
+          const namePattern = /^[a-z0-9_]+$/;
+
+          function validate(value, label) {
+            const errors = [];
+            if (!value || typeof value !== "object") return [`${label} registry must be an object`];
+            if (value.schema_version !== 1) errors.push(`${label} schema_version must be 1`);
+            if (value.runtime !== "production") errors.push(`${label} runtime must be production`);
+            if (!Array.isArray(value.scenarios) || value.scenarios.length === 0) {
+              errors.push(`${label} scenarios must be a non-empty array`);
+              return errors;
+            }
+            const seen = new Set();
+            for (const scenario of value.scenarios) {
+              if (!scenario || typeof scenario !== "object") {
+                errors.push(`${label} scenarios must contain objects`);
+                continue;
+              }
+              const name = scenario.name;
+              if (typeof name !== "string" || !namePattern.test(name)) errors.push(`${label} has an invalid scenario name`);
+              else if (seen.has(name)) errors.push(`${label} has a duplicate scenario: ${name}`);
+              else seen.add(name);
+              if (!isolations.has(scenario.isolation)) errors.push(`${label} ${name || "scenario"} has an unknown isolation`);
+              if (scenario.runtime !== "production") errors.push(`${label} ${name || "scenario"} must use runtime=production`);
+              if (!Number.isSafeInteger(scenario.timeout_minutes) || scenario.timeout_minutes < 1 || scenario.timeout_minutes > 180) {
+                errors.push(`${label} ${name || "scenario"} has an invalid timeout_minutes`);
+              }
+              if (!Array.isArray(scenario.helper_profiles)) {
+                errors.push(`${label} ${name || "scenario"} helper_profiles must be an array`);
+              } else {
+                const seenHelpers = new Set();
+                for (const helper of scenario.helper_profiles) {
+                  if (!helpers.has(helper)) errors.push(`${label} ${name || "scenario"} has an unknown helper profile`);
+                  else if (seenHelpers.has(helper)) errors.push(`${label} ${name || "scenario"} repeats a helper profile`);
+                  seenHelpers.add(helper);
+                }
+              }
+              if (typeof scenario.playwright !== "boolean") errors.push(`${label} ${name || "scenario"} playwright must be boolean`);
+              else if (scenario.playwright && Array.isArray(scenario.helper_profiles) && !scenario.helper_profiles.includes("playwright")) {
+                errors.push(`${label} ${name || "scenario"} requires the playwright helper profile`);
+              }
+            }
+            return errors;
+          }
+
+          function definition(scenario) {
+            const normalized = {};
+            for (const key of Object.keys(scenario).sort()) {
+              const value = scenario[key];
+              normalized[key] = key === "helper_profiles" && Array.isArray(value) ? [...value].sort() : value;
+            }
+            return JSON.stringify(normalized);
+          }
+
+          const errors = [...validate(candidate, "candidate"), ...validate(baseline, "baseline")];
+          const candidateByName = new Map(candidate.scenarios?.map((scenario) => [scenario.name, scenario]) ?? []);
+          for (const scenario of baseline.scenarios ?? []) {
+            const matching = candidateByName.get(scenario.name);
+            if (!matching) errors.push(`candidate is missing baseline scenario: ${scenario.name}`);
+            else if (definition(scenario) !== definition(matching)) errors.push(`candidate changed baseline scenario: ${scenario.name}`);
+          }
+          if (errors.length > 0) throw new Error(errors.join("\n"));
+          NODE
           exclusive_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix exclusive)"
           shared_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix shared_team)"
           {

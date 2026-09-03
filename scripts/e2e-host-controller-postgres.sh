@@ -290,7 +290,8 @@ verify_identity_cleanup_seed_upgrade() {
   ci_compose exec -T \
     -e "DENSE_MEM_IDENTITY_UPGRADE_API_KEY=${DENSE_MEM_CI_IDENTITY_UPGRADE_API_KEY}" \
     server sh -ec 'wget -q -O - --header="Authorization: Bearer ${DENSE_MEM_IDENTITY_UPGRADE_API_KEY}" \
-      --header="Content-Type: application/json" --post-data='"'"'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'"'"' \
+      --header="Content-Type: application/json" --header="Accept: application/json, text/event-stream" \
+      --post-data='"'"'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'"'"' \
       http://127.0.0.1:8080/mcp' |
     node -e 'let input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const p=JSON.parse(input);if(!p.result||p.error)process.exit(1);});'
 }
