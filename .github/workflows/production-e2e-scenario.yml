@@ -129,14 +129,22 @@ jobs:
           stack_scenario="${SHARED_PROJECT:+shared}"
           stack_scenario="${stack_scenario:-${SCENARIO}}"
           if [[ -n "${project}" ]]; then
+            printf 'Running %s production E2E scenario in the %s phase (project %s)\n' \
+              "${SCENARIO}" "${PHASE}" "${project}"
             scripts/e2e-host-controller.sh run \
               "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${PHASE}" "${stack_scenario}" \
               "${SCENARIO}" "${IMAGE}" "${GITHUB_WORKSPACE}" 2>&1 |
-              tail -c 262144 > "${log}"
-            status=${PIPESTATUS[0]}
+              tee "${log}"
+            pipeline_status=("${PIPESTATUS[@]}")
+            status=${pipeline_status[0]}
+            if ((pipeline_status[1] != 0)); then
+              printf '%s\n' "scenario log capture failed" >&2
+              status=1
+            fi
           else
-            echo "scenario setup did not produce a Compose project" > "${log}"
+            printf '%s\n' "scenario setup did not produce a Compose project" | tee "${log}"
           fi
+          printf 'Scenario %s exited with status %s\n' "${SCENARIO}" "${status}"
           printf '%s\n' "${status}" > "${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.status"
           exit "${status}"
 

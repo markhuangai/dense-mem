@@ -202,6 +202,9 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   const scenario = workflowJob(reusable, "scenario");
   assert.match(scenario, /^    runs-on: rootless-docker$/m);
   assertNode24Setup(scenario);
+  assert.match(scenario, /scripts\/e2e-host-controller\.sh run[\s\S]*?\|\n\s+tee "\$\{log\}"/);
+  assert.match(scenario, /pipeline_status=\("\$\{PIPESTATUS\[@\]\}"\)[\s\S]*?status=\$\{pipeline_status\[0\]\}/);
+  assert.doesNotMatch(scenario, /tail -c 262144 > "\$\{log\}"/);
   assert.doesNotMatch(workflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch/);
   assert.doesNotMatch(workflow, /secrets:\s*inherit/);
   assert.doesNotMatch(caller, /secrets:\s*inherit/);

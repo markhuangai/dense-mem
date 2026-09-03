@@ -9,6 +9,10 @@ fail() {
   exit 1
 }
 
+log() {
+  printf 'dense-mem CI scenario [%s]: %s\n' "$SCENARIO" "$*" >&2
+}
+
 [[ "$SCENARIO" =~ ^[a-z0-9_]+$ ]] || fail "a scenario name is required"
 scenario_info="$(node "${ROOT_DIR}/scripts/e2e-scenario-registry.mjs" --scenario "$SCENARIO")" || fail "scenario is not in the registry"
 node - "$scenario_info" <<'NODE' || fail "scenario is not audited in the production registry"
@@ -22,13 +26,19 @@ NODE
 : "${DENSE_MEM_E2E_TEAM_ID:?DENSE_MEM_E2E_TEAM_ID is required}"
 : "${DENSE_MEM_E2E_TEAM_NAME:?DENSE_MEM_E2E_TEAM_NAME is required}"
 : "${DENSE_MEM_E2E_API_KEY:?DENSE_MEM_E2E_API_KEY is required}"
+log "starting"
 
 wait_for_url() {
   local label="$1" url="$2" ca_file="${3:-}"
+  log "waiting for ${label}"
   for _ in $(seq 1 90); do
     if [[ -n "$ca_file" ]]; then
-      if curl --connect-timeout 5 --max-time 10 --cacert "$ca_file" -fsS "$url" >/dev/null 2>&1; then return 0; fi
+      if curl --connect-timeout 5 --max-time 10 --cacert "$ca_file" -fsS "$url" >/dev/null 2>&1; then
+        log "${label} is ready"
+        return 0
+      fi
     elif curl --connect-timeout 5 --max-time 10 -fsS "$url" >/dev/null 2>&1; then
+      log "${label} is ready"
       return 0
     fi
     sleep 2
@@ -67,7 +77,9 @@ export DENSE_MEM_E2E_SSO_CSRF_TOKEN="${DENSE_MEM_E2E_SSO_CSRF_TOKEN:-oauth-csrf-
 run_node_case() {
   local script="$1"
   [[ -f "${ROOT_DIR}/${script}" ]] || fail "missing scenario script: ${script}"
+  log "running ${script}"
   node "${ROOT_DIR}/${script}"
+  log "completed ${script}"
 }
 
 parse_json_root_field() {
@@ -95,7 +107,10 @@ process.stdin.on("end", () => {
 }
 
 run_playwright() {
-  [[ "${DENSE_MEM_E2E_RUN_PLAYWRIGHT:-0}" == "1" ]] || return 0
+  if [[ "${DENSE_MEM_E2E_RUN_PLAYWRIGHT:-0}" != "1" ]]; then
+    log "Playwright checks are disabled"
+    return 0
+  fi
   [[ -f "${ROOT_DIR}/web/package.json" ]] || fail "missing web package for Playwright"
   local diagnostics_attempt_id=""
   case "$SCENARIO" in
@@ -116,6 +131,7 @@ run_playwright() {
     mcp_oauth) specs=("tests-compose/oauth-team-resource.spec.ts") ;;
     synchronous_write) specs=("tests-compose/remember-attempts.spec.ts") ;;
   esac
+  log "running Playwright specs: ${specs[*]}"
   local web_dir="/tmp/dense-mem-web-${SCENARIO}-$$"
   if [[ -e "$web_dir" ]]; then rm -r -- "$web_dir"; fi
   mkdir -p "$web_dir"
@@ -135,10 +151,10 @@ case "$SCENARIO" in
   mcp_oauth) run_node_case tests/uat/oauth_mcp_e2e.mjs ;;
   private_memory_erasure) run_node_case tests/uat/private_memory_erasure_e2e.mjs ;;
   synchronous_write)
-    node "${ROOT_DIR}/tests/uat/synchronous_write/runner.mjs" || fail "synchronous-write scenario failed"
+    run_node_case tests/uat/synchronous_write/runner.mjs || fail "synchronous-write scenario failed"
     ;;
   synchronous_write_primitives)
-    DENSE_MEM_E2E_WRITE_CASE=remember node "${ROOT_DIR}/tests/uat/synchronous_write/runner.mjs"
+    DENSE_MEM_E2E_WRITE_CASE=remember run_node_case tests/uat/synchronous_write/runner.mjs
     ;;
   identity_cleanup) run_node_case tests/uat/identity_cleanup_e2e.mjs ;;
   community) run_node_case tests/uat/community_recall_mcp_e2e.mjs ;;
@@ -174,4 +190,5 @@ case "$SCENARIO" in
   mcp_oauth|community|conflict_queue|synchronous_write|full) run_playwright ;;
 esac
 
+log "completed"
 printf '%s\n' "${SCENARIO} passed"

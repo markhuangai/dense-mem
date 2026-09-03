@@ -394,6 +394,9 @@ test("verifier scenarios use the deterministic provider without replacing embedd
 });
 
 test("scenario runner executes Entra and diagnostics through the shared path", () => {
+  assert.match(scenario, /dense-mem CI scenario \[%s\]/);
+  assert.match(scenario, /log "running \$\{script\}"/);
+  assert.match(scenario, /log "running Playwright specs: \$\{specs\[\*\]\}"/);
   assert.match(scenario, /Entra OIDC mock/);
   assert.match(scenario, /tests\/uat\/entra_scim_e2e\.mjs/);
   assert.match(scenario, /synchronous_write\) specs=\("tests-compose\/remember-attempts\.spec\.ts"\)/);

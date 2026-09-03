@@ -24,7 +24,7 @@ test("synchronous-write cases are sorted and filterable", async () => {
 
 test("shared scenario runner owns synchronous-write diagnostics coverage", async () => {
   const scenario = await readFile(new URL("../../../scripts/e2e-scenario.sh", import.meta.url), "utf8");
-  assert.match(scenario, /node "\$\{ROOT_DIR\}\/tests\/uat\/synchronous_write\/runner\.mjs"/);
+  assert.match(scenario, /run_node_case tests\/uat\/synchronous_write\/runner\.mjs/);
   assert.match(scenario, /synchronous_write\) specs=\("tests-compose\/remember-attempts\.spec\.ts"\)/);
   assert.match(scenario, /DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE/);
   assert.doesNotMatch(scenario, /parse_json_dream_statement/);
