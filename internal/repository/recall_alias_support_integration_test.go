@@ -179,3 +179,70 @@ func TestRecallQuarantinedHistoricalAliasSupportDoesNotExposeRelationship(t *tes
 	require.Equal(t, canonical.Evidence[0].FragmentID, recall.Results[0].EvidenceID)
 	require.NotContains(t, recall.Results[0].RelationshipIDs, decision.Relationship.RelationshipID)
 }
+
+func TestRecallEvidenceDoesNotApplyFutureAliasSupportAtKnownAt(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "recall-alias-support-known-at-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-alias-support-known-at-owner")
+	insertSearchTestContract(t, adminDB, rls, "recall-alias-support-known-at", 3, "exact", "")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+	searchRepo := NewSearchRepository(appDB, rls)
+	content := "future alias support must not appear on canonical evidence at KnownAt"
+
+	canonical, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "recall-alias-support-known-at-canonical",
+		RequestHash: sha256Hex("recall-alias-support-known-at-canonical"), Evidence: []EvidenceInput{{Content: content}},
+	})
+	require.NoError(t, err)
+	alias, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "recall-alias-support-known-at-alias",
+		RequestHash: sha256Hex("recall-alias-support-known-at-alias"), Evidence: []EvidenceInput{{Content: content}},
+	})
+	require.NoError(t, err)
+	upsertRecallEvidenceSearchDocumentForTest(t, ctx, searchRepo, teamID, ownerID, canonical.Evidence[0])
+	upsertRecallEvidenceSearchDocumentForTest(t, ctx, searchRepo, teamID, ownerID, alias.Evidence[0])
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "KnownAt Alias Subject")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "KnownAt Alias Object")
+	decision := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: alias.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID: alias.Evidence[0].FragmentID, SourceGroupKey: "recall:future-alias-known-at",
+			SpanStart: 0, SpanEnd: len(content), Quote: content, Authority: "primary",
+		},
+	})
+	require.NotNil(t, decision.Relationship)
+
+	knownAt := databaseNowForTest(t, adminDB, rls)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO evidence_exact_aliases (
+				team_id, alias_fragment_id, alias_owner_profile_id,
+				canonical_fragment_id, canonical_owner_profile_id, created_at
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::timestamptz + interval '1 second')
+		`, teamID, alias.Evidence[0].FragmentID, ownerID, canonical.Evidence[0].FragmentID, ownerID, knownAt).Error
+	}))
+
+	recall, err := searchRepo.RecallEvidence(ctx, RecallEvidenceInput{
+		TeamID: teamID, Query: content, KnownAt: &knownAt, Limit: 5,
+	})
+	require.NoError(t, err)
+	var canonicalHit, aliasHit *RecallEvidenceHit
+	for index := range recall.Results {
+		hit := &recall.Results[index]
+		switch hit.EvidenceID {
+		case canonical.Evidence[0].FragmentID:
+			canonicalHit = hit
+		case alias.Evidence[0].FragmentID:
+			aliasHit = hit
+		}
+	}
+	require.NotNil(t, canonicalHit)
+	require.NotNil(t, aliasHit)
+	require.NotContains(t, canonicalHit.RelationshipIDs, decision.Relationship.RelationshipID)
+	require.Contains(t, aliasHit.RelationshipIDs, decision.Relationship.RelationshipID)
+}

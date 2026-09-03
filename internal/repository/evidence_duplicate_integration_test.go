@@ -182,6 +182,44 @@ func TestRememberDuplicateExactReuseCreatesOneCanonicalAndTwoOccurrences(t *test
 	require.Zero(t, crossTeamVisible, "occurrences must not cross team RLS")
 }
 
+func TestRememberDuplicateIdenticalItemsInOneBatchShareCanonical(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "duplicate-batch-identical", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "duplicate-batch-identical-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-batch-identical-owner")
+	repo := NewLedgerRepository(appDB, rls)
+
+	input := duplicateRememberInput(teamID, ownerID, "duplicate-batch-identical", "identical items in one Remember batch", false)
+	second := input.Evidence[0]
+	second.FragmentID = uuid.NewString()
+	input.Evidence = append(input.Evidence, second)
+	input.Commit.Items = append(input.Commit.Items, SubmissionAssessmentItemInput{FragmentID: second.FragmentID})
+	input.EvidenceSecurityResults = append(input.EvidenceSecurityResults, EvidenceSecurityResult{
+		FragmentID: second.FragmentID, EvidenceID: "evidence:1", EvidenceIndex: 1, Decision: "pass", Safe: true,
+	})
+
+	plan, err := repo.PlanRememberDuplicateEmbeddings(ctx, duplicateCandidateInput(input))
+	require.NoError(t, err)
+	require.Len(t, plan.Documents, 1, "identical batch items share one provider embedding")
+	resolved, err := repo.ResolveRememberDuplicateCandidates(ctx, duplicateCandidateInput(input), duplicatePlanEmbeddings(plan))
+	require.NoError(t, err)
+	require.Len(t, resolved.Exact, 2)
+	require.Equal(t, "new", resolved.Exact[0].Disposition)
+	require.Equal(t, "new", resolved.Exact[1].Disposition)
+	input.DuplicateResolutions = resolved.Exact
+
+	result, err := repo.CommitRememberWithEmbeddings(ctx, input, duplicatePlanEmbeddings(plan))
+	require.NoError(t, err)
+	evidence, ok := result.PublicResult["evidence"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, evidence, 2)
+	require.Equal(t, evidence[0]["evidence_id"], evidence[1]["evidence_id"])
+	require.EqualValues(t, 1, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid`, teamID))
+	require.EqualValues(t, 2, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_occurrences WHERE team_id = ?::uuid`, teamID))
+}
+
 func TestRememberDuplicateConcurrentSameContentConverges(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

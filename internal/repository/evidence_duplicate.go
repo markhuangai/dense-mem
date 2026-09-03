@@ -564,6 +564,13 @@ func rememberDuplicateSourceLessCanonicalClause(evidence EvidenceInput, tableAli
 	return "AND " + tableAlias + ".source_id IS NULL\n"
 }
 
+func rememberDuplicateBatchCanonicalKey(item EvidenceInput) string {
+	if item.ForceInsert || rememberEvidenceLifecycleBearing(item) {
+		return ""
+	}
+	return item.ContentHash + "\x00" + item.Content
+}
+
 func rememberDuplicateCandidateByIDInTx(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -793,20 +800,25 @@ func resolveRememberEvidenceInTx(
 	if err := lockRememberDuplicateEligibility(ctx, tx, input, lifecycleTargets); err != nil {
 		return nil, err
 	}
+	batchCanonicals := make(map[string]EvidenceFragment, len(createInput.Evidence))
 	evidence := make([]EvidenceFragment, 0, len(createInput.Evidence))
 	for index, item := range createInput.Evidence {
 		planned := resolutions[index]
 		canonicalID, exact := "", false
 		lifecycleBearing := rememberEvidenceLifecycleBearing(item)
 		if !lifecycleBearing {
-			var err error
-			canonicalID, exact, err = resolveRememberExactEvidenceInTx(ctx, tx, RememberDuplicateCandidateInput{
-				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID,
-				SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
-				Evidence: []EvidenceInput{item},
-			}, item)
-			if err != nil {
-				return nil, err
+			if prior, ok := batchCanonicals[rememberDuplicateBatchCanonicalKey(item)]; ok {
+				canonicalID, exact = prior.FragmentID, true
+			} else {
+				var err error
+				canonicalID, exact, err = resolveRememberExactEvidenceInTx(ctx, tx, RememberDuplicateCandidateInput{
+					TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID,
+					SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
+					Evidence: []EvidenceInput{item},
+				}, item)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 		if expectedCanonicalID, wasInitiallyExact := initialExact[index]; wasInitiallyExact &&
@@ -838,6 +850,9 @@ func resolveRememberEvidenceInTx(
 			}
 			canonicalID = fragment.FragmentID
 			canonicalOwnerID = input.OwnerProfileID
+			if key := rememberDuplicateBatchCanonicalKey(item); key != "" {
+				batchCanonicals[key] = fragment
+			}
 		}
 		occurrence := EvidenceFragment{
 			FragmentID: canonicalID, SubmittedFragmentID: item.FragmentID,

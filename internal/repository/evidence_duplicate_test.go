@@ -31,3 +31,15 @@ func TestValidateRememberDuplicateCandidateInputRejectsRepeatedSubmittedIDs(t *t
 	}
 	require.ErrorContains(t, validateRememberDuplicateCandidateInput(input), "fragment_id is duplicated")
 }
+
+func TestRememberDuplicateBatchCanonicalKeyExcludesForcedAndLifecycleEvidence(t *testing.T) {
+	item := EvidenceInput{Content: "same bytes", ContentHash: sha256Hex("same bytes")}
+	require.NotEmpty(t, rememberDuplicateBatchCanonicalKey(item))
+
+	item.ForceInsert = true
+	require.Empty(t, rememberDuplicateBatchCanonicalKey(item))
+
+	item.ForceInsert = false
+	item.SupersedesEvidenceIDs = []string{uuid.NewString()}
+	require.Empty(t, rememberDuplicateBatchCanonicalKey(item))
+}

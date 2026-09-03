@@ -636,7 +636,8 @@ func hydrateRecallEvidence(
 		  ON support.team_id = fragment.team_id
 		 AND (support.fragment_id = fragment.fragment_id OR EXISTS (SELECT 1 FROM evidence_exact_aliases AS support_alias
 		     WHERE support_alias.team_id = support.team_id AND support_alias.alias_fragment_id = support.fragment_id
-		       AND support_alias.canonical_fragment_id = fragment.fragment_id))
+		       AND support_alias.canonical_fragment_id = fragment.fragment_id
+		       AND support_alias.created_at <= COALESCE(?::timestamptz, 'infinity'::timestamptz)))
 		 AND NOT EXISTS (SELECT 1 FROM evidence_quarantines AS support_quarantine
 		     WHERE support_quarantine.team_id = support.team_id AND support_quarantine.fragment_id = support.fragment_id
 		       AND support_quarantine.status = 'active')
@@ -730,7 +731,7 @@ func hydrateRecallEvidence(
 		FROM eligible
 		GROUP BY evidence_id
 		`, pq.Array(evidenceIDs), input.TeamID, eventAt, eventAt,
-		input.TeamID, contract.EmbeddingContractID, eventAt,
+		input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt,
 		eventAt, eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,

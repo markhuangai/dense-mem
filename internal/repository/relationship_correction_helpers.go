@@ -28,16 +28,18 @@ type relationshipCorrectionInsert struct {
 
 type effectiveRelationshipCorrectionSupport struct {
 	RelationshipCorrectionSupport
-	SupportID              string
-	EvidenceOwnerProfileID string
-	SourceGroupKey         string
-	SourceID               string
-	SourceRevisionID       string
-	Quote                  string
-	Authority              string
-	Metadata               map[string]any
-	IngestID               string
-	SpaceID                string
+	SupportID                string
+	OccurrenceID             string
+	OccurrenceOwnerProfileID string
+	EvidenceOwnerProfileID   string
+	SourceGroupKey           string
+	SourceID                 string
+	SourceRevisionID         string
+	Quote                    string
+	Authority                string
+	Metadata                 map[string]any
+	IngestID                 string
+	SpaceID                  string
 }
 
 type relationshipCorrectionResolution struct {
@@ -137,6 +139,8 @@ func loadEffectiveRelationshipCorrectionSupports(
 		    ORDER BY support_id, created_at DESC, support_decision_id DESC
 		)
 		SELECT support.support_id::text, support.fragment_id::text,
+		       COALESCE(support.occurrence_id::text, ''),
+		       COALESCE(support.occurrence_owner_profile_id::text, ''),
 		       support.evidence_owner_profile_id::text,
 		       support.span_start, support.span_end, support.source_group_key,
 		       COALESCE(support.source_id::text, ''),
@@ -176,7 +180,8 @@ func loadEffectiveRelationshipCorrectionSupports(
 		var support effectiveRelationshipCorrectionSupport
 		var metadataJSON []byte
 		if err := rows.Scan(
-			&support.SupportID, &support.EvidenceID, &support.EvidenceOwnerProfileID,
+			&support.SupportID, &support.EvidenceID, &support.OccurrenceID,
+			&support.OccurrenceOwnerProfileID, &support.EvidenceOwnerProfileID,
 			&support.Start, &support.End,
 			&support.SourceGroupKey, &support.SourceID, &support.SourceRevisionID,
 			&support.Quote, &support.Authority, &metadataJSON,
@@ -693,6 +698,7 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 	for index, support := range supports {
 		supportInput := EvidenceSupportInput{
 			FragmentID: support.EvidenceID, EvidenceOwnerProfileID: support.EvidenceOwnerProfileID, SourceGroupKey: support.SourceGroupKey,
+			OccurrenceID: support.OccurrenceID, OccurrenceOwnerProfileID: support.OccurrenceOwnerProfileID,
 			SourceID: support.SourceID, SourceRevisionID: support.SourceRevisionID,
 			SpanStart: support.Start, SpanEnd: support.End, Quote: support.Quote,
 			Authority: support.Authority, Metadata: support.Metadata,

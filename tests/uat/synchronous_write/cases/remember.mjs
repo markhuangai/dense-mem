@@ -293,6 +293,8 @@ async function runSemanticDuplicateCase({ expect }) {
   assertStrictTerminalRemember(reused, expect);
   expect(reused.processing_state === "completed", `semantic duplicate reuse must complete: ${JSON.stringify(reused)}`);
   expect(reused.evidence[0]?.evidence_id === canonicalID, `semantic duplicate reuse must return the canonical evidence id: ${JSON.stringify(reused)}`);
+  expect(reused.search_state === "current", `semantic duplicate reuse must report current batch search state: ${JSON.stringify(reused)}`);
+  expect(reused.evidence[0]?.search_state === "current", `semantic duplicate reuse must report current evidence search state: ${JSON.stringify(reused)}`);
   expect(reused.relationship_results[0]?.disposition === "stored", `semantic duplicate reuse must preserve relationship storage: ${JSON.stringify(reused)}`);
 
   const fragmentCount = postgresQuery(`
