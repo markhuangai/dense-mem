@@ -199,6 +199,15 @@ func (r *SearchRepositoryImpl) SelectSearchReconciliationDocuments(
 			 AND contract.lifecycle_state = 'active'
 			WHERE document.embedding_contract_id = ?::uuid
 			  AND document.embedding_dimensions = ?
+			  AND (
+			      document.source_kind <> 'evidence'
+			      OR NOT EXISTS (
+			          SELECT 1
+			          FROM evidence_exact_aliases AS alias
+			          WHERE alias.team_id = document.team_id
+			            AND alias.alias_fragment_id = document.source_id
+			      )
+			  )
 			  AND EXISTS (
 			      SELECT 1
 			      FROM search_index_generations AS generation
@@ -434,6 +443,15 @@ func (r *SearchRepositoryImpl) CompleteSearchReconciliationDocuments(
 				  AND document.owner_profile_id = ?::uuid
 				  AND document.embedding_contract_id = ?::uuid
 				  AND document.embedding_dimensions = ?
+				  AND (
+				      document.source_kind <> 'evidence'
+				      OR NOT EXISTS (
+				          SELECT 1
+				          FROM evidence_exact_aliases AS alias
+				          WHERE alias.team_id = document.team_id
+				            AND alias.alias_fragment_id = document.source_id
+				      )
+				  )
 				FOR UPDATE
 			`, document.TeamID, document.SearchDocumentID, document.OwnerProfileID,
 				input.EmbeddingContractID, document.EmbeddingDimensions).Rows()

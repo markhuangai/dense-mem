@@ -35,6 +35,7 @@ func evidenceArraySchema() map[string]any {
 			"required": []string{"content"},
 			"properties": map[string]any{
 				"content":                  content,
+				"force_insert":             map[string]any{"type": "boolean", "description": "Bypass semantic duplicate reuse; exact reuse still applies."},
 				"source_type":              schemaEnum([]string{"conversation", "document", "observation", "manual"}),
 				"source":                   schemaString("Bounded provenance label.", 256),
 				"authority":                schemaEnum([]string{"authoritative", "primary", "secondary", "inferred", "unknown"}),
@@ -55,6 +56,7 @@ func dreamEvidenceArraySchema() map[string]any {
 	schema := evidenceArraySchema()
 	item, _ := schema["items"].(map[string]any)
 	properties, _ := item["properties"].(map[string]any)
+	delete(properties, "force_insert")
 	properties["idempotency_key"] = schemaString("Evidence retry key scoped to team and profile.", 128)
 	return schema
 }
@@ -411,6 +413,7 @@ func rememberEvidenceStatusSchema() map[string]any {
 		map[string]any{
 			"disposition":             schemaEnum([]string{"stored", "not_stored"}),
 			"evidence_id":             schemaString("Durable evidence ID when stored.", 128),
+			"content_hash":            schemaString("Evidence content hash.", 128),
 			"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
 			"superseded_evidence_ids": stringArraySchema("Evidence ID superseded by this evidence.", 50, 128),
 			"search_state":            schemaEnum([]string{"current", "not_required"}),

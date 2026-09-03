@@ -243,6 +243,7 @@ func TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, "active", trace.Relationship.Status)
 	assert.Equal(t, 1, trace.Relationship.SupportCount)
+	assert.Len(t, trace.EvidenceFragments, 2)
 
 	replay, err := ledger.RetractEvidence(ctx, RetractEvidenceInput{
 		TeamID:         teamID,
@@ -288,6 +289,7 @@ func TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, "pending_evidence", trace.Relationship.Status)
 	assert.Equal(t, 0, trace.Relationship.SupportCount)
+	assert.Len(t, trace.EvidenceFragments, 2)
 
 	var lifecycleEvents int
 	err = rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {

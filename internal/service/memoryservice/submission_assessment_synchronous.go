@@ -39,19 +39,22 @@ type RememberAssessmentScope struct {
 }
 
 type RememberAssessmentItem struct {
-	ItemID     string
-	Fragment   repository.EvidenceFragment
-	EvidenceID string
+	ItemID                      string
+	Fragment                    repository.EvidenceFragment
+	EvidenceID                  string
+	DuplicateAssessmentRequired bool
 }
 
 // RememberAssessmentSnapshot is the in-memory request snapshot used by the
 // assessor. IDs are generated before provider work and reused by the final
 // durable commit.
 type RememberAssessmentSnapshot struct {
-	Scope    RememberAssessmentScope
-	Proposal map[string]any
-	Evidence []repository.EvidenceFragment
-	Items    []RememberAssessmentItem
+	Scope                  RememberAssessmentScope
+	Proposal               map[string]any
+	Evidence               []repository.EvidenceFragment
+	Items                  []RememberAssessmentItem
+	DuplicateCandidates    []repository.RememberDuplicateCandidateGroup
+	ExactDuplicateEvidence map[int]repository.RememberDuplicateResolution
 }
 
 // SynchronousAssessmentInput is the in-memory request snapshot used by the
@@ -107,6 +110,10 @@ func BuildSynchronousRememberCommitInput(input SynchronousRememberCommitRequest)
 		return repository.SynchronousRememberCommitInput{}, err
 	}
 	assessment := input.Assessment.Assessment
+	duplicateResolutions, err := submissionAssessmentDuplicateResolutions(input.Assessment.Plan, input.Assessment.Response)
+	if err != nil {
+		return repository.SynchronousRememberCommitInput{}, err
+	}
 	providerTurns := assessment.ProviderTurns
 	if providerTurns < 1 {
 		providerTurns = 1
@@ -117,7 +124,8 @@ func BuildSynchronousRememberCommitInput(input SynchronousRememberCommitRequest)
 		RequestHash:   input.RequestHash,
 		SourceSummary: input.SourceSummary, Proposal: input.Proposal,
 		Metadata: input.Metadata, Evidence: append([]repository.EvidenceInput(nil), input.Evidence...),
-		AssessmentID: assessment.AssessmentID, AssessmentJSON: append(json.RawMessage(nil), assessment.NormalizedResponse...),
+		DuplicateResolutions: duplicateResolutions,
+		AssessmentID:         assessment.AssessmentID, AssessmentJSON: append(json.RawMessage(nil), assessment.NormalizedResponse...),
 		EvidenceSecurityResults: append([]repository.EvidenceSecurityResult(nil), securityResults...),
 		ProviderTurns:           providerTurns, InputTokens: assessment.InputTokens, OutputTokens: assessment.OutputTokens,
 		AssessorTurns: providerTurns, Duration: input.Duration,

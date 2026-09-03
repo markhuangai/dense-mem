@@ -78,7 +78,7 @@ func TestOpenAIVerifierAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 		}
 		assert.Equal(t, "assessor-model", request.Model)
 		assert.Equal(t, "dense_mem_semantic_assessment_response", request.ResponseFormat.JSONSchema.Name)
-		assert.Contains(t, request.Messages[0].Content, "structure, normalization, and evidence-security assessor")
+		assert.Contains(t, request.Messages[0].Content, "structure, normalization, evidence-security, and duplicate-equivalence assessor")
 		assert.Contains(t, request.Messages[0].Content, "registration_required predicate requires null predicate_key and predicate_version")
 		var payload map[string]any
 		if !assert.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &payload)) {

@@ -31,6 +31,14 @@ func normalizeSynchronousRememberCommitInput(input SynchronousRememberCommitInpu
 	for index := range input.Evidence {
 		input.Evidence[index].FragmentID = strings.TrimSpace(input.Evidence[index].FragmentID)
 	}
+	for index := range input.DuplicateResolutions {
+		resolution := &input.DuplicateResolutions[index]
+		resolution.EvidenceID = strings.TrimSpace(resolution.EvidenceID)
+		resolution.InputFragmentID = strings.TrimSpace(resolution.InputFragmentID)
+		resolution.CandidateFragmentID = strings.TrimSpace(resolution.CandidateFragmentID)
+		resolution.CandidateOwnerID = strings.TrimSpace(resolution.CandidateOwnerID)
+		resolution.Disposition = strings.TrimSpace(resolution.Disposition)
+	}
 	for index := range input.EvidenceSecurityResults {
 		result := &input.EvidenceSecurityResults[index]
 		result.FragmentID = strings.TrimSpace(result.FragmentID)
@@ -81,6 +89,39 @@ func validateSynchronousRememberCommitInputWithSecurity(input SynchronousRemembe
 			return fmt.Errorf("evidence[%d].fragment_id is duplicated", index)
 		}
 		seen[evidence.FragmentID] = struct{}{}
+	}
+	if len(input.DuplicateResolutions) > 0 {
+		if len(input.DuplicateResolutions) != len(input.Evidence) {
+			return errors.New("remember duplicate resolutions must contain exactly one result per evidence item")
+		}
+		seenResolutions := make(map[int]struct{}, len(input.DuplicateResolutions))
+		for index, resolution := range input.DuplicateResolutions {
+			if resolution.EvidenceIndex < 0 || resolution.EvidenceIndex >= len(input.Evidence) {
+				return fmt.Errorf("duplicate resolution[%d] has an invalid evidence index", index)
+			}
+			if _, exists := seenResolutions[resolution.EvidenceIndex]; exists {
+				return fmt.Errorf("duplicate resolution[%d] repeats an evidence index", index)
+			}
+			seenResolutions[resolution.EvidenceIndex] = struct{}{}
+			if resolution.InputFragmentID != input.Evidence[resolution.EvidenceIndex].FragmentID {
+				return fmt.Errorf("duplicate resolution[%d] does not identify its submitted evidence", index)
+			}
+			switch resolution.Disposition {
+			case "new":
+				if resolution.CandidateFragmentID != "" || resolution.CandidateOwnerID != "" {
+					return fmt.Errorf("duplicate resolution[%d] new result cannot carry a candidate", index)
+				}
+			case "reuse":
+				if _, err := uuid.Parse(resolution.CandidateFragmentID); err != nil {
+					return fmt.Errorf("duplicate resolution[%d] reuse candidate is invalid: %w", index, err)
+				}
+				if _, err := uuid.Parse(resolution.CandidateOwnerID); err != nil {
+					return fmt.Errorf("duplicate resolution[%d] reuse candidate owner is invalid: %w", index, err)
+				}
+			default:
+				return fmt.Errorf("duplicate resolution[%d] has unsupported disposition", index)
+			}
+		}
 	}
 	if err := validateEvidenceSecurityResults(input.Evidence, input.EvidenceSecurityResults, allowUnsafe); err != nil {
 		return err
@@ -322,16 +363,35 @@ func insertRememberTerminalEvidence(ctx context.Context, tx *gorm.DB, input Sync
 }
 
 func applyRememberCommitSourceReferences(observations []SubmissionAssessmentRelationshipObservationInput, evidence []EvidenceFragment) {
-	type sourceRef struct{ sourceID, revisionID string }
+	type sourceRef struct{ sourceID, revisionID, occurrenceID, evidenceOwnerID, occurrenceOwnerID, canonicalID string }
 	byFragment := make(map[string]sourceRef, len(evidence))
+	byOccurrence := make(map[string]sourceRef, len(evidence))
 	for _, item := range evidence {
-		byFragment[item.FragmentID] = sourceRef{sourceID: item.SourceID, revisionID: item.SourceRevisionID}
+		ref := sourceRef{sourceID: item.SourceID, revisionID: item.SourceRevisionID, occurrenceID: item.OccurrenceID, evidenceOwnerID: item.CanonicalOwnerID, occurrenceOwnerID: item.OccurrenceOwnerID, canonicalID: item.FragmentID}
+		byFragment[item.FragmentID] = ref
+		if item.OccurrenceID != "" {
+			byOccurrence[item.OccurrenceID] = ref
+		}
+		if item.SubmittedFragmentID != "" {
+			byFragment[item.SubmittedFragmentID] = ref
+		}
 	}
 	apply := func(support *EvidenceSupportInput) {
 		if support == nil {
 			return
 		}
+		if ref, ok := byOccurrence[strings.TrimSpace(support.OccurrenceID)]; ok {
+			support.FragmentID = ref.canonicalID
+			support.EvidenceOwnerProfileID = ref.evidenceOwnerID
+			support.OccurrenceOwnerProfileID = ref.occurrenceOwnerID
+			support.SourceID, support.SourceRevisionID = ref.sourceID, ref.revisionID
+			return
+		}
 		if ref, ok := byFragment[support.FragmentID]; ok {
+			support.FragmentID = ref.canonicalID
+			support.OccurrenceID = ref.occurrenceID
+			support.EvidenceOwnerProfileID = ref.evidenceOwnerID
+			support.OccurrenceOwnerProfileID = ref.occurrenceOwnerID
 			support.SourceID, support.SourceRevisionID = ref.sourceID, ref.revisionID
 		}
 	}
@@ -343,9 +403,75 @@ func applyRememberCommitSourceReferences(observations []SubmissionAssessmentRela
 	}
 }
 
+func remapRememberCommitEvidenceReferences(commit *CommitSubmissionAssessmentInput, evidence []EvidenceFragment) error {
+	if commit == nil {
+		return errors.New("remember semantic commit input is required")
+	}
+	byID := make(map[string]EvidenceFragment, len(evidence)*2)
+	for _, item := range evidence {
+		byID[item.FragmentID] = item
+		if item.SubmittedFragmentID != "" {
+			byID[item.SubmittedFragmentID] = item
+		}
+	}
+	resolve := func(fragmentID string, support *EvidenceSupportInput) error {
+		if support == nil {
+			return nil
+		}
+		item, ok := byID[strings.TrimSpace(fragmentID)]
+		if !ok {
+			return nil
+		}
+		support.FragmentID = item.FragmentID
+		support.OccurrenceID = item.OccurrenceID
+		support.OccurrenceOwnerProfileID = item.OccurrenceOwnerID
+		support.EvidenceOwnerProfileID = item.CanonicalOwnerID
+		return nil
+	}
+	for index := range commit.EntityResolutions {
+		resolution := &commit.EntityResolutions[index].Resolution
+		item, ok := byID[strings.TrimSpace(resolution.FragmentID)]
+		if !ok {
+			return fmt.Errorf("remember entity resolution evidence %q is outside the Remember request", resolution.FragmentID)
+		}
+		resolution.FragmentID = item.FragmentID
+		resolution.OccurrenceID = item.OccurrenceID
+		resolution.EvidenceOwnerProfileID = item.CanonicalOwnerID
+	}
+	for index := range commit.RelationshipObservations {
+		observation := &commit.RelationshipObservations[index].Observation
+		if observation.Support != nil {
+			if err := resolve(observation.Support.FragmentID, observation.Support); err != nil {
+				return err
+			}
+		}
+		for supportIndex := range observation.Supports {
+			if err := resolve(observation.Supports[supportIndex].FragmentID, &observation.Supports[supportIndex]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func rememberEvidenceExists(evidence []EvidenceFragment, fragmentID string) bool {
 	for _, item := range evidence {
 		if item.FragmentID == strings.TrimSpace(fragmentID) {
+			return true
+		}
+	}
+	return false
+}
+
+func rememberSubmittedOccurrenceBelongsToOwner(evidence []EvidenceFragment, support EvidenceSupportInput, ownerID string) bool {
+	occurrenceID := strings.TrimSpace(support.OccurrenceID)
+	if occurrenceID == "" {
+		return false
+	}
+	for _, item := range evidence {
+		if item.FragmentID == strings.TrimSpace(support.FragmentID) &&
+			item.OccurrenceID == occurrenceID &&
+			item.OccurrenceOwnerID == strings.TrimSpace(ownerID) {
 			return true
 		}
 	}

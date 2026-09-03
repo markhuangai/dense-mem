@@ -774,14 +774,16 @@ func hydrateRecallRelationshipEvidenceIDs(ctx context.Context, tx *gorm.DB, inpu
 		      AND (?::timestamptz IS NULL OR created_at <= ?::timestamptz)
 		    ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
 		),
-		effective_support AS (
-		    SELECT support.relationship_id::text,
-		           support.fragment_id::text,
-		           support.created_at
-		    FROM requested
-		    JOIN relationship_evidence_supports AS support
-		      ON support.team_id = ?::uuid
-		     AND support.relationship_id = requested.relationship_id
+			effective_support AS (
+			    SELECT support.relationship_id::text, support.support_id::text AS support_id,
+			           CASE WHEN alias.alias_fragment_id IS NOT NULL AND alias.created_at > COALESCE(?::timestamptz, 'infinity'::timestamptz) THEN alias.alias_fragment_id ELSE COALESCE(alias.canonical_fragment_id, support.fragment_id) END::text AS fragment_id, support.created_at
+			    FROM requested
+			    JOIN relationship_evidence_supports AS support
+			      ON support.team_id = ?::uuid
+			     AND support.relationship_id = requested.relationship_id
+			    LEFT JOIN evidence_exact_aliases AS alias
+			      ON alias.team_id = support.team_id
+			     AND alias.alias_fragment_id = support.fragment_id
 		    JOIN latest
 		      ON latest.team_id = support.team_id
 		     AND latest.support_id = support.support_id
@@ -799,12 +801,14 @@ func hydrateRecallRelationshipEvidenceIDs(ctx context.Context, tx *gorm.DB, inpu
 		          support.source_id IS NULL
 		          OR source.current_revision_id = support.source_revision_id
 		      )
+		), deduplicated AS (
+			SELECT DISTINCT ON (relationship_id, fragment_id) relationship_id, fragment_id, created_at, support_id
+			FROM effective_support ORDER BY relationship_id, fragment_id, created_at ASC, support_id ASC
 		)
-		SELECT relationship_id,
-		       array_agg(fragment_id ORDER BY created_at ASC, fragment_id ASC)::text[] AS evidence_ids
-		FROM effective_support
+		SELECT relationship_id, array_agg(fragment_id ORDER BY created_at ASC, fragment_id ASC, support_id ASC)::text[] AS evidence_ids
+		FROM deduplicated
 		GROUP BY relationship_id
-	`, pq.Array(relationshipIDs), input.TeamID, eventAt, eventAt, input.TeamID, eventAt, eventAt).Rows()
+		`, pq.Array(relationshipIDs), input.TeamID, eventAt, eventAt, input.KnownAt, input.TeamID, eventAt, eventAt).Rows()
 	if err != nil {
 		return err
 	}

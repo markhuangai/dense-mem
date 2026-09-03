@@ -85,6 +85,15 @@ test("remember case covers mixed object success and idempotency conflict behavio
   assert.match(remember, /changed-hash/);
 });
 
+test("remember case covers semantic duplicate reuse and unauthorized candidates", async () => {
+  const remember = await readFile(new URL("./cases/remember.mjs", import.meta.url), "utf8");
+  const fixture = await readFile(new URL("./provider-fixture.mjs", import.meta.url), "utf8");
+  assert.match(remember, /runSemanticDuplicateCase/);
+  assert.match(remember, /semantic-reuse/);
+  assert.match(remember, /occurrences_preserved/);
+  assert.match(fixture, /semantic-reuse-unauthorized/);
+});
+
 test("remember PostgreSQL fixtures follow the production runner handoff", async () => {
   const remember = await readFile(new URL("./cases/remember.mjs", import.meta.url), "utf8");
   const localOverlay = await readFile(new URL("../../../scripts/e2e-compose-synchronous-write.sh", import.meta.url), "utf8");

@@ -49,7 +49,7 @@ const (
 // catalog before any erasure worker starts.
 var privateMemoryErasureManifest = []string{
 	"knowledge_ingests", "evidence_sources", "evidence_source_revisions",
-	"evidence_fragments", "evidence_security_events", "evidence_security_signals",
+	"evidence_exact_aliases", "evidence_occurrences", "evidence_fragments", "evidence_security_events", "evidence_security_signals",
 	"evidence_quarantines", "evidence_lifecycle_operations", "evidence_lifecycle_events",
 	"submission_relationship_results",
 	"predicate_registration_events",

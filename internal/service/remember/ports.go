@@ -34,6 +34,7 @@ func (e *RememberValidationError) Error() string {
 
 type EvidenceInput struct {
 	Content                       string
+	ForceInsert                   bool
 	ContentHash                   string
 	SourceType                    string
 	Authority                     string

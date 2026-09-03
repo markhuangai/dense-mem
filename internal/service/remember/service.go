@@ -86,6 +86,7 @@ type RememberRequest struct {
 
 type RememberEvidenceInput struct {
 	Content                string         `json:"content"`
+	ForceInsert            bool           `json:"force_insert,omitempty"`
 	SourceType             string         `json:"source_type,omitempty"`
 	Source                 string         `json:"source,omitempty"`
 	SourceGroup            string         `json:"source_group,omitempty"`
@@ -156,6 +157,7 @@ type RelationshipCorrectionResult struct {
 type SubmissionEvidenceStatus struct {
 	Disposition           string                 `json:"disposition"`
 	EvidenceID            string                 `json:"evidence_id,omitempty"`
+	ContentHash           string                 `json:"content_hash,omitempty"`
 	EvidenceIndex         int                    `json:"evidence_index"`
 	SupersededEvidenceIDs []string               `json:"superseded_evidence_ids"`
 	SearchState           string                 `json:"search_state"`
@@ -284,6 +286,7 @@ func rememberSecurityAuditPersistenceError(req RememberRequest, correlationID st
 	for index := range status.Evidence {
 		status.Evidence[index] = SubmissionEvidenceStatus{
 			Disposition:           "not_stored",
+			ContentHash:           evidenceContentHash(req.Evidence[index].Content),
 			EvidenceIndex:         index,
 			SupersededEvidenceIDs: []string{},
 			SearchState:           string(TerminalSearchNotRequired),
@@ -461,6 +464,7 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 		terminal.Evidence = append(terminal.Evidence, TerminalEvidenceResult{
 			Disposition:           evidence.Disposition,
 			EvidenceID:            evidence.EvidenceID,
+			ContentHash:           evidence.ContentHash,
 			EvidenceIndex:         evidence.EvidenceIndex,
 			SupersededEvidenceIDs: append([]string(nil), evidence.SupersededEvidenceIDs...),
 			SearchState:           evidence.SearchState,

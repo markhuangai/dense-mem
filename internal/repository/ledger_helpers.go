@@ -75,21 +75,22 @@ func insertSecuritySignals(ctx context.Context, tx *gorm.DB, teamID, ownerProfil
 }
 
 func ensureEvidenceEventOwnership(ctx context.Context, tx *gorm.DB, input SecurityEventInput) error {
+	occurrenceID := input.OccurrenceID
+	if occurrenceID == "" {
+		occurrenceID = input.FragmentID
+	}
 	var exists bool
 	if err := tx.WithContext(ctx).Raw(`
 		SELECT EXISTS (
 			SELECT 1
-			FROM evidence_fragments AS fragment
-			JOIN knowledge_ingests AS ingest
-			  ON ingest.team_id = fragment.team_id
-			 AND ingest.ingest_id = fragment.ingest_id
-			 AND ingest.owner_profile_id = fragment.owner_profile_id
-			WHERE fragment.team_id = ?::uuid
-			  AND fragment.fragment_id = ?::uuid
-			  AND fragment.ingest_id = ?::uuid
-			  AND fragment.owner_profile_id = ?::uuid
+			FROM evidence_occurrences AS occurrence
+			WHERE occurrence.team_id = ?::uuid
+			  AND occurrence.occurrence_id = ?::uuid
+			  AND occurrence.canonical_fragment_id = ?::uuid
+			  AND occurrence.ingest_id = ?::uuid
+			  AND occurrence.owner_profile_id = ?::uuid
 		)
-	`, input.TeamID, input.FragmentID, input.IngestID, input.OwnerProfileID).Scan(&exists).Error; err != nil {
+	`, input.TeamID, occurrenceID, input.FragmentID, input.IngestID, input.OwnerProfileID).Scan(&exists).Error; err != nil {
 		return err
 	}
 	if !exists {
@@ -123,6 +124,8 @@ func normalizeSecurityEventInput(input SecurityEventInput) SecurityEventInput {
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
 	input.IngestID = strings.TrimSpace(input.IngestID)
 	input.FragmentID = strings.TrimSpace(input.FragmentID)
+	input.OccurrenceID = strings.TrimSpace(input.OccurrenceID)
+	input.EvidenceOwnerProfileID = strings.TrimSpace(input.EvidenceOwnerProfileID)
 	input.SecurityEventDraft = normalizeSecurityEventDraft(input.SecurityEventDraft)
 	return input
 }
@@ -151,6 +154,16 @@ func validateSecurityEventInput(input SecurityEventInput) error {
 	}
 	if _, err := uuid.Parse(input.FragmentID); err != nil {
 		return fmt.Errorf("fragment_id is required: %w", err)
+	}
+	if input.OccurrenceID != "" {
+		if _, err := uuid.Parse(input.OccurrenceID); err != nil {
+			return fmt.Errorf("occurrence_id is invalid: %w", err)
+		}
+	}
+	if input.EvidenceOwnerProfileID != "" {
+		if _, err := uuid.Parse(input.EvidenceOwnerProfileID); err != nil {
+			return fmt.Errorf("evidence_owner_profile_id is invalid: %w", err)
+		}
 	}
 	return validateSecurityEventDraft(input.SecurityEventDraft)
 }
@@ -189,22 +202,30 @@ func insertSecurityEvent(ctx context.Context, tx *gorm.DB, input SecurityEventIn
 	if err != nil {
 		return "", err
 	}
+	occurrenceID := input.OccurrenceID
+	if occurrenceID == "" {
+		occurrenceID = input.FragmentID
+	}
+	evidenceOwnerID := input.EvidenceOwnerProfileID
+	if evidenceOwnerID == "" {
+		evidenceOwnerID = input.OwnerProfileID
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO evidence_security_events (
-		    team_id, fragment_id, ingest_id, owner_profile_id, event_kind, decision,
+		    team_id, fragment_id, occurrence_id, evidence_owner_profile_id, ingest_id, owner_profile_id, event_kind, decision,
 		    reason, metadata, space_id, space_generation
 		)
-		SELECT ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb,
-		       fragment.space_id, fragment.space_generation
-		FROM evidence_fragments AS fragment
-		WHERE fragment.team_id = ?::uuid
-		  AND fragment.fragment_id = ?::uuid
-		  AND fragment.ingest_id = ?::uuid
-		  AND fragment.owner_profile_id = ?::uuid
+		SELECT ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?::jsonb,
+		       occurrence.space_id, occurrence.space_generation
+		FROM evidence_occurrences AS occurrence
+		WHERE occurrence.team_id = ?::uuid
+		  AND occurrence.occurrence_id = ?::uuid
+		  AND occurrence.ingest_id = ?::uuid
+		  AND occurrence.owner_profile_id = ?::uuid
 		RETURNING security_event_id::text, COALESCE(space_id::text, ''), COALESCE(space_generation, 0)
-	`, input.TeamID, input.FragmentID, input.IngestID, input.OwnerProfileID,
+	`, input.TeamID, input.FragmentID, occurrenceID, evidenceOwnerID, input.IngestID, input.OwnerProfileID,
 		input.EventKind, input.Decision, input.Reason, string(metadata),
-		input.TeamID, input.FragmentID, input.IngestID, input.OwnerProfileID).Rows()
+		input.TeamID, occurrenceID, input.IngestID, input.OwnerProfileID).Rows()
 	if err != nil {
 		return "", err
 	}

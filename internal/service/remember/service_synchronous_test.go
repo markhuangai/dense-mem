@@ -82,6 +82,7 @@ func TestRememberServiceSynchronousPassesAuthenticatedRequestToProcessor(t *test
 	require.False(t, processor.request.SecurityRejected)
 	require.Len(t, processor.request.Evidence, 1)
 	require.Equal(t, "Dense-Mem uses PostgreSQL.", processor.request.Evidence[0].Content)
+	require.Equal(t, evidenceContentHash("Dense-Mem uses PostgreSQL."), processor.request.Evidence[0].ContentHash)
 	require.Equal(t, "document", processor.request.Evidence[0].SourceType)
 	require.Equal(t, "primary", processor.request.Evidence[0].Authority)
 	require.Equal(t, "conversation:one", processor.request.Evidence[0].Metadata["contract_source_group"])

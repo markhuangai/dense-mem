@@ -171,10 +171,16 @@ function semanticAssessmentResponse(input, repairTurn) {
       signals,
     };
   });
+  const evidenceEquivalenceResults = (input.evidence_equivalence_candidates ?? []).map((group) => ({
+    evidence_id: group.evidence_id,
+    action: "new",
+    candidate_evidence_id: null,
+  }));
 
   return {
     request_id: input.request_id,
     evidence_security_results: securityResults,
+    evidence_equivalence_results: evidenceEquivalenceResults,
     entity_results: entityResults,
     relationship_results: relationshipResults,
   };

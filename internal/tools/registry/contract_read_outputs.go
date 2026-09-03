@@ -274,6 +274,7 @@ func traceEvidenceSupportSchema() map[string]any {
 			"observation_id":            schemaString("Observation ID.", 128),
 			"verification_event_id":     schemaString("Verification event ID.", 128),
 			"evidence_id":               schemaString("Evidence ID.", 128),
+			"occurrence_id":             schemaString("Evidence occurrence ID.", 128),
 			"evidence_owner_profile_id": schemaString("Evidence source owner profile ID.", 128),
 			"source_group_key":          schemaString("Derived source group key.", 256),
 			"span_start":                map[string]any{"type": "integer", "minimum": 0},
@@ -305,6 +306,7 @@ func traceEvidenceSchema() map[string]any {
 		[]string{"evidence_id", "submission_id", "evidence_index", "content_hash", "content_truncated"},
 		map[string]any{
 			"evidence_id":       schemaString("Evidence ID.", 128),
+			"occurrence_id":     schemaString("Evidence occurrence ID.", 128),
 			"submission_id":     schemaString("Submission ID.", 128),
 			"evidence_index":    map[string]any{"type": "integer", "minimum": 0, "maximum": 19},
 			"content":           schemaString("Optional bounded evidence content.", 999),

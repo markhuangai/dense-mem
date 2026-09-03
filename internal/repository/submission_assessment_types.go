@@ -135,6 +135,7 @@ type SynchronousRememberCommitInput struct {
 	StartedAt               time.Time
 	CorrelationID           string
 	PublicResult            map[string]any
+	DuplicateResolutions    []RememberDuplicateResolution
 	Commit                  CommitSubmissionAssessmentInput
 }
 

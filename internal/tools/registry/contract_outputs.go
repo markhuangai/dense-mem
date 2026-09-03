@@ -201,6 +201,7 @@ func traceEvidenceSupportOutputs(records []repository.RelationshipEvidenceSuppor
 			"span_start":          record.SpanStart,
 			"span_end":            record.SpanEnd,
 		}
+		putString(item, "occurrence_id", record.OccurrenceID)
 		putString(item, "observation_id", record.ObservationID)
 		putString(item, "verification_event_id", record.VerificationEventID)
 		putString(item, "evidence_owner_profile_id", record.EvidenceOwnerProfileID)
@@ -240,6 +241,7 @@ func traceEvidenceOutputs(records []repository.TraceEvidenceFragment) []map[stri
 			"content_hash":      record.ContentHash,
 			"content_truncated": record.ContentTruncated,
 		}
+		putString(item, "occurrence_id", record.OccurrenceID)
 		putString(item, "content", record.Content)
 		putString(item, "source_type", record.SourceType)
 		putString(item, "source", firstNonEmpty(record.SourceRef, record.SourceKey))

@@ -34,6 +34,7 @@ func terminalEvidenceSchema() map[string]any {
 		map[string]any{
 			"disposition":             schemaEnum([]string{"stored", "not_stored"}),
 			"evidence_id":             schemaString("Durable evidence ID when stored.", 128),
+			"content_hash":            schemaString("Evidence content hash.", 128),
 			"evidence_index":          map[string]any{"type": "integer", "minimum": 0},
 			"superseded_evidence_ids": stringArraySchema("Evidence ID superseded by this evidence.", 50, 128),
 			"search_state":            schemaEnum([]string{"current", "not_required"}),

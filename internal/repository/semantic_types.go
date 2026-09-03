@@ -241,16 +241,18 @@ type ValueRecord struct {
 }
 
 type EvidenceSupportInput struct {
-	FragmentID             string
-	EvidenceOwnerProfileID string
-	SourceGroupKey         string
-	SourceID               string
-	SourceRevisionID       string
-	SpanStart              int
-	SpanEnd                int
-	Quote                  string
-	Authority              string
-	Metadata               map[string]any
+	FragmentID               string
+	OccurrenceID             string
+	OccurrenceOwnerProfileID string
+	EvidenceOwnerProfileID   string
+	SourceGroupKey           string
+	SourceID                 string
+	SourceRevisionID         string
+	SpanStart                int
+	SpanEnd                  int
+	Quote                    string
+	Authority                string
+	Metadata                 map[string]any
 }
 
 type ApplyRelationshipDecisionInput struct {
@@ -604,6 +606,7 @@ type RelationshipEvidenceSupportRecord struct {
 	ObservationID          string         `json:"observation_id,omitempty"`
 	VerificationEventID    string         `json:"verification_event_id,omitempty"`
 	FragmentID             string         `json:"evidence_id,omitempty"`
+	OccurrenceID           string         `json:"occurrence_id,omitempty"`
 	OwnerProfileID         string         `json:"owner_profile_id,omitempty"`
 	EvidenceOwnerProfileID string         `json:"evidence_owner_profile_id,omitempty"`
 	SourceGroupKey         string         `json:"source_group_key,omitempty"`
@@ -655,6 +658,7 @@ type RelationshipSupportDecisionResult struct {
 
 type TraceEvidenceFragment struct {
 	FragmentID        string         `json:"evidence_id,omitempty"`
+	OccurrenceID      string         `json:"occurrence_id,omitempty"`
 	IngestID          string         `json:"ingest_id,omitempty"`
 	OwnerProfileID    string         `json:"owner_profile_id,omitempty"`
 	SourceID          string         `json:"source_id,omitempty"`

@@ -125,8 +125,9 @@ func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 	valueRange := semanticAssessmentTestRange(evidence, 11, 13)
 	supportRange := semanticAssessmentTestRange(evidence, 0, 13)
 	response := SemanticAssessmentResponse{
-		RequestID:               prepared.RequestID,
-		EvidenceSecurityResults: []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "ev-1", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}},
+		RequestID:                  prepared.RequestID,
+		EvidenceSecurityResults:    []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "ev-1", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}},
+		EvidenceEquivalenceResults: []SemanticAssessmentEvidenceEquivalenceResult{},
 		EntityResults: []SemanticAssessmentEntityResult{{
 			Ref: "entity:latency", GroundingRef: &groundingRef, Action: "create",
 		}},
@@ -684,8 +685,9 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 	denseMemGrounding := "grounding-dense-mem"
 	evidence := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "ev-1", Content: "Mark works on Dense-Mem."})
 	return SemanticAssessmentResponse{
-		RequestID:               "assess-1",
-		EvidenceSecurityResults: []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "ev-1", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}},
+		RequestID:                  "assess-1",
+		EvidenceSecurityResults:    []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "ev-1", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}},
+		EvidenceEquivalenceResults: []SemanticAssessmentEvidenceEquivalenceResult{},
 		EntityResults: []SemanticAssessmentEntityResult{
 			{
 				Ref:               "person-1",

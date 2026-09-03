@@ -765,9 +765,10 @@ func validPreparedSynchronousAssessment(t *testing.T, fixture synchronousAssessm
 
 func validSynchronousAssessmentResponse(request assessor.SemanticAssessmentRequest) assessor.SemanticAssessmentResponse {
 	response := assessor.SemanticAssessmentResponse{
-		RequestID:               request.RequestID,
-		EvidenceSecurityResults: []assessor.SemanticAssessmentEvidenceSecurityResult{},
-		EntityResults:           []assessor.SemanticAssessmentEntityResult{}, RelationshipResults: []assessor.SemanticAssessmentRelationshipResult{},
+		RequestID:                  request.RequestID,
+		EvidenceSecurityResults:    []assessor.SemanticAssessmentEvidenceSecurityResult{},
+		EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{},
+		EntityResults:              []assessor.SemanticAssessmentEntityResult{}, RelationshipResults: []assessor.SemanticAssessmentRelationshipResult{},
 	}
 	for _, evidence := range request.Evidence {
 		response.EvidenceSecurityResults = append(response.EvidenceSecurityResults, assessor.SemanticAssessmentEvidenceSecurityResult{EvidenceID: evidence.EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{}})

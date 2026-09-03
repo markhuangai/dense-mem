@@ -64,6 +64,7 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 		}
 		result.EvidenceSupports = supports
 		fragmentIDs := traceSupportFragmentIDs(supports)
+		lifecycleFragmentIDs := traceSupportLifecycleFragmentIDs(supports)
 
 		decisions, err := loadTraceSupportDecisions(ctx, tx, input)
 		if err != nil {
@@ -71,12 +72,12 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 		}
 		result.SupportDecisionEvents = decisions
 
-		evidence, err := loadTraceEvidenceFragments(ctx, tx, input, fragmentIDs)
+		evidence, err := loadTraceEvidenceForSupports(ctx, tx, input, supports)
 		if err != nil {
 			return err
 		}
 		result.EvidenceFragments = evidence
-		lifecycleEvents, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, input.spaceID, fragmentIDs, input.MaxEvents)
+		lifecycleEvents, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, input.spaceID, lifecycleFragmentIDs, input.MaxEvents)
 		if err != nil {
 			return err
 		}
@@ -444,13 +445,25 @@ func loadTraceSupports(
 	input TraceRelationshipInput,
 ) ([]RelationshipEvidenceSupportRecord, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT support_id::text, relationship_id::text, observation_id::text,
-		       verification_event_id::text, fragment_id::text, owner_profile_id::text,
-		       evidence_owner_profile_id::text,
-		       source_group_key, COALESCE(source_id::text, ''),
-		       COALESCE(source_revision_id::text, ''), span_start, span_end,
-		       quote, authority, metadata::text, created_at
+		SELECT support.support_id::text, support.relationship_id::text, support.observation_id::text,
+		       support.verification_event_id::text,
+		       COALESCE(alias.canonical_fragment_id, occurrence.canonical_fragment_id, support.fragment_id)::text,
+		       support.occurrence_id::text,
+		       support.owner_profile_id::text,
+		       support.evidence_owner_profile_id::text,
+		       support.source_group_key, COALESCE(support.source_id::text, ''),
+		       COALESCE(support.source_revision_id::text, ''), support.span_start, support.span_end,
+		       support.quote, support.authority, support.metadata::text, support.created_at
 		FROM relationship_evidence_supports AS support
+		LEFT JOIN evidence_occurrences AS occurrence
+		  ON occurrence.team_id = support.team_id
+		 AND occurrence.occurrence_id = support.occurrence_id
+		 AND occurrence.owner_profile_id = support.occurrence_owner_profile_id
+		 AND occurrence.space_id = support.space_id
+		 AND `+activeSemanticSpaceGenerationSQL("occurrence")+`
+		LEFT JOIN evidence_exact_aliases AS alias
+		  ON alias.team_id = support.team_id
+		 AND alias.alias_fragment_id = support.fragment_id
 		WHERE support.team_id = ?::uuid
 		  AND support.relationship_id = ?::uuid
 		  AND support.space_id = ?::uuid
@@ -468,7 +481,7 @@ func loadTraceSupports(
 		var metadataJSON string
 		if err := rows.Scan(
 			&row.SupportID, &row.RelationshipID, &row.ObservationID,
-			&row.VerificationEventID, &row.FragmentID, &row.OwnerProfileID,
+			&row.VerificationEventID, &row.FragmentID, &row.OccurrenceID, &row.OwnerProfileID,
 			&row.EvidenceOwnerProfileID,
 			&row.SourceGroupKey, &row.SourceID, &row.SourceRevisionID,
 			&row.SpanStart, &row.SpanEnd, &row.Quote, &row.Authority,
@@ -849,6 +862,25 @@ func traceSupportFragmentIDs(supports []RelationshipEvidenceSupportRecord) []str
 		out = append(out, support.FragmentID)
 	}
 	return out
+}
+
+func traceSupportLifecycleFragmentIDs(supports []RelationshipEvidenceSupportRecord) []string {
+	ids := traceSupportFragmentIDs(supports)
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		seen[id] = struct{}{}
+	}
+	for _, support := range supports {
+		if support.OccurrenceID == "" {
+			continue
+		}
+		if _, exists := seen[support.OccurrenceID]; exists {
+			continue
+		}
+		seen[support.OccurrenceID] = struct{}{}
+		ids = append(ids, support.OccurrenceID)
+	}
+	return ids
 }
 
 func traceVisitedEntityIDs(relationship *RelationshipTraceRecord, nodes []SemanticGraphNode) []string {

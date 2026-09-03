@@ -115,6 +115,49 @@ func TestRecallEvidenceHydratesEvidenceProvenance(t *testing.T) {
 	require.False(t, recall.Results[0].CreatedAt.IsZero())
 }
 
+func TestRecallAndFullTextSuppressExactAliasesButKeepCanonicalEvidence(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "recall-alias-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-alias-owner")
+	insertSearchTestContract(t, adminDB, rls, "recall-alias", 3, "exact", "")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	searchRepo := NewSearchRepository(appDB, rls)
+	content := "canonical evidence remains visible while aliases are suppressed"
+	canonical, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "recall-alias-canonical",
+		RequestHash: sha256Hex("recall-alias-canonical"), Evidence: []EvidenceInput{{Content: content}},
+	})
+	require.NoError(t, err)
+	alias, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "recall-alias-alias",
+		RequestHash: sha256Hex("recall-alias-alias"), Evidence: []EvidenceInput{{Content: content}},
+	})
+	require.NoError(t, err)
+	require.Len(t, canonical.Evidence, 1)
+	require.Len(t, alias.Evidence, 1)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO evidence_exact_aliases (
+				team_id, alias_fragment_id, alias_owner_profile_id,
+				canonical_fragment_id, canonical_owner_profile_id
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid)
+		`, teamID, alias.Evidence[0].FragmentID, ownerID, canonical.Evidence[0].FragmentID, ownerID).Error
+	}))
+	upsertRecallEvidenceSearchDocumentForTest(t, ctx, searchRepo, teamID, ownerID, canonical.Evidence[0])
+	upsertRecallEvidenceSearchDocumentForTest(t, ctx, searchRepo, teamID, ownerID, alias.Evidence[0])
+
+	fullText, err := searchRepo.SearchFullText(ctx, FullTextSearchInput{TeamID: teamID, Query: "canonical evidence visible", Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, fullText, 1)
+	require.Equal(t, canonical.Evidence[0].FragmentID, fullText[0].SourceID)
+	recall, err := searchRepo.RecallEvidence(ctx, RecallEvidenceInput{TeamID: teamID, Query: "canonical evidence visible", Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, recall.Results, 1)
+	require.Equal(t, canonical.Evidence[0].FragmentID, recall.Results[0].EvidenceID)
+}
+
 func TestRecallRelationshipsUsesNullGenerationVectorsForPostCutoverTeam(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -836,7 +879,20 @@ func upsertRecallEvidenceSearchDocumentForTest(
 	})
 	require.NoError(t, err)
 	require.Equal(t, evidence.FragmentID, doc.SourceID)
-	require.Equal(t, "pending", doc.SearchState)
+	var alias bool
+	require.NoError(t, repo.withSystemTx(ctx, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT EXISTS (
+				SELECT 1 FROM evidence_exact_aliases
+				WHERE team_id = ?::uuid AND alias_fragment_id = ?::uuid
+			)
+		`, teamID, evidence.FragmentID).Row().Scan(&alias)
+	}))
+	if alias {
+		require.Equal(t, "not_required", doc.SearchState)
+	} else {
+		require.Equal(t, "pending", doc.SearchState)
+	}
 }
 
 func assertRecallEvidenceRelationships(

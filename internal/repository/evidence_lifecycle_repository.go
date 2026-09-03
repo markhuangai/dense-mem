@@ -38,16 +38,17 @@ type EvidenceLifecycleResult struct {
 }
 
 type evidenceLifecycleOperationInput struct {
-	TeamID              string
-	OwnerProfileID      string
-	ActorProfileID      string
-	Action              string
-	EvidenceIDs         []string
-	Reason              string
-	IdempotencyKey      string
-	RequestHash         string
-	ReplacementID       string
-	ReplacementIngestID string
+	TeamID                  string
+	OwnerProfileID          string
+	ActorProfileID          string
+	Action                  string
+	EvidenceIDs             []string
+	Reason                  string
+	IdempotencyKey          string
+	RequestHash             string
+	ReplacementID           string
+	ReplacementOccurrenceID string
+	ReplacementIngestID     string
 }
 
 type evidenceLifecyclePlan struct {
@@ -254,14 +255,15 @@ func applyEvidenceSupersessions(
 			continue
 		}
 		operation := evidenceLifecycleOperationInput{
-			TeamID:              input.TeamID,
-			OwnerProfileID:      input.OwnerProfileID,
-			Action:              "supersede",
-			EvidenceIDs:         item.SupersedesEvidenceIDs,
-			IdempotencyKey:      item.IdempotencyKey,
-			RequestHash:         input.RequestHash,
-			ReplacementID:       evidence[index].FragmentID,
-			ReplacementIngestID: ingestID,
+			TeamID:                  input.TeamID,
+			OwnerProfileID:          input.OwnerProfileID,
+			Action:                  "supersede",
+			EvidenceIDs:             item.SupersedesEvidenceIDs,
+			IdempotencyKey:          item.IdempotencyKey,
+			RequestHash:             input.RequestHash,
+			ReplacementID:           evidence[index].FragmentID,
+			ReplacementOccurrenceID: evidence[index].OccurrenceID,
+			ReplacementIngestID:     ingestID,
 		}
 		planned, err := planEvidenceLifecycle(ctx, tx, operation)
 		if err != nil {
@@ -501,16 +503,19 @@ func loadEffectiveEvidenceLifecycleSupports(
 		  ON quarantine.team_id = support.team_id
 		 AND quarantine.fragment_id = support.fragment_id
 		 AND quarantine.status = 'active'
+		LEFT JOIN evidence_exact_aliases AS alias
+		  ON alias.team_id = support.team_id
+		 AND alias.alias_fragment_id = support.fragment_id
 		LEFT JOIN evidence_sources AS source
 		  ON source.team_id = support.team_id
 		 AND source.source_id = support.source_id
 		WHERE support.team_id = ?::uuid
-		  AND support.fragment_id = ANY(?::uuid[])
+		  AND (support.fragment_id = ANY(?::uuid[]) OR alias.canonical_fragment_id = ANY(?::uuid[]))
 		  AND latest.decision IN ('grant', 'reinstate')
 		  AND quarantine.quarantine_id IS NULL
 		  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
 		ORDER BY support.relationship_id ASC, support.support_id ASC
-	`, teamID, teamID, pq.Array(evidenceIDs)).Rows()
+	`, teamID, teamID, pq.Array(evidenceIDs), pq.Array(evidenceIDs)).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -598,15 +603,22 @@ func insertEvidenceLifecycleEvents(
 	operationID string,
 	spaceID string,
 ) error {
+	replacementOccurrenceID := input.ReplacementOccurrenceID
+	if replacementOccurrenceID == "" {
+		replacementOccurrenceID = input.ReplacementID
+	}
 	for _, evidenceID := range sortedEvidenceIDs(input.EvidenceIDs) {
 		result := tx.WithContext(ctx).Exec(`
 			INSERT INTO evidence_lifecycle_events (
 			    team_id, lifecycle_operation_id, target_fragment_id,
-			    replacement_fragment_id, owner_profile_id, action, space_id
+			    target_occurrence_id, replacement_fragment_id, replacement_occurrence_id,
+			    owner_profile_id, action, space_id
 			) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?::uuid, ?, ?::uuid
+			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid,
+			    NULLIF(?, '')::uuid, ?::uuid, ?, ?::uuid
 			)
-		`, input.TeamID, operationID, evidenceID, input.ReplacementID, input.OwnerProfileID, input.Action, spaceID)
+		`, input.TeamID, operationID, evidenceID, evidenceID, input.ReplacementID,
+			replacementOccurrenceID, input.OwnerProfileID, input.Action, spaceID)
 		if result.Error != nil {
 			if isPostgresUniqueConstraint(result.Error, "evidence_lifecycle_events_terminal_target_unique") {
 				return fmt.Errorf("%w: evidence target is already terminal", ErrEvidenceLifecycleConflict)

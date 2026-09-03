@@ -162,6 +162,7 @@ func recallEvidenceSearchState(
 			       OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 			  AND quarantine.quarantine_id IS NULL
 			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+			  `+recallEvidenceAliasVisibilitySQL("fragment")+`
 			  AND NOT EXISTS (
 			      SELECT 1
 			      FROM evidence_lifecycle_events AS lifecycle
@@ -169,7 +170,7 @@ func recallEvidenceSearchState(
 			        AND lifecycle.target_fragment_id = fragment.fragment_id
 			        AND (?::timestamptz IS NULL OR lifecycle.created_at <= ?::timestamptz)
 			  )
-			  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
+			  `+recallEvidenceHistoricalSourceVisibilitySQL("fragment", "source")+`
 			  AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
 			`+spaceClause+`
 		)
@@ -178,7 +179,8 @@ func recallEvidenceSearchState(
 		           WHEN EXISTS (SELECT 1 FROM eligible WHERE search_state = 'pending') THEN 'pending'
 		           ELSE 'current'
 		       END
-	`, input.TeamID, contract.EmbeddingContractID, eventAt, eventAt, eventAt, eventAt, eventAt).Scan(&state).Error
+		`, input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt, eventAt, eventAt,
+		input.KnownAt, input.KnownAt, eventAt, eventAt).Scan(&state).Error
 	if err != nil {
 		return "", err
 	}
@@ -220,11 +222,12 @@ func searchRecallFullText(
 		  AND search_documents.embedding_contract_id = ?::uuid
 		  AND (search_documents.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND search_documents.search_state = 'not_required'))
 		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+		  `+recallEvidenceAliasVisibilitySQL("source_fragment")+`
 		  AND search_documents.search_tsv @@ plainto_tsquery('simple', ?)
 	`+spaceClause+`
 		ORDER BY text_rank DESC, search_documents.updated_at DESC, search_documents.search_document_id ASC
 		LIMIT ?
-	`, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.Query, limit).Rows()
+	`, input.Query, input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt, input.Query, limit).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -283,11 +286,12 @@ func searchRecallExactVector(
 		  AND search_documents.search_state = 'current'
 		  AND search_documents.embedding IS NOT NULL
 		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+		  `+recallEvidenceAliasVisibilitySQL("source_fragment")+`
 		`+spaceClause+`
 		ORDER BY search_documents.embedding <=> ?::vector ASC, search_documents.search_document_id ASC
 		LIMIT ?
 	`, vectorLiteral, input.TeamID, contract.EmbeddingContractID,
-		contract.EmbeddingDimensions, vectorLiteral, limit).Rows()
+		contract.EmbeddingDimensions, input.KnownAt, vectorLiteral, limit).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -336,6 +340,7 @@ func searchRecallANNVector(
 			  AND search_documents.search_state = 'current'
 			  AND search_documents.embedding IS NOT NULL
 			  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+			  `+recallEvidenceAliasVisibilitySQL("source_fragment")+`
 			%s
 			ORDER BY %s ASC, search_documents.search_document_id ASC
 			LIMIT ?
@@ -360,6 +365,7 @@ func searchRecallANNVector(
 	rows, err := tx.WithContext(ctx).Raw(
 		query,
 		input.TeamID,
+		input.KnownAt,
 		vectorLiteral,
 		candidateLimit,
 		vectorLiteral,
@@ -486,19 +492,27 @@ func searchRecallEntityExpansion(
 		  ON latest.team_id = support.team_id
 		 AND latest.support_id = support.support_id
 		 AND latest.decision IN ('grant', 'reinstate')
-			JOIN search_documents AS document
+		LEFT JOIN evidence_exact_aliases AS support_alias ON support_alias.team_id = support.team_id AND support_alias.alias_fragment_id = support.fragment_id
+				JOIN search_documents AS document
 				  ON document.team_id = support.team_id
 				 AND document.source_kind = 'evidence'
-				 AND document.source_id = support.fragment_id
+				 AND document.source_id = CASE
+				     WHEN support_alias.alias_fragment_id IS NOT NULL
+				          AND support_alias.created_at > COALESCE(?::timestamptz, 'infinity'::timestamptz)
+				     THEN support_alias.alias_fragment_id
+				     ELSE COALESCE(support_alias.canonical_fragment_id, support.fragment_id)
+				 END
 				 AND document.embedding_contract_id = ?::uuid
 				 AND (document.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND document.search_state = 'not_required'))
 			JOIN evidence_fragments AS source_fragment
 				  ON source_fragment.team_id = support.team_id
-				 AND source_fragment.fragment_id = support.fragment_id
+				 AND source_fragment.fragment_id = document.source_id
 				LEFT JOIN evidence_quarantines AS quarantine
-			  ON quarantine.team_id = support.team_id
-			 AND quarantine.fragment_id = support.fragment_id
-			 AND quarantine.status = 'active'
+				  ON quarantine.team_id = support.team_id
+				 AND quarantine.fragment_id = support.fragment_id
+				 AND quarantine.status = 'active'
+				LEFT JOIN evidence_quarantines AS canonical_quarantine ON canonical_quarantine.team_id = source_fragment.team_id
+				 AND canonical_quarantine.fragment_id = source_fragment.fragment_id AND canonical_quarantine.status = 'active'
 			LEFT JOIN LATERAL (
 			    SELECT transition.to_status AS status
 			    FROM relationship_transition_events AS transition
@@ -527,6 +541,7 @@ func searchRecallEntityExpansion(
 			  )
 		  AND (?::timestamptz IS NOT NULL OR relationship.support_count > 0)
 		  AND quarantine.quarantine_id IS NULL
+		  AND canonical_quarantine.quarantine_id IS NULL
 		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 		  AND (
 		      relationship.subject_entity_id = ANY(?::uuid[])
@@ -553,7 +568,7 @@ func searchRecallEntityExpansion(
 		         document.embedding_contract_id, document.search_state
 		ORDER BY max(relationship.updated_at) DESC, document.search_document_id ASC
 		LIMIT ?
-		`, input.TeamID, eventAt, eventAt,
+		`, input.TeamID, eventAt, eventAt, input.KnownAt,
 		contract.EmbeddingContractID, eventAt,
 		eventAt, eventAt,
 		input.TeamID,
@@ -618,16 +633,22 @@ func hydrateRecallEvidence(
 			LEFT JOIN evidence_sources AS fragment_source
 			  ON fragment_source.team_id = fragment.team_id
 			 AND fragment_source.source_id = fragment.source_id
-			LEFT JOIN relationship_evidence_supports AS support
-			  ON support.team_id = fragment.team_id
-			 AND support.fragment_id = fragment.fragment_id
-			LEFT JOIN latest_support_decision AS latest
-			  ON latest.team_id = support.team_id
-			 AND latest.support_id = support.support_id
-			 AND latest.decision IN ('grant', 'reinstate')
+		LEFT JOIN relationship_evidence_supports AS support
+		  ON support.team_id = fragment.team_id
+		 AND (support.fragment_id = fragment.fragment_id OR EXISTS (SELECT 1 FROM evidence_exact_aliases AS support_alias
+		     WHERE support_alias.team_id = support.team_id AND support_alias.alias_fragment_id = support.fragment_id
+		       AND support_alias.canonical_fragment_id = fragment.fragment_id
+		       AND support_alias.created_at <= COALESCE(?::timestamptz, 'infinity'::timestamptz)))
+		 AND NOT EXISTS (SELECT 1 FROM evidence_quarantines AS support_quarantine
+		     WHERE support_quarantine.team_id = support.team_id AND support_quarantine.fragment_id = support.fragment_id
+		       AND support_quarantine.status = 'active')
+		LEFT JOIN latest_support_decision AS latest
+		  ON latest.team_id = support.team_id
+		 AND latest.support_id = support.support_id
+		 AND latest.decision IN ('grant', 'reinstate')
 				LEFT JOIN evidence_sources AS support_source
 				  ON support_source.team_id = support.team_id
-				 AND support_source.source_id = support.source_id
+				  AND support_source.source_id = support.source_id
 				LEFT JOIN LATERAL (
 				    SELECT relationship.relationship_id
 				    FROM relationship_records AS relationship
@@ -690,10 +711,7 @@ func hydrateRecallEvidence(
 			        AND lifecycle.target_fragment_id = fragment.fragment_id
 			        AND (?::timestamptz IS NULL OR lifecycle.created_at <= ?::timestamptz)
 			  )
-			  AND (
-			      fragment.source_id IS NULL
-			      OR fragment_source.current_revision_id = fragment.source_revision_id
-			  )
+			  `+recallEvidenceHistoricalSourceVisibilitySQL("fragment", "fragment_source")+`
 			  AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
 			  `+spaceClause+`
 			)
@@ -714,7 +732,7 @@ func hydrateRecallEvidence(
 		FROM eligible
 		GROUP BY evidence_id
 		`, pq.Array(evidenceIDs), input.TeamID, eventAt, eventAt,
-		input.TeamID, contract.EmbeddingContractID, eventAt,
+		input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt,
 		eventAt, eventAt,
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt,
@@ -722,8 +740,8 @@ func hydrateRecallEvidence(
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
-		input.KnownAt, input.KnownAt,
-		input.KnownAt, input.KnownAt).Rows()
+		input.KnownAt, input.KnownAt, input.KnownAt,
+		input.KnownAt, input.KnownAt, input.KnownAt).Rows()
 	if err != nil {
 		return nil, err
 	}
