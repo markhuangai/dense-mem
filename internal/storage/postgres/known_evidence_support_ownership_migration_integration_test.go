@@ -102,6 +102,8 @@ func TestKnownEvidenceSupportOwnershipMigrationUpdatesMarkerWithNOBYPASSRLS(t *t
 		"GRANT USAGE ON SCHEMA public TO " + quotedRole,
 		"ALTER TABLE app_config OWNER TO " + quotedRole,
 		"ALTER TABLE relationship_evidence_supports OWNER TO " + quotedRole,
+		"ALTER FUNCTION prevent_append_only_mutation() OWNER TO " + quotedRole,
+		"GRANT REFERENCES ON evidence_fragments, evidence_sources, evidence_source_revisions TO " + quotedRole,
 		"ALTER TABLE goose_db_version OWNER TO " + quotedRole,
 	} {
 		require.NoError(t, func() error {
