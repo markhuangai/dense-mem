@@ -572,7 +572,10 @@ func loadConflictLosingEvidenceTargets(
 				FROM relationship_evidence_supports AS shared
 				WHERE shared.team_id = ?::uuid
 				  AND shared.fragment_id = loser.fragment_id
-				  AND shared.evidence_owner_profile_id = loser.owner_profile_id
+				  AND (
+				      shared.owner_profile_id = loser.owner_profile_id
+				      OR shared.evidence_owner_profile_id = loser.owner_profile_id
+				  )
 				  AND NOT EXISTS (
 					  SELECT 1
 					  FROM active_members AS case_member

@@ -228,11 +228,149 @@ func TestOverdueConflictResolutionRetainsEvidenceUsedByAnotherOwner(t *testing.T
 	require.EqualValues(t, 2, knownSupportCount, "B's relationship keeps both submitted and known support grants")
 }
 
+func TestOverdueConflictResolutionRetainsEvidenceUsedByLosingOwner(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "conflict-review-losing-owner-support", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-review-losing-owner-support-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-losing-owner-support-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-losing-owner-support-owner-b")
+	ownerC := createLedgerProfile(t, adminDB, rls, teamID, "conflict-review-losing-owner-support-owner-c")
+	semantic := NewSemanticRepository(appDB, rls)
+	ledger := NewLedgerRepositoryWithRuntimeConfig(appDB, rls, ConflictRuntimeConfig{ReviewTTLDays: 2, Timezone: "UTC"})
+
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "project", "Losing-owner conflict subject")
+	preferredObject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "product", "Losing-owner preferred object")
+	losingObject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "product", "Losing-owner losing object")
+	unrelatedSubject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "project", "Losing-owner unrelated subject")
+	unrelatedObject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "product", "Losing-owner unrelated object")
+	known := createSemanticIngest(t, ctx, ledger, teamID, ownerB,
+		"losing-owner-known-evidence", "Owner B's evidence is used by Owner A relationships.")
+	knownContent := known.Evidence[0].Content
+	knownSupport := EvidenceSupportInput{
+		FragmentID: known.Evidence[0].FragmentID, EvidenceOwnerProfileID: ownerB,
+		SourceGroupKey: "losing-owner-known-support", SpanStart: 0, SpanEnd: len([]rune(knownContent)),
+		Quote: knownContent, Authority: "primary",
+	}
+	loser := commitConflictRememberFixtureWithSupports(t, ctx, ledger, teamID, ownerA, subject.EntityID, losingObject.EntityID,
+		"Owner A's losing relationship uses Owner B's evidence.", "losing-owner-conflict-loser", []EvidenceSupportInput{knownSupport})
+	require.NotEmpty(t, loser.RelationshipResults)
+	require.NotNil(t, loser.RelationshipResults[0].Relationship)
+
+	unrelatedSubmitted := createSemanticIngest(t, ctx, ledger, teamID, ownerA,
+		"losing-owner-unrelated-submitted", "Owner A's unrelated relationship also uses Owner B's evidence.")
+	unrelated := applySemanticDecision(t, ctx, semantic, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerA, IngestID: unrelatedSubmitted.IngestID,
+		SubjectEntityID: unrelatedSubject.EntityID, PredicateKey: "uses", ObjectEntityID: unrelatedObject.EntityID,
+		EvidenceVerdict: string(domain.VerificationEntailed),
+		Support: &EvidenceSupportInput{
+			FragmentID: unrelatedSubmitted.Evidence[0].FragmentID, SourceGroupKey: "losing-owner-unrelated-submitted",
+			SpanStart: 0, SpanEnd: len([]rune(unrelatedSubmitted.Evidence[0].Content)), Authority: "primary",
+		},
+		Supports: []EvidenceSupportInput{knownSupport},
+	})
+	require.NotNil(t, unrelated.Relationship)
+
+	preferred := commitConflictRememberFixture(t, ctx, ledger, teamID, ownerC, subject.EntityID, preferredObject.EntityID,
+		"Owner C's preferred relationship uses another object.", "losing-owner-conflict-preferred")
+	require.NotEmpty(t, preferred.RelationshipResults)
+
+	var conflictID string
+	var dueAt time.Time
+	var preferredPositionID string
+	require.NoError(t, rls.WithTeamProfileTx(ctx, appDB, teamID, ownerA, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT conflict_id::text, review_due_at
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid
+			ORDER BY created_at
+			LIMIT 1
+		`, teamID).Row().Scan(&conflictID, &dueAt); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT position_id::text
+			FROM relationship_conflict_positions
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+			  AND object_entity_id = ?::uuid
+		`, teamID, conflictID, preferredObject.EntityID).Row().Scan(&preferredPositionID)
+	}))
+	require.NotEmpty(t, conflictID)
+	require.NotEmpty(t, preferredPositionID)
+	reviewNow := dueAt.Add(time.Minute)
+	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, ConflictReviewRunInput{
+		TeamID: teamID, WorkerID: "losing-owner-conflict-reviewer", LocalRunDate: reviewNow, Timezone: "UTC", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NotNil(t, run)
+	cases, err := ledger.ClaimRelationshipConflictCases(ctx, ClaimRelationshipConflictCasesInput{
+		TeamID: teamID, WorkerID: "losing-owner-conflict-reviewer", ReviewRunID: run.ReviewRunID,
+		Limit: 10, Lease: time.Minute, MaxAttempts: 5, Now: reviewNow,
+	})
+	require.NoError(t, err)
+	require.Len(t, cases, 1)
+	review, err := ledger.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{
+		TeamID: teamID, WorkerID: "losing-owner-conflict-reviewer", ReviewRunID: run.ReviewRunID,
+		ConflictID: conflictID, Now: reviewNow,
+	})
+	require.NoError(t, err)
+	require.Equal(t, ConflictReviewOutcomeOverdue, review.Outcome)
+
+	reservation, dossier, reserved, err := ledger.ReserveOverdueConflictAssessment(ctx, ReserveOverdueConflictAssessmentInput{
+		TeamID: teamID, ConflictID: conflictID, ReviewRunID: run.ReviewRunID,
+		WorkerID: "losing-owner-conflict-reviewer", LocalAssessmentDate: reviewNow, Model: "losing-owner-test-model",
+	})
+	require.NoError(t, err)
+	require.True(t, reserved)
+	require.NotNil(t, reservation)
+	require.NotNil(t, dossier)
+	confidence := 1.0
+	_, err = ledger.CompleteOverdueConflictAssessment(ctx, CompleteOverdueConflictAssessmentInput{
+		TeamID: teamID, ConflictID: conflictID, AssessmentAttemptID: reservation.AssessmentAttemptID,
+		CaseVersion: reservation.CaseVersion, ReviewRunID: run.ReviewRunID, Decision: "selected",
+		SelectedPositionID: preferredPositionID, Confidence: &confidence, ProviderTurns: 1, ResponseHash: "losing-owner-test-response",
+	})
+	require.NoError(t, err)
+
+	result := commitOverdueConflictResolutionWithVectors(t, ctx, ledger, ApplyOverdueConflictResolutionInput{
+		TeamID: teamID, ConflictID: conflictID, ReviewRunID: run.ReviewRunID,
+		WorkerID: "losing-owner-conflict-reviewer", ExpectedCaseVersion: reservation.CaseVersion,
+		PreferredPositionID: preferredPositionID, AssessmentAttemptID: reservation.AssessmentAttemptID,
+		Method: "ai", Now: reviewNow,
+	})
+	require.True(t, result.Resolved)
+	require.ElementsMatch(t, []string{loser.RelationshipResults[0].Relationship.RelationshipID}, result.UpdatedRelationships)
+	require.NotContains(t, result.RetractedEvidenceIDs, known.Evidence[0].FragmentID)
+
+	var knownLifecycleCount int64
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT count(*)
+			FROM evidence_lifecycle_events
+			WHERE team_id = ?::uuid AND target_fragment_id = ?::uuid
+		`, teamID, known.Evidence[0].FragmentID).Scan(&knownLifecycleCount).Error
+	}))
+	require.Zero(t, knownLifecycleCount, "evidence used by the losing owner must not be retracted")
+}
+
 func commitConflictRememberFixture(
 	t *testing.T,
 	ctx context.Context,
 	repo *LedgerRepositoryImpl,
 	teamID, ownerID, subjectID, objectID, content, key string,
+) *SynchronousRememberCommitResult {
+	return commitConflictRememberFixtureWithSupports(t, ctx, repo, teamID, ownerID, subjectID, objectID, content, key, nil)
+}
+
+func commitConflictRememberFixtureWithSupports(
+	t *testing.T,
+	ctx context.Context,
+	repo *LedgerRepositoryImpl,
+	teamID, ownerID, subjectID, objectID, content, key string,
+	supports []EvidenceSupportInput,
 ) *SynchronousRememberCommitResult {
 	t.Helper()
 	fragmentID, ingestID, assessmentID := uuid.NewString(), uuid.NewString(), uuid.NewString()
@@ -260,7 +398,8 @@ func commitConflictRememberFixture(
 				Observation: SemanticRelationshipDecisionInput{
 					Ref: relationshipRef, SubjectRef: "subject", OriginalPredicate: "primary_database", PredicateKey: "primary_database", PredicateVersion: 1,
 					ObjectRef: "object", Polarity: "+", AssessorAccepted: true, AssessmentID: assessmentID,
-					Support: &EvidenceSupportInput{FragmentID: fragmentID, SourceGroupKey: key, SpanStart: 0, SpanEnd: len(content), Quote: content, Authority: "primary"},
+					Support:  &EvidenceSupportInput{FragmentID: fragmentID, SourceGroupKey: key, SpanStart: 0, SpanEnd: len(content), Quote: content, Authority: "primary"},
+					Supports: supports,
 				},
 			}},
 			RelationshipResults: []SubmissionRelationshipResultInput{{RelationshipRef: relationshipRef, Disposition: "stored"}},

@@ -197,6 +197,18 @@ func semanticAssessmentEntityLogicalKey(name, kind string) string {
 	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(name)), " ")) + "\x00" + strings.TrimSpace(kind)
 }
 
+func semanticAssessmentEntityResultLogicalKey(
+	result SemanticAssessmentEntityResult,
+	target SemanticAssessmentRequiredEntityRef,
+) string {
+	if result.CandidateEntityID != nil {
+		if candidateID := strings.TrimSpace(*result.CandidateEntityID); candidateID != "" {
+			return "candidate\x00" + candidateID
+		}
+	}
+	return semanticAssessmentEntityLogicalKey(target.Name, target.Kind)
+}
+
 func assessmentMatchingEntityCandidates(group SemanticAssessmentEntityCandidateGroup, kind string) []SemanticAssessmentEntityCandidate {
 	matching := make([]SemanticAssessmentEntityCandidate, 0, len(group.Candidates))
 	for _, candidate := range group.Candidates {

@@ -318,3 +318,39 @@ func TestSemanticAssessmentGroundingHelperSemantics(t *testing.T) {
 	require.False(t, semanticAssessmentValuesEqual(nil, &SemanticAssessmentValue{ValueType: "number", CanonicalValue: "1"}))
 	require.False(t, semanticAssessmentValuesEqual(&SemanticAssessmentValue{ValueType: "number", CanonicalValue: "1"}, &SemanticAssessmentValue{ValueType: "number", CanonicalValue: "2"}))
 }
+
+func TestSemanticAssessmentTreatsAliasTargetsAsOneEntityForDuplicateSpans(t *testing.T) {
+	evidence := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{
+		EvidenceID: "ev-1",
+		Content:    "Alice works with Alice.",
+	})
+	startRef, _ := SemanticAssessmentBoundaryRef(evidence, 0)
+	endRef, _ := SemanticAssessmentBoundaryRef(evidence, 5)
+	groundingRef := "grounding-alice"
+	aliasGroundingRef := "grounding-al"
+	candidateID := "entity-alice"
+	request := SemanticAssessmentRequest{
+		Evidence: []SemanticReviewEvidence{evidence},
+		EntityCandidateGroups: []SemanticAssessmentEntityCandidateGroup{{
+			EvidenceID: "ev-1", GroundingRef: groundingRef, Surface: "Alice", Start: 0, End: 5,
+			Candidates: []SemanticAssessmentEntityCandidate{{EntityID: candidateID, CanonicalName: "Alice", Kind: "person"}},
+		}},
+		SubmissionContract: &SemanticAssessmentSubmissionContract{Entities: []SemanticAssessmentRequiredEntityRef{
+			{
+				Ref: "entity:subject", Name: "Alice", Kind: "person", EvidenceIDs: []string{"ev-1"},
+				Groundings: []SemanticAssessmentEntityGrounding{{GroundingRef: groundingRef, EvidenceID: "ev-1", Surface: "Alice", StartRef: startRef, EndRef: endRef}},
+			},
+			{
+				Ref: "entity:object", Name: "Al", Kind: "person", EvidenceIDs: []string{"ev-1"},
+				Groundings: []SemanticAssessmentEntityGrounding{{GroundingRef: aliasGroundingRef, EvidenceID: "ev-1", Surface: "Alice", StartRef: startRef, EndRef: endRef}},
+			},
+		}},
+	}
+	results := []SemanticAssessmentEntityResult{
+		{Ref: "entity:subject", GroundingRef: &groundingRef, EvidenceID: "ev-1", Surface: "Alice", Kind: "person", Start: 0, End: 5, Action: "reuse", CandidateEntityID: &candidateID},
+		{Ref: "entity:object", GroundingRef: &aliasGroundingRef, EvidenceID: "ev-1", Surface: "Alice", Kind: "person", Start: 0, End: 5, Action: "reuse", CandidateEntityID: &candidateID},
+	}
+
+	errs := validateSemanticAssessmentEntityResults(request, results, nil, map[string]SemanticReviewEvidence{"ev-1": evidence})
+	require.Empty(t, errs)
+}

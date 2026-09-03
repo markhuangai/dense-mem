@@ -247,6 +247,47 @@ func TestSubmissionAssessmentOmitsPronounsAmbiguousAcrossEntityTargets(t *testin
 	require.Empty(t, validationErrors)
 }
 
+func TestSubmissionAssessmentGroundsAliasTargetsForOneEntity(t *testing.T) {
+	evidence := []assessor.SemanticReviewEvidence{
+		assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
+			EvidenceID: "evidence:0", EvidenceIndex: 0, Content: "Alice met the team.",
+		}),
+		assessor.PrepareSemanticAssessmentEvidence(assessor.SemanticReviewEvidence{
+			EvidenceID: "evidence:1", EvidenceIndex: 1, Content: "She thanked the team.",
+		}),
+	}
+	plan := submissionAssessmentPlan{EntityTargets: []submissionAssessmentEntityTarget{
+		{Target: assessor.SemanticAssessmentRequiredEntityRef{
+			Ref: "entity:subject", Name: "Alice", Kind: "person", EvidenceIDs: []string{"evidence:0", "evidence:1"},
+		}},
+		{Target: assessor.SemanticAssessmentRequiredEntityRef{
+			Ref: "entity:object", Name: "Al", Kind: "person", EvidenceIDs: []string{"evidence:0", "evidence:1"},
+		}},
+	}}
+	candidate := repository.SemanticReviewEntityCandidate{
+		EntityID: "entity-alice", EntityKind: "person", CanonicalName: "Alice", ActiveNames: []string{"Alice", "Al"}, Status: "active",
+	}
+	entities, _, err := submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{
+		Complete: true,
+		Groups: []repository.SubmissionAssessmentEntityCatalogGroup{
+			{Ref: "entity:subject", Candidates: []repository.SemanticReviewEntityCandidate{candidate}, Complete: true},
+			{Ref: "entity:object", Candidates: []repository.SemanticReviewEntityCandidate{candidate}, Complete: true},
+		},
+	}, evidence)
+	require.NoError(t, err)
+	require.Len(t, entities, 2)
+	for _, entity := range entities {
+		var foundPronoun bool
+		for _, grounding := range entity.Groundings {
+			if grounding.Surface == "She" {
+				foundPronoun = true
+				require.NotEmpty(t, grounding.AnchorRef)
+			}
+		}
+		require.True(t, foundPronoun, entity.Ref)
+	}
+}
+
 func TestSubmissionAssessmentProvidesKnownEvidenceAnchorForSubmittedPronoun(t *testing.T) {
 	fixture := synchronousAssessmentFixture(t)
 	fixture.input.Snapshot.Evidence[0].Content = "It uses Beta."

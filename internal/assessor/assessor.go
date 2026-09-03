@@ -854,13 +854,13 @@ func validateSemanticAssessmentEntityResults(
 		if _, exists := seenSpans[spanKey]; exists {
 			logicalKey := ""
 			if target, ok := entityTargets[result.Ref]; ok {
-				logicalKey = semanticAssessmentEntityLogicalKey(target.Name, target.Kind)
+				logicalKey = semanticAssessmentEntityResultLogicalKey(*result, target)
 			}
 			if previous, sameLogicalEntity := seenLogicalSpans[spanKey]; !sameLogicalEntity || previous != logicalKey {
 				errs = append(errs, semanticErr(fmt.Sprintf("entity_results[%d]", i), "duplicates an entity evidence span"))
 			}
 		} else if target, ok := entityTargets[result.Ref]; ok {
-			seenLogicalSpans[spanKey] = semanticAssessmentEntityLogicalKey(target.Name, target.Kind)
+			seenLogicalSpans[spanKey] = semanticAssessmentEntityResultLogicalKey(*result, target)
 		}
 		seenSpans[spanKey] = struct{}{}
 		exact, err := semanticExactSpanQuote(evidence.Content, result.Start, result.End, result.Surface)
