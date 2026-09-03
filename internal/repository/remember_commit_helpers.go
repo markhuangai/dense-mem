@@ -28,6 +28,7 @@ func normalizeSynchronousRememberCommitInput(input SynchronousRememberCommitInpu
 	input.Commit.RememberCommitScope.TeamID = input.TeamID
 	input.Commit.RememberCommitScope.OwnerProfileID = input.OwnerProfileID
 	input.Commit.RememberCommitScope.IngestID = input.IngestID
+	input.Commit = normalizeCommitSubmissionAssessmentInput(input.Commit)
 	for index := range input.Evidence {
 		input.Evidence[index].FragmentID = strings.TrimSpace(input.Evidence[index].FragmentID)
 	}

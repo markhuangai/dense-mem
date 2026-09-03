@@ -2,7 +2,9 @@ package memoryservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -162,6 +164,32 @@ func TestRecallConflictSummariesEnforcePositionBounds(t *testing.T) {
 	require.True(t, summaries[0].Positions[0].SupportersTruncated)
 }
 
+func TestRecallConflictJSONKeepsRelationshipShapeAndAddsEvidenceBranch(t *testing.T) {
+	relationship := RecallConflictSummary{
+		ConflictID: "relationship-1", Version: 1, Kind: "cross_profile_current_state", Status: "open",
+		Question: "Which value is current?", Positions: []RecallConflictPosition{{
+			PositionID: "position-1", Disposition: "candidate", SpanStart: 4, SpanEnd: 9,
+			RelationshipIDs: []string{"relationship-1"}, Supporters: []RecallConflictSupporter{},
+		}},
+	}
+	evidence := RecallConflictSummary{
+		ConflictID: "evidence-1", Version: 2, Kind: "evidence_conflict", Status: "resolved", PreferredPositionID: "position-2",
+		Positions: []RecallConflictPosition{{
+			PositionID: "position-2", Disposition: "preferred", EvidenceID: "evidence-1", OccurrenceID: "occurrence-1",
+			Quote: "exact", SpanStart: 0, SpanEnd: 5, Authority: "primary", Submitted: true,
+		}},
+	}
+	relationshipJSON, err := json.Marshal(relationship)
+	require.NoError(t, err)
+	evidenceJSON, err := json.Marshal(evidence)
+	require.NoError(t, err)
+	require.NotContains(t, string(relationshipJSON), "span_start")
+	require.NotContains(t, string(relationshipJSON), "occurrence_id")
+	require.Contains(t, string(evidenceJSON), `"span_start":0`)
+	require.Contains(t, string(evidenceJSON), `"occurrence_id":"occurrence-1"`)
+	require.NotContains(t, string(evidenceJSON), `"question"`)
+}
+
 func TestPublicHypothesisGeneratorKindPreservesProvider(t *testing.T) {
 	require.Equal(t, "provider", publicHypothesisGeneratorKind("provider"))
 }
@@ -248,6 +276,67 @@ func TestRecallProviderFailureIsOptionalDegradation(t *testing.T) {
 	require.Equal(t, string(domain.ErrorProviderUnavailable), result.Degradation.Code)
 	require.Empty(t, search.input.QueryEmbedding)
 	require.Equal(t, string(domain.SearchProjectionPending), result.SearchState)
+}
+
+func TestRecallProjectsEvidenceConflictPositionsAndJSONShape(t *testing.T) {
+	now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	positions := make([]repository.EvidenceConflictPositionRecord, 0, 11)
+	for index := 0; index < 11; index++ {
+		positions = append(positions, repository.EvidenceConflictPositionRecord{
+			PositionID: fmt.Sprintf("position-%d", index), CanonicalEvidenceID: fmt.Sprintf("evidence-%d", index), OccurrenceID: fmt.Sprintf("occurrence-%d", index),
+			Quote: fmt.Sprintf("quote-%d", index), SpanStart: index, SpanEnd: index + 2, Authority: "primary", Submitted: index == 0,
+		})
+	}
+	summaries := recallEvidenceConflictSummaries([]repository.EvidenceConflictCaseRecord{{
+		ConflictID: "conflict-1", Status: "resolved", Version: 3, PreferredPositionID: "position-0", CreatedAt: now, UpdatedAt: now, Positions: positions,
+	}})
+	require.Len(t, summaries, 1)
+	require.Equal(t, "evidence_conflict", summaries[0].Kind)
+	require.Equal(t, "preferred", summaries[0].Positions[0].Disposition)
+	require.True(t, summaries[0].PositionsTruncated)
+	require.Len(t, summaries[0].Positions, 11)
+	encoded, err := json.Marshal(summaries[0])
+	require.NoError(t, err)
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &wire))
+	require.Equal(t, "evidence_conflict", wire["kind"])
+	require.NotContains(t, wire, "question")
+	require.NotContains(t, wire, "review_due_at")
+}
+
+func TestRecallConflictLimitPreservesRelationshipOrderAndDeduplicates(t *testing.T) {
+	values := []RecallConflictSummary{
+		{ConflictID: "same", Kind: "relationship"},
+		{ConflictID: "same", Kind: "evidence_conflict"},
+		{ConflictID: "evidence-2", Kind: "evidence_conflict"},
+		{ConflictID: "relationship-2", Kind: "relationship"},
+	}
+	require.Empty(t, limitRecallConflictSummaries(values, 0))
+	limited := limitRecallConflictSummaries(values, 3)
+	require.Equal(t, []string{"same", "relationship-2", "evidence-2"}, []string{limited[0].ConflictID, limited[1].ConflictID, limited[2].ConflictID})
+}
+
+func TestRecallConflictTeamValidationRejectsCrossTeamEvidence(t *testing.T) {
+	recalled := &repository.RecallEvidenceResult{
+		Conflicts:         []repository.RelationshipConflictCaseRecord{{TeamID: "team-a"}},
+		EvidenceConflicts: []repository.EvidenceConflictCaseRecord{{TeamID: "team-b", Kind: "evidence_conflict"}},
+	}
+	require.ErrorIs(t, validateRecallConflictTeams(recalled, "team-a"), ErrRecallRepositoryTeamMismatch)
+	recalled.Conflicts = nil
+	recalled.EvidenceConflicts[0].TeamID = "team-a"
+	recalled.EvidenceConflicts[0].Kind = "relationship"
+	require.ErrorIs(t, validateRecallConflictTeams(recalled, "team-a"), ErrRecallRepositoryTeamMismatch)
+}
+
+func TestRecallConflictHelpersHandleNilAndExcludedRelationshipGroups(t *testing.T) {
+	require.NoError(t, validateRecallConflictTeams(nil, "team-a"))
+	values := []RelatedRelationshipSummary{
+		{RelationshipID: "kept", SemanticGroupKey: "keep"},
+		{RelationshipID: "removed", SemanticGroupKey: "remove"},
+	}
+	filtered := filterRelatedRelationshipsByGroups(values, map[string]struct{}{"remove": {}})
+	require.Len(t, filtered, 1)
+	require.Equal(t, "kept", filtered[0].RelationshipID)
 }
 
 func TestRecallProviderFailureReportsFailedRelationshipProjection(t *testing.T) {

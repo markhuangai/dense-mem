@@ -2,6 +2,8 @@ import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types
 import type { CommunityStatus } from "./community-api-types";
 import type { OAuthProtectedResourceConfig } from "./oauth-protected-resource-types";
 import type { SearchConvergence } from "./search-convergence-types";
+import type { EvidenceConflictDetail, EvidenceConflictListPage, EvidenceConflictListQuery, EvidenceConflict } from "./evidence-conflict-api-types";
+import { getEvidenceConflict as getEvidenceConflictRequest, listEvidenceConflicts as listEvidenceConflictsRequest, resolveEvidenceConflict as resolveEvidenceConflictRequest } from "./evidence-conflict-api";
 import { requestBytes, requestJson } from "./http";
 import {
   buildRememberAttemptDiagnosticPath, buildRememberAttemptDiagnosticsPath, buildRememberFailureArtifactPath,
@@ -715,6 +717,12 @@ export class ControlApi {
     const suffix = params.toString() ? `?${params.toString()}` : "";
     return this.requestEnvelope<ConflictQueuePage>(`/teams/${encodeURIComponent(teamId)}/conflicts/queue${suffix}`);
   }
+
+  listEvidenceConflicts(teamId: string, query: EvidenceConflictListQuery = {}): Promise<EvidenceConflictListPage> { return listEvidenceConflictsRequest(this.requestEnvelope.bind(this), teamId, query); }
+
+  getEvidenceConflict(teamId: string, conflictId: string, eventLimit?: number, eventCursor?: string): Promise<EvidenceConflictDetail> { return getEvidenceConflictRequest(this.requestEnvelope.bind(this), teamId, conflictId, eventLimit, eventCursor); }
+
+  resolveEvidenceConflict(teamId: string, conflictId: string, input: { expected_version: number; decision: "resolve" | "dismiss"; reason: string; preferred_position_id?: string }): Promise<{ conflict: EvidenceConflict }> { return resolveEvidenceConflictRequest(this.requestEnvelope.bind(this), teamId, conflictId, input); }
 
   getSearchConvergence(): Promise<SearchConvergence> {
     return this.requestEnvelope<SearchConvergence>("/search/convergence");

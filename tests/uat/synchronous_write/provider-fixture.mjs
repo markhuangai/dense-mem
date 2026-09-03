@@ -331,11 +331,16 @@ function fixtureAssessment(request, requestFault, attempt) {
       candidate_evidence_id: null,
     };
   });
+  const citedConflict = (request.evidence || []).length >= 2 && (request.evidence || []).some((item) => String(item?.content || "").includes("[fixture:cited-evidence-conflict]"));
+  const evidenceConflictResults = citedConflict ? [{
+    positions: request.evidence.slice(0, 2).map((evidence) => wholeEvidenceRange(evidence)),
+  }] : [];
   if (requestFault === "repair" && attempt === 1) {
     return {
       request_id: request.request_id || "fixture",
       evidence_security_results: securityResults,
       evidence_equivalence_results: evidenceEquivalenceResults,
+      evidence_conflict_results: evidenceConflictResults,
       entity_results: [],
       relationship_results: relationships,
     };
@@ -344,6 +349,7 @@ function fixtureAssessment(request, requestFault, attempt) {
     request_id: request.request_id || "fixture",
     evidence_security_results: securityResults,
     evidence_equivalence_results: evidenceEquivalenceResults,
+    evidence_conflict_results: evidenceConflictResults,
     entity_results: entities,
     relationship_results: relationships,
   };

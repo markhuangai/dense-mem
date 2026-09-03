@@ -29,6 +29,69 @@ func recallConflictSummaries(records []repository.RelationshipConflictCaseRecord
 	return out
 }
 
+func recallEvidenceConflictSummaries(records []repository.EvidenceConflictCaseRecord) []RecallConflictSummary {
+	out := make([]RecallConflictSummary, 0, len(records))
+	for _, record := range records {
+		positions := make([]RecallConflictPosition, 0, len(record.Positions))
+		for _, position := range record.Positions {
+			positions = append(positions, RecallConflictPosition{
+				PositionID: position.PositionID, Disposition: "candidate",
+				EvidenceID: position.CanonicalEvidenceID, OccurrenceID: position.OccurrenceID,
+				Quote: position.Quote, SpanStart: position.SpanStart, SpanEnd: position.SpanEnd,
+				Authority: position.Authority, Submitted: position.Submitted,
+			})
+		}
+		preferred := strings.TrimSpace(record.PreferredPositionID)
+		for index := range positions {
+			if preferred != "" && positions[index].PositionID == preferred {
+				positions[index].Disposition = "preferred"
+			}
+		}
+		out = append(out, RecallConflictSummary{
+			ConflictID: record.ConflictID, Version: record.Version, Kind: "evidence_conflict",
+			Status: record.Status, PreferredPositionID: preferred, Positions: positions,
+			PositionsTruncated: len(record.Positions) > recallConflictPositionLimit,
+		})
+	}
+	return out
+}
+
+func limitRecallConflictSummaries(values []RecallConflictSummary, limit int) []RecallConflictSummary {
+	if limit <= 0 {
+		return []RecallConflictSummary{}
+	}
+	seen := make(map[string]struct{}, len(values))
+	capacity := len(values)
+	if capacity > limit {
+		capacity = limit
+	}
+	out := make([]RecallConflictSummary, 0, capacity)
+	// Relationship conflicts remain first for compatibility with the existing
+	// conflict queue projection; evidence conflicts fill the shared remainder.
+	appendKind := func(kind string) {
+		for _, value := range values {
+			if (kind == "evidence_conflict" && value.Kind != "evidence_conflict") ||
+				(kind == "relationship" && value.Kind == "evidence_conflict") {
+				continue
+			}
+			if _, exists := seen[value.ConflictID]; exists {
+				continue
+			}
+			seen[value.ConflictID] = struct{}{}
+			out = append(out, value)
+			if len(out) == limit {
+				return
+			}
+		}
+	}
+	appendKind("relationship")
+	appendKind("evidence_conflict")
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
 const (
 	recallConflictPositionLimit         = 10
 	recallConflictSupporterLimit        = 20

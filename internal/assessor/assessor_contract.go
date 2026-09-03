@@ -7,15 +7,31 @@ import "github.com/markhuangai/dense-mem/internal/domain"
 // intentionally validated after decoding against the frozen request.
 func SemanticAssessmentResponseSchema() map[string]any {
 	return closedObject(
-		[]string{"request_id", "evidence_security_results", "evidence_equivalence_results", "entity_results", "relationship_results"},
+		[]string{"request_id", "evidence_security_results", "evidence_equivalence_results", "evidence_conflict_results", "entity_results", "relationship_results"},
 		map[string]any{
 			"request_id":                   stringSchema(1, 128),
 			"evidence_security_results":    semanticAssessmentEvidenceSecurityResultSchema(),
 			"evidence_equivalence_results": semanticAssessmentEvidenceEquivalenceResultSchema(),
+			"evidence_conflict_results":    semanticAssessmentEvidenceConflictResultSchema(),
 			"entity_results":               semanticAssessmentEntityResultSchema(),
 			"relationship_results":         semanticAssessmentRelationshipResultSchema(),
 		},
 	)
+}
+
+func semanticAssessmentEvidenceConflictResultSchema() map[string]any {
+	return map[string]any{
+		"type": "array", "maxItems": SemanticAssessmentMaxEvidenceConflictResults,
+		"items": closedObject(
+			[]string{"positions"},
+			map[string]any{
+				"positions": map[string]any{
+					"type": "array", "minItems": 2, "maxItems": SemanticAssessmentMaxEvidenceConflictPositions,
+					"items": semanticAssessmentGroundedRangeSchema(),
+				},
+			},
+		),
+	}
 }
 
 func semanticAssessmentEvidenceEquivalenceResultSchema() map[string]any {

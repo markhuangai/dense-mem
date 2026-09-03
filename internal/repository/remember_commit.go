@@ -169,6 +169,10 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 		if err := reauthorizeSubmissionKnownEvidence(ctx, tx, input.Commit); err != nil {
 			return err
 		}
+		stage = "evidence_conflicts"
+		if err := r.commitEvidenceConflictsInTx(ctx, tx, input, evidence); err != nil {
+			return err
+		}
 
 		stage = "assessment_history"
 		if err := insertRememberSemanticAssessment(ctx, tx, input); err != nil {

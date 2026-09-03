@@ -71,6 +71,8 @@ func semanticAssessmentValidationFieldFamily(field string) string {
 		return "evidence_security_results"
 	case strings.HasPrefix(field, "evidence_equivalence_results"), strings.HasPrefix(field, "evidence_equivalence_candidates"):
 		return "evidence_equivalence"
+	case strings.HasPrefix(field, "evidence_conflict_results"):
+		return "evidence_conflicts"
 	case strings.HasPrefix(field, "security_signals"), strings.HasPrefix(field, "security_results"):
 		return "evidence_security_results"
 	case strings.HasPrefix(field, "entity_results"):

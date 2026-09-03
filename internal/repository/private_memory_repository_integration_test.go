@@ -21,6 +21,9 @@ func TestPrivateMemoryManifestMatchesCatalog(t *testing.T) {
 	repo := NewPrivateMemoryRepository(appDB, rls)
 	require.NoError(t, repo.Prepare(context.Background()))
 	require.Len(t, repo.ordered, len(PrivateMemoryErasureManifest()))
+	require.Contains(t, PrivateMemoryErasureManifest(), "evidence_conflict_cases")
+	require.Contains(t, PrivateMemoryErasureManifest(), "evidence_conflict_positions")
+	require.Contains(t, PrivateMemoryErasureManifest(), "evidence_conflict_events")
 }
 
 func TestPrivateMemoryManifestMismatchBlocksPrepare(t *testing.T) {
@@ -399,6 +402,7 @@ func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 	targetIngest := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, target.MemorySpaceID, "target private content")
 	otherIngest := seedPrivateMemoryIngest(t, adminDB, rls, teamID, other.ID, other.MemorySpaceID, "other private content")
 	sharedIngest := seedPrivateMemoryIngest(t, adminDB, rls, teamID, target.ID, sharedSpaceID, "shared content")
+	seedPrivateMemoryEvidenceConflict(t, adminDB, rls, teamID, target, targetIngest)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO audit_log (
@@ -487,7 +491,13 @@ func TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.PrivateMemoryErasureCompleted, completed.Status)
 	require.Contains(t, completed.DeletedCounts, "knowledge_ingests")
+	require.Contains(t, completed.DeletedCounts, "evidence_conflict_cases")
+	require.Contains(t, completed.DeletedCounts, "evidence_conflict_positions")
+	require.Contains(t, completed.DeletedCounts, "evidence_conflict_events")
 	require.Equal(t, int64(1), completed.DeletedCounts["knowledge_ingests"])
+	require.Equal(t, int64(1), completed.DeletedCounts["evidence_conflict_cases"])
+	require.Equal(t, int64(2), completed.DeletedCounts["evidence_conflict_positions"])
+	require.Equal(t, int64(1), completed.DeletedCounts["evidence_conflict_events"])
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		for _, fixture := range []struct {

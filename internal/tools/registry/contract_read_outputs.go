@@ -66,6 +66,10 @@ func recallRelationshipSchema() map[string]any {
 }
 
 func recallConflictSchema() map[string]any {
+	return map[string]any{"oneOf": []any{recallRelationshipConflictSchema(), recallEvidenceConflictSchema()}}
+}
+
+func recallRelationshipConflictSchema() map[string]any {
 	return closedObject(
 		[]string{"conflict_id", "version", "kind", "status", "question", "positions", "positions_truncated"},
 		map[string]any{
@@ -80,6 +84,38 @@ func recallConflictSchema() map[string]any {
 			"preferred_position_id": nullableString("Preferred position when resolved.", 128),
 			"positions":             array(recallConflictPositionSchema(), 0, 10),
 			"positions_truncated":   map[string]any{"type": "boolean"},
+		},
+	)
+}
+
+func recallEvidenceConflictSchema() map[string]any {
+	return closedObject(
+		[]string{"conflict_id", "version", "kind", "status", "positions", "positions_truncated"},
+		map[string]any{
+			"conflict_id":           schemaString("Evidence conflict case ID.", 128),
+			"version":               map[string]any{"type": "integer", "minimum": 1},
+			"kind":                  schemaEnum([]string{"evidence_conflict"}),
+			"status":                schemaEnum([]string{"open", "resolved"}),
+			"preferred_position_id": nullableString("Preferred evidence position when resolved.", 128),
+			"positions":             array(recallEvidenceConflictPositionSchema(), 2, 10),
+			"positions_truncated":   map[string]any{"type": "boolean"},
+		},
+	)
+}
+
+func recallEvidenceConflictPositionSchema() map[string]any {
+	return closedObject(
+		[]string{"position_id", "disposition", "evidence_id", "occurrence_id", "quote", "span_start", "span_end", "authority", "submitted"},
+		map[string]any{
+			"position_id":   schemaString("Evidence conflict position ID.", 128),
+			"disposition":   schemaEnum([]string{"candidate", "preferred"}),
+			"evidence_id":   schemaString("Canonical evidence ID.", 128),
+			"occurrence_id": schemaString("Exact cited occurrence ID.", 128),
+			"quote":         schemaString("Exact server-derived evidence quote.", 4000),
+			"span_start":    map[string]any{"type": "integer", "minimum": 0},
+			"span_end":      map[string]any{"type": "integer", "minimum": 1},
+			"authority":     schemaEnum([]string{"authoritative", "primary", "secondary", "inferred", "unknown"}),
+			"submitted":     map[string]any{"type": "boolean"},
 		},
 	)
 }

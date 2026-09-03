@@ -119,3 +119,28 @@ test("remember case covers semantic duplicate reuse and unauthorized candidates"
   assert.match(remember, /occurrences_preserved/);
   assert.match(fixture, /semantic-reuse-unauthorized/);
 });
+
+test("remember case covers cited evidence conflict creation, recurrence, resolution, and similarity-only rejection", async () => {
+  const remember = await readFile(new URL("./cases/remember.mjs", import.meta.url), "utf8");
+  const fixture = await readFile(new URL("./provider-fixture.mjs", import.meta.url), "utf8");
+  assert.match(remember, /runEvidenceConflictCase/);
+  assert.match(remember, /cited-evidence-conflict/);
+  assert.match(remember, /similarity-only evidence must not create/);
+  assert.match(fixture, /evidenceConflictResults/);
+});
+
+test("remember PostgreSQL fixtures use the consolidated production runner handoff", async () => {
+  const remember = await readFile(new URL("./cases/remember.mjs", import.meta.url), "utf8");
+  const scenario = await readFile(new URL("../../../scripts/e2e-scenario.sh", import.meta.url), "utf8");
+  const controller = await readFile(new URL("../../../scripts/e2e-host-controller-runtime.sh", import.meta.url), "utf8");
+  assert.match(remember, /fileURLToPath\(new URL\("\.\.\/\.\.\/\.\.\/\.\.", import\.meta\.url\)\)/);
+  assert.match(remember, /DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE/);
+  assert.match(remember, /SET LOCAL app\.tx_mode = 'system'/);
+  assert.match(remember, /only permits read queries/);
+  assert.match(remember, /only permits alias setup/);
+  assert.match(remember, /psql -X -q -v ON_ERROR_STOP=1/);
+  assert.match(remember, /Remember PostgreSQL fixture failed \(\$\{result\.status\}\):/);
+  assert.match(remember, /requiredEnv\("DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE"\)/);
+  assert.match(scenario, /export DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE=/);
+  assert.match(controller, /DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE=\/ci\/helper-compose\.yml/);
+});

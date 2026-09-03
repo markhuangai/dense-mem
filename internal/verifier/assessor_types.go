@@ -15,6 +15,8 @@ type SemanticAssessmentGroundedRange = assessor.SemanticAssessmentGroundedRange
 type SemanticAssessmentSecuritySignal = assessor.SemanticAssessmentSecuritySignal
 type SemanticAssessmentEvidenceSecurityResult = assessor.SemanticAssessmentEvidenceSecurityResult
 type SemanticAssessmentEvidenceEquivalenceResult = assessor.SemanticAssessmentEvidenceEquivalenceResult
+type SemanticAssessmentEvidenceConflictResult = assessor.SemanticAssessmentEvidenceConflictResult
+type SemanticAssessmentEvidenceConflictPosition = assessor.SemanticAssessmentEvidenceConflictPosition
 type SemanticAssessmentSecurityResult = assessor.SemanticAssessmentSecurityResult
 type SemanticAssessmentValue = assessor.SemanticAssessmentValue
 type SemanticAssessmentRelationshipResult = assessor.SemanticAssessmentRelationshipResult
@@ -28,6 +30,7 @@ type SemanticAssessmentSubmittedEntity = assessor.SemanticAssessmentSubmittedEnt
 type SemanticAssessmentSubmittedRelationship = assessor.SemanticAssessmentSubmittedRelationship
 
 type semanticAssessmentCandidateContext struct {
-	EntityCandidateGroups []SemanticAssessmentEntityCandidateGroup `json:"entity_candidate_groups"`
-	PredicateOptions      []SemanticAssessmentPredicateOption      `json:"predicate_options"`
+	EntityCandidateGroups         []SemanticAssessmentEntityCandidateGroup                       `json:"entity_candidate_groups"`
+	PredicateOptions              []SemanticAssessmentPredicateOption                            `json:"predicate_options"`
+	EvidenceEquivalenceCandidates []assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup `json:"evidence_equivalence_candidates"`
 }

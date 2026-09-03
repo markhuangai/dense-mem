@@ -63,11 +63,62 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   if (selectedFault === "none") {
     results.push(await runKnownEvidenceCase({ expect }));
     results.push(await runSemanticDuplicateCase({ expect }));
+    results.push(await runEvidenceConflictCase({ rpc, expect }));
     results.push(await runConcurrentWinnerCase({ rpc, expect }));
     results.push(await runChangedHashConflictCase({ rawRPC, expect }));
     results.push(await runSupersessionFenceCase({ rpc, expect }));
   }
   return { mode: name, results };
+}
+
+async function runEvidenceConflictCase({ rpc, expect }) {
+  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
+  const actor = await createKnownEvidenceCredential(teamID, `evidence-conflict-${Date.now()}`, "shared_only");
+  const firstArgs = singleItemArguments("cited-evidence-conflict", "[fixture:cited-evidence-conflict]");
+  firstArgs.evidence.push({ content: "The same change was rejected by the reviewer. [fixture:cited-evidence-conflict]", source_type: "manual" });
+  const first = await rememberWithKey(actor.apiKey, firstArgs);
+  assertStrictTerminalRemember(first, expect);
+  expect(first.processing_state === "completed", `cited evidence conflict must complete: ${JSON.stringify(first)}`);
+  expect(first.evidence.length === 2 && first.evidence.every((item) => item.disposition === "stored"), "cited conflict must preserve both safe evidence items");
+
+  const conflictID = postgresQuery(`
+    SELECT conflict_id::text
+    FROM evidence_conflict_cases
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+    ORDER BY created_at DESC, conflict_id DESC
+    LIMIT 1;
+  `);
+  expect(conflictID, "cited conflict must create a durable case");
+  const firstRecall = await mcpSuccessWithKey(actor.apiKey, "recall_memory", { query: "cited evidence change reviewer" });
+  expect(firstRecall.conflicts?.some((item) => item.kind === "evidence_conflict" && item.conflict_id === conflictID), `recall must expose cited evidence conflict provenance: ${JSON.stringify(firstRecall)}`);
+
+  const recurrenceArgs = JSON.parse(JSON.stringify(firstArgs));
+  recurrenceArgs.idempotency_key = `synchronous-write-remember-cited-evidence-conflict-recurrence-${Date.now()}-${Math.random()}`;
+  const recurrence = await rememberWithKey(actor.apiKey, recurrenceArgs);
+  assertStrictTerminalRemember(recurrence, expect);
+  expect(recurrence.processing_state === "completed", `cited evidence conflict recurrence must complete: ${JSON.stringify(recurrence)}`);
+  const detail = await controlJSON(`/teams/${teamID}/evidence-conflicts/${conflictID}?event_limit=100`);
+  const conflict = detail.data?.conflict;
+  expect(conflict?.version === 2 && conflict.events?.length === 2, `recurrence must increment the open case once and append history: ${JSON.stringify(detail)}`);
+  const preferred = conflict.positions.find((position) => position.submitted)?.position_id;
+  const resolved = await controlJSON(`/teams/${teamID}/evidence-conflicts/${conflictID}/resolution`, {
+    method: "POST",
+    body: JSON.stringify({ expected_version: 2, decision: "resolve", reason: "reviewed opposing citations", preferred_position_id: preferred }),
+  });
+  expect(resolved.data?.conflict?.status === "resolved" && resolved.data.conflict.version === 3, `control must resolve the cited conflict without changing evidence: ${JSON.stringify(resolved)}`);
+
+  const beforeSimilarity = Number(postgresQuery(`SELECT count(*) FROM evidence_conflict_cases WHERE team_id = '${sqlLiteral(teamID)}'::uuid;`));
+  const similarityArgs = singleItemArguments("cited-evidence-similarity-only", "");
+  similarityArgs.evidence.push({ content: "A similar but uncited statement about the same change.", source_type: "manual" });
+  const similarity = await rememberWithKey(actor.apiKey, similarityArgs);
+  assertStrictTerminalRemember(similarity, expect);
+  expect(similarity.processing_state === "completed", `similarity-only evidence must still complete: ${JSON.stringify(similarity)}`);
+  const afterSimilarity = Number(postgresQuery(`SELECT count(*) FROM evidence_conflict_cases WHERE team_id = '${sqlLiteral(teamID)}'::uuid;`));
+  expect(beforeSimilarity === afterSimilarity, "similarity-only evidence must not create an evidence conflict case without assessor citations");
+  const resolvedRecall = await mcpSuccessWithKey(actor.apiKey, "recall_memory", { query: "cited evidence change reviewer" });
+  const recalled = resolvedRecall.conflicts?.find((item) => item.kind === "evidence_conflict" && item.conflict_id === conflictID);
+  expect(recalled?.status === "resolved" && recalled.positions?.every((position) => position.occurrence_id && position.quote), `resolved recall must retain exact evidence provenance: ${JSON.stringify(resolvedRecall)}`);
+  return { fault: "cited-evidence-conflict", created: true, recurrence: true, resolved: true, similarity_only_no_case: true };
 }
 
 async function runKnownEvidenceCase({ expect }) {

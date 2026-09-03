@@ -36,6 +36,7 @@ type SubmissionAssessment struct {
 
 type SubmissionAssessmentItemInput struct {
 	FragmentID string
+	EvidenceID string
 }
 
 type SubmissionAssessmentEntityResolutionInput struct {
@@ -46,6 +47,20 @@ type SubmissionAssessmentRelationshipObservationInput struct {
 	RelationshipRef string
 	SplitIndex      int
 	Observation     SemanticRelationshipDecisionInput
+}
+
+// EvidenceConflictPositionInput is a validated assessor citation. EvidenceID
+// is a request-local submitted ID, an explicit known evidence ID, or an
+// allowlisted existing candidate fragment ID. Start and End are Unicode-rune
+// offsets resolved by the assessor boundary validator.
+type EvidenceConflictPositionInput struct {
+	EvidenceID string
+	Start      int
+	End        int
+}
+
+type EvidenceConflictResultInput struct {
+	Positions []EvidenceConflictPositionInput
 }
 
 type SubmissionRelationshipSplitInput struct {
@@ -82,14 +97,20 @@ type SubmissionPredicateRegistrationInput struct {
 
 type CommitSubmissionAssessmentInput struct {
 	RememberCommitScope
-	AssessmentID             string
-	Items                    []SubmissionAssessmentItemInput
-	KnownEvidenceSnapshot    []SubmissionAssessmentKnownEvidence
-	EntityResolutions        []SubmissionAssessmentEntityResolutionInput
-	RelationshipObservations []SubmissionAssessmentRelationshipObservationInput
-	PredicateRegistrations   []SubmissionPredicateRegistrationInput
-	RelationshipResults      []SubmissionRelationshipResultInput
-	Payload                  map[string]any
+	AssessmentID            string
+	Items                   []SubmissionAssessmentItemInput
+	KnownEvidenceSnapshot   []SubmissionAssessmentKnownEvidence
+	EvidenceConflictResults []EvidenceConflictResultInput
+	// EvidenceConflictCandidateEvidenceIDs is the immutable server-side
+	// allowlist used to reauthorize assessor citations to T05 candidates.
+	// Keys are submitted request evidence IDs and values are candidate fragment
+	// IDs returned by the bounded duplicate-candidate lookup.
+	EvidenceConflictCandidateEvidenceIDs map[string][]string
+	EntityResolutions                    []SubmissionAssessmentEntityResolutionInput
+	RelationshipObservations             []SubmissionAssessmentRelationshipObservationInput
+	PredicateRegistrations               []SubmissionPredicateRegistrationInput
+	RelationshipResults                  []SubmissionRelationshipResultInput
+	Payload                              map[string]any
 }
 
 // EvidenceSecurityResult is the assessor's complete security disposition for

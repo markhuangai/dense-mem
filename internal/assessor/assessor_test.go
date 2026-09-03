@@ -57,7 +57,7 @@ func TestSemanticAssessmentWireRejectsObsoleteAssessorFields(t *testing.T) {
 
 func TestSemanticAssessmentWireRejectsDuplicateFields(t *testing.T) {
 	_, limits := semanticAssessmentTestRequest(t)
-	_, err := DecodeSemanticAssessmentResponseJSON([]byte(`{"request_id":"a","evidence_security_results":[],"entity_results":[],"relationship_results":[],"request_id":"b"}`), limits)
+	_, err := DecodeSemanticAssessmentResponseJSON([]byte(`{"request_id":"a","evidence_security_results":[],"evidence_equivalence_results":[],"evidence_conflict_results":[],"entity_results":[],"relationship_results":[],"request_id":"b"}`), limits)
 	require.ErrorContains(t, err, "duplicate JSON field")
 }
 
@@ -128,6 +128,7 @@ func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 		RequestID:                  prepared.RequestID,
 		EvidenceSecurityResults:    []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "ev-1", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}},
 		EvidenceEquivalenceResults: []SemanticAssessmentEvidenceEquivalenceResult{},
+		EvidenceConflictResults:    []SemanticAssessmentEvidenceConflictResult{},
 		EntityResults: []SemanticAssessmentEntityResult{{
 			Ref: "entity:latency", GroundingRef: &groundingRef, Action: "create",
 		}},
@@ -688,6 +689,7 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 		RequestID:                  "assess-1",
 		EvidenceSecurityResults:    []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "ev-1", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}},
 		EvidenceEquivalenceResults: []SemanticAssessmentEvidenceEquivalenceResult{},
+		EvidenceConflictResults:    []SemanticAssessmentEvidenceConflictResult{},
 		EntityResults: []SemanticAssessmentEntityResult{
 			{
 				Ref:               "person-1",

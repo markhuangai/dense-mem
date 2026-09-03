@@ -266,6 +266,7 @@ func fuseRecallResults(branches []*RecallResult, resultLimit, relationshipLimit 
 	for _, item := range relationshipItems[:relationshipLimit] {
 		fused.RelatedRelationships = append(fused.RelatedRelationships, item.item)
 	}
+	fused.Conflicts = limitRecallConflictSummaries(fused.Conflicts, 20)
 	if len(fused.Degradations) > 0 {
 		fused.Degradation = &fused.Degradations[0]
 	}
