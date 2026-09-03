@@ -266,25 +266,31 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Build production OCI layout
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./Dockerfile
-          target: preview
-          platforms: linux/amd64,linux/arm64/v8
-          push: false
-          provenance: false
-          outputs: type=oci,dest=${{ runner.temp }}/preview-oci,tar=false,name=dense-mem:test-${{ needs.resolve.outputs.pr_number }}
-          build-args: |
-            IMAGE_VERSION=test-${{ needs.resolve.outputs.pr_number }}
-            IMAGE_REVISION=${{ needs.resolve.outputs.head_sha }}
-            IMAGE_CREATED=${{ needs.resolve.outputs.head_created }}
-            PREVIEW_PR=${{ needs.resolve.outputs.pr_number }}
-            PREVIEW_HEAD=${{ needs.resolve.outputs.head_sha }}
-            PREVIEW_MAIN=${{ needs.resolve.outputs.main_sha }}
-            PREVIEW_RUN_ID=${{ github.run_id }}
-            PREVIEW_RUN_ATTEMPT=${{ github.run_attempt }}
-          cache-from: type=gha,scope=dense-mem-preview-${{ needs.resolve.outputs.pr_number }}
+        shell: bash
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          MAIN_SHA: ${{ needs.resolve.outputs.main_sha }}
+          HEAD_CREATED: ${{ needs.resolve.outputs.head_created }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --file ./Dockerfile \
+            --target preview \
+            --platform linux/amd64,linux/arm64/v8 \
+            --provenance=false \
+            --output "type=oci,dest=${RUNNER_TEMP}/preview-oci,tar=false,name=dense-mem:test-${PR_NUMBER}" \
+            --build-arg "IMAGE_VERSION=test-${PR_NUMBER}" \
+            --build-arg "IMAGE_REVISION=${HEAD_SHA}" \
+            --build-arg "IMAGE_CREATED=${HEAD_CREATED}" \
+            --build-arg "PREVIEW_PR=${PR_NUMBER}" \
+            --build-arg "PREVIEW_HEAD=${HEAD_SHA}" \
+            --build-arg "PREVIEW_MAIN=${MAIN_SHA}" \
+            --build-arg "PREVIEW_RUN_ID=${RUN_ID}" \
+            --build-arg "PREVIEW_RUN_ATTEMPT=${RUN_ATTEMPT}" \
+            .
 
       - name: Upload immutable OCI artifact
         uses: actions/upload-artifact@v7

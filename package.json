@@ -1,0 +1,7 @@
+{
+  "name": "dense-mem",
+  "private": true,
+  "scripts": {
+    "e2e": "bash scripts/e2e.sh"
+  }
+}

@@ -20,7 +20,7 @@ import (
 func TestIdentityCleanupComposeSeed(t *testing.T) {
 	variant := os.Getenv("DENSE_MEM_E2E_IDENTITY_SEED_VARIANT")
 	if variant == "" {
-		t.Skip("compose identity seed is only run by scripts/e2e-compose.sh")
+		t.Skip("compose identity seed is only run by the shared E2E controller")
 	}
 	versionByVariant := map[string]int64{
 		"v2_4_8":       2026080905,

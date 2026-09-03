@@ -44,6 +44,9 @@ if [[ -n "${DENSE_MEM_E2E_OAUTH_FIXTURE_TOKEN:-}" ]]; then
   if [[ -n "${DENSE_MEM_E2E_OAUTH_HARNESS_URL:-}" ]]; then
     wait_for_url "OAuth compatibility harness" "${DENSE_MEM_E2E_OAUTH_HARNESS_URL%/}/health" "${NODE_EXTRA_CA_CERTS:-}"
   fi
+  if [[ -n "${DENSE_MEM_ENTRA_MOCK_URL:-}" ]]; then
+    wait_for_url "Entra OIDC mock" "${DENSE_MEM_ENTRA_MOCK_URL%/}/.well-known/openid-configuration" "${NODE_EXTRA_CA_CERTS:-}"
+  fi
 fi
 if [[ "$SCENARIO" == "conflict" ]]; then
   conflict_health_url="${DENSE_MEM_E2E_CONFLICT_PROVIDER_URL%/}"
@@ -91,41 +94,27 @@ process.stdin.on("end", () => {
 ' "$field"
 }
 
-parse_json_dream_statement() {
-  node -e '
-let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => { input += chunk; });
-process.stdin.on("end", () => {
-  let value;
-  try {
-    const payload = JSON.parse(input);
-    value = payload.cases?.find((item) => item?.name === "dream")?.result?.dream_statement;
-  } catch {
-    process.exitCode = 1;
-    return;
-  }
-  if (typeof value !== "string" || value.length === 0 || /[\r\n]/.test(value)) {
-    process.exitCode = 1;
-    return;
-  }
-  process.stdout.write(value);
-});
-'
-}
-
 run_playwright() {
   [[ "${DENSE_MEM_E2E_RUN_PLAYWRIGHT:-0}" == "1" ]] || return 0
   [[ -f "${ROOT_DIR}/web/package.json" ]] || fail "missing web package for Playwright"
+  local diagnostics_attempt_id=""
   case "$SCENARIO" in
     mcp_oauth) [[ -n "${DENSE_MEM_E2E_OAUTH_SECOND_TEAM_ID:-}" ]] || fail "OAuth Playwright handoff is missing" ;;
-    full|synchronous_write) [[ -n "${DENSE_MEM_E2E_DREAM_STATEMENT:-}" ]] || fail "Dream Playwright handoff is missing" ;;
+    synchronous_write)
+      local fixture_file="${DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE:-}"
+      [[ -n "$fixture_file" && -f "$fixture_file" ]] || fail "diagnostics Playwright handoff is missing"
+      diagnostics_attempt_id="$(node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(value.failed_attempt_id||"");' "$fixture_file")"
+      [[ -n "$diagnostics_attempt_id" ]] || fail "diagnostics Playwright attempt is missing"
+      export DENSE_MEM_E2E_DIAGNOSTIC_ATTEMPT_ID="$diagnostics_attempt_id"
+      ;;
+    full) [[ -n "${DENSE_MEM_E2E_DREAM_STATEMENT:-}" ]] || fail "Dream Playwright handoff is missing" ;;
   esac
   local -a specs=("tests-compose/search-convergence.spec.ts" "tests-compose/compose-portal.spec.ts")
   case "$SCENARIO" in
     community) specs=("tests-compose/community-recall.spec.ts") ;;
     conflict_queue) specs=("tests-compose/compose-conflict-queue.spec.ts") ;;
     mcp_oauth) specs=("tests-compose/oauth-team-resource.spec.ts") ;;
+    synchronous_write) specs=("tests-compose/remember-attempts.spec.ts") ;;
   esac
   local web_dir="/tmp/dense-mem-web-${SCENARIO}-$$"
   if [[ -e "$web_dir" ]]; then rm -r -- "$web_dir"; fi
@@ -137,14 +126,16 @@ run_playwright() {
 
 case "$SCENARIO" in
   mcp_boundaries) run_node_case tests/uat/mcp_boundaries_e2e.mjs ;;
-  oauth_provider_compatibility) run_node_case tests/uat/oauth_provider_compatibility_e2e.mjs ;;
+  oauth_provider_compatibility)
+    run_node_case tests/uat/oauth_provider_compatibility_e2e.mjs
+    if [[ -n "${DENSE_MEM_ENTRA_MOCK_URL:-}" ]]; then
+      run_node_case tests/uat/entra_scim_e2e.mjs
+    fi
+    ;;
   mcp_oauth) run_node_case tests/uat/oauth_mcp_e2e.mjs ;;
   private_memory_erasure) run_node_case tests/uat/private_memory_erasure_e2e.mjs ;;
   synchronous_write)
-    synchronous_output="$(node "${ROOT_DIR}/tests/uat/synchronous_write/runner.mjs")" || fail "synchronous-write scenario failed"
-    printf '%s\n' "${synchronous_output}"
-    DENSE_MEM_E2E_DREAM_STATEMENT="$(printf '%s' "${synchronous_output}" | parse_json_dream_statement)" || fail "synchronous-write scenario did not produce the Dream Playwright handoff"
-    export DENSE_MEM_E2E_DREAM_STATEMENT
+    node "${ROOT_DIR}/tests/uat/synchronous_write/runner.mjs" || fail "synchronous-write scenario failed"
     ;;
   synchronous_write_primitives)
     DENSE_MEM_E2E_WRITE_CASE=remember node "${ROOT_DIR}/tests/uat/synchronous_write/runner.mjs"

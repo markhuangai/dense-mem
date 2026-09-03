@@ -4,7 +4,7 @@ CONTROLLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 CONTRACT_VERSION="dense-mem-ci-e2e.v1"
 CONFIG_DIR="${DENSE_MEM_CI_CONFIG_DIR:-${HOME}/dense-mem-ci}"
-COMPOSE_FILE="${DENSE_MEM_CI_COMPOSE_FILE:-${CONTROLLER_DIR}/e2e-ci-compose.yml}"
+COMPOSE_FILE="${DENSE_MEM_CI_COMPOSE_FILE:-${CONTROLLER_DIR}/e2e-stack.yml}"
 PROMETHEUS_FILE="${DENSE_MEM_CI_PROMETHEUS_FILE:-${CONTROLLER_DIR}/../examples/prometheus.yml}"
 ENV_FILE="${DENSE_MEM_CI_ENV_FILE:-${CONFIG_DIR}/.env}"
 TELEMETRY_TOKEN_FILE="${DENSE_MEM_CI_TELEMETRY_TOKEN_FILE:-${CONFIG_DIR}/telemetry-scrape-token}"
@@ -105,16 +105,18 @@ validate_bundle() {
   [[ -f "$ENV_FILE" ]] || fail "missing CI environment file: $ENV_FILE"
   [[ -f "$PROMETHEUS_FILE" ]] || fail "missing Prometheus configuration: $PROMETHEUS_FILE"
   [[ -f "$TELEMETRY_TOKEN_FILE" ]] || fail "missing telemetry scrape token: $TELEMETRY_TOKEN_FILE"
-  local env_mode env_owner
-  env_mode="$(stat -c '%a' "$ENV_FILE" 2>/dev/null || stat -f '%Lp' "$ENV_FILE")"
-  [[ "$env_mode" == "600" ]] || fail "CI environment file must have mode 0600"
-  env_owner="$(stat -c '%u' "$ENV_FILE" 2>/dev/null || stat -f '%u' "$ENV_FILE")"
-  [[ "$env_owner" == "$(id -u)" ]] || fail "CI environment file is not owned by the runner user"
-  local token_mode token_owner
-  token_mode="$(stat -c '%a' "$TELEMETRY_TOKEN_FILE" 2>/dev/null || stat -f '%Lp' "$TELEMETRY_TOKEN_FILE")"
-  [[ "$token_mode" == "600" ]] || fail "telemetry scrape token must have mode 0600"
-  token_owner="$(stat -c '%u' "$TELEMETRY_TOKEN_FILE" 2>/dev/null || stat -f '%u' "$TELEMETRY_TOKEN_FILE")"
-  [[ "$token_owner" == "$(id -u)" ]] || fail "telemetry scrape token is not owned by the runner user"
+  if [[ "${DENSE_MEM_CI_LOCAL:-0}" != "1" ]]; then
+    local env_mode env_owner
+    env_mode="$(stat -c '%a' "$ENV_FILE" 2>/dev/null || stat -f '%Lp' "$ENV_FILE")"
+    [[ "$env_mode" == "600" ]] || fail "CI environment file must have mode 0600"
+    env_owner="$(stat -c '%u' "$ENV_FILE" 2>/dev/null || stat -f '%u' "$ENV_FILE")"
+    [[ "$env_owner" == "$(id -u)" ]] || fail "CI environment file is not owned by the runner user"
+    local token_mode token_owner
+    token_mode="$(stat -c '%a' "$TELEMETRY_TOKEN_FILE" 2>/dev/null || stat -f '%Lp' "$TELEMETRY_TOKEN_FILE")"
+    [[ "$token_mode" == "600" ]] || fail "telemetry scrape token must have mode 0600"
+    token_owner="$(stat -c '%u' "$TELEMETRY_TOKEN_FILE" 2>/dev/null || stat -f '%u' "$TELEMETRY_TOKEN_FILE")"
+    [[ "$token_owner" == "$(id -u)" ]] || fail "telemetry scrape token is not owned by the runner user"
+  fi
   local database_field database_value secret_field secret_value telemetry_secret verifier_url
   for database_field in POSTGRES_USER POSTGRES_DB; do
     database_value="$(env_value "$database_field" 2>/dev/null || true)"
@@ -162,7 +164,11 @@ redact_diagnostics() {
 
 docker_socket_path() {
   local docker_host docker_socket
-  docker_host="$(env_value DOCKER_HOST 2>/dev/null || true)"
+  if [[ "${DENSE_MEM_CI_LOCAL:-0}" == "1" ]]; then
+    docker_host="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+  else
+    docker_host="$(env_value DOCKER_HOST 2>/dev/null || true)"
+  fi
   case "$docker_host" in
     unix://*) docker_socket="${docker_host#unix://}" ;;
     "") fail "DOCKER_HOST must be configured in the CI environment file" ;;
@@ -176,7 +182,36 @@ docker_socket_path() {
 copy_git_source() {
   local container="$1" source_dir="$2"
   [[ -d "$source_dir" && "$source_dir" == /* ]] || fail "source directory must be an absolute directory"
+  if [[ "${DENSE_MEM_CI_LOCAL:-0}" == "1" ]]; then
+    copy_worktree_source "$container" "$source_dir"
+    return
+  fi
   git -C "$source_dir" archive --format=tar --prefix=workspace/ HEAD |
+    docker cp - "$container:/"
+}
+
+copy_worktree_source() {
+  local container="$1" source_dir="$2"
+  git -C "$source_dir" ls-files --cached --others --exclude-standard -z |
+    node -e '
+      let input = "";
+      const blocked = [
+        /^(?:\.env|\.env\..*)$/,
+        /(?:^|\/)telemetry-scrape-token$/,
+        /(?:^|\/)coverage(?:\.out)?$/,
+        /(?:^|\/)(?:test-results|playwright-report)(?:\/|$)/,
+        /(?:^|\/)densemem-e2e-/,
+      ];
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (chunk) => { input += chunk; });
+      process.stdin.on("end", () => {
+        for (const path of input.split("\0")) {
+          if (path && !blocked.some((pattern) => pattern.test(path))) process.stdout.write(`${path}\0`);
+        }
+      });
+    ' |
+    tar --null --verbatim-files-from --files-from=- -C "$source_dir" \
+      --transform='s,^,workspace/,' -cf - |
     docker cp - "$container:/"
 }
 
@@ -273,6 +308,7 @@ NODE
 
 
 source "${CONTROLLER_DIR}/e2e-host-controller-stack.sh"
+source "${CONTROLLER_DIR}/e2e-host-controller-postgres.sh"
 
 precheck() {
   local run_id="$1" attempt="$2" image_ref="$3" source_dir="$4"
@@ -361,10 +397,12 @@ precheck() {
 doctor() {
   validate_bundle
   [[ -r "$REGISTRY_SCRIPT" ]] || fail "missing trusted scenario registry: $REGISTRY_SCRIPT"
-  docker info >/dev/null 2>&1 || fail "the rootless Docker daemon is unavailable"
-  local security_options
-  security_options="$(docker info --format '{{json .SecurityOptions}}' 2>/dev/null || true)"
-  [[ "$security_options" == *rootless* ]] || fail "Docker daemon is not rootless"
+  docker info >/dev/null 2>&1 || fail "the Docker daemon is unavailable"
+  if [[ "${DENSE_MEM_CI_LOCAL:-0}" != "1" ]]; then
+    local security_options
+    security_options="$(docker info --format '{{json .SecurityOptions}}' 2>/dev/null || true)"
+    [[ "$security_options" == *rootless* ]] || fail "Docker daemon is not rootless"
+  fi
   local project="densemem-ci-doctor-${BASHPID}"
   validate_project "$project"
   compose_base_env "$project"
@@ -406,6 +444,7 @@ start_stack() {
     local status=$?
     trap - EXIT INT TERM
     set +e
+    cleanup_identity_cleanup_lock || true
     if ((stack_started)); then
       local cleanup_overlay="$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE"
       DENSE_MEM_CI_COMPOSE_OVERLAY_FILE=""
@@ -447,24 +486,23 @@ start_stack() {
   fi
   stack_started=1
   seed_stack_inputs "$project" "$run_id" "$attempt" "$phase" "$scenario"
-  if [[ "$scenario" == "identity_cleanup" ]]; then
-    local identity_postgres_user identity_postgres_password identity_postgres_db
-    identity_postgres_user="$(env_value POSTGRES_USER 2>/dev/null || true)"
-    identity_postgres_password="$(env_value POSTGRES_PASSWORD 2>/dev/null || true)"
-    identity_postgres_db="$(env_value POSTGRES_DB 2>/dev/null || true)"
-    [[ -n "$identity_postgres_user" && -n "$identity_postgres_password" && -n "$identity_postgres_db" ]] || fail "identity cleanup seed requires PostgreSQL credentials"
-    if ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 postgres >/dev/null; then
-      ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
-      fail "PostgreSQL failed to start for identity cleanup seed"
-    fi
-    if ! run_identity_cleanup_seed "$source_dir" "$project" "$identity_postgres_user" "$identity_postgres_password" "$identity_postgres_db"; then
-      ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
-      fail "identity cleanup seed failed"
-    fi
+  if ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 postgres >/dev/null; then
+    ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+    fail "PostgreSQL failed to start"
   fi
-  if ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 >/dev/null; then
+  wait_for_postgres_service
+  provision_postgres_runtime_role
+  if [[ "$scenario" == "identity_cleanup" ]]; then
+    run_identity_cleanup_startup_matrix "$source_dir" "$project"
+  elif ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 >/dev/null; then
     ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
     fail "Compose stack failed to start"
+  else
+    verify_postgres_runtime_migration_state
+  fi
+  if ! ci_compose --profile client_env up -d --wait --wait-timeout 300 client-env >/dev/null; then
+    ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+    fail "client runtime environment failed to start"
   fi
   if ! ci_compose --profile client_env exec -T \
     -e "DENSE_MEM_CI_USER_URL=http://server:8080" \

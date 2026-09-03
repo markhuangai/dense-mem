@@ -222,6 +222,7 @@ run_scenario() {
     -e "DENSE_MEM_E2E_SSO_CSRF_TOKEN=${oauth_csrf_token}"
     -e "DENSE_MEM_E2E_MEMORY_SCENARIO=${scenario}"
     -e "DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE=${conflict_live}"
+    -e "DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE=/results/${scenario}-diagnostics.json"
     -e "DENSE_MEM_CONTROL_TOKEN=${control_token}"
   )
   if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
@@ -247,6 +248,9 @@ run_scenario() {
       )
     fi
   fi
+  if [[ "$scenario" == "oauth_provider_compatibility" ]]; then
+    docker_args+=(-e "DENSE_MEM_ENTRA_MOCK_URL=https://entra-mock:9443")
+  fi
   docker_args+=(
     "$test_image" bash -euc '
       set -euo pipefail
@@ -267,7 +271,7 @@ run_scenario() {
       fi
       docker version
       docker compose version
-      exec bash /workspace/scripts/e2e-ci-scenario.sh "$1"
+      exec bash /workspace/scripts/e2e-scenario.sh "$1"
     ' bash "$scenario"
   )
 

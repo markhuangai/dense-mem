@@ -3,12 +3,13 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import {
-  EXPECTED_SCENARIOS,
+  assertCompatibleRegistry,
   assertValidRegistry,
   classifyScenario,
   helperProfilesFor,
   matrixFor,
   readRegistry,
+  validateRegistryExtension,
   validateRegistry,
 } from "../../scripts/e2e-scenario-registry.mjs";
 
@@ -57,14 +58,14 @@ function assertWorkflowOrchestration(workflow) {
 
 test("production E2E registry is complete and valid", () => {
   assert.deepEqual(validateRegistry(registry), []);
-  assert.deepEqual(registry.scenarios.map(({ name }) => name), EXPECTED_SCENARIOS);
+  assert.equal(new Set(registry.scenarios.map(({ name }) => name)).size, registry.scenarios.length);
   assert.doesNotThrow(() => assertValidRegistry(registry));
 });
 
-test("registry partitions eleven isolated and ten team-scoped scenarios", () => {
-  assert.equal(matrixFor(registry, "exclusive").include.length, 11);
-  assert.equal(matrixFor(registry, "shared_team").include.length, 10);
-  assert.deepEqual(helperProfilesFor(registry, "shared_team"), ["verifier"]);
+test("registry partitions exclusive and team-scoped scenarios", () => {
+  assert.ok(matrixFor(registry, "exclusive").include.length > 0);
+  assert.ok(matrixFor(registry, "shared_team").include.length > 0);
+  assert.ok(helperProfilesFor(registry, "shared_team").includes("verifier"));
 });
 
 test("registry validation fails closed for duplicate, unknown, and non-production rows", () => {
@@ -75,9 +76,8 @@ test("registry validation fails closed for duplicate, unknown, and non-productio
   const errors = validateRegistry(invalid);
   assert.ok(errors.some((error) => error.includes("duplicate scenario")));
   assert.ok(errors.some((error) => error.includes("must use runtime=production")));
-  assert.ok(errors.some((error) => error.includes("unknown scenario")));
-  assert.ok(errors.some((error) => error.includes("unknown isolation")));
   assert.ok(errors.some((error) => error.includes("unknown helper profile")));
+  assert.ok(errors.some((error) => error.includes("unknown isolation")));
 });
 
 test("unregistered scenarios default to an isolated production stack", () => {
@@ -85,6 +85,37 @@ test("unregistered scenarios default to an isolated production stack", () => {
   assert.equal(classified.isolation, "exclusive");
   assert.equal(classified.runtime, "production");
   assert.equal(classified.audited, false);
+});
+
+test("registry compatibility permits additions but preserves baseline definitions", () => {
+  const extended = structuredClone(registry);
+  extended.scenarios.push({
+    name: "future_scenario",
+    isolation: "exclusive",
+    runtime: "production",
+    helper_profiles: [],
+    timeout_minutes: 30,
+    playwright: false,
+  });
+  assert.deepEqual(validateRegistryExtension(extended, registry), []);
+  assert.doesNotThrow(() => assertCompatibleRegistry(extended, registry));
+
+  const missing = structuredClone(registry);
+  missing.scenarios = missing.scenarios.filter(({ name }) => name !== "mcp_oauth");
+  assert.ok(validateRegistryExtension(missing, registry).includes("candidate is missing baseline scenario: mcp_oauth"));
+
+  for (const mutate of [
+    (scenario) => { scenario.isolation = "shared_team"; },
+    (scenario) => { scenario.helper_profiles = ["playwright"]; scenario.playwright = true; },
+    (scenario) => { scenario.timeout_minutes += 1; },
+    (scenario) => { scenario.playwright = !scenario.playwright; },
+  ]) {
+    const changed = structuredClone(registry);
+    mutate(changed.scenarios.find(({ name }) => name === "mcp_oauth"));
+    const errors = validateRegistryExtension(changed, registry);
+    assert.ok(errors.includes("candidate changed baseline scenario: mcp_oauth"));
+    assert.throws(() => assertCompatibleRegistry(changed, registry), /candidate changed baseline scenario: mcp_oauth/);
+  }
 });
 
 test("scenario classification fails closed for invalid registry metadata", () => {
@@ -99,7 +130,7 @@ test("production jobs use capability-matched runners and PR-owned assets", async
     readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8"),
     readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/e2e-host-controller.sh", import.meta.url), "utf8"),
-    readFile(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url), "utf8"),
+    readFile(new URL("../../scripts/e2e-stack.yml", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/e2e-ci.env.example", import.meta.url), "utf8"),
   ]);
   const authorize = workflowJob(workflow, "authorize");
@@ -131,7 +162,7 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   assert.match(workflow, /max-parallel: 4/);
   assert.match(workflow, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
   assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
-  assert.match(workflow, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenario-registry\.mjs/);
+  assert.match(workflow, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenarios\.json\n\s+scripts\/e2e-scenario-registry\.mjs/);
   assert.match(workflow, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --matrix exclusive/);
   assert.doesNotMatch(workflow, /node \.ci-source\/scripts\/e2e-scenario-registry\.mjs --matrix/);
   assert.match(reusable, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
@@ -146,7 +177,7 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   assert.doesNotMatch(compose, /DENSE_MEM_CI_PROMETHEUS_FILE|DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
   assert.match(compose, /external: true/);
   assertWorkflowOrchestration(workflow);
-  assert.match(authorize, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenario-registry\.mjs/);
+  assert.match(authorize, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenarios\.json\n\s+scripts\/e2e-scenario-registry\.mjs/);
   assert.match(authorize, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --matrix exclusive/);
 });
 
