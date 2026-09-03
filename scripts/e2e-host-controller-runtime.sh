@@ -41,10 +41,11 @@ run_scenario() {
   validate_scenario "$stack_scenario"
   [[ "$phase" == "shared" && "$stack_scenario" == "shared" || "$phase" == "exclusive" && "$stack_scenario" == "$scenario" ]] ||
     fail "scenario stack identity is invalid"
-  validate_image_ref "$image_ref"
-  local digest="${image_ref##*@}"
-  validate_digest "$digest"
-  image_ref="${image_ref%@*}"
+  resolve_image_ref "$image_ref"
+  image_ref="$DENSE_MEM_CI_RESOLVED_IMAGE"
+  local digest="$DENSE_MEM_CI_RESOLVED_DIGEST"
+  local compose_image="${image_ref}@${digest}"
+  [[ "${DENSE_MEM_CI_LOCAL:-0}" == "1" ]] && compose_image="$image_ref"
   [[ -d "$source_dir" && "$source_dir" == /* ]] || fail "scenario source directory must be an absolute directory"
   local tested_commit
   tested_commit="$(git -C "$source_dir" rev-parse HEAD 2>/dev/null || true)"
@@ -58,7 +59,7 @@ run_scenario() {
   [[ "$helpers" =~ ^[a-z0-9_,]*$ ]] || fail "invalid helper profile list"
   local created_at
   created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  compose_base_env "$project" "$phase" "$stack_scenario" "$digest" "$run_id" "$attempt" "$created_at" "${image_ref}@${digest}"
+  compose_base_env "$project" "$phase" "$stack_scenario" "$digest" "$run_id" "$attempt" "$created_at" "$compose_image"
 
   local run_root="${JOB_DIR}/${run_id}-${attempt}/${phase}-${stack_scenario}"
   local helper_dir="${JOB_DIR}/${run_id}-${attempt}/${phase}-${stack_scenario}-helpers"
@@ -69,7 +70,7 @@ run_scenario() {
   mkdir -p "${run_root}"
   chmod 700 "${run_root}"
   local runtime_compose_host="${run_root}/runtime-compose.yml"
-  write_runtime_compose "$runtime_compose_host" "$project" "${image_ref}@${digest}"
+  write_runtime_compose "$runtime_compose_host" "$project" "$compose_image"
 
   local test_image="$SCENARIO_TEST_IMAGE" control_token telemetry_token embedding_model embedding_dimensions postgres_user postgres_password postgres_db
   control_token="$(env_value CONTROL_PORTAL_TOKEN 2>/dev/null || true)"
@@ -316,7 +317,9 @@ run_scenario() {
 control_api_request() {
   local project="$1" phase="$2" scenario="$3" digest="$4" run_id="$5" attempt="$6" image_ref="$7" overlay="$8" token="$9" url="${10}" payload="${11}"
   (
-    compose_base_env "$project" "$phase" "$scenario" "$digest" "$run_id" "$attempt" "1970-01-01T00:00:00Z" "${image_ref}@${digest}"
+    local compose_image="${image_ref}@${digest}"
+    [[ "${DENSE_MEM_CI_LOCAL:-0}" == "1" ]] && compose_image="$image_ref"
+    compose_base_env "$project" "$phase" "$scenario" "$digest" "$run_id" "$attempt" "1970-01-01T00:00:00Z" "$compose_image"
     DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="$overlay" \
       ci_compose --profile client_env exec -T -e "DENSE_MEM_CI_CONTROL_TOKEN=${token}" client-env \
       sh -ec 'wget -q -O - --header="Authorization: Bearer ${DENSE_MEM_CI_CONTROL_TOKEN}" --header="Content-Type: application/json" --post-data="$1" "$2"' \

@@ -100,6 +100,23 @@ validate_image_ref() {
   [[ "$1" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+(:[A-Za-z0-9][A-Za-z0-9_.-]{0,127})?(@sha256:[0-9a-f]{64})?$ ]] || fail "image must be a GHCR repository reference"
 }
 
+resolve_image_ref() {
+  local image_ref="$1" digest
+  validate_image_ref "$image_ref"
+  if [[ "$image_ref" == *@* ]]; then
+    digest="${image_ref##*@}"
+    image_ref="${image_ref%@*}"
+  elif [[ "${DENSE_MEM_CI_LOCAL:-0}" == "1" ]]; then
+    digest="$(docker image inspect "$image_ref" --format '{{.Id}}' 2>/dev/null)" ||
+      fail "local E2E image is unavailable: ${image_ref}"
+  else
+    fail "image must be pinned by digest"
+  fi
+  validate_digest "$digest"
+  DENSE_MEM_CI_RESOLVED_IMAGE="$image_ref"
+  DENSE_MEM_CI_RESOLVED_DIGEST="$digest"
+}
+
 validate_bundle() {
   [[ -f "$COMPOSE_FILE" ]] || fail "missing Compose bundle: $COMPOSE_FILE"
   [[ -f "$ENV_FILE" ]] || fail "missing CI environment file: $ENV_FILE"
@@ -417,10 +434,11 @@ start_stack() {
   validate_decimal "$attempt"
   validate_phase "$phase"
   validate_scenario "$scenario"
-  validate_image_ref "$image_ref"
-  local digest="${image_ref##*@}"
-  validate_digest "$digest"
-  image_ref="${image_ref%@*}"
+  resolve_image_ref "$image_ref"
+  image_ref="$DENSE_MEM_CI_RESOLVED_IMAGE"
+  local digest="$DENSE_MEM_CI_RESOLVED_DIGEST"
+  local compose_image="${image_ref}@${digest}"
+  [[ "${DENSE_MEM_CI_LOCAL:-0}" == "1" ]] && compose_image="$image_ref"
   [[ -d "$source_dir" && "$source_dir" == /* ]] || fail "stack source directory must be absolute"
   validate_bundle
 
@@ -434,7 +452,7 @@ start_stack() {
   [[ "$helpers" =~ ^[a-z0-9_,]*$ ]] || fail "invalid helper profile list"
   local created_at
   created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  compose_base_env "$project" "$phase" "$scenario" "$digest" "$run_id" "$attempt" "$created_at" "${image_ref}@${digest}"
+  compose_base_env "$project" "$phase" "$scenario" "$digest" "$run_id" "$attempt" "$created_at" "$compose_image"
   local run_root="${JOB_DIR}/${run_id}-${attempt}/${phase}-${scenario}"
   mkdir -p "$run_root"
   chmod 700 "$run_root"
@@ -516,7 +534,7 @@ start_stack() {
   fi
 
   start_stack_helpers "$project" "$source_dir" "$helpers"
-  write_runtime_compose "$runtime_compose_path" "$project" "${image_ref}@${digest}"
+  write_runtime_compose "$runtime_compose_path" "$project" "$compose_image"
 
   printf '%s\n' "$project"
   stack_started=0

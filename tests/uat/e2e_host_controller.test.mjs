@@ -76,6 +76,8 @@ test("local adapter builds the working tree and delegates to the shared controll
   assert.match(local, /"\$CONTROLLER" start/);
   assert.match(local, /"\$CONTROLLER" run/);
   assert.match(local, /"\$CONTROLLER" stop/);
+  assert.match(local, /IMAGE_REF="\$IMAGE_TAG"/);
+  assert.doesNotMatch(local, /local image did not expose a content digest/);
   assert.doesNotMatch(local, /DOCKER_HOST=|rootless/);
   assert.deepEqual(JSON.parse(packageJSON).scripts, { e2e: "bash scripts/e2e.sh" });
 });
@@ -164,6 +166,8 @@ esac
     assert.deepEqual(calls.map(([command]) => command), ["doctor", "start", "run", "stop"]);
     assert.equal(calls[1][3], "exclusive");
     assert.equal(calls[1][4], "mcp_boundaries");
+    assert.match(calls[1][5], /^ghcr\.io\/markhuangai\/dense-mem:e2e-local-/);
+    assert.doesNotMatch(calls[1][5], /@sha256:/);
     assert.equal(calls[2][3], "exclusive");
     assert.equal(calls[2][4], "mcp_boundaries");
     assert.equal(calls[3][1], "stub-project");
@@ -237,8 +241,17 @@ test("local worktree transfer executes the source filter and excludes secrets an
 
     const dockerStub = `#!/usr/bin/env bash
 set -euo pipefail
-[[ "\${1:-}" == cp && "\${2:-}" == - && "\${3:-}" == test-container:/ ]] || exit 2
-tar -tf - > "\${DENSE_MEM_DOCKER_CP_ARCHIVE}"
+case "\${1:-}" in
+  cp)
+    [[ "\${2:-}" == - && "\${3:-}" == test-container:/ ]] || exit 2
+    tar -tf - > "\${DENSE_MEM_DOCKER_CP_ARCHIVE}"
+    ;;
+  image)
+    [[ "\${2:-}" == inspect ]] || exit 2
+    printf '%s\\n' sha256:2222222222222222222222222222222222222222222222222222222222222222
+    ;;
+  *) exit 2 ;;
+esac
 `;
     await executable(join(bin, "docker"), dockerStub);
     await writeFile(archiveList, "");
@@ -261,7 +274,7 @@ tar -tf - > "\${DENSE_MEM_DOCKER_CP_ARCHIVE}"
       "bash",
       [
         "-c",
-        'set -euo pipefail; source "$1"; copy_worktree_source "$2" "$3"',
+        'set -euo pipefail; source "$1"; resolve_image_ref "ghcr.io/markhuangai/dense-mem:local-test"; [[ "$DENSE_MEM_CI_RESOLVED_IMAGE" == ghcr.io/markhuangai/dense-mem:local-test ]]; [[ "$DENSE_MEM_CI_RESOLVED_DIGEST" == sha256:2222222222222222222222222222222222222222222222222222222222222222 ]]; copy_worktree_source "$2" "$3"',
         "worktree-filter-test",
         join(library, "e2e-host-controller.sh"),
         "test-container",
@@ -272,6 +285,7 @@ tar -tf - > "\${DENSE_MEM_DOCKER_CP_ARCHIVE}"
           ...process.env,
           PATH: `${bin}:${process.env.PATH}`,
           DENSE_MEM_DOCKER_CP_ARCHIVE: archiveList,
+          DENSE_MEM_CI_LOCAL: "1",
         },
       },
     );

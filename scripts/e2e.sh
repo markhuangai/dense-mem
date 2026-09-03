@@ -109,9 +109,8 @@ docker build --target production \
   --build-arg "IMAGE_VERSION=e2e-local-${run_id}" \
   --build-arg "IMAGE_REVISION=$(git -C "$ROOT_DIR" rev-parse HEAD)" \
   "$ROOT_DIR" >/dev/null
-image_digest="$(docker image inspect "$IMAGE_TAG" --format '{{.Id}}')"
-[[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "local image did not expose a content digest"
-IMAGE_REF="${IMAGE_TAG}@${image_digest}"
+docker image inspect "$IMAGE_TAG" >/dev/null || fail "local image was not registered"
+IMAGE_REF="$IMAGE_TAG"
 
 "$CONTROLLER" doctor >/dev/null
 PROJECT="$("$CONTROLLER" start "$run_id" "$attempt" "$phase" "$stack_scenario" "$IMAGE_REF" "$ROOT_DIR")"
