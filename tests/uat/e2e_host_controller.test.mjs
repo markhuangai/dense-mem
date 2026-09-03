@@ -115,6 +115,18 @@ test("validate_bundle rejects missing database identity and accepts a valid runn
   const tcpHost = await runDoctor({ dockerHost: "tcp://127.0.0.1:2375" });
   assert.notEqual(tcpHost.status, 0, "TCP Docker host unexpectedly passed validation");
   assert.match(tcpHost.stderr, /DOCKER_HOST in the CI environment file must use a Unix socket/);
+  for (const [dockerHost, expectedError] of [
+    ["unix://relative/docker.sock", /CI Docker socket path must be absolute/],
+    ["unix:///run/user/1001/docker.sock,readonly", /CI Docker socket path is invalid/],
+  ]) {
+    const invalid = await runDoctor({ dockerHost });
+    assert.notEqual(invalid.status, 0, `${dockerHost} unexpectedly passed validation`);
+    assert.match(invalid.stderr, expectedError);
+  }
+  for (const dockerHost of ['"unix:///run/user/1001/docker.sock\\nextra"', '"unix:///run/user/1001/docker.sock\\rextra"']) {
+    const invalid = await runDoctor({ dockerHost });
+    assert.notEqual(invalid.status, 0, `${dockerHost} unexpectedly passed env-file validation`);
+  }
 });
 
 test("Compose consumes fixed runner config and controller-seeded inputs without host ports", () => {
@@ -129,9 +141,11 @@ test("Compose consumes fixed runner config and controller-seeded inputs without 
   const postgres = compose.slice(compose.indexOf("  postgres:"), compose.indexOf("\n  redis:"));
   const redis = compose.slice(compose.indexOf("  redis:"), compose.indexOf("\n  server:"));
   const server = compose.slice(compose.indexOf("  server:"), compose.indexOf("\n  prometheus:"));
+  const oauthHarness = compose.slice(compose.indexOf("  oauth-compat-harness:"), compose.indexOf("\n  synchronous-write-provider:"));
   assert.doesNotMatch(postgres, /env_file:/);
   assert.doesNotMatch(redis, /env_file:/);
   assert.match(server, /DOCKER_HOST: ""/);
+  assert.match(oauthHarness, /entrypoint: \[\]/);
 });
 
 test("production workflow uses PR E2E assets, four-way matrices, and one shared-project output", () => {

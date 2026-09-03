@@ -106,6 +106,7 @@ services:
 
   oauth-compat-harness:
     image: alpine:3.24
+    entrypoint: []
     command: ["sh", "-c", "sleep infinity"]
     volumes:
       - oauth-provider-files:/e2e

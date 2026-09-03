@@ -169,8 +169,7 @@ docker_socket_path() {
     *) fail "DOCKER_HOST in the CI environment file must use a Unix socket" ;;
   esac
   [[ "$docker_socket" == /* ]] || fail "the CI Docker socket path must be absolute"
-  [[ "$docker_socket" != *','* && "$docker_socket" != *$'\n'* && "$docker_socket" != *$'\r'* ]] ||
-    fail "the CI Docker socket path is invalid"
+  [[ "$docker_socket" != *','* ]] || fail "the CI Docker socket path is invalid"
   printf '%s\n' "$docker_socket"
 }
 
