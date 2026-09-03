@@ -138,7 +138,6 @@ test("Compose consumes fixed runner config and controller-seeded inputs without 
   assert.doesNotMatch(compose, /DENSE_MEM_CI_PROMETHEUS_FILE/);
   assert.doesNotMatch(compose, /DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
   assert.match(compose, /prometheus-config:/);
-  assert.match(compose, /external: true/);
   assert.match(compose, /TELEMETRY_SCRAPE_TOKEN:/);
   assert.match(compose, /io\.dense-mem\.ci\.contract/);
   assert.doesNotMatch(compose, /^\s+ports:/m);
@@ -146,10 +145,15 @@ test("Compose consumes fixed runner config and controller-seeded inputs without 
   const redis = compose.slice(compose.indexOf("  redis:"), compose.indexOf("\n  server:"));
   const server = compose.slice(compose.indexOf("  server:"), compose.indexOf("\n  prometheus:"));
   const oauthHarness = compose.slice(compose.indexOf("  oauth-compat-harness:"), compose.indexOf("\n  synchronous-write-provider:"));
+  const volumes = compose.slice(compose.indexOf("\nvolumes:"));
+  const prometheusConfig = volumes.slice(volumes.indexOf("  prometheus-config:"), volumes.indexOf("\n  telemetry-scrape-token:"));
+  const telemetryToken = volumes.slice(volumes.indexOf("  telemetry-scrape-token:"), volumes.indexOf("\n  client-env:"));
   assert.doesNotMatch(postgres, /env_file:/);
   assert.doesNotMatch(redis, /env_file:/);
   assert.match(server, /DOCKER_HOST: ""/);
   assert.match(oauthHarness, /entrypoint: \[\]/);
+  assert.match(prometheusConfig, /external: true/);
+  assert.match(telemetryToken, /external: true/);
 });
 
 test("production workflow uses PR E2E assets, four-way matrices, and one shared-project output", () => {

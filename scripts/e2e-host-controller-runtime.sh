@@ -320,9 +320,8 @@ control_api_request() {
   )
 }
 
-stop_stack() {
+remove_project_resources() {
   local project="$1"
-  validate_project "$project"
   local cleanup_failed=0 resource
   while IFS= read -r resource; do
     [[ -n "$resource" ]] || continue
@@ -368,10 +367,23 @@ stop_stack() {
       docker image ls -q --no-trunc --filter "label=io.dense-mem.ci.contract=${CONTRACT_VERSION}" --filter "label=io.dense-mem.ci.repository=${REPOSITORY}" --filter "label=io.dense-mem.ci.compose-project=${project}"
     } | sort -u
   )
-  if ((cleanup_failed)); then
-    printf 'dense-mem CI controller: failed to remove every resource for project %s\n' "$project" >&2
-    return 1
-  fi
+  ((cleanup_failed == 0))
+}
+
+stop_stack() {
+  local project="$1"
+  validate_project "$project"
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    if remove_project_resources "$project"; then
+      return 0
+    fi
+    if ((attempt < 5)); then
+      sleep 2
+    fi
+  done
+  printf 'dense-mem CI controller: failed to remove every resource for project %s\n' "$project" >&2
+  return 1
 }
 
 stale_cleanup() {
