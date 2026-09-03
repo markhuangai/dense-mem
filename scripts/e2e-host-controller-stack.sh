@@ -288,6 +288,8 @@ if (has("oauth_compatibility")) {
   helperServices.push(["oauth-compat-harness", [
     `    image: ${JSON.stringify(harnessImage)}`,
     "    command: [\"sh\", \"-c\", \"sleep infinity\"]",
+    "    environment:",
+    "      SSL_CERT_FILE: \"/e2e/ca.pem\"",
   ]]);
 }
 if (serverEnvironment.size > 0 || serverVolumes.length > 0) {

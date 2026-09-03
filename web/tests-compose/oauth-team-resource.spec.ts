@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
+const mcpPublicBaseURL = requiredEnv("DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL").replace(/\/$/, "");
 const firstTeamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
 const secondTeamID = requiredEnv("DENSE_MEM_E2E_OAUTH_SECOND_TEAM_ID");
 const sessionToken = requiredEnv("DENSE_MEM_E2E_SSO_SESSION_TOKEN");
@@ -22,7 +23,7 @@ test("SSO workspace shows and copies the canonical team-scoped MCP URL after a t
   await page.goto(`${userURL}/ui`);
 
   const workspace = page.getByLabel("Current workspace");
-  const firstMCPURL = `${origin}/teams/${firstTeamID}/mcp`;
+  const firstMCPURL = `${mcpPublicBaseURL}/teams/${firstTeamID}/mcp`;
   await expect(workspace).toBeVisible();
   await expect(workspace.getByText(firstTeamID, { exact: true })).toBeVisible();
   await expect(workspace.getByText(firstMCPURL, { exact: true })).toBeVisible();
@@ -36,7 +37,7 @@ test("SSO workspace shows and copies the canonical team-scoped MCP URL after a t
     workspace.getByLabel("Active team").selectOption(secondTeamID),
   ]);
 
-  const secondMCPURL = `${origin}/teams/${secondTeamID}/mcp`;
+  const secondMCPURL = `${mcpPublicBaseURL}/teams/${secondTeamID}/mcp`;
   await expect(workspace.getByText(secondTeamID, { exact: true })).toBeVisible();
   await expect(workspace.getByText(secondMCPURL, { exact: true })).toBeVisible();
   await expect(workspace.getByText(firstTeamID, { exact: true })).toHaveCount(0);

@@ -21,6 +21,7 @@ const scenarioWorkflow = await readFile(new URL("../../.github/workflows/product
 const scenarioScript = await readFile(new URL("../../scripts/e2e-ci-scenario.sh", import.meta.url), "utf8");
 const oauthComposeScript = await readFile(new URL("../../scripts/e2e-compose-oauth.sh", import.meta.url), "utf8");
 const oauthMCPScenario = await readFile(new URL("./oauth_mcp_e2e.mjs", import.meta.url), "utf8");
+const oauthTeamResourceSpec = await readFile(new URL("../../web/tests-compose/oauth-team-resource.spec.ts", import.meta.url), "utf8");
 
 async function runDoctor({ omit = "", dockerHost = "unix:///run/user/1001/docker.sock" } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "dense-mem-doctor-"));
@@ -190,6 +191,55 @@ test("runtime Compose view declares the OAuth helper volume", () => {
   assert.match(controllerStack, /"volumes:", "  oauth-provider-files:", `    name: \$\{project\}_oauth-provider-files`, "    external: true"/);
 });
 
+test("OAuth compatibility helper trusts the generated provider CA", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dense-mem-oauth-helper-"));
+  try {
+    const result = spawnSync("bash", ["-e", "-u", "-o", "pipefail", "-c", `
+      set -euo pipefail
+      CONTRACT_VERSION=dense-mem-ci-e2e.v1
+      REPOSITORY=markhuangai/dense-mem
+      DENSE_MEM_CI_IMAGE_DIGEST=sha256:0000000000000000000000000000000000000000000000000000000000000000
+      JOB_DIR="$DENSE_MEM_TEST_JOB_DIR"
+      fail() { printf '%s\\n' "$*" >&2; exit 1; }
+      require_command() { :; }
+      has_helper() {
+        local helpers=",$1,"
+        [[ "$helpers" == *",$2,"* ]]
+      }
+      env_value() { return 1; }
+      openssl() {
+        local key="" certificate=""
+        while (($# > 0)); do
+          case "$1" in
+            -keyout) key="$2"; shift 2 ;;
+            -out) certificate="$2"; shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        : > "$key"
+        : > "$certificate"
+      }
+      docker() { [[ "$1" == "build" ]]; }
+      source "$DENSE_MEM_TEST_STACK"
+      prepare_stack_helpers densemem-ci-test "$DENSE_MEM_TEST_SOURCE_DIR" oauth_compatibility 1 1 exclusive oauth_provider_compatibility >/dev/null
+    `], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DENSE_MEM_TEST_JOB_DIR: join(directory, "job"),
+        DENSE_MEM_TEST_SOURCE_DIR: fileURLToPath(new URL("../..", import.meta.url)),
+        DENSE_MEM_TEST_STACK: fileURLToPath(new URL("../../scripts/e2e-host-controller-stack.sh", import.meta.url)),
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const overlay = await readFile(join(directory, "job", "1-1", "exclusive-oauth_provider_compatibility-helpers", "compose.yml"), "utf8");
+    const harness = overlay.slice(overlay.indexOf("  oauth-compat-harness:"));
+    assert.match(harness, /environment:\n\s+SSL_CERT_FILE: "\/e2e\/ca\.pem"/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("conflict-provider helpers align the effective embedding settings", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dense-mem-helper-dimensions-"));
   try {
@@ -354,6 +404,8 @@ test("MCP OAuth separates container traffic from the advertised public URL", () 
   assert.match(oauthMCPScenario, /key: "MCP_PUBLIC_BASE_URL", value: mcpPublicBaseURL/);
   assert.match(oauthMCPScenario, /metadata\.payload\.resource === `\$\{mcpPublicBaseURL\}\/mcp`/);
   assert.match(oauthMCPScenario, /fetch\(`\$\{userURL\}\$\{path\}`/);
+  assert.match(oauthTeamResourceSpec, /const mcpPublicBaseURL = requiredEnv\("DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL"\)/);
+  assert.match(oauthTeamResourceSpec, /const firstMCPURL = `\$\{mcpPublicBaseURL\}\/teams\/\$\{firstTeamID\}\/mcp`/);
 });
 
 test("real controller fixtures use workflow-scoped names and leave no local state", () => {
