@@ -184,6 +184,7 @@ run_scenario() {
     -e "DOCKER_HOST=unix://${docker_socket}"
     -e "HOME=/tmp/dense-mem-home"
     -e "DENSE_MEM_USER_URL=http://server:8080"
+    -e "DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL=https://dense-mem.example.test"
     -e "DENSE_MEM_CONTROL_URL=http://server:8090"
     -e "DENSE_MEM_PROMETHEUS_URL=http://prometheus:9090"
     -e "DENSE_MEM_E2E_PROMETHEUS_URL=http://prometheus:9090"

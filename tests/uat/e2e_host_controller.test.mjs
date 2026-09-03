@@ -19,6 +19,8 @@ const realControllerTest = await readFile(new URL("./e2e_host_controller_real.sh
 const productionWorkflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
 const scenarioWorkflow = await readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8");
 const scenarioScript = await readFile(new URL("../../scripts/e2e-ci-scenario.sh", import.meta.url), "utf8");
+const oauthComposeScript = await readFile(new URL("../../scripts/e2e-compose-oauth.sh", import.meta.url), "utf8");
+const oauthMCPScenario = await readFile(new URL("./oauth_mcp_e2e.mjs", import.meta.url), "utf8");
 
 async function runDoctor({ omit = "", dockerHost = "unix:///run/user/1001/docker.sock" } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "dense-mem-doctor-"));
@@ -342,6 +344,16 @@ test("production scenarios preserve Playwright handoff values", () => {
   assert.match(scenarioScript, /parse_json_dream_statement/);
   assert.match(scenarioScript, /OAuth scenario result handoff is missing/);
   assert.match(scenarioScript, /--connect-timeout 5 --max-time 10/);
+});
+
+test("MCP OAuth separates container traffic from the advertised public URL", () => {
+  assert.match(controllerRuntime, /DENSE_MEM_USER_URL=http:\/\/server:8080/);
+  assert.match(controllerRuntime, /DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL=https:\/\/dense-mem\.example\.test/);
+  assert.match(oauthComposeScript, /DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL="\$USER_URL"/);
+  assert.match(oauthMCPScenario, /const mcpPublicBaseURL = requiredEnv\("DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL"\)/);
+  assert.match(oauthMCPScenario, /key: "MCP_PUBLIC_BASE_URL", value: mcpPublicBaseURL/);
+  assert.match(oauthMCPScenario, /metadata\.payload\.resource === `\$\{mcpPublicBaseURL\}\/mcp`/);
+  assert.match(oauthMCPScenario, /fetch\(`\$\{userURL\}\$\{path\}`/);
 });
 
 test("real controller fixtures use workflow-scoped names and leave no local state", () => {

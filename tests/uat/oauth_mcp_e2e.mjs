@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const scenario = requiredEnv("DENSE_MEM_E2E_SCENARIO");
 const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
+const mcpPublicBaseURL = requiredEnv("DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL").replace(/\/$/, "");
 const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const seedTeamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
@@ -32,7 +33,7 @@ const secondTeam = await createTeam(`${runID} Team B`);
 const thirdTeam = await createTeam(`${runID} Team C`);
 await controlJSON("/config/sso", {
   method: "PATCH",
-  body: { items: [{ key: "MCP_PUBLIC_BASE_URL", value: userURL }] },
+  body: { items: [{ key: "MCP_PUBLIC_BASE_URL", value: mcpPublicBaseURL }] },
 });
 
 const providerInputs = {
@@ -117,7 +118,7 @@ assertProfilePrivateSpaces(identities.entra.id, [seedTeamID, secondTeam.id], thi
 
 const metadata = await publicJSON("/.well-known/oauth-protected-resource/mcp");
 assert(metadata.status === 200, "unscoped RFC 9728 metadata was unavailable");
-assert(metadata.payload.resource === `${userURL}/mcp`, "unscoped metadata resource did not use the configured public base URL");
+assert(metadata.payload.resource === `${mcpPublicBaseURL}/mcp`, "unscoped metadata resource did not use the configured public base URL");
 assert(metadata.payload.resource_name === "Dense-Mem MCP", "metadata resource name changed");
 assert(JSON.stringify(metadata.payload.bearer_methods_supported) === JSON.stringify(["header"]), "metadata bearer method changed");
 for (const name of ["entra", "pingone", "generic"]) {
@@ -129,10 +130,10 @@ for (const scope of ["memory.read", "memory.write", "ping.read", "ping.write", "
 
 const scopedMetadata = await publicJSON(`/.well-known/oauth-protected-resource/teams/${secondTeam.id}/mcp`);
 assert(scopedMetadata.status === 200, "team-scoped RFC 9728 metadata was unavailable");
-assert(scopedMetadata.payload.resource === `${userURL}/teams/${secondTeam.id}/mcp`, "team metadata resource was not canonical");
+assert(scopedMetadata.payload.resource === `${mcpPublicBaseURL}/teams/${secondTeam.id}/mcp`, "team metadata resource was not canonical");
 
-await assertChallenge("/mcp", `${userURL}/.well-known/oauth-protected-resource/mcp`);
-await assertChallenge(`/teams/${seedTeamID}/mcp`, `${userURL}/.well-known/oauth-protected-resource/teams/${seedTeamID}/mcp`);
+await assertChallenge("/mcp", `${mcpPublicBaseURL}/.well-known/oauth-protected-resource/mcp`);
+await assertChallenge(`/teams/${seedTeamID}/mcp`, `${mcpPublicBaseURL}/.well-known/oauth-protected-resource/teams/${seedTeamID}/mcp`);
 
 const apiUnscoped = await mcpTools(apiKey, "/mcp");
 assertMCPTools(apiUnscoped, { present: ["recall_memory", "remember"] });
