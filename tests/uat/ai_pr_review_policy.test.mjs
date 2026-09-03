@@ -293,7 +293,7 @@ test("AI review uses the Claude endpoint without obsolete executor routing", asy
   assert.doesNotMatch(workflow, /^\s+executor:/m);
   assert.ok(
     workflow.includes(
-      "ai-base-url: ${{ secrets.LOCAL_AI_ENDPOINT }}",
+      "ai-base-url: ${{ secrets.AI_ENDPOINT }}",
     ),
   );
 });

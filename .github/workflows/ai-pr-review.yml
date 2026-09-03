@@ -73,7 +73,7 @@ env:
 jobs:
   resolve:
     name: Resolve pull request
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
     if: >-
       github.event_name == 'pull_request_target' ||
       github.event_name == 'workflow_dispatch' ||
@@ -277,7 +277,7 @@ jobs:
     name: Review pull request
     needs: resolve
     if: needs.resolve.outputs.should_run == 'true'
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       REVIEW_STATUS_CONTEXT: ${{ needs.resolve.outputs.review_status_context }}
@@ -334,7 +334,7 @@ jobs:
         with:
           pull-request-url: ${{ format('{0}/{1}/pull/{2}', github.server_url, github.repository, needs.resolve.outputs.pr_number) }}
           github-pat: ${{ secrets.PR_REVIEW_PAT }}
-          ai-base-url: ${{ secrets.LOCAL_AI_ENDPOINT }}
+          ai-base-url: ${{ secrets.AI_ENDPOINT }}
           ai-secret: ${{ secrets.LOCAL_AI_SECRET }}
           model: auto
           effort: high
