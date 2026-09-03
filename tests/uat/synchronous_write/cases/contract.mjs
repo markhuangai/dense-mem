@@ -153,7 +153,7 @@ function validatedUserURL() {
   return validatedEndpointURL("DENSE_MEM_USER_URL");
 }
 
-function validatedEndpointURL(name) {
+export function validatedEndpointURL(name) {
   const raw = requiredEnv(name).trim();
   let parsed;
   try {
@@ -163,8 +163,17 @@ function validatedEndpointURL(name) {
   }
   const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-  if (parsed.username || parsed.password || (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback))) {
-    throw new Error(`${name} must use HTTPS or loopback HTTP`);
+  const productionComposeEndpoint = process.env.DENSE_MEM_E2E_RUNTIME === "production"
+    && parsed.protocol === "http:"
+    && parsed.pathname === "/"
+    && !parsed.search
+    && !parsed.hash
+    && (
+      (name === "DENSE_MEM_CONTROL_URL" && hostname === "server" && parsed.port === "8090")
+      || (name === "DENSE_MEM_USER_URL" && hostname === "server" && parsed.port === "8080")
+    );
+  if (parsed.username || parsed.password || (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && (loopback || productionComposeEndpoint)))) {
+    throw new Error(`${name} must use HTTPS, loopback HTTP, or its production Compose endpoint`);
   }
   return parsed.toString().replace(/\/$/, "");
 }

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { discoverCases } from "./runner.mjs";
+import { validatedEndpointURL } from "./cases/contract.mjs";
 
 test("synchronous-write cases are sorted and filterable", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dense-mem-synchronous-write-"));
@@ -136,6 +137,39 @@ test("contract ownership callers validate the user endpoint before sending crede
   const contract = await readFile(new URL("./cases/contract.mjs", import.meta.url), "utf8");
   assert.match(contract, /validatedUserURL\(\);/);
   assert.match(contract, /validatedEndpointURL\("DENSE_MEM_USER_URL"\)/);
-  assert.match(contract, /must use HTTPS or loopback HTTP/);
+  assert.match(contract, /production Compose endpoint/);
   assert.match(contract, /const baseURL = validatedUserURL\(\);/);
 });
+
+test("contract endpoint validation allows only the production Compose endpoints over HTTP", (t) => {
+  const originalRuntime = process.env.DENSE_MEM_E2E_RUNTIME;
+  const originalControlURL = process.env.DENSE_MEM_CONTROL_URL;
+  const originalUserURL = process.env.DENSE_MEM_USER_URL;
+  t.after(() => {
+    restoreEnv("DENSE_MEM_E2E_RUNTIME", originalRuntime);
+    restoreEnv("DENSE_MEM_CONTROL_URL", originalControlURL);
+    restoreEnv("DENSE_MEM_USER_URL", originalUserURL);
+  });
+
+  process.env.DENSE_MEM_E2E_RUNTIME = "production";
+  process.env.DENSE_MEM_CONTROL_URL = "http://server:8090";
+  process.env.DENSE_MEM_USER_URL = "http://server:8080";
+  assert.equal(validatedEndpointURL("DENSE_MEM_CONTROL_URL"), "http://server:8090");
+  assert.equal(validatedEndpointURL("DENSE_MEM_USER_URL"), "http://server:8080");
+
+  for (const value of ["http://server:8080", "http://example.test:8090", "http://server:8090/path?query=1"]) {
+    process.env.DENSE_MEM_CONTROL_URL = value;
+    assert.throws(() => validatedEndpointURL("DENSE_MEM_CONTROL_URL"), /production Compose endpoint/);
+  }
+  process.env.DENSE_MEM_CONTROL_URL = "http://server:8090";
+  delete process.env.DENSE_MEM_E2E_RUNTIME;
+  assert.throws(() => validatedEndpointURL("DENSE_MEM_CONTROL_URL"), /production Compose endpoint/);
+});
+
+function restoreEnv(name, value) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
