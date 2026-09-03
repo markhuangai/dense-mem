@@ -776,7 +776,7 @@ func hydrateRecallRelationshipEvidenceIDs(ctx context.Context, tx *gorm.DB, inpu
 		),
 			effective_support AS (
 			    SELECT support.relationship_id::text, support.support_id::text AS support_id,
-			           COALESCE(alias.canonical_fragment_id, support.fragment_id)::text AS fragment_id, support.created_at
+			           CASE WHEN alias.alias_fragment_id IS NOT NULL AND alias.created_at > COALESCE(?::timestamptz, 'infinity'::timestamptz) THEN alias.alias_fragment_id ELSE COALESCE(alias.canonical_fragment_id, support.fragment_id) END::text AS fragment_id, support.created_at
 			    FROM requested
 			    JOIN relationship_evidence_supports AS support
 			      ON support.team_id = ?::uuid
@@ -808,7 +808,7 @@ func hydrateRecallRelationshipEvidenceIDs(ctx context.Context, tx *gorm.DB, inpu
 		SELECT relationship_id, array_agg(fragment_id ORDER BY created_at ASC, fragment_id ASC, support_id ASC)::text[] AS evidence_ids
 		FROM deduplicated
 		GROUP BY relationship_id
-	`, pq.Array(relationshipIDs), input.TeamID, eventAt, eventAt, input.TeamID, eventAt, eventAt).Rows()
+		`, pq.Array(relationshipIDs), input.TeamID, eventAt, eventAt, input.KnownAt, input.TeamID, eventAt, eventAt).Rows()
 	if err != nil {
 		return err
 	}

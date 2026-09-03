@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -216,6 +217,15 @@ func TestRecallEvidenceDoesNotApplyFutureAliasSupportAtKnownAt(t *testing.T) {
 		},
 	})
 	require.NotNil(t, decision.Relationship)
+	relationshipDoc, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship",
+		SourceID: decision.Relationship.RelationshipID, SourceVersion: int64(decision.Relationship.Version),
+		DocumentText: "relationship\nsubject: KnownAt Alias Subject\npredicate: works on\nobject: KnownAt Alias Object\npolarity: positive",
+	})
+	require.NoError(t, err)
+	completeSearchDocumentsForTest(t, searchRepo, teamID, map[string][]float32{
+		relationshipDoc.SearchDocumentID: {1, 0, 0},
+	})
 
 	knownAt := databaseNowForTest(t, adminDB, rls)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
@@ -245,4 +255,18 @@ func TestRecallEvidenceDoesNotApplyFutureAliasSupportAtKnownAt(t *testing.T) {
 	require.NotNil(t, aliasHit)
 	require.NotContains(t, canonicalHit.RelationshipIDs, decision.Relationship.RelationshipID)
 	require.Contains(t, aliasHit.RelationshipIDs, decision.Relationship.RelationshipID)
+
+	historicalRelationships, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID: teamID, Query: "KnownAt Alias Subject KnownAt Alias Object", KnownAt: &knownAt, Limit: 5,
+	})
+	require.NoError(t, err)
+	require.Len(t, historicalRelationships.Results, 1)
+	require.Equal(t, []string{alias.Evidence[0].FragmentID}, historicalRelationships.Results[0].EvidenceIDs)
+	afterAlias := knownAt.Add(2 * time.Second)
+	currentRelationships, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID: teamID, Query: "KnownAt Alias Subject KnownAt Alias Object", KnownAt: &afterAlias, Limit: 5,
+	})
+	require.NoError(t, err)
+	require.Len(t, currentRelationships.Results, 1)
+	require.Equal(t, []string{canonical.Evidence[0].FragmentID}, currentRelationships.Results[0].EvidenceIDs)
 }
