@@ -10,7 +10,7 @@ docker_cli_paths() {
   local compose_plugin=""
   for candidate in /usr/libexec/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose; do
     if [[ -f "$candidate" ]]; then
-      compose_plugin="$candidate"
+      compose_plugin="$(readlink -f "$candidate")"
       break
     fi
   done

@@ -159,6 +159,7 @@ test("nested Docker clients use the runner socket at its original path", () => {
   assert.match(controllerRuntime, /copy_file_into_container \"\$container\" \"\$runtime_compose_host\"/);
   assert.match(controllerRuntime, /copy_file_into_container \"\$container\" \"\$DENSE_MEM_CI_DOCKER_BIN\"/);
   assert.match(controllerRuntime, /copy_file_into_container \"\$container\" \"\$DENSE_MEM_CI_COMPOSE_PLUGIN\"/);
+  assert.match(controllerRuntime, /compose_plugin=\"\$\(readlink -f \"\$candidate\"\)\"/);
   assert.match(controllerStack, /docker cp \"\$PROMETHEUS_FILE\" \"\$seed_container:\/config\/prometheus\.yml\"/);
   assert.match(controllerStack, /docker cp \"\$TELEMETRY_TOKEN_FILE\" \"\$seed_container:\/token\/telemetry-scrape-token\"/);
 });
