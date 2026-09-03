@@ -27,6 +27,16 @@ func recallEvidenceHistoricalSourceVisibilitySQL(fragmentAlias, sourceAlias stri
 		    WHERE historical_alias.team_id = %s.team_id
 		      AND historical_alias.alias_fragment_id = %s.fragment_id
 		      AND historical_alias.created_at > COALESCE(?::timestamptz, 'infinity'::timestamptz)
+		      AND NOT EXISTS (
+		          SELECT 1
+		          FROM evidence_source_revisions AS superseding_revision
+		          WHERE superseding_revision.team_id = %s.team_id
+		            AND superseding_revision.source_id = %s.source_id
+		            AND superseding_revision.owner_profile_id = %s.owner_profile_id
+		            AND superseding_revision.supersedes_revision_id = %s.source_revision_id
+		            AND superseding_revision.created_at <= COALESCE(?::timestamptz, 'infinity'::timestamptz)
+		      )
 		)
-	)`, fragmentAlias, sourceAlias, fragmentAlias, fragmentAlias, fragmentAlias)
+	)`, fragmentAlias, sourceAlias, fragmentAlias, fragmentAlias, fragmentAlias,
+		fragmentAlias, fragmentAlias, fragmentAlias, fragmentAlias)
 }

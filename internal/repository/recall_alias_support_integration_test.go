@@ -270,3 +270,84 @@ func TestRecallEvidenceDoesNotApplyFutureAliasSupportAtKnownAt(t *testing.T) {
 	require.Len(t, currentRelationships.Results, 1)
 	require.Equal(t, []string{canonical.Evidence[0].FragmentID}, currentRelationships.Results[0].EvidenceIDs)
 }
+
+func TestRecallEvidenceHistoricalAliasEndsAtSourceSupersession(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "recall-alias-source-history-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "recall-alias-source-history-owner")
+	insertSearchTestContract(t, adminDB, rls, "recall-alias-source-history", 3, "exact", "")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	searchRepo := NewSearchRepository(appDB, rls)
+	content := "source revision alias history ends when the source advances"
+	const sourceKey = "doc://recall-alias-source-history"
+
+	first, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "recall-alias-source-history-first",
+		RequestHash: sha256Hex("recall-alias-source-history-first"), Evidence: []EvidenceInput{{
+			Content: content, SourceType: "document", SourceKey: sourceKey,
+			SourceRevisionToken: "rev-1", SourceRevisionContentHash: sha256Hex(content),
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, first.Evidence, 1)
+	time.Sleep(20 * time.Millisecond)
+	second, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "recall-alias-source-history-second",
+		RequestHash: sha256Hex("recall-alias-source-history-second"), Evidence: []EvidenceInput{{
+			Content: content, SourceType: "document", SourceKey: sourceKey,
+			SourceRevisionToken: "rev-2", ExpectedPreviousRevisionToken: "rev-1",
+			SourceRevisionContentHash: sha256Hex(content),
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, second.Evidence, 1)
+	require.NotEqual(t, first.Evidence[0].FragmentID, second.Evidence[0].FragmentID)
+	require.NotEqual(t, first.Evidence[0].SourceRevisionID, second.Evidence[0].SourceRevisionID)
+	require.Equal(t, first.Evidence[0].SourceID, second.Evidence[0].SourceID)
+	upsertRecallEvidenceSearchDocumentForTest(t, ctx, searchRepo, teamID, ownerID, first.Evidence[0])
+	upsertRecallEvidenceSearchDocumentForTest(t, ctx, searchRepo, teamID, ownerID, second.Evidence[0])
+
+	var firstRevisionAt, secondRevisionAt time.Time
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT created_at
+			FROM evidence_source_revisions
+			WHERE team_id = ?::uuid AND source_revision_id = ?::uuid
+		`, teamID, first.Evidence[0].SourceRevisionID).Row().Scan(&firstRevisionAt); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT created_at
+			FROM evidence_source_revisions
+			WHERE team_id = ?::uuid AND source_revision_id = ?::uuid
+		`, teamID, second.Evidence[0].SourceRevisionID).Row().Scan(&secondRevisionAt)
+	}))
+	require.True(t, firstRevisionAt.Before(secondRevisionAt), "%s must precede %s", firstRevisionAt, secondRevisionAt)
+	knownBeforeSupersession := firstRevisionAt.Add(time.Millisecond)
+	knownAfterSupersession := secondRevisionAt.Add(time.Millisecond)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO evidence_exact_aliases (
+				team_id, alias_fragment_id, alias_owner_profile_id,
+				canonical_fragment_id, canonical_owner_profile_id, created_at
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::timestamptz)
+		`, teamID, first.Evidence[0].FragmentID, ownerID,
+			second.Evidence[0].FragmentID, ownerID, secondRevisionAt.Add(time.Hour)).Error
+	}))
+
+	historical, err := searchRepo.RecallEvidence(ctx, RecallEvidenceInput{
+		TeamID: teamID, Query: "source revision alias history", KnownAt: &knownBeforeSupersession, Limit: 5,
+	})
+	require.NoError(t, err)
+	require.Len(t, historical.Results, 1)
+	require.Equal(t, first.Evidence[0].FragmentID, historical.Results[0].EvidenceID)
+
+	postSupersession, err := searchRepo.RecallEvidence(ctx, RecallEvidenceInput{
+		TeamID: teamID, Query: "source revision alias history", KnownAt: &knownAfterSupersession, Limit: 5,
+	})
+	require.NoError(t, err)
+	require.Len(t, postSupersession.Results, 1)
+	require.Equal(t, second.Evidence[0].FragmentID, postSupersession.Results[0].EvidenceID)
+}

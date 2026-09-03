@@ -179,7 +179,8 @@ func recallEvidenceSearchState(
 		           WHEN EXISTS (SELECT 1 FROM eligible WHERE search_state = 'pending') THEN 'pending'
 		           ELSE 'current'
 		       END
-	`, input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt, eventAt, eventAt, input.KnownAt, eventAt, eventAt).Scan(&state).Error
+		`, input.TeamID, contract.EmbeddingContractID, eventAt, input.KnownAt, eventAt, eventAt,
+		input.KnownAt, input.KnownAt, eventAt, eventAt).Scan(&state).Error
 	if err != nil {
 		return "", err
 	}
@@ -739,7 +740,7 @@ func hydrateRecallEvidence(
 		input.ValidAt, input.ValidAt, input.ValidAt,
 		input.KnownAt, input.KnownAt, input.KnownAt, input.KnownAt,
 		pq.Array(input.KnownRelationshipIDs), pq.Array(input.KnownRelationshipIDs),
-		input.KnownAt, input.KnownAt,
+		input.KnownAt, input.KnownAt, input.KnownAt,
 		input.KnownAt, input.KnownAt, input.KnownAt).Rows()
 	if err != nil {
 		return nil, err
