@@ -301,6 +301,18 @@ if [[ "$1" == "manifest" && "$2" == "head" ]]; then
     printf '%s\n' 'stub manifest head failure' >&2
     exit 1
   fi
+  if [[ "$3" == ghcr.io/* && -n "\${STUB_REGCTL_HEAD_STATE:-}" ]]; then
+    count=0
+    if [[ -f "$STUB_REGCTL_HEAD_STATE" ]]; then
+      count="$(cat "$STUB_REGCTL_HEAD_STATE")"
+    fi
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$STUB_REGCTL_HEAD_STATE"
+    if [[ "$count" == "1" ]]; then
+      printf '%s\n' "sha256:${"d".repeat(64)}"
+      exit 0
+    fi
+  fi
   printf '%s\n' "$STUB_REGCTL_DIGEST"
   exit 0
 fi
@@ -384,6 +396,12 @@ exit 2
     const published = await invoke(publishArgs);
     assert.equal(published.status, 0);
     assert.equal(published.stdout, `${digest}\n`);
+
+    const eventualHeadState = join(directory, "eventual-head-state");
+    const eventuallyPublished = await invoke(publishArgs, { STUB_REGCTL_HEAD_STATE: eventualHeadState });
+    assert.equal(eventuallyPublished.status, 0);
+    assert.equal(eventuallyPublished.stdout, `${digest}\n`);
+    assert.equal(await readFile(eventualHeadState, "utf8"), "2\n");
 
     const copyFailure = await invoke(publishArgs, { STUB_REGCTL_COPY_FAILURE: "1" });
     assert.notEqual(copyFailure.status, 0);
