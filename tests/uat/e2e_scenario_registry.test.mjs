@@ -34,6 +34,11 @@ function assertNode24Setup(job) {
 
 function assertPreviewBuildPolicy(workflow) {
   const build = workflowJob(workflow, "build");
+  assert.match(
+    build,
+    /- name: Expose GitHub Actions runtime\n\s+uses: crazy-max\/ghaction-github-runtime@v4\n\n\s+- name: Build production OCI layout/,
+    "preview build must expose the GitHub Actions runtime before Buildx",
+  );
   for (const line of [
     "docker buildx build \\",
     "--target preview",
@@ -149,6 +154,12 @@ test("scenario classification fails closed for invalid registry metadata", () =>
 test("preview Buildx policy rejects weakened output settings", async () => {
   const workflow = await readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8");
   assert.doesNotThrow(() => assertPreviewBuildPolicy(workflow));
+  const withoutRuntime = workflow.replace(
+    /\n      - name: Expose GitHub Actions runtime\n        uses: crazy-max\/ghaction-github-runtime@v4\n/,
+    "",
+  );
+  assert.notEqual(withoutRuntime, workflow);
+  assert.throws(() => assertPreviewBuildPolicy(withoutRuntime), /GitHub Actions runtime/);
   const mutated = workflow.replace("--provenance=false", "--provenance=true");
   assert.notEqual(mutated, workflow);
   assert.throws(() => assertPreviewBuildPolicy(mutated), /preview build is missing --provenance=false/);
