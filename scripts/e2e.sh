@@ -65,13 +65,16 @@ classification="$(
   DENSE_MEM_E2E_SCENARIO_REGISTRY="${ROOT_DIR}/scripts/e2e-scenarios.json" \
     node "${ROOT_DIR}/scripts/e2e-scenario-registry.mjs" --scenario "$SCENARIO"
 )" || fail "scenario is not registered: $SCENARIO"
-phase="$(
+scenario_configuration="$(
   node - "$classification" <<'NODE'
 const scenario = JSON.parse(process.argv[2]);
 if (scenario.audited !== true || scenario.runtime !== "production") process.exit(1);
-process.stdout.write(scenario.isolation === "shared_team" ? "shared" : "exclusive");
+const phase = scenario.isolation === "shared_team" ? "shared" : "exclusive";
+process.stdout.write(`${phase} ${scenario.playwright ? "1" : "0"}`);
 NODE
 )" || fail "scenario is not audited for local production execution: $SCENARIO"
+read -r phase playwright <<< "$scenario_configuration"
+[[ "$playwright" == "0" || "$playwright" == "1" ]] || fail "scenario has invalid Playwright configuration: $SCENARIO"
 stack_scenario="$([[ "$phase" == "shared" ]] && printf '%s' shared || printf '%s' "$SCENARIO")"
 
 run_id="$(date -u +%s)$$"
@@ -102,12 +105,16 @@ export DENSE_MEM_CI_PROMETHEUS_FILE="$PROMETHEUS_FILE"
 export DENSE_MEM_CI_JOB_DIR="$JOB_DIR"
 export DENSE_MEM_CI_REPOSITORY="${DENSE_MEM_CI_REPOSITORY:-local/dense-mem}"
 export DENSE_MEM_E2E_SOURCE_ROOT="$ROOT_DIR"
+export DENSE_MEM_CI_RUN_PLAYWRIGHT="$playwright"
+
+REVISION="$(git -C "$ROOT_DIR" rev-parse HEAD)" || fail "unable to resolve the git revision"
+[[ "$REVISION" =~ ^[0-9a-f]{40}$ ]] || fail "git revision is invalid"
 
 printf 'Building local production image %s\n' "$IMAGE_TAG"
 docker build --target production \
   --tag "$IMAGE_TAG" \
   --build-arg "IMAGE_VERSION=e2e-local-${run_id}" \
-  --build-arg "IMAGE_REVISION=$(git -C "$ROOT_DIR" rev-parse HEAD)" \
+  --build-arg "IMAGE_REVISION=${REVISION}" \
   "$ROOT_DIR" >/dev/null
 docker image inspect "$IMAGE_TAG" >/dev/null || fail "local image was not registered"
 IMAGE_REF="$IMAGE_TAG"

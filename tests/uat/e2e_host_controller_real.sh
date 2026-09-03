@@ -195,6 +195,14 @@ const lines = [
   "    volumes:",
   "      - client-env:/client",
   "    labels: *ci_labels",
+  "  synchronous-write-provider:",
+  "    image: node:22-alpine",
+  "    command: [\"sh\", \"-c\", \"sleep infinity\"]",
+  "    volumes:",
+  "      - synchronous-write-provider-files:/e2e",
+  "    networks: [ci]",
+  "    labels: *ci_labels",
+  "    profiles: [synchronous_write, verifier]",
 ];
 if (mode === "ports") lines.splice(lines.indexOf("    labels: *ci_labels", lines.indexOf("  server:")), 0, "    ports:", "      - \"127.0.0.1:0:8080\"");
 lines.push(
@@ -205,6 +213,9 @@ lines.push(
   "volumes:",
   "  client-env:",
   "    name: ${DENSE_MEM_CI_CLIENT_VOLUME_NAME:?required}",
+  "    labels: *ci_labels",
+  "  synchronous-write-provider-files:",
+  "    name: ${DENSE_MEM_CI_SYNCHRONOUS_WRITE_VOLUME_NAME:?required}",
   "    labels: *ci_labels",
   "",
 );

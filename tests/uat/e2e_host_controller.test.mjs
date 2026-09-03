@@ -22,6 +22,7 @@ const [
   productionWorkflow,
   scenarioWorkflow,
   packageJSON,
+  realController,
 ] = await Promise.all([
   readFile(join(scripts, "e2e-host-controller.sh"), "utf8"),
   readFile(join(scripts, "e2e-host-controller-stack.sh"), "utf8"),
@@ -33,6 +34,7 @@ const [
   readFile(join(root, ".github/workflows/production-image-e2e.yml"), "utf8"),
   readFile(join(root, ".github/workflows/production-e2e-scenario.yml"), "utf8"),
   readFile(join(root, "package.json"), "utf8"),
+  readFile(join(root, "tests/uat/e2e_host_controller_real.sh"), "utf8"),
 ]);
 
 async function executable(path, contents) {
@@ -96,7 +98,7 @@ test("local entrypoint classifies scenarios and delegates lifecycle calls", asyn
     const dockerLog = join(fixture, "docker.log");
     const controllerStub = `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\\0' "$@" >> "\${DENSE_MEM_TEST_CONTROLLER_LOG}"
+printf '%s\\0' "$@" "playwright=\${DENSE_MEM_CI_RUN_PLAYWRIGHT:-unset}" >> "\${DENSE_MEM_TEST_CONTROLLER_LOG}"
 printf '\\n' >> "\${DENSE_MEM_TEST_CONTROLLER_LOG}"
 case "\${1:-}" in
   doctor|stop) ;;
@@ -170,6 +172,7 @@ esac
     assert.doesNotMatch(calls[1][5], /@sha256:/);
     assert.equal(calls[2][3], "exclusive");
     assert.equal(calls[2][4], "mcp_boundaries");
+    assert.equal(calls[2].at(-1), "playwright=0");
     assert.equal(calls[3][1], "stub-project");
 
     await writeFile(controllerLog, "");
@@ -181,6 +184,13 @@ esac
     assert.equal(calls[2][3], "shared");
     assert.equal(calls[2][4], "shared");
     assert.equal(calls[2][5], "mcp_sdk_parity");
+    assert.equal(calls[2].at(-1), "playwright=0");
+
+    await writeFile(controllerLog, "");
+    await runScenario("mcp_oauth");
+    calls = nulLines(await readFile(controllerLog, "utf8"));
+    assert.equal(calls[2][5], "mcp_oauth");
+    assert.equal(calls[2].at(-1), "playwright=1");
 
     await writeFile(controllerLog, "");
     await runFailure("not-valid", baseEnv, /usage: scripts\/e2e\.sh SCENARIO/);
@@ -191,6 +201,47 @@ esac
     const missingEnv = { ...baseEnv, DENSE_MEM_E2E_ENV_FILE: join(fixture, "missing.env") };
     await runFailure("mcp_boundaries", missingEnv, /missing environment file/);
     assert.equal((await readFile(controllerLog, "utf8")).length, 0);
+
+    await executable(join(bin, "git"), "#!/usr/bin/env bash\nexit 42\n");
+    await writeFile(dockerLog, "");
+    await runFailure("mcp_boundaries", baseEnv, /unable to resolve the git revision/);
+    const dockerCalls = nulLines(await readFile(dockerLog, "utf8"));
+    assert.equal(dockerCalls.some(([command]) => command === "build"), false);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("scenario containers discover a per-user Docker Compose plugin", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-compose-plugin-"));
+  try {
+    const bin = join(fixture, "bin");
+    const dockerConfig = join(fixture, "docker-config");
+    const docker = join(bin, "docker");
+    const plugin = join(dockerConfig, "cli-plugins", "docker-compose");
+    await mkdir(bin, { recursive: true });
+    await mkdir(join(dockerConfig, "cli-plugins"), { recursive: true });
+    await executable(docker, "#!/usr/bin/env sh\nexit 0\n");
+    await executable(plugin, "#!/usr/bin/env sh\nexit 0\n");
+
+    await run(
+      "bash",
+      [
+        "-c",
+        'set -euo pipefail; fail() { printf "%s\\n" "$*" >&2; exit 1; }; source "$1"; docker_cli_paths; [[ "$DENSE_MEM_CI_DOCKER_BIN" == "$(readlink -f "$2")" ]]; [[ "$DENSE_MEM_CI_COMPOSE_PLUGIN" == "$(readlink -f "$3")" ]]',
+        "compose-plugin-test",
+        join(scripts, "e2e-host-controller-runtime.sh"),
+        docker,
+        plugin,
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          DOCKER_CONFIG: dockerConfig,
+        },
+      },
+    );
   } finally {
     await rm(fixture, { recursive: true, force: true });
   }
@@ -332,6 +383,7 @@ test("Compose stack has no host bindings and carries only project-scoped inputs"
 
 test("verifier scenarios use the deterministic provider without replacing embeddings", () => {
   assert.match(compose, /profiles: \[synchronous_write, verifier\]/);
+  assert.match(realController, /"  synchronous-write-provider:"[\s\S]*"    profiles: \[synchronous_write, verifier\]"/);
   const verifierStart = stack.indexOf('if (has("verifier"))');
   const verifierEnd = stack.indexOf('if (has("conflict_provider"))', verifierStart);
   assert.ok(verifierStart >= 0 && verifierEnd > verifierStart);

@@ -8,7 +8,8 @@ docker_cli_paths() {
   docker_bin="$(readlink -f "$(command -v docker)")"
   [[ -f "$docker_bin" ]] || fail "the Docker CLI binary is unavailable"
   local compose_plugin=""
-  for candidate in /usr/libexec/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose; do
+  local docker_config="${DOCKER_CONFIG:-${HOME}/.docker}"
+  for candidate in "${docker_config}/cli-plugins/docker-compose" /usr/libexec/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose; do
     if [[ -f "$candidate" ]]; then
       compose_plugin="$(readlink -f "$candidate")"
       break
