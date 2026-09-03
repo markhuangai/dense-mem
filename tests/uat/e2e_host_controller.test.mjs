@@ -19,6 +19,7 @@ const realControllerTest = await readFile(new URL("./e2e_host_controller_real.sh
 const productionWorkflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
 const scenarioWorkflow = await readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8");
 const scenarioScript = await readFile(new URL("../../scripts/e2e-ci-scenario.sh", import.meta.url), "utf8");
+const e2eComposeScript = await readFile(new URL("../../scripts/e2e-compose.sh", import.meta.url), "utf8");
 const oauthComposeScript = await readFile(new URL("../../scripts/e2e-compose-oauth.sh", import.meta.url), "utf8");
 const oauthMCPScenario = await readFile(new URL("./oauth_mcp_e2e.mjs", import.meta.url), "utf8");
 const oauthTeamResourceSpec = await readFile(new URL("../../web/tests-compose/oauth-team-resource.spec.ts", import.meta.url), "utf8");
@@ -399,6 +400,7 @@ test("production scenarios preserve Playwright handoff values", () => {
 test("MCP OAuth separates container traffic from the advertised public URL", () => {
   assert.match(controllerRuntime, /DENSE_MEM_USER_URL=http:\/\/server:8080/);
   assert.match(controllerRuntime, /DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL=https:\/\/dense-mem\.example\.test/);
+  assert.match(e2eComposeScript, /-e "DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL=\$USER_URL"/);
   assert.match(oauthComposeScript, /DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL="\$USER_URL"/);
   assert.match(oauthMCPScenario, /const mcpPublicBaseURL = requiredEnv\("DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL"\)/);
   assert.match(oauthMCPScenario, /key: "MCP_PUBLIC_BASE_URL", value: mcpPublicBaseURL/);
@@ -406,6 +408,8 @@ test("MCP OAuth separates container traffic from the advertised public URL", () 
   assert.match(oauthMCPScenario, /fetch\(`\$\{userURL\}\$\{path\}`/);
   assert.match(oauthTeamResourceSpec, /const mcpPublicBaseURL = requiredEnv\("DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL"\)/);
   assert.match(oauthTeamResourceSpec, /const firstMCPURL = `\$\{mcpPublicBaseURL\}\/teams\/\$\{firstTeamID\}\/mcp`/);
+  assert.doesNotMatch(oauthTeamResourceSpec, /navigator\.clipboard\.readText/);
+  assert.match(oauthTeamResourceSpec, /getByRole\("button", \{ name: "MCP URL copied" \}\)/);
 });
 
 test("real controller fixtures use workflow-scoped names and leave no local state", () => {

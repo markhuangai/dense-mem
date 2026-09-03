@@ -619,6 +619,7 @@ run_compose_playwright_tests() {
     -e "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright" \
     -e "DENSE_MEM_CONTROL_URL=$CONTROL_URL" \
     -e "DENSE_MEM_USER_URL=$USER_URL" \
+    -e "DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL=$USER_URL" \
     -e "DENSE_MEM_CONTROL_TOKEN=$CONTROL_TOKEN" \
     -e "DENSE_MEM_E2E_TEAM_ID=$team_id" \
     -e "DENSE_MEM_E2E_TEAM_NAME=E2E Team" \
