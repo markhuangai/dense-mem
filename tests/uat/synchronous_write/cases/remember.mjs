@@ -245,6 +245,48 @@ async function runSemanticDuplicateCase({ expect }) {
   const canonicalID = canonical.evidence[0]?.evidence_id;
   expect(canonicalID, "semantic duplicate canonical write must return an evidence id");
 
+  const forcedArgs = singleItemArguments("semantic-duplicate-force", "[fixture-fault:semantic-reuse]");
+  forcedArgs.evidence[0].content = "Dense-Mem retains durable memory in PostgreSQL. [fixture:semantic-duplicate-force] [fixture-fault:semantic-reuse]";
+  forcedArgs.evidence[0].force_insert = true;
+  const forced = await rememberWithKey(actor.apiKey, forcedArgs);
+  assertStrictTerminalRemember(forced, expect);
+  expect(forced.processing_state === "completed", `force_insert semantic duplicate must complete: ${JSON.stringify(forced)}`);
+  expect(forced.evidence[0]?.evidence_id && forced.evidence[0].evidence_id !== canonicalID, `force_insert must create a new fragment: ${JSON.stringify(forced)}`);
+  expect(forced.evidence[0]?.search_state === "current", `force_insert new evidence must be searchable: ${JSON.stringify(forced)}`);
+  expect(Number(postgresQuery(`
+    SELECT count(*)
+    FROM evidence_fragments
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+      AND ingest_id IN ('${sqlLiteral(canonical.submission_id)}'::uuid, '${sqlLiteral(forced.submission_id)}'::uuid);
+  `)) === 2, "force_insert semantic duplicate must create a second fragment");
+  expect(Number(postgresQuery(`
+    SELECT count(*)
+    FROM evidence_occurrences
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+      AND ingest_id IN ('${sqlLiteral(canonical.submission_id)}'::uuid, '${sqlLiteral(forced.submission_id)}'::uuid);
+  `)) === 2, "force_insert semantic duplicate must preserve both occurrences");
+
+  const exactForcedArgs = singleItemArguments("semantic-duplicate-force-exact", "");
+  exactForcedArgs.evidence[0].content = canonicalArgs.evidence[0].content;
+  exactForcedArgs.evidence[0].force_insert = true;
+  const exactForced = await rememberWithKey(actor.apiKey, exactForcedArgs);
+  assertStrictTerminalRemember(exactForced, expect);
+  expect(exactForced.processing_state === "completed", `force_insert exact duplicate must complete: ${JSON.stringify(exactForced)}`);
+  expect(exactForced.evidence[0]?.evidence_id === canonicalID, `force_insert exact bytes must reuse the canonical fragment: ${JSON.stringify(exactForced)}`);
+  expect(exactForced.evidence[0]?.search_state === "current", `force_insert exact reuse must retain current search state: ${JSON.stringify(exactForced)}`);
+  expect(Number(postgresQuery(`
+    SELECT count(*)
+    FROM evidence_fragments
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+      AND ingest_id IN ('${sqlLiteral(canonical.submission_id)}'::uuid, '${sqlLiteral(exactForced.submission_id)}'::uuid);
+  `)) === 1, "force_insert exact duplicate must not create a second fragment");
+  expect(Number(postgresQuery(`
+    SELECT count(*)
+    FROM evidence_occurrences
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+      AND ingest_id IN ('${sqlLiteral(canonical.submission_id)}'::uuid, '${sqlLiteral(exactForced.submission_id)}'::uuid);
+  `)) === 2, "force_insert exact duplicate must append an occurrence");
+
   const reusedArgs = singleItemArguments("semantic-duplicate-reuse", "[fixture-fault:semantic-reuse]");
   reusedArgs.evidence[0].content = "Dense-Mem retains durable memory in PostgreSQL. [fixture:semantic-duplicate-canonical] [fixture-fault:semantic-reuse]";
   const reused = await rememberWithKey(actor.apiKey, reusedArgs);

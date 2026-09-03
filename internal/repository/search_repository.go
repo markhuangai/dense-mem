@@ -325,7 +325,11 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 				    search_state, document_text, document_hash, metadata
 				) VALUES (
 				    ?::uuid, ?::uuid, COALESCE(NULLIF(?, '')::uuid, dense_mem_team_shared_space(?::uuid)), NULLIF(?, 0)::bigint, ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, 1, ?::uuid, ?,
-				    'pending', ?, ?, ?::jsonb
+				    CASE WHEN ? = 'evidence' AND EXISTS (
+				        SELECT 1 FROM evidence_exact_aliases AS alias
+				        WHERE alias.team_id = ?::uuid AND alias.alias_fragment_id = ?::uuid
+				    ) THEN 'not_required' ELSE 'pending' END,
+				    ?, ?, ?::jsonb
 				)
 				ON CONFLICT (team_id, source_kind, source_id, embedding_contract_id)
 				DO UPDATE SET
@@ -341,6 +345,11 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 				        ELSE search_documents.document_version + 1
 				    END,
 				    search_state = CASE
+				        WHEN search_documents.source_kind = 'evidence' AND EXISTS (
+				            SELECT 1 FROM evidence_exact_aliases AS alias
+				            WHERE alias.team_id = search_documents.team_id
+				              AND alias.alias_fragment_id = search_documents.source_id
+				        ) THEN 'not_required'
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
 				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
 				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
@@ -351,6 +360,11 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 				    document_text = EXCLUDED.document_text,
 				    document_hash = EXCLUDED.document_hash,
 				    embedding = CASE
+				        WHEN search_documents.source_kind = 'evidence' AND EXISTS (
+				            SELECT 1 FROM evidence_exact_aliases AS alias
+				            WHERE alias.team_id = search_documents.team_id
+				              AND alias.alias_fragment_id = search_documents.source_id
+				        ) THEN NULL
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
 				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
 				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
@@ -358,6 +372,11 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 				        ELSE NULL
 				    END,
 				    embedding_updated_at = CASE
+				        WHEN search_documents.source_kind = 'evidence' AND EXISTS (
+				            SELECT 1 FROM evidence_exact_aliases AS alias
+				            WHERE alias.team_id = search_documents.team_id
+				              AND alias.alias_fragment_id = search_documents.source_id
+				        ) THEN NULL
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
 				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
 				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
@@ -365,6 +384,11 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 				        ELSE NULL
 				    END,
 				    embedding_error = CASE
+				        WHEN search_documents.source_kind = 'evidence' AND EXISTS (
+				            SELECT 1 FROM evidence_exact_aliases AS alias
+				            WHERE alias.team_id = search_documents.team_id
+				              AND alias.alias_fragment_id = search_documents.source_id
+				        ) THEN ''
 				        WHEN search_documents.document_hash = EXCLUDED.document_hash
 				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
 				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
@@ -384,9 +408,10 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 				          embedding_contract_id::text, embedding_dimensions, search_state
 			)
 			SELECT * FROM upserted
-		`, input.TeamID, input.OwnerProfileID, input.SpaceID, input.TeamID, input.SpaceGeneration, input.SourceKind, input.SourceID, input.SourceVersion,
+			`, input.TeamID, input.OwnerProfileID, input.SpaceID, input.TeamID, input.SpaceGeneration, input.SourceKind, input.SourceID, input.SourceVersion,
 			input.ProjectionFormat, input.ProjectionGenerationID,
-			contract.EmbeddingContractID, contract.EmbeddingDimensions, input.DocumentText,
+			contract.EmbeddingContractID, contract.EmbeddingDimensions, input.SourceKind, input.TeamID, input.SourceID,
+			input.DocumentText,
 			input.DocumentHash, string(metadata)).Rows()
 		if err != nil {
 			return err

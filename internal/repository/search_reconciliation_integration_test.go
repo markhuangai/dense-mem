@@ -135,6 +135,17 @@ func TestSearchReconciliationSuppressesHistoricalEvidenceAliases(t *testing.T) {
 	}))
 	upsertRecallEvidenceSearchDocumentForTest(t, ctx, repo, teamID, ownerID, canonical.Evidence[0])
 	upsertRecallEvidenceSearchDocumentForTest(t, ctx, repo, teamID, ownerID, alias.Evidence[0])
+	var aliasState string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT document.search_state
+			FROM search_documents AS document
+			WHERE document.team_id = ?::uuid
+			  AND document.source_kind = 'evidence'
+			  AND document.source_id = ?::uuid
+		`, teamID, alias.Evidence[0].FragmentID).Row().Scan(&aliasState)
+	}))
+	require.Equal(t, "not_required", aliasState)
 
 	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
 		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 10,
@@ -145,6 +156,8 @@ func TestSearchReconciliationSuppressesHistoricalEvidenceAliases(t *testing.T) {
 	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{EmbeddingContractID: contractID, EmbeddingDimensions: 2})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, convergence.ExpectedDocuments)
+	require.Zero(t, convergence.DriftedDocuments)
+	require.Equal(t, "converged", convergence.Status)
 }
 
 func TestSearchReconciliationProjectsSafeHistoricalRejectedEvidence(t *testing.T) {

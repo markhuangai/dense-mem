@@ -16,6 +16,59 @@ import (
 const testDreamPathPredicateFingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 const changedTestDreamPathPredicateFingerprint = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 
+func TestDreamEvidenceUsesOccurrenceContentForReusedEvidence(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "dream-occurrence-content", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "dream-occurrence-content-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "dream-occurrence-content-owner")
+	ledgerRepo := NewLedgerRepository(appDB, rls)
+	semanticRepo := NewSemanticRepository(appDB, rls)
+
+	canonicalContent := "Canonical evidence uses the original wording."
+	canonical := duplicateRememberInput(teamID, ownerID, "dream-occurrence-canonical", canonicalContent, false)
+	commitDuplicateFixture(t, ctx, ledgerRepo, canonical)
+	occurrenceContent := "Reused evidence carries a different occurrence wording."
+	reused := duplicateRememberInput(teamID, ownerID, "dream-occurrence-reused", occurrenceContent, false)
+	reused.DuplicateResolutions = []RememberDuplicateResolution{{
+		EvidenceIndex: 0, EvidenceID: "evidence:0", InputFragmentID: reused.Evidence[0].FragmentID,
+		Disposition: "reuse", CandidateFragmentID: canonical.Evidence[0].FragmentID, CandidateOwnerID: ownerID,
+	}}
+	plan, err := ledgerRepo.PlanRememberEmbeddings(ctx, reused)
+	require.NoError(t, err)
+	_, err = ledgerRepo.CommitRememberWithEmbeddings(ctx, reused, duplicatePlanToInline(plan))
+	require.NoError(t, err)
+	var occurrenceID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT occurrence_id::text
+			FROM evidence_occurrences
+			WHERE team_id = ?::uuid AND ingest_id = ?::uuid
+		`, teamID, reused.IngestID).Row().Scan(&occurrenceID)
+	}))
+
+	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Occurrence Subject")
+	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Occurrence Project")
+	decision := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: reused.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "uses", ObjectEntityID: object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID: canonical.Evidence[0].FragmentID, OccurrenceID: occurrenceID,
+			SourceGroupKey: "dream:occurrence-content", SpanStart: 0,
+			SpanEnd: len([]rune(occurrenceContent)), Quote: occurrenceContent, Authority: "primary",
+		},
+	})
+	require.Equal(t, "active", decision.Relationship.Status)
+
+	inputs, err := semanticRepo.ListDreamInputs(ctx, DreamInputListInput{TeamID: teamID, Limit: 10})
+	require.NoError(t, err)
+	dreamInput := requireDreamInput(t, inputs, decision.Relationship.RelationshipID)
+	require.Len(t, dreamInput.Evidence, 1)
+	require.Equal(t, canonical.Evidence[0].FragmentID, dreamInput.Evidence[0].FragmentID)
+	require.Equal(t, occurrenceContent, dreamInput.Evidence[0].Content)
+}
+
 func TestStaleDreamSourceErrorMapsMissingRelationship(t *testing.T) {
 	require.ErrorIs(t, staleDreamSourceError(sql.ErrNoRows, uuid.NewString()), ErrDreamSourceStale)
 }

@@ -879,7 +879,20 @@ func upsertRecallEvidenceSearchDocumentForTest(
 	})
 	require.NoError(t, err)
 	require.Equal(t, evidence.FragmentID, doc.SourceID)
-	require.Equal(t, "pending", doc.SearchState)
+	var alias bool
+	require.NoError(t, repo.withSystemTx(ctx, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT EXISTS (
+				SELECT 1 FROM evidence_exact_aliases
+				WHERE team_id = ?::uuid AND alias_fragment_id = ?::uuid
+			)
+		`, teamID, evidence.FragmentID).Row().Scan(&alias)
+	}))
+	if alias {
+		require.Equal(t, "not_required", doc.SearchState)
+	} else {
+		require.Equal(t, "pending", doc.SearchState)
+	}
 }
 
 func assertRecallEvidenceRelationships(

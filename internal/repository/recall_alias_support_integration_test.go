@@ -29,15 +29,29 @@ func TestRecallExpansionFollowsHistoricalAliasSupportToCanonicalEvidence(t *test
 		RequestHash: sha256Hex("recall-alias-support-alias"), Evidence: []EvidenceInput{{Content: content}},
 	})
 	require.NoError(t, err)
+	aliasTwo, err := ledgerRepo.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "recall-alias-support-alias-two",
+		RequestHash: sha256Hex("recall-alias-support-alias-two"), Evidence: []EvidenceInput{{Content: content}},
+	})
+	require.NoError(t, err)
 	require.Len(t, canonical.Evidence, 1)
 	require.Len(t, alias.Evidence, 1)
+	require.Len(t, aliasTwo.Evidence, 1)
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+			INSERT INTO evidence_exact_aliases (
+				team_id, alias_fragment_id, alias_owner_profile_id,
+				canonical_fragment_id, canonical_owner_profile_id
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid)
+		`, teamID, alias.Evidence[0].FragmentID, ownerID, canonical.Evidence[0].FragmentID, ownerID).Error; err != nil {
+			return err
+		}
 		return tx.Exec(`
 			INSERT INTO evidence_exact_aliases (
 				team_id, alias_fragment_id, alias_owner_profile_id,
 				canonical_fragment_id, canonical_owner_profile_id
 			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid)
-		`, teamID, alias.Evidence[0].FragmentID, ownerID, canonical.Evidence[0].FragmentID, ownerID).Error
+		`, teamID, aliasTwo.Evidence[0].FragmentID, ownerID, canonical.Evidence[0].FragmentID, ownerID).Error
 	}))
 	subject := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "person", "Alias Support Subject")
 	object := createSemanticEntity(t, ctx, semanticRepo, teamID, ownerID, "project", "Canonical Evidence")
@@ -50,7 +64,29 @@ func TestRecallExpansionFollowsHistoricalAliasSupportToCanonicalEvidence(t *test
 		},
 	})
 	require.NotNil(t, decision.Relationship)
+	secondDecision := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: aliasTwo.IngestID,
+		SubjectEntityID: subject.EntityID, PredicateKey: "works_on", ObjectEntityID: object.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID: aliasTwo.Evidence[0].FragmentID, SourceGroupKey: "recall:historical-alias-two",
+			SpanStart: 0, SpanEnd: len(content), Quote: content, Authority: "primary",
+		},
+	})
+	require.Equal(t, decision.Relationship.RelationshipID, secondDecision.Relationship.RelationshipID)
 	upsertRecallEvidenceSearchDocumentForTest(t, ctx, searchRepo, teamID, ownerID, canonical.Evidence[0])
+	relationshipDoc, err := searchRepo.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "relationship",
+		SourceID: decision.Relationship.RelationshipID, SourceVersion: int64(decision.Relationship.Version),
+		DocumentText: "relationship\nsubject: Alias Support Subject\npredicate: works on\nobject: Canonical Evidence\npolarity: positive",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "pending", relationshipDoc.SearchState)
+	recalledRelationships, err := searchRepo.RecallRelationships(ctx, RecallRelationshipsInput{
+		TeamID: teamID, ExpandFromEntityIDs: []string{subject.EntityID}, Limit: 5,
+	})
+	require.NoError(t, err)
+	require.Len(t, recalledRelationships.Results, 1)
+	require.Equal(t, []string{canonical.Evidence[0].FragmentID}, recalledRelationships.Results[0].EvidenceIDs)
 
 	recall, err := searchRepo.RecallEvidence(ctx, RecallEvidenceInput{
 		TeamID: teamID, ExpandFromEntityIDs: []string{subject.EntityID}, Limit: 5,
@@ -72,8 +108,8 @@ func TestRecallExpansionFollowsHistoricalAliasSupportToCanonicalEvidence(t *test
 	require.Equal(t, alias.Evidence[0].FragmentID, trace.EvidenceFragments[0].OccurrenceID)
 
 	_, err = ledgerRepo.RetractEvidence(ctx, RetractEvidenceInput{
-		TeamID: teamID, OwnerProfileID: ownerID, EvidenceIDs: []string{alias.Evidence[0].FragmentID},
-		Reason: "retract historical alias support", IdempotencyKey: "recall-alias-support-retract",
+		TeamID: teamID, OwnerProfileID: ownerID, EvidenceIDs: []string{canonical.Evidence[0].FragmentID},
+		Reason: "retract canonical evidence with historical alias support", IdempotencyKey: "recall-alias-support-retract",
 		RequestHash: sha256Hex("recall-alias-support-retract"),
 	})
 	require.NoError(t, err)
@@ -82,7 +118,8 @@ func TestRecallExpansionFollowsHistoricalAliasSupportToCanonicalEvidence(t *test
 	})
 	require.NoError(t, err)
 	require.Len(t, trace.EvidenceLifecycleEvents, 1)
-	require.Equal(t, alias.Evidence[0].FragmentID, trace.EvidenceLifecycleEvents[0].TargetFragmentID)
+	require.Equal(t, canonical.Evidence[0].FragmentID, trace.EvidenceLifecycleEvents[0].TargetFragmentID)
+	require.Equal(t, "pending_evidence", trace.Relationship.Status)
 }
 
 func TestRecallQuarantinedHistoricalAliasSupportDoesNotExposeRelationship(t *testing.T) {

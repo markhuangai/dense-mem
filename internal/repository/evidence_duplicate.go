@@ -102,12 +102,14 @@ func (r *LedgerRepositoryImpl) PlanRememberDuplicateEmbeddings(
 		plan.IndexGeneration = contract.IndexGeneration
 		seenContent := make(map[string]struct{}, len(input.Evidence))
 		for _, evidence := range input.Evidence {
-			_, found, err := resolveRememberExactEvidenceInTx(ctx, tx, input, evidence)
-			if err != nil {
-				return err
-			}
-			if found {
-				continue
+			if !rememberEvidenceLifecycleBearing(evidence) {
+				_, found, err := resolveRememberExactEvidenceInTx(ctx, tx, input, evidence)
+				if err != nil {
+					return err
+				}
+				if found {
+					continue
+				}
 			}
 			if !rememberEvidenceRequiresDuplicateAssessment(evidence) {
 				continue
@@ -176,9 +178,13 @@ func (r *LedgerRepositoryImpl) ResolveRememberDuplicateCandidates(
 			vectors[hash] = append([]float32(nil), embedding.Embedding...)
 		}
 		for index, evidence := range input.Evidence {
-			canonicalID, found, err := resolveRememberExactEvidenceInTx(ctx, tx, input, evidence)
-			if err != nil {
-				return err
+			canonicalID, found := "", false
+			if !rememberEvidenceLifecycleBearing(evidence) {
+				var err error
+				canonicalID, found, err = resolveRememberExactEvidenceInTx(ctx, tx, input, evidence)
+				if err != nil {
+					return err
+				}
 			}
 			resolution := RememberDuplicateResolution{EvidenceIndex: index, EvidenceID: fmt.Sprintf("evidence:%d", index), InputFragmentID: evidence.FragmentID}
 			if found {
@@ -278,6 +284,18 @@ func resolveRememberExactEvidenceInTx(
 ) (string, bool, error) {
 	spaceClause, args := rememberDuplicateSpacePredicate(input.SpaceID, input.SpaceGeneration, "fragment")
 	row := tx.WithContext(ctx).Raw(`
+		WITH active_contract AS (
+			SELECT contract.embedding_contract_id, contract.dimensions
+			FROM search_index_generations AS generation
+			JOIN embedding_contracts AS contract
+			  ON contract.embedding_contract_id = generation.embedding_contract_id
+			 AND contract.dimensions = generation.embedding_dimensions
+			WHERE generation.activation_state = 'active'
+			  AND contract.lifecycle_state = 'active'
+			  AND contract.distance_metric = 'cosine'
+			ORDER BY contract.version DESC, generation.generation DESC, generation.created_at DESC
+			LIMIT 1
+		)
 		SELECT fragment.fragment_id::text
 		FROM evidence_fragments AS fragment
 		WHERE fragment.team_id = ?::uuid
@@ -309,6 +327,24 @@ func resolveRememberExactEvidenceInTx(
 		            AND source.owner_profile_id = fragment.owner_profile_id
 		            AND source.current_revision_id = fragment.source_revision_id
 		      )
+		  )
+		  AND EXISTS (
+		      SELECT 1
+		      FROM search_documents AS document
+		      JOIN active_contract AS contract
+		        ON contract.embedding_contract_id = document.embedding_contract_id
+		       AND contract.dimensions = document.embedding_dimensions
+		      WHERE document.team_id = fragment.team_id
+		        AND document.owner_profile_id = fragment.owner_profile_id
+		        AND document.source_kind = 'evidence'
+		        AND document.source_id = fragment.fragment_id
+		        AND document.source_version = 1
+		        AND document.projection_format_version = 1
+		        AND document.search_state = 'current'
+		        AND document.embedding IS NOT NULL
+		        AND vector_dims(document.embedding) = document.embedding_dimensions
+		        AND document.space_id IS NOT DISTINCT FROM fragment.space_id
+		        AND document.space_generation IS NOT DISTINCT FROM fragment.space_generation
 		  )
 		  `+spaceClause+`
 		ORDER BY fragment.created_at ASC, fragment.fragment_id ASC
@@ -712,13 +748,18 @@ func resolveRememberEvidenceInTx(
 	lifecycleTargets := make([]string, 0, len(createInput.Evidence))
 	seenLifecycleTargets := make(map[string]struct{}, len(createInput.Evidence))
 	for index, item := range createInput.Evidence {
-		canonicalID, exact, err := resolveRememberExactEvidenceInTx(ctx, tx, RememberDuplicateCandidateInput{
-			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID,
-			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
-			Evidence: []EvidenceInput{item},
-		}, item)
-		if err != nil {
-			return nil, err
+		canonicalID, exact := "", false
+		lifecycleBearing := rememberEvidenceLifecycleBearing(item)
+		if !lifecycleBearing {
+			var err error
+			canonicalID, exact, err = resolveRememberExactEvidenceInTx(ctx, tx, RememberDuplicateCandidateInput{
+				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID,
+				SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
+				Evidence: []EvidenceInput{item},
+			}, item)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if exact {
 			initialExact[index] = canonicalID
@@ -741,13 +782,18 @@ func resolveRememberEvidenceInTx(
 	evidence := make([]EvidenceFragment, 0, len(createInput.Evidence))
 	for index, item := range createInput.Evidence {
 		planned := resolutions[index]
-		canonicalID, exact, err := resolveRememberExactEvidenceInTx(ctx, tx, RememberDuplicateCandidateInput{
-			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID,
-			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
-			Evidence: []EvidenceInput{item},
-		}, item)
-		if err != nil {
-			return nil, err
+		canonicalID, exact := "", false
+		lifecycleBearing := rememberEvidenceLifecycleBearing(item)
+		if !lifecycleBearing {
+			var err error
+			canonicalID, exact, err = resolveRememberExactEvidenceInTx(ctx, tx, RememberDuplicateCandidateInput{
+				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID,
+				SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
+				Evidence: []EvidenceInput{item},
+			}, item)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if expectedCanonicalID, wasInitiallyExact := initialExact[index]; wasInitiallyExact &&
 			(!exact || canonicalID != expectedCanonicalID) {
@@ -755,12 +801,12 @@ func resolveRememberEvidenceInTx(
 		}
 		canonicalOwnerID := input.OwnerProfileID
 		disposition := planned.Disposition
-		if exact {
+		if exact && !lifecycleBearing {
 			disposition = "reuse"
 			planned.CandidateFragmentID = canonicalID
 			planned.CandidateOwnerID = input.OwnerProfileID
 		}
-		if !exact && (item.ForceInsert || rememberEvidenceLifecycleBearing(item)) {
+		if lifecycleBearing {
 			disposition = "new"
 		}
 		if disposition == "reuse" && !exact {
@@ -779,16 +825,27 @@ func resolveRememberEvidenceInTx(
 			canonicalID = fragment.FragmentID
 			canonicalOwnerID = input.OwnerProfileID
 		}
-		occurrenceID := canonicalID
+		occurrence := EvidenceFragment{
+			FragmentID: canonicalID, SubmittedFragmentID: item.FragmentID,
+			OccurrenceID: canonicalID, CanonicalOwnerID: canonicalOwnerID,
+			OccurrenceOwnerID: input.OwnerProfileID, EvidenceIndex: index,
+			Content: item.Content, ContentHash: item.ContentHash,
+			Authority: item.Authority,
+		}
+		if source := sources[index]; source != nil {
+			occurrence.SourceID = source.SourceID
+			occurrence.SourceRevisionID = source.SourceRevisionID
+		}
 		if disposition == "reuse" {
-			occurrenceID = uuid.NewString()
+			occurrence.OccurrenceID = uuid.NewString()
+			var err error
+			occurrence, err = insertRememberEvidenceOccurrence(ctx, tx, createInput, item, index, occurrence.OccurrenceID, canonicalID, canonicalOwnerID, sources[index])
+			if err != nil {
+				return nil, err
+			}
+			occurrence.SubmittedFragmentID = item.FragmentID
+			occurrence.FragmentID = canonicalID
 		}
-		occurrence, err := insertRememberEvidenceOccurrence(ctx, tx, createInput, item, index, occurrenceID, canonicalID, canonicalOwnerID, sources[index])
-		if err != nil {
-			return nil, err
-		}
-		occurrence.SubmittedFragmentID = item.FragmentID
-		occurrence.FragmentID = canonicalID
 		evidence = append(evidence, occurrence)
 	}
 	return evidence, nil

@@ -86,7 +86,7 @@ func listActiveDreamEvidence(ctx context.Context, tx *gorm.DB, teamID, relations
 		       support.authority,
 		       support.span_start,
 		       support.span_end,
-		       fragment.content
+		       COALESCE(occurrence.content, fragment.content)
 		FROM relationship_evidence_supports support
 		JOIN latest_support_decision decision
 		  ON decision.support_id = support.support_id
@@ -95,6 +95,12 @@ func listActiveDreamEvidence(ctx context.Context, tx *gorm.DB, teamID, relations
 		 AND fragment.fragment_id = support.fragment_id
 		 AND fragment.space_id = support.space_id
 		 AND fragment.space_generation = support.space_generation
+		LEFT JOIN evidence_occurrences occurrence
+		  ON occurrence.team_id = support.team_id
+		 AND occurrence.occurrence_id = support.occurrence_id
+		 AND occurrence.owner_profile_id = COALESCE(support.occurrence_owner_profile_id, support.evidence_owner_profile_id, support.owner_profile_id)
+		 AND occurrence.space_id = support.space_id
+		 AND occurrence.space_generation = support.space_generation
 		LEFT JOIN evidence_sources source
 		  ON source.team_id = support.team_id
 		 AND source.source_id = support.source_id
@@ -167,7 +173,7 @@ func listActiveDreamEvidenceBatch(
 			       support.authority,
 			       support.span_start,
 			       support.span_end,
-			       fragment.content,
+			       COALESCE(occurrence.content, fragment.content),
 			       row_number() OVER (
 			           PARTITION BY support.relationship_id
 			           ORDER BY CASE support.authority
@@ -187,6 +193,12 @@ func listActiveDreamEvidenceBatch(
 			 AND fragment.fragment_id = support.fragment_id
 			 AND fragment.space_id = support.space_id
 			 AND fragment.space_generation = support.space_generation
+			LEFT JOIN evidence_occurrences occurrence
+			  ON occurrence.team_id = support.team_id
+			 AND occurrence.occurrence_id = support.occurrence_id
+			 AND occurrence.owner_profile_id = COALESCE(support.occurrence_owner_profile_id, support.evidence_owner_profile_id, support.owner_profile_id)
+			 AND occurrence.space_id = support.space_id
+			 AND occurrence.space_generation = support.space_generation
 			LEFT JOIN evidence_sources source
 			  ON source.team_id = support.team_id
 			 AND source.source_id = support.source_id

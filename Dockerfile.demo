@@ -8,7 +8,7 @@ FROM --platform=$BUILDPLATFORM node:26-alpine AS web-builder
 WORKDIR /web
 
 COPY web/package.json web/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm,sharing=locked npm ci
+RUN --mount=type=cache,target=/root/.npm,sharing=locked npm ci --include=optional
 
 COPY web/ ./
 RUN npm run build

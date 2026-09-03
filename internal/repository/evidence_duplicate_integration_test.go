@@ -268,6 +268,24 @@ func TestRememberDuplicateForceAndLifecycleBearingEvidenceStayNew(t *testing.T) 
 	candidate := duplicateRememberInput(teamID, ownerID, "duplicate-controls-candidate", "canonical semantic candidate", false)
 	commitDuplicateFixture(t, ctx, repo, candidate)
 
+	superseding := duplicateRememberInput(teamID, ownerID, "duplicate-controls-superseding", candidate.Evidence[0].Content, false)
+	superseding.Evidence[0].SupersedesEvidenceIDs = []string{candidate.Evidence[0].FragmentID}
+	superseding.Evidence[0].IdempotencyKey = "duplicate-controls-supersession"
+	supersedingPlan, err := repo.PlanRememberDuplicateEmbeddings(ctx, duplicateCandidateInput(superseding))
+	require.NoError(t, err)
+	require.Empty(t, supersedingPlan.Documents, "lifecycle-bearing exact bytes must not be semantically pre-assessed")
+	supersedingResolved, err := repo.ResolveRememberDuplicateCandidates(ctx, duplicateCandidateInput(superseding), nil)
+	require.NoError(t, err)
+	require.Equal(t, "new", supersedingResolved.Exact[0].Disposition)
+	superseding.DuplicateResolutions = supersedingResolved.Exact
+	commitDuplicateWithNormalPlan(t, ctx, repo, superseding)
+	require.NotEqual(t, candidate.Evidence[0].FragmentID, superseding.Evidence[0].FragmentID)
+	require.EqualValues(t, 1, duplicateCount(t, adminDB, rls, `
+		SELECT count(*)
+		FROM evidence_lifecycle_events
+		WHERE team_id = ?::uuid AND target_fragment_id = ?::uuid AND replacement_fragment_id = ?::uuid
+	`, teamID, candidate.Evidence[0].FragmentID, superseding.Evidence[0].FragmentID))
+
 	forced := duplicateRememberInput(teamID, ownerID, "duplicate-controls-forced", "semantically similar forced evidence", true)
 	forcedPlan, err := repo.PlanRememberDuplicateEmbeddings(ctx, duplicateCandidateInput(forced))
 	require.NoError(t, err)
@@ -293,7 +311,7 @@ func TestRememberDuplicateForceAndLifecycleBearingEvidenceStayNew(t *testing.T) 
 	lifecycle.DuplicateResolutions = lifecycleResolved.Exact
 	commitDuplicateWithNormalPlan(t, ctx, repo, lifecycle)
 
-	require.EqualValues(t, 3, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid`, teamID))
+	require.EqualValues(t, 4, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid`, teamID))
 	require.EqualValues(t, 1, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_sources WHERE team_id = ?::uuid`, teamID))
 }
 

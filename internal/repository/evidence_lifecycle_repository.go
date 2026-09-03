@@ -503,16 +503,19 @@ func loadEffectiveEvidenceLifecycleSupports(
 		  ON quarantine.team_id = support.team_id
 		 AND quarantine.fragment_id = support.fragment_id
 		 AND quarantine.status = 'active'
+		LEFT JOIN evidence_exact_aliases AS alias
+		  ON alias.team_id = support.team_id
+		 AND alias.alias_fragment_id = support.fragment_id
 		LEFT JOIN evidence_sources AS source
 		  ON source.team_id = support.team_id
 		 AND source.source_id = support.source_id
 		WHERE support.team_id = ?::uuid
-		  AND support.fragment_id = ANY(?::uuid[])
+		  AND (support.fragment_id = ANY(?::uuid[]) OR alias.canonical_fragment_id = ANY(?::uuid[]))
 		  AND latest.decision IN ('grant', 'reinstate')
 		  AND quarantine.quarantine_id IS NULL
 		  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
 		ORDER BY support.relationship_id ASC, support.support_id ASC
-	`, teamID, teamID, pq.Array(evidenceIDs)).Rows()
+	`, teamID, teamID, pq.Array(evidenceIDs), pq.Array(evidenceIDs)).Rows()
 	if err != nil {
 		return nil, err
 	}

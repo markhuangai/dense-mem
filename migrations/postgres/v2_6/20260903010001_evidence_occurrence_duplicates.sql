@@ -395,7 +395,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 -- +goose StatementEnd
-
 DROP POLICY IF EXISTS evidence_security_events_occurrence_backfill_update ON evidence_security_events;
 CREATE POLICY evidence_security_events_occurrence_backfill_update ON evidence_security_events
     FOR UPDATE
@@ -423,7 +422,6 @@ CREATE POLICY evidence_lifecycle_events_occurrence_backfill_update ON evidence_l
            AND target_occurrence_id IS NULL)
     WITH CHECK (current_setting('app.tx_mode', true) = 'migration' AND current_setting('app.evidence_occurrence_backfill', true) = 'true'
                 AND target_occurrence_id IS NOT NULL);
-
 -- Existing append-only rows are linked to their historical self-occurrence.
 -- The shared trigger permits only these new-column assignments while the
 -- migration-local flag is set.
@@ -433,24 +431,7 @@ SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 SELECT set_config('app.allowed_space_ids', '', true);
 SELECT set_config('app.evidence_occurrence_backfill', 'true', true);
-UPDATE evidence_security_events
-SET occurrence_id = COALESCE(occurrence_id, fragment_id),
-    evidence_owner_profile_id = COALESCE(evidence_owner_profile_id, owner_profile_id)
-WHERE occurrence_id IS NULL OR evidence_owner_profile_id IS NULL;
-UPDATE entity_resolution_events
-SET occurrence_id = COALESCE(occurrence_id, fragment_id),
-    evidence_owner_profile_id = COALESCE(evidence_owner_profile_id, owner_profile_id)
-WHERE occurrence_id IS NULL OR evidence_owner_profile_id IS NULL;
-UPDATE relationship_evidence_supports
-SET occurrence_id = COALESCE(occurrence_id, fragment_id),
-    occurrence_owner_profile_id = COALESCE(occurrence_owner_profile_id, evidence_owner_profile_id, owner_profile_id)
-WHERE occurrence_id IS NULL OR occurrence_owner_profile_id IS NULL;
-UPDATE evidence_lifecycle_events
-SET target_occurrence_id = COALESCE(target_occurrence_id, target_fragment_id),
-    replacement_occurrence_id = COALESCE(replacement_occurrence_id, replacement_fragment_id)
-WHERE target_occurrence_id IS NULL OR replacement_occurrence_id IS NULL;
 -- +goose StatementEnd
-
 -- Select aliases and self-occurrences in deterministic, resumable batches.
 -- Each procedure commit clears the migration-local settings, so every loop
 -- re-establishes the narrow RLS and append-only gates before touching rows.
@@ -462,12 +443,39 @@ DECLARE
     affected_rows INTEGER;
 BEGIN
     LOOP
+        PERFORM set_config('app.tx_mode', 'migration', true); PERFORM set_config('app.current_team_id', '', true);
+        PERFORM set_config('app.current_profile_id', '', true); PERFORM set_config('app.allowed_space_ids', '', true); PERFORM set_config('app.evidence_occurrence_backfill', 'true', true);
+        WITH batch AS MATERIALIZED (SELECT ctid FROM evidence_security_events WHERE occurrence_id IS NULL OR evidence_owner_profile_id IS NULL ORDER BY team_id, security_event_id LIMIT 500)
+        UPDATE evidence_security_events AS event SET occurrence_id = COALESCE(event.occurrence_id, event.fragment_id), evidence_owner_profile_id = COALESCE(event.evidence_owner_profile_id, event.owner_profile_id) FROM batch WHERE event.ctid = batch.ctid;
+        GET DIAGNOSTICS affected_rows = ROW_COUNT; COMMIT; EXIT WHEN affected_rows = 0;
+    END LOOP;
+    LOOP
+        PERFORM set_config('app.tx_mode', 'migration', true); PERFORM set_config('app.current_team_id', '', true);
+        PERFORM set_config('app.current_profile_id', '', true); PERFORM set_config('app.allowed_space_ids', '', true); PERFORM set_config('app.evidence_occurrence_backfill', 'true', true);
+        WITH batch AS MATERIALIZED (SELECT ctid FROM entity_resolution_events WHERE evidence_owner_profile_id IS NULL OR (occurrence_id IS NULL AND fragment_id IS NOT NULL) ORDER BY team_id, resolution_event_id LIMIT 500)
+        UPDATE entity_resolution_events AS event SET occurrence_id = COALESCE(event.occurrence_id, event.fragment_id), evidence_owner_profile_id = COALESCE(event.evidence_owner_profile_id, event.owner_profile_id) FROM batch WHERE event.ctid = batch.ctid;
+        GET DIAGNOSTICS affected_rows = ROW_COUNT; COMMIT; EXIT WHEN affected_rows = 0;
+    END LOOP;
+    LOOP
+        PERFORM set_config('app.tx_mode', 'migration', true); PERFORM set_config('app.current_team_id', '', true);
+        PERFORM set_config('app.current_profile_id', '', true); PERFORM set_config('app.allowed_space_ids', '', true); PERFORM set_config('app.evidence_occurrence_backfill', 'true', true);
+        WITH batch AS MATERIALIZED (SELECT ctid FROM relationship_evidence_supports WHERE occurrence_id IS NULL OR occurrence_owner_profile_id IS NULL ORDER BY team_id, support_id LIMIT 500)
+        UPDATE relationship_evidence_supports AS support SET occurrence_id = COALESCE(support.occurrence_id, support.fragment_id), occurrence_owner_profile_id = COALESCE(support.occurrence_owner_profile_id, support.evidence_owner_profile_id, support.owner_profile_id) FROM batch WHERE support.ctid = batch.ctid;
+        GET DIAGNOSTICS affected_rows = ROW_COUNT; COMMIT; EXIT WHEN affected_rows = 0;
+    END LOOP;
+    LOOP
+        PERFORM set_config('app.tx_mode', 'migration', true); PERFORM set_config('app.current_team_id', '', true);
+        PERFORM set_config('app.current_profile_id', '', true); PERFORM set_config('app.allowed_space_ids', '', true); PERFORM set_config('app.evidence_occurrence_backfill', 'true', true);
+        WITH batch AS MATERIALIZED (SELECT ctid FROM evidence_lifecycle_events WHERE target_occurrence_id IS NULL OR (replacement_occurrence_id IS NULL AND replacement_fragment_id IS NOT NULL) ORDER BY team_id, lifecycle_event_id LIMIT 500)
+        UPDATE evidence_lifecycle_events AS event SET target_occurrence_id = COALESCE(event.target_occurrence_id, event.target_fragment_id), replacement_occurrence_id = COALESCE(event.replacement_occurrence_id, event.replacement_fragment_id) FROM batch WHERE event.ctid = batch.ctid;
+        GET DIAGNOSTICS affected_rows = ROW_COUNT; COMMIT; EXIT WHEN affected_rows = 0;
+    END LOOP;
+    LOOP
         PERFORM set_config('app.tx_mode', 'migration', true);
         PERFORM set_config('app.current_team_id', '', true);
         PERFORM set_config('app.current_profile_id', '', true);
         PERFORM set_config('app.allowed_space_ids', '', true);
         PERFORM set_config('app.evidence_occurrence_backfill', 'true', true);
-
         WITH ranked AS MATERIALIZED (
             SELECT fragment.team_id,
                    fragment.fragment_id,
@@ -560,18 +568,15 @@ BEGIN
         FROM batch
         ON CONFLICT (team_id, alias_fragment_id) DO NOTHING;
         GET DIAGNOSTICS affected_rows = ROW_COUNT;
-
         COMMIT;
         EXIT WHEN affected_rows = 0;
     END LOOP;
-
     LOOP
         PERFORM set_config('app.tx_mode', 'migration', true);
         PERFORM set_config('app.current_team_id', '', true);
         PERFORM set_config('app.current_profile_id', '', true);
         PERFORM set_config('app.allowed_space_ids', '', true);
         PERFORM set_config('app.evidence_occurrence_backfill', 'true', true);
-
         INSERT INTO evidence_occurrences (
             team_id, occurrence_id, canonical_fragment_id, canonical_owner_profile_id,
             ingest_id, owner_profile_id, space_id, space_generation, evidence_index,
@@ -603,17 +608,14 @@ BEGIN
          AND alias.alias_fragment_id = fragment.fragment_id
         ON CONFLICT (team_id, occurrence_id) DO NOTHING;
         GET DIAGNOSTICS affected_rows = ROW_COUNT;
-
         COMMIT;
         EXIT WHEN affected_rows = 0;
     END LOOP;
 END
 $procedure$;
 -- +goose StatementEnd
-
 CALL dense_mem_backfill_evidence_occurrences_20260903010001();
 DROP PROCEDURE dense_mem_backfill_evidence_occurrences_20260903010001();
-
 -- Search projections for historical aliases are derived state, not evidence
 -- history. Remove them together with their jobs before canonical reads resume.
 -- +goose StatementBegin
@@ -675,7 +677,6 @@ WHERE document.source_kind = 'evidence'
   );
 DROP POLICY IF EXISTS search_documents_alias_cleanup_delete ON search_documents;
 -- +goose StatementEnd
-
 -- Occurrence identity is part of a support span. Keep the existing constraint
 -- name so the runtime ON CONFLICT path remains stable while allowing the same
 -- canonical fragment/span to be supported by distinct occurrences.
@@ -715,7 +716,6 @@ ALTER TABLE relationship_evidence_supports
         team_id, relationship_id, owner_profile_id, fragment_id, occurrence_id,
         span_start, span_end
     );
-
 ALTER TABLE evidence_occurrences
     ALTER COLUMN occurrence_id SET NOT NULL,
     ALTER COLUMN canonical_fragment_id SET NOT NULL,
@@ -732,7 +732,6 @@ ALTER TABLE relationship_evidence_supports
     ALTER COLUMN occurrence_owner_profile_id SET NOT NULL;
 ALTER TABLE evidence_lifecycle_events
     ALTER COLUMN target_occurrence_id SET NOT NULL;
-
 DROP INDEX CONCURRENTLY IF EXISTS evidence_occurrences_canonical_idx;
 CREATE INDEX CONCURRENTLY evidence_occurrences_canonical_idx
     ON evidence_occurrences(team_id, canonical_fragment_id, created_at ASC, occurrence_id ASC);
