@@ -260,3 +260,105 @@ func TestEvidenceOccurrenceMigrationBackfillPrefersCurrentSourceRevision(t *test
 	`, teamID, currentFragmentID).Scan(&canonicalOccurrences))
 	require.Equal(t, 2, canonicalOccurrences)
 }
+
+func TestEvidenceOccurrenceMigrationKeepsIndependentSourceLineagesSeparate(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, evidenceOccurrenceMigrationBase)
+	teamID, ownerID := insertMigrationTeamProfile(t, ctx, db)
+
+	var spaceID string
+	var generation int64
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT id::text, generation
+		FROM memory_spaces
+		WHERE team_id = $1::uuid AND kind = 'team_shared'
+		LIMIT 1
+	`, teamID).Scan(&spaceID, &generation))
+
+	sourceOneID, sourceTwoID := uuid.NewString(), uuid.NewString()
+	revisionOneID, revisionTwoID := uuid.NewString(), uuid.NewString()
+	ingestOneID, ingestTwoID := uuid.NewString(), uuid.NewString()
+	fragmentOneID, fragmentTwoID := uuid.NewString(), uuid.NewString()
+	const content = "identical bytes from independent source lineages"
+	const contentHash = "sha256:independent-source-lineages"
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		for _, ingest := range []struct{ id, key string }{
+			{ingestOneID, "independent-source-lineage-one"},
+			{ingestTwoID, "independent-source-lineage-two"},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO knowledge_ingests (
+					team_id, ingest_id, owner_profile_id, space_id, space_generation,
+					idempotency_key, request_hash, status, proposal, metadata
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5,
+				          $6, $6, 'completed', '{}'::jsonb, '{}'::jsonb)
+			`, teamID, ingest.id, ownerID, spaceID, generation, ingest.key); err != nil {
+				return err
+			}
+		}
+		for _, source := range []struct {
+			id, key, revisionID, ingestID, fragmentID string
+		}{
+			{sourceOneID, "document://independent-source-one", revisionOneID, ingestOneID, fragmentOneID},
+			{sourceTwoID, "document://independent-source-two", revisionTwoID, ingestTwoID, fragmentTwoID},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO evidence_sources (
+					team_id, source_id, owner_profile_id, source_key, source_kind, authority,
+					space_id, space_generation
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4,
+				          'document', 'primary', $5::uuid, $6)
+			`, teamID, source.id, ownerID, source.key, spaceID, generation); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO evidence_source_revisions (
+					team_id, source_revision_id, source_id, owner_profile_id,
+					revision_token, expected_previous_revision_token, content_hash,
+					envelope, space_id, space_generation
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'rev-1', '',
+				          $5, '{}'::jsonb, $6::uuid, $7)
+			`, teamID, source.revisionID, source.id, ownerID, contentHash, spaceID, generation); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE evidence_sources
+				SET current_revision_id = $1::uuid, current_revision_token = 'rev-1'
+				WHERE team_id = $2::uuid AND source_id = $3::uuid
+			`, source.revisionID, teamID, source.id); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO evidence_fragments (
+					team_id, fragment_id, ingest_id, owner_profile_id, source_id,
+					source_revision_id, space_id, space_generation, evidence_index,
+					content, content_hash, source_type, authority, source_ref, labels, metadata
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid,
+				          $7::uuid, $8, 0, $9, $10, 'document', 'primary', '',
+				          ARRAY[]::text[], '{}'::jsonb)
+			`, teamID, source.fragmentID, source.ingestID, ownerID, source.id, source.revisionID,
+				spaceID, generation, content, contentHash); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	runGooseUpTo(t, ctx, db, evidenceOccurrenceMigrationVersion)
+	var aliases int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT count(*)::int
+		FROM evidence_exact_aliases
+		WHERE team_id = $1::uuid AND alias_fragment_id IN ($2::uuid, $3::uuid)
+	`, teamID, fragmentOneID, fragmentTwoID).Scan(&aliases))
+	require.Zero(t, aliases)
+	var canonicalCount int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT count(DISTINCT canonical_fragment_id)::int
+		FROM evidence_occurrences
+		WHERE team_id = $1::uuid AND occurrence_id IN ($2::uuid, $3::uuid)
+	`, teamID, fragmentOneID, fragmentTwoID).Scan(&canonicalCount))
+	require.Equal(t, 2, canonicalCount)
+}

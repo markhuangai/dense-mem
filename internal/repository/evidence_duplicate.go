@@ -204,7 +204,7 @@ func (r *LedgerRepositoryImpl) ResolveRememberDuplicateCandidates(
 			if !ok {
 				return fmt.Errorf("%w: duplicate evidence content was not embedded", ErrInlineEmbeddingPlanMismatch)
 			}
-			candidates, err := listRememberDuplicateCandidatesInTx(ctx, tx, input, vector, contract)
+			candidates, err := listRememberDuplicateCandidatesInTx(ctx, tx, input, evidence, vector, contract)
 			if err != nil {
 				return err
 			}
@@ -283,6 +283,7 @@ func resolveRememberExactEvidenceInTx(
 	evidence EvidenceInput,
 ) (string, bool, error) {
 	spaceClause, args := rememberDuplicateSpacePredicate(input.SpaceID, input.SpaceGeneration, "fragment")
+	sourceClause := rememberDuplicateSourceLessCanonicalClause(evidence, "fragment")
 	row := tx.WithContext(ctx).Raw(`
 		WITH active_contract AS (
 			SELECT contract.embedding_contract_id, contract.dimensions
@@ -346,7 +347,7 @@ func resolveRememberExactEvidenceInTx(
 		        AND document.space_id IS NOT DISTINCT FROM fragment.space_id
 		        AND document.space_generation IS NOT DISTINCT FROM fragment.space_generation
 		  )
-		  `+spaceClause+`
+		  `+sourceClause+spaceClause+`
 		ORDER BY fragment.created_at ASC, fragment.fragment_id ASC
 		LIMIT 1
 	`, append([]any{input.TeamID, input.OwnerProfileID, evidence.ContentHash, evidence.Content}, args...)...).Row()
@@ -364,6 +365,7 @@ func listRememberDuplicateCandidatesInTx(
 	ctx context.Context,
 	tx *gorm.DB,
 	input RememberDuplicateCandidateInput,
+	evidence EvidenceInput,
 	vector []float32,
 	contract *ActiveSearchContract,
 ) ([]RememberDuplicateCandidate, error) {
@@ -372,6 +374,7 @@ func listRememberDuplicateCandidatesInTx(
 		return nil, err
 	}
 	spaceClause, args := rememberDuplicateSpacePredicate(input.SpaceID, input.SpaceGeneration, "fragment")
+	sourceClause := rememberDuplicateSourceLessCanonicalClause(evidence, "fragment")
 	queryArgs := []any{literal, input.TeamID, contract.EmbeddingContractID, contract.EmbeddingDimensions, input.OwnerProfileID}
 	queryArgs = append(queryArgs, args...)
 	queryArgs = append(queryArgs, literal, RememberDuplicateCandidateLimit)
@@ -422,7 +425,7 @@ func listRememberDuplicateCandidatesInTx(
 		      )
 		  )
 		  AND (space.kind = 'team_shared' OR fragment.owner_profile_id = ?::uuid)
-		  `+spaceClause+`
+		  `+sourceClause+spaceClause+`
 		ORDER BY document.embedding <=> ?::vector ASC, fragment.fragment_id ASC
 		LIMIT ?
 	`, queryArgs...).Rows()
@@ -554,6 +557,13 @@ func rememberEvidenceLifecycleBearing(item EvidenceInput) bool {
 		strings.TrimSpace(item.ExpectedPreviousRevisionToken) != ""
 }
 
+func rememberDuplicateSourceLessCanonicalClause(evidence EvidenceInput, tableAlias string) string {
+	if strings.TrimSpace(evidence.SourceKey) != "" || strings.TrimSpace(evidence.SourceRevisionToken) != "" {
+		return ""
+	}
+	return "AND " + tableAlias + ".source_id IS NULL\n"
+}
+
 func rememberDuplicateCandidateByIDInTx(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -565,6 +575,10 @@ func rememberDuplicateCandidateByIDInTx(
 		return RememberDuplicateCandidate{}, ErrRememberDuplicateCandidateStale
 	}
 	spaceClause, args := rememberDuplicateSpacePredicate(input.SpaceID, input.SpaceGeneration, "fragment")
+	var sourceClause string
+	if resolution.EvidenceIndex >= 0 && resolution.EvidenceIndex < len(input.Evidence) {
+		sourceClause = rememberDuplicateSourceLessCanonicalClause(input.Evidence[resolution.EvidenceIndex], "fragment")
+	}
 	queryArgs := []any{input.TeamID, resolution.CandidateFragmentID, resolution.CandidateOwnerID, contract.EmbeddingContractID, contract.EmbeddingDimensions}
 	queryArgs = append(queryArgs, args...)
 	queryArgs = append(queryArgs, input.OwnerProfileID)
@@ -614,7 +628,7 @@ func rememberDuplicateCandidateByIDInTx(
 		            AND source.current_revision_id = fragment.source_revision_id
 		      )
 		  )
-		  `+spaceClause+`
+		  `+sourceClause+spaceClause+`
 		  AND (fragment.owner_profile_id = ?::uuid OR EXISTS (
 		      SELECT 1 FROM memory_spaces AS space
 		      WHERE space.team_id = fragment.team_id

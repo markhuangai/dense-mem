@@ -100,12 +100,14 @@ func TestRecallExpansionFollowsHistoricalAliasSupportToCanonicalEvidence(t *test
 		TeamID: teamID, RelationshipID: decision.Relationship.RelationshipID,
 	})
 	require.NoError(t, err)
-	require.Len(t, trace.EvidenceSupports, 1)
-	require.Equal(t, canonical.Evidence[0].FragmentID, trace.EvidenceSupports[0].FragmentID)
-	require.Equal(t, alias.Evidence[0].FragmentID, trace.EvidenceSupports[0].OccurrenceID)
-	require.Len(t, trace.EvidenceFragments, 1)
-	require.Equal(t, canonical.Evidence[0].FragmentID, trace.EvidenceFragments[0].FragmentID)
-	require.Equal(t, alias.Evidence[0].FragmentID, trace.EvidenceFragments[0].OccurrenceID)
+	require.Len(t, trace.EvidenceSupports, 2)
+	require.Len(t, trace.EvidenceFragments, 2)
+	require.ElementsMatch(t, []string{alias.Evidence[0].FragmentID, aliasTwo.Evidence[0].FragmentID}, []string{
+		trace.EvidenceSupports[0].OccurrenceID, trace.EvidenceSupports[1].OccurrenceID,
+	})
+	for _, fragment := range trace.EvidenceFragments {
+		require.Equal(t, canonical.Evidence[0].FragmentID, fragment.FragmentID)
+	}
 
 	_, err = ledgerRepo.RetractEvidence(ctx, RetractEvidenceInput{
 		TeamID: teamID, OwnerProfileID: ownerID, EvidenceIDs: []string{canonical.Evidence[0].FragmentID},

@@ -1,19 +1,9 @@
--- Lock/rewrite impact: occurrence and alias tables are additive. Historical
--- rows are copied in bounded batches by the migration procedure below. New
--- lineage columns are nullable during the copy and become required after the
--- backfill completes. Derived alias search documents are removed; canonical
--- evidence and append-only source history are never deleted.
--- RLS impact: occurrence and alias reads remain team-scoped. Runtime inserts
--- require the authenticated occurrence owner; migration/system mode is used
--- only for the historical copy and constraint installation.
--- Backfill: every historical fragment receives one occurrence. Exact aliases
--- are selected by owner, memory space, content hash, byte content, and stable
--- creation order. The copy is resumable through primary-key existence checks
--- and processes at most 500 fragments per batch.
--- Backward compatibility: old fragment IDs remain valid and their history is
--- retained; canonical reads suppress aliases through the new mapping. A
--- current source revision wins canonical selection before creation ordering.
--- Rollback: Down refuses once occurrence or alias history exists.
+-- Lock/rewrite impact: additive occurrence/alias tables are copied in resumable
+-- 500-row batches. RLS impact: reads stay team-scoped and migration writes use
+-- system mode. Backfill selects exact aliases by owner, space, source lineage,
+-- content, hash, and creation order; current source revisions win. Backward compatibility:
+-- historical aliases remain for known_at recall. Rollback refuses
+-- once occurrence or alias history exists.
 
 -- +goose NO TRANSACTION
 
@@ -193,9 +183,8 @@ ALTER TABLE evidence_lifecycle_events
     ADD COLUMN IF NOT EXISTS target_occurrence_id UUID NULL,
     ADD COLUMN IF NOT EXISTS replacement_occurrence_id UUID NULL;
 
--- Keep direct legacy fixtures and older maintenance writers valid while the
--- new occurrence fields are rolled out. Runtime Remember writes provide the
--- values explicitly; these defaults only bind the historical self-occurrence.
+-- Keep direct legacy writers valid while occurrence fields roll out; defaults
+-- bind only the historical self-occurrence (Remember supplies explicit values).
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION dense_mem_evidence_fragment_occurrence_defaults()
 RETURNS TRIGGER AS $$
@@ -281,9 +270,8 @@ CREATE TRIGGER evidence_lifecycle_events_occurrence_defaults
     BEFORE INSERT ON evidence_lifecycle_events
     FOR EACH ROW EXECUTE FUNCTION dense_mem_evidence_lifecycle_occurrence_defaults();
 
--- Retain the existing legal-hold exception and add only the gated lineage
--- backfill. The flag is transaction-local and is cleared before migration
--- completion, so application writes remain append-only.
+-- Retain legal-hold handling and add only the transaction-local lineage
+-- backfill gate, which is cleared before application writes resume.
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION prevent_append_only_mutation()
 RETURNS TRIGGER AS $$
@@ -422,9 +410,8 @@ CREATE POLICY evidence_lifecycle_events_occurrence_backfill_update ON evidence_l
            AND target_occurrence_id IS NULL)
     WITH CHECK (current_setting('app.tx_mode', true) = 'migration' AND current_setting('app.evidence_occurrence_backfill', true) = 'true'
                 AND target_occurrence_id IS NOT NULL);
--- Existing append-only rows are linked to their historical self-occurrence.
--- The shared trigger permits only these new-column assignments while the
--- migration-local flag is set.
+-- Link existing append-only rows to historical self-occurrences through the
+-- shared trigger while the migration-local flag is set.
 -- +goose StatementBegin
 SELECT set_config('app.tx_mode', 'migration', true);
 SELECT set_config('app.current_team_id', '', true);
@@ -432,9 +419,8 @@ SELECT set_config('app.current_profile_id', '', true);
 SELECT set_config('app.allowed_space_ids', '', true);
 SELECT set_config('app.evidence_occurrence_backfill', 'true', true);
 -- +goose StatementEnd
--- Select aliases and self-occurrences in deterministic, resumable batches.
--- Each procedure commit clears the migration-local settings, so every loop
--- re-establishes the narrow RLS and append-only gates before touching rows.
+-- Select aliases and self-occurrences in deterministic, resumable batches;
+-- each commit re-establishes migration RLS and append-only gates.
 -- +goose StatementBegin
 CREATE OR REPLACE PROCEDURE dense_mem_backfill_evidence_occurrences_20260903010001()
 LANGUAGE plpgsql
@@ -485,7 +471,8 @@ BEGIN
                    row_number() OVER (
                        PARTITION BY fragment.team_id, fragment.owner_profile_id,
                                     fragment.space_id, fragment.space_generation,
-                                    fragment.content_hash, fragment.content
+                                    fragment.content_hash, fragment.content,
+                                    fragment.source_id
                        ORDER BY
                            CASE
                                WHEN fragment.source_id IS NULL
@@ -498,7 +485,8 @@ BEGIN
                    first_value(fragment.fragment_id) OVER (
                        PARTITION BY fragment.team_id, fragment.owner_profile_id,
                                     fragment.space_id, fragment.space_generation,
-                                    fragment.content_hash, fragment.content
+                                    fragment.content_hash, fragment.content,
+                                    fragment.source_id
                        ORDER BY
                            CASE
                                WHEN fragment.source_id IS NULL
@@ -518,7 +506,8 @@ BEGIN
                    ) OVER (
                        PARTITION BY fragment.team_id, fragment.owner_profile_id,
                                     fragment.space_id, fragment.space_generation,
-                                    fragment.content_hash, fragment.content
+                                    fragment.content_hash, fragment.content,
+                                    fragment.source_id
                        ORDER BY
                            CASE
                                WHEN fragment.source_id IS NULL
@@ -616,23 +605,10 @@ $procedure$;
 -- +goose StatementEnd
 CALL dense_mem_backfill_evidence_occurrences_20260903010001();
 DROP PROCEDURE dense_mem_backfill_evidence_occurrences_20260903010001();
--- Search projections for historical aliases are derived state, not evidence
--- history. Remove them together with their jobs before canonical reads resume.
+-- Retain alias search projections for historical known_at recall while runtime
+-- search excludes them; remove their embedding jobs in bounded commits.
 -- +goose StatementBegin
-SELECT set_config('app.tx_mode', 'migration', true);
-DROP POLICY IF EXISTS search_documents_alias_cleanup_delete ON search_documents;
-CREATE POLICY search_documents_alias_cleanup_delete ON search_documents
-    FOR DELETE USING (
-        current_setting('app.tx_mode', true) = 'migration'
-        AND source_kind = 'evidence'
-        AND EXISTS (
-            SELECT 1
-            FROM evidence_exact_aliases AS alias
-            WHERE alias.team_id = search_documents.team_id
-              AND alias.alias_fragment_id = search_documents.source_id
-        )
-    );
-DO $embedding_jobs_alias_cleanup$
+DO $embedding_jobs_alias_cleanup_policy$
 BEGIN
     IF to_regclass('public.embedding_jobs') IS NOT NULL THEN
         EXECUTE 'DROP POLICY IF EXISTS embedding_jobs_alias_cleanup_delete ON embedding_jobs';
@@ -652,38 +628,61 @@ BEGIN
                     )
                 )
         $policy$;
-        EXECUTE $delete$
+    END IF;
+END
+$embedding_jobs_alias_cleanup_policy$;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE OR REPLACE PROCEDURE dense_mem_cleanup_evidence_alias_embedding_jobs_20260903010001()
+LANGUAGE plpgsql
+AS $procedure$
+DECLARE
+    affected_rows INTEGER;
+BEGIN
+    IF to_regclass('public.embedding_jobs') IS NOT NULL THEN
+        LOOP
+            PERFORM set_config('app.tx_mode', 'migration', true);
+            PERFORM set_config('app.current_team_id', '', true);
+            PERFORM set_config('app.current_profile_id', '', true);
+            WITH batch AS MATERIALIZED (
+                SELECT job.ctid
+                FROM embedding_jobs AS job
+                JOIN search_documents AS document
+                  ON document.team_id = job.team_id
+                 AND document.search_document_id = job.search_document_id
+                 AND document.source_kind = 'evidence'
+                JOIN evidence_exact_aliases AS alias
+                  ON alias.team_id = document.team_id
+                 AND alias.alias_fragment_id = document.source_id
+                ORDER BY job.team_id, job.embedding_job_id
+                LIMIT 500
+            )
             DELETE FROM embedding_jobs AS job
-            USING search_documents AS document
-            WHERE document.team_id = job.team_id
-              AND document.search_document_id = job.search_document_id
-              AND document.source_kind = 'evidence'
-              AND EXISTS (
-                  SELECT 1 FROM evidence_exact_aliases AS alias
-                  WHERE alias.team_id = document.team_id
-                    AND alias.alias_fragment_id = document.source_id
-              )
-        $delete$;
+            USING batch
+            WHERE job.ctid = batch.ctid;
+            GET DIAGNOSTICS affected_rows = ROW_COUNT;
+            COMMIT;
+            EXIT WHEN affected_rows = 0;
+        END LOOP;
+    END IF;
+END
+$procedure$;
+-- +goose StatementEnd
+CALL dense_mem_cleanup_evidence_alias_embedding_jobs_20260903010001();
+DROP PROCEDURE dense_mem_cleanup_evidence_alias_embedding_jobs_20260903010001();
+-- +goose StatementBegin
+DO $embedding_jobs_alias_cleanup_drop$
+BEGIN
+    IF to_regclass('public.embedding_jobs') IS NOT NULL THEN
         EXECUTE 'DROP POLICY IF EXISTS embedding_jobs_alias_cleanup_delete ON embedding_jobs';
     END IF;
 END
-$embedding_jobs_alias_cleanup$;
-DELETE FROM search_documents AS document
-WHERE document.source_kind = 'evidence'
-  AND EXISTS (
-      SELECT 1 FROM evidence_exact_aliases AS alias
-      WHERE alias.team_id = document.team_id
-        AND alias.alias_fragment_id = document.source_id
-  );
-DROP POLICY IF EXISTS search_documents_alias_cleanup_delete ON search_documents;
+$embedding_jobs_alias_cleanup_drop$;
 -- +goose StatementEnd
--- Occurrence identity is part of a support span. Keep the existing constraint
--- name so the runtime ON CONFLICT path remains stable while allowing the same
--- canonical fragment/span to be supported by distinct occurrences.
--- PostgreSQL truncates long generated constraint names. Match the legacy
--- owner-scoped foreign keys by their definitions before installing the
--- occurrence-aware replacements, so cross-owner provenance cannot remain
--- blocked by an unaddressable truncated name.
+-- Occurrence identity is part of a support span; preserve the constraint name
+-- for runtime ON CONFLICT. Match legacy foreign keys by definition because
+-- PostgreSQL truncates generated names before installing occurrence-aware ones.
 -- +goose StatementBegin
 DO $dense_mem_occurrence_legacy_fk_cleanup$
 DECLARE
@@ -913,9 +912,8 @@ DROP TABLE IF EXISTS evidence_occurrences;
 
 ALTER TABLE evidence_fragments DROP COLUMN IF EXISTS force_insert;
 
--- Restore the append-only owner used by the pre-occurrence schema. The legal
--- hold and known-evidence backfill exceptions are retained for the migrations
--- that remain installed below this one.
+-- Restore the pre-occurrence append-only owner while retaining exceptions used
+-- by migrations that remain installed below this one.
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION prevent_append_only_mutation()
 RETURNS TRIGGER AS $$

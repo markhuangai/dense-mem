@@ -10,7 +10,7 @@ func rememberPublicResult(input SynchronousRememberCommitInput, evidence []Evide
 		"evidence": []map[string]any{}, "relationship_results": []map[string]any{},
 		"errors": []map[string]any{},
 	}
-	if len(semantic.SearchDocuments) > 0 {
+	if len(semantic.SearchDocuments) > 0 || rememberHasReusedEvidence(evidence) {
 		result["search_state"] = string(domain.SearchProjectionCurrent)
 	}
 	evidenceResults := make([]map[string]any, 0, len(evidence))
@@ -47,4 +47,13 @@ func rememberPublicResult(input SynchronousRememberCommitInput, evidence []Evide
 	}
 	result["relationship_results"] = relationshipResults
 	return result
+}
+
+func rememberHasReusedEvidence(evidence []EvidenceFragment) bool {
+	for _, item := range evidence {
+		if item.FragmentID != "" && item.FragmentID != item.SubmittedFragmentID {
+			return true
+		}
+	}
+	return false
 }

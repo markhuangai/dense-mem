@@ -153,6 +153,8 @@ func TestRememberDuplicateExactReuseCreatesOneCanonicalAndTwoOccurrences(t *test
 	require.True(t, ok)
 	require.Len(t, evidenceResult, 1)
 	require.Equal(t, "stored", evidenceResult[0]["disposition"])
+	require.Equal(t, "current", result.PublicResult["search_state"])
+	require.Equal(t, "current", evidenceResult[0]["search_state"])
 
 	require.EqualValues(t, 1, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid`, teamID))
 	require.EqualValues(t, 2, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_occurrences WHERE team_id = ?::uuid`, teamID))
@@ -313,6 +315,62 @@ func TestRememberDuplicateForceAndLifecycleBearingEvidenceStayNew(t *testing.T) 
 
 	require.EqualValues(t, 4, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid`, teamID))
 	require.EqualValues(t, 1, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_sources WHERE team_id = ?::uuid`, teamID))
+}
+
+func TestRememberDuplicateSourceLessCanonicalStaysIndependentFromSourceAdvance(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "duplicate-source-less-canonical", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "duplicate-source-less-canonical-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-source-less-canonical-owner")
+	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
+	repo := NewLedgerRepository(appDB, rls)
+
+	content := "source-backed content must not become a source-less canonical"
+	source := duplicateRememberInput(teamID, ownerID, "duplicate-source-less-source", content, false)
+	source.SpaceID, source.SpaceGeneration = spaceID, generation
+	source.Evidence[0].SourceKey = "document://duplicate-source-less-canonical"
+	source.Evidence[0].SourceRevisionToken = "rev-1"
+	source.Evidence[0].SourceRevisionContentHash = source.Evidence[0].ContentHash
+	commitDuplicateFixture(t, ctx, repo, source)
+
+	sourceLess := duplicateRememberInput(teamID, ownerID, "duplicate-source-less-submission", content, false)
+	sourceLess.SpaceID, sourceLess.SpaceGeneration = spaceID, generation
+	resolved, err := resolveDuplicateFixture(t, ctx, repo, sourceLess)
+	require.NoError(t, err)
+	require.False(t, resolved.Exact[0].Exact)
+	require.Len(t, resolved.Candidates, 1)
+	require.Empty(t, resolved.Candidates[0].Candidates)
+	sourceLess.DuplicateResolutions = resolved.Exact
+	_, err = repo.CommitRememberWithEmbeddings(ctx, sourceLess, duplicatePlanEmbeddingsForInput(t, ctx, repo, sourceLess))
+	require.NoError(t, err)
+
+	require.EqualValues(t, 2, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid`, teamID))
+	var sourceLessCanonical bool
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT source_id IS NULL
+			FROM evidence_fragments
+			WHERE team_id = ?::uuid AND fragment_id = ?::uuid
+		`, teamID, sourceLess.Evidence[0].FragmentID).Row().Scan(&sourceLessCanonical)
+	}))
+	require.True(t, sourceLessCanonical)
+
+	_, err = repo.AdvanceSourceRevision(ctx, AdvanceSourceRevisionInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: spaceID, SpaceGeneration: generation,
+		SourceKey: source.Evidence[0].SourceKey, SourceKind: "document", Authority: "primary",
+		RevisionToken: "rev-2", ExpectedPreviousRevisionToken: "rev-1",
+		ContentHash: sha256Hex("source-backed content revision two"), Envelope: map[string]any{},
+	})
+	require.NoError(t, err)
+
+	recalled, err := NewSearchRepository(appDB, rls).RecallEvidence(ctx, RecallEvidenceInput{
+		TeamID: teamID, Query: "source-less canonical", Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, recalled.Results, 1)
+	require.Equal(t, sourceLess.Evidence[0].FragmentID, recalled.Results[0].EvidenceID)
 }
 
 func commitDuplicateWithNormalPlan(t *testing.T, ctx context.Context, repo *LedgerRepositoryImpl, input SynchronousRememberCommitInput) {
@@ -740,151 +798,6 @@ func TestRememberDuplicateSemanticReuseSerializesWithConcurrentQuarantine(t *tes
 	require.EqualValues(t, 0, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_occurrences WHERE team_id = ?::uuid AND ingest_id = ?::uuid`, teamID, submitted.IngestID))
 }
 
-func TestRememberDuplicateExactReuseRejectsConcurrentSourceAdvance(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	insertSearchTestContract(t, adminDB, rls, "duplicate-exact-source-race", 2, "exact", "")
-	teamID := createLedgerTeam(t, adminDB, rls, "duplicate-exact-source-race-team")
-	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-exact-source-race-owner")
-	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := NewLedgerRepository(appDB, rls)
-
-	content := "source-backed exact candidate"
-	candidate := duplicateRememberInput(teamID, ownerID, "duplicate-exact-source-race-candidate", content, false)
-	candidate.SpaceID, candidate.SpaceGeneration = spaceID, generation
-	candidate.Evidence[0].SourceKey = "document://duplicate-exact-source-race"
-	candidate.Evidence[0].SourceRevisionToken = "rev-1"
-	candidate.Evidence[0].SourceRevisionContentHash = candidate.Evidence[0].ContentHash
-	commitDuplicateFixture(t, ctx, repo, candidate)
-	submitted := duplicateRememberInput(teamID, ownerID, "duplicate-exact-source-race-submitted", content, false)
-	submitted.SpaceID, submitted.SpaceGeneration = spaceID, generation
-	resolved, err := resolveDuplicateFixture(t, ctx, repo, submitted)
-	require.NoError(t, err)
-	require.True(t, resolved.Exact[0].Exact, "resolved=%+v candidates=%+v", resolved.Exact[0], resolved.Candidates)
-	submitted.DuplicateResolutions = resolved.Exact
-
-	lockHeld := make(chan struct{})
-	release := make(chan struct{})
-	advanceErr := make(chan error, 1)
-	go func() {
-		advanceErr <- rls.WithTeamProfileTx(ctx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
-			_, err := advanceSourceRevisionInTx(ctx, tx, AdvanceSourceRevisionInput{
-				TeamID: teamID, OwnerProfileID: ownerID, SpaceID: spaceID, SpaceGeneration: generation,
-				SourceKey: candidate.Evidence[0].SourceKey, SourceKind: "document", Authority: "primary",
-				RevisionToken: "rev-2", ExpectedPreviousRevisionToken: "rev-1",
-				ContentHash: sha256Hex("source-backed exact candidate revision 2"), Envelope: map[string]any{},
-			}, nil)
-			if err != nil {
-				return err
-			}
-			close(lockHeld)
-			<-release
-			return nil
-		})
-	}()
-	select {
-	case <-lockHeld:
-	case err := <-advanceErr:
-		require.NoError(t, err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for source revision lock")
-	}
-
-	commitDone := make(chan error, 1)
-	go func() {
-		_, commitErr := repo.CommitRememberWithEmbeddings(ctx, submitted, nil)
-		commitDone <- commitErr
-	}()
-	var commitErr error
-	select {
-	case commitErr = <-commitDone:
-	case <-time.After(100 * time.Millisecond):
-	}
-	close(release)
-	require.NoError(t, <-advanceErr)
-	if commitErr == nil {
-		commitErr = <-commitDone
-	}
-	require.ErrorIs(t, commitErr, ErrRememberDuplicateCandidateStale)
-	require.EqualValues(t, 0, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM knowledge_ingests WHERE team_id = ?::uuid AND ingest_id = ?::uuid`, teamID, submitted.IngestID))
-	require.EqualValues(t, 0, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_occurrences WHERE team_id = ?::uuid AND ingest_id = ?::uuid`, teamID, submitted.IngestID))
-}
-
-func TestRememberDuplicateSemanticReuseRejectsConcurrentSourceAdvance(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-	ctx := context.Background()
-	insertSearchTestContract(t, adminDB, rls, "duplicate-semantic-source-race", 2, "exact", "")
-	teamID := createLedgerTeam(t, adminDB, rls, "duplicate-semantic-source-race-team")
-	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-semantic-source-race-a")
-	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "duplicate-semantic-source-race-b")
-	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
-	repo := NewLedgerRepository(appDB, rls)
-
-	candidate := duplicateRememberInput(teamID, ownerB, "duplicate-semantic-source-race-candidate", "source-backed semantic candidate", false)
-	candidate.SpaceID, candidate.SpaceGeneration = spaceID, generation
-	candidate.Evidence[0].SourceKey = "document://duplicate-semantic-source-race"
-	candidate.Evidence[0].SourceRevisionToken = "rev-1"
-	candidate.Evidence[0].SourceRevisionContentHash = candidate.Evidence[0].ContentHash
-	commitDuplicateFixture(t, ctx, repo, candidate)
-	submitted := duplicateRememberInput(teamID, ownerA, "duplicate-semantic-source-race-submitted", "a paraphrase of the source candidate", false)
-	submitted.SpaceID, submitted.SpaceGeneration = spaceID, generation
-	resolved, err := resolveDuplicateFixture(t, ctx, repo, submitted)
-	require.NoError(t, err)
-	require.Len(t, resolved.Candidates, 1)
-	submitted.DuplicateResolutions = resolved.Exact
-	submitted.DuplicateResolutions[0].Disposition = "reuse"
-	submitted.DuplicateResolutions[0].CandidateFragmentID = candidate.Evidence[0].FragmentID
-	submitted.DuplicateResolutions[0].CandidateOwnerID = ownerB
-
-	lockHeld := make(chan struct{})
-	release := make(chan struct{})
-	advanceErr := make(chan error, 1)
-	go func() {
-		advanceErr <- rls.WithTeamProfileTx(ctx, appDB, teamID, ownerB, func(tx *gorm.DB) error {
-			_, err := advanceSourceRevisionInTx(ctx, tx, AdvanceSourceRevisionInput{
-				TeamID: teamID, OwnerProfileID: ownerB, SpaceID: spaceID, SpaceGeneration: generation,
-				SourceKey: candidate.Evidence[0].SourceKey, SourceKind: "document", Authority: "primary",
-				RevisionToken: "rev-2", ExpectedPreviousRevisionToken: "rev-1",
-				ContentHash: sha256Hex("source-backed semantic candidate revision 2"), Envelope: map[string]any{},
-			}, nil)
-			if err != nil {
-				return err
-			}
-			close(lockHeld)
-			<-release
-			return nil
-		})
-	}()
-	select {
-	case <-lockHeld:
-	case err := <-advanceErr:
-		require.NoError(t, err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for source revision lock")
-	}
-
-	commitDone := make(chan error, 1)
-	go func() {
-		_, commitErr := repo.CommitRememberWithEmbeddings(ctx, submitted, nil)
-		commitDone <- commitErr
-	}()
-	var commitErr error
-	select {
-	case commitErr = <-commitDone:
-	case <-time.After(100 * time.Millisecond):
-	}
-	close(release)
-	require.NoError(t, <-advanceErr)
-	if commitErr == nil {
-		commitErr = <-commitDone
-	}
-	require.ErrorIs(t, commitErr, ErrRememberDuplicateCandidateStale)
-	require.EqualValues(t, 0, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM knowledge_ingests WHERE team_id = ?::uuid AND ingest_id = ?::uuid`, teamID, submitted.IngestID))
-	require.EqualValues(t, 0, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_occurrences WHERE team_id = ?::uuid AND ingest_id = ?::uuid`, teamID, submitted.IngestID))
-}
-
 func TestRememberDuplicateExactReuseRejectsConcurrentPrivateSpaceSeal(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -942,13 +855,15 @@ func TestRememberDuplicateExactReuseRejectsConcurrentPrivateSpaceSeal(t *testing
 		commitDone <- commitErr
 	}()
 	var commitErr error
+	var received bool
 	select {
 	case commitErr = <-commitDone:
+		received = true
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(release)
 	require.NoError(t, <-sealErr)
-	if commitErr == nil {
+	if !received {
 		commitErr = <-commitDone
 	}
 	require.ErrorIs(t, commitErr, ErrRememberDuplicateCandidateStale)

@@ -32,3 +32,18 @@ func TestRememberPublicResultUsesCanonicalCompletedProjection(t *testing.T) {
 	require.Empty(t, terminal.Errors)
 	require.Equal(t, "sha256:result", terminal.Evidence[0].ContentHash)
 }
+
+func TestRememberPublicResultReportsCurrentProjectionForReusedEvidence(t *testing.T) {
+	input := SynchronousRememberCommitInput{IngestID: uuid.NewString()}
+	canonicalID := uuid.NewString()
+	result := rememberPublicResult(input, []EvidenceFragment{{
+		FragmentID: canonicalID, SubmittedFragmentID: uuid.NewString(), EvidenceIndex: 0,
+		ContentHash: "sha256:reused",
+	}}, &submissionSemanticCommitState{}, nil)
+
+	require.Equal(t, "current", result["search_state"])
+	evidence, ok := result["evidence"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, evidence, 1)
+	require.Equal(t, "current", evidence[0]["search_state"])
+}
