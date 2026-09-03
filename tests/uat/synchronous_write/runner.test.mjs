@@ -41,7 +41,7 @@ test("synchronous-write provider remains a project-scoped Compose helper", async
   const compose = await readFile(new URL("../../../scripts/e2e-stack.yml", import.meta.url), "utf8");
   const stack = await readFile(new URL("../../../scripts/e2e-host-controller-stack.sh", import.meta.url), "utf8");
   assert.match(compose, /synchronous-write-provider-files/);
-  assert.match(compose, /profiles: \[synchronous_write\]/);
+  assert.match(compose, /profiles: \[synchronous_write, verifier\]/);
   assert.match(stack, /provider-fixture\.mjs/);
   assert.match(stack, /DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS/);
 });

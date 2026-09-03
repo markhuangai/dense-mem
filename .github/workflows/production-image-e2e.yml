@@ -14,7 +14,7 @@ permissions:
 jobs:
   authorize:
     name: Authorize and resolve production image
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
       image: ${{ steps.resolve.outputs.image }}
@@ -390,7 +390,7 @@ jobs:
     name: Aggregate production E2E results
     needs: [authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup, shared-start, shared, shared-stop]
     if: always()
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Publish workflow summary

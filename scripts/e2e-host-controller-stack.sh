@@ -241,6 +241,14 @@ const lines = ["# dense-mem-ci-e2e.v1 generated helper overlay", "services:"];
 const serverEnvironment = new Map();
 const serverVolumes = [];
 const helperServices = [];
+if (has("verifier")) {
+  for (const [key, value] of Object.entries({
+    AI_VERIFIER_API_URL: "http://synchronous-write-provider:8787/v1",
+    AI_VERIFIER_API_KEY: "dense-mem-e2e-verifier-key",
+    AI_VERIFIER_MODEL: "dense-mem-e2e-verifier",
+    AI_VERIFIER_DISABLE_TEMPERATURE: "true",
+  })) serverEnvironment.set(key, value);
+}
 if (has("conflict_provider")) {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://conflict-provider:8081/v1",
@@ -356,12 +364,12 @@ start_stack_helpers() {
     docker cp "${source_dir}/tests/uat/conflict_openai_stub.mjs" "${conflict}:/e2e/conflict_openai_stub.mjs" >/dev/null
     docker exec -d "$conflict" node /e2e/conflict_openai_stub.mjs >/dev/null
   fi
-  if has_helper "$helpers" synchronous_write; then
-    local synchronous
-    synchronous="$(ci_compose ps -q synchronous-write-provider)"
-    [[ -n "$synchronous" ]] || fail "synchronous-write provider helper was not created"
-    docker cp "${source_dir}/tests/uat/synchronous_write/provider-fixture.mjs" "${synchronous}:/e2e/provider-fixture.mjs" >/dev/null
-    docker exec -d "$synchronous" node /e2e/provider-fixture.mjs >/dev/null
+  if has_helper "$helpers" verifier || has_helper "$helpers" synchronous_write; then
+    local provider
+    provider="$(ci_compose ps -q synchronous-write-provider)"
+    [[ -n "$provider" ]] || fail "deterministic provider helper was not created"
+    docker cp "${source_dir}/tests/uat/synchronous_write/provider-fixture.mjs" "${provider}:/e2e/provider-fixture.mjs" >/dev/null
+    docker exec -d "$provider" node /e2e/provider-fixture.mjs >/dev/null
   fi
 }
 

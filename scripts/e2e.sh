@@ -30,7 +30,7 @@ command -v docker >/dev/null 2>&1 || fail "docker is unavailable"
 command -v node >/dev/null 2>&1 || fail "node is unavailable"
 command -v git >/dev/null 2>&1 || fail "git is unavailable"
 
-if [[ ! -f "$ENV_FILE" && -f "${ROOT_DIR}/.env" ]]; then
+if [[ -z "${DENSE_MEM_E2E_ENV_FILE:-}" && ! -f "$ENV_FILE" && -f "${ROOT_DIR}/.env" ]]; then
   ENV_FILE="${ROOT_DIR}/.env"
 fi
 [[ -f "$ENV_FILE" ]] || fail "missing environment file: $ENV_FILE"

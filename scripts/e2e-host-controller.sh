@@ -182,7 +182,13 @@ redact_diagnostics() {
 docker_socket_path() {
   local docker_host docker_socket
   if [[ "${DENSE_MEM_CI_LOCAL:-0}" == "1" ]]; then
-    docker_host="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+    if [[ -n "${DOCKER_CONTEXT:-}" ]]; then
+      docker_host="$(docker context inspect "$DOCKER_CONTEXT" --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+    elif [[ -n "${DOCKER_HOST:-}" ]]; then
+      docker_host="$DOCKER_HOST"
+    else
+      docker_host="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
+    fi
   else
     docker_host="$(env_value DOCKER_HOST 2>/dev/null || true)"
   fi

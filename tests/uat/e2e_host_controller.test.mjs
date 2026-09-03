@@ -187,6 +187,7 @@ esac
     assert.equal((await readFile(controllerLog, "utf8")).length, 0);
     await runFailure("future_scenario", baseEnv, /not audited for local production execution/);
     assert.equal((await readFile(controllerLog, "utf8")).length, 0);
+    await writeFile(join(localRoot, ".env"), "CONTROL_PORTAL_TOKEN=repository-fallback-token\n");
     const missingEnv = { ...baseEnv, DENSE_MEM_E2E_ENV_FILE: join(fixture, "missing.env") };
     await runFailure("mcp_boundaries", missingEnv, /missing environment file/);
     assert.equal((await readFile(controllerLog, "utf8")).length, 0);
@@ -195,7 +196,7 @@ esac
   }
 });
 
-test("local worktree transfer executes the source filter and excludes secrets and generated artifacts", async () => {
+test("local controller honors the selected daemon while filtering worktree source", async () => {
   assert.match(controller, /telemetry-scrape-token/);
   assert.match(controller, /test-results/);
   assert.match(controller, /playwright-report/);
@@ -276,7 +277,7 @@ esac
       "bash",
       [
         "-c",
-        'set -euo pipefail; source "$1"; resolve_image_ref "ghcr.io/markhuangai/dense-mem:local-test"; [[ "$DENSE_MEM_CI_RESOLVED_IMAGE" == ghcr.io/markhuangai/dense-mem:local-test ]]; [[ "$DENSE_MEM_CI_RESOLVED_DIGEST" == sha256:2222222222222222222222222222222222222222222222222222222222222222 ]]; copy_worktree_source "$2" "$3"',
+        'set -euo pipefail; source "$1"; [[ "$(docker_socket_path)" == /explicit/docker.sock ]]; resolve_image_ref "ghcr.io/markhuangai/dense-mem:local-test"; [[ "$DENSE_MEM_CI_RESOLVED_IMAGE" == ghcr.io/markhuangai/dense-mem:local-test ]]; [[ "$DENSE_MEM_CI_RESOLVED_DIGEST" == sha256:2222222222222222222222222222222222222222222222222222222222222222 ]]; copy_worktree_source "$2" "$3"',
         "worktree-filter-test",
         join(library, "e2e-host-controller.sh"),
         "test-container",
@@ -288,6 +289,8 @@ esac
           PATH: `${bin}:${process.env.PATH}`,
           DENSE_MEM_DOCKER_CP_ARCHIVE: archiveList,
           DENSE_MEM_CI_LOCAL: "1",
+          DOCKER_HOST: "unix:///explicit/docker.sock",
+          DOCKER_CONTEXT: "",
         },
       },
     );
@@ -305,6 +308,7 @@ esac
 
 test("shared PostgreSQL provisioning keeps runtime identity least-privileged", () => {
   assert.match(postgres, /DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER="densemem_e2e_bootstrap"/);
+  assert.match(postgres, /export DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD/);
   assert.match(postgres, /CREATE EXTENSION IF NOT EXISTS vector/);
   assert.match(postgres, /NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/);
   assert.match(postgres, /ALTER DATABASE :"runtime_database" OWNER TO densemem_e2e_database_owner/);
@@ -316,13 +320,25 @@ test("shared PostgreSQL provisioning keeps runtime identity least-privileged", (
 
 test("Compose stack has no host bindings and carries only project-scoped inputs", () => {
   assert.doesNotMatch(compose, /^\s+ports:/m);
-  assert.match(compose, /POSTGRES_USER: densemem_e2e_bootstrap/);
+  assert.match(compose, /POSTGRES_USER: \$\{DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER:/);
+  assert.match(compose, /POSTGRES_PASSWORD: \$\{DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD:/);
   assert.match(compose, /env_file:\n\s+- \$\{DENSE_MEM_CI_ENV_FILE/);
   assert.match(compose, /prometheus-config:/);
   assert.match(compose, /telemetry-scrape-token:/);
   assert.match(compose, /entra-mock:/);
   assert.match(compose, /profiles: \[oauth_compatibility\]/);
   assert.match(compose, /external: true/);
+});
+
+test("verifier scenarios use the deterministic provider without replacing embeddings", () => {
+  assert.match(compose, /profiles: \[synchronous_write, verifier\]/);
+  const verifierStart = stack.indexOf('if (has("verifier"))');
+  const verifierEnd = stack.indexOf('if (has("conflict_provider"))', verifierStart);
+  assert.ok(verifierStart >= 0 && verifierEnd > verifierStart);
+  const verifierBlock = stack.slice(verifierStart, verifierEnd);
+  assert.match(verifierBlock, /AI_VERIFIER_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
+  assert.doesNotMatch(verifierBlock, /\bAI_API_URL:/);
+  assert.match(stack, /has_helper "\$helpers" verifier \|\| has_helper "\$helpers" synchronous_write/);
 });
 
 test("scenario runner executes Entra and diagnostics through the shared path", () => {

@@ -2,8 +2,8 @@ services:
   postgres:
     image: pgvector/pgvector:0.8.2-pg18-trixie
     environment:
-      POSTGRES_USER: densemem_e2e_bootstrap
-      POSTGRES_PASSWORD: dense-mem-e2e-bootstrap-password
+      POSTGRES_USER: ${DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER:?DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD:?DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-densemem}
     volumes:
       - postgres-data:/var/lib/postgresql
@@ -134,7 +134,7 @@ services:
     networks:
       - ci
     labels: *ci-labels
-    profiles: [synchronous_write]
+    profiles: [synchronous_write, verifier]
 
   client-env:
     image: alpine:3.24

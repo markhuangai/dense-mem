@@ -518,7 +518,15 @@ async function runRepairCase({ rpc, expect, fault }) {
   const expectedCode = fault === "repair" ? "" : "provider_response_invalid";
   expect(result.processing_state === expectedState, `${fault} must return ${expectedState}`);
   if (expectedCode) expect(result.errors[0]?.code === expectedCode, `${fault} must return ${expectedCode}`);
-  return { fault, processing_state: result.processing_state };
+  const assessorTurns = Number(postgresQuery(`
+    SELECT assessor_turns
+    FROM remember_attempts
+    WHERE team_id = '${sqlLiteral(requiredEnv("DENSE_MEM_E2E_TEAM_ID"))}'::uuid
+      AND attempt_id = '${sqlLiteral(result.submission_id)}'::uuid
+  `));
+  const expectedTurns = fault === "repair" ? 2 : 3;
+  expect(assessorTurns === expectedTurns, `${fault} must retain ${expectedTurns} assessor turns`);
+  return { fault, processing_state: result.processing_state, assessor_turns: assessorTurns };
 }
 
 async function runTerminalDomainCase({ rpc, expect, fault }) {

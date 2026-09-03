@@ -4,6 +4,7 @@
 
 DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER="densemem_e2e_bootstrap"
 DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD="dense-mem-e2e-bootstrap-password"
+export DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD
 
 compose_server_environment_value() {
   local field="$1"

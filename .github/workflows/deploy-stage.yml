@@ -23,7 +23,7 @@ jobs:
     name: Authorize staging deployment
     permissions:
       contents: read
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
     outputs:
       revision: ${{ steps.authorize.outputs.revision }}
       tag: ${{ steps.authorize.outputs.tag }}

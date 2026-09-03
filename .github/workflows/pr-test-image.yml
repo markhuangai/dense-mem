@@ -22,7 +22,7 @@ concurrency:
 jobs:
   resolve:
     name: Resolve preview request
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
@@ -231,7 +231,7 @@ jobs:
     if: needs.resolve.outputs.should_build == 'true'
     permissions:
       contents: read
-    runs-on: rootless-docker
+    runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
@@ -261,6 +261,11 @@ jobs:
         env:
           EXPECTED_HEAD: ${{ needs.resolve.outputs.head_sha }}
         run: test "$(git rev-parse HEAD)" = "${EXPECTED_HEAD}"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -318,7 +323,7 @@ jobs:
       packages: write
       pull-requests: write
       statuses: write
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
       image: ${{ steps.publish.outputs.image }}
@@ -422,7 +427,7 @@ jobs:
       contents: read
       pull-requests: write
       statuses: write
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
 
     steps:
       - name: Publish attempt result
@@ -489,7 +494,7 @@ jobs:
       contents: read
       pull-requests: write
       statuses: write
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
 
     steps:
       - name: Publish production E2E result
@@ -542,7 +547,7 @@ jobs:
       contents: read
       pull-requests: write
       statuses: write
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
 
     steps:
       - name: Publish controller failure
