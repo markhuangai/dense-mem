@@ -281,6 +281,9 @@ func loadRelationshipConflictPlacement(
 		return nil, err
 	}
 	scopeKey := relationshipConflictScopeKey(source, spaceID, spaceKind)
+	if err := lockRelationshipConflictSnapshotScope(ctx, tx, teamID, scopeKey); err != nil {
+		return nil, err
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		WITH active_relationships AS (
 			SELECT relationship.relationship_id,

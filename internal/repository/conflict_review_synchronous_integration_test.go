@@ -88,6 +88,132 @@ func TestConflictReviewRetiresLosingSearchProjectionWithoutEmbedding(t *testing.
 	require.Equal(t, string(domain.SearchProjectionNotRequired), searchState)
 }
 
+func TestConflictSnapshotScopeSerializesPlacementAndReview(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	insertSearchTestContract(t, adminDB, rls, "conflict-snapshot-scope-lock", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-snapshot-scope-lock-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "conflict-snapshot-scope-lock-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "conflict-snapshot-scope-lock-owner-b")
+	semantic := NewSemanticRepository(appDB, rls)
+	ledger := NewLedgerRepositoryWithRuntimeConfig(appDB, rls, ConflictRuntimeConfig{ReviewTTLDays: 2, Timezone: "UTC"})
+
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "project", "Conflict snapshot scope")
+	objectA := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "product", "PostgreSQL")
+	objectB := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "product", "GraphDB")
+	first := commitConflictRememberFixture(t, ctx, ledger, teamID, ownerA, subject.EntityID, objectA.EntityID, "Conflict snapshot scope uses PostgreSQL.", "conflict-snapshot-scope-a")
+	_ = commitConflictRememberFixture(t, ctx, ledger, teamID, ownerB, subject.EntityID, objectB.EntityID, "Conflict snapshot scope uses GraphDB.", "conflict-snapshot-scope-b")
+	require.Len(t, first.RelationshipResults, 1)
+	require.NotNil(t, first.RelationshipResults[0].Relationship)
+
+	var conflictID, scopeKey string
+	var dueAt time.Time
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`
+			SELECT conflict_id::text, semantic_scope_key, review_due_at
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid
+			ORDER BY created_at
+			LIMIT 1
+		`, teamID).Row().Scan(&conflictID, &scopeKey, &dueAt)
+	}))
+	require.NotEmpty(t, conflictID)
+	require.NotEmpty(t, scopeKey)
+
+	holdScopeLock := func() func() {
+		ready := make(chan struct{})
+		release := make(chan struct{})
+		done := make(chan error, 1)
+		go func() {
+			done <- rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+				if err := tx.WithContext(ctx).Exec(
+					`SELECT pg_advisory_xact_lock(hashtextextended(?::text, 0))`,
+					teamID+":relationship-conflict-snapshot:"+scopeKey,
+				).Error; err != nil {
+					return err
+				}
+				close(ready)
+				select {
+				case <-release:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			})
+		}()
+		select {
+		case <-ready:
+		case err := <-done:
+			require.NoError(t, err)
+			t.Fatal("conflict snapshot lock holder exited before acquiring the lock")
+		case <-ctx.Done():
+			t.Fatal("timed out acquiring the conflict snapshot lock")
+		}
+		released := false
+		return func() {
+			if released {
+				return
+			}
+			released = true
+			close(release)
+			require.NoError(t, <-done)
+		}
+	}
+	assertBlocked := func(label string, done <-chan error) {
+		select {
+		case err := <-done:
+			t.Fatalf("%s did not wait for the conflict snapshot lock: %v", label, err)
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+
+	releasePlacement := holdScopeLock()
+	defer releasePlacement()
+	placementDone := make(chan error, 1)
+	go func() {
+		placementDone <- rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+			placement, err := loadRelationshipConflictPlacement(ctx, tx, teamID, first.RelationshipResults[0].Relationship)
+			if err != nil {
+				return err
+			}
+			return upsertRelationshipConflictCase(ctx, tx, teamID, placement, ConflictRuntimeConfig{ReviewTTLDays: 2, Timezone: "UTC"})
+		})
+	}()
+	assertBlocked("conflict placement", placementDone)
+	releasePlacement()
+	require.NoError(t, <-placementDone)
+
+	reviewNow := dueAt.Add(-time.Minute)
+	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, ConflictReviewRunInput{
+		TeamID: teamID, WorkerID: "conflict-snapshot-scope-reviewer", LocalRunDate: reviewNow, Timezone: "UTC", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NotNil(t, run)
+	cases, err := ledger.ClaimRelationshipConflictCases(ctx, ClaimRelationshipConflictCasesInput{
+		TeamID: teamID, WorkerID: "conflict-snapshot-scope-reviewer", ReviewRunID: run.ReviewRunID,
+		Limit: 10, Lease: time.Minute, MaxAttempts: 5, Now: reviewNow,
+	})
+	require.NoError(t, err)
+	require.Len(t, cases, 1)
+
+	releaseReview := holdScopeLock()
+	defer releaseReview()
+	reviewDone := make(chan error, 1)
+	go func() {
+		_, reviewErr := ledger.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{
+			TeamID: teamID, WorkerID: "conflict-snapshot-scope-reviewer", ReviewRunID: run.ReviewRunID,
+			ConflictID: conflictID, Now: reviewNow,
+		})
+		reviewDone <- reviewErr
+	}()
+	assertBlocked("conflict review", reviewDone)
+	releaseReview()
+	require.NoError(t, <-reviewDone)
+}
+
 func TestOverdueConflictResolutionRetainsEvidenceUsedByAnotherOwner(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

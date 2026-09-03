@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 
@@ -51,6 +52,44 @@ func conflictPlacementHasConflict(rows []conflictPlacementRow) bool {
 		}
 	}
 	return len(positions) >= 2 && len(owners) >= 2
+}
+
+func lockRelationshipConflictSnapshotScope(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	semanticScopeKey string,
+) error {
+	// Remember placement and review refresh this scope before locking case, position, or member rows.
+	if strings.TrimSpace(semanticScopeKey) == "" {
+		return errors.New("relationship conflict snapshot requires a semantic scope key")
+	}
+	return tx.WithContext(ctx).Exec(
+		"SELECT pg_advisory_xact_lock(hashtextextended(?::text, 0))",
+		teamID+":relationship-conflict-snapshot:"+semanticScopeKey,
+	).Error
+}
+
+func lockRelationshipConflictCaseSnapshotScope(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	conflictID string,
+) error {
+	var semanticScopeKey string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT semantic_scope_key
+		FROM relationship_conflict_cases
+		WHERE team_id = ?::uuid
+		  AND conflict_id = ?::uuid
+	`, teamID, conflictID).Row().Scan(&semanticScopeKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return lockRelationshipConflictSnapshotScope(ctx, tx, teamID, semanticScopeKey)
 }
 
 func relationshipConflictScopeKey(record *RelationshipRecord, spaceID, spaceKind string) string {
