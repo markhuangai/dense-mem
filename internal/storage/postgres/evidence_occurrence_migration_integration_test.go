@@ -134,3 +134,129 @@ func TestEvidenceOccurrenceMigrationBackfillsAliasesAndOccurrencesInBatches(t *t
 
 	require.Error(t, migrationDownTo(ctx, db, evidenceOccurrenceMigrationBase))
 }
+
+func TestEvidenceOccurrenceMigrationBackfillPrefersCurrentSourceRevision(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	runGooseUpTo(t, ctx, db, evidenceOccurrenceMigrationBase)
+	teamID, ownerID := insertMigrationTeamProfile(t, ctx, db)
+
+	var spaceID string
+	var generation int64
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT id::text, generation
+		FROM memory_spaces
+		WHERE team_id = $1::uuid AND kind = 'team_shared'
+		LIMIT 1
+	`, teamID).Scan(&spaceID, &generation))
+
+	sourceID := uuid.NewString()
+	oldRevisionID := uuid.NewString()
+	currentRevisionID := uuid.NewString()
+	oldIngestID := uuid.NewString()
+	currentIngestID := uuid.NewString()
+	oldFragmentID := uuid.NewString()
+	currentFragmentID := uuid.NewString()
+	const content = "source revision duplicate remains visible"
+	const contentHash = "sha256:source-revision-duplicate"
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		for _, ingest := range []struct {
+			id, key string
+		}{
+			{oldIngestID, "source-revision-old-ingest"},
+			{currentIngestID, "source-revision-current-ingest"},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO knowledge_ingests (
+					team_id, ingest_id, owner_profile_id, space_id, space_generation,
+					idempotency_key, request_hash, status, proposal, metadata
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5,
+				          $6, $6, 'completed', '{}'::jsonb, '{}'::jsonb)
+			`, teamID, ingest.id, ownerID, spaceID, generation, ingest.key); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_sources (
+				team_id, source_id, owner_profile_id, source_key, source_kind, authority,
+				space_id, space_generation
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'doc://source-revision-duplicate',
+			          'document', 'primary', $4::uuid, $5)
+		`, teamID, sourceID, ownerID, spaceID, generation); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_source_revisions (
+				team_id, source_revision_id, source_id, owner_profile_id,
+				revision_token, expected_previous_revision_token, content_hash,
+				envelope, space_id, space_generation
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'rev-1', '',
+			          'sha256:source-revision-one', '{}'::jsonb, $5::uuid, $6)
+		`, teamID, oldRevisionID, sourceID, ownerID, spaceID, generation); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_source_revisions (
+				team_id, source_revision_id, source_id, owner_profile_id,
+				revision_token, expected_previous_revision_token, supersedes_revision_id,
+				content_hash, envelope, space_id, space_generation
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'rev-2', 'rev-1',
+			          $5::uuid, 'sha256:source-revision-two', '{}'::jsonb, $6::uuid, $7)
+		`, teamID, currentRevisionID, sourceID, ownerID, oldRevisionID, spaceID, generation); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE evidence_sources
+			SET current_revision_id = $1::uuid, current_revision_token = 'rev-2'
+			WHERE team_id = $2::uuid AND source_id = $3::uuid
+		`, currentRevisionID, teamID, sourceID); err != nil {
+			return err
+		}
+		for _, fragment := range []struct {
+			id, ingestID, revisionID string
+			createdAt                string
+		}{
+			{oldFragmentID, oldIngestID, oldRevisionID, "2026-01-01T00:00:00Z"},
+			{currentFragmentID, currentIngestID, currentRevisionID, "2026-01-02T00:00:00Z"},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO evidence_fragments (
+					team_id, fragment_id, ingest_id, owner_profile_id, source_id,
+					source_revision_id, space_id, space_generation, evidence_index,
+					content, content_hash, source_type, authority, source_ref, labels, metadata,
+					created_at
+				) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid,
+				          $7::uuid, $8, 0, $9, $10, 'document', 'primary', '',
+				          ARRAY[]::text[], '{}'::jsonb, $11::timestamptz)
+			`, teamID, fragment.id, fragment.ingestID, ownerID, sourceID, fragment.revisionID,
+				spaceID, generation, content, contentHash, fragment.createdAt); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	runGooseUpTo(t, ctx, db, evidenceOccurrenceMigrationVersion)
+	var canonicalID string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT canonical_fragment_id::text
+		FROM evidence_exact_aliases
+		WHERE team_id = $1::uuid AND alias_fragment_id = $2::uuid
+	`, teamID, oldFragmentID).Scan(&canonicalID))
+	require.Equal(t, currentFragmentID, canonicalID)
+	var currentAliasCount int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT count(*)::int
+		FROM evidence_exact_aliases
+		WHERE team_id = $1::uuid AND alias_fragment_id = $2::uuid
+	`, teamID, currentFragmentID).Scan(&currentAliasCount))
+	require.Zero(t, currentAliasCount, "the current source revision must remain canonical")
+	var canonicalOccurrences int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT count(*)::int
+		FROM evidence_occurrences
+		WHERE team_id = $1::uuid AND canonical_fragment_id = $2::uuid
+	`, teamID, currentFragmentID).Scan(&canonicalOccurrences))
+	require.Equal(t, 2, canonicalOccurrences)
+}

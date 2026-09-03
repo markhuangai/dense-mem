@@ -554,6 +554,8 @@ func TestRememberDuplicateRepeatedCanonicalKeepsRelationshipSupportOccurrences(t
 		require.Equal(t, ownerB, support.EvidenceOwner)
 		require.Equal(t, ownerA, support.OccurrenceOwner)
 	}
+
+	assertDuplicateTraceOccurrences(t, ctx, adminDB, appDB, rls, teamID, first, occurrences)
 }
 
 func duplicatePlanEmbeddingsForInput(t *testing.T, ctx context.Context, repo *LedgerRepositoryImpl, input SynchronousRememberCommitInput) []InlineEmbeddingResult {

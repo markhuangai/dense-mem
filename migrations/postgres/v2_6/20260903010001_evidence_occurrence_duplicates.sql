@@ -11,7 +11,8 @@
 -- creation order. The copy is resumable through primary-key existence checks
 -- and processes at most 500 fragments per batch.
 -- Backward compatibility: old fragment IDs remain valid and their history is
--- retained; canonical reads suppress aliases through the new mapping.
+-- retained; canonical reads suppress aliases through the new mapping. A
+-- current source revision wins canonical selection before creation ordering.
 -- Rollback: Down refuses once occurrence or alias history exists.
 
 -- +goose NO TRANSACTION
@@ -477,15 +478,53 @@ BEGIN
                        PARTITION BY fragment.team_id, fragment.owner_profile_id,
                                     fragment.space_id, fragment.space_generation,
                                     fragment.content_hash, fragment.content
-                       ORDER BY fragment.created_at ASC, fragment.fragment_id ASC
+                       ORDER BY
+                           CASE
+                               WHEN fragment.source_id IS NULL
+                                    OR source.current_revision_id = fragment.source_revision_id
+                               THEN 0
+                               ELSE 1
+                           END ASC,
+                           fragment.created_at ASC, fragment.fragment_id ASC
                    ) AS ordinal,
                    first_value(fragment.fragment_id) OVER (
                        PARTITION BY fragment.team_id, fragment.owner_profile_id,
                                     fragment.space_id, fragment.space_generation,
                                     fragment.content_hash, fragment.content
-                       ORDER BY fragment.created_at ASC, fragment.fragment_id ASC
-                   ) AS canonical_fragment_id
+                       ORDER BY
+                           CASE
+                               WHEN fragment.source_id IS NULL
+                                    OR source.current_revision_id = fragment.source_revision_id
+                               THEN 0
+                               ELSE 1
+                           END ASC,
+                           fragment.created_at ASC, fragment.fragment_id ASC
+                   ) AS canonical_fragment_id,
+                   first_value(
+                       CASE
+                           WHEN fragment.source_id IS NULL
+                                OR source.current_revision_id = fragment.source_revision_id
+                           THEN 0
+                           ELSE 1
+                       END
+                   ) OVER (
+                       PARTITION BY fragment.team_id, fragment.owner_profile_id,
+                                    fragment.space_id, fragment.space_generation,
+                                    fragment.content_hash, fragment.content
+                       ORDER BY
+                           CASE
+                               WHEN fragment.source_id IS NULL
+                                    OR source.current_revision_id = fragment.source_revision_id
+                               THEN 0
+                               ELSE 1
+                           END ASC,
+                           fragment.created_at ASC, fragment.fragment_id ASC
+                   ) AS canonical_source_staleness
             FROM evidence_fragments AS fragment
+            LEFT JOIN evidence_sources AS source
+              ON source.team_id = fragment.team_id
+             AND source.source_id = fragment.source_id
+             AND source.owner_profile_id = fragment.owner_profile_id
             WHERE NOT EXISTS (
                       SELECT 1 FROM evidence_lifecycle_events AS lifecycle
                       WHERE lifecycle.team_id = fragment.team_id
@@ -502,6 +541,7 @@ BEGIN
             FROM ranked
             WHERE ranked.ordinal > 1
               AND ranked.fragment_id <> ranked.canonical_fragment_id
+              AND ranked.canonical_source_staleness = 0
               AND NOT EXISTS (
                   SELECT 1 FROM evidence_exact_aliases AS alias
                   WHERE alias.team_id = ranked.team_id
@@ -956,5 +996,4 @@ BEGIN
     RAISE EXCEPTION '% is append-only: % operations are not allowed', TG_TABLE_NAME, TG_OP;
 END;
 $$ LANGUAGE plpgsql;
-
 -- +goose StatementEnd

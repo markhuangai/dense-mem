@@ -226,11 +226,28 @@ function fixtureAssessment(request, requestFault, attempt) {
     decision: securitySignalEvidenceIDs.has(evidence.evidence_id) ? "reject" : "pass",
     signals: securitySignalEvidenceIDs.has(evidence.evidence_id) ? securitySignals : [],
   }));
-  const evidenceEquivalenceResults = (request.evidence_equivalence_candidates || []).map((group) => ({
-    evidence_id: group.evidence_id,
-    action: "new",
-    candidate_evidence_id: null,
-  }));
+  const evidenceEquivalenceResults = (request.evidence_equivalence_candidates || []).map((group) => {
+    if (requestFault === "semantic-reuse") {
+      const candidate = group.candidates?.find((item) => String(item.content || "").includes("semantic-duplicate-canonical")) || group.candidates?.[0];
+      return {
+        evidence_id: group.evidence_id,
+        action: "reuse",
+        candidate_evidence_id: candidate?.evidence_id || "fixture-missing-candidate",
+      };
+    }
+    if (requestFault === "semantic-reuse-unauthorized") {
+      return {
+        evidence_id: group.evidence_id,
+        action: "reuse",
+        candidate_evidence_id: "fixture-unauthorized-candidate",
+      };
+    }
+    return {
+      evidence_id: group.evidence_id,
+      action: "new",
+      candidate_evidence_id: null,
+    };
+  });
   if (requestFault === "repair" && attempt === 1) {
     return {
       request_id: request.request_id || "fixture",

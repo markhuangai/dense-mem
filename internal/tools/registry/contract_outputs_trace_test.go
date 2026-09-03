@@ -24,14 +24,14 @@ func TestTraceContractOutputPreservesPublicSubmissionAndLineageIDs(t *testing.T)
 			SubjectRef: "subject", OriginalPredicate: "uses", ObjectRef: "object", Polarity: "+", CreatedAt: now,
 		}},
 		EvidenceSupports: []repository.RelationshipEvidenceSupportRecord{{
-			SupportID: "support-1", RelationshipID: "relationship-1", ObservationID: "observation-1", FragmentID: "evidence-1",
+			SupportID: "support-1", RelationshipID: "relationship-1", ObservationID: "observation-1", FragmentID: "evidence-1", OccurrenceID: "occurrence-1",
 			SpanStart: 0, SpanEnd: 4, Quote: "Dense", Authority: "primary", CreatedAt: now,
 		}},
 		EvidenceSupportDecisionEvents: []repository.RelationshipSupportDecisionEvent{{
 			SupportDecisionID: "decision-1", SupportID: "support-1", RelationshipID: "relationship-1", Decision: "accepted", CreatedAt: now,
 		}},
 		Evidence: []repository.TraceEvidenceFragment{{
-			FragmentID: "evidence-1", IngestID: "submission-1", Content: "Dense-Mem uses PostgreSQL", SourceType: "manual", Authority: "primary", CreatedAt: now,
+			FragmentID: "evidence-1", OccurrenceID: "occurrence-1", IngestID: "submission-1", Content: "Dense-Mem uses PostgreSQL", SourceType: "manual", Authority: "primary", CreatedAt: now,
 		}},
 		EvidenceLifecycleEvents: []repository.TraceEvidenceLifecycleEvent{{
 			LifecycleEventID: "lifecycle-1", TargetFragmentID: "evidence-1", Action: "accepted", CreatedAt: now,
@@ -70,6 +70,13 @@ func TestTraceContractOutputPreservesPublicSubmissionAndLineageIDs(t *testing.T)
 	evidence, ok := trace["evidence"].([]map[string]any)
 	if !ok || len(evidence) != 1 || evidence[0]["submission_id"] != "submission-1" {
 		t.Fatalf("evidence output = %#v", trace["evidence"])
+	}
+	if evidence[0]["occurrence_id"] != "occurrence-1" {
+		t.Fatalf("evidence occurrence output = %#v", evidence[0])
+	}
+	supports, ok := trace["evidence_supports"].([]map[string]any)
+	if !ok || len(supports) != 1 || supports[0]["occurrence_id"] != "occurrence-1" {
+		t.Fatalf("support occurrence output = %#v", trace["evidence_supports"])
 	}
 	lineage, ok := trace["supersession_lineage"].([]map[string]any)
 	if !ok || len(lineage) != 1 || lineage[0]["relationship_id"] != "relationship-0" {

@@ -774,14 +774,17 @@ func hydrateRecallRelationshipEvidenceIDs(ctx context.Context, tx *gorm.DB, inpu
 		      AND (?::timestamptz IS NULL OR created_at <= ?::timestamptz)
 		    ORDER BY team_id, support_id, created_at DESC, support_decision_id DESC
 		),
-		effective_support AS (
-		    SELECT support.relationship_id::text,
-		           support.fragment_id::text,
-		           support.created_at
-		    FROM requested
-		    JOIN relationship_evidence_supports AS support
-		      ON support.team_id = ?::uuid
-		     AND support.relationship_id = requested.relationship_id
+			effective_support AS (
+			    SELECT support.relationship_id::text,
+			           COALESCE(alias.canonical_fragment_id, support.fragment_id)::text AS fragment_id,
+			           support.created_at
+			    FROM requested
+			    JOIN relationship_evidence_supports AS support
+			      ON support.team_id = ?::uuid
+			     AND support.relationship_id = requested.relationship_id
+			    LEFT JOIN evidence_exact_aliases AS alias
+			      ON alias.team_id = support.team_id
+			     AND alias.alias_fragment_id = support.fragment_id
 		    JOIN latest
 		      ON latest.team_id = support.team_id
 		     AND latest.support_id = support.support_id

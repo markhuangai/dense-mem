@@ -62,6 +62,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
 
   if (selectedFault === "none") {
     results.push(await runKnownEvidenceCase({ expect }));
+    results.push(await runSemanticDuplicateCase({ expect }));
     results.push(await runConcurrentWinnerCase({ rpc, expect }));
     results.push(await runChangedHashConflictCase({ rawRPC, expect }));
     results.push(await runSupersessionFenceCase({ rpc, expect }));
@@ -230,6 +231,74 @@ async function runKnownEvidenceCase({ expect }) {
     id_boundaries: true,
     unreferenced_candidate_rejected: true,
     unanchored_and_ambiguous_rejected: true,
+  };
+}
+
+async function runSemanticDuplicateCase({ expect }) {
+  const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
+  const actor = await createKnownEvidenceCredential(teamID, `semantic-duplicate-${Date.now()}`, "credential_private");
+  const canonicalArgs = singleItemArguments("semantic-duplicate-canonical", "");
+  canonicalArgs.evidence[0].content = "Dense-Mem stores durable memory in PostgreSQL. [fixture:semantic-duplicate-canonical]";
+  const canonical = await rememberWithKey(actor.apiKey, canonicalArgs);
+  assertStrictTerminalRemember(canonical, expect);
+  expect(canonical.processing_state === "completed", `semantic duplicate canonical write must complete: ${JSON.stringify(canonical)}`);
+  const canonicalID = canonical.evidence[0]?.evidence_id;
+  expect(canonicalID, "semantic duplicate canonical write must return an evidence id");
+
+  const reusedArgs = singleItemArguments("semantic-duplicate-reuse", "[fixture-fault:semantic-reuse]");
+  reusedArgs.evidence[0].content = "Dense-Mem retains durable memory in PostgreSQL. [fixture:semantic-duplicate-canonical] [fixture-fault:semantic-reuse]";
+  const reused = await rememberWithKey(actor.apiKey, reusedArgs);
+  assertStrictTerminalRemember(reused, expect);
+  expect(reused.processing_state === "completed", `semantic duplicate reuse must complete: ${JSON.stringify(reused)}`);
+  expect(reused.evidence[0]?.evidence_id === canonicalID, `semantic duplicate reuse must return the canonical evidence id: ${JSON.stringify(reused)}`);
+  expect(reused.relationship_results[0]?.disposition === "stored", `semantic duplicate reuse must preserve relationship storage: ${JSON.stringify(reused)}`);
+
+  const fragmentCount = postgresQuery(`
+    SELECT count(*)
+    FROM evidence_fragments
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+      AND ingest_id IN ('${sqlLiteral(canonical.submission_id)}'::uuid, '${sqlLiteral(reused.submission_id)}'::uuid);
+  `);
+  const occurrenceCount = postgresQuery(`
+    SELECT count(*)
+    FROM evidence_occurrences
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+      AND ingest_id IN ('${sqlLiteral(canonical.submission_id)}'::uuid, '${sqlLiteral(reused.submission_id)}'::uuid);
+  `);
+  expect(Number(fragmentCount) === 1, `semantic duplicate reuse must create one fragment: ${fragmentCount}`);
+  expect(Number(occurrenceCount) === 2, `semantic duplicate reuse must create two occurrences: ${occurrenceCount}`);
+
+  const relationshipID = reused.relationship_results[0]?.splits?.[0]?.relationship_id;
+  expect(relationshipID, "semantic duplicate reuse must return a relationship id");
+  const trace = await mcpSuccessWithKey(actor.apiKey, "trace_memory", { relationship_id: relationshipID });
+  const support = trace.evidence_supports?.find((item) => item.evidence_id === canonicalID && item.occurrence_id && item.quote?.includes("retains durable memory"));
+  expect(support, `semantic duplicate trace must expose occurrence provenance: ${JSON.stringify(trace)}`);
+  const traceEvidence = trace.evidence?.find((item) => item.occurrence_id === support.occurrence_id);
+  expect(traceEvidence, `semantic duplicate trace must hydrate the supporting occurrence: ${JSON.stringify(trace)}`);
+  expect(traceEvidence.evidence_id === canonicalID && traceEvidence.content.includes("retains durable memory"), `semantic duplicate trace must pair canonical identity with occurrence content: ${JSON.stringify({ support, traceEvidence })}`);
+  expect(support.quote === traceEvidence.content, `semantic duplicate trace quote must match occurrence content: ${JSON.stringify({ support, traceEvidence })}`);
+
+  const unauthorizedArgs = singleItemArguments("semantic-duplicate-unauthorized", "[fixture-fault:semantic-reuse-unauthorized]");
+  unauthorizedArgs.evidence[0].content = "Dense-Mem keeps durable memory in PostgreSQL. [fixture:semantic-duplicate-canonical] [fixture-fault:semantic-reuse-unauthorized]";
+  const unauthorizedRaw = await rawRPCWithKey(actor.apiKey, "tools/call", { name: "remember", arguments: unauthorizedArgs });
+  const unauthorized = terminalPayload(unauthorizedRaw.result);
+  assertStrictTerminalRemember(unauthorized, expect);
+  expect(unauthorized.processing_state === "failed", `unauthorized duplicate candidate must fail: ${JSON.stringify(unauthorized)}`);
+  expect(unauthorized.errors[0]?.code === "provider_response_invalid", `unauthorized duplicate candidate must be rejected by the closed assessor contract: ${JSON.stringify(unauthorized)}`);
+  expect(unauthorized.evidence.every((item) => item.disposition === "not_stored"), "unauthorized duplicate candidate must not store evidence");
+  expect(Number(postgresQuery(`
+    SELECT count(*)
+    FROM evidence_fragments
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+      AND ingest_id = '${sqlLiteral(unauthorized.submission_id)}'::uuid;
+  `)) === 0, "unauthorized duplicate candidate must not commit a fragment");
+
+  return {
+    fault: "semantic-duplicate",
+    canonical_reused: true,
+    occurrences_preserved: true,
+    trace_occurrence_hydrated: true,
+    unauthorized_candidate_rejected: true,
   };
 }
 
