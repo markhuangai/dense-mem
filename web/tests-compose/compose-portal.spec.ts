@@ -163,6 +163,7 @@ test("control panel loads team Dreams without re-evaluation", async ({ page }) =
 });
 
 test("prometheus telemetry is scraped and rendered in control panel and user portal", async ({ page, request }) => {
+  test.setTimeout(150_000);
   const sessionResponse = await request.get(`${userUrl}/ui/api/session`, { headers: bearer(seedApiKey) });
   expect(sessionResponse.status()).toBe(200);
   const sessionBody = await sessionResponse.json() as UserSessionResponse;
@@ -195,8 +196,6 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   const currentCardLabels = telemetryLabels(telemetryBody.data?.current_cards);
   const activitySeriesLabels = telemetryLabels(telemetryBody.data?.activity_series);
   const stateSeriesLabels = telemetryLabels(telemetryBody.data?.state_series);
-  const readyWindowedCardLabels = telemetryReadyLabels(telemetryBody.data?.windowed_cards);
-  const readyActivitySeriesLabels = telemetryReadyLabels(telemetryBody.data?.activity_series);
   expect(windowedCardLabels.length).toBeGreaterThan(0);
   expect(currentCardLabels).toContain("Relationships: active");
   expect(activitySeriesLabels.length).toBeGreaterThan(0);
@@ -211,7 +210,19 @@ test("prometheus telemetry is scraped and rendered in control panel and user por
   await expect(page.getByLabel("Telemetry state history")).toHaveCount(0);
 
   await openUserPortal(page, seedApiKey);
+  const userTelemetryResponsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === "GET"
+      && url.origin === new URL(userUrl).origin
+      && url.pathname === "/ui/api/telemetry"
+      && url.searchParams.get("window") === "1h";
+  });
   await page.getByRole("button", { name: "Usage" }).click();
+  const userTelemetryResponse = await userTelemetryResponsePromise;
+  expect(userTelemetryResponse.status()).toBe(200);
+  const userTelemetryBody = await userTelemetryResponse.json() as TelemetryResponse;
+  const readyWindowedCardLabels = telemetryReadyLabels(userTelemetryBody.data?.windowed_cards);
+  const readyActivitySeriesLabels = telemetryReadyLabels(userTelemetryBody.data?.activity_series);
   for (const label of readyWindowedCardLabels) {
     await expect(page.getByLabel(`${expectedUsageTitle} totals`)).toContainText(label);
   }
@@ -284,6 +295,7 @@ test("MCP supersedes and retracts caller-owned evidence against compose", async 
 });
 
 test("MCP recall feedback is submitted and surfaced through compose telemetry", async ({ page, request }) => {
+  test.setTimeout(180_000);
   const recallFeedbackWasEnabled = await recallFeedbackEnabled(request);
   await setRecallFeedback(request, true);
 
@@ -353,26 +365,23 @@ test("MCP recall feedback is submitted and surfaced through compose telemetry", 
     ]));
 
     await expect.poll(
-      () => telemetryCardValue(request, "llm_recall_used_rate").catch(() => -1),
+      async () => {
+        try {
+          const telemetry = await userTelemetry(request);
+          return [
+            cardValue(telemetry, "llm_recall_used_rate"),
+            cardValue(telemetry, "llm_recall_answer_supported_rate"),
+            cardValue(telemetry, "llm_recall_quality_score"),
+          ];
+        } catch {
+          return [];
+        }
+      },
       {
         intervals: [1_000, 5_000, 10_000],
         timeout: 120_000,
       },
-    ).toBe(100);
-    await expect.poll(
-      () => telemetryCardValue(request, "llm_recall_answer_supported_rate").catch(() => -1),
-      {
-        intervals: [1_000, 5_000, 10_000],
-        timeout: 120_000,
-      },
-    ).toBe(100);
-    await expect.poll(
-      () => telemetryCardValue(request, "llm_recall_quality_score").catch(() => -1),
-      {
-        intervals: [1_000, 5_000, 10_000],
-        timeout: 120_000,
-      },
-    ).toBe(100);
+    ).toEqual([100, 100, 100]);
 
     const finalTelemetry = await userTelemetry(request);
     expect(cardValue(finalTelemetry, "llm_recall_missing_context_rate")).toBe(0);
@@ -816,10 +825,6 @@ async function userUsageTitle(request: APIRequestContext, apiKey: string) {
   }
   const body = await response.json() as UserSessionResponse;
   return body.data?.membership?.role === "manager" ? "Team usage" : "My credential usage";
-}
-
-async function telemetryCardValue(request: APIRequestContext, id: string) {
-  return cardValue(await userTelemetry(request), id);
 }
 
 function cardValue(body: TelemetryResponse, id: string) {

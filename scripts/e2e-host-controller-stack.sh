@@ -3,6 +3,122 @@
 
 CONFLICT_PROVIDER_EMBEDDING_MODEL="dense-mem-conflict-e2e-embedding"
 
+run_go_source_container() (
+  local source_dir="$1" image="$2" project="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7" digest="$8" network="$9" docker_socket="${10}" redact_env_file="${11}"
+  shift 11
+  local -a redaction_values=()
+  while [[ "$1" != "--" ]]; do
+    redaction_values+=("$1")
+    shift
+  done
+  shift
+  local -a environment_args=()
+  while [[ "$1" != "--" ]]; do
+    environment_args+=(-e "$1")
+    shift
+  done
+  shift
+  local -a command=("$@")
+  local container_name="${project}-driver-${BASHPID}"
+  local container=""
+  local created_at
+  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local -a docker_args=(
+    create --name "$container_name"
+    --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}"
+    --label "io.dense-mem.ci.repository=${REPOSITORY}"
+    --label "io.dense-mem.ci.run-id=${run_id}"
+    --label "io.dense-mem.ci.run-attempt=${attempt}"
+    --label "io.dense-mem.ci.phase=${phase}"
+    --label "io.dense-mem.ci.scenario=${scenario}"
+    --label "io.dense-mem.ci.image-digest=${digest}"
+    --label "io.dense-mem.ci.created-at=${created_at}"
+    --label "io.dense-mem.ci.compose-project=${project}"
+    --network "$network"
+    --workdir /workspace
+  )
+  if [[ -n "$docker_socket" ]]; then
+    docker_args+=(
+      --mount "type=bind,source=${docker_socket},target=${docker_socket}"
+      -e "DOCKER_HOST=unix://${docker_socket}"
+    )
+  fi
+  docker_args+=("${environment_args[@]}" "$image" "${command[@]}")
+
+  cleanup_go_container() {
+    local status=$?
+    trap - EXIT INT TERM
+    if [[ -n "$container" ]]; then
+      docker rm -f "$container" >/dev/null 2>&1 || status=1
+    fi
+    exit "$status"
+  }
+  trap cleanup_go_container EXIT INT TERM
+  container="$(docker "${docker_args[@]}")"
+  copy_git_source "$container" "$source_dir"
+  set +e
+  docker start --attach "$container" 2>&1 |
+    redact_diagnostics "$redact_env_file" "${redaction_values[@]}"
+  local -a pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+  ((pipeline_status[1] == 0)) || fail "diagnostic redaction failed for ${scenario}"
+  local result_status="${pipeline_status[0]}"
+  trap - EXIT INT TERM
+  docker rm "$container" >/dev/null
+  container=""
+  return "$result_status"
+)
+
+build_conflict_review_driver() (
+  local source_dir="$1" image="$2" project="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7"
+  local container_name="${project}-driver-${BASHPID}"
+  local container=""
+  local output="${DENSE_MEM_CI_HELPER_DIR}/conflict-review-driver"
+  local created_at
+  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local -a docker_args=(
+    create --name "$container_name"
+    --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}"
+    --label "io.dense-mem.ci.repository=${REPOSITORY}"
+    --label "io.dense-mem.ci.run-id=${run_id}"
+    --label "io.dense-mem.ci.run-attempt=${attempt}"
+    --label "io.dense-mem.ci.phase=${phase}"
+    --label "io.dense-mem.ci.scenario=${scenario}"
+    --label "io.dense-mem.ci.image-digest=${DENSE_MEM_CI_IMAGE_DIGEST}"
+    --label "io.dense-mem.ci.created-at=${created_at}"
+    --label "io.dense-mem.ci.compose-project=${project}"
+    --workdir /workspace
+    "$image"
+    bash -euc
+    'mkdir -p /tmp/dense-mem-helper && go build -o /tmp/dense-mem-helper/conflict-review-driver ./tests/uat/conflict_review_driver'
+  )
+
+  cleanup_conflict_driver() {
+    local status=$?
+    trap - EXIT INT TERM
+    if [[ -n "$container" ]]; then
+      docker rm -f "$container" >/dev/null 2>&1 || status=1
+    fi
+    exit "$status"
+  }
+  trap cleanup_conflict_driver EXIT INT TERM
+  container="$(docker "${docker_args[@]}")"
+  copy_git_source "$container" "$source_dir"
+  set +e
+  docker start --attach "$container" 2>&1 |
+    redact_diagnostics "$ENV_FILE"
+  local -a pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+  ((pipeline_status[1] == 0)) || fail "diagnostic redaction failed for conflict review helper"
+  ((pipeline_status[0] == 0)) || fail "failed to build the conflict review helper"
+  docker cp "$container:/tmp/dense-mem-helper/conflict-review-driver" "$output" >/dev/null ||
+    fail "failed to copy the conflict review helper"
+  chmod 700 "$output"
+  trap - EXIT INT TERM
+  docker rm "$container" >/dev/null
+  container=""
+)
+
 prepare_stack_helpers() {
   local project="$1" source_dir="$2" helpers="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7"
   DENSE_MEM_CI_HELPER_DIR="${JOB_DIR}/${run_id}-${attempt}/${phase}-${scenario}-helpers"
@@ -108,10 +224,10 @@ NODE
   fi
 
   if has_helper "$helpers" conflict_provider || has_helper "$helpers" conflict_review; then
-    require_command go
-    (cd "$source_dir" && go build -o "${DENSE_MEM_CI_HELPER_DIR}/conflict-review-driver" ./tests/uat/conflict_review_driver) >/dev/null ||
-      fail "failed to build the conflict review helper"
-    chmod 700 "${DENSE_MEM_CI_HELPER_DIR}/conflict-review-driver"
+    local go_image
+    go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
+    [[ "$go_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid conflict review helper image"
+    build_conflict_review_driver "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario"
   fi
 
   if [[ -n "$helpers" ]]; then
@@ -172,6 +288,8 @@ if (has("oauth_compatibility")) {
   helperServices.push(["oauth-compat-harness", [
     `    image: ${JSON.stringify(harnessImage)}`,
     "    command: [\"sh\", \"-c\", \"sleep infinity\"]",
+    "    environment:",
+    "      SSL_CERT_FILE: \"/e2e/ca.pem\"",
   ]]);
 }
 if (serverEnvironment.size > 0 || serverVolumes.length > 0) {
@@ -234,6 +352,35 @@ start_stack_helpers() {
   fi
 }
 
+seed_stack_inputs() {
+  local project="$1" run_id="$2" attempt="$3" phase="$4" scenario="$5"
+  local created_at
+  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local -a labels=(
+    --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}"
+    --label "io.dense-mem.ci.repository=${REPOSITORY}"
+    --label "io.dense-mem.ci.run-id=${run_id}"
+    --label "io.dense-mem.ci.run-attempt=${attempt}"
+    --label "io.dense-mem.ci.phase=${phase}"
+    --label "io.dense-mem.ci.scenario=${scenario}"
+    --label "io.dense-mem.ci.image-digest=${DENSE_MEM_CI_IMAGE_DIGEST}"
+    --label "io.dense-mem.ci.created-at=${created_at}"
+  )
+  labels+=(--label "io.dense-mem.ci.compose-project=${project}")
+  docker volume create "${labels[@]}" "$DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME" >/dev/null
+  docker volume create "${labels[@]}" "$DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME" >/dev/null
+
+  local seed_container="${project}-inputs"
+  seed_container="$(docker run -d --name "$seed_container" "${labels[@]}" \
+    --mount "type=volume,source=${DENSE_MEM_CI_PROMETHEUS_CONFIG_VOLUME_NAME},target=/config" \
+    --mount "type=volume,source=${DENSE_MEM_CI_TELEMETRY_TOKEN_VOLUME_NAME},target=/token" \
+    alpine:3.24 sh -ec 'sleep infinity')"
+  docker cp "$PROMETHEUS_FILE" "$seed_container:/config/prometheus.yml" >/dev/null
+  docker cp "$TELEMETRY_TOKEN_FILE" "$seed_container:/token/telemetry-scrape-token" >/dev/null
+  docker exec "$seed_container" chmod 0444 /config/prometheus.yml /token/telemetry-scrape-token >/dev/null
+  docker rm -f "$seed_container" >/dev/null
+}
+
 write_runtime_compose() {
   local path="$1" project="$2" image="$3"
   node - "$path" "$project" "$image" <<'NODE'
@@ -273,68 +420,35 @@ NODE
 )"
   local go_image
   go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
-  local -a args=(
-    docker run --rm
-    --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}"
-    --label "io.dense-mem.ci.repository=${REPOSITORY}"
-    --label "io.dense-mem.ci.run-id=${run_id}"
-    --label "io.dense-mem.ci.run-attempt=${attempt}"
-    --label "io.dense-mem.ci.phase=${phase}"
-    --label "io.dense-mem.ci.scenario=${scenario}"
-    --label "io.dense-mem.ci.image-digest=${digest}"
-    --label "io.dense-mem.ci.created-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    --label "io.dense-mem.ci.compose-project=${project}"
-    --network "${project}_ci"
-    --volume "${source_dir}:/workspace:ro"
-    --workdir /workspace
-    -e "DATABASE_URL=${database_url}"
-    -e "DENSE_MEM_E2E_PRIMITIVES_PROVIDER_URL=http://synchronous-write-provider:8787/v1"
-    -e "DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1"
-    -e "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1"
-    "$go_image"
-  )
-  set +e
-  "${args[@]}" go test -tags=compose_e2e ./internal/service/memoryservice -run '^TestComposeSynchronousEvidenceOnlyAssessorBatch$' -count=1 2>&1 |
-    redact_diagnostics "$ENV_FILE" "$postgres_password" "$postgres_user" "$postgres_db"
-  local -a first_status=("${PIPESTATUS[@]}")
-  set -e
-  ((first_status[1] == 0)) || fail "diagnostic redaction failed for synchronous-write assessor tests"
-  ((first_status[0] == 0)) || return "${first_status[0]}"
+  run_go_source_container \
+    "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "" "$ENV_FILE" \
+    "$postgres_password" "$postgres_user" "$postgres_db" -- \
+    "DATABASE_URL=${database_url}" \
+    "DENSE_MEM_E2E_PRIMITIVES_PROVIDER_URL=http://synchronous-write-provider:8787/v1" \
+    "DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1" \
+    "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
+    go test -tags=compose_e2e ./internal/service/memoryservice \
+      -run '^TestComposeSynchronousEvidenceOnlyAssessorBatch$' -count=1 || return $?
 
-  set +e
-  "${args[@]}" go test -tags=compose_e2e ./internal/repository -run '^TestComposeRememberPrimitives$' -count=1 2>&1 |
-    redact_diagnostics "$ENV_FILE" "$postgres_password" "$postgres_user" "$postgres_db"
-  local -a second_status=("${PIPESTATUS[@]}")
-  set -e
-  ((second_status[1] == 0)) || fail "diagnostic redaction failed for synchronous-write primitive tests"
-  return "${second_status[0]}"
+  run_go_source_container \
+    "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "" "$ENV_FILE" \
+    "$postgres_password" "$postgres_user" "$postgres_db" -- \
+    "DATABASE_URL=${database_url}" \
+    "DENSE_MEM_E2E_PRIMITIVES_PROVIDER_URL=http://synchronous-write-provider:8787/v1" \
+    "DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1" \
+    "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
+    go test -tags=compose_e2e ./internal/repository \
+      -run '^TestComposeRememberPrimitives$' -count=1
 }
 
 run_mcp_sdk_parity_driver() {
   local source_dir="$1" project="$2" run_id="$3" attempt="$4" phase="$5" scenario="$6" digest="$7"
   local go_image
   go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
-  set +e
-  docker run --rm \
-    --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}" \
-    --label "io.dense-mem.ci.repository=${REPOSITORY}" \
-    --label "io.dense-mem.ci.run-id=${run_id}" \
-    --label "io.dense-mem.ci.run-attempt=${attempt}" \
-    --label "io.dense-mem.ci.phase=${phase}" \
-    --label "io.dense-mem.ci.scenario=${scenario}" \
-    --label "io.dense-mem.ci.image-digest=${digest}" \
-    --label "io.dense-mem.ci.created-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --label "io.dense-mem.ci.compose-project=${project}" \
-    --network "${project}_ci" \
-    --volume "${source_dir}:/workspace:ro" \
-    --workdir /workspace \
-    "$go_image" \
-    go test ./internal/mcp -run '^TestConformanceHarness$' -count=1 2>&1 |
-    redact_diagnostics "$ENV_FILE"
-  local -a parity_status=("${PIPESTATUS[@]}")
-  set -e
-  ((parity_status[1] == 0)) || fail "diagnostic redaction failed for MCP SDK parity tests"
-  return "${parity_status[0]}"
+  run_go_source_container \
+    "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "" "$ENV_FILE" -- \
+    -- \
+    go test ./internal/mcp -run '^TestConformanceHarness$' -count=1
 }
 
 run_identity_cleanup_seed() {
@@ -346,35 +460,21 @@ run_identity_cleanup_seed() {
   local go_image
   go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
 
-  docker run --rm \
-    --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}" \
-    --label "io.dense-mem.ci.repository=${REPOSITORY}" \
-    --label "io.dense-mem.ci.run-id=${DENSE_MEM_CI_RUN_ID}" \
-    --label "io.dense-mem.ci.run-attempt=${DENSE_MEM_CI_RUN_ATTEMPT}" \
-    --label "io.dense-mem.ci.phase=${DENSE_MEM_CI_PHASE}" \
-    --label "io.dense-mem.ci.scenario=${DENSE_MEM_CI_SCENARIO}" \
-    --label "io.dense-mem.ci.image-digest=${DENSE_MEM_CI_IMAGE_DIGEST}" \
-    --label "io.dense-mem.ci.created-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --label "io.dense-mem.ci.compose-project=${project}" \
-    --network "${project}_ci" \
-    --volume "${source_dir}:/workspace:ro" \
-    --workdir /workspace \
-    -e DENSE_MEM_E2E_IDENTITY_SEED_VARIANT=bridge \
-    -e "DENSE_MEM_E2E_IDENTITY_TEAM_ID=${team_id}" \
-    -e "DENSE_MEM_E2E_IDENTITY_PROFILE_ID=${profile_id}" \
-    -e "DENSE_MEM_E2E_IDENTITY_API_KEY=${api_key}" \
-    -e "DENSE_MEM_E2E_POSTGRES_USER=${postgres_user}" \
-    -e "DENSE_MEM_E2E_POSTGRES_PASSWORD=${postgres_password}" \
-    -e "DENSE_MEM_E2E_POSTGRES_DB=${postgres_db}" \
-    -e DENSE_MEM_E2E_POSTGRES_HOST=postgres \
-    -e DENSE_MEM_E2E_POSTGRES_PORT=5432 \
-    "$go_image" \
-    go test -tags=integration ./internal/storage/postgres -run '^TestIdentityCleanupComposeSeed$' -count=1 2>&1 |
-    redact_diagnostics "$ENV_FILE" "$api_key" "$team_id" "$profile_id"
-  local -a seed_status=("${PIPESTATUS[@]}")
-  set -e
-  ((seed_status[1] == 0)) || fail "diagnostic redaction failed for identity cleanup seed"
-  ((seed_status[0] == 0)) || return "${seed_status[0]}"
+  run_go_source_container \
+    "$source_dir" "$go_image" "$project" "$DENSE_MEM_CI_RUN_ID" "$DENSE_MEM_CI_RUN_ATTEMPT" \
+    "$DENSE_MEM_CI_PHASE" "$DENSE_MEM_CI_SCENARIO" "$DENSE_MEM_CI_IMAGE_DIGEST" "${project}_ci" "" "$ENV_FILE" \
+    "$api_key" "$team_id" "$profile_id" -- \
+    "DENSE_MEM_E2E_IDENTITY_SEED_VARIANT=bridge_valid" \
+    "DENSE_MEM_E2E_IDENTITY_TEAM_ID=${team_id}" \
+    "DENSE_MEM_E2E_IDENTITY_PROFILE_ID=${profile_id}" \
+    "DENSE_MEM_E2E_IDENTITY_API_KEY=${api_key}" \
+    "DENSE_MEM_E2E_POSTGRES_USER=${postgres_user}" \
+    "DENSE_MEM_E2E_POSTGRES_PASSWORD=${postgres_password}" \
+    "DENSE_MEM_E2E_POSTGRES_DB=${postgres_db}" \
+    "DENSE_MEM_E2E_POSTGRES_HOST=postgres" \
+    "DENSE_MEM_E2E_POSTGRES_PORT=5432" -- \
+    go test -tags=integration ./internal/storage/postgres \
+      -run '^TestIdentityCleanupComposeSeed$' -count=1 >&2 || return $?
 
   local identity_file="${DENSE_MEM_CI_HELPER_DIR}/identity.env"
   printf 'DENSE_MEM_E2E_UPGRADE_TEAM_ID=%s\nDENSE_MEM_E2E_UPGRADE_PROFILE_ID=%s\nDENSE_MEM_E2E_UPGRADE_API_KEY=%s\n' \

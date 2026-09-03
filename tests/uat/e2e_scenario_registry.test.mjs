@@ -94,22 +94,26 @@ test("scenario classification fails closed for invalid registry metadata", () =>
 });
 
 test("production jobs use capability-matched runners and PR-owned assets", async () => {
-  const [workflow, reusable, caller, controller, compose] = await Promise.all([
+  const [workflow, reusable, caller, controller, compose, envExample] = await Promise.all([
     readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8"),
     readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8"),
     readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/e2e-host-controller.sh", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url), "utf8"),
+    readFile(new URL("../../scripts/e2e-ci.env.example", import.meta.url), "utf8"),
   ]);
-  for (const job of ["authorize", "report"]) {
-    const definition = workflowJob(workflow, job);
-    assert.match(definition, /^    runs-on: docker-runner$/m);
-    assertNode24Setup(definition);
-  }
+  const authorize = workflowJob(workflow, "authorize");
+  assert.match(authorize, /^    runs-on: docker-runner$/m);
+  assertNode24Setup(authorize);
+  const report = workflowJob(workflow, "report");
+  assert.match(report, /^    runs-on: docker-runner$/m);
+  assert.doesNotMatch(report, /actions\/setup-node@v7|actions\/download-artifact@v8/);
   for (const job of ["prechecks", "stale-cleanup", "exclusive-cleanup", "shared-start", "shared-stop"]) {
     const definition = workflowJob(workflow, job);
     assert.match(definition, /^    runs-on: rootless-docker$/m);
     assertNode24Setup(definition);
+    assert.match(definition, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
+    assert.match(definition, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
   }
   const scenario = workflowJob(reusable, "scenario");
   assert.match(scenario, /^    runs-on: rootless-docker$/m);
@@ -132,12 +136,16 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   assert.doesNotMatch(workflow, /node \.ci-source\/scripts\/e2e-scenario-registry\.mjs --matrix/);
   assert.match(reusable, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
   assert.match(reusable, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+  assert.doesNotMatch(envExample, /^DENSE_MEM_CI_TEST_IMAGE=/m);
   assert.match(controller, /DENSE_MEM_CI_PROMETHEUS_FILE/);
   assert.match(controller, /DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
-  assert.doesNotMatch(controller, /DENSE_MEM_CI_DAEMON_ID|LEASE_DIR|RUN_DIR|DENSE_MEM_E2E_SOURCE_REVISION|e2e-docker-proxy|e2e-runtime-adapter/);
+  assert.match(controller, /git -C "\$source_dir" archive --format=tar --prefix=workspace\//);
+  assert.doesNotMatch(controller, /DENSE_MEM_CI_DAEMON_ID|DENSE_MEM_CI_DOCKER_SOCKET|LEASE_DIR|RUN_DIR|DENSE_MEM_E2E_SOURCE_REVISION|e2e-docker-proxy|e2e-runtime-adapter/);
+  assert.doesNotMatch(controller, /\$\{source_dir\}:\/workspace|\$\{runtime_compose_host\}:|\$\{helper_overlay\}:|\$\{run_root\}\/results/);
   assert.doesNotMatch(compose, /^\s+ports:/m);
+  assert.doesNotMatch(compose, /DENSE_MEM_CI_PROMETHEUS_FILE|DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
+  assert.match(compose, /external: true/);
   assertWorkflowOrchestration(workflow);
-  const authorize = workflowJob(workflow, "authorize");
   assert.match(authorize, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenario-registry\.mjs/);
   assert.match(authorize, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --matrix exclusive/);
 });

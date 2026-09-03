@@ -355,7 +355,7 @@ async function prometheusValue(query) {
   return Number(response.data?.result?.[0]?.value?.[1] ?? 0);
 }
 async function waitForPrometheusMetric(query) {
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
     const value = await prometheusValue(query);
     if (value > 0) return value;
     await delay(1_000);

@@ -1,33 +1,22 @@
 #!/usr/bin/env bash
 # Sourced by e2e-host-controller.sh.
 
-docker_cli_mount_args() {
-  local docker_socket="${DENSE_MEM_CI_DOCKER_SOCKET:-}"
-  if [[ -z "$docker_socket" ]]; then
-    case "${DOCKER_HOST:-}" in
-      unix://*) docker_socket="${DOCKER_HOST#unix://}" ;;
-      "") docker_socket="/var/run/docker.sock" ;;
-      *) fail "the CI Docker host must use a Unix socket" ;;
-    esac
-  fi
-  [[ -S "$docker_socket" ]] || fail "the CI Docker socket is unavailable"
+SCENARIO_TEST_IMAGE="mcr.microsoft.com/playwright:v1.62.1-noble"
+
+docker_cli_paths() {
   local docker_bin
   docker_bin="$(readlink -f "$(command -v docker)")"
   [[ -f "$docker_bin" ]] || fail "the Docker CLI binary is unavailable"
   local compose_plugin=""
   for candidate in /usr/libexec/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose; do
     if [[ -f "$candidate" ]]; then
-      compose_plugin="$candidate"
+      compose_plugin="$(readlink -f "$candidate")"
       break
     fi
   done
   [[ -n "$compose_plugin" ]] || fail "the Docker Compose CLI plugin is unavailable"
-  DENSE_MEM_CI_DOCKER_REAL_SOCKET="$docker_socket"
-  DENSE_MEM_CI_DOCKER_SOCKET_GID="$(stat -c '%g' "$docker_socket" 2>/dev/null || stat -f '%g' "$docker_socket")"
-  DENSE_MEM_CI_DOCKER_MOUNT_ARGS=(
-    --volume "${docker_bin}:/usr/local/bin/docker:ro"
-    --volume "$(dirname "$compose_plugin"):/usr/libexec/docker/cli-plugins:ro"
-  )
+  DENSE_MEM_CI_DOCKER_BIN="$docker_bin"
+  DENSE_MEM_CI_COMPOSE_PLUGIN="$compose_plugin"
 }
 
 scenario_helpers() {
@@ -77,13 +66,12 @@ run_scenario() {
   if [[ -f "${helper_dir}/compose.yml" ]]; then
     helper_overlay="${helper_dir}/compose.yml"
   fi
-  mkdir -p "${run_root}/results-${scenario}"
-  chmod 700 "${run_root}" "${run_root}/results-${scenario}"
+  mkdir -p "${run_root}"
+  chmod 700 "${run_root}"
   local runtime_compose_host="${run_root}/runtime-compose.yml"
   write_runtime_compose "$runtime_compose_host" "$project" "${image_ref}@${digest}"
 
-  local test_image control_token telemetry_token embedding_model embedding_dimensions postgres_user postgres_password postgres_db
-  test_image="$(env_value DENSE_MEM_CI_TEST_IMAGE 2>/dev/null || printf '%s' node:24-bookworm)"
+  local test_image="$SCENARIO_TEST_IMAGE" control_token telemetry_token embedding_model embedding_dimensions postgres_user postgres_password postgres_db
   control_token="$(env_value CONTROL_PORTAL_TOKEN 2>/dev/null || true)"
   telemetry_token="$(env_value TELEMETRY_SCRAPE_TOKEN 2>/dev/null || cat "$TELEMETRY_TOKEN_FILE")"
   embedding_model="$(env_value AI_API_EMBEDDING_MODEL 2>/dev/null || true)"
@@ -144,7 +132,9 @@ run_scenario() {
     fi
   fi
 
-  docker_cli_mount_args
+  docker_cli_paths
+  local docker_socket
+  docker_socket="$(docker_socket_path)"
   if [[ "$scenario" == "synchronous_write_primitives" ]]; then
     run_synchronous_primitives_driver "$source_dir" "$project" "$postgres_user" "$postgres_password" "$postgres_db" "$run_id" "$attempt" "$phase" "$scenario" "$digest" ||
       fail "synchronous-write primitive drivers failed"
@@ -174,8 +164,10 @@ run_scenario() {
   local conflict_live=0
   [[ "$scenario" == "conflict_queue" ]] && conflict_live=1
   local container_name="${project}-test-${scenario//_/-}"
+  local created_at
+  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   local -a docker_args=(
-    run --rm --name "$container_name"
+    create --name "$container_name"
     --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}"
     --label "io.dense-mem.ci.repository=${REPOSITORY}"
     --label "io.dense-mem.ci.run-id=${run_id}"
@@ -183,21 +175,16 @@ run_scenario() {
     --label "io.dense-mem.ci.phase=${phase}"
     --label "io.dense-mem.ci.scenario=${scenario}"
     --label "io.dense-mem.ci.image-digest=${digest}"
-    --label "io.dense-mem.ci.created-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    --label "io.dense-mem.ci.created-at=${created_at}"
     --label "com.docker.compose.project=${project}"
     --network "${project}_ci"
-    --user "$(id -u):$(id -g)"
-    --group-add "$DENSE_MEM_CI_DOCKER_SOCKET_GID"
-    "${DENSE_MEM_CI_DOCKER_MOUNT_ARGS[@]}"
-    --volume "${DENSE_MEM_CI_DOCKER_REAL_SOCKET}:/var/run/docker.sock"
-    --volume "${source_dir}:/workspace:ro"
-    --volume "${runtime_compose_host}:/ci/runtime-compose.yml:ro"
+    --mount "type=bind,source=${docker_socket},target=${docker_socket}"
     --volume "${project}_client-env:/client-env:ro"
-    --volume "${run_root}/results-${scenario}:/results"
     --workdir /workspace
-    -e "DOCKER_HOST=unix:///var/run/docker.sock"
+    -e "DOCKER_HOST=unix://${docker_socket}"
     -e "HOME=/tmp/dense-mem-home"
     -e "DENSE_MEM_USER_URL=http://server:8080"
+    -e "DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL=https://dense-mem.example.test"
     -e "DENSE_MEM_CONTROL_URL=http://server:8090"
     -e "DENSE_MEM_PROMETHEUS_URL=http://prometheus:9090"
     -e "DENSE_MEM_E2E_PROMETHEUS_URL=http://prometheus:9090"
@@ -237,18 +224,14 @@ run_scenario() {
     -e "DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE=${conflict_live}"
     -e "DENSE_MEM_CONTROL_TOKEN=${control_token}"
   )
-  if [[ -f "$helper_overlay" ]]; then
-    docker_args+=(--volume "${helper_overlay}:/ci/helper-compose.yml:ro")
-  fi
   if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
-    docker_args+=(--volume "${helper_dir}/conflict-review-driver:/helpers/conflict-review-driver:ro")
     local provider_env
     for provider_env in "${conflict_driver_env[@]}"; do
       docker_args+=(-e "$provider_env")
     done
   fi
   if [[ -f "${helper_dir}/ca.pem" ]]; then
-    docker_args+=(--volume "${helper_dir}/ca.pem:/oauth/ca.pem:ro" -e "NODE_EXTRA_CA_CERTS=/oauth/ca.pem")
+    docker_args+=(-e "NODE_EXTRA_CA_CERTS=/oauth/ca.pem")
   fi
   if [[ -n "$oauth_token" ]]; then
     docker_args+=(
@@ -264,15 +247,66 @@ run_scenario() {
       )
     fi
   fi
-  docker_args+=("$test_image" bash /workspace/scripts/e2e-ci-scenario.sh "$scenario")
+  docker_args+=(
+    "$test_image" bash -euc '
+      set -euo pipefail
+      mkdir -p /usr/local/lib/docker/cli-plugins /ci /helpers /oauth /results
+      install -m 0755 /tmp/dense-mem-docker /usr/local/bin/docker
+      install -m 0755 /tmp/dense-mem-compose /usr/local/lib/docker/cli-plugins/docker-compose
+      if [[ -f /tmp/dense-mem-runtime-compose.yml ]]; then
+        install -m 0600 /tmp/dense-mem-runtime-compose.yml /ci/runtime-compose.yml
+      fi
+      if [[ -f /tmp/dense-mem-helper-compose.yml ]]; then
+        install -m 0600 /tmp/dense-mem-helper-compose.yml /ci/helper-compose.yml
+      fi
+      if [[ -f /tmp/dense-mem-conflict-review-driver ]]; then
+        install -m 0700 /tmp/dense-mem-conflict-review-driver /helpers/conflict-review-driver
+      fi
+      if [[ -f /tmp/dense-mem-oauth-ca.pem ]]; then
+        install -m 0644 /tmp/dense-mem-oauth-ca.pem /oauth/ca.pem
+      fi
+      docker version
+      docker compose version
+      exec bash /workspace/scripts/e2e-ci-scenario.sh "$1"
+    ' bash "$scenario"
+  )
+
+  local container=""
+  cleanup_scenario_container() {
+    local status=$?
+    trap - EXIT INT TERM
+    if [[ -n "$container" ]]; then
+      docker rm -f "$container" >/dev/null 2>&1 || status=1
+    fi
+    exit "$status"
+  }
+  trap cleanup_scenario_container EXIT INT TERM
+  container="$(docker "${docker_args[@]}")"
+  copy_git_source "$container" "$source_dir"
+  copy_file_into_container "$container" "$runtime_compose_host" /tmp/dense-mem-runtime-compose.yml
+  copy_file_into_container "$container" "$DENSE_MEM_CI_DOCKER_BIN" /tmp/dense-mem-docker
+  copy_file_into_container "$container" "$DENSE_MEM_CI_COMPOSE_PLUGIN" /tmp/dense-mem-compose
+  if [[ -f "$helper_overlay" ]]; then
+    copy_file_into_container "$container" "$helper_overlay" /tmp/dense-mem-helper-compose.yml
+  fi
+  if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
+    copy_file_into_container "$container" "${helper_dir}/conflict-review-driver" /tmp/dense-mem-conflict-review-driver
+  fi
+  if [[ -f "${helper_dir}/ca.pem" ]]; then
+    copy_file_into_container "$container" "${helper_dir}/ca.pem" /tmp/dense-mem-oauth-ca.pem
+  fi
 
   set +e
-  docker "${docker_args[@]}" 2>&1 |
+  docker start --attach "$container" 2>&1 |
     redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token"
   local -a scenario_pipeline_status=("${PIPESTATUS[@]}")
   set -e
   ((scenario_pipeline_status[1] == 0)) || fail "diagnostic redaction failed"
-  return "${scenario_pipeline_status[0]}"
+  local scenario_status="${scenario_pipeline_status[0]}"
+  trap - EXIT INT TERM
+  docker rm "$container" >/dev/null
+  container=""
+  return "$scenario_status"
 }
 
 control_api_request() {
@@ -286,9 +320,8 @@ control_api_request() {
   )
 }
 
-stop_stack() {
+remove_project_resources() {
   local project="$1"
-  validate_project "$project"
   local cleanup_failed=0 resource
   while IFS= read -r resource; do
     [[ -n "$resource" ]] || continue
@@ -334,10 +367,23 @@ stop_stack() {
       docker image ls -q --no-trunc --filter "label=io.dense-mem.ci.contract=${CONTRACT_VERSION}" --filter "label=io.dense-mem.ci.repository=${REPOSITORY}" --filter "label=io.dense-mem.ci.compose-project=${project}"
     } | sort -u
   )
-  if ((cleanup_failed)); then
-    printf 'dense-mem CI controller: failed to remove every resource for project %s\n' "$project" >&2
-    return 1
-  fi
+  ((cleanup_failed == 0))
+}
+
+stop_stack() {
+  local project="$1"
+  validate_project "$project"
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    if remove_project_resources "$project"; then
+      return 0
+    fi
+    if ((attempt < 5)); then
+      sleep 2
+    fi
+  done
+  printf 'dense-mem CI controller: failed to remove every resource for project %s\n' "$project" >&2
+  return 1
 }
 
 stale_cleanup() {
