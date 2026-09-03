@@ -159,6 +159,31 @@ redact_diagnostics() {
     node "${CONTROLLER_DIR}/e2e-redact-diagnostics.mjs"
 }
 
+docker_socket_path() {
+  local docker_socket
+  case "${DOCKER_HOST:-}" in
+    unix://*) docker_socket="${DOCKER_HOST#unix://}" ;;
+    "") docker_socket="/var/run/docker.sock" ;;
+    *) fail "the CI Docker host must use a Unix socket" ;;
+  esac
+  [[ "$docker_socket" == /* ]] || fail "the CI Docker socket path must be absolute"
+  [[ -S "$docker_socket" ]] || fail "the CI Docker socket is unavailable"
+  printf '%s\n' "$docker_socket"
+}
+
+copy_git_source() {
+  local container="$1" source_dir="$2"
+  [[ -d "$source_dir" && "$source_dir" == /* ]] || fail "source directory must be an absolute directory"
+  git -C "$source_dir" archive --format=tar --prefix=workspace/ HEAD |
+    docker cp - "$container:/"
+}
+
+copy_file_into_container() {
+  local container="$1" source_file="$2" destination="$3"
+  [[ -f "$source_file" ]] || fail "required copied file is unavailable: $source_file"
+  docker cp "$source_file" "$container:$destination" >/dev/null
+}
+
 compose_base_env() {
   local project="$1"
   local phase="${2:-doctor}"
@@ -258,15 +283,8 @@ precheck() {
   validate_bundle
   doctor >/dev/null
 
-  local docker_socket="${DENSE_MEM_CI_DOCKER_SOCKET:-}"
-  if [[ -z "$docker_socket" ]]; then
-    case "${DOCKER_HOST:-}" in
-      unix://*) docker_socket="${DOCKER_HOST#unix://}" ;;
-      "") docker_socket="/var/run/docker.sock" ;;
-      *) fail "the CI Docker host must use a Unix socket" ;;
-    esac
-  fi
-  [[ -S "$docker_socket" ]] || fail "the CI Docker socket is unavailable"
+  local docker_socket
+  docker_socket="$(docker_socket_path)"
   local project="densemem-ci-${run_id}-${attempt}-precheck"
   validate_project "$project"
   local precheck_network="$project"
@@ -296,71 +314,40 @@ precheck() {
   local test_image
   test_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
   [[ "$test_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid precheck Go test image"
-  set +e
-  docker run --rm \
-    --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}" \
-    --label "io.dense-mem.ci.repository=${REPOSITORY}" \
-    --label "io.dense-mem.ci.run-id=${run_id}" \
-    --label "io.dense-mem.ci.run-attempt=${attempt}" \
-    --label "io.dense-mem.ci.phase=precheck" \
-    --label "io.dense-mem.ci.scenario=precheck" \
-    --label "io.dense-mem.ci.image-digest=${image_digest}" \
-    --label "io.dense-mem.ci.created-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --label "io.dense-mem.ci.compose-project=${project}" \
-    --network "$precheck_network" \
-    --volume "${docker_socket}:/var/run/docker.sock" \
-    --volume "${source_dir}:/workspace:ro" \
-    --workdir /workspace \
-    -e DOCKER_HOST=unix:///var/run/docker.sock \
-    -e TESTCONTAINERS_RYUK_DISABLED=true \
-    -e DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 \
-    -e DENSE_MEM_CI_PRECHECK_CONTRACT="$CONTRACT_VERSION" \
-    -e DENSE_MEM_CI_PRECHECK_REPOSITORY="$REPOSITORY" \
-    -e DENSE_MEM_CI_PRECHECK_RUN_ID="$run_id" \
-      -e DENSE_MEM_CI_PRECHECK_RUN_ATTEMPT="$attempt" \
-      -e DENSE_MEM_CI_PRECHECK_PROJECT="$project" \
-      -e DENSE_MEM_CI_PRECHECK_NETWORK="$precheck_network" \
-      -e DENSE_MEM_CI_PRECHECK_IMAGE_DIGEST="$image_digest" \
-      "$test_image" \
+  local repository_status=0
+  run_go_source_container \
+    "$source_dir" "$test_image" "$project" "$run_id" "$attempt" precheck precheck "$image_digest" \
+    "$precheck_network" "$docker_socket" "$ENV_FILE" -- \
+    "TESTCONTAINERS_RYUK_DISABLED=true" \
+    "DENSE_MEM_REPOSITORY_TESTCONTAINERS=1" \
+    "DENSE_MEM_CI_PRECHECK_CONTRACT=${CONTRACT_VERSION}" \
+    "DENSE_MEM_CI_PRECHECK_REPOSITORY=${REPOSITORY}" \
+    "DENSE_MEM_CI_PRECHECK_RUN_ID=${run_id}" \
+    "DENSE_MEM_CI_PRECHECK_RUN_ATTEMPT=${attempt}" \
+    "DENSE_MEM_CI_PRECHECK_PROJECT=${project}" \
+    "DENSE_MEM_CI_PRECHECK_NETWORK=${precheck_network}" \
+    "DENSE_MEM_CI_PRECHECK_IMAGE_DIGEST=${image_digest}" -- \
     go test ./internal/repository \
       -run '^(TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment|TestScheduledDreamRecoveryFencesExpiredLease|TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited)$' \
-      -count=1
-  local repository_status=$?
-  if ((repository_status == 0)); then
-    docker run --rm \
-      --label "io.dense-mem.ci.contract=${CONTRACT_VERSION}" \
-      --label "io.dense-mem.ci.repository=${REPOSITORY}" \
-      --label "io.dense-mem.ci.run-id=${run_id}" \
-      --label "io.dense-mem.ci.run-attempt=${attempt}" \
-      --label "io.dense-mem.ci.phase=precheck" \
-      --label "io.dense-mem.ci.scenario=precheck" \
-      --label "io.dense-mem.ci.image-digest=${image_digest}" \
-      --label "io.dense-mem.ci.created-at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      --label "io.dense-mem.ci.compose-project=${project}" \
-      --network "$precheck_network" \
-      --volume "${docker_socket}:/var/run/docker.sock" \
-      --volume "${source_dir}:/workspace:ro" \
-      --workdir /workspace \
-      -e DOCKER_HOST=unix:///var/run/docker.sock \
-      -e TESTCONTAINERS_RYUK_DISABLED=true \
-      -e DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 \
-      -e DENSE_MEM_CI_PRECHECK_CONTRACT="$CONTRACT_VERSION" \
-      -e DENSE_MEM_CI_PRECHECK_REPOSITORY="$REPOSITORY" \
-      -e DENSE_MEM_CI_PRECHECK_RUN_ID="$run_id" \
-      -e DENSE_MEM_CI_PRECHECK_RUN_ATTEMPT="$attempt" \
-      -e DENSE_MEM_CI_PRECHECK_PROJECT="$project" \
-      -e DENSE_MEM_CI_PRECHECK_NETWORK="$precheck_network" \
-      -e DENSE_MEM_CI_PRECHECK_IMAGE_DIGEST="$image_digest" \
-      "$test_image" \
+      -count=1 || repository_status=$?
+  local test_status=$repository_status
+  if ((test_status == 0)); then
+    run_go_source_container \
+      "$source_dir" "$test_image" "$project" "$run_id" "$attempt" precheck precheck "$image_digest" \
+      "$precheck_network" "$docker_socket" "$ENV_FILE" -- \
+      "TESTCONTAINERS_RYUK_DISABLED=true" \
+      "DENSE_MEM_REPOSITORY_TESTCONTAINERS=1" \
+      "DENSE_MEM_CI_PRECHECK_CONTRACT=${CONTRACT_VERSION}" \
+      "DENSE_MEM_CI_PRECHECK_REPOSITORY=${REPOSITORY}" \
+      "DENSE_MEM_CI_PRECHECK_RUN_ID=${run_id}" \
+      "DENSE_MEM_CI_PRECHECK_RUN_ATTEMPT=${attempt}" \
+      "DENSE_MEM_CI_PRECHECK_PROJECT=${project}" \
+      "DENSE_MEM_CI_PRECHECK_NETWORK=${precheck_network}" \
+      "DENSE_MEM_CI_PRECHECK_IMAGE_DIGEST=${image_digest}" -- \
       go test ./internal/http \
         -run '^TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration$' \
-        -count=1
+        -count=1 || test_status=$?
   fi
-  local test_status=$?
-  if ((repository_status != 0)); then
-    test_status=$repository_status
-  fi
-  set -e
   trap - EXIT INT TERM
   docker network rm "$precheck_network" >/dev/null 2>&1 || true
   if ((test_status != 0)); then
@@ -456,13 +443,14 @@ start_stack() {
       profiles+=(--profile "$helper")
     done
   fi
+  stack_started=1
+  seed_stack_inputs "$project" "$run_id" "$attempt" "$phase" "$scenario"
   if [[ "$scenario" == "identity_cleanup" ]]; then
     local identity_postgres_user identity_postgres_password identity_postgres_db
     identity_postgres_user="$(env_value POSTGRES_USER 2>/dev/null || true)"
     identity_postgres_password="$(env_value POSTGRES_PASSWORD 2>/dev/null || true)"
     identity_postgres_db="$(env_value POSTGRES_DB 2>/dev/null || true)"
     [[ -n "$identity_postgres_user" && -n "$identity_postgres_password" && -n "$identity_postgres_db" ]] || fail "identity cleanup seed requires PostgreSQL credentials"
-    stack_started=1
     if ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 postgres >/dev/null; then
       ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
       fail "PostgreSQL failed to start for identity cleanup seed"
@@ -472,7 +460,6 @@ start_stack() {
       fail "identity cleanup seed failed"
     fi
   fi
-  stack_started=1
   if ! ci_compose "${profiles[@]}" up -d --wait --wait-timeout 300 >/dev/null; then
     ci_compose down --volumes --remove-orphans >/dev/null 2>&1 || true
     fail "Compose stack failed to start"

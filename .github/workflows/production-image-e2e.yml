@@ -312,20 +312,6 @@ jobs:
     runs-on: docker-runner
     timeout-minutes: 15
     steps:
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          package-manager-cache: false
-
-      - name: Download bounded scenario artifacts
-        uses: actions/download-artifact@v8
-        continue-on-error: true
-        with:
-          pattern: dense-mem-e2e-*
-          merge-multiple: true
-          path: ${{ runner.temp }}/dense-mem-e2e-results
-
       - name: Publish workflow summary
         shell: bash
         env:
@@ -339,8 +325,6 @@ jobs:
           SHARED_STOP_RESULT: ${{ needs.shared-stop.result }}
           IMAGE: ${{ needs.authorize.outputs.image }}
           DIGEST: ${{ needs.authorize.outputs.digest }}
-          EXCLUSIVE_MATRIX: ${{ needs.authorize.outputs.exclusive_matrix }}
-          SHARED_MATRIX: ${{ needs.authorize.outputs.shared_matrix }}
         run: |
           set -euo pipefail
           {
@@ -359,51 +343,6 @@ jobs:
             echo "| Shared stack start | ${SHARED_START_RESULT} |"
             echo "| Shared matrix | ${SHARED_RESULT} |"
             echo "| Shared cleanup | ${SHARED_STOP_RESULT} |"
-          } >> "${GITHUB_STEP_SUMMARY}"
-          {
-            echo
-            echo "### Scenario results"
-            echo
-            echo "| Scenario | Result |"
-            echo "| --- | --- |"
-            mkdir -p "${RUNNER_TEMP}/dense-mem-e2e-results"
-            exclusive_matrix="${EXCLUSIVE_MATRIX:-}"
-            shared_matrix="${SHARED_MATRIX:-}"
-            [[ -n "${exclusive_matrix}" ]] || exclusive_matrix='{"include":[]}'
-            [[ -n "${shared_matrix}" ]] || shared_matrix='{"include":[]}'
-            node - "${RUNNER_TEMP}/dense-mem-e2e-results" "${exclusive_matrix}" "${shared_matrix}" "${EXCLUSIVE_RESULT}" "${SHARED_RESULT}" "${SHARED_START_RESULT}" "${SHARED_STOP_RESULT}" <<'NODE'
-          const fs = require("node:fs");
-          const path = require("node:path");
-          const root = process.argv[2];
-          const exclusive = JSON.parse(process.argv[3]).include || [];
-          const shared = JSON.parse(process.argv[4]).include || [];
-          const exclusiveResult = process.argv[5];
-          const sharedResult = process.argv[6];
-          const sharedStartResult = process.argv[7];
-          const sharedStopResult = process.argv[8];
-          const files = new Map(fs.readdirSync(root).filter((name) => name.endsWith(".status")).map((file) => [
-            file.replace(/^dense-mem-e2e-/, "").replace(/\.status$/, ""),
-            fs.readFileSync(path.join(root, file), "utf8").trim(),
-          ]));
-          const rows = [
-            ...exclusive.map(({ name }) => [name, "exclusive", exclusiveResult]),
-            ...shared.map(({ name }) => [name, "shared", sharedResult]),
-          ];
-          for (const [scenario, phase, phaseResult] of rows) {
-            const result = files.get(scenario);
-            let display;
-            if (result !== undefined) {
-              if (result !== "0") display = `failed (${result || "unknown"})`;
-              else if (phase === "shared" && sharedStopResult !== "success") display = "passed (cleanup failed)";
-              else display = "passed";
-            }
-            else if (phaseResult === "success") display = "unavailable (no status artifact)";
-            else if (phase === "shared" && sharedStartResult !== "success") display = `skipped (${sharedStartResult || "unknown"})`;
-            else display = `skipped (${phaseResult || "unknown"})`;
-            process.stdout.write(`| ${scenario} | ${display} |\n`);
-          }
-          if (rows.length === 0) process.stdout.write("| unavailable | no scenario registry output |\n");
-          NODE
           } >> "${GITHUB_STEP_SUMMARY}"
           for result in \
             "${AUTH_RESULT}" \
