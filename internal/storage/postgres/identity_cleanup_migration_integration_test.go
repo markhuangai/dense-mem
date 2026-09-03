@@ -23,8 +23,9 @@ func TestIdentityCleanupComposeSeed(t *testing.T) {
 		t.Skip("compose identity seed is only run by scripts/e2e-compose.sh")
 	}
 	versionByVariant := map[string]int64{
-		"v2_4_8": 2026080905,
-		"bridge": 2026081001,
+		"v2_4_8":       2026080905,
+		"bridge":       2026081001,
+		"bridge_valid": 2026081001,
 	}
 	version, ok := versionByVariant[variant]
 	require.True(t, ok, "unsupported compose identity seed variant %q", variant)
@@ -166,11 +167,13 @@ func seedIdentityUpgradeState(
 	`, ssoSessionHash, identityID, providerID, ssoProfileID, teamID, now)
 	require.NoError(t, err)
 
+	if variant == "bridge" || variant == "bridge_valid" {
+		_, err = tx.ExecContext(ctx, `UPDATE team_profiles SET scopes = ARRAY['read']::text[] WHERE id = $1`, profileID)
+		require.NoError(t, err)
+	}
 	if variant == "bridge" {
 		mismatchTeamID := uuid.New()
 		_, err = tx.ExecContext(ctx, `INSERT INTO teams (id, name) VALUES ($1, $2)`, mismatchTeamID, "identity-upgrade-mismatch-"+mismatchTeamID.String())
-		require.NoError(t, err)
-		_, err = tx.ExecContext(ctx, `UPDATE team_profiles SET scopes = ARRAY['read']::text[] WHERE id = $1`, profileID)
 		require.NoError(t, err)
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO usage_metric_buckets (

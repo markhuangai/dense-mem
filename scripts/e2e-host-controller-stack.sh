@@ -464,7 +464,7 @@ run_identity_cleanup_seed() {
     "$source_dir" "$go_image" "$project" "$DENSE_MEM_CI_RUN_ID" "$DENSE_MEM_CI_RUN_ATTEMPT" \
     "$DENSE_MEM_CI_PHASE" "$DENSE_MEM_CI_SCENARIO" "$DENSE_MEM_CI_IMAGE_DIGEST" "${project}_ci" "" "$ENV_FILE" \
     "$api_key" "$team_id" "$profile_id" -- \
-    "DENSE_MEM_E2E_IDENTITY_SEED_VARIANT=bridge" \
+    "DENSE_MEM_E2E_IDENTITY_SEED_VARIANT=bridge_valid" \
     "DENSE_MEM_E2E_IDENTITY_TEAM_ID=${team_id}" \
     "DENSE_MEM_E2E_IDENTITY_PROFILE_ID=${profile_id}" \
     "DENSE_MEM_E2E_IDENTITY_API_KEY=${api_key}" \
@@ -474,7 +474,7 @@ run_identity_cleanup_seed() {
     "DENSE_MEM_E2E_POSTGRES_HOST=postgres" \
     "DENSE_MEM_E2E_POSTGRES_PORT=5432" -- \
     go test -tags=integration ./internal/storage/postgres \
-      -run '^TestIdentityCleanupComposeSeed$' -count=1 || return $?
+      -run '^TestIdentityCleanupComposeSeed$' -count=1 >&2 || return $?
 
   local identity_file="${DENSE_MEM_CI_HELPER_DIR}/identity.env"
   printf 'DENSE_MEM_E2E_UPGRADE_TEAM_ID=%s\nDENSE_MEM_E2E_UPGRADE_PROFILE_ID=%s\nDENSE_MEM_E2E_UPGRADE_API_KEY=%s\n' \

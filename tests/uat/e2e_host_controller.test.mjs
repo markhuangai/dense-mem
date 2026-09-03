@@ -381,9 +381,12 @@ esac
     assert.equal((log.match(/^create /gm) || []).length, 5);
     assert.equal((log.match(/^cp /gm) || []).length, 6);
     assert.match(log, /--network densemem-ci-test_ci/);
+    assert.match(log, /DENSE_MEM_E2E_IDENTITY_SEED_VARIANT=bridge_valid/);
     assert.doesNotMatch(log, /--mount|DENSE_MEM_TEST_ENV|\.env/);
     assert.match(log, /start --attach container-1/);
     assert.match(log, /start --attach container-5/);
+    assert.equal((result.stdout.match(/^driver passed$/gm) || []).length, 4);
+    assert.equal((result.stderr.match(/^driver passed$/gm) || []).length, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
