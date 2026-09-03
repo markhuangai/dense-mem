@@ -3,7 +3,7 @@
 
 CONFLICT_PROVIDER_EMBEDDING_MODEL="dense-mem-conflict-e2e-embedding"
 
-run_go_source_container() {
+run_go_source_container() (
   local source_dir="$1" image="$2" project="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7" digest="$8" network="$9" docker_socket="${10}" redact_env_file="${11}"
   shift 11
   local -a redaction_values=()
@@ -67,9 +67,9 @@ run_go_source_container() {
   docker rm "$container" >/dev/null
   container=""
   return "$result_status"
-}
+)
 
-build_conflict_review_driver() {
+build_conflict_review_driver() (
   local source_dir="$1" image="$2" project="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7"
   local container_name="${project}-driver-${BASHPID}"
   local container=""
@@ -117,7 +117,7 @@ build_conflict_review_driver() {
   trap - EXIT INT TERM
   docker rm "$container" >/dev/null
   container=""
-}
+)
 
 prepare_stack_helpers() {
   local project="$1" source_dir="$2" helpers="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7"

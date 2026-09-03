@@ -151,6 +151,8 @@ test("scenario workflow derives the stack from shared_project and executes PR sc
 });
 
 test("nested Docker clients use the runner socket at its original path", () => {
+  assert.match(controllerStack, /run_go_source_container\(\) \(/);
+  assert.match(controllerStack, /build_conflict_review_driver\(\) \(/);
   assert.match(controllerRuntime, /--mount \"type=bind,source=\$\{docker_socket\},target=\$\{docker_socket\}\"/);
   assert.match(controllerRuntime, /-e \"DOCKER_HOST=unix:\/\/\$\{docker_socket\}\"/);
   assert.match(controllerStack, /--mount \"type=bind,source=\$\{docker_socket\},target=\$\{docker_socket\}\"/);
@@ -251,6 +253,7 @@ case "\${1:-}" in
     ;;
   cp)
     if [[ "\${2:-}" == "-" ]]; then cat >/dev/null; fi
+    if [[ "\${2:-}" != "-" ]]; then : > "\${3:?}"; fi
     ;;
   start) printf '%s\\n' 'driver passed' ;;
   rm) ;;
@@ -277,9 +280,17 @@ esac
       }
       source "$DENSE_MEM_TEST_STACK"
       mkdir -p "$DENSE_MEM_CI_HELPER_DIR"
+      caller_cleanup() { :; }
+      trap caller_cleanup EXIT
+      assert_caller_cleanup() { [[ "$(trap -p EXIT)" == *caller_cleanup* ]]; }
+      build_conflict_review_driver source-dir golang:1.26.6-bookworm densemem-ci-test 11 2 exclusive conflict
+      assert_caller_cleanup
       run_synchronous_primitives_driver source-dir densemem-ci-test densemem postgres densemem 11 2 exclusive synchronous_write sha256:0000000000000000000000000000000000000000000000000000000000000000
+      assert_caller_cleanup
       run_mcp_sdk_parity_driver source-dir densemem-ci-test 11 2 shared mcp_sdk_parity sha256:0000000000000000000000000000000000000000000000000000000000000000
+      assert_caller_cleanup
       run_identity_cleanup_seed source-dir densemem-ci-test densemem postgres densemem
+      assert_caller_cleanup
     `], {
       encoding: "utf8",
       env: {
@@ -293,12 +304,12 @@ esac
     });
     assert.equal(result.status, 0, result.stderr);
     const log = await readFile(join(directory, "docker.log"), "utf8");
-    assert.equal((log.match(/^create /gm) || []).length, 4);
-    assert.equal((log.match(/^cp /gm) || []).length, 4);
+    assert.equal((log.match(/^create /gm) || []).length, 5);
+    assert.equal((log.match(/^cp /gm) || []).length, 6);
     assert.match(log, /--network densemem-ci-test_ci/);
     assert.doesNotMatch(log, /--mount|DENSE_MEM_TEST_ENV|\.env/);
     assert.match(log, /start --attach container-1/);
-    assert.match(log, /start --attach container-4/);
+    assert.match(log, /start --attach container-5/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
