@@ -301,6 +301,18 @@ if [[ "$1" == "manifest" && "$2" == "head" ]]; then
     printf '%s\n' 'stub manifest head failure' >&2
     exit 1
   fi
+  if [[ "$3" == ghcr.io/* && -n "\${STUB_REGCTL_HEAD_FAILURE_STATE:-}" ]]; then
+    count=0
+    if [[ -f "$STUB_REGCTL_HEAD_FAILURE_STATE" ]]; then
+      count="$(cat "$STUB_REGCTL_HEAD_FAILURE_STATE")"
+    fi
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$STUB_REGCTL_HEAD_FAILURE_STATE"
+    if [[ "$count" == "1" ]]; then
+      printf '%s\n' 'stub transient manifest head failure' >&2
+      exit 1
+    fi
+  fi
   if [[ "$3" == ghcr.io/* && -n "\${STUB_REGCTL_HEAD_STATE:-}" ]]; then
     count=0
     if [[ -f "$STUB_REGCTL_HEAD_STATE" ]]; then
@@ -402,6 +414,14 @@ exit 2
     assert.equal(eventuallyPublished.status, 0);
     assert.equal(eventuallyPublished.stdout, `${digest}\n`);
     assert.equal(await readFile(eventualHeadState, "utf8"), "2\n");
+
+    const transientHeadFailureState = join(directory, "transient-head-failure-state");
+    const publishedAfterTransientHeadFailure = await invoke(publishArgs, {
+      STUB_REGCTL_HEAD_FAILURE_STATE: transientHeadFailureState,
+    });
+    assert.equal(publishedAfterTransientHeadFailure.status, 0);
+    assert.equal(publishedAfterTransientHeadFailure.stdout, `${digest}\n`);
+    assert.equal(await readFile(transientHeadFailureState, "utf8"), "2\n");
 
     const copyFailure = await invoke(publishArgs, { STUB_REGCTL_COPY_FAILURE: "1" });
     assert.notEqual(copyFailure.status, 0);

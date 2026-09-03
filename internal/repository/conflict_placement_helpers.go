@@ -77,30 +77,46 @@ func lockRelationshipConflictSnapshotScopeForDecision(
 	predicate *predicateDefinition,
 	status string,
 ) error {
-	if status != string(domain.RelationshipStatusActive) ||
-		predicate.RelationshipKind != string(domain.RelationshipKindState) ||
-		predicate.CurrentCardinality != string(domain.CurrentCardinalityOne) {
+	source := &RelationshipRecord{
+		TeamID:             input.TeamID,
+		SubjectEntityID:    input.SubjectEntityID,
+		PredicateKey:       input.PredicateKey,
+		RelationshipKind:   predicate.RelationshipKind,
+		CurrentCardinality: predicate.CurrentCardinality,
+		Status:             status,
+		Polarity:           input.Polarity,
+		ScopeKey:           input.ScopeKey,
+	}
+	if !relationshipConflictSnapshotScopeEligible(source) {
 		return nil
 	}
 	spaceID, err := loadSemanticInputSpaceID(ctx, tx, input)
 	if err != nil {
 		return err
 	}
-	source := &RelationshipRecord{
-		TeamID:             input.TeamID,
-		SpaceID:            spaceID,
-		SubjectEntityID:    input.SubjectEntityID,
-		PredicateKey:       input.PredicateKey,
-		RelationshipKind:   predicate.RelationshipKind,
-		CurrentCardinality: predicate.CurrentCardinality,
-		Polarity:           input.Polarity,
-		ScopeKey:           input.ScopeKey,
+	source.SpaceID = spaceID
+	return lockRelationshipConflictSnapshotScopeForRecord(ctx, tx, source)
+}
+
+func lockRelationshipConflictSnapshotScopeForRecord(
+	ctx context.Context,
+	tx *gorm.DB,
+	source *RelationshipRecord,
+) error {
+	if !relationshipConflictSnapshotScopeEligible(source) {
+		return nil
 	}
-	_, spaceKind, err := loadRelationshipConflictSpace(ctx, tx, input.TeamID, source)
+	spaceID, spaceKind, err := loadRelationshipConflictSpace(ctx, tx, source.TeamID, source)
 	if err != nil {
 		return err
 	}
-	return lockRelationshipConflictSnapshotScope(ctx, tx, input.TeamID, relationshipConflictScopeKey(source, spaceID, spaceKind))
+	return lockRelationshipConflictSnapshotScope(ctx, tx, source.TeamID, relationshipConflictScopeKey(source, spaceID, spaceKind))
+}
+
+func relationshipConflictSnapshotScopeEligible(source *RelationshipRecord) bool {
+	return source.Status == string(domain.RelationshipStatusActive) &&
+		source.RelationshipKind == string(domain.RelationshipKindState) &&
+		source.CurrentCardinality == string(domain.CurrentCardinalityOne)
 }
 
 func lockRelationshipConflictCaseSnapshotScope(

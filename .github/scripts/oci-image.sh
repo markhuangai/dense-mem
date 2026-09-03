@@ -137,8 +137,10 @@ publish_preview() {
 	source_digest="$("${REGCTL_BIN}" manifest head "${source_ref}")"
 	"${REGCTL_BIN}" image copy --force-recursive "${source_ref}@${source_digest}" "${target_ref}" >/dev/null
 	for attempt in 1 2 3 4 5; do
-		target_digest="$("${REGCTL_BIN}" manifest head "${target_ref}")"
-		[[ "${target_digest}" == "${source_digest}" ]] && break
+		target_digest=""
+		if target_digest="$("${REGCTL_BIN}" manifest head "${target_ref}")"; then
+			[[ "${target_digest}" == "${source_digest}" ]] && break
+		fi
 		((attempt < 5)) && sleep 2
 	done
 	[[ "${target_digest}" == "${source_digest}" ]] ||

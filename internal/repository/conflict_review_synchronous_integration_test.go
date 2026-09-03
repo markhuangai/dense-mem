@@ -278,6 +278,227 @@ func TestConflictSnapshotScopeSerializesPlacementReviewAndWrite(t *testing.T) {
 	require.NoError(t, <-rememberDone)
 }
 
+func TestConflictSnapshotScopeLocksCorrectionBeforeReviewRowLock(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	adminSQL, err := adminDB.DB()
+	require.NoError(t, err)
+	appSQL, err := appDB.DB()
+	require.NoError(t, err)
+	appSQL.SetMaxOpenConns(8)
+	appSQL.SetMaxIdleConns(8)
+	insertSearchTestContract(t, adminDB, rls, "conflict-correction-scope-lock", 3, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "conflict-correction-scope-lock-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "conflict-correction-scope-lock-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "conflict-correction-scope-lock-owner-b")
+	ownerC := createLedgerProfile(t, adminDB, rls, teamID, "conflict-correction-scope-lock-owner-c")
+	semantic := NewSemanticRepository(appDB, rls)
+	ledger := NewLedgerRepositoryWithRuntimeConfig(appDB, rls, ConflictRuntimeConfig{ReviewTTLDays: 2, Timezone: "UTC"})
+
+	subject := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "project", "Correction scope lock")
+	objectA := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "product", "PostgreSQL")
+	objectB := createSemanticEntity(t, ctx, semantic, teamID, ownerA, "product", "GraphDB")
+	correctedObject := createSemanticEntity(t, ctx, semantic, teamID, ownerB, "product", "SQLite")
+	_ = commitConflictRememberFixture(t, ctx, ledger, teamID, ownerA, subject.EntityID, objectA.EntityID, "Correction scope lock uses PostgreSQL.", "conflict-correction-scope-a")
+	source := commitConflictRememberFixture(t, ctx, ledger, teamID, ownerB, subject.EntityID, objectB.EntityID, "Correction scope lock uses GraphDB.", "conflict-correction-scope-b")
+	_ = commitConflictRememberFixture(t, ctx, ledger, teamID, ownerC, subject.EntityID, objectA.EntityID, "Correction scope lock uses PostgreSQL again.", "conflict-correction-scope-c")
+	relationship := source.RelationshipResults[0].Relationship
+	require.NotNil(t, relationship)
+
+	var conflictID, scopeKey, evidenceID string
+	var dueAt time.Time
+	var supportStart, supportEnd int
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`
+			SELECT conflict_id::text, semantic_scope_key, review_due_at
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid
+			ORDER BY created_at
+			LIMIT 1
+		`, teamID).Row().Scan(&conflictID, &scopeKey, &dueAt); err != nil {
+			return err
+		}
+		return tx.Raw(`
+			SELECT fragment_id::text, span_start, span_end
+			FROM relationship_evidence_supports
+			WHERE team_id = ?::uuid AND relationship_id = ?::uuid
+			ORDER BY created_at, support_id
+			LIMIT 1
+		`, teamID, relationship.RelationshipID).Row().Scan(&evidenceID, &supportStart, &supportEnd)
+	}))
+	require.NotEmpty(t, conflictID)
+	require.NotEmpty(t, scopeKey)
+
+	reviewNow := dueAt.Add(time.Minute)
+	run, claimed, err := ledger.ReserveRelationshipConflictReviewRun(ctx, ConflictReviewRunInput{
+		TeamID: teamID, WorkerID: "conflict-correction-scope-reviewer", LocalRunDate: reviewNow, Timezone: "UTC", Lease: time.Minute,
+	})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NotNil(t, run)
+	cases, err := ledger.ClaimRelationshipConflictCases(ctx, ClaimRelationshipConflictCasesInput{
+		TeamID: teamID, WorkerID: "conflict-correction-scope-reviewer", ReviewRunID: run.ReviewRunID,
+		Limit: 10, Lease: time.Minute, MaxAttempts: 5, Now: reviewNow,
+	})
+	require.NoError(t, err)
+	require.Len(t, cases, 1)
+
+	correction := CorrectRelationshipInput{
+		TeamID: teamID, OwnerProfileID: ownerB, Action: "submit",
+		RelationshipID: relationship.RelationshipID, ExpectedVersion: relationship.Version,
+		Patch:    RelationshipCorrectionPatch{ObjectEntity: &RelationshipCorrectionEntityPatch{EntityID: correctedObject.EntityID}},
+		Supports: []RelationshipCorrectionSupport{{EvidenceID: evidenceID, Start: supportStart, End: supportEnd}},
+		Reason:   "the object Entity was resolved incorrectly", IdempotencyKey: "conflict-correction-scope-lock",
+	}
+	plan, err := semantic.PlanRelationshipCorrectionEmbeddings(ctx, correction)
+	require.NoError(t, err)
+
+	caseLocked := make(chan struct{})
+	releaseCase := make(chan struct{})
+	caseLockDone := make(chan error, 1)
+	go func() {
+		caseLockDone <- rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+			var lockedConflictID string
+			if err := tx.Raw(`
+				SELECT conflict_id::text
+				FROM relationship_conflict_cases
+				WHERE team_id = ?::uuid AND conflict_id = ?::uuid
+				FOR UPDATE
+			`, teamID, conflictID).Row().Scan(&lockedConflictID); err != nil {
+				return err
+			}
+			close(caseLocked)
+			select {
+			case <-releaseCase:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			return nil
+		})
+	}()
+	select {
+	case <-caseLocked:
+	case err := <-caseLockDone:
+		require.NoError(t, err)
+		t.Fatal("review transaction exited before locking the conflict case")
+	case <-ctx.Done():
+		t.Fatal("timed out locking the conflict case")
+	}
+	caseReleased := false
+	defer func() {
+		if !caseReleased {
+			close(releaseCase)
+		}
+	}()
+
+	type reviewResult struct {
+		result *ReviewRelationshipConflictCaseResult
+		err    error
+	}
+	reviewDone := make(chan reviewResult, 1)
+	go func() {
+		result, reviewErr := ledger.ReviewRelationshipConflictCase(ctx, ReviewRelationshipConflictCaseInput{
+			TeamID: teamID, WorkerID: "conflict-correction-scope-reviewer", ReviewRunID: run.ReviewRunID,
+			ConflictID: conflictID, Now: reviewNow,
+		})
+		reviewDone <- reviewResult{result: result, err: reviewErr}
+	}()
+	reviewWaitCtx, reviewWaitCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer reviewWaitCancel()
+	for {
+		var waiting bool
+		err := adminSQL.QueryRowContext(reviewWaitCtx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_locks
+				WHERE locktype = 'transactionid' AND NOT granted
+			)
+		`).Scan(&waiting)
+		require.NoError(t, err)
+		if waiting {
+			break
+		}
+		select {
+		case outcome := <-reviewDone:
+			require.NoError(t, outcome.err, "review returned before waiting for the conflict-case lock")
+			t.Fatal("review returned before waiting for the conflict-case lock")
+		case <-reviewWaitCtx.Done():
+			t.Fatal("review did not acquire the conflict snapshot scope before waiting for the conflict case")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	type correctionResult struct {
+		result *CorrectRelationshipResult
+		err    error
+	}
+	correctionDone := make(chan correctionResult, 1)
+	go func() {
+		result, correctionErr := semantic.CorrectRelationshipWithEmbeddings(ctx, correction, relationshipCorrectionTestEmbeddings(plan))
+		correctionDone <- correctionResult{result: result, err: correctionErr}
+	}()
+
+	scopeLockKey := teamID + ":relationship-conflict-snapshot:" + scopeKey
+	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer waitCancel()
+	for {
+		var waiting bool
+		err := adminSQL.QueryRowContext(waitCtx, `
+			WITH scope AS (
+				SELECT hashtextextended($1::text, 0) AS advisory_key
+			)
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_locks, scope
+				WHERE locktype = 'advisory'
+				  AND NOT granted
+				  AND objsubid = 1
+				  AND classid::bigint = ((scope.advisory_key >> 32) & 4294967295)
+				  AND objid::bigint = (scope.advisory_key & 4294967295)
+			)
+		`, scopeLockKey).Scan(&waiting)
+		require.NoError(t, err)
+		if waiting {
+			break
+		}
+		select {
+		case outcome := <-correctionDone:
+			require.NoError(t, outcome.err, "correction returned before waiting for the conflict snapshot scope")
+			t.Fatal("correction returned before waiting for the conflict snapshot scope")
+		case <-waitCtx.Done():
+			t.Fatal("correction did not wait for the conflict snapshot scope")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	close(releaseCase)
+	caseReleased = true
+	select {
+	case err := <-caseLockDone:
+		require.NoError(t, err)
+	case <-ctx.Done():
+		t.Fatal("conflict-case lock did not release")
+	}
+	select {
+	case outcome := <-reviewDone:
+		require.NoError(t, outcome.err)
+		require.Equal(t, ConflictReviewOutcomeResolve, outcome.result.Outcome)
+		require.Contains(t, outcome.result.UpdatedRelationships, relationship.RelationshipID)
+	case <-ctx.Done():
+		t.Fatal("review did not complete after the conflict-case lock released")
+	}
+	select {
+	case outcome := <-correctionDone:
+		require.NoError(t, outcome.err)
+		require.Equal(t, "rejected", outcome.result.ProcessingState)
+		require.Equal(t, "relationship_version_stale", outcome.result.ErrorCode)
+	case <-ctx.Done():
+		t.Fatal("correction did not complete after the review released the conflict snapshot scope")
+	}
+}
+
 func TestOverdueConflictResolutionRetainsEvidenceUsedByAnotherOwner(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

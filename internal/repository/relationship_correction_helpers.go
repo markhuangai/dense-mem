@@ -581,6 +581,33 @@ func rejectRelationshipCorrectionSubmission(
 	return nil
 }
 
+func lockRelationshipCorrectionSource(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	relationshipID string,
+	ownerProfileID string,
+) (*RelationshipRecord, error) {
+	source, err := loadRelationshipRecord(ctx, tx, teamID, relationshipID)
+	if err != nil {
+		return nil, err
+	}
+	if source.OwnerProfileID != ownerProfileID {
+		return nil, ErrSemanticOwnerMismatch
+	}
+	if err := lockRelationshipConflictSnapshotScopeForRecord(ctx, tx, source); err != nil {
+		return nil, err
+	}
+	source, err = loadRelationshipRecordForUpdate(ctx, tx, teamID, relationshipID)
+	if err != nil {
+		return nil, err
+	}
+	if source.OwnerProfileID != ownerProfileID {
+		return nil, ErrSemanticOwnerMismatch
+	}
+	return source, nil
+}
+
 func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 	ctx context.Context,
 	tx *gorm.DB,

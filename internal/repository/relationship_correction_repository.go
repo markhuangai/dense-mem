@@ -217,7 +217,7 @@ func (r *SemanticRepositoryImpl) submitRelationshipCorrection(
 		return nil, err
 	}
 
-	source, err := loadRelationshipRecordForUpdate(ctx, tx, input.TeamID, input.RelationshipID)
+	source, err := lockRelationshipCorrectionSource(ctx, tx, input.TeamID, input.RelationshipID, input.OwnerProfileID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrSemanticOwnerMismatch
 	}
@@ -345,7 +345,7 @@ func (r *SemanticRepositoryImpl) confirmRelationshipCorrection(
 		return relationshipCorrectionResultFromRow(row), ErrRelationshipCorrectionConfirmation
 	}
 
-	source, err := loadRelationshipRecordForUpdate(ctx, tx, row.TeamID, row.RelationshipID)
+	source, err := lockRelationshipCorrectionSource(ctx, tx, row.TeamID, row.RelationshipID, row.OwnerProfileID)
 	if err != nil || source.OwnerProfileID != row.OwnerProfileID {
 		if err == nil {
 			err = ErrSemanticOwnerMismatch
