@@ -63,7 +63,10 @@ func (r *LedgerRepositoryImpl) PlanRememberEmbeddings(
 			})
 			return nil
 		}
-		for _, evidence := range input.Evidence {
+		for index, evidence := range input.Evidence {
+			if rememberEvidenceDuplicateWasPreassessed(input, index) {
+				continue
+			}
 			if err := add("evidence", evidence.FragmentID, evidence.Content); err != nil {
 				return err
 			}
@@ -126,6 +129,21 @@ func (r *LedgerRepositoryImpl) PlanRememberEmbeddings(
 		return nil, fmt.Errorf("repository: plan Remember embeddings: %w", err)
 	}
 	return plan, nil
+}
+
+func rememberEvidenceDuplicateWasPreassessed(input SynchronousRememberCommitInput, evidenceIndex int) bool {
+	for _, resolution := range input.DuplicateResolutions {
+		if resolution.EvidenceIndex == evidenceIndex {
+			if resolution.Exact {
+				return true
+			}
+			if evidenceIndex < 0 || evidenceIndex >= len(input.Evidence) {
+				return false
+			}
+			return rememberEvidenceRequiresDuplicateAssessment(input.Evidence[evidenceIndex])
+		}
+	}
+	return false
 }
 func rememberEntityNames(ctx context.Context, tx *gorm.DB, input SynchronousRememberCommitInput) (map[string]string, error) {
 	names := make(map[string]string, len(input.Commit.EntityResolutions))

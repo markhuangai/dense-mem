@@ -86,6 +86,23 @@ func (s *assessmentEngine) buildRequest(
 		}
 		return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithCause("catalog_context_validation", "submission entity catalog is invalid", err)
 	}
+	equivalenceCandidates := make([]assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup, 0, len(plan.duplicateCandidatesByEvidenceID))
+	equivalenceIDs := make([]string, 0, len(plan.duplicateCandidatesByEvidenceID))
+	for evidenceID := range plan.duplicateCandidatesByEvidenceID {
+		equivalenceIDs = append(equivalenceIDs, evidenceID)
+	}
+	sort.Strings(equivalenceIDs)
+	for _, evidenceID := range equivalenceIDs {
+		group := plan.duplicateCandidatesByEvidenceID[evidenceID]
+		converted := assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup{EvidenceID: evidenceID, Candidates: []assessor.SemanticAssessmentEvidenceEquivalenceCandidate{}}
+		for _, candidate := range group.Candidates {
+			converted.Candidates = append(converted.Candidates, assessor.SemanticAssessmentEvidenceEquivalenceCandidate{
+				EvidenceID: candidate.FragmentID,
+				Content:    candidate.Content,
+			})
+		}
+		equivalenceCandidates = append(equivalenceCandidates, converted)
+	}
 	// Keep the derived, evidence-backed grounding catalog on the plan as well
 	// as in the provider request. Commit-time repair uses the plan and must be
 	// able to recover a missing grounding without inventing a span.
@@ -119,16 +136,17 @@ func (s *assessmentEngine) buildRequest(
 		requestID = "request"
 	}
 	req := assessor.SemanticAssessmentRequest{
-		RequestID:                "synchronous-remember:" + requestID,
-		TeamID:                   scope.TeamID,
-		OwnerProfileID:           scope.OwnerProfileID,
-		Evidence:                 evidence,
-		KnownEvidence:            knownEvidence,
-		ClientProposal:           assessmentClientProposalWithoutTrustedContext(proposal),
-		EntityCandidateGroups:    entityGroups,
-		PredicateOptions:         predicateOptions,
-		RequiredRelationshipRefs: append([]assessor.SemanticAssessmentRequiredRelationshipRef(nil), contract.Relationships...),
-		SubmissionContract:       &contract,
+		RequestID:                     "synchronous-remember:" + requestID,
+		TeamID:                        scope.TeamID,
+		OwnerProfileID:                scope.OwnerProfileID,
+		Evidence:                      evidence,
+		KnownEvidence:                 knownEvidence,
+		EvidenceEquivalenceCandidates: equivalenceCandidates,
+		ClientProposal:                assessmentClientProposalWithoutTrustedContext(proposal),
+		EntityCandidateGroups:         entityGroups,
+		PredicateOptions:              predicateOptions,
+		RequiredRelationshipRefs:      append([]assessor.SemanticAssessmentRequiredRelationshipRef(nil), contract.Relationships...),
+		SubmissionContract:            &contract,
 	}
 	prepared, validationErrors := assessor.PrepareSemanticAssessmentRequest(req, s.limits)
 	if len(validationErrors) == 0 {

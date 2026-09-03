@@ -462,6 +462,15 @@ func (r *SearchRepositoryImpl) SearchFullText(ctx context.Context, input FullTex
 			WHERE document.search_state IN ('pending', 'current', 'failed')
 			  AND document.search_tsv @@ plainto_tsquery('simple', ?)
 			  AND (
+			      document.source_kind <> 'evidence'
+			      OR NOT EXISTS (
+			          SELECT 1
+			          FROM evidence_exact_aliases AS alias
+			          WHERE alias.team_id = document.team_id
+			            AND alias.alias_fragment_id = document.source_id
+			      )
+			  )
+			  AND (
 			      document.source_kind <> 'relationship'
 			      OR (
 			          document.projection_format_version = 2
@@ -536,6 +545,15 @@ func (r *SearchRepositoryImpl) SearchExactVector(ctx context.Context, input Exac
 				  AND search_state = 'current'
 				  AND embedding IS NOT NULL
 				  AND (
+				      source_kind <> 'evidence'
+				      OR NOT EXISTS (
+				          SELECT 1
+				          FROM evidence_exact_aliases AS alias
+				          WHERE alias.team_id = search_documents.team_id
+				            AND alias.alias_fragment_id = search_documents.source_id
+				      )
+				  )
+				  AND (
 				      source_kind <> 'relationship'
 					      OR (
 					          projection_format_version = 2
@@ -587,7 +605,16 @@ func (r *SearchRepositoryImpl) SearchExactVector(ctx context.Context, input Exac
 				  AND embedding_dimensions = ?
 				  AND search_state = 'current'
 				  AND embedding IS NOT NULL
-					  AND (
+				  AND (
+				      source_kind <> 'evidence'
+				      OR NOT EXISTS (
+				          SELECT 1
+				          FROM evidence_exact_aliases AS alias
+				          WHERE alias.team_id = search_documents.team_id
+				            AND alias.alias_fragment_id = search_documents.source_id
+				      )
+				  )
+				  AND (
 					      source_kind <> 'relationship'
 						      OR (
 						          projection_format_version = 2

@@ -4,12 +4,13 @@ package assessor
 // Team and owner fields are retained for deterministic validation but never
 // leave the service boundary.
 type SemanticAssessmentRequest struct {
-	RequestID      string                   `json:"request_id"`
-	TeamID         string                   `json:"-"`
-	OwnerProfileID string                   `json:"-"`
-	Evidence       []SemanticReviewEvidence `json:"evidence"`
-	KnownEvidence  []SemanticReviewEvidence `json:"known_evidence,omitempty"`
-	ClientProposal map[string]any           `json:"client_proposal,omitempty"`
+	RequestID                     string                                                `json:"request_id"`
+	TeamID                        string                                                `json:"-"`
+	OwnerProfileID                string                                                `json:"-"`
+	Evidence                      []SemanticReviewEvidence                              `json:"evidence"`
+	KnownEvidence                 []SemanticReviewEvidence                              `json:"known_evidence,omitempty"`
+	EvidenceEquivalenceCandidates []SemanticAssessmentEvidenceEquivalenceCandidateGroup `json:"evidence_equivalence_candidates,omitempty"`
+	ClientProposal                map[string]any                                        `json:"client_proposal,omitempty"`
 	// EntityCandidateGroups are reuse allowlists for spans the assessor may
 	// extract, not required output targets.
 	EntityCandidateGroups     []SemanticAssessmentEntityCandidateGroup    `json:"entity_candidate_groups"`
@@ -51,8 +52,9 @@ type SemanticAssessmentPredicateOption struct {
 }
 
 type SemanticAssessmentResponse struct {
-	RequestID               string                                     `json:"request_id"`
-	EvidenceSecurityResults []SemanticAssessmentEvidenceSecurityResult `json:"evidence_security_results"`
+	RequestID                  string                                        `json:"request_id"`
+	EvidenceSecurityResults    []SemanticAssessmentEvidenceSecurityResult    `json:"evidence_security_results"`
+	EvidenceEquivalenceResults []SemanticAssessmentEvidenceEquivalenceResult `json:"evidence_equivalence_results"`
 	// SecuritySignals and SecurityResults are in-process compatibility aliases
 	// for callers that construct responses directly. They are never serialized.
 	SecuritySignals     []SemanticAssessmentSecuritySignal     `json:"-"`
@@ -62,6 +64,27 @@ type SemanticAssessmentResponse struct {
 	OutputTokens        int                                    `json:"-"`
 	InputTokens         int                                    `json:"-"`
 	ProviderTurns       int                                    `json:"-"`
+}
+
+// SemanticAssessmentEvidenceEquivalenceCandidateGroup is a server-authorized
+// allowlist for one submitted evidence item. Candidate content is read-only
+// context; the assessor cannot discover additional evidence.
+type SemanticAssessmentEvidenceEquivalenceCandidateGroup struct {
+	EvidenceID string                                           `json:"evidence_id"`
+	Candidates []SemanticAssessmentEvidenceEquivalenceCandidate `json:"candidates"`
+}
+
+type SemanticAssessmentEvidenceEquivalenceCandidate struct {
+	EvidenceID string `json:"evidence_id"`
+	Content    string `json:"content"`
+}
+
+// SemanticAssessmentEvidenceEquivalenceResult is the closed new/reuse result
+// for one non-exact submitted evidence item.
+type SemanticAssessmentEvidenceEquivalenceResult struct {
+	EvidenceID          string  `json:"evidence_id"`
+	Action              string  `json:"action"`
+	CandidateEvidenceID *string `json:"candidate_evidence_id"`
 }
 
 type SemanticAssessmentEvidenceSecurityResult struct {
@@ -150,6 +173,7 @@ type SemanticAssessmentPredicateRegistration struct {
 }
 
 type semanticAssessmentCandidateContext struct {
-	EntityCandidateGroups []SemanticAssessmentEntityCandidateGroup `json:"entity_candidate_groups"`
-	PredicateOptions      []SemanticAssessmentPredicateOption      `json:"predicate_options"`
+	EntityCandidateGroups         []SemanticAssessmentEntityCandidateGroup              `json:"entity_candidate_groups"`
+	PredicateOptions              []SemanticAssessmentPredicateOption                   `json:"predicate_options"`
+	EvidenceEquivalenceCandidates []SemanticAssessmentEvidenceEquivalenceCandidateGroup `json:"evidence_equivalence_candidates"`
 }

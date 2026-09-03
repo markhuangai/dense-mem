@@ -288,11 +288,13 @@ func insertSemanticEntityResolution(
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO entity_resolution_events (
 		    team_id, ingest_id, owner_profile_id, mention_ref,
-		    action, entity_id, fragment_id, span_start, span_end, verifier_result, metadata,
+		    action, entity_id, fragment_id, occurrence_id, evidence_owner_profile_id,
+		    span_start, span_end, verifier_result, metadata,
 		    assessment_id, space_id, space_generation
 		) VALUES (
 		    ?::uuid, ?::uuid, ?::uuid, ?, ?, NULLIF(?, '')::uuid,
-		    NULLIF(?, '')::uuid, ?, ?, ?::jsonb, ?::jsonb, NULLIF(?, '')::uuid,
+		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid,
+		    ?, ?, ?::jsonb, ?::jsonb, NULLIF(?, '')::uuid,
 		    (SELECT ingest.space_id FROM knowledge_ingests AS ingest
 		     WHERE ingest.team_id = ?::uuid AND ingest.ingest_id = ?::uuid
 		       AND ingest.owner_profile_id = ?::uuid),
@@ -302,7 +304,7 @@ func insertSemanticEntityResolution(
 		)
 		RETURNING resolution_event_id::text
 	`, commit.TeamID, commit.IngestID, commit.OwnerProfileID,
-		input.MentionRef, input.Action, entityID, input.FragmentID,
+		input.MentionRef, input.Action, entityID, input.FragmentID, input.OccurrenceID, input.EvidenceOwnerProfileID,
 		intPointerArg(input.SpanStart), intPointerArg(input.SpanEnd),
 		string(verifierResult), string(metadata), input.AssessmentID,
 		commit.TeamID, commit.IngestID, commit.OwnerProfileID,

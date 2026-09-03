@@ -7,14 +7,29 @@ import "github.com/markhuangai/dense-mem/internal/domain"
 // intentionally validated after decoding against the frozen request.
 func SemanticAssessmentResponseSchema() map[string]any {
 	return closedObject(
-		[]string{"request_id", "evidence_security_results", "entity_results", "relationship_results"},
+		[]string{"request_id", "evidence_security_results", "evidence_equivalence_results", "entity_results", "relationship_results"},
 		map[string]any{
-			"request_id":                stringSchema(1, 128),
-			"evidence_security_results": semanticAssessmentEvidenceSecurityResultSchema(),
-			"entity_results":            semanticAssessmentEntityResultSchema(),
-			"relationship_results":      semanticAssessmentRelationshipResultSchema(),
+			"request_id":                   stringSchema(1, 128),
+			"evidence_security_results":    semanticAssessmentEvidenceSecurityResultSchema(),
+			"evidence_equivalence_results": semanticAssessmentEvidenceEquivalenceResultSchema(),
+			"entity_results":               semanticAssessmentEntityResultSchema(),
+			"relationship_results":         semanticAssessmentRelationshipResultSchema(),
 		},
 	)
+}
+
+func semanticAssessmentEvidenceEquivalenceResultSchema() map[string]any {
+	return map[string]any{
+		"type": "array", "maxItems": SemanticAssessmentMaxEvidenceSpans,
+		"items": closedObject(
+			[]string{"evidence_id", "action", "candidate_evidence_id"},
+			map[string]any{
+				"evidence_id":           stringSchema(1, 128),
+				"action":                enumSchema([]string{"new", "reuse"}),
+				"candidate_evidence_id": nullableStringSchema(128),
+			},
+		),
+	}
 }
 
 func semanticAssessmentEvidenceSecurityResultSchema() map[string]any {

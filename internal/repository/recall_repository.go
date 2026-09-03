@@ -163,6 +163,11 @@ func recallEvidenceSearchState(
 			  AND quarantine.quarantine_id IS NULL
 			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 			  AND NOT EXISTS (
+			      SELECT 1 FROM evidence_exact_aliases AS alias
+			      WHERE alias.team_id = fragment.team_id
+			        AND alias.alias_fragment_id = fragment.fragment_id
+			  )
+			  AND NOT EXISTS (
 			      SELECT 1
 			      FROM evidence_lifecycle_events AS lifecycle
 			      WHERE lifecycle.team_id = fragment.team_id
@@ -220,6 +225,11 @@ func searchRecallFullText(
 		  AND search_documents.embedding_contract_id = ?::uuid
 		  AND (search_documents.search_state IN ('pending', 'current', 'failed') OR (?::timestamptz IS NOT NULL AND search_documents.search_state = 'not_required'))
 		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+		  AND NOT EXISTS (
+		      SELECT 1 FROM evidence_exact_aliases AS alias
+		      WHERE alias.team_id = source_fragment.team_id
+		        AND alias.alias_fragment_id = source_fragment.fragment_id
+		  )
 		  AND search_documents.search_tsv @@ plainto_tsquery('simple', ?)
 	`+spaceClause+`
 		ORDER BY text_rank DESC, search_documents.updated_at DESC, search_documents.search_document_id ASC
@@ -283,6 +293,11 @@ func searchRecallExactVector(
 		  AND search_documents.search_state = 'current'
 		  AND search_documents.embedding IS NOT NULL
 		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+		  AND NOT EXISTS (
+		      SELECT 1 FROM evidence_exact_aliases AS alias
+		      WHERE alias.team_id = source_fragment.team_id
+		        AND alias.alias_fragment_id = source_fragment.fragment_id
+		  )
 		`+spaceClause+`
 		ORDER BY search_documents.embedding <=> ?::vector ASC, search_documents.search_document_id ASC
 		LIMIT ?
@@ -336,6 +351,11 @@ func searchRecallANNVector(
 			  AND search_documents.search_state = 'current'
 			  AND search_documents.embedding IS NOT NULL
 			  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+			  AND NOT EXISTS (
+			      SELECT 1 FROM evidence_exact_aliases AS alias
+			      WHERE alias.team_id = source_fragment.team_id
+			        AND alias.alias_fragment_id = source_fragment.fragment_id
+			  )
 			%s
 			ORDER BY %s ASC, search_documents.search_document_id ASC
 			LIMIT ?
@@ -528,6 +548,11 @@ func searchRecallEntityExpansion(
 		  AND (?::timestamptz IS NOT NULL OR relationship.support_count > 0)
 		  AND quarantine.quarantine_id IS NULL
 		  AND COALESCE(source_fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+		  AND NOT EXISTS (
+		      SELECT 1 FROM evidence_exact_aliases AS alias
+		      WHERE alias.team_id = source_fragment.team_id
+		        AND alias.alias_fragment_id = source_fragment.fragment_id
+		  )
 		  AND (
 		      relationship.subject_entity_id = ANY(?::uuid[])
 		      OR relationship.object_entity_id = ANY(?::uuid[])

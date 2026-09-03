@@ -38,12 +38,12 @@ func TestOpenAIAssessorUsesClosedRememberContract(t *testing.T) {
 		}
 		assert.Equal(t, "assessor-model", body.Model)
 		assert.Len(t, body.Messages, 2)
-		assert.Contains(t, body.Messages[0].Content, "structure, normalization, and evidence-security assessor")
+		assert.Contains(t, body.Messages[0].Content, "structure, normalization, evidence-security, and duplicate-equivalence assessor")
 		assert.Equal(t, assessor.SemanticAssessmentSchemaName, body.ResponseFormat.JSONSchema.Name)
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"choices": []any{map[string]any{"message": map[string]string{
-				"content": "{\"request_id\":\"request-1\",\"evidence_security_results\":[{\"evidence_id\":\"evidence-1\",\"decision\":\"pass\",\"signals\":[]}],\"entity_results\":[],\"relationship_results\":[]}",
+				"content": "{\"request_id\":\"request-1\",\"evidence_security_results\":[{\"evidence_id\":\"evidence-1\",\"decision\":\"pass\",\"signals\":[]}],\"evidence_equivalence_results\":[],\"entity_results\":[],\"relationship_results\":[]}",
 			}}},
 			"usage": map[string]int{"prompt_tokens": 12, "completion_tokens": 7, "total_tokens": 19},
 		})

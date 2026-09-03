@@ -49,6 +49,7 @@ type CreateIngestInput struct {
 type EvidenceInput struct {
 	FragmentID                    string
 	Content                       string
+	ForceInsert                   bool
 	ContentHash                   string
 	SourceType                    string
 	Authority                     string
@@ -74,10 +75,12 @@ type SecurityEventDraft struct {
 }
 
 type SecurityEventInput struct {
-	TeamID         string
-	OwnerProfileID string
-	IngestID       string
-	FragmentID     string
+	TeamID                 string
+	OwnerProfileID         string
+	IngestID               string
+	FragmentID             string
+	OccurrenceID           string
+	EvidenceOwnerProfileID string
 	SecurityEventDraft
 }
 
@@ -104,6 +107,10 @@ type EvidenceIngestResult struct {
 
 type EvidenceFragment struct {
 	FragmentID            string
+	SubmittedFragmentID   string
+	OccurrenceID          string
+	CanonicalOwnerID      string
+	OccurrenceOwnerID     string
 	EvidenceIndex         int
 	Content               string
 	ContentHash           string
@@ -345,16 +352,16 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 		INSERT INTO evidence_fragments (
 		    fragment_id, team_id, ingest_id, owner_profile_id, space_id, space_generation,
 		    evidence_index, content, content_hash, source_type, authority, source_ref,
-		    source_id, source_revision_id, labels, metadata
+		    source_id, source_revision_id, labels, metadata, force_insert
 		) VALUES (
 		    COALESCE(NULLIF(?, '')::uuid, gen_random_uuid()), ?::uuid, ?::uuid, ?::uuid,
 		    NULLIF(?, '')::uuid, NULLIF(?::bigint, 0), ?, ?, ?, ?, ?, ?,
-		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?::jsonb
+		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?, ?::jsonb, ?
 		)
 		RETURNING fragment_id::text, authority
 	`, item.FragmentID, input.TeamID, ingestID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
 		index, item.Content, item.ContentHash, item.SourceType, item.Authority, item.SourceRef,
-		sourceID, sourceRevisionID, pqStringArray(item.Labels), string(metadata)).Rows()
+		sourceID, sourceRevisionID, pqStringArray(item.Labels), string(metadata), item.ForceInsert).Rows()
 	if err != nil {
 		return EvidenceFragment{}, err
 	}
@@ -362,7 +369,7 @@ func insertEvidenceFragment(ctx context.Context, tx *gorm.DB, input CreateIngest
 	if !rows.Next() {
 		return EvidenceFragment{}, sql.ErrNoRows
 	}
-	fragment := EvidenceFragment{EvidenceIndex: index, Content: item.Content, ContentHash: item.ContentHash, SourceID: sourceID, SourceRevisionID: sourceRevisionID}
+	fragment := EvidenceFragment{FragmentID: item.FragmentID, SubmittedFragmentID: item.FragmentID, EvidenceIndex: index, Content: item.Content, ContentHash: item.ContentHash, SourceID: sourceID, SourceRevisionID: sourceRevisionID, CanonicalOwnerID: input.OwnerProfileID, OccurrenceOwnerID: input.OwnerProfileID}
 	if err := rows.Scan(&fragment.FragmentID, &fragment.Authority); err != nil {
 		return EvidenceFragment{}, err
 	}

@@ -34,6 +34,8 @@ type rememberSynchronousProcessor struct {
 
 type rememberSynchronousLedger interface {
 	LoadRememberAttempt(context.Context, repository.RememberAttemptLookupInput) (*repository.RememberAttempt, error)
+	PlanRememberDuplicateEmbeddings(context.Context, repository.RememberDuplicateCandidateInput) (*repository.RememberDuplicateEmbeddingPlan, error)
+	ResolveRememberDuplicateCandidates(context.Context, repository.RememberDuplicateCandidateInput, []repository.InlineEmbeddingResult) (*repository.RememberDuplicateResolutionResult, error)
 	PlanRememberEmbeddings(context.Context, repository.SynchronousRememberCommitInput) (*repository.InlineEmbeddingPlan, error)
 	CommitRememberWithEmbeddings(context.Context, repository.SynchronousRememberCommitInput, []repository.InlineEmbeddingResult) (*repository.SynchronousRememberCommitResult, error)
 	RecordRememberFailure(context.Context, repository.RememberFailureRecordInput) error
@@ -157,6 +159,37 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	if input.SecurityRejected {
 		return fail(rememberapp.ErrRememberPolicyRejected, "assessment")
 	}
+	duplicateInput := repository.RememberDuplicateCandidateInput{
+		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID,
+		SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration,
+		Evidence: rememberEvidenceInputsForCommit(input, snapshot),
+	}
+	duplicateEmbeddingCtx, duplicateEmbeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
+	duplicatePlan, err := p.ledger.PlanRememberDuplicateEmbeddings(duplicateEmbeddingCtx, duplicateInput)
+	if err != nil {
+		duplicateEmbeddingCancel()
+		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
+	}
+	duplicateDocuments, err := p.embedSearchDocumentBatch(
+		duplicateEmbeddingCtx, input.TeamID, input.OwnerProfileID,
+		duplicatePlan.EmbeddingModel, duplicatePlan.Documents,
+	)
+	duplicateEmbeddingCancel()
+	if err != nil {
+		return fail(err, "embedding")
+	}
+	duplicateEmbeddings := inlineEmbeddingResultsFromDuplicateDocuments(duplicateDocuments, duplicatePlan)
+	duplicateResolution, err := p.ledger.ResolveRememberDuplicateCandidates(ctx, duplicateInput, duplicateEmbeddings)
+	if err != nil {
+		return fail(&rememberEmbeddingPlanFailure{cause: err}, "embedding")
+	}
+	snapshot.DuplicateCandidates = append([]repository.RememberDuplicateCandidateGroup(nil), duplicateResolution.Candidates...)
+	snapshot.ExactDuplicateEvidence = make(map[int]repository.RememberDuplicateResolution, len(duplicateResolution.Exact))
+	for index, resolution := range duplicateResolution.Exact {
+		if resolution.Disposition == "reuse" {
+			snapshot.ExactDuplicateEvidence[index] = resolution
+		}
+	}
 	prepared, err := memoryservice.AssessSynchronousRemember(ctx, memoryservice.SynchronousAssessmentDependencies{
 		Catalog: p.catalog, Provider: p.provider, Limits: p.limits, Metrics: p.metrics, Logger: p.logger,
 	}, memoryservice.SynchronousAssessmentInput{Scope: scope, Snapshot: snapshot})
@@ -199,18 +232,8 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 	if err != nil {
 		return fail(err, "embedding")
 	}
-	inlineEmbeddings := make([]repository.InlineEmbeddingResult, 0, len(plannedEmbeddings))
-	for _, embedding := range plannedEmbeddings {
-		inlineEmbeddings = append(inlineEmbeddings, repository.InlineEmbeddingResult{
-			DocumentHash:            embedding.DocumentHash,
-			Embedding:               embedding.Embedding,
-			EmbeddingContractID:     plan.EmbeddingContractID,
-			EmbeddingDimensions:     plan.EmbeddingDimensions,
-			EmbeddingModel:          plan.EmbeddingModel,
-			SearchIndexGenerationID: plan.SearchIndexGenerationID,
-			IndexGeneration:         plan.IndexGeneration,
-		})
-	}
+	inlineEmbeddings := inlineEmbeddingResultsFromDocuments(plannedEmbeddings, plan)
+	inlineEmbeddings = mergeInlineEmbeddingResults(duplicateEmbeddings, inlineEmbeddings)
 	commitCtx, commitCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseCommit)
 	if err := commitCtx.Err(); err != nil {
 		commitCancel()
@@ -279,6 +302,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	for _, item := range evidence {
 		publicEvidence = append(publicEvidence, map[string]any{
 			"disposition": item.Disposition, "evidence_index": item.EvidenceIndex,
+			"content_hash":            item.ContentHash,
 			"superseded_evidence_ids": item.SupersededEvidenceIDs, "search_state": item.SearchState,
 			"reason": item.Reason,
 		})
@@ -383,6 +407,7 @@ func rememberFailureResults(
 	for index := range evidence {
 		evidence[index] = rememberapp.SubmissionEvidenceStatus{
 			Disposition:           "not_stored",
+			ContentHash:           input.Evidence[index].ContentHash,
 			EvidenceIndex:         index,
 			SupersededEvidenceIDs: []string{},
 			SearchState:           "not_required",
@@ -439,7 +464,9 @@ func normalizeRememberFailure(failure error) error {
 	if failure == nil || errors.Is(failure, rememberapp.ErrRememberStaleInput) {
 		return failure
 	}
-	if errors.Is(failure, rememberapp.ErrSourceRevisionConflict) || memoryservice.IsRememberStaleInputError(failure) {
+	if errors.Is(failure, rememberapp.ErrSourceRevisionConflict) ||
+		errors.Is(failure, repository.ErrRememberDuplicateCandidateStale) ||
+		memoryservice.IsRememberStaleInputError(failure) {
 		return fmt.Errorf("%w: %v", rememberapp.ErrRememberStaleInput, failure)
 	}
 	return failure
@@ -577,7 +604,9 @@ func rememberCommitFailureMetadata(err error) (string, string) {
 		return "fence_conflict", "search_contract_changed"
 	case errors.Is(err, repository.ErrSearchStaleVersion):
 		return "fence_conflict", "search_document_stale"
-	case errors.Is(err, rememberapp.ErrRememberStaleInput), errors.Is(err, repository.ErrSourceRevisionConflict):
+	case errors.Is(err, rememberapp.ErrRememberStaleInput),
+		errors.Is(err, repository.ErrRememberDuplicateCandidateStale),
+		errors.Is(err, repository.ErrSourceRevisionConflict):
 		return "stale_input", "source_state_changed"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout", "semantic_commit_timeout"
@@ -647,6 +676,7 @@ func rememberFailureCode(phase string, err error) rememberapp.SubmissionErrorCod
 		return rememberapp.SubmissionErrorCommitConflict
 	}
 	if errors.Is(err, rememberapp.ErrRememberStaleInput) ||
+		errors.Is(err, repository.ErrRememberDuplicateCandidateStale) ||
 		errors.Is(err, repository.ErrSourceRevisionConflict) ||
 		errors.Is(err, rememberapp.ErrSourceRevisionConflict) {
 		return rememberapp.SubmissionErrorStaleInput
@@ -740,12 +770,17 @@ func rememberAssessmentSnapshot(
 		})
 		items = append(items, memoryservice.RememberAssessmentItem{
 			ItemID: uuid.NewString(), Fragment: evidence[len(evidence)-1],
-			EvidenceID: fmt.Sprintf("evidence:%d", index),
+			EvidenceID: fmt.Sprintf("evidence:%d", index), DuplicateAssessmentRequired: !item.ForceInsert &&
+				len(item.SupersedesEvidenceIDs) == 0 && strings.TrimSpace(item.SourceKey) == "" &&
+				strings.TrimSpace(item.SourceRevisionToken) == "" && strings.TrimSpace(item.ExpectedPreviousRevisionToken) == "",
 		})
 	}
 	return memoryservice.RememberAssessmentSnapshot{
-		Scope:    memoryservice.RememberAssessmentScope{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID, SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration},
-		Proposal: input.Proposal, Evidence: evidence, Items: items,
+		Scope:                  memoryservice.RememberAssessmentScope{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID, SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration},
+		Proposal:               input.Proposal,
+		Evidence:               evidence,
+		Items:                  items,
+		ExactDuplicateEvidence: make(map[int]repository.RememberDuplicateResolution),
 	}, memoryservice.RememberAssessmentScope{TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: ingestID, SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration}
 }
 
@@ -784,7 +819,7 @@ func rememberEvidenceInputs(items []rememberapp.EvidenceInput) []repository.Evid
 			}
 		}
 		result = append(result, repository.EvidenceInput{
-			Content: item.Content, ContentHash: item.ContentHash, SourceType: item.SourceType,
+			Content: item.Content, ForceInsert: item.ForceInsert, ContentHash: item.ContentHash, SourceType: item.SourceType,
 			Authority: item.Authority, SourceRef: item.SourceRef, SourceKey: item.SourceKey,
 			SourceRevisionToken: item.SourceRevisionToken, ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
 			SourceRevisionContentHash: item.SourceRevisionContentHash, SourceRevisionEnvelope: item.SourceRevisionEnvelope,

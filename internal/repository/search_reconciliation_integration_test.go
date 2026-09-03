@@ -105,6 +105,48 @@ func TestSearchReconciliationSelectionAndHashFence(t *testing.T) {
 	}))
 }
 
+func TestSearchReconciliationSuppressesHistoricalEvidenceAliases(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	contractID := insertSearchTestContract(t, adminDB, rls, "reconciliation-alias", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "reconciliation-alias-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "reconciliation-alias-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	repo := NewSearchRepository(appDB, rls)
+	content := "canonical reconciliation document"
+	canonical, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "reconciliation-alias-canonical",
+		RequestHash: sha256Hex("reconciliation-alias-canonical"), Evidence: []EvidenceInput{{Content: content}},
+	})
+	require.NoError(t, err)
+	alias, err := createTestIngest(ctx, ledger, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "reconciliation-alias-alias",
+		RequestHash: sha256Hex("reconciliation-alias-alias"), Evidence: []EvidenceInput{{Content: content}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO evidence_exact_aliases (
+				team_id, alias_fragment_id, alias_owner_profile_id,
+				canonical_fragment_id, canonical_owner_profile_id
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?::uuid)
+		`, teamID, alias.Evidence[0].FragmentID, ownerID, canonical.Evidence[0].FragmentID, ownerID).Error
+	}))
+	upsertRecallEvidenceSearchDocumentForTest(t, ctx, repo, teamID, ownerID, canonical.Evidence[0])
+	upsertRecallEvidenceSearchDocumentForTest(t, ctx, repo, teamID, ownerID, alias.Evidence[0])
+
+	selected, err := repo.SelectSearchReconciliationDocuments(ctx, SearchReconciliationSelectionInput{
+		EmbeddingContractID: contractID, EmbeddingDimensions: 2, Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	require.Equal(t, canonical.Evidence[0].FragmentID, selected[0].SourceID)
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{EmbeddingContractID: contractID, EmbeddingDimensions: 2})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, convergence.ExpectedDocuments)
+}
+
 func TestSearchReconciliationProjectsSafeHistoricalRejectedEvidence(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

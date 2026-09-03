@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,37 @@ func TestRememberFailureCodeMapsEmbeddingProviderResponseInvalid(t *testing.T) {
 	}}
 
 	require.Equal(t, rememberapp.SubmissionErrorEmbeddingResponseInvalid, rememberFailureCode("embedding", failure))
+}
+
+func TestRememberFailureCodeMapsDuplicateCandidateStaleToStaleInput(t *testing.T) {
+	require.Equal(t, rememberapp.SubmissionErrorStaleInput, rememberFailureCode("commit", repository.ErrRememberDuplicateCandidateStale))
+	require.ErrorIs(t, normalizeRememberFailure(repository.ErrRememberDuplicateCandidateStale), rememberapp.ErrRememberStaleInput)
+}
+
+func TestRememberAssessmentSnapshotCarriesHashAndDuplicateEligibility(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{
+		TeamID: "11111111-1111-4111-8111-111111111111", OwnerProfileID: "22222222-2222-4222-8222-222222222222",
+		Evidence: []rememberapp.EvidenceInput{
+			{Content: "normal", ContentHash: "sha256:normal"},
+			{Content: "forced", ContentHash: "sha256:forced", ForceInsert: true},
+			{Content: "versioned", ContentHash: "sha256:versioned", SourceKey: "doc://source", SourceRevisionToken: "rev-1"},
+		},
+	}
+	snapshot, _ := rememberAssessmentSnapshot(input, "33333333-3333-4333-8333-333333333333")
+	require.Equal(t, "sha256:normal", snapshot.Evidence[0].ContentHash)
+	require.True(t, snapshot.Items[0].DuplicateAssessmentRequired)
+	require.False(t, snapshot.Items[1].DuplicateAssessmentRequired)
+	require.False(t, snapshot.Items[2].DuplicateAssessmentRequired)
+}
+
+func TestMergeInlineEmbeddingResultsDeduplicatesDocumentHashes(t *testing.T) {
+	results := mergeInlineEmbeddingResults(
+		[]repository.InlineEmbeddingResult{{DocumentHash: "same", Embedding: []float32{1}}},
+		[]repository.InlineEmbeddingResult{{DocumentHash: "same", Embedding: []float32{2}}, {DocumentHash: "other", Embedding: []float32{3}}},
+	)
+	require.Len(t, results, 2)
+	require.Equal(t, []float32{1}, results[0].Embedding)
+	require.Equal(t, "other", results[1].DocumentHash)
 }
 
 func TestRememberFailureRequestArtifactIsCanonicalAndRedacted(t *testing.T) {
@@ -586,6 +618,18 @@ func (s *rememberFailureLedgerStub) LoadRememberAttempt(ctx context.Context, _ r
 
 func (*rememberFailureLedgerStub) PlanRememberEmbeddings(context.Context, repository.SynchronousRememberCommitInput) (*repository.InlineEmbeddingPlan, error) {
 	return nil, errors.New("unused")
+}
+
+func (*rememberFailureLedgerStub) PlanRememberDuplicateEmbeddings(context.Context, repository.RememberDuplicateCandidateInput) (*repository.RememberDuplicateEmbeddingPlan, error) {
+	return &repository.RememberDuplicateEmbeddingPlan{}, nil
+}
+
+func (s *rememberFailureLedgerStub) ResolveRememberDuplicateCandidates(_ context.Context, input repository.RememberDuplicateCandidateInput, _ []repository.InlineEmbeddingResult) (*repository.RememberDuplicateResolutionResult, error) {
+	result := &repository.RememberDuplicateResolutionResult{Exact: make([]repository.RememberDuplicateResolution, len(input.Evidence))}
+	for index, evidence := range input.Evidence {
+		result.Exact[index] = repository.RememberDuplicateResolution{EvidenceIndex: index, EvidenceID: fmt.Sprintf("evidence:%d", index), InputFragmentID: evidence.FragmentID}
+	}
+	return result, nil
 }
 
 func (*rememberFailureLedgerStub) CommitRememberWithEmbeddings(context.Context, repository.SynchronousRememberCommitInput, []repository.InlineEmbeddingResult) (*repository.SynchronousRememberCommitResult, error) {

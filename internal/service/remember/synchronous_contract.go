@@ -78,6 +78,7 @@ type TerminalRememberResult struct {
 type TerminalEvidenceResult struct {
 	Disposition           string   `json:"disposition"`
 	EvidenceID            string   `json:"evidence_id,omitempty"`
+	ContentHash           string   `json:"content_hash,omitempty"`
 	EvidenceIndex         int      `json:"evidence_index"`
 	SupersededEvidenceIDs []string `json:"superseded_evidence_ids"`
 	SearchState           string   `json:"search_state"`

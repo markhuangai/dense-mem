@@ -38,16 +38,17 @@ type EvidenceLifecycleResult struct {
 }
 
 type evidenceLifecycleOperationInput struct {
-	TeamID              string
-	OwnerProfileID      string
-	ActorProfileID      string
-	Action              string
-	EvidenceIDs         []string
-	Reason              string
-	IdempotencyKey      string
-	RequestHash         string
-	ReplacementID       string
-	ReplacementIngestID string
+	TeamID                  string
+	OwnerProfileID          string
+	ActorProfileID          string
+	Action                  string
+	EvidenceIDs             []string
+	Reason                  string
+	IdempotencyKey          string
+	RequestHash             string
+	ReplacementID           string
+	ReplacementOccurrenceID string
+	ReplacementIngestID     string
 }
 
 type evidenceLifecyclePlan struct {
@@ -254,14 +255,15 @@ func applyEvidenceSupersessions(
 			continue
 		}
 		operation := evidenceLifecycleOperationInput{
-			TeamID:              input.TeamID,
-			OwnerProfileID:      input.OwnerProfileID,
-			Action:              "supersede",
-			EvidenceIDs:         item.SupersedesEvidenceIDs,
-			IdempotencyKey:      item.IdempotencyKey,
-			RequestHash:         input.RequestHash,
-			ReplacementID:       evidence[index].FragmentID,
-			ReplacementIngestID: ingestID,
+			TeamID:                  input.TeamID,
+			OwnerProfileID:          input.OwnerProfileID,
+			Action:                  "supersede",
+			EvidenceIDs:             item.SupersedesEvidenceIDs,
+			IdempotencyKey:          item.IdempotencyKey,
+			RequestHash:             input.RequestHash,
+			ReplacementID:           evidence[index].FragmentID,
+			ReplacementOccurrenceID: evidence[index].OccurrenceID,
+			ReplacementIngestID:     ingestID,
 		}
 		planned, err := planEvidenceLifecycle(ctx, tx, operation)
 		if err != nil {
@@ -598,15 +600,22 @@ func insertEvidenceLifecycleEvents(
 	operationID string,
 	spaceID string,
 ) error {
+	replacementOccurrenceID := input.ReplacementOccurrenceID
+	if replacementOccurrenceID == "" {
+		replacementOccurrenceID = input.ReplacementID
+	}
 	for _, evidenceID := range sortedEvidenceIDs(input.EvidenceIDs) {
 		result := tx.WithContext(ctx).Exec(`
 			INSERT INTO evidence_lifecycle_events (
 			    team_id, lifecycle_operation_id, target_fragment_id,
-			    replacement_fragment_id, owner_profile_id, action, space_id
+			    target_occurrence_id, replacement_fragment_id, replacement_occurrence_id,
+			    owner_profile_id, action, space_id
 			) VALUES (
-			    ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?::uuid, ?, ?::uuid
+			    ?::uuid, ?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid,
+			    NULLIF(?, '')::uuid, ?::uuid, ?, ?::uuid
 			)
-		`, input.TeamID, operationID, evidenceID, input.ReplacementID, input.OwnerProfileID, input.Action, spaceID)
+		`, input.TeamID, operationID, evidenceID, evidenceID, input.ReplacementID,
+			replacementOccurrenceID, input.OwnerProfileID, input.Action, spaceID)
 		if result.Error != nil {
 			if isPostgresUniqueConstraint(result.Error, "evidence_lifecycle_events_terminal_target_unique") {
 				return fmt.Errorf("%w: evidence target is already terminal", ErrEvidenceLifecycleConflict)

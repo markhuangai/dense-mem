@@ -15,9 +15,10 @@ import (
 )
 
 type submissionAssessmentItem struct {
-	ItemID     string
-	Fragment   repository.EvidenceFragment
-	EvidenceID string
+	ItemID                      string
+	Fragment                    repository.EvidenceFragment
+	EvidenceID                  string
+	DuplicateAssessmentRequired bool
 }
 
 type submissionAssessmentEntityTarget struct {
@@ -38,13 +39,15 @@ type submissionAssessmentRelationshipTarget struct {
 }
 
 type submissionAssessmentPlan struct {
-	Items               []submissionAssessmentItem
-	EntityTargets       []submissionAssessmentEntityTarget
-	RelationshipTargets []submissionAssessmentRelationshipTarget
-	itemsByEvidenceID   map[string]submissionAssessmentItem
-	knownEvidenceByID   map[string]repository.SubmissionAssessmentKnownEvidence
-	entityTargetsByRef  map[string]submissionAssessmentEntityTarget
-	relationshipsByRef  map[string]submissionAssessmentRelationshipTarget
+	Items                           []submissionAssessmentItem
+	EntityTargets                   []submissionAssessmentEntityTarget
+	RelationshipTargets             []submissionAssessmentRelationshipTarget
+	itemsByEvidenceID               map[string]submissionAssessmentItem
+	knownEvidenceByID               map[string]repository.SubmissionAssessmentKnownEvidence
+	entityTargetsByRef              map[string]submissionAssessmentEntityTarget
+	relationshipsByRef              map[string]submissionAssessmentRelationshipTarget
+	duplicateCandidatesByEvidenceID map[string]repository.RememberDuplicateCandidateGroup
+	exactDuplicateByEvidenceID      map[string]repository.RememberDuplicateResolution
 }
 
 func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submissionAssessmentPlan, error) {
@@ -76,7 +79,10 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 		if _, exists := itemsByEvidenceID[evidenceID]; exists {
 			return submissionAssessmentPlan{}, errors.New("submission assessment evidence index is duplicated")
 		}
-		entry := submissionAssessmentItem{ItemID: item.ItemID, Fragment: fragment, EvidenceID: evidenceID}
+		entry := submissionAssessmentItem{
+			ItemID: item.ItemID, Fragment: fragment, EvidenceID: evidenceID,
+			DuplicateAssessmentRequired: item.DuplicateAssessmentRequired,
+		}
 		items = append(items, entry)
 		itemsByEvidenceID[evidenceID] = entry
 	}
@@ -88,11 +94,31 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 	})
 
 	plan := submissionAssessmentPlan{
-		Items:              items,
-		itemsByEvidenceID:  itemsByEvidenceID,
-		knownEvidenceByID:  map[string]repository.SubmissionAssessmentKnownEvidence{},
-		entityTargetsByRef: map[string]submissionAssessmentEntityTarget{},
-		relationshipsByRef: map[string]submissionAssessmentRelationshipTarget{},
+		Items:                           items,
+		itemsByEvidenceID:               itemsByEvidenceID,
+		knownEvidenceByID:               map[string]repository.SubmissionAssessmentKnownEvidence{},
+		entityTargetsByRef:              map[string]submissionAssessmentEntityTarget{},
+		relationshipsByRef:              map[string]submissionAssessmentRelationshipTarget{},
+		duplicateCandidatesByEvidenceID: map[string]repository.RememberDuplicateCandidateGroup{},
+		exactDuplicateByEvidenceID:      map[string]repository.RememberDuplicateResolution{},
+	}
+	for index, resolution := range snapshot.ExactDuplicateEvidence {
+		if index < 0 || index >= len(snapshot.Evidence) {
+			return submissionAssessmentPlan{}, errors.New("submission assessment exact duplicate index is invalid")
+		}
+		resolution.EvidenceIndex = index
+		resolution.EvidenceID = submissionAssessmentEvidenceID(index)
+		plan.exactDuplicateByEvidenceID[resolution.EvidenceID] = resolution
+	}
+	for _, group := range snapshot.DuplicateCandidates {
+		if group.EvidenceIndex < 0 || group.EvidenceIndex >= len(snapshot.Evidence) {
+			return submissionAssessmentPlan{}, errors.New("submission assessment duplicate candidate index is invalid")
+		}
+		group.EvidenceID = submissionAssessmentEvidenceID(group.EvidenceIndex)
+		if _, exists := plan.duplicateCandidatesByEvidenceID[group.EvidenceID]; exists {
+			return submissionAssessmentPlan{}, errors.New("submission assessment duplicate candidate index is duplicated")
+		}
+		plan.duplicateCandidatesByEvidenceID[group.EvidenceID] = group
 	}
 	rawRelationships, err := submissionAssessmentObjectArray(snapshot.Proposal, "relationship_hints", "relationships")
 	if err != nil {

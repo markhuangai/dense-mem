@@ -1,6 +1,8 @@
 package remember
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 )
 
@@ -20,6 +22,8 @@ func repositoryEvidenceInputs(evidence []RememberEvidenceInput) []EvidenceInput 
 		metadata = evidenceProcessingIntentMetadata(metadata, item)
 		out = append(out, EvidenceInput{
 			Content:                       item.Content,
+			ForceInsert:                   item.ForceInsert,
+			ContentHash:                   evidenceContentHash(item.Content),
 			SourceType:                    evidenceSourceType(item.SourceType),
 			Authority:                     authority,
 			SourceRef:                     strings.TrimSpace(item.Source),
@@ -35,4 +39,9 @@ func repositoryEvidenceInputs(evidence []RememberEvidenceInput) []EvidenceInput 
 		})
 	}
 	return out
+}
+
+func evidenceContentHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }

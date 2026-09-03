@@ -17,6 +17,7 @@ func rememberPublicResult(input SynchronousRememberCommitInput, evidence []Evide
 	for _, item := range evidence {
 		evidenceResults = append(evidenceResults, map[string]any{
 			"disposition": "stored", "evidence_id": item.FragmentID, "evidence_index": item.EvidenceIndex,
+			"content_hash":            item.ContentHash,
 			"superseded_evidence_ids": append([]string{}, item.SupersededEvidenceIDs...),
 			"search_state":            result["search_state"],
 		})

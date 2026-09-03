@@ -226,10 +226,27 @@ function fixtureAssessment(request, requestFault, attempt) {
     decision: securitySignalEvidenceIDs.has(evidence.evidence_id) ? "reject" : "pass",
     signals: securitySignalEvidenceIDs.has(evidence.evidence_id) ? securitySignals : [],
   }));
+  const evidenceEquivalenceResults = (request.evidence_equivalence_candidates || []).map((group) => ({
+    evidence_id: group.evidence_id,
+    action: "new",
+    candidate_evidence_id: null,
+  }));
   if (requestFault === "repair" && attempt === 1) {
-    return { request_id: request.request_id || "fixture", evidence_security_results: securityResults, entity_results: [], relationship_results: relationships };
+    return {
+      request_id: request.request_id || "fixture",
+      evidence_security_results: securityResults,
+      evidence_equivalence_results: evidenceEquivalenceResults,
+      entity_results: [],
+      relationship_results: relationships,
+    };
   }
-  return { request_id: request.request_id || "fixture", evidence_security_results: securityResults, entity_results: entities, relationship_results: relationships };
+  return {
+    request_id: request.request_id || "fixture",
+    evidence_security_results: securityResults,
+    evidence_equivalence_results: evidenceEquivalenceResults,
+    entity_results: entities,
+    relationship_results: relationships,
+  };
 }
 
 function wholeEvidenceRange(evidence) {
@@ -239,14 +256,21 @@ function wholeEvidenceRange(evidence) {
 }
 
 function fixtureFault(payload) {
-  const serialized = JSON.stringify(payload);
+  const input = assessmentInput(payload);
+  const evidence = Array.isArray(input.evidence) ? input.evidence : [];
+  const embeddingInputs = Array.isArray(payload.input) ? payload.input : [payload.input];
+  const serialized = [...evidence.map((item) => String(item?.content || "")), ...embeddingInputs.map((item) => String(item || ""))].join("\n");
   const match = serialized.match(/\[fixture-fault:([a-z0-9_-]+)\]/i);
   return match?.[1] || "";
 }
 
 function faultForRoute(value, route) {
   const normalized = String(value || "").trim().toLowerCase();
-  if (route === "embedding" && (normalized.startsWith("assessment-") || normalized === "repair" || normalized === "repair-exhausted" || normalized === "security" || normalized === "no-supported" || normalized === "mixed")) return "";
+  if (route === "embedding" && (
+    normalized === "unavailable" || normalized === "malformed" || normalized === "timeout" || normalized.startsWith("assessment-") ||
+    normalized === "repair" || normalized === "repair-exhausted" || normalized === "security" || normalized === "no-supported" ||
+    normalized === "mixed"
+  )) return "";
   if (route === "assessment" && (normalized.startsWith("embedding-") || normalized === "embedding-only-timeout")) return "";
   return normalized;
 }

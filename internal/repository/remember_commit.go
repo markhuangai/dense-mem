@@ -80,6 +80,10 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 			result.Outcome = replay.Outcome
 			return ErrRememberReplay
 		}
+		stage = "duplicate_fence"
+		if err := lockRememberDuplicateKeysInTx(ctx, tx, input); err != nil {
+			return err
+		}
 		stage = "embedding_contract_fence"
 		contract, err := loadActiveSearchContractInTx(ctx, tx)
 		if err != nil {
@@ -107,7 +111,7 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 
 		stage = "evidence"
 		sources := make(map[string]SourceRevisionResult, len(input.Evidence))
-		evidence := make([]EvidenceFragment, 0, len(input.Evidence))
+		sourcesByIndex := make(map[int]*SourceRevisionResult, len(input.Evidence))
 		for index, item := range createInput.Evidence {
 			var source *SourceRevisionResult
 			if item.SourceKey != "" {
@@ -123,23 +127,31 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 				}
 				source = advanced
 			}
-			fragment, err := insertEvidenceFragment(ctx, tx, createInput, input.IngestID, index, item, source)
-			if err != nil {
+			if source != nil {
+				copySource := *source
+				sourcesByIndex[index] = &copySource
+			}
+		}
+		evidence, err := resolveRememberEvidenceInTx(ctx, tx, input, createInput, contract, sourcesByIndex)
+		if err != nil {
+			return err
+		}
+		for index, item := range createInput.Evidence {
+			if item.InitialEvent == nil {
+				continue
+			}
+			eventInput := SecurityEventInput{
+				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
+				FragmentID: evidence[index].FragmentID, OccurrenceID: evidence[index].OccurrenceID,
+				EvidenceOwnerProfileID: evidence[index].CanonicalOwnerID,
+				SecurityEventDraft:     *item.InitialEvent,
+			}
+			if _, err := insertSecurityEvent(ctx, tx, eventInput); err != nil {
 				return err
 			}
-			evidence = append(evidence, fragment)
-			if item.InitialEvent != nil {
-				eventInput := SecurityEventInput{
-					TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
-					FragmentID: fragment.FragmentID, SecurityEventDraft: *item.InitialEvent,
-				}
-				if _, err := insertSecurityEvent(ctx, tx, eventInput); err != nil {
+			if item.InitialEvent.Decision == "quarantine" {
+				if err := insertEvidenceQuarantine(ctx, tx, createInput, input.IngestID, evidence[index].FragmentID, item.InitialEvent.Reason); err != nil {
 					return err
-				}
-				if item.InitialEvent.Decision == "quarantine" {
-					if err := insertEvidenceQuarantine(ctx, tx, createInput, input.IngestID, fragment.FragmentID, item.InitialEvent.Reason); err != nil {
-						return err
-					}
 				}
 			}
 		}
@@ -147,6 +159,9 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 			return err
 		}
 		if err := applyEvidenceSupersessions(ctx, tx, createInput, input.IngestID, evidence); err != nil {
+			return err
+		}
+		if err := remapRememberCommitEvidenceReferences(&input.Commit, evidence); err != nil {
 			return err
 		}
 		applyRememberCommitSourceReferences(input.Commit.RelationshipObservations, evidence)
@@ -204,7 +219,9 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 				if knownEvidenceSnapshotContains(input.Commit.KnownEvidenceSnapshot, support) {
 					continue
 				}
-				if strings.TrimSpace(support.EvidenceOwnerProfileID) == "" || support.EvidenceOwnerProfileID == input.OwnerProfileID {
+				if strings.TrimSpace(support.EvidenceOwnerProfileID) == "" ||
+					support.EvidenceOwnerProfileID == input.OwnerProfileID ||
+					rememberSubmittedOccurrenceBelongsToOwner(evidence, support, input.OwnerProfileID) {
 					if !rememberEvidenceExists(evidence, support.FragmentID) {
 						return errors.New("remember relationship submitted support is outside the Remember request")
 					}
@@ -243,6 +260,9 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 
 		stage = "search_documents"
 		for _, item := range evidence {
+			if item.FragmentID != item.SubmittedFragmentID {
+				continue
+			}
 			commit := common
 			commit.FragmentID = item.FragmentID
 			document, err := upsertSemanticEvidenceSearchDocumentWithContract(ctx, tx, commit, item.FragmentID, map[string]any{"remember_synchronous": true}, contract)

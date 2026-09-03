@@ -52,6 +52,11 @@ func canonicalSearchDocument(ctx context.Context, tx *gorm.DB, document SearchDo
 			      WHERE lifecycle.team_id = fragment.team_id
 			        AND lifecycle.target_fragment_id = fragment.fragment_id
 			  )
+			  AND NOT EXISTS (
+			      SELECT 1 FROM evidence_exact_aliases AS alias
+			      WHERE alias.team_id = fragment.team_id
+			        AND alias.alias_fragment_id = fragment.fragment_id
+			  )
 			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
 		`, document.TeamID, document.OwnerProfileID, document.SourceID).Row().Scan(&content, &spaceID, &spaceGeneration)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -160,6 +165,12 @@ func selectMissingCanonicalSearchDocuments(
 		          WHERE lifecycle.team_id = fragment.team_id
 		            AND lifecycle.target_fragment_id = fragment.fragment_id
 		      )
+		  AND NOT EXISTS (
+		          SELECT 1
+		          FROM evidence_exact_aliases AS alias
+		          WHERE alias.team_id = fragment.team_id
+	            AND alias.alias_fragment_id = fragment.fragment_id
+	      )
 		  AND fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
 		  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
 		  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'

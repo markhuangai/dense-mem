@@ -13,19 +13,21 @@ type CommitSemanticInput struct {
 }
 
 type SemanticEntityResolutionInput struct {
-	MentionRef      string
-	Action          string
-	EntityID        string
-	ExactEntityID   string
-	EntityKind      string
-	CanonicalName   string
-	FragmentID      string
-	SpanStart       *int
-	SpanEnd         *int
-	IdentityContext map[string]any
-	VerifierResult  map[string]any
-	Metadata        map[string]any
-	AssessmentID    string
+	MentionRef             string
+	Action                 string
+	EntityID               string
+	ExactEntityID          string
+	EntityKind             string
+	CanonicalName          string
+	FragmentID             string
+	OccurrenceID           string
+	EvidenceOwnerProfileID string
+	SpanStart              *int
+	SpanEnd                *int
+	IdentityContext        map[string]any
+	VerifierResult         map[string]any
+	Metadata               map[string]any
+	AssessmentID           string
 }
 
 type SemanticRelationshipDecisionInput struct {

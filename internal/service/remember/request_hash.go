@@ -116,6 +116,9 @@ func canonicalRememberEvidence(item map[string]any) {
 	} {
 		canonicalRememberTrimString(item, field, true)
 	}
+	if forceInsert, ok := item["force_insert"].(bool); ok && !forceInsert {
+		delete(item, "force_insert")
+	}
 	canonicalRememberStringSet(item, "supersedes_evidence_ids")
 	canonicalRememberStringSet(item, "labels")
 	canonicalRememberDropEmptyMap(item, "metadata")
