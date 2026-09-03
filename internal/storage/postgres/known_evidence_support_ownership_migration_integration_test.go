@@ -69,12 +69,13 @@ func TestKnownEvidenceSupportOwnershipMigrationBackfillsForeignKeys(t *testing.T
 	assert.False(t, columnExists(t, ctx, db, "relationship_evidence_supports", "evidence_owner_profile_id"))
 }
 
-func TestKnownEvidenceSupportOwnershipMigrationUpdatesMarkerWithNOBYPASSRLS(t *testing.T) {
+func TestKnownEvidenceSupportOwnershipMigrationsRunWithNOBYPASSRLS(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := openMigrationSQLDB(t, ctx)
 	defer cleanup()
 	runGooseUpTo(t, ctx, db, knownEvidenceSupportOwnershipMigrationBase)
-	runGooseUpTo(t, ctx, db, knownEvidenceSupportOwnershipMigrationOwnershipVersion)
+	teamID, ownerID := insertMigrationTeamProfile(t, ctx, db)
+	fixture := insertKnownEvidenceSupportOwnershipFixture(t, ctx, db, teamID, ownerID, ownerID)
 
 	var updateTimeBefore string
 	require.NoError(t, db.QueryRowContext(ctx, `
@@ -99,7 +100,7 @@ func TestKnownEvidenceSupportOwnershipMigrationUpdatesMarkerWithNOBYPASSRLS(t *t
 	}()
 
 	for _, statement := range []string{
-		"GRANT USAGE ON SCHEMA public TO " + quotedRole,
+		"GRANT USAGE, CREATE ON SCHEMA public TO " + quotedRole,
 		"ALTER TABLE app_config OWNER TO " + quotedRole,
 		"ALTER TABLE relationship_evidence_supports OWNER TO " + quotedRole,
 		"ALTER FUNCTION prevent_append_only_mutation() OWNER TO " + quotedRole,
@@ -122,6 +123,30 @@ func TestKnownEvidenceSupportOwnershipMigrationUpdatesMarkerWithNOBYPASSRLS(t *t
 
 	_, err = db.ExecContext(ctx, "RESET ROLE")
 	require.NoError(t, err)
+	var evidenceOwner string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT evidence_owner_profile_id::text
+		FROM relationship_evidence_supports
+		WHERE team_id = $1::uuid AND support_id = $2::uuid
+	`, teamID, fixture.supportID).Scan(&evidenceOwner))
+	require.Equal(t, ownerID, evidenceOwner)
+	var nullable string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+		  AND table_name = 'relationship_evidence_supports'
+		  AND column_name = 'evidence_owner_profile_id'
+	`).Scan(&nullable))
+	require.Equal(t, "NO", nullable)
+	var temporaryPolicyCount int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM pg_policy
+		WHERE polrelid = 'relationship_evidence_supports'::regclass
+		  AND polname = 'relationship_supports_evidence_owner_backfill_update'
+	`).Scan(&temporaryPolicyCount))
+	require.Zero(t, temporaryPolicyCount)
 	var updateTimeAfter string
 	require.NoError(t, db.QueryRowContext(ctx, `
 		SELECT value
@@ -335,12 +360,14 @@ func insertKnownEvidenceSupportOwnershipFixture(t *testing.T, ctx context.Contex
 	t.Helper()
 	spaceID := uuid.NewString()
 	var generation int64
-	require.NoError(t, db.QueryRowContext(ctx, `
-		SELECT id::text, generation
-		FROM memory_spaces
-		WHERE team_id = $1::uuid AND kind = 'team_shared'
-		LIMIT 1
-	`, teamID).Scan(&spaceID, &generation))
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT id::text, generation
+			FROM memory_spaces
+			WHERE team_id = $1::uuid AND kind = 'team_shared'
+			LIMIT 1
+		`, teamID).Scan(&spaceID, &generation)
+	}))
 	entityA, entityB := uuid.NewString(), uuid.NewString()
 	ingestID, fragmentID := uuid.NewString(), uuid.NewString()
 	relationshipID, observationID, verificationID, supportID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()

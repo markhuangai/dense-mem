@@ -304,7 +304,18 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 		return err
 	}))
 
+	require.NoError(t, migrationUpTo(ctx, sqlDB, knownEvidenceSupportOwnershipMigrationBase))
+	knownEvidenceFixture := insertKnownEvidenceSupportOwnershipFixture(t, ctx, sqlDB, teamID, profileID, profileID)
 	require.NoError(t, NewMigratorWithDB(sqlDB).RunUp(ctx))
+	var evidenceOwner string
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT evidence_owner_profile_id::text
+			FROM relationship_evidence_supports
+			WHERE team_id = $1::uuid AND support_id = $2::uuid
+		`, teamID, knownEvidenceFixture.supportID).Scan(&evidenceOwner)
+	}))
+	require.Equal(t, profileID, evidenceOwner)
 	var revisionCount, sharedRevisionCount int
 	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
@@ -326,7 +337,8 @@ func TestMigratorRunUpAsRuntimeRoleWithoutCreateRole(t *testing.T) {
 		FROM pg_policy
 		WHERE polname IN (
 			'dense_mem_2026081701_backfill_select',
-			'dense_mem_2026081701_backfill_update'
+			'dense_mem_2026081701_backfill_update',
+			'relationship_supports_evidence_owner_backfill_update'
 		)
 	`).Scan(&temporaryBackfillPolicyCount))
 	require.Zero(t, temporaryBackfillPolicyCount)

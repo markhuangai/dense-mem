@@ -8,8 +8,8 @@
 -- bounded, resumable batches so the append-only support table is not held in a
 -- single transaction. The supporting index is built concurrently, and foreign
 -- keys are installed NOT VALID before separate validation scans.
--- RLS impact: migration mode is the only mode allowed to rewrite the
--- append-only support table.
+-- RLS impact: a temporary UPDATE policy admits only the gated NULL-to-owner
+-- backfill through FORCE RLS and is removed before constraint validation.
 -- Backward compatibility: existing support rows retain their current owner;
 -- new known-evidence rows can point at a different evidence owner while the
 -- Relationship and support-decision owner remain unchanged.
@@ -143,6 +143,25 @@ CREATE INDEX CONCURRENTLY relationship_supports_evidence_owner_backfill_null_idx
     ON relationship_evidence_supports(team_id, support_id)
     WHERE evidence_owner_profile_id IS NULL;
 
+-- UPDATE through FORCE RLS needs an explicit policy in addition to the
+-- existing migration-mode SELECT policy. Keep the same narrow gate as the
+-- append-only trigger, and replace any policy left by an interrupted attempt.
+DROP POLICY IF EXISTS relationship_supports_evidence_owner_backfill_update
+    ON relationship_evidence_supports;
+CREATE POLICY relationship_supports_evidence_owner_backfill_update
+    ON relationship_evidence_supports
+    FOR UPDATE
+    USING (
+        current_setting('app.tx_mode', true) = 'migration'
+        AND current_setting('app.known_evidence_support_ownership_backfill', true) = 'true'
+        AND evidence_owner_profile_id IS NULL
+    )
+    WITH CHECK (
+        current_setting('app.tx_mode', true) = 'migration'
+        AND current_setting('app.known_evidence_support_ownership_backfill', true) = 'true'
+        AND evidence_owner_profile_id = owner_profile_id
+    );
+
 -- The support ledger remains append-only at runtime. Each batch enables the
 -- transaction-local backfill gate, then commits before the next batch is
 -- selected. A failed batch rolls back its row work; rerunning the migration
@@ -184,6 +203,8 @@ $procedure$;
 -- +goose StatementEnd
 
 CALL dense_mem_backfill_known_evidence_support_ownership_20260902010001();
+DROP POLICY relationship_supports_evidence_owner_backfill_update
+    ON relationship_evidence_supports;
 DROP PROCEDURE dense_mem_backfill_known_evidence_support_ownership_20260902010001();
 
 DROP INDEX CONCURRENTLY IF EXISTS relationship_supports_evidence_owner_backfill_null_idx;
