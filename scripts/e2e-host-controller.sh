@@ -210,7 +210,10 @@ copy_git_source() {
 copy_worktree_source() {
   local container="$1" source_dir="$2"
   git -C "$source_dir" ls-files --cached --others --exclude-standard -z |
-    node -e '
+    DENSE_MEM_CI_WORKTREE_SOURCE_DIR="$source_dir" node -e '
+      const fs = require("node:fs");
+      const pathModule = require("node:path");
+      const sourceDir = process.env.DENSE_MEM_CI_WORKTREE_SOURCE_DIR;
       let input = "";
       const blocked = [
         /(?:^|\/)\.env(?:\..*)?$/,
@@ -223,7 +226,13 @@ copy_worktree_source() {
       process.stdin.on("data", (chunk) => { input += chunk; });
       process.stdin.on("end", () => {
         for (const path of input.split("\0")) {
-          if (path && !blocked.some((pattern) => pattern.test(path))) process.stdout.write(`${path}\0`);
+          if (!path || blocked.some((pattern) => pattern.test(path))) continue;
+          try {
+            fs.lstatSync(pathModule.join(sourceDir, path));
+            process.stdout.write(`${path}\0`);
+          } catch {
+            // A tracked deletion is not part of the runnable worktree.
+          }
         }
       });
     ' |

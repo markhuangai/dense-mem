@@ -220,6 +220,7 @@ test("local worktree transfer executes the source filter and excludes secrets an
       "README.md": "allowed\n",
       "scripts/e2e.sh": "allowed\n",
       "src/allowed.txt": "allowed\n",
+      "deleted.txt": "removed from the worktree\n",
       ".env": "blocked\n",
       ".env.local": "blocked\n",
       "nested/.env": "blocked\n",
@@ -238,6 +239,7 @@ test("local worktree transfer executes the source filter and excludes secrets an
     }
     await run("git", ["add", "."], { cwd: source });
     await run("git", ["commit", "--quiet", "-m", "fixture"], { cwd: source });
+    await rm(join(source, "deleted.txt"));
 
     const dockerStub = `#!/usr/bin/env bash
 set -euo pipefail

@@ -39,6 +39,7 @@ function assertPreviewBuildPolicy(workflow) {
     "--target preview",
     "--platform linux/amd64,linux/arm64/v8",
     "--provenance=false",
+    '--cache-from "type=gha,scope=dense-mem-preview-${PR_NUMBER}"',
     "--output \"type=oci,dest=${RUNNER_TEMP}/preview-oci,tar=false,name=dense-mem:test-${PR_NUMBER}\"",
     '--build-arg "IMAGE_VERSION=test-${PR_NUMBER}"',
     '--build-arg "IMAGE_REVISION=${HEAD_SHA}"',
