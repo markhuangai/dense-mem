@@ -86,7 +86,7 @@ func listActiveDreamEvidence(ctx context.Context, tx *gorm.DB, teamID, relations
 		       support.authority,
 		       support.span_start,
 		       support.span_end,
-		       COALESCE(occurrence.content, fragment.content)
+		       COALESCE(occurrence.content, fragment.content) AS content
 		FROM relationship_evidence_supports support
 		JOIN latest_support_decision decision
 		  ON decision.support_id = support.support_id
@@ -173,7 +173,7 @@ func listActiveDreamEvidenceBatch(
 			       support.authority,
 			       support.span_start,
 			       support.span_end,
-			       COALESCE(occurrence.content, fragment.content),
+			       COALESCE(occurrence.content, fragment.content) AS content,
 			       row_number() OVER (
 			           PARTITION BY support.relationship_id
 			           ORDER BY CASE support.authority
