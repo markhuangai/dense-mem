@@ -92,6 +92,18 @@ func TestSubmissionAssessmentGroundingRejectsMissingKnownEntity(t *testing.T) {
 		Groups:   []repository.SubmissionAssessmentEntityCatalogGroup{{Ref: "entity:subject", Complete: true}},
 	}, []assessor.SemanticReviewEvidence{evidence})
 	require.ErrorIs(t, err, errSubmissionAssessmentStaleInput)
+
+	plan = submissionAssessmentGroundingTestPlan("Dense-Mem", "project")
+	plan.EntityTargets[0].KnownEntityID = "known-entity-id"
+	plan.entityTargetsByRef = map[string]submissionAssessmentEntityTarget{"entity:subject": plan.EntityTargets[0]}
+	_, _, err = submissionAssessmentGroundedEntities(plan, repository.SubmissionAssessmentEntityCatalogResult{
+		Complete: true,
+		Groups: []repository.SubmissionAssessmentEntityCatalogGroup{{
+			Ref: "entity:subject", Complete: true,
+			Candidates: []repository.SemanticReviewEntityCandidate{{EntityID: "same-name-in-space", EntityKind: "project", CanonicalName: "Dense-Mem"}},
+		}},
+	}, []assessor.SemanticReviewEvidence{evidence})
+	require.ErrorIs(t, err, errSubmissionAssessmentStaleInput)
 }
 
 func TestSubmissionAssessmentPlanRetainsExactReviewContext(t *testing.T) {

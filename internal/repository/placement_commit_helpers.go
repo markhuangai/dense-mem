@@ -63,6 +63,11 @@ func applySemanticRelationshipDecision(
 		if index >= len(applied.SupportIDs) || applied.SupportIDs[index] == "" || support.FragmentID == "" {
 			continue
 		}
+		// A non-empty evidence owner identifies read-only known context. Its
+		// existing search projection must not be rewritten for this submission.
+		if support.EvidenceOwnerProfileID != "" {
+			continue
+		}
 		if semanticFragmentID == "" {
 			var err error
 			semanticFragmentID, err = loadSemanticItemFragmentID(ctx, tx, commit)

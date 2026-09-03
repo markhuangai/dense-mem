@@ -469,7 +469,7 @@ func validateRemember(args map[string]any) error {
 	if err := validateDirectEvidenceSupersessions(evidence); err != nil {
 		return err
 	}
-	if err := validateSubmittedRelationships(args["relationships"], evidence, "relationships"); err != nil {
+	if err := validateSubmittedRelationships(args["relationships"], evidence, "relationships", true); err != nil {
 		return err
 	}
 	return nil

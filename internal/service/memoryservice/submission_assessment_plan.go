@@ -26,13 +26,15 @@ type submissionAssessmentEntityTarget struct {
 }
 
 type submissionAssessmentRelationshipTarget struct {
-	Target            assessor.SemanticAssessmentRequiredRelationshipRef
-	ProposedPredicate string
-	KnownPredicateKey string
-	SubjectKind       string
-	ObjectKind        string
-	CorrectionTarget  *repository.SemanticCorrectionTargetInput
-	ConflictContext   *repository.SemanticConflictContextInput
+	Target                   assessor.SemanticAssessmentRequiredRelationshipRef
+	ProposedPredicate        string
+	KnownPredicateKey        string
+	KnownEvidenceIDs         []string
+	KnownEvidenceUnavailable bool
+	SubjectKind              string
+	ObjectKind               string
+	CorrectionTarget         *repository.SemanticCorrectionTargetInput
+	ConflictContext          *repository.SemanticConflictContextInput
 }
 
 type submissionAssessmentPlan struct {
@@ -40,6 +42,7 @@ type submissionAssessmentPlan struct {
 	EntityTargets       []submissionAssessmentEntityTarget
 	RelationshipTargets []submissionAssessmentRelationshipTarget
 	itemsByEvidenceID   map[string]submissionAssessmentItem
+	knownEvidenceByID   map[string]repository.SubmissionAssessmentKnownEvidence
 	entityTargetsByRef  map[string]submissionAssessmentEntityTarget
 	relationshipsByRef  map[string]submissionAssessmentRelationshipTarget
 }
@@ -87,6 +90,7 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 	plan := submissionAssessmentPlan{
 		Items:              items,
 		itemsByEvidenceID:  itemsByEvidenceID,
+		knownEvidenceByID:  map[string]repository.SubmissionAssessmentKnownEvidence{},
 		entityTargetsByRef: map[string]submissionAssessmentEntityTarget{},
 		relationshipsByRef: map[string]submissionAssessmentRelationshipTarget{},
 	}
@@ -173,12 +177,16 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	if err != nil {
 		return submissionAssessmentRelationshipTarget{}, nil, err
 	}
+	knownEvidenceIDs, err := submissionAssessmentKnownEvidenceIDsFromProposal(raw)
+	if err != nil {
+		return submissionAssessmentRelationshipTarget{}, nil, err
+	}
 
 	subjectRaw, ok := proposalMap(raw["subject"])
 	if !ok {
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship subject is required")
 	}
-	subject, err := submissionAssessmentEntityTargetFromProposal(subjectRaw, fmt.Sprintf("entity:%d:subject", index), evidenceIDs)
+	subject, err := submissionAssessmentEntityTargetFromProposal(subjectRaw, fmt.Sprintf("entity:%d:subject", index), evidenceIDs, knownEvidenceIDs)
 	if err != nil {
 		return submissionAssessmentRelationshipTarget{}, nil, err
 	}
@@ -210,7 +218,7 @@ func submissionAssessmentRelationshipTargetFromProposal(
 	var objectRef *string
 	var objectValue *assessor.SemanticAssessmentValue
 	if hasEntity {
-		objectEntity, err := submissionAssessmentEntityTargetFromProposal(objectEntityRaw, fmt.Sprintf("entity:%d:object", index), evidenceIDs)
+		objectEntity, err := submissionAssessmentEntityTargetFromProposal(objectEntityRaw, fmt.Sprintf("entity:%d:object", index), evidenceIDs, knownEvidenceIDs)
 		if err != nil {
 			return submissionAssessmentRelationshipTarget{}, nil, err
 		}
@@ -243,20 +251,22 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		return submissionAssessmentRelationshipTarget{}, nil, errors.New("submission assessment relationship valid_to must not be before valid_from")
 	}
 	target := assessor.SemanticAssessmentRequiredRelationshipRef{
-		ProposalID:    ref,
-		PredicateHint: proposedPredicate,
-		EvidenceIDs:   append([]string(nil), evidenceIDs...),
-		SubjectRef:    subject.Target.Ref,
-		ObjectRef:     objectRef,
-		ObjectValue:   objectValue,
-		Polarity:      polarity,
-		ValidFrom:     submissionAssessmentTimeString(validFrom),
-		ValidTo:       submissionAssessmentTimeString(validTo),
+		ProposalID:       ref,
+		PredicateHint:    proposedPredicate,
+		EvidenceIDs:      append([]string(nil), evidenceIDs...),
+		KnownEvidenceIDs: append([]string(nil), knownEvidenceIDs...),
+		SubjectRef:       subject.Target.Ref,
+		ObjectRef:        objectRef,
+		ObjectValue:      objectValue,
+		Polarity:         polarity,
+		ValidFrom:        submissionAssessmentTimeString(validFrom),
+		ValidTo:          submissionAssessmentTimeString(validTo),
 	}
 	entry := submissionAssessmentRelationshipTarget{
 		Target:            target,
 		ProposedPredicate: proposedPredicate,
 		KnownPredicateKey: knownPredicateKey,
+		KnownEvidenceIDs:  append([]string(nil), knownEvidenceIDs...),
 		SubjectKind:       subject.Target.Kind,
 		ObjectKind:        objectKind,
 	}
@@ -281,6 +291,41 @@ func submissionAssessmentRelationshipTargetFromProposal(
 		}
 	}
 	return entry, entities, nil
+}
+
+func submissionAssessmentKnownEvidenceIDsFromProposal(raw map[string]any) ([]string, error) {
+	values, exists := raw["known_evidence_ids"]
+	if !exists || values == nil {
+		return nil, nil
+	}
+	items := rememberArrayValues(values)
+	if items == nil {
+		return nil, errors.New("submission assessment relationship known_evidence_ids must be an array")
+	}
+	if len(items) > 20 {
+		return nil, errors.New("submission assessment relationship known_evidence_ids must contain at most 20 IDs")
+	}
+	result := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, value := range items {
+		id, ok := value.(string)
+		if !ok {
+			return nil, errors.New("submission assessment relationship known_evidence_ids must contain UUIDs")
+		}
+		id = strings.TrimSpace(id)
+		parsed, err := uuid.Parse(id)
+		if err != nil {
+			return nil, errors.New("submission assessment relationship known_evidence_ids must contain UUIDs")
+		}
+		id = parsed.String()
+		if _, exists := seen[id]; exists {
+			return nil, errors.New("submission assessment relationship known_evidence_ids contains a duplicate")
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 func submissionAssessmentTimeString(value *time.Time) *string {
@@ -324,6 +369,7 @@ func submissionAssessmentEntityTargetFromProposal(
 	raw map[string]any,
 	ref string,
 	evidenceIDs []string,
+	knownEvidenceIDs []string,
 ) (submissionAssessmentEntityTarget, error) {
 	name := strings.TrimSpace(submissionAssessmentRawString(raw, "name"))
 	if name != "" && len([]rune(name)) > 256 {
@@ -344,10 +390,11 @@ func submissionAssessmentEntityTargetFromProposal(
 	}
 	return submissionAssessmentEntityTarget{
 		Target: assessor.SemanticAssessmentRequiredEntityRef{
-			Ref:         ref,
-			Name:        name,
-			Kind:        kind,
-			EvidenceIDs: append([]string(nil), evidenceIDs...),
+			Ref:              ref,
+			Name:             name,
+			Kind:             kind,
+			EvidenceIDs:      append([]string(nil), evidenceIDs...),
+			KnownEvidenceIDs: append([]string(nil), knownEvidenceIDs...),
 		},
 		KnownEntityID: knownEntityID,
 	}, nil

@@ -33,13 +33,19 @@ func ValidateSemanticAssessmentRequiredRelationshipRefs(
 		if result.Disposition == "not_supported" {
 			continue
 		}
-		matchesEvidence := false
-		if len(required.EvidenceIDs) == 0 {
-			for _, expected := range required.Evidence {
-				for _, split := range result.Splits {
+		if required.KnownEvidenceUnavailable {
+			errs = append(errs, semanticErr("relationship_results", "must be not_supported when requested known evidence is unavailable"))
+			continue
+		}
+		for splitIndex, split := range result.Splits {
+			matchesEvidence := false
+			matchesSubmittedEvidence := false
+			if len(required.EvidenceIDs) == 0 {
+				for _, expected := range required.Evidence {
 					for _, actual := range split.Evidence {
 						if actual.EvidenceID == expected.EvidenceID && actual.Start == expected.Start && actual.End == expected.End {
 							matchesEvidence = true
+							matchesSubmittedEvidence = true
 							break
 						}
 					}
@@ -47,16 +53,14 @@ func ValidateSemanticAssessmentRequiredRelationshipRefs(
 						break
 					}
 				}
-				if matchesEvidence {
-					break
-				}
 			}
-		}
-		for _, expectedEvidenceID := range required.EvidenceIDs {
-			for _, split := range result.Splits {
+			for _, expectedEvidenceID := range append(append([]string(nil), required.EvidenceIDs...), required.KnownEvidenceIDs...) {
 				for _, actual := range split.SupportRanges {
 					if actual.EvidenceID == expectedEvidenceID {
 						matchesEvidence = true
+						if containsString(stringSet(required.EvidenceIDs), actual.EvidenceID) {
+							matchesSubmittedEvidence = true
+						}
 						break
 					}
 				}
@@ -64,12 +68,12 @@ func ValidateSemanticAssessmentRequiredRelationshipRefs(
 					break
 				}
 			}
-			if matchesEvidence {
-				break
+			field := fmt.Sprintf("relationship_results.splits[%d]", splitIndex)
+			if !matchesEvidence {
+				errs = append(errs, semanticErr(field, "does not use trusted proposal evidence"))
+			} else if !matchesSubmittedEvidence {
+				errs = append(errs, semanticErr(field, "must retain a submitted support span"))
 			}
-		}
-		if !matchesEvidence {
-			errs = append(errs, semanticErr("relationship_results", "does not use trusted proposal evidence"))
 		}
 	}
 	return errs
@@ -191,6 +195,18 @@ func assessmentCandidateGroupsEquivalent(left, right SemanticAssessmentEntityCan
 
 func semanticAssessmentEntityLogicalKey(name, kind string) string {
 	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(name)), " ")) + "\x00" + strings.TrimSpace(kind)
+}
+
+func semanticAssessmentEntityResultLogicalKey(
+	result SemanticAssessmentEntityResult,
+	target SemanticAssessmentRequiredEntityRef,
+) string {
+	if result.CandidateEntityID != nil {
+		if candidateID := strings.TrimSpace(*result.CandidateEntityID); candidateID != "" {
+			return "candidate\x00" + candidateID
+		}
+	}
+	return semanticAssessmentEntityLogicalKey(target.Name, target.Kind)
 }
 
 func assessmentMatchingEntityCandidates(group SemanticAssessmentEntityCandidateGroup, kind string) []SemanticAssessmentEntityCandidate {

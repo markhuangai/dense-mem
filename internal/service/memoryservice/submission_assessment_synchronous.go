@@ -205,6 +205,9 @@ func AssessSynchronousRemember(
 		return nil, err
 	}
 	concrete := newSynchronousAssessmentEngine(deps, input.Scope.TeamID, input.Scope.OwnerProfileID)
+	if err := concrete.loadKnownEvidence(ctx, input.Scope, &plan); err != nil {
+		return nil, normalizeSynchronousAssessmentPreflightError(err)
+	}
 	request, err := concrete.buildRequest(ctx, input.Scope, plan, input.Snapshot.Proposal)
 	if err != nil {
 		return nil, normalizeSynchronousAssessmentPreflightError(err)
@@ -283,7 +286,7 @@ func normalizeSynchronousAssessmentPreflightError(err error) error {
 	}
 	stage, _ := semanticAssessmentPreflightFailure(err)
 	switch stage {
-	case "entity_catalog", "catalog_context", "assessment_input", "predicate_options_overflow":
+	case "entity_catalog", "known_evidence_context", "catalog_context", "assessment_input", "predicate_options_overflow":
 		return fmt.Errorf("%w: %v", rememberapp.ErrRememberInputBudgetExceeded, err)
 	default:
 		return err

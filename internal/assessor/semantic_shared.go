@@ -63,6 +63,14 @@ func semanticEvidenceByID(evidence []SemanticReviewEvidence) map[string]Semantic
 	return out
 }
 
+func semanticAssessmentAllEvidence(req SemanticAssessmentRequest) map[string]SemanticReviewEvidence {
+	out := semanticEvidenceByID(req.Evidence)
+	for _, item := range req.KnownEvidence {
+		out[strings.TrimSpace(item.EvidenceID)] = item
+	}
+	return out
+}
+
 func (e SemanticValidationError) Error() string {
 	if e.Field == "" {
 		return e.Message

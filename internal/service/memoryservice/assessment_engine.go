@@ -18,6 +18,10 @@ type SubmissionAssessmentCatalog interface {
 	ListSemanticAssessmentPredicateOptions(context.Context, repository.SemanticAssessmentPredicateOptionsInput) ([]repository.SemanticReviewPredicateCandidate, error)
 }
 
+type SubmissionAssessmentKnownEvidenceCatalog interface {
+	ListSubmissionAssessmentKnownEvidence(context.Context, repository.SubmissionAssessmentKnownEvidenceInput) (repository.SubmissionAssessmentKnownEvidenceResult, error)
+}
+
 // assessmentEngine contains request-scoped assessor mechanics only. It has no
 // ledger, placement identity, lease, retry, or background-worker state.
 type assessmentEngine struct {

@@ -28,15 +28,16 @@ type relationshipCorrectionInsert struct {
 
 type effectiveRelationshipCorrectionSupport struct {
 	RelationshipCorrectionSupport
-	SupportID        string
-	SourceGroupKey   string
-	SourceID         string
-	SourceRevisionID string
-	Quote            string
-	Authority        string
-	Metadata         map[string]any
-	IngestID         string
-	SpaceID          string
+	SupportID              string
+	EvidenceOwnerProfileID string
+	SourceGroupKey         string
+	SourceID               string
+	SourceRevisionID       string
+	Quote                  string
+	Authority              string
+	Metadata               map[string]any
+	IngestID               string
+	SpaceID                string
 }
 
 type relationshipCorrectionResolution struct {
@@ -136,6 +137,7 @@ func loadEffectiveRelationshipCorrectionSupports(
 		    ORDER BY support_id, created_at DESC, support_decision_id DESC
 		)
 		SELECT support.support_id::text, support.fragment_id::text,
+		       support.evidence_owner_profile_id::text,
 		       support.span_start, support.span_end, support.source_group_key,
 		       COALESCE(support.source_id::text, ''),
 		       COALESCE(support.source_revision_id::text, ''),
@@ -174,7 +176,8 @@ func loadEffectiveRelationshipCorrectionSupports(
 		var support effectiveRelationshipCorrectionSupport
 		var metadataJSON []byte
 		if err := rows.Scan(
-			&support.SupportID, &support.EvidenceID, &support.Start, &support.End,
+			&support.SupportID, &support.EvidenceID, &support.EvidenceOwnerProfileID,
+			&support.Start, &support.End,
 			&support.SourceGroupKey, &support.SourceID, &support.SourceRevisionID,
 			&support.Quote, &support.Authority, &metadataJSON,
 			&support.IngestID, &support.SpaceID,
@@ -187,6 +190,31 @@ func loadEffectiveRelationshipCorrectionSupports(
 		result = append(result, support)
 	}
 	return result, rows.Err()
+}
+
+func loadRelationshipCorrectionIngestID(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID, relationshipID, ownerProfileID string,
+) (string, error) {
+	var ingestID string
+	err := tx.WithContext(ctx).Raw(`
+		SELECT observation.ingest_id::text
+		FROM relationship_observations AS observation
+		JOIN knowledge_ingests AS ingest
+		  ON ingest.team_id = observation.team_id
+		 AND ingest.ingest_id = observation.ingest_id
+		 AND ingest.owner_profile_id = observation.owner_profile_id
+		WHERE observation.team_id = ?::uuid
+		  AND observation.relationship_id = ?::uuid
+		  AND observation.owner_profile_id = ?::uuid
+		ORDER BY observation.created_at ASC, observation.observation_id ASC
+		LIMIT 1
+	`, teamID, relationshipID, ownerProfileID).Row().Scan(&ingestID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errors.New("relationship correction requires an owner-owned source ingest")
+	}
+	return ingestID, err
 }
 
 func resolveRelationshipCorrectionPatch(
@@ -655,18 +683,22 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 	}); err != nil {
 		return nil, err
 	}
+	correctionIngestID, err := loadRelationshipCorrectionIngestID(ctx, tx, row.TeamID, source.RelationshipID, row.OwnerProfileID)
+	if err != nil {
+		return nil, err
+	}
 
 	var successor *RelationshipRecord
 	var verificationEventID string
 	for index, support := range supports {
 		supportInput := EvidenceSupportInput{
-			FragmentID: support.EvidenceID, SourceGroupKey: support.SourceGroupKey,
+			FragmentID: support.EvidenceID, EvidenceOwnerProfileID: support.EvidenceOwnerProfileID, SourceGroupKey: support.SourceGroupKey,
 			SourceID: support.SourceID, SourceRevisionID: support.SourceRevisionID,
 			SpanStart: support.Start, SpanEnd: support.End, Quote: support.Quote,
 			Authority: support.Authority, Metadata: support.Metadata,
 		}
 		copyDecision := decision
-		copyDecision.IngestID = support.IngestID
+		copyDecision.IngestID = correctionIngestID
 		copyDecision.SubjectRef = subjectEntityID
 		copyDecision.OriginalPredicate = resolution.Predicate.Key
 		copyDecision.ObjectRef = objectEntityID

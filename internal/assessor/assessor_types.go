@@ -8,6 +8,7 @@ type SemanticAssessmentRequest struct {
 	TeamID         string                   `json:"-"`
 	OwnerProfileID string                   `json:"-"`
 	Evidence       []SemanticReviewEvidence `json:"evidence"`
+	KnownEvidence  []SemanticReviewEvidence `json:"known_evidence,omitempty"`
 	ClientProposal map[string]any           `json:"client_proposal,omitempty"`
 	// EntityCandidateGroups are reuse allowlists for spans the assessor may
 	// extract, not required output targets.
@@ -76,6 +77,7 @@ type SemanticAssessmentSecurityResult = SemanticAssessmentEvidenceSecurityResult
 type SemanticAssessmentEntityResult struct {
 	Ref               string  `json:"ref"`
 	GroundingRef      *string `json:"grounding_ref"`
+	AnchorRef         *string `json:"anchor_ref,omitempty"`
 	Surface           string  `json:"-"`
 	Kind              string  `json:"-"`
 	EvidenceID        string  `json:"-"`

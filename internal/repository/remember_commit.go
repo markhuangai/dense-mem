@@ -150,6 +150,10 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 			return err
 		}
 		applyRememberCommitSourceReferences(input.Commit.RelationshipObservations, evidence)
+		stage = "known_evidence_fence"
+		if err := reauthorizeSubmissionKnownEvidence(ctx, tx, input.Commit); err != nil {
+			return err
+		}
 
 		stage = "assessment_history"
 		if err := insertRememberSemanticAssessment(ctx, tx, input); err != nil {
@@ -193,10 +197,20 @@ func (r *LedgerRepositoryImpl) CommitRememberWithEmbeddings(
 			if err != nil {
 				return err
 			}
+			if !rememberEvidenceExists(evidence, fragmentID) {
+				return errors.New("remember relationship observation requires submitted support")
+			}
 			for _, support := range relationshipEvidenceSupports(entry.Observation.Support, entry.Observation.Supports) {
-				if !rememberEvidenceExists(evidence, support.FragmentID) {
-					return errors.New("remember relationship support is outside the Remember request")
+				if knownEvidenceSnapshotContains(input.Commit.KnownEvidenceSnapshot, support) {
+					continue
 				}
+				if strings.TrimSpace(support.EvidenceOwnerProfileID) == "" || support.EvidenceOwnerProfileID == input.OwnerProfileID {
+					if !rememberEvidenceExists(evidence, support.FragmentID) {
+						return errors.New("remember relationship submitted support is outside the Remember request")
+					}
+					continue
+				}
+				return ErrSubmissionAssessmentKnownEvidenceStale
 			}
 			commit := common
 			commit.FragmentID = fragmentID
@@ -295,6 +309,18 @@ func validateRememberEmbeddingContractFence(embeddings []InlineEmbeddingResult) 
 		}
 	}
 	return nil
+}
+
+func knownEvidenceSnapshotContains(snapshot []SubmissionAssessmentKnownEvidence, support EvidenceSupportInput) bool {
+	for _, item := range snapshot {
+		if item.FragmentID == strings.TrimSpace(support.FragmentID) &&
+			item.OwnerProfileID == strings.TrimSpace(support.EvidenceOwnerProfileID) &&
+			item.SourceID == strings.TrimSpace(support.SourceID) &&
+			item.SourceRevisionID == strings.TrimSpace(support.SourceRevisionID) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateRememberEmbeddingContractAgainstActive(embeddings []InlineEmbeddingResult, contract *ActiveSearchContract) error {

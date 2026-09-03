@@ -49,10 +49,11 @@ func semanticAssessmentEntityResultSchema() map[string]any {
 	return map[string]any{
 		"type": "array", "maxItems": SemanticAssessmentMaxEntityResults,
 		"items": closedObject(
-			[]string{"ref", "grounding_ref", "action", "candidate_entity_id"},
+			[]string{"ref", "grounding_ref", "anchor_ref", "action", "candidate_entity_id"},
 			map[string]any{
 				"ref":                 stringSchema(1, 128),
 				"grounding_ref":       nullableStringSchema(128),
+				"anchor_ref":          nullableStringSchema(128),
 				"action":              enumSchema(domain.EntityResolutionActions()),
 				"candidate_entity_id": nullableStringSchema(128),
 			},

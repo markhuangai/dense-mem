@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -23,7 +24,33 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 	repo := NewSemanticRepository(appDB, rls)
 	teamAEntity := createSemanticEntity(t, ctx, repo, teamA, ownerA, "project", "Dense Mem")
 	teamCEntity := createSemanticEntity(t, ctx, repo, teamC, ownerC, "project", "Dense Mem")
-	_, err := repo.AddEntityName(ctx, AddEntityNameInput{
+	sharedSpace, err := NewMemorySpaceRepository(appDB, rls).GetTeamShared(ctx, uuid.MustParse(teamA))
+	require.NoError(t, err)
+	require.NotNil(t, sharedSpace)
+	privateSpace, err := NewMemorySpaceRepository(appDB, rls).EnsureCredentialPrivate(ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
+	require.NoError(t, err)
+	var privateGeneration int64
+	privateEntityID := uuid.New()
+	privateNameID := uuid.New()
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		if err := tx.Raw(`SELECT generation FROM memory_spaces WHERE id = ?::uuid`, privateSpace.ID).Row().Scan(&privateGeneration); err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO entity_records (
+				team_id, entity_id, entity_kind, identity_context, metadata, space_id, space_generation
+			) VALUES (?, ?, 'project', '{}'::jsonb, '{}'::jsonb, ?, ?)
+		`, teamA, privateEntityID, privateSpace.ID, privateGeneration).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO entity_names (
+				team_id, entity_name_id, entity_id, owner_profile_id, display_name, normalized_name,
+				name_kind, metadata, space_id, space_generation
+			) VALUES (?, ?, ?, ?, 'Dense Memory', 'dense memory', 'canonical', '{}'::jsonb, ?, ?)
+		`, teamA, privateNameID, privateEntityID, ownerA, privateSpace.ID, privateGeneration).Error
+	}))
+	_, err = repo.AddEntityName(ctx, AddEntityNameInput{
 		TeamID: teamA, OwnerProfileID: ownerA, EntityID: teamAEntity.EntityID, DisplayName: "Dense Memory", NameKind: "alias",
 	})
 	require.NoError(t, err)
@@ -60,6 +87,7 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 	entityCatalog, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
 		TeamID:         teamA,
 		OwnerProfileID: ownerB,
+		SpaceID:        sharedSpace.ID.String(),
 		Entities: []SubmissionAssessmentEntityCatalogTarget{{
 			Ref: "dense-mem", Surface: "  DENSE   MEMORY  ", EntityKind: "project", KnownEntityID: teamCEntity.EntityID,
 		}},
@@ -74,7 +102,7 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 	assert.Contains(t, entityCatalog.Groups[0].Candidates[0].ActiveNames, "Dense Memory")
 
 	knownOnlyCatalog, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
-		TeamID: teamA, OwnerProfileID: ownerB,
+		TeamID: teamA, OwnerProfileID: ownerB, SpaceID: sharedSpace.ID.String(),
 		Entities: []SubmissionAssessmentEntityCatalogTarget{{
 			Ref: "known-only", KnownEntityID: teamAEntity.EntityID,
 		}},
@@ -90,7 +118,7 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 		createSemanticEntity(t, ctx, repo, teamA, ownerA, "person", "Duplicate Exact Name")
 	}
 	exactDuplicateCatalog, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
-		TeamID: teamA, OwnerProfileID: ownerB,
+		TeamID: teamA, OwnerProfileID: ownerB, SpaceID: sharedSpace.ID.String(),
 		Entities: []SubmissionAssessmentEntityCatalogTarget{{
 			Ref: "exact-duplicate", Surface: "Duplicate Exact Name", EntityKind: "person", KnownEntityID: exactEntity.EntityID,
 		}},
@@ -103,7 +131,7 @@ func TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolutio
 	assert.Equal(t, exactEntity.EntityID, exactDuplicateCatalog.Groups[0].Candidates[0].EntityID)
 
 	inactiveCatalog, err := repo.ListSubmissionAssessmentEntityCatalog(ctx, SubmissionAssessmentEntityCatalogInput{
-		TeamID: teamA, OwnerProfileID: ownerB,
+		TeamID: teamA, OwnerProfileID: ownerB, SpaceID: sharedSpace.ID.String(),
 		Entities: []SubmissionAssessmentEntityCatalogTarget{{
 			Ref: "inactive", Surface: "Old Dense Memory", EntityKind: "project", KnownEntityID: inactiveEntity.EntityID,
 		}},

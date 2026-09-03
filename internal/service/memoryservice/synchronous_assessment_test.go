@@ -702,6 +702,7 @@ type synchronousAssessmentFixtureValue struct {
 func synchronousAssessmentFixture(t *testing.T) synchronousAssessmentFixtureValue {
 	t.Helper()
 	teamID, ownerID, ingestID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	spaceID := uuid.NewString()
 	first := repository.EvidenceFragment{
 		FragmentID: uuid.NewString(), EvidenceIndex: 0, Content: "Alpha uses Beta.", Authority: "primary",
 		SourceID: uuid.NewString(), SourceRevisionID: uuid.NewString(),
@@ -725,7 +726,7 @@ func synchronousAssessmentFixture(t *testing.T) synchronousAssessmentFixtureValu
 		},
 	}}
 	snapshot := RememberAssessmentSnapshot{
-		Scope:    RememberAssessmentScope{TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID},
+		Scope:    RememberAssessmentScope{TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID, SpaceID: spaceID},
 		Proposal: proposal, Evidence: []repository.EvidenceFragment{first, second},
 		Items: []RememberAssessmentItem{{ItemID: uuid.NewString(), Fragment: first}, {ItemID: uuid.NewString(), Fragment: second}},
 	}

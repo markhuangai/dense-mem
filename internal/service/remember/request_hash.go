@@ -127,6 +127,7 @@ func canonicalRememberRelationship(item map[string]any) {
 	canonicalRememberTrimString(item, "valid_from", true)
 	canonicalRememberTrimString(item, "valid_to", true)
 	canonicalRememberScalarSet(item, "evidence_indices")
+	canonicalRememberStringSet(item, "known_evidence_ids")
 	canonicalRememberEntity(canonicalRememberMap(item["subject"]))
 	if predicate := canonicalRememberMap(item["predicate"]); predicate != nil {
 		canonicalRememberTrimString(predicate, "proposed_key", true)

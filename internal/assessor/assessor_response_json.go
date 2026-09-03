@@ -27,7 +27,7 @@ func validateSemanticAssessmentResponseRaw(raw []byte) []SemanticValidationError
 		}
 		errs = append(errs, assessmentRawArrayObjects(result["signals"], path+".signals", []string{"kind", "start_ref", "end_ref"}, nil)...)
 	}
-	errs = append(errs, assessmentRawArrayObjects(top["entity_results"], "entity_results", []string{"ref", "grounding_ref", "action", "candidate_entity_id"}, map[string]bool{"grounding_ref": true, "candidate_entity_id": true})...)
+	errs = append(errs, assessmentRawArrayObjectsWithOptional(top["entity_results"], "entity_results", []string{"ref", "grounding_ref", "anchor_ref", "action", "candidate_entity_id"}, map[string]bool{"grounding_ref": true, "anchor_ref": true, "candidate_entity_id": true}, map[string]bool{"anchor_ref": true})...)
 
 	var relationships []json.RawMessage
 	if err := json.Unmarshal(top["relationship_results"], &relationships); err != nil {
@@ -86,19 +86,27 @@ func validateSemanticAssessmentSplitRaw(raw json.RawMessage, path string) []Sema
 }
 
 func assessmentRawArrayObjects(raw json.RawMessage, path string, fields []string, nullable map[string]bool) []SemanticValidationError {
+	return assessmentRawArrayObjectsWithOptional(raw, path, fields, nullable, nil)
+}
+
+func assessmentRawArrayObjectsWithOptional(raw json.RawMessage, path string, fields []string, nullable, optional map[string]bool) []SemanticValidationError {
 	var values []json.RawMessage
 	if err := json.Unmarshal(raw, &values); err != nil {
 		return []SemanticValidationError{semanticErr(path, "must be an array")}
 	}
 	var errs []SemanticValidationError
 	for i, value := range values {
-		_, itemErrs := assessmentRawObject(value, fmt.Sprintf("%s[%d]", path, i), fields, nullable)
+		_, itemErrs := assessmentRawObjectWithOptional(value, fmt.Sprintf("%s[%d]", path, i), fields, nullable, optional)
 		errs = append(errs, itemErrs...)
 	}
 	return errs
 }
 
 func assessmentRawObject(raw json.RawMessage, path string, fields []string, nullable map[string]bool) (map[string]json.RawMessage, []SemanticValidationError) {
+	return assessmentRawObjectWithOptional(raw, path, fields, nullable, nil)
+}
+
+func assessmentRawObjectWithOptional(raw json.RawMessage, path string, fields []string, nullable, optional map[string]bool) (map[string]json.RawMessage, []SemanticValidationError) {
 	if err := jsonstrict.RejectDuplicateFields(raw); err != nil {
 		return nil, []SemanticValidationError{semanticErr(assessmentRawField(path, ""), err.Error())}
 	}
@@ -114,6 +122,9 @@ func assessmentRawObject(raw json.RawMessage, path string, fields []string, null
 	for _, field := range fields {
 		value, ok := object[field]
 		if !ok {
+			if optional[field] {
+				continue
+			}
 			errs = append(errs, semanticErr(assessmentRawField(path, field), "is required"))
 			continue
 		}

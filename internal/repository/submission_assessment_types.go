@@ -84,6 +84,7 @@ type CommitSubmissionAssessmentInput struct {
 	RememberCommitScope
 	AssessmentID             string
 	Items                    []SubmissionAssessmentItemInput
+	KnownEvidenceSnapshot    []SubmissionAssessmentKnownEvidence
 	EntityResolutions        []SubmissionAssessmentEntityResolutionInput
 	RelationshipObservations []SubmissionAssessmentRelationshipObservationInput
 	PredicateRegistrations   []SubmissionPredicateRegistrationInput

@@ -225,6 +225,7 @@ func normalizeEvidenceSupports(primary *EvidenceSupportInput, additional []Evide
 
 func normalizeEvidenceSupport(input EvidenceSupportInput) EvidenceSupportInput {
 	input.FragmentID = strings.TrimSpace(input.FragmentID)
+	input.EvidenceOwnerProfileID = strings.TrimSpace(input.EvidenceOwnerProfileID)
 	input.SourceGroupKey = strings.TrimSpace(input.SourceGroupKey)
 	input.SourceID = strings.TrimSpace(input.SourceID)
 	input.SourceRevisionID = strings.TrimSpace(input.SourceRevisionID)
@@ -334,6 +335,11 @@ func validateApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInput
 func validateEvidenceSupportInput(input EvidenceSupportInput) error {
 	if _, err := uuid.Parse(input.FragmentID); err != nil {
 		return fmt.Errorf("support.fragment_id is required: %w", err)
+	}
+	if input.EvidenceOwnerProfileID != "" {
+		if _, err := uuid.Parse(input.EvidenceOwnerProfileID); err != nil {
+			return fmt.Errorf("support.evidence_owner_profile_id is invalid: %w", err)
+		}
 	}
 	if input.SourceID != "" {
 		if _, err := uuid.Parse(input.SourceID); err != nil {
