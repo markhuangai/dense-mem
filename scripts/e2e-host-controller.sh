@@ -135,6 +135,7 @@ validate_bundle() {
   fi
   telemetry_secret="$(cat "$TELEMETRY_TOKEN_FILE")"
   [[ ${#telemetry_secret} -ge 2 ]] || fail "telemetry scrape token must contain at least two characters"
+  docker_socket_path >/dev/null
 }
 
 env_value() {
@@ -160,14 +161,16 @@ redact_diagnostics() {
 }
 
 docker_socket_path() {
-  local docker_socket
-  case "${DOCKER_HOST:-}" in
-    unix://*) docker_socket="${DOCKER_HOST#unix://}" ;;
-    "") docker_socket="/var/run/docker.sock" ;;
-    *) fail "the CI Docker host must use a Unix socket" ;;
+  local docker_host docker_socket
+  docker_host="$(env_value DOCKER_HOST 2>/dev/null || true)"
+  case "$docker_host" in
+    unix://*) docker_socket="${docker_host#unix://}" ;;
+    "") fail "DOCKER_HOST must be configured in the CI environment file" ;;
+    *) fail "DOCKER_HOST in the CI environment file must use a Unix socket" ;;
   esac
   [[ "$docker_socket" == /* ]] || fail "the CI Docker socket path must be absolute"
-  [[ -S "$docker_socket" ]] || fail "the CI Docker socket is unavailable"
+  [[ "$docker_socket" != *','* && "$docker_socket" != *$'\n'* && "$docker_socket" != *$'\r'* ]] ||
+    fail "the CI Docker socket path is invalid"
   printf '%s\n' "$docker_socket"
 }
 

@@ -64,7 +64,7 @@ command -v git >/dev/null 2>&1 || fail "git is unavailable"
 security_options="$(docker info --format '{{json .SecurityOptions}}')"
 [[ "$security_options" == *rootless* ]] || fail "the test requires a rootless Docker daemon"
 
-printf '%s\n' 'CI_TEST=1' 'POSTGRES_USER=densemem' 'POSTGRES_DB=densemem' 'POSTGRES_PASSWORD=controller-test-password' 'AI_API_KEY=controller-test-key' 'CONTROL_PORTAL_TOKEN=controller-test-token' > "$ENV_FILE"
+printf '%s\n' 'CI_TEST=1' 'POSTGRES_USER=densemem' 'POSTGRES_DB=densemem' 'POSTGRES_PASSWORD=controller-test-password' 'AI_API_KEY=controller-test-key' 'CONTROL_PORTAL_TOKEN=controller-test-token' 'DOCKER_HOST=unix:///run/user/1001/docker.sock' > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 printf '%s\n' 'dense-mem-ci-real-test-token' > "${TEST_ROOT}/telemetry-scrape-token"
 chmod 600 "${TEST_ROOT}/telemetry-scrape-token"

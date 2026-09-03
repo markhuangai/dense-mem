@@ -48,6 +48,7 @@ services:
       - ${DENSE_MEM_CI_ENV_FILE:?DENSE_MEM_CI_ENV_FILE is required}
     environment:
       CONTROL_HTTP_ADDR: :8090
+      DOCKER_HOST: ""
       HTTP_ADDR: :8080
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"

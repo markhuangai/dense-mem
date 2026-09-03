@@ -20,7 +20,7 @@ const productionWorkflow = await readFile(new URL("../../.github/workflows/produ
 const scenarioWorkflow = await readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8");
 const scenarioScript = await readFile(new URL("../../scripts/e2e-ci-scenario.sh", import.meta.url), "utf8");
 
-async function runDoctor({ omit = "" } = {}) {
+async function runDoctor({ omit = "", dockerHost = "unix:///run/user/1001/docker.sock" } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "dense-mem-doctor-"));
   const configDirectory = join(directory, "dense-mem-ci");
   const binDirectory = join(directory, "bin");
@@ -36,6 +36,7 @@ async function runDoctor({ omit = "" } = {}) {
       "POSTGRES_DB=densemem",
       "AI_API_KEY=provider-secret",
       "CONTROL_PORTAL_TOKEN=control-secret",
+      `DOCKER_HOST=${dockerHost}`,
     ].filter((line) => !omit || !line.startsWith(`${omit}=`));
     await writeFile(envFile, `${envLines.join("\n")}\n`);
     await chmod(envFile, 0o600);
@@ -106,11 +107,14 @@ test("validate_bundle rejects missing database identity and accepts a valid runn
   const valid = await runDoctor();
   assert.equal(valid.status, 0, valid.stderr);
   assert.match(valid.stdout, /dense-mem-ci-e2e\.v1/);
-  for (const field of ["POSTGRES_USER", "POSTGRES_DB"]) {
+  for (const field of ["POSTGRES_USER", "POSTGRES_DB", "DOCKER_HOST"]) {
     const invalid = await runDoctor({ omit: field });
     assert.notEqual(invalid.status, 0, `${field} unexpectedly passed validation`);
     assert.match(invalid.stderr, new RegExp(`${field} must be configured`));
   }
+  const tcpHost = await runDoctor({ dockerHost: "tcp://127.0.0.1:2375" });
+  assert.notEqual(tcpHost.status, 0, "TCP Docker host unexpectedly passed validation");
+  assert.match(tcpHost.stderr, /DOCKER_HOST in the CI environment file must use a Unix socket/);
 });
 
 test("Compose consumes fixed runner config and controller-seeded inputs without host ports", () => {
@@ -124,8 +128,10 @@ test("Compose consumes fixed runner config and controller-seeded inputs without 
   assert.doesNotMatch(compose, /^\s+ports:/m);
   const postgres = compose.slice(compose.indexOf("  postgres:"), compose.indexOf("\n  redis:"));
   const redis = compose.slice(compose.indexOf("  redis:"), compose.indexOf("\n  server:"));
+  const server = compose.slice(compose.indexOf("  server:"), compose.indexOf("\n  prometheus:"));
   assert.doesNotMatch(postgres, /env_file:/);
   assert.doesNotMatch(redis, /env_file:/);
+  assert.match(server, /DOCKER_HOST: ""/);
 });
 
 test("production workflow uses PR E2E assets, four-way matrices, and one shared-project output", () => {
