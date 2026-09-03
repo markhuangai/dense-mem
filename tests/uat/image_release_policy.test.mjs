@@ -151,6 +151,22 @@ function workflowJob(workflow, name) {
   return nextJob === -1 ? remainder : remainder.slice(0, nextJob);
 }
 
+function assertHostedJob(workflow, name) {
+  assert.match(
+    workflowJob(workflow, name),
+    /^    runs-on: ubuntu-latest$/m,
+    `${name} must use a GitHub-hosted runner`,
+  );
+}
+
+function assertQemuBeforeBuildx(workflow, name) {
+  const job = workflowJob(workflow, name);
+  const qemu = job.indexOf("uses: docker/setup-qemu-action@v4");
+  const buildx = job.indexOf("uses: docker/setup-buildx-action@v4");
+  assert.ok(qemu !== -1 && qemu < buildx, `${name} must configure QEMU before Buildx`);
+  assert.match(job, /setup-qemu-action@v4[\s\S]*platforms: arm64/);
+}
+
 test("low-trust preview builds do not export an Actions cache", async () => {
   const workflow = await readFile(
     new URL("../../.github/workflows/pr-test-image.yml", import.meta.url),
@@ -159,6 +175,40 @@ test("low-trust preview builds do not export an Actions cache", async () => {
 
   assert.match(workflow, /^\s+pull_request_target:/m);
   assert.doesNotMatch(workflow, /^\s+cache-to:/m);
+});
+
+test("non-E2E image and release jobs use GitHub-hosted runners", async () => {
+  const [preview, prereleaseImage, demoImage, prerelease, release, startPrerelease] =
+    await Promise.all([
+      readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8"),
+      readFile(new URL("../../.github/workflows/publish-image.yml", import.meta.url), "utf8"),
+      readFile(new URL("../../.github/workflows/publish-demo-image.yml", import.meta.url), "utf8"),
+      readFile(new URL("../../.github/workflows/release-rc.yml", import.meta.url), "utf8"),
+      readFile(new URL("../../.github/workflows/release.yml", import.meta.url), "utf8"),
+      readFile(new URL("../../.github/workflows/start-prerelease.yml", import.meta.url), "utf8"),
+    ]);
+
+  for (const name of ["resolve", "build", "publish", "report", "report-e2e", "resolve-failure"]) {
+    assertHostedJob(preview, name);
+  }
+  assertHostedJob(prereleaseImage, "publish");
+  assertHostedJob(demoImage, "publish-demo");
+  for (const name of [
+    "classify-release",
+    "prepare-prerelease",
+    "resolve-production-source",
+    "promote-preview-image",
+  ]) {
+    assertHostedJob(prerelease, name);
+  }
+  for (const name of ["prepare-release", "create-release-tag", "promote-images", "create-github-release"]) {
+    assertHostedJob(release, name);
+  }
+  assertHostedJob(startPrerelease, "start-prerelease");
+
+  assertQemuBeforeBuildx(preview, "build");
+  assertQemuBeforeBuildx(prereleaseImage, "publish");
+  assertQemuBeforeBuildx(demoImage, "publish-demo");
 });
 
 test("PR preview workflow gates owner/admin and one-shot approval before digest handoff", async () => {
@@ -373,7 +423,7 @@ test("prerelease publication waits for the staging migration rehearsal", async (
   const prepare = workflowJob(releaseWorkflow, "prepare-prerelease");
 
   assert.doesNotMatch(pushWorkflow, /paths-ignore/);
-  assert.match(classifier, /^    runs-on: docker-runner$/m);
+  assert.match(classifier, /^    runs-on: ubuntu-latest$/m);
   assert.match(classifier, /^          fetch-depth: 0$/m);
   assert.match(classifier, /^          persist-credentials: false$/m);
   assert.match(
@@ -483,7 +533,7 @@ test("staging deployment is owner-gated and manual-only", async () => {
     workflow,
     /^  (?:pull_request|pull_request_target|push|workflow_call|workflow_run):/m,
   );
-  assert.match(authorize, /^    runs-on: docker-runner$/m);
+  assert.match(authorize, /^    runs-on: ubuntu-latest$/m);
   assert.match(authorize, /const actor = "Z-M-Huang"/);
   assert.match(authorize, /context\.actor !== actor/);
   assert.match(authorize, /process\.env\.TRIGGERING_ACTOR !== actor/);

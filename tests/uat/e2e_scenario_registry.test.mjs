@@ -34,6 +34,12 @@ function assertNode24Setup(job) {
 
 function assertPreviewBuildPolicy(workflow) {
   const build = workflowJob(workflow, "build");
+  assert.match(build, /^    runs-on: ubuntu-latest$/m);
+  assert.match(
+    build,
+    /- name: Set up QEMU\n\s+uses: docker\/setup-qemu-action@v4\n\s+with:\n\s+platforms: arm64\n\n\s+- name: Set up Docker Buildx/,
+    "preview build must configure ARM emulation before Buildx",
+  );
   assert.match(
     build,
     /- name: Expose GitHub Actions runtime\n\s+uses: crazy-max\/ghaction-github-runtime@v4\n\n\s+- name: Build production OCI layout/,
@@ -154,6 +160,12 @@ test("scenario classification fails closed for invalid registry metadata", () =>
 test("preview Buildx policy rejects weakened output settings", async () => {
   const workflow = await readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8");
   assert.doesNotThrow(() => assertPreviewBuildPolicy(workflow));
+  const withoutQemu = workflow.replace(
+    /\n      - name: Set up QEMU\n        uses: docker\/setup-qemu-action@v4\n        with:\n          platforms: arm64\n/,
+    "",
+  );
+  assert.notEqual(withoutQemu, workflow);
+  assert.throws(() => assertPreviewBuildPolicy(withoutQemu), /ARM emulation/);
   const withoutRuntime = workflow.replace(
     /\n      - name: Expose GitHub Actions runtime\n        uses: crazy-max\/ghaction-github-runtime@v4\n/,
     "",
@@ -175,10 +187,10 @@ test("production jobs use capability-matched runners and PR-owned assets", async
     readFile(new URL("../../scripts/e2e-ci.env.example", import.meta.url), "utf8"),
   ]);
   const authorize = workflowJob(workflow, "authorize");
-  assert.match(authorize, /^    runs-on: docker-runner$/m);
+  assert.match(authorize, /^    runs-on: ubuntu-latest$/m);
   assertNode24Setup(authorize);
   const report = workflowJob(workflow, "report");
-  assert.match(report, /^    runs-on: docker-runner$/m);
+  assert.match(report, /^    runs-on: ubuntu-latest$/m);
   assert.doesNotMatch(report, /actions\/setup-node@v7|actions\/download-artifact@v8/);
   for (const job of ["prechecks", "stale-cleanup", "exclusive-cleanup", "shared-start", "shared-stop"]) {
     const definition = workflowJob(workflow, job);

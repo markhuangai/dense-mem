@@ -350,7 +350,7 @@ test("scenario runner executes Entra and diagnostics through the shared path", (
 });
 
 test("production workflows use capability-matched runners and one OCI handoff", () => {
-  assert.match(productionWorkflow, /runs-on: docker-runner/);
+  assert.match(productionWorkflow, /runs-on: ubuntu-latest/);
   assert.match(productionWorkflow, /runs-on: rootless-docker/);
   assert.match(productionWorkflow, /max-parallel: 4/);
   assert.match(productionWorkflow, /shared_project: \$\{\{ steps\.start\.outputs\.shared_project \}\}/);
