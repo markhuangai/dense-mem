@@ -138,7 +138,7 @@ run_scenario() {
   local docker_socket
   docker_socket="$(docker_socket_path)"
   if [[ "$scenario" == "synchronous_write_primitives" ]]; then
-    run_synchronous_primitives_driver "$source_dir" "$project" "$postgres_user" "$postgres_password" "$postgres_db" "$run_id" "$attempt" "$phase" "$scenario" "$digest" ||
+    run_synchronous_primitives_driver "$source_dir" "$project" "$postgres_db" "$run_id" "$attempt" "$phase" "$scenario" "$digest" ||
       fail "synchronous-write primitive drivers failed"
   fi
   if [[ "$scenario" == "mcp_sdk_parity" ]]; then
@@ -309,6 +309,28 @@ run_scenario() {
   set -e
   ((scenario_pipeline_status[1] == 0)) || fail "diagnostic redaction failed"
   local scenario_status="${scenario_pipeline_status[0]}"
+  if ((scenario_status != 0)); then
+    printf 'dense-mem CI scenario [%s]: failed stack diagnostics\n' "$scenario" >&2
+    set +e
+    (
+      DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="$helper_overlay"
+      export DENSE_MEM_CI_COMPOSE_OVERLAY_FILE
+      {
+        printf '%s\n' '--- Compose services ---'
+        ci_compose ps --all
+        printf '%s\n' '--- Last 200 lines per Compose service ---'
+        ci_compose logs --no-color --timestamps --tail 200
+      } 2>&1
+    ) | redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token"
+    local -a diagnostics_pipeline_status=("${PIPESTATUS[@]}")
+    set -e
+    if ((diagnostics_pipeline_status[0] != 0)); then
+      printf 'dense-mem CI scenario [%s]: stack diagnostic collection failed\n' "$scenario" >&2
+    fi
+    if ((diagnostics_pipeline_status[1] != 0)); then
+      printf 'dense-mem CI scenario [%s]: stack diagnostic redaction failed\n' "$scenario" >&2
+    fi
+  fi
   trap - EXIT INT TERM
   docker rm "$container" >/dev/null
   container=""

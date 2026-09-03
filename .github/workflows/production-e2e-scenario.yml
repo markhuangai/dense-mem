@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   scenario:
-    name: Run ${{ inputs.scenario }}
+    name: Run ${{ inputs.scenario == 'full' && 'dreaming_telemetry_portal' || inputs.scenario }}
     runs-on: rootless-docker
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
@@ -112,9 +112,7 @@ jobs:
           [[ "${SHARED_PROJECT}" =~ ^densemem-ci-[a-z0-9][a-z0-9-]{0,50}$ ]]
 
       - name: Run scenario
-        id: run
         if: always()
-        continue-on-error: true
         env:
           DENSE_MEM_CI_RUN_PLAYWRIGHT: ${{ steps.configuration.outputs.playwright }}
           IMAGE: ${{ inputs.image }}
@@ -122,8 +120,6 @@ jobs:
         shell: bash
         run: |
           set +e
-          log="${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.log"
-          : > "${log}"
           status=1
           project="${SHARED_PROJECT:-${ISOLATED_PROJECT}}"
           stack_scenario="${SHARED_PROJECT:+shared}"
@@ -131,21 +127,25 @@ jobs:
           if [[ -n "${project}" ]]; then
             printf 'Running %s production E2E scenario in the %s phase (project %s)\n' \
               "${SCENARIO}" "${PHASE}" "${project}"
+            stop_marker="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+            restore_workflow_commands() {
+              if [[ -n "${stop_marker}" ]]; then
+                printf '\n::%s::\n' "${stop_marker}"
+                stop_marker=""
+              fi
+            }
+            trap restore_workflow_commands EXIT
+            printf '::stop-commands::%s\n' "${stop_marker}"
             scripts/e2e-host-controller.sh run \
               "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${PHASE}" "${stack_scenario}" \
-              "${SCENARIO}" "${IMAGE}" "${GITHUB_WORKSPACE}" 2>&1 |
-              tee "${log}"
-            pipeline_status=("${PIPESTATUS[@]}")
-            status=${pipeline_status[0]}
-            if ((pipeline_status[1] != 0)); then
-              printf '%s\n' "scenario log capture failed" >&2
-              status=1
-            fi
+              "${SCENARIO}" "${IMAGE}" "${GITHUB_WORKSPACE}" 2>&1
+            status=$?
+            restore_workflow_commands
+            trap - EXIT
           else
-            printf '%s\n' "scenario setup did not produce a Compose project" | tee "${log}"
+            printf '%s\n' "scenario setup did not produce a Compose project"
           fi
           printf 'Scenario %s exited with status %s\n' "${SCENARIO}" "${status}"
-          printf '%s\n' "${status}" > "${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.status"
           exit "${status}"
 
       - name: Stop isolated stack
@@ -155,43 +155,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! scripts/e2e-host-controller.sh stop "${PROJECT}"; then
-            printf '%s\n' 1 > "${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.status"
-            exit 1
-          fi
-
-      - name: Print failed scenario diagnostics
-        if: always()
-        env:
-          SCENARIO: ${{ inputs.scenario }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          status_file="${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.status"
-          log="${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.log"
-          status="1"
-          if [[ -f "${status_file}" ]]; then
-            status="$(cat "${status_file}")"
-          fi
-          [[ "${status}" == "0" ]] && exit 0
-          [[ -f "${log}" ]] || exit 0
-          stop_marker="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
-          printf '::stop-commands::%s\n' "${stop_marker}"
-          printf '%s\n' "Bounded diagnostics for failed scenario ${SCENARIO}:"
-          tail -c 262144 "${log}"
-          printf '\n::%s::\n' "${stop_marker}"
-
-      - name: Preserve scenario result
-        if: always()
-        env:
-          SCENARIO: ${{ inputs.scenario }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          status_file="${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.status"
-          if [[ ! -f "${status_file}" ]]; then
-            printf '%s\n' 1 > "${status_file}"
-          fi
-          status="$(cat "${status_file}")"
-          [[ "${status}" =~ ^[0-9]+$ ]] || exit 1
-          [[ "${status}" == "0" ]] || exit "${status}"
+          scripts/e2e-host-controller.sh stop "${PROJECT}"

@@ -82,7 +82,7 @@ attempt=1
 IMAGE_TAG="ghcr.io/markhuangai/dense-mem:e2e-local-${run_id}"
 
 cleanup() {
-  local status=$?
+  local status="${1:-$?}"
   trap - EXIT INT TERM
   set +e
   if [[ -n "$PROJECT" ]]; then
@@ -96,7 +96,9 @@ cleanup() {
   fi
   exit "$status"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup 130' INT
+trap 'cleanup 143' TERM
 
 export DENSE_MEM_CI_LOCAL=1
 export DENSE_MEM_CI_ENV_FILE="$ENV_FILE"

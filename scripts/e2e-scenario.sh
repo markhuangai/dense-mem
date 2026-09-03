@@ -76,10 +76,16 @@ export DENSE_MEM_E2E_SSO_CSRF_TOKEN="${DENSE_MEM_E2E_SSO_CSRF_TOKEN:-oauth-csrf-
 
 run_node_case() {
   local script="$1"
+  local status
   [[ -f "${ROOT_DIR}/${script}" ]] || fail "missing scenario script: ${script}"
   log "running ${script}"
-  node "${ROOT_DIR}/${script}"
-  log "completed ${script}"
+  if node "${ROOT_DIR}/${script}"; then
+    log "passed ${script}"
+  else
+    status=$?
+    log "failed ${script} (exit ${status})"
+    return "$status"
+  fi
 }
 
 parse_json_root_field() {
@@ -132,12 +138,21 @@ run_playwright() {
     synchronous_write) specs=("tests-compose/remember-attempts.spec.ts") ;;
   esac
   log "running Playwright specs: ${specs[*]}"
-  local web_dir="/tmp/dense-mem-web-${SCENARIO}-$$"
+  local web_dir="/tmp/dense-mem-web-${SCENARIO}-$$" status
   if [[ -e "$web_dir" ]]; then rm -r -- "$web_dir"; fi
   mkdir -p "$web_dir"
   cp -a "${ROOT_DIR}/web/." "$web_dir/"
-  (cd "$web_dir" && npm ci --ignore-scripts && npx playwright test --config playwright.compose.config.ts "${specs[@]}")
+  if (cd "$web_dir" && npm ci --ignore-scripts && npx playwright test --config playwright.compose.config.ts "${specs[@]}"); then
+    status=0
+  else
+    status=$?
+  fi
   rm -r -- "$web_dir"
+  if ((status != 0)); then
+    log "failed Playwright specs: ${specs[*]} (exit ${status})"
+    return "$status"
+  fi
+  log "passed Playwright specs: ${specs[*]}"
 }
 
 case "$SCENARIO" in

@@ -103,7 +103,11 @@ printf '\\n' >> "\${DENSE_MEM_TEST_CONTROLLER_LOG}"
 case "\${1:-}" in
   doctor|stop) ;;
   start) printf '%s\\n' stub-project ;;
-  run) ;;
+  run)
+    if [[ "\${DENSE_MEM_TEST_SIGNAL_PARENT:-}" == "TERM" ]]; then
+      kill -TERM "$PPID"
+    fi
+    ;;
   *) exit 2 ;;
 esac
 `;
@@ -191,6 +195,17 @@ esac
     calls = nulLines(await readFile(controllerLog, "utf8"));
     assert.equal(calls[2][5], "mcp_oauth");
     assert.equal(calls[2].at(-1), "playwright=1");
+
+    await writeFile(controllerLog, "");
+    await assert.rejects(
+      runScenario("mcp_boundaries", { ...baseEnv, DENSE_MEM_TEST_SIGNAL_PARENT: "TERM" }),
+      (error) => {
+        assert.equal(error.code, 143);
+        return true;
+      },
+    );
+    calls = nulLines(await readFile(controllerLog, "utf8"));
+    assert.deepEqual(calls.map(([command]) => command), ["doctor", "start", "run", "stop"]);
 
     await writeFile(controllerLog, "");
     await runFailure("not-valid", baseEnv, /usage: scripts\/e2e\.sh SCENARIO/);
@@ -402,6 +417,8 @@ test("scenario runner executes Entra and diagnostics through the shared path", (
   assert.match(scenario, /synchronous_write\) specs=\("tests-compose\/remember-attempts\.spec\.ts"\)/);
   assert.match(scenario, /DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE/);
   assert.doesNotMatch(scenario, /parse_json_dream_statement|DENSE_MEM_E2E_DREAM_STATEMENT.*synchronous/);
+  assert.match(runtime, /failed stack diagnostics/);
+  assert.match(runtime, /ci_compose logs --no-color --timestamps --tail 200/);
 });
 
 test("production workflows use capability-matched runners and one OCI handoff", () => {
@@ -409,13 +426,17 @@ test("production workflows use capability-matched runners and one OCI handoff", 
   assert.match(productionWorkflow, /runs-on: rootless-docker/);
   assert.match(productionWorkflow, /max-parallel: 4/);
   assert.match(productionWorkflow, /shared_project: \$\{\{ steps\.start\.outputs\.shared_project \}\}/);
-  assert.match(productionWorkflow, /const isolations = new Set\(\["exclusive", "shared_team"\]\)/);
-  assert.doesNotMatch(productionWorkflow, /scripts\/e2e-scenario-registry\.mjs --validate-compatible/);
+  assert.match(productionWorkflow, /scripts\/e2e-scenario-registry\.mjs --validate-compatible/);
+  assert.doesNotMatch(productionWorkflow, /const isolations = new Set\(\["exclusive", "shared_team"\]\)/);
   assert.doesNotMatch(productionWorkflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch|actions\/download-artifact|actions\/upload-artifact/);
   assert.match(scenarioWorkflow, /runs-on: rootless-docker/);
   assert.match(scenarioWorkflow, /actions\/setup-node@v7/);
-  assert.match(scenarioWorkflow, /Print failed scenario diagnostics/);
+  assert.match(scenarioWorkflow, /stop-commands/);
+  assert.match(scenarioWorkflow, /dreaming_telemetry_portal/);
+  assert.doesNotMatch(scenarioWorkflow, /continue-on-error|Preserve scenario result|Print failed scenario diagnostics|tee "\$\{log\}"/);
   assert.doesNotMatch(scenarioWorkflow, /actions\/upload-artifact/);
+  assert.doesNotMatch(controller, /conflict_provider\|conflict_review\|oauth\|oauth_compatibility\|playwright\|synchronous_write\|verifier/);
+  assert.doesNotMatch(stack, /local source_dir="\$1" project="\$2" postgres_user=/);
 });
 
 test("obsolete local Compose entrypoints are removed", async () => {

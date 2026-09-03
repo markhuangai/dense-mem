@@ -428,7 +428,7 @@ NODE
 }
 
 run_synchronous_primitives_driver() {
-  local source_dir="$1" project="$2" postgres_user="$3" postgres_password="$4" postgres_db="$5" run_id="$6" attempt="$7" phase="$8" scenario="$9" digest="${10}"
+  local source_dir="$1" project="$2" postgres_db="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7" digest="$8"
   local database_url
   database_url="$(node - "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD" "$postgres_db" <<'NODE'
 const [user, password, database] = process.argv.slice(2);

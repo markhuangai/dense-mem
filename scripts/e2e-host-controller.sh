@@ -510,10 +510,6 @@ start_stack() {
     IFS=',' read -r -a helper_values <<< "$helpers"
     for helper in "${helper_values[@]}"; do
       [[ -n "$helper" ]] || continue
-      case "$helper" in
-        conflict_provider|conflict_review|oauth|oauth_compatibility|playwright|synchronous_write|verifier) ;;
-        *) fail "unknown helper profile: $helper" ;;
-      esac
       profiles+=(--profile "$helper")
     done
   fi

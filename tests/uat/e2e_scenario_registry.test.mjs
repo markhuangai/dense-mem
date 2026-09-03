@@ -74,7 +74,7 @@ function assertWorkflowOrchestration(workflow) {
   const report = workflowJob(workflow, "report");
 
   assert.match(exclusive, /^    needs: \[authorize, prechecks, stale-cleanup\]$/m);
-  assert.match(exclusive, /^    strategy:\n      fail-fast: true\n      max-parallel: 4$/m);
+  assert.match(exclusive, /^    strategy:\n      fail-fast: false\n      max-parallel: 4$/m);
   assert.match(exclusiveCleanup, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive\]$/m);
   assert.match(exclusiveCleanup, /^    if: always\(\) && needs\.authorize\.result == 'success'$/m);
   assert.match(exclusiveCleanup, /^    runs-on: rootless-docker$/m);
@@ -82,7 +82,7 @@ function assertWorkflowOrchestration(workflow) {
   assert.match(sharedStart, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup\]$/m);
   assert.match(sharedStart, /^    if: needs\.exclusive\.result == 'success' && needs\.exclusive-cleanup\.result == 'success'$/m);
   assert.match(shared, /^    needs: \[authorize, shared-start\]$/m);
-  assert.match(shared, /^    strategy:\n      fail-fast: true\n      max-parallel: 4$/m);
+  assert.match(shared, /^    strategy:\n      fail-fast: false\n      max-parallel: 4$/m);
   assert.match(sharedStop, /^    needs: \[shared-start, shared\]$/m);
   assert.match(sharedStop, /^    if: always\(\) && needs\.shared-start\.result == 'success'$/m);
   assert.match(report, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup, shared-start, shared, shared-stop\]$/m);
@@ -202,9 +202,9 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   const scenario = workflowJob(reusable, "scenario");
   assert.match(scenario, /^    runs-on: rootless-docker$/m);
   assertNode24Setup(scenario);
-  assert.match(scenario, /scripts\/e2e-host-controller\.sh run[\s\S]*?\|\n\s+tee "\$\{log\}"/);
-  assert.match(scenario, /pipeline_status=\("\$\{PIPESTATUS\[@\]\}"\)[\s\S]*?status=\$\{pipeline_status\[0\]\}/);
-  assert.doesNotMatch(scenario, /tail -c 262144 > "\$\{log\}"/);
+  assert.match(scenario, /scripts\/e2e-host-controller\.sh run[\s\S]*?status=\$\?/);
+  assert.match(scenario, /::stop-commands::/);
+  assert.doesNotMatch(scenario, /continue-on-error|Preserve scenario result|tail -c 262144|tee "\$\{log\}"|Print failed scenario diagnostics/);
   assert.doesNotMatch(workflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch/);
   assert.doesNotMatch(workflow, /secrets:\s*inherit/);
   assert.doesNotMatch(caller, /secrets:\s*inherit/);
@@ -220,6 +220,7 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   assert.match(workflow, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
   assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
   assert.match(workflow, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenarios\.json\n\s+scripts\/e2e-scenario-registry\.mjs/);
+  assert.match(workflow, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --validate-compatible "\$\{baseline\}"/);
   assert.match(workflow, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --matrix exclusive/);
   assert.doesNotMatch(workflow, /node \.ci-source\/scripts\/e2e-scenario-registry\.mjs --matrix/);
   assert.match(reusable, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);

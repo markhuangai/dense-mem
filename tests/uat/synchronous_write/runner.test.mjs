@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { fixtureChatResponse } from "./provider-fixture.mjs";
 import { discoverCases } from "./runner.mjs";
 
 test("synchronous-write cases are sorted and filterable", async () => {
@@ -36,6 +37,56 @@ test("provider fixture retains bounded timeout and fault behavior", async () => 
   assert.match(fixture, /embeddingCallsByFault/);
   assert.match(fixture, /routeFault === "embedding-cancel" && embeddingFaultCall === 1/);
 });
+
+test("provider fixture implements the community and dream schemas used by verifier scenarios", () => {
+  const relationshipID = "11111111-1111-4111-8111-111111111111";
+  const evidenceID = "22222222-2222-4222-8222-222222222222";
+  const community = fixtureChatResponse(structuredRequest("community_summary", {
+    community_id: "community_1",
+    summary_input_hash: "sha256:community-input",
+    relationships: [{
+      relationship_id: relationshipID,
+      evidence_ids: [evidenceID],
+      support_quotes: [{ evidence_id: evidenceID, quote: "Dense-Mem uses PostgreSQL." }],
+      subject: "Dense-Mem",
+      predicate: "uses",
+      object: "PostgreSQL",
+    }],
+  }));
+  assert.deepEqual(community.admitted_relationship_ids, [relationshipID]);
+  assert.deepEqual(community.admitted_evidence_ids, [evidenceID]);
+  assert.deepEqual(community.admitted_support_quotes, [{ evidence_id: evidenceID, quote: "Dense-Mem uses PostgreSQL." }]);
+  assert.deepEqual(community.top_entities, ["Dense-Mem", "PostgreSQL"]);
+  assert.deepEqual(community.top_predicates, ["uses"]);
+
+  const dream = fixtureChatResponse(structuredRequest("dense_mem_dream_generation_response", {
+    request_id: "dream_request_1",
+    max_outputs: 1,
+    paths: [{
+      path_ref: "path_1",
+      subject: { ref: "node_1", display: "Dense-Mem", kind: "project" },
+      middle: { ref: "node_2", display: "Runtime", kind: "product" },
+      object: { ref: "node_3", display: "PostgreSQL", kind: "product" },
+      premises: [
+        { evidence: [{ evidence_ref: "evidence_1" }] },
+        { evidence: [{ evidence_ref: "evidence_2" }] },
+      ],
+      allowed_predicates: [{ predicate_ref: "predicate_1", label: "uses" }],
+    }],
+  }));
+  assert.equal(dream.request_id, "dream_request_1");
+  assert.equal(dream.proposals.length, 1);
+  assert.equal(dream.proposals[0].path_ref, "path_1");
+  assert.equal(dream.proposals[0].predicate_ref, "predicate_1");
+  assert.deepEqual(dream.proposals[0].evidence_refs, ["evidence_1", "evidence_2"]);
+});
+
+function structuredRequest(schemaName, input) {
+  return {
+    messages: [{ role: "user", content: JSON.stringify(input) }],
+    response_format: { json_schema: { name: schemaName } },
+  };
+}
 
 test("synchronous-write provider remains a project-scoped Compose helper", async () => {
   const compose = await readFile(new URL("../../../scripts/e2e-stack.yml", import.meta.url), "utf8");
