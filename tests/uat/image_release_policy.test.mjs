@@ -214,6 +214,7 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
   assert.match(audit, /local max_attempts=4/);
   assert.match(audit, /while \(\( attempt <= max_attempts \)\)/);
   assert.match(audit, /npm \(warn\|error\) \(audit \)\?5\[0-9\]\{2\}/);
+  assert.match(audit, /npm \(warn\|error\) audit network timeout/);
   assert.match(audit, /E5\[0-9\]\{2\}\|ECONNRESET\|ETIMEDOUT\|EAI_AGAIN\|ENETUNREACH\|ECONNREFUSED/);
   assert.match(audit, /status=\$\?/);
   const transientGuard = audit.indexOf("if ! grep -Eq");

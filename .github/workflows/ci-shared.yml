@@ -56,7 +56,7 @@ jobs:
               if (( status == 0 )); then
                 return 0
               fi
-              if ! grep -Eq 'npm (warn|error) (audit )?5[0-9]{2}\b|npm error code (E5[0-9]{2}|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|ECONNREFUSED)' <<<"${output}"; then
+              if ! grep -Eq 'npm (warn|error) (audit )?5[0-9]{2}\b|npm (warn|error) audit network timeout\b|npm error code (E5[0-9]{2}|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|ECONNREFUSED)' <<<"${output}"; then
                 return "${status}"
               fi
               if (( attempt == max_attempts )); then
