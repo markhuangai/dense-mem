@@ -262,6 +262,8 @@ type RelatedHypothesisSummary struct {
 	Statement             string    `json:"statement"`
 	Status                string    `json:"status"`
 	SourceRelationshipIDs []string  `json:"source_relationship_ids"`
+	SourceEvidenceIDs     []string  `json:"source_evidence_ids"`
+	Lane                  string    `json:"lane"`
 	GeneratorKind         string    `json:"generator_kind"`
 	GeneratorVersion      string    `json:"generator_version"`
 	CreatedAt             time.Time `json:"created_at"`

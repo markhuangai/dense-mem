@@ -386,9 +386,10 @@ func dueSchedulerConfig() EffectiveConfig {
 }
 
 type schedulerProfileStub struct {
-	profiles []*domain.Team
-	offsets  []int
-	err      error
+	profiles   []*domain.Team
+	offsets    []int
+	err        error
+	offsetErrs map[int]error
 }
 
 func discardSchedulerLogger() *slog.Logger {
@@ -403,6 +404,9 @@ func (s *schedulerProfileStub) List(_ context.Context, limit, offset int) ([]*do
 	s.offsets = append(s.offsets, offset)
 	if s.err != nil {
 		return nil, s.err
+	}
+	if err := s.offsetErrs[offset]; err != nil {
+		return nil, err
 	}
 	if offset >= len(s.profiles) {
 		return nil, nil

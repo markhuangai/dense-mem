@@ -30,6 +30,15 @@ func TestDreamStatusIsValid(t *testing.T) {
 	}
 }
 
+func TestDreamLaneIsValid(t *testing.T) {
+	if !DreamLaneGraph.IsValid() || !DreamLaneEvidenceDiscovery.IsValid() {
+		t.Fatal("supported dream lanes should be valid")
+	}
+	if DreamLane("legacy").IsValid() {
+		t.Fatal("unknown dream lane should be invalid")
+	}
+}
+
 // TestDTOValidationProfileCreate verifies CreateTeamRequest validation rules.
 func TestDTOValidationProfileCreate(t *testing.T) {
 	t.Run("valid profile passes validation", func(t *testing.T) {

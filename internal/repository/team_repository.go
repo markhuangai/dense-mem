@@ -85,6 +85,7 @@ func scanTeamRow(rows *sql.Rows) (*domain.Team, error) {
 		&team.Description,
 		&metadataJSON,
 		&configJSON,
+		&team.Status,
 		&team.CreatedAt,
 		&team.UpdatedAt,
 		&team.DeletedAt,
@@ -139,6 +140,7 @@ func (r *TeamRepositoryImpl) Create(ctx context.Context, team *domain.Team) erro
 	if err != nil {
 		return fmt.Errorf("failed to create team: %w", err)
 	}
+	team.Status = "active"
 
 	return nil
 }
@@ -152,7 +154,7 @@ func (r *TeamRepositoryImpl) GetByID(ctx context.Context, id uuid.UUID) (*domain
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
-			SELECT id, name, description, metadata::text, config::text, created_at, updated_at, deleted_at
+				SELECT id, name, description, metadata::text, config::text, status, created_at, updated_at, deleted_at
 			FROM teams
 			WHERE id = $1 AND deleted_at IS NULL
 		`, id).Rows()
@@ -199,7 +201,7 @@ func (r *TeamRepositoryImpl) List(ctx context.Context, limit, offset int) ([]*do
 	// profiles_system_read_access policy return every non-deleted row.
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
-			SELECT id, name, description, metadata::text, config::text, created_at, updated_at, deleted_at
+				SELECT id, name, description, metadata::text, config::text, status, created_at, updated_at, deleted_at
 			FROM teams
 			WHERE deleted_at IS NULL
 			ORDER BY created_at DESC, id ASC

@@ -592,6 +592,8 @@ func dreamSummaryContractOutput(dream *domain.Dream) map[string]any {
 		"statement":               dream.Hypothesis,
 		"status":                  string(dream.Status),
 		"source_relationship_ids": dreamOutputSourceIDs(dream, false),
+		"source_evidence_ids":     append([]string{}, dream.SourceEvidenceIDs...),
+		"lane":                    firstNonEmpty(string(dream.Lane), string(domain.DreamLaneGraph)),
 		"generator_kind":          dreamOutputGeneratorKind(dream),
 		"generator_version":       firstNonEmpty(dream.GeneratorVersion, dream.GeneratorModel, "dream-v2"),
 		"created_at":              dreamOutputCreatedAt(dream),
@@ -617,6 +619,7 @@ func dreamContractOutput(dream *domain.Dream) map[string]any {
 	out["source_candidate_relationship_ids"] = dreamOutputSourceIDs(dream, true)
 	out["source_versions"] = dreamOutputSourceVersions(dream)
 	out["derivations"] = dreamDerivationsContractOutput(dream)
+	out["evidence_derivations"] = dreamEvidenceDerivationsContractOutput(dream)
 	return out
 }
 
@@ -638,6 +641,24 @@ func dreamDerivationsContractOutput(dream *domain.Dream) []map[string]any {
 	return out
 }
 
+func dreamEvidenceDerivationsContractOutput(dream *domain.Dream) []map[string]any {
+	if dream == nil || len(dream.EvidenceDerivations) == 0 {
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(dream.EvidenceDerivations))
+	for _, derivation := range dream.EvidenceDerivations {
+		out = append(out, map[string]any{
+			"evidence_id":      derivation.EvidenceID,
+			"source_group_key": derivation.SourceGroupKey,
+			"span_start":       derivation.SpanStart,
+			"span_end":         derivation.SpanEnd,
+			"quote":            derivation.Quote,
+			"authority":        derivation.Authority,
+		})
+	}
+	return out
+}
+
 func dreamOutputOwnerIDs(dream *domain.Dream) []string {
 	if len(dream.SourceOwnerProfileIDs) > 0 {
 		return append([]string(nil), dream.SourceOwnerProfileIDs...)
@@ -654,8 +675,13 @@ func dreamOutputSourceIDs(dream *domain.Dream, candidates bool) []string {
 	}
 	out := []string{}
 	for _, ref := range dream.SourceRefs {
-		isCandidate := ref.Type == "candidate_relationship"
-		if isCandidate == candidates && strings.TrimSpace(ref.ID) != "" {
+		if candidates && ref.Type != "candidate_relationship" {
+			continue
+		}
+		if !candidates && ref.Type != "relationship" {
+			continue
+		}
+		if strings.TrimSpace(ref.ID) != "" {
 			out = append(out, ref.ID)
 		}
 	}

@@ -30,6 +30,13 @@ func TestAIOperationContextUsesBoundedLabels(t *testing.T) {
 	if HasAIOperation(WithAIOperation(ctx, "unbounded-operation", 2)) {
 		t.Fatal("unknown operation unexpectedly has an AI operation")
 	}
+	graphCtx := WithAIOperation(ctx, AIOperationDreamGeneration, 1)
+	evidenceCtx := WithAIOperation(ctx, AIOperationEvidenceDiscovery, 1)
+	graphOperation, graphOK := aiOperationFromContext(graphCtx)
+	evidenceOperation, evidenceOK := aiOperationFromContext(evidenceCtx)
+	if !graphOK || !evidenceOK || graphOperation.operation == evidenceOperation.operation {
+		t.Fatalf("graph/evidence AI operations are not distinct: graph=%#v evidence=%#v", graphOperation, evidenceOperation)
+	}
 
 	profileID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
 	identityCtx := WithMetricIdentity(ctx, "not-a-uuid", profileID.String())

@@ -6,19 +6,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestProviderProposalSchemaIsClosedAndCanonical(t *testing.T) {
-	schema := ProviderProposalSchema()
-	assertClosedProviderObjects(t, schema, "proposal")
+func TestSemanticAssessmentSchemaIsClosedAndCanonical(t *testing.T) {
+	schema := SemanticAssessmentResponseSchema()
+	assertClosedProviderObjects(t, schema, "assessment response")
 	props := schemaPropertiesForTest(t, schema)
-	for _, field := range []string{"predicate_options", "entity_proposals", "relationship_proposals"} {
+	for _, field := range []string{"evidence_security_results", "evidence_equivalence_results", "evidence_conflict_results", "entity_results", "relationship_results"} {
 		if _, ok := props[field]; !ok {
-			t.Fatalf("provider proposal schema missing %s", field)
+			t.Fatalf("assessment schema missing %s", field)
 		}
 	}
-	if _, ok := props["evidence"]; ok {
-		t.Fatal("provider proposal schema should not require immutable evidence echo")
-	}
-	assertOpenAIStrictSchemaSubset(t, schema, "provider proposal")
+	assertOpenAIStrictSchemaSubset(t, schema, "assessment response")
 }
 
 func TestExportedAssessmentAdaptersPreserveDefaultsAndShapeErrors(t *testing.T) {

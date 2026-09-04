@@ -153,6 +153,10 @@ func limitStrings(values []string, limit int) []string {
 func relatedHypothesisSummaries(records []repository.HypothesisRecord) []RelatedHypothesisSummary {
 	out := make([]RelatedHypothesisSummary, 0, len(records))
 	for _, record := range records {
+		lane := string(record.Lane)
+		if lane == "" {
+			lane = "graph"
+		}
 		out = append(out, RelatedHypothesisSummary{
 			HypothesisID:          record.HypothesisID,
 			SubjectEntityID:       record.SubjectEntityID,
@@ -162,6 +166,8 @@ func relatedHypothesisSummaries(records []repository.HypothesisRecord) []Related
 			Statement:             record.Statement,
 			Status:                record.Status,
 			SourceRelationshipIDs: relatedHypothesisSourceIDs(record.SourceRefs),
+			SourceEvidenceIDs:     append([]string{}, record.SourceEvidenceIDs...),
+			Lane:                  lane,
 			GeneratorKind:         publicHypothesisGeneratorKind(record.GeneratorKind),
 			GeneratorVersion:      record.GeneratorVersion,
 			CreatedAt:             record.CreatedAt,
@@ -173,6 +179,11 @@ func relatedHypothesisSummaries(records []repository.HypothesisRecord) []Related
 func relatedHypothesisSourceIDs(refs []map[string]any) []string {
 	out := []string{}
 	for _, ref := range refs {
+		refType, _ := ref["type"].(string)
+		refType = strings.TrimSpace(refType)
+		if refType != "relationship" && refType != "candidate_relationship" {
+			continue
+		}
 		id, _ := ref["id"].(string)
 		id = strings.TrimSpace(id)
 		if id != "" {

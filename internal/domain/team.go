@@ -26,6 +26,7 @@ type Team struct {
 	Description string
 	Metadata    map[string]any
 	Config      map[string]any
+	Status      string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	DeletedAt   *time.Time

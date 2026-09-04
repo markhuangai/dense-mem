@@ -468,6 +468,40 @@ func TestReadPathsRefreshAndMapHypotheses(t *testing.T) {
 	assert.Equal(t, 0, status.PendingCount)
 }
 
+func TestReadPathsKeepEvidenceReferencesOutOfRelationshipIDs(t *testing.T) {
+	teamID, ownerID := uuid.New(), uuid.New()
+	record := repository.HypothesisRecord{
+		TeamID: teamID.String(), HypothesisID: uuid.NewString(), Status: string(domain.DreamStatusProposed),
+		Lane: domain.DreamLaneEvidenceDiscovery, Statement: "Evidence may imply a relationship.",
+		SourceRefs:        []map[string]any{{"type": "evidence", "id": "evidence-1"}},
+		SourceEvidenceIDs: []string{"evidence-1"},
+	}
+	repo := &dreamRepositoryStub{getRecord: record}
+	svc := New(Dependencies{
+		Store:     repo,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, StartTimeLocal: "03:00", Timezone: "UTC"}},
+	})
+	ctx := dreamTestContext(teamID, ownerID)
+
+	list, _, err := svc.List(ctx, "ignored-profile", ListOptions{Limit: 3})
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	got := list[0]
+	require.Empty(t, got.SourceRelationshipIDs)
+	require.Equal(t, []string{"evidence-1"}, got.SourceEvidenceIDs)
+
+	got, err = svc.Get(ctx, "ignored-profile", record.HypothesisID)
+	require.NoError(t, err)
+	require.Empty(t, got.SourceRelationshipIDs)
+	require.Equal(t, []string{"evidence-1"}, got.SourceEvidenceIDs)
+
+	recalled, err := svc.Recall(ctx, "ignored-profile", "evidence", 3)
+	require.NoError(t, err)
+	require.Len(t, recalled, 1)
+	require.Empty(t, recalled[0].SourceRelationshipIDs)
+	require.Equal(t, []string{"evidence-1"}, recalled[0].SourceEvidenceIDs)
+}
+
 func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()

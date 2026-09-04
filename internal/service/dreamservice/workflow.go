@@ -65,6 +65,7 @@ func (s *service) runTeamCycle(
 		TeamID:    teamID,
 		RunDate:   runDate,
 		StartedAt: started,
+		Lane:      domain.DreamLaneGraph,
 		Status:    "running",
 	}
 	windowKey := runDate
@@ -85,6 +86,7 @@ func (s *service) runTeamCycle(
 		ScheduledFor:         scheduledFor,
 		LeaseToken:           uuid.NewString(),
 		LeaseUntil:           started.Add(leaseDuration),
+		Lane:                 domain.DreamLaneGraph,
 	}
 	var (
 		claimed *repository.DreamCycleRun
@@ -103,6 +105,7 @@ func (s *service) runTeamCycle(
 		return result, err
 	}
 	result.RunID = claimed.RunID
+	result.Lane = claimed.Lane
 	if !claimed.Claimed && !req.Manual {
 		result.CompletedAt = s.now().UTC()
 		result.Status = "skipped"
@@ -144,13 +147,16 @@ func (s *service) runClaimedTeamCycle(
 		result.Error = err.Error()
 		result.OutcomeSummary = map[string]int{"input_selection_error": 1}
 		completeErr := s.completeTeamCycle(ctx, scheduled, repository.DreamCycleCompleteInput{
-			TeamID:               teamID,
-			InitiatedByProfileID: initiatedByProfileID,
-			RunID:                claimed.RunID,
-			LeaseToken:           claimed.LeaseToken,
-			Status:               "failed",
-			OutcomeSummary:       map[string]int{"input_selection_error": 1},
-			Error:                result.Error,
+			TeamID:                   teamID,
+			InitiatedByProfileID:     initiatedByProfileID,
+			RunID:                    claimed.RunID,
+			LeaseToken:               claimed.LeaseToken,
+			Status:                   "failed",
+			OutcomeSummary:           map[string]int{"input_selection_error": 1},
+			Error:                    result.Error,
+			Lane:                     claimed.Lane,
+			EvidenceTargets:          result.EvidenceTargets,
+			EvaluatedEvidenceTargets: result.EvaluatedEvidenceTargets,
 		})
 		if completeErr != nil {
 			return result, errors.Join(err, completeErr)
@@ -172,23 +178,26 @@ func (s *service) runClaimedTeamCycle(
 		completeStatus = "failed"
 	}
 	if err := s.completeTeamCycle(ctx, scheduled, repository.DreamCycleCompleteInput{
-		TeamID:               teamID,
-		InitiatedByProfileID: initiatedByProfileID,
-		RunID:                claimed.RunID,
-		LeaseToken:           claimed.LeaseToken,
-		Status:               completeStatus,
-		InputCount:           len(inputs),
-		CreatedHypotheses:    created,
-		RejectedHypotheses:   rejected,
-		SourceSnapshot:       dreamInputSnapshot(inputs),
-		ProviderModel:        result.ProviderModel,
-		ProviderTurns:        result.ProviderTurns,
-		ProviderInputTokens:  result.ProviderInputTokens,
-		ProviderOutputTokens: result.ProviderOutputTokens,
-		AttemptedPaths:       result.AttemptedPaths,
-		ProviderProposals:    result.ProviderProposals,
-		OutcomeSummary:       result.OutcomeSummary,
-		Error:                result.Error,
+		TeamID:                   teamID,
+		InitiatedByProfileID:     initiatedByProfileID,
+		RunID:                    claimed.RunID,
+		LeaseToken:               claimed.LeaseToken,
+		Status:                   completeStatus,
+		InputCount:               len(inputs),
+		CreatedHypotheses:        created,
+		RejectedHypotheses:       rejected,
+		SourceSnapshot:           dreamInputSnapshot(inputs),
+		ProviderModel:            result.ProviderModel,
+		ProviderTurns:            result.ProviderTurns,
+		ProviderInputTokens:      result.ProviderInputTokens,
+		ProviderOutputTokens:     result.ProviderOutputTokens,
+		AttemptedPaths:           result.AttemptedPaths,
+		ProviderProposals:        result.ProviderProposals,
+		OutcomeSummary:           result.OutcomeSummary,
+		Error:                    result.Error,
+		Lane:                     claimed.Lane,
+		EvidenceTargets:          result.EvidenceTargets,
+		EvaluatedEvidenceTargets: result.EvaluatedEvidenceTargets,
 	}); err != nil && runErr == nil {
 		err = translateDreamRepositoryError(err)
 		result.Status = "error"
@@ -643,11 +652,14 @@ func dreamRecord(record *repository.HypothesisRecord) *domain.Dream {
 		GeneratorKind:                  firstNonEmpty(record.GeneratorKind, "deterministic"),
 		GeneratorVersion:               firstNonEmpty(record.GeneratorVersion, "dream-v2"),
 		Status:                         domain.DreamStatus(record.Status),
+		Lane:                           record.Lane,
 		CycleRunID:                     record.CycleRunID,
 		GeneratorModel:                 firstNonEmpty(record.GeneratorVersion, record.GeneratorKind),
 		ContentHash:                    record.ContentHash,
 		SourceRefs:                     dreamSourceRefs(record.SourceRefs),
 		Derivations:                    dreamDerivations(record.Derivations),
+		SourceEvidenceIDs:              append([]string(nil), record.SourceEvidenceIDs...),
+		EvidenceDerivations:            dreamEvidenceDerivations(record.EvidenceDerivations),
 		InvalidatedReason:              record.InvalidatedReason,
 		CreatedAt:                      record.CreatedAt,
 		UpdatedAt:                      record.UpdatedAt,
@@ -669,12 +681,30 @@ func dreamDerivations(derivations []repository.DreamDerivationSource) []domain.D
 	return out
 }
 
+func dreamEvidenceDerivations(derivations []repository.EvidenceDerivationSource) []domain.DreamEvidenceDerivation {
+	out := make([]domain.DreamEvidenceDerivation, 0, len(derivations))
+	for _, derivation := range derivations {
+		out = append(out, domain.DreamEvidenceDerivation{
+			EvidenceID:     derivation.EvidenceID,
+			SourceGroupKey: derivation.SourceGroupKey,
+			SpanStart:      derivation.SpanStart,
+			SpanEnd:        derivation.SpanEnd,
+			Quote:          derivation.Quote,
+			Authority:      derivation.Authority,
+		})
+	}
+	return out
+}
+
 func dreamSourceIDs(refs []map[string]any, candidates bool) []string {
 	out := []string{}
 	for _, ref := range refs {
 		refType := strings.TrimSpace(anyString(ref["type"]))
-		isCandidate := refType == "candidate_relationship"
-		if isCandidate != candidates {
+		if candidates {
+			if refType != "candidate_relationship" {
+				continue
+			}
+		} else if refType != "relationship" {
 			continue
 		}
 		id := strings.TrimSpace(anyString(ref["id"]))
@@ -706,25 +736,28 @@ func cycleRunResult(run *repository.DreamCycleRun) *RunCycleResult {
 		scheduledFor = *run.ScheduledFor
 	}
 	return &RunCycleResult{
-		RunID:                run.RunID,
-		TeamID:               run.TeamID,
-		RunDate:              run.RunDate,
-		StartedAt:            run.StartedAt,
-		CompletedAt:          completed,
-		InputRelationships:   run.InputCount,
-		CreatedDreams:        run.CreatedHypotheses,
-		RejectedDreams:       run.RejectedHypotheses,
-		ScheduledFor:         scheduledFor,
-		AttemptCount:         run.AttemptCount,
-		ProviderModel:        run.ProviderModel,
-		ProviderTurns:        run.ProviderTurns,
-		ProviderInputTokens:  run.ProviderInputTokens,
-		ProviderOutputTokens: run.ProviderOutputTokens,
-		AttemptedPaths:       run.AttemptedPaths,
-		ProviderProposals:    run.ProviderProposals,
-		OutcomeSummary:       copyDreamOutcomeSummary(run.OutcomeSummary),
-		Status:               run.Status,
-		Error:                run.Error,
+		RunID:                    run.RunID,
+		TeamID:                   run.TeamID,
+		RunDate:                  run.RunDate,
+		StartedAt:                run.StartedAt,
+		CompletedAt:              completed,
+		InputRelationships:       run.InputCount,
+		CreatedDreams:            run.CreatedHypotheses,
+		RejectedDreams:           run.RejectedHypotheses,
+		ScheduledFor:             scheduledFor,
+		AttemptCount:             run.AttemptCount,
+		ProviderModel:            run.ProviderModel,
+		ProviderTurns:            run.ProviderTurns,
+		ProviderInputTokens:      run.ProviderInputTokens,
+		ProviderOutputTokens:     run.ProviderOutputTokens,
+		AttemptedPaths:           run.AttemptedPaths,
+		ProviderProposals:        run.ProviderProposals,
+		OutcomeSummary:           copyDreamOutcomeSummary(run.OutcomeSummary),
+		Status:                   run.Status,
+		Error:                    run.Error,
+		Lane:                     run.Lane,
+		EvidenceTargets:          run.EvidenceTargets,
+		EvaluatedEvidenceTargets: run.EvaluatedEvidenceTargets,
 	}
 }
 

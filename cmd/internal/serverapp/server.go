@@ -21,6 +21,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/conflictassessment"
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dreamgeneration"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/http"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
@@ -267,17 +268,17 @@ func RunActiveServer(
 	})
 	contextSvc := contextservice.NewSemantic(semanticRepo)
 	dreamSvc := dreamservice.New(dreamservice.Dependencies{
-		Remember:       rememberSvc,
-		Store:          semanticRepo,
-		ScheduledStore: semanticRepo,
-		AppConfig:      appConfigService,
-		Teams:          teamService,
-		Locker:         dreamservice.NewPostgresCycleLocker(),
-		Postgres:       pgDB.GetDB(),
-		Generator:      dreamservice.NewProviderGenerator(verifierProvider),
-		Metrics:        discoverabilityMetrics,
+		Remember:          rememberSvc,
+		Store:             semanticRepo,
+		ScheduledStore:    semanticRepo,
+		AppConfig:         appConfigService,
+		Teams:             teamService,
+		Generator:         dreamservice.NewProviderGenerator(dreamgeneration.NewProvider(assessorProvider, cfg.GetAIVerifierModel(), assessmentLimits)),
+		EvidenceStore:     semanticRepo,
+		EvidenceGenerator: dreamservice.NewEvidenceProviderGenerator(assessorProvider, cfg.GetAIVerifierModel(), assessmentLimits),
+		Metrics:           discoverabilityMetrics,
 		ProviderCycleLease: time.Duration(cfg.GetAIVerifierTimeoutSeconds())*
-			time.Second*time.Duration(verifier.SemanticAssessmentMaxProviderTurns) + time.Minute,
+			time.Second*time.Duration(dreamgeneration.DreamGenerationMaxProviderTurns) + time.Minute,
 	})
 	configureTelemetryFeatures(telemetryPrometheusService, appConfigService, dreamSvc)
 	controlDreamSvc := dreamservice.NewControl(dreamservice.ControlDependencies{

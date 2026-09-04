@@ -7,6 +7,8 @@ import (
 
 	"github.com/lib/pq"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 func (r *SemanticRepositoryImpl) UpsertHypothesis(
@@ -107,8 +109,10 @@ func insertHypothesisTx(
 	if err := validateHypothesisTargetAbsent(ctx, tx, input); err != nil {
 		return nil, false, err
 	}
-	if err := validateHypothesisSources(ctx, tx, input); err != nil {
-		return nil, false, err
+	if input.Lane != domain.DreamLaneEvidenceDiscovery {
+		if err := validateHypothesisSources(ctx, tx, input); err != nil {
+			return nil, false, err
+		}
 	}
 	sourceRefs, err := marshalJSONArray(input.SourceRefs)
 	if err != nil {
@@ -124,7 +128,7 @@ func insertHypothesisTx(
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		INSERT INTO hypotheses (
-		    team_id, space_id, space_generation, created_by_profile_id, status, statement, rationale,
+			    team_id, space_id, space_generation, created_by_profile_id, lane, status, statement, rationale,
 		    likelihood, confidence, subject_entity_id, predicate_key,
 		    predicate_version, object_entity_id, object_value_id,
 		    source_refs, source_versions, source_owner_profile_ids,
@@ -133,13 +137,13 @@ func insertHypothesisTx(
 		) VALUES (
 			?::uuid, dense_mem_team_shared_space(?::uuid),
 			(SELECT generation FROM memory_spaces WHERE id = dense_mem_team_shared_space(?::uuid)),
-			NULLIF(?, '')::uuid, 'proposed', ?, ?, ?, ?, ?::uuid, ?, ?,
+				NULLIF(?, '')::uuid, ?, 'proposed', ?, ?, ?, ?, ?::uuid, ?, ?,
 		    NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?::jsonb, ?::jsonb,
 		    ?::uuid[], ?, ?, ?::uuid, ?, ?, ?::jsonb
 		)
 		ON CONFLICT DO NOTHING
 		RETURNING team_id::text, hypothesis_id::text, COALESCE(created_by_profile_id::text, ''),
-		          status, statement, rationale, likelihood, confidence,
+		          status, COALESCE(lane, 'graph'), statement, rationale, likelihood, confidence,
 		          subject_entity_id::text, predicate_key, predicate_version,
 		          COALESCE(object_entity_id::text, ''), COALESCE(object_value_id::text, ''),
 		          source_refs, source_versions,
@@ -172,7 +176,7 @@ func insertHypothesisTx(
 		          ), ''),
 		          submitted_at,
 		          payload, created_at, updated_at
-	`, input.TeamID, input.TeamID, input.TeamID, input.CreatedByProfileID, input.Statement, input.Rationale,
+	`, input.TeamID, input.TeamID, input.TeamID, input.CreatedByProfileID, input.Lane, input.Statement, input.Rationale,
 		input.Likelihood, input.Confidence, input.SubjectEntityID, input.PredicateKey,
 		input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
 		string(sourceRefs), string(sourceVersions), pq.Array(input.SourceOwnerProfileIDs),
@@ -205,6 +209,9 @@ func insertHypothesisTx(
 		return nil, false, err
 	}
 	if err := insertHypothesisDerivations(ctx, tx, input.TeamID, loaded.HypothesisID, input.Derivations); err != nil {
+		return nil, false, err
+	}
+	if err := insertHypothesisEvidenceDerivations(ctx, tx, input.TeamID, loaded.HypothesisID, input.EvidenceDerivations); err != nil {
 		return nil, false, err
 	}
 	return loaded, true, nil

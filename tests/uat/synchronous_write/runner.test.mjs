@@ -38,7 +38,7 @@ test("provider fixture retains bounded timeout and fault behavior", async () => 
   assert.match(fixture, /routeFault === "embedding-cancel" && embeddingFaultCall === 1/);
 });
 
-test("provider fixture implements the community and dream schemas used by verifier scenarios", () => {
+test("provider fixture implements the community, dream, and evidence-discovery schemas", () => {
   const relationshipID = "11111111-1111-4111-8111-111111111111";
   const evidenceID = "22222222-2222-4222-8222-222222222222";
   const community = fixtureChatResponse(structuredRequest("community_summary", {
@@ -79,6 +79,35 @@ test("provider fixture implements the community and dream schemas used by verifi
   assert.equal(dream.proposals[0].path_ref, "path_1");
   assert.equal(dream.proposals[0].predicate_ref, "predicate_1");
   assert.deepEqual(dream.proposals[0].evidence_refs, ["evidence_1", "evidence_2"]);
+
+  const evidence = fixtureChatResponse(structuredRequest("dense_mem_evidence_discovery_response", {
+    request_id: "evidence_request_1",
+    max_outputs: 1,
+    contexts: [{
+      evidence_ref: "evidence_target",
+      boundary_text: "⟦bfixture_0⟧Dense-Mem uses PostgreSQL.⟦bfixture_1⟧",
+    }],
+    nodes: [
+      { ref: "node_1", display: "Dense-Mem", kind: "project" },
+      { ref: "node_2", display: "PostgreSQL", kind: "product" },
+    ],
+    allowed_predicates: [{ ref: "predicate_1", label: "uses", version: 1 }],
+  }));
+  assert.equal(evidence.request_id, "evidence_request_1");
+  assert.equal(evidence.proposals.length, 1);
+  assert.equal(evidence.proposals[0].predicate_ref, "predicate_1");
+  assert.deepEqual(evidence.proposals[0].derivations, [{
+    evidence_ref: "evidence_target", start_ref: "bfixture_0", end_ref: "bfixture_1",
+  }]);
+});
+
+test("team-dreaming Compose UAT covers hourly evidence discovery and adverse eligibility", async () => {
+  const scenario = await readFile(new URL("../team_dreaming_e2e.mjs", import.meta.url), "utf8");
+  assert.match(scenario, /waitForHourlyEvidenceRun/);
+  assert.match(scenario, /lane, "evidence_discovery"/);
+  assert.match(scenario, /evidence_targets/);
+  assert.match(scenario, /quarantinedContent/);
+  assert.match(scenario, /confirm_true/);
 });
 
 function structuredRequest(schemaName, input) {

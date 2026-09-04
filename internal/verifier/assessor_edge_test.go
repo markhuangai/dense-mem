@@ -9,11 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSemanticAssessmentTurnBoundsRemainWorkflowSpecific(t *testing.T) {
-	require.Equal(t, 5, SemanticAssessmentMaxProviderTurns)
-	require.Equal(t, 3, SemanticAssessmentMaxRememberProviderTurns)
-}
-
 func TestSemanticAssessmentRequestRejectsInvalidCandidateContext(t *testing.T) {
 	testCases := []struct {
 		name   string

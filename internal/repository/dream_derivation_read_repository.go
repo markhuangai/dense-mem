@@ -25,6 +25,8 @@ func hydrateDreamHypothesisDerivations(
 		indices[records[index].HypothesisID] = index
 		ids = append(ids, records[index].HypothesisID)
 		records[index].Derivations = []DreamDerivationSource{}
+		records[index].EvidenceDerivations = []EvidenceDerivationSource{}
+		records[index].SourceEvidenceIDs = []string{}
 	}
 	if len(ids) == 0 {
 		return nil
@@ -71,5 +73,54 @@ func hydrateDreamHypothesisDerivations(
 			records[index].Derivations = append(records[index].Derivations, derivation)
 		}
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	evidenceRows, err := tx.WithContext(ctx).Raw(`
+		SELECT hypothesis_id::text, evidence_id::text, fragment_id::text,
+		       COALESCE(source_id::text, ''), COALESCE(source_revision_id::text, ''),
+		       source_group_key, span_start, span_end, quote, authority
+		FROM hypothesis_evidence_derivation_sources
+		WHERE team_id = ?::uuid
+		  AND space_id = dense_mem_team_shared_space(team_id)
+		  AND space_generation = dense_mem_team_shared_generation(team_id)
+		  AND hypothesis_id = ANY(?::uuid[])
+		ORDER BY hypothesis_id, created_at, derivation_source_id
+	`, teamID, pq.Array(ids)).Rows()
+	if err != nil {
+		return err
+	}
+	defer evidenceRows.Close()
+	for evidenceRows.Next() {
+		var hypothesisID string
+		var derivation EvidenceDerivationSource
+		if err := evidenceRows.Scan(
+			&hypothesisID,
+			&derivation.EvidenceID,
+			&derivation.FragmentID,
+			&derivation.SourceID,
+			&derivation.SourceRevisionID,
+			&derivation.SourceGroupKey,
+			&derivation.SpanStart,
+			&derivation.SpanEnd,
+			&derivation.Quote,
+			&derivation.Authority,
+		); err != nil {
+			return err
+		}
+		if index, ok := indices[hypothesisID]; ok {
+			records[index].EvidenceDerivations = append(records[index].EvidenceDerivations, derivation)
+			seen := false
+			for _, evidenceID := range records[index].SourceEvidenceIDs {
+				if evidenceID == derivation.EvidenceID {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				records[index].SourceEvidenceIDs = append(records[index].SourceEvidenceIDs, derivation.EvidenceID)
+			}
+		}
+	}
+	return evidenceRows.Err()
 }

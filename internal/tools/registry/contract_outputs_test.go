@@ -9,6 +9,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRecallContractOutputValidatesSpaceBranchDegradation(t *testing.T) {
@@ -36,6 +37,18 @@ func TestRecallContractOutputValidatesSpaceBranchDegradation(t *testing.T) {
 	if err := ValidateInput(Tool{InputSchema: recall.OutputSchema}, wireOutput); err != nil {
 		t.Fatalf("validate output: %v", err)
 	}
+}
+
+func TestDreamContractOutputKeepsEvidenceReferencesOutOfRelationshipIDs(t *testing.T) {
+	dream := &domain.Dream{
+		DreamID: "hypothesis-evidence-1", Hypothesis: "Evidence may imply a relationship.",
+		Status: domain.DreamStatusProposed, Lane: domain.DreamLaneEvidenceDiscovery,
+		SourceRefs:        []domain.DreamSourceRef{{Type: "evidence", ID: "evidence-1"}},
+		SourceEvidenceIDs: []string{"evidence-1"},
+	}
+	output := dreamContractOutput(dream)
+	require.Empty(t, output["source_relationship_ids"])
+	require.Equal(t, []string{"evidence-1"}, output["source_evidence_ids"])
 }
 
 func TestRecallContractOutputValidatesEmptyEquivalentRelationshipIDs(t *testing.T) {

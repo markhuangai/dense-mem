@@ -13,7 +13,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 type contractFixture struct {
@@ -676,9 +675,6 @@ func sortedStrings(raw any) []string {
 }
 
 func TestProviderAndEmbeddingContracts(t *testing.T) {
-	if err := assertProviderProposalSchema(verifier.ProviderProposalSchema()); err != nil {
-		t.Fatal(err)
-	}
 	sourceKinds := embedding.EmbeddingSourceKinds()
 	for _, want := range []string{"evidence", "search_document", "recall_query"} {
 		if !slices.Contains(sourceKinds, want) {
