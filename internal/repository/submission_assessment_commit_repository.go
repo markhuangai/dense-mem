@@ -170,8 +170,8 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 			seenEvidenceIDs[item.EvidenceID] = struct{}{}
 		}
 	}
-	if len(input.EvidenceConflictResults) > 20 {
-		return errors.New("submission evidence conflicts must contain at most 20 results")
+	if len(input.EvidenceConflictResults) > EvidenceConflictMaxResults {
+		return fmt.Errorf("submission evidence conflicts must contain at most %d results", EvidenceConflictMaxResults)
 	}
 	for evidenceID, candidates := range input.EvidenceConflictCandidateEvidenceIDs {
 		if strings.TrimSpace(evidenceID) == "" {
@@ -184,8 +184,8 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 		}
 	}
 	for conflictIndex, conflict := range input.EvidenceConflictResults {
-		if len(conflict.Positions) < 2 || len(conflict.Positions) > 10 {
-			return fmt.Errorf("submission evidence conflict[%d] must contain between 2 and 10 positions", conflictIndex)
+		if len(conflict.Positions) < 2 || len(conflict.Positions) > EvidenceConflictMaxPositions {
+			return fmt.Errorf("submission evidence conflict[%d] must contain between 2 and %d positions", conflictIndex, EvidenceConflictMaxPositions)
 		}
 		seenPositions := make(map[string]struct{}, len(conflict.Positions))
 		for positionIndex, position := range conflict.Positions {

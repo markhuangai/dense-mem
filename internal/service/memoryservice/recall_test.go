@@ -294,7 +294,8 @@ func TestRecallProjectsEvidenceConflictPositionsAndJSONShape(t *testing.T) {
 	require.Equal(t, "evidence_conflict", summaries[0].Kind)
 	require.Equal(t, "preferred", summaries[0].Positions[0].Disposition)
 	require.True(t, summaries[0].PositionsTruncated)
-	require.Len(t, summaries[0].Positions, 11)
+	require.Len(t, summaries[0].Positions, recallConflictPositionLimit)
+	require.Equal(t, "position-9", summaries[0].Positions[recallConflictPositionLimit-1].PositionID)
 	encoded, err := json.Marshal(summaries[0])
 	require.NoError(t, err)
 	var wire map[string]any

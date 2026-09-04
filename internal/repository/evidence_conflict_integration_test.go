@@ -481,6 +481,66 @@ func TestEvidenceConflictRecallHistoricalOrderPrecedesCandidateLimit(t *testing.
 	require.Equal(t, expectedIDs, actualIDs)
 }
 
+func TestEvidenceConflictHistoricalEventHydrationIsBounded(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "evidence-conflict-historical-events", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-historical-events-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-historical-events-owner")
+	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
+	repo := NewLedgerRepository(appDB, rls)
+
+	input := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-historical-events", "Historical event one.", "Historical event two.", spaceID, generation)
+	commitCitedEvidenceFixture(t, ctx, repo, input)
+	conflictID := conflictIDForTest(t, adminDB, rls, teamID)
+	resolved, err := repo.ResolveEvidenceConflict(ctx, EvidenceConflictResolutionInput{
+		TeamID: teamID, ConflictID: conflictID, ExpectedVersion: 1,
+		Decision: "resolve", Reason: "historical event hydration regression", ActorKind: "control", ActorID: "integration-test",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "resolved", resolved.Status)
+	const extraEvents = 1000
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO evidence_conflict_events (
+				team_id, conflict_event_id, conflict_id, space_id, space_generation, ordinal,
+				action, status_after, case_version, actor_kind, actor_id, citation_snapshot, created_at
+			)
+			SELECT conflict.team_id, gen_random_uuid(), conflict.conflict_id, conflict.space_id, conflict.space_generation,
+			       series.ordinal, 'recited', conflict.status, conflict.version, 'profile', ?, '[]'::jsonb, clock_timestamp()
+			FROM evidence_conflict_cases AS conflict
+			CROSS JOIN generate_series(3, ?::bigint) AS series(ordinal)
+			WHERE conflict.team_id = ?::uuid AND conflict.conflict_id = ?::uuid
+		`, ownerID, extraEvents+2, teamID, conflictID).Error
+	}))
+	knownAt := time.Now().UTC().Add(time.Minute)
+	var events []EvidenceConflictEventRecord
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		loaded, err := loadEvidenceConflictEventsAt(ctx, tx, teamID, conflictID, &knownAt)
+		if err != nil {
+			return err
+		}
+		events = loaded
+		return nil
+	}))
+	require.Len(t, events, 2, "historical hydration should retain only bounded state events")
+	require.EqualValues(t, 2, events[0].Ordinal)
+	require.EqualValues(t, extraEvents+2, events[1].Ordinal)
+	var historical *EvidenceConflictCaseRecord
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		loaded, err := loadRecallEvidenceConflictCase(ctx, tx, teamID, conflictID, &knownAt)
+		if err != nil {
+			return err
+		}
+		historical = loaded
+		return nil
+	}))
+	require.Equal(t, "resolved", historical.Status)
+	require.Equal(t, 2, historical.Version)
+	require.Equal(t, "historical event hydration regression", historical.ResolutionReason)
+}
+
 func TestEvidenceConflictConcurrentCreationSerializesSameOwnerAndDifferentOwner(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

@@ -251,25 +251,33 @@ func loadRecallEvidenceConflictCase(ctx context.Context, tx *gorm.DB, teamID, co
 }
 
 func loadEvidenceConflictEventsAt(ctx context.Context, tx *gorm.DB, teamID, conflictID string, knownAt *time.Time) ([]EvidenceConflictEventRecord, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
+	const selectColumns = `
 		SELECT conflict_event_id::text, conflict_id::text, ordinal, action, status_after,
 		       case_version, actor_kind, actor_id, reason,
 		       COALESCE(preferred_position_id::text, ''), citation_snapshot, created_at
 		FROM evidence_conflict_events
 		WHERE team_id = ?::uuid AND conflict_id = ?::uuid AND created_at <= ?::timestamptz
-		ORDER BY ordinal, conflict_event_id
-	`, teamID, conflictID, knownAt).Rows()
-	if err != nil {
-		return nil, err
+	`
+	queries := []string{
+		selectColumns + ` ORDER BY ordinal DESC, conflict_event_id DESC LIMIT 1`,
+		selectColumns + ` AND action IN ('resolved', 'dismissed') ORDER BY ordinal DESC, conflict_event_id DESC LIMIT 1`,
 	}
-	defer rows.Close()
-	out := []EvidenceConflictEventRecord{}
-	for rows.Next() {
+	out := make([]EvidenceConflictEventRecord, 0, len(queries))
+	seen := make(map[string]struct{}, len(queries))
+	for _, query := range queries {
 		var event EvidenceConflictEventRecord
 		var raw []byte
-		if err := rows.Scan(&event.ConflictEventID, &event.ConflictID, &event.Ordinal, &event.Action, &event.StatusAfter, &event.CaseVersion, &event.ActorKind, &event.ActorID, &event.Reason, &event.PreferredPositionID, &raw, &event.CreatedAt); err != nil {
+		err := tx.WithContext(ctx).Raw(query, teamID, conflictID, knownAt).Row().Scan(&event.ConflictEventID, &event.ConflictID, &event.Ordinal, &event.Action, &event.StatusAfter, &event.CaseVersion, &event.ActorKind, &event.ActorID, &event.Reason, &event.PreferredPositionID, &raw, &event.CreatedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
 			return nil, err
 		}
+		if _, exists := seen[event.ConflictEventID]; exists {
+			continue
+		}
+		seen[event.ConflictEventID] = struct{}{}
 		if len(raw) > 0 && string(raw) != "null" {
 			if err := json.Unmarshal(raw, &event.CitationSnapshot); err != nil {
 				return nil, fmt.Errorf("decode evidence conflict citation history: %w", err)
@@ -280,5 +288,11 @@ func loadEvidenceConflictEventsAt(ctx context.Context, tx *gorm.DB, teamID, conf
 		}
 		out = append(out, event)
 	}
-	return out, rows.Err()
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Ordinal != out[j].Ordinal {
+			return out[i].Ordinal < out[j].Ordinal
+		}
+		return out[i].ConflictEventID < out[j].ConflictEventID
+	})
+	return out, nil
 }

@@ -32,8 +32,13 @@ func recallConflictSummaries(records []repository.RelationshipConflictCaseRecord
 func recallEvidenceConflictSummaries(records []repository.EvidenceConflictCaseRecord) []RecallConflictSummary {
 	out := make([]RecallConflictSummary, 0, len(records))
 	for _, record := range records {
-		positions := make([]RecallConflictPosition, 0, len(record.Positions))
-		for _, position := range record.Positions {
+		positionsTruncated := len(record.Positions) > recallConflictPositionLimit
+		positionRecords := record.Positions
+		if positionsTruncated {
+			positionRecords = positionRecords[:recallConflictPositionLimit]
+		}
+		positions := make([]RecallConflictPosition, 0, len(positionRecords))
+		for _, position := range positionRecords {
 			positions = append(positions, RecallConflictPosition{
 				PositionID: position.PositionID, Disposition: "candidate",
 				EvidenceID: position.CanonicalEvidenceID, OccurrenceID: position.OccurrenceID,
@@ -50,7 +55,7 @@ func recallEvidenceConflictSummaries(records []repository.EvidenceConflictCaseRe
 		out = append(out, RecallConflictSummary{
 			ConflictID: record.ConflictID, Version: record.Version, Kind: "evidence_conflict",
 			Status: record.Status, PreferredPositionID: preferred, Positions: positions,
-			PositionsTruncated: len(record.Positions) > recallConflictPositionLimit,
+			PositionsTruncated: positionsTruncated,
 		})
 	}
 	return out
