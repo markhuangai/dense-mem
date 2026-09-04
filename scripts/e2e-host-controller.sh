@@ -398,7 +398,7 @@ precheck() {
     "DENSE_MEM_CI_PRECHECK_NETWORK=${precheck_network}" \
     "DENSE_MEM_CI_PRECHECK_IMAGE_DIGEST=${image_digest}" -- \
     go test ./internal/repository \
-      -run '^(TestConflictSnapshotScopeSerializesCorrectionBeforeReviewRowLock|TestConflictSnapshotScopeSerializesPlacementReviewAndWrite|TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment|TestScheduledDreamRecoveryFencesExpiredLease|TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited)$' \
+      -run '^(TestConflictSnapshotScopeLocksCorrectionBeforeReviewRowLock|TestConflictSnapshotScopeSerializesPlacementReviewAndWrite|TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment|TestScheduledDreamRecoveryFencesExpiredLease|TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited)$' \
       -count=1 || repository_status=$?
   local test_status=$repository_status
   if ((test_status == 0)); then
