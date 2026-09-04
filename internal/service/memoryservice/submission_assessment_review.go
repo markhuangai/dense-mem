@@ -178,7 +178,7 @@ func submissionAssessmentConflictCanonicalEvidence(
 		identity := "submitted:" + item.Fragment.FragmentID
 		if exact, ok := plan.exactDuplicateByEvidenceID[item.EvidenceID]; ok && strings.TrimSpace(exact.CandidateFragmentID) != "" {
 			identity = "canonical:" + exact.CandidateFragmentID
-		} else if item.DuplicateAssessmentRequired {
+		} else if item.DuplicateAssessmentRequired || item.ExactReuseEligible {
 			identity = "batch:" + item.Fragment.ContentHash + "\x00" + item.Fragment.Content
 		}
 		canonical[item.EvidenceID] = identity

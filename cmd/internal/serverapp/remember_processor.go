@@ -767,15 +767,16 @@ func rememberAssessmentSnapshot(
 	items := make([]memoryservice.RememberAssessmentItem, 0, len(input.Evidence))
 	for index, item := range input.Evidence {
 		fragmentID := uuid.NewString()
+		exactReuseEligible := len(item.SupersedesEvidenceIDs) == 0 && strings.TrimSpace(item.SourceKey) == "" &&
+			strings.TrimSpace(item.SourceRevisionToken) == "" && strings.TrimSpace(item.ExpectedPreviousRevisionToken) == ""
 		evidence = append(evidence, repository.EvidenceFragment{
 			FragmentID: fragmentID, EvidenceIndex: index, Content: item.Content,
 			ContentHash: item.ContentHash, Authority: item.Authority,
 		})
 		items = append(items, memoryservice.RememberAssessmentItem{
 			ItemID: uuid.NewString(), Fragment: evidence[len(evidence)-1],
-			EvidenceID: fmt.Sprintf("evidence:%d", index), DuplicateAssessmentRequired: !item.ForceInsert &&
-				len(item.SupersedesEvidenceIDs) == 0 && strings.TrimSpace(item.SourceKey) == "" &&
-				strings.TrimSpace(item.SourceRevisionToken) == "" && strings.TrimSpace(item.ExpectedPreviousRevisionToken) == "",
+			EvidenceID: fmt.Sprintf("evidence:%d", index), DuplicateAssessmentRequired: exactReuseEligible && !item.ForceInsert,
+			ExactReuseEligible: exactReuseEligible,
 		})
 	}
 	return memoryservice.RememberAssessmentSnapshot{

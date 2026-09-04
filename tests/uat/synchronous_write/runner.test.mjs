@@ -142,5 +142,6 @@ test("remember PostgreSQL fixtures use the consolidated production runner handof
   assert.match(remember, /Remember PostgreSQL fixture failed \(\$\{result\.status\}\):/);
   assert.match(remember, /requiredEnv\("DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE"\)/);
   assert.match(scenario, /export DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE=/);
+  assert.match(scenario, /specs\+=\("tests-compose\/compose-evidence-conflict\.spec\.ts"\)/);
   assert.match(controller, /DENSE_MEM_E2E_COMPOSE_OVERLAY_FILE=\/ci\/helper-compose\.yml/);
 });

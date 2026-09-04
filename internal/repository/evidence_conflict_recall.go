@@ -14,6 +14,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const evidenceConflictRecallCandidateLimit = EvidenceConflictMaxResults * recallOverfetchMultiple
+
 func loadRecallEvidenceConflictRecords(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -55,7 +57,7 @@ func loadRecallEvidenceConflictRecords(
 		FROM evidence_conflict_cases AS conflict
 		JOIN evidence_conflict_positions AS position
 		  ON position.team_id = conflict.team_id AND position.conflict_id = conflict.conflict_id
-		`+where+` ORDER BY conflict.conflict_id::text`, args...).Rows()
+		`+where+` ORDER BY conflict.conflict_id::text LIMIT ?`, append(args, evidenceConflictRecallCandidateLimit)...).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -101,6 +103,9 @@ func loadRecallEvidenceConflictRecords(
 		}
 		return out[i].ConflictID < out[j].ConflictID
 	})
+	if len(out) > EvidenceConflictMaxResults {
+		out = out[:EvidenceConflictMaxResults]
+	}
 	return out, nil
 }
 

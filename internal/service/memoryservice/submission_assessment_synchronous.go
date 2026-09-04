@@ -43,6 +43,8 @@ type RememberAssessmentItem struct {
 	Fragment                    repository.EvidenceFragment
 	EvidenceID                  string
 	DuplicateAssessmentRequired bool
+	// ExactReuseEligible mirrors the repository's exact-byte coalescing fence.
+	ExactReuseEligible bool
 }
 
 // RememberAssessmentSnapshot is the in-memory request snapshot used by the

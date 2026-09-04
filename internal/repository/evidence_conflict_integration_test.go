@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -186,6 +188,140 @@ func TestEvidenceConflictRememberCreationAndRecurrence(t *testing.T) {
 	require.Len(t, terminal.Conflict.Events, 4)
 	require.Equal(t, "recited", terminal.Conflict.Events[0].Action)
 	require.Equal(t, 3, terminal.Conflict.Events[0].CaseVersion)
+}
+
+func TestEvidenceConflictRecallBoundsCaseHydration(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "evidence-conflict-recall-bound", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-recall-bound-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-recall-bound-owner")
+	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
+	repo := NewLedgerRepository(appDB, rls)
+
+	sharedContent := "The bounded recall citation is shared across cases."
+	var sharedEvidenceID string
+	for index := 0; index < EvidenceConflictMaxResults+1; index++ {
+		input := citedEvidenceRememberInput(
+			teamID,
+			ownerID,
+			fmt.Sprintf("evidence-conflict-recall-bound-%d", index),
+			sharedContent,
+			fmt.Sprintf("The opposing citation is case %d.", index),
+			spaceID,
+			generation,
+		)
+		commitCitedEvidenceFixture(t, ctx, repo, input)
+		if index == 0 {
+			sharedEvidenceID = input.Evidence[0].FragmentID
+		}
+	}
+
+	var records []EvidenceConflictCaseRecord
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		loaded, err := loadRecallEvidenceConflictRecords(ctx, tx, RecallEvidenceInput{
+			TeamID: teamID, SpaceID: spaceID, SpaceKind: "team_shared",
+		}, []RecallEvidenceHit{{EvidenceID: sharedEvidenceID}})
+		if err != nil {
+			return err
+		}
+		records = loaded
+		return nil
+	}))
+	require.Len(t, records, EvidenceConflictMaxResults)
+}
+
+func TestEvidenceConflictConcurrentCreationSerializesSameOwnerAndDifferentOwner(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "evidence-conflict-concurrent", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-concurrent-team")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-concurrent-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-concurrent-owner-b")
+	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
+	repo := NewLedgerRepository(appDB, rls)
+	if sqlDB, err := appDB.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(8)
+		sqlDB.SetMaxIdleConns(8)
+	}
+
+	for _, testCase := range []struct {
+		name   string
+		owners []string
+		label  string
+	}{
+		{name: "same owner", owners: []string{ownerA, ownerA}, label: "same-owner"},
+		{name: "different same-team owners", owners: []string{ownerA, ownerB}, label: "different-owners"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			sharedContent := "Concurrent cited evidence shared " + testCase.label + "."
+			seedFirst := duplicateRememberInput(teamID, ownerA, "evidence-conflict-concurrent-seed-first-"+testCase.label, sharedContent, false)
+			seedFirst.SpaceID, seedFirst.SpaceGeneration = spaceID, generation
+			commitDuplicateFixture(t, ctx, repo, seedFirst)
+			seedSecond := duplicateRememberInput(teamID, ownerA, "evidence-conflict-concurrent-seed-second-"+testCase.label, "Concurrent opposing evidence "+testCase.label+".", false)
+			seedSecond.SpaceID, seedSecond.SpaceGeneration = spaceID, generation
+			commitDuplicateFixture(t, ctx, repo, seedSecond)
+
+			inputs := make([]SynchronousRememberCommitInput, 0, len(testCase.owners))
+			plans := make([]*InlineEmbeddingPlan, 0, len(testCase.owners))
+			for index, ownerID := range testCase.owners {
+				input := citedEvidenceRememberInput(teamID, ownerID, fmt.Sprintf("evidence-conflict-concurrent-%s-%d", testCase.label, index), sharedContent, "Concurrent opposing evidence "+testCase.label+".", spaceID, generation)
+				input.DuplicateResolutions = []RememberDuplicateResolution{
+					{EvidenceIndex: 0, EvidenceID: "evidence:0", InputFragmentID: input.Evidence[0].FragmentID, Disposition: "reuse", CandidateFragmentID: seedFirst.Evidence[0].FragmentID, CandidateOwnerID: ownerA},
+					{EvidenceIndex: 1, EvidenceID: "evidence:1", InputFragmentID: input.Evidence[1].FragmentID, Disposition: "reuse", CandidateFragmentID: seedSecond.Evidence[0].FragmentID, CandidateOwnerID: ownerA},
+				}
+				plan, err := repo.PlanRememberEmbeddings(ctx, input)
+				require.NoError(t, err)
+				inputs = append(inputs, input)
+				plans = append(plans, plan)
+			}
+
+			start := make(chan struct{})
+			errs := make(chan error, len(inputs))
+			var group sync.WaitGroup
+			for index := range inputs {
+				index := index
+				group.Add(1)
+				go func() {
+					defer group.Done()
+					<-start
+					_, err := repo.CommitRememberWithEmbeddings(ctx, inputs[index], rememberTestEmbeddings(plans[index], false))
+					errs <- err
+				}()
+			}
+			close(start)
+			group.Wait()
+			close(errs)
+			for err := range errs {
+				require.NoError(t, err)
+			}
+
+			firstPositionKey := evidenceConflictPositionKey(resolvedEvidenceConflictCitation{
+				CanonicalEvidenceID: seedFirst.Evidence[0].FragmentID,
+				ContentHash:         seedFirst.Evidence[0].ContentHash,
+			}, 0, 5)
+			secondPositionKey := evidenceConflictPositionKey(resolvedEvidenceConflictCitation{
+				CanonicalEvidenceID: seedSecond.Evidence[0].FragmentID,
+				ContentHash:         seedSecond.Evidence[0].ContentHash,
+			}, 0, 5)
+			caseKey := evidenceConflictCaseKey(teamID, spaceID, generation, []string{firstPositionKey, secondPositionKey})
+			var caseID string
+			require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+				return tx.Raw(`
+					SELECT conflict_id::text
+					FROM evidence_conflict_cases
+					WHERE team_id = ?::uuid AND case_key = ?
+				`, teamID, caseKey).Row().Scan(&caseID)
+			}))
+			require.NotEmpty(t, caseID)
+			caseCount := duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_conflict_cases WHERE team_id = ?::uuid AND case_key = ?`, teamID, caseKey)
+			require.EqualValues(t, 1, caseCount)
+			require.EqualValues(t, 2, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_conflict_positions WHERE team_id = ?::uuid AND conflict_id = ?::uuid`, teamID, caseID))
+			require.EqualValues(t, 2, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_conflict_events WHERE team_id = ?::uuid AND conflict_id = ?::uuid`, teamID, caseID))
+		})
+	}
 }
 
 func TestEvidenceConflictChangedPositionSetCreatesNewCase(t *testing.T) {

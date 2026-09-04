@@ -115,8 +115,8 @@ func TestAssessSynchronousRememberRepairsCanonicalDuplicateConflictCitations(t *
 			Scope:    RememberAssessmentScope{TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID},
 			Evidence: []repository.EvidenceFragment{first, second},
 			Items: []RememberAssessmentItem{
-				{ItemID: uuid.NewString(), Fragment: first, DuplicateAssessmentRequired: true},
-				{ItemID: uuid.NewString(), Fragment: second, DuplicateAssessmentRequired: true},
+				{ItemID: uuid.NewString(), Fragment: first, ExactReuseEligible: true},
+				{ItemID: uuid.NewString(), Fragment: second, DuplicateAssessmentRequired: true, ExactReuseEligible: true},
 			},
 		},
 	}

@@ -132,11 +132,14 @@ run_playwright() {
   esac
   local -a specs=("tests-compose/search-convergence.spec.ts" "tests-compose/compose-portal.spec.ts")
   case "$SCENARIO" in
+    synchronous_write) specs=("tests-compose/remember-attempts.spec.ts") ;;
     community) specs=("tests-compose/community-recall.spec.ts") ;;
     conflict_queue) specs=("tests-compose/compose-conflict-queue.spec.ts") ;;
     mcp_oauth) specs=("tests-compose/oauth-team-resource.spec.ts") ;;
-    synchronous_write) specs=("tests-compose/remember-attempts.spec.ts") ;;
   esac
+  if [[ "$SCENARIO" == "synchronous_write" ]]; then
+    specs+=("tests-compose/compose-evidence-conflict.spec.ts")
+  fi
   log "running Playwright specs: ${specs[*]}"
   local web_dir="/tmp/dense-mem-web-${SCENARIO}-$$" status
   if [[ -e "$web_dir" ]]; then rm -r -- "$web_dir"; fi

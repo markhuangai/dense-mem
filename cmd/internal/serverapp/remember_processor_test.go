@@ -46,8 +46,11 @@ func TestRememberAssessmentSnapshotCarriesHashAndDuplicateEligibility(t *testing
 	snapshot, _ := rememberAssessmentSnapshot(input, "33333333-3333-4333-8333-333333333333")
 	require.Equal(t, "sha256:normal", snapshot.Evidence[0].ContentHash)
 	require.True(t, snapshot.Items[0].DuplicateAssessmentRequired)
+	require.True(t, snapshot.Items[0].ExactReuseEligible)
 	require.False(t, snapshot.Items[1].DuplicateAssessmentRequired)
+	require.True(t, snapshot.Items[1].ExactReuseEligible)
 	require.False(t, snapshot.Items[2].DuplicateAssessmentRequired)
+	require.False(t, snapshot.Items[2].ExactReuseEligible)
 }
 
 func TestMergeInlineEmbeddingResultsDeduplicatesDocumentHashes(t *testing.T) {
