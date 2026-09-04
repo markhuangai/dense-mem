@@ -315,6 +315,9 @@ func loadRelationshipConflictCaseForReview(
 	tx *gorm.DB,
 	input ReviewRelationshipConflictCaseInput,
 ) (*RelationshipConflictCaseRecord, error) {
+	if err := lockRelationshipConflictCaseSnapshotScope(ctx, tx, input.TeamID, input.ConflictID); err != nil {
+		return nil, err
+	}
 	var conflictID string
 	if err := tx.WithContext(ctx).Raw(`
 		SELECT conflict_id::text

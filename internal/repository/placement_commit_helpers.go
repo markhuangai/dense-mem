@@ -545,6 +545,9 @@ func applyRelationshipDecisionInTx(
 		return nil, err
 	}
 	status := statusForRelationshipDecision(input)
+	if err := lockRelationshipConflictSnapshotScopeForDecision(ctx, tx, input, predicate, status); err != nil {
+		return nil, err
+	}
 	groupKey := semanticGroupKey(input)
 	recordState, err := upsertRelationshipRecord(ctx, tx, input, predicate, status, groupKey)
 	if err != nil {

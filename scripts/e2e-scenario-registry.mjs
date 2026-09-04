@@ -4,30 +4,6 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_REGISTRY = new URL("./e2e-scenarios.json", import.meta.url);
-const EXPECTED_SCENARIOS = Object.freeze([
-  "mcp_boundaries",
-  "oauth_provider_compatibility",
-  "mcp_oauth",
-  "private_memory_erasure",
-  "synchronous_write",
-  "synchronous_write_primitives",
-  "identity_cleanup",
-  "community",
-  "conflict",
-  "conflict_queue",
-  "full",
-  "mcp_sdk_parity",
-  "mcp_sdk_transport",
-  "security_runtime",
-  "infrastructure_credentials",
-  "submission_terminal_errors",
-  "security_intake",
-  "memory_space_backfill",
-  "memory_space_isolation",
-  "space_aware_recall",
-  "credential_memory_binding",
-]);
-
 const ISOLATIONS = new Set(["exclusive", "shared_team"]);
 const HELPER_PROFILES = new Set([
   "conflict_provider",
@@ -38,6 +14,7 @@ const HELPER_PROFILES = new Set([
   "synchronous_write",
   "verifier",
 ]);
+const NAME_PATTERN = /^[a-z0-9_]+$/;
 
 function readRegistry(path = fileURLToPath(DEFAULT_REGISTRY)) {
   return JSON.parse(readFileSync(path, "utf8"));
@@ -66,7 +43,7 @@ function validateRegistry(registry) {
       continue;
     }
     const name = scenario.name;
-    if (typeof name !== "string" || !/^[a-z0-9_]+$/.test(name)) {
+    if (typeof name !== "string" || !NAME_PATTERN.test(name)) {
       errors.push(`invalid scenario name: ${String(name)}`);
     } else if (seen.has(name)) {
       errors.push(`duplicate scenario: ${name}`);
@@ -106,13 +83,6 @@ function validateRegistry(registry) {
     }
   }
 
-  const expected = new Set(EXPECTED_SCENARIOS);
-  for (const name of EXPECTED_SCENARIOS) {
-    if (!seen.has(name)) errors.push(`missing scenario: ${name}`);
-  }
-  for (const name of seen) {
-    if (!expected.has(name)) errors.push(`unknown scenario: ${name}`);
-  }
   return errors;
 }
 
@@ -120,6 +90,46 @@ function assertValidRegistry(registry) {
   const errors = validateRegistry(registry);
   if (errors.length > 0) {
     throw new Error(`invalid E2E scenario registry:\n${errors.map((error) => `- ${error}`).join("\n")}`);
+  }
+  return registry;
+}
+
+function validateRegistryExtension(registry, baseline) {
+  const errors = [...validateRegistry(registry)];
+  const baselineErrors = validateRegistry(baseline);
+  if (baselineErrors.length > 0) {
+    errors.push(...baselineErrors.map((error) => `baseline ${error}`));
+  }
+  const candidateByName = new Map(
+    (registry?.scenarios ?? [])
+      .filter((scenario) => scenario && typeof scenario === "object" && typeof scenario.name === "string")
+      .map((scenario) => [scenario.name, scenario]),
+  );
+  for (const scenario of baseline?.scenarios ?? []) {
+    if (!scenario || typeof scenario !== "object" || typeof scenario.name !== "string") continue;
+    const candidate = candidateByName.get(scenario.name);
+    if (!candidate) {
+      errors.push(`candidate is missing baseline scenario: ${scenario?.name}`);
+    } else if (scenarioDefinition(scenario) !== scenarioDefinition(candidate)) {
+      errors.push(`candidate changed baseline scenario: ${scenario.name}`);
+    }
+  }
+  return errors;
+}
+
+function scenarioDefinition(scenario) {
+  const normalized = {};
+  for (const key of Object.keys(scenario).sort()) {
+    const value = scenario[key];
+    normalized[key] = key === "helper_profiles" && Array.isArray(value) ? [...value].sort() : value;
+  }
+  return JSON.stringify(normalized);
+}
+
+function assertCompatibleRegistry(registry, baseline) {
+  const errors = validateRegistryExtension(registry, baseline);
+  if (errors.length > 0) {
+    throw new Error(`incompatible E2E scenario registry:\n${errors.map((error) => `- ${error}`).join("\n")}`);
   }
   return registry;
 }
@@ -150,7 +160,7 @@ function scenarioFor(registry, name) {
 
 function classifyScenario(registry, name) {
   assertValidRegistry(registry);
-  if (typeof name !== "string" || !/^[a-z0-9_]+$/.test(name)) {
+  if (typeof name !== "string" || !NAME_PATTERN.test(name)) {
     throw new Error(`invalid scenario: ${String(name)}`);
   }
   const scenario = registry.scenarios?.find((candidate) => candidate.name === name);
@@ -168,7 +178,7 @@ function classifyScenario(registry, name) {
 
 function usage() {
   process.stderr.write(
-    "usage: e2e-scenario-registry.mjs --validate | --matrix <exclusive|shared_team|all> | --helpers <exclusive|shared_team> | --scenario <name>\n",
+    "usage: e2e-scenario-registry.mjs --validate | --validate-compatible <baseline> | --matrix <exclusive|shared_team|all> | --helpers <exclusive|shared_team> | --scenario <name>\n",
   );
 }
 
@@ -179,6 +189,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     if (command === "--validate") {
       assertValidRegistry(registry);
       process.stdout.write("E2E scenario registry is valid.\n");
+    } else if (command === "--validate-compatible") {
+      const baseline = readRegistry(process.argv[3]);
+      assertCompatibleRegistry(registry, baseline);
+      process.stdout.write("E2E scenario registry is compatible with the baseline.\n");
     } else if (command === "--matrix") {
       process.stdout.write(`${JSON.stringify(matrixFor(registry, process.argv[3]))}\n`);
     } else if (command === "--helpers") {
@@ -196,9 +210,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 }
 
 export {
-  EXPECTED_SCENARIOS,
   HELPER_PROFILES,
   ISOLATIONS,
+  assertCompatibleRegistry,
   assertValidRegistry,
   classifyScenario,
   helperProfilesFor,
@@ -206,5 +220,6 @@ export {
   readRegistry,
   scenarioFor,
   scenariosFor,
+  validateRegistryExtension,
   validateRegistry,
 };

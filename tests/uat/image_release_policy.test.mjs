@@ -151,6 +151,22 @@ function workflowJob(workflow, name) {
   return nextJob === -1 ? remainder : remainder.slice(0, nextJob);
 }
 
+function assertHostedJob(workflow, name) {
+  assert.match(
+    workflowJob(workflow, name),
+    /^    runs-on: ubuntu-latest$/m,
+    `${name} must use a GitHub-hosted runner`,
+  );
+}
+
+function assertQemuBeforeBuildx(workflow, name) {
+  const job = workflowJob(workflow, name);
+  const qemu = job.indexOf("uses: docker/setup-qemu-action@v4");
+  const buildx = job.indexOf("uses: docker/setup-buildx-action@v4");
+  assert.ok(qemu !== -1 && qemu < buildx, `${name} must configure QEMU before Buildx`);
+  assert.match(job, /setup-qemu-action@v4[\s\S]*platforms: arm64/);
+}
+
 test("low-trust preview builds do not export an Actions cache", async () => {
   const workflow = await readFile(
     new URL("../../.github/workflows/pr-test-image.yml", import.meta.url),
@@ -159,6 +175,40 @@ test("low-trust preview builds do not export an Actions cache", async () => {
 
   assert.match(workflow, /^\s+pull_request_target:/m);
   assert.doesNotMatch(workflow, /^\s+cache-to:/m);
+});
+
+test("non-E2E image and release jobs use GitHub-hosted runners", async () => {
+  const [preview, prereleaseImage, demoImage, prerelease, release, startPrerelease] =
+    await Promise.all([
+      readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8"),
+      readFile(new URL("../../.github/workflows/publish-image.yml", import.meta.url), "utf8"),
+      readFile(new URL("../../.github/workflows/publish-demo-image.yml", import.meta.url), "utf8"),
+      readFile(new URL("../../.github/workflows/release-rc.yml", import.meta.url), "utf8"),
+      readFile(new URL("../../.github/workflows/release.yml", import.meta.url), "utf8"),
+      readFile(new URL("../../.github/workflows/start-prerelease.yml", import.meta.url), "utf8"),
+    ]);
+
+  for (const name of ["resolve", "build", "publish", "report", "report-e2e", "resolve-failure"]) {
+    assertHostedJob(preview, name);
+  }
+  assertHostedJob(prereleaseImage, "publish");
+  assertHostedJob(demoImage, "publish-demo");
+  for (const name of [
+    "classify-release",
+    "prepare-prerelease",
+    "resolve-production-source",
+    "promote-preview-image",
+  ]) {
+    assertHostedJob(prerelease, name);
+  }
+  for (const name of ["prepare-release", "create-release-tag", "promote-images", "create-github-release"]) {
+    assertHostedJob(release, name);
+  }
+  assertHostedJob(startPrerelease, "start-prerelease");
+
+  assertQemuBeforeBuildx(preview, "build");
+  assertQemuBeforeBuildx(prereleaseImage, "publish");
+  assertQemuBeforeBuildx(demoImage, "publish-demo");
 });
 
 test("PR preview workflow gates owner/admin and one-shot approval before digest handoff", async () => {
@@ -251,6 +301,30 @@ if [[ "$1" == "manifest" && "$2" == "head" ]]; then
     printf '%s\n' 'stub manifest head failure' >&2
     exit 1
   fi
+  if [[ "$3" == ghcr.io/* && -n "\${STUB_REGCTL_HEAD_FAILURE_STATE:-}" ]]; then
+    count=0
+    if [[ -f "$STUB_REGCTL_HEAD_FAILURE_STATE" ]]; then
+      count="$(cat "$STUB_REGCTL_HEAD_FAILURE_STATE")"
+    fi
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$STUB_REGCTL_HEAD_FAILURE_STATE"
+    if [[ "$count" == "1" ]]; then
+      printf '%s\n' 'stub transient manifest head failure' >&2
+      exit 1
+    fi
+  fi
+  if [[ "$3" == ghcr.io/* && -n "\${STUB_REGCTL_HEAD_STATE:-}" ]]; then
+    count=0
+    if [[ -f "$STUB_REGCTL_HEAD_STATE" ]]; then
+      count="$(cat "$STUB_REGCTL_HEAD_STATE")"
+    fi
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$STUB_REGCTL_HEAD_STATE"
+    if [[ "$count" == "1" ]]; then
+      printf '%s\n' "sha256:${"d".repeat(64)}"
+      exit 0
+    fi
+  fi
   printf '%s\n' "$STUB_REGCTL_DIGEST"
   exit 0
 fi
@@ -335,6 +409,20 @@ exit 2
     assert.equal(published.status, 0);
     assert.equal(published.stdout, `${digest}\n`);
 
+    const eventualHeadState = join(directory, "eventual-head-state");
+    const eventuallyPublished = await invoke(publishArgs, { STUB_REGCTL_HEAD_STATE: eventualHeadState });
+    assert.equal(eventuallyPublished.status, 0);
+    assert.equal(eventuallyPublished.stdout, `${digest}\n`);
+    assert.equal(await readFile(eventualHeadState, "utf8"), "2\n");
+
+    const transientHeadFailureState = join(directory, "transient-head-failure-state");
+    const publishedAfterTransientHeadFailure = await invoke(publishArgs, {
+      STUB_REGCTL_HEAD_FAILURE_STATE: transientHeadFailureState,
+    });
+    assert.equal(publishedAfterTransientHeadFailure.status, 0);
+    assert.equal(publishedAfterTransientHeadFailure.stdout, `${digest}\n`);
+    assert.equal(await readFile(transientHeadFailureState, "utf8"), "2\n");
+
     const copyFailure = await invoke(publishArgs, { STUB_REGCTL_COPY_FAILURE: "1" });
     assert.notEqual(copyFailure.status, 0);
     assert.match(copyFailure.stderr, /stub image copy failure/);
@@ -373,7 +461,7 @@ test("prerelease publication waits for the staging migration rehearsal", async (
   const prepare = workflowJob(releaseWorkflow, "prepare-prerelease");
 
   assert.doesNotMatch(pushWorkflow, /paths-ignore/);
-  assert.match(classifier, /^    runs-on: docker-runner$/m);
+  assert.match(classifier, /^    runs-on: ubuntu-latest$/m);
   assert.match(classifier, /^          fetch-depth: 0$/m);
   assert.match(classifier, /^          persist-credentials: false$/m);
   assert.match(
@@ -483,7 +571,7 @@ test("staging deployment is owner-gated and manual-only", async () => {
     workflow,
     /^  (?:pull_request|pull_request_target|push|workflow_call|workflow_run):/m,
   );
-  assert.match(authorize, /^    runs-on: docker-runner$/m);
+  assert.match(authorize, /^    runs-on: ubuntu-latest$/m);
   assert.match(authorize, /const actor = "Z-M-Huang"/);
   assert.match(authorize, /context\.actor !== actor/);
   assert.match(authorize, /process\.env\.TRIGGERING_ACTOR !== actor/);

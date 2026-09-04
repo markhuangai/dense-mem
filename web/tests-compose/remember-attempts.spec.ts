@@ -26,9 +26,11 @@ test("control panel shows the Remember Attempts diagnostic transcript", async ({
   await expect(page.getByRole("heading", { name: "Event spine" })).toBeVisible();
   await expect(page.locator(".remember-event-metadata").filter({ hasText: "<script>bad()</script>" })).toHaveCount(1);
   await expect(page.locator(".remember-event-metadata script")).toHaveCount(0);
-  await expect(page.locator(".remember-artifact")).toContainText("sha256:");
-  await expect(page.locator(".remember-artifact")).toContainText("Expires");
-  await page.locator(".remember-artifact").getByRole("button", { name: "View", exact: true }).click();
+  const failureArtifact = page.locator(".remember-artifact").filter({ hasText: /^failure/ });
+  await expect(failureArtifact).toHaveCount(1);
+  await expect(failureArtifact).toContainText("sha256:");
+  await expect(failureArtifact).toContainText("Expires");
+  await failureArtifact.getByRole("button", { name: "View", exact: true }).click();
   await expect(page.locator(".remember-artifact-content")).toContainText("provider_unavailable");
   await expect(page.locator(".remember-artifact-content")).not.toContainText("<script>");
 });

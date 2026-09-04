@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 const port = Number(process.env.PORT || 8787);
 const dimensions = Number(process.env.DENSE_MEM_E2E_PROVIDER_DIMENSIONS || 1536);
@@ -108,7 +110,7 @@ const server = createServer(async (request, response) => {
       sendJSON(response, 200, { choices: [{ message: { content: "not-json" } }] });
       return;
     }
-    const assessment = fixtureAssessment(assessmentRequest, assessmentFault, attempt);
+    const assessment = fixtureChatResponse(payload, assessmentFault, attempt);
     sendJSON(response, 200, {
       choices: [{ message: { content: JSON.stringify(assessment) } }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
@@ -130,6 +132,87 @@ function assessmentInput(payload) {
     }
   }
   return { request_id: "fixture", submitted_entities: [], submitted_relationships: [], evidence: [] };
+}
+
+function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
+  const schemaName = payload.response_format?.json_schema?.name;
+  if (schemaName === "community_summary") return fixtureCommunitySummary(payload);
+  if (schemaName === "dense_mem_dream_generation_response") return fixtureDreamGeneration(payload);
+  return fixtureAssessment(assessmentInput(payload), requestFault, attempt);
+}
+
+function fixtureCommunitySummary(payload) {
+  const input = structuredInput(payload, (value) => Array.isArray(value.relationships));
+  const relationships = input.relationships || [];
+  const facts = relationships
+    .map((relationship) => [relationship.subject, relationship.predicate, relationship.object].map((value) => String(value || "").trim()).filter(Boolean).join(" "))
+    .filter(Boolean);
+  const supportQuotes = [];
+  const seenQuoteEvidence = new Set();
+  for (const relationship of relationships) {
+    for (const quote of relationship.support_quotes || []) {
+      const evidenceID = String(quote?.evidence_id || "").trim();
+      const text = String(quote?.quote || "").trim();
+      if (!evidenceID || !text || seenQuoteEvidence.has(evidenceID)) continue;
+      seenQuoteEvidence.add(evidenceID);
+      supportQuotes.push({ evidence_id: evidenceID, quote: text });
+    }
+  }
+  return {
+    summary: facts.length > 0 ? `${facts.join("; ")}.` : "The supplied relationships form a community.",
+    top_entities: uniqueStrings(relationships.flatMap((relationship) => [relationship.subject, relationship.object])).slice(0, 5),
+    top_predicates: uniqueStrings(relationships.map((relationship) => relationship.predicate)).slice(0, 5),
+    admitted_relationship_ids: uniqueStrings(relationships.map((relationship) => relationship.relationship_id)),
+    admitted_evidence_ids: uniqueStrings(relationships.flatMap((relationship) => relationship.evidence_ids || [])),
+    admitted_support_quotes: supportQuotes,
+  };
+}
+
+function fixtureDreamGeneration(payload) {
+  const input = structuredInput(payload, (value) => Array.isArray(value.paths));
+  const maxOutputs = Number.isSafeInteger(input.max_outputs) && input.max_outputs > 0 ? input.max_outputs : 1;
+  const proposals = [];
+  for (const path of input.paths || []) {
+    const predicate = path.allowed_predicates?.[0];
+    const evidenceRefs = (path.premises || [])
+      .map((premise) => premise.evidence?.[0]?.evidence_ref)
+      .filter((value) => typeof value === "string" && value.length > 0);
+    if (!path.path_ref || !predicate?.predicate_ref || evidenceRefs.length !== 2) continue;
+    const subject = String(path.subject?.display || "the subject").trim();
+    const object = String(path.object?.display || "the object").trim();
+    const label = String(predicate.label || "the supplied predicate").trim();
+    proposals.push({
+      path_ref: path.path_ref,
+      predicate_ref: predicate.predicate_ref,
+      statement: `${subject} may be related to ${object} through ${label}.`,
+      rationale: "The supplied two-premise path supports evaluating this possibility.",
+      what_if: "What if the proposed relationship is useful?",
+      possible_outcome: "The hypothesis can be reviewed against its cited evidence.",
+      likelihood: 0.7,
+      confidence: 0.8,
+      evidence_refs: evidenceRefs,
+    });
+    if (proposals.length === maxOutputs) break;
+  }
+  return { request_id: input.request_id || "fixture", proposals };
+}
+
+function structuredInput(payload, matches) {
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role !== "user" || typeof messages[index]?.content !== "string") continue;
+    try {
+      const parsed = JSON.parse(messages[index].content);
+      if (matches(parsed)) return parsed;
+    } catch {
+      // Correction feedback is not the original structured request.
+    }
+  }
+  return {};
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
 function fixtureAssessment(request, requestFault, attempt) {
@@ -304,6 +387,10 @@ function isRepairPayload(payload) {
   });
 }
 
-server.listen(port, "0.0.0.0", () => {
-  process.stdout.write(`synchronous-write-provider listening on ${port}\n`);
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  server.listen(port, "0.0.0.0", () => {
+    process.stdout.write(`synchronous-write-provider listening on ${port}\n`);
+  });
+}
+
+export { fixtureChatResponse };

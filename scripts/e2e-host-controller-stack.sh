@@ -140,7 +140,7 @@ prepare_stack_helpers() {
       -out "${DENSE_MEM_CI_HELPER_DIR}/ca.pem" \
       -days 1 \
       -subj "/CN=dense-mem-ci-oauth" \
-      -addext "subjectAltName=DNS:oauth-provider-mock,DNS:oauth-compat-harness,DNS:server,DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1 ||
+      -addext "subjectAltName=DNS:oauth-provider-mock,DNS:oauth-compat-harness,DNS:entra-mock,DNS:server,DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1 ||
       fail "failed to create the OAuth fixture certificate"
     chmod 600 "${DENSE_MEM_CI_PRIVATE_DIR}/server.key"
     chmod 644 "${DENSE_MEM_CI_HELPER_DIR}/ca.pem"
@@ -241,6 +241,14 @@ const lines = ["# dense-mem-ci-e2e.v1 generated helper overlay", "services:"];
 const serverEnvironment = new Map();
 const serverVolumes = [];
 const helperServices = [];
+if (has("verifier")) {
+  for (const [key, value] of Object.entries({
+    AI_VERIFIER_API_URL: "http://synchronous-write-provider:8787/v1",
+    AI_VERIFIER_API_KEY: "dense-mem-e2e-verifier-key",
+    AI_VERIFIER_MODEL: "dense-mem-e2e-verifier",
+    AI_VERIFIER_DISABLE_TEMPERATURE: "true",
+  })) serverEnvironment.set(key, value);
+}
 if (has("conflict_provider")) {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://conflict-provider:8081/v1",
@@ -291,6 +299,13 @@ if (has("oauth_compatibility")) {
     "    environment:",
     "      SSL_CERT_FILE: \"/e2e/ca.pem\"",
   ]]);
+  helperServices.push(["entra-mock", [
+    "    command: [\"sh\", \"-c\", \"sleep infinity\"]",
+    "    environment:",
+    "      DENSE_MEM_ENTRA_CERT: /e2e/ca.pem",
+    "      DENSE_MEM_ENTRA_KEY: /e2e/server.key",
+    "      DENSE_MEM_ENTRA_ISSUER: https://entra-mock:9443",
+  ]]);
 }
 if (serverEnvironment.size > 0 || serverVolumes.length > 0) {
   lines.push("  server:");
@@ -334,6 +349,12 @@ start_stack_helpers() {
         --config=/e2e/config.json \
         --tls-cert=/e2e/ca.pem \
         --tls-key=/e2e/server.key >/dev/null
+      local entra
+      entra="$(ci_compose ps -q entra-mock)"
+      [[ -n "$entra" ]] || fail "Entra mock helper was not created"
+      docker cp "${source_dir}/web/tests-compose/entra-mock.mjs" "${entra}:/e2e/entra-mock.mjs" >/dev/null
+      docker exec "$entra" chmod 644 /e2e/entra-mock.mjs >/dev/null
+      docker exec -d "$entra" node /e2e/entra-mock.mjs >/dev/null
     fi
   fi
   if has_helper "$helpers" conflict_provider; then
@@ -343,12 +364,12 @@ start_stack_helpers() {
     docker cp "${source_dir}/tests/uat/conflict_openai_stub.mjs" "${conflict}:/e2e/conflict_openai_stub.mjs" >/dev/null
     docker exec -d "$conflict" node /e2e/conflict_openai_stub.mjs >/dev/null
   fi
-  if has_helper "$helpers" synchronous_write; then
-    local synchronous
-    synchronous="$(ci_compose ps -q synchronous-write-provider)"
-    [[ -n "$synchronous" ]] || fail "synchronous-write provider helper was not created"
-    docker cp "${source_dir}/tests/uat/synchronous_write/provider-fixture.mjs" "${synchronous}:/e2e/provider-fixture.mjs" >/dev/null
-    docker exec -d "$synchronous" node /e2e/provider-fixture.mjs >/dev/null
+  if has_helper "$helpers" verifier || has_helper "$helpers" synchronous_write; then
+    local provider
+    provider="$(ci_compose ps -q synchronous-write-provider)"
+    [[ -n "$provider" ]] || fail "deterministic provider helper was not created"
+    docker cp "${source_dir}/tests/uat/synchronous_write/provider-fixture.mjs" "${provider}:/e2e/provider-fixture.mjs" >/dev/null
+    docker exec -d "$provider" node /e2e/provider-fixture.mjs >/dev/null
   fi
 }
 
@@ -396,6 +417,7 @@ const lines = [
   "  prometheus:", "    image: prom/prometheus:v3.12.0", "    networks: [ci]",
   "  conflict-provider:", "    image: node:24-alpine", "    networks: [ci]",
   "  oauth-provider-mock:", "    image: node:26-alpine", "    networks: [ci]",
+  "  entra-mock:", "    image: node:26-alpine", "    networks: [ci]",
   "  oauth-compat-harness:", "    image: alpine:3.24", "    networks: [ci]",
   "  synchronous-write-provider:", "    image: node:22-alpine", "    networks: [ci]",
   "volumes:", "  oauth-provider-files:", `    name: ${project}_oauth-provider-files`, "    external: true",
@@ -406,9 +428,9 @@ NODE
 }
 
 run_synchronous_primitives_driver() {
-  local source_dir="$1" project="$2" postgres_user="$3" postgres_password="$4" postgres_db="$5" run_id="$6" attempt="$7" phase="$8" scenario="$9" digest="${10}"
+  local source_dir="$1" project="$2" postgres_db="$3" run_id="$4" attempt="$5" phase="$6" scenario="$7" digest="$8"
   local database_url
-  database_url="$(node - "$postgres_user" "$postgres_password" "$postgres_db" <<'NODE'
+  database_url="$(node - "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD" "$postgres_db" <<'NODE'
 const [user, password, database] = process.argv.slice(2);
 const url = new URL("postgresql://postgres:5432");
 url.username = user;
@@ -422,7 +444,7 @@ NODE
   go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
   run_go_source_container \
     "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "" "$ENV_FILE" \
-    "$postgres_password" "$postgres_user" "$postgres_db" -- \
+    "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD" "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" "$postgres_db" -- \
     "DATABASE_URL=${database_url}" \
     "DENSE_MEM_E2E_PRIMITIVES_PROVIDER_URL=http://synchronous-write-provider:8787/v1" \
     "DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1" \
@@ -432,13 +454,22 @@ NODE
 
   run_go_source_container \
     "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "" "$ENV_FILE" \
-    "$postgres_password" "$postgres_user" "$postgres_db" -- \
+    "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD" "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" "$postgres_db" -- \
     "DATABASE_URL=${database_url}" \
     "DENSE_MEM_E2E_PRIMITIVES_PROVIDER_URL=http://synchronous-write-provider:8787/v1" \
     "DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1" \
     "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
     go test -tags=compose_e2e ./internal/repository \
-      -run '^TestComposeRememberPrimitives$' -count=1
+      -run '^TestComposeRememberPrimitives$' -count=1 || return $?
+
+  run_go_source_container \
+    "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "" "$ENV_FILE" \
+    "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD" "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" "$postgres_db" -- \
+    "DATABASE_URL=${database_url}" \
+    "DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1" \
+    "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
+    go test ./cmd/internal/serverapp \
+      -run '^TestRememberServiceRejectsHistoricalOutcomesThroughPostgres$' -count=1
 }
 
 run_mcp_sdk_parity_driver() {
@@ -449,35 +480,4 @@ run_mcp_sdk_parity_driver() {
     "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "" "$ENV_FILE" -- \
     -- \
     go test ./internal/mcp -run '^TestConformanceHarness$' -count=1
-}
-
-run_identity_cleanup_seed() {
-  local source_dir="$1" project="$2" postgres_user="$3" postgres_password="$4" postgres_db="$5"
-  local team_id profile_id api_key
-  team_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
-  profile_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
-  api_key="dm_upgrade_$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("base64url"))')"
-  local go_image
-  go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
-
-  run_go_source_container \
-    "$source_dir" "$go_image" "$project" "$DENSE_MEM_CI_RUN_ID" "$DENSE_MEM_CI_RUN_ATTEMPT" \
-    "$DENSE_MEM_CI_PHASE" "$DENSE_MEM_CI_SCENARIO" "$DENSE_MEM_CI_IMAGE_DIGEST" "${project}_ci" "" "$ENV_FILE" \
-    "$api_key" "$team_id" "$profile_id" -- \
-    "DENSE_MEM_E2E_IDENTITY_SEED_VARIANT=bridge_valid" \
-    "DENSE_MEM_E2E_IDENTITY_TEAM_ID=${team_id}" \
-    "DENSE_MEM_E2E_IDENTITY_PROFILE_ID=${profile_id}" \
-    "DENSE_MEM_E2E_IDENTITY_API_KEY=${api_key}" \
-    "DENSE_MEM_E2E_POSTGRES_USER=${postgres_user}" \
-    "DENSE_MEM_E2E_POSTGRES_PASSWORD=${postgres_password}" \
-    "DENSE_MEM_E2E_POSTGRES_DB=${postgres_db}" \
-    "DENSE_MEM_E2E_POSTGRES_HOST=postgres" \
-    "DENSE_MEM_E2E_POSTGRES_PORT=5432" -- \
-    go test -tags=integration ./internal/storage/postgres \
-      -run '^TestIdentityCleanupComposeSeed$' -count=1 >&2 || return $?
-
-  local identity_file="${DENSE_MEM_CI_HELPER_DIR}/identity.env"
-  printf 'DENSE_MEM_E2E_UPGRADE_TEAM_ID=%s\nDENSE_MEM_E2E_UPGRADE_PROFILE_ID=%s\nDENSE_MEM_E2E_UPGRADE_API_KEY=%s\n' \
-    "$team_id" "$profile_id" "$api_key" > "$identity_file"
-  chmod 600 "$identity_file"
 }

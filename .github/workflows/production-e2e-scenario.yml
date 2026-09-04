@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   scenario:
-    name: Run ${{ inputs.scenario }}
+    name: Run ${{ inputs.scenario == 'full' && 'dreaming_telemetry_portal' || inputs.scenario }}
     runs-on: rootless-docker
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
@@ -112,9 +112,7 @@ jobs:
           [[ "${SHARED_PROJECT}" =~ ^densemem-ci-[a-z0-9][a-z0-9-]{0,50}$ ]]
 
       - name: Run scenario
-        id: run
         if: always()
-        continue-on-error: true
         env:
           DENSE_MEM_CI_RUN_PLAYWRIGHT: ${{ steps.configuration.outputs.playwright }}
           IMAGE: ${{ inputs.image }}
@@ -122,36 +120,33 @@ jobs:
         shell: bash
         run: |
           set +e
-          log="${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.log"
-          : > "${log}"
           status=1
           project="${SHARED_PROJECT:-${ISOLATED_PROJECT}}"
           stack_scenario="${SHARED_PROJECT:+shared}"
           stack_scenario="${stack_scenario:-${SCENARIO}}"
           if [[ -n "${project}" ]]; then
+            printf 'Running %s production E2E scenario in the %s phase (project %s)\n' \
+              "${SCENARIO}" "${PHASE}" "${project}"
+            stop_marker="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+            restore_workflow_commands() {
+              if [[ -n "${stop_marker}" ]]; then
+                printf '\n::%s::\n' "${stop_marker}"
+                stop_marker=""
+              fi
+            }
+            trap restore_workflow_commands EXIT
+            printf '::stop-commands::%s\n' "${stop_marker}"
             scripts/e2e-host-controller.sh run \
               "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${PHASE}" "${stack_scenario}" \
-              "${SCENARIO}" "${IMAGE}" "${GITHUB_WORKSPACE}" 2>&1 |
-              tail -c 262144 > "${log}"
-            status=${PIPESTATUS[0]}
+              "${SCENARIO}" "${IMAGE}" "${GITHUB_WORKSPACE}" 2>&1
+            status=$?
+            restore_workflow_commands
+            trap - EXIT
           else
-            echo "scenario setup did not produce a Compose project" > "${log}"
+            printf '%s\n' "scenario setup did not produce a Compose project"
           fi
-          printf '%s\n' "${status}" > "${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.status"
+          printf 'Scenario %s exited with status %s\n' "${SCENARIO}" "${status}"
           exit "${status}"
-
-      - name: Bound scenario diagnostics
-        if: always()
-        env:
-          SCENARIO: ${{ inputs.scenario }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          log="${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.log"
-          if [[ -f "${log}" ]]; then
-            tail -c 262144 "${log}" > "${log}.bounded"
-            mv -- "${log}.bounded" "${log}"
-          fi
 
       - name: Stop isolated stack
         if: always() && env.PHASE == 'exclusive' && steps.isolated.outputs.project != ''
@@ -160,33 +155,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! scripts/e2e-host-controller.sh stop "${PROJECT}"; then
-            printf '%s\n' 1 > "${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.status"
-            exit 1
-          fi
-
-      - name: Preserve scenario result
-        if: always()
-        env:
-          SCENARIO: ${{ inputs.scenario }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          status_file="${RUNNER_TEMP}/dense-mem-e2e-${SCENARIO}.status"
-          if [[ ! -f "${status_file}" ]]; then
-            printf '%s\n' 1 > "${status_file}"
-          fi
-          status="$(cat "${status_file}")"
-          [[ "${status}" =~ ^[0-9]+$ ]] || exit 1
-          [[ "${status}" == "0" ]] || exit "${status}"
-
-      - name: Upload bounded scenario diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: dense-mem-e2e-${{ env.PHASE }}-${{ env.SCENARIO }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/dense-mem-e2e-${{ env.SCENARIO }}.log
-            ${{ runner.temp }}/dense-mem-e2e-${{ env.SCENARIO }}.status
-          if-no-files-found: warn
-          retention-days: 3
+          scripts/e2e-host-controller.sh stop "${PROJECT}"

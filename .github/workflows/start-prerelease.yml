@@ -20,7 +20,7 @@ concurrency:
 jobs:
   start-prerelease:
     name: Start prerelease line
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout current main

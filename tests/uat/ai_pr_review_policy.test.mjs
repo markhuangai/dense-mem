@@ -271,6 +271,7 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   );
   assert.match(workflow, /EXPECTED_HEAD_SHA: \$\{\{ needs\.resolve\.outputs\.head_sha \}\}/);
   assert.match(workflow, /persist-credentials: false/);
+  assert.equal(workflow.match(/^    runs-on: ubuntu-latest$/gm)?.length, 2);
   assert.match(workflow, /effort: high/);
   assert.match(workflow, /parallel-count: "6"/);
   assert.match(workflow, /max-turns: "100"/);
@@ -293,7 +294,7 @@ test("AI review uses the Claude endpoint without obsolete executor routing", asy
   assert.doesNotMatch(workflow, /^\s+executor:/m);
   assert.ok(
     workflow.includes(
-      "ai-base-url: ${{ secrets.LOCAL_AI_ENDPOINT }}",
+      "ai-base-url: ${{ secrets.AI_ENDPOINT }}",
     ),
   );
 });

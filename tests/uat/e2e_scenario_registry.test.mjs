@@ -3,12 +3,13 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import {
-  EXPECTED_SCENARIOS,
+  assertCompatibleRegistry,
   assertValidRegistry,
   classifyScenario,
   helperProfilesFor,
   matrixFor,
   readRegistry,
+  validateRegistryExtension,
   validateRegistry,
 } from "../../scripts/e2e-scenario-registry.mjs";
 
@@ -31,6 +32,39 @@ function assertNode24Setup(job) {
   );
 }
 
+function assertPreviewBuildPolicy(workflow) {
+  const build = workflowJob(workflow, "build");
+  assert.match(build, /^    runs-on: ubuntu-latest$/m);
+  assert.match(
+    build,
+    /- name: Set up QEMU\n\s+uses: docker\/setup-qemu-action@v4\n\s+with:\n\s+platforms: arm64\n\n\s+- name: Set up Docker Buildx/,
+    "preview build must configure ARM emulation before Buildx",
+  );
+  assert.match(
+    build,
+    /- name: Expose GitHub Actions runtime\n\s+uses: crazy-max\/ghaction-github-runtime@v4\n\n\s+- name: Build production OCI layout/,
+    "preview build must expose the GitHub Actions runtime before Buildx",
+  );
+  for (const line of [
+    "docker buildx build \\",
+    "--target preview",
+    "--platform linux/amd64,linux/arm64/v8",
+    "--provenance=false",
+    '--cache-from "type=gha,scope=dense-mem-preview-${PR_NUMBER}"',
+    "--output \"type=oci,dest=${RUNNER_TEMP}/preview-oci,tar=false,name=dense-mem:test-${PR_NUMBER}\"",
+    '--build-arg "IMAGE_VERSION=test-${PR_NUMBER}"',
+    '--build-arg "IMAGE_REVISION=${HEAD_SHA}"',
+    '--build-arg "IMAGE_CREATED=${HEAD_CREATED}"',
+    '--build-arg "PREVIEW_PR=${PR_NUMBER}"',
+    '--build-arg "PREVIEW_HEAD=${HEAD_SHA}"',
+    '--build-arg "PREVIEW_MAIN=${MAIN_SHA}"',
+    '--build-arg "PREVIEW_RUN_ID=${RUN_ID}"',
+    '--build-arg "PREVIEW_RUN_ATTEMPT=${RUN_ATTEMPT}"',
+  ]) {
+    assert.ok(build.includes(line), `preview build is missing ${line}`);
+  }
+}
+
 function assertWorkflowOrchestration(workflow) {
   const exclusive = workflowJob(workflow, "exclusive");
   const exclusiveCleanup = workflowJob(workflow, "exclusive-cleanup");
@@ -40,7 +74,7 @@ function assertWorkflowOrchestration(workflow) {
   const report = workflowJob(workflow, "report");
 
   assert.match(exclusive, /^    needs: \[authorize, prechecks, stale-cleanup\]$/m);
-  assert.match(exclusive, /^    strategy:\n      fail-fast: true\n      max-parallel: 4$/m);
+  assert.match(exclusive, /^    strategy:\n      fail-fast: false\n      max-parallel: 4$/m);
   assert.match(exclusiveCleanup, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive\]$/m);
   assert.match(exclusiveCleanup, /^    if: always\(\) && needs\.authorize\.result == 'success'$/m);
   assert.match(exclusiveCleanup, /^    runs-on: rootless-docker$/m);
@@ -48,7 +82,7 @@ function assertWorkflowOrchestration(workflow) {
   assert.match(sharedStart, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup\]$/m);
   assert.match(sharedStart, /^    if: needs\.exclusive\.result == 'success' && needs\.exclusive-cleanup\.result == 'success'$/m);
   assert.match(shared, /^    needs: \[authorize, shared-start\]$/m);
-  assert.match(shared, /^    strategy:\n      fail-fast: true\n      max-parallel: 4$/m);
+  assert.match(shared, /^    strategy:\n      fail-fast: false\n      max-parallel: 4$/m);
   assert.match(sharedStop, /^    needs: \[shared-start, shared\]$/m);
   assert.match(sharedStop, /^    if: always\(\) && needs\.shared-start\.result == 'success'$/m);
   assert.match(report, /^    needs: \[authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup, shared-start, shared, shared-stop\]$/m);
@@ -57,14 +91,14 @@ function assertWorkflowOrchestration(workflow) {
 
 test("production E2E registry is complete and valid", () => {
   assert.deepEqual(validateRegistry(registry), []);
-  assert.deepEqual(registry.scenarios.map(({ name }) => name), EXPECTED_SCENARIOS);
+  assert.equal(new Set(registry.scenarios.map(({ name }) => name)).size, registry.scenarios.length);
   assert.doesNotThrow(() => assertValidRegistry(registry));
 });
 
-test("registry partitions eleven isolated and ten team-scoped scenarios", () => {
-  assert.equal(matrixFor(registry, "exclusive").include.length, 11);
-  assert.equal(matrixFor(registry, "shared_team").include.length, 10);
-  assert.deepEqual(helperProfilesFor(registry, "shared_team"), ["verifier"]);
+test("registry partitions exclusive and team-scoped scenarios", () => {
+  assert.ok(matrixFor(registry, "exclusive").include.length > 0);
+  assert.ok(matrixFor(registry, "shared_team").include.length > 0);
+  assert.ok(helperProfilesFor(registry, "shared_team").includes("verifier"));
 });
 
 test("registry validation fails closed for duplicate, unknown, and non-production rows", () => {
@@ -75,9 +109,8 @@ test("registry validation fails closed for duplicate, unknown, and non-productio
   const errors = validateRegistry(invalid);
   assert.ok(errors.some((error) => error.includes("duplicate scenario")));
   assert.ok(errors.some((error) => error.includes("must use runtime=production")));
-  assert.ok(errors.some((error) => error.includes("unknown scenario")));
-  assert.ok(errors.some((error) => error.includes("unknown isolation")));
   assert.ok(errors.some((error) => error.includes("unknown helper profile")));
+  assert.ok(errors.some((error) => error.includes("unknown isolation")));
 });
 
 test("unregistered scenarios default to an isolated production stack", () => {
@@ -87,10 +120,61 @@ test("unregistered scenarios default to an isolated production stack", () => {
   assert.equal(classified.audited, false);
 });
 
+test("registry compatibility permits additions but preserves baseline definitions", () => {
+  const extended = structuredClone(registry);
+  extended.scenarios.push({
+    name: "future_scenario",
+    isolation: "exclusive",
+    runtime: "production",
+    helper_profiles: [],
+    timeout_minutes: 30,
+    playwright: false,
+  });
+  assert.deepEqual(validateRegistryExtension(extended, registry), []);
+  assert.doesNotThrow(() => assertCompatibleRegistry(extended, registry));
+
+  const missing = structuredClone(registry);
+  missing.scenarios = missing.scenarios.filter(({ name }) => name !== "mcp_oauth");
+  assert.ok(validateRegistryExtension(missing, registry).includes("candidate is missing baseline scenario: mcp_oauth"));
+
+  for (const mutate of [
+    (scenario) => { scenario.isolation = "shared_team"; },
+    (scenario) => { scenario.helper_profiles = ["playwright"]; scenario.playwright = true; },
+    (scenario) => { scenario.timeout_minutes += 1; },
+    (scenario) => { scenario.playwright = !scenario.playwright; },
+  ]) {
+    const changed = structuredClone(registry);
+    mutate(changed.scenarios.find(({ name }) => name === "mcp_oauth"));
+    const errors = validateRegistryExtension(changed, registry);
+    assert.ok(errors.includes("candidate changed baseline scenario: mcp_oauth"));
+    assert.throws(() => assertCompatibleRegistry(changed, registry), /candidate changed baseline scenario: mcp_oauth/);
+  }
+});
+
 test("scenario classification fails closed for invalid registry metadata", () => {
   const invalid = structuredClone(registry);
   invalid.scenarios[0].runtime = "development";
   assert.throws(() => classifyScenario(invalid, invalid.scenarios[0].name), /invalid E2E scenario registry:.*runtime=production/s);
+});
+
+test("preview Buildx policy rejects weakened output settings", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8");
+  assert.doesNotThrow(() => assertPreviewBuildPolicy(workflow));
+  const withoutQemu = workflow.replace(
+    /\n      - name: Set up QEMU\n        uses: docker\/setup-qemu-action@v4\n        with:\n          platforms: arm64\n/,
+    "",
+  );
+  assert.notEqual(withoutQemu, workflow);
+  assert.throws(() => assertPreviewBuildPolicy(withoutQemu), /ARM emulation/);
+  const withoutRuntime = workflow.replace(
+    /\n      - name: Expose GitHub Actions runtime\n        uses: crazy-max\/ghaction-github-runtime@v4\n/,
+    "",
+  );
+  assert.notEqual(withoutRuntime, workflow);
+  assert.throws(() => assertPreviewBuildPolicy(withoutRuntime), /GitHub Actions runtime/);
+  const mutated = workflow.replace("--provenance=false", "--provenance=true");
+  assert.notEqual(mutated, workflow);
+  assert.throws(() => assertPreviewBuildPolicy(mutated), /preview build is missing --provenance=false/);
 });
 
 test("production jobs use capability-matched runners and PR-owned assets", async () => {
@@ -99,14 +183,14 @@ test("production jobs use capability-matched runners and PR-owned assets", async
     readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8"),
     readFile(new URL("../../.github/workflows/pr-test-image.yml", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/e2e-host-controller.sh", import.meta.url), "utf8"),
-    readFile(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url), "utf8"),
+    readFile(new URL("../../scripts/e2e-stack.yml", import.meta.url), "utf8"),
     readFile(new URL("../../scripts/e2e-ci.env.example", import.meta.url), "utf8"),
   ]);
   const authorize = workflowJob(workflow, "authorize");
-  assert.match(authorize, /^    runs-on: docker-runner$/m);
+  assert.match(authorize, /^    runs-on: ubuntu-latest$/m);
   assertNode24Setup(authorize);
   const report = workflowJob(workflow, "report");
-  assert.match(report, /^    runs-on: docker-runner$/m);
+  assert.match(report, /^    runs-on: ubuntu-latest$/m);
   assert.doesNotMatch(report, /actions\/setup-node@v7|actions\/download-artifact@v8/);
   for (const job of ["prechecks", "stale-cleanup", "exclusive-cleanup", "shared-start", "shared-stop"]) {
     const definition = workflowJob(workflow, job);
@@ -118,9 +202,13 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   const scenario = workflowJob(reusable, "scenario");
   assert.match(scenario, /^    runs-on: rootless-docker$/m);
   assertNode24Setup(scenario);
+  assert.match(scenario, /scripts\/e2e-host-controller\.sh run[\s\S]*?status=\$\?/);
+  assert.match(scenario, /::stop-commands::/);
+  assert.doesNotMatch(scenario, /continue-on-error|Preserve scenario result|tail -c 262144|tee "\$\{log\}"|Print failed scenario diagnostics/);
   assert.doesNotMatch(workflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch/);
   assert.doesNotMatch(workflow, /secrets:\s*inherit/);
   assert.doesNotMatch(caller, /secrets:\s*inherit/);
+  assert.doesNotThrow(() => assertPreviewBuildPolicy(caller));
   const workflowCall = workflow.slice(workflow.indexOf("on:\n  workflow_call:"), workflow.indexOf("\npermissions:"));
   const scenarioCall = reusable.slice(reusable.indexOf("on:\n  workflow_call:"), reusable.indexOf("\npermissions:"));
   assert.match(workflowCall, /^      image:$/m);
@@ -131,7 +219,8 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   assert.match(workflow, /max-parallel: 4/);
   assert.match(workflow, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
   assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
-  assert.match(workflow, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenario-registry\.mjs/);
+  assert.match(workflow, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenarios\.json\n\s+scripts\/e2e-scenario-registry\.mjs/);
+  assert.match(workflow, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --validate-compatible "\$\{baseline\}"/);
   assert.match(workflow, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --matrix exclusive/);
   assert.doesNotMatch(workflow, /node \.ci-source\/scripts\/e2e-scenario-registry\.mjs --matrix/);
   assert.match(reusable, /repository: \$\{\{ github\.event\.pull_request\.head\.repo\.full_name \}\}/);
@@ -146,7 +235,7 @@ test("production jobs use capability-matched runners and PR-owned assets", async
   assert.doesNotMatch(compose, /DENSE_MEM_CI_PROMETHEUS_FILE|DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
   assert.match(compose, /external: true/);
   assertWorkflowOrchestration(workflow);
-  assert.match(authorize, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenario-registry\.mjs/);
+  assert.match(authorize, /path: \.ci-policy[\s\S]*?sparse-checkout:\s*\|\n\s+\.github\/scripts\n\s+scripts\/e2e-scenarios\.json\n\s+scripts\/e2e-scenario-registry\.mjs/);
   assert.match(authorize, /node \.ci-policy\/scripts\/e2e-scenario-registry\.mjs --matrix exclusive/);
 });
 

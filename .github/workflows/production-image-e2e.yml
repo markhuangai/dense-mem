@@ -14,7 +14,7 @@ permissions:
 jobs:
   authorize:
     name: Authorize and resolve production image
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
       image: ${{ steps.resolve.outputs.image }}
@@ -32,6 +32,7 @@ jobs:
           path: .ci-policy
           sparse-checkout: |
             .github/scripts
+            scripts/e2e-scenarios.json
             scripts/e2e-scenario-registry.mjs
 
       - name: Validate immutable image
@@ -80,8 +81,11 @@ jobs:
         run: |
           set -euo pipefail
           registry="${GITHUB_WORKSPACE}/.ci-source/scripts/e2e-scenarios.json"
+          baseline="${GITHUB_WORKSPACE}/.ci-policy/scripts/e2e-scenarios.json"
           [[ -f "${registry}" ]]
+          [[ -f "${baseline}" ]]
           export DENSE_MEM_E2E_SCENARIO_REGISTRY="${registry}"
+          node .ci-policy/scripts/e2e-scenario-registry.mjs --validate-compatible "${baseline}"
           exclusive_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix exclusive)"
           shared_matrix="$(node .ci-policy/scripts/e2e-scenario-registry.mjs --matrix shared_team)"
           {
@@ -162,11 +166,11 @@ jobs:
         run: scripts/e2e-host-controller.sh stale-cleanup 86400
 
   exclusive:
-    name: Exclusive ${{ matrix.name }}
+    name: Exclusive ${{ matrix.name == 'full' && 'dreaming_telemetry_portal' || matrix.name }}
     needs: [authorize, prechecks, stale-cleanup]
     if: needs.prechecks.result == 'success' && needs.stale-cleanup.result == 'success'
     strategy:
-      fail-fast: true
+      fail-fast: false
       max-parallel: 4
       matrix: ${{ fromJSON(needs.authorize.outputs.exclusive_matrix) }}
     uses: ./.github/workflows/production-e2e-scenario.yml
@@ -259,7 +263,7 @@ jobs:
     needs: [authorize, shared-start]
     if: needs.shared-start.result == 'success'
     strategy:
-      fail-fast: true
+      fail-fast: false
       max-parallel: 4
       matrix: ${{ fromJSON(needs.authorize.outputs.shared_matrix) }}
     uses: ./.github/workflows/production-e2e-scenario.yml
@@ -309,7 +313,7 @@ jobs:
     name: Aggregate production E2E results
     needs: [authorize, prechecks, stale-cleanup, exclusive, exclusive-cleanup, shared-start, shared, shared-stop]
     if: always()
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Publish workflow summary

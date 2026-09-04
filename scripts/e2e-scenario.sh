@@ -9,6 +9,10 @@ fail() {
   exit 1
 }
 
+log() {
+  printf 'dense-mem CI scenario [%s]: %s\n' "$SCENARIO" "$*" >&2
+}
+
 [[ "$SCENARIO" =~ ^[a-z0-9_]+$ ]] || fail "a scenario name is required"
 scenario_info="$(node "${ROOT_DIR}/scripts/e2e-scenario-registry.mjs" --scenario "$SCENARIO")" || fail "scenario is not in the registry"
 node - "$scenario_info" <<'NODE' || fail "scenario is not audited in the production registry"
@@ -22,13 +26,19 @@ NODE
 : "${DENSE_MEM_E2E_TEAM_ID:?DENSE_MEM_E2E_TEAM_ID is required}"
 : "${DENSE_MEM_E2E_TEAM_NAME:?DENSE_MEM_E2E_TEAM_NAME is required}"
 : "${DENSE_MEM_E2E_API_KEY:?DENSE_MEM_E2E_API_KEY is required}"
+log "starting"
 
 wait_for_url() {
   local label="$1" url="$2" ca_file="${3:-}"
+  log "waiting for ${label}"
   for _ in $(seq 1 90); do
     if [[ -n "$ca_file" ]]; then
-      if curl --connect-timeout 5 --max-time 10 --cacert "$ca_file" -fsS "$url" >/dev/null 2>&1; then return 0; fi
+      if curl --connect-timeout 5 --max-time 10 --cacert "$ca_file" -fsS "$url" >/dev/null 2>&1; then
+        log "${label} is ready"
+        return 0
+      fi
     elif curl --connect-timeout 5 --max-time 10 -fsS "$url" >/dev/null 2>&1; then
+      log "${label} is ready"
       return 0
     fi
     sleep 2
@@ -43,6 +53,9 @@ if [[ -n "${DENSE_MEM_E2E_OAUTH_FIXTURE_TOKEN:-}" ]]; then
   wait_for_url "OAuth provider mock" "${DENSE_MEM_E2E_OAUTH_MOCK_URL%/}/health" "${NODE_EXTRA_CA_CERTS:-}"
   if [[ -n "${DENSE_MEM_E2E_OAUTH_HARNESS_URL:-}" ]]; then
     wait_for_url "OAuth compatibility harness" "${DENSE_MEM_E2E_OAUTH_HARNESS_URL%/}/health" "${NODE_EXTRA_CA_CERTS:-}"
+  fi
+  if [[ -n "${DENSE_MEM_ENTRA_MOCK_URL:-}" ]]; then
+    wait_for_url "Entra OIDC mock" "${DENSE_MEM_ENTRA_MOCK_URL%/}/.well-known/openid-configuration" "${NODE_EXTRA_CA_CERTS:-}"
   fi
 fi
 if [[ "$SCENARIO" == "conflict" ]]; then
@@ -63,8 +76,16 @@ export DENSE_MEM_E2E_SSO_CSRF_TOKEN="${DENSE_MEM_E2E_SSO_CSRF_TOKEN:-oauth-csrf-
 
 run_node_case() {
   local script="$1"
+  local status
   [[ -f "${ROOT_DIR}/${script}" ]] || fail "missing scenario script: ${script}"
-  node "${ROOT_DIR}/${script}"
+  log "running ${script}"
+  if node "${ROOT_DIR}/${script}"; then
+    log "passed ${script}"
+  else
+    status=$?
+    log "failed ${script} (exit ${status})"
+    return "$status"
+  fi
 }
 
 parse_json_root_field() {
@@ -91,63 +112,64 @@ process.stdin.on("end", () => {
 ' "$field"
 }
 
-parse_json_dream_statement() {
-  node -e '
-let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => { input += chunk; });
-process.stdin.on("end", () => {
-  let value;
-  try {
-    const payload = JSON.parse(input);
-    value = payload.cases?.find((item) => item?.name === "dream")?.result?.dream_statement;
-  } catch {
-    process.exitCode = 1;
-    return;
-  }
-  if (typeof value !== "string" || value.length === 0 || /[\r\n]/.test(value)) {
-    process.exitCode = 1;
-    return;
-  }
-  process.stdout.write(value);
-});
-'
-}
-
 run_playwright() {
-  [[ "${DENSE_MEM_E2E_RUN_PLAYWRIGHT:-0}" == "1" ]] || return 0
+  if [[ "${DENSE_MEM_E2E_RUN_PLAYWRIGHT:-0}" != "1" ]]; then
+    log "Playwright checks are disabled"
+    return 0
+  fi
   [[ -f "${ROOT_DIR}/web/package.json" ]] || fail "missing web package for Playwright"
+  local diagnostics_attempt_id=""
   case "$SCENARIO" in
     mcp_oauth) [[ -n "${DENSE_MEM_E2E_OAUTH_SECOND_TEAM_ID:-}" ]] || fail "OAuth Playwright handoff is missing" ;;
-    full|synchronous_write) [[ -n "${DENSE_MEM_E2E_DREAM_STATEMENT:-}" ]] || fail "Dream Playwright handoff is missing" ;;
+    synchronous_write)
+      local fixture_file="${DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE:-}"
+      [[ -n "$fixture_file" && -f "$fixture_file" ]] || fail "diagnostics Playwright handoff is missing"
+      diagnostics_attempt_id="$(node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(value.failed_attempt_id||"");' "$fixture_file")"
+      [[ -n "$diagnostics_attempt_id" ]] || fail "diagnostics Playwright attempt is missing"
+      export DENSE_MEM_E2E_DIAGNOSTIC_ATTEMPT_ID="$diagnostics_attempt_id"
+      ;;
+    full) [[ -n "${DENSE_MEM_E2E_DREAM_STATEMENT:-}" ]] || fail "Dream Playwright handoff is missing" ;;
   esac
   local -a specs=("tests-compose/search-convergence.spec.ts" "tests-compose/compose-portal.spec.ts")
   case "$SCENARIO" in
     community) specs=("tests-compose/community-recall.spec.ts") ;;
     conflict_queue) specs=("tests-compose/compose-conflict-queue.spec.ts") ;;
     mcp_oauth) specs=("tests-compose/oauth-team-resource.spec.ts") ;;
+    synchronous_write) specs=("tests-compose/remember-attempts.spec.ts") ;;
   esac
-  local web_dir="/tmp/dense-mem-web-${SCENARIO}-$$"
+  log "running Playwright specs: ${specs[*]}"
+  local web_dir="/tmp/dense-mem-web-${SCENARIO}-$$" status
   if [[ -e "$web_dir" ]]; then rm -r -- "$web_dir"; fi
   mkdir -p "$web_dir"
   cp -a "${ROOT_DIR}/web/." "$web_dir/"
-  (cd "$web_dir" && npm ci --ignore-scripts && npx playwright test --config playwright.compose.config.ts "${specs[@]}")
+  if (cd "$web_dir" && npm ci --ignore-scripts && npx playwright test --config playwright.compose.config.ts "${specs[@]}"); then
+    status=0
+  else
+    status=$?
+  fi
   rm -r -- "$web_dir"
+  if ((status != 0)); then
+    log "failed Playwright specs: ${specs[*]} (exit ${status})"
+    return "$status"
+  fi
+  log "passed Playwright specs: ${specs[*]}"
 }
 
 case "$SCENARIO" in
   mcp_boundaries) run_node_case tests/uat/mcp_boundaries_e2e.mjs ;;
-  oauth_provider_compatibility) run_node_case tests/uat/oauth_provider_compatibility_e2e.mjs ;;
+  oauth_provider_compatibility)
+    run_node_case tests/uat/oauth_provider_compatibility_e2e.mjs
+    if [[ -n "${DENSE_MEM_ENTRA_MOCK_URL:-}" ]]; then
+      run_node_case tests/uat/entra_scim_e2e.mjs
+    fi
+    ;;
   mcp_oauth) run_node_case tests/uat/oauth_mcp_e2e.mjs ;;
   private_memory_erasure) run_node_case tests/uat/private_memory_erasure_e2e.mjs ;;
   synchronous_write)
-    synchronous_output="$(node "${ROOT_DIR}/tests/uat/synchronous_write/runner.mjs")" || fail "synchronous-write scenario failed"
-    printf '%s\n' "${synchronous_output}"
-    DENSE_MEM_E2E_DREAM_STATEMENT="$(printf '%s' "${synchronous_output}" | parse_json_dream_statement)" || fail "synchronous-write scenario did not produce the Dream Playwright handoff"
-    export DENSE_MEM_E2E_DREAM_STATEMENT
+    run_node_case tests/uat/synchronous_write/runner.mjs || fail "synchronous-write scenario failed"
     ;;
   synchronous_write_primitives)
-    DENSE_MEM_E2E_WRITE_CASE=remember node "${ROOT_DIR}/tests/uat/synchronous_write/runner.mjs"
+    DENSE_MEM_E2E_WRITE_CASE=remember run_node_case tests/uat/synchronous_write/runner.mjs
     ;;
   identity_cleanup) run_node_case tests/uat/identity_cleanup_e2e.mjs ;;
   community) run_node_case tests/uat/community_recall_mcp_e2e.mjs ;;
@@ -183,4 +205,5 @@ case "$SCENARIO" in
   mcp_oauth|community|conflict_queue|synchronous_write|full) run_playwright ;;
 esac
 
+log "completed"
 printf '%s\n' "${SCENARIO} passed"

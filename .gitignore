@@ -12,13 +12,9 @@ user-dist/
 .env
 .env.local
 .env.*.local
-.env.e2e-*
-
-# Local docker-compose files created from examples/docker-compose.*.yml
+# Local Docker Compose configuration
 docker-compose.yml
 docker-compose.override.yml
-docker-compose.e2e-*.yml
-docker-compose.*-e2e-*.yml
 
 # IDE
 .vscode/
@@ -61,7 +57,5 @@ temp/
 *.bak
 telemetry-scrape-token
 prometheus.yml
-densemem-e2e-prometheus-*/
-densemem-e2e-oauth-*/
 # Codex local state and credentials; only the staging-test workflow is shared.
 .codex/*

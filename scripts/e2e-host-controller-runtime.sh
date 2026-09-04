@@ -8,7 +8,8 @@ docker_cli_paths() {
   docker_bin="$(readlink -f "$(command -v docker)")"
   [[ -f "$docker_bin" ]] || fail "the Docker CLI binary is unavailable"
   local compose_plugin=""
-  for candidate in /usr/libexec/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose; do
+  local docker_config="${DOCKER_CONFIG:-${HOME}/.docker}"
+  for candidate in "${docker_config}/cli-plugins/docker-compose" /usr/libexec/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose; do
     if [[ -f "$candidate" ]]; then
       compose_plugin="$(readlink -f "$candidate")"
       break
@@ -41,10 +42,11 @@ run_scenario() {
   validate_scenario "$stack_scenario"
   [[ "$phase" == "shared" && "$stack_scenario" == "shared" || "$phase" == "exclusive" && "$stack_scenario" == "$scenario" ]] ||
     fail "scenario stack identity is invalid"
-  validate_image_ref "$image_ref"
-  local digest="${image_ref##*@}"
-  validate_digest "$digest"
-  image_ref="${image_ref%@*}"
+  resolve_image_ref "$image_ref"
+  image_ref="$DENSE_MEM_CI_RESOLVED_IMAGE"
+  local digest="$DENSE_MEM_CI_RESOLVED_DIGEST"
+  local compose_image="${image_ref}@${digest}"
+  [[ "${DENSE_MEM_CI_LOCAL:-0}" == "1" ]] && compose_image="$image_ref"
   [[ -d "$source_dir" && "$source_dir" == /* ]] || fail "scenario source directory must be an absolute directory"
   local tested_commit
   tested_commit="$(git -C "$source_dir" rev-parse HEAD 2>/dev/null || true)"
@@ -58,7 +60,7 @@ run_scenario() {
   [[ "$helpers" =~ ^[a-z0-9_,]*$ ]] || fail "invalid helper profile list"
   local created_at
   created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  compose_base_env "$project" "$phase" "$stack_scenario" "$digest" "$run_id" "$attempt" "$created_at" "${image_ref}@${digest}"
+  compose_base_env "$project" "$phase" "$stack_scenario" "$digest" "$run_id" "$attempt" "$created_at" "$compose_image"
 
   local run_root="${JOB_DIR}/${run_id}-${attempt}/${phase}-${stack_scenario}"
   local helper_dir="${JOB_DIR}/${run_id}-${attempt}/${phase}-${stack_scenario}-helpers"
@@ -69,7 +71,7 @@ run_scenario() {
   mkdir -p "${run_root}"
   chmod 700 "${run_root}"
   local runtime_compose_host="${run_root}/runtime-compose.yml"
-  write_runtime_compose "$runtime_compose_host" "$project" "${image_ref}@${digest}"
+  write_runtime_compose "$runtime_compose_host" "$project" "$compose_image"
 
   local test_image="$SCENARIO_TEST_IMAGE" control_token telemetry_token embedding_model embedding_dimensions postgres_user postgres_password postgres_db
   control_token="$(env_value CONTROL_PORTAL_TOKEN 2>/dev/null || true)"
@@ -136,7 +138,7 @@ run_scenario() {
   local docker_socket
   docker_socket="$(docker_socket_path)"
   if [[ "$scenario" == "synchronous_write_primitives" ]]; then
-    run_synchronous_primitives_driver "$source_dir" "$project" "$postgres_user" "$postgres_password" "$postgres_db" "$run_id" "$attempt" "$phase" "$scenario" "$digest" ||
+    run_synchronous_primitives_driver "$source_dir" "$project" "$postgres_db" "$run_id" "$attempt" "$phase" "$scenario" "$digest" ||
       fail "synchronous-write primitive drivers failed"
   fi
   if [[ "$scenario" == "mcp_sdk_parity" ]]; then
@@ -222,6 +224,7 @@ run_scenario() {
     -e "DENSE_MEM_E2E_SSO_CSRF_TOKEN=${oauth_csrf_token}"
     -e "DENSE_MEM_E2E_MEMORY_SCENARIO=${scenario}"
     -e "DENSE_MEM_E2E_CONFLICT_REVIEW_LIVE=${conflict_live}"
+    -e "DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE=/results/${scenario}-diagnostics.json"
     -e "DENSE_MEM_CONTROL_TOKEN=${control_token}"
   )
   if [[ -f "${helper_dir}/conflict-review-driver" ]]; then
@@ -247,6 +250,9 @@ run_scenario() {
       )
     fi
   fi
+  if [[ "$scenario" == "oauth_provider_compatibility" ]]; then
+    docker_args+=(-e "DENSE_MEM_ENTRA_MOCK_URL=https://entra-mock:9443")
+  fi
   docker_args+=(
     "$test_image" bash -euc '
       set -euo pipefail
@@ -267,7 +273,7 @@ run_scenario() {
       fi
       docker version
       docker compose version
-      exec bash /workspace/scripts/e2e-ci-scenario.sh "$1"
+      exec bash /workspace/scripts/e2e-scenario.sh "$1"
     ' bash "$scenario"
   )
 
@@ -303,6 +309,28 @@ run_scenario() {
   set -e
   ((scenario_pipeline_status[1] == 0)) || fail "diagnostic redaction failed"
   local scenario_status="${scenario_pipeline_status[0]}"
+  if ((scenario_status != 0)); then
+    printf 'dense-mem CI scenario [%s]: failed stack diagnostics\n' "$scenario" >&2
+    set +e
+    (
+      DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="$helper_overlay"
+      export DENSE_MEM_CI_COMPOSE_OVERLAY_FILE
+      {
+        printf '%s\n' '--- Compose services ---'
+        ci_compose ps --all
+        printf '%s\n' '--- Last 200 lines per Compose service ---'
+        ci_compose logs --no-color --timestamps --tail 200
+      } 2>&1
+    ) | redact_diagnostics "$ENV_FILE" "$control_token" "$telemetry_token" "$postgres_password" "$api_key" "$identity_upgrade_api_key" "$oauth_token"
+    local -a diagnostics_pipeline_status=("${PIPESTATUS[@]}")
+    set -e
+    if ((diagnostics_pipeline_status[0] != 0)); then
+      printf 'dense-mem CI scenario [%s]: stack diagnostic collection failed\n' "$scenario" >&2
+    fi
+    if ((diagnostics_pipeline_status[1] != 0)); then
+      printf 'dense-mem CI scenario [%s]: stack diagnostic redaction failed\n' "$scenario" >&2
+    fi
+  fi
   trap - EXIT INT TERM
   docker rm "$container" >/dev/null
   container=""
@@ -312,7 +340,9 @@ run_scenario() {
 control_api_request() {
   local project="$1" phase="$2" scenario="$3" digest="$4" run_id="$5" attempt="$6" image_ref="$7" overlay="$8" token="$9" url="${10}" payload="${11}"
   (
-    compose_base_env "$project" "$phase" "$scenario" "$digest" "$run_id" "$attempt" "1970-01-01T00:00:00Z" "${image_ref}@${digest}"
+    local compose_image="${image_ref}@${digest}"
+    [[ "${DENSE_MEM_CI_LOCAL:-0}" == "1" ]] && compose_image="$image_ref"
+    compose_base_env "$project" "$phase" "$scenario" "$digest" "$run_id" "$attempt" "1970-01-01T00:00:00Z" "$compose_image"
     DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="$overlay" \
       ci_compose --profile client_env exec -T -e "DENSE_MEM_CI_CONTROL_TOKEN=${token}" client-env \
       sh -ec 'wget -q -O - --header="Authorization: Bearer ${DENSE_MEM_CI_CONTROL_TOKEN}" --header="Content-Type: application/json" --post-data="$1" "$2"' \

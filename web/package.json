@@ -13,7 +13,7 @@
     "build": "npm run typecheck && npm run build:control && npm run build:user",
     "test": "vitest run",
     "test:watch": "vitest",
-    "playwright": "bash ../scripts/e2e-compose.sh",
+    "e2e": "bash ../scripts/e2e.sh",
     "playwright:compose": "playwright test --config playwright.compose.config.ts",
     "playwright:mock": "npm run playwright:mock:control && npm run playwright:mock:user",
     "playwright:mock:control": "playwright test",

@@ -64,6 +64,9 @@ func (r *LedgerRepositoryImpl) CommitRelationshipConflictResolution(
 		if err := ensureActiveTeamForMutation(ctx, tx, resolution.TeamID); err != nil {
 			return err
 		}
+		if err := lockRelationshipConflictCaseSnapshotScope(ctx, tx, resolution.TeamID, resolution.ConflictID); err != nil {
+			return err
+		}
 		if err := lockConflictResolutionRelationships(ctx, tx, resolution); err != nil {
 			return err
 		}
@@ -641,6 +644,9 @@ func loadRelationshipConflictCaseForResolution(
 	resolution RelationshipConflictResolutionInput,
 	review ReviewRelationshipConflictCaseInput,
 ) (*RelationshipConflictCaseRecord, error) {
+	if err := lockRelationshipConflictCaseSnapshotScope(ctx, tx, resolution.TeamID, resolution.ConflictID); err != nil {
+		return nil, err
+	}
 	if resolution.Method == "deterministic" {
 		return loadRelationshipConflictCaseForReview(ctx, tx, review)
 	}

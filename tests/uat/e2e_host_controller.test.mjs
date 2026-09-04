@@ -1,539 +1,458 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { test } from "node:test";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 
-const [controllerMain, controllerStack, controllerRuntime] = await Promise.all([
-  readFile(new URL("../../scripts/e2e-host-controller.sh", import.meta.url), "utf8"),
-  readFile(new URL("../../scripts/e2e-host-controller-stack.sh", import.meta.url), "utf8"),
-  readFile(new URL("../../scripts/e2e-host-controller-runtime.sh", import.meta.url), "utf8"),
+const execFileAsync = promisify(execFile);
+
+const root = fileURLToPath(new URL("../..", import.meta.url));
+const scripts = join(root, "scripts");
+const [
+  controller,
+  stack,
+  runtime,
+  postgres,
+  scenario,
+  local,
+  compose,
+  productionWorkflow,
+  scenarioWorkflow,
+  packageJSON,
+  realController,
+] = await Promise.all([
+  readFile(join(scripts, "e2e-host-controller.sh"), "utf8"),
+  readFile(join(scripts, "e2e-host-controller-stack.sh"), "utf8"),
+  readFile(join(scripts, "e2e-host-controller-runtime.sh"), "utf8"),
+  readFile(join(scripts, "e2e-host-controller-postgres.sh"), "utf8"),
+  readFile(join(scripts, "e2e-scenario.sh"), "utf8"),
+  readFile(join(scripts, "e2e.sh"), "utf8"),
+  readFile(join(scripts, "e2e-stack.yml"), "utf8"),
+  readFile(join(root, ".github/workflows/production-image-e2e.yml"), "utf8"),
+  readFile(join(root, ".github/workflows/production-e2e-scenario.yml"), "utf8"),
+  readFile(join(root, "package.json"), "utf8"),
+  readFile(join(root, "tests/uat/e2e_host_controller_real.sh"), "utf8"),
 ]);
-const controllerPath = fileURLToPath(new URL("../../scripts/e2e-host-controller.sh", import.meta.url));
-const controller = [controllerMain, controllerStack, controllerRuntime].join("\n");
-const compose = await readFile(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url), "utf8");
-const redactorPath = fileURLToPath(new URL("../../scripts/e2e-redact-diagnostics.mjs", import.meta.url));
-const realControllerTest = await readFile(new URL("./e2e_host_controller_real.sh", import.meta.url), "utf8");
-const productionWorkflow = await readFile(new URL("../../.github/workflows/production-image-e2e.yml", import.meta.url), "utf8");
-const scenarioWorkflow = await readFile(new URL("../../.github/workflows/production-e2e-scenario.yml", import.meta.url), "utf8");
-const scenarioScript = await readFile(new URL("../../scripts/e2e-ci-scenario.sh", import.meta.url), "utf8");
-const e2eComposeScript = await readFile(new URL("../../scripts/e2e-compose.sh", import.meta.url), "utf8");
-const oauthComposeScript = await readFile(new URL("../../scripts/e2e-compose-oauth.sh", import.meta.url), "utf8");
-const oauthMCPScenario = await readFile(new URL("./oauth_mcp_e2e.mjs", import.meta.url), "utf8");
-const oauthTeamResourceSpec = await readFile(new URL("../../web/tests-compose/oauth-team-resource.spec.ts", import.meta.url), "utf8");
 
-async function runDoctor({ omit = "", dockerHost = "unix:///run/user/1001/docker.sock" } = {}) {
-  const directory = await mkdtemp(join(tmpdir(), "dense-mem-doctor-"));
-  const configDirectory = join(directory, "dense-mem-ci");
-  const binDirectory = join(directory, "bin");
-  const envFile = join(configDirectory, ".env");
-  const telemetryTokenFile = join(configDirectory, "telemetry-scrape-token");
-  const dockerPath = join(binDirectory, "docker");
-  try {
-    await mkdir(configDirectory, { recursive: true });
-    await mkdir(binDirectory, { recursive: true });
-    const envLines = [
-      "POSTGRES_USER=densemem",
-      "POSTGRES_PASSWORD=postgres-secret",
-      "POSTGRES_DB=densemem",
-      "AI_API_KEY=provider-secret",
-      "CONTROL_PORTAL_TOKEN=control-secret",
-      `DOCKER_HOST=${dockerHost}`,
-    ].filter((line) => !omit || !line.startsWith(`${omit}=`));
-    await writeFile(envFile, `${envLines.join("\n")}\n`);
-    await chmod(envFile, 0o600);
-    await writeFile(telemetryTokenFile, "telemetry-secret\n");
-    await chmod(telemetryTokenFile, 0o600);
-    await writeFile(dockerPath, `#!/usr/bin/env bash
-set -euo pipefail
-case "\${1:-}" in
-  info)
-    if [[ "\${2:-}" == "--format" ]]; then
-      printf '%s\\n' '["rootless"]'
-    fi
-    ;;
-  compose)
-    if [[ "\$*" == *"--format json"* ]]; then
-      printf '%s\\n' '{"services":{}}'
-    fi
-    ;;
-esac
-`);
-    await chmod(dockerPath, 0o700);
-    return spawnSync("bash", [controllerPath, "doctor"], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        HOME: directory,
-        PATH: `${binDirectory}:${process.env.PATH}`,
-        DENSE_MEM_CI_ENV_FILE: envFile,
-        DENSE_MEM_CI_TELEMETRY_TOKEN_FILE: telemetryTokenFile,
-        DENSE_MEM_CI_COMPOSE_FILE: fileURLToPath(new URL("../../scripts/e2e-ci-compose.yml", import.meta.url)),
-        DENSE_MEM_CI_PROMETHEUS_FILE: fileURLToPath(new URL("../../examples/prometheus.yml", import.meta.url)),
-        DENSE_MEM_CI_REGISTRY_SCRIPT: fileURLToPath(new URL("../../scripts/e2e-scenario-registry.mjs", import.meta.url)),
-      },
-    });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+async function executable(path, contents) {
+  await writeFile(path, contents, { mode: 0o700 });
+  await chmod(path, 0o700);
 }
 
-test("controller is PR-owned and has no persistent lease or manifest contract", () => {
+async function run(command, args, options = {}) {
+  return execFileAsync(command, args, { ...options, maxBuffer: 1024 * 1024 });
+}
+
+function nulLines(contents) {
+  return contents
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.split("\0").filter(Boolean));
+}
+
+test("the shared controller owns CI and local lifecycle without legacy state", () => {
   assert.match(controller, /CONTRACT_VERSION="dense-mem-ci-e2e\.v1"/);
-  for (const operation of ["doctor", "start", "run", "stop", "stale-cleanup", "precheck"]) {
-    assert.match(controller, new RegExp(`e2e-host-controller[.]sh ${operation}`));
+  for (const command of ["doctor", "start", "run", "stop", "stale-cleanup", "precheck"]) {
+    assert.match(controller, new RegExp("e2e-host-controller[.]sh " + command));
   }
-  assert.match(controller, /stale-cleanup \[MAX_AGE_SECONDS\] \[RUN_ID ATTEMPT PHASE\]/);
-  assert.match(controller, /JOB_DIR=.*RUNNER_TEMP/);
-  assert.match(controller, /DENSE_MEM_CI_PROMETHEUS_FILE/);
-  assert.match(controller, /DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
-  assert.match(controller, /validate_cleanup_phase\(\)/);
-  assert.match(controller, /validate_cleanup_phase "\$target_phase"/);
-  assert.match(controller, /validate_cleanup_phase[\s\S]*precheck/);
-  assert.match(controller, /for database_field in POSTGRES_USER POSTGRES_DB/);
-  assert.match(controller, /redact_diagnostics/);
-  assert.match(controller, /must contain at least two characters/);
-  assert.match(controller, /\[\[ \$\{#secret_value\} -ge 2 \]\]/);
-  assert.doesNotMatch(controller, /\$\{#secret_value\} -ne 1/);
-  assert.match(controller, /docker "\$\{docker_args\[@\]\}"/);
-  assert.match(controller, /git -C \"\$source_dir\" archive --format=tar --prefix=workspace\//);
-  assert.match(controller, /docker cp - \"\$container:\/\"/);
-  assert.match(controller, /SCENARIO_TEST_IMAGE=\"mcr\.microsoft\.com\/playwright:v1\.62\.1-noble\"/);
-  assert.doesNotMatch(controller, /DENSE_MEM_CI_TEST_IMAGE/);
-  assert.doesNotMatch(controller, /DENSE_MEM_CI_DAEMON_ID|DENSE_MEM_CI_DOCKER_SOCKET|LEASE_DIR|RUN_DIR|DENSE_MEM_E2E_SOURCE_REVISION|e2e-docker-proxy|e2e-runtime-adapter/);
+  assert.match(controller, /copy_worktree_source\(\)/);
+  assert.match(controller, /git -C "\$source_dir" ls-files --cached --others --exclude-standard -z/);
+  assert.match(controller, /DENSE_MEM_CI_LOCAL/);
+  assert.match(controller, /docker context inspect/);
+  assert.doesNotMatch(controller, /DENSE_MEM_CI_DAEMON_ID|DENSE_MEM_CI_DOCKER_SOCKET|LEASE_DIR|RUN_DIR|e2e-docker-proxy|e2e-runtime-adapter/);
   assert.doesNotMatch(controller, /\$\{source_dir\}:\/workspace|\$\{runtime_compose_host\}:|\$\{helper_overlay\}:|\$\{run_root\}\/results/);
-  assert.doesNotMatch(controller, /docker system prune|docker image rm[^\n]*--force/);
+  assert.match(runtime, /copy_git_source "\$container" "\$source_dir"/);
+  assert.match(stack, /copy_git_source "\$container" "\$source_dir"/);
 });
 
-test("validate_bundle rejects missing database identity and accepts a valid runner bundle", async () => {
-  const valid = await runDoctor();
-  assert.equal(valid.status, 0, valid.stderr);
-  assert.match(valid.stdout, /dense-mem-ci-e2e\.v1/);
-  for (const field of ["POSTGRES_USER", "POSTGRES_DB", "DOCKER_HOST"]) {
-    const invalid = await runDoctor({ omit: field });
-    assert.notEqual(invalid.status, 0, `${field} unexpectedly passed validation`);
-    assert.match(invalid.stderr, new RegExp(`${field} must be configured`));
-  }
-  const tcpHost = await runDoctor({ dockerHost: "tcp://127.0.0.1:2375" });
-  assert.notEqual(tcpHost.status, 0, "TCP Docker host unexpectedly passed validation");
-  assert.match(tcpHost.stderr, /DOCKER_HOST in the CI environment file must use a Unix socket/);
-  for (const [dockerHost, expectedError] of [
-    ["unix://relative/docker.sock", /CI Docker socket path must be absolute/],
-    ["unix:///run/user/1001/docker.sock,readonly", /CI Docker socket path is invalid/],
-  ]) {
-    const invalid = await runDoctor({ dockerHost });
-    assert.notEqual(invalid.status, 0, `${dockerHost} unexpectedly passed validation`);
-    assert.match(invalid.stderr, expectedError);
-  }
-  for (const dockerHost of ['"unix:///run/user/1001/docker.sock\\nextra"', '"unix:///run/user/1001/docker.sock\\rextra"']) {
-    const invalid = await runDoctor({ dockerHost });
-    assert.notEqual(invalid.status, 0, `${dockerHost} unexpectedly passed env-file validation`);
+test("local adapter builds the working tree and delegates to the shared controller", () => {
+  assert.match(local, /docker build --target production/);
+  assert.match(local, /DENSE_MEM_CI_LOCAL=1/);
+  assert.match(local, /DENSE_MEM_CI_ENV_FILE/);
+  assert.match(local, /DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
+  assert.match(local, /DENSE_MEM_CI_PROMETHEUS_FILE/);
+  assert.match(local, /CONTROLLER="\$\{DENSE_MEM_E2E_CONTROLLER:-\$\{ROOT_DIR\}\/scripts\/e2e-host-controller\.sh\}"/);
+  assert.match(local, /"\$CONTROLLER" start/);
+  assert.match(local, /"\$CONTROLLER" run/);
+  assert.match(local, /"\$CONTROLLER" stop/);
+  assert.match(local, /IMAGE_REF="\$IMAGE_TAG"/);
+  assert.doesNotMatch(local, /local image did not expose a content digest/);
+  assert.doesNotMatch(local, /DOCKER_HOST=|rootless/);
+  assert.deepEqual(JSON.parse(packageJSON).scripts, { e2e: "bash scripts/e2e.sh" });
+});
+
+test("local entrypoint classifies scenarios and delegates lifecycle calls", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-local-entrypoint-"));
+  try {
+    const localRoot = join(fixture, "repo");
+    const localScripts = join(localRoot, "scripts");
+    const localExamples = join(localRoot, "examples");
+    const bin = join(fixture, "bin");
+    const envFile = join(fixture, ".env");
+    const tokenFile = join(fixture, "telemetry-scrape-token");
+    const prometheusFile = join(fixture, "prometheus.yml");
+    const controllerLog = join(fixture, "controller.log");
+    const dockerLog = join(fixture, "docker.log");
+    const controllerStub = `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\0' "$@" "playwright=\${DENSE_MEM_CI_RUN_PLAYWRIGHT:-unset}" >> "\${DENSE_MEM_TEST_CONTROLLER_LOG}"
+printf '\\n' >> "\${DENSE_MEM_TEST_CONTROLLER_LOG}"
+case "\${1:-}" in
+  doctor|stop) ;;
+  start) printf '%s\\n' stub-project ;;
+  run)
+    if [[ "\${DENSE_MEM_TEST_SIGNAL_PARENT:-}" == "TERM" ]]; then
+      kill -TERM "$PPID"
+    fi
+    ;;
+  *) exit 2 ;;
+esac
+`;
+    const dockerStub = `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\0' "$@" >> "\${DENSE_MEM_TEST_DOCKER_LOG}"
+printf '\\n' >> "\${DENSE_MEM_TEST_DOCKER_LOG}"
+case "\${1:-}" in
+  build) ;;
+  image)
+    case "\${2:-}" in
+      inspect) printf '%s\\n' sha256:1111111111111111111111111111111111111111111111111111111111111111 ;;
+      rm) ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  *) exit 2 ;;
+esac
+`;
+    await mkdir(localScripts, { recursive: true });
+    await mkdir(localExamples, { recursive: true });
+    await mkdir(bin);
+    await writeFile(join(localScripts, "e2e.sh"), local, { mode: 0o700 });
+    await chmod(join(localScripts, "e2e.sh"), 0o700);
+    for (const name of ["e2e-scenario-registry.mjs", "e2e-scenarios.json", "e2e-redact-diagnostics.mjs"]) {
+      await writeFile(join(localScripts, name), await readFile(join(scripts, name)));
+    }
+    await writeFile(join(localExamples, "prometheus.yml"), await readFile(join(root, "examples/prometheus.yml")));
+    await executable(join(bin, "docker"), dockerStub);
+    await executable(join(bin, "controller"), controllerStub);
+    await writeFile(envFile, "CONTROL_PORTAL_TOKEN=local-test-token\n");
+    await writeFile(tokenFile, "local-telemetry-token\n");
+    await writeFile(prometheusFile, "global:\n  scrape_interval: 15s\n");
+    await writeFile(controllerLog, "");
+    await writeFile(dockerLog, "");
+    await run("git", ["init", "--quiet"], { cwd: localRoot });
+    await run("git", ["config", "user.email", "e2e@example.test"], { cwd: localRoot });
+    await run("git", ["config", "user.name", "Dense-Mem E2E"], { cwd: localRoot });
+    await run("git", ["add", "."], { cwd: localRoot });
+    await run("git", ["commit", "--quiet", "-m", "fixture"], { cwd: localRoot });
+
+    const baseEnv = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      DENSE_MEM_E2E_CONTROLLER: join(bin, "controller"),
+      DENSE_MEM_E2E_ENV_FILE: envFile,
+      DENSE_MEM_E2E_TELEMETRY_TOKEN_FILE: tokenFile,
+      DENSE_MEM_E2E_PROMETHEUS_FILE: prometheusFile,
+      DENSE_MEM_TEST_CONTROLLER_LOG: controllerLog,
+      DENSE_MEM_TEST_DOCKER_LOG: dockerLog,
+    };
+    const runScenario = async (name, env = baseEnv) => run("bash", [join(localScripts, "e2e.sh"), name], { env });
+    const runFailure = async (name, env, message) => {
+      await assert.rejects(runScenario(name, env), (error) => {
+        assert.match(`${error.stderr || ""}${error.stdout || ""}`, message);
+        return true;
+      });
+    };
+
+    await runScenario("mcp_boundaries");
+    let calls = nulLines(await readFile(controllerLog, "utf8"));
+    assert.deepEqual(calls.map(([command]) => command), ["doctor", "start", "run", "stop"]);
+    assert.equal(calls[1][3], "exclusive");
+    assert.equal(calls[1][4], "mcp_boundaries");
+    assert.match(calls[1][5], /^ghcr\.io\/markhuangai\/dense-mem:e2e-local-/);
+    assert.doesNotMatch(calls[1][5], /@sha256:/);
+    assert.equal(calls[2][3], "exclusive");
+    assert.equal(calls[2][4], "mcp_boundaries");
+    assert.equal(calls[2].at(-1), "playwright=0");
+    assert.equal(calls[3][1], "stub-project");
+
+    await writeFile(controllerLog, "");
+    await runScenario("mcp_sdk_parity");
+    calls = nulLines(await readFile(controllerLog, "utf8"));
+    assert.deepEqual(calls.map(([command]) => command), ["doctor", "start", "run", "stop"]);
+    assert.equal(calls[1][3], "shared");
+    assert.equal(calls[1][4], "shared");
+    assert.equal(calls[2][3], "shared");
+    assert.equal(calls[2][4], "shared");
+    assert.equal(calls[2][5], "mcp_sdk_parity");
+    assert.equal(calls[2].at(-1), "playwright=0");
+
+    await writeFile(controllerLog, "");
+    await runScenario("mcp_oauth");
+    calls = nulLines(await readFile(controllerLog, "utf8"));
+    assert.equal(calls[2][5], "mcp_oauth");
+    assert.equal(calls[2].at(-1), "playwright=1");
+
+    await writeFile(controllerLog, "");
+    await assert.rejects(
+      runScenario("mcp_boundaries", { ...baseEnv, DENSE_MEM_TEST_SIGNAL_PARENT: "TERM" }),
+      (error) => {
+        assert.equal(error.code, 143);
+        return true;
+      },
+    );
+    calls = nulLines(await readFile(controllerLog, "utf8"));
+    assert.deepEqual(calls.map(([command]) => command), ["doctor", "start", "run", "stop"]);
+
+    await writeFile(controllerLog, "");
+    await runFailure("not-valid", baseEnv, /usage: scripts\/e2e\.sh SCENARIO/);
+    assert.equal((await readFile(controllerLog, "utf8")).length, 0);
+    await runFailure("future_scenario", baseEnv, /not audited for local production execution/);
+    assert.equal((await readFile(controllerLog, "utf8")).length, 0);
+    await writeFile(join(localRoot, ".env"), "CONTROL_PORTAL_TOKEN=repository-fallback-token\n");
+    const missingEnv = { ...baseEnv, DENSE_MEM_E2E_ENV_FILE: join(fixture, "missing.env") };
+    await runFailure("mcp_boundaries", missingEnv, /missing environment file/);
+    assert.equal((await readFile(controllerLog, "utf8")).length, 0);
+
+    await executable(join(bin, "git"), "#!/usr/bin/env bash\nexit 42\n");
+    await writeFile(dockerLog, "");
+    await runFailure("mcp_boundaries", baseEnv, /unable to resolve the git revision/);
+    const dockerCalls = nulLines(await readFile(dockerLog, "utf8"));
+    assert.equal(dockerCalls.some(([command]) => command === "build"), false);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
   }
 });
 
-test("Compose consumes fixed runner config and controller-seeded inputs without host ports", () => {
-  assert.match(compose, /env_file:\n\s+- \$\{DENSE_MEM_CI_ENV_FILE/);
-  assert.doesNotMatch(compose, /DENSE_MEM_CI_PROMETHEUS_FILE/);
-  assert.doesNotMatch(compose, /DENSE_MEM_CI_TELEMETRY_TOKEN_FILE/);
-  assert.match(compose, /prometheus-config:/);
-  assert.match(compose, /TELEMETRY_SCRAPE_TOKEN:/);
-  assert.match(compose, /io\.dense-mem\.ci\.contract/);
+test("scenario containers discover a per-user Docker Compose plugin", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-compose-plugin-"));
+  try {
+    const bin = join(fixture, "bin");
+    const dockerConfig = join(fixture, "docker-config");
+    const docker = join(bin, "docker");
+    const plugin = join(dockerConfig, "cli-plugins", "docker-compose");
+    await mkdir(bin, { recursive: true });
+    await mkdir(join(dockerConfig, "cli-plugins"), { recursive: true });
+    await executable(docker, "#!/usr/bin/env sh\nexit 0\n");
+    await executable(plugin, "#!/usr/bin/env sh\nexit 0\n");
+
+    await run(
+      "bash",
+      [
+        "-c",
+        'set -euo pipefail; fail() { printf "%s\\n" "$*" >&2; exit 1; }; source "$1"; docker_cli_paths; [[ "$DENSE_MEM_CI_DOCKER_BIN" == "$(readlink -f "$2")" ]]; [[ "$DENSE_MEM_CI_COMPOSE_PLUGIN" == "$(readlink -f "$3")" ]]',
+        "compose-plugin-test",
+        join(scripts, "e2e-host-controller-runtime.sh"),
+        docker,
+        plugin,
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          DOCKER_CONFIG: dockerConfig,
+        },
+      },
+    );
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("local controller honors the selected daemon while filtering worktree source", async () => {
+  assert.match(controller, /telemetry-scrape-token/);
+  assert.match(controller, /test-results/);
+  assert.match(controller, /playwright-report/);
+  assert.match(controller, /densemem-e2e-/);
+  assert.match(controller, /tar --null --verbatim-files-from/);
+  assert.match(controller, /--transform='s,\^,workspace\//);
+
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-worktree-filter-"));
+  try {
+    const source = join(fixture, "source");
+    const bin = join(fixture, "bin");
+    const library = join(fixture, "controller");
+    const archiveList = join(fixture, "archive.list");
+    await mkdir(source, { recursive: true });
+    await mkdir(bin);
+    await mkdir(library);
+    await run("git", ["init", "--quiet"], { cwd: source });
+    await run("git", ["config", "user.email", "e2e@example.test"], { cwd: source });
+    await run("git", ["config", "user.name", "Dense-Mem E2E"], { cwd: source });
+
+    const files = {
+      "README.md": "allowed\n",
+      "scripts/e2e.sh": "allowed\n",
+      "src/allowed.txt": "allowed\n",
+      "deleted.txt": "removed from the worktree\n",
+      ".env": "blocked\n",
+      ".env.local": "blocked\n",
+      "nested/.env": "blocked\n",
+      "telemetry-scrape-token": "blocked\n",
+      "nested/telemetry-scrape-token": "blocked\n",
+      "coverage": "blocked\n",
+      "coverage.out": "blocked\n",
+      "test-results/report.json": "blocked\n",
+      "playwright-report/index.html": "blocked\n",
+      "nested/densemem-e2e-run/result.json": "blocked\n",
+    };
+    for (const [relative, contents] of Object.entries(files)) {
+      const path = join(source, relative);
+      await mkdir(join(path, ".."), { recursive: true });
+      await writeFile(path, contents);
+    }
+    await run("git", ["add", "."], { cwd: source });
+    await run("git", ["commit", "--quiet", "-m", "fixture"], { cwd: source });
+    await rm(join(source, "deleted.txt"));
+
+    const dockerStub = `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  cp)
+    [[ "\${2:-}" == - && "\${3:-}" == test-container:/ ]] || exit 2
+    tar -tf - > "\${DENSE_MEM_DOCKER_CP_ARCHIVE}"
+    ;;
+  image)
+    [[ "\${2:-}" == inspect ]] || exit 2
+    printf '%s\\n' sha256:2222222222222222222222222222222222222222222222222222222222222222
+    ;;
+  *) exit 2 ;;
+esac
+`;
+    await executable(join(bin, "docker"), dockerStub);
+    await writeFile(archiveList, "");
+
+    const controllerSources = {
+      "e2e-host-controller.sh": controller.slice(0, controller.indexOf('case "${1:-}" in')),
+      "e2e-host-controller-stack.sh": stack,
+      "e2e-host-controller-postgres.sh": postgres,
+      "e2e-host-controller-runtime.sh": runtime,
+      "e2e-redact-diagnostics.mjs": await readFile(join(scripts, "e2e-redact-diagnostics.mjs"), "utf8"),
+    };
+    assert.ok(!controllerSources["e2e-host-controller.sh"].includes('case "${1:-}" in'));
+    for (const [name, contents] of Object.entries(controllerSources)) {
+      const path = join(library, name);
+      await writeFile(path, contents);
+      if (name.endsWith(".sh")) await chmod(path, 0o700);
+    }
+
+    await run(
+      "bash",
+      [
+        "-c",
+        'set -euo pipefail; source "$1"; [[ "$(docker_socket_path)" == /explicit/docker.sock ]]; resolve_image_ref "ghcr.io/markhuangai/dense-mem:local-test"; [[ "$DENSE_MEM_CI_RESOLVED_IMAGE" == ghcr.io/markhuangai/dense-mem:local-test ]]; [[ "$DENSE_MEM_CI_RESOLVED_DIGEST" == sha256:2222222222222222222222222222222222222222222222222222222222222222 ]]; copy_worktree_source "$2" "$3"',
+        "worktree-filter-test",
+        join(library, "e2e-host-controller.sh"),
+        "test-container",
+        source,
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          DENSE_MEM_DOCKER_CP_ARCHIVE: archiveList,
+          DENSE_MEM_CI_LOCAL: "1",
+          DOCKER_HOST: "unix:///explicit/docker.sock",
+          DOCKER_CONTEXT: "",
+        },
+      },
+    );
+
+    const transferred = (await readFile(archiveList, "utf8"))
+      .trim()
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .sort();
+    assert.deepEqual(transferred, ["workspace/README.md", "workspace/scripts/e2e.sh", "workspace/src/allowed.txt"]);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("shared PostgreSQL provisioning keeps runtime identity least-privileged", () => {
+  assert.match(postgres, /DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER="densemem_e2e_bootstrap"/);
+  assert.match(postgres, /export DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD/);
+  assert.match(postgres, /CREATE EXTENSION IF NOT EXISTS vector/);
+  assert.match(postgres, /NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/);
+  assert.match(postgres, /ALTER DATABASE :"runtime_database" OWNER TO densemem_e2e_database_owner/);
+  assert.match(postgres, /role\.rolbypassrls/);
+  assert.match(postgres, /run_identity_cleanup_startup_matrix/);
+  assert.match(controller, /provision_postgres_runtime_role/);
+  assert.match(controller, /verify_postgres_runtime_migration_state/);
+});
+
+test("Compose stack has no host bindings and carries only project-scoped inputs", () => {
   assert.doesNotMatch(compose, /^\s+ports:/m);
-  const postgres = compose.slice(compose.indexOf("  postgres:"), compose.indexOf("\n  redis:"));
-  const redis = compose.slice(compose.indexOf("  redis:"), compose.indexOf("\n  server:"));
-  const server = compose.slice(compose.indexOf("  server:"), compose.indexOf("\n  prometheus:"));
-  const oauthHarness = compose.slice(compose.indexOf("  oauth-compat-harness:"), compose.indexOf("\n  synchronous-write-provider:"));
-  const volumes = compose.slice(compose.indexOf("\nvolumes:"));
-  const prometheusConfig = volumes.slice(volumes.indexOf("  prometheus-config:"), volumes.indexOf("\n  telemetry-scrape-token:"));
-  const telemetryToken = volumes.slice(volumes.indexOf("  telemetry-scrape-token:"), volumes.indexOf("\n  client-env:"));
-  assert.doesNotMatch(postgres, /env_file:/);
-  assert.doesNotMatch(redis, /env_file:/);
-  assert.match(server, /DOCKER_HOST: ""/);
-  assert.match(oauthHarness, /entrypoint: \[\]/);
-  assert.match(prometheusConfig, /external: true/);
-  assert.match(telemetryToken, /external: true/);
+  assert.match(compose, /POSTGRES_USER: \$\{DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER:/);
+  assert.match(compose, /POSTGRES_PASSWORD: \$\{DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD:/);
+  assert.match(compose, /env_file:\n\s+- \$\{DENSE_MEM_CI_ENV_FILE/);
+  assert.match(compose, /prometheus-config:/);
+  assert.match(compose, /telemetry-scrape-token:/);
+  assert.match(compose, /entra-mock:/);
+  assert.match(compose, /profiles: \[oauth_compatibility\]/);
+  assert.match(compose, /external: true/);
 });
 
-test("production workflow uses PR E2E assets, four-way matrices, and one shared-project output", () => {
-  assert.match(productionWorkflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
-  assert.match(productionWorkflow, /scripts\/e2e-host-controller\.sh/);
+test("verifier scenarios use the deterministic provider without replacing embeddings", () => {
+  assert.match(compose, /profiles: \[synchronous_write, verifier\]/);
+  assert.match(realController, /"  synchronous-write-provider:"[\s\S]*"    profiles: \[synchronous_write, verifier\]"/);
+  const verifierStart = stack.indexOf('if (has("verifier"))');
+  const verifierEnd = stack.indexOf('if (has("conflict_provider"))', verifierStart);
+  assert.ok(verifierStart >= 0 && verifierEnd > verifierStart);
+  const verifierBlock = stack.slice(verifierStart, verifierEnd);
+  assert.match(verifierBlock, /AI_VERIFIER_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
+  assert.doesNotMatch(verifierBlock, /\bAI_API_URL:/);
+  assert.match(stack, /has_helper "\$helpers" verifier \|\| has_helper "\$helpers" synchronous_write/);
+});
+
+test("scenario runner executes Entra and diagnostics through the shared path", () => {
+  assert.match(scenario, /dense-mem CI scenario \[%s\]/);
+  assert.match(scenario, /log "running \$\{script\}"/);
+  assert.match(scenario, /log "running Playwright specs: \$\{specs\[\*\]\}"/);
+  assert.match(scenario, /Entra OIDC mock/);
+  assert.match(scenario, /tests\/uat\/entra_scim_e2e\.mjs/);
+  assert.match(scenario, /synchronous_write\) specs=\("tests-compose\/remember-attempts\.spec\.ts"\)/);
+  assert.match(scenario, /DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE/);
+  assert.doesNotMatch(scenario, /parse_json_dream_statement|DENSE_MEM_E2E_DREAM_STATEMENT.*synchronous/);
+  assert.match(runtime, /failed stack diagnostics/);
+  assert.match(runtime, /ci_compose logs --no-color --timestamps --tail 200/);
+});
+
+test("production workflows use capability-matched runners and one OCI handoff", () => {
+  assert.match(productionWorkflow, /runs-on: ubuntu-latest/);
+  assert.match(productionWorkflow, /runs-on: rootless-docker/);
   assert.match(productionWorkflow, /max-parallel: 4/);
   assert.match(productionWorkflow, /shared_project: \$\{\{ steps\.start\.outputs\.shared_project \}\}/);
-  assert.match(productionWorkflow, /printf 'shared_project=%s\\n'/);
-  assert.doesNotMatch(productionWorkflow, /actions\/download-artifact@v8/);
-  assert.doesNotMatch(productionWorkflow, /acquire:|release:|cleanup-run:|e2e-stack\.sh|dense-mem-ci\/e2e-stack|manifest/);
-  assert.doesNotMatch(productionWorkflow, /rootless-docker-shared|runs-on:\s*pc/);
+  assert.match(productionWorkflow, /scripts\/e2e-scenario-registry\.mjs --validate-compatible/);
+  assert.doesNotMatch(productionWorkflow, /const isolations = new Set\(\["exclusive", "shared_team"\]\)/);
+  assert.doesNotMatch(productionWorkflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch|actions\/download-artifact|actions\/upload-artifact/);
+  assert.match(scenarioWorkflow, /runs-on: rootless-docker/);
+  assert.match(scenarioWorkflow, /actions\/setup-node@v7/);
+  assert.match(scenarioWorkflow, /stop-commands/);
+  assert.match(scenarioWorkflow, /dreaming_telemetry_portal/);
+  assert.doesNotMatch(scenarioWorkflow, /continue-on-error|Preserve scenario result|Print failed scenario diagnostics|tee "\$\{log\}"/);
+  assert.doesNotMatch(scenarioWorkflow, /actions\/upload-artifact/);
+  assert.doesNotMatch(controller, /conflict_provider\|conflict_review\|oauth\|oauth_compatibility\|playwright\|synchronous_write\|verifier/);
+  assert.doesNotMatch(stack, /local source_dir="\$1" project="\$2" postgres_user=/);
 });
 
-test("scenario workflow derives the stack from shared_project and executes PR scripts", () => {
-  assert.match(scenarioWorkflow, /shared_project:/);
-  assert.match(scenarioWorkflow, /PHASE: \$\{\{ inputs\.shared_project != ''/);
-  assert.match(scenarioWorkflow, /node scripts\/e2e-scenario-registry\.mjs/);
-  assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh start/);
-  assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh run/);
-  assert.match(scenarioWorkflow, /scripts\/e2e-host-controller\.sh stop/);
-  assert.match(scenarioWorkflow, /tail -c 262144/);
-  assert.doesNotMatch(scenarioWorkflow, /manifest|e2e-stack\.sh|dense-mem-ci\/e2e-stack|e2e-runtime-adapter/);
-});
-
-test("nested Docker clients use the runner socket at its original path", () => {
-  assert.match(controllerStack, /run_go_source_container\(\) \(/);
-  assert.match(controllerStack, /build_conflict_review_driver\(\) \(/);
-  assert.match(controllerRuntime, /--mount \"type=bind,source=\$\{docker_socket\},target=\$\{docker_socket\}\"/);
-  assert.match(controllerRuntime, /-e \"DOCKER_HOST=unix:\/\/\$\{docker_socket\}\"/);
-  assert.match(controllerStack, /--mount \"type=bind,source=\$\{docker_socket\},target=\$\{docker_socket\}\"/);
-  assert.match(controllerRuntime, /copy_file_into_container \"\$container\" \"\$runtime_compose_host\"/);
-  assert.match(controllerRuntime, /copy_file_into_container \"\$container\" \"\$DENSE_MEM_CI_DOCKER_BIN\"/);
-  assert.match(controllerRuntime, /copy_file_into_container \"\$container\" \"\$DENSE_MEM_CI_COMPOSE_PLUGIN\"/);
-  assert.match(controllerRuntime, /compose_plugin=\"\$\(readlink -f \"\$candidate\"\)\"/);
-  assert.match(controllerStack, /docker cp \"\$PROMETHEUS_FILE\" \"\$seed_container:\/config\/prometheus\.yml\"/);
-  assert.match(controllerStack, /docker cp \"\$TELEMETRY_TOKEN_FILE\" \"\$seed_container:\/token\/telemetry-scrape-token\"/);
-});
-
-test("runtime Compose view declares the OAuth helper volume", () => {
-  assert.match(controllerStack, /"volumes:", "  oauth-provider-files:", `    name: \$\{project\}_oauth-provider-files`, "    external: true"/);
-});
-
-test("OAuth compatibility helper trusts the generated provider CA", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dense-mem-oauth-helper-"));
-  try {
-    const result = spawnSync("bash", ["-e", "-u", "-o", "pipefail", "-c", `
-      set -euo pipefail
-      CONTRACT_VERSION=dense-mem-ci-e2e.v1
-      REPOSITORY=markhuangai/dense-mem
-      DENSE_MEM_CI_IMAGE_DIGEST=sha256:0000000000000000000000000000000000000000000000000000000000000000
-      JOB_DIR="$DENSE_MEM_TEST_JOB_DIR"
-      fail() { printf '%s\\n' "$*" >&2; exit 1; }
-      require_command() { :; }
-      has_helper() {
-        local helpers=",$1,"
-        [[ "$helpers" == *",$2,"* ]]
-      }
-      env_value() { return 1; }
-      openssl() {
-        local key="" certificate=""
-        while (($# > 0)); do
-          case "$1" in
-            -keyout) key="$2"; shift 2 ;;
-            -out) certificate="$2"; shift 2 ;;
-            *) shift ;;
-          esac
-        done
-        : > "$key"
-        : > "$certificate"
-      }
-      docker() { [[ "$1" == "build" ]]; }
-      source "$DENSE_MEM_TEST_STACK"
-      prepare_stack_helpers densemem-ci-test "$DENSE_MEM_TEST_SOURCE_DIR" oauth_compatibility 1 1 exclusive oauth_provider_compatibility >/dev/null
-    `], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        DENSE_MEM_TEST_JOB_DIR: join(directory, "job"),
-        DENSE_MEM_TEST_SOURCE_DIR: fileURLToPath(new URL("../..", import.meta.url)),
-        DENSE_MEM_TEST_STACK: fileURLToPath(new URL("../../scripts/e2e-host-controller-stack.sh", import.meta.url)),
-      },
-    });
-    assert.equal(result.status, 0, result.stderr);
-    const overlay = await readFile(join(directory, "job", "1-1", "exclusive-oauth_provider_compatibility-helpers", "compose.yml"), "utf8");
-    const harness = overlay.slice(overlay.indexOf("  oauth-compat-harness:"));
-    assert.match(harness, /environment:\n\s+SSL_CERT_FILE: "\/e2e\/ca\.pem"/);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("conflict-provider helpers align the effective embedding settings", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dense-mem-helper-dimensions-"));
-  try {
-    const result = spawnSync("bash", ["-e", "-u", "-o", "pipefail", "-c", `
-      set -euo pipefail
-      CONTRACT_VERSION=dense-mem-ci-e2e.v1
-      REPOSITORY=markhuangai/dense-mem
-      DENSE_MEM_CI_IMAGE_DIGEST=sha256:0000000000000000000000000000000000000000000000000000000000000000
-      JOB_DIR="$DENSE_MEM_TEST_JOB_DIR"
-      fail() { printf '%s\\n' "$*" >&2; exit 1; }
-      require_command() { :; }
-      has_helper() {
-        local helpers=",$1,"
-        [[ "$helpers" == *",$2,"* ]]
-      }
-      env_value() {
-        [[ "$1" == "AI_API_EMBEDDING_DIMENSIONS" ]] || return 1
-        printf '%s' "$DENSE_MEM_TEST_DIMENSIONS"
-      }
-      go() {
-        if [[ "$1" == "build" && "$2" == "-o" ]]; then
-          : > "$3"
-        fi
-      }
-      source "$DENSE_MEM_TEST_STACK"
-      build_conflict_review_driver() {
-        : > "$DENSE_MEM_CI_HELPER_DIR/conflict-review-driver"
-      }
-      prepare_stack_helpers densemem-ci-test "$DENSE_MEM_TEST_SOURCE_DIR" conflict_provider,synchronous_write 1 1 exclusive synchronous_write >/dev/null
-      printf '%s\\n' combined
-      cat "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE"
-      prepare_stack_helpers densemem-ci-test "$DENSE_MEM_TEST_SOURCE_DIR" conflict_provider 1 1 exclusive conflict >/dev/null
-      printf '%s\\n' standalone
-      cat "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE"
-    `], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        DENSE_MEM_TEST_JOB_DIR: join(directory, "job"),
-        DENSE_MEM_TEST_SOURCE_DIR: directory,
-        DENSE_MEM_TEST_STACK: fileURLToPath(new URL("../../scripts/e2e-host-controller-stack.sh", import.meta.url)),
-        DENSE_MEM_TEST_DIMENSIONS: "3072",
-      },
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /AI_API_EMBEDDING_MODEL: "dense-mem-conflict-e2e-embedding"/);
-    assert.match(result.stdout, /AI_API_EMBEDDING_DIMENSIONS: "3072"/);
-    assert.match(result.stdout, /DENSE_MEM_E2E_PROVIDER_DIMENSIONS: "3072"/);
-    assert.match(result.stdout, /standalone[\s\S]*AI_API_EMBEDDING_DIMENSIONS: "1536"/);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("conflict review drivers receive the provider settings used by their stack", () => {
-  assert.match(controllerRuntime, /CONFLICT_PROVIDER_EMBEDDING_MODEL/);
-  assert.match(controllerRuntime, /if has_helper "\$helpers" conflict_provider; then[\s\S]*embedding_model="\$CONFLICT_PROVIDER_EMBEDDING_MODEL"/);
-  assert.match(controllerRuntime, /AI_API_EMBEDDING_MODEL=\$\{embedding_model\}/);
-  assert.match(controllerRuntime, /AI_API_EMBEDDING_DIMENSIONS=\$\{embedding_dimensions\}/);
-  assert.match(controllerRuntime, /provider_field in[\s\S]*AI_API_EMBEDDING_MODEL AI_API_EMBEDDING_DIMENSIONS/);
-  assert.match(controllerRuntime, /AI_API_URL=http:\/\/conflict-provider:8081\/v1/);
-  assert.match(controllerRuntime, /AI_VERIFIER_API_URL=http:\/\/conflict-provider:8081\/v1/);
-  assert.match(controllerRuntime, /for provider_field in[\s\S]*AI_API_URL[\s\S]*AI_VERIFIER_TIMEOUT_SECONDS/);
-  assert.match(controllerRuntime, /if \[\[ -n \"\$provider_value\" \]\]; then[\s\S]*conflict_driver_env\+=/);
-  assert.match(controllerRuntime, /docker_args\+=\(-e \"\$provider_env\"\)/);
-});
-
-test("Go driver wrappers copy source into project-scoped containers", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dense-mem-go-driver-transfer-"));
-  try {
-    const binDirectory = join(directory, "bin");
-    const dockerPath = join(binDirectory, "docker");
-    await mkdir(binDirectory, { recursive: true });
-    await writeFile(dockerPath, `#!/usr/bin/env bash
-set -euo pipefail
-next=""
-if [[ "\${1:-}" == "create" ]]; then
-  next="$(grep -c '^create ' "\${DENSE_MEM_TEST_DOCKER_LOG}" || true)"
-fi
-printf '%s\\n' "$(printf '%q ' "$@")" >> "\${DENSE_MEM_TEST_DOCKER_LOG}"
-case "\${1:-}" in
-  create)
-    printf 'container-%s\\n' "$((next + 1))"
-    ;;
-  cp)
-    if [[ "\${2:-}" == "-" ]]; then cat >/dev/null; fi
-    if [[ "\${2:-}" != "-" ]]; then : > "\${3:?}"; fi
-    ;;
-  start) printf '%s\\n' 'driver passed' ;;
-  rm) ;;
-esac
-`);
-    await chmod(dockerPath, 0o700);
-    const result = spawnSync("bash", ["-e", "-u", "-o", "pipefail", "-c", `
-      set -euo pipefail
-      CONTRACT_VERSION=dense-mem-ci-e2e.v1
-      REPOSITORY=markhuangai/dense-mem
-      ENV_FILE="$DENSE_MEM_TEST_ENV"
-      CONTROLLER_DIR="$DENSE_MEM_TEST_ROOT/scripts"
-      DENSE_MEM_CI_HELPER_DIR="$DENSE_MEM_TEST_ROOT/helpers"
-      DENSE_MEM_CI_RUN_ID=11
-      DENSE_MEM_CI_RUN_ATTEMPT=2
-      DENSE_MEM_CI_PHASE=exclusive
-      DENSE_MEM_CI_SCENARIO=identity_cleanup
-      DENSE_MEM_CI_IMAGE_DIGEST=sha256:0000000000000000000000000000000000000000000000000000000000000000
-      fail() { printf '%s\\n' "$*" >&2; exit 1; }
-      env_value() { return 1; }
-      redact_diagnostics() { cat; }
-      copy_git_source() {
-        printf '%s\\n' archive | docker cp - "$1:/"
-      }
-      source "$DENSE_MEM_TEST_STACK"
-      mkdir -p "$DENSE_MEM_CI_HELPER_DIR"
-      caller_cleanup() { :; }
-      trap caller_cleanup EXIT
-      assert_caller_cleanup() { [[ "$(trap -p EXIT)" == *caller_cleanup* ]]; }
-      build_conflict_review_driver source-dir golang:1.26.6-bookworm densemem-ci-test 11 2 exclusive conflict
-      assert_caller_cleanup
-      run_synchronous_primitives_driver source-dir densemem-ci-test densemem postgres densemem 11 2 exclusive synchronous_write sha256:0000000000000000000000000000000000000000000000000000000000000000
-      assert_caller_cleanup
-      run_mcp_sdk_parity_driver source-dir densemem-ci-test 11 2 shared mcp_sdk_parity sha256:0000000000000000000000000000000000000000000000000000000000000000
-      assert_caller_cleanup
-      run_identity_cleanup_seed source-dir densemem-ci-test densemem postgres densemem
-      assert_caller_cleanup
-    `], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: `${directory}/bin:${process.env.PATH}`,
-        DENSE_MEM_TEST_ROOT: directory,
-        DENSE_MEM_TEST_STACK: fileURLToPath(new URL("../../scripts/e2e-host-controller-stack.sh", import.meta.url)),
-        DENSE_MEM_TEST_ENV: join(directory, ".env"),
-        DENSE_MEM_TEST_DOCKER_LOG: join(directory, "docker.log"),
-      },
-    });
-    assert.equal(result.status, 0, result.stderr);
-    const log = await readFile(join(directory, "docker.log"), "utf8");
-    assert.equal((log.match(/^create /gm) || []).length, 5);
-    assert.equal((log.match(/^cp /gm) || []).length, 6);
-    assert.match(log, /--network densemem-ci-test_ci/);
-    assert.match(log, /DENSE_MEM_E2E_IDENTITY_SEED_VARIANT=bridge_valid/);
-    assert.doesNotMatch(log, /--mount|DENSE_MEM_TEST_ENV|\.env/);
-    assert.match(log, /start --attach container-1/);
-    assert.match(log, /start --attach container-5/);
-    assert.equal((result.stdout.match(/^driver passed$/gm) || []).length, 4);
-    assert.equal((result.stderr.match(/^driver passed$/gm) || []).length, 1);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("production scenarios preserve Playwright handoff values", () => {
-  assert.match(scenarioScript, /DENSE_MEM_E2E_OAUTH_SECOND_TEAM_ID/);
-  assert.match(scenarioScript, /DENSE_MEM_E2E_DREAM_STATEMENT/);
-  assert.match(scenarioScript, /parse_json_dream_statement/);
-  assert.match(scenarioScript, /OAuth scenario result handoff is missing/);
-  assert.match(scenarioScript, /--connect-timeout 5 --max-time 10/);
-});
-
-test("MCP OAuth separates container traffic from the advertised public URL", () => {
-  assert.match(controllerRuntime, /DENSE_MEM_USER_URL=http:\/\/server:8080/);
-  assert.match(controllerRuntime, /DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL=https:\/\/dense-mem\.example\.test/);
-  assert.match(e2eComposeScript, /-e "DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL=\$USER_URL"/);
-  assert.match(oauthComposeScript, /DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL="\$USER_URL"/);
-  assert.match(oauthMCPScenario, /const mcpPublicBaseURL = requiredEnv\("DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL"\)/);
-  assert.match(oauthMCPScenario, /key: "MCP_PUBLIC_BASE_URL", value: mcpPublicBaseURL/);
-  assert.match(oauthMCPScenario, /metadata\.payload\.resource === `\$\{mcpPublicBaseURL\}\/mcp`/);
-  assert.match(oauthMCPScenario, /fetch\(`\$\{userURL\}\$\{path\}`/);
-  assert.match(oauthTeamResourceSpec, /const mcpPublicBaseURL = requiredEnv\("DENSE_MEM_E2E_MCP_PUBLIC_BASE_URL"\)/);
-  assert.match(oauthTeamResourceSpec, /const firstMCPURL = `\$\{mcpPublicBaseURL\}\/teams\/\$\{firstTeamID\}\/mcp`/);
-  assert.doesNotMatch(oauthTeamResourceSpec, /navigator\.clipboard\.readText/);
-  assert.match(oauthTeamResourceSpec, /getByRole\("button", \{ name: "MCP URL copied" \}\)/);
-});
-
-test("real controller fixtures use workflow-scoped names and leave no local state", () => {
-  assert.match(realControllerTest, /GITHUB_RUN_ID/);
-  assert.match(realControllerTest, /GITHUB_RUN_ATTEMPT/);
-  assert.match(realControllerTest, /fixture_prefix/);
-  assert.match(realControllerTest, /DENSE_MEM_CI_JOB_DIR/);
-  assert.match(realControllerTest, /controller created persistent lease\/run state/);
-  assert.match(realControllerTest, /for state_dir in "\$JOB_DIR" "\$CONFIG_DIR"/);
-  assert.match(realControllerTest, /stale-cleanup 1 "\$run_stale" "\$fixture_attempt" shared/);
-  assert.match(realControllerTest, /io\.dense-mem\.ci\.phase=exclusive/);
-  assert.doesNotMatch(realControllerTest, /DENSE_MEM_CI_DAEMON_ID|e2e-docker-proxy|e2e-runtime-adapter|release.*lease/);
-  assert.match(realControllerTest, /\"io\.dense-mem\.ci\.run-attempt\": attempt/);
-});
-
-test("diagnostic redaction protects secrets split across input chunks", async () => {
-  const { redactChunks } = await import("../../scripts/e2e-redact-diagnostics.mjs");
-  assert.equal(redactChunks(["prefix xxABC", "DEFyy suffix"], ["ABCDEF"]), "prefix xx[REDACTED]yy suffix");
-  assert.equal(redactChunks(["prefix zzabc", "defyy suffix"], ["a", "abcdef"]), "prefix zz[REDACTED]yy suffix");
-  assert.equal(redactChunks(["ordinary", " text"], ["ABCDEF"]), "ordinary text");
-  const output = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [redactorPath], {
-      env: { ...process.env, DENSE_MEM_CI_REDACT_ENV_FILE: "/dev/null", DENSE_MEM_CI_REDACT_EXTRA_VALUES: "ABCDEF" },
-    });
-    let text = "";
-    let error = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { text += chunk; });
-    child.stderr.on("data", (chunk) => { error += chunk; });
-    child.on("error", reject);
-    child.on("close", (code) => code === 0 ? resolve(text) : reject(new Error(`${code}: ${error}`)));
-    child.stdin.write("prefix xxABC");
-    setTimeout(() => child.stdin.end("DEFyy suffix"), 10);
-  });
-  assert.equal(output, "prefix xx[REDACTED]yy suffix");
-});
-
-test("controller diagnostics redact short credentials", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dense-mem-redact-short-"));
-  const envFile = join(directory, ".env");
-  try {
-    await writeFile(envFile, "POSTGRES_PASSWORD=abc\n");
-    const output = await new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, [redactorPath], {
-        env: {
-          ...process.env,
-          DENSE_MEM_CI_REDACT_ALLOW_SHORT: "1",
-          DENSE_MEM_CI_REDACT_ENV_FILE: envFile,
-        },
-      });
-      let text = "";
-      let error = "";
-      child.stdout.setEncoding("utf8");
-      child.stderr.setEncoding("utf8");
-      child.stdout.on("data", (chunk) => { text += chunk; });
-      child.stderr.on("data", (chunk) => { error += chunk; });
-      child.on("error", reject);
-      child.on("close", (code) => code === 0 ? resolve(text) : reject(new Error(`${code}: ${error}`)));
-      child.stdin.end("prefix abc suffix");
-    });
-    assert.equal(output, "prefix [REDACTED] suffix");
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("controller diagnostics leave one-character text intact", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "dense-mem-redact-one-char-"));
-  const envFile = join(directory, ".env");
-  try {
-    await writeFile(envFile, "POSTGRES_PASSWORD=a\n");
-    const output = await new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, [redactorPath], {
-        env: {
-          ...process.env,
-          DENSE_MEM_CI_REDACT_ALLOW_SHORT: "1",
-          DENSE_MEM_CI_REDACT_ENV_FILE: envFile,
-        },
-      });
-      let text = "";
-      let error = "";
-      child.stdout.setEncoding("utf8");
-      child.stderr.setEncoding("utf8");
-      child.stdout.on("data", (chunk) => { text += chunk; });
-      child.stderr.on("data", (chunk) => { error += chunk; });
-      child.on("error", reject);
-      child.on("close", (code) => code === 0 ? resolve(text) : reject(new Error(`${code}: ${error}`)));
-      child.stdin.end("prefix a suffix");
-    });
-    assert.equal(output, "prefix a suffix");
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("diagnostic redaction parses supported Compose env syntax and rejects interpolation", async () => {
-  const { valueFromEnvFile, valuesFromEnvFile } = await import("../../scripts/e2e-redact-diagnostics.mjs");
-  const directory = await mkdtemp(join(tmpdir(), "dense-mem-redact-env-"));
-  const envFile = join(directory, ".env");
-  try {
-    await writeFile(envFile, [
-      "# ignored comment",
-      "export PLAIN=plain-secret # inline comment",
-      "COLON: colon-secret # inline comment",
-      "DOUBLE=\"double\\\"quote\" # trailing comment",
-      "SINGLE='single # literal'",
-      "HASH=abc#def",
-    ].join("\n"));
-    assert.deepEqual(valuesFromEnvFile(envFile), ["plain-secret", "colon-secret", 'double"quote', "single # literal", "abc#def"]);
-    assert.equal(valueFromEnvFile(envFile, "PLAIN"), "plain-secret");
-    assert.equal(valueFromEnvFile(envFile, "COLON"), "colon-secret");
-    await writeFile(envFile, 'TOKEN="unterminated\n');
-    assert.throws(() => valuesFromEnvFile(envFile), /unsupported Compose env syntax/);
-    await writeFile(envFile, 'TOKEN="secret${OTHER}"\n');
-    assert.throws(() => valuesFromEnvFile(envFile), /variable interpolation is unsupported/);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
+test("obsolete local Compose entrypoints are removed", async () => {
+  for (const name of [
+    "e2e-compose.sh",
+    "e2e-compose-all.sh",
+    "e2e-compose-conflict.sh",
+    "e2e-compose-identity-cleanup.sh",
+    "e2e-compose-json.sh",
+    "e2e-compose-memory-spaces.sh",
+    "e2e-compose-oauth.sh",
+    "e2e-compose-private-memory.sh",
+    "e2e-compose-prometheus.sh",
+    "e2e-compose-security.sh",
+    "e2e-compose-synchronous-write.sh",
+  ]) {
+    await assert.rejects(readFile(join(scripts, name), "utf8"));
   }
 });

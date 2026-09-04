@@ -27,7 +27,7 @@ jobs:
       }}
     permissions:
       contents: read
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
     outputs:
       should_release: ${{ steps.policy.outputs.should_release }}
 
@@ -87,7 +87,7 @@ jobs:
       }}
     permissions:
       contents: write
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       should_publish: ${{ steps.version.outputs.is_prerelease }}
@@ -201,7 +201,7 @@ jobs:
       packages: read
       pull-requests: read
       statuses: read
-    runs-on: docker-runner
+    runs-on: ubuntu-latest
     outputs:
       preview_base: ${{ steps.export.outputs.preview_base }}
       preview_digest: ${{ steps.export.outputs.preview_digest }}
@@ -439,7 +439,7 @@ jobs:
       packages: write
       pull-requests: read
       statuses: read
-    runs-on: rootless-docker
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout release helpers

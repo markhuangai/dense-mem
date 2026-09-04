@@ -15,15 +15,15 @@ const runID = `conflict-e2e-${Date.now()}`;
 
 let rpcID = 0;
 
-const early = await earlyQuorumScenario(seededTeamID);
-await assertRemovedPlacementTools(early.profileA.apiKey);
-const embeddingFailure = await embeddingFailureRetryScenario();
-const authoritative = await dueUniqueAuthoritativeScenario();
-const majority = await dueMajorityScenario();
-const selected = await aiSelectionScenario();
-const abstained = await aiAbstentionScenario();
-const failedDays = await fiveFailedDaysScenario();
-const provenance = await provenanceAndIsolationScenario();
+const early = await runStage("early quorum", () => earlyQuorumScenario(seededTeamID));
+await runStage("removed placement tools", () => assertRemovedPlacementTools(early.profileA.apiKey));
+const embeddingFailure = await runStage("embedding failure retry", embeddingFailureRetryScenario);
+const authoritative = await runStage("authority versus majority", dueUniqueAuthoritativeScenario);
+const majority = await runStage("due majority", dueMajorityScenario);
+const selected = await runStage("AI selection", aiSelectionScenario);
+const abstained = await runStage("AI abstention", aiAbstentionScenario);
+const failedDays = await runStage("five failed review days", fiveFailedDaysScenario);
+const provenance = await runStage("supporter provenance and isolation", provenanceAndIsolationScenario);
 
 console.log(JSON.stringify({
   status: "ok",
@@ -38,6 +38,19 @@ console.log(JSON.stringify({
   supporter_provenance: provenance,
   removed_placement_tools_absent: true,
 }, null, 2));
+
+async function runStage(label, action) {
+  const startedAt = Date.now();
+  console.error(`conflict e2e: ${label} started`);
+  try {
+    const result = await action();
+    console.error(`conflict e2e: ${label} passed (${Date.now() - startedAt} ms)`);
+    return result;
+  } catch (error) {
+    console.error(`conflict e2e: ${label} failed (${Date.now() - startedAt} ms)`);
+    throw error;
+  }
+}
 
 async function earlyQuorumScenario(teamID) {
   const fixture = await createConflictFixture("early-quorum", {
@@ -214,8 +227,8 @@ async function provenanceAndIsolationScenario() {
     });
   }
 
-  const beforeIndependent = await currentConflict(profileC.apiKey, fixture.relationshipA, "open");
-  const copiedPosition = positionForRelationship(beforeIndependent, fixture.relationshipA);
+  const beforeIndependent = await currentConflict(profileC.apiKey, fixture.relationshipA, "open", fixture.conflictID);
+  const copiedPosition = positionByID(beforeIndependent, fixture.positionAID);
   assert(copiedPosition.supporter_count === 21, `copied supporter count = ${copiedPosition.supporter_count}`);
   const observedVersion = Number(beforeIndependent.version);
   // Reusing this observed version must succeed once and be held after that commit advances the case.
@@ -226,8 +239,8 @@ async function provenanceAndIsolationScenario() {
     conflictContext: { conflict_id: fixture.conflictID, expected_version: observedVersion },
   });
 
-  const afterIndependent = await currentConflict(profileC.apiKey, fixture.relationshipA, "open");
-  const independentPosition = positionForRelationship(afterIndependent, fixture.relationshipA);
+  const afterIndependent = await currentConflict(profileC.apiKey, fixture.relationshipA, "open", fixture.conflictID);
+  const independentPosition = positionByID(afterIndependent, fixture.positionAID);
   assert(independentPosition.supporter_count === 21, `same profile gained an extra vote: ${JSON.stringify(independentPosition)}`);
   assert(Number(afterIndependent.version) > observedVersion, "fresh conflict_context support did not advance the conflict version");
 
@@ -480,14 +493,21 @@ function relationshipHint(input, evidence) {
   };
 }
 
-async function currentConflict(apiKey, relationshipID, status) {
+async function currentConflict(apiKey, relationshipID, status, conflictID = "") {
+  let observedConflicts = [];
   for (let attempt = 0; attempt < 240; attempt += 1) {
     const trace = await mcpSuccess(apiKey, "trace_memory", { relationship_id: relationshipID });
-    const conflict = (trace.conflicts ?? []).find((item) => item.status === status && (item.positions ?? []).some((position) => (position.relationship_ids ?? []).includes(relationshipID)));
+    observedConflicts = trace.conflicts ?? [];
+    const conflict = observedConflicts.find((item) => item.status === status && (
+      conflictID
+        ? item.conflict_id === conflictID
+        : (item.positions ?? []).some((position) => (position.relationship_ids ?? []).includes(relationshipID))
+    ));
     if (conflict) return conflict;
     await delay(250);
   }
-  throw new Error(`timed out waiting for ${status} conflict for relationship ${relationshipID}`);
+  const observed = observedConflicts.map((item) => `${item.conflict_id}:${item.status}`).join(",") || "none";
+  throw new Error(`timed out waiting for ${status} conflict for relationship ${relationshipID}; observed ${observed}`);
 }
 
 async function waitForConflictRecall(apiKey, query, conflictID) {
