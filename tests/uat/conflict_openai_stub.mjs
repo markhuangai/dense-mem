@@ -181,6 +181,7 @@ function semanticAssessmentResponse(input, repairTurn) {
     request_id: input.request_id,
     evidence_security_results: securityResults,
     evidence_equivalence_results: evidenceEquivalenceResults,
+    evidence_conflict_results: [],
     entity_results: entityResults,
     relationship_results: relationshipResults,
   };

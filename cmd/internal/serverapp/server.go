@@ -36,6 +36,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	"github.com/markhuangai/dense-mem/internal/service/evidenceconflict"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
@@ -106,6 +107,7 @@ func RunActiveServer(
 		},
 	)
 	conflictQueueService := conflictqueue.New(ledgerRepo)
+	evidenceConflictService := evidenceconflict.New(ledgerRepo)
 	searchRepo := repository.NewSearchRepository(pgDB.GetDB(), rlsHelper)
 	if err := checkActiveAuthority(authority); err != nil {
 		log.Fatalf("active boot blocked: %v", err)
@@ -421,22 +423,23 @@ func RunActiveServer(
 			credentialService,
 			usageMetricsService,
 			http.ControlPortalTelemetry{
-				Reader:           telemetryReader,
-				HTTPMetrics:      telemetryHTTPMetrics,
-				ScrapeHandler:    telemetryScrapeHandler,
-				ScrapeToken:      cfg.GetTelemetryScrapeToken(),
-				SSO:              ssoService,
-				Directory:        directoryIdentityService,
-				ControlIdentity:  controlIdentityService,
-				Config:           appConfigService,
-				Logs:             operationLogService,
-				RecallFeedback:   recallFeedbackEventService,
-				Dreams:           controlDreamSvc,
-				Communities:      communitySvc,
-				ConflictQueue:    conflictQueueService,
-				Convergence:      service.NewSearchConvergenceService(searchRepo),
-				RememberAttempts: service.NewRememberAttemptDiagnosticsService(ledgerRepo),
-				PrivateMemory:    privateMemoryService,
+				Reader:            telemetryReader,
+				HTTPMetrics:       telemetryHTTPMetrics,
+				ScrapeHandler:     telemetryScrapeHandler,
+				ScrapeToken:       cfg.GetTelemetryScrapeToken(),
+				SSO:               ssoService,
+				Directory:         directoryIdentityService,
+				ControlIdentity:   controlIdentityService,
+				Config:            appConfigService,
+				Logs:              operationLogService,
+				RecallFeedback:    recallFeedbackEventService,
+				Dreams:            controlDreamSvc,
+				Communities:       communitySvc,
+				ConflictQueue:     conflictQueueService,
+				EvidenceConflicts: evidenceConflictService,
+				Convergence:       service.NewSearchConvergenceService(searchRepo),
+				RememberAttempts:  service.NewRememberAttemptDiagnosticsService(ledgerRepo),
+				PrivateMemory:     privateMemoryService,
 			},
 			healthConfig,
 			logger,

@@ -43,6 +43,8 @@ type RememberAssessmentItem struct {
 	Fragment                    repository.EvidenceFragment
 	EvidenceID                  string
 	DuplicateAssessmentRequired bool
+	// ExactReuseEligible mirrors the repository's exact-byte coalescing fence.
+	ExactReuseEligible bool
 }
 
 // RememberAssessmentSnapshot is the in-memory request snapshot used by the
@@ -230,7 +232,9 @@ func AssessSynchronousRemember(
 	providerCtx := observability.WithMetricIdentity(ctx, input.Scope.TeamID, input.Scope.OwnerProfileID)
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationSemanticAssessment, 1)
 	started := time.Now()
-	response, _, finalRequest, err := concrete.assessRememberSession(providerCtx, request, refresh, 0)
+	response, _, finalRequest, err := concrete.assessRememberSessionWithValidator(providerCtx, request, refresh, 0, func(_ assessor.SemanticAssessmentRequest, response assessor.SemanticAssessmentResponse) []assessor.SemanticValidationError {
+		return validateSubmissionAssessmentEvidenceConflictCanonicalization(plan, response)
+	})
 	if err != nil {
 		providerTurns := SynchronousAssessmentProviderTurns(err)
 		outcome := "provider_error"

@@ -104,6 +104,121 @@ func TestSynchronousAssessmentBuildsRequestAndCommitInput(t *testing.T) {
 	require.Len(t, securityResults, 2)
 }
 
+func TestAssessSynchronousRememberRepairsCanonicalDuplicateConflictCitations(t *testing.T) {
+	teamID, ownerID, ingestID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	content := "the same submitted claim"
+	first := repository.EvidenceFragment{FragmentID: uuid.NewString(), EvidenceIndex: 0, Content: content}
+	second := repository.EvidenceFragment{FragmentID: uuid.NewString(), EvidenceIndex: 1, Content: content}
+	input := SynchronousAssessmentInput{
+		Scope: RememberAssessmentScope{TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID},
+		Snapshot: RememberAssessmentSnapshot{
+			Scope:    RememberAssessmentScope{TeamID: teamID, OwnerProfileID: ownerID, IngestID: ingestID},
+			Evidence: []repository.EvidenceFragment{first, second},
+			Items: []RememberAssessmentItem{
+				{ItemID: uuid.NewString(), Fragment: first, DuplicateAssessmentRequired: true, ExactReuseEligible: true},
+				{ItemID: uuid.NewString(), Fragment: second, DuplicateAssessmentRequired: true, ExactReuseEligible: true},
+			},
+		},
+	}
+	provider := &synchronousAssessmentProviderStub{response: func(request assessor.SemanticAssessmentRequest, call int) assessor.SemanticAssessmentResponse {
+		response := assessor.SemanticAssessmentResponse{
+			RequestID:                  request.RequestID,
+			EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{},
+			EvidenceConflictResults:    []assessor.SemanticAssessmentEvidenceConflictResult{},
+			EntityResults:              []assessor.SemanticAssessmentEntityResult{},
+			RelationshipResults:        []assessor.SemanticAssessmentRelationshipResult{},
+		}
+		for _, evidence := range request.Evidence {
+			response.EvidenceSecurityResults = append(response.EvidenceSecurityResults, assessor.SemanticAssessmentEvidenceSecurityResult{
+				EvidenceID: evidence.EvidenceID, Decision: "pass", Signals: []assessor.SemanticAssessmentSecuritySignal{},
+			})
+		}
+		if call == 1 {
+			firstEvidence := request.Evidence[0]
+			secondEvidence := request.Evidence[1]
+			firstStart, _ := assessor.SemanticAssessmentBoundaryRef(firstEvidence, 0)
+			firstEnd, _ := assessor.SemanticAssessmentBoundaryRef(firstEvidence, len([]rune(content)))
+			secondStart, _ := assessor.SemanticAssessmentBoundaryRef(secondEvidence, 0)
+			secondEnd, _ := assessor.SemanticAssessmentBoundaryRef(secondEvidence, len([]rune(content)))
+			response.EvidenceConflictResults = []assessor.SemanticAssessmentEvidenceConflictResult{{Positions: []assessor.SemanticAssessmentEvidenceConflictPosition{
+				{EvidenceID: firstEvidence.EvidenceID, StartRef: firstStart, EndRef: firstEnd},
+				{EvidenceID: secondEvidence.EvidenceID, StartRef: secondStart, EndRef: secondEnd},
+			}}}
+		}
+		return response
+	}}
+	deps := SynchronousAssessmentDependencies{
+		Catalog:  &submissionAssessmentWorkerCatalogStub{entityComplete: true, predicateComplete: true},
+		Provider: provider,
+		Limits:   assessor.DefaultSemanticAssessmentLimits(),
+	}
+
+	prepared, err := AssessSynchronousRemember(context.Background(), deps, input)
+	require.NoError(t, err)
+	require.Equal(t, 1, provider.calls)
+	require.Equal(t, 1, provider.repairCalls)
+	require.Equal(t, 2, prepared.Response.ProviderTurns)
+	require.Empty(t, prepared.Response.EvidenceConflictResults)
+}
+
+func TestSubmissionAssessmentConflictCanonicalizationCoversCanonicalSources(t *testing.T) {
+	candidateID := "candidate-fragment"
+	plan := submissionAssessmentPlan{
+		Items: []submissionAssessmentItem{
+			{EvidenceID: "evidence:0", Fragment: repository.EvidenceFragment{FragmentID: "submitted-exact", Content: "exact"}},
+			{EvidenceID: "evidence:1", Fragment: repository.EvidenceFragment{FragmentID: "submitted-batch", Content: "batch"}, DuplicateAssessmentRequired: true},
+			{EvidenceID: "evidence:2", Fragment: repository.EvidenceFragment{FragmentID: "submitted-plain", Content: "plain"}},
+		},
+		exactDuplicateByEvidenceID: map[string]repository.RememberDuplicateResolution{
+			"evidence:0": {CandidateFragmentID: "canonical-exact"},
+		},
+		knownEvidenceByID: map[string]repository.SubmissionAssessmentKnownEvidence{
+			"known":       {FragmentID: "canonical-known"},
+			"known-empty": {},
+		},
+		duplicateCandidatesByEvidenceID: map[string]repository.RememberDuplicateCandidateGroup{
+			"evidence:1": {Candidates: []repository.RememberDuplicateCandidate{{FragmentID: candidateID}}},
+		},
+	}
+	response := assessor.SemanticAssessmentResponse{
+		EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{
+			{EvidenceID: "evidence:1", Action: "reuse", CandidateEvidenceID: &candidateID},
+			{EvidenceID: "evidence:2", Action: "new"},
+			{EvidenceID: "missing", Action: "reuse", CandidateEvidenceID: &candidateID},
+			{EvidenceID: "evidence:0", Action: "reuse"},
+		},
+		EvidenceConflictResults: []assessor.SemanticAssessmentEvidenceConflictResult{
+			{Positions: []assessor.SemanticAssessmentEvidenceConflictPosition{
+				{EvidenceID: "evidence:0", Start: 0, End: 1},
+				{EvidenceID: "evidence:1", Start: 0, End: 1},
+				{EvidenceID: candidateID, Start: 0, End: 1},
+				{EvidenceID: "known", Start: 0, End: 1},
+				{EvidenceID: "unknown", Start: 0, End: 1},
+			}},
+			{Positions: []assessor.SemanticAssessmentEvidenceConflictPosition{{EvidenceID: "unknown", Start: 0, End: 1}}},
+			{Positions: []assessor.SemanticAssessmentEvidenceConflictPosition{
+				{EvidenceID: "evidence:0", Start: 0, End: 1},
+				{EvidenceID: "evidence:1", Start: 0, End: 1},
+				{EvidenceID: candidateID, Start: 0, End: 1},
+				{EvidenceID: "known", Start: 0, End: 1},
+			}},
+		},
+	}
+	canonical := submissionAssessmentConflictCanonicalEvidence(plan, response)
+	require.Equal(t, "canonical:canonical-exact", canonical["evidence:0"])
+	require.Equal(t, "canonical:candidate-fragment", canonical["evidence:1"])
+	require.Equal(t, "submitted:submitted-plain", canonical["evidence:2"])
+	require.Equal(t, "canonical:canonical-known", canonical["known"])
+	require.Equal(t, "canonical:known-empty", canonical["known-empty"])
+	require.Equal(t, "canonical:candidate-fragment", canonical[candidateID])
+
+	errs := validateSubmissionAssessmentEvidenceConflictCanonicalization(plan, response)
+	require.Len(t, errs, 3)
+	require.Equal(t, "duplicates another canonical position", errs[0].Message)
+	require.Equal(t, "duplicates another canonical position", errs[1].Message)
+	require.Equal(t, "duplicates another canonical conflict result", errs[2].Message)
+}
+
 func TestSynchronousAssessmentSupportsEvidenceOnlyRemember(t *testing.T) {
 	runSynchronousEvidenceOnlyAssessorScenario(t)
 }
@@ -768,6 +883,7 @@ func validSynchronousAssessmentResponse(request assessor.SemanticAssessmentReque
 		RequestID:                  request.RequestID,
 		EvidenceSecurityResults:    []assessor.SemanticAssessmentEvidenceSecurityResult{},
 		EvidenceEquivalenceResults: []assessor.SemanticAssessmentEvidenceEquivalenceResult{},
+		EvidenceConflictResults:    []assessor.SemanticAssessmentEvidenceConflictResult{},
 		EntityResults:              []assessor.SemanticAssessmentEntityResult{}, RelationshipResults: []assessor.SemanticAssessmentRelationshipResult{},
 	}
 	for _, evidence := range request.Evidence {

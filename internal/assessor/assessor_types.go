@@ -55,6 +55,7 @@ type SemanticAssessmentResponse struct {
 	RequestID                  string                                        `json:"request_id"`
 	EvidenceSecurityResults    []SemanticAssessmentEvidenceSecurityResult    `json:"evidence_security_results"`
 	EvidenceEquivalenceResults []SemanticAssessmentEvidenceEquivalenceResult `json:"evidence_equivalence_results"`
+	EvidenceConflictResults    []SemanticAssessmentEvidenceConflictResult    `json:"evidence_conflict_results"`
 	// SecuritySignals and SecurityResults are in-process compatibility aliases
 	// for callers that construct responses directly. They are never serialized.
 	SecuritySignals     []SemanticAssessmentSecuritySignal     `json:"-"`
@@ -75,8 +76,11 @@ type SemanticAssessmentEvidenceEquivalenceCandidateGroup struct {
 }
 
 type SemanticAssessmentEvidenceEquivalenceCandidate struct {
-	EvidenceID string `json:"evidence_id"`
-	Content    string `json:"content"`
+	EvidenceID     string         `json:"evidence_id"`
+	Content        string         `json:"content"`
+	BoundaryText   string         `json:"boundary_text,omitempty"`
+	BoundaryRefs   map[string]int `json:"-"`
+	BoundaryPrefix string         `json:"-"`
 }
 
 // SemanticAssessmentEvidenceEquivalenceResult is the closed new/reuse result
@@ -85,6 +89,21 @@ type SemanticAssessmentEvidenceEquivalenceResult struct {
 	EvidenceID          string  `json:"evidence_id"`
 	Action              string  `json:"action"`
 	CandidateEvidenceID *string `json:"candidate_evidence_id"`
+}
+
+// SemanticAssessmentEvidenceConflictResult is one assessor-cited set of
+// opposing evidence spans. The server resolves the request-local references
+// into rune offsets before any durable state is considered.
+type SemanticAssessmentEvidenceConflictResult struct {
+	Positions []SemanticAssessmentEvidenceConflictPosition `json:"positions"`
+}
+
+type SemanticAssessmentEvidenceConflictPosition struct {
+	EvidenceID string `json:"evidence_id"`
+	StartRef   string `json:"start_ref"`
+	EndRef     string `json:"end_ref"`
+	Start      int    `json:"-"`
+	End        int    `json:"-"`
 }
 
 type SemanticAssessmentEvidenceSecurityResult struct {

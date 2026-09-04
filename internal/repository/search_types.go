@@ -351,10 +351,11 @@ type RecallRelationshipsInput struct {
 }
 
 type RecallEvidenceResult struct {
-	TeamID      string
-	SearchState string
-	Results     []RecallEvidenceHit
-	Conflicts   []RelationshipConflictCaseRecord
+	TeamID            string
+	SearchState       string
+	Results           []RecallEvidenceHit
+	Conflicts         []RelationshipConflictCaseRecord
+	EvidenceConflicts []EvidenceConflictCaseRecord
 }
 
 type RecallRelationshipsResult struct {

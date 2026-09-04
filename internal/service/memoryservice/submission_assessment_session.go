@@ -58,6 +58,18 @@ func (s *assessmentEngine) assessRememberSession(
 	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
 	turnOffset int,
 ) (assessor.SemanticAssessmentResponse, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRequest, error) {
+	return s.assessRememberSessionWithValidator(ctx, request, refresh, turnOffset, nil)
+}
+
+type submissionAssessmentResponseValidator func(assessor.SemanticAssessmentRequest, assessor.SemanticAssessmentResponse) []assessor.SemanticValidationError
+
+func (s *assessmentEngine) assessRememberSessionWithValidator(
+	ctx context.Context,
+	request assessor.SemanticAssessmentRequest,
+	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
+	turnOffset int,
+	validate submissionAssessmentResponseValidator,
+) (assessor.SemanticAssessmentResponse, assessor.SemanticAssessmentSession, assessor.SemanticAssessmentRequest, error) {
 	if s == nil || s.provider == nil {
 		return assessor.SemanticAssessmentResponse{}, nil, request, errors.New("synchronous assessment provider is required")
 	}
@@ -68,7 +80,7 @@ func (s *assessmentEngine) assessRememberSession(
 	if err != nil {
 		return assessor.SemanticAssessmentResponse{}, session, request, err
 	}
-	response, finalRequest, err := s.completeRememberSessionTurns(ctx, session, turn, request, refresh, turnOffset)
+	response, finalRequest, err := s.completeRememberSessionTurnsWithValidator(ctx, session, turn, request, refresh, turnOffset, validate)
 	return response, session, finalRequest, err
 }
 
@@ -79,6 +91,18 @@ func (s *assessmentEngine) completeRememberSessionTurns(
 	request assessor.SemanticAssessmentRequest,
 	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
 	turnOffset int,
+) (assessor.SemanticAssessmentResponse, assessor.SemanticAssessmentRequest, error) {
+	return s.completeRememberSessionTurnsWithValidator(ctx, session, turn, request, refresh, turnOffset, nil)
+}
+
+func (s *assessmentEngine) completeRememberSessionTurnsWithValidator(
+	ctx context.Context,
+	session assessor.SemanticAssessmentSession,
+	turn assessor.SemanticAssessmentTurn,
+	request assessor.SemanticAssessmentRequest,
+	refresh func(context.Context) (assessor.SemanticAssessmentRequest, error),
+	turnOffset int,
+	validate submissionAssessmentResponseValidator,
 ) (assessor.SemanticAssessmentResponse, assessor.SemanticAssessmentRequest, error) {
 	if s == nil || s.provider == nil {
 		return assessor.SemanticAssessmentResponse{}, request, errors.New("synchronous assessment provider is required")
@@ -93,6 +117,9 @@ func (s *assessmentEngine) completeRememberSessionTurns(
 		validationErrors := append([]assessor.SemanticValidationError(nil), turn.ValidationErrors...)
 		if len(validationErrors) == 0 {
 			response, validationErrors = assessor.PrepareSemanticAssessmentResponse(request, response, s.limits)
+		}
+		if len(validationErrors) == 0 && validate != nil {
+			validationErrors = validate(request, response)
 		}
 		if len(validationErrors) == 0 {
 			response.ProviderTurns = totalTurns

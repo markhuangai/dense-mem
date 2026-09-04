@@ -43,7 +43,12 @@ async function executable(path, contents) {
 }
 
 async function run(command, args, options = {}) {
-  return execFileAsync(command, args, { ...options, maxBuffer: 1024 * 1024 });
+  const { env: overrides, ...commandOptions } = options;
+  const env = { ...process.env, ...overrides };
+  for (const name of Object.keys(env)) {
+    if (name.startsWith("GIT_")) delete env[name];
+  }
+  return execFileAsync(command, args, { ...commandOptions, env, maxBuffer: 1024 * 1024 });
 }
 
 function nulLines(contents) {

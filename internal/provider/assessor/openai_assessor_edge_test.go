@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
@@ -118,6 +119,8 @@ func TestOpenAIAssessorRememberSessionRepairsWithRefreshedCandidates(t *testing.
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 		requests = append(requests, request)
 		response := semanticAssessmentTestResponse()
+		candidateID := "candidate-evidence"
+		response.EvidenceEquivalenceResults = []SemanticAssessmentEvidenceEquivalenceResult{{EvidenceID: "ev-1", Action: "reuse", CandidateEvidenceID: &candidateID}}
 		if len(requests) == 1 {
 			response.EntityResults[0].GroundingRef = nil
 		}
@@ -131,6 +134,10 @@ func TestOpenAIAssessorRememberSessionRepairsWithRefreshedCandidates(t *testing.
 
 	v := NewOpenAIAssessor(newTestVerifierConfig(srv.URL, "key", "assessor-model"), srv.Client())
 	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	request.EvidenceEquivalenceCandidates = []assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup{{
+		EvidenceID: "ev-1",
+		Candidates: []assessor.SemanticAssessmentEvidenceEquivalenceCandidate{{EvidenceID: "candidate-evidence", Content: "Historical candidate evidence."}},
+	}}
 	session, first, err := v.Assess(context.Background(), request)
 	require.NoError(t, err)
 	require.NotNil(t, session)
@@ -141,6 +148,9 @@ func TestOpenAIAssessorRememberSessionRepairsWithRefreshedCandidates(t *testing.
 	refreshed := request
 	refreshed.EntityCandidateGroups = append([]SemanticAssessmentEntityCandidateGroup(nil), request.EntityCandidateGroups...)
 	refreshed.EntityCandidateGroups[0].Candidates[0].IdentityContext = map[string]any{"source": "refreshed-catalog"}
+	refreshed.EvidenceEquivalenceCandidates = append([]assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup(nil), request.EvidenceEquivalenceCandidates...)
+	refreshed.EvidenceEquivalenceCandidates[0].Candidates = append([]assessor.SemanticAssessmentEvidenceEquivalenceCandidate(nil), request.EvidenceEquivalenceCandidates[0].Candidates...)
+	refreshed.EvidenceEquivalenceCandidates[0].Candidates[0].Content = "Refreshed candidate evidence."
 	second, err := v.Repair(context.Background(), session, SemanticAssessmentRepairRequest{
 		Request:          refreshed,
 		ValidationErrors: first.ValidationErrors,
@@ -153,6 +163,8 @@ func TestOpenAIAssessorRememberSessionRepairsWithRefreshedCandidates(t *testing.
 	assert.Equal(t, []string{"system", "user", "assistant", "user"}, assessmentMessageRoles(requests[1].Messages))
 	assert.Contains(t, requests[1].Messages[3].Content, "refreshed_candidate_context")
 	assert.Contains(t, requests[1].Messages[3].Content, "refreshed-catalog")
+	assert.Contains(t, requests[1].Messages[3].Content, "Refreshed candidate evidence.")
+	assert.Contains(t, requests[1].Messages[3].Content, "Return evidence_conflict_results")
 }
 
 func TestOpenAIAssessorRememberSessionRepairsMultipleCandidatesAsAmbiguous(t *testing.T) {

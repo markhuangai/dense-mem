@@ -66,6 +66,7 @@ var privateMemoryErasureManifest = []string{
 	"relationship_conflict_derived_evidence_tasks", "relationship_conflict_evidence_derivations",
 	"relationship_conflict_resolution_plans", "relationship_conflict_ai_assessment_attempts",
 	"relationship_conflict_ai_assessment_events", "search_documents",
+	"evidence_conflict_cases", "evidence_conflict_positions", "evidence_conflict_events",
 	"community_snapshot_runs", "community_records", "community_memberships",
 	"community_sources", "community_summary_attempts", "dream_cycle_runs",
 	"dream_path_evaluations", "recall_feedback_events",

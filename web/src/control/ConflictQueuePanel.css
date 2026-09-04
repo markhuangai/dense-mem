@@ -2,6 +2,134 @@
   min-width: 0;
 }
 
+.conflict-view-tabs {
+  display: inline-flex;
+  gap: 4px;
+  margin: 4px 0 12px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.conflict-view-tabs button {
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 12px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.conflict-view-tabs button.active {
+  color: var(--text);
+  background: var(--panel);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+}
+
+.evidence-conflict-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.evidence-conflict-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--panel-strong);
+  text-align: left;
+  cursor: pointer;
+}
+
+.evidence-conflict-card:hover,
+.evidence-conflict-card.selected {
+  border-color: var(--accent);
+}
+
+.evidence-conflict-card small {
+  color: var(--muted);
+}
+
+.evidence-conflict-detail {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--panel-strong);
+}
+
+.evidence-conflict-detail-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.evidence-conflict-detail-heading h3 {
+  margin: 7px 0 0;
+}
+
+.evidence-position-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.evidence-position-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.evidence-position-card p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.evidence-position-card code,
+.evidence-position-card small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.evidence-conflict-detail textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.evidence-conflict-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.evidence-conflict-history {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.evidence-conflict-history div {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border-left: 2px solid var(--accent-soft);
+}
+
+.evidence-conflict-history small {
+  color: var(--muted);
+}
+
 .conflict-summary {
   grid-template-columns: repeat(6, minmax(0, 1fr));
 }

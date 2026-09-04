@@ -26,7 +26,7 @@ func submissionAssessmentCommitInput(
 	items := make([]repository.SubmissionAssessmentItemInput, 0, len(plan.Items))
 	for _, item := range plan.Items {
 		items = append(items, repository.SubmissionAssessmentItemInput{
-			FragmentID: item.Fragment.FragmentID,
+			FragmentID: item.Fragment.FragmentID, EvidenceID: item.EvidenceID,
 		})
 	}
 	entityResolutions := make([]repository.SubmissionAssessmentEntityResolutionInput, 0, len(response.EntityResults))
@@ -311,15 +311,6 @@ func submissionAssessmentCommitInput(
 			Disposition:     "stored",
 		}
 	}
-	knownEvidenceIDs := make([]string, 0, len(usedKnownEvidenceIDs))
-	for evidenceID := range usedKnownEvidenceIDs {
-		knownEvidenceIDs = append(knownEvidenceIDs, evidenceID)
-	}
-	sort.Strings(knownEvidenceIDs)
-	knownEvidenceSnapshot := make([]repository.SubmissionAssessmentKnownEvidence, 0, len(knownEvidenceIDs))
-	for _, evidenceID := range knownEvidenceIDs {
-		knownEvidenceSnapshot = append(knownEvidenceSnapshot, plan.knownEvidenceByID[evidenceID])
-	}
 	if len(seenRelationshipRefs) != len(plan.RelationshipTargets) {
 		return repository.CommitSubmissionAssessmentInput{}, errors.New("submission assessor omitted a relationship result")
 	}
@@ -332,15 +323,54 @@ func submissionAssessmentCommitInput(
 		}
 		relationshipResults = append(relationshipResults, result)
 	}
+	evidenceConflictResults := make([]repository.EvidenceConflictResultInput, 0, len(response.EvidenceConflictResults))
+	for _, conflict := range response.EvidenceConflictResults {
+		positions := make([]repository.EvidenceConflictPositionInput, 0, len(conflict.Positions))
+		for _, position := range conflict.Positions {
+			if _, known := plan.knownEvidenceByID[position.EvidenceID]; known {
+				usedKnownEvidenceIDs[position.EvidenceID] = struct{}{}
+			}
+			positions = append(positions, repository.EvidenceConflictPositionInput{
+				EvidenceID: position.EvidenceID,
+				Start:      position.Start,
+				End:        position.End,
+			})
+		}
+		evidenceConflictResults = append(evidenceConflictResults, repository.EvidenceConflictResultInput{Positions: positions})
+	}
+	// Conflict citations are assessed independently from Relationship support.
+	// Build the complete known-evidence closure only after processing both paths;
+	// otherwise a known-only opposing position would be absent from the final
+	// transaction fence.
+	knownEvidenceIDs := make([]string, 0, len(usedKnownEvidenceIDs))
+	for evidenceID := range usedKnownEvidenceIDs {
+		knownEvidenceIDs = append(knownEvidenceIDs, evidenceID)
+	}
+	sort.Strings(knownEvidenceIDs)
+	knownEvidenceSnapshot := make([]repository.SubmissionAssessmentKnownEvidence, 0, len(knownEvidenceIDs))
+	for _, evidenceID := range knownEvidenceIDs {
+		knownEvidenceSnapshot = append(knownEvidenceSnapshot, plan.knownEvidenceByID[evidenceID])
+	}
+	evidenceConflictCandidates := make(map[string][]string, len(plan.duplicateCandidatesByEvidenceID))
+	for evidenceID, group := range plan.duplicateCandidatesByEvidenceID {
+		ids := make([]string, 0, len(group.Candidates))
+		for _, candidate := range group.Candidates {
+			ids = append(ids, candidate.FragmentID)
+		}
+		sort.Strings(ids)
+		evidenceConflictCandidates[evidenceID] = ids
+	}
 	return repository.CommitSubmissionAssessmentInput{
-		RememberCommitScope:      scope,
-		AssessmentID:             assessment.AssessmentID,
-		Items:                    items,
-		KnownEvidenceSnapshot:    knownEvidenceSnapshot,
-		EntityResolutions:        entityResolutions,
-		RelationshipObservations: observations,
-		PredicateRegistrations:   registrations,
-		RelationshipResults:      relationshipResults,
+		RememberCommitScope:                  scope,
+		AssessmentID:                         assessment.AssessmentID,
+		Items:                                items,
+		KnownEvidenceSnapshot:                knownEvidenceSnapshot,
+		EvidenceConflictResults:              evidenceConflictResults,
+		EvidenceConflictCandidateEvidenceIDs: evidenceConflictCandidates,
+		EntityResolutions:                    entityResolutions,
+		RelationshipObservations:             observations,
+		PredicateRegistrations:               registrations,
+		RelationshipResults:                  relationshipResults,
 		Payload: map[string]any{
 			"assessor_contract":           domain.ContractVersion,
 			"assessment_id":               assessment.AssessmentID,

@@ -84,6 +84,35 @@ func TestRecallContractOutputValidatesEmptyEquivalentRelationshipIDs(t *testing.
 	}
 }
 
+func TestRecallContractOutputValidatesEvidenceConflictBranch(t *testing.T) {
+	recall, err := requireTool(toolMap(t), ToolRecallMemory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := recallContractOutput(&memoryservice.RecallResult{
+		RecallID: "rec-evidence-conflict",
+		Conflicts: []memoryservice.RecallConflictSummary{{
+			ConflictID: "conflict-1", Version: 2, Kind: "evidence_conflict", Status: "resolved",
+			PreferredPositionID: "position-1", Positions: []memoryservice.RecallConflictPosition{
+				{PositionID: "position-1", Disposition: "preferred", EvidenceID: "evidence-1", OccurrenceID: "occurrence-1", Quote: "first", SpanStart: 0, SpanEnd: 5, Authority: "primary", Submitted: true},
+				{PositionID: "position-2", Disposition: "candidate", EvidenceID: "evidence-2", OccurrenceID: "occurrence-2", Quote: "second", SpanStart: 0, SpanEnd: 6, Authority: "secondary", Submitted: false},
+			}, PositionsTruncated: false,
+		}},
+		SearchStates: memoryservice.RecallSearchStates{Evidence: string(domain.SearchProjectionCurrent), Relationships: string(domain.SearchProjectionCurrent)},
+	})
+	encoded, err := json.Marshal(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wireOutput map[string]any
+	if err := json.Unmarshal(encoded, &wireOutput); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateInput(Tool{InputSchema: recall.OutputSchema}, wireOutput); err != nil {
+		t.Fatalf("validate evidence conflict output: %v", err)
+	}
+}
+
 func TestFirstNonEmptyReturnsTrimmedNonNilValue(t *testing.T) {
 	if got := firstNonEmpty("  ", " "+uuid.Nil.String()+" ", " canonical "); got != "canonical" {
 		t.Fatalf("firstNonEmpty = %q; want canonical", got)

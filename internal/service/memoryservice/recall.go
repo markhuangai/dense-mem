@@ -949,7 +949,9 @@ func recallResultFromRepository(
 				CreatedAt:       recallCreatedAt(item.CreatedAt),
 			})
 		}
-		conflicts = recallConflictSummaries(recalled.Conflicts)
+		conflicts = append(conflicts, recallConflictSummaries(recalled.Conflicts)...)
+		conflicts = append(conflicts, recallEvidenceConflictSummaries(recalled.EvidenceConflicts)...)
+		conflicts = limitRecallConflictSummaries(conflicts, 20)
 	}
 	result := &RecallResult{
 		RecallID:             "rec_" + uuid.NewString(),

@@ -191,6 +191,7 @@ func truncateLedgerFixtures(tx *gorm.DB) error {
 				'hypotheses', 'dream_cycle_runs', 'review_tasks', 'relationship_cross_references',
 				'entity_correction_events', 'entity_resolution_events', 'relationship_transition_events',
 				'relationship_support_decision_events', 'relationship_evidence_supports',
+				'evidence_conflict_events', 'evidence_conflict_positions', 'evidence_conflict_cases',
 				'verification_events', 'relationship_observations', 'relationship_records',
 				'value_records', 'entity_names', 'entity_records', 'evidence_exact_aliases',
 				'evidence_occurrences', 'evidence_quarantines',

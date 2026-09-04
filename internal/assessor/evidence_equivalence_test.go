@@ -59,6 +59,7 @@ func TestSemanticAssessmentEvidenceEquivalenceRequiresCompleteAllowlistedResults
 		RequestID:                  request.RequestID,
 		EvidenceSecurityResults:    []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "submitted", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}},
 		EvidenceEquivalenceResults: []SemanticAssessmentEvidenceEquivalenceResult{{EvidenceID: "submitted", Action: "reuse", CandidateEvidenceID: stringPointer("candidate-1")}},
+		EvidenceConflictResults:    []SemanticAssessmentEvidenceConflictResult{},
 		EntityResults:              []SemanticAssessmentEntityResult{},
 		RelationshipResults:        []SemanticAssessmentRelationshipResult{},
 	}

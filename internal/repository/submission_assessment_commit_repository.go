@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -47,6 +48,7 @@ func normalizeCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentIn
 	input.AssessmentID = strings.TrimSpace(input.AssessmentID)
 	for i := range input.Items {
 		input.Items[i].FragmentID = strings.TrimSpace(input.Items[i].FragmentID)
+		input.Items[i].EvidenceID = strings.TrimSpace(input.Items[i].EvidenceID)
 	}
 	for i := range input.KnownEvidenceSnapshot {
 		item := &input.KnownEvidenceSnapshot[i]
@@ -61,6 +63,33 @@ func normalizeCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentIn
 		item.SourceRevisionID = strings.TrimSpace(item.SourceRevisionID)
 		item.CurrentSourceRevisionID = strings.TrimSpace(item.CurrentSourceRevisionID)
 		item.SpaceID = strings.TrimSpace(item.SpaceID)
+	}
+	for i := range input.EvidenceConflictResults {
+		for j := range input.EvidenceConflictResults[i].Positions {
+			input.EvidenceConflictResults[i].Positions[j].EvidenceID = strings.TrimSpace(input.EvidenceConflictResults[i].Positions[j].EvidenceID)
+		}
+	}
+	if input.EvidenceConflictCandidateEvidenceIDs != nil {
+		normalizedCandidates := make(map[string][]string, len(input.EvidenceConflictCandidateEvidenceIDs))
+		for evidenceID, candidates := range input.EvidenceConflictCandidateEvidenceIDs {
+			evidenceID = strings.TrimSpace(evidenceID)
+			values := make([]string, 0, len(candidates))
+			seen := make(map[string]struct{}, len(candidates))
+			for _, candidateID := range candidates {
+				candidateID = strings.TrimSpace(candidateID)
+				if candidateID == "" {
+					continue
+				}
+				if _, exists := seen[candidateID]; exists {
+					continue
+				}
+				seen[candidateID] = struct{}{}
+				values = append(values, candidateID)
+			}
+			sort.Strings(values)
+			normalizedCandidates[evidenceID] = values
+		}
+		input.EvidenceConflictCandidateEvidenceIDs = normalizedCandidates
 	}
 	for i := range input.EntityResolutions {
 		entry := &input.EntityResolutions[i]
@@ -114,6 +143,9 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 		if len(input.EntityResolutions) != 0 || len(input.RelationshipObservations) != 0 || len(input.PredicateRegistrations) != 0 {
 			return errors.New("terminal synchronous result cannot carry semantic decisions")
 		}
+		if len(input.EvidenceConflictResults) != 0 {
+			return errors.New("terminal synchronous result cannot carry evidence conflicts")
+		}
 		for _, result := range input.RelationshipResults {
 			if result.Disposition != "not_stored" || !submissionRelationshipNotStoredReasonAllowed(strings.TrimSpace(result.Reason)) {
 				return fmt.Errorf("terminal synchronous relationship result %q is invalid", result.RelationshipRef)
@@ -122,6 +154,7 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 		return nil
 	}
 	seenItems := map[string]struct{}{}
+	seenEvidenceIDs := map[string]struct{}{}
 	for _, item := range input.Items {
 		if _, err := uuid.Parse(item.FragmentID); err != nil {
 			return fmt.Errorf("fragment_id is required: %w", err)
@@ -130,6 +163,41 @@ func validateCommitSubmissionAssessmentInput(input CommitSubmissionAssessmentInp
 			return errors.New("submission assessment item identity is duplicated")
 		}
 		seenItems[item.FragmentID] = struct{}{}
+		if item.EvidenceID != "" {
+			if _, exists := seenEvidenceIDs[item.EvidenceID]; exists {
+				return errors.New("submission assessment evidence identity is duplicated")
+			}
+			seenEvidenceIDs[item.EvidenceID] = struct{}{}
+		}
+	}
+	if len(input.EvidenceConflictResults) > EvidenceConflictMaxResults {
+		return fmt.Errorf("submission evidence conflicts must contain at most %d results", EvidenceConflictMaxResults)
+	}
+	for evidenceID, candidates := range input.EvidenceConflictCandidateEvidenceIDs {
+		if strings.TrimSpace(evidenceID) == "" {
+			return errors.New("submission evidence conflict candidate evidence_id is required")
+		}
+		for _, candidateID := range candidates {
+			if _, err := uuid.Parse(candidateID); err != nil {
+				return fmt.Errorf("submission evidence conflict candidate %q is invalid: %w", candidateID, err)
+			}
+		}
+	}
+	for conflictIndex, conflict := range input.EvidenceConflictResults {
+		if len(conflict.Positions) < 2 || len(conflict.Positions) > EvidenceConflictMaxPositions {
+			return fmt.Errorf("submission evidence conflict[%d] must contain between 2 and %d positions", conflictIndex, EvidenceConflictMaxPositions)
+		}
+		seenPositions := make(map[string]struct{}, len(conflict.Positions))
+		for positionIndex, position := range conflict.Positions {
+			if strings.TrimSpace(position.EvidenceID) == "" || position.Start < 0 || position.End <= position.Start {
+				return fmt.Errorf("submission evidence conflict[%d] position[%d] is invalid", conflictIndex, positionIndex)
+			}
+			key := fmt.Sprintf("%s:%d:%d", position.EvidenceID, position.Start, position.End)
+			if _, exists := seenPositions[key]; exists {
+				return fmt.Errorf("submission evidence conflict[%d] position[%d] is duplicated", conflictIndex, positionIndex)
+			}
+			seenPositions[key] = struct{}{}
+		}
 	}
 	seenEntities := map[string]struct{}{}
 	for _, entry := range input.EntityResolutions {

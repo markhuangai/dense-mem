@@ -466,6 +466,7 @@ func normalizeRememberFailure(failure error) error {
 	}
 	if errors.Is(failure, rememberapp.ErrSourceRevisionConflict) ||
 		errors.Is(failure, repository.ErrRememberDuplicateCandidateStale) ||
+		errors.Is(failure, repository.ErrEvidenceConflictStaleInput) ||
 		memoryservice.IsRememberStaleInputError(failure) {
 		return fmt.Errorf("%w: %v", rememberapp.ErrRememberStaleInput, failure)
 	}
@@ -606,7 +607,8 @@ func rememberCommitFailureMetadata(err error) (string, string) {
 		return "fence_conflict", "search_document_stale"
 	case errors.Is(err, rememberapp.ErrRememberStaleInput),
 		errors.Is(err, repository.ErrRememberDuplicateCandidateStale),
-		errors.Is(err, repository.ErrSourceRevisionConflict):
+		errors.Is(err, repository.ErrSourceRevisionConflict),
+		errors.Is(err, repository.ErrEvidenceConflictStaleInput):
 		return "stale_input", "source_state_changed"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout", "semantic_commit_timeout"
@@ -678,6 +680,7 @@ func rememberFailureCode(phase string, err error) rememberapp.SubmissionErrorCod
 	if errors.Is(err, rememberapp.ErrRememberStaleInput) ||
 		errors.Is(err, repository.ErrRememberDuplicateCandidateStale) ||
 		errors.Is(err, repository.ErrSourceRevisionConflict) ||
+		errors.Is(err, repository.ErrEvidenceConflictStaleInput) ||
 		errors.Is(err, rememberapp.ErrSourceRevisionConflict) {
 		return rememberapp.SubmissionErrorStaleInput
 	}
@@ -764,15 +767,16 @@ func rememberAssessmentSnapshot(
 	items := make([]memoryservice.RememberAssessmentItem, 0, len(input.Evidence))
 	for index, item := range input.Evidence {
 		fragmentID := uuid.NewString()
+		exactReuseEligible := len(item.SupersedesEvidenceIDs) == 0 && strings.TrimSpace(item.SourceKey) == "" &&
+			strings.TrimSpace(item.SourceRevisionToken) == "" && strings.TrimSpace(item.ExpectedPreviousRevisionToken) == ""
 		evidence = append(evidence, repository.EvidenceFragment{
 			FragmentID: fragmentID, EvidenceIndex: index, Content: item.Content,
 			ContentHash: item.ContentHash, Authority: item.Authority,
 		})
 		items = append(items, memoryservice.RememberAssessmentItem{
 			ItemID: uuid.NewString(), Fragment: evidence[len(evidence)-1],
-			EvidenceID: fmt.Sprintf("evidence:%d", index), DuplicateAssessmentRequired: !item.ForceInsert &&
-				len(item.SupersedesEvidenceIDs) == 0 && strings.TrimSpace(item.SourceKey) == "" &&
-				strings.TrimSpace(item.SourceRevisionToken) == "" && strings.TrimSpace(item.ExpectedPreviousRevisionToken) == "",
+			EvidenceID: fmt.Sprintf("evidence:%d", index), DuplicateAssessmentRequired: exactReuseEligible && !item.ForceInsert,
+			ExactReuseEligible: exactReuseEligible,
 		})
 	}
 	return memoryservice.RememberAssessmentSnapshot{

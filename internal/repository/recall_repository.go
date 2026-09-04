@@ -116,19 +116,25 @@ func (r *SearchRepositoryImpl) RecallEvidence(ctx context.Context, input RecallE
 		}
 	}
 	conflicts := []RelationshipConflictCaseRecord{}
+	evidenceConflicts := []EvidenceConflictCaseRecord{}
 	err = r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
 		conflicts, err = loadRecallOpenConflictRecords(ctx, tx, input.TeamID, input.KnownAt, results)
+		if err != nil {
+			return err
+		}
+		evidenceConflicts, err = loadRecallEvidenceConflictRecords(ctx, tx, input, results)
 		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("recall: load conflicts: %w", err)
 	}
 	return &RecallEvidenceResult{
-		TeamID:      input.TeamID,
-		SearchState: searchState,
-		Results:     results,
-		Conflicts:   conflicts,
+		TeamID:            input.TeamID,
+		SearchState:       searchState,
+		Results:           results,
+		Conflicts:         conflicts,
+		EvidenceConflicts: evidenceConflicts,
 	}, nil
 }
 

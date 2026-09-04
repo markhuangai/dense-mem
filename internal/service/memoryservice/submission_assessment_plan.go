@@ -19,6 +19,7 @@ type submissionAssessmentItem struct {
 	Fragment                    repository.EvidenceFragment
 	EvidenceID                  string
 	DuplicateAssessmentRequired bool
+	ExactReuseEligible          bool
 }
 
 type submissionAssessmentEntityTarget struct {
@@ -82,6 +83,7 @@ func buildSubmissionAssessmentPlan(snapshot RememberAssessmentSnapshot) (submiss
 		entry := submissionAssessmentItem{
 			ItemID: item.ItemID, Fragment: fragment, EvidenceID: evidenceID,
 			DuplicateAssessmentRequired: item.DuplicateAssessmentRequired,
+			ExactReuseEligible:          item.ExactReuseEligible,
 		}
 		items = append(items, entry)
 		itemsByEvidenceID[evidenceID] = entry

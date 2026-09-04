@@ -122,6 +122,7 @@ func TestSemanticAssessmentSubmissionContractPreservesTypedValue(t *testing.T) {
 		RequestID:                  prepared.RequestID,
 		EvidenceSecurityResults:    []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "ev-1", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}},
 		EvidenceEquivalenceResults: []SemanticAssessmentEvidenceEquivalenceResult{},
+		EvidenceConflictResults:    []SemanticAssessmentEvidenceConflictResult{},
 		EntityResults: []SemanticAssessmentEntityResult{{
 			Ref: "entity:latency", GroundingRef: &groundingRef, Action: "create",
 		}},
@@ -675,6 +676,7 @@ func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 		RequestID:                  "assess-1",
 		EvidenceSecurityResults:    []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "ev-1", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}},
 		EvidenceEquivalenceResults: []SemanticAssessmentEvidenceEquivalenceResult{},
+		EvidenceConflictResults:    []SemanticAssessmentEvidenceConflictResult{},
 		EntityResults: []SemanticAssessmentEntityResult{
 			{
 				Ref:               "person-1",
