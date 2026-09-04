@@ -120,7 +120,7 @@ test("remember case covers semantic duplicate reuse and unauthorized candidates"
   assert.match(fixture, /semantic-reuse-unauthorized/);
 });
 
-test("remember case covers cited evidence conflict creation, recurrence, resolution, and similarity-only rejection", async () => {
+test("remember case covers cited evidence conflict creation, recurrence, resolution, dismissal, and similarity-only rejection", async () => {
   const remember = await readFile(new URL("./cases/remember.mjs", import.meta.url), "utf8");
   const fixture = await readFile(new URL("./provider-fixture.mjs", import.meta.url), "utf8");
   assert.match(remember, /runEvidenceConflictCase/);

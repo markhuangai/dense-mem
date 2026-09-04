@@ -215,6 +215,7 @@ func semanticAssessmentRequestEnvelope(req assessor.SemanticAssessmentRequest) s
 	reduced := req
 	reduced.EntityCandidateGroups = nil
 	reduced.PredicateOptions = nil
+	reduced.EvidenceEquivalenceCandidates = nil
 	reduced.CandidateContextTokens = 0
 	reduced.CandidateContextTruncated = false
 	reduced.InputTokens = 0

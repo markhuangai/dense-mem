@@ -53,11 +53,11 @@ func loadRecallEvidenceConflictRecords(
 		args = append(args, *input.KnownAt)
 	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT DISTINCT conflict.conflict_id::text
+		SELECT conflict.conflict_id::text
 		FROM evidence_conflict_cases AS conflict
 		JOIN evidence_conflict_positions AS position
 		  ON position.team_id = conflict.team_id AND position.conflict_id = conflict.conflict_id
-		`+where+` ORDER BY conflict.conflict_id::text LIMIT ?`, append(args, evidenceConflictRecallCandidateLimit)...).Rows()
+		`+where+` GROUP BY conflict.conflict_id, conflict.updated_at ORDER BY conflict.updated_at DESC, conflict.conflict_id DESC LIMIT ?`, append(args, evidenceConflictRecallCandidateLimit)...).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -99,9 +99,9 @@ func loadRecallEvidenceConflictRecords(
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if !out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
-			return out[i].UpdatedAt.Before(out[j].UpdatedAt)
+			return out[i].UpdatedAt.After(out[j].UpdatedAt)
 		}
-		return out[i].ConflictID < out[j].ConflictID
+		return out[i].ConflictID > out[j].ConflictID
 	})
 	if len(out) > EvidenceConflictMaxResults {
 		out = out[:EvidenceConflictMaxResults]
@@ -179,10 +179,10 @@ func evidenceConflictCasePositionsAuthorized(
 	args := []any{
 		input.TeamID, item.ConflictID,
 		eventAt,
-		input.KnownAt,
+		eventAt,
 		eventAt, eventAt,
+		input.KnownAt, eventAt,
 		input.KnownAt, input.KnownAt,
-		eventAt, eventAt,
 	}
 	if err := tx.WithContext(ctx).Raw(query, args...).Row().Scan(&authorized); err != nil {
 		return false, err

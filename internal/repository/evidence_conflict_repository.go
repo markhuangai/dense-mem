@@ -819,9 +819,17 @@ func (r *LedgerRepositoryImpl) upsertRememberEvidenceConflictCase(
 		`, version, input.TeamID, conflictID, version-1).Error; err != nil {
 			return err
 		}
-		return insertEvidenceConflictEvent(ctx, tx, input, conflictID, nextEvidenceConflictOrdinal(ctx, tx, input.TeamID, conflictID), "recited", "open", version, "profile", input.OwnerProfileID, "", preferred, positions)
+		ordinal, err := nextEvidenceConflictOrdinal(ctx, tx, input.TeamID, conflictID)
+		if err != nil {
+			return err
+		}
+		return insertEvidenceConflictEvent(ctx, tx, input, conflictID, ordinal, "recited", "open", version, "profile", input.OwnerProfileID, "", preferred, positions)
 	}
-	return insertEvidenceConflictEvent(ctx, tx, input, conflictID, nextEvidenceConflictOrdinal(ctx, tx, input.TeamID, conflictID), "recited", status, version, "profile", input.OwnerProfileID, "", preferred, positions)
+	ordinal, err := nextEvidenceConflictOrdinal(ctx, tx, input.TeamID, conflictID)
+	if err != nil {
+		return err
+	}
+	return insertEvidenceConflictEvent(ctx, tx, input, conflictID, ordinal, "recited", status, version, "profile", input.OwnerProfileID, "", preferred, positions)
 }
 
 func evidenceConflictCaseLockKey(teamID, spaceID string, generation int64, caseKey string) string {
@@ -854,12 +862,15 @@ func insertEvidenceConflictPosition(ctx context.Context, tx *gorm.DB, input Sync
 		position.Quote, position.SpanStart, position.SpanEnd, position.Authority, position.Submitted).Error
 }
 
-func nextEvidenceConflictOrdinal(ctx context.Context, tx *gorm.DB, teamID, conflictID string) int64 {
+func nextEvidenceConflictOrdinal(ctx context.Context, tx *gorm.DB, teamID, conflictID string) (int64, error) {
 	var ordinal int64
-	if err := tx.WithContext(ctx).Raw(`SELECT COALESCE(max(ordinal), 0) + 1 FROM evidence_conflict_events WHERE team_id = ?::uuid AND conflict_id = ?::uuid`, teamID, conflictID).Row().Scan(&ordinal); err != nil || ordinal < 1 {
-		return 1
+	if err := tx.WithContext(ctx).Raw(`SELECT COALESCE(max(ordinal), 0) + 1 FROM evidence_conflict_events WHERE team_id = ?::uuid AND conflict_id = ?::uuid`, teamID, conflictID).Row().Scan(&ordinal); err != nil {
+		return 0, err
 	}
-	return ordinal
+	if ordinal < 1 {
+		return 1, nil
+	}
+	return ordinal, nil
 }
 
 func insertEvidenceConflictEvent(ctx context.Context, tx *gorm.DB, input SynchronousRememberCommitInput, conflictID string, ordinal int64, action, status string, version int, actorKind, actorID, reason, preferred string, positions []EvidenceConflictPositionRecord) error {

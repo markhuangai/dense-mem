@@ -190,6 +190,41 @@ func TestEvidenceConflictRememberCreationAndRecurrence(t *testing.T) {
 	require.Equal(t, 3, terminal.Conflict.Events[0].CaseVersion)
 }
 
+func TestEvidenceConflictDismissalRecordsTerminalEvent(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "evidence-conflict-dismiss", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-dismiss-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-dismiss-owner")
+	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
+	repo := NewLedgerRepository(appDB, rls)
+
+	input := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-dismiss", "Dismissal evidence supports the first position.", "Dismissal evidence supports the opposing position.", spaceID, generation)
+	commitCitedEvidenceFixture(t, ctx, repo, input)
+	conflictID := conflictIDForTest(t, adminDB, rls, teamID)
+
+	dismissed, err := repo.ResolveEvidenceConflict(ctx, EvidenceConflictResolutionInput{
+		TeamID: teamID, ConflictID: conflictID, ExpectedVersion: 1,
+		Decision: "dismiss", Reason: "reviewer determined the citations are not actionable",
+		ActorKind: "control", ActorID: "integration-test",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "dismissed", dismissed.Status)
+	require.Equal(t, 2, dismissed.Version)
+
+	detail, err := repo.GetEvidenceConflict(ctx, EvidenceConflictGetInput{TeamID: teamID, ConflictID: conflictID, EventLimit: 10})
+	require.NoError(t, err)
+	require.Len(t, detail.Conflict.Events, 2)
+	require.Equal(t, "dismissed", detail.Conflict.Events[0].Action)
+	require.Len(t, detail.Conflict.Events[0].CitationSnapshot, 2)
+	require.NotEmpty(t, detail.Conflict.Events[0].CitationSnapshot[0].PositionID)
+
+	recalled, err := NewSearchRepository(appDB, rls).RecallEvidence(ctx, RecallEvidenceInput{TeamID: teamID, Query: "Dismissal evidence", Limit: 10})
+	require.NoError(t, err)
+	require.Empty(t, recalled.EvidenceConflicts)
+}
+
 func TestEvidenceConflictRecallBoundsCaseHydration(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -218,6 +253,29 @@ func TestEvidenceConflictRecallBoundsCaseHydration(t *testing.T) {
 		}
 	}
 
+	var expectedIDs []string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		rows, err := tx.Raw(`
+			SELECT conflict_id::text
+			FROM evidence_conflict_cases
+			WHERE team_id = ?::uuid
+			ORDER BY updated_at DESC, conflict_id DESC
+			LIMIT ?
+		`, teamID, EvidenceConflictMaxResults).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var conflictID string
+			if err := rows.Scan(&conflictID); err != nil {
+				return err
+			}
+			expectedIDs = append(expectedIDs, conflictID)
+		}
+		return rows.Err()
+	}))
+
 	var records []EvidenceConflictCaseRecord
 	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
 		loaded, err := loadRecallEvidenceConflictRecords(ctx, tx, RecallEvidenceInput{
@@ -230,6 +288,11 @@ func TestEvidenceConflictRecallBoundsCaseHydration(t *testing.T) {
 		return nil
 	}))
 	require.Len(t, records, EvidenceConflictMaxResults)
+	actualIDs := make([]string, 0, len(records))
+	for _, record := range records {
+		actualIDs = append(actualIDs, record.ConflictID)
+	}
+	require.Equal(t, expectedIDs, actualIDs)
 }
 
 func TestEvidenceConflictConcurrentCreationSerializesSameOwnerAndDifferentOwner(t *testing.T) {

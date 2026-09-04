@@ -263,12 +263,20 @@ func (r *LedgerRepositoryImpl) ResolveEvidenceConflict(ctx context.Context, inpu
 			newStatus = "dismissed"
 			action = "dismissed"
 		}
+		positions, err := loadEvidenceConflictPositions(ctx, tx, input.TeamID, input.ConflictID)
+		if err != nil {
+			return err
+		}
+		ordinal, err := nextEvidenceConflictOrdinal(ctx, tx, input.TeamID, input.ConflictID)
+		if err != nil {
+			return err
+		}
 		newVersion := version + 1
 		now := time.Now().UTC()
 		if err := tx.WithContext(ctx).Exec(`UPDATE evidence_conflict_cases SET status = ?, version = ?, preferred_position_id = NULLIF(?, '')::uuid, resolved_at = ?, resolution_reason = ?, updated_at = ? WHERE team_id = ?::uuid AND conflict_id = ?::uuid AND status = 'open' AND version = ?`, newStatus, newVersion, input.PreferredPositionID, now, input.Reason, now, input.TeamID, input.ConflictID, version).Error; err != nil {
 			return err
 		}
-		if err := insertEvidenceConflictEvent(ctx, tx, SynchronousRememberCommitInput{TeamID: input.TeamID, SpaceID: spaceID, SpaceGeneration: generation}, input.ConflictID, nextEvidenceConflictOrdinal(ctx, tx, input.TeamID, input.ConflictID), action, newStatus, newVersion, input.ActorKind, input.ActorID, input.Reason, input.PreferredPositionID, nil); err != nil {
+		if err := insertEvidenceConflictEvent(ctx, tx, SynchronousRememberCommitInput{TeamID: input.TeamID, SpaceID: spaceID, SpaceGeneration: generation}, input.ConflictID, ordinal, action, newStatus, newVersion, input.ActorKind, input.ActorID, input.Reason, input.PreferredPositionID, positions); err != nil {
 			return err
 		}
 		loaded, err := loadEvidenceConflictCaseForSystem(ctx, tx, input.TeamID, input.ConflictID)

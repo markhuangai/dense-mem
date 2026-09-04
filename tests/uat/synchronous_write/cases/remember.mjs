@@ -126,6 +126,28 @@ async function runEvidenceConflictCase({ rpc, expect }) {
   const unchanged = await controlJSON(`/teams/${teamID}/evidence-conflicts/${conflictID}?event_limit=100`);
   expect(unchanged.data?.conflict?.version === 2 && unchanged.data.conflict.events?.length === 2 && unchanged.data.conflict.positions?.length === conflict.positions.length, "adverse control requests changed evidence conflict history");
 
+  const dismissArgs = singleItemArguments("cited-evidence-conflict-dismiss", "[fixture:cited-evidence-conflict]");
+  dismissArgs.evidence.push({ content: "This cited conflict is intentionally dismissed. [fixture:cited-evidence-conflict-dismiss]", source_type: "manual" });
+  const dismissSubmission = await rememberWithKey(actor.apiKey, dismissArgs);
+  assertStrictTerminalRemember(dismissSubmission, expect);
+  expect(dismissSubmission.processing_state === "completed", `dismiss fixture must complete: ${JSON.stringify(dismissSubmission)}`);
+  const dismissConflictID = postgresQuery(`
+    SELECT conflict_id::text
+    FROM evidence_conflict_cases
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+    ORDER BY created_at DESC, conflict_id DESC
+    LIMIT 1;
+  `);
+  const dismissed = await controlJSON(`/teams/${teamID}/evidence-conflicts/${dismissConflictID}/resolution`, {
+    method: "POST",
+    body: JSON.stringify({ expected_version: 1, decision: "dismiss", reason: "cited positions are not actionable" }),
+  });
+  expect(dismissed.data?.conflict?.status === "dismissed" && dismissed.data.conflict.version === 2, `control must dismiss the cited conflict: ${JSON.stringify(dismissed)}`);
+  const dismissedDetail = await controlJSON(`/teams/${teamID}/evidence-conflicts/${dismissConflictID}?event_limit=100`);
+  expect(dismissedDetail.data?.conflict?.events?.[0]?.action === "dismissed" && dismissedDetail.data.conflict.events[0].citation_snapshot?.length === 2, `dismissal must retain cited position history: ${JSON.stringify(dismissedDetail)}`);
+  const dismissedRecall = await mcpSuccessWithKey(actor.apiKey, "recall_memory", { query: "intentionally dismissed cited conflict" });
+  expect(!dismissedRecall.conflicts?.some((item) => item.kind === "evidence_conflict" && item.conflict_id === dismissConflictID), `dismissed conflicts must not appear in current recall: ${JSON.stringify(dismissedRecall)}`);
+
   const resolved = await controlJSON(`/teams/${teamID}/evidence-conflicts/${conflictID}/resolution`, {
     method: "POST",
     body: JSON.stringify({ expected_version: 2, decision: "resolve", reason: "reviewed opposing citations", preferred_position_id: preferred }),
@@ -161,7 +183,7 @@ async function runEvidenceConflictCase({ rpc, expect }) {
     expect(browserConflictID, `browser evidence conflict fixture ${index} must create a durable case`);
     browserFixtures.push(browserConflictID);
   }
-  return { fault: "cited-evidence-conflict", created: true, recurrence: true, resolved: true, similarity_only_no_case: true, browser_fixtures: browserFixtures.length };
+  return { fault: "cited-evidence-conflict", created: true, recurrence: true, resolved: true, dismissed: true, similarity_only_no_case: true, browser_fixtures: browserFixtures.length };
 }
 
 async function runKnownEvidenceCase({ expect }) {
