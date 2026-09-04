@@ -190,6 +190,47 @@ func TestEvidenceConflictRememberCreationAndRecurrence(t *testing.T) {
 	require.Equal(t, 3, terminal.Conflict.Events[0].CaseVersion)
 }
 
+func TestEvidenceConflictRememberKeepsForcedBatchPositionsDistinct(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "evidence-conflict-forced-distinct", 2, "exact", "")
+	repo := NewLedgerRepository(appDB, rls)
+	content := "Forced evidence stays distinct."
+	contentHash := sha256Hex(content)
+
+	tests := []struct {
+		name        string
+		forceInsert [2]bool
+	}{
+		{name: "forced_then_normal", forceInsert: [2]bool{true, false}},
+		{name: "normal_then_forced", forceInsert: [2]bool{false, true}},
+		{name: "both_forced", forceInsert: [2]bool{true, true}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-forced-distinct-"+test.name)
+			ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-forced-distinct-owner-"+test.name)
+			spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
+			input := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-forced-distinct-"+test.name, content, content, spaceID, generation)
+			for index := range input.Evidence {
+				input.Evidence[index].ForceInsert = test.forceInsert[index]
+				input.Evidence[index].ContentHash = contentHash
+			}
+
+			result := commitCitedEvidenceFixture(t, ctx, repo, input)
+			require.Equal(t, "completed", result.Outcome)
+			require.EqualValues(t, 2, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid AND ingest_id = ?::uuid`, teamID, input.IngestID))
+
+			detail, err := repo.GetEvidenceConflict(ctx, EvidenceConflictGetInput{TeamID: teamID, ConflictID: conflictIDForTest(t, adminDB, rls, teamID), EventLimit: 10})
+			require.NoError(t, err)
+			require.Len(t, detail.Conflict.Positions, 2)
+			require.NotEqual(t, detail.Conflict.Positions[0].CanonicalEvidenceID, detail.Conflict.Positions[1].CanonicalEvidenceID)
+			require.NotEqual(t, detail.Conflict.Positions[0].PositionKey, detail.Conflict.Positions[1].PositionKey)
+		})
+	}
+}
+
 func TestEvidenceConflictDismissalRecordsTerminalEvent(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
