@@ -196,6 +196,22 @@ BEGIN
                AND NEW.case_key = OLD.case_key
                AND NEW.created_at = OLD.created_at
            )
+           -- A terminal recitation refreshes activity without reopening or versioning the case.
+           OR (
+               current_setting('app.tx_mode', true) = 'profile'
+               AND OLD.status IN ('resolved', 'dismissed')
+               AND NEW.status = OLD.status
+               AND NEW.version = OLD.version
+               AND NEW.team_id = OLD.team_id
+               AND NEW.space_id = OLD.space_id
+               AND NEW.space_generation = OLD.space_generation
+               AND NEW.case_key = OLD.case_key
+               AND NEW.preferred_position_id IS NOT DISTINCT FROM OLD.preferred_position_id
+               AND NEW.resolved_at IS NOT DISTINCT FROM OLD.resolved_at
+               AND NEW.resolution_reason = OLD.resolution_reason
+               AND NEW.created_at = OLD.created_at
+               AND NEW.updated_at > OLD.updated_at
+           )
        )
     THEN
         RETURN NEW;
@@ -258,7 +274,7 @@ CREATE POLICY evidence_conflict_cases_update ON evidence_conflict_cases FOR UPDA
         current_setting('app.tx_mode', true) = 'profile'
         AND team_id = NULLIF(current_setting('app.current_team_id', true), '')::uuid
         AND (space_id = dense_mem_team_shared_space(team_id) OR dense_mem_space_allowed(space_id))
-        AND status = 'open'
+        AND status IN ('open', 'resolved', 'dismissed')
     )
 );
 DROP POLICY IF EXISTS evidence_conflict_cases_erasure_delete ON evidence_conflict_cases;

@@ -836,6 +836,12 @@ func (r *LedgerRepositoryImpl) upsertRememberEvidenceConflictCase(
 	if err != nil {
 		return err
 	}
+	if err := tx.WithContext(ctx).Exec(`
+		UPDATE evidence_conflict_cases SET updated_at = now()
+		WHERE team_id = ?::uuid AND conflict_id = ?::uuid AND status = ? AND version = ?
+	`, input.TeamID, conflictID, status, version).Error; err != nil {
+		return err
+	}
 	return insertEvidenceConflictEvent(ctx, tx, input, conflictID, ordinal, "recited", status, version, "profile", input.OwnerProfileID, "", preferred, positions)
 }
 

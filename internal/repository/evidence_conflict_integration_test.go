@@ -200,6 +200,19 @@ func TestEvidenceConflictRememberCreationAndRecurrence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "resolved", resolved.Status)
 	require.Equal(t, 3, resolved.Version)
+	resolvedUpdatedAt := resolved.UpdatedAt
+
+	background := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-terminal-recurrence-background", "Bob approved the change.", "Bob rejected the change.", spaceID, generation)
+	commitCitedEvidenceFixture(t, ctx, repo, background)
+	backgroundPage, err := repo.ListEvidenceConflicts(ctx, EvidenceConflictListInput{TeamID: teamID, Status: "open", Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, backgroundPage.Items, 1)
+	backgroundResolved, err := repo.ResolveEvidenceConflict(ctx, EvidenceConflictResolutionInput{
+		TeamID: teamID, ConflictID: backgroundPage.Items[0].ConflictID, ExpectedVersion: 1,
+		Decision: "resolve", Reason: "reviewed background cited positions", ActorKind: "control", ActorID: "integration-test",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "resolved", backgroundResolved.Status)
 
 	third := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-terminal-recurrence", "Alice approved the change.", "Alice rejected the change.", spaceID, generation)
 	thirdDuplicateInput := duplicateCandidateInput(third)
@@ -213,9 +226,14 @@ func TestEvidenceConflictRememberCreationAndRecurrence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "resolved", terminal.Conflict.Status)
 	require.Equal(t, 3, terminal.Conflict.Version, "terminal recurrence must not reopen or increment the case")
+	require.True(t, terminal.Conflict.UpdatedAt.After(resolvedUpdatedAt), "terminal recurrence must advance case activity")
 	require.Len(t, terminal.Conflict.Events, 4)
 	require.Equal(t, "recited", terminal.Conflict.Events[0].Action)
 	require.Equal(t, 3, terminal.Conflict.Events[0].CaseVersion)
+	resolvedPage, err := repo.ListEvidenceConflicts(ctx, EvidenceConflictListInput{TeamID: teamID, Status: "resolved", Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, resolvedPage.Items, 1)
+	require.Equal(t, detail.Conflict.ConflictID, resolvedPage.Items[0].ConflictID, "terminal recurrence must win the bounded activity page")
 }
 
 func TestEvidenceConflictRememberKeepsForcedBatchPositionsDistinct(t *testing.T) {
