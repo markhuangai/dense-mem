@@ -268,7 +268,6 @@ func PrepareSemanticAssessmentResponse(
 			result.CandidateEvidenceID = &value
 		}
 	}
-	normalizeSemanticAssessmentEvidenceConflictResults(&response)
 	for i := range response.EntityResults {
 		result := &response.EntityResults[i]
 		result.Ref = strings.TrimSpace(result.Ref)

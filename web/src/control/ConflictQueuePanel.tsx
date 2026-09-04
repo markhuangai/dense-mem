@@ -342,7 +342,7 @@ function EvidenceConflictView({ api, team, refreshNonce }: { api: ControlApi; te
     </div>
     {stale && <div className="banner warning" role="status">This conflict changed in another review. The latest version is loaded; your reason remains.</div>}
     {loading && <LoadingState label="Loading evidence conflicts" />}
-    {!loading && Boolean(error) && !visibleSelected && <QueueErrorState status={error instanceof ApiError ? error.status : 0} message={readError(error)} />}
+    {!loading && Boolean(error) && <QueueErrorState status={error instanceof ApiError ? error.status : 0} message={readError(error)} />}
     {!loading && !error && visibleItems.length === 0 && <div className="table-placeholder" role="status">No evidence conflicts match this view.</div>}
     {!loading && visibleItems.length > 0 && <div className="evidence-conflict-list">
       {visibleItems.map((item) => <button type="button" className={`evidence-conflict-card ${visibleSelected?.conflict.conflict_id === item.conflict_id ? "selected" : ""}`} key={item.conflict_id} onClick={() => openConflict(item)}>

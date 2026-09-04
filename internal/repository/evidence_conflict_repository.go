@@ -16,6 +16,8 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/assessor"
 )
 
 const (
@@ -23,9 +25,9 @@ const (
 	EvidenceConflictMaxLimit          = 100
 	EvidenceConflictDefaultEventLimit = 50
 	EvidenceConflictMaxEventLimit     = 100
-	EvidenceConflictMaxResults        = 20
-	EvidenceConflictMaxPositions      = 10
-	EvidenceConflictMaxQuoteRunes     = 4000
+	EvidenceConflictMaxResults        = assessor.SemanticAssessmentMaxEvidenceConflictResults
+	EvidenceConflictMaxPositions      = assessor.SemanticAssessmentMaxEvidenceConflictPositions
+	EvidenceConflictMaxQuoteRunes     = assessor.SemanticAssessmentMaxEvidenceConflictQuoteRunes
 )
 
 var (
@@ -790,7 +792,11 @@ func (r *LedgerRepositoryImpl) upsertRememberEvidenceConflictCase(
 				return err
 			}
 		}
-		return insertEvidenceConflictEvent(ctx, tx, input, conflictID, 1, "opened", "open", 1, "profile", input.OwnerProfileID, "", "", positions)
+		storedPositions, err := loadEvidenceConflictPositions(ctx, tx, input.TeamID, conflictID)
+		if err != nil {
+			return err
+		}
+		return insertEvidenceConflictEvent(ctx, tx, input, conflictID, 1, "opened", "open", 1, "profile", input.OwnerProfileID, "", "", storedPositions)
 	}
 	if err != nil {
 		return err
@@ -799,17 +805,18 @@ func (r *LedgerRepositoryImpl) upsertRememberEvidenceConflictCase(
 	if err != nil {
 		return err
 	}
-	storedPositionIDs := make(map[string]string, len(storedPositions))
+	storedPositionIDs := make(map[string]EvidenceConflictPositionRecord, len(storedPositions))
 	for _, stored := range storedPositions {
-		storedPositionIDs[stored.PositionKey] = stored.PositionID
+		storedPositionIDs[stored.PositionKey] = stored
 	}
 	for index := range positions {
-		positionID, exists := storedPositionIDs[positions[index].PositionKey]
+		stored, exists := storedPositionIDs[positions[index].PositionKey]
 		if !exists {
 			return errors.New("evidence conflict recurrence position set does not match the stored case")
 		}
 		positions[index].ConflictID = conflictID
-		positions[index].PositionID = positionID
+		positions[index].PositionID = stored.PositionID
+		positions[index].CreatedAt = stored.CreatedAt
 	}
 	if status == "open" {
 		version++
@@ -878,9 +885,10 @@ func insertEvidenceConflictEvent(ctx context.Context, tx *gorm.DB, input Synchro
 	for _, position := range positions {
 		snapshot = append(snapshot, map[string]any{
 			"position_id": position.PositionID, "position_key": position.PositionKey,
-			"evidence_id": position.CanonicalEvidenceID, "occurrence_id": position.OccurrenceID,
+			"evidence_id": position.CanonicalEvidenceID, "canonical_owner_profile_id": position.CanonicalOwnerProfileID,
+			"occurrence_id": position.OccurrenceID, "occurrence_owner_profile_id": position.OccurrenceOwnerProfileID,
 			"quote": position.Quote, "span_start": position.SpanStart, "span_end": position.SpanEnd,
-			"authority": position.Authority, "submitted": position.Submitted,
+			"authority": position.Authority, "submitted": position.Submitted, "created_at": position.CreatedAt,
 		})
 	}
 	encoded, err := json.Marshal(snapshot)

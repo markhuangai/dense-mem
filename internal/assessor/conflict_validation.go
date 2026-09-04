@@ -13,17 +13,6 @@ type semanticConflictCitableEvidence struct {
 	candidateFor []string
 }
 
-func normalizeSemanticAssessmentEvidenceConflictResults(response *SemanticAssessmentResponse) {
-	for i := range response.EvidenceConflictResults {
-		for j := range response.EvidenceConflictResults[i].Positions {
-			position := &response.EvidenceConflictResults[i].Positions[j]
-			position.EvidenceID = strings.TrimSpace(position.EvidenceID)
-			position.StartRef = strings.TrimSpace(position.StartRef)
-			position.EndRef = strings.TrimSpace(position.EndRef)
-		}
-	}
-}
-
 func semanticAssessmentConflictCitableEvidence(req SemanticAssessmentRequest) map[string]semanticConflictCitableEvidence {
 	out := make(map[string]semanticConflictCitableEvidence, len(req.Evidence)+len(req.KnownEvidence))
 	for _, item := range req.Evidence {
@@ -112,6 +101,14 @@ func resolveSemanticAssessmentEvidenceConflictResults(
 		for positionIndex := range result.Positions {
 			position := &result.Positions[positionIndex]
 			positionField := fmt.Sprintf("%s.positions[%d]", field, positionIndex)
+			if position.EvidenceID != strings.TrimSpace(position.EvidenceID) {
+				errs = append(errs, semanticErr(positionField+".evidence_id", "must copy the supplied evidence_id exactly"))
+				continue
+			}
+			if position.StartRef != strings.TrimSpace(position.StartRef) || position.EndRef != strings.TrimSpace(position.EndRef) {
+				errs = append(errs, semanticErr(positionField, "must copy supplied boundary references exactly"))
+				continue
+			}
 			item, ok := citable[position.EvidenceID]
 			if !ok {
 				errs = append(errs, semanticErr(positionField+".evidence_id", "is unknown or not citable"))

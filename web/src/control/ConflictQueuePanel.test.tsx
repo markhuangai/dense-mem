@@ -183,6 +183,31 @@ describe("ConflictQueuePanel", () => {
     expect(screen.getByText(/latest version is loaded/)).toBeInTheDocument();
   });
 
+  it("shows detail errors while an earlier selection remains visible", async () => {
+    const detail = evidenceConflictDetail();
+    const getEvidenceConflict = vi.fn()
+      .mockResolvedValueOnce(detail)
+      .mockRejectedValueOnce(new ApiError(500, "detail unavailable"));
+    const api = {
+      getConflictQueue: vi.fn().mockResolvedValue(queuePage()),
+      getTelemetry: vi.fn().mockResolvedValue({ available: true, current_cards: [] }),
+      listEvidenceConflicts: vi.fn().mockResolvedValue(evidenceConflictPage()),
+      getEvidenceConflict,
+    } as unknown as ControlApi;
+    const user = userEvent.setup();
+
+    render(<ConflictQueuePanel api={api} team={team()} />);
+    await user.click(await screen.findByRole("tab", { name: "Evidence" }));
+    const card = await screen.findByRole("button", { name: /2 cited positions/ });
+    await user.click(card);
+    await screen.findByText("Cited evidence conflict");
+    await user.click(card);
+
+    expect(await screen.findByText("Conflict queue unavailable.")).toBeInTheDocument();
+    expect(screen.getByText("detail unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Cited evidence conflict")).toBeInTheDocument();
+  });
+
   it("ignores a stale resolution refetch after selecting another case", async () => {
     const first = evidenceConflict({ conflict_id: "first", positions: [{ ...evidenceConflict().positions[0], quote: "first detail" }, { ...evidenceConflict().positions[1] }] });
     const second = evidenceConflict({ conflict_id: "second", positions: [{ ...evidenceConflict().positions[0], quote: "second detail" }, { ...evidenceConflict().positions[1] }] });

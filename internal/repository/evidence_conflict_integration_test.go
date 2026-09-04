@@ -73,6 +73,14 @@ func TestEvidenceConflictRememberCreationAndRecurrence(t *testing.T) {
 	require.Len(t, detail.Conflict.Events, 1)
 	require.Equal(t, "opened", detail.Conflict.Events[0].Action)
 	require.Equal(t, "Alice", detail.Conflict.Positions[0].Quote)
+	initialSharedOccurrenceID := ""
+	for _, position := range detail.Conflict.Positions {
+		if position.CanonicalEvidenceID == first.Evidence[0].FragmentID {
+			initialSharedOccurrenceID = position.OccurrenceID
+			break
+		}
+	}
+	require.NotEmpty(t, initialSharedOccurrenceID)
 	listed, err := repo.ListEvidenceConflicts(ctx, EvidenceConflictListInput{TeamID: teamID, Status: "open", Limit: 25})
 	require.NoError(t, err)
 	require.Len(t, listed.Items, 1)
@@ -87,6 +95,7 @@ func TestEvidenceConflictRememberCreationAndRecurrence(t *testing.T) {
 	require.Equal(t, detail.Conflict.ConflictID, recalled.EvidenceConflicts[0].ConflictID)
 
 	second := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-second", "Alice approved the change.", "Alice rejected the change.", spaceID, generation)
+	second.Evidence[0].Authority = "authoritative"
 	duplicateInput := duplicateCandidateInput(second)
 	duplicatePlan, err := repo.PlanRememberDuplicateEmbeddings(ctx, duplicateInput)
 	require.NoError(t, err)
@@ -97,6 +106,25 @@ func TestEvidenceConflictRememberCreationAndRecurrence(t *testing.T) {
 	detail, err = repo.GetEvidenceConflict(ctx, EvidenceConflictGetInput{TeamID: teamID, ConflictID: detail.Conflict.ConflictID, EventLimit: 10})
 	require.NoError(t, err)
 	require.Len(t, detail.Conflict.Events, 2)
+	require.Equal(t, "recited", detail.Conflict.Events[0].Action)
+	sharedPositionID := ""
+	for _, position := range detail.Conflict.Positions {
+		if position.CanonicalEvidenceID == first.Evidence[0].FragmentID {
+			sharedPositionID = position.PositionID
+			break
+		}
+	}
+	require.NotEmpty(t, sharedPositionID)
+	var recitedSharedSnapshot *EvidenceConflictPositionRecord
+	for index := range detail.Conflict.Events[0].CitationSnapshot {
+		if detail.Conflict.Events[0].CitationSnapshot[index].PositionID == sharedPositionID {
+			recitedSharedSnapshot = &detail.Conflict.Events[0].CitationSnapshot[index]
+			break
+		}
+	}
+	require.NotNil(t, recitedSharedSnapshot)
+	require.NotEqual(t, initialSharedOccurrenceID, recitedSharedSnapshot.OccurrenceID)
+	require.Equal(t, second.Evidence[0].Authority, recitedSharedSnapshot.Authority)
 	_, err = repo.GetEvidenceConflict(ctx, EvidenceConflictGetInput{TeamID: uuid.NewString(), ConflictID: detail.Conflict.ConflictID, EventLimit: 10})
 	require.ErrorIs(t, err, ErrEvidenceConflictNotFound)
 	_, err = repo.ResolveEvidenceConflict(ctx, EvidenceConflictResolutionInput{
@@ -260,6 +288,20 @@ func TestEvidenceConflictDismissalRecordsTerminalEvent(t *testing.T) {
 	require.Equal(t, "dismissed", detail.Conflict.Events[0].Action)
 	require.Len(t, detail.Conflict.Events[0].CitationSnapshot, 2)
 	require.NotEmpty(t, detail.Conflict.Events[0].CitationSnapshot[0].PositionID)
+	positionsByID := make(map[string]EvidenceConflictPositionRecord, len(detail.Conflict.Positions))
+	for _, position := range detail.Conflict.Positions {
+		positionsByID[position.PositionID] = position
+	}
+	for _, event := range detail.Conflict.Events {
+		for _, snapshot := range event.CitationSnapshot {
+			position, ok := positionsByID[snapshot.PositionID]
+			require.True(t, ok, "snapshot position %q must belong to the immutable case", snapshot.PositionID)
+			require.Equal(t, position.CanonicalOwnerProfileID, snapshot.CanonicalOwnerProfileID)
+			require.Equal(t, position.OccurrenceOwnerProfileID, snapshot.OccurrenceOwnerProfileID)
+			require.False(t, snapshot.CreatedAt.IsZero(), "snapshot position timestamps must be persisted")
+			require.True(t, position.CreatedAt.Equal(snapshot.CreatedAt))
+		}
+	}
 
 	recalled, err := NewSearchRepository(appDB, rls).RecallEvidence(ctx, RecallEvidenceInput{TeamID: teamID, Query: "Dismissal evidence", Limit: 10})
 	require.NoError(t, err)
@@ -321,6 +363,91 @@ func TestEvidenceConflictRecallBoundsCaseHydration(t *testing.T) {
 	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
 		loaded, err := loadRecallEvidenceConflictRecords(ctx, tx, RecallEvidenceInput{
 			TeamID: teamID, SpaceID: spaceID, SpaceKind: "team_shared",
+		}, []RecallEvidenceHit{{EvidenceID: sharedEvidenceID}})
+		if err != nil {
+			return err
+		}
+		records = loaded
+		return nil
+	}))
+	require.Len(t, records, EvidenceConflictMaxResults)
+	actualIDs := make([]string, 0, len(records))
+	for _, record := range records {
+		actualIDs = append(actualIDs, record.ConflictID)
+	}
+	require.Equal(t, expectedIDs, actualIDs)
+}
+
+func TestEvidenceConflictRecallHistoricalOrderPrecedesCandidateLimit(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "evidence-conflict-recall-historical-order", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-recall-historical-order-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-recall-historical-order-owner")
+	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
+	repo := NewLedgerRepository(appDB, rls)
+
+	const totalCases = evidenceConflictRecallCandidateLimit + 1
+	const postKnownAtUpdates = evidenceConflictRecallCandidateLimit - EvidenceConflictMaxResults + 1
+	sharedContent := "Historical candidate ordering must remain stable."
+	var sharedEvidenceID string
+	for index := 0; index < totalCases; index++ {
+		input := citedEvidenceRememberInput(
+			teamID,
+			ownerID,
+			fmt.Sprintf("evidence-conflict-recall-historical-order-%d", index),
+			sharedContent,
+			fmt.Sprintf("Historical opposing citation %d.", index),
+			spaceID,
+			generation,
+		)
+		commitCitedEvidenceFixture(t, ctx, repo, input)
+		if index == 0 {
+			sharedEvidenceID = input.Evidence[0].FragmentID
+		}
+	}
+	knownAt := time.Now().UTC()
+
+	var caseIDs []string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		rows, err := tx.Raw(`
+			SELECT conflict_id::text
+			FROM evidence_conflict_cases
+			WHERE team_id = ?::uuid
+			ORDER BY created_at, conflict_id
+		`, teamID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var conflictID string
+			if err := rows.Scan(&conflictID); err != nil {
+				return err
+			}
+			caseIDs = append(caseIDs, conflictID)
+		}
+		return rows.Err()
+	}))
+	require.Len(t, caseIDs, totalCases)
+	expectedIDs := append([]string(nil), caseIDs[totalCases-EvidenceConflictMaxResults:]...)
+	for left, right := 0, len(expectedIDs)-1; left < right; left, right = left+1, right-1 {
+		expectedIDs[left], expectedIDs[right] = expectedIDs[right], expectedIDs[left]
+	}
+
+	for index := 0; index < postKnownAtUpdates; index++ {
+		_, err := repo.ResolveEvidenceConflict(ctx, EvidenceConflictResolutionInput{
+			TeamID: teamID, ConflictID: caseIDs[index], ExpectedVersion: 1,
+			Decision: "resolve", Reason: "historical ordering regression", ActorKind: "control", ActorID: "integration-test",
+		})
+		require.NoError(t, err)
+	}
+
+	var records []EvidenceConflictCaseRecord
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		loaded, err := loadRecallEvidenceConflictRecords(ctx, tx, RecallEvidenceInput{
+			TeamID: teamID, SpaceID: spaceID, SpaceKind: "team_shared", KnownAt: &knownAt,
 		}, []RecallEvidenceHit{{EvidenceID: sharedEvidenceID}})
 		if err != nil {
 			return err

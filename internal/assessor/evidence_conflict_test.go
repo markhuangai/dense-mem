@@ -109,6 +109,31 @@ func TestSemanticAssessmentEvidenceConflictRejectsMalformedCompleteResults(t *te
 	}
 }
 
+func TestSemanticAssessmentEvidenceConflictRejectsPaddedCitationIdentifiers(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*SemanticAssessmentEvidenceConflictPosition)
+		want   string
+	}{
+		{name: "evidence id", mutate: func(position *SemanticAssessmentEvidenceConflictPosition) { position.EvidenceID = " submitted " }, want: "must copy the supplied evidence_id exactly"},
+		{name: "start ref", mutate: func(position *SemanticAssessmentEvidenceConflictPosition) {
+			position.StartRef = " " + position.StartRef + " "
+		}, want: "must copy supplied boundary references exactly"},
+		{name: "end ref", mutate: func(position *SemanticAssessmentEvidenceConflictPosition) {
+			position.EndRef = " " + position.EndRef + " "
+		}, want: "must copy supplied boundary references exactly"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			prepared, response := validEvidenceConflictAssessment(t)
+			testCase.mutate(&response.EvidenceConflictResults[0].Positions[0])
+			validated, errs := PrepareSemanticAssessmentResponse(prepared, response, DefaultSemanticAssessmentLimits())
+			require.Contains(t, semanticAssessmentJoinedErrors(errs), testCase.want)
+			require.Equal(t, response.EvidenceConflictResults[0].Positions[0].EvidenceID, validated.EvidenceConflictResults[0].Positions[0].EvidenceID)
+		})
+	}
+}
+
 func TestSemanticAssessmentEvidenceConflictRequiresCandidateAssociation(t *testing.T) {
 	prepared, response := validEvidenceConflictAssessment(t)
 	candidate := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "candidate", Content: "candidate claim"})

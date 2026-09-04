@@ -52,12 +52,23 @@ func loadRecallEvidenceConflictRecords(
 		where += ` AND conflict.created_at <= ?::timestamptz`
 		args = append(args, *input.KnownAt)
 	}
+	groupBy := "conflict.team_id, conflict.conflict_id, conflict.updated_at"
+	orderBy := "conflict.updated_at DESC"
+	if input.KnownAt != nil {
+		orderBy = `(SELECT max(event.created_at)
+			FROM evidence_conflict_events AS event
+			WHERE event.team_id = conflict.team_id
+			  AND event.conflict_id = conflict.conflict_id
+			  AND event.created_at <= ?::timestamptz
+		) DESC NULLS LAST`
+		args = append(args, *input.KnownAt)
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT conflict.conflict_id::text
 		FROM evidence_conflict_cases AS conflict
 		JOIN evidence_conflict_positions AS position
 		  ON position.team_id = conflict.team_id AND position.conflict_id = conflict.conflict_id
-		`+where+` GROUP BY conflict.conflict_id, conflict.updated_at ORDER BY conflict.updated_at DESC, conflict.conflict_id DESC LIMIT ?`, append(args, evidenceConflictRecallCandidateLimit)...).Rows()
+		`+where+` GROUP BY `+groupBy+` ORDER BY `+orderBy+`, conflict.conflict_id DESC LIMIT ?`, append(args, evidenceConflictRecallCandidateLimit)...).Rows()
 	if err != nil {
 		return nil, err
 	}
