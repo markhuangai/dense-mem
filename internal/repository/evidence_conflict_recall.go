@@ -45,11 +45,31 @@ func loadRecallEvidenceConflictRecords(
 		  AND position.canonical_evidence_id = ANY(?::uuid[])
 	` + spaceClause
 	args := []any{input.TeamID, pq.Array(evidenceIDs)}
+	where += `
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM evidence_conflict_positions AS candidate_position
+			  WHERE candidate_position.team_id = conflict.team_id
+				AND candidate_position.conflict_id = conflict.conflict_id
+				AND NOT (` + evidenceConflictPositionEligibilitySQL("candidate_position") + `)
+		  )
+	`
+	args = append(args, evidenceConflictPositionEligibilityArgs(input)...)
 	if input.KnownAt == nil {
 		where += ` AND conflict.space_generation = dense_mem_active_space_generation(conflict.team_id, conflict.space_id)
 		  AND conflict.status IN ('open', 'resolved')`
 	} else {
 		where += ` AND conflict.created_at <= ?::timestamptz`
+		args = append(args, *input.KnownAt)
+		where += ` AND COALESCE((
+			SELECT event.status_after
+			FROM evidence_conflict_events AS event
+			WHERE event.team_id = conflict.team_id
+			  AND event.conflict_id = conflict.conflict_id
+			  AND event.created_at <= ?::timestamptz
+			ORDER BY event.ordinal DESC, event.conflict_event_id DESC
+			LIMIT 1
+		), conflict.status) IN ('open', 'resolved')`
 		args = append(args, *input.KnownAt)
 	}
 	groupBy := "conflict.team_id, conflict.conflict_id, conflict.updated_at"
@@ -129,76 +149,77 @@ func evidenceConflictCasePositionsAuthorized(
 	if len(item.Positions) == 0 {
 		return false, nil
 	}
-	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
 	var authorized int
 	query := `
 		SELECT count(*)::int
 		FROM evidence_conflict_positions AS position
 		WHERE position.team_id = ?::uuid
 		  AND position.conflict_id = ?::uuid
-		  AND EXISTS (
-			  SELECT 1
-			  FROM evidence_fragments AS fragment
-			  JOIN knowledge_ingests AS ingest
-			    ON ingest.team_id = fragment.team_id
-			   AND ingest.ingest_id = fragment.ingest_id
-			  JOIN memory_spaces AS space
-			    ON space.team_id = fragment.team_id
-			   AND space.id = fragment.space_id
-			  LEFT JOIN evidence_sources AS source
-			    ON source.team_id = fragment.team_id
-			   AND source.source_id = fragment.source_id
-			   AND source.owner_profile_id = fragment.owner_profile_id
-			  JOIN evidence_occurrences AS occurrence
-			    ON occurrence.team_id = fragment.team_id
-			   AND occurrence.occurrence_id = position.occurrence_id
-			   AND occurrence.canonical_fragment_id = fragment.fragment_id
-			   AND occurrence.canonical_owner_profile_id = fragment.owner_profile_id
-			   AND occurrence.owner_profile_id = position.occurrence_owner_profile_id
-			  WHERE fragment.team_id = position.team_id
-			    AND fragment.fragment_id = position.canonical_evidence_id
-			    AND fragment.owner_profile_id = position.canonical_owner_profile_id
-			    AND fragment.space_id = position.space_id
-			    AND fragment.space_generation = position.space_generation
-			    AND (?::timestamptz IS NOT NULL OR fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id))
-			    AND ingest.status = 'completed'
-			    AND space.lifecycle_state = 'active'
-			    AND (space.kind = 'team_shared' OR dense_mem_space_allowed(space.id))
-			    ` + recallEvidenceAliasVisibilitySQL("fragment") + `
-			    AND NOT EXISTS (
-			        SELECT 1
-			        FROM evidence_lifecycle_events AS lifecycle
-			        WHERE lifecycle.team_id = fragment.team_id
-			          AND lifecycle.target_fragment_id = fragment.fragment_id
-			          AND (?::timestamptz IS NULL OR lifecycle.created_at <= ?::timestamptz)
-			    )
-			    AND NOT EXISTS (
-			        SELECT 1
-			        FROM evidence_quarantines AS quarantine
-			        WHERE quarantine.team_id = fragment.team_id
-			          AND quarantine.fragment_id = fragment.fragment_id
-			          AND quarantine.status = 'active'
-			    )
-			    AND NOT (
-			        ingest.source_summary = 'overdue conflict deletion-only derivation'
-			        AND ingest.metadata ->> 'conflict_resolution_deletion_only' = 'true'
-			    )
-			    ` + recallEvidenceHistoricalSourceVisibilitySQL("fragment", "source") + `
-			    AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
-		  )
+		  AND ` + evidenceConflictPositionEligibilitySQL("position") + `
 		`
-	args := []any{
-		input.TeamID, item.ConflictID,
-		eventAt,
-		eventAt,
-		eventAt, eventAt,
-		input.KnownAt, eventAt,
-		input.KnownAt, input.KnownAt,
-	}
+	args := append([]any{input.TeamID, item.ConflictID}, evidenceConflictPositionEligibilityArgs(input)...)
 	if err := tx.WithContext(ctx).Raw(query, args...).Row().Scan(&authorized); err != nil {
 		return false, err
 	}
 	return authorized == len(item.Positions), nil
+}
+
+func evidenceConflictPositionEligibilitySQL(positionAlias string) string {
+	return fmt.Sprintf(`EXISTS (
+		SELECT 1
+		FROM evidence_fragments AS fragment
+		JOIN knowledge_ingests AS ingest
+		  ON ingest.team_id = fragment.team_id
+		 AND ingest.ingest_id = fragment.ingest_id
+		JOIN memory_spaces AS space
+		  ON space.team_id = fragment.team_id
+		 AND space.id = fragment.space_id
+		LEFT JOIN evidence_sources AS source
+		  ON source.team_id = fragment.team_id
+		 AND source.source_id = fragment.source_id
+		 AND source.owner_profile_id = fragment.owner_profile_id
+		JOIN evidence_occurrences AS occurrence
+		  ON occurrence.team_id = fragment.team_id
+		 AND occurrence.occurrence_id = %[1]s.occurrence_id
+		 AND occurrence.canonical_fragment_id = fragment.fragment_id
+		 AND occurrence.canonical_owner_profile_id = fragment.owner_profile_id
+		 AND occurrence.owner_profile_id = %[1]s.occurrence_owner_profile_id
+		WHERE fragment.team_id = %[1]s.team_id
+		  AND fragment.fragment_id = %[1]s.canonical_evidence_id
+		  AND fragment.owner_profile_id = %[1]s.canonical_owner_profile_id
+		  AND fragment.space_id = %[1]s.space_id
+		  AND fragment.space_generation = %[1]s.space_generation
+		  AND (?::timestamptz IS NOT NULL OR fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id))
+		  AND ingest.status = 'completed'
+		  AND space.lifecycle_state = 'active'
+		  AND (space.kind = 'team_shared' OR dense_mem_space_allowed(space.id))
+		  `+recallEvidenceAliasVisibilitySQL("fragment")+`
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM evidence_lifecycle_events AS lifecycle
+		      WHERE lifecycle.team_id = fragment.team_id
+		        AND lifecycle.target_fragment_id = fragment.fragment_id
+		        AND (?::timestamptz IS NULL OR lifecycle.created_at <= ?::timestamptz)
+		  )
+		  AND NOT EXISTS (
+		      SELECT 1
+		      FROM evidence_quarantines AS quarantine
+		      WHERE quarantine.team_id = fragment.team_id
+		        AND quarantine.fragment_id = fragment.fragment_id
+		        AND quarantine.status = 'active'
+		  )
+		  AND NOT (
+		      ingest.source_summary = 'overdue conflict deletion-only derivation'
+		      AND ingest.metadata ->> 'conflict_resolution_deletion_only' = 'true'
+		  )
+		  `+recallEvidenceHistoricalSourceVisibilitySQL("fragment", "source")+`
+		  AND (?::timestamptz IS NULL OR fragment.created_at <= ?::timestamptz)
+	)`, positionAlias)
+}
+
+func evidenceConflictPositionEligibilityArgs(input RecallEvidenceInput) []any {
+	eventAt := recallEventAt(input.ValidAt, input.KnownAt)
+	return []any{eventAt, eventAt, eventAt, eventAt, input.KnownAt, eventAt, input.KnownAt, input.KnownAt}
 }
 
 func loadRecallEvidenceConflictCase(ctx context.Context, tx *gorm.DB, teamID, conflictID string, knownAt *time.Time) (*EvidenceConflictCaseRecord, error) {

@@ -541,6 +541,84 @@ func TestEvidenceConflictHistoricalEventHydrationIsBounded(t *testing.T) {
 	require.Equal(t, "historical event hydration regression", historical.ResolutionReason)
 }
 
+func TestEvidenceConflictRecallFiltersHistoricalIneligibleBeforeCandidateLimit(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "evidence-conflict-recall-historical-filter", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-conflict-recall-historical-filter-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-conflict-recall-historical-filter-owner")
+	spaceID, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
+	repo := NewLedgerRepository(appDB, rls)
+
+	input := citedEvidenceRememberInput(teamID, ownerID, "evidence-conflict-recall-historical-filter", "Historical filter evidence one.", "Historical filter evidence two.", spaceID, generation)
+	commitCitedEvidenceFixture(t, ctx, repo, input)
+	conflictID := conflictIDForTest(t, adminDB, rls, teamID)
+	detail, err := repo.GetEvidenceConflict(ctx, EvidenceConflictGetInput{TeamID: teamID, ConflictID: conflictID, EventLimit: 10})
+	require.NoError(t, err)
+	require.Len(t, detail.Conflict.Positions, 2)
+	base := time.Now().UTC().Add(time.Minute)
+	createdAt := base.Add(-time.Hour)
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		for index := 0; index < evidenceConflictRecallCandidateLimit; index++ {
+			candidateID := uuid.NewString()
+			if err := tx.Exec(`
+				INSERT INTO evidence_conflict_cases (
+					team_id, conflict_id, space_id, space_generation, case_key, status, version, resolved_at, resolution_reason, created_at, updated_at
+				) VALUES (?::uuid, ?::uuid, ?::uuid, ?, ?, 'dismissed', 2, ?, 'historical filter fixture', ?, ?)
+			`, teamID, candidateID, spaceID, generation, fmt.Sprintf("historical-filter-%d", index), base, createdAt, base).Error; err != nil {
+				return err
+			}
+			for positionIndex, position := range detail.Conflict.Positions {
+				if err := tx.Exec(`
+					INSERT INTO evidence_conflict_positions (
+						team_id, conflict_id, space_id, space_generation, position_id, position_key,
+						canonical_evidence_id, canonical_owner_profile_id, occurrence_id, occurrence_owner_profile_id,
+						quote, span_start, span_end, authority, submitted, created_at
+					) VALUES (?::uuid, ?::uuid, ?::uuid, ?, ?::uuid, ?, ?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?)
+				`, teamID, candidateID, spaceID, generation, uuid.NewString(), fmt.Sprintf("historical-filter-position-%d", positionIndex),
+					position.CanonicalEvidenceID, position.CanonicalOwnerProfileID, position.OccurrenceID, position.OccurrenceOwnerProfileID,
+					position.Quote, position.SpanStart, position.SpanEnd, position.Authority, position.Submitted, createdAt).Error; err != nil {
+					return err
+				}
+			}
+			for ordinal, event := range []struct {
+				action, status string
+				version        int
+				createdAt      time.Time
+			}{
+				{action: "opened", status: "open", version: 1, createdAt: createdAt},
+				{action: "dismissed", status: "dismissed", version: 2, createdAt: base},
+			} {
+				if err := tx.Exec(`
+					INSERT INTO evidence_conflict_events (
+						team_id, conflict_event_id, conflict_id, space_id, space_generation, ordinal,
+						action, status_after, case_version, actor_kind, actor_id, reason, citation_snapshot, created_at
+					) VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, 'profile', ?, 'historical filter fixture', '[]'::jsonb, ?)
+				`, teamID, uuid.NewString(), candidateID, spaceID, generation, ordinal+1, event.action, event.status, event.version, ownerID, event.createdAt).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}))
+	knownAt := base.Add(time.Minute)
+	var records []EvidenceConflictCaseRecord
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		loaded, err := loadRecallEvidenceConflictRecords(ctx, tx, RecallEvidenceInput{
+			TeamID: teamID, SpaceID: spaceID, SpaceKind: "team_shared", KnownAt: &knownAt,
+		}, []RecallEvidenceHit{{EvidenceID: input.Evidence[0].FragmentID}})
+		if err != nil {
+			return err
+		}
+		records = loaded
+		return nil
+	}))
+	require.Len(t, records, 1)
+	require.Equal(t, conflictID, records[0].ConflictID)
+	require.Equal(t, "open", records[0].Status)
+}
+
 func TestEvidenceConflictConcurrentCreationSerializesSameOwnerAndDifferentOwner(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

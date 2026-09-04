@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -272,8 +271,7 @@ func (r *LedgerRepositoryImpl) ResolveEvidenceConflict(ctx context.Context, inpu
 			return err
 		}
 		newVersion := version + 1
-		now := time.Now().UTC()
-		if err := tx.WithContext(ctx).Exec(`UPDATE evidence_conflict_cases SET status = ?, version = ?, preferred_position_id = NULLIF(?, '')::uuid, resolved_at = ?, resolution_reason = ?, updated_at = ? WHERE team_id = ?::uuid AND conflict_id = ?::uuid AND status = 'open' AND version = ?`, newStatus, newVersion, input.PreferredPositionID, now, input.Reason, now, input.TeamID, input.ConflictID, version).Error; err != nil {
+		if err := tx.WithContext(ctx).Exec(`UPDATE evidence_conflict_cases SET status = ?, version = ?, preferred_position_id = NULLIF(?, '')::uuid, resolved_at = now(), resolution_reason = ?, updated_at = now() WHERE team_id = ?::uuid AND conflict_id = ?::uuid AND status = 'open' AND version = ?`, newStatus, newVersion, input.PreferredPositionID, input.Reason, input.TeamID, input.ConflictID, version).Error; err != nil {
 			return err
 		}
 		if err := insertEvidenceConflictEvent(ctx, tx, SynchronousRememberCommitInput{TeamID: input.TeamID, SpaceID: spaceID, SpaceGeneration: generation}, input.ConflictID, ordinal, action, newStatus, newVersion, input.ActorKind, input.ActorID, input.Reason, input.PreferredPositionID, positions); err != nil {
