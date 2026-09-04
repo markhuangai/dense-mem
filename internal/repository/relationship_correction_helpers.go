@@ -581,7 +581,7 @@ func rejectRelationshipCorrectionSubmission(
 	return nil
 }
 
-func lockRelationshipCorrectionSource(
+func loadRelationshipCorrectionSource(
 	ctx context.Context,
 	tx *gorm.DB,
 	teamID string,
@@ -595,17 +595,59 @@ func lockRelationshipCorrectionSource(
 	if source.OwnerProfileID != ownerProfileID {
 		return nil, ErrSemanticOwnerMismatch
 	}
-	if err := lockRelationshipConflictSnapshotScopeForRecord(ctx, tx, source); err != nil {
-		return nil, err
+	return source, nil
+}
+
+func lockRelationshipCorrectionConflictSnapshotScopes(
+	ctx context.Context,
+	tx *gorm.DB,
+	source *RelationshipRecord,
+	resolution *relationshipCorrectionResolution,
+	ownerProfileID string,
+) (*RelationshipRecord, error) {
+	if resolution == nil || resolution.Predicate == nil {
+		return nil, errors.New("relationship correction requires a resolved predicate")
 	}
-	source, err = loadRelationshipRecordForUpdate(ctx, tx, teamID, relationshipID)
+	if source.SpaceID == "" {
+		return nil, errors.New("relationship correction requires a memory space")
+	}
+	sourceScopeKey, err := relationshipConflictSnapshotScopeKeyForRecord(ctx, tx, source)
 	if err != nil {
 		return nil, err
 	}
-	if source.OwnerProfileID != ownerProfileID {
+	subjectEntityID := resolution.SubjectEntityID
+	if resolution.Selection.SubjectEntityID != "" {
+		subjectEntityID = resolution.Selection.SubjectEntityID
+	}
+	destinationScopeKey := ""
+	if resolution.SubjectCreate == nil {
+		destination := &RelationshipRecord{
+			TeamID:             source.TeamID,
+			SpaceID:            source.SpaceID,
+			SubjectEntityID:    subjectEntityID,
+			PredicateKey:       resolution.Predicate.Key,
+			RelationshipKind:   resolution.Predicate.RelationshipKind,
+			CurrentCardinality: resolution.Predicate.CurrentCardinality,
+			Status:             string(domain.RelationshipStatusActive),
+			Polarity:           source.Polarity,
+			ScopeKey:           source.ScopeKey,
+		}
+		destinationScopeKey, err = relationshipConflictSnapshotScopeKeyForRecord(ctx, tx, destination)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := lockRelationshipConflictSnapshotScopes(ctx, tx, source.TeamID, sourceScopeKey, destinationScopeKey); err != nil {
+		return nil, err
+	}
+	locked, err := loadRelationshipRecordForUpdate(ctx, tx, source.TeamID, source.RelationshipID)
+	if err != nil {
+		return nil, err
+	}
+	if locked.OwnerProfileID != ownerProfileID {
 		return nil, ErrSemanticOwnerMismatch
 	}
-	return source, nil
+	return locked, nil
 }
 
 func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
@@ -614,9 +656,35 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 	row *relationshipCorrectionSubmissionRow,
 	source *RelationshipRecord,
 	resolution *relationshipCorrectionResolution,
-	supports []effectiveRelationshipCorrectionSupport,
 ) (*CorrectRelationshipResult, error) {
-	for _, support := range supports {
+	lockedSource, err := lockRelationshipCorrectionConflictSnapshotScopes(ctx, tx, source, resolution, row.OwnerProfileID)
+	if err != nil {
+		return nil, err
+	}
+	source = lockedSource
+	if source.Version != row.ExpectedVersion {
+		if row.ConfirmationIdempotency != "" {
+			return r.rejectAppliedRelationshipCorrection(ctx, tx, row, "relationship_changed", "relationship changed while confirmation was pending")
+		}
+		return r.rejectAppliedRelationshipCorrection(ctx, tx, row, "relationship_version_stale", "relationship version is stale")
+	}
+	if source.IdentityAliasOfID != "" || source.Status != string(domain.RelationshipStatusActive) || source.SupportCount == 0 {
+		if row.ConfirmationIdempotency != "" {
+			return r.rejectAppliedRelationshipCorrection(ctx, tx, row, "relationship_changed", "relationship changed while confirmation was pending")
+		}
+		return r.rejectAppliedRelationshipCorrection(ctx, tx, row, "relationship_not_active", "relationship must be active, supported, and canonical")
+	}
+	effectiveSupports, err := loadEffectiveRelationshipCorrectionSupports(ctx, tx, row.TeamID, source.RelationshipID)
+	if err != nil {
+		return nil, err
+	}
+	if !relationshipCorrectionSupportsEqual(row.Supports, effectiveSupports) {
+		if row.ConfirmationIdempotency != "" {
+			return r.rejectAppliedRelationshipCorrection(ctx, tx, row, "support_set_changed", "relationship supports changed while confirmation was pending")
+		}
+		return r.rejectAppliedRelationshipCorrection(ctx, tx, row, "support_set_mismatch", "supports must exactly match the relationship's effective evidence spans")
+	}
+	for _, support := range effectiveSupports {
 		if err := requireSemanticSpaceMatch(source.SpaceID, support.SpaceID); err != nil {
 			return nil, err
 		}
@@ -722,7 +790,7 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 
 	var successor *RelationshipRecord
 	var verificationEventID string
-	for index, support := range supports {
+	for index, support := range effectiveSupports {
 		supportInput := EvidenceSupportInput{
 			FragmentID: support.EvidenceID, EvidenceOwnerProfileID: support.EvidenceOwnerProfileID, SourceGroupKey: support.SourceGroupKey,
 			OccurrenceID: support.OccurrenceID, OccurrenceOwnerProfileID: support.OccurrenceOwnerProfileID,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 	"strings"
 
 	"gorm.io/gorm"
@@ -70,6 +71,27 @@ func lockRelationshipConflictSnapshotScope(
 	).Error
 }
 
+func lockRelationshipConflictSnapshotScopes(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	semanticScopeKeys ...string,
+) error {
+	keys := append([]string(nil), semanticScopeKeys...)
+	sort.Strings(keys)
+	previous := ""
+	for _, key := range keys {
+		if key == "" || key == previous {
+			continue
+		}
+		if err := lockRelationshipConflictSnapshotScope(ctx, tx, teamID, key); err != nil {
+			return err
+		}
+		previous = key
+	}
+	return nil
+}
+
 func lockRelationshipConflictSnapshotScopeForDecision(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -77,6 +99,20 @@ func lockRelationshipConflictSnapshotScopeForDecision(
 	predicate *predicateDefinition,
 	status string,
 ) error {
+	semanticScopeKey, err := relationshipConflictSnapshotScopeKeyForDecision(ctx, tx, input, predicate, status)
+	if err != nil {
+		return err
+	}
+	return lockRelationshipConflictSnapshotScopes(ctx, tx, input.TeamID, semanticScopeKey)
+}
+
+func relationshipConflictSnapshotScopeKeyForDecision(
+	ctx context.Context,
+	tx *gorm.DB,
+	input ApplyRelationshipDecisionInput,
+	predicate *predicateDefinition,
+	status string,
+) (string, error) {
 	source := &RelationshipRecord{
 		TeamID:             input.TeamID,
 		SubjectEntityID:    input.SubjectEntityID,
@@ -88,14 +124,14 @@ func lockRelationshipConflictSnapshotScopeForDecision(
 		ScopeKey:           input.ScopeKey,
 	}
 	if !relationshipConflictSnapshotScopeEligible(source) {
-		return nil
+		return "", nil
 	}
 	spaceID, err := loadSemanticInputSpaceID(ctx, tx, input)
 	if err != nil {
-		return err
+		return "", err
 	}
 	source.SpaceID = spaceID
-	return lockRelationshipConflictSnapshotScopeForRecord(ctx, tx, source)
+	return relationshipConflictSnapshotScopeKeyForRecord(ctx, tx, source)
 }
 
 func lockRelationshipConflictSnapshotScopeForRecord(
@@ -103,14 +139,26 @@ func lockRelationshipConflictSnapshotScopeForRecord(
 	tx *gorm.DB,
 	source *RelationshipRecord,
 ) error {
-	if !relationshipConflictSnapshotScopeEligible(source) {
-		return nil
-	}
-	spaceID, spaceKind, err := loadRelationshipConflictSpace(ctx, tx, source.TeamID, source)
+	semanticScopeKey, err := relationshipConflictSnapshotScopeKeyForRecord(ctx, tx, source)
 	if err != nil {
 		return err
 	}
-	return lockRelationshipConflictSnapshotScope(ctx, tx, source.TeamID, relationshipConflictScopeKey(source, spaceID, spaceKind))
+	return lockRelationshipConflictSnapshotScopes(ctx, tx, source.TeamID, semanticScopeKey)
+}
+
+func relationshipConflictSnapshotScopeKeyForRecord(
+	ctx context.Context,
+	tx *gorm.DB,
+	source *RelationshipRecord,
+) (string, error) {
+	if !relationshipConflictSnapshotScopeEligible(source) {
+		return "", nil
+	}
+	spaceID, spaceKind, err := loadRelationshipConflictSpace(ctx, tx, source.TeamID, source)
+	if err != nil {
+		return "", err
+	}
+	return relationshipConflictScopeKey(source, spaceID, spaceKind), nil
 }
 
 func relationshipConflictSnapshotScopeEligible(source *RelationshipRecord) bool {
