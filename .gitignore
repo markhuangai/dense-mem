@@ -12,8 +12,7 @@ user-dist/
 .env
 .env.local
 .env.*.local
-# Local Docker Compose configuration
-docker-compose.yml
+# Local Docker Compose overrides
 docker-compose.override.yml
 
 # IDE

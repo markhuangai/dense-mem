@@ -10,6 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  go-unit:
-    name: Go unit tests
+  ci:
+    name: CI
     uses: ./.github/workflows/ci-shared.yml

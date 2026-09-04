@@ -177,6 +177,92 @@ test("low-trust preview builds do not export an Actions cache", async () => {
   assert.doesNotMatch(workflow, /^\s+cache-to:/m);
 });
 
+test("shared CI partitions slow gates into independent hosted jobs", async () => {
+  const [shared, pullRequest, push] = await Promise.all([
+    readFile(new URL("../../.github/workflows/ci-shared.yml", import.meta.url), "utf8"),
+    readFile(new URL("../../.github/workflows/ci-pr.yml", import.meta.url), "utf8"),
+    readFile(new URL("../../.github/workflows/ci-push.yml", import.meta.url), "utf8"),
+  ]);
+  const jobIds = [...shared.matchAll(/^  ([a-z0-9-]+):$/gm)].map(([, id]) => id);
+  assert.deepEqual(jobIds, ["npm-audit", "postgres-migrations", "quality"]);
+  const audit = workflowJob(shared, "npm-audit");
+  const migrations = workflowJob(shared, "postgres-migrations");
+  const quality = workflowJob(shared, "quality");
+  assert.match(shared, /^  COVERAGE_THRESHOLD: "90\.0"$/m);
+  assert.equal((shared.match(/COVERAGE_THRESHOLD: "90\.0"/g) || []).length, 1);
+
+  for (const [name, job] of [
+    ["npm-audit", audit],
+    ["postgres-migrations", migrations],
+    ["quality", quality],
+  ]) {
+    assert.match(job, /^    runs-on: ubuntu-latest$/m, `${name} must use a hosted runner`);
+    assert.doesNotMatch(job, /^    needs:/m, `${name} must not depend on another CI job`);
+  }
+  assert.match(audit, /Run npm vulnerability audits/);
+  assert.doesNotMatch(audit, /npm ci/);
+  for (const option of [
+    "--fetch-retries=4",
+    "--fetch-retry-factor=2",
+    "--fetch-retry-mintimeout=1000",
+    "--fetch-retry-maxtimeout=30000",
+    "--fetch-timeout=30000",
+  ]) {
+    assert.equal((audit.match(new RegExp(option, "g")) || []).length, 1, `${option} must be shared by every audit retry`);
+  }
+  assert.match(audit, /audit_with_retry\(\)/);
+  assert.match(audit, /local max_attempts=4/);
+  assert.match(audit, /while \(\( attempt <= max_attempts \)\)/);
+  assert.match(audit, /npm \(warn\|error\) \(audit \)\?5\[0-9\]\{2\}/);
+  assert.match(audit, /npm \(warn\|error\) audit network timeout/);
+  assert.match(audit, /E5\[0-9\]\{2\}\|ECONNRESET\|ETIMEDOUT\|EAI_AGAIN\|ENETUNREACH\|ECONNREFUSED/);
+  assert.match(audit, /status=\$\?/);
+  const transientGuard = audit.indexOf("if ! grep -Eq");
+  const nonTransientReturn = audit.indexOf('return "${status}"', transientGuard);
+  const retryBackoff = audit.indexOf("sleep_seconds=$(", transientGuard);
+  assert.ok(transientGuard !== -1 && nonTransientReturn > transientGuard && nonTransientReturn < retryBackoff);
+  for (const prefix of [".lint", "web", "packages/mcp-proxy"]) {
+    assert.match(audit, new RegExp(`audit_with_retry ${prefix.replace("/", "\\/")}`), `${prefix} audit must be invoked`);
+  }
+  assert.equal((audit.match(/^\s+audit_with_retry (?:\.lint|web|packages\/mcp-proxy)$/gm) || []).length, 3);
+
+  for (const step of [
+    "Install lint dependencies",
+    "Install MCP proxy dependencies",
+    "Run repository lint",
+    "Run architecture conformance",
+    "Run MCP proxy tests",
+    "Run scheduled-dreaming timing test",
+    "Run image release policy tests",
+    "Run prerelease version tests",
+    "Run Go vulnerability scan policy tests",
+    "Run AI PR review policy tests",
+    "Run evaluation monitor shell test",
+    "Run Go tests",
+    "Run pinned Go static analysis",
+    "Run Go vulnerability scan",
+    "Run unit coverage gate",
+  ]) {
+    assert.equal((quality.match(new RegExp(`^      - name: ${step.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "gm")) || []).length, 1, `${step} must run exactly once`);
+  }
+  assert.match(migrations, /Validate PostgreSQL migration history/);
+  assert.match(migrations, /go test -tags=integration \.\/internal\/storage\/postgres -count=1/);
+  assert.doesNotMatch(migrations, /Run Go tests|Run unit coverage gate/);
+  assert.match(quality, /Run Go tests/);
+  assert.match(quality, /Run unit coverage gate/);
+  assert.doesNotMatch(quality, /Run npm vulnerability audits|Run PostgreSQL migration integration suite|Validate PostgreSQL migration history/);
+  assert.match(shared, /^  workflow_call:\n    inputs:\n      migration-base-ref:\n        description:/m);
+  assert.match(shared, /^        required: false$/m);
+  assert.match(shared, /^        type: string$/m);
+  assert.match(shared, /^        default: origin\/main$/m);
+  assert.match(migrations, /scripts\/check-postgres-migrations\.sh "\$\{\{ inputs\.migration-base-ref \}\}"/);
+  assert.match(pullRequest, /^name: CI Pull Request$/m);
+  assert.match(push, /^name: CI Push$/m);
+  assert.match(pullRequest, /  ci:\n    name: CI\n    uses: \.\/\.github\/workflows\/ci-shared\.yml/);
+  assert.match(push, /  ci:\n    name: CI\n    uses: \.\/\.github\/workflows\/ci-shared\.yml/);
+  assert.match(push, /migration-base-ref: \$\{\{ github\.event\.before \}\}/);
+});
+
 test("non-E2E image and release jobs use GitHub-hosted runners", async () => {
   const [preview, prereleaseImage, demoImage, prerelease, release, startPrerelease] =
     await Promise.all([
@@ -243,19 +329,76 @@ test("PR preview workflow gates owner/admin and one-shot approval before digest 
   }
 });
 
-test("PR preview reporting does not claim skipped production E2E failed", async () => {
+test("preview reporting comments only on successful publication and reports E2E by status", async () => {
   const workflow = await readFile(
     new URL("../../.github/workflows/pr-test-image.yml", import.meta.url),
     "utf8",
   );
+  const report = workflowJob(workflow, "report");
   const reportE2E = workflowJob(workflow, "report-e2e");
+  const resolveFailure = workflowJob(workflow, "resolve-failure");
   const statusCall = reportE2E.indexOf("github.rest.repos.createCommitStatus");
-  const publishedImageGuard = reportE2E.indexOf("if (imagePublished)");
-  const commentCall = reportE2E.indexOf("github.rest.issues.createComment");
+  const statusGuard = reportE2E.indexOf("if (imagePublished)");
 
   assert.match(reportE2E, /const imagePublished = process\.env\.BUILD_RESULT === "success"/);
-  assert.ok(statusCall !== -1 && statusCall < publishedImageGuard);
-  assert.ok(publishedImageGuard < commentCall);
+  assert.ok(statusCall !== -1);
+  assert.equal(statusGuard, -1);
+  assert.equal((report.match(/github\.rest\.repos\.createCommitStatus/g) || []).length, 1);
+  assert.match(report, /const succeeded = process\.env\.BUILD_RESULT === "success" &&\s+process\.env\.PUBLISH_RESULT === "success"/);
+  assert.match(report, /state: succeeded \? "success" : "failure"/);
+  assert.match(report, /context: process\.env\.POLICY_STATUS_CONTEXT/);
+  assert.equal((reportE2E.match(/github\.rest\.repos\.createCommitStatus/g) || []).length, 1);
+  assert.match(reportE2E, /const succeeded = imagePublished && process\.env\.E2E_RESULT === "success"/);
+  assert.match(reportE2E, /state: succeeded \? "success" : "failure"/);
+  assert.match(reportE2E, /context: process\.env\.E2E_STATUS_CONTEXT/);
+  assert.equal((resolveFailure.match(/github\.rest\.repos\.createCommitStatus/g) || []).length, 1);
+  assert.match(resolveFailure, /state: "failure"/);
+  assert.match(resolveFailure, /for \(const contextName of \[/);
+  assert.doesNotMatch(reportE2E, /github\.rest\.issues\.createComment/);
+  assert.doesNotMatch(resolveFailure, /github\.rest\.issues\.createComment/);
+  assert.equal((workflow.match(/github\.rest\.issues\.createComment/g) || []).length, 1);
+  const successStart = report.indexOf("if (succeeded) {");
+  const successEnd = report.indexOf("\n            }\n", successStart);
+  assert.ok(successStart !== -1 && successEnd > successStart);
+  const successBlock = report.slice(successStart, successEnd);
+  assert.match(successBlock, /github\.rest\.issues\.createComment/);
+  assert.doesNotMatch(report.slice(0, successStart), /github\.rest\.issues\.createComment/);
+  assert.doesNotMatch(report.slice(successEnd), /github\.rest\.issues\.createComment/);
+  assert.doesNotMatch(report, /Test image attempt failed/);
+});
+
+test("preview OCI cleanup is fenced to the current run and nonblocking", async () => {
+  const workflow = await readFile(
+    new URL("../../.github/workflows/pr-test-image.yml", import.meta.url),
+    "utf8",
+  );
+  const report = workflowJob(workflow, "report");
+
+  assert.match(report, /^      actions: write$/m);
+  assert.match(report, /- name: Delete OCI handoff artifact[\s\S]*if: always\(\)[\s\S]*continue-on-error: true/);
+  assert.match(report, /^    needs: \[resolve, build, publish\]$/m);
+  assert.doesNotMatch(report, /production-e2e/);
+  assert.match(report, /preview-oci-\$\{process\.env\.EXPECTED_HEAD\}-\$\{process\.env\.RUN_ATTEMPT\}/);
+  assert.match(report, /listWorkflowRunArtifacts/);
+  assert.match(report, /run_id: context\.runId/);
+  assert.match(report, /matches = artifacts\.filter\(\(\{ name \}\) => name === artifactName\)/);
+  const ambiguityGuard = report.indexOf("if (matches.length !== 1)");
+  const ambiguityEnd = report.indexOf("\n              }\n", ambiguityGuard);
+  const deleteCall = report.indexOf("github.rest.actions.deleteArtifact");
+  assert.ok(ambiguityGuard !== -1 && ambiguityEnd > ambiguityGuard && ambiguityEnd < deleteCall);
+  assert.equal((report.match(/github\.rest\.actions\.deleteArtifact/g) || []).length, 1);
+  const runIdLookup = report.indexOf("run_id: context.runId");
+  const exactNameFilter = report.indexOf("matches = artifacts.filter");
+  assert.ok(runIdLookup !== -1 && exactNameFilter > runIdLookup && deleteCall > exactNameFilter);
+  const ambiguityBlock = report.slice(ambiguityGuard, ambiguityEnd);
+  assert.match(ambiguityBlock, /core\.warning/);
+  assert.match(ambiguityBlock, /return;/);
+  assert.doesNotMatch(ambiguityBlock, /deleteArtifact/);
+  assert.match(report, /Skipping OCI handoff cleanup: found \$\{matches\.length\} artifacts named \$\{artifactName\}\./);
+  assert.match(report, /deleteArtifact/);
+  assert.match(report, /artifact_id: matches\[0\]\.id/);
+  assert.match(report, /OCI handoff artifact cleanup failed/);
+  assert.match(workflow, /retention-days: 1/);
 });
 
 test("OCI promotion avoids jq 1.6 reserved variable names", async () => {

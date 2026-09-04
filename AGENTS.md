@@ -218,5 +218,10 @@ npm test --prefix web
 - Mocks may isolate outbound provider transport failures or pure query
   construction. Tests must still exercise the real validation and domain policy
   around those boundaries.
+- For production E2E-covered changes, run only the registered local scenarios
+  that exercise the changed behavior (for example, `scripts/e2e.sh <scenario>`);
+  the full scenario matrix is a GitHub pipeline gate, not a routine local gate.
+- The final-head production-image E2E status must pass before merge. A skipped,
+  pending, or absent full-matrix status is incomplete evidence, not a pass.
 - Keep changes small, preserve unrelated worktree edits, and surface failures
   before retrying or changing scope.
