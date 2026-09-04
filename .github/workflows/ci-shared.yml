@@ -16,8 +16,67 @@ env:
   COVERAGE_THRESHOLD: "90.0"
 
 jobs:
-  go-unit:
-    name: Go unit tests
+  npm-audit:
+    name: NPM vulnerability audits
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Run npm vulnerability audits
+        shell: bash
+        run: |
+          set -euo pipefail
+          audit_with_retry() {
+            local prefix="$1"
+            local attempt=1
+            local max_attempts=4
+            local output status sleep_seconds
+
+            while (( attempt <= max_attempts )); do
+              set +e
+              output="$(npm audit --prefix "${prefix}" --audit-level=high \
+                --fetch-retries=4 \
+                --fetch-retry-factor=2 \
+                --fetch-retry-mintimeout=1000 \
+                --fetch-retry-maxtimeout=30000 \
+                --fetch-timeout=30000 2>&1)"
+              status=$?
+              set -e
+              printf '%s\n' "${output}"
+              if (( status == 0 )); then
+                return 0
+              fi
+              if ! grep -Eq 'npm (warn|error) (audit )?5[0-9]{2}\b|npm error code (E5[0-9]{2}|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|ECONNREFUSED)' <<<"${output}"; then
+                return "${status}"
+              fi
+              if (( attempt == max_attempts )); then
+                printf 'npm audit failed after %d attempts for %s\n' "${max_attempts}" "${prefix}" >&2
+                return "${status}"
+              fi
+              sleep_seconds=$((2 ** (attempt - 1)))
+              printf 'Transient npm audit failure for %s; retrying in %ss (attempt %d/%d).\n' \
+                "${prefix}" "${sleep_seconds}" "${attempt}" "${max_attempts}" >&2
+              sleep "${sleep_seconds}"
+              attempt=$((attempt + 1))
+            done
+          }
+
+          audit_with_retry .lint
+          audit_with_retry web
+          audit_with_retry packages/mcp-proxy
+
+  postgres-migrations:
+    name: PostgreSQL migration integration
     runs-on: ubuntu-latest
 
     steps:
@@ -28,6 +87,25 @@ jobs:
 
       - name: Validate PostgreSQL migration history
         run: scripts/check-postgres-migrations.sh "${{ inputs.migration-base-ref }}"
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.6"
+          cache: false
+
+      - name: Run PostgreSQL migration integration suite
+        run: go test -tags=integration ./internal/storage/postgres -count=1
+
+  quality:
+    name: Quality and unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -46,14 +124,6 @@ jobs:
 
       - name: Install MCP proxy dependencies
         run: npm ci --prefix packages/mcp-proxy
-
-      - name: Run npm vulnerability audits
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm audit --prefix .lint --audit-level=high
-          npm audit --prefix web --audit-level=high
-          npm audit --prefix packages/mcp-proxy --audit-level=high
 
       - name: Run repository lint
         run: npm run --prefix .lint lint:lines
@@ -99,9 +169,6 @@ jobs:
 
       - name: Run Go vulnerability scan
         run: scripts/go-vulnerability-scan.sh
-
-      - name: Run PostgreSQL migration integration suite
-        run: go test -tags=integration ./internal/storage/postgres -count=1
 
       - name: Run unit coverage gate
         shell: bash
