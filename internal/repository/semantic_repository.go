@@ -21,8 +21,6 @@ var ErrSemanticIdentityAlias = errors.New("semantic relationship is a legacy ide
 type SemanticRepositoryImpl struct {
 	db  *gorm.DB
 	rls rLSHelper
-
-	dreamConfirmationLockState dreamConfirmationLockAdmissionState
 }
 
 var _ SemanticRepository = (*SemanticRepositoryImpl)(nil)

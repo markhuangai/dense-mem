@@ -117,6 +117,8 @@ export type Dream = {
   rationale: string;
   likelihood: number;
   confidence: number;
+  lane?: "graph" | "evidence_discovery" | string;
+  source_evidence_ids?: string[];
   status: "proposed" | "reinforced" | "stale" | "rejected" | "submitted" | string;
   cycle_run_id?: string;
   generator_model?: string;
@@ -126,6 +128,14 @@ export type Dream = {
     relationship_id: string;
     relationship_version: number;
     source_group_key: string;
+    quote: string;
+    authority: string;
+  }>;
+  evidence_derivations?: Array<{
+    evidence_id: string;
+    source_group_key: string;
+    span_start: number;
+    span_end: number;
     quote: string;
     authority: string;
   }>;
@@ -162,6 +172,9 @@ export type DreamRun = {
   provider_output_tokens?: number;
   attempted_paths?: number;
   provider_proposals?: number;
+  lane?: "graph" | "evidence_discovery" | string;
+  evidence_targets?: number;
+  evaluated_evidence_targets?: number;
   outcome_summary?: Record<string, number>;
   status: string;
   error?: string;

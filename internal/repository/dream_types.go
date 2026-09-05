@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"time"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
 type DreamRepository interface {
@@ -47,6 +49,7 @@ type DreamCycleClaimInput struct {
 	LeaseToken           string
 	LeaseUntil           time.Time
 	SourceSnapshot       []map[string]any
+	Lane                 domain.DreamLane
 }
 
 type DreamCycleRecoveryClaimInput struct {
@@ -54,53 +57,60 @@ type DreamCycleRecoveryClaimInput struct {
 	LeaseToken  string
 	LeaseUntil  time.Time
 	MaxAttempts int
+	Lane        domain.DreamLane
 }
 
 type DreamCycleCompleteInput struct {
-	TeamID               string
-	InitiatedByProfileID string
-	RunID                string
-	LeaseToken           string
-	Status               string
-	InputCount           int
-	CreatedHypotheses    int
-	RejectedHypotheses   int
-	SourceSnapshot       []map[string]any
-	ProviderModel        string
-	ProviderTurns        int
-	ProviderInputTokens  int
-	ProviderOutputTokens int
-	AttemptedPaths       int
-	ProviderProposals    int
-	OutcomeSummary       map[string]int
-	Error                string
+	TeamID                   string
+	InitiatedByProfileID     string
+	RunID                    string
+	LeaseToken               string
+	Status                   string
+	InputCount               int
+	CreatedHypotheses        int
+	RejectedHypotheses       int
+	SourceSnapshot           []map[string]any
+	ProviderModel            string
+	ProviderTurns            int
+	ProviderInputTokens      int
+	ProviderOutputTokens     int
+	AttemptedPaths           int
+	ProviderProposals        int
+	OutcomeSummary           map[string]int
+	Error                    string
+	Lane                     domain.DreamLane
+	EvidenceTargets          int
+	EvaluatedEvidenceTargets int
 }
 
 type DreamCycleRun struct {
-	TeamID               string
-	RunID                string
-	InitiatedByProfileID string
-	RunDate              string
-	WindowKey            string
-	Status               string
-	ScheduledFor         *time.Time
-	LeaseToken           string
-	LeaseUntil           *time.Time
-	AttemptCount         int
-	InputCount           int
-	CreatedHypotheses    int
-	RejectedHypotheses   int
-	ProviderModel        string
-	ProviderTurns        int
-	ProviderInputTokens  int
-	ProviderOutputTokens int
-	AttemptedPaths       int
-	ProviderProposals    int
-	OutcomeSummary       map[string]int
-	Error                string
-	StartedAt            time.Time
-	CompletedAt          *time.Time
-	Claimed              bool
+	TeamID                   string
+	RunID                    string
+	InitiatedByProfileID     string
+	RunDate                  string
+	WindowKey                string
+	Status                   string
+	ScheduledFor             *time.Time
+	LeaseToken               string
+	LeaseUntil               *time.Time
+	AttemptCount             int
+	InputCount               int
+	CreatedHypotheses        int
+	RejectedHypotheses       int
+	ProviderModel            string
+	ProviderTurns            int
+	ProviderInputTokens      int
+	ProviderOutputTokens     int
+	AttemptedPaths           int
+	ProviderProposals        int
+	OutcomeSummary           map[string]int
+	Error                    string
+	StartedAt                time.Time
+	CompletedAt              *time.Time
+	Claimed                  bool
+	Lane                     domain.DreamLane
+	EvidenceTargets          int
+	EvaluatedEvidenceTargets int
 }
 
 type DreamInputListInput struct {
@@ -217,6 +227,21 @@ type UpsertHypothesisInput struct {
 	GeneratorKind         string
 	GeneratorVersion      string
 	Payload               map[string]any
+	Lane                  domain.DreamLane
+	SourceEvidenceIDs     []string
+	EvidenceDerivations   []EvidenceDerivationSource
+}
+
+type EvidenceDerivationSource struct {
+	EvidenceID       string
+	FragmentID       string
+	SourceID         string
+	SourceRevisionID string
+	SourceGroupKey   string
+	SpanStart        int
+	SpanEnd          int
+	Quote            string
+	Authority        string
 }
 
 type DreamDerivationSource struct {
@@ -267,6 +292,9 @@ type HypothesisRecord struct {
 	Payload                       map[string]any
 	CreatedAt                     time.Time
 	UpdatedAt                     time.Time
+	Lane                          domain.DreamLane
+	SourceEvidenceIDs             []string
+	EvidenceDerivations           []EvidenceDerivationSource
 }
 
 type ListHypothesesInput struct {
@@ -276,6 +304,112 @@ type ListHypothesesInput struct {
 	Cursor    string
 	Sort      string
 	Direction string
+}
+
+type EvidenceTarget struct {
+	EvidenceID       string
+	FragmentID       string
+	OwnerProfileID   string
+	SpaceID          string
+	SpaceGeneration  int64
+	ContentHash      string
+	SourceID         string
+	SourceRevisionID string
+	SourceGroupKey   string
+	Authority        string
+	Content          string
+	SpanStart        int
+	SpanEnd          int
+	CreatedAt        time.Time
+	LastEvaluatedAt  *time.Time
+	PassCount        int
+}
+
+type EvidenceContext struct {
+	EvidenceID       string
+	FragmentID       string
+	SourceID         string
+	SourceRevisionID string
+	SourceGroupKey   string
+	Authority        string
+	Content          string
+	StartRefs        map[string]int
+	EndRefs          map[string]int
+	Similarity       float64
+}
+
+type EvidenceDiscoverySelectionInput struct {
+	TeamID      string
+	RunID       string
+	LeaseToken  string
+	Limit       int
+	MaxContexts int
+	MaxRelated  int
+}
+
+// EvidenceDiscoveryAttempt identifies one target/content-version provider
+// reservation. Reservations are durable before dispatch; validated responses
+// are terminal and cannot be reclaimed by a later worker.
+type EvidenceDiscoveryAttempt struct {
+	AttemptID        string
+	ReservationToken string
+	PassNumber       int
+}
+
+type EvidenceDiscoveryAttemptValidationInput struct {
+	TeamID            string
+	AttemptID         string
+	ReservationToken  string
+	AcceptedProposals int
+}
+
+type EvidenceDiscoveryTargetInput struct {
+	Target               EvidenceTarget
+	Contexts             []EvidenceContext
+	RelatedRelationships []DreamInput
+	RelatedHypotheses    []HypothesisRecord
+	Nodes                []EvidenceNode
+	AllowedPredicates    []DreamTargetPredicate
+}
+
+// EvidenceNode is a team-shared semantic endpoint made available to the
+// evidence-discovery provider. IDs remain inside the service boundary and are
+// replaced by request-local opaque references before transport.
+type EvidenceNode struct {
+	ID      string
+	Display string
+	Kind    string
+}
+
+type EvidenceDiscoveryEvaluationInput struct {
+	TeamID               string
+	RunID                string
+	LeaseToken           string
+	AttemptID            string
+	ReservationToken     string
+	Target               EvidenceTarget
+	PassNumber           int
+	ProviderModel        string
+	ProviderTurns        int
+	ProviderInputTokens  int
+	ProviderOutputTokens int
+	ProviderProposals    int
+	AcceptedProposals    int
+	RejectedProposals    int
+	CreatedHypotheses    int
+	Proposals            []UpsertHypothesisInput
+}
+
+type EvidenceDiscoveryRunTotals struct {
+	TargetCount          int
+	TargetKeys           []string
+	Evaluated            int
+	Created              int
+	Rejected             int
+	ProviderProposals    int
+	ProviderTurns        int
+	ProviderInputTokens  int
+	ProviderOutputTokens int
 }
 
 type GetHypothesisInput struct {

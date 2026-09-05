@@ -2,7 +2,6 @@ package dreamgeneration
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -567,10 +566,6 @@ func looksLikeUUID(value string) bool {
 		}
 	}
 	return true
-}
-
-type Provider interface {
-	GenerateDreams(context.Context, DreamGenerationRequest) (DreamGenerationResponse, error)
 }
 
 type SemanticAssessmentLimits = assessor.SemanticAssessmentLimits

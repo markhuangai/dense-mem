@@ -126,10 +126,6 @@ type EvidenceSecurityResult struct {
 	Signals       []SecuritySignalInput
 }
 
-// EvidenceSecurityResultInput is retained as a descriptive alias for callers
-// that use input terminology at the repository boundary.
-type EvidenceSecurityResultInput = EvidenceSecurityResult
-
 // SynchronousRememberCommitInput contains all request-owned state needed to make
 // one final Remember transaction. Provider work happens before this input is
 // committed; no field represents a pre-provider reservation.

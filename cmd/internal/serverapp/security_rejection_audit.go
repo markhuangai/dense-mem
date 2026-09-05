@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
@@ -15,10 +14,6 @@ type securityRejectionAuditAdapter struct {
 
 type securityRejectionAuditAppender interface {
 	Append(ctx context.Context, entry service.AuditLogEntry) error
-}
-
-func newSecurityRejectionAuditAdapter(audit securityRejectionAuditAppender) memoryservice.SecurityRejectionAuditor {
-	return securityRejectionAuditAdapter{audit: audit}
 }
 
 func newRememberSecurityRejectionAuditAdapter(audit securityRejectionAuditAppender) rememberapp.SecurityRejectionAuditor {
@@ -44,21 +39,6 @@ func (a rememberSecurityRejectionAuditAdapter) RecordSecurityRejection(
 	))
 }
 
-func (a securityRejectionAuditAdapter) RecordSecurityRejection(
-	ctx context.Context,
-	input memoryservice.SecurityRejectionAuditInput,
-) error {
-	if a.audit == nil {
-		return errors.New("security rejection audit appender is required")
-	}
-	teamID := input.TeamID
-	actorProfileID := input.ActorProfileID
-	return a.audit.Append(ctx, securityRejectionAuditEntry(
-		input.EventID, teamID, actorProfileID, input.ActorRole, input.CorrelationID,
-		input.Surface, input.ReasonCode, input.EvidenceCount, flattenMemorySecuritySignals(input.Signals), input.SignalsTruncated,
-	))
-}
-
 type securityRejectionAuditSignal struct {
 	EvidenceIndex int
 	Source        string
@@ -70,17 +50,6 @@ type securityRejectionAuditSignal struct {
 }
 
 func flattenRememberSecuritySignals(input []rememberapp.SecurityRejectionAuditSignal) []securityRejectionAuditSignal {
-	result := make([]securityRejectionAuditSignal, 0, len(input))
-	for _, signal := range input {
-		result = append(result, securityRejectionAuditSignal{
-			EvidenceIndex: signal.EvidenceIndex, Source: signal.Source, Kind: signal.Kind,
-			RuleID: signal.RuleID, Severity: signal.Severity, SpanStart: signal.SpanStart, SpanEnd: signal.SpanEnd,
-		})
-	}
-	return result
-}
-
-func flattenMemorySecuritySignals(input []memoryservice.SecurityRejectionAuditSignal) []securityRejectionAuditSignal {
 	result := make([]securityRejectionAuditSignal, 0, len(input))
 	for _, signal := range input {
 		result = append(result, securityRejectionAuditSignal{

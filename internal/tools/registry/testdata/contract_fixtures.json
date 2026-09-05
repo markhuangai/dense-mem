@@ -247,10 +247,13 @@
         "confidence": 0.61,
         "source_relationship_ids": ["rel-1"],
         "source_candidate_relationship_ids": [],
+        "source_evidence_ids": [],
+        "evidence_derivations": [],
         "source_versions": {"rel-1": 4},
         "generator_kind": "provider",
         "generator_version": "dream-v2",
         "status": "proposed",
+        "lane": "graph",
         "created_at": "2026-07-17T00:00:00Z"
       }
     }

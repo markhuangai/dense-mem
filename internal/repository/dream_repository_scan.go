@@ -16,12 +16,14 @@ func dreamCycleRunColumns(alias string) string {
 		prefix = alias + "."
 	}
 	return fmt.Sprintf(`%[1]steam_id::text, %[1]srun_id::text,
-       COALESCE(%[1]sinitiated_by_profile_id::text, ''), %[1]srun_date, %[1]swindow_key,
-       %[1]sstatus, %[1]sscheduled_for, COALESCE(%[1]slease_token::text, ''), %[1]slease_until,
-       %[1]sattempt_count, %[1]sinput_count, %[1]screated_hypotheses, %[1]srejected_hypotheses,
-       %[1]sprovider_model, %[1]sprovider_turns, %[1]sprovider_input_tokens,
-       %[1]sprovider_output_tokens, %[1]sattempted_paths, %[1]sprovider_proposals,
-       %[1]soutcome_summary, %[1]serror, %[1]sstarted_at, %[1]scompleted_at`, prefix)
+	       COALESCE(%[1]sinitiated_by_profile_id::text, ''), %[1]srun_date, %[1]swindow_key,
+	       COALESCE(%[1]slane, 'graph'),
+	       %[1]sstatus, %[1]sscheduled_for, COALESCE(%[1]slease_token::text, ''), %[1]slease_until,
+	       %[1]sattempt_count, %[1]sinput_count, %[1]screated_hypotheses, %[1]srejected_hypotheses,
+	       %[1]sprovider_model, %[1]sprovider_turns, %[1]sprovider_input_tokens,
+	       %[1]sprovider_output_tokens, %[1]sattempted_paths, %[1]sprovider_proposals,
+	       %[1]sevidence_targets, %[1]sevaluated_evidence_targets,
+	       %[1]soutcome_summary, %[1]serror, %[1]sstarted_at, %[1]scompleted_at`, prefix)
 }
 
 func scanDreamCycleRun(rows *sql.Rows) (*DreamCycleRun, error) {
@@ -37,6 +39,7 @@ func scanDreamCycleRun(rows *sql.Rows) (*DreamCycleRun, error) {
 		&run.InitiatedByProfileID,
 		&run.RunDate,
 		&run.WindowKey,
+		&run.Lane,
 		&run.Status,
 		&scheduledFor,
 		&leaseToken,
@@ -51,6 +54,8 @@ func scanDreamCycleRun(rows *sql.Rows) (*DreamCycleRun, error) {
 		&run.ProviderOutputTokens,
 		&run.AttemptedPaths,
 		&run.ProviderProposals,
+		&run.EvidenceTargets,
+		&run.EvaluatedEvidenceTargets,
 		&outcomeSummaryRaw,
 		&run.Error,
 		&run.StartedAt,
@@ -78,7 +83,7 @@ func scanDreamCycleRun(rows *sql.Rows) (*DreamCycleRun, error) {
 func hypothesisSelectSQL(where string) string {
 	return `
 		SELECT team_id::text, hypothesis_id::text, COALESCE(created_by_profile_id::text, ''),
-		       status, statement, rationale, likelihood, confidence,
+		       status, COALESCE(lane, 'graph'), statement, rationale, likelihood, confidence,
 		       COALESCE(subject_entity_id::text, ''), COALESCE(predicate_key, ''),
 		       COALESCE(predicate_version, 0), COALESCE(object_entity_id::text, ''),
 		       COALESCE(object_value_id::text, ''), source_refs, source_versions,
@@ -119,7 +124,7 @@ func hypothesisSelectSQL(where string) string {
 func hypothesisUpdateReturningSQL(update string) string {
 	return update + `
 		RETURNING team_id::text, hypothesis_id::text, COALESCE(created_by_profile_id::text, ''),
-		          status, statement, rationale, likelihood, confidence,
+		          status, COALESCE(lane, 'graph'), statement, rationale, likelihood, confidence,
 		          COALESCE(subject_entity_id::text, ''), COALESCE(predicate_key, ''),
 		          COALESCE(predicate_version, 0), COALESCE(object_entity_id::text, ''),
 		          COALESCE(object_value_id::text, ''), source_refs, source_versions,
@@ -182,6 +187,7 @@ func scanHypothesisRecord(rows *sql.Rows) (*HypothesisRecord, error) {
 		&record.HypothesisID,
 		&record.CreatedByProfileID,
 		&record.Status,
+		&record.Lane,
 		&record.Statement,
 		&record.Rationale,
 		&likelihood,

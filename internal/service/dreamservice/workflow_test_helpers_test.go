@@ -35,6 +35,7 @@ type dreamRepositoryStub struct {
 	recallRecords       []repository.HypothesisRecord
 	listInput           repository.DreamInputListInput
 	claimInput          repository.DreamCycleClaimInput
+	claimNil            bool
 	completeInput       repository.DreamCycleCompleteInput
 	missedInput         repository.DreamCycleClaimInput
 	upserts             []repository.UpsertHypothesisInput
@@ -48,6 +49,8 @@ type dreamRepositoryStub struct {
 	pathAssessErr       error
 	upsertErr           error
 	listErr             error
+	reinforcedErr       error
+	listHypothesesCalls int
 	getErr              error
 	recallErr           error
 	updateErr           error
@@ -56,12 +59,17 @@ type dreamRepositoryStub struct {
 	submitCalls         int
 	latestErr           error
 	confirmationLockErr error
+	recoveryRun         *repository.DreamCycleRun
+	recoveryErr         error
 
 	confirmationLockCalls int
 }
 
 func (s *dreamRepositoryStub) ClaimDreamCycle(_ context.Context, input repository.DreamCycleClaimInput) (*repository.DreamCycleRun, error) {
 	s.claimInput = input
+	if s.claimNil {
+		return nil, nil
+	}
 	if s.claimErr != nil {
 		return nil, s.claimErr
 	}
@@ -182,7 +190,11 @@ func (s *dreamRepositoryStub) UpsertHypothesis(_ context.Context, input reposito
 	}, true, nil
 }
 
-func (s *dreamRepositoryStub) ListHypotheses(context.Context, repository.ListHypothesesInput) ([]repository.HypothesisRecord, string, error) {
+func (s *dreamRepositoryStub) ListHypotheses(_ context.Context, input repository.ListHypothesesInput) ([]repository.HypothesisRecord, string, error) {
+	s.listHypothesesCalls++
+	if input.Status == string(domain.DreamStatusReinforced) && s.reinforcedErr != nil {
+		return nil, "", s.reinforcedErr
+	}
 	if s.listErr != nil {
 		return nil, "", s.listErr
 	}
@@ -303,7 +315,10 @@ func (s *dreamRepositoryStub) ClaimScheduledDreamCycle(ctx context.Context, inpu
 }
 
 func (s *dreamRepositoryStub) ClaimRecoverableScheduledDreamCycle(context.Context, repository.DreamCycleRecoveryClaimInput) (*repository.DreamCycleRun, error) {
-	return nil, nil
+	if s.recoveryErr != nil {
+		return nil, s.recoveryErr
+	}
+	return s.recoveryRun, nil
 }
 
 func (s *dreamRepositoryStub) CompleteScheduledDreamCycle(ctx context.Context, input repository.DreamCycleCompleteInput) error {

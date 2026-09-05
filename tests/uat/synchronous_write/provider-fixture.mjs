@@ -138,6 +138,7 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   const schemaName = payload.response_format?.json_schema?.name;
   if (schemaName === "community_summary") return fixtureCommunitySummary(payload);
   if (schemaName === "dense_mem_dream_generation_response") return fixtureDreamGeneration(payload);
+  if (schemaName === "dense_mem_evidence_discovery_response") return fixtureEvidenceDiscovery(payload);
   return fixtureAssessment(assessmentInput(payload), requestFault, attempt);
 }
 
@@ -195,6 +196,40 @@ function fixtureDreamGeneration(payload) {
     if (proposals.length === maxOutputs) break;
   }
   return { request_id: input.request_id || "fixture", proposals };
+}
+
+function fixtureEvidenceDiscovery(payload) {
+  const input = structuredInput(payload, (value) => Array.isArray(value.contexts) && Array.isArray(value.nodes));
+  const target = input.contexts?.[0];
+  const predicate = input.allowed_predicates?.[0];
+  const subject = input.nodes?.[0];
+  const object = [...(input.nodes || [])].reverse().find((node) => node?.ref && node.ref !== subject?.ref) || input.nodes?.[1];
+  const markers = [...String(target?.boundary_text || "").matchAll(/⟦([^⟧]+)⟧/g)].map((match) => match[1]);
+  if (!target?.evidence_ref || !predicate?.ref || !subject?.ref || !object?.ref || markers.length < 2) {
+    return { request_id: input.request_id || "fixture", proposals: [] };
+  }
+  if ((input.related_hypotheses || []).some((hypothesis) => (
+    hypothesis?.subject_ref === subject.ref &&
+    hypothesis?.predicate === predicate.ref &&
+    hypothesis?.object_ref === object.ref
+  ))) {
+    return { request_id: input.request_id || "fixture", proposals: [] };
+  }
+  return {
+    request_id: input.request_id || "fixture",
+    proposals: [{
+      subject_ref: subject.ref,
+      predicate_ref: predicate.ref,
+      object_ref: object.ref,
+      statement: `${subject.display} may be related to ${object.display} through ${predicate.label}.`,
+      rationale: "The target evidence supports evaluating this supplied relationship.",
+      what_if: "What if this relationship is useful?",
+      possible_outcome: "The hypothesis can be reviewed against the target evidence.",
+      likelihood: 0.7,
+      confidence: 0.8,
+      derivations: [{ evidence_ref: target.evidence_ref, start_ref: markers[0], end_ref: markers[markers.length - 1] }],
+    }],
+  };
 }
 
 function structuredInput(payload, matches) {
@@ -362,10 +397,24 @@ function wholeEvidenceRange(evidence) {
 }
 
 function fixtureFault(payload) {
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  const structuredInputs = [];
+  for (const message of messages) {
+    if (message?.role !== "user" || typeof message.content !== "string") continue;
+    try {
+      structuredInputs.push(JSON.parse(message.content));
+    } catch {
+      // Correction feedback is not a provider request.
+    }
+  }
   const input = assessmentInput(payload);
   const evidence = Array.isArray(input.evidence) ? input.evidence : [];
   const embeddingInputs = Array.isArray(payload.input) ? payload.input : [payload.input];
-  const serialized = [...evidence.map((item) => String(item?.content || "")), ...embeddingInputs.map((item) => String(item || ""))].join("\n");
+  const structuredContent = structuredInputs.flatMap((item) => [
+    ...(Array.isArray(item?.contexts) ? item.contexts.map((context) => context?.content) : []),
+    ...(Array.isArray(item?.evidence) ? item.evidence.map((item) => item?.content) : []),
+  ]);
+  const serialized = [...evidence.map((item) => String(item?.content || "")), ...structuredContent.map((item) => String(item || "")), ...embeddingInputs.map((item) => String(item || ""))].join("\n");
   const match = serialized.match(/\[fixture-fault:([a-z0-9_-]+)\]/i);
   return match?.[1] || "";
 }

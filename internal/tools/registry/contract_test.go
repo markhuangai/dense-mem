@@ -13,7 +13,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/markhuangai/dense-mem/internal/verifier"
 )
 
 type contractFixture struct {
@@ -73,6 +72,29 @@ func TestContractRememberBoundaryContent(t *testing.T) {
 	err = ValidateContractInput(remember, oversized, []string{"write"})
 	if err == nil || !strings.Contains(err.Error(), "maximum length") {
 		t.Fatalf("oversized content err = %v, want maximum length", err)
+	}
+}
+
+func TestDreamOutputSchemasAllowOwnerPrefixedSourceGroupKeys(t *testing.T) {
+	const ownerPrefixedSourceGroupKeyLength = len("owner:") + 36 + len(":") + 256
+	for name, schema := range map[string]map[string]any{
+		"dream derivation":       dreamDerivationSchema(),
+		"evidence derivation":    dreamEvidenceDerivationSchema(),
+		"trace evidence support": traceEvidenceSupportSchema(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			property, ok := schemaProperties(schema)["source_group_key"]
+			if !ok {
+				t.Fatal("source_group_key schema is missing")
+			}
+			maxLength, ok := property["maxLength"].(int)
+			if !ok {
+				t.Fatalf("maxLength has type %T", property["maxLength"])
+			}
+			if maxLength < ownerPrefixedSourceGroupKeyLength {
+				t.Fatalf("maxLength = %d, want at least %d", maxLength, ownerPrefixedSourceGroupKeyLength)
+			}
+		})
 	}
 }
 
@@ -676,9 +698,6 @@ func sortedStrings(raw any) []string {
 }
 
 func TestProviderAndEmbeddingContracts(t *testing.T) {
-	if err := assertProviderProposalSchema(verifier.ProviderProposalSchema()); err != nil {
-		t.Fatal(err)
-	}
 	sourceKinds := embedding.EmbeddingSourceKinds()
 	for _, want := range []string{"evidence", "search_document", "recall_query"} {
 		if !slices.Contains(sourceKinds, want) {

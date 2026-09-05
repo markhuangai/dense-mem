@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,48 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRememberIdempotencyLockFansOutSameKeyWaiters(t *testing.T) {
-	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-
-	repo := NewLedgerRepository(appDB, nil)
-	teamID, ownerID, key := uuid.NewString(), uuid.NewString(), "remember-lock-fanout"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	wantErr := errors.New("callback failed")
-	var callbackCalls atomic.Int32
-	firstErr := make(chan error, 1)
-	go func() {
-		firstErr <- repo.WithRememberIdempotencyLock(ctx, teamID, ownerID, key, func() error {
-			callbackCalls.Add(1)
-			close(entered)
-			<-release
-			return wantErr
-		})
-	}()
-	<-entered
-
-	secondErr := make(chan error, 1)
-	go func() {
-		secondErr <- repo.WithRememberIdempotencyLock(ctx, teamID, ownerID, key, func() error {
-			callbackCalls.Add(1)
-			return nil
-		})
-	}()
-	select {
-	case err := <-secondErr:
-		t.Fatalf("same-key waiter returned before owner completed: %v", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(release)
-	require.ErrorIs(t, <-firstErr, wantErr)
-	require.ErrorIs(t, <-secondErr, wantErr)
-	require.EqualValues(t, 1, callbackCalls.Load())
-}
-
-func TestRememberIdempotencyLockSerializesAcrossRepositoryInstances(t *testing.T) {
+func TestRememberAttemptLockSerializesAcrossRepositoryInstances(t *testing.T) {
 	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
@@ -69,7 +27,7 @@ func TestRememberIdempotencyLockSerializesAcrossRepositoryInstances(t *testing.T
 	var secondWaited atomic.Bool
 	firstErr := make(chan error, 1)
 	go func() {
-		firstErr <- firstRepo.WithRememberIdempotencyLock(ctx, teamID, ownerID, key, func() error {
+		firstErr <- firstRepo.WithRememberAttemptLock(ctx, teamID, ownerID, key, func(bool) error {
 			close(firstEntered)
 			<-release
 			return nil
@@ -101,222 +59,7 @@ func TestRememberIdempotencyLockSerializesAcrossRepositoryInstances(t *testing.T
 	require.NoError(t, <-secondErr)
 }
 
-func TestRememberIdempotencyLockAllowsDifferentKeysConcurrently(t *testing.T) {
-	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-
-	sqlDB, err := appDB.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(3)
-	sqlDB.SetMaxIdleConns(3)
-	repo := NewLedgerRepository(appDB, nil)
-	teamID, ownerID := uuid.NewString(), uuid.NewString()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	release := make(chan struct{})
-	entered := make(chan struct{}, 2)
-	errorsCh := make(chan error, 2)
-	for index := 0; index < 2; index++ {
-		key := "remember-lock-different-" + uuid.NewString()
-		go func() {
-			errorsCh <- repo.WithRememberIdempotencyLock(ctx, teamID, ownerID, key, func() error {
-				entered <- struct{}{}
-				<-release
-				return nil
-			})
-		}()
-	}
-	for range 2 {
-		select {
-		case <-entered:
-		case <-ctx.Done():
-			t.Fatal("different-key callback did not start concurrently")
-		}
-	}
-	close(release)
-	for range 2 {
-		require.NoError(t, <-errorsCh)
-	}
-}
-
-func TestRememberIdempotencyLockCancellationDiscardsConnection(t *testing.T) {
-	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-
-	sqlDB, err := appDB.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(3)
-	sqlDB.SetMaxIdleConns(3)
-	teamID, ownerID, key := uuid.NewString(), uuid.NewString(), "remember-lock-cancel"
-	lockKey := rememberIdempotencyLockNamespace + teamID + ":" + ownerID + ":" + key
-	externalCtx, externalCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer externalCancel()
-	external, err := sqlDB.Conn(externalCtx)
-	require.NoError(t, err)
-	defer external.Close()
-	_, err = external.ExecContext(externalCtx,
-		"SELECT pg_advisory_lock(hashtextextended($1, $2))", lockKey, rememberIdempotencyLockHashSeed,
-	)
-	require.NoError(t, err)
-
-	lockCtx, lockCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer lockCancel()
-	repo := NewLedgerRepository(appDB, nil)
-	called := false
-	err = repo.WithRememberIdempotencyLock(lockCtx, teamID, ownerID, key, func() error {
-		called = true
-		return nil
-	})
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.False(t, called)
-	_, err = external.ExecContext(externalCtx,
-		"SELECT pg_advisory_unlock(hashtextextended($1, $2))", lockKey, rememberIdempotencyLockHashSeed,
-	)
-	require.NoError(t, err)
-	require.NoError(t, repo.WithRememberIdempotencyLock(externalCtx, teamID, ownerID, key, func() error { return nil }))
-}
-
-func TestRememberIdempotencyLockPanicCleansUpAndAllowsRetry(t *testing.T) {
-	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-
-	sqlDB, err := appDB.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(4)
-	sqlDB.SetMaxIdleConns(4)
-	firstRepo := NewLedgerRepository(appDB, nil)
-	secondRepo := NewLedgerRepository(appDB, nil)
-	teamID, ownerID, key := uuid.NewString(), uuid.NewString(), "remember-lock-panic"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	firstEntered := make(chan struct{})
-	firstRelease := make(chan struct{})
-	panicValue := make(chan any, 1)
-	go func() {
-		defer func() { panicValue <- recover() }()
-		_ = firstRepo.WithRememberIdempotencyLock(ctx, teamID, ownerID, key, func() error {
-			close(firstEntered)
-			<-firstRelease
-			panic("remember callback panic")
-		})
-	}()
-	<-firstEntered
-
-	waiterErr := make(chan error, 1)
-	var waiterCallbackCalled atomic.Bool
-	go func() {
-		waiterErr <- firstRepo.WithRememberIdempotencyLock(ctx, teamID, ownerID, key, func() error {
-			waiterCallbackCalled.Store(true)
-			return nil
-		})
-	}()
-
-	secondEntered := make(chan struct{})
-	secondRelease := make(chan struct{})
-	secondErr := make(chan error, 1)
-	go func() {
-		secondErr <- secondRepo.WithRememberIdempotencyLock(ctx, teamID, ownerID, "remember-lock-panic-different", func() error {
-			close(secondEntered)
-			<-secondRelease
-			return nil
-		})
-	}()
-	select {
-	case <-secondEntered:
-	case <-ctx.Done():
-		t.Fatal("distinct-key callback did not acquire a distinct session")
-	}
-
-	var advisoryLockPIDs int
-	require.NoError(t, sqlDB.QueryRowContext(ctx, `
-		SELECT count(DISTINCT pid)
-		FROM pg_locks
-		WHERE locktype = 'advisory' AND granted
-	`).Scan(&advisoryLockPIDs))
-	require.GreaterOrEqual(t, advisoryLockPIDs, 2, "distinct repositories must hold session locks on distinct backend sessions")
-
-	close(firstRelease)
-	close(secondRelease)
-	require.Equal(t, "remember callback panic", <-panicValue)
-	require.ErrorIs(t, <-waiterErr, errRememberIdempotencyCallbackPanic)
-	require.False(t, waiterCallbackCalled.Load(), "same-key waiter callback must not run after owner panic")
-	require.NoError(t, <-secondErr)
-	require.NoError(t, firstRepo.WithRememberIdempotencyLock(ctx, teamID, ownerID, key, func() error { return nil }))
-}
-
-func TestRememberIdempotencyLockDoesNotConsumeDreamAdmission(t *testing.T) {
-	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-
-	sqlDB, err := appDB.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(dreamConfirmationLockAdmissionLimit + sharedAdvisoryLockAdmissionLimit + 1)
-	sqlDB.SetMaxIdleConns(dreamConfirmationLockAdmissionLimit + sharedAdvisoryLockAdmissionLimit + 1)
-	teamID := createLedgerTeam(t, adminDB, rls, "remember-lock-dream-admission")
-	rememberRepo := NewLedgerRepository(appDB, rls)
-	semanticRepo := NewSemanticRepository(appDB, rls)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	release := make(chan struct{})
-	entered := make(chan struct{}, sharedAdvisoryLockAdmissionLimit)
-	rememberErrors := make(chan error, sharedAdvisoryLockAdmissionLimit)
-	for index := 0; index < sharedAdvisoryLockAdmissionLimit; index++ {
-		key := "remember-lock-dream-" + uuid.NewString()
-		go func() {
-			rememberErrors <- rememberRepo.WithRememberIdempotencyLock(ctx, teamID, uuid.NewString(), key, func() error {
-				entered <- struct{}{}
-				<-release
-				return nil
-			})
-		}()
-	}
-	for range sharedAdvisoryLockAdmissionLimit {
-		select {
-		case <-entered:
-		case <-ctx.Done():
-			t.Fatal("Remember lock did not consume its bounded admission")
-		}
-	}
-
-	dreamEntered := make(chan struct{})
-	dreamErr := make(chan error, 1)
-	go func() {
-		dreamErr <- semanticRepo.WithHypothesisConfirmationLock(ctx, teamID, uuid.NewString(), func(DreamRepository) error {
-			close(dreamEntered)
-			return nil
-		})
-	}()
-	select {
-	case <-dreamEntered:
-	case err := <-dreamErr:
-		t.Fatalf("Dream admission changed by Remember locks: %v", err)
-	case <-ctx.Done():
-		t.Fatal("Dream admission did not reach its callback")
-	}
-	require.NoError(t, <-dreamErr)
-	close(release)
-	for range sharedAdvisoryLockAdmissionLimit {
-		require.NoError(t, <-rememberErrors)
-	}
-}
-
-func TestRememberIdempotencyLockDiscardHelperClosesBadConnection(t *testing.T) {
-	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
-	defer cleanup()
-
-	sqlDB, err := appDB.DB()
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	conn, err := sqlDB.Conn(ctx)
-	require.NoError(t, err)
-	require.NoError(t, discardAdvisoryLockConnection(conn))
-	require.ErrorIs(t, conn.PingContext(ctx), sql.ErrConnDone)
-	require.NoError(t, sqlDB.PingContext(ctx))
-}
-
-func TestRememberIdempotencyLockDifferentKeysUseIndependentCallbacks(t *testing.T) {
+func TestRememberAttemptLockDifferentKeysUseIndependentCallbacks(t *testing.T) {
 	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
 
@@ -337,4 +80,141 @@ func TestRememberIdempotencyLockDifferentKeysUseIndependentCallbacks(t *testing.
 	for range 2 {
 		require.NoError(t, <-errorsCh)
 	}
+}
+
+func TestRememberAttemptLockReleasesAfterContextCancellation(t *testing.T) {
+	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	repo := NewLedgerRepository(appDB, nil)
+	teamID, ownerID, key := uuid.NewString(), uuid.NewString(), "remember-lock-cancel"
+	ctx, cancel := context.WithCancel(context.Background())
+	entered := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- repo.WithRememberAttemptLock(ctx, teamID, ownerID, key, func(bool) error {
+			close(entered)
+			cancel()
+			return context.Canceled
+		})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("remember lock callback did not start")
+	}
+	require.ErrorIs(t, <-errCh, context.Canceled)
+
+	followupCtx, followupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer followupCancel()
+	require.NoError(t, repo.WithRememberAttemptLock(followupCtx, teamID, ownerID, key, func(bool) error { return nil }))
+}
+
+func TestRememberAttemptLockReleasesAfterCallbackPanic(t *testing.T) {
+	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	repo := NewLedgerRepository(appDB, nil)
+	teamID, ownerID, key := uuid.NewString(), uuid.NewString(), "remember-lock-panic"
+	func() {
+		defer func() {
+			require.Equal(t, "remember callback panic", recover())
+		}()
+		_ = repo.WithRememberAttemptLock(context.Background(), teamID, ownerID, key, func(bool) error {
+			panic("remember callback panic")
+		})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, repo.WithRememberAttemptLock(ctx, teamID, ownerID, key, func(bool) error { return nil }))
+}
+
+func TestRememberAttemptLockBoundsDifferentKeysByPoolAdmission(t *testing.T) {
+	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	sqlDB, err := appDB.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(sharedAdvisoryLockAdmissionLimit + 1)
+	sqlDB.SetMaxIdleConns(sharedAdvisoryLockAdmissionLimit + 1)
+	repo := NewLedgerRepository(appDB, nil)
+	teamID, ownerID := uuid.NewString(), uuid.NewString()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	release := make(chan struct{})
+	entered := make(chan struct{}, sharedAdvisoryLockAdmissionLimit)
+	errsCh := make(chan error, sharedAdvisoryLockAdmissionLimit)
+	for index := 0; index < sharedAdvisoryLockAdmissionLimit; index++ {
+		key := uuid.NewString()
+		go func() {
+			errsCh <- repo.WithRememberAttemptLock(ctx, teamID, ownerID, key, func(bool) error {
+				entered <- struct{}{}
+				<-release
+				return nil
+			})
+		}()
+	}
+	for index := 0; index < sharedAdvisoryLockAdmissionLimit; index++ {
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			t.Fatal("remember lock callback did not reach the admission bound")
+		}
+	}
+
+	extraEntered := make(chan struct{})
+	extraErr := make(chan error, 1)
+	go func() {
+		extraErr <- repo.WithRememberAttemptLock(ctx, teamID, ownerID, uuid.NewString(), func(bool) error {
+			close(extraEntered)
+			return nil
+		})
+	}()
+	select {
+	case <-extraEntered:
+		t.Fatal("remember lock callback exceeded the admission bound")
+	case err := <-extraErr:
+		require.ErrorIs(t, err, ErrRememberIdempotencyBusy)
+	case <-time.After(5 * time.Second):
+		t.Fatal("remember lock admission did not return while the bound was full")
+	}
+	close(release)
+	for index := 0; index < sharedAdvisoryLockAdmissionLimit; index++ {
+		require.NoError(t, <-errsCh)
+	}
+}
+
+func TestRememberAttemptLockRejectsPoolWithoutApplicationCapacity(t *testing.T) {
+	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	sqlDB, err := appDB.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+	repo := NewLedgerRepository(appDB, nil)
+	called := false
+	err = repo.WithRememberAttemptLock(context.Background(), uuid.NewString(), uuid.NewString(), "remember-lock-no-capacity", func(bool) error {
+		called = true
+		return nil
+	})
+	require.ErrorIs(t, err, ErrRememberIdempotencyBusy)
+	require.False(t, called)
+}
+
+func TestRememberAttemptLockDiscardsFailedCleanupConnection(t *testing.T) {
+	_, appDB, _, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+
+	sqlDB, err := appDB.DB()
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	lockConn, err := sqlDB.Conn(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, discardAdvisoryLockConnection(lockConn))
+	require.ErrorIs(t, lockConn.PingContext(ctx), sql.ErrConnDone)
+	require.NoError(t, sqlDB.PingContext(ctx))
 }

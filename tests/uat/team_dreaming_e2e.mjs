@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { nextScheduledUTCMinute } from "./team_dreaming_schedule.mjs";
@@ -14,10 +14,18 @@ const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
 const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 
 let rpcID = 0;
+const maxPollingAttempts = 60;
 const scheduledAt = nextScheduledUTCMinute();
 const runDate = formatDate(scheduledAt);
 const ownerProfileID = await apiCredentialOwnerID();
+const adverseTeam = await createAdverseEvidenceTeam();
 const seeded = seedSchedulerInputs(ownerProfileID);
+const evidenceSeeded = seedEvidenceDiscoveryInputs(ownerProfileID);
+seedEvidenceDiscoveryInputs(
+  adverseTeam.ownerProfileID,
+  adverseTeam.teamID,
+  `Adverse evidence [fixture-fault:unavailable] for ${adverseTeam.teamID}.`,
+);
 
 await updateControlConfig("/config/general", [{ key: "APP_TIMEZONE", value: "UTC" }]);
 await updateControlConfig("/config/dreaming", [
@@ -62,6 +70,50 @@ assertContainsDream(listOutput.dreams, hypothesisID, statement, "MCP list_dreams
 const getOutput = await mcpTool(apiKey, "get_dream", { hypothesis_id: hypothesisID }, true);
 assertEvidenceDerivedDream(getOutput.hypothesis, seeded, "MCP get_dream");
 
+const evidenceRun = await waitForHourlyEvidenceRun();
+assertEqual(evidenceRun.team_id, teamID, "hourly evidence run team");
+assertEqual(evidenceRun.lane, "evidence_discovery", "hourly evidence run lane");
+assertEqual(evidenceRun.status, "completed", "hourly evidence run status");
+assertEqual(Number(evidenceRun.evidence_targets), 1, "hourly eligible target count");
+assertEqual(Number(evidenceRun.evaluated_evidence_targets), 2, "hourly validated pass count");
+assertEqual(Number(evidenceRun.created_dreams), 1, "hourly created hypothesis count");
+const evidenceDreams = await controlJSON(`/teams/${teamID}/dreams?limit=20`);
+const evidenceDream = findDream(evidenceDreams.data?.items, evidenceRun.run_id, "hourly evidence control API");
+assertEvidenceDiscoveryDream(evidenceDream, evidenceSeeded, "hourly evidence control API");
+const confirmed = await mcpTool(apiKey, "resolve_dream_feedback", {
+  hypothesis_id: evidenceDream.dream_id,
+  decision: "confirm_true",
+  evidence: [{
+    content: "Independent evidence confirms Dense-Mem uses PostgreSQL.",
+    source_type: "manual",
+    source: `hourly-evidence-confirmation-${evidenceDream.dream_id}`,
+  }],
+  relationships: [{
+    ref: `hourly-evidence-confirmation-${evidenceDream.dream_id}`,
+    subject: { name: "Dense-Mem", entity_kind: "project" },
+    predicate: { proposed_key: "uses" },
+    object: { entity: { name: "PostgreSQL", entity_kind: "product" } },
+    polarity: "+",
+    modality: "statement",
+    evidence_indices: [0],
+  }],
+});
+assertEqual(confirmed.hypothesis_id, evidenceDream.dream_id, "hourly evidence confirmation hypothesis");
+assertEqual(confirmed.status, "submitted", "hourly evidence confirmation status");
+const evidenceFailureRun = await waitForHourlyEvidenceFailureRun(adverseTeam.teamID);
+assertEqual(evidenceFailureRun.status, "failed", "adverse hourly evidence run status");
+assertEqual(Number(evidenceFailureRun.evidence_targets), 1, "adverse hourly eligible target count");
+assertEqual(Number(evidenceFailureRun.evaluated_evidence_targets ?? evidenceFailureRun.outcome_summary?.evaluated_evidence_targets ?? 0), 0, "adverse hourly validated pass count");
+assertEqual(Number(evidenceFailureRun.created_dreams), 0, "adverse hourly created hypothesis count");
+assertEqual(Number(evidenceFailureRun.outcome_summary?.provider_failed ?? 0), 1, "adverse hourly provider failure");
+const adverseHypotheses = postgresQuery(`
+  SELECT count(*)
+  FROM hypotheses
+  WHERE team_id = ${sqlLiteral(adverseTeam.teamID)}::uuid
+    AND cycle_run_id = ${sqlLiteral(evidenceFailureRun.run_id)}::uuid
+`);
+assertEqual(adverseHypotheses, "0", "adverse hourly partial hypothesis count");
+
 console.log(JSON.stringify({
   status: "ok",
   team_id: teamID,
@@ -69,6 +121,13 @@ console.log(JSON.stringify({
   hypothesis_id: hypothesisID,
   statement,
   scheduled_at: scheduledAt.toISOString(),
+  evidence_run_id: evidenceRun.run_id,
+  evidence_hypothesis_id: evidenceDream.dream_id,
+  evidence_dream_statement: evidenceDream.hypothesis,
+  evidence_target_id: evidenceSeeded.targetID,
+  evidence_target_content: evidenceSeeded.targetContent,
+  evidence_failure_run_id: evidenceFailureRun.run_id,
+  evidence_failure_team_name: adverseTeam.teamName,
 }, null, 2));
 
 function formatDate(value) {
@@ -88,7 +147,7 @@ async function updateControlConfig(path, items) {
 
 async function waitForScheduledRun() {
   let lastRuns = [];
-  for (let attempt = 0; attempt < 85; attempt += 1) {
+  for (let attempt = 0; attempt < maxPollingAttempts; attempt += 1) {
     const payload = await controlJSON(`/teams/${teamID}/dreaming/runs?limit=20`);
     const runs = Array.isArray(payload.data) ? payload.data : [];
     lastRuns = runs;
@@ -104,6 +163,45 @@ async function waitForScheduledRun() {
     await delay(5_000);
   }
   throw new Error(`timed out waiting for scheduled team run at ${scheduledAt.toISOString()}: ${JSON.stringify(lastRuns)}`);
+}
+
+async function waitForHourlyEvidenceRun() {
+  let lastRuns = [];
+  for (let attempt = 0; attempt < maxPollingAttempts; attempt += 1) {
+    const payload = await controlJSON(`/teams/${teamID}/dreaming/runs?limit=50`);
+    const runs = Array.isArray(payload.data) ? payload.data : [];
+    lastRuns = runs;
+    const run = runs.find((item) => (
+      item?.lane === "evidence_discovery" &&
+      item?.status === "completed" &&
+      Number(item?.evidence_targets) === 1 &&
+      Number(item?.evaluated_evidence_targets) === 2 &&
+      Number(item?.created_dreams) === 1
+    ));
+    if (run) return run;
+    await delay(5_000);
+  }
+  throw new Error(`timed out waiting for hourly evidence discovery: ${JSON.stringify(lastRuns)}`);
+}
+
+async function waitForHourlyEvidenceFailureRun(targetTeamID) {
+  let lastRuns = [];
+  for (let attempt = 0; attempt < maxPollingAttempts; attempt += 1) {
+    const payload = await controlJSON(`/teams/${targetTeamID}/dreaming/runs?limit=50`);
+    const runs = Array.isArray(payload.data) ? payload.data : [];
+    lastRuns = runs;
+    const run = runs.find((item) => (
+      item?.lane === "evidence_discovery" &&
+      item?.status === "failed" &&
+      Number(item?.evidence_targets) === 1 &&
+      Number(item?.evaluated_evidence_targets ?? item?.outcome_summary?.evaluated_evidence_targets ?? 0) === 0 &&
+      Number(item?.created_dreams) === 0 &&
+      Number(item?.outcome_summary?.provider_failed ?? 0) === 1
+    ));
+    if (run) return run;
+    await delay(5_000);
+  }
+  throw new Error(`timed out waiting for adverse hourly evidence discovery: ${JSON.stringify(lastRuns)}`);
 }
 
 async function assertSystemRun(runID) {
@@ -294,7 +392,136 @@ function seedSchedulerInputs(ownerProfileID) {
     secondRelationshipID,
     firstQuote,
     secondQuote,
+    subjectID,
+    middleID,
+    objectID,
   };
+}
+
+function seedEvidenceDiscoveryInputs(ownerProfileID, targetTeamID = teamID, targetContentOverride = "") {
+  const targetID = randomUUID();
+  const quarantinedID = randomUUID();
+  const ingestID = randomUUID();
+  const targetSecurityID = randomUUID();
+  const quarantinedSecurityID = randomUUID();
+  const quarantineID = randomUUID();
+  const targetContent = targetContentOverride || "Dense-Mem uses PostgreSQL for durable memory in an hourly evidence target.";
+  const quarantinedContent = "This quarantined evidence must never enter evidence discovery.";
+  const targetContentHash = sha256Hash(targetContent);
+  const quarantinedContentHash = sha256Hash(quarantinedContent);
+  postgresQuery(`
+    INSERT INTO team_predicate_definitions (
+      team_id, predicate_key, version, aliases, allowed_subject_kinds,
+      allowed_object_kinds, relationship_kind, current_cardinality,
+      lifecycle_state, origin, metadata, created_at
+    )
+    SELECT ${sqlLiteral(targetTeamID)}::uuid, predicate_key, version, aliases,
+           allowed_subject_kinds, allowed_object_kinds, relationship_kind,
+           current_cardinality, lifecycle_state, 'built_in',
+           metadata || jsonb_build_object('source', 'compose_uat'), created_at
+    FROM predicate_definitions
+    WHERE (predicate_key, version) = ('uses', 1)
+    ON CONFLICT (team_id, predicate_key, version) DO NOTHING;
+
+    INSERT INTO knowledge_ingests (
+      team_id, ingest_id, owner_profile_id, idempotency_key, request_hash,
+      source_summary, status, proposal, metadata, completed_at
+    ) VALUES (
+      ${sqlLiteral(targetTeamID)}::uuid, ${sqlLiteral(ingestID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid,
+      'hourly-evidence-discovery', 'sha256:hourly-evidence-discovery',
+      'Hourly evidence-discovery UAT fixture', 'completed', '{}'::jsonb, '{}'::jsonb, now()
+    );
+    INSERT INTO evidence_fragments (
+      team_id, fragment_id, ingest_id, owner_profile_id, evidence_index,
+      content, content_hash, source_type, authority, source_ref, metadata
+    ) VALUES
+      (${sqlLiteral(targetTeamID)}::uuid, ${sqlLiteral(targetID)}::uuid, ${sqlLiteral(ingestID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 0,
+       ${sqlLiteral(targetContent)}, ${sqlLiteral(targetContentHash)}, 'manual', 'primary', 'hourly-evidence-target', '{}'::jsonb),
+      (${sqlLiteral(targetTeamID)}::uuid, ${sqlLiteral(quarantinedID)}::uuid, ${sqlLiteral(ingestID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 1,
+       ${sqlLiteral(quarantinedContent)}, ${sqlLiteral(quarantinedContentHash)}, 'manual', 'primary', 'hourly-evidence-quarantined', '{}'::jsonb);
+    INSERT INTO evidence_security_events (
+      team_id, security_event_id, fragment_id, ingest_id, owner_profile_id,
+      event_kind, decision, reason, metadata
+    ) VALUES
+      (${sqlLiteral(targetTeamID)}::uuid, ${sqlLiteral(targetSecurityID)}::uuid, ${sqlLiteral(targetID)}::uuid, ${sqlLiteral(ingestID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid,
+       'deterministic_scan', 'pass', 'hourly evidence target passed security', '{}'::jsonb),
+      (${sqlLiteral(targetTeamID)}::uuid, ${sqlLiteral(quarantinedSecurityID)}::uuid, ${sqlLiteral(quarantinedID)}::uuid, ${sqlLiteral(ingestID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid,
+       'deterministic_scan', 'quarantine', 'hourly adverse evidence is quarantined', '{}'::jsonb);
+    INSERT INTO evidence_quarantines (
+      team_id, quarantine_id, fragment_id, ingest_id, owner_profile_id, status, reason
+    ) VALUES (
+      ${sqlLiteral(targetTeamID)}::uuid, ${sqlLiteral(quarantineID)}::uuid, ${sqlLiteral(quarantinedID)}::uuid,
+      ${sqlLiteral(ingestID)}::uuid, ${sqlLiteral(ownerProfileID)}::uuid, 'active', 'hourly adverse evidence fixture'
+    );
+    INSERT INTO search_documents (
+      team_id, search_document_id, owner_profile_id, source_kind, source_id, source_version,
+      document_version, embedding_contract_id, embedding_dimensions, search_state,
+      document_text, document_hash, projection_format_version, metadata, embedding
+    )
+    SELECT ${sqlLiteral(targetTeamID)}::uuid, ${sqlLiteral(randomUUID())}::uuid, ${sqlLiteral(ownerProfileID)}::uuid,
+           'evidence', ${sqlLiteral(targetID)}::uuid, 1, 1, contract.embedding_contract_id,
+           contract.dimensions, 'current', ${sqlLiteral(targetContent)}, ${sqlLiteral(targetContentHash)},
+           2, '{}'::jsonb, ('[' || repeat('0,', contract.dimensions - 1) || '0]')::vector
+    FROM (
+      SELECT embedding_contract.embedding_contract_id, embedding_contract.dimensions
+      FROM search_index_generations AS generation
+      JOIN embedding_contracts AS embedding_contract
+        ON embedding_contract.embedding_contract_id = generation.embedding_contract_id
+       AND embedding_contract.dimensions = generation.embedding_dimensions
+      WHERE generation.activation_state = 'active' AND embedding_contract.lifecycle_state = 'active'
+      ORDER BY embedding_contract.version DESC, generation.generation DESC, generation.created_at DESC
+      LIMIT 1
+    ) AS contract;
+    INSERT INTO search_documents (
+      team_id, search_document_id, owner_profile_id, source_kind, source_id, source_version,
+      document_version, embedding_contract_id, embedding_dimensions, search_state,
+      document_text, document_hash, projection_format_version, metadata, embedding
+    )
+    SELECT ${sqlLiteral(targetTeamID)}::uuid, ${sqlLiteral(randomUUID())}::uuid, ${sqlLiteral(ownerProfileID)}::uuid,
+           'evidence', ${sqlLiteral(quarantinedID)}::uuid, 1, 1, contract.embedding_contract_id,
+           contract.dimensions, 'current', ${sqlLiteral(quarantinedContent)}, ${sqlLiteral(quarantinedContentHash)},
+           2, '{}'::jsonb, ('[' || repeat('0,', contract.dimensions - 1) || '0]')::vector
+    FROM (
+      SELECT embedding_contract.embedding_contract_id, embedding_contract.dimensions
+      FROM search_index_generations AS generation
+      JOIN embedding_contracts AS embedding_contract
+        ON embedding_contract.embedding_contract_id = generation.embedding_contract_id
+       AND embedding_contract.dimensions = generation.embedding_dimensions
+      WHERE generation.activation_state = 'active' AND embedding_contract.lifecycle_state = 'active'
+      ORDER BY embedding_contract.version DESC, generation.generation DESC, generation.created_at DESC
+      LIMIT 1
+    ) AS contract;
+  `);
+  const indexed = postgresQuery(`
+    SELECT count(*)
+    FROM search_documents
+    WHERE team_id = ${sqlLiteral(targetTeamID)}::uuid
+      AND source_kind = 'evidence'
+      AND source_id IN (${sqlLiteral(targetID)}::uuid, ${sqlLiteral(quarantinedID)}::uuid)
+  `);
+  assertEqual(indexed, "2", `evidence search-document seed for ${targetTeamID}`);
+  return { targetID, targetContent };
+}
+
+async function createAdverseEvidenceTeam() {
+  const teamName = `Hourly evidence adverse ${Date.now()}`;
+  const team = await controlJSON("/teams", {
+    method: "POST",
+    body: JSON.stringify({ name: teamName, description: "hourly evidence provider failure UAT" }),
+  });
+  const targetTeamID = team.data?.id;
+  if (typeof targetTeamID !== "string" || !targetTeamID) {
+    throw new Error("adverse evidence team creation did not return an id");
+  }
+  const credential = await controlJSON(`/teams/${targetTeamID}/credentials`, {
+    method: "POST",
+    body: JSON.stringify({ name: "Hourly evidence adverse owner", role: "member", scopes: ["read", "write"], rate_limit: 300 }),
+  });
+  const ownerProfileID = credential.data?.credential?.id;
+  if (typeof ownerProfileID !== "string" || !ownerProfileID) {
+    throw new Error("adverse evidence credential did not return an owner profile id");
+  }
+  return { teamID: targetTeamID, teamName, ownerProfileID };
 }
 
 async function createTeamCredential(name) {
@@ -487,6 +714,22 @@ function assertEvidenceDerivedDream(dream, seededInputs, label) {
   }
 }
 
+function assertEvidenceDiscoveryDream(dream, seededInputs, label) {
+  assertEqual(dream?.lane, "evidence_discovery", `${label} lane`);
+  const evidenceIDs = Array.isArray(dream?.source_evidence_ids) ? dream.source_evidence_ids : [];
+  if (!evidenceIDs.includes(seededInputs.targetID)) {
+    throw new Error(`${label} omitted the target evidence ID: ${JSON.stringify(dream)}`);
+  }
+  const derivations = dream?.evidence_derivations;
+  if (!Array.isArray(derivations) || derivations.length !== 1) {
+    throw new Error(`${label} did not return one evidence derivation: ${JSON.stringify(dream)}`);
+  }
+  assertEqual(derivations[0].evidence_id, seededInputs.targetID, `${label} evidence ID`);
+  assertEqual(derivations[0].quote, seededInputs.targetContent, `${label} exact quote`);
+  assertEqual(Number(derivations[0].span_start), 0, `${label} span start`);
+  assertEqual(Number(derivations[0].span_end), seededInputs.targetContent.length, `${label} span end`);
+}
+
 function assertEqual(actual, expected, label) {
   if (actual !== expected) {
     throw new Error(`${label} = ${JSON.stringify(actual)}; want ${JSON.stringify(expected)}`);
@@ -501,6 +744,10 @@ function assertAtLeast(actual, minimum, label) {
 
 function sqlLiteral(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function sha256Hash(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function redactHTTPBody(text) {

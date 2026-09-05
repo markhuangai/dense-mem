@@ -7,6 +7,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/domain"
+)
+
+const (
+	maxEvidenceDiscoveryDerivations = 10
+	maxEvidenceDiscoveryEvidenceIDs = 10
 )
 
 func normalizeDreamCycleClaimInput(input DreamCycleClaimInput) DreamCycleClaimInput {
@@ -15,6 +21,9 @@ func normalizeDreamCycleClaimInput(input DreamCycleClaimInput) DreamCycleClaimIn
 	input.RunDate = strings.TrimSpace(input.RunDate)
 	input.WindowKey = strings.TrimSpace(input.WindowKey)
 	input.LeaseToken = strings.TrimSpace(input.LeaseToken)
+	if !input.Lane.IsValid() {
+		input.Lane = domain.DreamLaneGraph
+	}
 	if input.RunDate == "" {
 		input.RunDate = time.Now().UTC().Format("2006-01-02")
 	}
@@ -51,12 +60,18 @@ func validateDreamCycleClaimInput(input DreamCycleClaimInput, system bool) error
 	if input.LeaseUntil.IsZero() {
 		return errors.New("lease_until is required")
 	}
+	if !input.Lane.IsValid() {
+		return fmt.Errorf("unsupported dream lane %q", input.Lane)
+	}
 	return nil
 }
 
 func normalizeDreamCycleRecoveryClaimInput(input DreamCycleRecoveryClaimInput) DreamCycleRecoveryClaimInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.LeaseToken = strings.TrimSpace(input.LeaseToken)
+	if !input.Lane.IsValid() {
+		input.Lane = domain.DreamLaneGraph
+	}
 	if input.LeaseToken == "" {
 		input.LeaseToken = uuid.NewString()
 	}
@@ -82,6 +97,9 @@ func validateDreamCycleRecoveryClaimInput(input DreamCycleRecoveryClaimInput) er
 	if input.MaxAttempts < 1 {
 		return errors.New("max_attempts must be greater than zero")
 	}
+	if !input.Lane.IsValid() {
+		return fmt.Errorf("unsupported dream lane %q", input.Lane)
+	}
 	return nil
 }
 
@@ -92,6 +110,9 @@ func normalizeDreamCycleCompleteInput(input DreamCycleCompleteInput) DreamCycleC
 	input.LeaseToken = strings.TrimSpace(input.LeaseToken)
 	input.Status = strings.TrimSpace(input.Status)
 	input.Error = strings.TrimSpace(input.Error)
+	if !input.Lane.IsValid() {
+		input.Lane = domain.DreamLaneGraph
+	}
 	if input.OutcomeSummary == nil {
 		input.OutcomeSummary = map[string]int{}
 	}
@@ -119,6 +140,12 @@ func validateDreamCycleCompleteInput(input DreamCycleCompleteInput, system bool)
 	if input.ProviderTurns < 0 || input.ProviderInputTokens < 0 || input.ProviderOutputTokens < 0 ||
 		input.AttemptedPaths < 0 || input.ProviderProposals < 0 {
 		return errors.New("provider diagnostics must not be negative")
+	}
+	if input.EvidenceTargets < 0 || input.EvaluatedEvidenceTargets < 0 {
+		return errors.New("evidence diagnostics must not be negative")
+	}
+	if !input.Lane.IsValid() {
+		return fmt.Errorf("unsupported dream lane %q", input.Lane)
 	}
 	switch input.Status {
 	case "completed", "failed", "skipped", "cancelled", "missed":
@@ -214,6 +241,13 @@ func normalizeUpsertHypothesisInput(input UpsertHypothesisInput) UpsertHypothesi
 	input.TargetIdentity = strings.TrimSpace(input.TargetIdentity)
 	input.GeneratorKind = strings.TrimSpace(input.GeneratorKind)
 	input.GeneratorVersion = strings.TrimSpace(input.GeneratorVersion)
+	if !input.Lane.IsValid() {
+		input.Lane = domain.DreamLaneGraph
+	}
+	input.SourceEvidenceIDs = normalizeStringSet(input.SourceEvidenceIDs)
+	for index := range input.EvidenceDerivations {
+		input.EvidenceDerivations[index] = normalizeEvidenceDerivationSource(input.EvidenceDerivations[index])
+	}
 	for index := range input.Derivations {
 		input.Derivations[index] = normalizeDreamDerivationSource(input.Derivations[index])
 	}
@@ -234,6 +268,16 @@ func normalizeDreamDerivationSource(input DreamDerivationSource) DreamDerivation
 	input.RelationshipID = strings.TrimSpace(input.RelationshipID)
 	input.SupportID = strings.TrimSpace(input.SupportID)
 	input.ObservationID = strings.TrimSpace(input.ObservationID)
+	input.FragmentID = strings.TrimSpace(input.FragmentID)
+	input.SourceID = strings.TrimSpace(input.SourceID)
+	input.SourceRevisionID = strings.TrimSpace(input.SourceRevisionID)
+	input.SourceGroupKey = strings.TrimSpace(input.SourceGroupKey)
+	input.Authority = strings.TrimSpace(input.Authority)
+	return input
+}
+
+func normalizeEvidenceDerivationSource(input EvidenceDerivationSource) EvidenceDerivationSource {
+	input.EvidenceID = strings.TrimSpace(input.EvidenceID)
 	input.FragmentID = strings.TrimSpace(input.FragmentID)
 	input.SourceID = strings.TrimSpace(input.SourceID)
 	input.SourceRevisionID = strings.TrimSpace(input.SourceRevisionID)
@@ -279,15 +323,75 @@ func validateUpsertHypothesisInput(input UpsertHypothesisInput, system bool) err
 			return fmt.Errorf("object_value_id is invalid: %w", err)
 		}
 	}
-	if len(input.SourceVersions) == 0 {
+	if input.Lane != domain.DreamLaneEvidenceDiscovery && len(input.SourceVersions) == 0 {
 		return errors.New("source_versions is required")
 	}
 	if input.ContentHash == "" {
 		return errors.New("content_hash is required")
 	}
+	if !input.Lane.IsValid() {
+		return fmt.Errorf("unsupported dream lane %q", input.Lane)
+	}
 	expectedTargetIdentity := hypothesisTargetIdentity(input.TeamID, input.SubjectEntityID, input.PredicateKey, input.ObjectEntityID, input.ObjectValueID)
 	if input.TargetIdentity == "" || input.TargetIdentity != expectedTargetIdentity {
 		return errors.New("target_identity must match the canonical hypothesis target")
+	}
+	if input.Lane == domain.DreamLaneEvidenceDiscovery {
+		if len(input.EvidenceDerivations) == 0 || len(input.EvidenceDerivations) > maxEvidenceDiscoveryDerivations ||
+			len(input.SourceEvidenceIDs) == 0 || len(input.SourceEvidenceIDs) > maxEvidenceDiscoveryEvidenceIDs {
+			return errors.New("evidence discovery hypotheses require evidence derivations")
+		}
+		seenEvidenceIDs := make(map[string]struct{}, len(input.SourceEvidenceIDs))
+		for index, evidenceID := range input.SourceEvidenceIDs {
+			if _, err := uuid.Parse(evidenceID); err != nil {
+				return fmt.Errorf("source_evidence_ids[%d] is invalid: %w", index, err)
+			}
+			if _, exists := seenEvidenceIDs[evidenceID]; exists {
+				return fmt.Errorf("source_evidence_ids[%d] is duplicated", index)
+			}
+			seenEvidenceIDs[evidenceID] = struct{}{}
+		}
+		derivationEvidenceIDs := make(map[string]struct{}, len(input.EvidenceDerivations))
+		for index, derivation := range input.EvidenceDerivations {
+			derivationEvidenceIDs[derivation.EvidenceID] = struct{}{}
+			if _, err := uuid.Parse(derivation.EvidenceID); err != nil {
+				return fmt.Errorf("evidence_derivations[%d].evidence_id is invalid: %w", index, err)
+			}
+			if _, err := uuid.Parse(derivation.FragmentID); err != nil {
+				return fmt.Errorf("evidence_derivations[%d].fragment_id is invalid: %w", index, err)
+			}
+			if derivation.EvidenceID != derivation.FragmentID {
+				return fmt.Errorf("evidence_derivations[%d] evidence_id and fragment_id must match", index)
+			}
+			if (derivation.SourceID == "") != (derivation.SourceRevisionID == "") {
+				return fmt.Errorf("evidence_derivations[%d] must pair source_id and source_revision_id", index)
+			}
+			if derivation.SourceID != "" {
+				if _, err := uuid.Parse(derivation.SourceID); err != nil {
+					return fmt.Errorf("evidence_derivations[%d].source_id is invalid: %w", index, err)
+				}
+				if _, err := uuid.Parse(derivation.SourceRevisionID); err != nil {
+					return fmt.Errorf("evidence_derivations[%d].source_revision_id is invalid: %w", index, err)
+				}
+			}
+			if !domain.Authority(derivation.Authority).IsValid() {
+				return fmt.Errorf("evidence_derivations[%d].authority is unsupported", index)
+			}
+			if derivation.SourceGroupKey == "" || derivation.Quote == "" || derivation.SpanStart < 0 || derivation.SpanEnd <= derivation.SpanStart {
+				return fmt.Errorf("evidence_derivations[%d] is incomplete", index)
+			}
+		}
+		for evidenceID := range seenEvidenceIDs {
+			if _, exists := derivationEvidenceIDs[evidenceID]; !exists {
+				return fmt.Errorf("source_evidence_ids contains evidence without a derivation")
+			}
+		}
+		for evidenceID := range derivationEvidenceIDs {
+			if _, exists := seenEvidenceIDs[evidenceID]; !exists {
+				return fmt.Errorf("evidence derivations contain evidence missing from source_evidence_ids")
+			}
+		}
+		return nil
 	}
 	if input.GeneratorKind != "evaluation_seed" && len(input.Derivations) == 0 {
 		return errors.New("derivations are required")

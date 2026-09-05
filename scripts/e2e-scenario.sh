@@ -191,7 +191,15 @@ case "$SCENARIO" in
     dreaming_output="$(run_node_case tests/uat/team_dreaming_e2e.mjs)" || fail "team-dreaming scenario failed"
     printf '%s\n' "${dreaming_output}"
     DENSE_MEM_E2E_DREAM_STATEMENT="$(printf '%s' "${dreaming_output}" | parse_json_root_field statement)" || fail "team-dreaming scenario did not produce the Dream Playwright handoff"
+    DENSE_MEM_E2E_EVIDENCE_DREAM_ID="$(printf '%s' "${dreaming_output}" | parse_json_root_field evidence_hypothesis_id)" || fail "team-dreaming scenario did not produce the evidence Dream handoff"
+    DENSE_MEM_E2E_EVIDENCE_DREAM_STATEMENT="$(printf '%s' "${dreaming_output}" | parse_json_root_field evidence_dream_statement)" || fail "team-dreaming scenario did not produce the evidence statement handoff"
+    DENSE_MEM_E2E_EVIDENCE_TARGET_ID="$(printf '%s' "${dreaming_output}" | parse_json_root_field evidence_target_id)" || fail "team-dreaming scenario did not produce the evidence target handoff"
+    DENSE_MEM_E2E_EVIDENCE_TARGET_CONTENT="$(printf '%s' "${dreaming_output}" | parse_json_root_field evidence_target_content)" || fail "team-dreaming scenario did not produce the evidence content handoff"
+    DENSE_MEM_E2E_EVIDENCE_FAILURE_RUN_ID="$(printf '%s' "${dreaming_output}" | parse_json_root_field evidence_failure_run_id)" || fail "team-dreaming scenario did not produce the adverse evidence run handoff"
+    DENSE_MEM_E2E_EVIDENCE_FAILURE_TEAM_NAME="$(printf '%s' "${dreaming_output}" | parse_json_root_field evidence_failure_team_name)" || fail "team-dreaming scenario did not produce the adverse evidence team handoff"
     export DENSE_MEM_E2E_DREAM_STATEMENT
+    export DENSE_MEM_E2E_EVIDENCE_DREAM_ID DENSE_MEM_E2E_EVIDENCE_DREAM_STATEMENT
+    export DENSE_MEM_E2E_EVIDENCE_TARGET_ID DENSE_MEM_E2E_EVIDENCE_TARGET_CONTENT DENSE_MEM_E2E_EVIDENCE_FAILURE_RUN_ID DENSE_MEM_E2E_EVIDENCE_FAILURE_TEAM_NAME
     run_node_case tests/uat/telemetry_mcp_e2e.mjs
     ;;
   *) fail "unsupported scenario: ${SCENARIO}" ;;

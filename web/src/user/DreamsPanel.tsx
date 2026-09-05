@@ -254,9 +254,10 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
         <thead>
           <tr>
             <th>Started</th>
+            <th>Lane</th>
             <th>Status</th>
-            <th><MetricLabel label="Eligible" detail="Relationships with current, valid evidence. This is not the number of AI calls." /></th>
-            <th><MetricLabel label="Paths" detail="Direct A → B → C paths actually sent to the AI provider." /></th>
+            <th><MetricLabel label="Eligible" detail="Graph relationships or evidence targets selected for this Dream lane." /></th>
+            <th><MetricLabel label="Paths" detail="Direct A → B → C paths for graph dreaming; evidence target passes for discovery." /></th>
             <th><MetricLabel label="AI" detail="Valid possible-relationship proposals returned by the provider." /></th>
             <th>Created</th>
             <th><MetricLabel label="Rejected" detail="Provider proposals rejected by current target or source policy after validation." /></th>
@@ -267,9 +268,10 @@ function RunTable({ runs }: { runs: DreamRun[] }) {
           {runs.map((run) => (
             <tr key={run.run_id}>
               <td>{formatDate(run.started_at)}</td>
+              <td>{run.lane === "evidence_discovery" ? "Evidence discovery" : "Graph"}</td>
               <td><span className={runStatusClass(run.status)}>{run.status}</span></td>
-              <td>{run.input_relationships}</td>
-              <td>{run.attempted_paths ?? 0}</td>
+              <td>{run.lane === "evidence_discovery" ? run.evidence_targets ?? 0 : run.input_relationships}</td>
+              <td>{run.lane === "evidence_discovery" ? run.evaluated_evidence_targets ?? 0 : run.attempted_paths ?? 0}</td>
               <td>{run.provider_proposals ?? 0}</td>
               <td>{run.created_dreams}</td>
               <td>{run.rejected_dreams}</td>

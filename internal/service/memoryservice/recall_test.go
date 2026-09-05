@@ -113,6 +113,15 @@ func TestRecallUsesAuthenticatedTeamAndVectorQuery(t *testing.T) {
 	require.Equal(t, "PostgreSQL memory", provider.query)
 }
 
+func TestRelatedHypothesisSourceIDsExcludeEvidenceReferences(t *testing.T) {
+	got := relatedHypothesisSourceIDs([]map[string]any{
+		{"type": "relationship", "id": "relationship-1"},
+		{"type": "candidate_relationship", "id": "candidate-1"},
+		{"type": "evidence", "id": "evidence-1"},
+	})
+	require.Equal(t, []string{"relationship-1", "candidate-1"}, got)
+}
+
 func TestRecallRejectsMismatchedConflictTeam(t *testing.T) {
 	teamID := uuid.New()
 	search := &recallSearchStub{

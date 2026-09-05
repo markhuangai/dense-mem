@@ -69,7 +69,8 @@ var privateMemoryErasureManifest = []string{
 	"evidence_conflict_cases", "evidence_conflict_positions", "evidence_conflict_events",
 	"community_snapshot_runs", "community_records", "community_memberships",
 	"community_sources", "community_summary_attempts", "dream_cycle_runs",
-	"dream_path_evaluations", "recall_feedback_events",
+	"dream_path_evaluations", "dream_evidence_target_attempts", "dream_evidence_target_evaluations",
+	"hypothesis_evidence_derivation_sources", "recall_feedback_events",
 }
 
 var privateMemoryCatalogExclusions = []string{

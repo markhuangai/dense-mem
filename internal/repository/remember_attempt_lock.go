@@ -28,25 +28,6 @@ type rememberIdempotencyLockEntry struct {
 	err   error
 }
 
-// WithRememberIdempotencyLock serializes one request owner for a scoped
-// Remember idempotency key. A local same-key waiter shares the owner's result
-// and never consumes another PostgreSQL session; callers that need replay can
-// load the durable attempt after this method returns.
-func (r *LedgerRepositoryImpl) WithRememberIdempotencyLock(
-	ctx context.Context,
-	teamID string,
-	ownerProfileID string,
-	idempotencyKey string,
-	fn func() error,
-) error {
-	if fn == nil {
-		return errors.New("remember idempotency lock: callback is required")
-	}
-	return r.withRememberIdempotencyLock(ctx, teamID, ownerProfileID, idempotencyKey, func(bool) error {
-		return fn()
-	})
-}
-
 func (r *LedgerRepositoryImpl) withRememberIdempotencyLock(
 	ctx context.Context,
 	teamID string,

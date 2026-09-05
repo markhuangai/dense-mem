@@ -33,10 +33,6 @@ Respond ONLY with a JSON object conforming to the required schema:
 - "verdict": exactly one of "entailed", "contradicted", or "insufficient"
 - "confidence": a float in [0.0, 1.0] expressing your confidence in the verdict
 - "rationale": a concise, non-empty explanation of your reasoning`
-
-	openAISemanticProposalPrompt = `You are Dense-Mem's structure extraction assistant. Use only the submitted evidence and optional client hints. Return a complete JSON object matching the required schema.
-
-Extract evidence-grounded entity_proposals and relationship_proposals with exact evidence spans. Prefer a predicate_options label when it accurately expresses the relationship. When none fits, propose one concise, reusable predicate label in predicate_candidates; the server will canonicalize and approve it. Do not invent durable IDs, tiers, statuses, truth, ownership, support counts, or policy decisions. If no supported semantic relationship is present, return empty proposal arrays.`
 )
 
 // verifierResponseSchema is the strict JSON schema enforced via response_format.
@@ -222,29 +218,6 @@ func (v *OpenAIVerifier) SetMetrics(m observability.DiscoverabilityMetrics) {
 
 func (v *OpenAIVerifier) ModelName() string {
 	return v.model
-}
-
-func (v *OpenAIVerifier) ProposeSemantic(ctx context.Context, req ProviderProposalRequest) (ProviderProposal, error) {
-	prepared, validationErrors := PrepareProviderProposalRequest(req)
-	if len(validationErrors) > 0 {
-		return ProviderProposal{}, &ProviderError{
-			Provider: openAIVerifierProvider,
-			Message:  "invalid provider proposal request: " + openAIValidationSummary(validationErrors),
-		}
-	}
-	rawContent, err := v.openAIStructuredChatJSON(ctx, v.model, ProviderProposalSchemaName, ProviderProposalSchema(), openAISemanticProposalPrompt, prepared)
-	if err != nil {
-		return ProviderProposal{}, err
-	}
-	proposal, err := DecodeProviderProposalJSON([]byte(rawContent))
-	if err != nil {
-		return ProviderProposal{}, &MalformedResponseError{
-			Provider: openAIVerifierProvider,
-			Message:  "failed to parse provider proposal response",
-			RawJSON:  rawContent,
-		}
-	}
-	return proposal, nil
 }
 
 // Verify submits req to the OpenAI-compatible chat completions endpoint and

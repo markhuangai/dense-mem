@@ -156,7 +156,7 @@ func hypothesisSummarySchema() map[string]any {
 	return closedObject(
 		[]string{
 			"hypothesis_id", "subject_entity_id", "predicate_key", "statement", "status",
-			"source_relationship_ids", "generator_kind", "generator_version", "created_at",
+			"source_relationship_ids", "source_evidence_ids", "lane", "generator_kind", "generator_version", "created_at",
 		},
 		map[string]any{
 			"hypothesis_id":           schemaString("Hypothesis ID.", 128),
@@ -167,6 +167,8 @@ func hypothesisSummarySchema() map[string]any {
 			"statement":               schemaString("Bounded hypothesis statement.", 1000),
 			"status":                  schemaEnum(domain.HypothesisStatuses()),
 			"source_relationship_ids": stringArraySchema("Source Relationship ID.", 200, 128),
+			"source_evidence_ids":     stringArraySchema("Evidence ID cited by an evidence-discovery hypothesis.", 20, 128),
+			"lane":                    schemaEnum([]string{string(domain.DreamLaneGraph), string(domain.DreamLaneEvidenceDiscovery)}),
 			"generator_kind":          schemaEnum([]string{"deterministic", "provider"}),
 			"generator_version":       schemaString("Dream generator version.", 128),
 			"created_at":              map[string]any{"type": "string", "format": "date-time"},
@@ -180,7 +182,7 @@ func hypothesisSchema() map[string]any {
 			"hypothesis_id", "source_owner_profile_ids", "subject_entity_id", "predicate_key",
 			"statement", "rationale", "likelihood", "confidence", "source_relationship_ids",
 			"source_candidate_relationship_ids", "source_versions", "generator_kind",
-			"generator_version", "status", "created_at",
+			"generator_version", "status", "lane", "source_evidence_ids", "evidence_derivations", "created_at",
 		},
 		map[string]any{
 			"hypothesis_id":                     schemaString("Hypothesis ID.", 128),
@@ -195,11 +197,14 @@ func hypothesisSchema() map[string]any {
 			"confidence":                        map[string]any{"type": "number", "minimum": 0, "maximum": 1},
 			"source_relationship_ids":           stringArraySchema("Source Relationship ID.", 200, 128),
 			"source_candidate_relationship_ids": stringArraySchema("Source candidate Relationship ID.", 200, 128),
+			"source_evidence_ids":               stringArraySchema("Evidence ID cited by an evidence-discovery hypothesis.", 20, 128),
 			"source_versions":                   versionMapSchema(),
 			"derivations":                       array(dreamDerivationSchema(), 0, 4),
+			"evidence_derivations":              array(dreamEvidenceDerivationSchema(), 0, 10),
 			"generator_kind":                    schemaEnum([]string{"deterministic", "provider"}),
 			"generator_version":                 schemaString("Dream generator version.", 128),
 			"status":                            schemaEnum(domain.HypothesisStatuses()),
+			"lane":                              schemaEnum([]string{string(domain.DreamLaneGraph), string(domain.DreamLaneEvidenceDiscovery)}),
 			"created_at":                        map[string]any{"type": "string", "format": "date-time"},
 		},
 	)
@@ -212,9 +217,23 @@ func dreamDerivationSchema() map[string]any {
 			"premise_position":     map[string]any{"type": "integer", "minimum": 1, "maximum": 2},
 			"relationship_id":      schemaString("Source Relationship ID.", 128),
 			"relationship_version": map[string]any{"type": "integer", "minimum": 1},
-			"source_group_key":     schemaString("Current source group key.", 256),
+			"source_group_key":     schemaString("Current source group key.", 320),
 			"quote":                schemaString("Exact cited premise excerpt.", 4000),
 			"authority":            schemaEnum([]string{"authoritative", "primary", "secondary", "inferred", "unknown"}),
+		},
+	)
+}
+
+func dreamEvidenceDerivationSchema() map[string]any {
+	return closedObject(
+		[]string{"evidence_id", "source_group_key", "span_start", "span_end", "quote", "authority"},
+		map[string]any{
+			"evidence_id":      schemaString("Evidence ID cited by the hypothesis.", 128),
+			"source_group_key": schemaString("Current evidence source group.", 320),
+			"span_start":       map[string]any{"type": "integer", "minimum": 0},
+			"span_end":         map[string]any{"type": "integer", "minimum": 1},
+			"quote":            schemaString("Exact cited evidence excerpt.", 4000),
+			"authority":        schemaEnum([]string{"authoritative", "primary", "secondary", "inferred", "unknown", "derived"}),
 		},
 	)
 }
@@ -312,7 +331,7 @@ func traceEvidenceSupportSchema() map[string]any {
 			"evidence_id":               schemaString("Evidence ID.", 128),
 			"occurrence_id":             schemaString("Evidence occurrence ID.", 128),
 			"evidence_owner_profile_id": schemaString("Evidence source owner profile ID.", 128),
-			"source_group_key":          schemaString("Derived source group key.", 256),
+			"source_group_key":          schemaString("Derived source group key.", 320),
 			"span_start":                map[string]any{"type": "integer", "minimum": 0},
 			"span_end":                  map[string]any{"type": "integer", "minimum": 0},
 			"quote":                     schemaString("Exact evidence quote.", 999),

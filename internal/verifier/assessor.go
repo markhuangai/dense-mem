@@ -12,13 +12,10 @@ import (
 const (
 	SemanticAssessmentSchemaName = assessor.SemanticAssessmentSchemaName
 
-	// SemanticAssessmentMaxProviderTurns preserves the legacy verifier
-	// conversation bound used by Dream and conflict assessment.
-	SemanticAssessmentMaxProviderTurns = 5
-	// Remember uses the shorter evidence-first assessor bound: one initial
-	// response plus at most two complete-response corrections.
-	SemanticAssessmentMaxRememberProviderTurns = assessor.SemanticAssessmentMaxProviderTurns
-	SemanticAssessmentMaxCorrectionErrors      = assessor.SemanticAssessmentMaxCorrectionErrors
+	// SemanticAssessmentMaxProviderTurns is the bounded verifier conversation
+	// limit used by conflict assessment.
+	SemanticAssessmentMaxProviderTurns    = 5
+	SemanticAssessmentMaxCorrectionErrors = assessor.SemanticAssessmentMaxCorrectionErrors
 
 	SemanticAssessmentMaxEntityCandidatesPerSurface = assessor.SemanticAssessmentMaxEntityCandidatesPerSurface
 	SemanticAssessmentMaxPredicateOptions           = assessor.SemanticAssessmentMaxPredicateOptions
@@ -27,9 +24,6 @@ const (
 	SemanticAssessmentMaxRelationshipSplits         = assessor.SemanticAssessmentMaxRelationshipSplits
 	SemanticAssessmentMaxEvidenceSpans              = assessor.SemanticAssessmentMaxEvidenceSpans
 	SemanticAssessmentMaxEntityGroundings           = assessor.SemanticAssessmentMaxEntityGroundings
-
-	semanticAssessmentSystemPrompt          = assessor.SemanticAssessmentSystemPrompt
-	semanticAssessmentCorrectionInstruction = assessor.SemanticAssessmentCorrectionInstruction
 )
 
 type SemanticAssessmentLimits = assessor.SemanticAssessmentLimits

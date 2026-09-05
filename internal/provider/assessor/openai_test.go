@@ -3,6 +3,7 @@ package assessorprovider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -94,13 +95,18 @@ func TestOpenAIAssessorCompleteAndStructuredJSONCompatibility(t *testing.T) {
 	}, server.Client())
 	require.Equal(t, "assessor-model", provider.ModelName())
 
-	result, err := provider.Complete(context.Background(), modelprovider.StructuredRequest{
+	admitted := false
+	result, err := provider.Complete(modelprovider.WithAdmissionCallback(context.Background(), func(context.Context) error {
+		admitted = true
+		return nil
+	}), modelprovider.StructuredRequest{
 		Model:      "assessor-model",
 		Messages:   []modelprovider.Message{{Role: "user", Content: "return JSON"}},
 		SchemaName: "test_schema",
 		Schema:     map[string]any{"type": "object"},
 	})
 	require.NoError(t, err)
+	require.True(t, admitted)
 	require.Equal(t, `{"ok":true}`, result.Content)
 	require.Equal(t, 3, result.PromptTokens)
 	require.Equal(t, 2, result.CompletionTokens)
@@ -119,6 +125,48 @@ func TestOpenAIAssessorUsesProvidedConcurrencyGate(t *testing.T) {
 		&config.Config{AIVerifierModel: "assessor-model"}, nil, assessor.DefaultSemanticAssessmentLimits(), gate,
 	)
 	require.Equal(t, gate, provider.sem)
+}
+
+func TestOpenAIAssessorNotifiesAdmissionOnlyAfterGateAcquisition(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"content":"{\"ok\":true}"}}]}`))
+	}))
+	defer server.Close()
+
+	gate := modelprovider.NewConcurrencyGate(1)
+	provider := NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(
+		&config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "test-key", AIVerifierModel: "model"},
+		server.Client(), assessor.DefaultSemanticAssessmentLimits(), gate,
+	)
+	require.NoError(t, modelprovider.AcquireConcurrency(context.Background(), gate))
+	called := false
+	ctx, cancel := context.WithCancel(modelprovider.WithAdmissionCallback(context.Background(), func(context.Context) error {
+		called = true
+		return nil
+	}))
+	cancel()
+	_, err := provider.Complete(ctx, modelprovider.StructuredRequest{
+		Model: "model", Messages: []modelprovider.Message{{Role: "user", Content: "return JSON"}},
+		SchemaName: "test_schema", Schema: map[string]any{"type": "object"},
+	})
+	var timeout *modelprovider.TimeoutError
+	require.ErrorAs(t, err, &timeout)
+	require.False(t, called, "a canceled gate waiter must not be reported as admitted")
+	require.Zero(t, requestCount)
+	modelprovider.ReleaseConcurrency(gate)
+
+	wantErr := errors.New("dispatch marker failed")
+	_, err = provider.Complete(modelprovider.WithAdmissionCallback(context.Background(), func(context.Context) error {
+		return wantErr
+	}), modelprovider.StructuredRequest{
+		Model: "model", Messages: []modelprovider.Message{{Role: "user", Content: "return JSON"}},
+		SchemaName: "test_schema", Schema: map[string]any{"type": "object"},
+	})
+	require.ErrorIs(t, err, wantErr)
+	require.Zero(t, requestCount, "a failed dispatch marker must prevent the provider request")
 }
 
 func TestOpenAIAssessorStructuredJSONReportsLocalMarshalAndRequestErrors(t *testing.T) {

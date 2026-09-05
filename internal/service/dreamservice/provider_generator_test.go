@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/dreamgeneration"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
@@ -157,4 +158,210 @@ func (s *providerGeneratorStub) GenerateDreams(_ context.Context, request dreamg
 
 func (s *providerGeneratorStub) ModelName() string {
 	return s.model
+}
+
+func TestProviderEvidenceDiscoveryMapsConcreteNodesAndExactSpans(t *testing.T) {
+	targetID := "11111111-1111-4111-8111-111111111111"
+	request, mappings, err := providerEvidenceDiscoveryRequest(EvidenceGenerationRequest{
+		Target: repository.EvidenceTarget{
+			EvidenceID: targetID, FragmentID: targetID, Content: "  Alice works.  ",
+			Authority: "primary", SourceGroupKey: "ingest:test",
+		},
+		Nodes: []repository.EvidenceNode{
+			{ID: "22222222-2222-4222-8222-222222222222", Display: "Alice", Kind: "person"},
+			{ID: "33333333-3333-4333-8333-333333333333", Display: "Project", Kind: "project"},
+		},
+		AllowedPredicates: []repository.DreamTargetPredicate{{
+			PredicateKey: "works_on", Version: 1,
+			AllowedSubjectKinds: []string{"person"}, AllowedObjectKinds: []string{"project"},
+		}},
+	})
+	require.NoError(t, err)
+	prepared, validationErrs := dreamgeneration.PrepareEvidenceDiscoveryRequest(request, assessor.DefaultSemanticAssessmentLimits())
+	require.Empty(t, validationErrs)
+	startRef := providerEvidenceBoundaryRef(prepared.Contexts[0], 2)
+	endRef := providerEvidenceBoundaryRef(prepared.Contexts[0], 7)
+	response, responseErrs := dreamgeneration.PrepareEvidenceDiscoveryResponse(prepared, dreamgeneration.EvidenceDiscoveryResponse{
+		RequestID: prepared.RequestID,
+		Proposals: []dreamgeneration.EvidenceDiscoveryProposal{{
+			SubjectRef: "node_1", PredicateRef: "predicate_1", ObjectRef: "node_2",
+			Statement: "Alice may work on Project.", Rationale: "The target names the assignment.",
+			WhatIf: "What if the assignment changes?", PossibleOutcome: "Review the assignment.",
+			Likelihood: 0.5, Confidence: 0.5,
+			Derivations: []dreamgeneration.EvidenceDiscoveryDerivation{{
+				EvidenceRef: prepared.TargetRef, StartRef: startRef, EndRef: endRef,
+			}},
+		}},
+	})
+	require.Empty(t, responseErrs)
+	dream, ok := mapEvidenceDiscoveryProposal(response.Proposals[0], mappings)
+	require.True(t, ok)
+	require.Equal(t, "Alice", dream.EvidenceDerivations[0].Quote)
+	require.Equal(t, 2, dream.EvidenceDerivations[0].SpanStart)
+	require.Equal(t, 7, dream.EvidenceDerivations[0].SpanEnd)
+	require.Equal(t, "22222222-2222-4222-8222-222222222222", dream.SubjectEntityID)
+	require.Equal(t, "33333333-3333-4333-8333-333333333333", dream.ObjectEntityID)
+}
+
+func TestEvidenceProviderGeneratorDispatchesAndMapsDiagnostics(t *testing.T) {
+	provider := &evidenceProviderGeneratorStub{
+		model: " evidence-model ",
+		response: dreamgeneration.EvidenceDiscoveryResponse{
+			ProviderTurns: 2, InputTokens: 11, OutputTokens: 7,
+			Proposals: []dreamgeneration.EvidenceDiscoveryProposal{{
+				SubjectRef: "node_1", PredicateRef: "predicate_1", ObjectRef: "node_2",
+				Statement: "Alice may use Project.", Rationale: "The target names the connection.",
+				WhatIf: "What if the connection changes?", PossibleOutcome: "Review the proposal.",
+				Likelihood: 0.4, Confidence: 0.7,
+				Derivations: []dreamgeneration.EvidenceDiscoveryDerivation{{EvidenceRef: "evidence_target", Start: 0, End: 5}},
+			}},
+		},
+	}
+	generator := &EvidenceProviderGenerator{provider: provider}
+	targetID := "11111111-1111-4111-8111-111111111111"
+	generated, diagnostics, err := generator.GenerateEvidence(context.Background(), "team", EvidenceGenerationRequest{
+		Target:            repository.EvidenceTarget{EvidenceID: targetID, FragmentID: targetID, Content: "Alice uses Project.", Authority: "primary", SourceGroupKey: "ingest:test"},
+		Contexts:          []repository.EvidenceContext{{EvidenceID: targetID, FragmentID: targetID, Content: "Alice uses Project.", Authority: "primary", SourceGroupKey: "ingest:test"}},
+		Nodes:             []repository.EvidenceNode{{ID: "entity-a", Display: "Alice", Kind: "entity"}, {ID: "entity-b", Display: "Project", Kind: "entity"}},
+		AllowedPredicates: []repository.DreamTargetPredicate{{PredicateKey: "uses", Version: 1, AllowedSubjectKinds: []string{"entity"}, AllowedObjectKinds: []string{"entity"}}},
+		MaxOutputs:        2,
+	})
+	require.NoError(t, err)
+	require.Len(t, generated, 1)
+	require.Equal(t, "evidence-model", generator.Model())
+	require.Equal(t, GenerationDiagnostics{ProviderTurns: 2, ProviderInputTokens: 11, ProviderOutputTokens: 7, ProviderProposals: 1}, diagnostics)
+	require.Len(t, provider.requests, 1)
+	require.Equal(t, "evidence_target", provider.requests[0].TargetRef)
+	require.Equal(t, targetID, generated[0].EvidenceDerivations[0].EvidenceID)
+}
+
+func TestEvidenceProviderGeneratorRejectsUnavailableAndInvalidProviderResponses(t *testing.T) {
+	var nilGenerator *EvidenceProviderGenerator
+	require.Empty(t, nilGenerator.Model())
+	_, _, err := nilGenerator.GenerateEvidence(context.Background(), "team", EvidenceGenerationRequest{})
+	require.ErrorIs(t, err, ErrDreamProviderUnavailable)
+
+	provider := &evidenceProviderGeneratorStub{model: "provider", err: errors.New("transport failed")}
+	generator := &EvidenceProviderGenerator{provider: provider}
+	_, _, err = generator.GenerateEvidence(context.Background(), "team", EvidenceGenerationRequest{Target: repository.EvidenceTarget{EvidenceID: "target"}})
+	require.ErrorContains(t, err, "transport failed")
+
+	_, _, err = generator.GenerateEvidence(context.Background(), "team", EvidenceGenerationRequest{Target: repository.EvidenceTarget{EvidenceID: "target"}, Contexts: []repository.EvidenceContext{{EvidenceID: "target", Content: "content"}}})
+	require.Error(t, err)
+
+	provider.err = nil
+	provider.response = dreamgeneration.EvidenceDiscoveryResponse{Proposals: []dreamgeneration.EvidenceDiscoveryProposal{{SubjectRef: "unknown", PredicateRef: "unknown", ObjectRef: "unknown"}}}
+	generated, _, err := generator.GenerateEvidence(context.Background(), "team", EvidenceGenerationRequest{
+		Target:            repository.EvidenceTarget{EvidenceID: "target", FragmentID: "target", Content: "content"},
+		Contexts:          []repository.EvidenceContext{{EvidenceID: "target", FragmentID: "target", Content: "content"}},
+		Nodes:             []repository.EvidenceNode{{ID: "node", Kind: "entity"}},
+		AllowedPredicates: []repository.DreamTargetPredicate{{PredicateKey: "uses", Version: 1}},
+	})
+	require.NoError(t, err)
+	require.Empty(t, generated)
+	constructed := NewEvidenceProviderGenerator(nil, "constructed-model", assessor.DefaultSemanticAssessmentLimits())
+	require.Equal(t, "constructed-model", constructed.Model())
+	_, _, err = constructed.GenerateEvidence(context.Background(), "team", EvidenceGenerationRequest{
+		Target:            repository.EvidenceTarget{EvidenceID: "target", FragmentID: "target", Content: "content"},
+		Contexts:          []repository.EvidenceContext{{EvidenceID: "target", FragmentID: "target", Content: "content"}},
+		AllowedPredicates: []repository.DreamTargetPredicate{{PredicateKey: "uses", Version: 1}},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "transport is unavailable")
+}
+
+func TestEvidenceProviderGeneratorRetainsProviderDiagnosticsOnError(t *testing.T) {
+	provider := &evidenceProviderGeneratorStub{
+		model: "provider",
+		response: dreamgeneration.EvidenceDiscoveryResponse{
+			ProviderTurns: 5, InputTokens: 55, OutputTokens: 35,
+		},
+		err: errors.New("malformed response"),
+	}
+	generator := &EvidenceProviderGenerator{provider: provider}
+
+	_, diagnostics, err := generator.GenerateEvidence(context.Background(), "team", EvidenceGenerationRequest{
+		Target:   repository.EvidenceTarget{EvidenceID: "target", FragmentID: "target", Content: "content"},
+		Contexts: []repository.EvidenceContext{{EvidenceID: "target", FragmentID: "target", Content: "content"}},
+	})
+
+	require.EqualError(t, err, "malformed response")
+	require.Equal(t, GenerationDiagnostics{
+		ProviderTurns: 5, ProviderInputTokens: 55, ProviderOutputTokens: 35,
+	}, diagnostics)
+}
+
+func TestEvidenceProviderMappingsCoverRecordAndReferenceVariants(t *testing.T) {
+	relationships := []repository.DreamInput{
+		{SubjectEntityID: "subject", SubjectName: "Subject", SubjectKind: "person", PredicateKey: "uses", ObjectEntityID: "object", ObjectName: "Object", ObjectKind: "project"},
+		{SubjectEntityID: "subject", SubjectKind: "person", PredicateKey: "uses", ObjectValueID: "value", ObjectName: "Value"},
+		{SubjectEntityID: "missing", SubjectKind: "person", PredicateKey: "uses", ObjectEntityID: "object", ObjectKind: "project"},
+	}
+	hypotheses := []repository.HypothesisRecord{
+		{SubjectEntityID: "subject", PredicateKey: "uses", ObjectEntityID: "object"},
+		{SubjectEntityID: "subject", PredicateKey: "uses", ObjectValueID: "value"},
+	}
+	nodes := evidenceNodesFromRecords(relationships, hypotheses)
+	require.Len(t, nodes, 6)
+	refs := map[string]string{"subject\x00person": "node_subject", "object\x00project": "node_object", "value\x00value": "node_value", "subject\x00entity": "node_subject_entity", "object\x00entity": "node_object_entity"}
+	require.Equal(t, "node_subject", providerNodeRef(refs, "subject", "person"))
+	require.Equal(t, "node_subject", providerNodeRef(map[string]string{"subject\x00person": "node_subject"}, "subject", "entity"))
+	require.Equal(t, "node_value", providerNodeRef(refs, "value", "value"))
+	require.Empty(t, providerNodeRef(refs, "missing", "entity"))
+	predicates := map[string]string{"uses": "predicate_uses"}
+	relatedRelationships := providerRelatedRelationships(relationships, refs, predicates)
+	require.Len(t, relatedRelationships, 2)
+	relatedHypotheses := providerRelatedHypotheses(hypotheses, refs, predicates)
+	require.Len(t, relatedHypotheses, 2)
+	require.True(t, evidenceNodeIsValue("value"))
+	require.True(t, evidenceNodeIsValue("string"))
+	require.False(t, evidenceNodeIsValue("person"))
+	require.Equal(t, "node_value_type", providerNodeRef(map[string]string{"value\x00string": "node_value_type"}, "value", "value"))
+
+	request, _, err := providerEvidenceDiscoveryRequest(EvidenceGenerationRequest{
+		Target:               repository.EvidenceTarget{EvidenceID: "target", FragmentID: "target", Content: "content"},
+		Contexts:             []repository.EvidenceContext{{EvidenceID: "target", FragmentID: "target", Content: "content"}},
+		RelatedRelationships: relationships[:1], RelatedHypotheses: hypotheses[:1],
+		AllowedPredicates: []repository.DreamTargetPredicate{{PredicateKey: "uses", Version: 1}},
+	})
+	require.NoError(t, err)
+	require.Len(t, request.Nodes, 4)
+	mappings := evidenceProviderMappings{
+		nodes:      map[string]repository.EvidenceNode{"subject": {ID: "subject", Kind: "entity"}, "value": {ID: "value", Kind: "value"}},
+		predicates: map[string]repository.DreamTargetPredicate{"predicate": {PredicateKey: "uses", Version: 1}},
+		contexts:   map[string]repository.EvidenceContext{"evidence": {EvidenceID: "evidence", FragmentID: "evidence", Content: "quoted"}},
+	}
+	valueDream, ok := mapEvidenceDiscoveryProposal(dreamgeneration.EvidenceDiscoveryProposal{
+		SubjectRef: "subject", PredicateRef: "predicate", ObjectRef: "value", Statement: "statement",
+		Derivations: []dreamgeneration.EvidenceDiscoveryDerivation{{EvidenceRef: "evidence", Start: 0, End: 6}},
+	}, mappings)
+	require.True(t, ok)
+	require.Equal(t, "value", valueDream.ObjectValueID)
+	_, ok = mapEvidenceDiscoveryProposal(dreamgeneration.EvidenceDiscoveryProposal{SubjectRef: "subject", PredicateRef: "predicate", ObjectRef: "value", Derivations: []dreamgeneration.EvidenceDiscoveryDerivation{{EvidenceRef: "evidence", Start: -1, End: 1}}}, mappings)
+	require.False(t, ok)
+	_, ok = mapEvidenceDiscoveryProposal(dreamgeneration.EvidenceDiscoveryProposal{SubjectRef: "subject", PredicateRef: "predicate", ObjectRef: "value"}, mappings)
+	require.False(t, ok)
+}
+
+type evidenceProviderGeneratorStub struct {
+	model    string
+	response dreamgeneration.EvidenceDiscoveryResponse
+	err      error
+	requests []dreamgeneration.EvidenceDiscoveryRequest
+}
+
+func (s *evidenceProviderGeneratorStub) GenerateEvidenceDiscoveries(_ context.Context, request dreamgeneration.EvidenceDiscoveryRequest) (dreamgeneration.EvidenceDiscoveryResponse, error) {
+	s.requests = append(s.requests, request)
+	return s.response, s.err
+}
+
+func (s *evidenceProviderGeneratorStub) ModelName() string { return s.model }
+
+func providerEvidenceBoundaryRef(context dreamgeneration.EvidenceDiscoveryContext, offset int) string {
+	for ref, candidate := range context.BoundaryRefs {
+		if candidate == offset {
+			return ref
+		}
+	}
+	return ""
 }

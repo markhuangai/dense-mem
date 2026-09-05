@@ -1,0 +1,52 @@
+import { describe, expect, it } from "vitest";
+import { runOutcome } from "./dreams";
+
+describe("runOutcome", () => {
+  it("reports evidence progress in two-pass units", () => {
+    expect(runOutcome({
+      lane: "evidence_discovery",
+      evidence_targets: 3,
+      evaluated_evidence_targets: 2,
+      outcome_summary: { provider_proposals: 1 },
+    })).toBe("2 of 6 evidence target passes evaluated");
+  });
+
+  it("stores evidence results after every target pass", () => {
+    expect(runOutcome({
+      lane: "evidence_discovery",
+      evidence_targets: 1,
+      evaluated_evidence_targets: 2,
+      outcome_summary: { provider_proposals: 1, created_hypotheses: 1 },
+    })).toBe("Evidence discovery stored");
+  });
+
+  it("reports a completed one-pass run without proposals", () => {
+    expect(runOutcome({
+      lane: "evidence_discovery",
+      status: "completed",
+      evidence_targets: 3,
+      evaluated_evidence_targets: 3,
+      outcome_summary: { provider_proposals: 0, created_hypotheses: 0 },
+    })).toBe("Provider returned no supported relationship");
+  });
+
+  it("treats a completed mixed-pass run as stored", () => {
+    expect(runOutcome({
+      lane: "evidence_discovery",
+      status: "completed",
+      evidence_targets: 2,
+      evaluated_evidence_targets: 3,
+      outcome_summary: { provider_proposals: 1, created_hypotheses: 1 },
+    })).toBe("Evidence discovery stored");
+  });
+
+  it("reports no supported relationship when every proposal is rejected", () => {
+    expect(runOutcome({
+      lane: "evidence_discovery",
+      status: "completed",
+      evidence_targets: 1,
+      evaluated_evidence_targets: 1,
+      outcome_summary: { provider_proposals: 1, created_hypotheses: 0 },
+    })).toBe("Provider returned no supported relationship");
+  });
+});

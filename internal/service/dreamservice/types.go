@@ -12,7 +12,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
-	"gorm.io/gorm"
 )
 
 const (
@@ -61,12 +60,13 @@ type TeamConfigService interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Team, error)
 }
 
-type CycleLocker interface {
-	WithCycleLock(ctx context.Context, db *gorm.DB, teamID, runDate string, timeout time.Duration, fn func(tx *gorm.DB) error) error
-}
-
 type Generator interface {
 	Generate(ctx context.Context, teamID string, req GenerateRequest) ([]GeneratedDream, error)
+	Model() string
+}
+
+type EvidenceGenerator interface {
+	GenerateEvidence(ctx context.Context, teamID string, req EvidenceGenerationRequest) ([]GeneratedDream, GenerationDiagnostics, error)
 	Model() string
 }
 
@@ -80,9 +80,9 @@ type Dependencies struct {
 	ScheduledStore     repository.ScheduledDreamRepository
 	AppConfig          AppConfig
 	Teams              TeamService
-	Locker             CycleLocker
-	Postgres           *gorm.DB
 	Generator          Generator
+	EvidenceStore      repository.EvidenceDiscoveryRepository
+	EvidenceGenerator  EvidenceGenerator
 	Metrics            observability.DiscoverabilityMetrics
 	ProviderCycleLease time.Duration
 	Now                func() time.Time
@@ -108,25 +108,29 @@ type RunCycleRequest struct {
 }
 
 type RunCycleResult struct {
-	RunID                string         `json:"run_id"`
-	TeamID               string         `json:"team_id"`
-	RunDate              string         `json:"run_date"`
-	StartedAt            time.Time      `json:"started_at"`
-	CompletedAt          time.Time      `json:"completed_at"`
-	InputRelationships   int            `json:"input_relationships"`
-	CreatedDreams        int            `json:"created_dreams"`
-	RejectedDreams       int            `json:"rejected_dreams"`
-	ScheduledFor         time.Time      `json:"scheduled_for,omitempty"`
-	AttemptCount         int            `json:"attempt_count,omitempty"`
-	ProviderModel        string         `json:"provider_model,omitempty"`
-	ProviderTurns        int            `json:"provider_turns,omitempty"`
-	ProviderInputTokens  int            `json:"provider_input_tokens,omitempty"`
-	ProviderOutputTokens int            `json:"provider_output_tokens,omitempty"`
-	AttemptedPaths       int            `json:"attempted_paths,omitempty"`
-	ProviderProposals    int            `json:"provider_proposals,omitempty"`
-	OutcomeSummary       map[string]int `json:"outcome_summary,omitempty"`
-	Status               string         `json:"status"`
-	Error                string         `json:"error,omitempty"`
+	RunID                    string           `json:"run_id"`
+	TeamID                   string           `json:"team_id"`
+	RunDate                  string           `json:"run_date"`
+	StartedAt                time.Time        `json:"started_at"`
+	CompletedAt              time.Time        `json:"completed_at"`
+	InputRelationships       int              `json:"input_relationships"`
+	CreatedDreams            int              `json:"created_dreams"`
+	RejectedDreams           int              `json:"rejected_dreams"`
+	ScheduledFor             time.Time        `json:"scheduled_for,omitempty"`
+	AttemptCount             int              `json:"attempt_count,omitempty"`
+	ProviderModel            string           `json:"provider_model,omitempty"`
+	ProviderTurns            int              `json:"provider_turns,omitempty"`
+	ProviderInputTokens      int              `json:"provider_input_tokens,omitempty"`
+	ProviderOutputTokens     int              `json:"provider_output_tokens,omitempty"`
+	AttemptedPaths           int              `json:"attempted_paths,omitempty"`
+	ProviderProposals        int              `json:"provider_proposals,omitempty"`
+	OutcomeSummary           map[string]int   `json:"outcome_summary,omitempty"`
+	Status                   string           `json:"status"`
+	Error                    string           `json:"error,omitempty"`
+	Lane                     domain.DreamLane `json:"lane"`
+	EvidenceTargets          int              `json:"evidence_targets,omitempty"`
+	EvaluatedEvidenceTargets int              `json:"evaluated_evidence_targets,omitempty"`
+	durablyFinalized         bool
 }
 
 type ListOptions struct {
@@ -184,21 +188,32 @@ type DreamInput struct {
 }
 
 type GeneratedDream struct {
-	PathRef          string
-	PredicateRef     string
-	EvidenceRefs     []string
-	Hypothesis       string
-	WhatIf           string
-	PossibleOutcome  string
-	Rationale        string
-	Likelihood       float64
-	Confidence       float64
-	SubjectEntityID  string
-	PredicateKey     string
-	PredicateVersion int
-	ObjectEntityID   string
-	ObjectValueID    string
-	SourceRefs       []domain.DreamSourceRef
+	PathRef             string
+	PredicateRef        string
+	EvidenceRefs        []string
+	Hypothesis          string
+	WhatIf              string
+	PossibleOutcome     string
+	Rationale           string
+	Likelihood          float64
+	Confidence          float64
+	SubjectEntityID     string
+	PredicateKey        string
+	PredicateVersion    int
+	ObjectEntityID      string
+	ObjectValueID       string
+	SourceRefs          []domain.DreamSourceRef
+	EvidenceDerivations []repository.EvidenceDerivationSource
+}
+
+type EvidenceGenerationRequest struct {
+	Target               repository.EvidenceTarget
+	Contexts             []repository.EvidenceContext
+	Nodes                []repository.EvidenceNode
+	AllowedPredicates    []repository.DreamTargetPredicate
+	RelatedRelationships []repository.DreamInput
+	RelatedHypotheses    []repository.HypothesisRecord
+	MaxOutputs           int
 }
 
 type GenerationDiagnostics struct {

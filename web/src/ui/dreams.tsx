@@ -11,27 +11,47 @@ type DreamDerivation = {
 type DreamEvidence = {
   hypothesis: string;
   derivations?: readonly DreamDerivation[];
+  evidence_derivations?: readonly {
+    evidence_id: string;
+    source_group_key: string;
+    span_start: number;
+    span_end: number;
+    quote: string;
+    authority: string;
+  }[];
 };
 
 type DreamRunPresentation = {
+  lane?: string;
+  status?: string;
   attempted_paths?: number;
   provider_proposals?: number;
+  evidence_targets?: number;
+  evaluated_evidence_targets?: number;
   outcome_summary?: Record<string, number>;
 };
 
+const EVIDENCE_PASSES_PER_TARGET = 2;
+
 export function DreamEvidenceSummary({ dream }: { dream: DreamEvidence }) {
   const derivations = dream.derivations ?? [];
-  if (derivations.length === 0) {
+  const evidenceDerivations = dream.evidence_derivations ?? [];
+  if (derivations.length === 0 && evidenceDerivations.length === 0) {
     return <span className="form-meta">No cited excerpts</span>;
   }
   return (
     <span>
-      {derivations.length} cited excerpt{derivations.length === 1 ? "" : "s"}
+      {derivations.length + evidenceDerivations.length} cited excerpt{derivations.length + evidenceDerivations.length === 1 ? "" : "s"}
       <InfoTooltip label={`Evidence used for ${dream.hypothesis}`}>
         <div>
           {derivations.map((derivation, index) => (
             <div key={`${derivation.relationship_id}-${derivation.premise_position}-${index}`}>
               Premise {derivation.premise_position} · {derivation.authority} · “{derivation.quote}”
+            </div>
+          ))}
+          {evidenceDerivations.map((derivation, index) => (
+            <div key={`${derivation.evidence_id}-${derivation.span_start}-${index}`}>
+              Evidence · {derivation.authority} · “{derivation.quote}”
             </div>
           ))}
         </div>
@@ -55,6 +75,30 @@ export function runOutcome(run: DreamRunPresentation): string {
   }
   if ((outcomes.provider_failed ?? 0) > 0) {
     return "Provider call failed";
+  }
+  if (run.lane === "evidence_discovery") {
+    const targets = run.evidence_targets ?? outcomes.evidence_targets ?? 0;
+    const evaluated = run.evaluated_evidence_targets ?? outcomes.evaluated_evidence_targets ?? 0;
+    const providerProposals = outcomes.provider_proposals ?? run.provider_proposals ?? 0;
+    const createdHypotheses = outcomes.created_hypotheses ?? 0;
+    if (targets === 0) {
+      return "No eligible evidence target";
+    }
+    if (run.status === "completed") {
+      return createdHypotheses === 0
+        ? "Provider returned no supported relationship"
+        : "Evidence discovery stored";
+    }
+    if (evaluated === targets && providerProposals === 0) {
+      return "Provider returned no supported relationship";
+    }
+    if (evaluated < targets * EVIDENCE_PASSES_PER_TARGET) {
+      return `${evaluated} of ${targets * EVIDENCE_PASSES_PER_TARGET} evidence target passes evaluated`;
+    }
+    if (providerProposals === 0) {
+      return "Provider returned no supported relationship";
+    }
+    return "Evidence discovery stored";
   }
   const attemptedPaths = run.attempted_paths ?? outcomes.attempted_paths ?? 0;
   if (attemptedPaths === 0) {

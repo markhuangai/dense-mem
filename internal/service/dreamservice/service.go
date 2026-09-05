@@ -52,6 +52,17 @@ func (s *service) cycleLease(scheduled bool) time.Duration {
 	return lease
 }
 
+func (s *service) evidenceCycleLease() time.Duration {
+	lease := scheduledDreamCycleLease
+	if s.deps.ProviderCycleLease > 0 {
+		lease = s.deps.ProviderCycleLease * evidenceDiscoveryTargetLimit * evidenceDiscoveryPassLimit * evidenceDiscoveryRegenerationLimit
+		if lease < scheduledDreamCycleLease {
+			lease = scheduledDreamCycleLease
+		}
+	}
+	return lease
+}
+
 func (s *service) RunCycle(ctx context.Context, _ string, req RunCycleRequest) (*RunCycleResult, error) {
 	if s.deps.Store == nil {
 		return nil, fmt.Errorf("dreaming cycle: dream repository is required")
@@ -64,6 +75,16 @@ func (s *service) RunScheduledCycle(ctx context.Context, teamID string, windowAt
 		return nil, fmt.Errorf("scheduled dreaming cycle: scheduled dream repository is required")
 	}
 	return s.runScheduledCycle(ctx, teamID, windowAt)
+}
+
+// RunScheduledEvidenceCycle runs one current UTC-hour evidence-discovery
+// window. It is exposed on the concrete service for the scheduler so the
+// daily Service contract remains backward compatible.
+func (s *service) RunScheduledEvidenceCycle(ctx context.Context, teamID string, windowAt time.Time) (*RunCycleResult, error) {
+	if s.deps.ScheduledStore == nil {
+		return nil, fmt.Errorf("scheduled evidence dreaming cycle: scheduled dream repository is required")
+	}
+	return s.runScheduledEvidenceCycle(ctx, teamID, windowAt)
 }
 
 func (s *service) RecoverScheduledCycle(ctx context.Context, teamID string) (*RunCycleResult, error) {
