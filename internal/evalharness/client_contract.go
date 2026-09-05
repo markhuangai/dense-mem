@@ -15,7 +15,10 @@ import (
 type contractMode string
 
 const (
-	contractModeV262 contractMode = "v2.6.2"
+	contractModeV263 contractMode = "v2.6.3"
+	// contractModeV262 remains an alias for fixtures that exercise the retained
+	// v2.6.2 request/replay path.
+	contractModeV262 contractMode = contractModeV263
 )
 
 type mcpToolsListResponse struct {
@@ -87,8 +90,8 @@ func classifyContract(tools []mcpToolDefinition) (contractMode, error) {
 		return "", errors.New("MCP tools/list did not describe remember")
 	}
 	version := contractVersionFromSchema(rememberSchema)
-	if version == domain.ContractVersion && matchesContractToolSet(names, registry.ContractToolNames()) {
-		return contractModeV262, nil
+	if domain.ContractVersionCompatible(version) && matchesContractToolSet(names, registry.ContractToolNames()) {
+		return contractModeV263, nil
 	}
 	return "", fmt.Errorf("unsupported or mixed MCP contract: remember=%q", version)
 }
@@ -120,11 +123,15 @@ func contractVersionFromSchema(schema map[string]any) string {
 	}
 	if properties, ok := schema["properties"].(map[string]any); ok {
 		if property, ok := properties["contract_version"].(map[string]any); ok {
-			if values, ok := property["enum"].([]any); ok && len(values) == 1 {
-				return stringValue(values[0])
+			if values, ok := property["enum"].([]any); ok {
+				return preferredContractVersion(values)
 			}
-			if values, ok := property["enum"].([]string); ok && len(values) == 1 {
-				return strings.TrimSpace(values[0])
+			if values, ok := property["enum"].([]string); ok {
+				converted := make([]any, 0, len(values))
+				for _, value := range values {
+					converted = append(converted, value)
+				}
+				return preferredContractVersion(converted)
 			}
 		}
 	}
@@ -145,6 +152,34 @@ func contractVersionFromSchema(schema map[string]any) string {
 			version = candidate
 		}
 		return version
+	}
+	return ""
+}
+
+func preferredContractVersion(values []any) string {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		version := strings.TrimSpace(stringValue(value))
+		if version == "" {
+			continue
+		}
+		seen[version] = struct{}{}
+	}
+	for version := range seen {
+		if !domain.ContractVersionCompatible(version) {
+			return ""
+		}
+	}
+	if _, ok := seen[domain.ContractVersion]; ok {
+		return domain.ContractVersion
+	}
+	if _, ok := seen[domain.PreviousContractVersion]; ok {
+		return domain.PreviousContractVersion
+	}
+	if len(seen) == 1 {
+		for version := range seen {
+			return version
+		}
 	}
 	return ""
 }

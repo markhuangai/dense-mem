@@ -6,8 +6,11 @@ import (
 )
 
 func TestContractEnums(t *testing.T) {
-	if ContractVersion != "dense-mem.v2.6.2" {
+	if ContractVersion != "dense-mem.v2.6.3" {
 		t.Fatalf("ContractVersion = %q", ContractVersion)
+	}
+	if !ContractVersionCompatible(PreviousContractVersion) || !ContractVersionCompatible(ContractVersion) {
+		t.Fatalf("accepted contract versions do not include current and previous versions")
 	}
 	for _, action := range []string{
 		"acknowledge",

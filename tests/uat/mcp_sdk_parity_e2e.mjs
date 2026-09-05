@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -25,6 +26,18 @@ const listed = await rpc("tools/list", {}, { "MCP-Protocol-Version": "2025-11-25
 if (listed.error || !listed.result?.tools?.some((tool) => tool.name === "remember")) {
   throw new Error("live SDK tools/list did not expose the shared registry");
 }
+const failedTrace = await rpc("tools/call", {
+  name: "trace_memory",
+  arguments: { relationship_id: randomUUID() },
+}, { "MCP-Protocol-Version": "2025-11-25" });
+if (failedTrace.error || failedTrace.result?.isError !== true || !failedTrace.result?.structuredContent) {
+  throw new Error("live SDK trace failure did not return structured actionable data");
+}
+const failedTraceText = failedTrace.result.content?.[0]?.text;
+if (typeof failedTraceText !== "string" || stableJSON(JSON.parse(failedTraceText)) !== stableJSON(failedTrace.result.structuredContent) ||
+    failedTrace.result.structuredContent.reason_code !== "reference_not_found") {
+  throw new Error("live SDK trace failure text and structured guidance differed");
+}
 const bounded = await rpc("tools/call", {
   name: "remember",
   arguments: {},
@@ -40,6 +53,7 @@ console.log(JSON.stringify({
   shared_registry: true,
   local_differential_harness: true,
   live_public_boundary: true,
+  trace_failure_structured: true,
   protocol_2025: true,
   protocol_2026: true,
   bounded_errors: true,
@@ -65,4 +79,10 @@ function requiredEnv(name) {
 function initializeParams(version) {
   if (version === "2026-07-28") return { protocolVersion: version, _meta: { "io.modelcontextprotocol/protocolVersion": version, "io.modelcontextprotocol/clientCapabilities": {} } };
   return { protocolVersion: version };
+}
+
+function stableJSON(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJSON).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJSON(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
 }

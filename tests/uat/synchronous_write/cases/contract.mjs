@@ -7,20 +7,28 @@ import {
 
 export const name = "contract";
 
+const CURRENT_CONTRACT_VERSION = "dense-mem.v2.6.3";
+const ACCEPTED_CONTRACT_VERSIONS = [CURRENT_CONTRACT_VERSION, "dense-mem.v2.6.2"];
+
 export async function run({ rpc, expect }) {
   await enableTargetFeatureGates();
   validatedUserURL();
   const listed = await rpc("tools/list", {});
   const tools = listed.tools || [];
   const names = tools.map((tool) => tool.name);
-  expect(names.length === TERMINAL_TOOLS.length && TERMINAL_TOOLS.every((tool) => names.includes(tool)), "v2.6.2 catalog must expose exactly ten tools");
-  expect(!names.includes("get_submission_status"), "v2.6.2 catalog must remove get_submission_status");
+  expect(names.length === TERMINAL_TOOLS.length && TERMINAL_TOOLS.every((tool) => names.includes(tool)), "current catalog must expose exactly ten tools");
+  expect(!names.includes("get_submission_status"), "current catalog must remove get_submission_status");
 
   const rememberTool = tools.find((tool) => tool.name === "remember");
   const rememberSchema = rememberTool?.outputSchema || rememberTool?.output_schema || {};
   const rememberProperties = rememberSchema.properties || {};
-  expect(JSON.stringify(rememberProperties.contract_version?.enum) === JSON.stringify(["dense-mem.v2.6.2"]), "Remember schema must identify v2.6.2");
-  expect(!Object.hasOwn(rememberProperties, "status_tool") && !Object.hasOwn(rememberProperties, "check_after_seconds"), "v2.6.2 Remember schema must not expose polling fields");
+  expect(JSON.stringify(rememberProperties.contract_version?.enum) === JSON.stringify(ACCEPTED_CONTRACT_VERSIONS), "Remember schema must advertise current and retained contract versions");
+  expect(!Object.hasOwn(rememberProperties, "status_tool") && !Object.hasOwn(rememberProperties, "check_after_seconds"), "current Remember schema must not expose polling fields");
+  for (const toolName of ["remember", "recall_memory", "trace_memory", "export_memory_pack"]) {
+    const schema = tools.find((tool) => tool.name === toolName)?.outputSchema || {};
+    const errorBranch = (schema.oneOf || []).find((branch) => branch?.properties?.reason_code && branch?.properties?.next_action);
+    expect(errorBranch, `${toolName} output schema must advertise actionable operational errors`);
+  }
 
   const runID = `synchronous-write-contract-${randomUUID()}`;
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
@@ -28,7 +36,7 @@ export async function run({ rpc, expect }) {
   const sourceRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "remember", arguments: rememberArguments(runID, "none") });
   const source = successfulToolResult(sourceRaw, expect);
   assertTerminalRememberResult(source);
-  expect(source.contract_version === "dense-mem.v2.6.2", "terminal Remember must return v2.6.2");
+  expect(source.contract_version === CURRENT_CONTRACT_VERSION, "terminal Remember must return the current contract version");
   expect(source.processing_state === "completed", `terminal Remember must complete: ${JSON.stringify(source)}`);
   expect(source.relationship_results?.[0]?.splits?.[0]?.relationship_id, "terminal Remember must return a relationship split");
   assertTextStructuredParity(sourceRaw, expect);
@@ -41,7 +49,7 @@ export async function run({ rpc, expect }) {
   const evidenceOnlyRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "remember", arguments: evidenceOnlyArguments });
   const evidenceOnly = successfulToolResult(evidenceOnlyRaw, expect);
   assertTerminalRememberResult(evidenceOnly);
-  expect(evidenceOnly.contract_version === "dense-mem.v2.6.2" && evidenceOnly.processing_state === "completed", "evidence-only Remember must complete");
+  expect(evidenceOnly.contract_version === CURRENT_CONTRACT_VERSION && evidenceOnly.processing_state === "completed", "evidence-only Remember must complete");
   expect(evidenceOnly.evidence?.[0]?.disposition === "stored" && evidenceOnly.relationship_results?.length === 0, "evidence-only Remember must store evidence without relationship results");
   assertTextStructuredParity(evidenceOnlyRaw, expect);
 
@@ -68,7 +76,7 @@ export async function run({ rpc, expect }) {
   });
   const correction = successfulToolResult(correctionRaw, expect);
   assertTerminalCorrectionResult(correction);
-  expect(correction.contract_version === "dense-mem.v2.6.2", "direct correction must return v2.6.2");
+  expect(correction.contract_version === CURRENT_CONTRACT_VERSION, "direct correction must return the current contract version");
   expect(!Object.hasOwn(correction, "status_tool") && !Object.hasOwn(correction, "check_after_seconds"), "direct correction must not return polling metadata");
   assertTextStructuredParity(correctionRaw, expect);
 
@@ -86,14 +94,14 @@ export async function run({ rpc, expect }) {
   });
   const stale = structuredToolResult(staleRaw, expect);
   assertTerminalCorrectionResult(stale);
-  expect(stale.contract_version === "dense-mem.v2.6.2" && stale.processing_state === "rejected", "stale correction must return a terminal rejection");
+  expect(stale.contract_version === CURRENT_CONTRACT_VERSION && stale.processing_state === "rejected", "stale correction must return a terminal rejection");
   expect(stale.errors?.[0]?.code === "relationship_version_stale", `stale correction must preserve version classification: ${JSON.stringify(stale)}`);
   assertTextStructuredParity(staleRaw, expect);
 
   // Keep the intermediate confirmation branch exercised even when this
   // disposable seed resolves the correction directly to completed.
   assertTerminalCorrectionResult({
-    contract_version: "dense-mem.v2.6.2",
+    contract_version: CURRENT_CONTRACT_VERSION,
     submission_id: "fixture-confirmation",
     submission_kind: "relationship_correction",
     processing_state: "awaiting_confirmation",

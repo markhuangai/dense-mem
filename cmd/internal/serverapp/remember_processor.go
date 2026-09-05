@@ -137,7 +137,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		if !rememberAttemptMatchesRequest(attempt, input) {
 			return nil, rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
 		}
-		if strings.TrimSpace(attempt.ContractVersion) != domain.ContractVersion {
+		if version := strings.TrimSpace(attempt.ContractVersion); version != "" && !domain.ContractVersionCompatible(version) {
 			return nil, rememberConflictProcessError(input, ingestID, rememberapp.ErrRememberConflict)
 		}
 		if attempt.Outcome == "completed" || (attempt.Outcome == "failed" && !attempt.Retryable) {
@@ -287,7 +287,12 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		return nil, rememberConflictProcessError(input, attemptID, failure)
 	}
 	code := rememberFailureCode(phase, failure)
-	publicError := rememberapp.TerminalStatusError(rememberapp.TerminalErrorCode(code))
+	reasonCode, details := memoryservice.SynchronousAssessmentFailureDetails(failure)
+	if reasonCode == "" {
+		reasonCode = "remember_" + strings.TrimSpace(phase) + "_failed"
+		details = map[string]any{"component": "remember." + strings.TrimSpace(phase), "server_owned": true}
+	}
+	publicError := rememberapp.TerminalStatusErrorWithDetails(rememberapp.TerminalErrorCode(code), reasonCode, details)
 	correlationID := rememberProcessCorrelationID(input.Metadata)
 	processingState := "failed"
 	notStoredReason := rememberFailureNotStoredReason(code)
@@ -314,13 +319,20 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 			"reason": item.Reason, "splits": item.Splits,
 		})
 	}
+	publicErrorPayload := map[string]any{
+		"code": publicError.Code, "message": publicError.Message, "retryable": publicError.Retryable,
+		"next_action": publicError.NextAction, "remediation": publicError.Remediation,
+	}
+	if publicError.ReasonCode != "" {
+		publicErrorPayload["reason_code"] = publicError.ReasonCode
+	}
+	if len(publicError.Details) > 0 {
+		publicErrorPayload["details"] = publicError.Details
+	}
 	publicResult := map[string]any{
 		"contract_version": domain.ContractVersion, "submission_id": attemptID, "submission_kind": "remember",
 		"processing_state": processingState, "search_state": "not_required", "correlation_id": correlationID,
-		"evidence": publicEvidence, "relationship_results": publicRelationships, "errors": []any{map[string]any{
-			"code": publicError.Code, "message": publicError.Message, "retryable": publicError.Retryable,
-			"next_action": publicError.NextAction, "remediation": publicError.Remediation,
-		}},
+		"evidence": publicEvidence, "relationship_results": publicRelationships, "errors": []any{publicErrorPayload},
 	}
 	artifacts := []repository.RememberFailureArtifactInput{
 		{ArtifactKind: "failure", ContentType: "application/json", Content: []byte(fmt.Sprintf(`{"phase":%q,"code":%q}`, phase, publicError.Code))},
@@ -383,7 +395,7 @@ func rememberConflictProcessError(
 		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
 		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
 		Evidence: evidence, RelationshipResults: relationshipResults,
-		Errors: []rememberapp.SubmissionStatusError{rememberapp.StatusError(rememberapp.SubmissionErrorIdempotencyConflict)},
+		Errors: []rememberapp.SubmissionStatusError{rememberapp.StatusErrorWithDetails(rememberapp.SubmissionErrorIdempotencyConflict, "idempotency_conflict", map[string]any{"component": "remember.idempotency", "server_owned": true})},
 	}
 	return &rememberapp.RememberProcessError{Status: status, Err: cause}
 }
@@ -497,7 +509,7 @@ func rememberFailurePersistenceProcessError(
 		ContractVersion: domain.ContractVersion, SubmissionID: submissionID, SubmissionKind: "remember",
 		ProcessingState: "failed", SearchState: "not_required", CorrelationID: rememberProcessCorrelationID(input.Metadata),
 		Evidence: evidence, RelationshipResults: relationshipResults,
-		Errors: []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusError(rememberapp.TerminalErrorDatabaseFailure)},
+		Errors: []rememberapp.SubmissionStatusError{rememberapp.TerminalStatusErrorWithDetails(rememberapp.TerminalErrorDatabaseFailure, "failure_retention", map[string]any{"component": "remember.failure_record", "server_owned": true})},
 	}
 	return &rememberapp.RememberProcessError{Status: status, Err: rememberFailurePersistenceError(cause)}
 }

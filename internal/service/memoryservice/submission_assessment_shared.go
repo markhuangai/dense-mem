@@ -78,6 +78,95 @@ func semanticAssessmentPreflightFailure(err error) (string, bool) {
 	return "candidate_prefetch", false
 }
 
+// SynchronousAssessmentFailureDetails exposes only bounded, server-owned
+// measurements for an assessor failure. Provider text and response content
+// remain private to logs and diagnostics.
+func SynchronousAssessmentFailureDetails(err error) (string, map[string]any) {
+	if err == nil {
+		return "", nil
+	}
+	var preflight *semanticAssessmentPreflightError
+	if errors.As(err, &preflight) && preflight != nil {
+		reasonCode := strings.TrimSpace(preflight.reasonCode)
+		if reasonCode == "" {
+			reasonCode = strings.TrimSpace(preflight.stage)
+		}
+		if reasonCode == "" {
+			reasonCode = "assessor_preflight_failed"
+		}
+		details := map[string]any{
+			"component": assessorFailureComponent(preflight.stage),
+		}
+		if assessmentFailureIsClientControlled(preflight.stage) {
+			details["client_controlled"] = true
+		} else {
+			details["server_owned"] = true
+		}
+		if preflight.measurement != nil {
+			details["unit"] = preflight.measurement.Unit
+			details["observed"] = preflight.measurement.Observed
+			details["limit"] = preflight.measurement.Limit
+			if preflight.measurement.ObservedAtLeast {
+				details["observed_at_least"] = true
+			}
+		}
+		return reasonCode, details
+	}
+	var malformed *assessor.MalformedResponseError
+	if errors.As(err, &malformed) && malformed != nil && strings.TrimSpace(malformed.FailureClass) == "input_budget" {
+		details := map[string]any{
+			"component":    assessorFailureComponent(malformed.ValidationStage),
+			"server_owned": true,
+		}
+		if malformed.Measurement != nil {
+			details["unit"] = malformed.Measurement.Unit
+			details["observed"] = malformed.Measurement.Observed
+			details["limit"] = malformed.Measurement.Limit
+			if malformed.Measurement.ObservedAtLeast {
+				details["observed_at_least"] = true
+			}
+		}
+		reasonCode := "assessor_conversation_input_exceeded"
+		if strings.TrimSpace(malformed.ValidationStage) == "conversation_candidate_context_tokens" {
+			reasonCode = "assessor_conversation_candidate_context_exceeded"
+		}
+		return reasonCode, details
+	}
+	return "", nil
+}
+
+func assessorFailureComponent(stage string) string {
+	switch strings.TrimSpace(stage) {
+	case "entity_catalog":
+		return "assessor.required_entity_catalog"
+	case "known_evidence_context":
+		return "assessor.required_known_evidence"
+	case "catalog_context", "catalog_context_validation", "predicate_options_overflow":
+		return "assessor.optional_context"
+	case "predicate_context":
+		return "assessor.required_predicate_context"
+	case "required_context":
+		return "assessor.required_context"
+	case "assessment_input", "input_tokens":
+		return "assessor.required_input"
+	case "conversation_input_tokens":
+		return "assessor.conversation"
+	case "conversation_candidate_context_tokens":
+		return "assessor.conversation_candidate_context"
+	default:
+		return "assessor"
+	}
+}
+
+func assessmentFailureIsClientControlled(stage string) bool {
+	switch strings.TrimSpace(stage) {
+	case "assessment_input", "input_tokens":
+		return true
+	default:
+		return false
+	}
+}
+
 func terminalizeAfterError(original error, complete func() error) error {
 	if completionErr := complete(); completionErr != nil {
 		return errors.Join(original, completionErr)

@@ -137,6 +137,12 @@ func ContractValidationErrorData(result ContractValidationResult) map[string]any
 		})
 	}
 	return map[string]any{
+		"code":             "invalid_input",
+		"reason_code":      "validation_failed",
+		"message":          "The tool arguments failed validation; correct the listed fields and submit again.",
+		"retryable":        false,
+		"next_action":      "correct_and_resubmit",
+		"remediation":      "Correct the listed argument paths and submit the request again.",
 		"reason":           "validation_failed",
 		"issues":           issues,
 		"issues_truncated": result.IssuesTruncated,

@@ -94,23 +94,86 @@ func boundedMap(description string) map[string]any {
 		"description":          description,
 		"maxProperties":        metadataMaxProperties,
 		"additionalProperties": true,
+		"x-bounded-map":        true,
 		"x-max-depth":          4,
 		"x-max-bytes":          16384,
 	}
 }
 
+func actionableErrorDetailsSchema() map[string]any {
+	return closedObject(nil, map[string]any{
+		"component":           schemaString("Owning server component.", 128),
+		"tool":                schemaString("Affected tool name.", 128),
+		"unit":                schemaString("Measurement unit.", 32),
+		"observed":            map[string]any{"type": "integer", "minimum": 0},
+		"limit":               map[string]any{"type": "integer", "minimum": 0},
+		"observed_at_least":   map[string]any{"type": "boolean"},
+		"server_owned":        map[string]any{"type": "boolean"},
+		"client_controlled":   map[string]any{"type": "boolean"},
+		"retry_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 86400},
+	})
+}
+
 func PublicErrorSchema() map[string]any {
 	return closedObject(
-		[]string{"code", "message", "retryable", "correlation_id"},
+		[]string{"code", "message", "retryable", "next_action", "remediation", "correlation_id"},
 		map[string]any{
 			"code":                schemaEnum(publicErrorCodes()),
 			"message":             schemaString("Bounded public error message.", 512),
 			"retryable":           map[string]any{"type": "boolean"},
+			"reason_code":         schemaString("Stable code-specific reason.", 128),
+			"next_action":         schemaEnum([]string{"retry_same_request", "correct_and_resubmit", "refresh_state", "obtain_authorization", "contact_operator", "stop"}),
+			"remediation":         schemaString("Bounded next step for the caller.", 512),
 			"retry_after_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 86400},
 			"correlation_id":      schemaString("Request correlation ID.", 128),
 			"details":             boundedMap("Code-specific bounded safe metadata."),
 		},
 	)
+}
+
+// actionableOutputSchema keeps the successful contract shape discoverable
+// while explicitly admitting the bounded actionable error returned by the MCP
+// SDK for operational failures. The top-level property union is needed for
+// closed-object validation; each oneOf branch still enforces its own required
+// fields and rejects unknown fields.
+func actionableOutputSchema(success map[string]any) map[string]any {
+	properties := make(map[string]any)
+	collectOutputProperties(success, properties)
+	for name, property := range schemaProperties(PublicErrorSchema()) {
+		if _, exists := properties[name]; !exists {
+			properties[name] = property
+		}
+	}
+	validatedSuccess := success
+	if _, hasVariants := success["oneOf"]; hasVariants {
+		validatedSuccess = make(map[string]any, len(success)+1)
+		for key, value := range success {
+			validatedSuccess[key] = value
+		}
+		validatedSuccess["x-enforce-one-of"] = true
+	}
+	return map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"additionalProperties": false,
+		"oneOf":                []any{validatedSuccess, PublicErrorSchema()},
+		"x-enforce-one-of":     true,
+	}
+}
+
+func collectOutputProperties(schema map[string]any, into map[string]any) {
+	for name, property := range schemaProperties(schema) {
+		if _, exists := into[name]; !exists {
+			into[name] = property
+		}
+	}
+	variants, _ := schema["oneOf"].([]any)
+	for _, raw := range variants {
+		variant, ok := raw.(map[string]any)
+		if ok {
+			collectOutputProperties(variant, into)
+		}
+	}
 }
 
 func publicErrorCodes() []string {
@@ -158,6 +221,8 @@ func submissionStatusErrorSchema() map[string]any {
 			"retryable":   map[string]any{"type": "boolean"},
 			"next_action": schemaEnum(memoryservice.SubmissionNextActions()),
 			"remediation": schemaString("Bounded action the caller can take next.", 512),
+			"reason_code": schemaString("Code-specific bounded reason.", 128),
+			"details":     actionableErrorDetailsSchema(),
 		},
 	)
 }

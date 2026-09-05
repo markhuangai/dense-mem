@@ -112,7 +112,7 @@ func TestOpenAIAssessorAssessSemanticUsesOneTurnForValidResponse(t *testing.T) {
 	assert.Equal(t, 200, response.InputTokens)
 }
 
-func TestOpenAIAssessorRememberSessionRepairsWithRefreshedCandidates(t *testing.T) {
+func TestOpenAIAssessorRememberSessionRepairsWithoutRepeatingCandidates(t *testing.T) {
 	var requests []openAIVerifierRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request openAIVerifierRequest
@@ -161,9 +161,9 @@ func TestOpenAIAssessorRememberSessionRepairsWithRefreshedCandidates(t *testing.
 	assert.NotEmpty(t, session.SessionID())
 	require.Len(t, requests, 2)
 	assert.Equal(t, []string{"system", "user", "assistant", "user"}, assessmentMessageRoles(requests[1].Messages))
-	assert.Contains(t, requests[1].Messages[3].Content, "refreshed_candidate_context")
-	assert.Contains(t, requests[1].Messages[3].Content, "refreshed-catalog")
-	assert.Contains(t, requests[1].Messages[3].Content, "Refreshed candidate evidence.")
+	assert.NotContains(t, requests[1].Messages[3].Content, "refreshed_candidate_context")
+	assert.NotContains(t, requests[1].Messages[3].Content, "refreshed-catalog")
+	assert.NotContains(t, requests[1].Messages[3].Content, "Refreshed candidate evidence.")
 	assert.Contains(t, requests[1].Messages[3].Content, "Return evidence_conflict_results")
 }
 

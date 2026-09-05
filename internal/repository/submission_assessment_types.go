@@ -14,24 +14,26 @@ type RememberCommitScope struct {
 }
 
 type SubmissionAssessment struct {
-	TeamID                    string
-	AssessmentID              string
-	OwnerProfileID            string
-	IngestID                  string
-	RequestID                 string
-	AssessorContractVersion   string
-	Model                     string
-	Tokenizer                 string
-	RevisionNumber            int
-	ProviderTurns             int
-	InputTokens               int
-	OutputTokens              int
-	CandidateContextTokens    int
-	CandidateContextTruncated bool
-	NormalizedResponse        json.RawMessage
-	ResponseHash              string
-	ValidatedAt               time.Time
-	CreatedAt                 time.Time
+	TeamID                                  string
+	AssessmentID                            string
+	OwnerProfileID                          string
+	IngestID                                string
+	RequestID                               string
+	AssessorContractVersion                 string
+	Model                                   string
+	Tokenizer                               string
+	RevisionNumber                          int
+	ProviderTurns                           int
+	InputTokens                             int
+	OutputTokens                            int
+	CandidateContextTokens                  int
+	CandidateContextTruncated               bool
+	CandidateContextOmittedCandidates       int
+	CandidateContextOmittedPredicateOptions int
+	NormalizedResponse                      json.RawMessage
+	ResponseHash                            string
+	ValidatedAt                             time.Time
+	CreatedAt                               time.Time
 }
 
 type SubmissionAssessmentItemInput struct {
@@ -130,30 +132,32 @@ type EvidenceSecurityResult struct {
 // one final Remember transaction. Provider work happens before this input is
 // committed; no field represents a pre-provider reservation.
 type SynchronousRememberCommitInput struct {
-	TeamID                  string
-	OwnerProfileID          string
-	IngestID                string
-	SpaceID                 string
-	SpaceGeneration         int64
-	IdempotencyKey          string
-	RequestHash             string
-	SourceSummary           string
-	Proposal                map[string]any
-	Metadata                map[string]any
-	Evidence                []EvidenceInput
-	AssessmentID            string
-	AssessmentJSON          json.RawMessage
-	EvidenceSecurityResults []EvidenceSecurityResult
-	ProviderTurns           int
-	InputTokens             int
-	OutputTokens            int
-	AssessorTurns           int
-	Duration                time.Duration
-	StartedAt               time.Time
-	CorrelationID           string
-	PublicResult            map[string]any
-	DuplicateResolutions    []RememberDuplicateResolution
-	Commit                  CommitSubmissionAssessmentInput
+	TeamID                                  string
+	OwnerProfileID                          string
+	IngestID                                string
+	SpaceID                                 string
+	SpaceGeneration                         int64
+	IdempotencyKey                          string
+	RequestHash                             string
+	SourceSummary                           string
+	Proposal                                map[string]any
+	Metadata                                map[string]any
+	Evidence                                []EvidenceInput
+	AssessmentID                            string
+	AssessmentJSON                          json.RawMessage
+	EvidenceSecurityResults                 []EvidenceSecurityResult
+	ProviderTurns                           int
+	InputTokens                             int
+	OutputTokens                            int
+	CandidateContextOmittedCandidates       int
+	CandidateContextOmittedPredicateOptions int
+	AssessorTurns                           int
+	Duration                                time.Duration
+	StartedAt                               time.Time
+	CorrelationID                           string
+	PublicResult                            map[string]any
+	DuplicateResolutions                    []RememberDuplicateResolution
+	Commit                                  CommitSubmissionAssessmentInput
 }
 
 type CommitSubmissionAssessmentResult struct {

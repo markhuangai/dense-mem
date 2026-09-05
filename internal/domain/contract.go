@@ -1,7 +1,8 @@
 package domain
 
 const (
-	ContractVersion              = "dense-mem.v2.6.2"
+	ContractVersion              = "dense-mem.v2.6.3"
+	PreviousContractVersion      = "dense-mem.v2.6.2"
 	PredicatePolicyVersion       = "open_vocabulary_v1"
 	ConflictPolicyVersion        = "cross_profile_supporter_majority_after_ttl"
 	ConflictOverduePolicyVersion = "overdue_conflict_ai_supporter_voting"
@@ -9,8 +10,20 @@ const (
 	ToolVisibility               = "active"
 )
 
+// ContractVersionCompatible reports versions whose terminal Remember shape
+// and replay semantics are intentionally preserved by the current server.
+func ContractVersionCompatible(version string) bool {
+	return version == ContractVersion || version == PreviousContractVersion
+}
+
+// AcceptedContractVersions returns the current version first, followed by the
+// one explicitly retained for replay compatibility.
+func AcceptedContractVersions() []string {
+	return []string{ContractVersion, PreviousContractVersion}
+}
+
 const (
-	SubmissionErrorMessagePolicyRejected = "submission was rejected by semantic policy"
+	SubmissionErrorMessagePolicyRejected  = "submission was rejected by semantic policy"
 	SubmissionErrorMessageInternalFailure = "Dense-Mem could not complete the submission"
 )
 

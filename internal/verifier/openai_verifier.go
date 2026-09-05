@@ -171,6 +171,10 @@ func NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate(
 	if gate == nil {
 		gate = modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(cfg))
 	}
+	normalizedLimits := normalizeSemanticAssessmentLimits(assessmentLimits)
+	// The legacy verifier owns separate request shapes and accounting. The
+	// synchronous Remember assessor uses the shared exact framing path.
+	normalizedLimits.LegacyProviderFraming = true
 	return &OpenAIVerifier{
 		baseURL:            cfg.GetAIVerifierAPIURL(),
 		apiKey:             cfg.GetAIVerifierAPIKey(),
@@ -179,7 +183,7 @@ func NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate(
 		httpClient:         client,
 		sem:                gate,
 		metrics:            observability.NoopDiscoverabilityMetrics(),
-		assessmentLimits:   normalizeSemanticAssessmentLimits(assessmentLimits),
+		assessmentLimits:   normalizedLimits,
 	}
 }
 
@@ -188,6 +192,7 @@ func NewOpenAIVerifierWithAssessmentLimitsAndConcurrencyGate(
 func SemanticAssessmentLimitsForConfig(cfg config.ConfigProvider) SemanticAssessmentLimits {
 	budget := config.AIVerifierAssessmentBudgetFor(cfg)
 	limits := DefaultSemanticAssessmentLimits()
+	limits.LegacyProviderFraming = true
 	limits.Tokenizer = budget.Tokenizer
 	limits.MaxInputTokens = budget.MaxInputTokens
 	limits.MaxOutputTokens = budget.MaxOutputTokens

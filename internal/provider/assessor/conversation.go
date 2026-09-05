@@ -14,12 +14,61 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 )
 
-func semanticAssessmentMessageTokens(messages []openAIVerifierMessage, tokenizerName string) (int, error) {
-	encoded, err := json.Marshal(messages)
-	if err != nil {
-		return 0, err
+func semanticAssessmentTurnTokens(
+	model string,
+	schemaName string,
+	messages []openAIVerifierMessage,
+	schema map[string]any,
+	temperatureDisabled bool,
+	tokenizerName string,
+) (int, error) {
+	converted := make([]assessor.SemanticAssessmentProviderMessage, 0, len(messages))
+	for _, message := range messages {
+		converted = append(converted, assessor.SemanticAssessmentProviderMessage{Role: message.Role, Content: message.Content})
 	}
-	return assessor.CountTokens(string(encoded), tokenizerName)
+	return assessor.CountSemanticAssessmentProviderRequestTokens(
+		model, schemaName, schema, temperatureDisabled, converted, tokenizerName,
+	)
+}
+
+// semanticAssessmentConversationCandidateContextTokens counts every
+// candidate-context occurrence in the complete conversation. The initial
+// request remains in history; an explicitly supplied refreshed context is
+// counted too so compatibility extensions cannot bypass the sub-budget.
+func semanticAssessmentConversationCandidateContextTokens(messages []openAIVerifierMessage, tokenizerName string) (int, error) {
+	total := 0
+	for _, message := range messages {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(message.Content), &fields); err != nil {
+			continue
+		}
+		if refreshed, ok := fields["refreshed_candidate_context"]; ok && len(refreshed) > 0 {
+			count, err := assessor.CountTokens(string(refreshed), tokenizerName)
+			if err != nil {
+				return 0, err
+			}
+			total += count
+		}
+		candidateFields := map[string]json.RawMessage{}
+		for _, key := range []string{"entity_candidate_groups", "predicate_options", "evidence_equivalence_candidates"} {
+			if value, ok := fields[key]; ok {
+				candidateFields[key] = value
+			}
+		}
+		if len(candidateFields) == 0 {
+			continue
+		}
+		candidateJSON, err := json.Marshal(candidateFields)
+		if err != nil {
+			return 0, err
+		}
+		count, err := assessor.CountTokens(string(candidateJSON), tokenizerName)
+		if err != nil {
+			return 0, err
+		}
+		total += count
+	}
+	return total, nil
 }
 
 func boundedSemanticAssessmentCorrectionErrors(errs []assessor.SemanticValidationError) []assessor.SemanticValidationError {

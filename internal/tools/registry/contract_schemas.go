@@ -391,7 +391,7 @@ func exportMemoryPackInputSchema() map[string]any {
 
 func rememberOutputSchema() map[string]any {
 	properties := map[string]any{
-		"contract_version":     schemaEnum([]string{domain.ContractVersion}),
+		"contract_version":     schemaEnum(domain.AcceptedContractVersions()),
 		"submission_id":        schemaString("Submission ID.", 128),
 		"submission_kind":      schemaEnum([]string{"remember"}),
 		"processing_state":     schemaEnum([]string{"completed", "failed"}),
@@ -400,6 +400,7 @@ func rememberOutputSchema() map[string]any {
 		"evidence":             array(rememberEvidenceStatusSchema(), 0, 100),
 		"relationship_results": submissionRelationshipResultsSchema(),
 		"errors":               submissionStatusErrorArraySchema(),
+		"warnings":             stringArraySchema("Bounded server diagnostics about optional assessor context.", 20, 512),
 	}
 	return closedObject(
 		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"},
@@ -478,7 +479,7 @@ func retractEvidenceOutputSchema() map[string]any {
 
 func correctRelationshipOutputSchema() map[string]any {
 	properties := map[string]any{
-		"contract_version":      schemaEnum([]string{domain.ContractVersion}),
+		"contract_version":      schemaEnum(domain.AcceptedContractVersions()),
 		"submission_id":         schemaString("Correction submission ID.", 128),
 		"submission_kind":       schemaEnum([]string{"relationship_correction"}),
 		"processing_state":      schemaEnum([]string{"awaiting_confirmation", "completed", "rejected", "failed"}),

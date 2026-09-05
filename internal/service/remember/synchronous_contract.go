@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -72,6 +73,7 @@ type TerminalRememberResult struct {
 	Evidence            []TerminalEvidenceResult       `json:"evidence"`
 	RelationshipResults []SubmissionRelationshipResult `json:"relationship_results"`
 	Errors              []SubmissionStatusError        `json:"errors"`
+	Warnings            []string                       `json:"warnings,omitempty"`
 	Kind                ResultKind                     `json:"-"`
 }
 
@@ -201,6 +203,17 @@ func TerminalStatusError(code TerminalErrorCode) SubmissionStatusError {
 	}
 }
 
+// TerminalStatusErrorWithDetails preserves canonical code guidance, except
+// that a server-owned input budget directs the caller to an operator, while
+// attaching bounded, safe cause information from the owning service.
+func TerminalStatusErrorWithDetails(code TerminalErrorCode, reasonCode string, details map[string]any) SubmissionStatusError {
+	base := TerminalStatusError(code)
+	base.ReasonCode = boundedStatusErrorText(reasonCode, 128)
+	base.Details = boundedStatusErrorDetails(details)
+	applyServerOwnedInputBudgetGuidance(base.Code, &base)
+	return base
+}
+
 func normalizeTerminalErrorCode(code TerminalErrorCode) TerminalErrorCode {
 	for _, known := range terminalErrorCodes {
 		if code == known {
@@ -238,6 +251,10 @@ func ValidateTerminalStatusError(value SubmissionStatusError) error {
 		return fmt.Errorf("remember: terminal next action %q is not allowed", value.NextAction)
 	}
 	retryable, action := terminalErrorGuidance(code)
+	serverOwnedInputBudget := code == TerminalErrorInputBudgetExceeded && statusErrorServerOwned(value.Details)
+	if serverOwnedInputBudget {
+		action = TerminalNextActionContactOperator
+	}
 	if value.NextAction == string(TerminalNextActionRetryDreamFeedback) {
 		if !retryable || action != TerminalNextActionResubmitRemember || !value.Retryable ||
 			!validDreamFeedbackRetryRemediation(value.Remediation) {
@@ -250,8 +267,25 @@ func ValidateTerminalStatusError(value SubmissionStatusError) error {
 	if value.Message != canonical.Message {
 		return fmt.Errorf("remember: terminal error message for %q is not canonical", code)
 	}
-	if value.NextAction != string(TerminalNextActionRetryDreamFeedback) && value.Remediation != canonical.Remediation {
-		return fmt.Errorf("remember: terminal error remediation for %q is not canonical", code)
+	if value.NextAction != string(TerminalNextActionRetryDreamFeedback) {
+		if serverOwnedInputBudget {
+			if value.Remediation != serverOwnedInputBudgetRemediation {
+				return fmt.Errorf("remember: terminal error remediation for %q is not server-owned budget guidance", code)
+			}
+		} else if value.Remediation != canonical.Remediation {
+			return fmt.Errorf("remember: terminal error remediation for %q is not canonical", code)
+		}
+	}
+	if value.ReasonCode != boundedStatusErrorText(value.ReasonCode, 128) {
+		return fmt.Errorf("remember: terminal error reason_code is not bounded")
+	}
+	if value.ReasonCode != "" {
+		if value.Details == nil {
+			return fmt.Errorf("remember: terminal error details are required with reason_code")
+		}
+		if !reflect.DeepEqual(value.Details, boundedStatusErrorDetails(value.Details)) {
+			return fmt.Errorf("remember: terminal error details are not bounded")
+		}
 	}
 	return nil
 }
@@ -348,7 +382,7 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	if result.Kind != ResultKindTerminal {
 		return fmt.Errorf("remember: result kind %q is not terminal", result.Kind)
 	}
-	if result.ContractVersion != domain.ContractVersion || result.SubmissionKind != "remember" {
+	if !domain.ContractVersionCompatible(strings.TrimSpace(result.ContractVersion)) || result.SubmissionKind != "remember" {
 		return fmt.Errorf("remember: terminal result identity is invalid")
 	}
 	if strings.TrimSpace(result.SubmissionID) == "" || result.CorrelationID == "" || result.CorrelationID != strings.TrimSpace(result.CorrelationID) {
@@ -375,6 +409,14 @@ func ValidateTerminalRememberResult(result *TerminalRememberResult, evidenceCoun
 	}
 	if len(result.Errors) > maxTerminalErrors {
 		return fmt.Errorf("remember: terminal error count %d exceeds limit %d", len(result.Errors), maxTerminalErrors)
+	}
+	if len(result.Warnings) > 20 {
+		return errors.New("remember: terminal warning count exceeds limit")
+	}
+	for _, warning := range result.Warnings {
+		if strings.TrimSpace(warning) == "" || utf8.RuneCountInString(warning) > 512 {
+			return errors.New("remember: terminal warning is empty or exceeds maximum length")
+		}
 	}
 	if len(result.Evidence) != evidenceCount {
 		return fmt.Errorf("remember: terminal evidence count %d, expected %d", len(result.Evidence), evidenceCount)

@@ -13,9 +13,133 @@ import (
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
+
+func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T) {
+	ctx := correlation.WithID(context.Background(), "actionable-correlation")
+	cases := []struct {
+		name       string
+		tool       string
+		err        error
+		code       string
+		reasonCode string
+		nextAction string
+		retryable  bool
+	}{
+		{name: "unknown", tool: "", err: nil, code: string(domain.ErrorProviderUnavailable), reasonCode: "tool_execution_failed", nextAction: actionContactOperator},
+		{name: "cancelled", tool: ToolRemember, err: context.Canceled, code: string(domain.ErrorConflict), reasonCode: "request_cancelled", nextAction: actionStop},
+		{name: "deadline read", tool: ToolRecallMemory, err: context.DeadlineExceeded, code: string(domain.ErrorProviderUnavailable), reasonCode: "request_timeout", nextAction: actionRetrySameRequest, retryable: true},
+		{name: "unavailable", tool: ToolRecallMemory, err: ErrToolUnavailable, code: string(domain.ErrorDegraded), reasonCode: "tool_unavailable", nextAction: actionContactOperator},
+		{name: "authorization", tool: ToolRemember, err: rememberapp.ErrRememberAuthContext, code: string(domain.ErrorUnauthorizedScope), reasonCode: "authenticated_context_required", nextAction: actionAuthorization},
+		{name: "reference", tool: ToolTraceMemory, err: repository.ErrTraceRelationshipNotFound, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
+		{name: "budget", tool: ToolRemember, err: rememberapp.ErrRememberInputBudgetExceeded, code: string(domain.ErrorInvalidInput), reasonCode: "input_budget_exceeded", nextAction: actionContactOperator},
+		{name: "stale", tool: ToolRemember, err: rememberapp.ErrRememberStaleInput, code: string(domain.ErrorConflict), reasonCode: "stale_state", nextAction: actionRefreshState},
+		{name: "remember timeout", tool: ToolRemember, err: rememberapp.ErrRememberRequestTimeout, code: string(domain.ErrorProviderUnavailable), reasonCode: "request_timeout", nextAction: actionRetrySameRequest, retryable: true},
+		{name: "remember cancelled", tool: ToolRemember, err: rememberapp.ErrRememberRequestCancelled, code: string(domain.ErrorConflict), reasonCode: "request_cancelled", nextAction: actionStop},
+		{name: "idempotency", tool: ToolRemember, err: rememberapp.ErrRememberConflict, code: string(domain.ErrorConflict), reasonCode: "idempotency_conflict", nextAction: actionRefreshState},
+		{name: "malformed", tool: ToolRemember, err: modelprovider.ErrVerifierMalformedResponse, code: string(domain.ErrorProviderMalformed), reasonCode: "provider_response_invalid", nextAction: actionRetrySameRequest, retryable: true},
+		{name: "provider", tool: ToolRemember, err: modelprovider.ErrVerifierProvider, code: string(domain.ErrorProviderUnavailable), reasonCode: "provider_unavailable", nextAction: actionRetrySameRequest, retryable: true},
+		{name: "rate limited", tool: ToolRemember, err: &modelprovider.RateLimitError{Provider: "test", Message: "secret", RetryAfter: 7}, code: string(domain.ErrorProviderUnavailable), reasonCode: "provider_unavailable", nextAction: actionRetrySameRequest, retryable: true},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			result := ActionableErrorData(ctx, test.tool, test.err)
+			require.Equal(t, test.code, result["code"])
+			require.Equal(t, test.reasonCode, result["reason_code"])
+			require.Equal(t, test.nextAction, result["next_action"])
+			require.Equal(t, test.retryable, result["retryable"])
+			require.Equal(t, "actionable-correlation", result["correlation_id"])
+			details, ok := result["details"].(map[string]any)
+			require.True(t, ok)
+			if test.name == "rate limited" {
+				require.Equal(t, 7, details["retry_after_seconds"])
+				require.Equal(t, 7, result["retry_after_seconds"])
+			}
+		})
+	}
+}
+
+func TestActionableErrorDataMapsHTTPStatusesAndBudgetMeasurements(t *testing.T) {
+	ctx := correlation.WithID(context.Background(), "http-correlation")
+	cases := []struct {
+		name       string
+		status     httperr.ErrorCode
+		code       string
+		reasonCode string
+		nextAction string
+		retryable  bool
+	}{
+		{name: "unauthorized", status: httperr.AUTH_INVALID, code: string(domain.ErrorUnauthorizedScope), reasonCode: "authorization_required", nextAction: actionAuthorization},
+		{name: "not found", status: httperr.NOT_FOUND, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
+		{name: "conflict", status: httperr.CONFLICT, code: string(domain.ErrorConflict), reasonCode: "state_conflict", nextAction: actionRefreshState},
+		{name: "rate limited", status: httperr.RATE_LIMITED, code: string(domain.ErrorProviderUnavailable), reasonCode: "rate_limited", nextAction: actionRetrySameRequest, retryable: true},
+		{name: "server", status: httperr.SERVICE_UNAVAILABLE, code: string(domain.ErrorProviderUnavailable), reasonCode: "service_unavailable", nextAction: actionRetrySameRequest, retryable: true},
+		{name: "invalid", status: httperr.VALIDATION_ERROR, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			result := ActionableErrorData(ctx, ToolRecallMemory, httperr.New(test.status, "safe public message"))
+			require.Equal(t, test.code, result["code"])
+			require.Equal(t, test.reasonCode, result["reason_code"])
+			require.Equal(t, test.nextAction, result["next_action"])
+			require.Equal(t, test.retryable, result["retryable"])
+			require.Equal(t, "safe public message", result["message"])
+		})
+	}
+
+	measured := errors.Join(
+		rememberapp.ErrRememberInputBudgetExceeded,
+		&modelprovider.MalformedResponseError{
+			FailureClass:    "input_budget",
+			ValidationStage: "conversation_input_tokens",
+			Measurement:     &modelprovider.FailureMeasurement{Unit: "tokens", Observed: 12, Limit: 10},
+		},
+	)
+	result := ActionableErrorData(ctx, ToolRemember, measured)
+	require.Equal(t, "assessor_conversation_input_exceeded", result["reason_code"])
+	require.Equal(t, actionContactOperator, result["next_action"])
+	details := result["details"].(map[string]any)
+	require.Equal(t, "assessor.conversation", details["component"])
+	require.Equal(t, 12, details["observed"])
+	require.Equal(t, 10, details["limit"])
+	require.Equal(t, true, details["server_owned"])
+}
+
+func TestActionableErrorHelpersExposeBoundedRecoveryActions(t *testing.T) {
+	ctx := correlation.WithID(context.Background(), "helper-correlation")
+	invalid := ActionableInvalidInputData(ctx, ToolRemember, "bad_field", "bad field", "fix it")
+	require.Equal(t, string(domain.ErrorInvalidInput), invalid["code"])
+	require.Equal(t, "bad_field", invalid["reason_code"])
+	require.Equal(t, actionCorrectInput, invalid["next_action"])
+	require.Equal(t, false, invalid["retryable"])
+
+	require.Equal(t, string(domain.ErrorUnauthorizedScope), ActionableAuthorizationData(ctx, ToolRemember)["code"])
+	require.Equal(t, "tool_unavailable", ActionableToolUnavailableData(ctx, ToolRecallMemory)["reason_code"])
+	require.Equal(t, "tool_result_serialization_failed", ActionableSerializationFailureData(ctx, ToolRecallMemory)["reason_code"])
+
+	for _, tool := range []string{ToolRemember, ToolRetractEvidence, ToolCorrectRelationship, ToolSubmitRecallSessionFeedback, ToolResolveDreamFeedback} {
+		require.True(t, actionableToolRequiresIdempotency(tool), tool)
+		require.Contains(t, actionableTimeoutRemediation(tool), "same idempotency key")
+		require.Contains(t, actionableTransientRemediation(tool), "same idempotency key")
+	}
+	for _, tool := range []string{ToolRecallMemory, ToolTraceMemory, ToolListDreams, ToolGetDream, ToolExportMemoryPack} {
+		require.True(t, actionableToolIsRead(tool), tool)
+		require.Contains(t, actionableTimeoutRemediation(tool), "read request")
+		require.Contains(t, actionableTransientRemediation(tool), "read request")
+	}
+	require.False(t, actionableToolRequiresIdempotency("other"))
+	require.False(t, actionableToolIsRead("other"))
+	require.Contains(t, actionableTimeoutRemediation("other"), "same arguments")
+	require.Contains(t, actionableTransientRemediation("other"), "same arguments")
+
+	require.False(t, actionableInputBudgetError(errors.New("ordinary error")))
+	require.False(t, actionableInputBudgetError(&modelprovider.MalformedResponseError{FailureClass: "provider"}))
+	require.True(t, actionableInputBudgetError(&modelprovider.MalformedResponseError{FailureClass: "input_budget"}))
+}
 
 func TestRememberToolResultErrorProjectsTerminalAndFailureResults(t *testing.T) {
 	ctx := correlation.WithID(context.Background(), "request-correlation")

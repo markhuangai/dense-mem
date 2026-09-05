@@ -22,6 +22,19 @@ func TestTerminalStatusErrorUsesOnlyClosedVocabulary(t *testing.T) {
 	require.NoError(t, ValidateTerminalStatusError(unknown))
 }
 
+func TestTerminalStatusErrorWithDetailsBoundsActionableContext(t *testing.T) {
+	error := TerminalStatusErrorWithDetails(
+		TerminalErrorInputBudgetExceeded,
+		" assessor_context_overflow ",
+		map[string]any{"component": "assessor.conversation", "observed": 120, "limit": 100, "server_owned": true},
+	)
+	require.Equal(t, "assessor_context_overflow", error.ReasonCode)
+	require.Equal(t, 120, error.Details["observed"])
+	require.Equal(t, TerminalNextActionContactOperator, TerminalNextAction(error.NextAction))
+	require.Equal(t, serverOwnedInputBudgetRemediation, error.Remediation)
+	require.NoError(t, ValidateTerminalStatusError(error))
+}
+
 func TestValidateTerminalRememberResultRejectsUnclosedErrorProjection(t *testing.T) {
 	result := &TerminalRememberResult{
 		ContractVersion: domain.ContractVersion,

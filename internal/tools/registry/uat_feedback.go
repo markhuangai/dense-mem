@@ -97,6 +97,10 @@ func submitRecallFeedback(ctx context.Context, deps Dependencies, input map[stri
 				"partial_success": recorded > 0,
 				"failed_index":    recorded,
 				"error":           "recall feedback submission failed",
+				"error_code":      "degraded",
+				"reason_code":     "feedback_item_failed",
+				"next_action":     "correct_and_resubmit",
+				"remediation":     "Correct the feedback item at failed_index and resubmit the remaining feedback with the same recall_event_id.",
 			}, nil
 		}
 		observability.RecordRecallFeedback(ctx, deps.Metrics, observability.RecallFeedback{

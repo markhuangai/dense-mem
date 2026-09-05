@@ -63,12 +63,61 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   if (selectedFault === "none") {
     results.push(await runKnownEvidenceCase({ expect }));
     results.push(await runSemanticDuplicateCase({ expect }));
+    results.push(await runBudgetContextCase({ expect }));
     results.push(await runEvidenceConflictCase({ rpc, expect }));
     results.push(await runConcurrentWinnerCase({ rpc, expect }));
     results.push(await runChangedHashConflictCase({ rawRPC, expect }));
     results.push(await runSupersessionFenceCase({ rpc, expect }));
   }
   return { mode: name, results };
+}
+
+async function runBudgetContextCase({ expect }) {
+  const teamID = await createKnownEvidenceTeam(`assessor-budget-${Date.now()}`);
+  const actor = await createKnownEvidenceCredential(teamID, `assessor-budget-${Date.now()}`, "shared_only");
+  const candidateContents = [];
+  for (let index = 0; index < 10; index += 1) {
+    const content = `Large stored candidate ${index} ${"candidate context material ".repeat(100)}`;
+    candidateContents.push(content);
+    const seeded = await rememberWithKey(actor.apiKey, {
+      evidence: [{ content, source_type: "manual", force_insert: true }],
+      relationships: [],
+      idempotency_key: `assessor-budget-seed-${index}-${Date.now()}-${Math.random()}`,
+    });
+    assertStrictTerminalRemember(seeded, expect);
+    expect(seeded.processing_state === "completed" && seeded.evidence[0]?.disposition === "stored", `large candidate seed ${index} must complete: ${JSON.stringify(seeded)}`);
+  }
+
+  const shortRequest = {
+    evidence: [{ content: "Short note for bounded server-selected context.", source_type: "manual" }],
+    relationships: [],
+    idempotency_key: `assessor-budget-short-${Date.now()}-${Math.random()}`,
+  };
+  const first = await rememberWithKey(actor.apiKey, shortRequest);
+  assertStrictTerminalRemember(first, expect);
+  expect(first.processing_state === "completed", `short note with large candidates must remain usable: ${JSON.stringify(first)}`);
+  expect(first.errors.length === 0, `optional candidate omission must not be a client input failure: ${JSON.stringify(first)}`);
+  expect(first.warnings?.includes("optional duplicate candidates were omitted to fit the configured assessor budget"), `large candidate context must report bounded omission: ${JSON.stringify(first)}`);
+  const storedAssessmentCount = Number(postgresQuery(`
+    SELECT count(*)
+    FROM semantic_assessments
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+      AND attempt_id = '${sqlLiteral(first.submission_id)}'::uuid;
+  `));
+  expect(storedAssessmentCount === 1, "bounded candidate selection must persist one accepted assessment");
+
+  const replay = await rememberWithKey(actor.apiKey, shortRequest);
+  assertStrictTerminalRemember(replay, expect);
+  expect(stableJSON(replay) === stableJSON(first), "bounded candidate selection replay must be byte-equivalent");
+  expect(replay.submission_id === first.submission_id, "bounded candidate selection replay must reuse the committed attempt");
+
+  return {
+    fault: "assessor-budget",
+    processing_state: first.processing_state,
+    candidate_count: candidateContents.length,
+    omitted_optional_candidates: true,
+    replay_preserved: true,
+  };
 }
 
 async function runEvidenceConflictCase({ rpc, expect }) {
@@ -831,6 +880,9 @@ function assertStrictTerminalRemember(result, expect) {
   expect(result.submission_kind === "remember", "terminal Remember must include remember submission_kind");
   expect(typeof result.correlation_id === "string" && result.correlation_id.length > 0, "terminal Remember must include correlation_id");
   expect(Array.isArray(result.errors), "terminal Remember must include errors array");
+  if (Object.hasOwn(result, "warnings")) {
+    expect(Array.isArray(result.warnings) && result.warnings.length <= 20 && result.warnings.every((warning) => typeof warning === "string" && warning.length <= 512), "terminal Remember warnings must be bounded");
+  }
   for (const evidence of result.evidence) {
     expect(typeof evidence.disposition === "string" && Number.isInteger(evidence.evidence_index), "terminal evidence must have disposition and index");
     expect(Array.isArray(evidence.superseded_evidence_ids) && typeof evidence.search_state === "string", "terminal evidence must have supersession and search state");
@@ -840,6 +892,9 @@ function assertStrictTerminalRemember(result, expect) {
   }
   for (const error of result.errors) {
     expect(typeof error.code === "string" && typeof error.message === "string" && typeof error.retryable === "boolean" && typeof error.next_action === "string" && typeof error.remediation === "string", "terminal error must have complete bounded guidance");
+    if (error.code === "input_budget_exceeded") {
+      expect(typeof error.reason_code === "string" && error.reason_code.length > 0 && error.details && typeof error.details === "object", "input budget errors must identify their owning component");
+    }
   }
 }
 

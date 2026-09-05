@@ -107,21 +107,26 @@ type rpcError struct {
 // invokeTool is the registry-only execution seam used by the official SDK.
 func (s *Server) invokeTool(ctx context.Context, name string, args map[string]any) (map[string]any, *rpcError) {
 	if name == "" {
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: "missing tool name"}
+		data := registry.ActionableInvalidInputData(ctx, "", "tool_name_required", "A tool name is required.", "Provide the name of one tool returned by tools/list and submit again.")
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "A tool name is required.", Data: data}
 	}
 	tool, ok := s.registry.Get(name)
 	if !ok {
-		return nil, &rpcError{Code: errCodeMethodNotFound, Message: "tool not found: " + boundedRPCText(name)}
+		data := registry.ActionableInvalidInputData(ctx, name, "tool_not_available", "The requested tool is not available for this connection.", "Refresh tools/list and call an available tool.")
+		return nil, &rpcError{Code: errCodeMethodNotFound, Message: "The requested tool is not available for this connection.", Data: data}
 	}
 	policy := registry.ResolveRuntimeToolPolicy(ctx, s.runtimeToolPolicy, tool)
 	if !registry.ToolVisible(ctx, tool, policy) {
-		return nil, &rpcError{Code: errCodeMethodNotFound, Message: "tool not found: " + boundedRPCText(name)}
+		data := registry.ActionableInvalidInputData(ctx, name, "tool_not_available", "The requested tool is not available for this connection.", "Refresh tools/list and call an available tool.")
+		return nil, &rpcError{Code: errCodeMethodNotFound, Message: "The requested tool is not available for this connection.", Data: data}
 	}
 	if !s.canUseTool(tool) {
-		return nil, &rpcError{Code: errCodeToolFailure, Message: "insufficient scope for tool"}
+		data := registry.ActionableAuthorizationData(ctx, name)
+		return nil, &rpcError{Code: errCodeToolFailure, Message: "The connection does not have the scope required for this tool.", Data: data}
 	}
 	if tool.Invoke == nil {
-		return nil, &rpcError{Code: errCodeToolFailure, Message: "tool not executable"}
+		data := registry.ActionableToolUnavailableData(ctx, name)
+		return nil, &rpcError{Code: errCodeToolFailure, Message: "The requested tool is not executable on this server.", Data: data}
 	}
 
 	if args == nil {
@@ -129,7 +134,8 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 	}
 	if registry.IsEvaluationTool(tool.Name) && registry.HasTenantOverrideArgs(args) {
 		s.logToolInputRejected(ctx, tool.Name, "tenant_override_rejected")
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: "evaluation tools do not accept team_id or profile_id"}
+		data := registry.ActionableInvalidInputData(ctx, tool.Name, "tenant_override_rejected", "Evaluation tools cannot select a team or profile.", "Remove team_id and profile_id from the evaluation arguments and submit again.")
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "evaluation tools do not accept team_id or profile_id", Data: data}
 	}
 	if registry.IsContractTool(tool) {
 		validation := registry.ValidateContractInputIssues(tool, args, s.validationScopes(tool))
@@ -152,7 +158,8 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 		registry.StripTenantOverrideArgs(args)
 		if err := registry.ValidateInput(tool, args); err != nil {
 			s.logToolInputRejected(ctx, tool.Name, "input_validation_failed")
-			return nil, &rpcError{Code: errCodeInvalidParams, Message: boundedRPCText(err.Error())}
+			actionable := registry.ActionableErrorData(ctx, tool.Name, err)
+			return nil, &rpcError{Code: errCodeInvalidParams, Message: boundedRPCText(fmt.Sprint(actionable["message"])), Data: actionable}
 		}
 	}
 	ctx = registry.WithRuntimeToolPolicy(ctx, policy)
@@ -161,7 +168,8 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 		if structured, ok := registry.ToolResultFromError(err); ok {
 			payload, marshalErr := json.Marshal(structured.Result)
 			if marshalErr != nil {
-				return nil, &rpcError{Code: errCodeToolFailure, Message: "tool result serialization failed"}
+				data := registry.ActionableSerializationFailureData(ctx, tool.Name)
+				return nil, &rpcError{Code: errCodeToolFailure, Message: "Dense-Mem could not serialize the result for this operation.", Data: data}
 			}
 			return map[string]any{
 				"content":           []map[string]any{{"type": "text", "text": string(payload)}},
@@ -170,7 +178,8 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 			}, nil
 		}
 		if errors.Is(err, registry.ErrToolDisabled) {
-			return nil, &rpcError{Code: errCodeMethodNotFound, Message: fmt.Sprintf("tool not found: %s", name)}
+			data := registry.ActionableInvalidInputData(ctx, name, "tool_not_available", "The requested tool is not available for this connection.", "Refresh tools/list and call an available tool.")
+			return nil, &rpcError{Code: errCodeMethodNotFound, Message: "tool not found: " + boundedRPCText(name), Data: data}
 		}
 		if validation, ok := registry.ContractValidationResultFromError(err); ok {
 			s.logToolInputRejected(ctx, tool.Name, "contract_preflight_failed")
@@ -180,14 +189,18 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 				Data:    registry.ContractValidationErrorData(validation),
 			}
 		}
-		safeMessage := tools.SanitizeError(err)
+		actionable := registry.ActionableErrorData(ctx, tool.Name, err)
+		safeMessage := fmt.Sprint(actionable["message"])
+		if !registry.IsContractTool(tool) {
+			safeMessage = tools.SanitizeError(err)
+		}
 		if s.logger != nil {
 			s.logger.Error("mcp: tool invocation failed", errors.New(safeMessage),
 				observability.String("tool", name),
 				observability.String("team_id", s.teamID),
 			)
 		}
-		return nil, &rpcError{Code: errCodeToolFailure, Message: boundedRPCText(safeMessage)}
+		return nil, &rpcError{Code: errCodeToolFailure, Message: boundedRPCText(safeMessage), Data: actionable}
 	}
 
 	payload, err := json.Marshal(result)
@@ -195,7 +208,8 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 		if s.logger != nil {
 			s.logger.Error("mcp: tool result marshal failed", errors.New("tool result serialization failed"), observability.String("tool", name))
 		}
-		return nil, &rpcError{Code: errCodeToolFailure, Message: "tool result serialization failed"}
+		data := registry.ActionableSerializationFailureData(ctx, tool.Name)
+		return nil, &rpcError{Code: errCodeToolFailure, Message: "Dense-Mem could not serialize the result for this operation.", Data: data}
 	}
 	return map[string]any{
 		"content":           []map[string]any{{"type": "text", "text": string(payload)}},

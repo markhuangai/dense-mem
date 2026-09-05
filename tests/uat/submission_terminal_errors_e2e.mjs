@@ -16,6 +16,26 @@ seedOverflowPredicates();
 const terminal = await mcpOperationalResult("remember", overflowFixture());
 const submissionID = requiredString(terminal.submission_id, "submission_id");
 assertTerminalErrors(terminal);
+const zeroSemanticWrites = postgresQuery(`
+  SELECT count(*) FROM knowledge_ingests
+  WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+    AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
+  UNION ALL
+  SELECT count(*) FROM evidence_fragments
+  WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+    AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
+  UNION ALL
+  SELECT count(*) FROM semantic_assessments
+  WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+    AND attempt_id = '${sqlLiteral(submissionID)}'::uuid
+  UNION ALL
+  SELECT count(*) FROM relationship_observations
+  WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+    AND ingest_id = '${sqlLiteral(submissionID)}'::uuid;
+`).split(/\r?\n/).filter(Boolean).map(Number);
+if (zeroSemanticWrites.length !== 4 || zeroSemanticWrites.some((count) => count !== 0)) {
+  throw new Error(`irreducible assessor budget failure created partial semantic state: ${zeroSemanticWrites.join(",")}`);
+}
 
 const removed = await mcpRaw("get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
 if (removed.error?.code !== -32601 || removed.result !== undefined) {
@@ -29,6 +49,7 @@ console.log(JSON.stringify({
   processing_state: terminal.processing_state,
   error_code: terminal.errors[0]?.code,
   terminal_errors_nonempty: true,
+  zero_partial_semantic_state: true,
   closed_codes: true,
   structured_content_matches_text: true,
   operational_is_error: true,
@@ -96,6 +117,12 @@ function assertTerminalErrors(status) {
     }
     if (seen.has(`${code}\0${message}`)) throw new Error("terminal errors were not deduplicated");
     seen.add(`${code}\0${message}`);
+    if (code === "input_budget_exceeded") {
+      if (item.reason_code !== "predicate_options_overflow" || item.details?.server_owned !== true ||
+          item.next_action !== "contact_operator" || !item.remediation.includes("operator")) {
+        throw new Error("server-owned assessor budget failure did not expose operator guidance");
+      }
+    }
   }
 }
 

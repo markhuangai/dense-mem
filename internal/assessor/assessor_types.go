@@ -21,7 +21,11 @@ type SemanticAssessmentRequest struct {
 	SubmissionContract        *SemanticAssessmentSubmissionContract       `json:"-"`
 	CandidateContextTokens    int                                         `json:"candidate_context_tokens"`
 	CandidateContextTruncated bool                                        `json:"candidate_context_truncated"`
-	InputTokens               int                                         `json:"-"`
+	// Candidate context omission counts are server-side diagnostics. They are
+	// intentionally excluded from the provider payload and public response.
+	CandidateContextOmittedCandidates       int `json:"-"`
+	CandidateContextOmittedPredicateOptions int `json:"-"`
+	InputTokens                             int `json:"-"`
 }
 
 type SemanticAssessmentEntityCandidateGroup struct {

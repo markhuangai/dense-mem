@@ -10,6 +10,16 @@ func rememberPublicResult(input SynchronousRememberCommitInput, evidence []Evide
 		"evidence": []map[string]any{}, "relationship_results": []map[string]any{},
 		"errors": []map[string]any{},
 	}
+	warnings := make([]string, 0, 2)
+	if input.CandidateContextOmittedCandidates > 0 {
+		warnings = append(warnings, "optional duplicate candidates were omitted to fit the configured assessor budget")
+	}
+	if input.CandidateContextOmittedPredicateOptions > 0 {
+		warnings = append(warnings, "optional predicate suggestions were omitted to fit the configured assessor budget")
+	}
+	if len(warnings) > 0 {
+		result["warnings"] = warnings
+	}
 	if len(semantic.SearchDocuments) > 0 || rememberHasReusedEvidence(evidence) {
 		result["search_state"] = string(domain.SearchProjectionCurrent)
 	}

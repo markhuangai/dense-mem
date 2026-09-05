@@ -168,6 +168,14 @@ test("remember case covers semantic duplicate reuse and unauthorized candidates"
   assert.match(fixture, /semantic-reuse-unauthorized/);
 });
 
+test("remember case covers bounded assessor context selection and replay", async () => {
+  const remember = await readFile(new URL("./cases/remember.mjs", import.meta.url), "utf8");
+  assert.match(remember, /runBudgetContextCase/);
+  assert.match(remember, /optional duplicate candidates were omitted/);
+  assert.match(remember, /bounded candidate selection replay must be byte-equivalent/);
+  assert.match(remember, /semantic_assessments/);
+});
+
 test("remember case covers cited evidence conflict creation, recurrence, resolution, dismissal, and similarity-only rejection", async () => {
   const remember = await readFile(new URL("./cases/remember.mjs", import.meta.url), "utf8");
   const fixture = await readFile(new URL("./provider-fixture.mjs", import.meta.url), "utf8");

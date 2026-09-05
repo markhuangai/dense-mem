@@ -558,6 +558,20 @@ func TestSubmissionAssessmentSharedPoliciesAndFailureMeasurements(t *testing.T) 
 	require.Equal(t, "candidate_prefetch", mustPreflightStage(deterministicSemanticAssessmentPreflightError("", "default")))
 }
 
+func TestSynchronousAssessmentFailureDetailsPreserveBudgetMeasurement(t *testing.T) {
+	err := &assessor.MalformedResponseError{
+		FailureClass:    "input_budget",
+		ValidationStage: "conversation_candidate_context_tokens",
+		Measurement:     &assessor.FailureMeasurement{Unit: "tokens", Observed: 12, Limit: 10},
+	}
+	reason, details := SynchronousAssessmentFailureDetails(err)
+	require.Equal(t, "assessor_conversation_candidate_context_exceeded", reason)
+	require.Equal(t, "assessor.conversation_candidate_context", details["component"])
+	require.Equal(t, 12, details["observed"])
+	require.Equal(t, 10, details["limit"])
+	require.Equal(t, true, details["server_owned"])
+}
+
 func TestRememberInputIndexBounds(t *testing.T) {
 	for _, raw := range []any{
 		[]any{0}, []map[string]any{{"index": 0}}, []string{"1"}, "invalid",

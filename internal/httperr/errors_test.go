@@ -325,3 +325,24 @@ func TestAPIErrorProvider(t *testing.T) {
 	apiErrWithDetails := NewWithDetails(VALIDATION_ERROR, "bad input", details)
 	assert.Equal(t, details, apiErrWithDetails.GetDetails())
 }
+
+func TestAPIErrorGuidanceIsBoundedAndPreservedByHTTPProjection(t *testing.T) {
+	retryAfter := 30
+	apiErr := WithGuidance(nil, strings.Repeat("r", maxPublicErrorFieldRunes+20), "retry_same_request", strings.Repeat("m", maxPublicDetailMessageRunes+20), true, &retryAfter, strings.Repeat("c", maxPublicErrorFieldRunes+20))
+	require.Equal(t, INTERNAL_ERROR, apiErr.Code)
+	require.True(t, apiErr.Retryable)
+	require.Equal(t, retryAfter, *apiErr.RetryAfterSeconds)
+	require.LessOrEqual(t, utf8.RuneCountInString(apiErr.ReasonCode), maxPublicErrorFieldRunes)
+	require.LessOrEqual(t, utf8.RuneCountInString(apiErr.Remediation), maxPublicDetailMessageRunes)
+	require.LessOrEqual(t, utf8.RuneCountInString(apiErr.CorrelationID), maxPublicErrorFieldRunes)
+
+	invalidRetry := -1
+	invalidErr := WithGuidance(New(VALIDATION_ERROR, "invalid retry"), "reason", "action", "remediation", false, &invalidRetry, "correlation")
+	require.Nil(t, invalidErr.RetryAfterSeconds)
+
+	projected := invalidErr.bounded(http.StatusBadRequest)
+	require.Equal(t, "reason", projected.ReasonCode)
+	require.Equal(t, "action", projected.NextAction)
+	require.Equal(t, "remediation", projected.Remediation)
+	require.Equal(t, "correlation", projected.CorrelationID)
+}

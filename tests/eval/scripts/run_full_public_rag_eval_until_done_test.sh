@@ -18,7 +18,7 @@ export V1_DATA_DIR="${tmp_dir}/runtime"
 source "${ROOT_DIR}/tests/eval/scripts/run_full_public_rag_eval_until_done.sh"
 
 if [[ "$(terminal_attempt_outcomes_sql)" != "'completed'" ]]; then
-  echo "terminal attempt outcome list is not v2.6.2" >&2
+  echo "terminal attempt outcome list is not completed-only" >&2
   exit 1
 fi
 if [[ "$(terminal_attempt_count 991)" != "991" ]]; then

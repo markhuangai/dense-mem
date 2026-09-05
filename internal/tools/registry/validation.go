@@ -17,6 +17,22 @@ func ValidateInput(tool Tool, args map[string]any) error {
 	if len(schema) == 0 {
 		return nil
 	}
+	if variants, ok := schema["oneOf"].([]any); ok && schemaEnforcesOneOf(schema) {
+		matches := 0
+		for _, raw := range variants {
+			variant, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if validateSchemaValue("value", args, variant) == nil {
+				matches++
+			}
+		}
+		if matches != 1 {
+			return fmt.Errorf("value must match exactly one allowed shape")
+		}
+		return nil
+	}
 
 	for _, name := range schemaRequiredFields(schema) {
 		if _, ok := args[name]; !ok {

@@ -51,6 +51,14 @@ type openAIVerifierRequest struct {
 	ResponseFormat openAIVerifierResponseFormat `json:"response_format"`
 }
 
+func semanticAssessmentProviderMessages(messages []openAIVerifierMessage) []assessor.SemanticAssessmentProviderMessage {
+	converted := make([]assessor.SemanticAssessmentProviderMessage, 0, len(messages))
+	for _, message := range messages {
+		converted = append(converted, assessor.SemanticAssessmentProviderMessage{Role: message.Role, Content: message.Content})
+	}
+	return converted
+}
+
 // openAIVerifierAPIResponse represents the outer chat completions response envelope.
 type openAIVerifierUsage struct {
 	PromptTokens     int64 `json:"prompt_tokens"`
@@ -166,6 +174,11 @@ func NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(
 	if gate == nil {
 		gate = modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(cfg))
 	}
+	normalizedLimits := assessor.NormalizeSemanticAssessmentLimits(assessmentLimits)
+	normalizedLimits.ProviderModel = cfg.GetAIVerifierModel()
+	normalizedLimits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
+	normalizedLimits.ProviderTemperatureDisabled = config.AIVerifierTemperatureDisabled(cfg)
+	normalizedLimits.ProviderFramingEnabled = true
 	return &OpenAIAssessor{
 		baseURL:            cfg.GetAIVerifierAPIURL(),
 		apiKey:             cfg.GetAIVerifierAPIKey(),
@@ -174,7 +187,7 @@ func NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(
 		httpClient:         client,
 		sem:                gate,
 		metrics:            observability.NoopDiscoverabilityMetrics(),
-		assessmentLimits:   assessor.NormalizeSemanticAssessmentLimits(assessmentLimits),
+		assessmentLimits:   normalizedLimits,
 	}
 }
 
@@ -183,6 +196,10 @@ func NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(
 func SemanticAssessmentLimitsForConfig(cfg config.ConfigProvider) assessor.SemanticAssessmentLimits {
 	budget := config.AIVerifierAssessmentBudgetFor(cfg)
 	limits := DefaultSemanticAssessmentLimits()
+	limits.ProviderModel = cfg.GetAIVerifierModel()
+	limits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
+	limits.ProviderTemperatureDisabled = config.AIVerifierTemperatureDisabled(cfg)
+	limits.ProviderFramingEnabled = true
 	limits.Tokenizer = budget.Tokenizer
 	limits.MaxInputTokens = budget.MaxInputTokens
 	limits.MaxOutputTokens = budget.MaxOutputTokens
@@ -237,8 +254,7 @@ func (v *OpenAIAssessor) openAIStructuredChatJSON(
 	defer func() {
 		observability.RecordVerifierLatency(ctx, v.metrics, model, float64(time.Since(started).Milliseconds()), latencyOutcome)
 	}()
-	schemaRaw, err := json.Marshal(schema)
-	if err != nil {
+	if _, err := json.Marshal(schema); err != nil {
 		return "", &ProviderError{
 			Provider: openAIVerifierProvider,
 			Message:  "failed to marshal structured schema",
@@ -253,23 +269,17 @@ func (v *OpenAIAssessor) openAIStructuredChatJSON(
 			Cause:    err,
 		}
 	}
-	chatReq := openAIVerifierRequest{
-		Model: model,
-		Messages: []openAIVerifierMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: string(userJSON)},
-		},
-		Temperature: openAIVerifierTemperature(v.disableTemperature),
-		ResponseFormat: openAIVerifierResponseFormat{
-			Type: "json_schema",
-			JSONSchema: openAIVerifierJSONSchema{
-				Name:   schemaName,
-				Strict: true,
-				Schema: schemaRaw,
-			},
-		},
+	messages := []openAIVerifierMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: string(userJSON)},
 	}
-	bodyBytes, err := json.Marshal(chatReq)
+	bodyBytes, err := assessor.MarshalSemanticAssessmentProviderRequest(
+		model,
+		schemaName,
+		schema,
+		v.disableTemperature,
+		semanticAssessmentProviderMessages(messages),
+	)
 	if err != nil {
 		return "", &ProviderError{
 			Provider: openAIVerifierProvider,
@@ -351,7 +361,7 @@ func (v *OpenAIAssessor) openAIStructuredChatJSON(
 		if strings.TrimSpace(content) == "" {
 			v.recordVerifierMissingUsage(ctx, model)
 		} else {
-			v.recordVerifierTokenizerUsage(ctx, model, chatReq, content)
+			v.recordVerifierTokenizerUsage(ctx, model, bodyBytes, content)
 		}
 	}
 	latencyOutcome = "ok"
@@ -404,8 +414,7 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 	defer func() {
 		observability.RecordVerifierLatency(ctx, v.metrics, model, float64(time.Since(started).Milliseconds()), latencyOutcome)
 	}()
-	schemaRaw, err := json.Marshal(schema)
-	if err != nil {
+	if _, err := json.Marshal(schema); err != nil {
 		return openAIStructuredChatResult{}, &ProviderError{
 			Provider:     openAIVerifierProvider,
 			Message:      "failed to marshal structured schema",
@@ -413,20 +422,13 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 			FailureClass: ProviderFailureClassProviderUnavailable,
 		}
 	}
-	chatReq := openAIVerifierRequest{
-		Model:       model,
-		Messages:    append([]openAIVerifierMessage(nil), messages...),
-		Temperature: openAIVerifierTemperature(v.disableTemperature),
-		ResponseFormat: openAIVerifierResponseFormat{
-			Type: "json_schema",
-			JSONSchema: openAIVerifierJSONSchema{
-				Name:   schemaName,
-				Strict: true,
-				Schema: schemaRaw,
-			},
-		},
-	}
-	bodyBytes, err := json.Marshal(chatReq)
+	bodyBytes, err := assessor.MarshalSemanticAssessmentProviderRequest(
+		model,
+		schemaName,
+		schema,
+		v.disableTemperature,
+		semanticAssessmentProviderMessages(messages),
+	)
 	if err != nil {
 		return openAIStructuredChatResult{}, &ProviderError{
 			Provider:     openAIVerifierProvider,
@@ -528,7 +530,7 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 		}
 	}
 	if usage == nil {
-		v.recordVerifierTokenizerUsage(ctx, model, chatReq, content)
+		v.recordVerifierTokenizerUsage(ctx, model, bodyBytes, content)
 	}
 	latencyOutcome = "ok"
 	return openAIStructuredChatResult{

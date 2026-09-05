@@ -2,8 +2,11 @@ package httperr
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/markhuangai/dense-mem/internal/correlation"
 )
 
 // HTTPStatusCode maps ErrorCode to HTTP status codes.
@@ -71,6 +74,7 @@ func ErrorHandler(err error, c echo.Context) {
 		apiErr = New(INTERNAL_ERROR, stablePublicMessage(http.StatusInternalServerError))
 		statusCode = http.StatusInternalServerError
 	}
+	apiErr = withDefaultGuidance(apiErr, statusCode, correlation.FromContext(c.Request().Context()))
 	apiErr = apiErr.bounded(statusCode)
 
 	// Don't overwrite the response if already committed
@@ -82,6 +86,35 @@ func ErrorHandler(err error, c echo.Context) {
 	// AC-X6: The stable external contract exposes code at the top level so
 	// callers can match on body.code without needing to unwrap a nested key.
 	c.JSON(statusCode, apiErr)
+}
+
+func withDefaultGuidance(err *APIError, status int, correlationID string) *APIError {
+	if err == nil {
+		err = New(INTERNAL_ERROR, stablePublicMessage(status))
+	}
+	if err.NextAction != "" {
+		if err.CorrelationID == "" {
+			err.CorrelationID = correlationID
+		}
+		return err
+	}
+	reason := strings.ToLower(string(err.Code))
+	action := "contact_operator"
+	remediation := "Contact an operator with the correlation ID and request details."
+	retryable := false
+	switch {
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		reason, action, remediation = "authorization_required", "obtain_authorization", "Obtain the required authorization or scope, then retry the request."
+	case status == http.StatusBadRequest || status == http.StatusUnprocessableEntity:
+		reason, action, remediation = "invalid_request", "correct_and_resubmit", "Correct the identified request fields and submit the request again."
+	case status == http.StatusNotFound:
+		reason, action, remediation = "reference_not_found", "refresh_state", "Refresh authorized state and retry with a current reference."
+	case status == http.StatusConflict:
+		reason, action, remediation = "state_conflict", "refresh_state", "Refresh authoritative state and retry with current values."
+	case status == http.StatusTooManyRequests || status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout:
+		reason, action, remediation, retryable = "temporary_service_failure", "retry_same_request", "Retry the same request after the service recovers.", true
+	}
+	return WithGuidance(err, reason, action, remediation, retryable, nil, correlationID)
 }
 
 // echoHTTPErrorToAPIError converts an Echo HTTPError to our APIError.

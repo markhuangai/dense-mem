@@ -14,6 +14,10 @@ func recallFeedbackOutputSchema() map[string]any {
 			"partial_success": map[string]any{"type": "boolean"},
 			"failed_index":    map[string]any{"type": "integer", "minimum": 0, "maximum": 19},
 			"error":           schemaString("Bounded feedback failure summary.", 128),
+			"error_code":      schemaEnum([]string{"degraded", "invalid_input", "internal_failure"}),
+			"reason_code":     schemaString("Code-specific bounded failure reason.", 128),
+			"next_action":     schemaEnum([]string{"correct_and_resubmit", "retry_same_request", "contact_operator", "stop"}),
+			"remediation":     schemaString("Bounded action for the remaining feedback items.", 512),
 		},
 	)
 }

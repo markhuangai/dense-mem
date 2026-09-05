@@ -449,6 +449,10 @@ func TestRememberProcessorInputBudgetUsesCanonicalTerminalGuidance(t *testing.T)
 	var processErr *rememberapp.RememberProcessError
 	require.ErrorAs(t, err, &processErr)
 	want := rememberapp.TerminalStatusError(rememberapp.TerminalErrorInputBudgetExceeded)
+	want.ReasonCode = "remember_assessment_failed"
+	want.Details = map[string]any{"component": "remember.assessment", "server_owned": true}
+	want.NextAction = string(rememberapp.TerminalNextActionContactOperator)
+	want.Remediation = "Ask an operator to review the configured assessor budget and server-owned context before retrying."
 	require.Equal(t, want, processErr.Status.Errors[0])
 	require.NoError(t, rememberapp.ValidateTerminalStatusError(processErr.Status.Errors[0]))
 }
@@ -471,6 +475,8 @@ func TestRememberProcessorFailurePersistencePreservesDatabaseResult(t *testing.T
 	require.ErrorAs(t, err, &processErr)
 	require.ErrorIs(t, err, rememberapp.ErrRememberPersistence)
 	want := rememberapp.TerminalStatusError(rememberapp.TerminalErrorDatabaseFailure)
+	want.ReasonCode = "failure_retention"
+	want.Details = map[string]any{"component": "remember.failure_record", "server_owned": true}
 	require.Equal(t, want, processErr.Status.Errors[0])
 	require.Len(t, processErr.Status.Evidence, 2)
 	require.Len(t, processErr.Status.RelationshipResults, 2)

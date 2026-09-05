@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
@@ -15,7 +16,7 @@ func terminalRememberOutputSchemaForActions(version string, nextActions []string
 	return closedObject(
 		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"},
 		map[string]any{
-			"contract_version":     schemaEnum([]string{version}),
+			"contract_version":     schemaEnum(contractVersionSchemaValues(version)),
 			"submission_id":        schemaString("Submission ID.", 128),
 			"submission_kind":      schemaEnum([]string{"remember"}),
 			"processing_state":     schemaEnum([]string{"completed", "failed"}),
@@ -24,6 +25,7 @@ func terminalRememberOutputSchemaForActions(version string, nextActions []string
 			"evidence":             array(terminalEvidenceSchema(), 0, 20),
 			"relationship_results": submissionRelationshipResultsSchema(),
 			"errors":               array(terminalErrorSchemaForActions(nextActions), 0, 50),
+			"warnings":             stringArraySchema("Bounded server diagnostics about optional assessor context.", 20, 512),
 		},
 	)
 }
@@ -47,7 +49,7 @@ func terminalCorrectionOutputSchema(version string) map[string]any {
 	return closedObject(
 		[]string{"contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "errors"},
 		map[string]any{
-			"contract_version":      schemaEnum([]string{version}),
+			"contract_version":      schemaEnum(contractVersionSchemaValues(version)),
 			"submission_id":         schemaString("Correction submission ID.", 128),
 			"submission_kind":       schemaEnum([]string{"relationship_correction"}),
 			"processing_state":      schemaEnum([]string{"awaiting_confirmation", "completed", "rejected", "failed"}),
@@ -58,6 +60,13 @@ func terminalCorrectionOutputSchema(version string) map[string]any {
 			"errors":                array(terminalErrorSchema(), 0, 50),
 		},
 	)
+}
+
+func contractVersionSchemaValues(version string) []string {
+	if version == domain.ContractVersion {
+		return domain.AcceptedContractVersions()
+	}
+	return []string{version}
 }
 
 func terminalErrorSchema() map[string]any {
@@ -73,6 +82,8 @@ func terminalErrorSchemaForActions(nextActions []string) map[string]any {
 			"retryable":   map[string]any{"type": "boolean"},
 			"next_action": schemaEnum(nextActions),
 			"remediation": schemaString("Bounded action the caller can take next.", 512),
+			"reason_code": schemaString("Code-specific bounded reason.", 128),
+			"details":     actionableErrorDetailsSchema(),
 		},
 	)
 }

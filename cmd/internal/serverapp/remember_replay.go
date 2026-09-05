@@ -54,7 +54,7 @@ func rememberAttemptReplay(attempt *repository.RememberAttempt, input rememberap
 	if attempt == nil {
 		return nil, rememberConflictProcessError(input, "", rememberapp.ErrRememberConflict)
 	}
-	if contract := strings.TrimSpace(attempt.ContractVersion); contract != "" && contract != domain.ContractVersion {
+	if contract := strings.TrimSpace(attempt.ContractVersion); contract != "" && !domain.ContractVersionCompatible(contract) {
 		return nil, rememberConflictProcessError(input, attempt.AttemptID, rememberapp.ErrRememberConflict)
 	}
 	if !rememberAttemptMatchesRequest(attempt, input) {

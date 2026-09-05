@@ -18,7 +18,9 @@ import (
 )
 
 const (
-	requestHashContractVersion = "dense-mem.v2.6.2"
+	// Request hashes retain the v2.6.2 body contract so retries can replay
+	// attempts created before the v2.6.3 public contract change.
+	requestHashContractVersion = domain.PreviousContractVersion
 )
 
 var (
@@ -110,6 +112,7 @@ type RememberResult struct {
 	Evidence             []SubmissionEvidenceStatus      `json:"evidence"`
 	Errors               []SubmissionStatusError         `json:"errors"`
 	RelationshipResults  []SubmissionRelationshipResult  `json:"relationship_results"`
+	Warnings             []string                        `json:"warnings,omitempty"`
 	AwaitingConfirmation *SubmissionAwaitingConfirmation `json:"awaiting_confirmation,omitempty"`
 	CorrectionResult     *RelationshipCorrectionResult   `json:"correction_result,omitempty"`
 	Kind                 ResultKind                      `json:"-"`
@@ -126,6 +129,7 @@ type SubmissionStatusResult struct {
 	Evidence             []SubmissionEvidenceStatus      `json:"evidence"`
 	Errors               []SubmissionStatusError         `json:"errors"`
 	RelationshipResults  []SubmissionRelationshipResult  `json:"relationship_results"`
+	Warnings             []string                        `json:"warnings,omitempty"`
 	QuarantineExpiresAt  *time.Time                      `json:"-"`
 	AwaitingConfirmation *SubmissionAwaitingConfirmation `json:"awaiting_confirmation,omitempty"`
 	CorrectionResult     *RelationshipCorrectionResult   `json:"correction_result,omitempty"`
@@ -281,7 +285,11 @@ func rememberSecurityAuditPersistenceError(req RememberRequest, correlationID st
 		CorrelationID:       correlationID,
 		Evidence:            make([]SubmissionEvidenceStatus, len(req.Evidence)),
 		RelationshipResults: make([]SubmissionRelationshipResult, len(req.RelationshipHints)),
-		Errors:              []SubmissionStatusError{StatusError(SubmissionErrorDatabaseFailure)},
+		Errors: []SubmissionStatusError{StatusErrorWithDetails(
+			SubmissionErrorDatabaseFailure,
+			"security_audit_persistence",
+			map[string]any{"component": "remember.security_audit", "server_owned": true},
+		)},
 	}
 	for index := range status.Evidence {
 		status.Evidence[index] = SubmissionEvidenceStatus{
@@ -393,6 +401,7 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 	copyStatus.Evidence = append([]SubmissionEvidenceStatus(nil), status.Evidence...)
 	copyStatus.RelationshipResults = append([]SubmissionRelationshipResult(nil), status.RelationshipResults...)
 	copyStatus.Errors = append([]SubmissionStatusError(nil), status.Errors...)
+	copyStatus.Warnings = append([]string(nil), status.Warnings...)
 	if copyStatus.Evidence == nil {
 		copyStatus.Evidence = []SubmissionEvidenceStatus{}
 	}
@@ -418,6 +427,7 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 		Evidence:             copyStatus.Evidence,
 		Errors:               copyStatus.Errors,
 		RelationshipResults:  copyStatus.RelationshipResults,
+		Warnings:             copyStatus.Warnings,
 		AwaitingConfirmation: copyStatus.AwaitingConfirmation,
 		CorrectionResult:     copyStatus.CorrectionResult,
 		Kind:                 copyStatus.Kind,
@@ -458,6 +468,7 @@ func rememberResultFromStatus(status *SubmissionStatusResult, ingestID string) *
 		Evidence:            make([]TerminalEvidenceResult, 0, len(result.Evidence)),
 		RelationshipResults: append([]SubmissionRelationshipResult(nil), result.RelationshipResults...),
 		Errors:              append([]SubmissionStatusError(nil), result.Errors...),
+		Warnings:            append([]string(nil), result.Warnings...),
 		Kind:                ResultKindTerminal,
 	}
 	for _, evidence := range result.Evidence {

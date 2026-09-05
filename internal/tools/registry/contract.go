@@ -375,7 +375,7 @@ func contractTool(
 		Name:           name,
 		Description:    description,
 		InputSchema:    input,
-		OutputSchema:   output,
+		OutputSchema:   actionableOutputSchema(output),
 		RequiredScopes: scopes,
 		FeatureGate:    domain.FeatureGate,
 		Visibility:     domain.ToolVisibility,

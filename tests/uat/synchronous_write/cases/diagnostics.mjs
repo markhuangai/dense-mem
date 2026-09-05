@@ -66,7 +66,7 @@ export async function run({ rpc, expect }) {
     }
     if (label === "completed") {
       const publicResult = terminalDetail.data?.public_result || {};
-      const allowedKeys = new Set(["contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors"]);
+      const allowedKeys = new Set(["contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors", "warnings"]);
       expect(Object.keys(publicResult).every((key) => allowedKeys.has(key)), "completed detail public result must use the terminal allowlist");
       expect(!Object.hasOwn(publicResult, "secret"), "completed detail public result must not expose secret fields");
       expect(Array.isArray(terminalDetail.data?.events) && terminalDetail.data.events.length >= 1, "completed attempt detail must expose its event transcript");
