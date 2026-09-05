@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,11 +20,6 @@ const (
 )
 
 var ErrDreamConfirmationBusy = errors.New("dream confirmation is already in progress")
-
-type dreamConfirmationLockAdmissionState struct {
-	once  sync.Once
-	slots chan struct{}
-}
 
 // WithHypothesisConfirmationLock admits one confirmation workflow for a
 // team-owned Hypothesis. The advisory lock uses one application-pool session
@@ -50,8 +44,11 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 	if fn == nil {
 		return errors.New("dream confirmation lock: callback is required")
 	}
-	releaseAdmission, err := r.acquireDreamConfirmationLockAdmission(ctx)
+	releaseAdmission, err := acquireSharedAdvisoryLockAdmission(ctx, r.db, dreamConfirmationLockAdmissionLimit)
 	if err != nil {
+		if errors.Is(err, errAdvisoryLockAdmissionBusy) {
+			return ErrDreamConfirmationBusy
+		}
 		return err
 	}
 	defer releaseAdmission()
@@ -136,29 +133,6 @@ func discardDreamConfirmationLockConnection(lockConn *sql.Conn) error {
 		return fmt.Errorf("dream confirmation lock discard: %w", err)
 	}
 	return errors.New("dream confirmation lock discard: connection was not discarded")
-}
-
-func (r *SemanticRepositoryImpl) acquireDreamConfirmationLockAdmission(ctx context.Context) (func(), error) {
-	r.dreamConfirmationLockState.once.Do(func() {
-		limit := dreamConfirmationLockAdmissionLimit
-		if sqlDB, err := r.db.DB(); err == nil {
-			if configured := sqlDB.Stats().MaxOpenConnections; configured > 0 && configured-1 < limit {
-				limit = configured - 1
-			}
-		}
-		r.dreamConfirmationLockState.slots = make(chan struct{}, limit)
-	})
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
-	select {
-	case r.dreamConfirmationLockState.slots <- struct{}{}:
-		return func() { <-r.dreamConfirmationLockState.slots }, nil
-	default:
-		return nil, ErrDreamConfirmationBusy
-	}
 }
 
 func (r *SemanticRepositoryImpl) openDreamConfirmationLockConnection(ctx context.Context) (*sql.Conn, error) {
