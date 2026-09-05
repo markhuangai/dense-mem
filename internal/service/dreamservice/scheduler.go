@@ -236,7 +236,7 @@ func isActiveScheduledTeam(team *domain.Team) bool {
 
 func (s *Scheduler) runEvidenceDue(ctx context.Context, teamID string, cfg EffectiveConfig, now time.Time) {
 	service, ok := s.service.(evidenceScheduledService)
-	if !ok || now.UTC().Minute() != 0 || !cfg.Enabled {
+	if !ok || !cfg.Enabled {
 		return
 	}
 	windowAt := now.UTC().Truncate(time.Hour)

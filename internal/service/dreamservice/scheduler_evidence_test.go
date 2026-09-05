@@ -32,7 +32,7 @@ func TestSchedulerRunsHourlyEvidenceAndDailyGraphLanesIndependently(t *testing.T
 	require.Len(t, dreams.evidenceWindows, 1)
 }
 
-func TestSchedulerDoesNotCatchUpHourlyEvidenceAfterMissedHour(t *testing.T) {
+func TestSchedulerRunsHourlyEvidenceWithinCurrentHour(t *testing.T) {
 	teamID := uuid.New()
 	dreams := &schedulerEvidenceStub{schedulerDreamStub: &schedulerDreamStub{cfg: dueSchedulerConfig()}}
 	scheduler := NewScheduler(dreams, &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}, discardSchedulerLogger())
@@ -40,8 +40,8 @@ func TestSchedulerDoesNotCatchUpHourlyEvidenceAfterMissedHour(t *testing.T) {
 
 	scheduler.runDue(context.Background())
 
-	require.Empty(t, dreams.evidenceWindows)
-	require.False(t, scheduler.hourlyAlreadyObserved(teamID.String(), "hour:2026-09-04T03"))
+	require.Equal(t, []time.Time{time.Date(2026, 9, 4, 3, 0, 0, 0, time.UTC)}, dreams.evidenceWindows)
+	require.True(t, scheduler.hourlyAlreadyObserved(teamID.String(), "hour:2026-09-04T03"))
 }
 
 func TestSchedulerDispatchesDailyGraphBeforeBlockingEvidenceLane(t *testing.T) {
