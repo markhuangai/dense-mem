@@ -273,11 +273,19 @@ func (s *service) runClaimedEvidenceCycle(
 					}
 					providerCtx := observability.WithAIOperation(observability.WithMetricIdentity(ctx, teamID, ""), observability.AIOperationEvidenceDiscovery, 1)
 					providerCtx = modelprovider.WithAdmissionCallback(providerCtx, markDispatched)
+					evaluationProviderTurns := 0
+					evaluationProviderInputTokens := 0
+					evaluationProviderOutputTokens := 0
+					evaluationProviderProposals := 0
 					for regeneration := 0; regeneration < evidenceDiscoveryRegenerationLimit; regeneration++ {
 						generation, diagnostics, generateErr := s.deps.EvidenceGenerator.GenerateEvidence(
 							providerCtx,
 							teamID, request,
 						)
+						evaluationProviderTurns += diagnostics.ProviderTurns
+						evaluationProviderInputTokens += diagnostics.ProviderInputTokens
+						evaluationProviderOutputTokens += diagnostics.ProviderOutputTokens
+						evaluationProviderProposals += diagnostics.ProviderProposals
 						providerTurns += diagnostics.ProviderTurns
 						providerInputTokens += diagnostics.ProviderInputTokens
 						providerOutputTokens += diagnostics.ProviderOutputTokens
@@ -313,8 +321,8 @@ func (s *service) runClaimedEvidenceCycle(
 							TeamID: teamID, RunID: claimed.RunID, LeaseToken: claimed.LeaseToken,
 							AttemptID: attempt.AttemptID, ReservationToken: attempt.ReservationToken,
 							Target: target.Target, PassNumber: attempt.PassNumber, ProviderModel: providerModel,
-							ProviderTurns: diagnostics.ProviderTurns, ProviderInputTokens: diagnostics.ProviderInputTokens,
-							ProviderOutputTokens: diagnostics.ProviderOutputTokens, ProviderProposals: diagnostics.ProviderProposals,
+							ProviderTurns: evaluationProviderTurns, ProviderInputTokens: evaluationProviderInputTokens,
+							ProviderOutputTokens: evaluationProviderOutputTokens, ProviderProposals: evaluationProviderProposals,
 							AcceptedProposals: len(proposals),
 							RejectedProposals: invalid, CreatedHypotheses: len(proposals), Proposals: proposals,
 						})

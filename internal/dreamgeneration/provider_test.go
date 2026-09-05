@@ -40,6 +40,17 @@ func TestProviderHandlesUnavailableTransportAndModelName(t *testing.T) {
 	require.ErrorContains(t, err, "transport failed")
 }
 
+func TestEvidenceProviderCountsTransportFailureAsProviderTurn(t *testing.T) {
+	transport := &countingErrorStructuredTransport{}
+	provider := NewProvider(transport, "model", DefaultSemanticAssessmentLimits())
+
+	response, err := provider.GenerateEvidenceDiscoveries(context.Background(), evidenceDiscoveryTestRequest(t))
+
+	require.ErrorContains(t, err, "transport failed")
+	require.Equal(t, 1, transport.calls)
+	require.Equal(t, 1, response.ProviderTurns)
+}
+
 func TestGraphProviderRepairsMalformedResponseWithBoundedCorrection(t *testing.T) {
 	transport := &graphCorrectionTransportStub{}
 	provider := NewProvider(transport, "graph-model", DefaultSemanticAssessmentLimits())
@@ -232,6 +243,15 @@ type graphProviderTransportStub struct {
 type errorStructuredTransport struct{}
 
 func (errorStructuredTransport) Complete(context.Context, modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	return modelprovider.StructuredResult{}, errors.New("transport failed")
+}
+
+type countingErrorStructuredTransport struct {
+	calls int
+}
+
+func (s *countingErrorStructuredTransport) Complete(context.Context, modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	s.calls++
 	return modelprovider.StructuredResult{}, errors.New("transport failed")
 }
 

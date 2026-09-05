@@ -200,7 +200,7 @@ func (p *Provider) GenerateEvidenceDiscoveries(ctx context.Context, req Evidence
 			MaxInputTokens: p.limits.MaxInputTokens, MaxOutputTokens: p.limits.MaxOutputTokens,
 		})
 		if err != nil {
-			return responseWithUsage(turn - 1), err
+			return responseWithUsage(turn), err
 		}
 		outputTokens, err := assessor.CountTokens(result.Content, p.limits.Tokenizer)
 		if err != nil {

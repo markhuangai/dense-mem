@@ -549,7 +549,14 @@ func TestClaimedEvidenceCycleRegeneratesAfterDuplicatePersistence(t *testing.T) 
 		attemptPasses: map[string]int{targetID + ":hash": 1},
 	}
 	repo := &dreamRepositoryStub{}
-	generator := &evidenceGeneratorStub{model: "model", generatedResponses: [][]GeneratedDream{{valid}, {valid}}}
+	generator := &evidenceGeneratorStub{
+		model:              "model",
+		generatedResponses: [][]GeneratedDream{{valid}, {valid}},
+		diagnostics: []GenerationDiagnostics{
+			{ProviderTurns: 2, ProviderInputTokens: 11, ProviderOutputTokens: 7, ProviderProposals: 1},
+			{ProviderTurns: 3, ProviderInputTokens: 13, ProviderOutputTokens: 9, ProviderProposals: 1},
+		},
+	}
 	service := &service{deps: Dependencies{Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: generator}, now: time.Now}
 	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
 
@@ -565,6 +572,14 @@ func TestClaimedEvidenceCycleRegeneratesAfterDuplicatePersistence(t *testing.T) 
 	require.Equal(t, valid.ObjectEntityID, generator.requests[1].RelatedHypotheses[0].ObjectEntityID)
 	require.Equal(t, 1, result.CreatedDreams)
 	require.Equal(t, 1, result.EvaluatedEvidenceTargets)
+	require.Equal(t, 5, result.ProviderTurns)
+	require.Equal(t, 24, result.ProviderInputTokens)
+	require.Equal(t, 16, result.ProviderOutputTokens)
+	require.Equal(t, 2, result.ProviderProposals)
+	require.Equal(t, 5, store.evaluations[0].ProviderTurns)
+	require.Equal(t, 24, store.evaluations[0].ProviderInputTokens)
+	require.Equal(t, 16, store.evaluations[0].ProviderOutputTokens)
+	require.Equal(t, 2, store.evaluations[0].ProviderProposals)
 }
 
 func TestClaimedEvidenceCycleAbandonsAfterPersistenceFailure(t *testing.T) {
@@ -940,6 +955,7 @@ type evidenceGeneratorStub struct {
 	skipAdmission      bool
 	err                error
 	errorDiagnostics   GenerationDiagnostics
+	diagnostics        []GenerationDiagnostics
 	requests           []EvidenceGenerationRequest
 }
 
@@ -953,9 +969,10 @@ func (s *evidenceGeneratorStub) GenerateEvidence(ctx context.Context, _ string, 
 	if s.err != nil {
 		return nil, s.errorDiagnostics, s.err
 	}
+	callIndex := s.generatedCalls
 	generated := append([]GeneratedDream(nil), s.generated...)
-	if s.generatedCalls < len(s.generatedResponses) {
-		generated = append([]GeneratedDream(nil), s.generatedResponses[s.generatedCalls]...)
+	if callIndex < len(s.generatedResponses) {
+		generated = append([]GeneratedDream(nil), s.generatedResponses[callIndex]...)
 	}
 	s.generatedCalls++
 	for index := range generated {
@@ -970,7 +987,11 @@ func (s *evidenceGeneratorStub) GenerateEvidence(ctx context.Context, _ string, 
 			}
 		}
 	}
-	return generated, GenerationDiagnostics{ProviderTurns: 1, ProviderProposals: len(generated)}, nil
+	diagnostics := GenerationDiagnostics{ProviderTurns: 1, ProviderProposals: len(generated)}
+	if callIndex < len(s.diagnostics) {
+		diagnostics = s.diagnostics[callIndex]
+	}
+	return generated, diagnostics, nil
 }
 
 func (s *evidenceGeneratorStub) Model() string { return s.model }
