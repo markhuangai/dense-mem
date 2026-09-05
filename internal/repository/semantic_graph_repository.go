@@ -3,44 +3,129 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
 
-func loadTraceGraphContext(
+const (
+	defaultSemanticGraphLimit = 80
+	defaultSemanticGraphDepth = 2
+	maxSemanticGraphDepth     = 5
+)
+
+func (r *SemanticRepositoryImpl) SemanticGraph(
 	ctx context.Context,
-	tx *gorm.DB,
-	relationship *RelationshipTraceRecord,
-	input TraceRelationshipInput,
-) ([]SemanticGraphNode, []SemanticGraphEdge, error) {
-	if relationship == nil || input.MaxEdges <= 0 || input.MaxDepth <= 0 {
-		return nil, nil, nil
+	input SemanticGraphQuery,
+) (*SemanticGraphSnapshot, error) {
+	input = normalizeSemanticGraphQuery(input)
+	if err := validateSemanticGraphQuery(input); err != nil {
+		return nil, err
 	}
-	rows, err := loadSemanticLocalGraphRows(ctx, tx, SemanticGraphQuery{
-		TeamID:       input.TeamID,
-		Scope:        "local",
-		Query:        strings.ToLower(input.Topic),
-		Types:        []string{"entity", "value"},
-		AnchorType:   "entity",
-		AnchorID:     relationship.SubjectEntityID,
-		Depth:        input.MaxDepth,
-		Limit:        input.MaxEdges,
-		MinRelevance: optionalRelevanceValue(input.MinRelevance),
-		spaceID:      relationship.SpaceID,
+	var rows []semanticGraphEdgeRow
+	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		var err error
+		if input.Scope == "local" {
+			rows, err = loadSemanticLocalGraphRows(ctx, tx, input)
+		} else {
+			rows, err = loadSemanticOverviewGraphRows(ctx, tx, input)
+		}
+		return err
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, fmt.Errorf("semantic graph: %w", err)
 	}
-	snapshot := semanticGraphSnapshot(SemanticGraphQuery{
-		TeamID: input.TeamID,
-		Scope:  "local",
-		Depth:  input.MaxDepth,
-		Limit:  input.MaxEdges,
-	}, rows)
-	return snapshot.Nodes, snapshot.Edges, nil
+	return semanticGraphSnapshot(input, rows), nil
+}
+
+func (r *SemanticRepositoryImpl) SemanticGraphNodeDetail(
+	ctx context.Context,
+	input SemanticGraphNodeDetailInput,
+) (*SemanticGraphNode, error) {
+	input = normalizeSemanticGraphNodeDetailInput(input)
+	if err := validateSemanticGraphNodeDetailInput(input); err != nil {
+		return nil, err
+	}
+	var node *SemanticGraphNode
+	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
+		var err error
+		switch input.NodeType {
+		case "entity":
+			node, err = loadSemanticEntityGraphNode(ctx, tx, input.TeamID, input.NodeID)
+		case "value":
+			node, err = loadSemanticValueGraphNode(ctx, tx, input.TeamID, input.NodeID)
+		default:
+			return sql.ErrNoRows
+		}
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("semantic graph node: %w", err)
+	}
+	return node, nil
+}
+
+type semanticGraphEdgeRow struct {
+	source SemanticGraphNode
+	target SemanticGraphNode
+	edge   SemanticGraphEdge
+}
+
+func normalizeSemanticGraphQuery(input SemanticGraphQuery) SemanticGraphQuery {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.spaceID = strings.TrimSpace(input.spaceID)
+	input.Scope = strings.ToLower(strings.TrimSpace(input.Scope))
+	if input.Scope == "" || input.Scope != "local" {
+		input.Scope = "overview"
+	}
+	input.Query = strings.ToLower(strings.TrimSpace(input.Query))
+	input.AnchorType = normalizeSemanticGraphNodeType(input.AnchorType)
+	input.AnchorID = strings.TrimSpace(input.AnchorID)
+	input.Types = normalizeSemanticGraphTypes(input.Types)
+	input.Depth = clampInt(input.Depth, defaultSemanticGraphDepth, maxSemanticGraphDepth)
+	input.Limit = defaultPositiveInt(input.Limit, defaultSemanticGraphLimit)
+	input.MinRelevance = normalizeRelevance(input.MinRelevance)
+	return input
+}
+
+func validateSemanticGraphQuery(input SemanticGraphQuery) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if input.Scope == "local" {
+		if input.AnchorType == "" {
+			return errors.New("anchor_type is required for local graph")
+		}
+		if _, err := uuid.Parse(input.AnchorID); err != nil {
+			return fmt.Errorf("anchor_id is required for local graph: %w", err)
+		}
+	}
+	return nil
+}
+
+func normalizeSemanticGraphNodeDetailInput(input SemanticGraphNodeDetailInput) SemanticGraphNodeDetailInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.NodeType = normalizeSemanticGraphNodeType(input.NodeType)
+	input.NodeID = strings.TrimSpace(input.NodeID)
+	return input
+}
+
+func validateSemanticGraphNodeDetailInput(input SemanticGraphNodeDetailInput) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if input.NodeType == "" {
+		return errors.New("node_type must be entity or value")
+	}
+	if _, err := uuid.Parse(input.NodeID); err != nil {
+		return fmt.Errorf("node_id is required: %w", err)
+	}
+	return nil
 }
 
 func loadSemanticOverviewGraphRows(
@@ -258,13 +343,6 @@ func semanticGraphQueryArgs(input SemanticGraphQuery, limit int, extraArgs ...an
 	return args
 }
 
-func optionalRelevanceValue(value *float64) float64 {
-	if value == nil {
-		return 0
-	}
-	return normalizeRelevance(*value)
-}
-
 func scanSemanticGraphRows(rows *sql.Rows, types []string) ([]semanticGraphEdgeRow, error) {
 	typeSet := semanticGraphTypeSet(types)
 	if !typeSet["entity"] {
@@ -451,26 +529,6 @@ func semanticGraphSnapshot(input SemanticGraphQuery, rows []semanticGraphEdgeRow
 		}
 	}
 	return snapshot
-}
-
-func normalizeTracePredicateKeys(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := map[string]struct{}{}
-	for _, raw := range values {
-		value := strings.TrimSpace(raw)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-		if len(out) == 30 {
-			break
-		}
-	}
-	return out
 }
 
 func normalizeSemanticGraphTypes(values []string) []string {
