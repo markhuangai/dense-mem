@@ -533,6 +533,63 @@ func TestScheduledEvidenceCycleSkipsSecondPassAfterNoProposal(t *testing.T) {
 	require.Zero(t, repo.completeInput.OutcomeSummary["provider_proposals"])
 }
 
+func TestClaimedEvidenceCycleRegeneratesAfterDuplicatePersistence(t *testing.T) {
+	teamID := uuid.NewString()
+	targetID := uuid.NewString()
+	target := repository.EvidenceDiscoveryTargetInput{Target: repository.EvidenceTarget{
+		EvidenceID: targetID, FragmentID: targetID, ContentHash: "hash", Content: "target", Authority: "primary",
+	}}
+	valid := GeneratedDream{
+		Hypothesis: "A may use B.", SubjectEntityID: "subject", PredicateKey: "uses", ObjectEntityID: "object",
+		EvidenceDerivations: []repository.EvidenceDerivationSource{{EvidenceID: targetID, FragmentID: targetID, SpanStart: 0, SpanEnd: 6, Quote: "target", Authority: "primary"}},
+	}
+	store := &evidenceRepositoryStub{
+		targets:     []repository.EvidenceDiscoveryTargetInput{target},
+		persistErrs: []error{repository.ErrDreamExactHypothesisExists},
+	}
+	repo := &dreamRepositoryStub{}
+	generator := &evidenceGeneratorStub{model: "model", generatedResponses: [][]GeneratedDream{{valid}, nil}}
+	service := &service{deps: Dependencies{Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: generator}, now: time.Now}
+	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
+
+	result, err := service.runClaimedEvidenceCycle(context.Background(), teamID, EffectiveConfig{
+		DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5},
+	}, &RunCycleResult{}, claimed)
+	require.NoError(t, err)
+	require.Len(t, generator.requests, 2, "a duplicate response must receive one complete regeneration")
+	require.Len(t, store.evaluations, 1, "the duplicate response must not create a partial evaluation")
+	require.Equal(t, 1, result.EvaluatedEvidenceTargets)
+}
+
+func TestClaimedEvidenceCycleAbandonsAfterDuplicateRegenerationExhaustion(t *testing.T) {
+	teamID := uuid.NewString()
+	targetID := uuid.NewString()
+	target := repository.EvidenceDiscoveryTargetInput{Target: repository.EvidenceTarget{
+		EvidenceID: targetID, FragmentID: targetID, ContentHash: "hash", Content: "target", Authority: "primary",
+	}}
+	valid := GeneratedDream{
+		Hypothesis: "A may use B.", SubjectEntityID: "subject", PredicateKey: "uses", ObjectEntityID: "object",
+		EvidenceDerivations: []repository.EvidenceDerivationSource{{EvidenceID: targetID, FragmentID: targetID, SpanStart: 0, SpanEnd: 6, Quote: "target", Authority: "primary"}},
+	}
+	store := &evidenceRepositoryStub{
+		targets:     []repository.EvidenceDiscoveryTargetInput{target},
+		persistErrs: []error{repository.ErrDreamExactHypothesisExists, repository.ErrDreamExactHypothesisExists},
+	}
+	repo := &dreamRepositoryStub{}
+	generator := &evidenceGeneratorStub{model: "model", generatedResponses: [][]GeneratedDream{{valid}, {valid}}}
+	service := &service{deps: Dependencies{Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: generator}, now: time.Now}
+	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
+
+	result, err := service.runClaimedEvidenceCycle(context.Background(), teamID, EffectiveConfig{
+		DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5},
+	}, &RunCycleResult{}, claimed)
+	require.ErrorIs(t, err, modelprovider.ErrVerifierMalformedResponse)
+	require.Equal(t, "evidence discovery provider response invalid", result.Error)
+	require.Len(t, generator.requests, 2)
+	require.Empty(t, store.evaluations)
+	require.Equal(t, 1, store.abandonCalls)
+}
+
 func TestFinishEvidenceCycleCombinesRunAndCompletionErrors(t *testing.T) {
 	teamID := uuid.NewString()
 	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
@@ -557,8 +614,10 @@ type evidenceRepositoryStub struct {
 	dispatchedErr   error
 	validatedErr    error
 	persistErr      error
+	persistErrs     []error
 	abandonErr      error
 	validatedCalls  int
+	abandonCalls    int
 }
 
 type errorAppConfigStub struct{ err error }
@@ -605,6 +664,13 @@ func (s *evidenceRepositoryStub) LoadEvidenceDiscoveryRunTotals(_ context.Contex
 }
 
 func (s *evidenceRepositoryStub) PersistEvidenceDiscoveryEvaluation(_ context.Context, input repository.EvidenceDiscoveryEvaluationInput) (repository.DreamGenerationPersistResult, error) {
+	if len(s.persistErrs) > 0 {
+		err := s.persistErrs[0]
+		s.persistErrs = s.persistErrs[1:]
+		if err != nil {
+			return repository.DreamGenerationPersistResult{}, err
+		}
+	}
 	if s.persistErr != nil {
 		return repository.DreamGenerationPersistResult{}, s.persistErr
 	}
@@ -644,6 +710,7 @@ func (s *evidenceRepositoryStub) MarkEvidenceDiscoveryAttemptDispatched(_ contex
 }
 
 func (s *evidenceRepositoryStub) AbandonEvidenceDiscoveryAttempt(_ context.Context, _, _, _ string) error {
+	s.abandonCalls++
 	if s.abandonErr != nil {
 		return s.abandonErr
 	}
@@ -651,10 +718,12 @@ func (s *evidenceRepositoryStub) AbandonEvidenceDiscoveryAttempt(_ context.Conte
 }
 
 type evidenceGeneratorStub struct {
-	model     string
-	generated []GeneratedDream
-	err       error
-	requests  []EvidenceGenerationRequest
+	model              string
+	generated          []GeneratedDream
+	generatedResponses [][]GeneratedDream
+	generatedCalls     int
+	err                error
+	requests           []EvidenceGenerationRequest
 }
 
 func (s *evidenceGeneratorStub) GenerateEvidence(_ context.Context, _ string, request EvidenceGenerationRequest) ([]GeneratedDream, GenerationDiagnostics, error) {
@@ -663,6 +732,10 @@ func (s *evidenceGeneratorStub) GenerateEvidence(_ context.Context, _ string, re
 		return nil, GenerationDiagnostics{}, s.err
 	}
 	generated := append([]GeneratedDream(nil), s.generated...)
+	if s.generatedCalls < len(s.generatedResponses) {
+		generated = append([]GeneratedDream(nil), s.generatedResponses[s.generatedCalls]...)
+	}
+	s.generatedCalls++
 	for index := range generated {
 		for derivationIndex := range generated[index].EvidenceDerivations {
 			derivation := &generated[index].EvidenceDerivations[derivationIndex]

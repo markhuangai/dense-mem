@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	evidenceDiscoveryTargetLimit  = 20
-	evidenceDiscoveryContextLimit = 10
-	evidenceDiscoveryRelatedLimit = 5
-	evidenceDiscoveryPassLimit    = 2
+	evidenceDiscoveryTargetLimit       = 20
+	evidenceDiscoveryContextLimit      = 10
+	evidenceDiscoveryRelatedLimit      = 5
+	evidenceDiscoveryPassLimit         = 2
+	evidenceDiscoveryRegenerationLimit = 2
 )
 
 func (s *service) runScheduledEvidenceCycle(ctx context.Context, teamID string, windowAt time.Time) (*RunCycleResult, error) {
@@ -246,48 +247,65 @@ func (s *service) runClaimedEvidenceCycle(
 					}); err != nil {
 						return err
 					}
-					generation, diagnostics, generateErr := s.deps.EvidenceGenerator.GenerateEvidence(
-						observability.WithAIOperation(observability.WithMetricIdentity(ctx, teamID, ""), observability.AIOperationEvidenceDiscovery, 1),
-						teamID, request,
-					)
-					providerTurns += diagnostics.ProviderTurns
-					providerInputTokens += diagnostics.ProviderInputTokens
-					providerOutputTokens += diagnostics.ProviderOutputTokens
-					providerProposals += diagnostics.ProviderProposals
-					result.ProviderTurns = providerTurns
-					result.ProviderInputTokens = providerInputTokens
-					result.ProviderOutputTokens = providerOutputTokens
-					result.ProviderProposals = providerProposals
-					if generateErr != nil {
-						if evidenceProviderFailureCanAbandon(generateErr) {
-							abandonErr := s.deps.EvidenceStore.AbandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
-							if abandonErr != nil {
-								return errors.Join(generateErr, abandonErr)
+					for regeneration := 0; regeneration < evidenceDiscoveryRegenerationLimit; regeneration++ {
+						generation, diagnostics, generateErr := s.deps.EvidenceGenerator.GenerateEvidence(
+							observability.WithAIOperation(observability.WithMetricIdentity(ctx, teamID, ""), observability.AIOperationEvidenceDiscovery, 1),
+							teamID, request,
+						)
+						providerTurns += diagnostics.ProviderTurns
+						providerInputTokens += diagnostics.ProviderInputTokens
+						providerOutputTokens += diagnostics.ProviderOutputTokens
+						providerProposals += diagnostics.ProviderProposals
+						result.ProviderTurns = providerTurns
+						result.ProviderInputTokens = providerInputTokens
+						result.ProviderOutputTokens = providerOutputTokens
+						result.ProviderProposals = providerProposals
+						if generateErr != nil {
+							if evidenceProviderFailureCanAbandon(generateErr) {
+								abandonErr := s.deps.EvidenceStore.AbandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
+								if abandonErr != nil {
+									return errors.Join(generateErr, abandonErr)
+								}
 							}
+							return generateErr
 						}
-						return generateErr
+						proposals, invalid := evidenceProposalsFromGenerated(generation, target.Target, providerModel, request.MaxOutputs)
+						persisted, persistErr := s.deps.EvidenceStore.PersistEvidenceDiscoveryEvaluation(ctx, repository.EvidenceDiscoveryEvaluationInput{
+							TeamID: teamID, RunID: claimed.RunID, LeaseToken: claimed.LeaseToken,
+							AttemptID: attempt.AttemptID, ReservationToken: attempt.ReservationToken,
+							Target: target.Target, PassNumber: attempt.PassNumber, ProviderModel: providerModel,
+							ProviderTurns: diagnostics.ProviderTurns, ProviderInputTokens: diagnostics.ProviderInputTokens,
+							ProviderOutputTokens: diagnostics.ProviderOutputTokens, ProviderProposals: diagnostics.ProviderProposals,
+							AcceptedProposals: len(proposals),
+							RejectedProposals: invalid, CreatedHypotheses: len(proposals), Proposals: proposals,
+						})
+						if persistErr != nil {
+							if evidencePersistenceDuplicate(persistErr) && regeneration+1 < evidenceDiscoveryRegenerationLimit {
+								continue
+							}
+							if evidencePersistenceDuplicate(persistErr) {
+								duplicateErr := &modelprovider.MalformedResponseError{
+									Provider: providerModel, Message: "evidence discovery response duplicated an existing target",
+									FailureClass: "duplicate_exhausted", Attempts: regeneration + 1,
+								}
+								abandonErr := s.deps.EvidenceStore.AbandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
+								if abandonErr != nil {
+									return errors.Join(duplicateErr, abandonErr)
+								}
+								return duplicateErr
+							}
+							return persistErr
+						}
+						rejected += invalid
+						created += persisted.Created
+						rejected += persisted.Rejected
+						evaluated++
+						// A second pass is a bounded reinforcement check only when the first
+						// validated pass produced at least one durable hypothesis.
+						continuePass = attempt.PassNumber == 1 && persisted.Created > 0
+						return nil
 					}
-					proposals, invalid := evidenceProposalsFromGenerated(generation, target.Target, providerModel, request.MaxOutputs)
-					rejected += invalid
-					persisted, persistErr := s.deps.EvidenceStore.PersistEvidenceDiscoveryEvaluation(ctx, repository.EvidenceDiscoveryEvaluationInput{
-						TeamID: teamID, RunID: claimed.RunID, LeaseToken: claimed.LeaseToken,
-						AttemptID: attempt.AttemptID, ReservationToken: attempt.ReservationToken,
-						Target: target.Target, PassNumber: attempt.PassNumber, ProviderModel: providerModel,
-						ProviderTurns: diagnostics.ProviderTurns, ProviderInputTokens: diagnostics.ProviderInputTokens,
-						ProviderOutputTokens: diagnostics.ProviderOutputTokens, ProviderProposals: diagnostics.ProviderProposals,
-						AcceptedProposals: len(proposals),
-						RejectedProposals: invalid, CreatedHypotheses: len(proposals), Proposals: proposals,
-					})
-					if persistErr != nil {
-						return persistErr
-					}
-					created += persisted.Created
-					rejected += persisted.Rejected
-					evaluated++
-					// A second pass is a bounded reinforcement check only when the first
-					// validated pass produced at least one durable hypothesis.
-					continuePass = attempt.PassNumber == 1 && persisted.Created > 0
-					return nil
+					return errors.New("evidence discovery regeneration limit exhausted")
 				},
 			)
 			if targetErr != nil {
@@ -306,6 +324,11 @@ func (s *service) runClaimedEvidenceCycle(
 		"created_hypotheses": created, "rejected_hypotheses": rejected,
 	}
 	return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, nil)
+}
+
+func evidencePersistenceDuplicate(err error) bool {
+	return errors.Is(err, repository.ErrDreamExactRelationshipExists) ||
+		errors.Is(err, repository.ErrDreamExactHypothesisExists)
 }
 
 const dreamgenerationMaxEvidenceOutputs = 50
