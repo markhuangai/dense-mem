@@ -193,7 +193,7 @@ async function waitForHourlyEvidenceFailureRun(targetTeamID) {
       item?.lane === "evidence_discovery" &&
       item?.status === "failed" &&
       Number(item?.evidence_targets) === 1 &&
-      Number(item?.evaluated_evidence_targets) === 0 &&
+      Number(item?.evaluated_evidence_targets ?? item?.outcome_summary?.evaluated_evidence_targets ?? 0) === 0 &&
       Number(item?.created_dreams) === 0 &&
       Number(item?.outcome_summary?.provider_failed ?? 0) === 1
     ));
