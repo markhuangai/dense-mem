@@ -19,4 +19,13 @@ describe("runOutcome", () => {
       outcome_summary: { provider_proposals: 1 },
     })).toBe("Evidence discovery stored");
   });
+
+  it("reports a completed one-pass run without proposals", () => {
+    expect(runOutcome({
+      lane: "evidence_discovery",
+      evidence_targets: 3,
+      evaluated_evidence_targets: 3,
+      outcome_summary: { provider_proposals: 0 },
+    })).toBe("Provider returned no supported relationship");
+  });
 });

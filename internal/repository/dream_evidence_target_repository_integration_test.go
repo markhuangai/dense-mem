@@ -189,6 +189,68 @@ func TestEvidenceDiscoveryNodesRankEvidenceMentionsBeforeTheGlobalBound(t *testi
 	require.Equal(t, relevant.EntityID, targets[0].Nodes[0].ID, "the mentioned newer node must be selected before the 100-node bound")
 }
 
+func TestEvidenceDiscoveryPredicatesRankTargetRelevantDefinitionsBeforeTheGlobalBound(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "evidence-dream-predicate-relevance", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-dream-predicate-relevance-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-dream-predicate-relevance-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	search := NewSearchRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+	const relevantPredicate = "zz_late_target_relation"
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		for index := 0; index < 101; index++ {
+			if err := tx.Exec(`
+				INSERT INTO team_predicate_definitions (
+				    team_id, predicate_key, version, aliases, allowed_subject_kinds,
+				    allowed_object_kinds, relationship_kind, current_cardinality,
+				    lifecycle_state, origin, metadata
+				) VALUES (?, ?, 1, ARRAY[]::text[], ARRAY['project','product','entity']::text[],
+				          ARRAY['project','product','entity']::text[], 'state', 'many',
+				          'active', 'test', '{}'::jsonb)
+			`, teamID, fmt.Sprintf("zz_filler_%03d", index)).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Exec(`
+			INSERT INTO team_predicate_definitions (
+			    team_id, predicate_key, version, aliases, allowed_subject_kinds,
+			    allowed_object_kinds, relationship_kind, current_cardinality,
+			    lifecycle_state, origin, metadata
+			) VALUES (?, ?, 1, ARRAY['target relation']::text[], ARRAY['project','product','entity']::text[],
+			          ARRAY['project','product','entity']::text[], 'state', 'many',
+			          'active', 'test', '{}'::jsonb)
+		`, teamID, relevantPredicate).Error
+	}))
+	content := "The target explicitly describes zz_late_target_relation between supplied nodes."
+	ingest, err := ledger.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "evidence-dream-predicate-target",
+		RequestHash: sha256Hex(content), Evidence: []EvidenceInput{{
+			Content: content, InitialEvent: &SecurityEventDraft{EventKind: "deterministic_scan", Decision: "pass"},
+		}},
+	})
+	require.NoError(t, err)
+	fragment := requireTestEvidenceFragment(t, ingest)
+	document, err := search.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: fragment.FragmentID,
+		SourceVersion: 1, DocumentText: content,
+	})
+	require.NoError(t, err)
+	completeSearchDocumentsForTest(t, search, teamID, map[string][]float32{document.SearchDocumentID: {1, 0}})
+
+	targets, err := semantic.ListEvidenceDiscoveryTargets(ctx, teamID, evidenceTargetTestLimit, evidenceContextTestLimit)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	keys := make([]string, 0, len(targets[0].AllowedPredicates))
+	for _, predicate := range targets[0].AllowedPredicates {
+		keys = append(keys, predicate.PredicateKey)
+	}
+	require.Contains(t, keys, relevantPredicate, "a relevant predicate after the alphabetical 100th entry must remain allowlisted")
+	require.Equal(t, relevantPredicate, targets[0].AllowedPredicates[0].PredicateKey)
+}
+
 func TestEvidenceDiscoveryTargetPassCapStopsAfterTwoRecordedEvaluations(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -531,6 +593,7 @@ func TestEvidenceDiscoveryEvaluationPersistsDerivationsAndReadsThemBack(t *testi
 	targets, err := semantic.ListEvidenceDiscoveryTargets(ctx, teamID, evidenceTargetTestLimit, evidenceContextTestLimit)
 	require.NoError(t, err)
 	require.Len(t, targets, 1)
+	require.Equal(t, ownerID, targets[0].Target.OwnerProfileID)
 	sourceGroupKey := "ingest:" + ingest.IngestID
 
 	var persisted DreamGenerationPersistResult
@@ -562,6 +625,7 @@ func TestEvidenceDiscoveryEvaluationPersistsDerivationsAndReadsThemBack(t *testi
 	totals, err := semantic.LoadEvidenceDiscoveryRunTotals(ctx, teamID, run.RunID)
 	require.NoError(t, err)
 	require.Equal(t, 1, totals.TargetCount)
+	require.Equal(t, []string{target.FragmentID + ":" + target.ContentHash}, totals.TargetKeys)
 	require.Equal(t, 1, totals.Evaluated)
 	require.Equal(t, 1, totals.Created)
 	require.Equal(t, 1, totals.ProviderProposals)
@@ -573,10 +637,30 @@ func TestEvidenceDiscoveryEvaluationPersistsDerivationsAndReadsThemBack(t *testi
 	require.Len(t, records[0].EvidenceDerivations, 1)
 	require.Equal(t, content, records[0].EvidenceDerivations[0].Quote)
 	require.Equal(t, sourceGroupKey, records[0].EvidenceDerivations[0].SourceGroupKey)
+	require.Equal(t, []string{ownerID}, records[0].SourceOwnerProfileIDs)
 	loaded, err := semantic.GetHypothesis(ctx, GetHypothesisInput{TeamID: teamID, HypothesisID: records[0].HypothesisID})
 	require.NoError(t, err)
 	require.Len(t, loaded.EvidenceDerivations, 1)
 	require.Equal(t, target.FragmentID, loaded.EvidenceDerivations[0].EvidenceID)
+	otherOwnerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-dream-other-owner")
+	_, err = semantic.UpdateHypothesisStatus(ctx, UpdateHypothesisStatusInput{
+		TeamID: teamID, ActorProfileID: otherOwnerID, HypothesisID: records[0].HypothesisID,
+		Status: "reinforced", Decision: "reinforce",
+	})
+	require.ErrorIs(t, err, ErrDreamHypothesisNotFound)
+	updated, err := semantic.UpdateHypothesisStatus(ctx, UpdateHypothesisStatusInput{
+		TeamID: teamID, ActorProfileID: ownerID, HypothesisID: records[0].HypothesisID,
+		Status: "reinforced", Decision: "reinforce",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "reinforced", updated.Status)
+	submission := createSemanticIngest(t, ctx, ledger, teamID, ownerID,
+		"evidence-dream-owner-submit", "Independent owner evidence for the hypothesis.")
+	_, err = semantic.SubmitHypothesis(ctx, SubmitHypothesisInput{
+		TeamID: teamID, ActorProfileID: otherOwnerID, HypothesisID: records[0].HypothesisID,
+		Decision: "confirm_true", SubmittedIngestID: submission.IngestID,
+	})
+	require.ErrorIs(t, err, ErrDreamHypothesisNotFound)
 }
 
 func TestEvidenceDiscoveryTargetEligibilityFiltersAliasesQuarantineLifecycleStaleAndDeletionOnly(t *testing.T) {

@@ -75,6 +75,29 @@ func TestContractRememberBoundaryContent(t *testing.T) {
 	}
 }
 
+func TestDreamOutputSchemasAllowOwnerPrefixedSourceGroupKeys(t *testing.T) {
+	const ownerPrefixedSourceGroupKeyLength = len("owner:") + 36 + len(":") + 256
+	for name, schema := range map[string]map[string]any{
+		"dream derivation":       dreamDerivationSchema(),
+		"evidence derivation":    dreamEvidenceDerivationSchema(),
+		"trace evidence support": traceEvidenceSupportSchema(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			property, ok := schemaProperties(schema)["source_group_key"]
+			if !ok {
+				t.Fatal("source_group_key schema is missing")
+			}
+			maxLength, ok := property["maxLength"].(int)
+			if !ok {
+				t.Fatalf("maxLength has type %T", property["maxLength"])
+			}
+			if maxLength < ownerPrefixedSourceGroupKeyLength {
+				t.Fatalf("maxLength = %d, want at least %d", maxLength, ownerPrefixedSourceGroupKeyLength)
+			}
+		})
+	}
+}
+
 func flatRelationshipForContent(content string) map[string]any {
 	return map[string]any{
 		"idempotency_key": "remember-test-batch",

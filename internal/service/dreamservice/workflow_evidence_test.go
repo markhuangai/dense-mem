@@ -446,6 +446,89 @@ func TestRecoveredEvidenceCyclePreservesPersistedEvaluationTotals(t *testing.T) 
 	require.Equal(t, 2, repo.completeInput.EvaluatedEvidenceTargets)
 }
 
+func TestRecoveredEvidenceCycleCountsDistinctPersistedAndSelectedTargets(t *testing.T) {
+	teamID := uuid.NewString()
+	priorID := uuid.NewString()
+	currentID := uuid.NewString()
+	target := repository.EvidenceDiscoveryTargetInput{Target: repository.EvidenceTarget{
+		EvidenceID: currentID, FragmentID: currentID, ContentHash: "current-hash", Content: "target", Authority: "primary",
+	}}
+	store := &evidenceRepositoryStub{
+		targets: []repository.EvidenceDiscoveryTargetInput{target},
+		runTotals: repository.EvidenceDiscoveryRunTotals{
+			TargetCount: 1, TargetKeys: []string{priorID + ":prior-hash"},
+		},
+	}
+	repo := &dreamRepositoryStub{}
+	generator := &evidenceGeneratorStub{model: "model", generated: []GeneratedDream{{
+		Hypothesis: "A may use B.", SubjectEntityID: "subject", PredicateKey: "uses", ObjectEntityID: "object",
+		EvidenceDerivations: []repository.EvidenceDerivationSource{{EvidenceID: currentID, FragmentID: currentID, SpanStart: 0, SpanEnd: 6, Quote: "target", Authority: "primary"}},
+	}}}
+	claimed := &repository.DreamCycleRun{
+		TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), AttemptCount: 2, Claimed: true,
+	}
+	service := &service{deps: Dependencies{
+		Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: generator,
+	}, now: time.Now}
+
+	result, err := service.runClaimedEvidenceCycle(context.Background(), teamID, EffectiveConfig{
+		DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5},
+	}, &RunCycleResult{}, claimed)
+	require.NoError(t, err)
+	require.Equal(t, 2, result.EvidenceTargets)
+	require.Equal(t, 2, repo.completeInput.EvidenceTargets)
+}
+
+func TestRecoveredEvidenceCyclePreservesTotalsWhenTargetListingFails(t *testing.T) {
+	teamID := uuid.NewString()
+	store := &evidenceRepositoryStub{
+		targetsErr: errors.New("target list failed"),
+		runTotals: repository.EvidenceDiscoveryRunTotals{
+			TargetCount: 3, Evaluated: 3, Created: 4, Rejected: 2, ProviderProposals: 5,
+			ProviderTurns: 2, ProviderInputTokens: 10, ProviderOutputTokens: 6,
+		},
+	}
+	repo := &dreamRepositoryStub{}
+	claimed := &repository.DreamCycleRun{
+		TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), AttemptCount: 2, Claimed: true,
+	}
+	service := &service{deps: Dependencies{
+		Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: &evidenceGeneratorStub{model: "model"},
+	}, now: time.Now}
+
+	result, err := service.runClaimedEvidenceCycle(context.Background(), teamID, EffectiveConfig{
+		DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5},
+	}, &RunCycleResult{}, claimed)
+	require.Error(t, err)
+	require.Equal(t, 3, result.EvidenceTargets)
+	require.Equal(t, 4, repo.completeInput.CreatedHypotheses)
+	require.Equal(t, 2, repo.completeInput.RejectedHypotheses)
+	require.Equal(t, 3, repo.completeInput.EvaluatedEvidenceTargets)
+	require.Equal(t, 5, repo.completeInput.ProviderProposals)
+}
+
+func TestScheduledEvidenceCycleSkipsSecondPassAfterNoProposal(t *testing.T) {
+	teamID := uuid.NewString()
+	targetID := uuid.NewString()
+	store := &evidenceRepositoryStub{targets: []repository.EvidenceDiscoveryTargetInput{{
+		Target: repository.EvidenceTarget{EvidenceID: targetID, FragmentID: targetID, ContentHash: "hash", Content: "target", Authority: "primary"},
+	}}}
+	repo := &dreamRepositoryStub{}
+	generator := &evidenceGeneratorStub{model: "model"}
+	service := New(Dependencies{
+		Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: generator,
+		AppConfig: cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5, Timezone: "UTC", StartTimeLocal: "03:00"}},
+	}).(*service)
+
+	result, err := service.RunScheduledEvidenceCycle(context.Background(), teamID, time.Date(2026, 9, 4, 3, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(generator.requests))
+	require.Equal(t, 1, result.EvaluatedEvidenceTargets)
+	require.Equal(t, 0, result.ProviderProposals)
+	require.Equal(t, 1, repo.completeInput.OutcomeSummary["evaluated_evidence_targets"])
+	require.Zero(t, repo.completeInput.OutcomeSummary["provider_proposals"])
+}
+
 func TestFinishEvidenceCycleCombinesRunAndCompletionErrors(t *testing.T) {
 	teamID := uuid.NewString()
 	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}

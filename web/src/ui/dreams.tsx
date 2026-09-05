@@ -78,13 +78,17 @@ export function runOutcome(run: DreamRunPresentation): string {
   if (run.lane === "evidence_discovery") {
     const targets = run.evidence_targets ?? outcomes.evidence_targets ?? 0;
     const evaluated = run.evaluated_evidence_targets ?? outcomes.evaluated_evidence_targets ?? 0;
+    const providerProposals = outcomes.provider_proposals ?? run.provider_proposals ?? 0;
     if (targets === 0) {
       return "No eligible evidence target";
+    }
+    if (evaluated === targets && providerProposals === 0) {
+      return "Provider returned no supported relationship";
     }
     if (evaluated < targets * EVIDENCE_PASSES_PER_TARGET) {
       return `${evaluated} of ${targets * EVIDENCE_PASSES_PER_TARGET} evidence target passes evaluated`;
     }
-    if ((outcomes.provider_proposals ?? run.provider_proposals ?? 0) === 0) {
+    if (providerProposals === 0) {
       return "Provider returned no supported relationship";
     }
     return "Evidence discovery stored";

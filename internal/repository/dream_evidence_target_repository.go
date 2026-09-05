@@ -54,10 +54,7 @@ func (r *SemanticRepositoryImpl) ListEvidenceDiscoveryTargets(
 	load := func() error {
 		result := []EvidenceDiscoveryTargetInput{}
 		err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
-			predicates, err := listEvidenceDiscoveryPredicates(ctx, tx, teamID, 100)
-			if err != nil {
-				return err
-			}
+			var err error
 			rows, err := tx.WithContext(ctx).Raw(`
 			WITH latest_security AS (
 				SELECT DISTINCT ON (security.team_id, security.fragment_id)
@@ -69,6 +66,7 @@ func (r *SemanticRepositoryImpl) ListEvidenceDiscoveryTargets(
 			eligible AS (
 				SELECT fragment.team_id,
 				       fragment.fragment_id,
+				       fragment.owner_profile_id::text AS owner_profile_id,
 				       fragment.space_id,
 				       fragment.space_generation,
 				       fragment.content_hash,
@@ -152,6 +150,7 @@ func (r *SemanticRepositoryImpl) ListEvidenceDiscoveryTargets(
 				GROUP BY team_id, target_evidence_id, target_content_hash
 			)
 			SELECT eligible.fragment_id::text,
+			       eligible.owner_profile_id,
 			       eligible.space_id::text,
 			       eligible.space_generation,
 			       eligible.content_hash,
@@ -173,7 +172,7 @@ func (r *SemanticRepositoryImpl) ListEvidenceDiscoveryTargets(
 			  ON attempt.team_id = eligible.team_id
 			 AND attempt.target_evidence_id = eligible.fragment_id
 			 AND attempt.target_content_hash = eligible.content_hash
-			GROUP BY eligible.fragment_id, eligible.space_id, eligible.space_generation,
+			GROUP BY eligible.fragment_id, eligible.owner_profile_id, eligible.space_id, eligible.space_generation,
 			         eligible.content_hash, eligible.source_id, eligible.source_revision_id,
 			         eligible.source_group_key, eligible.authority, eligible.content,
 			         eligible.span_end, eligible.created_at
@@ -206,6 +205,7 @@ func (r *SemanticRepositoryImpl) ListEvidenceDiscoveryTargets(
 				var lastEvaluated sql.NullTime
 				if err := rows.Scan(
 					&target.FragmentID,
+					&target.OwnerProfileID,
 					&target.SpaceID,
 					&target.SpaceGeneration,
 					&target.ContentHash,
@@ -254,6 +254,10 @@ func (r *SemanticRepositoryImpl) ListEvidenceDiscoveryTargets(
 				if err != nil {
 					return err
 				}
+				predicates, err := listEvidenceDiscoveryPredicates(ctx, tx, teamID, target, allContexts, nodes, 100)
+				if err != nil {
+					return err
+				}
 				result = append(result, EvidenceDiscoveryTargetInput{
 					Target: target, Contexts: allContexts,
 					Nodes: nodes, AllowedPredicates: predicates,
@@ -291,9 +295,9 @@ func (r *SemanticRepositoryImpl) LoadEvidenceDiscoveryRunTotals(
 	}
 	var totals EvidenceDiscoveryRunTotals
 	err := r.withDreamWriteTx(ctx, teamID, "", true, func(tx *gorm.DB) error {
-		return tx.WithContext(ctx).Raw(`
+		if err := tx.WithContext(ctx).Raw(`
 			SELECT COUNT(*)::int,
-			       COUNT(DISTINCT target_evidence_id)::int,
+			       COUNT(DISTINCT (target_evidence_id, target_content_hash))::int,
 			       COALESCE(SUM(created_hypotheses), 0)::int,
 			       COALESCE(SUM(rejected_proposals), 0)::int,
 			       COALESCE(SUM(provider_proposals), 0)::int,
@@ -311,7 +315,27 @@ func (r *SemanticRepositoryImpl) LoadEvidenceDiscoveryRunTotals(
 			&totals.ProviderTurns,
 			&totals.ProviderInputTokens,
 			&totals.ProviderOutputTokens,
-		)
+		); err != nil {
+			return err
+		}
+		rows, err := tx.WithContext(ctx).Raw(`
+			SELECT DISTINCT target_evidence_id::text || ':' || target_content_hash
+			FROM dream_evidence_target_evaluations
+			WHERE team_id = ?::uuid AND run_id = ?::uuid
+			ORDER BY 1
+		`, teamID, runID).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var key string
+			if err := rows.Scan(&key); err != nil {
+				return err
+			}
+			totals.TargetKeys = append(totals.TargetKeys, key)
+		}
+		return rows.Err()
 	})
 	if err != nil {
 		return EvidenceDiscoveryRunTotals{}, fmt.Errorf("dream: load evidence discovery run totals: %w", err)
@@ -394,28 +418,69 @@ func listEvidenceDiscoveryNodes(
 	return nodes, rows.Err()
 }
 
-func listEvidenceDiscoveryPredicates(ctx context.Context, tx *gorm.DB, teamID string, limit int) ([]DreamTargetPredicate, error) {
+func listEvidenceDiscoveryPredicates(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	target EvidenceTarget,
+	contexts []EvidenceContext,
+	nodes []EvidenceNode,
+	limit int,
+) ([]DreamTargetPredicate, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	if limit > 100 {
 		limit = 100
 	}
+	evidenceText := make([]string, 0, len(contexts)+1)
+	evidenceText = append(evidenceText, target.Content)
+	for _, context := range contexts {
+		evidenceText = append(evidenceText, context.Content)
+	}
+	nodeKinds := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		nodeKinds = append(nodeKinds, node.Kind)
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
-		       relationship_kind, current_cardinality
-		FROM (
+		WITH predicate_versions AS (
 			SELECT DISTINCT ON (predicate_key)
-			       predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
+			       predicate_key, version, aliases, allowed_subject_kinds, allowed_object_kinds,
 			       relationship_kind, current_cardinality
 			FROM team_predicate_definitions
 			WHERE team_id = ?::uuid
 			  AND lifecycle_state = 'active'
 			ORDER BY predicate_key, version DESC
-		) predicates
-		ORDER BY predicate_key, version
+		), evidence_text(content) AS (
+			SELECT lower(content) FROM unnest(?::text[]) AS item(content)
+		), node_kinds(kind) AS (
+			SELECT lower(kind) FROM unnest(?::text[]) AS item(kind)
+		)
+		SELECT predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
+		       relationship_kind, current_cardinality
+		FROM predicate_versions predicate
+		ORDER BY
+			CASE WHEN EXISTS (
+				SELECT 1 FROM unnest(predicate.allowed_subject_kinds) kind
+				WHERE lower(kind) IN (SELECT node_kinds.kind FROM node_kinds)
+			) AND EXISTS (
+				SELECT 1 FROM unnest(predicate.allowed_object_kinds) kind
+				WHERE lower(kind) IN (SELECT node_kinds.kind FROM node_kinds)
+			) THEN 0 ELSE 1 END,
+			CASE WHEN EXISTS (
+				SELECT 1
+				FROM evidence_text
+				WHERE strpos(content, lower(predicate.predicate_key)) > 0
+				   OR strpos(content, replace(lower(predicate.predicate_key), '_', ' ')) > 0
+				   OR EXISTS (
+					SELECT 1 FROM unnest(predicate.aliases) alias
+					WHERE strpos(content, lower(alias)) > 0
+					   OR strpos(content, replace(lower(alias), '_', ' ')) > 0
+				   )
+			) THEN 0 ELSE 1 END,
+			predicate_key, predicate.version
 		LIMIT ?
-	`, teamID, limit).Rows()
+	`, teamID, pq.Array(evidenceText), pq.Array(nodeKinds), limit).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -602,6 +667,9 @@ func (r *SemanticRepositoryImpl) PersistEvidenceDiscoveryEvaluation(
 	if input.Target.FragmentID == "" || input.Target.EvidenceID != input.Target.FragmentID {
 		return DreamGenerationPersistResult{}, errors.New("target evidence identity is required")
 	}
+	if _, err := uuid.Parse(input.Target.OwnerProfileID); err != nil {
+		return DreamGenerationPersistResult{}, fmt.Errorf("target evidence owner is required: %w", err)
+	}
 	result := DreamGenerationPersistResult{}
 	err := r.withDreamWriteTx(ctx, input.TeamID, "", true, func(tx *gorm.DB) error {
 		if err := requireCurrentDreamCycleLease(ctx, tx, input.TeamID, input.RunID, input.LeaseToken); err != nil {
@@ -690,6 +758,7 @@ func (r *SemanticRepositoryImpl) PersistEvidenceDiscoveryEvaluation(
 			input.Proposals[index].TeamID = input.TeamID
 			input.Proposals[index].RunID = input.RunID
 			input.Proposals[index].CreatedByProfileID = ""
+			input.Proposals[index].SourceOwnerProfileIDs = []string{input.Target.OwnerProfileID}
 			input.Proposals[index].Lane = domain.DreamLaneEvidenceDiscovery
 			input.Proposals[index] = normalizeUpsertHypothesisInput(input.Proposals[index])
 			if err := validateEvidenceDiscoveryProposalInTx(ctx, tx, input.TeamID, input.Target.EvidenceID, input.Proposals[index]); err != nil {
@@ -757,6 +826,7 @@ func (r *SemanticRepositoryImpl) PersistEvidenceDiscoveryEvaluation(
 
 func validateEvidenceDiscoveryTargetInTx(ctx context.Context, tx *gorm.DB, teamID string, target EvidenceTarget) error {
 	var contentHash string
+	var ownerProfileID string
 	var spaceID string
 	var spaceGeneration int64
 	var sourceID, sourceRevisionID, sourceGroupKey, authority string
@@ -768,7 +838,7 @@ func validateEvidenceDiscoveryTargetInTx(ctx context.Context, tx *gorm.DB, teamI
 			WHERE security.team_id = ?::uuid
 			ORDER BY security.team_id, security.fragment_id, security.created_at DESC, security.security_event_id DESC
 		)
-		SELECT fragment.content_hash, fragment.space_id::text, fragment.space_generation,
+		SELECT fragment.content_hash, fragment.owner_profile_id::text, fragment.space_id::text, fragment.space_generation,
 		       COALESCE(fragment.source_id::text, ''), COALESCE(fragment.source_revision_id::text, ''),
 		       CASE
 		           WHEN fragment.source_id IS NOT NULL THEN 'source:' || fragment.source_id::text
@@ -828,7 +898,7 @@ func validateEvidenceDiscoveryTargetInTx(ctx context.Context, tx *gorm.DB, teamI
 		        AND security.decision IN ('pass', 'released')
 		  )
 		`, teamID, teamID, target.EvidenceID, target.ContentHash).Row().Scan(
-		&contentHash, &spaceID, &spaceGeneration, &sourceID, &sourceRevisionID, &sourceGroupKey, &authority,
+		&contentHash, &ownerProfileID, &spaceID, &spaceGeneration, &sourceID, &sourceRevisionID, &sourceGroupKey, &authority,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrDreamSourceStale
@@ -836,7 +906,7 @@ func validateEvidenceDiscoveryTargetInTx(ctx context.Context, tx *gorm.DB, teamI
 	if err != nil {
 		return err
 	}
-	if contentHash != target.ContentHash || spaceID != target.SpaceID || spaceGeneration != target.SpaceGeneration ||
+	if contentHash != target.ContentHash || ownerProfileID != target.OwnerProfileID || spaceID != target.SpaceID || spaceGeneration != target.SpaceGeneration ||
 		sourceID != target.SourceID || sourceRevisionID != target.SourceRevisionID ||
 		sourceGroupKey != target.SourceGroupKey || authority != target.Authority {
 		return ErrDreamSourceStale

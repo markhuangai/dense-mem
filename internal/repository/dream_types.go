@@ -309,6 +309,7 @@ type ListHypothesesInput struct {
 type EvidenceTarget struct {
 	EvidenceID       string
 	FragmentID       string
+	OwnerProfileID   string
 	SpaceID          string
 	SpaceGeneration  int64
 	ContentHash      string
@@ -401,6 +402,7 @@ type EvidenceDiscoveryEvaluationInput struct {
 
 type EvidenceDiscoveryRunTotals struct {
 	TargetCount          int
+	TargetKeys           []string
 	Evaluated            int
 	Created              int
 	Rejected             int

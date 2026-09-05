@@ -532,6 +532,7 @@ func (r *SemanticRepositoryImpl) UpdateHypothesisStatus(
 			  AND space_id = dense_mem_team_shared_space(team_id)
 			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND canonical_hypothesis_id IS NULL
+			  AND (lane <> 'evidence_discovery' OR ?::uuid = ANY(source_owner_profile_ids))
 			  AND hypothesis_id = COALESCE((
 			      SELECT canonical_hypothesis_id
 			      FROM hypotheses
@@ -540,8 +541,8 @@ func (r *SemanticRepositoryImpl) UpdateHypothesisStatus(
 				        AND space_generation = dense_mem_team_shared_generation(team_id)
 			        AND hypothesis_id = ?::uuid
 			  ), ?::uuid)
-		`), input.Status, input.InvalidatedReason, input.InvalidatedReason,
-			input.TeamID, input.TeamID, input.HypothesisID, input.HypothesisID).Rows()
+			`), input.Status, input.InvalidatedReason, input.InvalidatedReason,
+			input.TeamID, input.ActorProfileID, input.TeamID, input.HypothesisID, input.HypothesisID).Rows()
 		if err != nil {
 			return err
 		}
@@ -594,6 +595,7 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 			  AND space_id = dense_mem_team_shared_space(team_id)
 			  AND space_generation = dense_mem_team_shared_generation(team_id)
 			  AND canonical_hypothesis_id IS NULL
+			  AND (lane <> 'evidence_discovery' OR ?::uuid = ANY(source_owner_profile_ids))
 			  AND hypothesis_id = COALESCE((
 			      SELECT canonical_hypothesis_id
 			      FROM hypotheses
@@ -603,8 +605,8 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 			        AND hypothesis_id = ?::uuid
 			  ), ?::uuid)
 			  AND NOT (status = 'submitted' AND submitted_ingest_id IS NOT NULL)
-		`), input.SubmittedIngestID, input.InvalidatedReason, input.InvalidatedReason,
-			input.TeamID, input.TeamID, input.HypothesisID, input.HypothesisID).Rows()
+			`), input.SubmittedIngestID, input.InvalidatedReason, input.InvalidatedReason,
+			input.TeamID, input.ActorProfileID, input.TeamID, input.HypothesisID, input.HypothesisID).Rows()
 		if err != nil {
 			return err
 		}

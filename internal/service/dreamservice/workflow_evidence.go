@@ -157,20 +157,14 @@ func (s *service) runClaimedEvidenceCycle(
 	if s.deps.Store == nil || s.deps.EvidenceStore == nil || s.deps.EvidenceGenerator == nil {
 		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, 0, 0, 0, 0, 0, errors.New("evidence discovery store and provider are required"))
 	}
-	targets, err := s.deps.EvidenceStore.ListEvidenceDiscoveryTargets(ctx, teamID, evidenceDiscoveryTargetLimit, evidenceDiscoveryContextLimit)
-	if err != nil {
-		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, 0, 0, 0, 0, 0, err)
-	}
-	if len(targets) > evidenceDiscoveryTargetLimit {
-		targets = targets[:evidenceDiscoveryTargetLimit]
-	}
-	result.EvidenceTargets = max(len(targets), claimed.EvidenceTargets)
 	created, rejected, evaluated, providerProposals := claimed.CreatedHypotheses, claimed.RejectedHypotheses, claimed.EvaluatedEvidenceTargets, claimed.ProviderProposals
 	providerTurns, providerInputTokens, providerOutputTokens := claimed.ProviderTurns, claimed.ProviderInputTokens, claimed.ProviderOutputTokens
+	totals := repository.EvidenceDiscoveryRunTotals{}
 	if claimed.AttemptCount > 1 {
-		totals, totalsErr := s.deps.EvidenceStore.LoadEvidenceDiscoveryRunTotals(ctx, teamID, claimed.RunID)
+		var totalsErr error
+		totals, totalsErr = s.deps.EvidenceStore.LoadEvidenceDiscoveryRunTotals(ctx, teamID, claimed.RunID)
 		if totalsErr != nil {
-			return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, totalsErr)
+			return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, claimed.EvidenceTargets, totalsErr)
 		}
 		created = max(created, totals.Created)
 		rejected = max(rejected, totals.Rejected)
@@ -179,8 +173,16 @@ func (s *service) runClaimedEvidenceCycle(
 		providerTurns = max(providerTurns, totals.ProviderTurns)
 		providerInputTokens = max(providerInputTokens, totals.ProviderInputTokens)
 		providerOutputTokens = max(providerOutputTokens, totals.ProviderOutputTokens)
-		result.EvidenceTargets = max(result.EvidenceTargets, totals.TargetCount)
 	}
+	targets, err := s.deps.EvidenceStore.ListEvidenceDiscoveryTargets(ctx, teamID, evidenceDiscoveryTargetLimit, evidenceDiscoveryContextLimit)
+	if err != nil {
+		targetCount := max(claimed.EvidenceTargets, totals.TargetCount)
+		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, targetCount, err)
+	}
+	if len(targets) > evidenceDiscoveryTargetLimit {
+		targets = targets[:evidenceDiscoveryTargetLimit]
+	}
+	result.EvidenceTargets = evidenceDiscoveryTargetCount(claimed.EvidenceTargets, totals, targets)
 	result.CreatedDreams = created
 	result.RejectedDreams = rejected
 	result.EvaluatedEvidenceTargets = evaluated
@@ -331,6 +333,32 @@ func evidenceProviderFailureCanAbandon(err error) bool {
 		return providerErr.FailureClass == modelprovider.ProviderFailureClassRequestInvalid
 	}
 	return false
+}
+
+func evidenceDiscoveryTargetKey(target repository.EvidenceTarget) string {
+	return strings.TrimSpace(target.EvidenceID) + ":" + strings.TrimSpace(target.ContentHash)
+}
+
+func evidenceDiscoveryTargetCount(claimedCount int, totals repository.EvidenceDiscoveryRunTotals, targets []repository.EvidenceDiscoveryTargetInput) int {
+	keys := make(map[string]struct{}, len(totals.TargetKeys)+len(targets))
+	for _, key := range totals.TargetKeys {
+		if strings.TrimSpace(key) != "" {
+			keys[key] = struct{}{}
+		}
+	}
+	for _, target := range targets {
+		key := evidenceDiscoveryTargetKey(target.Target)
+		if key != ":" {
+			keys[key] = struct{}{}
+		}
+	}
+	count := len(keys)
+	count = max(count, totals.TargetCount)
+	count = max(count, claimedCount)
+	if count == 0 {
+		count = len(targets)
+	}
+	return count
 }
 
 func evidenceProviderFailure(err error) bool {
@@ -542,7 +570,7 @@ func evidenceProposalsFromGenerated(generated []GeneratedDream, target repositor
 			PredicateVersion: generatedDream.PredicateVersion, ObjectEntityID: generatedDream.ObjectEntityID,
 			ObjectValueID: generatedDream.ObjectValueID, GeneratorKind: "provider",
 			GeneratorVersion: firstNonEmpty(model, "dream-v3.evidence"), Lane: domain.DreamLaneEvidenceDiscovery,
-			SourceEvidenceIDs: evidenceIDs, EvidenceDerivations: derivations,
+			SourceEvidenceIDs: evidenceIDs, SourceOwnerProfileIDs: []string{target.OwnerProfileID}, EvidenceDerivations: derivations,
 			SourceRefs: []map[string]any{{"type": "evidence", "id": target.EvidenceID}},
 			Payload:    map[string]any{"what_if": strings.TrimSpace(generatedDream.WhatIf), "possible_outcome": strings.TrimSpace(generatedDream.PossibleOutcome)},
 		}
