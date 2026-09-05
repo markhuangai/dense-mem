@@ -9,6 +9,7 @@ const seedApiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
 const dreamStatement = requiredEnv("DENSE_MEM_E2E_DREAM_STATEMENT");
 const evidenceDreamStatement = requiredEnv("DENSE_MEM_E2E_EVIDENCE_DREAM_STATEMENT");
 const evidenceTargetContent = requiredEnv("DENSE_MEM_E2E_EVIDENCE_TARGET_CONTENT");
+const evidenceFailureTeamName = requiredEnv("DENSE_MEM_E2E_EVIDENCE_FAILURE_TEAM_NAME");
 const prometheusUrl = requiredEnv("DENSE_MEM_PROMETHEUS_URL").replace(/\/$/, "");
 const graphAnchorEntityId = process.env.DENSE_MEM_E2E_GRAPH_ANCHOR_ENTITY_ID ?? "";
 const graphOriginalObjectEntityId = process.env.DENSE_MEM_E2E_GRAPH_ORIGINAL_OBJECT_ENTITY_ID ?? "";
@@ -180,14 +181,10 @@ test("control panel renders evidence-discovery citations and lane output", async
   await expect(evidenceRun).toContainText("Evidence discovery stored");
 });
 
-test("user portal surfaces an adverse evidence-discovery run", async ({ page }) => {
-  await openUserPortal(page, seedApiKey);
-  await page.getByRole("button", { name: "Dreams" }).click();
-
-  const dreamRow = page.locator(".dreams-table tbody tr").filter({ hasText: evidenceDreamStatement });
-  await expect(dreamRow).toBeVisible();
-  await dreamRow.getByRole("button", { name: `Evidence used for ${evidenceDreamStatement}` }).click();
-  await expect(page.getByRole("tooltip").filter({ hasText: evidenceTargetContent })).toBeVisible();
+test("control panel surfaces an adverse evidence-discovery run", async ({ page }) => {
+  await openControlPanel(page);
+  await page.getByRole("button", { name: new RegExp(escapeRegExp(evidenceFailureTeamName)) }).click();
+  await page.getByRole("button", { name: /team dreams/i }).click();
 
   const failedRun = page.locator(".dream-runs-table tbody tr").filter({ hasText: "Evidence discovery" }).filter({ hasText: "failed" });
   await expect(failedRun).toHaveCount(1);

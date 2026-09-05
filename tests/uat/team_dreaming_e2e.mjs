@@ -127,6 +127,7 @@ console.log(JSON.stringify({
   evidence_target_id: evidenceSeeded.targetID,
   evidence_target_content: evidenceSeeded.targetContent,
   evidence_failure_run_id: evidenceFailureRun.run_id,
+  evidence_failure_team_name: adverseTeam.teamName,
 }, null, 2));
 
 function formatDate(value) {
@@ -503,9 +504,10 @@ function seedEvidenceDiscoveryInputs(ownerProfileID, targetTeamID = teamID, targ
 }
 
 async function createAdverseEvidenceTeam() {
+  const teamName = `Hourly evidence adverse ${Date.now()}`;
   const team = await controlJSON("/teams", {
     method: "POST",
-    body: JSON.stringify({ name: `Hourly evidence adverse ${Date.now()}`, description: "hourly evidence provider failure UAT" }),
+    body: JSON.stringify({ name: teamName, description: "hourly evidence provider failure UAT" }),
   });
   const targetTeamID = team.data?.id;
   if (typeof targetTeamID !== "string" || !targetTeamID) {
@@ -519,7 +521,7 @@ async function createAdverseEvidenceTeam() {
   if (typeof ownerProfileID !== "string" || !ownerProfileID) {
     throw new Error("adverse evidence credential did not return an owner profile id");
   }
-  return { teamID: targetTeamID, ownerProfileID };
+  return { teamID: targetTeamID, teamName, ownerProfileID };
 }
 
 async function createTeamCredential(name) {
