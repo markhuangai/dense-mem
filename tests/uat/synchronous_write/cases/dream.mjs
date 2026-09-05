@@ -69,7 +69,15 @@ export async function run({ rpc, rawRPC, expect }) {
     name: "resolve_dream_feedback",
     arguments: { ...resolveArguments(scenarios.completed), decision: "confirm_false", evidence: [{ content: "Independent refuting evidence.", source_type: "manual" }] },
   });
-  expect(String(conflicting.error?.message || "").includes("dream not found"), "conflicting Dream confirmation must be rejected before Remember");
+  const conflictError = conflicting.result?.structuredContent || conflicting.error?.data;
+  expect(
+    (conflicting.result?.isError === true || Boolean(conflicting.error)) &&
+      conflictError?.code === "invalid_input" &&
+      conflictError?.reason_code === "reference_not_found" &&
+      conflictError?.next_action === "refresh_state" &&
+      conflictError?.retryable === false,
+    `conflicting Dream confirmation must return actionable not-found guidance before Remember: ${JSON.stringify(conflicting)}`,
+  );
   expect(hypothesisIngestCount(teamID, scenarios.completed.hypothesisID) === completedIngestCount, "conflicting Dream confirmation must not create a Remember ingest");
   expect(feedbackEventCount(teamID, scenarios.completed.hypothesisID) === completedFeedbackEvents, "conflicting Dream confirmation must not append a feedback event");
 
