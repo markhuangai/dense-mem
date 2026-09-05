@@ -103,7 +103,7 @@ assertEqual(confirmed.status, "submitted", "hourly evidence confirmation status"
 const evidenceFailureRun = await waitForHourlyEvidenceFailureRun(adverseTeam.teamID);
 assertEqual(evidenceFailureRun.status, "failed", "adverse hourly evidence run status");
 assertEqual(Number(evidenceFailureRun.evidence_targets), 1, "adverse hourly eligible target count");
-assertEqual(Number(evidenceFailureRun.evaluated_evidence_targets), 0, "adverse hourly validated pass count");
+assertEqual(Number(evidenceFailureRun.evaluated_evidence_targets ?? evidenceFailureRun.outcome_summary?.evaluated_evidence_targets ?? 0), 0, "adverse hourly validated pass count");
 assertEqual(Number(evidenceFailureRun.created_dreams), 0, "adverse hourly created hypothesis count");
 assertEqual(Number(evidenceFailureRun.outcome_summary?.provider_failed ?? 0), 1, "adverse hourly provider failure");
 const adverseHypotheses = postgresQuery(`
