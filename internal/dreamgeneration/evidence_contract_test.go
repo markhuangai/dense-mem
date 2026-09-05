@@ -81,13 +81,17 @@ func TestEvidenceDiscoveryProviderRepairsOneCompleteMalformedResponse(t *testing
 }
 
 func TestEvidenceDiscoveryProviderExhaustsMalformedResponsesWithoutPartialResult(t *testing.T) {
-	transport := &evidenceDiscoveryTransportStub{alwaysInvalid: true}
+	transport := &evidenceDiscoveryTransportStub{alwaysInvalid: true, promptTokens: 11, completionTokens: 7}
 	provider := NewProvider(transport, "dream-model", DefaultSemanticAssessmentLimits())
-	_, err := provider.GenerateEvidenceDiscoveries(context.Background(), evidenceDiscoveryTestRequest(t))
+	response, err := provider.GenerateEvidenceDiscoveries(context.Background(), evidenceDiscoveryTestRequest(t))
 	var malformed *modelprovider.MalformedResponseError
 	require.ErrorAs(t, err, &malformed)
 	require.Equal(t, "malformed_exhausted", malformed.FailureClass)
 	require.Equal(t, DreamGenerationMaxProviderTurns, malformed.Attempts)
+	require.Equal(t, DreamGenerationMaxProviderTurns, response.ProviderTurns)
+	require.Equal(t, DreamGenerationMaxProviderTurns*11, response.InputTokens)
+	require.Equal(t, DreamGenerationMaxProviderTurns*7, response.OutputTokens)
+	require.Empty(t, response.Proposals, "failed validation must not return partial proposals")
 }
 
 func TestEvidenceDiscoveryRequestPreservesExactWhitespaceAndConcreteNodeKinds(t *testing.T) {
@@ -333,9 +337,11 @@ func evidenceDiscoveryBoundaryRef(context EvidenceDiscoveryContext, offset int) 
 }
 
 type evidenceDiscoveryTransportStub struct {
-	requests       []modelprovider.StructuredRequest
-	alwaysInvalid  bool
-	completedCalls int
+	requests         []modelprovider.StructuredRequest
+	alwaysInvalid    bool
+	completedCalls   int
+	promptTokens     int
+	completionTokens int
 }
 
 func (s *evidenceDiscoveryTransportStub) Complete(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
@@ -348,9 +354,9 @@ func (s *evidenceDiscoveryTransportStub) Complete(_ context.Context, request mod
 		return modelprovider.StructuredResult{}, err
 	}
 	if s.alwaysInvalid || s.completedCalls == 1 {
-		return modelprovider.StructuredResult{Content: `{"request_id":"` + payload.RequestID + `","proposals":[{"subject_ref":"missing","predicate_ref":"predicate_uses","object_ref":"node_object","statement":"A may use B.","rationale":"reason","what_if":"what if","possible_outcome":"outcome","likelihood":0.5,"confidence":0.6,"derivations":[]}]}`}, nil
+		return modelprovider.StructuredResult{Content: `{"request_id":"` + payload.RequestID + `","proposals":[{"subject_ref":"missing","predicate_ref":"predicate_uses","object_ref":"node_object","statement":"A may use B.","rationale":"reason","what_if":"what if","possible_outcome":"outcome","likelihood":0.5,"confidence":0.6,"derivations":[]}]}`, PromptTokens: s.promptTokens, CompletionTokens: s.completionTokens}, nil
 	}
-	return modelprovider.StructuredResult{Content: validEvidenceDiscoveryResponseJSON(payload.RequestID)}, nil
+	return modelprovider.StructuredResult{Content: validEvidenceDiscoveryResponseJSON(payload.RequestID), PromptTokens: s.promptTokens, CompletionTokens: s.completionTokens}, nil
 }
 
 func validEvidenceDiscoveryResponseJSON(requestID string) string {

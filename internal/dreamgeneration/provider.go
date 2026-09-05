@@ -175,16 +175,21 @@ func (p *Provider) GenerateEvidenceDiscoveries(ctx context.Context, req Evidence
 	}
 	messages := []modelprovider.Message{{Role: "system", Content: evidenceDiscoverySystemPrompt}, {Role: "user", Content: string(payload)}}
 	inputTotal, outputTotal := 0, 0
+	responseWithUsage := func(turns int) EvidenceDiscoveryResponse {
+		return EvidenceDiscoveryResponse{
+			InputTokens: inputTotal, OutputTokens: outputTotal, ProviderTurns: turns,
+		}
+	}
 	for turn := 1; turn <= DreamGenerationMaxProviderTurns; turn++ {
 		inputTokens, err := messageTokens(messages, p.limits.Tokenizer)
 		if err != nil {
-			return EvidenceDiscoveryResponse{}, &modelprovider.ProviderError{
+			return responseWithUsage(turn - 1), &modelprovider.ProviderError{
 				Provider: "structured_dream", Message: "failed to count evidence discovery tokens",
 				Cause: err, FailureClass: modelprovider.ProviderFailureClassProviderUnavailable,
 			}
 		}
 		if inputTokens > p.limits.MaxInputTokens {
-			return EvidenceDiscoveryResponse{}, &modelprovider.MalformedResponseError{
+			return responseWithUsage(turn - 1), &modelprovider.MalformedResponseError{
 				Provider: "structured_dream", Message: "evidence discovery exceeds input token budget",
 				FailureClass: "input_budget", Attempts: turn - 1,
 			}
@@ -195,11 +200,11 @@ func (p *Provider) GenerateEvidenceDiscoveries(ctx context.Context, req Evidence
 			MaxInputTokens: p.limits.MaxInputTokens, MaxOutputTokens: p.limits.MaxOutputTokens,
 		})
 		if err != nil {
-			return EvidenceDiscoveryResponse{}, err
+			return responseWithUsage(turn - 1), err
 		}
 		outputTokens, err := assessor.CountTokens(result.Content, p.limits.Tokenizer)
 		if err != nil {
-			return EvidenceDiscoveryResponse{}, &modelprovider.ProviderError{
+			return responseWithUsage(turn), &modelprovider.ProviderError{
 				Provider: "structured_dream", Message: "failed to count evidence discovery output tokens",
 				Cause: err, FailureClass: modelprovider.ProviderFailureClassProviderUnavailable,
 			}
@@ -215,7 +220,7 @@ func (p *Provider) GenerateEvidenceDiscoveries(ctx context.Context, req Evidence
 		inputTotal += turnInputTokens
 		outputTotal += turnOutputTokens
 		if result.PromptTokens > p.limits.MaxInputTokens {
-			return EvidenceDiscoveryResponse{}, &modelprovider.MalformedResponseError{
+			return responseWithUsage(turn), &modelprovider.MalformedResponseError{
 				Provider: "structured_dream", Message: "evidence discovery provider reported input tokens beyond the configured limit",
 				FailureClass: "input_budget", Attempts: turn,
 			}
@@ -240,7 +245,7 @@ func (p *Provider) GenerateEvidenceDiscoveries(ctx context.Context, req Evidence
 			return response, nil
 		}
 		if turn == DreamGenerationMaxProviderTurns {
-			return EvidenceDiscoveryResponse{}, &modelprovider.MalformedResponseError{
+			return responseWithUsage(turn), &modelprovider.MalformedResponseError{
 				Provider: "structured_dream", Message: "evidence discovery response remained invalid after bounded correction",
 				FailureClass: "malformed_exhausted", Attempts: turn,
 			}
@@ -250,7 +255,7 @@ func (p *Provider) GenerateEvidenceDiscoveries(ctx context.Context, req Evidence
 			"instruction":       evidenceDiscoveryCorrectionInstruction,
 		})
 		if err != nil {
-			return EvidenceDiscoveryResponse{}, &modelprovider.ProviderError{
+			return responseWithUsage(turn), &modelprovider.ProviderError{
 				Provider: "structured_dream", Message: "failed to marshal evidence discovery correction",
 				Cause: err, FailureClass: modelprovider.ProviderFailureClassProviderUnavailable,
 			}
@@ -260,7 +265,7 @@ func (p *Provider) GenerateEvidenceDiscoveries(ctx context.Context, req Evidence
 			modelprovider.Message{Role: "user", Content: string(correction)},
 		)
 	}
-	return EvidenceDiscoveryResponse{}, &modelprovider.MalformedResponseError{
+	return responseWithUsage(DreamGenerationMaxProviderTurns), &modelprovider.MalformedResponseError{
 		Provider: "structured_dream", Message: "evidence discovery response remained invalid after bounded correction",
 		FailureClass: "malformed_exhausted", Attempts: DreamGenerationMaxProviderTurns,
 	}

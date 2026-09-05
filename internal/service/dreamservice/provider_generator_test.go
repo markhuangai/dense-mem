@@ -270,6 +270,27 @@ func TestEvidenceProviderGeneratorRejectsUnavailableAndInvalidProviderResponses(
 	require.Contains(t, err.Error(), "transport is unavailable")
 }
 
+func TestEvidenceProviderGeneratorRetainsProviderDiagnosticsOnError(t *testing.T) {
+	provider := &evidenceProviderGeneratorStub{
+		model: "provider",
+		response: dreamgeneration.EvidenceDiscoveryResponse{
+			ProviderTurns: 5, InputTokens: 55, OutputTokens: 35,
+		},
+		err: errors.New("malformed response"),
+	}
+	generator := &EvidenceProviderGenerator{provider: provider}
+
+	_, diagnostics, err := generator.GenerateEvidence(context.Background(), "team", EvidenceGenerationRequest{
+		Target:   repository.EvidenceTarget{EvidenceID: "target", FragmentID: "target", Content: "content"},
+		Contexts: []repository.EvidenceContext{{EvidenceID: "target", FragmentID: "target", Content: "content"}},
+	})
+
+	require.EqualError(t, err, "malformed response")
+	require.Equal(t, GenerationDiagnostics{
+		ProviderTurns: 5, ProviderInputTokens: 55, ProviderOutputTokens: 35,
+	}, diagnostics)
+}
+
 func TestEvidenceProviderMappingsCoverRecordAndReferenceVariants(t *testing.T) {
 	relationships := []repository.DreamInput{
 		{SubjectEntityID: "subject", SubjectName: "Subject", SubjectKind: "person", PredicateKey: "uses", ObjectEntityID: "object", ObjectName: "Object", ObjectKind: "project"},

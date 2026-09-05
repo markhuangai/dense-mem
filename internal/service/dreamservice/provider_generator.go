@@ -59,8 +59,14 @@ func (g *EvidenceProviderGenerator) GenerateEvidence(ctx context.Context, _ stri
 		return nil, GenerationDiagnostics{}, err
 	}
 	response, err := g.provider.GenerateEvidenceDiscoveries(ctx, request)
+	diagnostics := GenerationDiagnostics{
+		ProviderTurns:        response.ProviderTurns,
+		ProviderInputTokens:  response.InputTokens,
+		ProviderOutputTokens: response.OutputTokens,
+		ProviderProposals:    len(response.Proposals),
+	}
 	if err != nil {
-		return nil, GenerationDiagnostics{}, err
+		return nil, diagnostics, err
 	}
 	generated := make([]GeneratedDream, 0, len(response.Proposals))
 	for _, proposal := range response.Proposals {
@@ -69,12 +75,7 @@ func (g *EvidenceProviderGenerator) GenerateEvidence(ctx context.Context, _ stri
 			generated = append(generated, dream)
 		}
 	}
-	return generated, GenerationDiagnostics{
-		ProviderTurns:        response.ProviderTurns,
-		ProviderInputTokens:  response.InputTokens,
-		ProviderOutputTokens: response.OutputTokens,
-		ProviderProposals:    len(response.Proposals),
-	}, nil
+	return generated, diagnostics, nil
 }
 
 type evidenceProviderMappings struct {

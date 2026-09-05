@@ -55,7 +55,7 @@ func (s *service) cycleLease(scheduled bool) time.Duration {
 func (s *service) evidenceCycleLease() time.Duration {
 	lease := scheduledDreamCycleLease
 	if s.deps.ProviderCycleLease > 0 {
-		lease = s.deps.ProviderCycleLease * evidenceDiscoveryTargetLimit * evidenceDiscoveryPassLimit
+		lease = s.deps.ProviderCycleLease * evidenceDiscoveryTargetLimit * evidenceDiscoveryPassLimit * evidenceDiscoveryRegenerationLimit
 		if lease < scheduledDreamCycleLease {
 			lease = scheduledDreamCycleLease
 		}

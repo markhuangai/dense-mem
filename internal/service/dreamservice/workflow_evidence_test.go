@@ -939,6 +939,7 @@ type evidenceGeneratorStub struct {
 	generatedCalls     int
 	skipAdmission      bool
 	err                error
+	errorDiagnostics   GenerationDiagnostics
 	requests           []EvidenceGenerationRequest
 }
 
@@ -950,7 +951,7 @@ func (s *evidenceGeneratorStub) GenerateEvidence(ctx context.Context, _ string, 
 		}
 	}
 	if s.err != nil {
-		return nil, GenerationDiagnostics{}, s.err
+		return nil, s.errorDiagnostics, s.err
 	}
 	generated := append([]GeneratedDream(nil), s.generated...)
 	if s.generatedCalls < len(s.generatedResponses) {
