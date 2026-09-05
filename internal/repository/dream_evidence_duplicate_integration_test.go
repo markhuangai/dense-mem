@@ -53,6 +53,7 @@ func TestEvidenceDiscoveryEvaluationRejectsMixedDuplicateResponseAtomically(t *t
 		return UpsertHypothesisInput{
 			Statement: statement, Rationale: "The target excerpt names the supplied endpoints.",
 			SubjectEntityID: subject.EntityID, PredicateKey: "uses", PredicateVersion: 1, ObjectEntityID: objectID,
+			ContentHash:   sha256Hex(statement),
 			GeneratorKind: "provider", GeneratorVersion: "derivation-test", Lane: domain.DreamLaneEvidenceDiscovery,
 			SourceEvidenceIDs: []string{target.FragmentID}, EvidenceDerivations: []EvidenceDerivationSource{{
 				EvidenceID: target.FragmentID, FragmentID: target.FragmentID, SourceGroupKey: sourceGroupKey,
@@ -75,18 +76,22 @@ func TestEvidenceDiscoveryEvaluationRejectsMixedDuplicateResponseAtomically(t *t
 
 	err = semantic.WithEvidenceDiscoveryTargetLock(ctx, teamID, target.EvidenceID, target.ContentHash, func(attempt EvidenceDiscoveryAttempt) error {
 		require.Equal(t, 2, attempt.PassNumber)
+		novelProposal := proposal(novelObject.EntityID, "Dense-Mem may use Redis for durable memory.")
 		_, err := semantic.PersistEvidenceDiscoveryEvaluation(ctx, EvidenceDiscoveryEvaluationInput{
 			TeamID: teamID, RunID: run.RunID, LeaseToken: run.LeaseToken,
 			AttemptID: attempt.AttemptID, ReservationToken: attempt.ReservationToken, Target: target,
 			PassNumber: attempt.PassNumber, ProviderModel: "derivation-test-model", ProviderProposals: 2,
 			AcceptedProposals: 2, CreatedHypotheses: 2, Proposals: []UpsertHypothesisInput{
-				proposal(novelObject.EntityID, "Dense-Mem may use Redis for durable memory."),
+				novelProposal,
 				firstProposal,
 			},
 		})
 		return err
 	})
 	require.ErrorIs(t, err, ErrDreamExactHypothesisExists)
+	var duplicate *EvidenceDiscoveryDuplicateError
+	require.ErrorAs(t, err, &duplicate)
+	require.Equal(t, 1, duplicate.Index)
 	totals, err := semantic.LoadEvidenceDiscoveryRunTotals(ctx, teamID, run.RunID)
 	require.NoError(t, err)
 	require.Equal(t, 1, totals.Evaluated, "the mixed duplicate response must not persist a second evaluation")

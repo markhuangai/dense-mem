@@ -768,7 +768,7 @@ func (r *SemanticRepositoryImpl) PersistEvidenceDiscoveryEvaluation(
 			_ = record
 			if err != nil {
 				if errors.Is(err, ErrDreamExactRelationshipExists) || errors.Is(err, ErrDreamExactHypothesisExists) {
-					return fmt.Errorf("proposals[%d]: %w", index, err)
+					return &EvidenceDiscoveryDuplicateError{Index: index, Err: err}
 				}
 				return err
 			}

@@ -565,6 +565,45 @@ func TestClaimedEvidenceCycleRegeneratesAfterDuplicatePersistence(t *testing.T) 
 	require.Equal(t, 1, result.EvaluatedEvidenceTargets)
 }
 
+func TestClaimedEvidenceCycleAbandonsAfterPersistenceFailure(t *testing.T) {
+	teamID := uuid.NewString()
+	targetID := uuid.NewString()
+	target := repository.EvidenceDiscoveryTargetInput{Target: repository.EvidenceTarget{
+		EvidenceID: targetID, FragmentID: targetID, ContentHash: "hash", Content: "target", Authority: "primary",
+	}}
+	valid := GeneratedDream{
+		Hypothesis: "A may use B.", SubjectEntityID: "subject", PredicateKey: "uses", ObjectEntityID: "object",
+		EvidenceDerivations: []repository.EvidenceDerivationSource{{EvidenceID: targetID, FragmentID: targetID, SpanStart: 0, SpanEnd: 6, Quote: "target", Authority: "primary"}},
+	}
+	store := &evidenceRepositoryStub{targets: []repository.EvidenceDiscoveryTargetInput{target}, persistErr: errors.New("transient persistence failure")}
+	repo := &dreamRepositoryStub{}
+	service := &service{deps: Dependencies{
+		Store: repo, ScheduledStore: repo, EvidenceStore: store,
+		EvidenceGenerator: &evidenceGeneratorStub{model: "model", generated: []GeneratedDream{valid}},
+	}, now: time.Now}
+	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
+
+	_, err := service.runClaimedEvidenceCycle(context.Background(), teamID, EffectiveConfig{
+		DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5},
+	}, &RunCycleResult{}, claimed)
+	require.ErrorContains(t, err, "transient persistence failure")
+	require.Equal(t, 1, store.abandonCalls, "a dispatched attempt must be released after persistence failure")
+}
+
+func TestEvidenceDuplicateContextPrioritizesOffendingProposal(t *testing.T) {
+	proposals := make([]repository.UpsertHypothesisInput, 6)
+	for index := range proposals {
+		proposals[index] = repository.UpsertHypothesisInput{
+			SubjectEntityID: uuid.NewString(), PredicateKey: "uses", PredicateVersion: 1, ObjectEntityID: uuid.NewString(),
+		}
+	}
+	relationships, hypotheses := evidenceDuplicateContext(nil, nil, proposals, 5)
+	require.Empty(t, relationships)
+	require.Len(t, hypotheses, evidenceDiscoveryRelatedLimit)
+	require.Equal(t, proposals[5].SubjectEntityID, hypotheses[0].SubjectEntityID)
+	require.Equal(t, proposals[5].ObjectEntityID, hypotheses[0].ObjectEntityID)
+}
+
 func TestClaimedEvidenceCycleRefreshesDuplicateContextForSecondPass(t *testing.T) {
 	teamID := uuid.NewString()
 	targetID := uuid.NewString()

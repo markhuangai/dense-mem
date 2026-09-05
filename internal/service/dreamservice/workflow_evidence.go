@@ -280,11 +280,11 @@ func (s *service) runClaimedEvidenceCycle(
 							RejectedProposals: invalid, CreatedHypotheses: len(proposals), Proposals: proposals,
 						})
 						if persistErr != nil {
-							if evidencePersistenceDuplicate(persistErr) && regeneration+1 < evidenceDiscoveryRegenerationLimit {
-								request = evidenceRequestWithDuplicateContext(request, proposals)
-								continue
-							}
 							if evidencePersistenceDuplicate(persistErr) {
+								if regeneration+1 < evidenceDiscoveryRegenerationLimit {
+									request = evidenceRequestWithDuplicateContext(request, proposals, evidenceDuplicateProposalIndex(persistErr))
+									continue
+								}
 								duplicateErr := &modelprovider.MalformedResponseError{
 									Provider: providerModel, Message: "evidence discovery response duplicated an existing target",
 									FailureClass: "duplicate_exhausted", Attempts: regeneration + 1,
@@ -294,6 +294,10 @@ func (s *service) runClaimedEvidenceCycle(
 									return errors.Join(duplicateErr, abandonErr)
 								}
 								return duplicateErr
+							}
+							abandonErr := s.deps.EvidenceStore.AbandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
+							if abandonErr != nil {
+								return errors.Join(persistErr, abandonErr)
 							}
 							return persistErr
 						}
@@ -306,7 +310,7 @@ func (s *service) runClaimedEvidenceCycle(
 						continuePass = attempt.PassNumber == 1 && persisted.Created > 0
 						if continuePass {
 							target.RelatedRelationships, target.RelatedHypotheses = evidenceDuplicateContext(
-								target.RelatedRelationships, target.RelatedHypotheses, proposals,
+								target.RelatedRelationships, target.RelatedHypotheses, proposals, -1,
 							)
 						}
 						return nil
@@ -335,9 +339,10 @@ func (s *service) runClaimedEvidenceCycle(
 func evidenceRequestWithDuplicateContext(
 	request EvidenceGenerationRequest,
 	proposals []repository.UpsertHypothesisInput,
+	duplicateIndex int,
 ) EvidenceGenerationRequest {
 	request.RelatedRelationships, request.RelatedHypotheses = evidenceDuplicateContext(
-		request.RelatedRelationships, request.RelatedHypotheses, proposals,
+		request.RelatedRelationships, request.RelatedHypotheses, proposals, duplicateIndex,
 	)
 	return request
 }
@@ -346,6 +351,7 @@ func evidenceDuplicateContext(
 	relationships []repository.DreamInput,
 	existing []repository.HypothesisRecord,
 	proposals []repository.UpsertHypothesisInput,
+	duplicateIndex int,
 ) ([]repository.DreamInput, []repository.HypothesisRecord) {
 	result := make([]repository.HypothesisRecord, 0, min(evidenceDiscoveryRelatedLimit, len(existing)+len(proposals)))
 	seen := make(map[string]struct{}, len(existing)+len(proposals))
@@ -364,7 +370,17 @@ func evidenceDuplicateContext(
 			result = append(result, record)
 		}
 	}
-	for _, proposal := range proposals {
+	orderedProposals := make([]repository.UpsertHypothesisInput, 0, len(proposals))
+	if duplicateIndex >= 0 && duplicateIndex < len(proposals) {
+		orderedProposals = append(orderedProposals, proposals[duplicateIndex])
+	}
+	for index, proposal := range proposals {
+		if index == duplicateIndex {
+			continue
+		}
+		orderedProposals = append(orderedProposals, proposal)
+	}
+	for _, proposal := range orderedProposals {
 		add(repository.HypothesisRecord{
 			Status:                string(domain.DreamStatusProposed),
 			SubjectEntityID:       proposal.SubjectEntityID,
@@ -397,6 +413,14 @@ func evidenceDuplicateContext(
 		}
 	}
 	return selectedRelationships, result
+}
+
+func evidenceDuplicateProposalIndex(err error) int {
+	var duplicate *repository.EvidenceDiscoveryDuplicateError
+	if errors.As(err, &duplicate) {
+		return duplicate.Index
+	}
+	return -1
 }
 
 func evidencePersistenceDuplicate(err error) bool {
