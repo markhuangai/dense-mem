@@ -43,7 +43,7 @@ func TestHourlyEvidenceDreamsMigrationDownRejectsEvidenceCycleHistory(t *testing
 		return err
 	}))
 
-	require.Error(t, migrationDownTo(ctx, db, hourlyEvidenceDreamsMigrationBase))
+	require.ErrorContains(t, migrationDownTo(ctx, db, hourlyEvidenceDreamsMigrationBase), "cannot roll back hourly evidence Dreams: append-only history exists")
 	require.True(t, tableExists(t, ctx, db, "dream_evidence_target_attempts"))
 	require.True(t, tableExists(t, ctx, db, "dream_evidence_target_evaluations"))
 	require.True(t, tableExists(t, ctx, db, "hypothesis_evidence_derivation_sources"))

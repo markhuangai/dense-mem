@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS dream_evidence_target_evaluations (
     provider_turns INTEGER NOT NULL DEFAULT 0,
     provider_input_tokens INTEGER NOT NULL DEFAULT 0,
     provider_output_tokens INTEGER NOT NULL DEFAULT 0,
+    provider_proposals INTEGER NOT NULL DEFAULT 0,
     accepted_proposals INTEGER NOT NULL DEFAULT 0,
     rejected_proposals INTEGER NOT NULL DEFAULT 0,
     created_hypotheses INTEGER NOT NULL DEFAULT 0,
@@ -169,6 +170,7 @@ CREATE TABLE IF NOT EXISTS dream_evidence_target_evaluations (
     CONSTRAINT dream_evidence_target_evaluations_pass_check CHECK (pass_number IN (1, 2)),
     CONSTRAINT dream_evidence_target_evaluations_counts_check CHECK (
         provider_turns >= 0 AND provider_input_tokens >= 0 AND provider_output_tokens >= 0
+        AND provider_proposals >= 0
         AND accepted_proposals >= 0 AND rejected_proposals >= 0 AND created_hypotheses >= 0
     ),
     CONSTRAINT dream_evidence_target_evaluations_model_check CHECK (btrim(provider_model) <> ''),
@@ -242,7 +244,7 @@ CREATE TABLE IF NOT EXISTS hypothesis_evidence_derivation_sources (
     CONSTRAINT hypothesis_evidence_derivation_span_check CHECK (span_start >= 0 AND span_end > span_start),
     CONSTRAINT hypothesis_evidence_derivation_quote_check CHECK (btrim(quote) <> ''),
     CONSTRAINT hypothesis_evidence_derivation_authority_check CHECK (
-        authority IN ('authoritative', 'primary', 'secondary', 'inferred', 'unknown', 'derived')
+        authority IN ('authoritative', 'primary', 'secondary', 'inferred', 'unknown')
     ),
     CONSTRAINT hypothesis_evidence_derivation_unique UNIQUE (
         team_id, hypothesis_id, evidence_id, span_start, span_end

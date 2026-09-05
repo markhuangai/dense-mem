@@ -390,10 +390,24 @@ function wholeEvidenceRange(evidence) {
 }
 
 function fixtureFault(payload) {
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  const structuredInputs = [];
+  for (const message of messages) {
+    if (message?.role !== "user" || typeof message.content !== "string") continue;
+    try {
+      structuredInputs.push(JSON.parse(message.content));
+    } catch {
+      // Correction feedback is not a provider request.
+    }
+  }
   const input = assessmentInput(payload);
   const evidence = Array.isArray(input.evidence) ? input.evidence : [];
   const embeddingInputs = Array.isArray(payload.input) ? payload.input : [payload.input];
-  const serialized = [...evidence.map((item) => String(item?.content || "")), ...embeddingInputs.map((item) => String(item || ""))].join("\n");
+  const structuredContent = structuredInputs.flatMap((item) => [
+    ...(Array.isArray(item?.contexts) ? item.contexts.map((context) => context?.content) : []),
+    ...(Array.isArray(item?.evidence) ? item.evidence.map((item) => item?.content) : []),
+  ]);
+  const serialized = [...evidence.map((item) => String(item?.content || "")), ...structuredContent.map((item) => String(item || "")), ...embeddingInputs.map((item) => String(item || ""))].join("\n");
   const match = serialized.match(/\[fixture-fault:([a-z0-9_-]+)\]/i);
   return match?.[1] || "";
 }

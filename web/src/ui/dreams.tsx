@@ -30,6 +30,8 @@ type DreamRunPresentation = {
   outcome_summary?: Record<string, number>;
 };
 
+const EVIDENCE_PASSES_PER_TARGET = 2;
+
 export function DreamEvidenceSummary({ dream }: { dream: DreamEvidence }) {
   const derivations = dream.derivations ?? [];
   const evidenceDerivations = dream.evidence_derivations ?? [];
@@ -79,8 +81,8 @@ export function runOutcome(run: DreamRunPresentation): string {
     if (targets === 0) {
       return "No eligible evidence target";
     }
-    if (evaluated < targets) {
-      return `${evaluated} of ${targets} evidence targets evaluated`;
+    if (evaluated < targets * EVIDENCE_PASSES_PER_TARGET) {
+      return `${evaluated} of ${targets * EVIDENCE_PASSES_PER_TARGET} evidence target passes evaluated`;
     }
     if ((outcomes.provider_proposals ?? run.provider_proposals ?? 0) === 0) {
       return "Provider returned no supported relationship";

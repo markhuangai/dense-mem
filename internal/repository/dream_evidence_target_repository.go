@@ -18,6 +18,7 @@ import (
 // selection and per-target durable evaluation.
 type EvidenceDiscoveryRepository interface {
 	ListEvidenceDiscoveryTargets(context.Context, string, int, int) ([]EvidenceDiscoveryTargetInput, error)
+	LoadEvidenceDiscoveryRunTotals(context.Context, string, string) (EvidenceDiscoveryRunTotals, error)
 	PersistEvidenceDiscoveryEvaluation(context.Context, EvidenceDiscoveryEvaluationInput) (DreamGenerationPersistResult, error)
 	WithEvidenceDiscoveryTargetLock(context.Context, string, string, string, func(EvidenceDiscoveryAttempt) error) error
 	MarkEvidenceDiscoveryAttemptDispatched(context.Context, EvidenceDiscoveryAttemptValidationInput) error
@@ -53,10 +54,6 @@ func (r *SemanticRepositoryImpl) ListEvidenceDiscoveryTargets(
 	load := func() error {
 		result := []EvidenceDiscoveryTargetInput{}
 		err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
-			nodes, err := listEvidenceDiscoveryNodes(ctx, tx, teamID, 100)
-			if err != nil {
-				return err
-			}
 			predicates, err := listEvidenceDiscoveryPredicates(ctx, tx, teamID, 100)
 			if err != nil {
 				return err
@@ -99,7 +96,7 @@ func (r *SemanticRepositoryImpl) ListEvidenceDiscoveryTargets(
 				 AND document.source_version = 1
 				 AND document.search_state = 'current'
 				 AND document.embedding IS NOT NULL
-				 AND document.document_hash = fragment.content_hash
+				 AND document.document_hash = regexp_replace(fragment.content_hash, '^sha256:', '')
 				LEFT JOIN evidence_sources source
 				  ON source.team_id = fragment.team_id
 				 AND source.source_id = fragment.source_id
@@ -253,6 +250,10 @@ func (r *SemanticRepositoryImpl) ListEvidenceDiscoveryTargets(
 					Content: target.Content,
 				})
 				allContexts = append(allContexts, contexts...)
+				nodes, err := listEvidenceDiscoveryNodes(ctx, tx, teamID, target, allContexts, 100)
+				if err != nil {
+					return err
+				}
 				result = append(result, EvidenceDiscoveryTargetInput{
 					Target: target, Contexts: allContexts,
 					Nodes: nodes, AllowedPredicates: predicates,
@@ -275,16 +276,70 @@ func (r *SemanticRepositoryImpl) ListEvidenceDiscoveryTargets(
 	return loadedEvidenceDiscoveryTargets, nil
 }
 
-func listEvidenceDiscoveryNodes(ctx context.Context, tx *gorm.DB, teamID string, limit int) ([]EvidenceNode, error) {
+func (r *SemanticRepositoryImpl) LoadEvidenceDiscoveryRunTotals(
+	ctx context.Context,
+	teamID string,
+	runID string,
+) (EvidenceDiscoveryRunTotals, error) {
+	teamID = strings.TrimSpace(teamID)
+	runID = strings.TrimSpace(runID)
+	if _, err := uuid.Parse(teamID); err != nil {
+		return EvidenceDiscoveryRunTotals{}, fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(runID); err != nil {
+		return EvidenceDiscoveryRunTotals{}, fmt.Errorf("run_id is required: %w", err)
+	}
+	var totals EvidenceDiscoveryRunTotals
+	err := r.withDreamWriteTx(ctx, teamID, "", true, func(tx *gorm.DB) error {
+		return tx.WithContext(ctx).Raw(`
+			SELECT COUNT(*)::int,
+			       COUNT(DISTINCT target_evidence_id)::int,
+			       COALESCE(SUM(created_hypotheses), 0)::int,
+			       COALESCE(SUM(rejected_proposals), 0)::int,
+			       COALESCE(SUM(provider_proposals), 0)::int,
+			       COALESCE(SUM(provider_turns), 0)::int,
+			       COALESCE(SUM(provider_input_tokens), 0)::int,
+			       COALESCE(SUM(provider_output_tokens), 0)::int
+			FROM dream_evidence_target_evaluations
+			WHERE team_id = ?::uuid AND run_id = ?::uuid
+		`, teamID, runID).Row().Scan(
+			&totals.Evaluated,
+			&totals.TargetCount,
+			&totals.Created,
+			&totals.Rejected,
+			&totals.ProviderProposals,
+			&totals.ProviderTurns,
+			&totals.ProviderInputTokens,
+			&totals.ProviderOutputTokens,
+		)
+	})
+	if err != nil {
+		return EvidenceDiscoveryRunTotals{}, fmt.Errorf("dream: load evidence discovery run totals: %w", err)
+	}
+	return totals, nil
+}
+
+func listEvidenceDiscoveryNodes(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	target EvidenceTarget,
+	contexts []EvidenceContext,
+	limit int,
+) ([]EvidenceNode, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	if limit > 100 {
 		limit = 100
 	}
+	evidenceText := make([]string, 0, len(contexts)+1)
+	evidenceText = append(evidenceText, target.Content)
+	for _, context := range contexts {
+		evidenceText = append(evidenceText, context.Content)
+	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT node.id, node.display, node.kind
-		FROM (
+		WITH node AS (
 			SELECT entity.entity_id::text AS id,
 			       COALESCE(name.display_name, '') AS display,
 			       entity.entity_kind AS kind,
@@ -308,10 +363,22 @@ func listEvidenceDiscoveryNodes(ctx context.Context, tx *gorm.DB, teamID string,
 			WHERE value.team_id = ?::uuid
 			  AND value.space_id = dense_mem_team_shared_space(value.team_id)
 			  AND value.space_generation = dense_mem_team_shared_generation(value.team_id)
-		) node
-		ORDER BY node.created_at, node.id
+		), evidence_text AS (
+			SELECT unnest(?::text[]) AS content
+		)
+		SELECT node.id, node.display, node.kind
+		FROM node
+		ORDER BY CASE
+			WHEN btrim(node.display) <> '' AND EXISTS (
+				SELECT 1
+				FROM evidence_text
+				WHERE strpos(lower(evidence_text.content), lower(node.display)) > 0
+			) THEN 0
+			ELSE 1
+		END,
+		node.created_at, node.id
 		LIMIT ?
-	`, teamID, teamID, limit).Rows()
+	`, teamID, teamID, pq.Array(evidenceText), limit).Rows()
 	if err != nil {
 		return nil, err
 	}
@@ -417,7 +484,7 @@ func listEvidenceDiscoveryContexts(
 		 AND document.source_version = 1
 		 AND document.search_state = 'current'
 		 AND document.embedding IS NOT NULL
-		 AND document.document_hash = fragment.content_hash
+		 AND document.document_hash = regexp_replace(fragment.content_hash, '^sha256:', '')
 		CROSS JOIN target_document target_doc
 		LEFT JOIN evidence_sources source
 		  ON source.team_id = fragment.team_id
@@ -526,7 +593,7 @@ func (r *SemanticRepositoryImpl) PersistEvidenceDiscoveryEvaluation(
 	if input.ProviderModel == "" {
 		return DreamGenerationPersistResult{}, errors.New("provider_model is required")
 	}
-	if input.ProviderTurns < 0 || input.ProviderInputTokens < 0 || input.ProviderOutputTokens < 0 {
+	if input.ProviderTurns < 0 || input.ProviderInputTokens < 0 || input.ProviderOutputTokens < 0 || input.ProviderProposals < 0 {
 		return DreamGenerationPersistResult{}, errors.New("provider diagnostics must not be negative")
 	}
 	if input.AcceptedProposals < 0 || input.RejectedProposals < 0 || input.CreatedHypotheses < 0 {
@@ -644,15 +711,15 @@ func (r *SemanticRepositoryImpl) PersistEvidenceDiscoveryEvaluation(
 		if err := tx.WithContext(ctx).Exec(`
 			INSERT INTO dream_evidence_target_evaluations (
 			    team_id, run_id, space_id, space_generation, target_evidence_id,
-			    target_content_hash, pass_number, provider_model, provider_turns,
-			    provider_input_tokens, provider_output_tokens, accepted_proposals,
-			    rejected_proposals, created_hypotheses
+				target_content_hash, pass_number, provider_model, provider_turns,
+				provider_input_tokens, provider_output_tokens, provider_proposals, accepted_proposals,
+				rejected_proposals, created_hypotheses
 			)
-			VALUES (?, ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, input.TeamID, input.RunID, input.Target.SpaceID, input.Target.SpaceGeneration,
 			input.Target.EvidenceID, input.Target.ContentHash, input.PassNumber, input.ProviderModel,
 			input.ProviderTurns, input.ProviderInputTokens, input.ProviderOutputTokens,
-			len(input.Proposals), result.Rejected, result.Created).Error; err != nil {
+			input.ProviderProposals, len(input.Proposals), input.RejectedProposals+result.Rejected, result.Created).Error; err != nil {
 			return err
 		}
 		updateAttempt := tx.WithContext(ctx).Exec(`
@@ -727,7 +794,7 @@ func validateEvidenceDiscoveryTargetInTx(ctx context.Context, tx *gorm.DB, teamI
 		 AND document.source_version = 1
 		 AND document.search_state = 'current'
 		 AND document.embedding IS NOT NULL
-		 AND document.document_hash = fragment.content_hash
+		 AND document.document_hash = regexp_replace(fragment.content_hash, '^sha256:', '')
 		WHERE fragment.team_id = ?::uuid
 		  AND team.status = 'active'
 		  AND team.deleted_at IS NULL

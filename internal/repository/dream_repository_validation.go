@@ -374,6 +374,9 @@ func validateUpsertHypothesisInput(input UpsertHypothesisInput, system bool) err
 					return fmt.Errorf("evidence_derivations[%d].source_revision_id is invalid: %w", index, err)
 				}
 			}
+			if !domain.Authority(derivation.Authority).IsValid() {
+				return fmt.Errorf("evidence_derivations[%d].authority is unsupported", index)
+			}
 			if derivation.SourceGroupKey == "" || derivation.Quote == "" || derivation.SpanStart < 0 || derivation.SpanEnd <= derivation.SpanStart {
 				return fmt.Errorf("evidence_derivations[%d] is incomplete", index)
 			}

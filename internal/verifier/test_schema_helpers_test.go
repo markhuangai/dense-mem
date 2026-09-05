@@ -22,6 +22,22 @@ func assertClosedProviderObjects(t *testing.T, schema map[string]any, path strin
 	if items, ok := schema["items"].(map[string]any); ok {
 		assertClosedProviderObjects(t, items, path+"[]")
 	}
+	if variants, ok := schema["anyOf"].([]any); ok {
+		for i, raw := range variants {
+			if child, ok := raw.(map[string]any); ok {
+				assertClosedProviderObjects(t, child, fmt.Sprintf("%s.anyOf[%d]", path, i))
+			}
+		}
+	}
+}
+
+func TestAssertClosedProviderObjectsTraversesAnyOf(t *testing.T) {
+	assertClosedProviderObjects(t, map[string]any{
+		"anyOf": []any{map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+		}},
+	}, "response")
 }
 
 func assertOpenAIStrictSchemaSubset(t *testing.T, schema map[string]any, path string) {

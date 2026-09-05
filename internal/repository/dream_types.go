@@ -392,10 +392,22 @@ type EvidenceDiscoveryEvaluationInput struct {
 	ProviderTurns        int
 	ProviderInputTokens  int
 	ProviderOutputTokens int
+	ProviderProposals    int
 	AcceptedProposals    int
 	RejectedProposals    int
 	CreatedHypotheses    int
 	Proposals            []UpsertHypothesisInput
+}
+
+type EvidenceDiscoveryRunTotals struct {
+	TargetCount          int
+	Evaluated            int
+	Created              int
+	Rejected             int
+	ProviderProposals    int
+	ProviderTurns        int
+	ProviderInputTokens  int
+	ProviderOutputTokens int
 }
 
 type GetHypothesisInput struct {

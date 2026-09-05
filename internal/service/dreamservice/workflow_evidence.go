@@ -40,9 +40,6 @@ func (s *service) runScheduledEvidenceCycle(ctx context.Context, teamID string, 
 		return nil, err
 	}
 	windowAt = windowAt.UTC()
-	if windowAt.Minute() != 0 {
-		return &RunCycleResult{TeamID: teamID, RunDate: windowAt.Format("2006-01-02"), ScheduledFor: windowAt, Lane: domain.DreamLaneEvidenceDiscovery, Status: "skipped"}, nil
-	}
 	windowAt = windowAt.Truncate(time.Hour)
 	result := &RunCycleResult{
 		TeamID: teamID, RunDate: windowAt.Format("2006-01-02"),
@@ -167,7 +164,30 @@ func (s *service) runClaimedEvidenceCycle(
 	if len(targets) > evidenceDiscoveryTargetLimit {
 		targets = targets[:evidenceDiscoveryTargetLimit]
 	}
-	result.EvidenceTargets = len(targets)
+	result.EvidenceTargets = max(len(targets), claimed.EvidenceTargets)
+	created, rejected, evaluated, providerProposals := claimed.CreatedHypotheses, claimed.RejectedHypotheses, claimed.EvaluatedEvidenceTargets, claimed.ProviderProposals
+	providerTurns, providerInputTokens, providerOutputTokens := claimed.ProviderTurns, claimed.ProviderInputTokens, claimed.ProviderOutputTokens
+	if claimed.AttemptCount > 1 {
+		totals, totalsErr := s.deps.EvidenceStore.LoadEvidenceDiscoveryRunTotals(ctx, teamID, claimed.RunID)
+		if totalsErr != nil {
+			return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, totalsErr)
+		}
+		created = max(created, totals.Created)
+		rejected = max(rejected, totals.Rejected)
+		evaluated = max(evaluated, totals.Evaluated)
+		providerProposals = max(providerProposals, totals.ProviderProposals)
+		providerTurns = max(providerTurns, totals.ProviderTurns)
+		providerInputTokens = max(providerInputTokens, totals.ProviderInputTokens)
+		providerOutputTokens = max(providerOutputTokens, totals.ProviderOutputTokens)
+		result.EvidenceTargets = max(result.EvidenceTargets, totals.TargetCount)
+	}
+	result.CreatedDreams = created
+	result.RejectedDreams = rejected
+	result.EvaluatedEvidenceTargets = evaluated
+	result.ProviderTurns = providerTurns
+	result.ProviderInputTokens = providerInputTokens
+	result.ProviderOutputTokens = providerOutputTokens
+	result.ProviderProposals = providerProposals
 	// Related records are context only. They are read under the same team
 	// boundary and never become evidence derivations.
 	relationships, relationshipErr := s.deps.Store.ListDreamInputs(ctx, repository.DreamInputListInput{TeamID: teamID, Limit: 500})
@@ -175,7 +195,7 @@ func (s *service) runClaimedEvidenceCycle(
 		TeamID: teamID, Status: string(domain.DreamStatusProposed), Limit: 100,
 	})
 	if relationshipErr != nil || hypothesisErr != nil {
-		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, 0, 0, 0, 0, len(targets), errors.Join(relationshipErr, hypothesisErr))
+		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, errors.Join(relationshipErr, hypothesisErr))
 	}
 	// Reinforced hypotheses are also allowed as non-supporting duplicate
 	// context. Fetch them separately because the list contract accepts one
@@ -184,16 +204,15 @@ func (s *service) runClaimedEvidenceCycle(
 		TeamID: teamID, Status: string(domain.DreamStatusReinforced), Limit: 100,
 	})
 	if err != nil {
-		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, 0, 0, 0, 0, len(targets), err)
+		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, err)
 	}
 	hypotheses = append(hypotheses, reinforced...)
 
-	created, rejected, evaluated, providerProposals := 0, 0, 0, 0
-	providerTurns, providerInputTokens, providerOutputTokens := 0, 0, 0
 	providerModel := s.deps.EvidenceGenerator.Model()
 	if strings.TrimSpace(providerModel) == "" {
-		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, 0, 0, 0, 0, len(targets), ErrDreamProviderUnavailable)
+		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, ErrDreamProviderUnavailable)
 	}
+	result.ProviderModel = providerModel
 	for index := range targets {
 		target := targets[index]
 		target.RelatedRelationships = selectEvidenceRelatedRelationships(target.Target, relationships, evidenceDiscoveryRelatedLimit)
@@ -233,6 +252,10 @@ func (s *service) runClaimedEvidenceCycle(
 					providerInputTokens += diagnostics.ProviderInputTokens
 					providerOutputTokens += diagnostics.ProviderOutputTokens
 					providerProposals += diagnostics.ProviderProposals
+					result.ProviderTurns = providerTurns
+					result.ProviderInputTokens = providerInputTokens
+					result.ProviderOutputTokens = providerOutputTokens
+					result.ProviderProposals = providerProposals
 					if generateErr != nil {
 						if evidenceProviderFailureCanAbandon(generateErr) {
 							abandonErr := s.deps.EvidenceStore.AbandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
@@ -255,7 +278,8 @@ func (s *service) runClaimedEvidenceCycle(
 						AttemptID: attempt.AttemptID, ReservationToken: attempt.ReservationToken,
 						Target: target.Target, PassNumber: attempt.PassNumber, ProviderModel: providerModel,
 						ProviderTurns: diagnostics.ProviderTurns, ProviderInputTokens: diagnostics.ProviderInputTokens,
-						ProviderOutputTokens: diagnostics.ProviderOutputTokens, AcceptedProposals: len(proposals),
+						ProviderOutputTokens: diagnostics.ProviderOutputTokens, ProviderProposals: diagnostics.ProviderProposals,
+						AcceptedProposals: len(proposals),
 						RejectedProposals: invalid, CreatedHypotheses: len(proposals), Proposals: proposals,
 					})
 					if persistErr != nil {
@@ -271,28 +295,31 @@ func (s *service) runClaimedEvidenceCycle(
 				},
 			)
 			if targetErr != nil {
-				return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, len(targets), targetErr)
+				return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, targetErr)
 			}
 		}
 	}
-	result.ProviderModel = providerModel
 	result.ProviderTurns = providerTurns
 	result.ProviderInputTokens = providerInputTokens
 	result.ProviderOutputTokens = providerOutputTokens
 	result.ProviderProposals = providerProposals
 	result.EvaluatedEvidenceTargets = evaluated
 	result.OutcomeSummary = map[string]int{
-		"evidence_targets": len(targets), "evaluated_evidence_targets": evaluated,
+		"evidence_targets": result.EvidenceTargets, "evaluated_evidence_targets": evaluated,
 		"provider_proposals": providerProposals, "invalid_provider_proposals": rejected,
 		"created_hypotheses": created, "rejected_hypotheses": rejected,
 	}
-	return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, len(targets), nil)
+	return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, nil)
 }
 
 const dreamgenerationMaxEvidenceOutputs = 50
 
 func evidenceProviderFailureCanAbandon(err error) bool {
 	if errors.Is(err, ErrDreamProviderUnavailable) {
+		return true
+	}
+	var rateLimit *modelprovider.RateLimitError
+	if errors.As(err, &rateLimit) {
 		return true
 	}
 	var malformed *modelprovider.MalformedResponseError
@@ -304,6 +331,53 @@ func evidenceProviderFailureCanAbandon(err error) bool {
 		return providerErr.FailureClass == modelprovider.ProviderFailureClassRequestInvalid
 	}
 	return false
+}
+
+func evidenceProviderFailure(err error) bool {
+	if errors.Is(err, ErrDreamProviderUnavailable) || errors.Is(err, modelprovider.ErrVerifierProvider) ||
+		errors.Is(err, modelprovider.ErrVerifierRateLimit) || errors.Is(err, modelprovider.ErrVerifierMalformedResponse) ||
+		errors.Is(err, modelprovider.ErrVerifierTimeout) {
+		return true
+	}
+	var providerErr *modelprovider.ProviderError
+	var rateLimit *modelprovider.RateLimitError
+	var malformed *modelprovider.MalformedResponseError
+	return errors.As(err, &providerErr) || errors.As(err, &rateLimit) || errors.As(err, &malformed)
+}
+
+func evidenceCyclePublicError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, ErrDreamProviderUnavailable) {
+		return "evidence discovery provider unavailable"
+	}
+	if errors.Is(err, modelprovider.ErrVerifierRateLimit) {
+		return "evidence discovery provider rate limited"
+	}
+	if errors.Is(err, modelprovider.ErrVerifierMalformedResponse) {
+		return "evidence discovery provider response invalid"
+	}
+	if errors.Is(err, modelprovider.ErrVerifierTimeout) {
+		return "evidence discovery provider timed out"
+	}
+	var providerErr *modelprovider.ProviderError
+	if errors.As(err, &providerErr) {
+		switch providerErr.FailureClass {
+		case modelprovider.ProviderFailureClassRequestInvalid:
+			return "evidence discovery provider rejected the request"
+		case modelprovider.ProviderFailureClassRateLimited:
+			return "evidence discovery provider rate limited"
+		case modelprovider.ProviderFailureClassTimeout:
+			return "evidence discovery provider timed out"
+		case modelprovider.ProviderFailureClassProviderUnavailable, modelprovider.ProviderFailureClassTransport,
+			modelprovider.ProviderFailureClassProtocol, modelprovider.ProviderFailureClassHTTPClient,
+			modelprovider.ProviderFailureClassHTTPServer, modelprovider.ProviderFailureClassHTTPUnexpected:
+			return "evidence discovery provider unavailable"
+		}
+		return "evidence discovery provider failed"
+	}
+	return "evidence discovery cycle failed"
 }
 
 func (s *service) finishEvidenceCycle(
@@ -329,10 +403,13 @@ func (s *service) finishEvidenceCycle(
 	result.Status = "completed"
 	if runErr != nil {
 		result.Status = "error"
-		result.Error = translateDreamRepositoryError(runErr).Error()
+		result.Error = evidenceCyclePublicError(runErr)
 	}
 	if result.OutcomeSummary == nil {
 		result.OutcomeSummary = map[string]int{}
+	}
+	if evidenceProviderFailure(runErr) {
+		result.OutcomeSummary["provider_failed"] = 1
 	}
 	result.OutcomeSummary["evidence_targets"] = targetCount
 	result.OutcomeSummary["evaluated_evidence_targets"] = evaluated
@@ -354,7 +431,7 @@ func (s *service) finishEvidenceCycle(
 	if completeErr != nil {
 		result.Status = "error"
 		if runErr == nil {
-			result.Error = completeErr.Error()
+			result.Error = evidenceCyclePublicError(completeErr)
 		}
 		if runErr != nil {
 			return result, errors.Join(runErr, completeErr)

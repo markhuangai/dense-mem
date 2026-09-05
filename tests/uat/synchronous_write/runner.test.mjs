@@ -108,6 +108,9 @@ test("team-dreaming Compose UAT covers hourly evidence discovery and adverse eli
   assert.match(scenario, /evidence_targets/);
   assert.match(scenario, /quarantinedContent/);
   assert.match(scenario, /confirm_true/);
+  assert.match(scenario, /createAdverseEvidenceTeam/);
+  assert.match(scenario, /provider_failed/);
+  assert.match(scenario, /evidence search-document seed/);
 });
 
 function structuredRequest(schemaName, input) {

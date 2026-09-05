@@ -98,7 +98,7 @@ func TestScheduledEvidenceCycleSkipsInactiveTeamBeforeClaim(t *testing.T) {
 	require.Nil(t, recovered, "inactive teams must not claim evidence recovery")
 }
 
-func TestScheduledEvidenceCycleSkipsNonHourlyAndDisabledWindows(t *testing.T) {
+func TestScheduledEvidenceCycleAcceptsMidHourAndSkipsDisabledWindows(t *testing.T) {
 	teamID := uuid.NewString()
 	store := &dreamRepositoryStub{}
 	service := New(Dependencies{
@@ -108,9 +108,10 @@ func TestScheduledEvidenceCycleSkipsNonHourlyAndDisabledWindows(t *testing.T) {
 	}).(*service)
 	nonHourly, err := service.RunScheduledEvidenceCycle(context.Background(), teamID, time.Date(2026, 9, 4, 3, 1, 0, 0, time.UTC))
 	require.NoError(t, err)
-	require.Equal(t, "skipped", nonHourly.Status)
-	require.Empty(t, store.claimInput.TeamID)
+	require.Equal(t, "completed", nonHourly.Status)
+	require.Equal(t, teamID, store.claimInput.TeamID)
 
+	store.claimInput = repository.DreamCycleClaimInput{}
 	service.deps.AppConfig = cycleAppConfigStub{cfg: domain.DreamingRuntimeConfig{Enabled: false, MaxOutputs: 5, Timezone: "UTC", StartTimeLocal: "03:00"}}
 	disabled, err := service.RunScheduledEvidenceCycle(context.Background(), teamID, time.Date(2026, 9, 4, 3, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
@@ -188,16 +189,36 @@ func TestFinishEvidenceCycleSurfacesRunAndCompletionErrors(t *testing.T) {
 	now := time.Date(2026, 9, 4, 3, 0, 0, 0, time.UTC)
 	store := &dreamRepositoryStub{}
 	service := &service{deps: Dependencies{ScheduledStore: store}, now: func() time.Time { return now }}
-	result, err := service.finishEvidenceCycle(context.Background(), teamID, EffectiveConfig{}, &RunCycleResult{}, claimed, 0, 0, 0, 0, 0, errors.New("cycle failed"))
+	result, err := service.finishEvidenceCycle(context.Background(), teamID, EffectiveConfig{}, &RunCycleResult{}, claimed, 0, 0, 0, 0, 0, errors.New("pq: password=secret cycle failed"))
 	require.ErrorContains(t, err, "cycle failed")
 	require.Equal(t, "error", result.Status)
+	require.Equal(t, "evidence discovery cycle failed", result.Error)
+	require.Equal(t, result.Error, store.completeInput.Error)
+	require.NotContains(t, result.Error, "password")
 
 	store.completeErr = errors.New("completion failed")
 	result, err = service.finishEvidenceCycle(context.Background(), teamID, EffectiveConfig{}, &RunCycleResult{}, claimed, 0, 0, 0, 0, 0, nil)
 	require.ErrorContains(t, err, "completion failed")
 	require.Equal(t, "error", result.Status)
+	require.Equal(t, "evidence discovery cycle failed", result.Error)
 	_, err = service.finishEvidenceCycle(context.Background(), teamID, EffectiveConfig{}, &RunCycleResult{}, nil, 0, 0, 0, 0, 0, nil)
 	require.Error(t, err)
+}
+
+func TestFinishEvidenceCycleMarksProviderFailureWithoutLeakingDetails(t *testing.T) {
+	teamID := uuid.NewString()
+	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
+	store := &dreamRepositoryStub{}
+	service := &service{deps: Dependencies{ScheduledStore: store}, now: time.Now}
+	providerErr := &modelprovider.ProviderError{
+		Provider: "fixture", Message: "connection reset", FailureClass: modelprovider.ProviderFailureClassTransport,
+	}
+	result, err := service.finishEvidenceCycle(context.Background(), teamID, EffectiveConfig{}, &RunCycleResult{}, claimed, 0, 0, 0, 0, 1, providerErr)
+	require.ErrorIs(t, err, providerErr)
+	require.Equal(t, "evidence discovery provider unavailable", result.Error)
+	require.Equal(t, 1, result.OutcomeSummary["provider_failed"])
+	require.Equal(t, result.Error, store.completeInput.Error)
+	require.NotContains(t, result.Error, "connection reset")
 }
 
 func TestEvidenceRelatedSelectionUsesSharedFiveRecordCap(t *testing.T) {
@@ -262,6 +283,7 @@ func TestEvidenceProposalConversionRejectsInvalidAndKeepsDistinctEvidenceIDs(t *
 func TestEvidenceProviderFailureAbandonmentIsConservative(t *testing.T) {
 	require.True(t, evidenceProviderFailureCanAbandon(ErrDreamProviderUnavailable))
 	require.True(t, evidenceProviderFailureCanAbandon(&modelprovider.MalformedResponseError{}))
+	require.True(t, evidenceProviderFailureCanAbandon(&modelprovider.RateLimitError{}))
 	require.True(t, evidenceProviderFailureCanAbandon(&modelprovider.ProviderError{FailureClass: modelprovider.ProviderFailureClassRequestInvalid}))
 	require.False(t, evidenceProviderFailureCanAbandon(&modelprovider.ProviderError{FailureClass: modelprovider.ProviderFailureClassTimeout}))
 	require.False(t, evidenceProviderFailureCanAbandon(errors.New("ambiguous transport failure")))
@@ -379,6 +401,51 @@ func TestClaimedEvidenceCycleHandlesAttemptAndPersistenceFailures(t *testing.T) 
 	require.ErrorContains(t, err, "reinforced list failed")
 }
 
+func TestRecoveredEvidenceCyclePreservesPersistedEvaluationTotals(t *testing.T) {
+	teamID := uuid.NewString()
+	targetID := uuid.NewString()
+	target := repository.EvidenceDiscoveryTargetInput{Target: repository.EvidenceTarget{
+		EvidenceID: targetID, FragmentID: targetID, ContentHash: "hash", Content: "target", Authority: "primary",
+	}}
+	store := &evidenceRepositoryStub{
+		targets:       []repository.EvidenceDiscoveryTargetInput{target},
+		attemptPasses: map[string]int{targetID + ":hash": 1},
+		runTotals: repository.EvidenceDiscoveryRunTotals{
+			TargetCount: 1, Evaluated: 1, Created: 4, Rejected: 2, ProviderProposals: 3,
+			ProviderTurns: 2, ProviderInputTokens: 10, ProviderOutputTokens: 6,
+		},
+	}
+	repo := &dreamRepositoryStub{}
+	generator := &evidenceGeneratorStub{
+		model: "model",
+		generated: []GeneratedDream{{
+			Hypothesis: "A may use B.", SubjectEntityID: "subject", PredicateKey: "uses", ObjectEntityID: "object",
+			EvidenceDerivations: []repository.EvidenceDerivationSource{{EvidenceID: targetID, FragmentID: targetID, SpanStart: 0, SpanEnd: 6, Quote: "target", Authority: "primary"}},
+		}},
+	}
+	claimed := &repository.DreamCycleRun{
+		TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), AttemptCount: 2, Claimed: true,
+	}
+	service := &service{deps: Dependencies{
+		Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: generator,
+	}, now: time.Now}
+
+	result, err := service.runClaimedEvidenceCycle(context.Background(), teamID, EffectiveConfig{
+		DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5},
+	}, &RunCycleResult{}, claimed)
+	require.NoError(t, err)
+	require.Equal(t, 5, result.CreatedDreams)
+	require.Equal(t, 2, result.RejectedDreams)
+	require.Equal(t, 2, result.EvaluatedEvidenceTargets)
+	require.Equal(t, 4, result.ProviderProposals)
+	require.Equal(t, 3, result.ProviderTurns)
+	require.Equal(t, 10, result.ProviderInputTokens)
+	require.Equal(t, 6, result.ProviderOutputTokens)
+	require.Equal(t, 5, repo.completeInput.CreatedHypotheses)
+	require.Equal(t, 2, repo.completeInput.RejectedHypotheses)
+	require.Equal(t, 2, repo.completeInput.EvaluatedEvidenceTargets)
+}
+
 func TestFinishEvidenceCycleCombinesRunAndCompletionErrors(t *testing.T) {
 	teamID := uuid.NewString()
 	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
@@ -393,6 +460,8 @@ func TestFinishEvidenceCycleCombinesRunAndCompletionErrors(t *testing.T) {
 type evidenceRepositoryStub struct {
 	targets         []repository.EvidenceDiscoveryTargetInput
 	evaluations     []repository.EvidenceDiscoveryEvaluationInput
+	runTotals       repository.EvidenceDiscoveryRunTotals
+	runTotalsErr    error
 	attemptPasses   map[string]int
 	lastLimit       int
 	lastMaxContexts int
@@ -441,6 +510,10 @@ func (s *evidenceRepositoryStub) ListEvidenceDiscoveryTargets(_ context.Context,
 		return nil, s.targetsErr
 	}
 	return append([]repository.EvidenceDiscoveryTargetInput(nil), s.targets...), nil
+}
+
+func (s *evidenceRepositoryStub) LoadEvidenceDiscoveryRunTotals(_ context.Context, _, _ string) (repository.EvidenceDiscoveryRunTotals, error) {
+	return s.runTotals, s.runTotalsErr
 }
 
 func (s *evidenceRepositoryStub) PersistEvidenceDiscoveryEvaluation(_ context.Context, input repository.EvidenceDiscoveryEvaluationInput) (repository.DreamGenerationPersistResult, error) {

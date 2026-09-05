@@ -123,7 +123,7 @@ func TestEvidenceDiscoveryContextsPrioritizeSameSourceAndExcludePrivateSpaces(t 
 		TeamID: teamID, OwnerProfileID: ownerID, Documents: []SearchDocumentEmbedding{{
 			TeamID: teamID, SearchDocumentID: privateDocument.SearchDocumentID, OwnerProfileID: ownerID,
 			SourceKind: "evidence", SourceID: private.FragmentID, SourceVersion: 1,
-			DocumentText: private.Content, DocumentHash: private.ContentHash, DocumentVersion: privateDocument.DocumentVersion,
+			DocumentText: private.Content, DocumentHash: searchDocumentHash(private.Content), DocumentVersion: privateDocument.DocumentVersion,
 			ProjectionFormat: privateDocument.ProjectionFormat, ProjectionGenerationID: privateDocument.ProjectionGenerationID,
 			EmbeddingContractID: privateDocument.EmbeddingContractID, EmbeddingDimensions: privateDocument.EmbeddingDimensions,
 			Embedding: []float32{1, 0}, SpaceID: privateDocument.SpaceID, SpaceGeneration: privateDocument.SpaceGeneration,
@@ -150,6 +150,43 @@ func TestEvidenceDiscoveryContextsPrioritizeSameSourceAndExcludePrivateSpaces(t 
 	for _, item := range selected.Contexts {
 		require.NotEqual(t, private.FragmentID, item.EvidenceID, "private evidence must not enter shared discovery context")
 	}
+}
+
+func TestEvidenceDiscoveryNodesRankEvidenceMentionsBeforeTheGlobalBound(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "evidence-dream-node-relevance", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-dream-node-relevance-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-dream-node-relevance-owner")
+	semantic := NewSemanticRepository(appDB, rls)
+	ledger := NewLedgerRepository(appDB, rls)
+	search := NewSearchRepository(appDB, rls)
+	for index := 0; index < 100; index++ {
+		createSemanticEntity(t, ctx, semantic, teamID, ownerID, "project", fmt.Sprintf("Historical Node %03d", index))
+	}
+	relevant := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "product", "Relevant Node")
+	const content = "The target evidence specifically names Relevant Node for discovery."
+	ingest, err := ledger.CreateIngest(ctx, CreateIngestInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IdempotencyKey: "evidence-dream-node-relevance-ingest",
+		RequestHash: sha256Hex(content), Evidence: []EvidenceInput{{
+			Content: content, InitialEvent: &SecurityEventDraft{EventKind: "deterministic_scan", Decision: "pass"},
+		}},
+	})
+	require.NoError(t, err)
+	target := requireTestEvidenceFragment(t, ingest)
+	document, err := search.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+		TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: target.FragmentID,
+		SourceVersion: 1, DocumentText: content,
+	})
+	require.NoError(t, err)
+	completeSearchDocumentsForTest(t, search, teamID, map[string][]float32{document.SearchDocumentID: {1, 0}})
+
+	targets, err := semantic.ListEvidenceDiscoveryTargets(ctx, teamID, evidenceTargetTestLimit, evidenceContextTestLimit)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.NotEmpty(t, targets[0].Nodes)
+	require.Equal(t, relevant.EntityID, targets[0].Nodes[0].ID, "the mentioned newer node must be selected before the 100-node bound")
 }
 
 func TestEvidenceDiscoveryTargetPassCapStopsAfterTwoRecordedEvaluations(t *testing.T) {
@@ -190,7 +227,7 @@ func TestEvidenceDiscoveryTargetPassCapStopsAfterTwoRecordedEvaluations(t *testi
 				    team_id, run_id, space_id, space_generation, target_evidence_id,
 				    target_content_hash, pass_number, provider_model
 				) VALUES (?, ?::uuid, dense_mem_team_shared_space(?::uuid), dense_mem_team_shared_generation(?::uuid), ?::uuid, ?, ?, ?)
-			`, teamID, run.RunID, teamID, targets[0].Target.EvidenceID, targets[0].Target.ContentHash, pass, "test-model").Error
+			`, teamID, run.RunID, teamID, teamID, targets[0].Target.EvidenceID, targets[0].Target.ContentHash, pass, "test-model").Error
 		}))
 	}
 	targets, err = semantic.ListEvidenceDiscoveryTargets(ctx, teamID, evidenceTargetTestLimit, evidenceContextTestLimit)
@@ -507,7 +544,7 @@ func TestEvidenceDiscoveryEvaluationPersistsDerivationsAndReadsThemBack(t *testi
 		persisted, err = semantic.PersistEvidenceDiscoveryEvaluation(ctx, EvidenceDiscoveryEvaluationInput{
 			TeamID: teamID, RunID: run.RunID, LeaseToken: run.LeaseToken,
 			AttemptID: attempt.AttemptID, ReservationToken: attempt.ReservationToken, Target: targets[0].Target,
-			PassNumber: attempt.PassNumber, ProviderModel: "derivation-test-model", AcceptedProposals: 1, CreatedHypotheses: 1,
+			PassNumber: attempt.PassNumber, ProviderModel: "derivation-test-model", ProviderProposals: 1, AcceptedProposals: 1, CreatedHypotheses: 1,
 			Proposals: []UpsertHypothesisInput{{
 				Statement: "Dense-Mem may use PostgreSQL for durable memory.", Rationale: "The target excerpt names both supplied endpoints.",
 				SubjectEntityID: subject.EntityID, PredicateKey: "uses", PredicateVersion: 1, ObjectEntityID: object.EntityID,
@@ -522,6 +559,12 @@ func TestEvidenceDiscoveryEvaluationPersistsDerivationsAndReadsThemBack(t *testi
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, persisted.Created)
+	totals, err := semantic.LoadEvidenceDiscoveryRunTotals(ctx, teamID, run.RunID)
+	require.NoError(t, err)
+	require.Equal(t, 1, totals.TargetCount)
+	require.Equal(t, 1, totals.Evaluated)
+	require.Equal(t, 1, totals.Created)
+	require.Equal(t, 1, totals.ProviderProposals)
 	records, _, err := semantic.ListHypotheses(ctx, ListHypothesesInput{TeamID: teamID, Status: "proposed", Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, records, 1)
@@ -623,7 +666,7 @@ func TestEvidenceDiscoveryTargetEligibilityFiltersAliasesQuarantineLifecycleStal
 				canonical_fragment_id, canonical_owner_profile_id, space_id, space_generation
 			) VALUES (?, ?::uuid, ?::uuid, ?::uuid, ?::uuid,
 			          dense_mem_team_shared_space(?::uuid), dense_mem_team_shared_generation(?::uuid))
-		`, teamID, alias.FragmentID, ownerID, canonical.FragmentID, ownerID, teamID).Error
+		`, teamID, alias.FragmentID, ownerID, canonical.FragmentID, ownerID, teamID, teamID).Error
 	}))
 	targets, err := semantic.ListEvidenceDiscoveryTargets(ctx, teamID, evidenceTargetTestLimit, evidenceContextTestLimit)
 	require.NoError(t, err)

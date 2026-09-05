@@ -99,10 +99,13 @@ func (p *Provider) GenerateDreams(ctx context.Context, req DreamGenerationReques
 		}
 		inputTotal += turnInputTokens
 		outputTotal += turnOutputTokens
-		responseErrors := []assessor.SemanticValidationError{}
 		if result.PromptTokens > p.limits.MaxInputTokens {
-			responseErrors = append(responseErrors, errField("input_tokens", "provider reported input tokens beyond the configured limit"))
+			return DreamGenerationResponse{}, &modelprovider.MalformedResponseError{
+				Provider: "structured_dream", Message: "dream generation provider reported input tokens beyond the configured limit",
+				FailureClass: "input_budget", Attempts: turn,
+			}
 		}
+		responseErrors := []assessor.SemanticValidationError{}
 		if result.CompletionTokens > p.limits.MaxOutputTokens {
 			responseErrors = append(responseErrors, errField("output_tokens", "provider reported output tokens beyond the configured limit"))
 		}
@@ -211,10 +214,13 @@ func (p *Provider) GenerateEvidenceDiscoveries(ctx context.Context, req Evidence
 		}
 		inputTotal += turnInputTokens
 		outputTotal += turnOutputTokens
-		responseErrors := []assessor.SemanticValidationError{}
 		if result.PromptTokens > p.limits.MaxInputTokens {
-			responseErrors = append(responseErrors, errField("input_tokens", "provider reported input tokens beyond the configured limit"))
+			return EvidenceDiscoveryResponse{}, &modelprovider.MalformedResponseError{
+				Provider: "structured_dream", Message: "evidence discovery provider reported input tokens beyond the configured limit",
+				FailureClass: "input_budget", Attempts: turn,
+			}
 		}
+		responseErrors := []assessor.SemanticValidationError{}
 		if result.CompletionTokens > p.limits.MaxOutputTokens {
 			responseErrors = append(responseErrors, errField("output_tokens", "provider reported output tokens beyond the configured limit"))
 		}

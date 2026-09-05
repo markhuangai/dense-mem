@@ -88,9 +88,14 @@ func TestProviderCorrectionErrorFormattingIsBounded(t *testing.T) {
 func TestProviderRejectsReportedUsageAndTokenizerFailures(t *testing.T) {
 	limits := DefaultSemanticAssessmentLimits()
 	limits.MaxInputTokens = 10_000
-	provider := NewProvider(&usageStructuredTransport{promptTokens: limits.MaxInputTokens + 1}, "model", limits)
+	graphUsage := &usageStructuredTransport{promptTokens: limits.MaxInputTokens + 1}
+	provider := NewProvider(graphUsage, "model", limits)
 	_, err := provider.GenerateDreams(context.Background(), dreamGenerationTestRequest(t))
-	require.Error(t, err)
+	var malformed *modelprovider.MalformedResponseError
+	require.ErrorAs(t, err, &malformed)
+	require.Equal(t, "input_budget", malformed.FailureClass)
+	require.Equal(t, 1, malformed.Attempts)
+	require.Equal(t, 1, graphUsage.calls)
 
 	limits = DefaultSemanticAssessmentLimits()
 	limits.MaxOutputTokens = 100
@@ -106,6 +111,7 @@ func TestProviderRejectsReportedUsageAndTokenizerFailures(t *testing.T) {
 }
 
 func TestProviderRejectsTheOppositeReportedUsageOverages(t *testing.T) {
+	var malformed *modelprovider.MalformedResponseError
 	limits := DefaultSemanticAssessmentLimits()
 	limits.MaxOutputTokens = 100
 	provider := NewProvider(&usageStructuredTransport{completionTokens: limits.MaxOutputTokens + 1}, "model", limits)
@@ -114,9 +120,13 @@ func TestProviderRejectsTheOppositeReportedUsageOverages(t *testing.T) {
 
 	limits = DefaultSemanticAssessmentLimits()
 	limits.MaxInputTokens = 10_000
-	provider = NewProvider(&usageStructuredTransport{promptTokens: limits.MaxInputTokens + 1}, "model", limits)
+	evidenceUsage := &usageStructuredTransport{promptTokens: limits.MaxInputTokens + 1}
+	provider = NewProvider(evidenceUsage, "model", limits)
 	_, err = provider.GenerateEvidenceDiscoveries(context.Background(), evidenceDiscoveryTestRequest(t))
-	require.Error(t, err)
+	require.ErrorAs(t, err, &malformed)
+	require.Equal(t, "input_budget", malformed.FailureClass)
+	require.Equal(t, 1, malformed.Attempts)
+	require.Equal(t, 1, evidenceUsage.calls)
 }
 
 func TestProviderRepairsMalformedJSONBeforeAcceptingACompleteResponse(t *testing.T) {
@@ -228,6 +238,7 @@ func (errorStructuredTransport) Complete(context.Context, modelprovider.Structur
 type usageStructuredTransport struct {
 	promptTokens     int
 	completionTokens int
+	calls            int
 }
 
 type invalidJSONThenValidTransport struct {
@@ -255,6 +266,7 @@ func (invalidUTF8Transport) Complete(context.Context, modelprovider.StructuredRe
 }
 
 func (s *usageStructuredTransport) Complete(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	s.calls++
 	var payload struct {
 		RequestID string `json:"request_id"`
 	}
