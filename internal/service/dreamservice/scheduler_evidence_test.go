@@ -106,12 +106,48 @@ func TestSchedulerPreservesEarlierDailyDispatchWhenLaterTeamPageFails(t *testing
 	require.Empty(t, dreams.evidenceWindows, "hourly evidence must wait until team enumeration succeeds")
 }
 
+func TestSchedulerMarksDurablyFailedEvidenceWindowObserved(t *testing.T) {
+	teamID := uuid.New()
+	dreams := &schedulerEvidenceStub{
+		schedulerDreamStub: &schedulerDreamStub{cfg: dueSchedulerConfig()},
+		evidenceResult:     &RunCycleResult{RunID: uuid.NewString(), Status: "error", durablyFinalized: true},
+		evidenceErr:        errors.New("provider failed"),
+	}
+	scheduler := NewScheduler(dreams, &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}, discardSchedulerLogger())
+	scheduler.now = func() time.Time { return time.Date(2026, 9, 4, 3, 0, 0, 0, time.UTC) }
+
+	scheduler.runDue(context.Background())
+	scheduler.runDue(context.Background())
+
+	require.True(t, scheduler.hourlyAlreadyObserved(teamID.String(), "hour:2026-09-04T03"))
+	require.Len(t, dreams.evidenceWindows, 1)
+}
+
+func TestSchedulerRetriesEvidenceWindowWhenFinalizationFails(t *testing.T) {
+	teamID := uuid.New()
+	dreams := &schedulerEvidenceStub{
+		schedulerDreamStub: &schedulerDreamStub{cfg: dueSchedulerConfig()},
+		evidenceResult:     &RunCycleResult{RunID: uuid.NewString(), Status: "error"},
+		evidenceErr:        errors.New("completion failed"),
+	}
+	scheduler := NewScheduler(dreams, &schedulerProfileStub{profiles: []*domain.Team{{ID: teamID}}}, discardSchedulerLogger())
+	scheduler.now = func() time.Time { return time.Date(2026, 9, 4, 3, 0, 0, 0, time.UTC) }
+
+	scheduler.runDue(context.Background())
+	scheduler.runDue(context.Background())
+
+	require.False(t, scheduler.hourlyAlreadyObserved(teamID.String(), "hour:2026-09-04T03"))
+	require.Len(t, dreams.evidenceWindows, 2)
+}
+
 type schedulerEvidenceStub struct {
 	*schedulerDreamStub
 	evidenceWindows       []time.Time
 	evidenceRecoveryTeams []string
 	evidenceStarted       chan struct{}
 	evidenceRelease       chan struct{}
+	evidenceResult        *RunCycleResult
+	evidenceErr           error
 }
 
 func (s *schedulerEvidenceStub) RunScheduledEvidenceCycle(_ context.Context, teamID string, windowAt time.Time) (*RunCycleResult, error) {
@@ -122,6 +158,11 @@ func (s *schedulerEvidenceStub) RunScheduledEvidenceCycle(_ context.Context, tea
 	}
 	if s.evidenceRelease != nil {
 		<-s.evidenceRelease
+	}
+	if s.evidenceResult != nil {
+		result := *s.evidenceResult
+		result.TeamID = teamID
+		return &result, s.evidenceErr
 	}
 	return &RunCycleResult{RunID: uuid.NewString(), TeamID: teamID, Status: "completed"}, nil
 }

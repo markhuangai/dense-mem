@@ -246,6 +246,12 @@ func (s *Scheduler) runEvidenceDue(ctx context.Context, teamID string, cfg Effec
 	}
 	result, err := service.RunScheduledEvidenceCycle(ctx, teamID, windowAt)
 	if err != nil {
+		if result != nil && result.durablyFinalized {
+			s.markHourlyObserved(teamID, windowKey)
+			s.logger.Info("dreaming scheduler: evidence cycle observed",
+				slog.String("team_id", teamID), slog.String("run_id", result.RunID),
+				slog.String("window_key", windowKey), slog.String("status", result.Status))
+		}
 		s.logger.Warn("dreaming scheduler: evidence cycle failed", slog.String("team_id", teamID), slog.String("error_kind", "evidence_cycle_failed"))
 		return
 	}

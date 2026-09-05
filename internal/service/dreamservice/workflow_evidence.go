@@ -629,6 +629,7 @@ func (s *service) finishEvidenceCycle(
 	if claimed == nil {
 		return result, errors.New("evidence discovery cycle: missing durable claim")
 	}
+	result.durablyFinalized = false
 	result.CreatedDreams = created
 	result.RejectedDreams = rejected
 	result.EvidenceTargets = targetCount
@@ -672,6 +673,7 @@ func (s *service) finishEvidenceCycle(
 		}
 		return result, completeErr
 	}
+	result.durablyFinalized = true
 	if runErr != nil {
 		return result, runErr
 	}

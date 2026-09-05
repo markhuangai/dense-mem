@@ -130,6 +130,7 @@ type RunCycleResult struct {
 	Lane                     domain.DreamLane `json:"lane"`
 	EvidenceTargets          int              `json:"evidence_targets,omitempty"`
 	EvaluatedEvidenceTargets int              `json:"evaluated_evidence_targets,omitempty"`
+	durablyFinalized         bool
 }
 
 type ListOptions struct {
