@@ -119,6 +119,9 @@ func TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships(t *test
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Export error = %v, want substring %q", err, tc.want)
 			}
+			if tc.name == "relationship inactive" && !errors.Is(err, ErrMemoryPackRelationshipNotActive) {
+				t.Fatalf("Export error = %v, want ErrMemoryPackRelationshipNotActive", err)
+			}
 		})
 	}
 }

@@ -140,9 +140,11 @@ func actionableOutputSchema(success map[string]any) map[string]any {
 	properties := make(map[string]any)
 	collectOutputProperties(success, properties)
 	for name, property := range schemaProperties(PublicErrorSchema()) {
-		if _, exists := properties[name]; !exists {
-			properties[name] = property
+		if existing, exists := properties[name]; exists {
+			properties[name] = schemaPropertyAnyOf(existing, property)
+			continue
 		}
+		properties[name] = property
 	}
 	validatedSuccess := success
 	if _, hasVariants := success["oneOf"]; hasVariants {
@@ -163,9 +165,11 @@ func actionableOutputSchema(success map[string]any) map[string]any {
 
 func collectOutputProperties(schema map[string]any, into map[string]any) {
 	for name, property := range schemaProperties(schema) {
-		if _, exists := into[name]; !exists {
-			into[name] = property
+		if existing, exists := into[name]; exists {
+			into[name] = schemaPropertyAnyOf(existing, property)
+			continue
 		}
+		into[name] = property
 	}
 	variants, _ := schema["oneOf"].([]any)
 	for _, raw := range variants {
@@ -174,6 +178,10 @@ func collectOutputProperties(schema map[string]any, into map[string]any) {
 			collectOutputProperties(variant, into)
 		}
 	}
+}
+
+func schemaPropertyAnyOf(left, right any) map[string]any {
+	return map[string]any{"anyOf": []any{left, right}}
 }
 
 func publicErrorCodes() []string {

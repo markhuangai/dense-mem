@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,7 @@ func TestSemanticAssessmentAcceptsExactSerializedInputBoundary(t *testing.T) {
 	defer server.Close()
 
 	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	request.SubmissionContract.Relationships[0].KnownPredicateKey = "works_on"
 	limits := DefaultSemanticAssessmentLimits()
 	limits.ProviderModel = "assessor-model"
 	limits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
@@ -68,6 +70,7 @@ func TestSemanticAssessmentRepairEnforcesGrowthOfSerializedConversation(t *testi
 	defer server.Close()
 
 	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	request.SubmissionContract.Relationships[0].KnownPredicateKey = "works_on"
 	limits := DefaultSemanticAssessmentLimits()
 	limits.ProviderModel = "assessor-model"
 	limits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
@@ -130,4 +133,14 @@ func TestSemanticAssessmentRepairDoesNotDoubleCountFrozenCandidateContext(t *tes
 	require.NoError(t, err)
 	require.Empty(t, second.ValidationErrors)
 	require.Equal(t, 2, calls)
+}
+
+func TestSemanticAssessmentCandidateContextBudgetIgnoresAssistantFields(t *testing.T) {
+	user := openAIVerifierMessage{Role: "user", Content: `{"entity_candidate_groups":[{"evidence_id":"evidence:0","candidates":[{"entity_id":"entity-1"}]}]}`}
+	assistant := openAIVerifierMessage{Role: "assistant", Content: `{"entity_candidate_groups":[{"evidence_id":"evidence:1","candidates":[{"entity_id":"` + strings.Repeat("assistant-only ", 200) + `"}]}]}`}
+	userOnly, err := semanticAssessmentConversationCandidateContextTokens([]openAIVerifierMessage{user}, "o200k_base")
+	require.NoError(t, err)
+	withAssistant, err := semanticAssessmentConversationCandidateContextTokens([]openAIVerifierMessage{user, assistant}, "o200k_base")
+	require.NoError(t, err)
+	require.Equal(t, userOnly, withAssistant)
 }

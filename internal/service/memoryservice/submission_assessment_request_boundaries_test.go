@@ -394,6 +394,7 @@ func TestSynchronousAssessmentFailureDetailsClassifiesPreflightStages(t *testing
 		{stage: "required_context", component: "assessor.required_context"},
 		{stage: "assessment_input", component: "assessor.required_input", client: true},
 		{stage: "input_tokens", component: "assessor.required_input", client: true},
+		{stage: "provider_framing", component: "assessor.provider_framing"},
 		{stage: "conversation_input_tokens", component: "assessor.conversation"},
 		{stage: "conversation_candidate_context_tokens", component: "assessor.conversation_candidate_context"},
 		{stage: "unknown", component: "assessor"},

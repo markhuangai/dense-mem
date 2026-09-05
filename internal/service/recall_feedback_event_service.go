@@ -19,7 +19,10 @@ const recallFeedbackEventPruneInterval = time.Hour
 
 // ErrRecallFeedbackInvalidInput identifies feedback that cannot be repaired by
 // retrying the same server operation.
-var ErrRecallFeedbackInvalidInput = errors.New("recall feedback input is invalid")
+var (
+	ErrRecallFeedbackInvalidInput     = errors.New("recall feedback input is invalid")
+	ErrRecallFeedbackInvalidResultRef = errors.New("recall feedback result reference is invalid")
+)
 
 type RecallFeedbackEventReader interface {
 	ListRecallFeedbackEvents(ctx context.Context, filter domain.RecallFeedbackEventFilter) (*domain.RecallFeedbackEventPage, error)
@@ -110,7 +113,7 @@ func (s *RecallFeedbackEventServiceImpl) RecordRecallFeedback(ctx context.Contex
 		return fmt.Errorf("%w: recall feedback event snapshot is required", ErrRecallFeedbackInvalidInput)
 	}
 	if err := validateRecallFeedbackSubmissionRefs(feedback, existing.ResultRefs); err != nil {
-		return fmt.Errorf("%w: %w", ErrRecallFeedbackInvalidInput, err)
+		return fmt.Errorf("%w: %w: %w", ErrRecallFeedbackInvalidInput, ErrRecallFeedbackInvalidResultRef, err)
 	}
 	used := feedback.Used
 	answerSupported := feedback.AnswerSupported

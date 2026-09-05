@@ -207,7 +207,8 @@ anchor for an earlier exact name span. Inaccessible or stale known evidence leav
 Relationship unsupported without revealing whether an ID exists. The aggregate known
 evidence content in one request is bounded to 20,000 Unicode code points before
 assessor boundary expansion; larger requests return `input_budget_exceeded`. The
-public contract remains `dense-mem.v2.6.2`.
+current public contract is `dense-mem.v2.6.3`; `dense-mem.v2.6.2` remains accepted
+for compatible replays.
 
 To replace a specific current evidence item you own, put its UUID in the new
 item's `supersedes_evidence_ids`. Direct targeting is separate from advancing a

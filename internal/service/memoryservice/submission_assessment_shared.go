@@ -149,6 +149,8 @@ func assessorFailureComponent(stage string) string {
 		return "assessor.required_context"
 	case "assessment_input", "input_tokens":
 		return "assessor.required_input"
+	case "provider_framing":
+		return "assessor.provider_framing"
 	case "conversation_input_tokens":
 		return "assessor.conversation"
 	case "conversation_candidate_context_tokens":

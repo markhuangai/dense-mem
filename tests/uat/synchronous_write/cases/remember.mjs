@@ -893,7 +893,8 @@ function assertStrictTerminalRemember(result, expect) {
   for (const error of result.errors) {
     expect(typeof error.code === "string" && typeof error.message === "string" && typeof error.retryable === "boolean" && typeof error.next_action === "string" && typeof error.remediation === "string", "terminal error must have complete bounded guidance");
     if (error.code === "input_budget_exceeded") {
-      expect(typeof error.reason_code === "string" && error.reason_code.length > 0 && error.details && typeof error.details === "object", "input budget errors must identify their owning component");
+      expect(typeof error.reason_code === "string" && error.reason_code.length > 0 && error.details && typeof error.details === "object" && !Array.isArray(error.details), "input budget errors must identify their owning component");
+      expect(typeof error.details.server_owned === "boolean" || typeof error.details.client_controlled === "boolean", "input budget errors must identify ownership");
     }
   }
 }

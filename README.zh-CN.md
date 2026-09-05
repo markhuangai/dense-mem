@@ -178,7 +178,8 @@ Relationship 仍必须至少包含一个提交证据的 `evidence_indices` 支�
 canonical 名称或 alias；代词只有在 assessor 收到服务端为更早精确名称范围签发的 anchor 时才可用。
 不可访问或在评估后变为陈旧的 known evidence 只会让该 Relationship 变为不支持，不泄露 ID 是否存在。
 单个请求中的 known evidence 文本总量在 assessor 边界展开前限制为 20,000 个 Unicode 码点；
-超过限制的请求会返回 `input_budget_exceeded`。公共契约仍为 `dense-mem.v2.6.2`。
+超过限制的请求会返回 `input_budget_exceeded`。当前公共契约为 `dense-mem.v2.6.3`；
+`dense-mem.v2.6.2` 仍接受用于兼容重放。
 
 若要替换自己拥有的一条当前证据，把其 UUID 放入新证据的
 `supersedes_evidence_ids`。直接指定目标与通过 `previous_source_revision` 推进

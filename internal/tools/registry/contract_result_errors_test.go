@@ -19,6 +19,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 )
 
 func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T) {
@@ -40,6 +41,7 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 		{name: "reference", tool: ToolTraceMemory, err: repository.ErrTraceRelationshipNotFound, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
 		{name: "dream feedback input", tool: ToolResolveDreamFeedback, err: dreamservice.ErrDreamFeedbackInvalidInput, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "read repository", tool: ToolRecallMemory, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "read_unavailable", nextAction: actionRetrySameRequest, retryable: true},
+		{name: "retract repository", tool: ToolRetractEvidence, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "write_unavailable", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "budget", tool: ToolRemember, err: rememberapp.ErrRememberInputBudgetExceeded, code: string(domain.ErrorInvalidInput), reasonCode: "input_budget_exceeded", nextAction: actionContactOperator},
 		{name: "stale", tool: ToolRemember, err: rememberapp.ErrRememberStaleInput, code: string(domain.ErrorConflict), reasonCode: "stale_state", nextAction: actionRefreshState},
 		{name: "remember timeout", tool: ToolRemember, err: rememberapp.ErrRememberRequestTimeout, code: string(domain.ErrorProviderUnavailable), reasonCode: "request_timeout", nextAction: actionRetrySameRequest, retryable: true},
@@ -76,6 +78,14 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 	dreamDetails := dreamInput["details"].(map[string]any)
 	require.Equal(t, "dream_feedback.evidence", dreamDetails["component"])
 	require.Equal(t, true, dreamDetails["client_controlled"])
+	inactiveExport := ActionableErrorData(ctx, ToolExportMemoryPack, fmt.Errorf("%w: relationship-1", skillpackservice.ErrMemoryPackRelationshipNotActive))
+	require.Equal(t, string(domain.ErrorInvalidInput), inactiveExport["code"])
+	require.Equal(t, "relationship_not_active", inactiveExport["reason_code"])
+	require.Equal(t, actionRefreshState, inactiveExport["next_action"])
+	require.False(t, inactiveExport["retryable"].(bool))
+	inactiveDetails := inactiveExport["details"].(map[string]any)
+	require.Equal(t, "memory_pack.relationship", inactiveDetails["component"])
+	require.Equal(t, true, inactiveDetails["client_controlled"])
 }
 
 func TestActionableErrorDataMapsHTTPStatusesAndBudgetMeasurements(t *testing.T) {
@@ -299,35 +309,54 @@ func TestCorrectionToolResultErrorPreservesTypedConflictReasons(t *testing.T) {
 		wantCode       rememberapp.SubmissionErrorCode
 		wantState      string
 		wantNextAction string
+		wantClient     bool
 	}{
+		{
+			name: "entity not found", reason: "not found",
+			wantCode: rememberapp.SubmissionErrorEntityNotFound, wantState: "failed",
+			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection), wantClient: true,
+		},
 		{
 			name: "idempotency", reason: string(rememberapp.SubmissionErrorIdempotencyConflict),
 			wantCode: rememberapp.SubmissionErrorIdempotencyConflict, wantState: "failed",
-			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection),
+			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection), wantClient: true,
 		},
 		{
 			name: "confirmation expired", reason: string(rememberapp.SubmissionErrorConfirmationExpired),
 			wantCode: rememberapp.SubmissionErrorConfirmationExpired, wantState: "rejected",
-			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection),
+			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection), wantClient: true,
 		},
 		{
 			name: "commit fence", reason: string(rememberapp.SubmissionErrorCommitConflict),
 			wantCode: rememberapp.SubmissionErrorCommitConflict, wantState: "failed",
-			wantNextAction: string(rememberapp.SubmissionNextActionRetrySameRequest),
+			wantNextAction: string(rememberapp.SubmissionNextActionRetrySameRequest), wantClient: false,
 		},
 		{
 			name: "invalid confirmation", reason: memoryservice.CorrectionConfirmationInvalidReason,
 			wantCode: rememberapp.SubmissionErrorRelationshipChanged, wantState: "failed",
-			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection),
+			wantNextAction: string(rememberapp.SubmissionNextActionRetryCorrection), wantClient: true,
 		},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			err := httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{Field: "reason", Message: test.reason}})
+			var err error
+			if test.name == "entity not found" {
+				err = httperr.New(httperr.NOT_FOUND, "submission not found")
+			} else {
+				err = httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{Field: "reason", Message: test.reason}})
+			}
 			result := structuredToolResult(t, correctionToolResultError(ctx, "correction-submission", err))
 			require.Equal(t, test.wantCode, rememberapp.SubmissionErrorCode(result["errors"].([]any)[0].(map[string]any)["code"].(string)))
 			require.Equal(t, test.wantState, result["processing_state"])
 			require.Equal(t, test.wantNextAction, result["errors"].([]any)[0].(map[string]any)["next_action"])
+			details := result["errors"].([]any)[0].(map[string]any)["details"].(map[string]any)
+			if test.wantClient {
+				require.Equal(t, true, details["client_controlled"])
+				require.NotContains(t, details, "server_owned")
+			} else {
+				require.Equal(t, true, details["server_owned"])
+				require.NotContains(t, details, "client_controlled")
+			}
 			if test.wantCode == rememberapp.SubmissionErrorIdempotencyConflict {
 				require.Equal(t, "Retry correct_relationship with current relationship state and a new idempotency_key.", result["errors"].([]any)[0].(map[string]any)["remediation"])
 			}

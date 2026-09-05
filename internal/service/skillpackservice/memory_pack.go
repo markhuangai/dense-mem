@@ -11,6 +11,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
+// ErrMemoryPackRelationshipNotActive identifies a caller-selected Relationship
+// that was found but is no longer eligible for export.
+var ErrMemoryPackRelationshipNotActive = errors.New("memory pack export relationship is not active")
+
 var _ MemoryPackService = (*memoryPackService)(nil)
 
 func NewMemoryPackService(deps MemoryPackDependencies) MemoryPackService {
@@ -70,7 +74,7 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 			return nil, fmt.Errorf("memory pack export: relationship %s not found", relationshipID)
 		}
 		if trace.Relationship.Status != string(domain.RelationshipStatusActive) {
-			return nil, fmt.Errorf("memory pack export: relationship %s is not active", relationshipID)
+			return nil, fmt.Errorf("%w: %s", ErrMemoryPackRelationshipNotActive, relationshipID)
 		}
 		item := memoryPackRelationshipFromTrace(trace.Relationship)
 		if includeSupport {

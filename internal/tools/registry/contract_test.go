@@ -747,6 +747,29 @@ func TestPublicErrorSchemaContract(t *testing.T) {
 	}
 }
 
+func TestActionableOutputSchemaAcceptsPublicErrorsWithCollidingSuccessFields(t *testing.T) {
+	resolve := toolMap(t)[ToolResolveDreamFeedback]
+	codeSchema := schemaProperties(resolve.OutputSchema)["code"]
+	if _, ok := codeSchema["anyOf"]; !ok {
+		t.Fatalf("resolve_dream_feedback code schema = %#v, want a property union", codeSchema)
+	}
+	nextActionSchema := schemaProperties(toolMap(t)[ToolSubmitRecallSessionFeedback].OutputSchema)["next_action"]
+	if _, ok := nextActionSchema["anyOf"]; !ok {
+		t.Fatalf("submit_recall_session_feedback next_action schema = %#v, want a property union", nextActionSchema)
+	}
+	publicError := map[string]any{
+		"code":           string(domain.ErrorInvalidInput),
+		"message":        "invalid input",
+		"retryable":      false,
+		"next_action":    "correct_and_resubmit",
+		"remediation":    "Correct the request and submit again.",
+		"correlation_id": uuid.NewString(),
+	}
+	if err := ValidateInput(Tool{InputSchema: resolve.OutputSchema}, publicError); err != nil {
+		t.Fatalf("public error rejected by resolve output schema: %v", err)
+	}
+}
+
 func assertClosedObjectSchemas(t *testing.T, schema map[string]any, path string) {
 	t.Helper()
 	if schema["type"] == "object" {

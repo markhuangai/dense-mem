@@ -338,7 +338,8 @@ func submissionFailureCode(stage, class string) SubmissionErrorCode {
 		return SubmissionErrorInputBudgetExceeded
 	case stage == "entity_catalog" || stage == "known_evidence_context" || stage == "catalog_context" ||
 		stage == "catalog_context_validation" || stage == "predicate_context" ||
-		stage == "predicate_options_overflow" || stage == "assessment_input" || stage == "assessment_budget":
+		stage == "predicate_options_overflow" || stage == "assessment_input" || stage == "assessment_budget" ||
+		stage == "provider_framing":
 		return SubmissionErrorInputBudgetExceeded
 	case stage == "configuration" || stage == "configuration_invalid":
 		return SubmissionErrorConfigurationInvalid

@@ -9,6 +9,10 @@ import (
 	"strings"
 )
 
+// Reserve bounded correction-instruction room after the configured output
+// allowance so optional context cannot consume the entire next-turn budget.
+const semanticAssessmentRepairSafetyTokens = 4096
+
 // CountSemanticAssessmentRequestTokens returns the token cost of the complete
 // request envelope and the candidate-context sub-payload. The structured
 // response schema is included because providers account for it as part of the
@@ -58,6 +62,32 @@ func CountSemanticAssessmentRequestTokens(
 		return 0, 0, err
 	}
 	return inputTokens, candidateContextTokens, nil
+}
+
+// CountSemanticAssessmentProviderFramingTokens returns the fixed request cost
+// that remains when no request-specific content is supplied. The empty user
+// message preserves the provider's message wrapper, so a budget below this
+// value cannot admit any semantic assessment request.
+func CountSemanticAssessmentProviderFramingTokens(limits SemanticAssessmentLimits) (int, error) {
+	limits = normalizeSemanticAssessmentLimits(limits)
+	if limits.LegacyProviderFraming {
+		payload, err := json.Marshal(SemanticAssessmentRequest{})
+		if err != nil {
+			return 0, err
+		}
+		return CountTokens(semanticAssessmentSystemPrompt+string(payload), limits.Tokenizer)
+	}
+	return CountSemanticAssessmentProviderRequestTokens(
+		limits.ProviderModel,
+		limits.ProviderSchemaName,
+		SemanticAssessmentResponseSchema(),
+		limits.ProviderTemperatureDisabled,
+		[]SemanticAssessmentProviderMessage{
+			{Role: "system", Content: SemanticAssessmentSystemPrompt},
+			{Role: "user", Content: "{}"},
+		},
+		limits.Tokenizer,
+	)
 }
 
 // allocateSemanticAssessmentOptionalContext removes only optional provider
@@ -138,6 +168,7 @@ func allocateSemanticAssessmentOptionalContext(
 	if inputTokens > limits.MaxInputTokens {
 		return []SemanticValidationError{semanticErr("input_tokens", fmt.Sprintf("required assessor input exceeds the configured budget (observed %d, limit %d)", inputTokens, limits.MaxInputTokens))}, nil
 	}
+	optionalInputLimit := semanticAssessmentOptionalContextInputLimit(limits, len(optionalPredicates) > 0 || len(allCandidates) > 0)
 
 	maxRounds := len(optionalPredicates)
 	for _, candidates := range allCandidates {
@@ -153,7 +184,7 @@ func allocateSemanticAssessmentOptionalContext(
 			if countErr != nil {
 				return nil, countErr
 			}
-			if candidateContext <= limits.MaxCandidateContextTokens && candidateInput <= limits.MaxInputTokens {
+			if candidateContext <= limits.MaxCandidateContextTokens && candidateInput <= optionalInputLimit {
 				inputTokens, contextTokens = candidateInput, candidateContext
 			} else {
 				req.PredicateOptions = req.PredicateOptions[:len(req.PredicateOptions)-1]
@@ -170,7 +201,7 @@ func allocateSemanticAssessmentOptionalContext(
 			if countErr != nil {
 				return nil, countErr
 			}
-			if candidateContext <= limits.MaxCandidateContextTokens && candidateInput <= limits.MaxInputTokens {
+			if candidateContext <= limits.MaxCandidateContextTokens && candidateInput <= optionalInputLimit {
 				inputTokens, contextTokens = candidateInput, candidateContext
 				continue
 			}
@@ -183,6 +214,17 @@ func allocateSemanticAssessmentOptionalContext(
 	req.CandidateContextTokens = contextTokens
 	req.InputTokens = inputTokens
 	return nil, nil
+}
+
+func semanticAssessmentOptionalContextInputLimit(limits SemanticAssessmentLimits, hasOptionalContext bool) int {
+	if !hasOptionalContext {
+		return limits.MaxInputTokens
+	}
+	headroom := limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens
+	if headroom >= limits.MaxInputTokens {
+		return 0
+	}
+	return limits.MaxInputTokens - headroom
 }
 
 // SemanticAssessmentBudgetFailureStage identifies the remaining required
@@ -214,6 +256,9 @@ func SemanticAssessmentBudgetFailureStage(req SemanticAssessmentRequest, field s
 	}
 	if field != "input_tokens" {
 		return "assessment_input"
+	}
+	if framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits); err == nil && framingTokens > limits.MaxInputTokens {
+		return "provider_framing"
 	}
 	// A required known-evidence catalog is the narrowest server-owned cause
 	// when removing it makes the complete serialized request fit.

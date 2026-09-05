@@ -10,6 +10,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	appservice "github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/stretchr/testify/require"
 )
@@ -200,6 +201,8 @@ func TestBuildActiveSubmitRecallSessionFeedbackClassifiesFailureOwnership(t *tes
 	}{
 		{name: "persistence", err: errors.New("database unavailable"), errorCode: "degraded", reasonCode: "feedback_persistence_failed", nextAction: "retry_same_request"},
 		{name: "invalid reference", err: repository.ErrRecallFeedbackEventNotFound, errorCode: "invalid_input", reasonCode: "reference_not_found", nextAction: "correct_and_resubmit"},
+		{name: "invalid result reference", err: appservice.ErrRecallFeedbackInvalidResultRef, errorCode: "invalid_input", reasonCode: "result_reference_invalid", nextAction: "correct_and_resubmit"},
+		{name: "invalid feedback", err: appservice.ErrRecallFeedbackInvalidInput, errorCode: "invalid_input", reasonCode: "invalid_feedback", nextAction: "correct_and_resubmit"},
 		{name: "cancelled", err: context.Canceled, errorCode: "degraded", reasonCode: "request_cancelled", nextAction: "stop"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

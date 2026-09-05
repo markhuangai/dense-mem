@@ -129,11 +129,21 @@ func recallFeedbackFailureGuidance(err error) map[string]any {
 		"remediation": "Retry the same feedback request with unchanged items after the service recovers.",
 	}
 	switch {
-	case errors.Is(err, appservice.ErrRecallFeedbackInvalidInput), errors.Is(err, repository.ErrRecallFeedbackEventNotFound):
+	case errors.Is(err, appservice.ErrRecallFeedbackInvalidResultRef):
+		guidance["error_code"] = "invalid_input"
+		guidance["reason_code"] = "result_reference_invalid"
+		guidance["next_action"] = "correct_and_resubmit"
+		guidance["remediation"] = "Correct or remove the invalid irrelevant_result_refs or hypothesis_feedback references and resubmit with the current recall_event_id."
+	case errors.Is(err, repository.ErrRecallFeedbackEventNotFound):
 		guidance["error_code"] = "invalid_input"
 		guidance["reason_code"] = "reference_not_found"
 		guidance["next_action"] = "correct_and_resubmit"
 		guidance["remediation"] = "Use a current recall_event_id and resubmit the corrected feedback items."
+	case errors.Is(err, appservice.ErrRecallFeedbackInvalidInput):
+		guidance["error_code"] = "invalid_input"
+		guidance["reason_code"] = "invalid_feedback"
+		guidance["next_action"] = "correct_and_resubmit"
+		guidance["remediation"] = "Correct the feedback fields and resubmit the request."
 	case errors.Is(err, context.Canceled):
 		guidance["error_code"] = "degraded"
 		guidance["reason_code"] = "request_cancelled"

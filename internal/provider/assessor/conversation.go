@@ -38,6 +38,9 @@ func semanticAssessmentTurnTokens(
 func semanticAssessmentConversationCandidateContextTokens(messages []openAIVerifierMessage, tokenizerName string) (int, error) {
 	total := 0
 	for _, message := range messages {
+		if strings.ToLower(strings.TrimSpace(message.Role)) != "user" {
+			continue
+		}
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(message.Content), &fields); err != nil {
 			continue

@@ -56,6 +56,10 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		code, reasonCode, message, nextAction, remediation = domain.ErrorUnauthorizedScope, "authenticated_context_required", "Dense-Mem could not authorize the "+tool+" operation.", actionAuthorization, "Authenticate with a credential that has access to this tool and retry."
 	case errors.Is(err, repository.ErrTraceRelationshipNotFound), errors.Is(err, contextservice.ErrTraceRelationshipNotFound), errors.Is(err, dreamservice.ErrDreamNotFound), errors.Is(err, repository.ErrDreamHypothesisNotFound):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "reference_not_found", "The reference supplied to "+tool+" was not found or is no longer available.", actionRefreshState, "Refresh authorized state, then retry with a current reference."
+	case errors.Is(err, skillpackservice.ErrMemoryPackRelationshipNotActive):
+		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "relationship_not_active", "The selected relationship for "+tool+" is no longer active.", actionRefreshState, "Refresh authorized relationships, remove inactive references, and submit the export again."
+		failureDetails["component"] = "memory_pack.relationship"
+		failureDetails["client_controlled"] = true
 	case errors.Is(err, dreamservice.ErrDreamFeedbackInvalidInput):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The evidence field for "+tool+" must contain independent evidence rather than the hypothesis text.", actionCorrectInput, "Provide independent evidence in the evidence field, then submit the corrected Dream feedback request."
 		failureDetails["component"] = "dream_feedback.evidence"
@@ -116,6 +120,8 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		}
 	case actionableToolIsRead(tool):
 		code, reasonCode, message, retryable, nextAction, remediation = domain.ErrorProviderUnavailable, "read_unavailable", "A required service for "+tool+" is temporarily unavailable.", true, actionRetrySameRequest, actionableTransientRemediation(tool)
+	case strings.TrimSpace(tool) == ToolRetractEvidence:
+		code, reasonCode, message, retryable, nextAction, remediation = domain.ErrorProviderUnavailable, "write_unavailable", "A required service for "+tool+" is temporarily unavailable.", true, actionRetrySameRequest, actionableTransientRemediation(tool)
 	}
 
 	details := map[string]any{}
@@ -344,7 +350,12 @@ func correctionToolResultError(ctx context.Context, submissionID string, err err
 	}
 	value := correctionStatusError(code)
 	value.ReasonCode = reasonCode
-	value.Details = map[string]any{"component": "relationship_correction", "server_owned": true}
+	value.Details = map[string]any{"component": "relationship_correction"}
+	if correctionErrorClientControlled(code) {
+		value.Details["client_controlled"] = true
+	} else {
+		value.Details["server_owned"] = true
+	}
 	errorPayload := map[string]any{
 		"code": value.Code, "message": value.Message, "retryable": value.Retryable,
 		"next_action": value.NextAction, "remediation": value.Remediation,
@@ -359,6 +370,18 @@ func correctionToolResultError(ctx context.Context, submissionID string, err err
 		"correlation_id":   rememberapp.NormalizeTerminalCorrelationID(correlation.FromContext(ctx)),
 		"errors":           []any{errorPayload},
 	})
+}
+
+func correctionErrorClientControlled(code rememberapp.SubmissionErrorCode) bool {
+	switch code {
+	case rememberapp.SubmissionErrorEntityNotFound,
+		rememberapp.SubmissionErrorIdempotencyConflict,
+		rememberapp.SubmissionErrorConfirmationExpired,
+		rememberapp.SubmissionErrorRelationshipChanged:
+		return true
+	default:
+		return false
+	}
 }
 
 func correctionConflictCode(apiErr *httperr.APIError) (rememberapp.SubmissionErrorCode, string) {
