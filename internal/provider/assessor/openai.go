@@ -288,6 +288,9 @@ func (v *OpenAIAssessor) openAIStructuredChatJSON(
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+v.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
+	if err := modelprovider.NotifyAdmission(ctx); err != nil {
+		return "", err
+	}
 
 	httpResp, err := v.httpClient.Do(httpReq)
 	if err != nil {
@@ -444,6 +447,9 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+v.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
+	if err := modelprovider.NotifyAdmission(ctx); err != nil {
+		return openAIStructuredChatResult{}, err
+	}
 
 	httpResp, err := v.httpClient.Do(httpReq)
 	if err != nil {

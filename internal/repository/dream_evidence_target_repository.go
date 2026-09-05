@@ -825,6 +825,7 @@ func (r *SemanticRepositoryImpl) PersistEvidenceDiscoveryEvaluation(
 
 func validateEvidenceDiscoveryTargetInTx(ctx context.Context, tx *gorm.DB, teamID string, target EvidenceTarget) error {
 	var contentHash string
+	var content string
 	var ownerProfileID string
 	var spaceID string
 	var spaceGeneration int64
@@ -837,7 +838,7 @@ func validateEvidenceDiscoveryTargetInTx(ctx context.Context, tx *gorm.DB, teamI
 			WHERE security.team_id = ?::uuid
 			ORDER BY security.team_id, security.fragment_id, security.created_at DESC, security.security_event_id DESC
 		)
-		SELECT fragment.content_hash, fragment.owner_profile_id::text, fragment.space_id::text, fragment.space_generation,
+		SELECT fragment.content, fragment.content_hash, fragment.owner_profile_id::text, fragment.space_id::text, fragment.space_generation,
 		       COALESCE(fragment.source_id::text, ''), COALESCE(fragment.source_revision_id::text, ''),
 		       CASE
 		           WHEN fragment.source_id IS NOT NULL THEN 'source:' || fragment.source_id::text
@@ -896,8 +897,8 @@ func validateEvidenceDiscoveryTargetInTx(ctx context.Context, tx *gorm.DB, teamI
 		        AND security.fragment_id = fragment.fragment_id
 		        AND security.decision IN ('pass', 'released')
 		  )
-		`, teamID, teamID, target.EvidenceID, target.ContentHash).Row().Scan(
-		&contentHash, &ownerProfileID, &spaceID, &spaceGeneration, &sourceID, &sourceRevisionID, &sourceGroupKey, &authority,
+	`, teamID, teamID, target.EvidenceID, target.ContentHash).Row().Scan(
+		&content, &contentHash, &ownerProfileID, &spaceID, &spaceGeneration, &sourceID, &sourceRevisionID, &sourceGroupKey, &authority,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrDreamSourceStale
@@ -905,7 +906,7 @@ func validateEvidenceDiscoveryTargetInTx(ctx context.Context, tx *gorm.DB, teamI
 	if err != nil {
 		return err
 	}
-	if contentHash != target.ContentHash || ownerProfileID != target.OwnerProfileID || spaceID != target.SpaceID || spaceGeneration != target.SpaceGeneration ||
+	if content != target.Content || contentHash != target.ContentHash || ownerProfileID != target.OwnerProfileID || spaceID != target.SpaceID || spaceGeneration != target.SpaceGeneration ||
 		sourceID != target.SourceID || sourceRevisionID != target.SourceRevisionID ||
 		sourceGroupKey != target.SourceGroupKey || authority != target.Authority {
 		return ErrDreamSourceStale

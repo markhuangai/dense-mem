@@ -80,11 +80,12 @@ export function runOutcome(run: DreamRunPresentation): string {
     const targets = run.evidence_targets ?? outcomes.evidence_targets ?? 0;
     const evaluated = run.evaluated_evidence_targets ?? outcomes.evaluated_evidence_targets ?? 0;
     const providerProposals = outcomes.provider_proposals ?? run.provider_proposals ?? 0;
+    const createdHypotheses = outcomes.created_hypotheses ?? 0;
     if (targets === 0) {
       return "No eligible evidence target";
     }
     if (run.status === "completed") {
-      return providerProposals === 0
+      return createdHypotheses === 0
         ? "Provider returned no supported relationship"
         : "Evidence discovery stored";
     }

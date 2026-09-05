@@ -544,11 +544,12 @@ func TestClaimedEvidenceCycleRegeneratesAfterDuplicatePersistence(t *testing.T) 
 		EvidenceDerivations: []repository.EvidenceDerivationSource{{EvidenceID: targetID, FragmentID: targetID, SpanStart: 0, SpanEnd: 6, Quote: "target", Authority: "primary"}},
 	}
 	store := &evidenceRepositoryStub{
-		targets:     []repository.EvidenceDiscoveryTargetInput{target},
-		persistErrs: []error{repository.ErrDreamExactHypothesisExists},
+		targets:       []repository.EvidenceDiscoveryTargetInput{target},
+		persistErrs:   []error{repository.ErrDreamExactHypothesisExists},
+		attemptPasses: map[string]int{targetID + ":hash": 1},
 	}
 	repo := &dreamRepositoryStub{}
-	generator := &evidenceGeneratorStub{model: "model", generatedResponses: [][]GeneratedDream{{valid}, nil}}
+	generator := &evidenceGeneratorStub{model: "model", generatedResponses: [][]GeneratedDream{{valid}, {valid}}}
 	service := &service{deps: Dependencies{Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: generator}, now: time.Now}
 	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
 
@@ -562,6 +563,7 @@ func TestClaimedEvidenceCycleRegeneratesAfterDuplicatePersistence(t *testing.T) 
 	require.Equal(t, valid.SubjectEntityID, generator.requests[1].RelatedHypotheses[0].SubjectEntityID)
 	require.Equal(t, valid.PredicateKey, generator.requests[1].RelatedHypotheses[0].PredicateKey)
 	require.Equal(t, valid.ObjectEntityID, generator.requests[1].RelatedHypotheses[0].ObjectEntityID)
+	require.Equal(t, 1, result.CreatedDreams)
 	require.Equal(t, 1, result.EvaluatedEvidenceTargets)
 }
 
@@ -588,6 +590,128 @@ func TestClaimedEvidenceCycleAbandonsAfterPersistenceFailure(t *testing.T) {
 	}, &RunCycleResult{}, claimed)
 	require.ErrorContains(t, err, "transient persistence failure")
 	require.Equal(t, 1, store.abandonCalls, "a dispatched attempt must be released after persistence failure")
+}
+
+func TestClaimedEvidenceCycleSkipsStaleInputsBeforeProviderDispatch(t *testing.T) {
+	teamID := uuid.NewString()
+	targetID := uuid.NewString()
+	store := &evidenceRepositoryStub{
+		targets: []repository.EvidenceDiscoveryTargetInput{{
+			Target:   repository.EvidenceTarget{EvidenceID: targetID, FragmentID: targetID, ContentHash: "hash", Content: "target", Authority: "primary"},
+			Contexts: []repository.EvidenceContext{{EvidenceID: targetID, FragmentID: targetID, Content: "target", Authority: "primary"}},
+		}},
+		validateErr: repository.ErrDreamSourceStale,
+	}
+	repo := &dreamRepositoryStub{}
+	generator := &evidenceGeneratorStub{model: "model", generated: []GeneratedDream{{
+		Hypothesis: "A may use B.", SubjectEntityID: "subject", PredicateKey: "uses", ObjectEntityID: "object",
+		EvidenceDerivations: []repository.EvidenceDerivationSource{{EvidenceID: targetID, FragmentID: targetID, SpanStart: 0, SpanEnd: 6, Quote: "target", Authority: "primary"}},
+	}}}
+	service := &service{deps: Dependencies{
+		Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: generator,
+	}, now: time.Now}
+	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
+
+	result, err := service.runClaimedEvidenceCycle(context.Background(), teamID, EffectiveConfig{
+		DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5},
+	}, &RunCycleResult{}, claimed)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.Status)
+	require.Equal(t, 1, store.validateCalls)
+	require.Equal(t, 1, store.abandonCalls)
+	require.Empty(t, generator.requests, "stale target/context snapshots must not reach the provider")
+	require.Equal(t, 1, result.OutcomeSummary["stale_evidence_targets"])
+	require.Zero(t, result.EvaluatedEvidenceTargets)
+}
+
+func TestClaimedEvidenceCycleKeepsAdmittedTimeoutReservation(t *testing.T) {
+	teamID := uuid.NewString()
+	targetID := uuid.NewString()
+	store := &evidenceRepositoryStub{targets: []repository.EvidenceDiscoveryTargetInput{{
+		Target: repository.EvidenceTarget{EvidenceID: targetID, FragmentID: targetID, ContentHash: "hash", Content: "target", Authority: "primary"},
+	}}}
+	repo := &dreamRepositoryStub{}
+	generator := &evidenceGeneratorStub{model: "model", err: &modelprovider.TimeoutError{Provider: "fixture", Message: "provider request timed out"}}
+	service := &service{deps: Dependencies{
+		Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: generator,
+	}, now: time.Now}
+	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
+
+	_, err := service.runClaimedEvidenceCycle(context.Background(), teamID, EffectiveConfig{
+		DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5},
+	}, &RunCycleResult{}, claimed)
+	require.ErrorIs(t, err, modelprovider.ErrVerifierTimeout)
+	require.Equal(t, 1, store.dispatchedCalls)
+	require.Zero(t, store.abandonCalls, "an admitted timeout may have an uncertain provider outcome")
+}
+
+func TestClaimedEvidenceCycleAbandonsBeforeAdmissionTimeout(t *testing.T) {
+	teamID := uuid.NewString()
+	targetID := uuid.NewString()
+	store := &evidenceRepositoryStub{targets: []repository.EvidenceDiscoveryTargetInput{{
+		Target: repository.EvidenceTarget{EvidenceID: targetID, FragmentID: targetID, ContentHash: "hash", Content: "target", Authority: "primary"},
+	}}}
+	repo := &dreamRepositoryStub{}
+	generator := &evidenceGeneratorStub{
+		model:         "model",
+		skipAdmission: true,
+		err:           &modelprovider.TimeoutError{Provider: "fixture", Message: "gate wait canceled"},
+	}
+	service := &service{deps: Dependencies{
+		Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: generator,
+	}, now: time.Now}
+	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
+
+	_, err := service.runClaimedEvidenceCycle(context.Background(), teamID, EffectiveConfig{
+		DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5},
+	}, &RunCycleResult{}, claimed)
+	require.ErrorIs(t, err, modelprovider.ErrVerifierTimeout)
+	require.Zero(t, store.dispatchedCalls)
+	require.Equal(t, 1, store.abandonCalls)
+}
+
+func TestClaimedEvidenceCycleRevalidatesAtProviderAdmission(t *testing.T) {
+	teamID := uuid.NewString()
+	targetID := uuid.NewString()
+	store := &evidenceRepositoryStub{
+		targets: []repository.EvidenceDiscoveryTargetInput{{
+			Target: repository.EvidenceTarget{EvidenceID: targetID, FragmentID: targetID, ContentHash: "hash", Content: "target", Authority: "primary"},
+		}},
+		validateErrs: []error{nil, repository.ErrDreamSourceStale},
+	}
+	repo := &dreamRepositoryStub{}
+	generator := &evidenceGeneratorStub{model: "model", generated: []GeneratedDream{{
+		Hypothesis: "A may use B.", SubjectEntityID: "subject", PredicateKey: "uses", ObjectEntityID: "object",
+		EvidenceDerivations: []repository.EvidenceDerivationSource{{EvidenceID: targetID, FragmentID: targetID, SpanStart: 0, SpanEnd: 6, Quote: "target", Authority: "primary"}},
+	}}}
+	service := &service{deps: Dependencies{
+		Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: generator,
+	}, now: time.Now}
+	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
+
+	result, err := service.runClaimedEvidenceCycle(context.Background(), teamID, EffectiveConfig{
+		DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5},
+	}, &RunCycleResult{}, claimed)
+	require.NoError(t, err)
+	require.Equal(t, 2, store.validateCalls)
+	require.Zero(t, store.dispatchedCalls)
+	require.Equal(t, 1, store.abandonCalls)
+	require.Equal(t, 1, result.OutcomeSummary["stale_evidence_targets"])
+}
+
+func TestAbandonEvidenceDiscoveryAttemptUsesDetachedCleanupContext(t *testing.T) {
+	store := &evidenceRepositoryStub{}
+	service := &service{deps: Dependencies{EvidenceStore: store}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	require.NoError(t, service.abandonEvidenceDiscoveryAttempt(ctx, uuid.NewString(), uuid.NewString(), uuid.NewString()))
+	require.False(t, store.abandonCanceled, "cleanup must not inherit cycle cancellation")
+}
+
+func TestValidateEvidenceDiscoveryInputsRequiresValidator(t *testing.T) {
+	err := validateEvidenceDiscoveryInputs(context.Background(), nil, uuid.NewString(), repository.EvidenceTarget{}, nil)
+	require.ErrorContains(t, err, "input validator is required")
 }
 
 func TestEvidenceDuplicateContextPrioritizesOffendingProposal(t *testing.T) {
@@ -682,6 +806,8 @@ type evidenceRepositoryStub struct {
 	lastLimit       int
 	lastMaxContexts int
 	targetsErr      error
+	validateErr     error
+	validateErrs    []error
 	lockErr         error
 	dispatchedErr   error
 	validatedErr    error
@@ -689,7 +815,11 @@ type evidenceRepositoryStub struct {
 	persistErrs     []error
 	abandonErr      error
 	validatedCalls  int
+	dispatchedCalls int
 	abandonCalls    int
+	abandonCanceled bool
+	validateCalls   int
+	validatedInputs []repository.EvidenceContext
 }
 
 type errorAppConfigStub struct{ err error }
@@ -729,6 +859,17 @@ func (s *evidenceRepositoryStub) ListEvidenceDiscoveryTargets(_ context.Context,
 		return nil, s.targetsErr
 	}
 	return append([]repository.EvidenceDiscoveryTargetInput(nil), s.targets...), nil
+}
+
+func (s *evidenceRepositoryStub) ValidateEvidenceDiscoveryInputs(_ context.Context, _ string, _ repository.EvidenceTarget, contexts []repository.EvidenceContext) error {
+	s.validateCalls++
+	s.validatedInputs = append([]repository.EvidenceContext(nil), contexts...)
+	if len(s.validateErrs) > 0 {
+		err := s.validateErrs[0]
+		s.validateErrs = s.validateErrs[1:]
+		return err
+	}
+	return s.validateErr
 }
 
 func (s *evidenceRepositoryStub) LoadEvidenceDiscoveryRunTotals(_ context.Context, _, _ string) (repository.EvidenceDiscoveryRunTotals, error) {
@@ -775,14 +916,16 @@ func (s *evidenceRepositoryStub) MarkEvidenceDiscoveryAttemptValidated(_ context
 }
 
 func (s *evidenceRepositoryStub) MarkEvidenceDiscoveryAttemptDispatched(_ context.Context, _ repository.EvidenceDiscoveryAttemptValidationInput) error {
+	s.dispatchedCalls++
 	if s.dispatchedErr != nil {
 		return s.dispatchedErr
 	}
 	return nil
 }
 
-func (s *evidenceRepositoryStub) AbandonEvidenceDiscoveryAttempt(_ context.Context, _, _, _ string) error {
+func (s *evidenceRepositoryStub) AbandonEvidenceDiscoveryAttempt(ctx context.Context, _, _, _ string) error {
 	s.abandonCalls++
+	s.abandonCanceled = ctx.Err() != nil
 	if s.abandonErr != nil {
 		return s.abandonErr
 	}
@@ -794,12 +937,18 @@ type evidenceGeneratorStub struct {
 	generated          []GeneratedDream
 	generatedResponses [][]GeneratedDream
 	generatedCalls     int
+	skipAdmission      bool
 	err                error
 	requests           []EvidenceGenerationRequest
 }
 
-func (s *evidenceGeneratorStub) GenerateEvidence(_ context.Context, _ string, request EvidenceGenerationRequest) ([]GeneratedDream, GenerationDiagnostics, error) {
+func (s *evidenceGeneratorStub) GenerateEvidence(ctx context.Context, _ string, request EvidenceGenerationRequest) ([]GeneratedDream, GenerationDiagnostics, error) {
 	s.requests = append(s.requests, request)
+	if !s.skipAdmission {
+		if err := modelprovider.NotifyAdmission(ctx); err != nil {
+			return nil, GenerationDiagnostics{}, err
+		}
+	}
 	if s.err != nil {
 		return nil, GenerationDiagnostics{}, s.err
 	}

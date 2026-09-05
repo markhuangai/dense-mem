@@ -150,6 +150,18 @@ func TestEvidenceDiscoveryContextsPrioritizeSameSourceAndExcludePrivateSpaces(t 
 	for _, item := range selected.Contexts {
 		require.NotEqual(t, private.FragmentID, item.EvidenceID, "private evidence must not enter shared discovery context")
 	}
+	require.NoError(t, semantic.ValidateEvidenceDiscoveryInputs(ctx, teamID, selected.Target, selected.Contexts))
+	var sameSourceIngestID string
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT ingest_id::text FROM evidence_fragments WHERE team_id = ?::uuid AND fragment_id = ?::uuid`, teamID, sameSource.FragmentID).Scan(&sameSourceIngestID).Error
+	}))
+	_, err = ledger.AppendSecurityEvent(ctx, SecurityEventInput{
+		TeamID: teamID, OwnerProfileID: ownerID, IngestID: sameSourceIngestID,
+		FragmentID:         sameSource.FragmentID,
+		SecurityEventDraft: SecurityEventDraft{EventKind: "reviewer_signal", Decision: "quarantine", Reason: "context revalidation test"},
+	})
+	require.NoError(t, err)
+	require.ErrorIs(t, semantic.ValidateEvidenceDiscoveryInputs(ctx, teamID, selected.Target, selected.Contexts), ErrDreamSourceStale)
 }
 
 func TestEvidenceDiscoveryNodesRankEvidenceMentionsBeforeTheGlobalBound(t *testing.T) {

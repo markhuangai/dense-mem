@@ -16,7 +16,7 @@ describe("runOutcome", () => {
       lane: "evidence_discovery",
       evidence_targets: 1,
       evaluated_evidence_targets: 2,
-      outcome_summary: { provider_proposals: 1 },
+      outcome_summary: { provider_proposals: 1, created_hypotheses: 1 },
     })).toBe("Evidence discovery stored");
   });
 
@@ -26,7 +26,7 @@ describe("runOutcome", () => {
       status: "completed",
       evidence_targets: 3,
       evaluated_evidence_targets: 3,
-      outcome_summary: { provider_proposals: 0 },
+      outcome_summary: { provider_proposals: 0, created_hypotheses: 0 },
     })).toBe("Provider returned no supported relationship");
   });
 
@@ -36,7 +36,17 @@ describe("runOutcome", () => {
       status: "completed",
       evidence_targets: 2,
       evaluated_evidence_targets: 3,
-      outcome_summary: { provider_proposals: 1 },
+      outcome_summary: { provider_proposals: 1, created_hypotheses: 1 },
     })).toBe("Evidence discovery stored");
+  });
+
+  it("reports no supported relationship when every proposal is rejected", () => {
+    expect(runOutcome({
+      lane: "evidence_discovery",
+      status: "completed",
+      evidence_targets: 1,
+      evaluated_evidence_targets: 1,
+      outcome_summary: { provider_proposals: 1, created_hypotheses: 0 },
+    })).toBe("Provider returned no supported relationship");
   });
 });

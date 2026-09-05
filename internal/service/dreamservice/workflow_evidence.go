@@ -22,6 +22,7 @@ const (
 	evidenceDiscoveryRelatedLimit      = 5
 	evidenceDiscoveryPassLimit         = 2
 	evidenceDiscoveryRegenerationLimit = 2
+	evidenceDiscoveryCleanupTimeout    = 5 * time.Second
 )
 
 func (s *service) runScheduledEvidenceCycle(ctx context.Context, teamID string, windowAt time.Time) (*RunCycleResult, error) {
@@ -159,6 +160,7 @@ func (s *service) runClaimedEvidenceCycle(
 		return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, 0, 0, 0, 0, 0, errors.New("evidence discovery store and provider are required"))
 	}
 	created, rejected, evaluated, providerProposals := claimed.CreatedHypotheses, claimed.RejectedHypotheses, claimed.EvaluatedEvidenceTargets, claimed.ProviderProposals
+	staleTargets := 0
 	providerTurns, providerInputTokens, providerOutputTokens := claimed.ProviderTurns, claimed.ProviderInputTokens, claimed.ProviderOutputTokens
 	totals := repository.EvidenceDiscoveryRunTotals{}
 	if claimed.AttemptCount > 1 {
@@ -242,14 +244,38 @@ func (s *service) runClaimedEvidenceCycle(
 					if request.MaxOutputs <= 0 || request.MaxOutputs > dreamgenerationMaxEvidenceOutputs {
 						request.MaxOutputs = dreamgenerationMaxEvidenceOutputs
 					}
-					if err := s.deps.EvidenceStore.MarkEvidenceDiscoveryAttemptDispatched(ctx, repository.EvidenceDiscoveryAttemptValidationInput{
-						TeamID: teamID, AttemptID: attempt.AttemptID, ReservationToken: attempt.ReservationToken,
-					}); err != nil {
+					if err := validateEvidenceDiscoveryInputs(ctx, s.deps.EvidenceStore, teamID, request.Target, request.Contexts); err != nil {
+						abandonErr := s.abandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
+						if abandonErr != nil {
+							return errors.Join(err, abandonErr)
+						}
 						return err
 					}
+					dispatchMarked := false
+					admissionAttempted := false
+					admissionValidationFailed := false
+					markDispatched := func(markCtx context.Context) error {
+						admissionAttempted = true
+						if err := validateEvidenceDiscoveryInputs(markCtx, s.deps.EvidenceStore, teamID, request.Target, request.Contexts); err != nil {
+							admissionValidationFailed = true
+							return err
+						}
+						if dispatchMarked {
+							return nil
+						}
+						if err := s.deps.EvidenceStore.MarkEvidenceDiscoveryAttemptDispatched(markCtx, repository.EvidenceDiscoveryAttemptValidationInput{
+							TeamID: teamID, AttemptID: attempt.AttemptID, ReservationToken: attempt.ReservationToken,
+						}); err != nil {
+							return err
+						}
+						dispatchMarked = true
+						return nil
+					}
+					providerCtx := observability.WithAIOperation(observability.WithMetricIdentity(ctx, teamID, ""), observability.AIOperationEvidenceDiscovery, 1)
+					providerCtx = modelprovider.WithAdmissionCallback(providerCtx, markDispatched)
 					for regeneration := 0; regeneration < evidenceDiscoveryRegenerationLimit; regeneration++ {
 						generation, diagnostics, generateErr := s.deps.EvidenceGenerator.GenerateEvidence(
-							observability.WithAIOperation(observability.WithMetricIdentity(ctx, teamID, ""), observability.AIOperationEvidenceDiscovery, 1),
+							providerCtx,
 							teamID, request,
 						)
 						providerTurns += diagnostics.ProviderTurns
@@ -261,8 +287,12 @@ func (s *service) runClaimedEvidenceCycle(
 						result.ProviderOutputTokens = providerOutputTokens
 						result.ProviderProposals = providerProposals
 						if generateErr != nil {
-							if evidenceProviderFailureCanAbandon(generateErr) {
-								abandonErr := s.deps.EvidenceStore.AbandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
+							shouldAbandon := evidenceProviderFailureCanAbandon(generateErr)
+							if admissionValidationFailed || (!dispatchMarked && (admissionAttempted || evidenceProviderWasNotAdmitted(generateErr))) {
+								shouldAbandon = true
+							}
+							if shouldAbandon {
+								abandonErr := s.abandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
 								if abandonErr != nil {
 									return errors.Join(generateErr, abandonErr)
 								}
@@ -270,6 +300,15 @@ func (s *service) runClaimedEvidenceCycle(
 							return generateErr
 						}
 						proposals, invalid := evidenceProposalsFromGenerated(generation, target.Target, providerModel, request.MaxOutputs)
+						if !dispatchMarked {
+							if err := markDispatched(ctx); err != nil {
+								abandonErr := s.abandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
+								if abandonErr != nil {
+									return errors.Join(err, abandonErr)
+								}
+								return err
+							}
+						}
 						persisted, persistErr := s.deps.EvidenceStore.PersistEvidenceDiscoveryEvaluation(ctx, repository.EvidenceDiscoveryEvaluationInput{
 							TeamID: teamID, RunID: claimed.RunID, LeaseToken: claimed.LeaseToken,
 							AttemptID: attempt.AttemptID, ReservationToken: attempt.ReservationToken,
@@ -289,13 +328,13 @@ func (s *service) runClaimedEvidenceCycle(
 									Provider: providerModel, Message: "evidence discovery response duplicated an existing target",
 									FailureClass: "duplicate_exhausted", Attempts: regeneration + 1,
 								}
-								abandonErr := s.deps.EvidenceStore.AbandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
+								abandonErr := s.abandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
 								if abandonErr != nil {
 									return errors.Join(duplicateErr, abandonErr)
 								}
 								return duplicateErr
 							}
-							abandonErr := s.deps.EvidenceStore.AbandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
+							abandonErr := s.abandonEvidenceDiscoveryAttempt(ctx, teamID, attempt.AttemptID, attempt.ReservationToken)
 							if abandonErr != nil {
 								return errors.Join(persistErr, abandonErr)
 							}
@@ -319,6 +358,10 @@ func (s *service) runClaimedEvidenceCycle(
 				},
 			)
 			if targetErr != nil {
+				if errors.Is(targetErr, repository.ErrDreamSourceStale) {
+					staleTargets++
+					continue
+				}
 				return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, targetErr)
 			}
 		}
@@ -332,6 +375,9 @@ func (s *service) runClaimedEvidenceCycle(
 		"evidence_targets": result.EvidenceTargets, "evaluated_evidence_targets": evaluated,
 		"provider_proposals": providerProposals, "invalid_provider_proposals": rejected,
 		"created_hypotheses": created, "rejected_hypotheses": rejected,
+	}
+	if staleTargets > 0 {
+		result.OutcomeSummary["stale_evidence_targets"] = staleTargets
 	}
 	return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, nil)
 }
@@ -451,6 +497,40 @@ func evidenceProviderFailureCanAbandon(err error) bool {
 			providerErr.StatusCode >= 400 && providerErr.StatusCode < 500
 	}
 	return false
+}
+
+// evidenceProviderWasNotAdmitted identifies a canceled provider-gate wait.
+// OpenAI transport timeouts after admission have already invoked the durable
+// dispatch callback and therefore are handled by the dispatchMarked flag.
+func evidenceProviderWasNotAdmitted(err error) bool {
+	var timeout *modelprovider.TimeoutError
+	return errors.As(err, &timeout)
+}
+
+func validateEvidenceDiscoveryInputs(
+	ctx context.Context,
+	store repository.EvidenceDiscoveryRepository,
+	teamID string,
+	target repository.EvidenceTarget,
+	contexts []repository.EvidenceContext,
+) error {
+	validator, ok := store.(repository.EvidenceDiscoveryInputValidator)
+	if !ok {
+		return errors.New("evidence discovery input validator is required")
+	}
+	return validator.ValidateEvidenceDiscoveryInputs(ctx, teamID, target, contexts)
+}
+
+func (s *service) abandonEvidenceDiscoveryAttempt(ctx context.Context, teamID, attemptID, reservationToken string) error {
+	if s == nil || s.deps.EvidenceStore == nil {
+		return errors.New("evidence discovery attempt cleanup: repository is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), evidenceDiscoveryCleanupTimeout)
+	defer cancel()
+	return s.deps.EvidenceStore.AbandonEvidenceDiscoveryAttempt(cleanupCtx, teamID, attemptID, reservationToken)
 }
 
 func evidenceDiscoveryTargetKey(target repository.EvidenceTarget) string {
