@@ -21,7 +21,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/conflictassessment"
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/dreamgeneration"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/http"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
@@ -35,12 +34,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/conflictqueue"
 	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
-	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/evidenceconflict"
-	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -231,21 +227,11 @@ func RunActiveServer(
 	if err != nil {
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
-	rememberAuditor := newRememberSecurityRejectionAuditAdapter(auditService)
-	rememberProcessor := newRememberSynchronousProcessor(
-		ledgerRepo,
-		semanticRepo,
-		assessorProvider,
-		openaiProvider,
-		assessmentLimits,
-		discoverabilityMetrics,
-		logger,
-	)
-	rememberCore := rememberapp.NewService(rememberapp.Dependencies{
-		Synchronous: rememberProcessor, Auditor: rememberAuditor,
-		Metrics: discoverabilityMetrics, Logger: logger,
+	rememberSvc := buildRememberApplication(rememberApplicationDependencies{
+		Ledger: ledgerRepo, Catalog: semanticRepo, Assessor: assessorProvider,
+		Embedder: openaiProvider, Limits: assessmentLimits,
+		Metrics: discoverabilityMetrics, Logger: logger, Audit: auditService,
 	})
-	rememberSvc := rememberCore
 	recallSvc := memoryservice.NewRecallService(memoryservice.RecallDependencies{
 		Search:          searchRepo,
 		Provider:        retryEmbedder,
@@ -266,27 +252,20 @@ func RunActiveServer(
 		CorrectionExecutor:         newSemanticwriteEmbeddingExecutor(openaiProvider),
 		CorrectionEmbeddingTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
 	})
-	contextSvc := contextservice.NewSemantic(semanticRepo)
-	dreamSvc := dreamservice.New(dreamservice.Dependencies{
-		Remember:          rememberSvc,
-		Store:             semanticRepo,
-		ScheduledStore:    semanticRepo,
-		AppConfig:         appConfigService,
-		Teams:             teamService,
-		Generator:         dreamservice.NewProviderGenerator(dreamgeneration.NewProvider(assessorProvider, cfg.GetAIVerifierModel(), assessmentLimits)),
-		EvidenceStore:     semanticRepo,
-		EvidenceGenerator: dreamservice.NewEvidenceProviderGenerator(assessorProvider, cfg.GetAIVerifierModel(), assessmentLimits),
-		Metrics:           discoverabilityMetrics,
-		ProviderCycleLease: time.Duration(cfg.GetAIVerifierTimeoutSeconds())*
-			time.Second*time.Duration(dreamgeneration.DreamGenerationMaxProviderTurns) + time.Minute,
+	contextSvc := buildContextApplication(semanticRepo)
+	dreamSvc := buildDreamApplication(dreamApplicationDependencies{
+		Remember: rememberSvc, Store: semanticRepo, ScheduledStore: semanticRepo,
+		AppConfig: appConfigService, Teams: teamService,
+		GeneratorTransport: assessorProvider, EvidenceStore: semanticRepo,
+		Model: cfg.GetAIVerifierModel(), Limits: assessmentLimits,
+		Metrics:            discoverabilityMetrics,
+		ProviderCycleLease: dreamProviderCycleLease(cfg),
 	})
 	configureTelemetryFeatures(telemetryPrometheusService, appConfigService, dreamSvc)
-	controlDreamSvc := dreamservice.NewControl(dreamservice.ControlDependencies{
-		Store:     semanticRepo,
-		AppConfig: appConfigService,
-		Teams:     teamService,
+	controlDreamSvc := buildControlDreamApplication(controlDreamApplicationDependencies{
+		Store: semanticRepo, AppConfig: appConfigService, Teams: teamService,
 	})
-	graphViewSvc := graphview.NewSemantic(semanticRepo)
+	graphViewSvc := buildGraphApplication(semanticRepo)
 	memoryPackSvc := skillpackservice.NewMemoryPackService(skillpackservice.MemoryPackDependencies{
 		Semantic: semanticRepo,
 	})

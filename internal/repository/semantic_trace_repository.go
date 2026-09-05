@@ -3,12 +3,9 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -24,9 +21,6 @@ const (
 	maxTraceEvents            = 500
 	defaultTraceFragmentRunes = 2000
 	maxTraceFragmentRunes     = 8000
-	defaultSemanticGraphLimit = 80
-	defaultSemanticGraphDepth = 2
-	maxSemanticGraphDepth     = 5
 )
 
 var ErrTraceRelationshipNotFound = errors.New("trace relationship not found")
@@ -153,63 +147,6 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 	return result, nil
 }
 
-func (r *SemanticRepositoryImpl) SemanticGraph(
-	ctx context.Context,
-	input SemanticGraphQuery,
-) (*SemanticGraphSnapshot, error) {
-	input = normalizeSemanticGraphQuery(input)
-	if err := validateSemanticGraphQuery(input); err != nil {
-		return nil, err
-	}
-	var rows []semanticGraphEdgeRow
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		var err error
-		if input.Scope == "local" {
-			rows, err = loadSemanticLocalGraphRows(ctx, tx, input)
-		} else {
-			rows, err = loadSemanticOverviewGraphRows(ctx, tx, input)
-		}
-		return err
-	})
-	if err != nil {
-		return nil, fmt.Errorf("semantic graph: %w", err)
-	}
-	return semanticGraphSnapshot(input, rows), nil
-}
-
-func (r *SemanticRepositoryImpl) SemanticGraphNodeDetail(
-	ctx context.Context,
-	input SemanticGraphNodeDetailInput,
-) (*SemanticGraphNode, error) {
-	input = normalizeSemanticGraphNodeDetailInput(input)
-	if err := validateSemanticGraphNodeDetailInput(input); err != nil {
-		return nil, err
-	}
-	var node *SemanticGraphNode
-	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		var err error
-		switch input.NodeType {
-		case "entity":
-			node, err = loadSemanticEntityGraphNode(ctx, tx, input.TeamID, input.NodeID)
-		case "value":
-			node, err = loadSemanticValueGraphNode(ctx, tx, input.TeamID, input.NodeID)
-		default:
-			return sql.ErrNoRows
-		}
-		return err
-	})
-	if err != nil {
-		return nil, fmt.Errorf("semantic graph node: %w", err)
-	}
-	return node, nil
-}
-
-type semanticGraphEdgeRow struct {
-	source SemanticGraphNode
-	target SemanticGraphNode
-	edge   SemanticGraphEdge
-}
-
 func normalizeTraceRelationshipInput(input TraceRelationshipInput) TraceRelationshipInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.RelationshipID = strings.TrimSpace(input.RelationshipID)
@@ -233,56 +170,37 @@ func validateTraceRelationshipInput(input TraceRelationshipInput) error {
 	return nil
 }
 
-func normalizeSemanticGraphQuery(input SemanticGraphQuery) SemanticGraphQuery {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.spaceID = strings.TrimSpace(input.spaceID)
-	input.Scope = strings.ToLower(strings.TrimSpace(input.Scope))
-	if input.Scope == "" || input.Scope != "local" {
-		input.Scope = "overview"
+func loadTraceGraphContext(
+	ctx context.Context,
+	tx *gorm.DB,
+	relationship *RelationshipTraceRecord,
+	input TraceRelationshipInput,
+) ([]SemanticGraphNode, []SemanticGraphEdge, error) {
+	if relationship == nil || input.MaxEdges <= 0 || input.MaxDepth <= 0 {
+		return nil, nil, nil
 	}
-	input.Query = strings.ToLower(strings.TrimSpace(input.Query))
-	input.AnchorType = normalizeSemanticGraphNodeType(input.AnchorType)
-	input.AnchorID = strings.TrimSpace(input.AnchorID)
-	input.Types = normalizeSemanticGraphTypes(input.Types)
-	input.Depth = clampInt(input.Depth, defaultSemanticGraphDepth, maxSemanticGraphDepth)
-	input.Limit = defaultPositiveInt(input.Limit, defaultSemanticGraphLimit)
-	input.MinRelevance = normalizeRelevance(input.MinRelevance)
-	return input
-}
-
-func validateSemanticGraphQuery(input SemanticGraphQuery) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
+	rows, err := loadSemanticLocalGraphRows(ctx, tx, SemanticGraphQuery{
+		TeamID:       input.TeamID,
+		Scope:        "local",
+		Query:        strings.ToLower(input.Topic),
+		Types:        []string{"entity", "value"},
+		AnchorType:   "entity",
+		AnchorID:     relationship.SubjectEntityID,
+		Depth:        input.MaxDepth,
+		Limit:        input.MaxEdges,
+		MinRelevance: optionalRelevanceValue(input.MinRelevance),
+		spaceID:      relationship.SpaceID,
+	})
+	if err != nil {
+		return nil, nil, err
 	}
-	if input.Scope == "local" {
-		if input.AnchorType == "" {
-			return errors.New("anchor_type is required for local graph")
-		}
-		if _, err := uuid.Parse(input.AnchorID); err != nil {
-			return fmt.Errorf("anchor_id is required for local graph: %w", err)
-		}
-	}
-	return nil
-}
-
-func normalizeSemanticGraphNodeDetailInput(input SemanticGraphNodeDetailInput) SemanticGraphNodeDetailInput {
-	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.NodeType = normalizeSemanticGraphNodeType(input.NodeType)
-	input.NodeID = strings.TrimSpace(input.NodeID)
-	return input
-}
-
-func validateSemanticGraphNodeDetailInput(input SemanticGraphNodeDetailInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if input.NodeType == "" {
-		return errors.New("node_type must be entity or value")
-	}
-	if _, err := uuid.Parse(input.NodeID); err != nil {
-		return fmt.Errorf("node_id is required: %w", err)
-	}
-	return nil
+	snapshot := semanticGraphSnapshot(SemanticGraphQuery{
+		TeamID: input.TeamID,
+		Scope:  "local",
+		Depth:  input.MaxDepth,
+		Limit:  input.MaxEdges,
+	}, rows)
+	return snapshot.Nodes, snapshot.Edges, nil
 }
 
 func loadTraceRelationship(
@@ -908,76 +826,29 @@ func traceVisitedEntityIDs(relationship *RelationshipTraceRecord, nodes []Semant
 	return out
 }
 
-func jSONMap(raw string) map[string]any {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "{}" || raw == "[]" {
-		return nil
+func normalizeTracePredicateKeys(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+		if len(out) == 30 {
+			break
+		}
 	}
-	var out map[string]any
-	if err := json.Unmarshal([]byte(raw), &out); err == nil {
-		return out
-	}
-	return map[string]any{"raw": raw}
+	return out
 }
 
-func jSON(raw string) any {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	var out any
-	if err := json.Unmarshal([]byte(raw), &out); err == nil {
-		return out
-	}
-	return map[string]any{"raw": raw}
-}
-
-func boolDefault(value *bool, defaultValue bool) bool {
+func optionalRelevanceValue(value *float64) float64 {
 	if value == nil {
-		return defaultValue
-	}
-	return *value
-}
-
-func timePtr(value sql.NullTime) *time.Time {
-	if !value.Valid {
-		return nil
-	}
-	t := value.Time.UTC()
-	return &t
-}
-
-func clampInt(value, defaultValue, maxValue int) int {
-	if value <= 0 {
-		return defaultValue
-	}
-	if value > maxValue {
-		return maxValue
-	}
-	return value
-}
-
-func defaultPositiveInt(value, defaultValue int) int {
-	if value <= 0 {
-		return defaultValue
-	}
-	return value
-}
-
-func normalizeOptionalRelevance(value *float64) *float64 {
-	if value == nil {
-		return nil
-	}
-	normalized := normalizeRelevance(*value)
-	return &normalized
-}
-
-func normalizeRelevance(value float64) float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
 		return 0
 	}
-	if value > 1 {
-		return 1
-	}
-	return value
+	return normalizeRelevance(*value)
 }
