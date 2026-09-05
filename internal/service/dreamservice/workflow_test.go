@@ -594,6 +594,32 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 	assert.Equal(t, ingestID, repo.submitInput.SubmittedIngestID)
 }
 
+func TestResolveFeedbackRejectsForeignEvidenceDreamBeforeRemember(t *testing.T) {
+	teamID := uuid.New()
+	ownerID := uuid.New()
+	actorID := uuid.New()
+	hypothesisID := uuid.NewString()
+	repo := &dreamRepositoryStub{getRecord: repository.HypothesisRecord{
+		TeamID:                teamID.String(),
+		HypothesisID:          hypothesisID,
+		Status:                string(domain.DreamStatusProposed),
+		Lane:                  domain.DreamLaneEvidenceDiscovery,
+		Statement:             "Dense-Mem may use PostgreSQL.",
+		SourceOwnerProfileIDs: []string{ownerID.String()},
+	}}
+	remember := &rememberServiceStub{result: dreamTerminalRememberResult(string(rememberapp.TerminalProcessingCompleted), uuid.NewString())}
+	svc := New(Dependencies{Store: repo, Remember: remember})
+
+	_, err := svc.ResolveFeedback(dreamTestContext(teamID, actorID), "ignored-profile", ResolveFeedbackRequest{
+		DreamID:  hypothesisID,
+		Decision: "confirm_true",
+		Evidence: []rememberapp.RememberEvidenceInput{{Content: "Independent evidence."}},
+	})
+	require.ErrorIs(t, err, ErrDreamNotFound)
+	require.Empty(t, remember.requests, "foreign evidence-Dream confirmation must not call Remember")
+	require.Empty(t, repo.submitInput, "foreign evidence-Dream confirmation must not mutate the hypothesis")
+}
+
 func TestResolveFeedbackLifecycleDecisions(t *testing.T) {
 	teamID := uuid.New()
 	ownerID := uuid.New()

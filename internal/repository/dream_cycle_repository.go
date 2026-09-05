@@ -340,30 +340,48 @@ func failExhaustedScheduledDreamRecoveries(ctx context.Context, tx *gorm.DB, tea
 		  AND lease_until IS NOT NULL
 		  AND lease_until <= now()
 		  AND attempt_count >= ?
-		RETURNING run_id::text, input_count, created_hypotheses, rejected_hypotheses
+		RETURNING run_id::text, input_count, created_hypotheses, rejected_hypotheses,
+		          provider_proposals, provider_turns, provider_input_tokens,
+		          provider_output_tokens, evidence_targets, evaluated_evidence_targets
 	`, teamID, lane, maxAttempts).Rows()
 	if err != nil {
 		return err
 	}
 	failedRuns := make([]struct {
-		runID    string
-		inputs   int
-		created  int
-		rejected int
+		runID                    string
+		inputs                   int
+		created                  int
+		rejected                 int
+		evidenceTargets          int
+		evaluatedEvidenceTargets int
+		providerProposals        int
+		providerTurns            int
+		providerInputTokens      int
+		providerOutputTokens     int
 	}, 0)
 	for rows.Next() {
 		var runID string
-		var inputCount, created, rejected int
-		if err := rows.Scan(&runID, &inputCount, &created, &rejected); err != nil {
+		var inputCount, created, rejected, providerProposals, providerTurns, providerInputTokens, providerOutputTokens, evidenceTargets, evaluatedEvidenceTargets int
+		if err := rows.Scan(&runID, &inputCount, &created, &rejected, &providerProposals, &providerTurns,
+			&providerInputTokens, &providerOutputTokens, &evidenceTargets, &evaluatedEvidenceTargets); err != nil {
 			_ = rows.Close()
 			return err
 		}
 		failedRuns = append(failedRuns, struct {
-			runID    string
-			inputs   int
-			created  int
-			rejected int
-		}{runID: runID, inputs: inputCount, created: created, rejected: rejected})
+			runID                    string
+			inputs                   int
+			created                  int
+			rejected                 int
+			evidenceTargets          int
+			evaluatedEvidenceTargets int
+			providerProposals        int
+			providerTurns            int
+			providerInputTokens      int
+			providerOutputTokens     int
+		}{runID: runID, inputs: inputCount, created: created, rejected: rejected,
+			providerProposals: providerProposals, providerTurns: providerTurns,
+			providerInputTokens: providerInputTokens, providerOutputTokens: providerOutputTokens,
+			evidenceTargets: evidenceTargets, evaluatedEvidenceTargets: evaluatedEvidenceTargets})
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -373,16 +391,85 @@ func failExhaustedScheduledDreamRecoveries(ctx context.Context, tx *gorm.DB, tea
 		return err
 	}
 	for _, failed := range failedRuns {
+		if lane == domain.DreamLaneEvidenceDiscovery {
+			var totals EvidenceDiscoveryRunTotals
+			if err := tx.WithContext(ctx).Raw(`
+				SELECT COUNT(*)::int,
+				       COUNT(DISTINCT (target_evidence_id, target_content_hash))::int,
+				       COALESCE(SUM(created_hypotheses), 0)::int,
+				       COALESCE(SUM(rejected_proposals), 0)::int,
+				       COALESCE(SUM(provider_proposals), 0)::int,
+				       COALESCE(SUM(provider_turns), 0)::int,
+				       COALESCE(SUM(provider_input_tokens), 0)::int,
+				       COALESCE(SUM(provider_output_tokens), 0)::int
+				FROM dream_evidence_target_evaluations
+				WHERE team_id = ?::uuid AND run_id = ?::uuid
+			`, teamID, failed.runID).Row().Scan(
+				&totals.Evaluated, &totals.TargetCount, &totals.Created, &totals.Rejected,
+				&totals.ProviderProposals, &totals.ProviderTurns,
+				&totals.ProviderInputTokens, &totals.ProviderOutputTokens,
+			); err != nil {
+				return err
+			}
+			if err := tx.WithContext(ctx).Exec(`
+				UPDATE dream_cycle_runs
+				SET created_hypotheses = ?,
+				    rejected_hypotheses = ?,
+				    provider_proposals = ?,
+				    provider_turns = ?,
+				    provider_input_tokens = ?,
+				    provider_output_tokens = ?,
+				    evidence_targets = ?,
+				    evaluated_evidence_targets = ?,
+				    outcome_summary = outcome_summary || jsonb_build_object(
+				        'evidence_targets', ?::integer,
+				        'evaluated_evidence_targets', ?::integer,
+				        'provider_proposals', ?::integer,
+				        'created_hypotheses', ?::integer,
+				        'rejected_hypotheses', ?::integer,
+				        'recovery_exhausted', 1
+				    ),
+				    updated_at = now()
+				WHERE team_id = ?::uuid AND run_id = ?::uuid
+			`, totals.Created, totals.Rejected, totals.ProviderProposals,
+				totals.ProviderTurns, totals.ProviderInputTokens, totals.ProviderOutputTokens,
+				totals.TargetCount, totals.Evaluated,
+				totals.TargetCount, totals.Evaluated, totals.ProviderProposals,
+				totals.Created, totals.Rejected, teamID, failed.runID).Error; err != nil {
+				return err
+			}
+			failed.created = totals.Created
+			failed.rejected = totals.Rejected
+			failed.evidenceTargets = totals.TargetCount
+			failed.evaluatedEvidenceTargets = totals.Evaluated
+			failed.providerProposals = totals.ProviderProposals
+			failed.providerTurns = totals.ProviderTurns
+			failed.providerInputTokens = totals.ProviderInputTokens
+			failed.providerOutputTokens = totals.ProviderOutputTokens
+		}
 		if err := insertScheduledDreamAudit(ctx, tx, DreamCycleCompleteInput{
-			TeamID:             teamID,
-			RunID:              failed.runID,
-			Status:             "failed",
-			InputCount:         failed.inputs,
-			CreatedHypotheses:  failed.created,
-			RejectedHypotheses: failed.rejected,
-			Error:              "scheduled dream recovery attempts exhausted",
-			OutcomeSummary:     map[string]int{"recovery_exhausted": 1},
-			Lane:               lane,
+			TeamID:                   teamID,
+			RunID:                    failed.runID,
+			Status:                   "failed",
+			InputCount:               failed.inputs,
+			CreatedHypotheses:        failed.created,
+			RejectedHypotheses:       failed.rejected,
+			ProviderProposals:        failed.providerProposals,
+			ProviderTurns:            failed.providerTurns,
+			ProviderInputTokens:      failed.providerInputTokens,
+			ProviderOutputTokens:     failed.providerOutputTokens,
+			EvidenceTargets:          failed.evidenceTargets,
+			EvaluatedEvidenceTargets: failed.evaluatedEvidenceTargets,
+			Error:                    "scheduled dream recovery attempts exhausted",
+			OutcomeSummary: map[string]int{
+				"recovery_exhausted":         1,
+				"evidence_targets":           failed.evidenceTargets,
+				"evaluated_evidence_targets": failed.evaluatedEvidenceTargets,
+				"provider_proposals":         failed.providerProposals,
+				"created_hypotheses":         failed.created,
+				"rejected_hypotheses":        failed.rejected,
+			},
+			Lane: lane,
 		}); err != nil {
 			return err
 		}

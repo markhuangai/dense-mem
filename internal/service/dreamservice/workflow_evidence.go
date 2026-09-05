@@ -281,6 +281,7 @@ func (s *service) runClaimedEvidenceCycle(
 						})
 						if persistErr != nil {
 							if evidencePersistenceDuplicate(persistErr) && regeneration+1 < evidenceDiscoveryRegenerationLimit {
+								request = evidenceRequestWithDuplicateContext(request, proposals)
 								continue
 							}
 							if evidencePersistenceDuplicate(persistErr) {
@@ -303,6 +304,11 @@ func (s *service) runClaimedEvidenceCycle(
 						// A second pass is a bounded reinforcement check only when the first
 						// validated pass produced at least one durable hypothesis.
 						continuePass = attempt.PassNumber == 1 && persisted.Created > 0
+						if continuePass {
+							target.RelatedRelationships, target.RelatedHypotheses = evidenceDuplicateContext(
+								target.RelatedRelationships, target.RelatedHypotheses, proposals,
+							)
+						}
 						return nil
 					}
 					return errors.New("evidence discovery regeneration limit exhausted")
@@ -324,6 +330,73 @@ func (s *service) runClaimedEvidenceCycle(
 		"created_hypotheses": created, "rejected_hypotheses": rejected,
 	}
 	return s.finishEvidenceCycle(ctx, teamID, cfg, result, claimed, created, rejected, evaluated, providerProposals, result.EvidenceTargets, nil)
+}
+
+func evidenceRequestWithDuplicateContext(
+	request EvidenceGenerationRequest,
+	proposals []repository.UpsertHypothesisInput,
+) EvidenceGenerationRequest {
+	request.RelatedRelationships, request.RelatedHypotheses = evidenceDuplicateContext(
+		request.RelatedRelationships, request.RelatedHypotheses, proposals,
+	)
+	return request
+}
+
+func evidenceDuplicateContext(
+	relationships []repository.DreamInput,
+	existing []repository.HypothesisRecord,
+	proposals []repository.UpsertHypothesisInput,
+) ([]repository.DreamInput, []repository.HypothesisRecord) {
+	result := make([]repository.HypothesisRecord, 0, min(evidenceDiscoveryRelatedLimit, len(existing)+len(proposals)))
+	seen := make(map[string]struct{}, len(existing)+len(proposals))
+	add := func(record repository.HypothesisRecord) {
+		key := strings.TrimSpace(record.SubjectEntityID) + "\x00" +
+			strings.ToLower(strings.TrimSpace(record.PredicateKey)) + "\x00" +
+			strings.TrimSpace(record.ObjectEntityID) + "\x00" + strings.TrimSpace(record.ObjectValueID)
+		if key == "\x00\x00\x00" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		if len(result) < evidenceDiscoveryRelatedLimit {
+			result = append(result, record)
+		}
+	}
+	for _, proposal := range proposals {
+		add(repository.HypothesisRecord{
+			Status:                string(domain.DreamStatusProposed),
+			SubjectEntityID:       proposal.SubjectEntityID,
+			PredicateKey:          proposal.PredicateKey,
+			PredicateVersion:      proposal.PredicateVersion,
+			ObjectEntityID:        proposal.ObjectEntityID,
+			ObjectValueID:         proposal.ObjectValueID,
+			SourceOwnerProfileIDs: append([]string(nil), proposal.SourceOwnerProfileIDs...),
+		})
+	}
+	remaining := evidenceDiscoveryRelatedLimit - len(result)
+	if remaining < 0 {
+		remaining = 0
+	}
+	selectedRelationships := append([]repository.DreamInput(nil), relationships...)
+	if len(selectedRelationships) > remaining {
+		selectedRelationships = selectedRelationships[:remaining]
+	}
+	remaining -= len(selectedRelationships)
+	if remaining > 0 {
+		for _, record := range existing {
+			if len(result) >= evidenceDiscoveryRelatedLimit || remaining == 0 {
+				break
+			}
+			before := len(result)
+			add(record)
+			if len(result) > before {
+				remaining--
+			}
+		}
+	}
+	return selectedRelationships, result
 }
 
 func evidencePersistenceDuplicate(err error) bool {

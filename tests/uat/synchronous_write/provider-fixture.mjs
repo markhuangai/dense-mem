@@ -208,6 +208,13 @@ function fixtureEvidenceDiscovery(payload) {
   if (!target?.evidence_ref || !predicate?.ref || !subject?.ref || !object?.ref || markers.length < 2) {
     return { request_id: input.request_id || "fixture", proposals: [] };
   }
+  if ((input.related_hypotheses || []).some((hypothesis) => (
+    hypothesis?.subject_ref === subject.ref &&
+    hypothesis?.predicate === predicate.ref &&
+    hypothesis?.object_ref === object.ref
+  ))) {
+    return { request_id: input.request_id || "fixture", proposals: [] };
+  }
   return {
     request_id: input.request_id || "fixture",
     proposals: [{

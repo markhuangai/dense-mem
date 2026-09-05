@@ -139,6 +139,10 @@ func (s *service) resolveConfirmation(
 		return nil, err
 	}
 	dream := dreamRecord(record)
+	if record.Lane == domain.DreamLaneEvidenceDiscovery && !dreamEvidenceHypothesisOwnedBy(record, actorProfileID) {
+		s.recordDreamFeedback(ctx, decision, dream, "error")
+		return nil, ErrDreamNotFound
+	}
 	if s.deps.Remember == nil {
 		s.recordDreamFeedback(ctx, decision, dream, "error")
 		return nil, fmt.Errorf("resolve dream feedback: remember service is required")
@@ -198,6 +202,23 @@ func (s *service) resolveConfirmation(
 		InvalidatedReason: req.Feedback,
 	})
 	return s.feedbackResult(ctx, decision, dream, updated, remember, err)
+}
+
+func dreamEvidenceHypothesisOwnedBy(record *repository.HypothesisRecord, profileID string) bool {
+	if record == nil {
+		return false
+	}
+	actorID, err := uuid.Parse(strings.TrimSpace(profileID))
+	if err != nil {
+		return false
+	}
+	for _, ownerID := range record.SourceOwnerProfileIDs {
+		ownerUUID, err := uuid.Parse(strings.TrimSpace(ownerID))
+		if err == nil && ownerUUID == actorID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *service) submitDreamHypothesisWithRetry(

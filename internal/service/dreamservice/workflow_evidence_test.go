@@ -558,7 +558,40 @@ func TestClaimedEvidenceCycleRegeneratesAfterDuplicatePersistence(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, generator.requests, 2, "a duplicate response must receive one complete regeneration")
 	require.Len(t, store.evaluations, 1, "the duplicate response must not create a partial evaluation")
+	require.Len(t, generator.requests[1].RelatedHypotheses, 1, "regeneration must identify the rejected target")
+	require.Equal(t, valid.SubjectEntityID, generator.requests[1].RelatedHypotheses[0].SubjectEntityID)
+	require.Equal(t, valid.PredicateKey, generator.requests[1].RelatedHypotheses[0].PredicateKey)
+	require.Equal(t, valid.ObjectEntityID, generator.requests[1].RelatedHypotheses[0].ObjectEntityID)
 	require.Equal(t, 1, result.EvaluatedEvidenceTargets)
+}
+
+func TestClaimedEvidenceCycleRefreshesDuplicateContextForSecondPass(t *testing.T) {
+	teamID := uuid.NewString()
+	targetID := uuid.NewString()
+	target := repository.EvidenceDiscoveryTargetInput{Target: repository.EvidenceTarget{
+		EvidenceID: targetID, FragmentID: targetID, ContentHash: "hash", Content: "target", Authority: "primary",
+	}}
+	valid := GeneratedDream{
+		Hypothesis: "A may use B.", SubjectEntityID: "subject", PredicateKey: "uses", ObjectEntityID: "object",
+		EvidenceDerivations: []repository.EvidenceDerivationSource{{EvidenceID: targetID, FragmentID: targetID, SpanStart: 0, SpanEnd: 6, Quote: "target", Authority: "primary"}},
+	}
+	store := &evidenceRepositoryStub{targets: []repository.EvidenceDiscoveryTargetInput{target}}
+	repo := &dreamRepositoryStub{}
+	generator := &evidenceGeneratorStub{model: "model", generatedResponses: [][]GeneratedDream{{valid}, nil}}
+	service := &service{deps: Dependencies{Store: repo, ScheduledStore: repo, EvidenceStore: store, EvidenceGenerator: generator}, now: time.Now}
+	claimed := &repository.DreamCycleRun{TeamID: teamID, RunID: uuid.NewString(), LeaseToken: uuid.NewString(), Claimed: true}
+
+	result, err := service.runClaimedEvidenceCycle(context.Background(), teamID, EffectiveConfig{
+		DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, MaxOutputs: 5},
+	}, &RunCycleResult{}, claimed)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(generator.requests))
+	require.Len(t, generator.requests[1].RelatedHypotheses, 1, "pass two must receive pass-one duplicate context")
+	require.Equal(t, valid.SubjectEntityID, generator.requests[1].RelatedHypotheses[0].SubjectEntityID)
+	require.Equal(t, valid.PredicateKey, generator.requests[1].RelatedHypotheses[0].PredicateKey)
+	require.Equal(t, valid.ObjectEntityID, generator.requests[1].RelatedHypotheses[0].ObjectEntityID)
+	require.Len(t, store.evaluations, 2)
+	require.Equal(t, 2, result.EvaluatedEvidenceTargets)
 }
 
 func TestClaimedEvidenceCycleAbandonsAfterDuplicateRegenerationExhaustion(t *testing.T) {

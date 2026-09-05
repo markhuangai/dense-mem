@@ -99,6 +99,21 @@ test("provider fixture implements the community, dream, and evidence-discovery s
   assert.deepEqual(evidence.proposals[0].derivations, [{
     evidence_ref: "evidence_target", start_ref: "bfixture_0", end_ref: "bfixture_1",
   }]);
+  const duplicateSuppressed = fixtureChatResponse(structuredRequest("dense_mem_evidence_discovery_response", {
+    request_id: "evidence_request_2",
+    max_outputs: 1,
+    contexts: [{
+      evidence_ref: "evidence_target",
+      boundary_text: "⟦bfixture_0⟧Dense-Mem uses PostgreSQL.⟦bfixture_1⟧",
+    }],
+    nodes: [
+      { ref: "node_1", display: "Dense-Mem", kind: "project" },
+      { ref: "node_2", display: "PostgreSQL", kind: "product" },
+    ],
+    allowed_predicates: [{ ref: "predicate_1", label: "uses", version: 1 }],
+    related_hypotheses: [{ subject_ref: "node_1", predicate: "predicate_1", object_ref: "node_2" }],
+  }));
+  assert.equal(duplicateSuppressed.proposals.length, 0);
 });
 
 test("team-dreaming Compose UAT covers hourly evidence discovery and adverse eligibility", async () => {
