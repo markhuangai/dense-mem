@@ -293,7 +293,8 @@ async function provenanceAndIsolationScenario() {
   const foreignRecall = await mcpSuccess(foreign.apiKey, "recall_memory", { query: fixture.subjectName, limit: 10 });
   assert(!(foreignRecall.conflicts ?? []).some((conflict) => conflict.conflict_id === fixture.conflictID), "separate-team recall disclosed the conflict");
   const foreignTrace = await mcpRaw(foreign.apiKey, "trace_memory", { relationship_id: fixture.relationshipA });
-  assert(foreignTrace.error && foreignTrace.result === undefined && !JSON.stringify(foreignTrace).includes(fixture.conflictID), "separate-team trace disclosed the conflict");
+  const foreignTraceFailed = Boolean(foreignTrace.error) || foreignTrace.result?.isError === true;
+  assert(foreignTraceFailed && !JSON.stringify(foreignTrace).includes(fixture.conflictID), "separate-team trace disclosed the conflict");
 
   const ownerRetraction = await mcpSuccess(fixture.profileA.apiKey, "retract_evidence", {
     evidence_ids: [fixture.evidenceA],
