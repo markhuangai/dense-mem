@@ -1,11 +1,13 @@
 package registry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/markhuangai/dense-mem/internal/correlation"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
@@ -127,7 +129,7 @@ func ValidateContractInputIssues(tool Tool, args map[string]any, scopes []string
 }
 
 // ContractValidationErrorData returns the stable JSON-RPC error.data payload.
-func ContractValidationErrorData(result ContractValidationResult) map[string]any {
+func ContractValidationErrorData(ctx context.Context, result ContractValidationResult) map[string]any {
 	issues := make([]map[string]any, 0, len(result.Issues))
 	for _, issue := range result.Issues {
 		issues = append(issues, map[string]any{
@@ -143,6 +145,7 @@ func ContractValidationErrorData(result ContractValidationResult) map[string]any
 		"retryable":        false,
 		"next_action":      "correct_and_resubmit",
 		"remediation":      "Correct the listed argument paths and submit the request again.",
+		"correlation_id":   rememberapp.NormalizeTerminalCorrelationID(correlation.FromContext(ctx)),
 		"reason":           "validation_failed",
 		"issues":           issues,
 		"issues_truncated": result.IssuesTruncated,

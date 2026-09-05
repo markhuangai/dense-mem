@@ -15,8 +15,37 @@ let rpcID = 0;
 seedOverflowPredicates();
 const terminal = await mcpOperationalResult("remember", overflowFixture());
 const submissionID = requiredString(terminal.submission_id, "submission_id");
-assertTerminalErrors(terminal);
-const zeroSemanticWrites = postgresQuery(`
+assertTerminalErrors(terminal, { serverOwned: true });
+assertZeroSemanticWrites(submissionID, "server-owned budget failure");
+
+const clientControlled = await mcpOperationalResult("remember", clientControlledBudgetFixture());
+const clientSubmissionID = requiredString(clientControlled.submission_id, "client-controlled submission_id");
+assertTerminalErrors(clientControlled, { serverOwned: false });
+assertZeroSemanticWrites(clientSubmissionID, "client-controlled budget failure");
+
+const removed = await mcpRaw("get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
+if (removed.error?.code !== -32601 || removed.result !== undefined) {
+  throw new Error("removed get_submission_status remained callable");
+}
+console.log(JSON.stringify({
+  status: "ok",
+  scenario: "submission_terminal_errors",
+  tested_commit: requiredEnv("DENSE_MEM_E2E_COMMIT_SHA"),
+  submission_id: submissionID,
+  client_controlled_submission_id: clientSubmissionID,
+  processing_state: terminal.processing_state,
+  error_code: terminal.errors[0]?.code,
+  terminal_errors_nonempty: true,
+  zero_partial_semantic_state: true,
+  client_controlled_budget_guidance: true,
+  closed_codes: true,
+  structured_content_matches_text: true,
+  operational_is_error: true,
+  removed_status_tool: true,
+}, null, 2));
+
+function assertZeroSemanticWrites(submissionID, label) {
+  const zeroSemanticWrites = postgresQuery(`
   SELECT count(*) FROM knowledge_ingests
   WHERE team_id = '${sqlLiteral(teamID)}'::uuid
     AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
@@ -34,29 +63,11 @@ const zeroSemanticWrites = postgresQuery(`
     AND ingest_id = '${sqlLiteral(submissionID)}'::uuid;
 `).split(/\r?\n/).filter(Boolean).map(Number);
 if (zeroSemanticWrites.length !== 4 || zeroSemanticWrites.some((count) => count !== 0)) {
-  throw new Error(`irreducible assessor budget failure created partial semantic state: ${zeroSemanticWrites.join(",")}`);
+    throw new Error(`${label} created partial semantic state: ${zeroSemanticWrites.join(",")}`);
+  }
 }
 
-const removed = await mcpRaw("get_submission_status", { submission_id: "00000000-0000-0000-0000-000000000000" });
-if (removed.error?.code !== -32601 || removed.result !== undefined) {
-  throw new Error("removed get_submission_status remained callable");
-}
-console.log(JSON.stringify({
-  status: "ok",
-  scenario: "submission_terminal_errors",
-  tested_commit: requiredEnv("DENSE_MEM_E2E_COMMIT_SHA"),
-  submission_id: submissionID,
-  processing_state: terminal.processing_state,
-  error_code: terminal.errors[0]?.code,
-  terminal_errors_nonempty: true,
-  zero_partial_semantic_state: true,
-  closed_codes: true,
-  structured_content_matches_text: true,
-  operational_is_error: true,
-  removed_status_tool: true,
-}, null, 2));
-
-function assertTerminalErrors(status) {
+function assertTerminalErrors(status, options = {}) {
   if (!["failed"].includes(status.processing_state) || !Array.isArray(status.errors) || status.errors.length === 0) {
     throw new Error("terminal failure returned an empty errors array");
   }
@@ -118,9 +129,17 @@ function assertTerminalErrors(status) {
     if (seen.has(`${code}\0${message}`)) throw new Error("terminal errors were not deduplicated");
     seen.add(`${code}\0${message}`);
     if (code === "input_budget_exceeded") {
-      if (item.reason_code !== "predicate_options_overflow" || item.details?.server_owned !== true ||
-          item.next_action !== "contact_operator" || !item.remediation.includes("operator")) {
-        throw new Error("server-owned assessor budget failure did not expose operator guidance");
+      if (item.details === null || typeof item.details !== "object" || Array.isArray(item.details)) {
+        throw new Error("assessor budget failure details must be a bounded object");
+      }
+      if (options.serverOwned) {
+        if (typeof item.details.server_owned !== "boolean" || item.reason_code !== "predicate_options_overflow" || item.details.server_owned !== true ||
+            item.next_action !== "contact_operator" || !item.remediation.includes("operator")) {
+          throw new Error("server-owned assessor budget failure did not expose operator guidance");
+        }
+      } else if (typeof item.details.client_controlled !== "boolean" || item.reason_code !== "assessment_input" || item.details.client_controlled !== true ||
+          item.next_action !== "resubmit_remember" || !item.remediation.includes("new idempotency_key")) {
+        throw new Error("client-controlled assessor budget failure did not expose correction guidance");
       }
     }
   }
@@ -166,6 +185,27 @@ function overflowFixture() {
     for (const index of indexes) relationships.push(relationship(content, evidenceIndex, `${runID}:${index}`, "A", predicateKey(index), "B"));
   }
   return { evidence, relationships, idempotency_key: `${runID}:batch` };
+}
+
+function clientControlledBudgetFixture() {
+  const comment = "界".repeat(1000);
+  const relationships = [];
+  for (let index = 0; index < 200; index += 1) {
+    relationships.push({
+      ref: `${runID}:client-budget:${index}`,
+      subject: { name: "Client subject", entity_kind: "project" },
+      predicate: { proposed_key: "uses" },
+      object: { entity: { name: "Client object", entity_kind: "product" } },
+      polarity: "+",
+      evidence_indices: [0],
+      client_comment: comment,
+    });
+  }
+  return {
+    evidence: [{ content: "Client-controlled assessor budget input.", source_type: "manual", source: `${runID}:client-budget`, source_group: runID }],
+    relationships,
+    idempotency_key: `${runID}:client-budget`,
+  };
 }
 
 function relationship(content, evidenceIndex, ref, subject, predicate, object) {

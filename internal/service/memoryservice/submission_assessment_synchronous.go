@@ -256,7 +256,7 @@ func AssessSynchronousRemember(
 			if errors.As(err, &malformed) && malformed != nil && malformed.FailureClass == "input_budget" {
 				mapped = fmt.Errorf("%w: %w", rememberapp.ErrRememberInputBudgetExceeded, err)
 			} else if errors.Is(err, rememberapp.ErrRememberInputBudgetExceeded) {
-				mapped = fmt.Errorf("%w: refreshed assessor input exceeded the deterministic budget", rememberapp.ErrRememberInputBudgetExceeded)
+				mapped = fmt.Errorf("%w: refreshed assessor input exceeded the deterministic budget: %w", rememberapp.ErrRememberInputBudgetExceeded, err)
 			} else if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
 				mapped = fmt.Errorf("%w: complete assessor response remained invalid", rememberapp.ErrRememberProviderResponseInvalid)
 			} else {

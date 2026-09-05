@@ -148,7 +148,7 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 			return nil, &rpcError{
 				Code:    errCodeInvalidParams,
 				Message: boundedRPCText(validation.Issues[0].Message),
-				Data:    registry.ContractValidationErrorData(validation),
+				Data:    registry.ContractValidationErrorData(ctx, validation),
 			}
 		}
 	} else {
@@ -158,7 +158,7 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 		registry.StripTenantOverrideArgs(args)
 		if err := registry.ValidateInput(tool, args); err != nil {
 			s.logToolInputRejected(ctx, tool.Name, "input_validation_failed")
-			actionable := registry.ActionableErrorData(ctx, tool.Name, err)
+			actionable := registry.ActionableInvalidInputData(ctx, tool.Name, "invalid_request", "The evaluation tool arguments failed validation.", "Correct the identified evaluation arguments and submit the request again.")
 			return nil, &rpcError{Code: errCodeInvalidParams, Message: boundedRPCText(fmt.Sprint(actionable["message"])), Data: actionable}
 		}
 	}
@@ -186,7 +186,7 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 			return nil, &rpcError{
 				Code:    errCodeInvalidParams,
 				Message: boundedRPCText(validation.Issues[0].Message),
-				Data:    registry.ContractValidationErrorData(validation),
+				Data:    registry.ContractValidationErrorData(ctx, validation),
 			}
 		}
 		actionable := registry.ActionableErrorData(ctx, tool.Name, err)

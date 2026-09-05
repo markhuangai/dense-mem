@@ -9,7 +9,9 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildActiveRecallRecordsFeedbackSnapshot(t *testing.T) {
@@ -185,6 +187,43 @@ func TestBuildActiveSubmitRecallSessionFeedbackReportsPartialSuccess(t *testing.
 	}
 	if len(recorder.feedback) != 1 || recorder.feedback[0].RecallID != "rec-canonical-a" {
 		t.Fatalf("feedback submissions = %#v", recorder.feedback)
+	}
+}
+
+func TestBuildActiveSubmitRecallSessionFeedbackClassifiesFailureOwnership(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		err        error
+		errorCode  string
+		reasonCode string
+		nextAction string
+	}{
+		{name: "persistence", err: errors.New("database unavailable"), errorCode: "degraded", reasonCode: "feedback_persistence_failed", nextAction: "retry_same_request"},
+		{name: "invalid reference", err: repository.ErrRecallFeedbackEventNotFound, errorCode: "invalid_input", reasonCode: "reference_not_found", nextAction: "correct_and_resubmit"},
+		{name: "cancelled", err: context.Canceled, errorCode: "degraded", reasonCode: "request_cancelled", nextAction: "stop"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reg, err := BuildActive(Dependencies{
+				RecallFeedbackEvents: &stubRecallFeedbackRecorder{err: test.err},
+				Metrics:              observability.NewInMemoryDiscoverabilityMetrics(),
+			})
+			require.NoError(t, err)
+			submit, ok := reg.Get(ToolSubmitRecallSessionFeedback)
+			require.True(t, ok)
+			out, err := submit.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
+				"recalls": []any{map[string]any{
+					"recall_event_id":  "rec-canonical",
+					"used":             true,
+					"answer_supported": true,
+					"quality":          "high",
+				}},
+			})
+			require.NoError(t, err)
+			require.Equal(t, test.errorCode, out["error_code"])
+			require.Equal(t, test.reasonCode, out["reason_code"])
+			require.Equal(t, test.nextAction, out["next_action"])
+			require.NotEmpty(t, out["remediation"])
+		})
 	}
 }
 

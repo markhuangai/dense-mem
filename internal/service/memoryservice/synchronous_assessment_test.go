@@ -572,6 +572,29 @@ func TestSynchronousAssessmentFailureDetailsPreserveBudgetMeasurement(t *testing
 	require.Equal(t, true, details["server_owned"])
 }
 
+func TestAssessSynchronousRememberPreservesBudgetDetailsFromRepairFailure(t *testing.T) {
+	fixture := synchronousAssessmentFixture(t)
+	fixture.provider.response = func(assessor.SemanticAssessmentRequest, int) assessor.SemanticAssessmentResponse {
+		return assessor.SemanticAssessmentResponse{}
+	}
+	preflight := deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+		"assessment_input",
+		"repair input exceeded the configured budget",
+		assessor.FailureMeasurement{Unit: "tokens", Observed: 12, Limit: 10},
+	)
+	fixture.provider.repairErr = errors.Join(rememberapp.ErrRememberInputBudgetExceeded, preflight)
+
+	_, err := AssessSynchronousRemember(context.Background(), fixture.deps, fixture.input)
+	require.Error(t, err)
+	require.ErrorIs(t, err, rememberapp.ErrRememberInputBudgetExceeded)
+	reason, details := SynchronousAssessmentFailureDetails(err)
+	require.Equal(t, "assessment_input", reason)
+	require.Equal(t, "assessor.required_input", details["component"])
+	require.Equal(t, true, details["client_controlled"])
+	require.Equal(t, 12, details["observed"])
+	require.Equal(t, 10, details["limit"])
+}
+
 func TestRememberInputIndexBounds(t *testing.T) {
 	for _, raw := range []any{
 		[]any{0}, []map[string]any{{"index": 0}}, []string{"1"}, "invalid",

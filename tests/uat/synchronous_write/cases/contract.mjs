@@ -59,7 +59,7 @@ export async function run({ rpc, expect }) {
   const support = trace.evidence_supports?.[0];
   expect(support?.evidence_id && Number.isInteger(support.span_start) && Number.isInteger(support.span_end), "trace must expose correction support spans");
   const unknownTrace = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "trace_memory", arguments: { relationship_id: randomUUID() } });
-  expect(unknownTrace.error?.code === -32000 && unknownTrace.error?.message === "not_found: relationship not found" && !unknownTrace.result, `unknown trace target must be a bounded not-found error: ${JSON.stringify(unknownTrace)}`);
+  assertReferenceNotFound(unknownTrace, expect, "unknown trace target");
   const ownership = await assertOwnershipIsolation({ runID, source, split, trace, support, expect });
 
   const correctionRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", {
@@ -247,7 +247,8 @@ async function assertOwnershipIsolation({ runID, source, split, trace, support, 
     name: "trace_memory",
     arguments: { relationship_id: split.relationship_id },
   });
-  expect(crossTeamTraceRaw.error?.code === -32000 && crossTeamTraceRaw.error?.message === "not_found: relationship not found" && !crossTeamTraceRaw.result, `cross-team trace target must be indistinguishable from unknown: ${JSON.stringify(crossTeamTraceRaw)}`);
+  assertReferenceNotFound(crossTeamTraceRaw, expect, "cross-team trace target");
+  expect(!JSON.stringify(crossTeamTraceRaw).includes(split.relationship_id), "cross-team trace target must not disclose the protected relationship ID");
   const sameTeamDenied = assertOwnershipDenied(sameTeamRaw, source, split.relationship_id, expect, "same-team non-owner");
   const crossTeamDenied = assertOwnershipDenied(crossTeamRaw, source, split.relationship_id, expect, "cross-team actor");
 
@@ -350,6 +351,16 @@ function assertTextStructuredParity(raw, expect) {
   const text = raw.result?.content?.[0]?.text;
   const parsed = JSON.parse(text);
   expect(stableJSON(parsed) === stableJSON(raw.result?.structuredContent), "MCP text and structuredContent must be equivalent");
+}
+
+function assertReferenceNotFound(raw, expect, label) {
+  if (raw.error) {
+    expect(raw.error.code === -32000 && raw.error.message === "not_found: relationship not found" && !raw.result, `${label} must be a bounded not-found error: ${JSON.stringify(raw)}`);
+    return;
+  }
+  const structured = structuredToolResult(raw, expect);
+  expect(structured.code === "invalid_input" && structured.reason_code === "reference_not_found" && structured.next_action === "refresh_state" && structured.retryable === false, `${label} must expose actionable not-found guidance: ${JSON.stringify(structured)}`);
+  assertTextStructuredParity(raw, expect);
 }
 
 function stableJSON(value) {

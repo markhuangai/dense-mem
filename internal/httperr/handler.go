@@ -102,16 +102,16 @@ func withDefaultGuidance(err *APIError, status int, correlationID string) *APIEr
 	action := "contact_operator"
 	remediation := "Contact an operator with the correlation ID and request details."
 	retryable := false
-	switch {
-	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
 		reason, action, remediation = "authorization_required", "obtain_authorization", "Obtain the required authorization or scope, then retry the request."
-	case status == http.StatusBadRequest || status == http.StatusUnprocessableEntity:
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		reason, action, remediation = "invalid_request", "correct_and_resubmit", "Correct the identified request fields and submit the request again."
-	case status == http.StatusNotFound:
+	case http.StatusNotFound:
 		reason, action, remediation = "reference_not_found", "refresh_state", "Refresh authorized state and retry with a current reference."
-	case status == http.StatusConflict:
+	case http.StatusConflict:
 		reason, action, remediation = "state_conflict", "refresh_state", "Refresh authoritative state and retry with current values."
-	case status == http.StatusTooManyRequests || status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout:
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		reason, action, remediation, retryable = "temporary_service_failure", "retry_same_request", "Retry the same request after the service recovers.", true
 	}
 	return WithGuidance(err, reason, action, remediation, retryable, nil, correlationID)

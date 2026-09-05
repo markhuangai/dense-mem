@@ -31,7 +31,6 @@ func ValidateInput(tool Tool, args map[string]any) error {
 		if matches != 1 {
 			return fmt.Errorf("value must match exactly one allowed shape")
 		}
-		return nil
 	}
 
 	for _, name := range schemaRequiredFields(schema) {

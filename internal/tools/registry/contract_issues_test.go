@@ -1,10 +1,13 @@
 package registry
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/correlation"
 )
 
 func TestValidateContractInputIssuesAggregatesRememberProblems(t *testing.T) {
@@ -45,8 +48,9 @@ func TestValidateContractInputIssuesAggregatesRememberProblems(t *testing.T) {
 	}
 	require.Contains(t, result.Issues, ContractValidationIssue{Path: "/unknown", Code: "unknown_field", Message: "unknown field: unknown"})
 
-	data := ContractValidationErrorData(result)
+	data := ContractValidationErrorData(correlation.WithID(context.Background(), "validation-correlation"), result)
 	require.Equal(t, "validation_failed", data["reason"])
+	require.Equal(t, "validation-correlation", data["correlation_id"])
 	require.Equal(t, result.IssuesTruncated, data["issues_truncated"])
 	require.Len(t, data["issues"], len(result.Issues))
 }

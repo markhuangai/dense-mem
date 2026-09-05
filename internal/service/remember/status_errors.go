@@ -238,16 +238,18 @@ func boundedStatusErrorDetails(details map[string]any) map[string]any {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	if len(keys) > 20 {
-		keys = keys[:20]
-	}
-	result := make(map[string]any, len(keys))
-	for _, key := range keys {
-		key = boundedStatusErrorText(key, 128)
+	result := make(map[string]any, min(len(keys), 20))
+	selected := 0
+	for _, originalKey := range keys {
+		key := boundedStatusErrorText(originalKey, 128)
 		if key == "" {
 			continue
 		}
-		switch value := details[key].(type) {
+		if selected >= 20 {
+			break
+		}
+		selected++
+		switch value := details[originalKey].(type) {
 		case string:
 			result[key] = boundedStatusErrorText(value, 512)
 		case int:

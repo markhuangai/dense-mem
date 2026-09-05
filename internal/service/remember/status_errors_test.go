@@ -73,6 +73,9 @@ func TestStatusErrorWithDetailsBoundsSafeValuesAndServerGuidance(t *testing.T) {
 	require.LessOrEqual(t, len(result.Details["string"].(string)), 512)
 	require.Equal(t, SubmissionNextActionContactOperator, SubmissionNextAction(result.NextAction))
 	require.Equal(t, serverOwnedInputBudgetRemediation, result.Remediation)
+	longKey := strings.Repeat("k", 129)
+	withLongKey := StatusErrorWithDetails(SubmissionErrorInputBudgetExceeded, "reason", map[string]any{longKey: "preserved"})
+	require.Equal(t, "preserved", withLongKey.Details[longKey[:128]])
 
 	for index := 0; index < 25; index++ {
 		details["extra_"+string(rune('a'+index))] = index

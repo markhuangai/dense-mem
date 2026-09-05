@@ -36,6 +36,7 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 		{name: "unavailable", tool: ToolRecallMemory, err: ErrToolUnavailable, code: string(domain.ErrorDegraded), reasonCode: "tool_unavailable", nextAction: actionContactOperator},
 		{name: "authorization", tool: ToolRemember, err: rememberapp.ErrRememberAuthContext, code: string(domain.ErrorUnauthorizedScope), reasonCode: "authenticated_context_required", nextAction: actionAuthorization},
 		{name: "reference", tool: ToolTraceMemory, err: repository.ErrTraceRelationshipNotFound, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
+		{name: "read repository", tool: ToolRecallMemory, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "read_unavailable", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "budget", tool: ToolRemember, err: rememberapp.ErrRememberInputBudgetExceeded, code: string(domain.ErrorInvalidInput), reasonCode: "input_budget_exceeded", nextAction: actionContactOperator},
 		{name: "stale", tool: ToolRemember, err: rememberapp.ErrRememberStaleInput, code: string(domain.ErrorConflict), reasonCode: "stale_state", nextAction: actionRefreshState},
 		{name: "remember timeout", tool: ToolRemember, err: rememberapp.ErrRememberRequestTimeout, code: string(domain.ErrorProviderUnavailable), reasonCode: "request_timeout", nextAction: actionRetrySameRequest, retryable: true},
@@ -61,6 +62,12 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 			}
 		})
 	}
+	longCorrelation := strings.Repeat("界", 129)
+	bounded := ActionableErrorData(correlation.WithID(context.Background(), longCorrelation), ToolTraceMemory, repository.ErrTraceRelationshipNotFound)
+	require.LessOrEqual(t, len([]rune(bounded["correlation_id"].(string))), 128)
+	require.NotEqual(t, longCorrelation, bounded["correlation_id"])
+	serverMessage := ActionableErrorData(ctx, ToolRecallMemory, httperr.New(httperr.SERVICE_UNAVAILABLE, "internal database password"))
+	require.Equal(t, "service unavailable", serverMessage["message"])
 }
 
 func TestActionableErrorDataMapsHTTPStatusesAndBudgetMeasurements(t *testing.T) {
@@ -87,7 +94,11 @@ func TestActionableErrorDataMapsHTTPStatusesAndBudgetMeasurements(t *testing.T) 
 			require.Equal(t, test.reasonCode, result["reason_code"])
 			require.Equal(t, test.nextAction, result["next_action"])
 			require.Equal(t, test.retryable, result["retryable"])
-			require.Equal(t, "safe public message", result["message"])
+			wantMessage := "safe public message"
+			if test.name == "server" {
+				wantMessage = "service unavailable"
+			}
+			require.Equal(t, wantMessage, result["message"])
 		})
 	}
 
@@ -121,11 +132,14 @@ func TestActionableErrorHelpersExposeBoundedRecoveryActions(t *testing.T) {
 	require.Equal(t, "tool_unavailable", ActionableToolUnavailableData(ctx, ToolRecallMemory)["reason_code"])
 	require.Equal(t, "tool_result_serialization_failed", ActionableSerializationFailureData(ctx, ToolRecallMemory)["reason_code"])
 
-	for _, tool := range []string{ToolRemember, ToolRetractEvidence, ToolCorrectRelationship, ToolSubmitRecallSessionFeedback, ToolResolveDreamFeedback} {
+	for _, tool := range []string{ToolRemember, ToolRetractEvidence, ToolCorrectRelationship, ToolSubmitRecallSessionFeedback} {
 		require.True(t, actionableToolRequiresIdempotency(tool), tool)
 		require.Contains(t, actionableTimeoutRemediation(tool), "same idempotency key")
 		require.Contains(t, actionableTransientRemediation(tool), "same idempotency key")
 	}
+	require.False(t, actionableToolRequiresIdempotency(ToolResolveDreamFeedback))
+	require.Contains(t, actionableTimeoutRemediation(ToolResolveDreamFeedback), "same arguments")
+	require.Contains(t, actionableTransientRemediation(ToolResolveDreamFeedback), "same arguments")
 	for _, tool := range []string{ToolRecallMemory, ToolTraceMemory, ToolListDreams, ToolGetDream, ToolExportMemoryPack} {
 		require.True(t, actionableToolIsRead(tool), tool)
 		require.Contains(t, actionableTimeoutRemediation(tool), "read request")

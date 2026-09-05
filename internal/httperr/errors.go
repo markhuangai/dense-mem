@@ -77,7 +77,7 @@ type APIError struct {
 	Message           string        `json:"message"`
 	Details           []ErrorDetail `json:"details"`
 	ReasonCode        string        `json:"reason_code,omitempty"`
-	Retryable         bool          `json:"retryable,omitempty"`
+	Retryable         bool          `json:"retryable"`
 	NextAction        string        `json:"next_action,omitempty"`
 	Remediation       string        `json:"remediation,omitempty"`
 	RetryAfterSeconds *int          `json:"retry_after_seconds,omitempty"`
@@ -109,7 +109,7 @@ func (e *APIError) bounded(status int) *APIError {
 	copyErr := &APIError{
 		Code: e.Code, Message: e.Message, ReasonCode: boundedText(e.ReasonCode, maxPublicErrorFieldRunes),
 		Retryable: e.Retryable, NextAction: boundedText(e.NextAction, maxPublicErrorFieldRunes),
-		Remediation:   boundedMessage(e.Remediation, maxPublicDetailMessageRunes),
+		Remediation:   boundedText(e.Remediation, maxPublicDetailMessageRunes),
 		CorrelationID: boundedText(e.CorrelationID, maxPublicErrorFieldRunes),
 	}
 	if e.RetryAfterSeconds != nil && *e.RetryAfterSeconds >= 0 && *e.RetryAfterSeconds <= 86400 {
@@ -153,6 +153,12 @@ func stablePublicMessage(status int) string {
 	default:
 		return "internal server error"
 	}
+}
+
+// StablePublicMessage returns the bounded replacement used for server-side
+// HTTP failures before they cross a public transport boundary.
+func StablePublicMessage(status int) string {
+	return stablePublicMessage(status)
 }
 
 // Error implements the error interface.
@@ -212,7 +218,7 @@ func WithGuidance(err *APIError, reasonCode, nextAction, remediation string, ret
 	}
 	err.ReasonCode = boundedText(reasonCode, maxPublicErrorFieldRunes)
 	err.NextAction = boundedText(nextAction, maxPublicErrorFieldRunes)
-	err.Remediation = boundedMessage(remediation, maxPublicDetailMessageRunes)
+	err.Remediation = boundedText(remediation, maxPublicDetailMessageRunes)
 	err.Retryable = retryable
 	err.CorrelationID = boundedText(correlationID, maxPublicErrorFieldRunes)
 	if retryAfterSeconds != nil && *retryAfterSeconds >= 0 && *retryAfterSeconds <= 86400 {

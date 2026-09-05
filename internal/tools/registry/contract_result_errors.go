@@ -56,6 +56,8 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		code, reasonCode, message, nextAction, remediation = domain.ErrorUnauthorizedScope, "authenticated_context_required", "Dense-Mem could not authorize the "+tool+" operation.", actionAuthorization, "Authenticate with a credential that has access to this tool and retry."
 	case errors.Is(err, repository.ErrTraceRelationshipNotFound), errors.Is(err, contextservice.ErrTraceRelationshipNotFound), errors.Is(err, dreamservice.ErrDreamNotFound), errors.Is(err, repository.ErrDreamHypothesisNotFound):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "reference_not_found", "The reference supplied to "+tool+" was not found or is no longer available.", actionRefreshState, "Refresh authorized state, then retry with a current reference."
+	case errors.Is(err, repository.ErrSearchContractMismatch):
+		code, reasonCode, message, nextAction, remediation = domain.ErrorDegraded, "search_not_ready", "Dense-Mem search is not ready for the "+tool+" operation.", actionContactOperator, "Contact an operator to restore the configured search contract, then retry."
 	case errors.Is(err, rememberapp.ErrRememberInputBudgetExceeded):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "input_budget_exceeded", "The assessor input for "+tool+" exceeds the configured server budget.", actionContactOperator, "Ask an operator to review the configured assessor budget and selected server context before retrying."
 		if measuredReason, measured := memoryservice.SynchronousAssessmentFailureDetails(err); measuredReason != "" {
@@ -105,6 +107,11 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		default:
 			code, reasonCode, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", actionCorrectInput, "Correct the identified request fields and submit again."
 		}
+		if status >= 500 {
+			message = httperr.StablePublicMessage(status)
+		}
+	case actionableToolIsRead(tool):
+		code, reasonCode, message, retryable, nextAction, remediation = domain.ErrorProviderUnavailable, "read_unavailable", "A required service for "+tool+" is temporarily unavailable.", true, actionRetrySameRequest, actionableTransientRemediation(tool)
 	}
 
 	details := map[string]any{}
@@ -129,7 +136,7 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 	if seconds, ok := details["retry_after_seconds"].(int); ok && seconds > 0 {
 		result["retry_after_seconds"] = seconds
 	}
-	correlationID := strings.TrimSpace(correlation.FromContext(ctx))
+	correlationID := rememberapp.NormalizeTerminalCorrelationID(correlation.FromContext(ctx))
 	if correlationID == "" {
 		correlationID = uuid.NewString()
 	}
@@ -193,7 +200,7 @@ func actionableTransientRemediation(tool string) string {
 
 func actionableToolRequiresIdempotency(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case ToolRemember, ToolRetractEvidence, ToolCorrectRelationship, ToolSubmitRecallSessionFeedback, ToolResolveDreamFeedback:
+	case ToolRemember, ToolRetractEvidence, ToolCorrectRelationship, ToolSubmitRecallSessionFeedback:
 		return true
 	default:
 		return false

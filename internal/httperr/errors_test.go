@@ -345,4 +345,10 @@ func TestAPIErrorGuidanceIsBoundedAndPreservedByHTTPProjection(t *testing.T) {
 	require.Equal(t, "action", projected.NextAction)
 	require.Equal(t, "remediation", projected.Remediation)
 	require.Equal(t, "correlation", projected.CorrelationID)
+	emptyRemediation := WithGuidance(New(VALIDATION_ERROR, "invalid"), "reason", "action", "", false, nil, "correlation")
+	require.Empty(t, emptyRemediation.Remediation)
+	require.Empty(t, emptyRemediation.bounded(http.StatusBadRequest).Remediation)
+	encoded, err := json.Marshal(emptyRemediation)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"retryable":false`)
 }
