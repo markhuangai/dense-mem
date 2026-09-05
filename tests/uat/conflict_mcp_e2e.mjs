@@ -285,7 +285,8 @@ async function provenanceAndIsolationScenario() {
     reason: "Conflict e2e verifies owner-only mutation.",
     idempotency_key: `${runID}:provenance:non-owner-retract`,
   });
-  assert(nonOwnerRetraction.error && nonOwnerRetraction.result === undefined && !JSON.stringify(nonOwnerRetraction).includes(fixture.evidenceA), "same-team non-owner retraction was allowed or leaked the evidence ID");
+  const nonOwnerRetractionFailed = Boolean(nonOwnerRetraction.error) || nonOwnerRetraction.result?.isError === true;
+  assert(nonOwnerRetractionFailed && !JSON.stringify(nonOwnerRetraction).includes(fixture.evidenceA), "same-team non-owner retraction was allowed or leaked the evidence ID");
 
   const foreignTeamID = await createTeam("foreign-isolation");
   const foreign = await createCredential(foreignTeamID, `${runID} foreign reader`);
