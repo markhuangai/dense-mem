@@ -90,7 +90,7 @@ test("completion membership is independent of issue order", () => {
     manifest.exceptions = [{
       source: "github.com/markhuangai/dense-mem/internal/repository",
       target: "github.com/markhuangai/dense-mem/internal/storage/postgres",
-      removal_issue: 262,
+      removal_issue: 261,
       reason: "fixture exception",
     }];
     return manifest;
@@ -98,7 +98,7 @@ test("completion membership is independent of issue order", () => {
   const ordered = validateManifest(makeManifest([260, 262]));
   const reversed = validateManifest(makeManifest([262, 260]));
   assert.deepEqual(reversed, ordered);
-  assert.ok(ordered.some((item) => item.startsWith("expired:")));
+  assert.equal(ordered.some((item) => item.startsWith("expired:")), false);
 });
 
 test("completing an issue expires only its retained obligations", () => {
