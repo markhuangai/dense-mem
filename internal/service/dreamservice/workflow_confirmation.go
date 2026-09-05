@@ -256,16 +256,16 @@ func dreamSubmissionEvidenceWithStatus(
 	legacy bool,
 ) ([]rememberapp.RememberEvidenceInput, error) {
 	if len(req.Evidence) == 0 {
-		return nil, errors.New("resolve dream feedback: independent evidence is required")
+		return nil, fmt.Errorf("%w: independent evidence is required", ErrDreamFeedbackInvalidInput)
 	}
 	out := make([]rememberapp.RememberEvidenceInput, 0, len(req.Evidence))
 	for i, item := range req.Evidence {
 		content := strings.TrimSpace(item.Content)
 		if content == "" {
-			return nil, fmt.Errorf("resolve dream feedback: evidence[%d].content is required", i)
+			return nil, fmt.Errorf("%w: evidence[%d].content is required", ErrDreamFeedbackInvalidInput, i)
 		}
 		if strings.EqualFold(content, strings.TrimSpace(record.Statement)) {
-			return nil, errors.New("resolve dream feedback: hypothesis text cannot be submitted as its own evidence")
+			return nil, fmt.Errorf("%w: hypothesis text cannot be submitted as its own evidence", ErrDreamFeedbackInvalidInput)
 		}
 		if item.SourceType == "" {
 			item.SourceType = "manual"

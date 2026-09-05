@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -15,6 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
@@ -36,6 +38,7 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 		{name: "unavailable", tool: ToolRecallMemory, err: ErrToolUnavailable, code: string(domain.ErrorDegraded), reasonCode: "tool_unavailable", nextAction: actionContactOperator},
 		{name: "authorization", tool: ToolRemember, err: rememberapp.ErrRememberAuthContext, code: string(domain.ErrorUnauthorizedScope), reasonCode: "authenticated_context_required", nextAction: actionAuthorization},
 		{name: "reference", tool: ToolTraceMemory, err: repository.ErrTraceRelationshipNotFound, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
+		{name: "dream feedback input", tool: ToolResolveDreamFeedback, err: dreamservice.ErrDreamFeedbackInvalidInput, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "read repository", tool: ToolRecallMemory, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "read_unavailable", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "budget", tool: ToolRemember, err: rememberapp.ErrRememberInputBudgetExceeded, code: string(domain.ErrorInvalidInput), reasonCode: "input_budget_exceeded", nextAction: actionContactOperator},
 		{name: "stale", tool: ToolRemember, err: rememberapp.ErrRememberStaleInput, code: string(domain.ErrorConflict), reasonCode: "stale_state", nextAction: actionRefreshState},
@@ -68,6 +71,11 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 	require.NotEqual(t, longCorrelation, bounded["correlation_id"])
 	serverMessage := ActionableErrorData(ctx, ToolRecallMemory, httperr.New(httperr.SERVICE_UNAVAILABLE, "internal database password"))
 	require.Equal(t, "service unavailable", serverMessage["message"])
+	dreamInput := ActionableErrorData(ctx, ToolResolveDreamFeedback, fmt.Errorf("%w: hypothesis text cannot be submitted as its own evidence", dreamservice.ErrDreamFeedbackInvalidInput))
+	require.Contains(t, dreamInput["message"], "evidence field")
+	dreamDetails := dreamInput["details"].(map[string]any)
+	require.Equal(t, "dream_feedback.evidence", dreamDetails["component"])
+	require.Equal(t, true, dreamDetails["client_controlled"])
 }
 
 func TestActionableErrorDataMapsHTTPStatusesAndBudgetMeasurements(t *testing.T) {

@@ -56,6 +56,10 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		code, reasonCode, message, nextAction, remediation = domain.ErrorUnauthorizedScope, "authenticated_context_required", "Dense-Mem could not authorize the "+tool+" operation.", actionAuthorization, "Authenticate with a credential that has access to this tool and retry."
 	case errors.Is(err, repository.ErrTraceRelationshipNotFound), errors.Is(err, contextservice.ErrTraceRelationshipNotFound), errors.Is(err, dreamservice.ErrDreamNotFound), errors.Is(err, repository.ErrDreamHypothesisNotFound):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "reference_not_found", "The reference supplied to "+tool+" was not found or is no longer available.", actionRefreshState, "Refresh authorized state, then retry with a current reference."
+	case errors.Is(err, dreamservice.ErrDreamFeedbackInvalidInput):
+		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The evidence field for "+tool+" must contain independent evidence rather than the hypothesis text.", actionCorrectInput, "Provide independent evidence in the evidence field, then submit the corrected Dream feedback request."
+		failureDetails["component"] = "dream_feedback.evidence"
+		failureDetails["client_controlled"] = true
 	case errors.Is(err, repository.ErrSearchContractMismatch):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorDegraded, "search_not_ready", "Dense-Mem search is not ready for the "+tool+" operation.", actionContactOperator, "Contact an operator to restore the configured search contract, then retry."
 	case errors.Is(err, rememberapp.ErrRememberInputBudgetExceeded):

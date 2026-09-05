@@ -132,7 +132,16 @@ export async function run({ rpc, rawRPC, expect }) {
       relationships: [dreamRelationship(scenarios.failed)],
     },
   });
-  expect(String(hypothesisText.error?.message || "").includes("hypothesis text cannot be submitted"), "Hypothesis text must not be accepted as evidence");
+  const hypothesisTextError = hypothesisText.result?.structuredContent || hypothesisText.error?.data;
+  expect(
+    (hypothesisText.result?.isError === true || Boolean(hypothesisText.error)) &&
+      hypothesisTextError?.code === "invalid_input" &&
+      hypothesisTextError?.reason_code === "invalid_request" &&
+      hypothesisTextError?.next_action === "correct_and_resubmit" &&
+      hypothesisTextError?.retryable === false &&
+      String(hypothesisTextError?.message || "").includes("evidence field"),
+    `Hypothesis text must be rejected with actionable evidence guidance: ${JSON.stringify(hypothesisText)}`,
+  );
   expect(attemptRow(teamID, scenarios.failed.idempotencyKey).count === failedAttemptCount, "Hypothesis text rejection must not invoke Remember");
 
   const contention = scenarios.contention;
