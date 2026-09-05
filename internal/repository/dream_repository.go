@@ -618,6 +618,9 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 			if err != nil {
 				return err
 			}
+			if loaded.Lane == domain.DreamLaneEvidenceDiscovery && !evidenceHypothesisOwnedBy(loaded, input.ActorProfileID) {
+				return ErrDreamHypothesisNotFound
+			}
 			if loaded.Status != "submitted" || loaded.SubmittedIngestID != input.SubmittedIngestID {
 				return ErrDreamHypothesisNotFound
 			}
@@ -644,6 +647,23 @@ func (r *SemanticRepositoryImpl) SubmitHypothesis(
 		return nil, fmt.Errorf("dream: submit hypothesis: %w", err)
 	}
 	return record, nil
+}
+
+func evidenceHypothesisOwnedBy(record *HypothesisRecord, profileID string) bool {
+	if record == nil {
+		return false
+	}
+	actorID, err := uuid.Parse(profileID)
+	if err != nil {
+		return false
+	}
+	for _, ownerID := range record.SourceOwnerProfileIDs {
+		ownerUUID, err := uuid.Parse(ownerID)
+		if err == nil && ownerUUID == actorID {
+			return true
+		}
+	}
+	return false
 }
 
 func validateHypothesisEndpoints(ctx context.Context, tx *gorm.DB, input UpsertHypothesisInput) error {

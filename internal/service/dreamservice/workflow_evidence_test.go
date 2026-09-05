@@ -59,6 +59,7 @@ func TestScheduledEvidenceCycleBoundsTargetsContextsAndRelatedRecords(t *testing
 	}
 	require.Equal(t, evidenceDiscoveryTargetLimit, evidenceStore.lastLimit)
 	require.Equal(t, evidenceDiscoveryContextLimit, evidenceStore.lastMaxContexts)
+	require.Zero(t, evidenceStore.validatedCalls, "evaluation persistence owns the validated attempt transition")
 }
 
 func TestScheduledEvidenceCycleSurfacesProviderFailureAndCompletesFailedRun(t *testing.T) {
@@ -285,7 +286,11 @@ func TestEvidenceProviderFailureAbandonmentIsConservative(t *testing.T) {
 	require.True(t, evidenceProviderFailureCanAbandon(&modelprovider.MalformedResponseError{}))
 	require.True(t, evidenceProviderFailureCanAbandon(&modelprovider.RateLimitError{}))
 	require.True(t, evidenceProviderFailureCanAbandon(&modelprovider.ProviderError{FailureClass: modelprovider.ProviderFailureClassRequestInvalid}))
+	require.True(t, evidenceProviderFailureCanAbandon(&modelprovider.ProviderError{FailureClass: modelprovider.ProviderFailureClassHTTPClient, StatusCode: 400}))
+	require.True(t, evidenceProviderFailureCanAbandon(&modelprovider.ProviderError{FailureClass: modelprovider.ProviderFailureClassHTTPClient, StatusCode: 403}))
 	require.False(t, evidenceProviderFailureCanAbandon(&modelprovider.ProviderError{FailureClass: modelprovider.ProviderFailureClassTimeout}))
+	require.False(t, evidenceProviderFailureCanAbandon(&modelprovider.ProviderError{FailureClass: modelprovider.ProviderFailureClassHTTPServer, StatusCode: 503}))
+	require.False(t, evidenceProviderFailureCanAbandon(&modelprovider.ProviderError{FailureClass: modelprovider.ProviderFailureClassHTTPClient}))
 	require.False(t, evidenceProviderFailureCanAbandon(errors.New("ambiguous transport failure")))
 }
 
@@ -369,7 +374,6 @@ func TestClaimedEvidenceCycleHandlesAttemptAndPersistenceFailures(t *testing.T) 
 		genErr error
 	}{
 		{name: "dispatch", store: &evidenceRepositoryStub{targets: []repository.EvidenceDiscoveryTargetInput{target}, dispatchedErr: errors.New("dispatch failed")}},
-		{name: "validation", store: &evidenceRepositoryStub{targets: []repository.EvidenceDiscoveryTargetInput{target}, validatedErr: errors.New("validation failed")}},
 		{name: "persistence", store: &evidenceRepositoryStub{targets: []repository.EvidenceDiscoveryTargetInput{target}, persistErr: errors.New("persist failed")}},
 		{name: "provider", store: &evidenceRepositoryStub{targets: []repository.EvidenceDiscoveryTargetInput{target}}, genErr: ErrDreamProviderUnavailable},
 	} {
@@ -554,6 +558,7 @@ type evidenceRepositoryStub struct {
 	validatedErr    error
 	persistErr      error
 	abandonErr      error
+	validatedCalls  int
 }
 
 type errorAppConfigStub struct{ err error }
@@ -624,6 +629,7 @@ func (s *evidenceRepositoryStub) WithEvidenceDiscoveryTargetLock(_ context.Conte
 }
 
 func (s *evidenceRepositoryStub) MarkEvidenceDiscoveryAttemptValidated(_ context.Context, _ repository.EvidenceDiscoveryAttemptValidationInput) error {
+	s.validatedCalls++
 	if s.validatedErr != nil {
 		return s.validatedErr
 	}

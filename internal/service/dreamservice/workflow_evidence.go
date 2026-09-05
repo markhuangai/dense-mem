@@ -269,12 +269,6 @@ func (s *service) runClaimedEvidenceCycle(
 					}
 					proposals, invalid := evidenceProposalsFromGenerated(generation, target.Target, providerModel, request.MaxOutputs)
 					rejected += invalid
-					if err := s.deps.EvidenceStore.MarkEvidenceDiscoveryAttemptValidated(ctx, repository.EvidenceDiscoveryAttemptValidationInput{
-						TeamID: teamID, AttemptID: attempt.AttemptID, ReservationToken: attempt.ReservationToken,
-						AcceptedProposals: len(proposals),
-					}); err != nil {
-						return err
-					}
 					persisted, persistErr := s.deps.EvidenceStore.PersistEvidenceDiscoveryEvaluation(ctx, repository.EvidenceDiscoveryEvaluationInput{
 						TeamID: teamID, RunID: claimed.RunID, LeaseToken: claimed.LeaseToken,
 						AttemptID: attempt.AttemptID, ReservationToken: attempt.ReservationToken,
@@ -330,7 +324,11 @@ func evidenceProviderFailureCanAbandon(err error) bool {
 	}
 	var providerErr *modelprovider.ProviderError
 	if errors.As(err, &providerErr) {
-		return providerErr.FailureClass == modelprovider.ProviderFailureClassRequestInvalid
+		if providerErr.FailureClass == modelprovider.ProviderFailureClassRequestInvalid {
+			return true
+		}
+		return providerErr.FailureClass == modelprovider.ProviderFailureClassHTTPClient &&
+			providerErr.StatusCode >= 400 && providerErr.StatusCode < 500
 	}
 	return false
 }

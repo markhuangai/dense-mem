@@ -23,6 +23,7 @@ type DreamEvidence = {
 
 type DreamRunPresentation = {
   lane?: string;
+  status?: string;
   attempted_paths?: number;
   provider_proposals?: number;
   evidence_targets?: number;
@@ -81,6 +82,11 @@ export function runOutcome(run: DreamRunPresentation): string {
     const providerProposals = outcomes.provider_proposals ?? run.provider_proposals ?? 0;
     if (targets === 0) {
       return "No eligible evidence target";
+    }
+    if (run.status === "completed") {
+      return providerProposals === 0
+        ? "Provider returned no supported relationship"
+        : "Evidence discovery stored";
     }
     if (evaluated === targets && providerProposals === 0) {
       return "Provider returned no supported relationship";

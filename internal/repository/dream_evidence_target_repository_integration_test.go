@@ -297,6 +297,95 @@ func TestEvidenceDiscoveryTargetPassCapStopsAfterTwoRecordedEvaluations(t *testi
 	require.Empty(t, targets)
 }
 
+func TestEvidenceDiscoveryRecoveryReportsDistinctTargetCount(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	insertSearchTestContract(t, adminDB, rls, "evidence-dream-recovery-target-count", 2, "exact", "")
+	teamID := createLedgerTeam(t, adminDB, rls, "evidence-dream-recovery-target-count-team")
+	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "evidence-dream-recovery-target-count-owner")
+	ledger := NewLedgerRepository(appDB, rls)
+	search := NewSearchRepository(appDB, rls)
+	semantic := NewSemanticRepository(appDB, rls)
+
+	documentVectors := map[string][]float32{}
+	for index := 0; index < 2; index++ {
+		result, err := ledger.CreateIngest(ctx, CreateIngestInput{
+			TeamID: teamID, OwnerProfileID: ownerID,
+			IdempotencyKey: fmt.Sprintf("evidence-dream-recovery-target-count-%d", index),
+			RequestHash:    fmt.Sprintf("evidence-dream-recovery-target-count-hash-%d", index),
+			Evidence: []EvidenceInput{{
+				Content:      fmt.Sprintf("Recovery target count evidence %d.", index),
+				InitialEvent: &SecurityEventDraft{EventKind: "deterministic_scan", Decision: "pass"},
+			}},
+		})
+		require.NoError(t, err)
+		fragment := requireTestEvidenceFragment(t, result)
+		document, err := search.UpsertSearchDocument(ctx, UpsertSearchDocumentInput{
+			TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: fragment.FragmentID,
+			SourceVersion: 1, DocumentText: fragment.Content,
+		})
+		require.NoError(t, err)
+		documentVectors[document.SearchDocumentID] = []float32{1, 0}
+	}
+	completeSearchDocumentsForTest(t, search, teamID, documentVectors)
+
+	scheduledFor := time.Now().UTC().Add(-time.Hour)
+	run, err := semantic.ClaimScheduledDreamCycle(ctx, DreamCycleClaimInput{
+		TeamID: teamID, RunDate: scheduledFor.Format("2006-01-02"),
+		WindowKey: "hour:" + scheduledFor.Format("2006-01-02T15"), ScheduledFor: &scheduledFor,
+		LeaseToken: uuid.NewString(), LeaseUntil: time.Now().UTC().Add(-time.Minute),
+		Lane: domain.DreamLaneEvidenceDiscovery,
+	})
+	require.NoError(t, err)
+	targets, err := semantic.ListEvidenceDiscoveryTargets(ctx, teamID, evidenceTargetTestLimit, evidenceContextTestLimit)
+	require.NoError(t, err)
+	require.Len(t, targets, 2)
+	completedTarget := targets[0].Target
+	for pass := 1; pass <= 2; pass++ {
+		require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+			return tx.Exec(`
+				INSERT INTO dream_evidence_target_evaluations (
+				    team_id, run_id, space_id, space_generation, target_evidence_id,
+				    target_content_hash, pass_number, provider_model, created_hypotheses
+				) VALUES (?, ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, 'recovery-count-test', 1)
+			`, teamID, run.RunID, completedTarget.SpaceID, completedTarget.SpaceGeneration,
+				completedTarget.EvidenceID, completedTarget.ContentHash, pass).Error
+		}))
+	}
+
+	totals, err := semantic.LoadEvidenceDiscoveryRunTotals(ctx, teamID, run.RunID)
+	require.NoError(t, err)
+	require.Equal(t, 1, totals.TargetCount)
+	require.Equal(t, []string{completedTarget.EvidenceID + ":" + completedTarget.ContentHash}, totals.TargetKeys)
+	remaining, err := semantic.ListEvidenceDiscoveryTargets(ctx, teamID, evidenceTargetTestLimit, evidenceContextTestLimit)
+	require.NoError(t, err)
+	require.Len(t, remaining, 1)
+
+	recovered, err := semantic.ClaimRecoverableScheduledDreamCycle(ctx, DreamCycleRecoveryClaimInput{
+		TeamID: teamID, LeaseToken: uuid.NewString(), LeaseUntil: time.Now().UTC().Add(time.Minute),
+		MaxAttempts: 3, Lane: domain.DreamLaneEvidenceDiscovery,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, recovered)
+	allTargetKeys := map[string]struct{}{}
+	for _, key := range totals.TargetKeys {
+		allTargetKeys[key] = struct{}{}
+	}
+	allTargetKeys[remaining[0].Target.EvidenceID+":"+remaining[0].Target.ContentHash] = struct{}{}
+	require.Len(t, allTargetKeys, 2)
+	require.NoError(t, semantic.CompleteScheduledDreamCycle(ctx, DreamCycleCompleteInput{
+		TeamID: teamID, RunID: recovered.RunID, LeaseToken: recovered.LeaseToken,
+		Status: "completed", Lane: domain.DreamLaneEvidenceDiscovery,
+		EvidenceTargets: len(allTargetKeys), EvaluatedEvidenceTargets: totals.Evaluated,
+	}))
+
+	runs, err := semantic.ListDreamCyclesForTeam(ctx, teamID, 10)
+	require.NoError(t, err)
+	require.Len(t, runs, 1)
+	require.Equal(t, 2, runs[0].EvidenceTargets, "recovery must persist the union of prior and selected targets")
+}
+
 func TestEvidenceDiscoveryTargetLockCapsConcurrentProviderPasses(t *testing.T) {
 	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()
@@ -661,6 +750,17 @@ func TestEvidenceDiscoveryEvaluationPersistsDerivationsAndReadsThemBack(t *testi
 		Decision: "confirm_true", SubmittedIngestID: submission.IngestID,
 	})
 	require.ErrorIs(t, err, ErrDreamHypothesisNotFound)
+	ownerSubmitted, err := semantic.SubmitHypothesis(ctx, SubmitHypothesisInput{
+		TeamID: teamID, ActorProfileID: ownerID, HypothesisID: records[0].HypothesisID,
+		Decision: "confirm_true", SubmittedIngestID: submission.IngestID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, submission.IngestID, ownerSubmitted.SubmittedIngestID)
+	_, err = semantic.SubmitHypothesis(ctx, SubmitHypothesisInput{
+		TeamID: teamID, ActorProfileID: otherOwnerID, HypothesisID: records[0].HypothesisID,
+		Decision: "confirm_true", SubmittedIngestID: submission.IngestID,
+	})
+	require.ErrorIs(t, err, ErrDreamHypothesisNotFound, "an evidence-lane idempotency replay remains owner-bound")
 }
 
 func TestEvidenceDiscoveryTargetEligibilityFiltersAliasesQuarantineLifecycleStaleAndDeletionOnly(t *testing.T) {
