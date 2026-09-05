@@ -26,7 +26,7 @@ function fixture(name) {
 function fixtureManifest() {
   return {
     schema_version: 1,
-    enforced_through_issue: 260,
+    completed_issues: [260],
     module: "fixture",
     allowed_targets: productionManifest.allowed_targets,
     go: {
@@ -71,7 +71,7 @@ test("rejects an unclassified package", () => {
   assertEdgeExpectation(edge, checkGoEdges(fixtureManifest(), [edge]));
 });
 
-test("rejects an exception that expires at the enforced issue", () => {
+test("rejects an exception owned by a completed issue", () => {
   const edge = fixture("expired-exception.json");
   const manifest = fixtureManifest();
   manifest.exceptions = [{
@@ -81,6 +81,81 @@ test("rejects an exception that expires at the enforced issue", () => {
     reason: "fixture exception",
   }];
   assert.ok(validateManifest(manifest).some((item) => item.startsWith("expired:")));
+});
+
+test("completion membership is independent of issue order", () => {
+  const makeManifest = (completedIssues) => {
+    const manifest = structuredClone(productionManifest);
+    manifest.completed_issues = completedIssues;
+    manifest.exceptions = [{
+      source: "github.com/markhuangai/dense-mem/internal/repository",
+      target: "github.com/markhuangai/dense-mem/internal/storage/postgres",
+      removal_issue: 262,
+      reason: "fixture exception",
+    }];
+    return manifest;
+  };
+  const ordered = validateManifest(makeManifest([260, 262]));
+  const reversed = validateManifest(makeManifest([262, 260]));
+  assert.deepEqual(reversed, ordered);
+  assert.ok(ordered.some((item) => item.startsWith("expired:")));
+});
+
+test("completing an issue expires only its retained obligations", () => {
+  const completed = structuredClone(productionManifest);
+  completed.completed_issues = [260, 261, 262, 263, 272];
+  completed.exceptions = completed.exceptions.filter((entry) => entry.removal_issue !== 272);
+  assert.deepEqual(validateManifest(completed), []);
+
+  const retained = structuredClone(completed);
+  retained.exceptions.push({
+    source: "github.com/markhuangai/dense-mem/internal/service/skillpackservice",
+    target: "github.com/markhuangai/dense-mem/internal/repository",
+    removal_issue: 272,
+    reason: "fixture retained obligation",
+  });
+  assert.ok(validateManifest(retained).some((item) => item.includes("completed issue 272")));
+});
+
+test("rejects malformed completion membership", () => {
+  const manifest = structuredClone(productionManifest);
+  manifest.completed_issues = [260, 260, 0, "261"];
+  const diagnostics = validateManifest(manifest);
+  assert.ok(diagnostics.some((item) => item.startsWith("duplicate: completed_issues")));
+  assert.ok(diagnostics.filter((item) => item.includes("completed_issues contains an invalid issue number")).length >= 2);
+});
+
+test("rejects missing completion membership and malformed lifecycle metadata", () => {
+  const missing = structuredClone(productionManifest);
+  delete missing.completed_issues;
+  assert.ok(validateManifest(missing).some((item) => item.includes("completed_issues must be an array")));
+
+  const malformed = structuredClone(productionManifest);
+  malformed.workers[0].lifecycle_issue = 0;
+  malformed.workers[1].lifecycle_issue = "277";
+  const diagnostics = validateManifest(malformed);
+  assert.ok(diagnostics.some((item) => item.includes("lifecycle_issue must be a positive issue number")));
+});
+
+test("rejects obsolete completion and worker lifecycle fields", () => {
+  const manifest = structuredClone(productionManifest);
+  manifest.enforced_through_issue = 263;
+  manifest.workers[0].owner_issue = 277;
+  const diagnostics = validateManifest(manifest);
+  assert.ok(diagnostics.some((item) => item.includes("enforced_through_issue is obsolete")));
+  assert.ok(diagnostics.some((item) => item.includes("uses obsolete owner_issue")));
+});
+
+test("completed worker lifecycle obligations fail while permanent anchors remain valid", () => {
+  const expiring = structuredClone(productionManifest);
+  expiring.completed_issues = [260, 261, 262, 263, 277];
+  assert.ok(validateManifest(expiring).some((item) => item.includes("worker") && item.includes("completed issue 277")));
+
+  const permanent = structuredClone(productionManifest);
+  permanent.completed_issues = [260, 261, 262, 263, 277];
+  permanent.workers = [permanent.workers[0]];
+  delete permanent.workers[0].lifecycle_issue;
+  assert.equal(validateManifest(permanent).some((item) => item.includes("worker") && item.startsWith("expired:")), false);
 });
 
 test("rejects Go profiles that the checker cannot discover", () => {

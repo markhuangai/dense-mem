@@ -85,6 +85,10 @@ function hasWildcard(value) {
   return /[*?]/u.test(value);
 }
 
+function isIssueNumber(value) {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
 function normaliseRoot(value) {
   return path.resolve(value || process.cwd());
 }
@@ -125,8 +129,23 @@ export function validateManifest(manifest, actualModulePath = null) {
   if (manifest.schema_version !== 1) {
     diagnostics.push(diagnostic("invalid-manifest", "schema_version must be 1"));
   }
-  if (!Number.isInteger(manifest.enforced_through_issue)) {
-    diagnostics.push(diagnostic("invalid-manifest", "enforced_through_issue must be an integer"));
+  if (Object.prototype.hasOwnProperty.call(manifest, "enforced_through_issue")) {
+    diagnostics.push(diagnostic("invalid-manifest", "enforced_through_issue is obsolete; use completed_issues"));
+  }
+  const completedIssues = new Set();
+  if (!Array.isArray(manifest.completed_issues)) {
+    diagnostics.push(diagnostic("invalid-manifest", "completed_issues must be an array"));
+  } else {
+    for (const issue of manifest.completed_issues) {
+      if (!isIssueNumber(issue)) {
+        diagnostics.push(diagnostic("invalid-manifest", "completed_issues contains an invalid issue number"));
+        continue;
+      }
+      if (completedIssues.has(issue)) {
+        diagnostics.push(diagnostic("duplicate", `completed_issues contains issue ${issue} more than once`));
+      }
+      completedIssues.add(issue);
+    }
   }
   if (!manifest.module || typeof manifest.module !== "string" || hasWildcard(manifest.module)) {
     diagnostics.push(diagnostic("invalid-manifest", "module must be a concrete module path"));
@@ -201,8 +220,10 @@ export function validateManifest(manifest, actualModulePath = null) {
       if (!goUnits.has(source) || !goUnits.has(target)) {
         diagnostics.push(diagnostic("unknown", `exception ${source} -> ${target} names an unclassified package`));
       }
-      if (!Number.isInteger(exception.removal_issue) || exception.removal_issue <= manifest.enforced_through_issue) {
-        diagnostics.push(diagnostic("expired", `exception ${source} -> ${target} needs a later removal issue`));
+      if (!isIssueNumber(exception.removal_issue)) {
+        diagnostics.push(diagnostic("invalid-manifest", `exception ${source} -> ${target} needs a positive removal issue`));
+      } else if (completedIssues.has(exception.removal_issue)) {
+        diagnostics.push(diagnostic("expired", `exception ${source} -> ${target} is owned by completed issue ${exception.removal_issue}`));
       }
       if (typeof exception.reason !== "string" || exception.reason.length === 0) {
         diagnostics.push(diagnostic("invalid-manifest", `exception ${source} -> ${target} needs a reason`));
@@ -257,8 +278,13 @@ export function validateManifest(manifest, actualModulePath = null) {
       if (worker.role !== "worker") {
         diagnostics.push(diagnostic("unknown-role", `worker ${worker.path} must use role worker`));
       }
-      if (!Number.isInteger(worker.owner_issue) || worker.owner_issue <= manifest.enforced_through_issue) {
-        diagnostics.push(diagnostic("expired", `worker ${worker.path} needs its later lifecycle issue`));
+      if (Object.prototype.hasOwnProperty.call(worker, "owner_issue")) {
+        diagnostics.push(diagnostic("invalid-manifest", `worker ${worker.path} uses obsolete owner_issue; use lifecycle_issue`));
+      }
+      if (worker.lifecycle_issue !== undefined && !isIssueNumber(worker.lifecycle_issue)) {
+        diagnostics.push(diagnostic("invalid-manifest", `worker ${worker.path} lifecycle_issue must be a positive issue number`));
+      } else if (completedIssues.has(worker.lifecycle_issue)) {
+        diagnostics.push(diagnostic("expired", `worker ${worker.path} is owned by completed issue ${worker.lifecycle_issue}`));
       }
     }
   }
