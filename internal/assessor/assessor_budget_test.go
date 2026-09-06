@@ -214,6 +214,18 @@ func TestValidateSemanticAssessmentLimitsRequiresUsableInputBudget(t *testing.T)
 	require.ErrorContains(t, ValidateSemanticAssessmentLimits(limits), "cannot be measured")
 }
 
+func TestValidateSemanticAssessmentLimitsRequiresMinimumCandidateContextBudget(t *testing.T) {
+	limits := DefaultSemanticAssessmentLimits()
+	_, minimumCandidateContextTokens, err := CountSemanticAssessmentRequestTokens(SemanticAssessmentRequest{}, limits)
+	require.NoError(t, err)
+	require.Greater(t, minimumCandidateContextTokens, 1)
+	limits.MaxCandidateContextTokens = minimumCandidateContextTokens - 1
+
+	var validationErr *SemanticAssessmentLimitValidationError
+	require.ErrorAs(t, ValidateSemanticAssessmentLimits(limits), &validationErr)
+	require.Equal(t, "candidate_context_tokens", validationErr.Field)
+}
+
 func TestCountSemanticAssessmentProviderFramingTokensUsesTheRequestEnvelope(t *testing.T) {
 	limits := DefaultSemanticAssessmentLimits()
 	requestTokens, _, err := CountSemanticAssessmentRequestTokens(SemanticAssessmentRequest{}, limits)

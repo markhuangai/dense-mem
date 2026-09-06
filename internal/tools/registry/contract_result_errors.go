@@ -120,7 +120,7 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		}
 	case actionableToolIsRead(tool):
 		code, reasonCode, message, retryable, nextAction, remediation = domain.ErrorProviderUnavailable, "read_unavailable", "A required service for "+tool+" is temporarily unavailable.", true, actionRetrySameRequest, actionableTransientRemediation(tool)
-	case strings.TrimSpace(tool) == ToolRetractEvidence:
+	case strings.TrimSpace(tool) == ToolRetractEvidence, strings.TrimSpace(tool) == ToolResolveDreamFeedback:
 		code, reasonCode, message, retryable, nextAction, remediation = domain.ErrorProviderUnavailable, "write_unavailable", "A required service for "+tool+" is temporarily unavailable.", true, actionRetrySameRequest, actionableTransientRemediation(tool)
 	}
 

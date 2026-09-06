@@ -177,3 +177,51 @@ func TestSemanticAssessmentRepairBoundsEscapedAssistantHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, semanticAssessmentRepairHistoryPlaceholder, bounded[2].Content)
 }
+
+func TestSemanticAssessmentRepairBoundsEveryOversizedAssistantTurn(t *testing.T) {
+	limits := DefaultSemanticAssessmentLimits()
+	correction := semanticAssessmentSessionRepair{
+		ValidationErrors: []assessor.SemanticValidationError{{Field: "response", Message: "must be valid"}},
+		Instruction:      "Return one complete replacement JSON object.",
+	}
+	correctionJSON, err := json.Marshal(correction)
+	require.NoError(t, err)
+	messages := []openAIVerifierMessage{
+		{Role: "system", Content: assessor.SemanticAssessmentSystemPrompt},
+		{Role: "user", Content: `{"request_id":"request"}`},
+		{Role: "assistant", Content: strings.Repeat("first-escaped-\x00", 10_000)},
+		{Role: "user", Content: string(correctionJSON)},
+		{Role: "assistant", Content: strings.Repeat("second-escaped-\x00", 10_000)},
+		{Role: "user", Content: string(correctionJSON)},
+	}
+
+	placeholderMessages := append([]openAIVerifierMessage(nil), messages...)
+	placeholderMessages[2].Content = semanticAssessmentRepairHistoryPlaceholder
+	placeholderMessages[4].Content = semanticAssessmentRepairHistoryPlaceholder
+	placeholderTokens, err := semanticAssessmentTurnTokens(
+		"assessor-model",
+		assessor.SemanticAssessmentSchemaName,
+		placeholderMessages,
+		assessor.SemanticAssessmentResponseSchema(),
+		limits.ProviderTemperatureDisabled,
+		limits.Tokenizer,
+	)
+	require.NoError(t, err)
+
+	limits.MaxInputTokens = placeholderTokens
+	provider := NewOpenAIAssessorWithAssessmentLimits(newTestVerifierConfig("", "key", "assessor-model"), nil, limits)
+	bounded, err := provider.boundRepairHistory(messages)
+	require.NoError(t, err)
+	require.Equal(t, semanticAssessmentRepairHistoryPlaceholder, bounded[2].Content)
+	require.Equal(t, semanticAssessmentRepairHistoryPlaceholder, bounded[4].Content)
+	boundedTokens, err := semanticAssessmentTurnTokens(
+		"assessor-model",
+		assessor.SemanticAssessmentSchemaName,
+		bounded,
+		assessor.SemanticAssessmentResponseSchema(),
+		limits.ProviderTemperatureDisabled,
+		limits.Tokenizer,
+	)
+	require.NoError(t, err)
+	require.LessOrEqual(t, boundedTokens, limits.MaxInputTokens)
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -185,17 +186,25 @@ func (v *OpenAIAssessor) boundRepairHistory(messages []openAIVerifierMessage) ([
 		return messages, nil
 	}
 	bounded := append([]openAIVerifierMessage(nil), messages...)
-	bounded[len(bounded)-2].Content = semanticAssessmentRepairHistoryPlaceholder
-	boundedTokens, err := semanticAssessmentTurnTokens(
-		v.model,
-		assessor.SemanticAssessmentSchemaName,
-		bounded,
-		assessor.SemanticAssessmentResponseSchema(),
-		v.disableTemperature,
-		v.assessmentLimits.Tokenizer,
-	)
-	if err != nil || boundedTokens > v.assessmentLimits.MaxInputTokens {
-		return messages, err
+	for index := len(bounded) - 2; index >= 0 && inputTokens > v.assessmentLimits.MaxInputTokens; index-- {
+		if strings.ToLower(strings.TrimSpace(bounded[index].Role)) != "assistant" || bounded[index].Content == semanticAssessmentRepairHistoryPlaceholder {
+			continue
+		}
+		bounded[index].Content = semanticAssessmentRepairHistoryPlaceholder
+		inputTokens, err = semanticAssessmentTurnTokens(
+			v.model,
+			assessor.SemanticAssessmentSchemaName,
+			bounded,
+			assessor.SemanticAssessmentResponseSchema(),
+			v.disableTemperature,
+			v.assessmentLimits.Tokenizer,
+		)
+		if err != nil {
+			return messages, err
+		}
+	}
+	if inputTokens > v.assessmentLimits.MaxInputTokens {
+		return messages, nil
 	}
 	return bounded, nil
 }

@@ -332,11 +332,12 @@ func (c *Config) ValidateServerStartup() error {
 	}
 	budget := AIVerifierAssessmentBudgetFor(c)
 	if err := assessor.ValidateSemanticAssessmentLimits(assessor.SemanticAssessmentLimits{
-		Tokenizer:          budget.Tokenizer,
-		ProviderModel:      c.GetAIVerifierModel(),
-		ProviderSchemaName: assessor.SemanticAssessmentSchemaName,
-		MaxInputTokens:     budget.MaxInputTokens,
-		MaxOutputTokens:    budget.MaxOutputTokens,
+		Tokenizer:                 budget.Tokenizer,
+		ProviderModel:             c.GetAIVerifierModel(),
+		ProviderSchemaName:        assessor.SemanticAssessmentSchemaName,
+		MaxInputTokens:            budget.MaxInputTokens,
+		MaxOutputTokens:           budget.MaxOutputTokens,
+		MaxCandidateContextTokens: budget.MaxCandidateContextTokens,
 	}); err != nil {
 		field := "AI_VERIFIER_MAX_INPUT_TOKENS"
 		var limitErr *assessor.SemanticAssessmentLimitValidationError
@@ -344,6 +345,8 @@ func (c *Config) ValidateServerStartup() error {
 			switch limitErr.Field {
 			case "output_tokens":
 				field = "AI_VERIFIER_MAX_OUTPUT_TOKENS"
+			case "candidate_context_tokens":
+				field = "AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS"
 			case "tokenizer":
 				field = "AI_VERIFIER_TOKENIZER"
 			}

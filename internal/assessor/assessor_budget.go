@@ -242,9 +242,16 @@ func semanticAssessmentLimitValidationError(field, message string, cause error) 
 
 func validateSemanticAssessmentLimits(limits SemanticAssessmentLimits) error {
 	limits = normalizeSemanticAssessmentLimits(limits)
-	framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits)
+	framingTokens, candidateContextTokens, err := CountSemanticAssessmentRequestTokens(SemanticAssessmentRequest{}, limits)
 	if err != nil {
 		return semanticAssessmentLimitValidationError("tokenizer", "semantic assessment provider framing cannot be measured: "+err.Error(), err)
+	}
+	if candidateContextTokens > limits.MaxCandidateContextTokens {
+		return semanticAssessmentLimitValidationError(
+			"candidate_context_tokens",
+			fmt.Sprintf("semantic assessment candidate context budget is below the minimum serialized context (limit %d, minimum %d)", limits.MaxCandidateContextTokens, candidateContextTokens),
+			nil,
+		)
 	}
 	conversationLimit := semanticAssessmentConversationInputLimit(limits)
 	if conversationLimit <= framingTokens {
