@@ -78,10 +78,10 @@
     "valid": true,
     "input": {
       "action": "submit",
-      "relationship_id": "rel-billing-mark",
+      "relationship_id": "00000000-0000-0000-0000-000000000601",
       "expected_version": 2,
       "patch": {"predicate": {"key": "works_with"}},
-      "supports": [{"evidence_id": "ev-billing-1", "start": 0, "end": 34}],
+      "supports": [{"evidence_id": "00000000-0000-0000-0000-000000000602", "start": 0, "end": 34}],
       "reason": "The predicate was resolved incorrectly.",
       "idempotency_key": "relationship-correction-1"
     },
@@ -102,9 +102,9 @@
     "valid": true,
     "input": {
       "action": "confirm",
-      "submission_id": "correction-1",
-      "confirmation_token": "confirmation-1",
-      "selection": {"object_entity_id": "entity-atlas"},
+      "submission_id": "00000000-0000-0000-0000-000000000603",
+      "confirmation_token": "00000000-0000-0000-0000-000000000604",
+      "selection": {"object_entity_id": "00000000-0000-0000-0000-000000000605"},
       "idempotency_key": "relationship-correction-confirm-1"
     },
     "output": {
@@ -400,10 +400,10 @@
     "want_error": "relationship_id is not accepted for action confirm",
     "input": {
       "action": "confirm",
-      "submission_id": "correction-1",
-      "confirmation_token": "confirmation-1",
-      "selection": {"object_entity_id": "entity-atlas"},
-      "relationship_id": "relationship-source",
+      "submission_id": "00000000-0000-0000-0000-000000000603",
+      "confirmation_token": "00000000-0000-0000-0000-000000000604",
+      "selection": {"object_entity_id": "00000000-0000-0000-0000-000000000605"},
+      "relationship_id": "00000000-0000-0000-0000-000000000601",
       "idempotency_key": "relationship-correction-confirm-mixed-1"
     }
   },
