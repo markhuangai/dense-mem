@@ -411,15 +411,15 @@ func privateMemoryHTTPError(err error) error {
 	case errors.Is(err, repository.ErrPrivateMemoryNotFound):
 		return httperr.New(httperr.NOT_FOUND, "private-memory target not found")
 	case errors.Is(err, repository.ErrPrivateMemoryLegalHold):
-		return httperr.New(httperr.CONFLICT, "private memory is under legal hold")
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "private memory is under legal hold"), "legal_hold", "contact_operator", "Do not retry while the legal hold is active; contact an operator to review it.", false, nil, "")
 	case errors.Is(err, repository.ErrPrivateMemoryIdempotency):
-		return httperr.New(httperr.CONFLICT, "Idempotency-Key conflicts with a different request")
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "Idempotency-Key conflicts with a different request"), "idempotency_conflict", "correct_and_resubmit", "Reuse the Idempotency-Key only for the original request; submit a changed request with a new key.", false, nil, "")
 	case errors.Is(err, repository.ErrPrivateMemoryOperationConflict):
-		return httperr.New(httperr.CONFLICT, "private-memory erasure is already in progress")
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "private-memory erasure is already in progress"), "operation_in_progress", "retry_same_request", "Retry the same erasure request after the current operation completes.", true, nil, "")
 	case errors.Is(err, repository.ErrPrivateMemoryRetentionDisabled):
-		return httperr.New(httperr.CONFLICT, "private-memory retention is disabled")
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "private-memory retention is disabled"), "retention_disabled", "contact_operator", "Contact an operator to enable private-memory retention before retrying.", false, nil, "")
 	case errors.Is(err, repository.ErrPrivateMemoryHoldConflict):
-		return httperr.New(httperr.CONFLICT, "private-memory legal hold conflicts with the active hold")
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "private-memory legal hold conflicts with the active hold"), "legal_hold_conflict", "contact_operator", "Stop the request and contact an operator to review the active legal hold.", false, nil, "")
 	case errors.Is(err, repository.ErrPrivateMemoryManifest):
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "private-memory erasure is unavailable")
 	case errors.Is(err, repository.ErrPrivateMemoryInternal):

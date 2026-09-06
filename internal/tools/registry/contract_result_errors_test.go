@@ -40,6 +40,9 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 		{name: "authorization", tool: ToolRemember, err: rememberapp.ErrRememberAuthContext, code: string(domain.ErrorUnauthorizedScope), reasonCode: "authenticated_context_required", nextAction: actionAuthorization},
 		{name: "reference", tool: ToolTraceMemory, err: repository.ErrTraceRelationshipNotFound, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
 		{name: "invalid trace id", tool: ToolTraceMemory, err: repository.ErrTraceRelationshipIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
+		{name: "invalid dream id", tool: ToolGetDream, err: repository.ErrDreamHypothesisIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
+		{name: "invalid dream feedback id", tool: ToolResolveDreamFeedback, err: repository.ErrDreamHypothesisIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
+		{name: "invalid retract evidence id", tool: ToolRetractEvidence, err: repository.ErrEvidenceLifecycleIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "dream feedback input", tool: ToolResolveDreamFeedback, err: dreamservice.ErrDreamFeedbackInvalidInput, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "read repository", tool: ToolRecallMemory, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "read_unavailable", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "retract repository", tool: ToolRetractEvidence, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "write_unavailable", nextAction: actionRetrySameRequest, retryable: true},
@@ -66,6 +69,14 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 			if test.name == "rate limited" {
 				require.Equal(t, 7, details["retry_after_seconds"])
 				require.Equal(t, 7, result["retry_after_seconds"])
+			}
+			if test.name == "invalid dream id" || test.name == "invalid dream feedback id" {
+				require.Equal(t, "dream.hypothesis_id", details["component"])
+				require.Equal(t, true, details["client_controlled"])
+			}
+			if test.name == "invalid retract evidence id" {
+				require.Equal(t, "retract_evidence.evidence_ids", details["component"])
+				require.Equal(t, true, details["client_controlled"])
 			}
 		})
 	}
@@ -141,6 +152,16 @@ func TestActionableErrorDataMapsHTTPStatusesAndBudgetMeasurements(t *testing.T) 
 	invalidTrace := ActionableErrorData(ctx, ToolTraceMemory, repository.ErrTraceRelationshipIDInvalid)
 	require.Equal(t, "trace.relationship_id", invalidTrace["details"].(map[string]any)["component"])
 	require.Equal(t, true, invalidTrace["details"].(map[string]any)["client_controlled"])
+
+	guided := ActionableErrorData(ctx, ToolRemember, httperr.WithGuidance(
+		httperr.New(httperr.CONFLICT, "team name already exists"),
+		"team_name_conflict", actionCorrectInput, "Choose a different team name and submit again.", false, nil, "",
+	))
+	require.Equal(t, string(domain.ErrorConflict), guided["code"])
+	require.Equal(t, "team_name_conflict", guided["reason_code"])
+	require.Equal(t, actionCorrectInput, guided["next_action"])
+	require.Equal(t, "Choose a different team name and submit again.", guided["remediation"])
+	require.False(t, guided["retryable"].(bool))
 }
 
 func TestActionableErrorHelpersExposeBoundedRecoveryActions(t *testing.T) {

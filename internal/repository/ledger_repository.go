@@ -14,11 +14,12 @@ import (
 )
 
 var (
-	ErrIdempotencyConflict       = errors.New("idempotency conflict")
-	ErrSourceRevisionConflict    = errors.New("source revision conflict")
-	ErrEvidenceLifecycleNotFound = errors.New("evidence lifecycle target not found")
-	ErrEvidenceLifecycleConflict = errors.New("evidence lifecycle conflict")
-	ErrTeamInactive              = errors.New("team is not active")
+	ErrIdempotencyConflict        = errors.New("idempotency conflict")
+	ErrSourceRevisionConflict     = errors.New("source revision conflict")
+	ErrEvidenceLifecycleNotFound  = errors.New("evidence lifecycle target not found")
+	ErrEvidenceLifecycleConflict  = errors.New("evidence lifecycle conflict")
+	ErrEvidenceLifecycleIDInvalid = errors.New("evidence lifecycle ID invalid")
+	ErrTeamInactive               = errors.New("team is not active")
 )
 
 // LedgerRepository contains only durable, non-workflow operations. Semantic

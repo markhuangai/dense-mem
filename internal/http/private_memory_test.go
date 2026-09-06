@@ -508,6 +508,11 @@ func TestPrivateMemoryResponseHelpersAndBoundedErrors(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, code, mapped.Code)
 	}
+	legalHold, ok := privateMemoryHTTPError(repository.ErrPrivateMemoryLegalHold).(*httperr.APIError)
+	require.True(t, ok)
+	require.Equal(t, "legal_hold", legalHold.ReasonCode)
+	require.Equal(t, "contact_operator", legalHold.NextAction)
+	require.False(t, legalHold.Retryable)
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)

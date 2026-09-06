@@ -712,7 +712,6 @@ func TestCredentialServiceScopeNameAndConstructorHelpers(t *testing.T) {
 		Code:           "23505",
 		ConstraintName: "idx_credentials_owner_team_active_unique",
 	}, "name"), "api credential already exists")
-
 	svc := NewCredentialServiceWithLogger(nil, nil, nil, nil, nil)
 	require.Nil(t, svc.logger)
 	svc.logAuditError(errors.New("audit failed"), "CREATE", "key-1", "corr")

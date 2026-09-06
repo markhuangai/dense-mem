@@ -12,6 +12,8 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/correlation"
 )
 
 func TestErrorEnvelopeShape(t *testing.T) {
@@ -159,6 +161,27 @@ func TestErrorHandler(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 		assert.Contains(t, rec.Body.String(), `"code":"NOT_FOUND"`)
 		assert.Contains(t, rec.Body.String(), `"message":"resource not found"`)
+	})
+
+	t.Run("preserves capability conflict guidance", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/teams", nil)
+		req = req.WithContext(correlation.WithID(req.Context(), "http-conflict-correlation"))
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		ErrorHandler(WithGuidance(
+			New(CONFLICT, "team name already exists"),
+			"team_name_conflict", "correct_and_resubmit", "Choose a different team name and submit again.", false, nil, "",
+		), c)
+
+		var body APIError
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, http.StatusConflict, rec.Code)
+		assert.Equal(t, "team_name_conflict", body.ReasonCode)
+		assert.Equal(t, "correct_and_resubmit", body.NextAction)
+		assert.Equal(t, "Choose a different team name and submit again.", body.Remediation)
+		assert.Equal(t, "http-conflict-correlation", body.CorrelationID)
+		assert.False(t, body.Retryable)
 	})
 
 	t.Run("handles generic error", func(t *testing.T) {

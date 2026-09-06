@@ -60,6 +60,14 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The relationship_id supplied to "+tool+" must be a valid UUID.", actionCorrectInput, "Use a relationship_id returned by recall_memory and submit the corrected request again."
 		failureDetails["component"] = "trace.relationship_id"
 		failureDetails["client_controlled"] = true
+	case errors.Is(err, repository.ErrDreamHypothesisIDInvalid):
+		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The hypothesis_id supplied to "+tool+" must be a valid UUID.", actionCorrectInput, "Use a hypothesis_id returned by list_dreams or recall_memory and submit the corrected request again."
+		failureDetails["component"] = "dream.hypothesis_id"
+		failureDetails["client_controlled"] = true
+	case errors.Is(err, repository.ErrEvidenceLifecycleIDInvalid):
+		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The evidence_ids supplied to "+tool+" must contain valid UUIDs.", actionCorrectInput, "Use evidence IDs returned by remember or recall_memory and submit the corrected request again."
+		failureDetails["component"] = "retract_evidence.evidence_ids"
+		failureDetails["client_controlled"] = true
 	case errors.Is(err, skillpackservice.ErrMemoryPackRelationshipNotActive):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "relationship_not_active", "The selected relationship for "+tool+" is no longer active.", actionRefreshState, "Refresh authorized relationships, remove inactive references, and submit the export again."
 		failureDetails["component"] = "memory_pack.relationship"
@@ -105,6 +113,32 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 	case errors.As(err, &apiErr) && apiErr != nil:
 		status := httperr.HTTPStatusCode(apiErr.Code)
 		message = boundedContractText(apiErr.Message, 512)
+		if apiErr.NextAction != "" {
+			switch {
+			case status == 401 || status == 403:
+				code = domain.ErrorUnauthorizedScope
+			case status == 404:
+				code = domain.ErrorInvalidInput
+			case status == 409:
+				code = domain.ErrorConflict
+			case status == 429 || status >= 500:
+				code = domain.ErrorProviderUnavailable
+			default:
+				code = domain.ErrorInvalidInput
+			}
+			if strings.TrimSpace(apiErr.ReasonCode) != "" {
+				reasonCode = apiErr.ReasonCode
+			}
+			retryable = apiErr.Retryable
+			nextAction = apiErr.NextAction
+			if strings.TrimSpace(apiErr.Remediation) != "" {
+				remediation = apiErr.Remediation
+			}
+			if status >= 500 {
+				message = httperr.StablePublicMessage(status)
+			}
+			break
+		}
 		switch {
 		case status == 401 || status == 403:
 			code, reasonCode, nextAction, remediation = domain.ErrorUnauthorizedScope, "authorization_required", actionAuthorization, "Obtain the required authorization or scope, then retry."

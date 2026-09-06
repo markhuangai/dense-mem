@@ -138,6 +138,9 @@ func TestTeamServiceCreateUpdateErrorBranches(t *testing.T) {
 	var apiErr *httperr.APIError
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, httperr.CONFLICT, apiErr.Code)
+	require.Equal(t, "team_name_conflict", apiErr.ReasonCode)
+	require.Equal(t, "correct_and_resubmit", apiErr.NextAction)
+	require.False(t, apiErr.Retryable)
 
 	repo = &unitProfileRepo{createErr: errors.New("insert failed")}
 	svc = NewTeamService(repo, new(MockAuditService), nil)

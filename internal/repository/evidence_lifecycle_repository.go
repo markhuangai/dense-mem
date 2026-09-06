@@ -169,7 +169,7 @@ func validateRetractEvidenceInput(input RetractEvidenceInput) error {
 	seen := make(map[string]struct{}, len(input.EvidenceIDs))
 	for _, evidenceID := range input.EvidenceIDs {
 		if _, err := uuid.Parse(evidenceID); err != nil {
-			return fmt.Errorf("evidence_ids contains invalid UUID %q: %w", evidenceID, err)
+			return fmt.Errorf("%w: evidence_ids contains an invalid UUID: %w", ErrEvidenceLifecycleIDInvalid, err)
 		}
 		if _, exists := seen[evidenceID]; exists {
 			return fmt.Errorf("evidence_ids contains duplicate UUID %q", evidenceID)
