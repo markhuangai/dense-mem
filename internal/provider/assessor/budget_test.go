@@ -225,3 +225,65 @@ func TestSemanticAssessmentRepairBoundsEveryOversizedAssistantTurn(t *testing.T)
 	require.NoError(t, err)
 	require.LessOrEqual(t, boundedTokens, limits.MaxInputTokens)
 }
+
+func TestSemanticAssessmentRepairHistoryKeepsLongerPlaceholderOut(t *testing.T) {
+	limits := DefaultSemanticAssessmentLimits()
+	correction := semanticAssessmentSessionRepair{
+		ValidationErrors: []assessor.SemanticValidationError{{Field: "response", Message: "must be valid"}},
+		Instruction:      "Return one complete replacement JSON object.",
+	}
+	correctionJSON, err := json.Marshal(correction)
+	require.NoError(t, err)
+	messages := []openAIVerifierMessage{
+		{Role: "system", Content: assessor.SemanticAssessmentSystemPrompt},
+		{Role: "user", Content: `{"request_id":"request"}`},
+		{Role: "assistant", Content: strings.Repeat("old-escaped-\x00", 10_000)},
+		{Role: "user", Content: string(correctionJSON)},
+		{Role: "assistant", Content: "ok"},
+		{Role: "user", Content: string(correctionJSON)},
+		{Role: "assistant", Content: strings.Repeat("new-escaped-\x00", 10_000)},
+		{Role: "user", Content: string(correctionJSON)},
+	}
+
+	withPlaceholders := func(indices ...int) ([]openAIVerifierMessage, int) {
+		candidate := append([]openAIVerifierMessage(nil), messages...)
+		for _, index := range indices {
+			candidate[index].Content = semanticAssessmentRepairHistoryPlaceholder
+		}
+		tokens, countErr := semanticAssessmentTurnTokens(
+			"assessor-model",
+			assessor.SemanticAssessmentSchemaName,
+			candidate,
+			assessor.SemanticAssessmentResponseSchema(),
+			limits.ProviderTemperatureDisabled,
+			limits.Tokenizer,
+		)
+		require.NoError(t, countErr)
+		return candidate, tokens
+	}
+
+	newestOnly, newestTokens := withPlaceholders(6)
+	_, largeCompactedTokens := withPlaceholders(2, 6)
+	_, allCompactedTokens := withPlaceholders(2, 4, 6)
+	require.Greater(t, newestTokens, largeCompactedTokens)
+	require.Greater(t, allCompactedTokens, largeCompactedTokens)
+	require.Equal(t, semanticAssessmentRepairHistoryPlaceholder, newestOnly[6].Content)
+	limits.MaxInputTokens = largeCompactedTokens
+
+	provider := NewOpenAIAssessorWithAssessmentLimits(newTestVerifierConfig("", "key", "assessor-model"), nil, limits)
+	bounded, err := provider.boundRepairHistory(messages)
+	require.NoError(t, err)
+	require.Equal(t, semanticAssessmentRepairHistoryPlaceholder, bounded[2].Content)
+	require.Equal(t, "ok", bounded[4].Content)
+	require.Equal(t, semanticAssessmentRepairHistoryPlaceholder, bounded[6].Content)
+	boundedTokens, err := semanticAssessmentTurnTokens(
+		"assessor-model",
+		assessor.SemanticAssessmentSchemaName,
+		bounded,
+		assessor.SemanticAssessmentResponseSchema(),
+		limits.ProviderTemperatureDisabled,
+		limits.Tokenizer,
+	)
+	require.NoError(t, err)
+	require.LessOrEqual(t, boundedTokens, limits.MaxInputTokens)
+}

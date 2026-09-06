@@ -190,18 +190,24 @@ func (v *OpenAIAssessor) boundRepairHistory(messages []openAIVerifierMessage) ([
 		if strings.ToLower(strings.TrimSpace(bounded[index].Role)) != "assistant" || bounded[index].Content == semanticAssessmentRepairHistoryPlaceholder {
 			continue
 		}
-		bounded[index].Content = semanticAssessmentRepairHistoryPlaceholder
-		inputTokens, err = semanticAssessmentTurnTokens(
+		candidate := append([]openAIVerifierMessage(nil), bounded...)
+		candidate[index].Content = semanticAssessmentRepairHistoryPlaceholder
+		candidateTokens, countErr := semanticAssessmentTurnTokens(
 			v.model,
 			assessor.SemanticAssessmentSchemaName,
-			bounded,
+			candidate,
 			assessor.SemanticAssessmentResponseSchema(),
 			v.disableTemperature,
 			v.assessmentLimits.Tokenizer,
 		)
-		if err != nil {
-			return messages, err
+		if countErr != nil {
+			return messages, countErr
 		}
+		if candidateTokens >= inputTokens {
+			continue
+		}
+		bounded = candidate
+		inputTokens = candidateTokens
 	}
 	if inputTokens > v.assessmentLimits.MaxInputTokens {
 		return messages, nil

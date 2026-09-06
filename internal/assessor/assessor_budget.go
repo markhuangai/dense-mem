@@ -65,11 +65,28 @@ func CountSemanticAssessmentRequestTokens(
 }
 
 // CountSemanticAssessmentProviderFramingTokens returns the minimum serialized
-// provider request cost. It uses the same request builder as admission so the
-// configured budget cannot pass preflight while rejecting an empty request.
+// provider request cost for a valid assessment. It uses the same request
+// builder as admission so startup cannot accept a budget that rejects every
+// supported request.
 func CountSemanticAssessmentProviderFramingTokens(limits SemanticAssessmentLimits) (int, error) {
-	inputTokens, _, err := CountSemanticAssessmentRequestTokens(SemanticAssessmentRequest{}, limits)
+	inputTokens, _, err := CountSemanticAssessmentRequestTokens(minimumSemanticAssessmentRequest(), limits)
 	return inputTokens, err
+}
+
+func minimumSemanticAssessmentRequest() SemanticAssessmentRequest {
+	return SemanticAssessmentRequest{
+		RequestID: "synchronous-remember:request",
+		TeamID:    "t",
+		Evidence: []SemanticReviewEvidence{
+			PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{
+				EvidenceID: "evidence:0",
+				Content:    "x",
+			}),
+		},
+		EntityCandidateGroups:         []SemanticAssessmentEntityCandidateGroup{},
+		PredicateOptions:              []SemanticAssessmentPredicateOption{},
+		EvidenceEquivalenceCandidates: []SemanticAssessmentEvidenceEquivalenceCandidateGroup{},
+	}
 }
 
 // allocateSemanticAssessmentOptionalContext removes only optional provider
@@ -242,7 +259,7 @@ func semanticAssessmentLimitValidationError(field, message string, cause error) 
 
 func validateSemanticAssessmentLimits(limits SemanticAssessmentLimits) error {
 	limits = normalizeSemanticAssessmentLimits(limits)
-	framingTokens, candidateContextTokens, err := CountSemanticAssessmentRequestTokens(SemanticAssessmentRequest{}, limits)
+	framingTokens, candidateContextTokens, err := CountSemanticAssessmentRequestTokens(minimumSemanticAssessmentRequest(), limits)
 	if err != nil {
 		return semanticAssessmentLimitValidationError("tokenizer", "semantic assessment provider framing cannot be measured: "+err.Error(), err)
 	}
