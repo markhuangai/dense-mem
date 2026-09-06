@@ -226,6 +226,19 @@ func semanticAssessmentConversationInputLimit(limits SemanticAssessmentLimits) i
 	return limits.MaxInputTokens - headroom
 }
 
+func validateSemanticAssessmentLimits(limits SemanticAssessmentLimits) error {
+	limits = normalizeSemanticAssessmentLimits(limits)
+	framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits)
+	if err != nil {
+		return fmt.Errorf("semantic assessment provider framing cannot be measured: %w", err)
+	}
+	conversationLimit := semanticAssessmentConversationInputLimit(limits)
+	if conversationLimit <= framingTokens {
+		return fmt.Errorf("semantic assessment input budget leaves no usable room after repair headroom (input limit %d, framing %d)", limits.MaxInputTokens, framingTokens)
+	}
+	return nil
+}
+
 // SemanticAssessmentBudgetFailureStage identifies the remaining required
 // context when optional assessor context has already been removed. The
 // returned stage is used only for safe operator diagnostics; it does not alter
@@ -257,7 +270,7 @@ func SemanticAssessmentBudgetFailureStage(req SemanticAssessmentRequest, field s
 		return "assessment_input"
 	}
 	inputLimit := semanticAssessmentConversationInputLimit(limits)
-	if framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits); err == nil && framingTokens > limits.MaxInputTokens {
+	if framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits); err == nil && framingTokens > inputLimit {
 		return "provider_framing"
 	}
 	// A required known-evidence catalog is the narrowest server-owned cause

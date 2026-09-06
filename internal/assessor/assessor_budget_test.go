@@ -163,7 +163,8 @@ func TestSemanticAssessmentBudgetFailureStageIdentifiesRequiredContext(t *testin
 	clientLimits := limits
 	framingTokens, err := CountSemanticAssessmentProviderFramingTokens(clientLimits)
 	require.NoError(t, err)
-	clientLimits.MaxInputTokens = framingTokens + 1
+	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (clientLimits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
+	clientLimits.MaxInputTokens = framingTokens + repairHeadroom + 1
 	require.Equal(t, "assessment_input", SemanticAssessmentBudgetFailureStage(client, "input_tokens", clientLimits))
 }
 
@@ -173,6 +174,8 @@ func TestSemanticAssessmentBudgetFailureStageIdentifiesProviderFramingOverflow(t
 	require.NoError(t, err)
 	require.Greater(t, framingTokens, 0)
 	limits.MaxInputTokens = framingTokens - 1
+	require.Equal(t, "provider_framing", SemanticAssessmentBudgetFailureStage(SemanticAssessmentRequest{}, "input_tokens", limits))
+	limits.MaxInputTokens = framingTokens + (SemanticAssessmentMaxProviderTurns-1)*(limits.MaxOutputTokens+semanticAssessmentRepairSafetyTokens) - 1
 	require.Equal(t, "provider_framing", SemanticAssessmentBudgetFailureStage(SemanticAssessmentRequest{}, "input_tokens", limits))
 
 	limits.LegacyProviderFraming = true
@@ -200,6 +203,15 @@ func TestSemanticAssessmentBudgetFailureStageUsesRepairAwareInputLimit(t *testin
 	require.Greater(t, inputTokens, semanticAssessmentConversationInputLimit(limits))
 	require.Less(t, inputTokens, limits.MaxInputTokens)
 	require.Equal(t, "assessment_input", SemanticAssessmentBudgetFailureStage(request, "input_tokens", limits))
+}
+
+func TestValidateSemanticAssessmentLimitsRequiresUsableInputBudget(t *testing.T) {
+	require.NoError(t, ValidateSemanticAssessmentLimits(DefaultSemanticAssessmentLimits()))
+	limits := DefaultSemanticAssessmentLimits()
+	limits.MaxInputTokens = 50_000
+	require.ErrorContains(t, ValidateSemanticAssessmentLimits(limits), "no usable room")
+	limits.Tokenizer = "not-a-tokenizer"
+	require.ErrorContains(t, ValidateSemanticAssessmentLimits(limits), "cannot be measured")
 }
 
 func stageForInputOverflow(t *testing.T, req SemanticAssessmentRequest, limits SemanticAssessmentLimits) string {
@@ -358,7 +370,8 @@ func TestSemanticAssessmentBudgetFailureStageKeepsOversizedClientInputClientCont
 	limits := DefaultSemanticAssessmentLimits()
 	framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits)
 	require.NoError(t, err)
-	limits.MaxInputTokens = framingTokens + 1
+	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
+	limits.MaxInputTokens = framingTokens + repairHeadroom + 1
 	require.Equal(t, "assessment_input", SemanticAssessmentBudgetFailureStage(req, "input_tokens", limits))
 }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
@@ -327,6 +328,16 @@ func (c *Config) ValidateServerStartup() error {
 			Field:   "AI_API_EMBEDDING_DIMENSIONS",
 			Message: fmt.Sprintf("must be at most %d", domain.MaxEmbeddingDimensions),
 		}
+	}
+	budget := AIVerifierAssessmentBudgetFor(c)
+	if err := assessor.ValidateSemanticAssessmentLimits(assessor.SemanticAssessmentLimits{
+		Tokenizer:          budget.Tokenizer,
+		ProviderModel:      c.GetAIVerifierModel(),
+		ProviderSchemaName: assessor.SemanticAssessmentSchemaName,
+		MaxInputTokens:     budget.MaxInputTokens,
+		MaxOutputTokens:    budget.MaxOutputTokens,
+	}); err != nil {
+		return &ValidationError{Field: "AI_VERIFIER_MAX_INPUT_TOKENS", Message: err.Error()}
 	}
 	return nil
 }

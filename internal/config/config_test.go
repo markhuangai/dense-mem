@@ -766,6 +766,24 @@ func TestValidateServerStartup_SucceedsWithEmbeddingConfig(t *testing.T) {
 	}
 }
 
+func TestValidateServerStartupRejectsAssessorBudgetWithoutRepairRoom(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	setRequiredEmbeddingEnv()
+	setRequiredModelEnv()
+	t.Setenv("AI_VERIFIER_MAX_INPUT_TOKENS", "50000")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+	err = cfg.ValidateServerStartup()
+	validationErr, ok := err.(*ValidationError)
+	if !ok || validationErr.Field != "AI_VERIFIER_MAX_INPUT_TOKENS" {
+		t.Fatalf("ValidateServerStartup() error = %v, want assessor input budget validation error", err)
+	}
+}
+
 func TestValidateServerStartup_RequiresVerifierModel(t *testing.T) {
 	clearEnv()
 	setRequiredEnv()
