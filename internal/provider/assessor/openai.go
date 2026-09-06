@@ -178,7 +178,6 @@ func NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(
 	normalizedLimits.ProviderModel = cfg.GetAIVerifierModel()
 	normalizedLimits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
 	normalizedLimits.ProviderTemperatureDisabled = config.AIVerifierTemperatureDisabled(cfg)
-	normalizedLimits.ProviderFramingEnabled = true
 	return &OpenAIAssessor{
 		baseURL:            cfg.GetAIVerifierAPIURL(),
 		apiKey:             cfg.GetAIVerifierAPIKey(),
@@ -199,7 +198,6 @@ func SemanticAssessmentLimitsForConfig(cfg config.ConfigProvider) assessor.Seman
 	limits.ProviderModel = cfg.GetAIVerifierModel()
 	limits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
 	limits.ProviderTemperatureDisabled = config.AIVerifierTemperatureDisabled(cfg)
-	limits.ProviderFramingEnabled = true
 	limits.Tokenizer = budget.Tokenizer
 	limits.MaxInputTokens = budget.MaxInputTokens
 	limits.MaxOutputTokens = budget.MaxOutputTokens

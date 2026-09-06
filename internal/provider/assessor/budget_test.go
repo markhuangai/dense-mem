@@ -30,7 +30,6 @@ func TestSemanticAssessmentAcceptsSerializedInputWithRepairHeadroom(t *testing.T
 	limits := DefaultSemanticAssessmentLimits()
 	limits.ProviderModel = "assessor-model"
 	limits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
-	limits.ProviderFramingEnabled = true
 	limits.MaxInputTokens = 1_000_000
 	prepared, errs := assessor.PrepareSemanticAssessmentRequest(request, limits)
 	require.Empty(t, errs)
@@ -67,7 +66,6 @@ func TestSemanticAssessmentRejectsRequiredInputWithoutRepairHeadroom(t *testing.
 	limits := DefaultSemanticAssessmentLimits()
 	limits.ProviderModel = "assessor-model"
 	limits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
-	limits.ProviderFramingEnabled = true
 	limits.MaxInputTokens = 1_000_000
 	prepared, errs := assessor.PrepareSemanticAssessmentRequest(request, limits)
 	require.Empty(t, errs)
@@ -107,7 +105,6 @@ func TestSemanticAssessmentRepairDoesNotDoubleCountFrozenCandidateContext(t *tes
 	limits := DefaultSemanticAssessmentLimits()
 	limits.ProviderModel = "assessor-model"
 	limits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
-	limits.ProviderFramingEnabled = true
 	limits.MaxInputTokens = 1_000_000
 	limits.MaxCandidateContextTokens = 1_000_000
 	prepared, errs := assessor.PrepareSemanticAssessmentRequest(request, limits)

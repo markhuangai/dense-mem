@@ -390,6 +390,24 @@ func TestCorrectionToolResultErrorPreservesTypedConflictReasons(t *testing.T) {
 	}
 }
 
+func TestCorrectionToolResultErrorPreservesSearchConfigurationGuidance(t *testing.T) {
+	ctx := correlation.WithID(context.Background(), "correction-correlation")
+	err := httperr.WithGuidance(
+		httperr.New(httperr.CONFLICT, "relationship correction conflict"),
+		"search_configuration_invalid", "contact_operator", "Contact an operator to restore the configured search contract before retrying.", false, nil, "",
+	)
+	result := structuredToolResult(t, correctionToolResultError(ctx, "correction-submission", err))
+	entry := result["errors"].([]any)[0].(map[string]any)
+	require.Equal(t, string(rememberapp.SubmissionErrorConfigurationInvalid), entry["code"])
+	require.Equal(t, "search_configuration_invalid", entry["reason_code"])
+	require.Equal(t, "contact_operator", entry["next_action"])
+	require.Equal(t, "Contact an operator to restore the configured search contract before retrying.", entry["remediation"])
+	require.False(t, entry["retryable"].(bool))
+	details := entry["details"].(map[string]any)
+	require.Equal(t, true, details["server_owned"])
+	require.NotContains(t, details, "client_controlled")
+}
+
 func structuredToolResult(t *testing.T, err error) map[string]any {
 	t.Helper()
 	structured, ok := ToolResultFromError(err)

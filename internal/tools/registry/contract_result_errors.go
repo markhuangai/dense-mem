@@ -384,10 +384,22 @@ func correctionToolResultError(ctx context.Context, submissionID string, err err
 		case httperr.CONFLICT:
 			code, processingState = correctionConflictCode(apiErr)
 			reasonCode = "relationship_correction_conflict"
+			if guidedReason := strings.TrimSpace(apiErr.ReasonCode); guidedReason != "" {
+				reasonCode = guidedReason
+			}
 		}
 	}
 	value := correctionStatusError(code)
 	value.ReasonCode = reasonCode
+	if apiErr != nil && reasonCode == "search_configuration_invalid" {
+		value.Retryable = apiErr.Retryable
+		if strings.TrimSpace(apiErr.NextAction) != "" {
+			value.NextAction = apiErr.NextAction
+		}
+		if strings.TrimSpace(apiErr.Remediation) != "" {
+			value.Remediation = apiErr.Remediation
+		}
+	}
 	value.Details = map[string]any{"component": "relationship_correction"}
 	if correctionErrorClientControlled(code) {
 		value.Details["client_controlled"] = true
@@ -424,6 +436,8 @@ func correctionErrorClientControlled(code rememberapp.SubmissionErrorCode) bool 
 
 func correctionConflictCode(apiErr *httperr.APIError) (rememberapp.SubmissionErrorCode, string) {
 	switch {
+	case strings.TrimSpace(apiErr.ReasonCode) == "search_configuration_invalid":
+		return rememberapp.SubmissionErrorConfigurationInvalid, "failed"
 	case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.SubmissionErrorIdempotencyConflict)):
 		return rememberapp.SubmissionErrorIdempotencyConflict, "failed"
 	case apiErrorDetailEquals(apiErr, "reason", string(rememberapp.SubmissionErrorConfirmationExpired)):

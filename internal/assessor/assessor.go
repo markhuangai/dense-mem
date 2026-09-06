@@ -61,7 +61,6 @@ type SemanticAssessmentLimits struct {
 	ProviderModel               string
 	ProviderSchemaName          string
 	ProviderTemperatureDisabled bool
-	ProviderFramingEnabled      bool
 	LegacyProviderFraming       bool
 	MaxInputTokens              int
 	MaxOutputTokens             int
@@ -76,7 +75,6 @@ func DefaultSemanticAssessmentLimits() SemanticAssessmentLimits {
 	return SemanticAssessmentLimits{
 		Tokenizer:                 "o200k_base",
 		ProviderSchemaName:        SemanticAssessmentSchemaName,
-		ProviderFramingEnabled:    true,
 		MaxInputTokens:            200000,
 		MaxOutputTokens:           65536,
 		MaxCandidateContextTokens: 50000,
@@ -89,9 +87,6 @@ func DefaultSemanticAssessmentLimits() SemanticAssessmentLimits {
 
 func normalizeSemanticAssessmentLimits(limits SemanticAssessmentLimits) SemanticAssessmentLimits {
 	defaults := DefaultSemanticAssessmentLimits()
-	// Exact provider framing is the default policy. Legacy adapters explicitly
-	// opt out after normalization because they own a different request shape.
-	limits.ProviderFramingEnabled = true
 	if strings.TrimSpace(limits.Tokenizer) == "" {
 		limits.Tokenizer = defaults.Tokenizer
 	}
