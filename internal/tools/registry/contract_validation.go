@@ -113,6 +113,9 @@ func validateCorrectRelationship(args map[string]any) error {
 				return fmt.Errorf("%s is required for action submit", field)
 			}
 		}
+		if err := validateContractUUID(args["relationship_id"], "relationship_id"); err != nil {
+			return err
+		}
 		for _, field := range []string{"submission_id", "confirmation_token", "selection"} {
 			if !contractValueEmpty(args[field]) {
 				return fmt.Errorf("%s is not accepted for action submit", field)
@@ -131,12 +134,20 @@ func validateCorrectRelationship(args map[string]any) error {
 				if err := validateRelationshipCorrectionEntity(entity, "patch."+field); err != nil {
 					return err
 				}
+				if entityID := strings.TrimSpace(stringField(entity, "entity_id")); entityID != "" {
+					if err := validateContractUUID(entityID, "patch."+field+".entity_id"); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		supports, _ := args["supports"].([]any)
 		seen := make(map[string]struct{}, len(supports))
 		for index, raw := range supports {
 			support, _ := objectFields(raw)
+			if err := validateContractUUID(support["evidence_id"], fmt.Sprintf("supports[%d].evidence_id", index)); err != nil {
+				return err
+			}
 			key := fmt.Sprintf("%s\x00%v\x00%v", stringField(support, "evidence_id"), support["start"], support["end"])
 			if _, exists := seen[key]; exists {
 				return fmt.Errorf("supports[%d] duplicates an evidence span", index)
@@ -149,6 +160,11 @@ func validateCorrectRelationship(args map[string]any) error {
 				return fmt.Errorf("%s is required for action confirm", field)
 			}
 		}
+		for _, field := range []string{"submission_id", "confirmation_token"} {
+			if err := validateContractUUID(args[field], field); err != nil {
+				return err
+			}
+		}
 		for _, field := range []string{"relationship_id", "expected_version", "patch", "supports", "reason"} {
 			if !contractValueEmpty(args[field]) {
 				return fmt.Errorf("%s is not accepted for action confirm", field)
@@ -158,8 +174,26 @@ func validateCorrectRelationship(args map[string]any) error {
 		if contractValueEmpty(selection["subject_entity_id"]) && contractValueEmpty(selection["object_entity_id"]) {
 			return fmt.Errorf("selection must choose at least one Entity candidate")
 		}
+		for _, field := range []string{"subject_entity_id", "object_entity_id"} {
+			if value, exists := selection[field]; exists && !contractValueEmpty(value) {
+				if err := validateContractUUID(value, "selection."+field); err != nil {
+					return err
+				}
+			}
+		}
 	default:
 		return errors.New("action must be submit or confirm")
+	}
+	return nil
+}
+
+func validateContractUUID(value any, path string) error {
+	text, ok := value.(string)
+	if !ok || strings.TrimSpace(text) == "" {
+		return fmt.Errorf("%s must be a valid UUID", path)
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(text)); err != nil {
+		return fmt.Errorf("%s must be a valid UUID", path)
 	}
 	return nil
 }

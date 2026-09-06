@@ -2,9 +2,12 @@ package registry
 
 import (
 	"context"
+	"errors"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/repository"
+	appservice "github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
@@ -91,13 +94,17 @@ func submitRecallFeedback(ctx context.Context, deps Dependencies, input map[stri
 	for _, submission := range submissions {
 		if err := deps.RecallFeedbackEvents.RecordRecallFeedback(ctx, submission); err != nil {
 			//nolint:nilerr // Partial failure is reported through the tool response payload.
-			return map[string]any{
+			result := map[string]any{
 				"recorded":        recorded > 0,
 				"recorded_count":  recorded,
 				"partial_success": recorded > 0,
 				"failed_index":    recorded,
 				"error":           "recall feedback submission failed",
-			}, nil
+			}
+			for key, value := range recallFeedbackFailureGuidance(err) {
+				result[key] = value
+			}
+			return result, nil
 		}
 		observability.RecordRecallFeedback(ctx, deps.Metrics, observability.RecallFeedback{
 			Used:            submission.Used,
@@ -112,6 +119,41 @@ func submitRecallFeedback(ctx context.Context, deps Dependencies, input map[stri
 		"recorded":       recorded > 0,
 		"recorded_count": recorded,
 	}, nil
+}
+
+func recallFeedbackFailureGuidance(err error) map[string]any {
+	guidance := map[string]any{
+		"error_code":  "degraded",
+		"reason_code": "feedback_persistence_failed",
+		"next_action": "retry_same_request",
+		"remediation": "Retry the same feedback request with unchanged items after the service recovers.",
+	}
+	switch {
+	case errors.Is(err, appservice.ErrRecallFeedbackInvalidResultRef):
+		guidance["error_code"] = "invalid_input"
+		guidance["reason_code"] = "result_reference_invalid"
+		guidance["next_action"] = "correct_and_resubmit"
+		guidance["remediation"] = "Correct or remove the invalid irrelevant_result_refs or hypothesis_feedback references and resubmit with the current recall_event_id."
+	case errors.Is(err, repository.ErrRecallFeedbackEventNotFound):
+		guidance["error_code"] = "invalid_input"
+		guidance["reason_code"] = "reference_not_found"
+		guidance["next_action"] = "correct_and_resubmit"
+		guidance["remediation"] = "Use a current recall_event_id and resubmit the corrected feedback items."
+	case errors.Is(err, appservice.ErrRecallFeedbackInvalidInput):
+		guidance["error_code"] = "invalid_input"
+		guidance["reason_code"] = "invalid_feedback"
+		guidance["next_action"] = "correct_and_resubmit"
+		guidance["remediation"] = "Correct the feedback fields and resubmit the request."
+	case errors.Is(err, context.Canceled):
+		guidance["error_code"] = "degraded"
+		guidance["reason_code"] = "request_cancelled"
+		guidance["next_action"] = "stop"
+		guidance["remediation"] = "Stop this feedback submission; retry only if the caller still needs it."
+	case errors.Is(err, context.DeadlineExceeded):
+		guidance["reason_code"] = "request_timeout"
+		guidance["remediation"] = "Retry the same feedback request with unchanged items after the timeout clears."
+	}
+	return guidance
 }
 
 func recallFeedbackSubmissions(input map[string]any) []domain.RecallFeedbackSubmission {

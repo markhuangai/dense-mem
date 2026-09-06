@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -28,4 +29,12 @@ func TestLoadTraceRelationshipPropagatesIteratorError(t *testing.T) {
 	require.ErrorIs(t, err, iteratorErr)
 	require.NotErrorIs(t, err, sql.ErrNoRows)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestValidateTraceRelationshipInputClassifiesInvalidRelationshipID(t *testing.T) {
+	err := validateTraceRelationshipInput(TraceRelationshipInput{
+		TeamID:         uuid.NewString(),
+		RelationshipID: "not-a-uuid",
+	})
+	require.ErrorIs(t, err, ErrTraceRelationshipIDInvalid)
 }

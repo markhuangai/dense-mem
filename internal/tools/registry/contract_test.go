@@ -538,10 +538,10 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 	}
 	submit := map[string]any{
 		"action":           "submit",
-		"relationship_id":  "relationship-source",
+		"relationship_id":  "00000000-0000-0000-0000-000000000611",
 		"expected_version": 2,
 		"patch":            map[string]any{"predicate": map[string]any{"key": "works_with"}},
-		"supports":         []any{map[string]any{"evidence_id": "evidence-1", "start": 0, "end": 8}},
+		"supports":         []any{map[string]any{"evidence_id": "00000000-0000-0000-0000-000000000612", "start": 0, "end": 8}},
 		"reason":           "predicate resolved incorrectly",
 		"idempotency_key":  "correction-submit-1",
 	}
@@ -550,9 +550,9 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 	}
 	confirm := map[string]any{
 		"action":             "confirm",
-		"submission_id":      "correction-submission",
-		"confirmation_token": "confirmation-token",
-		"selection":          map[string]any{"subject_entity_id": "entity-selected"},
+		"submission_id":      "00000000-0000-0000-0000-000000000613",
+		"confirmation_token": "00000000-0000-0000-0000-000000000614",
+		"selection":          map[string]any{"subject_entity_id": "00000000-0000-0000-0000-000000000615"},
 		"idempotency_key":    "correction-confirm-1",
 	}
 	if err := ValidateContractInput(tool, confirm, []string{"write"}); err != nil {
@@ -567,7 +567,7 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 		{
 			name: "submit with entity id",
 			input: mergeMap(submit, map[string]any{
-				"patch":           map[string]any{"object_entity": map[string]any{"entity_id": "entity-existing"}},
+				"patch":           map[string]any{"object_entity": map[string]any{"entity_id": "00000000-0000-0000-0000-000000000616"}},
 				"idempotency_key": "correction-submit-entity-id",
 			}),
 		},
@@ -590,7 +590,7 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 			name: "submit entity mixes alternatives",
 			input: mergeMap(submit, map[string]any{
 				"patch": map[string]any{"subject_entity": map[string]any{
-					"entity_id": "entity-existing", "name": "PostgreSQL", "entity_kind": "product",
+					"entity_id": "00000000-0000-0000-0000-000000000617", "name": "PostgreSQL", "entity_kind": "product",
 				}},
 				"idempotency_key": "correction-submit-entity-mixed",
 			}),
@@ -599,7 +599,7 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 		{
 			name: "submit missing supports",
 			input: map[string]any{
-				"action": "submit", "relationship_id": "relationship-source", "expected_version": 2,
+				"action": "submit", "relationship_id": "00000000-0000-0000-0000-000000000611", "expected_version": 2,
 				"patch":  map[string]any{"predicate": map[string]any{"key": "works_with"}},
 				"reason": "predicate resolved incorrectly", "idempotency_key": "correction-submit-missing",
 			},
@@ -608,9 +608,9 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 		{
 			name: "submit with confirmation field",
 			input: map[string]any{
-				"action": "submit", "relationship_id": "relationship-source", "expected_version": 2,
+				"action": "submit", "relationship_id": "00000000-0000-0000-0000-000000000611", "expected_version": 2,
 				"patch":    map[string]any{"predicate": map[string]any{"key": "works_with"}},
-				"supports": []any{map[string]any{"evidence_id": "evidence-1", "start": 0, "end": 8}},
+				"supports": []any{map[string]any{"evidence_id": "00000000-0000-0000-0000-000000000612", "start": 0, "end": 8}},
 				"reason":   "predicate resolved incorrectly", "submission_id": "not-accepted",
 				"idempotency_key": "correction-submit-mixed",
 			},
@@ -619,8 +619,8 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 		{
 			name: "confirm with submit field",
 			input: map[string]any{
-				"action": "confirm", "submission_id": "correction-submission", "confirmation_token": "confirmation-token",
-				"selection": map[string]any{"subject_entity_id": "entity-selected"}, "relationship_id": "not-accepted",
+				"action": "confirm", "submission_id": "00000000-0000-0000-0000-000000000613", "confirmation_token": "00000000-0000-0000-0000-000000000614",
+				"selection": map[string]any{"subject_entity_id": "00000000-0000-0000-0000-000000000615"}, "relationship_id": "not-accepted",
 				"idempotency_key": "correction-confirm-mixed",
 			},
 			wantError: "relationship_id is not accepted for action confirm",
@@ -628,7 +628,7 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 		{
 			name: "confirm with empty selection",
 			input: map[string]any{
-				"action": "confirm", "submission_id": "correction-submission", "confirmation_token": "confirmation-token",
+				"action": "confirm", "submission_id": "00000000-0000-0000-0000-000000000613", "confirmation_token": "00000000-0000-0000-0000-000000000614",
 				"selection": map[string]any{}, "idempotency_key": "correction-confirm-empty",
 			},
 			wantError: "selection must choose at least one Entity candidate",
@@ -644,6 +644,78 @@ func TestCorrectionRequiresSubmitOrConfirmFields(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("error = %v; want %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestCorrectRelationshipRejectsMalformedUUIDsAtContractBoundary(t *testing.T) {
+	tool, err := requireTool(toolMap(t), ToolCorrectRelationship)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSubmit := func() map[string]any {
+		return map[string]any{
+			"action":           "submit",
+			"relationship_id":  "00000000-0000-0000-0000-000000000631",
+			"expected_version": 2,
+			"patch":            map[string]any{"predicate": map[string]any{"key": "works_with"}},
+			"supports":         []any{map[string]any{"evidence_id": "00000000-0000-0000-0000-000000000632", "start": 0, "end": 8}},
+			"reason":           "predicate resolved incorrectly",
+			"idempotency_key":  "correction-uuid-validation",
+		}
+	}
+	newConfirm := func() map[string]any {
+		return map[string]any{
+			"action":             "confirm",
+			"submission_id":      "00000000-0000-0000-0000-000000000633",
+			"confirmation_token": "00000000-0000-0000-0000-000000000634",
+			"selection":          map[string]any{"subject_entity_id": "00000000-0000-0000-0000-000000000635"},
+			"idempotency_key":    "correction-uuid-validation-confirm",
+		}
+	}
+	cases := []struct {
+		name     string
+		input    func() map[string]any
+		mutate   func(map[string]any)
+		wantPath string
+	}{
+		{name: "relationship", input: newSubmit, mutate: func(input map[string]any) {
+			input["relationship_id"] = "relationship-source"
+		}, wantPath: "relationship_id"},
+		{name: "support evidence", input: newSubmit, mutate: func(input map[string]any) {
+			input["supports"].([]any)[0].(map[string]any)["evidence_id"] = "evidence-source"
+		}, wantPath: "supports[0].evidence_id"},
+		{name: "subject entity patch", input: newSubmit, mutate: func(input map[string]any) {
+			input["patch"] = map[string]any{"subject_entity": map[string]any{"entity_id": "entity-source"}}
+		}, wantPath: "patch.subject_entity.entity_id"},
+		{name: "object entity patch", input: newSubmit, mutate: func(input map[string]any) {
+			input["patch"] = map[string]any{"object_entity": map[string]any{"entity_id": "entity-source"}}
+		}, wantPath: "patch.object_entity.entity_id"},
+		{name: "submission", input: newConfirm, mutate: func(input map[string]any) {
+			input["submission_id"] = "correction-submission"
+		}, wantPath: "submission_id"},
+		{name: "confirmation token", input: newConfirm, mutate: func(input map[string]any) {
+			input["confirmation_token"] = "confirmation-token"
+		}, wantPath: "confirmation_token"},
+		{name: "subject selection", input: newConfirm, mutate: func(input map[string]any) {
+			input["selection"].(map[string]any)["subject_entity_id"] = "entity-selected"
+		}, wantPath: "selection.subject_entity_id"},
+		{name: "object selection", input: newConfirm, mutate: func(input map[string]any) {
+			input["selection"] = map[string]any{"object_entity_id": "entity-selected"}
+		}, wantPath: "selection.object_entity_id"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			input := test.input()
+			test.mutate(input)
+			err := ValidateContractInput(tool, input, []string{"write"})
+			if err == nil || !strings.Contains(err.Error(), test.wantPath+" must be a valid UUID") {
+				t.Fatalf("ValidateContractInput error = %v, want %s UUID error", err, test.wantPath)
+			}
+			issues := ValidateContractInputIssues(tool, input, []string{"write"})
+			if len(issues.Issues) != 1 || issues.Issues[0].Code != "format" || !strings.Contains(issues.Issues[0].Message, test.wantPath) {
+				t.Fatalf("validation issues = %#v, want one format issue for %s", issues, test.wantPath)
 			}
 		})
 	}
@@ -744,6 +816,29 @@ func TestPublicErrorSchemaContract(t *testing.T) {
 	detailsSchema := schemaProperties(schema)["details"]
 	if detailsSchema["maxProperties"] != metadataMaxProperties || detailsSchema["x-max-depth"] != 4 {
 		t.Fatalf("details schema is not bounded: %#v", detailsSchema)
+	}
+}
+
+func TestActionableOutputSchemaAcceptsPublicErrorsWithCollidingSuccessFields(t *testing.T) {
+	resolve := toolMap(t)[ToolResolveDreamFeedback]
+	codeSchema := schemaProperties(resolve.OutputSchema)["code"]
+	if _, ok := codeSchema["anyOf"]; !ok {
+		t.Fatalf("resolve_dream_feedback code schema = %#v, want a property union", codeSchema)
+	}
+	nextActionSchema := schemaProperties(toolMap(t)[ToolSubmitRecallSessionFeedback].OutputSchema)["next_action"]
+	if _, ok := nextActionSchema["anyOf"]; !ok {
+		t.Fatalf("submit_recall_session_feedback next_action schema = %#v, want a property union", nextActionSchema)
+	}
+	publicError := map[string]any{
+		"code":           string(domain.ErrorInvalidInput),
+		"message":        "invalid input",
+		"retryable":      false,
+		"next_action":    "correct_and_resubmit",
+		"remediation":    "Correct the request and submit again.",
+		"correlation_id": uuid.NewString(),
+	}
+	if err := ValidateInput(Tool{InputSchema: resolve.OutputSchema}, publicError); err != nil {
+		t.Fatalf("public error rejected by resolve output schema: %v", err)
 	}
 }
 

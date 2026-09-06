@@ -287,31 +287,33 @@ func translateRelationshipCorrectionError(err error) error {
 		return httperr.New(httperr.NOT_FOUND, "submission not found")
 	}
 	if errors.Is(err, repository.ErrSemanticIdempotencyConflict) {
-		return httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+		return httperr.WithGuidance(httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
 			Field: "reason", Message: "idempotency_conflict",
-		}})
+		}}), "idempotency_conflict", "correct_and_resubmit", "Use a new idempotency key for the changed correction request, then submit again.", false, nil, "")
 	}
 	if errors.Is(err, repository.ErrRelationshipCorrectionConfirmationExpired) {
-		return httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+		return httperr.WithGuidance(httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
 			Field: "reason", Message: string(SubmissionErrorConfirmationExpired),
-		}})
+		}}), "confirmation_expired", "correct_and_resubmit", "Start a new correction submission and use its fresh confirmation token.", false, nil, "")
 	}
 	if errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) {
-		return httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+		return httperr.WithGuidance(httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
 			Field: "reason", Message: CorrectionConfirmationInvalidReason,
-		}})
+		}}), "confirmation_invalid", "correct_and_resubmit", "Start a new correction submission and use its current confirmation token.", false, nil, "")
 	}
 	if errors.Is(err, errLifecycleCorrectionCommitFence) {
-		return httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
+		return httperr.WithGuidance(httperr.NewWithDetails(httperr.CONFLICT, "relationship correction conflict", []httperr.ErrorDetail{{
 			Field: "reason", Message: string(rememberapp.TerminalErrorCommitConflict),
-		}})
+		}}), "commit_conflict", "refresh_state", "Refresh the current relationship state, then submit the correction again with a new idempotency key.", false, nil, "")
 	}
-	if errors.Is(err, repository.ErrRelationshipCorrectionConfirmation) ||
-		errors.Is(err, repository.ErrRelationshipCorrectionStateConflict) ||
-		errors.Is(err, repository.ErrSearchEmbeddingRequired) ||
-		errors.Is(err, repository.ErrSearchContractMismatch) ||
-		errors.Is(err, repository.ErrSearchStaleVersion) {
-		return httperr.New(httperr.CONFLICT, "relationship correction conflict")
+	if errors.Is(err, repository.ErrRelationshipCorrectionStateConflict) {
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "relationship correction conflict"), "state_conflict", "refresh_state", "Refresh the current relationship state, then submit the correction again.", false, nil, "")
+	}
+	if errors.Is(err, repository.ErrSearchEmbeddingRequired) || errors.Is(err, repository.ErrSearchContractMismatch) {
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "relationship correction conflict"), "search_configuration_invalid", "contact_operator", "Contact an operator to restore the configured search contract before retrying.", false, nil, "")
+	}
+	if errors.Is(err, repository.ErrSearchStaleVersion) {
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "relationship correction conflict"), "search_state_stale", "refresh_state", "Refresh the current relationship state, then submit the correction again.", false, nil, "")
 	}
 	return ErrLifecyclePersistence
 }
@@ -384,8 +386,10 @@ func translateEvidenceLifecycleError(err error) error {
 	switch {
 	case errors.Is(err, repository.ErrEvidenceLifecycleNotFound), errors.Is(err, repository.ErrTeamInactive):
 		return httperr.New(httperr.NOT_FOUND, "evidence not found")
-	case errors.Is(err, repository.ErrEvidenceLifecycleConflict), errors.Is(err, repository.ErrIdempotencyConflict):
-		return httperr.New(httperr.CONFLICT, "evidence lifecycle conflict")
+	case errors.Is(err, repository.ErrIdempotencyConflict):
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "evidence lifecycle conflict"), "idempotency_conflict", "correct_and_resubmit", "Use a new idempotency key for the changed retraction request, then submit again.", false, nil, "")
+	case errors.Is(err, repository.ErrEvidenceLifecycleConflict):
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "evidence lifecycle conflict"), "evidence_lifecycle_conflict", "refresh_state", "Refresh the current evidence state, then submit the retraction again with a new idempotency key.", false, nil, "")
 	default:
 		return err
 	}

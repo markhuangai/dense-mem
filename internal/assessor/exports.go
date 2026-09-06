@@ -47,3 +47,15 @@ func ValidateSemanticAssessmentSubmissionResponse(
 func NormalizeSemanticAssessmentLimits(limits SemanticAssessmentLimits) SemanticAssessmentLimits {
 	return normalizeSemanticAssessmentLimits(limits)
 }
+
+// ValidateSemanticAssessmentLimits rejects an assessor budget that cannot fit
+// the minimum request after reserving room for bounded response repairs.
+func ValidateSemanticAssessmentLimits(limits SemanticAssessmentLimits) error {
+	return validateSemanticAssessmentLimits(limits)
+}
+
+// SemanticAssessmentConversationInputLimit returns the effective input limit
+// after reserving bounded room for complete provider response repairs.
+func SemanticAssessmentConversationInputLimit(limits SemanticAssessmentLimits) int {
+	return semanticAssessmentConversationInputLimit(limits)
+}

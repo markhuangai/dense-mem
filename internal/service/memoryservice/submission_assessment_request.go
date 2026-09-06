@@ -159,18 +159,17 @@ func (s *assessmentEngine) buildRequest(
 			if limit <= 0 {
 				limit = assessor.DefaultSemanticAssessmentLimits().MaxCandidateContextTokens
 			}
-			return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
-				"catalog_context",
-				"submission assessment catalog exceeds its configured token budget",
+			stage := assessor.SemanticAssessmentBudgetFailureStage(prepared, validationError.Field, s.limits)
+			return prepared, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+				stage,
+				"submission assessment context exceeds its configured token budget",
 				assessor.FailureMeasurement{Unit: "tokens", Observed: prepared.CandidateContextTokens, Limit: limit},
 			)
 		case "input_tokens":
-			limit := s.limits.MaxInputTokens
-			if limit <= 0 {
-				limit = assessor.DefaultSemanticAssessmentLimits().MaxInputTokens
-			}
-			return assessor.SemanticAssessmentRequest{}, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
-				"assessment_input",
+			limit := assessor.SemanticAssessmentConversationInputLimit(s.limits)
+			stage := assessor.SemanticAssessmentBudgetFailureStage(prepared, validationError.Field, s.limits)
+			return prepared, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
+				stage,
 				"submission assessment input exceeds its configured token budget",
 				assessor.FailureMeasurement{Unit: "tokens", Observed: prepared.InputTokens, Limit: limit},
 			)

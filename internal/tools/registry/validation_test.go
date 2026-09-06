@@ -121,6 +121,36 @@ func TestValidateInputSchemaBranches(t *testing.T) {
 	}
 }
 
+func TestValidateInputOneOfStillAppliesEnclosingObjectConstraints(t *testing.T) {
+	tool := Tool{InputSchema: map[string]any{
+		"type":                 "object",
+		"required":             []any{"common"},
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"common": map[string]any{"type": "string"},
+			"kind":   map[string]any{"type": "string"},
+		},
+		"oneOf": []any{
+			map[string]any{
+				"type":                 "object",
+				"required":             []any{"kind"},
+				"properties":           map[string]any{"kind": map[string]any{"type": "string"}},
+				"additionalProperties": true,
+			},
+		},
+		"x-enforce-one-of": true,
+	}}
+	if err := ValidateInput(tool, map[string]any{"kind": "a", "common": "ok"}); err != nil {
+		t.Fatalf("valid oneOf input rejected: %v", err)
+	}
+	if err := ValidateInput(tool, map[string]any{"kind": "a"}); err == nil || !strings.Contains(err.Error(), "common is required") {
+		t.Fatalf("missing enclosing required field error = %v", err)
+	}
+	if err := ValidateInput(tool, map[string]any{"kind": "a", "common": "ok", "extra": true}); err == nil || !strings.Contains(err.Error(), "unknown field: extra") {
+		t.Fatalf("enclosing additionalProperties error = %v", err)
+	}
+}
+
 func TestValidateInputDateTimeEnforcementIsOptIn(t *testing.T) {
 	dateTime := map[string]any{"type": "string", "format": "date-time"}
 	tool := Tool{InputSchema: map[string]any{

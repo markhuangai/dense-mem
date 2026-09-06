@@ -89,6 +89,13 @@ func (s *TeamServiceImpl) logAuditError(err error, operation, teamID, correlatio
 	)
 }
 
+func teamNameConflict(name, correlationID string) error {
+	return httperr.WithGuidance(
+		httperr.New(httperr.CONFLICT, fmt.Sprintf("team with name '%s' already exists", name)),
+		"team_name_conflict", "correct_and_resubmit", "Choose a different team name and submit the request again.", false, nil, correlationID,
+	)
+}
+
 // Create creates a new team with server-side UUID generation.
 // Enforces unique lower(name) among non-deleted rows and sets status=active.
 func (s *TeamServiceImpl) Create(ctx context.Context, req CreateTeamRequest, actorKeyID *string, actorRole, clientIP, correlationID string) (*domain.Team, error) {
@@ -108,7 +115,7 @@ func (s *TeamServiceImpl) Create(ctx context.Context, req CreateTeamRequest, act
 		// Check for unique constraint violation (23505 is PostgreSQL unique constraint error code)
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			return nil, httperr.New(httperr.CONFLICT, fmt.Sprintf("team with name '%s' already exists", req.Name))
+			return nil, teamNameConflict(req.Name, correlationID)
 		}
 		return nil, fmt.Errorf("failed to create team: %w", err)
 	}
@@ -193,7 +200,7 @@ func (s *TeamServiceImpl) Update(ctx context.Context, id uuid.UUID, req UpdateTe
 				return nil, fmt.Errorf("failed to check name existence: %w", err)
 			}
 			if exists {
-				return nil, httperr.New(httperr.CONFLICT, fmt.Sprintf("team with name '%s' already exists", *req.Name))
+				return nil, teamNameConflict(*req.Name, correlationID)
 			}
 			existing.Name = *req.Name
 		}
@@ -217,7 +224,7 @@ func (s *TeamServiceImpl) Update(ctx context.Context, id uuid.UUID, req UpdateTe
 			if req.Name != nil {
 				name = *req.Name
 			}
-			return nil, httperr.New(httperr.CONFLICT, fmt.Sprintf("team with name '%s' already exists", name))
+			return nil, teamNameConflict(name, correlationID)
 		}
 		return nil, fmt.Errorf("failed to update team: %w", err)
 	}

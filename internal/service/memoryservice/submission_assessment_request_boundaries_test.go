@@ -270,7 +270,7 @@ func TestSubmissionAssessmentRequestPreflightBranches(t *testing.T) {
 				fixture.deps.Limits.MaxCandidateContextTokens = 1
 				return fixture, plan
 			},
-			want: "catalog exceeds",
+			want: "context exceeds",
 		},
 		{
 			name: "input budget",
@@ -312,6 +312,122 @@ func TestSubmissionAssessmentRequestPreflightBranches(t *testing.T) {
 	request, err := engine.buildRequest(t.Context(), fixture.input.Scope, plan, fixture.input.Snapshot.Proposal)
 	require.NoError(t, err)
 	require.Equal(t, "synchronous-remember:request", request.RequestID)
+}
+
+func TestSubmissionAssessmentRequiredContextBudgetDiagnostics(t *testing.T) {
+	fixture := synchronousAssessmentFixture(t)
+	plan, err := buildSubmissionAssessmentPlan(fixture.input.Snapshot)
+	require.NoError(t, err)
+	fixture.deps.Limits.MaxCandidateContextTokens = 1
+	engine := newAssessmentEngine(fixture.deps, fixture.input.Scope.TeamID, fixture.input.Scope.OwnerProfileID)
+	_, err = engine.buildRequest(t.Context(), fixture.input.Scope, plan, fixture.input.Snapshot.Proposal)
+	require.Error(t, err)
+	reasonCode, details := SynchronousAssessmentFailureDetails(err)
+	require.Equal(t, "entity_catalog", reasonCode)
+	require.Equal(t, "assessor.required_entity_catalog", details["component"])
+	require.Equal(t, true, details["server_owned"])
+	require.Greater(t, details["observed"], 1)
+	require.Equal(t, 1, details["limit"])
+}
+
+func TestSubmissionAssessmentCombinedRequiredContextUsesOperatorGuidance(t *testing.T) {
+	fixture := synchronousAssessmentFixture(t)
+	relationships := fixture.input.Snapshot.Proposal["relationship_hints"].([]any)
+	for _, raw := range relationships {
+		relationship := raw.(map[string]any)
+		predicate := relationship["predicate"].(map[string]any)
+		predicate["known_predicate_key"] = predicate["proposed_key"]
+	}
+	plan, err := buildSubmissionAssessmentPlan(fixture.input.Snapshot)
+	require.NoError(t, err)
+	fixture.deps.Limits.MaxInputTokens = 1_000_000
+	fixture.deps.Limits.MaxCandidateContextTokens = 1_000_000
+	engine := newAssessmentEngine(fixture.deps, fixture.input.Scope.TeamID, fixture.input.Scope.OwnerProfileID)
+	request, err := engine.buildRequest(t.Context(), fixture.input.Scope, plan, fixture.input.Snapshot.Proposal)
+	require.NoError(t, err)
+	withoutEntities := request
+	withoutEntities.EntityCandidateGroups = nil
+	withoutPredicates := request
+	withoutPredicates.PredicateOptions = nil
+	withoutEntityInput, _, err := assessor.CountSemanticAssessmentRequestTokens(withoutEntities, fixture.deps.Limits)
+	require.NoError(t, err)
+	withoutPredicateInput, _, err := assessor.CountSemanticAssessmentRequestTokens(withoutPredicates, fixture.deps.Limits)
+	require.NoError(t, err)
+	limit := withoutEntityInput
+	if withoutPredicateInput > limit {
+		limit = withoutPredicateInput
+	}
+	require.Greater(t, request.InputTokens, limit)
+	repairHeadroom := (assessor.SemanticAssessmentMaxProviderTurns - 1) * (fixture.deps.Limits.MaxOutputTokens + 4096)
+	fixture.deps.Limits.MaxInputTokens = limit + repairHeadroom
+	engine = newAssessmentEngine(fixture.deps, fixture.input.Scope.TeamID, fixture.input.Scope.OwnerProfileID)
+	_, err = engine.buildRequest(t.Context(), fixture.input.Scope, plan, fixture.input.Snapshot.Proposal)
+	require.Error(t, err)
+	reasonCode, details := SynchronousAssessmentFailureDetails(err)
+	require.Equal(t, "entity_catalog", reasonCode)
+	require.Equal(t, "assessor.required_entity_catalog", details["component"])
+	require.Equal(t, true, details["server_owned"])
+	require.Equal(t, request.InputTokens, details["observed"])
+	require.Equal(t, limit, details["limit"])
+	require.Less(t, details["limit"], fixture.deps.Limits.MaxInputTokens)
+
+	serverOwned := rememberapp.TerminalStatusErrorWithDetails(rememberapp.TerminalErrorInputBudgetExceeded, reasonCode, details)
+	require.Equal(t, string(rememberapp.TerminalNextActionContactOperator), serverOwned.NextAction)
+	require.Equal(t, "Ask an operator to review the configured assessor budget and server-owned context before retrying.", serverOwned.Remediation)
+	require.NoError(t, rememberapp.ValidateTerminalStatusError(serverOwned))
+
+	clientControlled := rememberapp.TerminalStatusErrorWithDetails(rememberapp.TerminalErrorInputBudgetExceeded, "assessment_input", map[string]any{"component": "assessor.required_input", "client_controlled": true})
+	require.Equal(t, string(rememberapp.TerminalNextActionResubmitRemember), clientControlled.NextAction)
+	require.Contains(t, clientControlled.Remediation, "new idempotency_key")
+}
+
+func TestSynchronousAssessmentFailureDetailsClassifiesPreflightStages(t *testing.T) {
+	cases := []struct {
+		stage     string
+		component string
+		client    bool
+	}{
+		{stage: "entity_catalog", component: "assessor.required_entity_catalog"},
+		{stage: "known_evidence_context", component: "assessor.required_known_evidence"},
+		{stage: "catalog_context", component: "assessor.optional_context"},
+		{stage: "catalog_context_validation", component: "assessor.optional_context"},
+		{stage: "predicate_options_overflow", component: "assessor.optional_context"},
+		{stage: "predicate_context", component: "assessor.required_predicate_context"},
+		{stage: "required_context", component: "assessor.required_context"},
+		{stage: "assessment_input", component: "assessor.required_input", client: true},
+		{stage: "input_tokens", component: "assessor.required_input", client: true},
+		{stage: "provider_framing", component: "assessor.provider_framing"},
+		{stage: "conversation_input_tokens", component: "assessor.conversation"},
+		{stage: "conversation_candidate_context_tokens", component: "assessor.conversation_candidate_context"},
+		{stage: "unknown", component: "assessor"},
+	}
+	for _, test := range cases {
+		t.Run(test.stage, func(t *testing.T) {
+			err := deterministicSemanticAssessmentPreflightErrorWithMeasurement(test.stage, "bounded failure", assessor.FailureMeasurement{
+				Unit: "tokens", Observed: 12, ObservedAtLeast: true, Limit: 10,
+			})
+			reasonCode, details := SynchronousAssessmentFailureDetails(err)
+			require.Equal(t, test.stage, reasonCode)
+			require.Equal(t, test.component, details["component"])
+			require.Equal(t, test.client, details["client_controlled"] == true)
+			require.Equal(t, !test.client, details["server_owned"] == true)
+			require.Equal(t, true, details["observed_at_least"])
+		})
+	}
+
+	empty := &semanticAssessmentPreflightError{err: errors.New("preflight")}
+	reasonCode, details := SynchronousAssessmentFailureDetails(empty)
+	require.Equal(t, "assessor_preflight_failed", reasonCode)
+	require.Equal(t, "assessor", details["component"])
+	require.Equal(t, true, details["server_owned"])
+
+	conversation := &assessor.MalformedResponseError{FailureClass: "input_budget", ValidationStage: "conversation_input_tokens"}
+	reasonCode, details = SynchronousAssessmentFailureDetails(conversation)
+	require.Equal(t, "assessor_conversation_input_exceeded", reasonCode)
+	require.Equal(t, "assessor.conversation", details["component"])
+	require.NotContains(t, details, "observed")
+	_, details = SynchronousAssessmentFailureDetails(&assessor.MalformedResponseError{FailureClass: "provider"})
+	require.Nil(t, details)
 }
 
 func TestSubmissionAssessmentCatalogFailuresCarryDatabaseClassification(t *testing.T) {

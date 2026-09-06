@@ -86,6 +86,36 @@ func TestServerRejectsProfileOverrideForEvaluationTools(t *testing.T) {
 	}
 }
 
+func TestServerProjectsEvaluationValidationAsActionableInvalidInput(t *testing.T) {
+	logger, _ := testLogger(t)
+	reg := registry.New()
+	called := false
+	if err := reg.Register(registry.Tool{
+		Name:           "eval_run_recall_case",
+		Description:    "evaluation probe",
+		InputSchema:    map[string]any{"type": "object", "required": []any{"case_id"}, "properties": map[string]any{"case_id": map[string]any{"type": "string"}}},
+		RequiredScopes: []string{"read", "write"},
+		Invoke: func(context.Context, string, map[string]any) (map[string]any, error) {
+			called = true
+			return map[string]any{"ok": true}, nil
+		},
+	}); err != nil {
+		t.Fatalf("register evaluation tool: %v", err)
+	}
+	server := NewServerWithScopes(reg, "team-a", []string{"read", "write"}, logger)
+	_, rpcErr := server.invokeTool(correlation.WithID(context.Background(), "eval-validation-correlation"), "eval_run_recall_case", map[string]any{})
+	require.NotNil(t, rpcErr)
+	require.Equal(t, errCodeInvalidParams, rpcErr.Code)
+	data, ok := rpcErr.Data.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_input", data["code"])
+	require.Equal(t, "invalid_request", data["reason_code"])
+	require.Equal(t, "correct_and_resubmit", data["next_action"])
+	require.Equal(t, false, data["retryable"])
+	require.Equal(t, "eval-validation-correlation", data["correlation_id"])
+	require.False(t, called)
+}
+
 func TestSanitizeToolError(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()

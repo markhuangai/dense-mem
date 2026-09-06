@@ -253,7 +253,7 @@ func loadTerminalRememberAttemptInTx(ctx context.Context, tx *gorm.DB, teamID, o
 	if strings.TrimSpace(result.RequestHash) != strings.TrimSpace(requestHash) {
 		return nil, fmt.Errorf("%w: idempotency key reused with a different request hash", ErrIdempotencyConflict)
 	}
-	if strings.TrimSpace(result.ContractVersion) != "" && strings.TrimSpace(result.ContractVersion) != domain.ContractVersion {
+	if version := strings.TrimSpace(result.ContractVersion); version != "" && !domain.ContractVersionCompatible(version) {
 		return nil, fmt.Errorf("%w: historical Remember contract is not replayable", ErrIdempotencyConflict)
 	}
 	if result.Outcome == "rejected" || result.Outcome == "quarantined" {

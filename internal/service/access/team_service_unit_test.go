@@ -138,6 +138,10 @@ func TestTeamServiceCreateUpdateErrorBranches(t *testing.T) {
 	var apiErr *httperr.APIError
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, httperr.CONFLICT, apiErr.Code)
+	require.Equal(t, "team_name_conflict", apiErr.ReasonCode)
+	require.Equal(t, "correct_and_resubmit", apiErr.NextAction)
+	require.False(t, apiErr.Retryable)
+	require.Equal(t, "corr", apiErr.CorrelationID)
 
 	repo = &unitProfileRepo{createErr: errors.New("insert failed")}
 	svc = NewTeamService(repo, new(MockAuditService), nil)
@@ -151,6 +155,7 @@ func TestTeamServiceCreateUpdateErrorBranches(t *testing.T) {
 	_, err = svc.Update(ctx, id, UpdateTeamRequest{Name: &newName}, nil, "system", "127.0.0.1", "corr")
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, httperr.CONFLICT, apiErr.Code)
+	require.Equal(t, "corr", apiErr.CorrelationID)
 
 	repo = &unitProfileRepo{profile: existing, nameExistsErr: errors.New("lookup failed")}
 	svc = NewTeamService(repo, new(MockAuditService), nil)
@@ -162,6 +167,7 @@ func TestTeamServiceCreateUpdateErrorBranches(t *testing.T) {
 	_, err = svc.Update(ctx, id, UpdateTeamRequest{Name: &newName}, nil, "system", "127.0.0.1", "corr")
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, httperr.CONFLICT, apiErr.Code)
+	require.Equal(t, "corr", apiErr.CorrelationID)
 
 	repo = &unitProfileRepo{profile: existing, updateErr: errors.New("update failed")}
 	svc = NewTeamService(repo, new(MockAuditService), nil)

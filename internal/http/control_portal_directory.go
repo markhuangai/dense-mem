@@ -241,7 +241,7 @@ func controlDirectoryServiceError(err error) error {
 	}
 	message := strings.ToLower(err.Error())
 	if errors.Is(err, service.ErrDirectoryConnectorDisabled) {
-		return httperr.New(httperr.CONFLICT, "directory connector is disabled")
+		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "directory connector is disabled"), "connector_disabled", "contact_operator", "Contact an operator to enable the directory connector before retrying.", false, nil, "")
 	}
 	if strings.Contains(message, "not found") {
 		return httperr.New(httperr.NOT_FOUND, "directory resource not found")

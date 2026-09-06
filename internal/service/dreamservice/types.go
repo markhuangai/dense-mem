@@ -21,8 +21,9 @@ const (
 )
 
 var (
-	ErrDreamNotFound      = errors.New("dream not found")
-	ErrInvalidDreamStatus = errors.New("invalid dream status")
+	ErrDreamNotFound             = errors.New("dream not found")
+	ErrInvalidDreamStatus        = errors.New("invalid dream status")
+	ErrDreamFeedbackInvalidInput = errors.New("dream feedback input is invalid")
 )
 
 // ConfirmationBusyError reports that another Dream feedback operation

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
@@ -23,4 +24,13 @@ func TestValidateEvidenceDiscoveryHypothesisUsesCanonicalAuthority(t *testing.T)
 		}},
 	})
 	require.ErrorContains(t, validateUpsertHypothesisInput(input, true), "evidence_derivations[0].authority is unsupported")
+}
+
+func TestGetHypothesisClassifiesInvalidHypothesisID(t *testing.T) {
+	var repo SemanticRepositoryImpl
+	_, err := repo.GetHypothesis(context.Background(), GetHypothesisInput{
+		TeamID:       uuid.NewString(),
+		HypothesisID: "not-a-uuid",
+	})
+	require.ErrorIs(t, err, ErrDreamHypothesisIDInvalid)
 }

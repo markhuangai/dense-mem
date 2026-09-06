@@ -73,9 +73,15 @@ type ErrorDetail struct {
 
 // APIError represents a structured API error with code, message, and optional details.
 type APIError struct {
-	Code    ErrorCode     `json:"code"`
-	Message string        `json:"message"`
-	Details []ErrorDetail `json:"details"`
+	Code              ErrorCode     `json:"code"`
+	Message           string        `json:"message"`
+	Details           []ErrorDetail `json:"details"`
+	ReasonCode        string        `json:"reason_code,omitempty"`
+	Retryable         bool          `json:"retryable"`
+	NextAction        string        `json:"next_action,omitempty"`
+	Remediation       string        `json:"remediation,omitempty"`
+	RetryAfterSeconds *int          `json:"retry_after_seconds,omitempty"`
+	CorrelationID     string        `json:"correlation_id,omitempty"`
 }
 
 func boundedText(value string, maxRunes int) string {
@@ -100,7 +106,16 @@ func (e *APIError) bounded(status int) *APIError {
 	if e == nil {
 		return New(INTERNAL_ERROR, stablePublicMessage(httpStatusInternalServerError))
 	}
-	copyErr := &APIError{Code: e.Code, Message: e.Message}
+	copyErr := &APIError{
+		Code: e.Code, Message: e.Message, ReasonCode: boundedText(e.ReasonCode, maxPublicErrorFieldRunes),
+		Retryable: e.Retryable, NextAction: boundedText(e.NextAction, maxPublicErrorFieldRunes),
+		Remediation:   boundedText(e.Remediation, maxPublicDetailMessageRunes),
+		CorrelationID: boundedText(e.CorrelationID, maxPublicErrorFieldRunes),
+	}
+	if e.RetryAfterSeconds != nil && *e.RetryAfterSeconds >= 0 && *e.RetryAfterSeconds <= 86400 {
+		value := *e.RetryAfterSeconds
+		copyErr.RetryAfterSeconds = &value
+	}
 	if status >= 500 {
 		copyErr.Message = stablePublicMessage(status)
 		return copyErr
@@ -138,6 +153,12 @@ func stablePublicMessage(status int) string {
 	default:
 		return "internal server error"
 	}
+}
+
+// StablePublicMessage returns the bounded replacement used for server-side
+// HTTP failures before they cross a public transport boundary.
+func StablePublicMessage(status int) string {
+	return stablePublicMessage(status)
 }
 
 // Error implements the error interface.
@@ -188,6 +209,23 @@ func NewWithDetails(code ErrorCode, message string, details []ErrorDetail) *APIE
 		Message: message,
 		Details: details,
 	}
+}
+
+// WithGuidance adds bounded recovery metadata to an API error.
+func WithGuidance(err *APIError, reasonCode, nextAction, remediation string, retryable bool, retryAfterSeconds *int, correlationID string) *APIError {
+	if err == nil {
+		err = New(INTERNAL_ERROR, "internal server error")
+	}
+	err.ReasonCode = boundedText(reasonCode, maxPublicErrorFieldRunes)
+	err.NextAction = boundedText(nextAction, maxPublicErrorFieldRunes)
+	err.Remediation = boundedText(remediation, maxPublicDetailMessageRunes)
+	err.Retryable = retryable
+	err.CorrelationID = boundedText(correlationID, maxPublicErrorFieldRunes)
+	if retryAfterSeconds != nil && *retryAfterSeconds >= 0 && *retryAfterSeconds <= 86400 {
+		value := *retryAfterSeconds
+		err.RetryAfterSeconds = &value
+	}
+	return err
 }
 
 // ErrorEnvelope is the JSON envelope for error responses.

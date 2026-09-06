@@ -156,15 +156,21 @@ func normalizeCredentialName(name string) (string, error) {
 	return trimmed, nil
 }
 
+func credentialConflict(message, reasonCode, nextAction, remediation string, retryable bool) error {
+	return httperr.WithGuidance(
+		httperr.New(httperr.CONFLICT, message), reasonCode, nextAction, remediation, retryable, nil, "",
+	)
+}
+
 func credentialNameConflict(err error, name string) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return httperr.New(httperr.CONFLICT, fmt.Sprintf("credential with name '%s' already exists for this team", name))
+		return credentialConflict(fmt.Sprintf("credential with name '%s' already exists for this team", name), "credential_name_conflict", "correct_and_resubmit", "Choose a different credential name and submit the request again.", false)
 	}
 
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-		return httperr.New(httperr.CONFLICT, fmt.Sprintf("credential with name '%s' already exists for this team", name))
+		return credentialConflict(fmt.Sprintf("credential with name '%s' already exists for this team", name), "credential_name_conflict", "correct_and_resubmit", "Choose a different credential name and submit the request again.", false)
 	}
 	return nil
 }
@@ -174,7 +180,7 @@ func credentialCreateConflict(err error, name string) error {
 	// older database is still serving traffic, fail closed instead of reporting
 	// a successful create without a durable credential row.
 	if uniqueViolationName(err) == "idx_credentials_owner_team_active_unique" {
-		return httperr.New(httperr.CONFLICT, "api credential already exists for this owner and team")
+		return credentialConflict("api credential already exists for this owner and team", "credential_exists", "correct_and_resubmit", "Use the existing credential or choose a different credential owner and name, then submit again.", false)
 	}
 	return credentialNameConflict(err, name)
 }
@@ -605,7 +611,7 @@ func (s *CredentialServiceImpl) RotateForTeam(ctx context.Context, teamID, id uu
 		return nil, "", httperr.New(httperr.NOT_FOUND, fmt.Sprintf("credential with id '%s' not found", id.String()))
 	}
 	if credential.RevokedAt != nil {
-		return nil, "", httperr.New(httperr.CONFLICT, "api credential is revoked and cannot rotate")
+		return nil, "", credentialConflict("api credential is revoked and cannot rotate", "credential_revoked", "stop", "Stop the rotation and use an active credential.", false)
 	}
 
 	name := credential.Name
@@ -742,7 +748,7 @@ func (s *CredentialServiceImpl) RevokeForTeam(ctx context.Context, teamID, id uu
 		return httperr.New(httperr.NOT_FOUND, fmt.Sprintf("api credential with id '%s' not found", id.String()))
 	}
 	if credential.RevokedAt != nil {
-		return httperr.New(httperr.CONFLICT, "api credential is already revoked")
+		return credentialConflict("api credential is already revoked", "credential_revoked", "stop", "Stop the revoke request; this credential is already revoked.", false)
 	}
 
 	beforePayload := map[string]interface{}{

@@ -130,7 +130,9 @@ func BuildSynchronousRememberCommitInput(input SynchronousRememberCommitRequest)
 		AssessmentID:         assessment.AssessmentID, AssessmentJSON: append(json.RawMessage(nil), assessment.NormalizedResponse...),
 		EvidenceSecurityResults: append([]repository.EvidenceSecurityResult(nil), securityResults...),
 		ProviderTurns:           providerTurns, InputTokens: assessment.InputTokens, OutputTokens: assessment.OutputTokens,
-		AssessorTurns: providerTurns, Duration: input.Duration,
+		CandidateContextOmittedCandidates:       assessment.CandidateContextOmittedCandidates,
+		CandidateContextOmittedPredicateOptions: assessment.CandidateContextOmittedPredicateOptions,
+		AssessorTurns:                           providerTurns, Duration: input.Duration,
 		Commit: commit,
 	}, nil
 }
@@ -222,12 +224,14 @@ func AssessSynchronousRemember(
 	if err != nil {
 		return nil, normalizeSynchronousAssessmentPreflightError(err)
 	}
+	// Candidate and predicate selections are part of the server-owned assessor
+	// allowlist. Freeze the first bounded selection so a repair cannot observe a
+	// different catalog result while the response is being validated and
+	// committed.
+	selectedRequest := request
 	refresh := func(refreshCtx context.Context) (assessor.SemanticAssessmentRequest, error) {
-		request, err := concrete.buildRequest(refreshCtx, input.Scope, plan, input.Snapshot.Proposal)
-		if err != nil {
-			return assessor.SemanticAssessmentRequest{}, normalizeSynchronousAssessmentPreflightError(err)
-		}
-		return request, nil
+		_ = refreshCtx
+		return selectedRequest, nil
 	}
 	providerCtx := observability.WithMetricIdentity(ctx, input.Scope.TeamID, input.Scope.OwnerProfileID)
 	providerCtx = observability.WithAIOperation(providerCtx, observability.AIOperationSemanticAssessment, 1)
@@ -247,12 +251,17 @@ func AssessSynchronousRemember(
 			mapped = fmt.Errorf("%w: assessor phase exceeded 160 seconds", rememberapp.ErrRememberRequestTimeout)
 		} else if errors.Is(err, context.Canceled) {
 			mapped = context.Canceled
-		} else if errors.Is(err, rememberapp.ErrRememberInputBudgetExceeded) {
-			mapped = fmt.Errorf("%w: refreshed assessor input exceeded the deterministic budget", rememberapp.ErrRememberInputBudgetExceeded)
-		} else if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
-			mapped = fmt.Errorf("%w: complete assessor response remained invalid", rememberapp.ErrRememberProviderResponseInvalid)
 		} else {
-			mapped = fmt.Errorf("%w: assessor provider request failed", rememberapp.ErrRememberProviderUnavailable)
+			var malformed *assessor.MalformedResponseError
+			if errors.As(err, &malformed) && malformed != nil && malformed.FailureClass == "input_budget" {
+				mapped = fmt.Errorf("%w: %w", rememberapp.ErrRememberInputBudgetExceeded, err)
+			} else if errors.Is(err, rememberapp.ErrRememberInputBudgetExceeded) {
+				mapped = fmt.Errorf("%w: refreshed assessor input exceeded the deterministic budget: %w", rememberapp.ErrRememberInputBudgetExceeded, err)
+			} else if errors.Is(err, assessor.ErrVerifierMalformedResponse) {
+				mapped = fmt.Errorf("%w: complete assessor response remained invalid", rememberapp.ErrRememberProviderResponseInvalid)
+			} else {
+				mapped = fmt.Errorf("%w: assessor provider request failed", rememberapp.ErrRememberProviderUnavailable)
+			}
 		}
 		if providerTurns > 0 {
 			mapped = &submissionAssessmentConsumedTurnsError{cause: mapped, providerTurns: providerTurns}
@@ -285,8 +294,10 @@ func AssessSynchronousRemember(
 		Model: deps.Provider.ModelName(), Tokenizer: assessmentTokenizer(deps.Limits),
 		RevisionNumber: 1, ProviderTurns: providerTurns, InputTokens: inputTokens,
 		OutputTokens: response.OutputTokens, CandidateContextTokens: finalRequest.CandidateContextTokens,
-		CandidateContextTruncated: finalRequest.CandidateContextTruncated,
-		NormalizedResponse:        canonicalJSON, ResponseHash: semanticAssessmentHash(canonicalJSON),
+		CandidateContextTruncated:               finalRequest.CandidateContextTruncated,
+		CandidateContextOmittedCandidates:       finalRequest.CandidateContextOmittedCandidates,
+		CandidateContextOmittedPredicateOptions: finalRequest.CandidateContextOmittedPredicateOptions,
+		NormalizedResponse:                      canonicalJSON, ResponseHash: semanticAssessmentHash(canonicalJSON),
 		ValidatedAt: now, CreatedAt: now,
 	}
 	return &SynchronousAssessmentResult{Response: response, Request: finalRequest, Plan: plan, Assessment: assessment}, nil
@@ -298,8 +309,8 @@ func normalizeSynchronousAssessmentPreflightError(err error) error {
 	}
 	stage, _ := semanticAssessmentPreflightFailure(err)
 	switch stage {
-	case "entity_catalog", "known_evidence_context", "catalog_context", "assessment_input", "predicate_options_overflow":
-		return fmt.Errorf("%w: %v", rememberapp.ErrRememberInputBudgetExceeded, err)
+	case "entity_catalog", "known_evidence_context", "catalog_context", "predicate_context", "assessment_input", "predicate_options_overflow", "provider_framing":
+		return fmt.Errorf("%w: %w", rememberapp.ErrRememberInputBudgetExceeded, err)
 	default:
 		return err
 	}

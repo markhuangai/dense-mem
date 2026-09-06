@@ -55,19 +55,26 @@ Each evidence boundary_text inserts request-local markers around every Unicode c
 
 // SemanticAssessmentLimits bounds one immutable assessor request; token limits are semantic and transport byte limits belong to provider adapters.
 type SemanticAssessmentLimits struct {
-	Tokenizer                 string
-	MaxInputTokens            int
-	MaxOutputTokens           int
-	MaxCandidateContextTokens int
-	MaxEntityResults          int
-	MaxRelationshipResults    int
-	MaxCandidatesPerSurface   int
-	MaxPredicateOptions       int
+	Tokenizer string
+	// Provider framing is part of the configured assessor budget. These fields
+	// are populated by the provider constructor and shared with preflight.
+	ProviderModel               string
+	ProviderSchemaName          string
+	ProviderTemperatureDisabled bool
+	LegacyProviderFraming       bool
+	MaxInputTokens              int
+	MaxOutputTokens             int
+	MaxCandidateContextTokens   int
+	MaxEntityResults            int
+	MaxRelationshipResults      int
+	MaxCandidatesPerSurface     int
+	MaxPredicateOptions         int
 }
 
 func DefaultSemanticAssessmentLimits() SemanticAssessmentLimits {
 	return SemanticAssessmentLimits{
 		Tokenizer:                 "o200k_base",
+		ProviderSchemaName:        SemanticAssessmentSchemaName,
 		MaxInputTokens:            200000,
 		MaxOutputTokens:           65536,
 		MaxCandidateContextTokens: 50000,
@@ -82,6 +89,9 @@ func normalizeSemanticAssessmentLimits(limits SemanticAssessmentLimits) Semantic
 	defaults := DefaultSemanticAssessmentLimits()
 	if strings.TrimSpace(limits.Tokenizer) == "" {
 		limits.Tokenizer = defaults.Tokenizer
+	}
+	if strings.TrimSpace(limits.ProviderSchemaName) == "" {
+		limits.ProviderSchemaName = defaults.ProviderSchemaName
 	}
 	if limits.MaxInputTokens <= 0 {
 		limits.MaxInputTokens = defaults.MaxInputTokens
@@ -128,6 +138,7 @@ func PrepareSemanticAssessmentRequest(
 	limits SemanticAssessmentLimits,
 ) (SemanticAssessmentRequest, []SemanticValidationError) {
 	limits = normalizeSemanticAssessmentLimits(limits)
+	cloneSemanticAssessmentRequestSlices(&req)
 	req.RequestID = strings.TrimSpace(req.RequestID)
 	req.TeamID = strings.TrimSpace(req.TeamID)
 	req.OwnerProfileID = strings.TrimSpace(req.OwnerProfileID)
@@ -177,34 +188,12 @@ func PrepareSemanticAssessmentRequest(
 		return req, errs
 	}
 
-	contextPayload, err := json.Marshal(semanticAssessmentCandidateContext{
-		EntityCandidateGroups:         req.EntityCandidateGroups,
-		PredicateOptions:              req.PredicateOptions,
-		EvidenceEquivalenceCandidates: req.EvidenceEquivalenceCandidates,
-	})
-	if err != nil {
-		return req, []SemanticValidationError{semanticErr("candidate_context", "cannot be serialized")}
-	}
-	contextTokens, err := CountTokens(string(contextPayload), limits.Tokenizer)
-	if err != nil {
-		return req, []SemanticValidationError{semanticErr("tokenizer", err.Error())}
-	}
-	req.CandidateContextTokens = contextTokens
-	if contextTokens > limits.MaxCandidateContextTokens {
-		return req, []SemanticValidationError{semanticErr("candidate_context_tokens", fmt.Sprintf("must be less than or equal to %d", limits.MaxCandidateContextTokens))}
-	}
-
-	payload, err := json.Marshal(req)
-	if err != nil {
+	allocationErrors, allocationErr := allocateSemanticAssessmentOptionalContext(&req, limits)
+	if allocationErr != nil {
 		return req, []SemanticValidationError{semanticErr("request", "cannot be serialized")}
 	}
-	inputTokens, err := CountTokens(semanticAssessmentSystemPrompt+string(payload), limits.Tokenizer)
-	if err != nil {
-		return req, []SemanticValidationError{semanticErr("tokenizer", err.Error())}
-	}
-	req.InputTokens = inputTokens
-	if inputTokens > limits.MaxInputTokens {
-		return req, []SemanticValidationError{semanticErr("input_tokens", fmt.Sprintf("must be less than or equal to %d", limits.MaxInputTokens))}
+	if len(allocationErrors) > 0 {
+		return req, allocationErrors
 	}
 	return req, nil
 }

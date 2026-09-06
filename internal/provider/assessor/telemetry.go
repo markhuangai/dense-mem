@@ -2,7 +2,6 @@ package assessorprovider
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/markhuangai/dense-mem/internal/observability"
 
@@ -42,13 +41,8 @@ func (v *OpenAIAssessor) recordVerifierMissingUsage(ctx context.Context, model s
 	observability.RecordAIOperationUnpriced(ctx, v.metrics, observability.AIComponentVerifier, model, "missing_usage")
 }
 
-func (v *OpenAIAssessor) recordVerifierTokenizerUsage(ctx context.Context, model string, request openAIVerifierRequest, content string) {
+func (v *OpenAIAssessor) recordVerifierTokenizerUsage(ctx context.Context, model string, requestJSON []byte, content string) {
 	if !observability.HasAIOperation(ctx) {
-		return
-	}
-	requestJSON, err := json.Marshal(request)
-	if err != nil {
-		observability.RecordAIOperationUnpriced(ctx, v.metrics, observability.AIComponentVerifier, model, "tokenizer_error")
 		return
 	}
 	inputTokens, err := assessor.CountTokens(string(requestJSON), v.assessmentLimits.Tokenizer)

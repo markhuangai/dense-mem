@@ -138,6 +138,43 @@ func TestClassifyContractAllowsEvaluationToolsAndRejectsUnknownTools(t *testing.
 	require.ErrorContains(t, err, "unsupported or mixed MCP contract")
 }
 
+func TestClassifyContractAcceptsRetainedV262Schema(t *testing.T) {
+	definitions := make([]mcpToolDefinition, 0, len(registry.ContractTools()))
+	for _, tool := range registry.ContractTools() {
+		schema := tool.OutputSchema
+		if tool.Name == registry.ToolRemember {
+			schema = map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"contract_version": map[string]any{"enum": []any{"dense-mem.v2.6.2"}},
+				},
+			}
+		}
+		definitions = append(definitions, mcpToolDefinition{Name: tool.Name, OutputSchema: schema})
+	}
+	mode, err := classifyContract(definitions)
+	require.NoError(t, err)
+	require.Equal(t, contractModeV263, mode)
+}
+
+func TestClassifyContractRejectsMixedUnknownContractVersions(t *testing.T) {
+	definitions := make([]mcpToolDefinition, 0, len(registry.ContractTools()))
+	for _, tool := range registry.ContractTools() {
+		schema := tool.OutputSchema
+		if tool.Name == registry.ToolRemember {
+			schema = map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"contract_version": map[string]any{"enum": []any{"dense-mem.v2.6.2", "dense-mem.v9.0.0"}},
+				},
+			}
+		}
+		definitions = append(definitions, mcpToolDefinition{Name: tool.Name, OutputSchema: schema})
+	}
+	_, err := classifyContract(definitions)
+	require.ErrorContains(t, err, "unsupported or mixed MCP contract")
+}
+
 func TestHTTPClientRetriesContractDiscoveryAfterFailure(t *testing.T) {
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

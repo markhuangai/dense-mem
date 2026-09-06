@@ -109,7 +109,7 @@ func TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships(t *test
 		{name: "name required", svc: base, ctx: ctx, req: ExportRequest{RelationshipIDs: []string{"rel-1"}}, want: "name is required"},
 		{name: "relationship ids required", svc: base, ctx: ctx, req: ExportRequest{Name: "pack"}, want: "relationship_ids is required"},
 		{name: "trace failure", svc: NewMemoryPackService(MemoryPackDependencies{Semantic: &exportSemanticStub{err: errors.New("trace failed")}}), ctx: ctx, req: ExportRequest{Name: "pack", RelationshipIDs: []string{"rel-1"}}, want: "trace failed"},
-		{name: "trace relationship not found", svc: NewMemoryPackService(MemoryPackDependencies{Semantic: &exportSemanticStub{err: repository.ErrTraceRelationshipNotFound}}), ctx: ctx, req: ExportRequest{Name: "pack", RelationshipIDs: []string{"rel-1"}}, want: "sql: no rows in result set"},
+		{name: "trace relationship not found", svc: NewMemoryPackService(MemoryPackDependencies{Semantic: &exportSemanticStub{err: repository.ErrTraceRelationshipNotFound}}), ctx: ctx, req: ExportRequest{Name: "pack", RelationshipIDs: []string{"rel-1"}}, want: "trace relationship not found"},
 		{name: "relationship missing", svc: NewMemoryPackService(MemoryPackDependencies{Semantic: &exportSemanticStub{result: &repository.RelationshipTraceResult{}}}), ctx: ctx, req: ExportRequest{Name: "pack", RelationshipIDs: []string{"rel-1"}}, want: "not found"},
 		{name: "relationship inactive", svc: NewMemoryPackService(MemoryPackDependencies{Semantic: &exportSemanticStub{record: &repository.RelationshipTraceRecord{RelationshipID: "rel-1", Status: string(domain.RelationshipStatusSuperseded)}}}), ctx: ctx, req: ExportRequest{Name: "pack", RelationshipIDs: []string{"rel-1"}}, want: "not active"},
 	}
@@ -118,6 +118,12 @@ func TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships(t *test
 			_, err := tc.svc.Export(tc.ctx, tc.req)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Export error = %v, want substring %q", err, tc.want)
+			}
+			if tc.name == "relationship inactive" && !errors.Is(err, ErrMemoryPackRelationshipNotActive) {
+				t.Fatalf("Export error = %v, want ErrMemoryPackRelationshipNotActive", err)
+			}
+			if tc.name == "relationship missing" && !errors.Is(err, repository.ErrTraceRelationshipNotFound) {
+				t.Fatalf("Export error = %v, want repository.ErrTraceRelationshipNotFound", err)
 			}
 		})
 	}

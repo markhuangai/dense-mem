@@ -175,6 +175,7 @@ func TestRecallFeedbackEventServiceRejectsUnsnapshottedOrUnreturnedFeedbackRefs(
 		}},
 	})
 	require.ErrorContains(t, err, "was not returned")
+	require.ErrorIs(t, err, ErrRecallFeedbackInvalidResultRef)
 	require.Empty(t, repo.feedbacks)
 
 	repo.event = &domain.RecallFeedbackEvent{

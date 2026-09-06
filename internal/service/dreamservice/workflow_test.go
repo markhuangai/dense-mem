@@ -531,6 +531,7 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 		DreamID:  hypothesisID,
 		Decision: "confirm_true",
 	})
+	require.ErrorIs(t, err, ErrDreamFeedbackInvalidInput)
 	require.ErrorContains(t, err, "independent evidence is required")
 
 	_, err = svc.ResolveFeedback(ctx, "ignored-profile", ResolveFeedbackRequest{
@@ -540,6 +541,7 @@ func TestResolveFeedbackSubmitsIndependentEvidence(t *testing.T) {
 			Content: "Dense-Mem may use PostgreSQL.",
 		}},
 	})
+	require.ErrorIs(t, err, ErrDreamFeedbackInvalidInput)
 	require.ErrorContains(t, err, "hypothesis text cannot be submitted")
 
 	evidenceContent := " The deployment note says Dense-Mem uses PostgreSQL. "

@@ -12,6 +12,8 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/correlation"
 )
 
 func TestErrorEnvelopeShape(t *testing.T) {
@@ -161,6 +163,48 @@ func TestErrorHandler(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), `"message":"resource not found"`)
 	})
 
+	t.Run("classifies an unmatched route as a correctable request", func(t *testing.T) {
+		router := echo.New()
+		router.HTTPErrorHandler = ErrorHandler
+		router.GET("/known", func(c echo.Context) error {
+			return c.NoContent(http.StatusNoContent)
+		})
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/missing", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		var body APIError
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.Equal(t, NOT_FOUND, body.Code)
+		assert.Equal(t, "The requested route is not available.", body.Message)
+		assert.Equal(t, "invalid_request", body.ReasonCode)
+		assert.Equal(t, "correct_and_resubmit", body.NextAction)
+		assert.Equal(t, "Use a supported route and HTTP method, then submit the request again.", body.Remediation)
+		assert.False(t, body.Retryable)
+	})
+
+	t.Run("preserves capability conflict guidance", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/teams", nil)
+		req = req.WithContext(correlation.WithID(req.Context(), "http-conflict-correlation"))
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		ErrorHandler(WithGuidance(
+			New(CONFLICT, "team name already exists"),
+			"team_name_conflict", "correct_and_resubmit", "Choose a different team name and submit again.", false, nil, "",
+		), c)
+
+		var body APIError
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, http.StatusConflict, rec.Code)
+		assert.Equal(t, "team_name_conflict", body.ReasonCode)
+		assert.Equal(t, "correct_and_resubmit", body.NextAction)
+		assert.Equal(t, "Choose a different team name and submit again.", body.Remediation)
+		assert.Equal(t, "http-conflict-correlation", body.CorrelationID)
+		assert.False(t, body.Retryable)
+	})
+
 	t.Run("handles generic error", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		rec := httptest.NewRecorder()
@@ -214,6 +258,28 @@ func TestErrorHandler(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &emptyFieldBody))
 		require.Len(t, emptyFieldBody.Details, 1)
 		assert.Empty(t, emptyFieldBody.Details[0].Field)
+
+		rec = httptest.NewRecorder()
+		c = e.NewContext(req, rec)
+		ErrorHandler(echo.NewHTTPError(http.StatusRequestEntityTooLarge, "request body exceeds limit"), c)
+		assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+		var oversizedBody APIError
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &oversizedBody))
+		assert.Equal(t, VALIDATION_ERROR, oversizedBody.Code)
+		assert.Equal(t, "correct_and_resubmit", oversizedBody.NextAction)
+		assert.False(t, oversizedBody.Retryable)
+
+		for _, status := range []int{http.StatusMethodNotAllowed, http.StatusUnsupportedMediaType} {
+			rec = httptest.NewRecorder()
+			c = e.NewContext(req, rec)
+			ErrorHandler(echo.NewHTTPError(status, http.StatusText(status)), c)
+			var clientError APIError
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &clientError))
+			assert.Equal(t, status, rec.Code)
+			assert.Equal(t, VALIDATION_ERROR, clientError.Code)
+			assert.Equal(t, "correct_and_resubmit", clientError.NextAction)
+			assert.False(t, clientError.Retryable)
+		}
 	})
 
 	t.Run("does not write committed response", func(t *testing.T) {
@@ -235,6 +301,9 @@ func TestEchoHTTPErrorToAPIErrorBranches(t *testing.T) {
 		code   ErrorCode
 	}{
 		{http.StatusBadRequest, VALIDATION_ERROR},
+		{http.StatusRequestEntityTooLarge, VALIDATION_ERROR},
+		{http.StatusMethodNotAllowed, VALIDATION_ERROR},
+		{http.StatusUnsupportedMediaType, VALIDATION_ERROR},
 		{http.StatusUnauthorized, AUTH_INVALID},
 		{http.StatusForbidden, FORBIDDEN},
 		{http.StatusNotFound, NOT_FOUND},
@@ -324,4 +393,31 @@ func TestAPIErrorProvider(t *testing.T) {
 	details := []ErrorDetail{{Field: "id", Message: "invalid"}}
 	apiErrWithDetails := NewWithDetails(VALIDATION_ERROR, "bad input", details)
 	assert.Equal(t, details, apiErrWithDetails.GetDetails())
+}
+
+func TestAPIErrorGuidanceIsBoundedAndPreservedByHTTPProjection(t *testing.T) {
+	retryAfter := 30
+	apiErr := WithGuidance(nil, strings.Repeat("r", maxPublicErrorFieldRunes+20), "retry_same_request", strings.Repeat("m", maxPublicDetailMessageRunes+20), true, &retryAfter, strings.Repeat("c", maxPublicErrorFieldRunes+20))
+	require.Equal(t, INTERNAL_ERROR, apiErr.Code)
+	require.True(t, apiErr.Retryable)
+	require.Equal(t, retryAfter, *apiErr.RetryAfterSeconds)
+	require.LessOrEqual(t, utf8.RuneCountInString(apiErr.ReasonCode), maxPublicErrorFieldRunes)
+	require.LessOrEqual(t, utf8.RuneCountInString(apiErr.Remediation), maxPublicDetailMessageRunes)
+	require.LessOrEqual(t, utf8.RuneCountInString(apiErr.CorrelationID), maxPublicErrorFieldRunes)
+
+	invalidRetry := -1
+	invalidErr := WithGuidance(New(VALIDATION_ERROR, "invalid retry"), "reason", "action", "remediation", false, &invalidRetry, "correlation")
+	require.Nil(t, invalidErr.RetryAfterSeconds)
+
+	projected := invalidErr.bounded(http.StatusBadRequest)
+	require.Equal(t, "reason", projected.ReasonCode)
+	require.Equal(t, "action", projected.NextAction)
+	require.Equal(t, "remediation", projected.Remediation)
+	require.Equal(t, "correlation", projected.CorrelationID)
+	emptyRemediation := WithGuidance(New(VALIDATION_ERROR, "invalid"), "reason", "action", "", false, nil, "correlation")
+	require.Empty(t, emptyRemediation.Remediation)
+	require.Empty(t, emptyRemediation.bounded(http.StatusBadRequest).Remediation)
+	encoded, err := json.Marshal(emptyRemediation)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"retryable":false`)
 }

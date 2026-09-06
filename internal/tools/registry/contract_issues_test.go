@@ -1,10 +1,13 @@
 package registry
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/correlation"
 )
 
 func TestValidateContractInputIssuesAggregatesRememberProblems(t *testing.T) {
@@ -45,8 +48,9 @@ func TestValidateContractInputIssuesAggregatesRememberProblems(t *testing.T) {
 	}
 	require.Contains(t, result.Issues, ContractValidationIssue{Path: "/unknown", Code: "unknown_field", Message: "unknown field: unknown"})
 
-	data := ContractValidationErrorData(result)
+	data := ContractValidationErrorData(correlation.WithID(context.Background(), "validation-correlation"), result)
 	require.Equal(t, "validation_failed", data["reason"])
+	require.Equal(t, "validation-correlation", data["correlation_id"])
 	require.Equal(t, result.IssuesTruncated, data["issues_truncated"])
 	require.Len(t, data["issues"], len(result.Issues))
 }
@@ -88,6 +92,22 @@ func TestValidateContractInputIssuesDispatchesToolSpecificValidation(t *testing.
 			result := ValidateContractInputIssues(tool, tc.args, []string{tc.scope})
 			require.Len(t, result.Issues, 1)
 			require.Contains(t, result.Issues[0].Message, tc.want)
+		})
+	}
+}
+
+func TestValidateContractInputIssuesRejectsMalformedRecallUUIDFilters(t *testing.T) {
+	recall, err := requireTool(toolMap(t), ToolRecallMemory)
+	require.NoError(t, err)
+
+	for _, field := range []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"} {
+		t.Run(field, func(t *testing.T) {
+			result := ValidateContractInputIssues(recall, map[string]any{
+				"query": "durable memory",
+				field:   []any{"not-a-uuid"},
+			}, []string{"read"})
+			require.Len(t, result.Issues, 1)
+			require.Equal(t, field+"[0] must be a valid UUID", result.Issues[0].Message)
 		})
 	}
 }

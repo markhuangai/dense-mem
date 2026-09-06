@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
@@ -327,6 +329,30 @@ func (c *Config) ValidateServerStartup() error {
 			Field:   "AI_API_EMBEDDING_DIMENSIONS",
 			Message: fmt.Sprintf("must be at most %d", domain.MaxEmbeddingDimensions),
 		}
+	}
+	budget := AIVerifierAssessmentBudgetFor(c)
+	if err := assessor.ValidateSemanticAssessmentLimits(assessor.SemanticAssessmentLimits{
+		Tokenizer:                   budget.Tokenizer,
+		ProviderModel:               c.GetAIVerifierModel(),
+		ProviderSchemaName:          assessor.SemanticAssessmentSchemaName,
+		ProviderTemperatureDisabled: AIVerifierTemperatureDisabled(c),
+		MaxInputTokens:              budget.MaxInputTokens,
+		MaxOutputTokens:             budget.MaxOutputTokens,
+		MaxCandidateContextTokens:   budget.MaxCandidateContextTokens,
+	}); err != nil {
+		field := "AI_VERIFIER_MAX_INPUT_TOKENS"
+		var limitErr *assessor.SemanticAssessmentLimitValidationError
+		if errors.As(err, &limitErr) && limitErr != nil {
+			switch limitErr.Field {
+			case "output_tokens":
+				field = "AI_VERIFIER_MAX_OUTPUT_TOKENS"
+			case "candidate_context_tokens":
+				field = "AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS"
+			case "tokenizer":
+				field = "AI_VERIFIER_TOKENIZER"
+			}
+		}
+		return &ValidationError{Field: field, Message: err.Error()}
 	}
 	return nil
 }

@@ -47,3 +47,17 @@ func TestRememberPublicResultReportsCurrentProjectionForReusedEvidence(t *testin
 	require.Len(t, evidence, 1)
 	require.Equal(t, "current", evidence[0]["search_state"])
 }
+
+func TestRememberPublicResultProjectsAssessorContextWarnings(t *testing.T) {
+	input := SynchronousRememberCommitInput{
+		IngestID:                                uuid.NewString(),
+		CandidateContextOmittedCandidates:       2,
+		CandidateContextOmittedPredicateOptions: 1,
+	}
+	result := rememberPublicResult(input, nil, &submissionSemanticCommitState{}, nil)
+	warnings, ok := result["warnings"].([]string)
+	require.True(t, ok)
+	require.Len(t, warnings, 2)
+	require.Contains(t, warnings[0], "duplicate candidates")
+	require.Contains(t, warnings[1], "predicate suggestions")
+}

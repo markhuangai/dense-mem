@@ -105,10 +105,10 @@ func TestBuildActiveWiresExecutableCorrectRelationship(t *testing.T) {
 	}
 	out, err := correct.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
 		"action":           "submit",
-		"relationship_id":  "relationship-source",
+		"relationship_id":  "00000000-0000-0000-0000-000000000621",
 		"expected_version": 2,
 		"patch":            map[string]any{"predicate": map[string]any{"key": "works_with"}},
-		"supports":         []any{map[string]any{"evidence_id": "evidence-1", "start": 0, "end": 8}},
+		"supports":         []any{map[string]any{"evidence_id": "00000000-0000-0000-0000-000000000622", "start": 0, "end": 8}},
 		"reason":           "predicate resolved incorrectly",
 		"idempotency_key":  "relationship-correction-1",
 	})
@@ -121,7 +121,7 @@ func TestBuildActiveWiresExecutableCorrectRelationship(t *testing.T) {
 	if out["submission_kind"] != "relationship_correction" || out["processing_state"] != "completed" {
 		t.Fatalf("correct output = %#v", out)
 	}
-	if stub.correctReq.Action != "submit" || stub.correctReq.RelationshipID != "relationship-source" {
+	if stub.correctReq.Action != "submit" || stub.correctReq.RelationshipID != "00000000-0000-0000-0000-000000000621" {
 		t.Fatalf("stub correct request not populated: %#v", stub.correctReq)
 	}
 }
@@ -138,10 +138,10 @@ func TestBuildActiveCorrectRelationshipRejectsTenantOverride(t *testing.T) {
 	_, err = correct.Invoke(contractInvokeContext("write"), "ignored-profile", map[string]any{
 		"team_id":          "attacker-team",
 		"action":           "submit",
-		"relationship_id":  "relationship-source",
+		"relationship_id":  "00000000-0000-0000-0000-000000000621",
 		"expected_version": 2,
 		"patch":            map[string]any{"predicate": map[string]any{"key": "works_with"}},
-		"supports":         []any{map[string]any{"evidence_id": "evidence-1", "start": 0, "end": 8}},
+		"supports":         []any{map[string]any{"evidence_id": "00000000-0000-0000-0000-000000000622", "start": 0, "end": 8}},
 		"reason":           "predicate resolved incorrectly",
 		"idempotency_key":  "relationship-correction-1",
 	})

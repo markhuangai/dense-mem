@@ -448,7 +448,9 @@ async function placeHold(spaceID, reasonCode) {
   const replay = await controlRaw(`/private-memory/spaces/${spaceID}/legal-hold`, { method: "POST", body: { reason_code: reasonCode } });
   assert(replay.status === 200 && replay.payload.data?.id === response.payload.data?.id, "legal hold replay changed the hold");
   const conflict = await controlRaw(`/private-memory/spaces/${spaceID}/legal-hold`, { method: "POST", body: { reason_code: `${reasonCode}_other` } });
-  assert(conflict.status === 409, "conflicting active legal hold was accepted");
+  assert(conflict.status === 409 && conflict.payload.reason_code === "legal_hold_conflict" && conflict.payload.next_action === "contact_operator" &&
+    conflict.payload.retryable === false && typeof conflict.payload.remediation === "string" && conflict.payload.remediation.includes("legal hold"),
+  `conflicting active legal hold returned incorrect guidance: ${JSON.stringify(conflict.payload)}`);
 }
 
 async function releaseHold(spaceID) {

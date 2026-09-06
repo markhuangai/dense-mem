@@ -279,7 +279,7 @@ func loadRememberAttemptInTx(ctx context.Context, tx *gorm.DB, input Synchronous
 	if strings.TrimSpace(attempt.RequestHash) != strings.TrimSpace(input.RequestHash) {
 		return nil, fmt.Errorf("%w: idempotency key reused with a different request hash", ErrIdempotencyConflict)
 	}
-	if strings.TrimSpace(attempt.ContractVersion) != "" && strings.TrimSpace(attempt.ContractVersion) != domain.ContractVersion {
+	if version := strings.TrimSpace(attempt.ContractVersion); version != "" && !domain.ContractVersionCompatible(version) {
 		return nil, fmt.Errorf("%w: historical Remember contract is not replayable", ErrIdempotencyConflict)
 	}
 	if attempt.Outcome == "rejected" || attempt.Outcome == "quarantined" {
@@ -297,9 +297,19 @@ func insertRememberSemanticAssessment(ctx context.Context, tx *gorm.DB, input Sy
 	if len(input.AssessmentJSON) == 0 {
 		return errors.New("remember semantic assessment response is required")
 	}
+	warnings := make([]string, 0, 2)
+	if input.CandidateContextOmittedCandidates > 0 {
+		warnings = append(warnings, "optional duplicate candidates were omitted to fit the configured assessor budget")
+	}
+	if input.CandidateContextOmittedPredicateOptions > 0 {
+		warnings = append(warnings, "optional predicate suggestions were omitted to fit the configured assessor budget")
+	}
 	history, err := json.Marshal([]map[string]any{{
 		"assessment_id": input.AssessmentID, "normalized_response": json.RawMessage(input.AssessmentJSON),
 		"response_hash": input.Commit.Payload["response_hash"], "provider_turns": input.ProviderTurns,
+		"candidate_context_omitted_candidates":        input.CandidateContextOmittedCandidates,
+		"candidate_context_omitted_predicate_options": input.CandidateContextOmittedPredicateOptions,
+		"warnings":     warnings,
 		"validated_at": time.Now().UTC(),
 	}})
 	if err != nil {

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { assertActionableInvalidInput } from "../surface.mjs";
+
 export const name = "dream";
 
 export async function run({ rpc, rawRPC, expect }) {
@@ -10,6 +12,17 @@ export async function run({ rpc, rawRPC, expect }) {
   const names = new Set((listed.tools || []).map((tool) => tool.name));
   expect(names.has("resolve_dream_feedback"), "dream surface must expose resolve_dream_feedback");
   expect(!names.has("get_submission_status"), "dream surface must remove the legacy status tool");
+
+  const malformedDream = await rawRPC("tools/call", {
+    name: "get_dream",
+    arguments: { hypothesis_id: "not-a-uuid" },
+  });
+  assertActionableInvalidInput(malformedDream, "dream.hypothesis_id", "malformed get_dream hypothesis_id", expect);
+  const malformedFeedback = await rawRPC("tools/call", {
+    name: "resolve_dream_feedback",
+    arguments: { hypothesis_id: "not-a-uuid", decision: "reject", reason: "malformed hypothesis ID coverage" },
+  });
+  assertActionableInvalidInput(malformedFeedback, "dream.hypothesis_id", "malformed resolve_dream_feedback hypothesis_id", expect);
 
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
   const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");
@@ -69,7 +82,15 @@ export async function run({ rpc, rawRPC, expect }) {
     name: "resolve_dream_feedback",
     arguments: { ...resolveArguments(scenarios.completed), decision: "confirm_false", evidence: [{ content: "Independent refuting evidence.", source_type: "manual" }] },
   });
-  expect(String(conflicting.error?.message || "").includes("dream not found"), "conflicting Dream confirmation must be rejected before Remember");
+  const conflictError = conflicting.result?.structuredContent || conflicting.error?.data;
+  expect(
+    (conflicting.result?.isError === true || Boolean(conflicting.error)) &&
+      conflictError?.code === "invalid_input" &&
+      conflictError?.reason_code === "reference_not_found" &&
+      conflictError?.next_action === "refresh_state" &&
+      conflictError?.retryable === false,
+    `conflicting Dream confirmation must return actionable not-found guidance before Remember: ${JSON.stringify(conflicting)}`,
+  );
   expect(hypothesisIngestCount(teamID, scenarios.completed.hypothesisID) === completedIngestCount, "conflicting Dream confirmation must not create a Remember ingest");
   expect(feedbackEventCount(teamID, scenarios.completed.hypothesisID) === completedFeedbackEvents, "conflicting Dream confirmation must not append a feedback event");
 
@@ -124,7 +145,16 @@ export async function run({ rpc, rawRPC, expect }) {
       relationships: [dreamRelationship(scenarios.failed)],
     },
   });
-  expect(String(hypothesisText.error?.message || "").includes("hypothesis text cannot be submitted"), "Hypothesis text must not be accepted as evidence");
+  const hypothesisTextError = hypothesisText.result?.structuredContent || hypothesisText.error?.data;
+  expect(
+    (hypothesisText.result?.isError === true || Boolean(hypothesisText.error)) &&
+      hypothesisTextError?.code === "invalid_input" &&
+      hypothesisTextError?.reason_code === "invalid_request" &&
+      hypothesisTextError?.next_action === "correct_and_resubmit" &&
+      hypothesisTextError?.retryable === false &&
+      String(hypothesisTextError?.message || "").includes("evidence field"),
+    `Hypothesis text must be rejected with actionable evidence guidance: ${JSON.stringify(hypothesisText)}`,
+  );
   expect(attemptRow(teamID, scenarios.failed.idempotencyKey).count === failedAttemptCount, "Hypothesis text rejection must not invoke Remember");
 
   const contention = scenarios.contention;

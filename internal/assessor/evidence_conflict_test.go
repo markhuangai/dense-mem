@@ -166,7 +166,9 @@ func TestSemanticAssessmentEvidenceConflictRejectsOversizedQuoteAndDuplicateCase
 	submitted := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "submitted", Content: large})
 	known := PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "known", Content: "known"})
 	request := SemanticAssessmentRequest{RequestID: "large-conflict", TeamID: "team-1", Evidence: []SemanticReviewEvidence{submitted}, KnownEvidence: []SemanticReviewEvidence{known}}
-	prepared, errs := PrepareSemanticAssessmentRequest(request, DefaultSemanticAssessmentLimits())
+	limits := DefaultSemanticAssessmentLimits()
+	limits.MaxInputTokens = 300_000
+	prepared, errs := PrepareSemanticAssessmentRequest(request, limits)
 	require.Empty(t, errs)
 	startSubmitted, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], 0)
 	endSubmitted, _ := SemanticAssessmentBoundaryRef(prepared.Evidence[0], SemanticAssessmentMaxEvidenceConflictQuoteRunes+1)
@@ -174,7 +176,7 @@ func TestSemanticAssessmentEvidenceConflictRejectsOversizedQuoteAndDuplicateCase
 	endKnown, _ := SemanticAssessmentBoundaryRef(prepared.KnownEvidence[0], 5)
 	base := SemanticAssessmentEvidenceConflictResult{Positions: []SemanticAssessmentEvidenceConflictPosition{{EvidenceID: "submitted", StartRef: startSubmitted, EndRef: endSubmitted}, {EvidenceID: "known", StartRef: startKnown, EndRef: endKnown}}}
 	response := SemanticAssessmentResponse{RequestID: prepared.RequestID, EvidenceSecurityResults: []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "submitted", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}}, EvidenceEquivalenceResults: []SemanticAssessmentEvidenceEquivalenceResult{}, EvidenceConflictResults: []SemanticAssessmentEvidenceConflictResult{base, base}, EntityResults: []SemanticAssessmentEntityResult{}, RelationshipResults: []SemanticAssessmentRelationshipResult{}}
-	_, errs = PrepareSemanticAssessmentResponse(prepared, response, DefaultSemanticAssessmentLimits())
+	_, errs = PrepareSemanticAssessmentResponse(prepared, response, limits)
 	joined := semanticAssessmentJoinedErrors(errs)
 	require.Contains(t, joined, "quote must contain at most 4000 runes")
 	require.Contains(t, joined, "duplicates another conflict result")
