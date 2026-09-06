@@ -310,7 +310,8 @@ test("enforces private visibility and narrow PostgreSQL infrastructure reuse", (
     unit("worker-source", "worker", "source-capability", "private"),
     unit("worker-target", "worker", "target-capability", "private"),
   );
-  assert.equal(workerToWorker.ok, true);
+  assert.equal(workerToWorker.ok, false);
+  assert.match(workerToWorker.diagnostic, /^forbidden:/);
 
   const sameCapabilityPrivate = evaluateModuleEdge(
     unit("private-source", "application_api", "same-capability", "private"),

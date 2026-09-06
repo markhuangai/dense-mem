@@ -268,9 +268,7 @@ export function evaluateModuleEdge(sourceUnit, targetUnit) {
   if (!sourceUnit || !targetUnit) {
     return { ok: false, diagnostic: diagnostic("unclassified", "module edge names an unclassified unit") };
   }
-  const roleAllowed = sourceUnit.role === targetUnit.role && sourceUnit.role === "worker"
-    ? true
-    : allowedTargets[sourceUnit.role]?.includes(targetUnit.role);
+  const roleAllowed = allowedTargets[sourceUnit.role]?.includes(targetUnit.role);
   if (!roleAllowed) {
     return {
       ok: false,
@@ -278,12 +276,11 @@ export function evaluateModuleEdge(sourceUnit, targetUnit) {
     };
   }
   const sameCapability = sourceUnit.capability === targetUnit.capability;
-  const workerToWorker = sourceUnit.role === "worker" && targetUnit.role === "worker";
   const compositionMayConstructPrivate = sourceUnit.role === "composition";
   const postgresAdapterMayUseInfrastructure = sourceUnit.role === "postgres_adapter"
     && targetUnit.role === "postgres_infrastructure";
-  if (sameCapability || workerToWorker || targetUnit.visibility === "public"
-    || compositionMayConstructPrivate || postgresAdapterMayUseInfrastructure) {
+  if (sameCapability || targetUnit.visibility === "public" || compositionMayConstructPrivate
+    || postgresAdapterMayUseInfrastructure) {
     return { ok: true };
   }
   return {
