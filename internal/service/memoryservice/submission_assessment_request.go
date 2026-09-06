@@ -166,10 +166,7 @@ func (s *assessmentEngine) buildRequest(
 				assessor.FailureMeasurement{Unit: "tokens", Observed: prepared.CandidateContextTokens, Limit: limit},
 			)
 		case "input_tokens":
-			limit := s.limits.MaxInputTokens
-			if limit <= 0 {
-				limit = assessor.DefaultSemanticAssessmentLimits().MaxInputTokens
-			}
+			limit := assessor.SemanticAssessmentConversationInputLimit(s.limits)
 			stage := assessor.SemanticAssessmentBudgetFailureStage(prepared, validationError.Field, s.limits)
 			return prepared, deterministicSemanticAssessmentPreflightErrorWithMeasurement(
 				stage,

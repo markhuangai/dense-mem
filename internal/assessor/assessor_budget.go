@@ -22,6 +22,25 @@ func cloneSemanticAssessmentRequestSlices(req *SemanticAssessmentRequest) {
 	req.EntityCandidateGroups = cloneSemanticAssessmentEntityCandidateGroups(req.EntityCandidateGroups)
 	req.PredicateOptions = append([]SemanticAssessmentPredicateOption(nil), req.PredicateOptions...)
 	req.EvidenceEquivalenceCandidates = cloneSemanticAssessmentEvidenceEquivalenceCandidateGroups(req.EvidenceEquivalenceCandidates)
+	req.RequiredRelationshipRefs = cloneSemanticAssessmentRequiredRelationshipRefs(req.RequiredRelationshipRefs)
+}
+
+func cloneSemanticAssessmentRequiredRelationshipRefs(refs []SemanticAssessmentRequiredRelationshipRef) []SemanticAssessmentRequiredRelationshipRef {
+	if refs == nil {
+		return nil
+	}
+	cloned := make([]SemanticAssessmentRequiredRelationshipRef, len(refs))
+	for index, ref := range refs {
+		cloned[index] = ref
+		cloned[index].EvidenceIDs = append([]string(nil), ref.EvidenceIDs...)
+		cloned[index].KnownEvidenceIDs = append([]string(nil), ref.KnownEvidenceIDs...)
+		cloned[index].Evidence = append([]SemanticAssessmentEvidenceSpan(nil), ref.Evidence...)
+		cloned[index].ObjectRef = cloneOptionalString(ref.ObjectRef)
+		cloned[index].ObjectValue = cloneSemanticAssessmentValue(ref.ObjectValue)
+		cloned[index].ValidFrom = cloneOptionalString(ref.ValidFrom)
+		cloned[index].ValidTo = cloneOptionalString(ref.ValidTo)
+	}
+	return cloned
 }
 
 func cloneSemanticAssessmentEntityCandidateGroups(groups []SemanticAssessmentEntityCandidateGroup) []SemanticAssessmentEntityCandidateGroup {

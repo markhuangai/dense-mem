@@ -368,7 +368,8 @@ func TestSubmissionAssessmentCombinedRequiredContextUsesOperatorGuidance(t *test
 	require.Equal(t, "assessor.required_entity_catalog", details["component"])
 	require.Equal(t, true, details["server_owned"])
 	require.Equal(t, request.InputTokens, details["observed"])
-	require.Equal(t, limit+repairHeadroom, details["limit"])
+	require.Equal(t, limit, details["limit"])
+	require.Less(t, details["limit"], fixture.deps.Limits.MaxInputTokens)
 
 	serverOwned := rememberapp.TerminalStatusErrorWithDetails(rememberapp.TerminalErrorInputBudgetExceeded, reasonCode, details)
 	require.Equal(t, string(rememberapp.TerminalNextActionContactOperator), serverOwned.NextAction)

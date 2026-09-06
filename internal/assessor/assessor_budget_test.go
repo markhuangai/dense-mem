@@ -159,9 +159,36 @@ func TestPrepareSemanticAssessmentRequestDoesNotMutateCandidateContext(t *testin
 	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
 	require.Empty(t, errs)
 	require.Len(t, prepared.EvidenceEquivalenceCandidates[0].Candidates, 1)
+	require.Equal(t, "candidate:0", req.EvidenceEquivalenceCandidates[0].Candidates[0].EvidenceID)
+	require.Empty(t, req.EvidenceEquivalenceCandidates[0].Candidates[0].BoundaryText)
+	require.Nil(t, req.EvidenceEquivalenceCandidates[0].Candidates[0].BoundaryRefs)
+	require.Empty(t, req.EvidenceEquivalenceCandidates[0].Candidates[0].BoundaryPrefix)
 	after, err := json.Marshal(req)
 	require.NoError(t, err)
 	require.JSONEq(t, string(before), string(after))
+}
+
+func TestPrepareSemanticAssessmentRequestDoesNotMutateRequiredRelationshipRefs(t *testing.T) {
+	req := SemanticAssessmentRequest{
+		RequestID: "request",
+		TeamID:    "team",
+		Evidence:  []SemanticReviewEvidence{{EvidenceID: "evidence:0", Content: "submitted evidence"}},
+		RequiredRelationshipRefs: []SemanticAssessmentRequiredRelationshipRef{
+			{ProposalID: " proposal ", EvidenceIDs: []string{" evidence:0 "}},
+			{ProposalID: "span", Evidence: []SemanticAssessmentEvidenceSpan{{EvidenceID: " evidence:0 ", Start: 0, End: 9}}},
+		},
+	}
+	limits := DefaultSemanticAssessmentLimits()
+	limits.MaxInputTokens = 1_000_000
+	limits.MaxCandidateContextTokens = 1_000_000
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	require.Empty(t, errs)
+	require.Equal(t, "proposal", prepared.RequiredRelationshipRefs[0].ProposalID)
+	require.Equal(t, []string{"evidence:0"}, prepared.RequiredRelationshipRefs[0].EvidenceIDs)
+	require.Equal(t, "evidence:0", prepared.RequiredRelationshipRefs[1].Evidence[0].EvidenceID)
+	require.Equal(t, " proposal ", req.RequiredRelationshipRefs[0].ProposalID)
+	require.Equal(t, []string{" evidence:0 "}, req.RequiredRelationshipRefs[0].EvidenceIDs)
+	require.Equal(t, " evidence:0 ", req.RequiredRelationshipRefs[1].Evidence[0].EvidenceID)
 }
 
 func TestSemanticAssessmentBudgetFailureStageIdentifiesRequiredContext(t *testing.T) {

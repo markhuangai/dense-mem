@@ -53,3 +53,9 @@ func NormalizeSemanticAssessmentLimits(limits SemanticAssessmentLimits) Semantic
 func ValidateSemanticAssessmentLimits(limits SemanticAssessmentLimits) error {
 	return validateSemanticAssessmentLimits(limits)
 }
+
+// SemanticAssessmentConversationInputLimit returns the effective input limit
+// after reserving bounded room for complete provider response repairs.
+func SemanticAssessmentConversationInputLimit(limits SemanticAssessmentLimits) int {
+	return semanticAssessmentConversationInputLimit(limits)
+}
