@@ -65,6 +65,17 @@ func ErrorHandler(err error, c echo.Context) {
 		// Handle Echo's HTTPError
 		statusCode = he.Code
 		apiErr = echoHTTPErrorToAPIError(he)
+		if he.Code == http.StatusNotFound && c != nil && c.Path() == "" {
+			apiErr = WithGuidance(
+				New(NOT_FOUND, "The requested route is not available."),
+				"invalid_request",
+				"correct_and_resubmit",
+				"Use a supported route and HTTP method, then submit the request again.",
+				false,
+				nil,
+				correlation.FromContext(c.Request().Context()),
+			)
+		}
 	} else if ae, ok := err.(*APIError); ok {
 		// Handle our typed APIError
 		apiErr = ae

@@ -163,6 +163,27 @@ func TestErrorHandler(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), `"message":"resource not found"`)
 	})
 
+	t.Run("classifies an unmatched route as a correctable request", func(t *testing.T) {
+		router := echo.New()
+		router.HTTPErrorHandler = ErrorHandler
+		router.GET("/known", func(c echo.Context) error {
+			return c.NoContent(http.StatusNoContent)
+		})
+		req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		var body APIError
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.Equal(t, NOT_FOUND, body.Code)
+		assert.Equal(t, "The requested route is not available.", body.Message)
+		assert.Equal(t, "invalid_request", body.ReasonCode)
+		assert.Equal(t, "correct_and_resubmit", body.NextAction)
+		assert.Equal(t, "Use a supported route and HTTP method, then submit the request again.", body.Remediation)
+		assert.False(t, body.Retryable)
+	})
+
 	t.Run("preserves capability conflict guidance", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/teams", nil)
 		req = req.WithContext(correlation.WithID(req.Context(), "http-conflict-correlation"))
