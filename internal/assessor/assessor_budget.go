@@ -274,6 +274,7 @@ func allocateSemanticAssessmentOptionalContext(
 }
 
 func semanticAssessmentConversationInputLimit(limits SemanticAssessmentLimits) int {
+	limits = normalizeSemanticAssessmentLimits(limits)
 	repairTurns := SemanticAssessmentMaxProviderTurns - 1
 	headroom := repairTurns * (limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
 	if headroom >= limits.MaxInputTokens {
