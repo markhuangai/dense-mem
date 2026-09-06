@@ -13,6 +13,41 @@ import (
 // allowance so optional context cannot consume the entire next-turn budget.
 const semanticAssessmentRepairSafetyTokens = 4096
 
+func cloneSemanticAssessmentRequestSlices(req *SemanticAssessmentRequest) {
+	if req == nil {
+		return
+	}
+	req.Evidence = append([]SemanticReviewEvidence(nil), req.Evidence...)
+	req.KnownEvidence = append([]SemanticReviewEvidence(nil), req.KnownEvidence...)
+	req.EntityCandidateGroups = cloneSemanticAssessmentEntityCandidateGroups(req.EntityCandidateGroups)
+	req.PredicateOptions = append([]SemanticAssessmentPredicateOption(nil), req.PredicateOptions...)
+	req.EvidenceEquivalenceCandidates = cloneSemanticAssessmentEvidenceEquivalenceCandidateGroups(req.EvidenceEquivalenceCandidates)
+}
+
+func cloneSemanticAssessmentEntityCandidateGroups(groups []SemanticAssessmentEntityCandidateGroup) []SemanticAssessmentEntityCandidateGroup {
+	if groups == nil {
+		return nil
+	}
+	cloned := make([]SemanticAssessmentEntityCandidateGroup, len(groups))
+	for index, group := range groups {
+		cloned[index] = group
+		cloned[index].Candidates = append([]SemanticAssessmentEntityCandidate(nil), group.Candidates...)
+	}
+	return cloned
+}
+
+func cloneSemanticAssessmentEvidenceEquivalenceCandidateGroups(groups []SemanticAssessmentEvidenceEquivalenceCandidateGroup) []SemanticAssessmentEvidenceEquivalenceCandidateGroup {
+	if groups == nil {
+		return nil
+	}
+	cloned := make([]SemanticAssessmentEvidenceEquivalenceCandidateGroup, len(groups))
+	for index, group := range groups {
+		cloned[index] = group
+		cloned[index].Candidates = append([]SemanticAssessmentEvidenceEquivalenceCandidate(nil), group.Candidates...)
+	}
+	return cloned
+}
+
 // CountSemanticAssessmentRequestTokens returns the token cost of the complete
 // request envelope and the candidate-context sub-payload. The structured
 // response schema is included because providers account for it as part of the

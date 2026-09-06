@@ -138,6 +138,7 @@ func PrepareSemanticAssessmentRequest(
 	limits SemanticAssessmentLimits,
 ) (SemanticAssessmentRequest, []SemanticValidationError) {
 	limits = normalizeSemanticAssessmentLimits(limits)
+	cloneSemanticAssessmentRequestSlices(&req)
 	req.RequestID = strings.TrimSpace(req.RequestID)
 	req.TeamID = strings.TrimSpace(req.TeamID)
 	req.OwnerProfileID = strings.TrimSpace(req.OwnerProfileID)

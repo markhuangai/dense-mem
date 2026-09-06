@@ -169,7 +169,7 @@ func TestErrorHandler(t *testing.T) {
 		router.GET("/known", func(c echo.Context) error {
 			return c.NoContent(http.StatusNoContent)
 		})
-		req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/missing", nil)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 

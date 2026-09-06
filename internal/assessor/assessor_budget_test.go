@@ -138,6 +138,32 @@ func TestPrepareSemanticAssessmentRequestPreservesPriorTruncationOnReprepare(t *
 	require.JSONEq(t, string(firstJSON), string(secondJSON))
 }
 
+func TestPrepareSemanticAssessmentRequestDoesNotMutateCandidateContext(t *testing.T) {
+	req := SemanticAssessmentRequest{
+		RequestID: "request",
+		TeamID:    "team",
+		Evidence:  []SemanticReviewEvidence{{EvidenceID: "evidence:0", Content: "submitted evidence"}},
+		EvidenceEquivalenceCandidates: []SemanticAssessmentEvidenceEquivalenceCandidateGroup{{
+			EvidenceID: "evidence:0",
+			Candidates: []SemanticAssessmentEvidenceEquivalenceCandidate{{
+				EvidenceID: "candidate:0",
+				Content:    "historical candidate evidence",
+			}},
+		}},
+	}
+	before, err := json.Marshal(req)
+	require.NoError(t, err)
+	limits := DefaultSemanticAssessmentLimits()
+	limits.MaxInputTokens = 1_000_000
+	limits.MaxCandidateContextTokens = 1_000_000
+	prepared, errs := PrepareSemanticAssessmentRequest(req, limits)
+	require.Empty(t, errs)
+	require.Len(t, prepared.EvidenceEquivalenceCandidates[0].Candidates, 1)
+	after, err := json.Marshal(req)
+	require.NoError(t, err)
+	require.JSONEq(t, string(before), string(after))
+}
+
 func TestSemanticAssessmentBudgetFailureStageIdentifiesRequiredContext(t *testing.T) {
 	limits := DefaultSemanticAssessmentLimits()
 	limits.MaxCandidateContextTokens = 1

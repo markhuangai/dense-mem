@@ -122,6 +122,45 @@ func TestSemanticAssessmentRepairDoesNotDoubleCountFrozenCandidateContext(t *tes
 	require.Equal(t, 2, calls)
 }
 
+func TestSemanticAssessmentPreparedRequestRetainsEquivalenceAllowlist(t *testing.T) {
+	candidateID := "candidate-evidence"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		response := semanticAssessmentTestResponse()
+		response.EvidenceEquivalenceResults = []SemanticAssessmentEvidenceEquivalenceResult{{
+			EvidenceID: "ev-1", Action: "reuse", CandidateEvidenceID: &candidateID,
+		}}
+		content, err := json.Marshal(response)
+		require.NoError(t, err)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
+		})
+	}))
+	defer server.Close()
+
+	request, _ := semanticAssessmentSubmissionContractTestRequest(t)
+	request.EvidenceEquivalenceCandidates = []assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup{{
+		EvidenceID: "ev-1",
+		Candidates: []assessor.SemanticAssessmentEvidenceEquivalenceCandidate{{
+			EvidenceID: candidateID,
+			Content:    "Historical candidate evidence.",
+		}},
+	}}
+	limits := DefaultSemanticAssessmentLimits()
+	limits.ProviderModel = "assessor-model"
+	limits.ProviderSchemaName = assessor.SemanticAssessmentSchemaName
+	limits.MaxInputTokens = 1_000_000
+	limits.MaxCandidateContextTokens = 1_000_000
+	prepared, errs := assessor.PrepareSemanticAssessmentRequest(request, limits)
+	require.Empty(t, errs)
+	require.Len(t, prepared.EvidenceEquivalenceCandidates[0].Candidates, 1)
+
+	provider := NewOpenAIAssessorWithAssessmentLimits(newTestVerifierConfig(server.URL, "key", "assessor-model"), server.Client(), limits)
+	_, turn, err := provider.Assess(context.Background(), prepared)
+	require.NoError(t, err)
+	require.Empty(t, turn.ValidationErrors)
+	require.Len(t, prepared.EvidenceEquivalenceCandidates[0].Candidates, 1)
+}
+
 func TestSemanticAssessmentCandidateContextBudgetIgnoresAssistantFields(t *testing.T) {
 	user := openAIVerifierMessage{Role: "user", Content: `{"entity_candidate_groups":[{"evidence_id":"evidence:0","candidates":[{"entity_id":"entity-1"}]}]}`}
 	assistant := openAIVerifierMessage{Role: "assistant", Content: `{"entity_candidate_groups":[{"evidence_id":"evidence:1","candidates":[{"entity_id":"` + strings.Repeat("assistant-only ", 200) + `"}]}]}`}
