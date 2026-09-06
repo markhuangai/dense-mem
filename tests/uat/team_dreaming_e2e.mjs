@@ -162,6 +162,18 @@ async function waitForScheduledRun() {
     }
     await delay(5_000);
   }
+  const finalPayload = await controlJSON(`/teams/${teamID}/dreaming/runs?limit=20`);
+  const finalRuns = Array.isArray(finalPayload.data) ? finalPayload.data : [];
+  lastRuns = finalRuns;
+  const finalRun = finalRuns.find((item) => (
+    item?.run_date === runDate &&
+    item?.status === "completed" &&
+    Number(item?.input_relationships) === 2 &&
+    Number(item?.created_dreams) === 1
+  ));
+  if (finalRun) {
+    return finalRun;
+  }
   throw new Error(`timed out waiting for scheduled team run at ${scheduledAt.toISOString()}: ${JSON.stringify(lastRuns)}`);
 }
 
