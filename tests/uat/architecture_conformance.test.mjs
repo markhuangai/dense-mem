@@ -110,12 +110,14 @@ test("rejects missing, unlisted, and duplicate capability fragments", () => {
   const rootOwned = copyManifestFixture();
   try {
     rootOwned.rootManifest.completed_issues = [381];
+    rootOwned.rootManifest.enforced_through_issue = 381;
     fs.writeFileSync(
       path.join(rootOwned.fixtureRoot, "architecture/ownership.v1.json"),
       JSON.stringify(rootOwned.rootManifest, null, 2),
     );
     const loaded = loadManifest(rootOwned.fixtureRoot);
     assert.ok(loaded.load_diagnostics.some((item) => item.includes("root manifest must not define completed_issues")));
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("root manifest must not define enforced_through_issue")));
   } finally {
     fs.rmSync(rootOwned.fixtureRoot, { recursive: true, force: true });
   }
@@ -202,6 +204,20 @@ test("rejects missing, unlisted, and duplicate capability fragments", () => {
     assert.ok(loaded.load_diagnostics.some((item) => item.includes("worker") && item.includes("must be owned by")));
   } finally {
     fs.rmSync(misplaced.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects obsolete completion markers inside capability fragments", () => {
+  const fixtureCopy = copyManifestFixture();
+  try {
+    const architecturePath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/architecture.json");
+    const architectureFragment = JSON.parse(fs.readFileSync(architecturePath, "utf8"));
+    architectureFragment.enforced_through_issue = 381;
+    fs.writeFileSync(architecturePath, JSON.stringify(architectureFragment, null, 2));
+    const loaded = loadManifest(fixtureCopy.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("uses obsolete enforced_through_issue")));
+  } finally {
+    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
   }
 });
 

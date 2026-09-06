@@ -390,7 +390,7 @@ export function loadManifest(root, manifestPath = path.join(root, "architecture"
   }
 
   const rootFragmentOwnedFields = [];
-  for (const key of ["completed_issues", "exceptions", "workers"]) {
+  for (const key of ["completed_issues", "exceptions", "workers", "enforced_through_issue"]) {
     if (Object.prototype.hasOwnProperty.call(rootManifest, key)) {
       rootFragmentOwnedFields.push(diagnostic("invalid-fragment", `root manifest must not define ${key}; move it to its capability fragment`));
     }
@@ -462,6 +462,9 @@ export function loadManifest(root, manifestPath = path.join(root, "architecture"
     }
     validateFragmentShape(fragment, ref, diagnostics);
     if (!fragment || typeof fragment !== "object") continue;
+    if (Object.prototype.hasOwnProperty.call(fragment, "enforced_through_issue")) {
+      diagnostics.push(diagnostic("invalid-fragment", `${ref} uses obsolete enforced_through_issue; move completion records to completed_issues`));
+    }
     const capability = fragment.capability;
     const expectedCapability = path.basename(ref, ".json");
     if (typeof capability === "string" && capability !== expectedCapability) {
