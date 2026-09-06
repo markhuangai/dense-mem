@@ -36,7 +36,7 @@ function fixtureManifest() {
       units: [
         {id: "fixture/composition", capability: "fixture", role: "composition", visibility: "public"},
         {id: "fixture/transport", capability: "fixture", role: "transport", visibility: "public"},
-        {id: "fixture/postgres", capability: "fixture", role: "adapter", visibility: "public"},
+        {id: "fixture/postgres", capability: "fixture", role: "adapter", visibility: "private"},
       ],
     },
     browser: {
@@ -105,6 +105,19 @@ test("rejects missing, unlisted, and duplicate capability fragments", () => {
     assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("invalid-fragment:")));
   } finally {
     fs.rmSync(empty.fixtureRoot, { recursive: true, force: true });
+  }
+
+  const rootOwned = copyManifestFixture();
+  try {
+    rootOwned.rootManifest.completed_issues = [381];
+    fs.writeFileSync(
+      path.join(rootOwned.fixtureRoot, "architecture/ownership.v1.json"),
+      JSON.stringify(rootOwned.rootManifest, null, 2),
+    );
+    const loaded = loadManifest(rootOwned.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("root manifest must not define completed_issues")));
+  } finally {
+    fs.rmSync(rootOwned.fixtureRoot, { recursive: true, force: true });
   }
 
   const missing = copyManifestFixture();
@@ -192,6 +205,73 @@ test("rejects missing, unlisted, and duplicate capability fragments", () => {
   }
 });
 
+test("rejects a fragment whose capability does not match its filename", () => {
+  const fixtureCopy = copyManifestFixture();
+  try {
+    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/foo.json");
+    const fragment = JSON.parse(fs.readFileSync(
+      path.join(fixtureCopy.fixtureRoot, "architecture/modules/architecture.json"),
+      "utf8",
+    ));
+    fragment.capability = "bar";
+    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
+    fixtureCopy.rootManifest.fragments.push("architecture/modules/foo.json");
+    fs.writeFileSync(
+      path.join(fixtureCopy.fixtureRoot, "architecture/ownership.v1.json"),
+      JSON.stringify(fixtureCopy.rootManifest, null, 2),
+    );
+    const loaded = loadManifest(fixtureCopy.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item === "invalid-fragment: architecture/modules/foo.json capability must match its filename foo"));
+  } finally {
+    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects duplicate Go and browser unit ownership across fragments", () => {
+  const fixtureCopy = copyManifestFixture();
+  try {
+    const architecturePath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/architecture.json");
+    const architectureFragment = JSON.parse(fs.readFileSync(architecturePath, "utf8"));
+    const postgresFragment = JSON.parse(fs.readFileSync(
+      path.join(fixtureCopy.fixtureRoot, "architecture/modules/postgres-storage-adapter.json"),
+      "utf8",
+    ));
+    const controlFragment = JSON.parse(fs.readFileSync(
+      path.join(fixtureCopy.fixtureRoot, "architecture/modules/control-portal.json"),
+      "utf8",
+    ));
+    architectureFragment.go.units.push(postgresFragment.go.units[0]);
+    architectureFragment.browser.units.push(controlFragment.browser.units[0]);
+    fs.writeFileSync(architecturePath, JSON.stringify(architectureFragment, null, 2));
+    const loaded = loadManifest(fixtureCopy.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("duplicate-fragment:") && item.includes("internal/repository")));
+    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("duplicate-fragment:") && item.includes("web/src/")));
+  } finally {
+    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects fragment units that try to override inherited capability", () => {
+  const fixtureCopy = copyManifestFixture();
+  try {
+    const postgresPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/postgres-storage-adapter.json");
+    const postgresFragment = JSON.parse(fs.readFileSync(postgresPath, "utf8"));
+    postgresFragment.go.units[0].capability = "wrong-capability";
+    fs.writeFileSync(postgresPath, JSON.stringify(postgresFragment, null, 2));
+
+    const controlPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/control-portal.json");
+    const controlFragment = JSON.parse(fs.readFileSync(controlPath, "utf8"));
+    controlFragment.browser.units[0].capability = "wrong-capability";
+    fs.writeFileSync(controlPath, JSON.stringify(controlFragment, null, 2));
+
+    const loaded = loadManifest(fixtureCopy.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("Go unit") && item.includes("must inherit capability")));
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("browser unit") && item.includes("must inherit capability")));
+  } finally {
+    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test("units inherit capability ownership from their fragment", () => {
   const unit = productionManifest.go.units.find((entry) => entry.id.endsWith("/internal/repository"));
   assert.equal(unit.capability, "postgres-storage-adapter");
@@ -226,6 +306,18 @@ test("enforces private visibility and narrow PostgreSQL infrastructure reuse", (
   );
   assert.equal(postgresInfrastructure.ok, true);
 
+  const workerToWorker = evaluateModuleEdge(
+    unit("worker-source", "worker", "source-capability", "private"),
+    unit("worker-target", "worker", "target-capability", "private"),
+  );
+  assert.equal(workerToWorker.ok, true);
+
+  const sameCapabilityPrivate = evaluateModuleEdge(
+    unit("private-source", "application_api", "same-capability", "private"),
+    unit("private-target", "application_api", "same-capability", "private"),
+  );
+  assert.equal(sameCapabilityPrivate.ok, true);
+
   for (const role of ["application_api", "transport", "adapter"]) {
     const forbidden = evaluateModuleEdge(
       unit(`${role}-source`, role, `${role}-capability`, "public"),
@@ -234,6 +326,10 @@ test("enforces private visibility and narrow PostgreSQL infrastructure reuse", (
     assert.equal(forbidden.ok, false);
     assert.match(forbidden.diagnostic, /^forbidden:/);
   }
+
+  const publicInfrastructure = structuredClone(productionManifest);
+  publicInfrastructure.go.units.find((entry) => entry.role === "postgres_infrastructure").visibility = "public";
+  assert.ok(validateManifest(publicInfrastructure).some((item) => item.includes("postgres_infrastructure") && item.includes("must be private")));
 });
 
 test("retains precise replacement owners and lifecycle obligations", () => {

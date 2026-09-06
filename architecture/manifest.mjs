@@ -158,6 +158,8 @@ export function validateManifest(manifest, actualModulePath = null) {
       }
       if (!isVisibility(unit.visibility)) {
         diagnostics.push(diagnostic("invalid-manifest", `${kind} unit ${unit.id} needs visibility public or private`));
+      } else if (kind === "go" && ["adapter", "postgres_adapter", "postgres_infrastructure"].includes(unit.role) && unit.visibility !== "private") {
+        diagnostics.push(diagnostic("invalid-manifest", `${kind} unit ${unit.id} with role ${unit.role} must be private`));
       }
     }
   }
@@ -276,10 +278,12 @@ export function evaluateModuleEdge(sourceUnit, targetUnit) {
     };
   }
   const sameCapability = sourceUnit.capability === targetUnit.capability;
+  const workerToWorker = sourceUnit.role === "worker" && targetUnit.role === "worker";
   const compositionMayConstructPrivate = sourceUnit.role === "composition";
   const postgresAdapterMayUseInfrastructure = sourceUnit.role === "postgres_adapter"
     && targetUnit.role === "postgres_infrastructure";
-  if (sameCapability || targetUnit.visibility === "public" || compositionMayConstructPrivate || postgresAdapterMayUseInfrastructure) {
+  if (sameCapability || workerToWorker || targetUnit.visibility === "public"
+    || compositionMayConstructPrivate || postgresAdapterMayUseInfrastructure) {
     return { ok: true };
   }
   return {
@@ -388,11 +392,27 @@ export function loadManifest(root, manifestPath = path.join(root, "architecture"
     };
   }
 
+  const rootFragmentOwnedFields = [];
+  for (const key of ["completed_issues", "exceptions", "workers"]) {
+    if (Object.prototype.hasOwnProperty.call(rootManifest, key)) {
+      rootFragmentOwnedFields.push(diagnostic("invalid-fragment", `root manifest must not define ${key}; move it to its capability fragment`));
+    }
+  }
+  for (const kind of ["go", "browser"]) {
+    if (rootManifest[kind] && typeof rootManifest[kind] === "object"
+      && Object.prototype.hasOwnProperty.call(rootManifest[kind], "units")) {
+      rootFragmentOwnedFields.push(diagnostic("invalid-fragment", `root manifest must not define ${kind}.units; move units to capability fragments`));
+    }
+  }
+  diagnostics.push(...rootFragmentOwnedFields);
   const fragmentRefs = rootManifest.fragments;
   if (!Array.isArray(fragmentRefs) || fragmentRefs.length === 0) {
     return {
       ...rootManifest,
-      load_diagnostics: [diagnostic("invalid-fragment", "root manifest must list one or more architecture/modules fragments")],
+      load_diagnostics: [
+        ...rootFragmentOwnedFields,
+        diagnostic("invalid-fragment", "root manifest must list one or more architecture/modules fragments"),
+      ],
     };
   }
   const normalizedRefs = [];
@@ -462,6 +482,7 @@ export function loadManifest(root, manifestPath = path.join(root, "architecture"
       ref,
       capability,
       goUnits: Array.isArray(fragment.go?.units) ? fragment.go.units : [],
+      browserUnits: Array.isArray(fragment.browser?.units) ? fragment.browser.units : [],
       exceptions: Array.isArray(fragment.exceptions) ? fragment.exceptions : [],
       workers: Array.isArray(fragment.workers) ? fragment.workers : [],
     });
@@ -491,6 +512,18 @@ export function loadManifest(root, manifestPath = path.join(root, "architecture"
         diagnostics.push(diagnostic("duplicate-fragment", `Go unit ${unit.id} is owned by both ${previous.ref} and ${record.ref}`));
       } else {
         goOwners.set(unit.id, record);
+      }
+    }
+  }
+  const browserOwners = new Map();
+  for (const record of fragmentRecords) {
+    for (const unit of record.browserUnits) {
+      if (typeof unit?.id !== "string") continue;
+      const previous = browserOwners.get(unit.id);
+      if (previous) {
+        diagnostics.push(diagnostic("duplicate-fragment", `browser unit ${unit.id} is owned by both ${previous.ref} and ${record.ref}`));
+      } else {
+        browserOwners.set(unit.id, record);
       }
     }
   }
