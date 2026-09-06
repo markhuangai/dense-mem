@@ -64,30 +64,12 @@ func CountSemanticAssessmentRequestTokens(
 	return inputTokens, candidateContextTokens, nil
 }
 
-// CountSemanticAssessmentProviderFramingTokens returns the fixed request cost
-// that remains when no request-specific content is supplied. The empty user
-// message preserves the provider's message wrapper, so a budget below this
-// value cannot admit any semantic assessment request.
+// CountSemanticAssessmentProviderFramingTokens returns the minimum serialized
+// provider request cost. It uses the same request builder as admission so the
+// configured budget cannot pass preflight while rejecting an empty request.
 func CountSemanticAssessmentProviderFramingTokens(limits SemanticAssessmentLimits) (int, error) {
-	limits = normalizeSemanticAssessmentLimits(limits)
-	if limits.LegacyProviderFraming {
-		payload, err := json.Marshal(SemanticAssessmentRequest{})
-		if err != nil {
-			return 0, err
-		}
-		return CountTokens(semanticAssessmentSystemPrompt+string(payload), limits.Tokenizer)
-	}
-	return CountSemanticAssessmentProviderRequestTokens(
-		limits.ProviderModel,
-		limits.ProviderSchemaName,
-		SemanticAssessmentResponseSchema(),
-		limits.ProviderTemperatureDisabled,
-		[]SemanticAssessmentProviderMessage{
-			{Role: "system", Content: SemanticAssessmentSystemPrompt},
-			{Role: "user", Content: "{}"},
-		},
-		limits.Tokenizer,
-	)
+	inputTokens, _, err := CountSemanticAssessmentRequestTokens(SemanticAssessmentRequest{}, limits)
+	return inputTokens, err
 }
 
 // allocateSemanticAssessmentOptionalContext removes only optional provider
@@ -226,15 +208,55 @@ func semanticAssessmentConversationInputLimit(limits SemanticAssessmentLimits) i
 	return limits.MaxInputTokens - headroom
 }
 
+// SemanticAssessmentLimitValidationError identifies the configured assessor
+// limit responsible for a startup validation failure.
+type SemanticAssessmentLimitValidationError struct {
+	Field   string
+	Message string
+	Cause   error
+}
+
+func (e *SemanticAssessmentLimitValidationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if strings.TrimSpace(e.Message) != "" {
+		return e.Message
+	}
+	if e.Cause != nil {
+		return e.Cause.Error()
+	}
+	return "invalid semantic assessment limits"
+}
+
+func (e *SemanticAssessmentLimitValidationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+func semanticAssessmentLimitValidationError(field, message string, cause error) error {
+	return &SemanticAssessmentLimitValidationError{Field: field, Message: message, Cause: cause}
+}
+
 func validateSemanticAssessmentLimits(limits SemanticAssessmentLimits) error {
 	limits = normalizeSemanticAssessmentLimits(limits)
 	framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits)
 	if err != nil {
-		return fmt.Errorf("semantic assessment provider framing cannot be measured: %w", err)
+		return semanticAssessmentLimitValidationError("tokenizer", "semantic assessment provider framing cannot be measured: "+err.Error(), err)
 	}
 	conversationLimit := semanticAssessmentConversationInputLimit(limits)
 	if conversationLimit <= framingTokens {
-		return fmt.Errorf("semantic assessment input budget leaves no usable room after repair headroom (input limit %d, framing %d)", limits.MaxInputTokens, framingTokens)
+		field := "output_tokens"
+		if limits.MaxInputTokens <= framingTokens {
+			field = "input_tokens"
+		}
+		return semanticAssessmentLimitValidationError(
+			field,
+			fmt.Sprintf("semantic assessment input budget leaves no usable room after repair headroom (input limit %d, framing %d)", limits.MaxInputTokens, framingTokens),
+			nil,
+		)
 	}
 	return nil
 }

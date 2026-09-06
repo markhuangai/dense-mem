@@ -134,3 +134,46 @@ func TestSemanticAssessmentCandidateContextBudgetIgnoresAssistantFields(t *testi
 	require.NoError(t, err)
 	require.Equal(t, userOnly, withAssistant)
 }
+
+func TestSemanticAssessmentRepairBoundsEscapedAssistantHistory(t *testing.T) {
+	limits := DefaultSemanticAssessmentLimits()
+	correction := semanticAssessmentSessionRepair{
+		ValidationErrors: []assessor.SemanticValidationError{{Field: "response", Message: "must be valid"}},
+		Instruction:      "Return one complete replacement JSON object.",
+	}
+	correctionJSON, err := json.Marshal(correction)
+	require.NoError(t, err)
+	messages := []openAIVerifierMessage{
+		{Role: "system", Content: assessor.SemanticAssessmentSystemPrompt},
+		{Role: "user", Content: `{"request_id":"request"}`},
+		{Role: "assistant", Content: strings.Repeat("\x00", 10_000)},
+		{Role: "user", Content: string(correctionJSON)},
+	}
+	rawTokens, err := semanticAssessmentTurnTokens(
+		"assessor-model",
+		assessor.SemanticAssessmentSchemaName,
+		messages,
+		assessor.SemanticAssessmentResponseSchema(),
+		limits.ProviderTemperatureDisabled,
+		limits.Tokenizer,
+	)
+	require.NoError(t, err)
+	placeholderMessages := append([]openAIVerifierMessage(nil), messages...)
+	placeholderMessages[2].Content = semanticAssessmentRepairHistoryPlaceholder
+	placeholderTokens, err := semanticAssessmentTurnTokens(
+		"assessor-model",
+		assessor.SemanticAssessmentSchemaName,
+		placeholderMessages,
+		assessor.SemanticAssessmentResponseSchema(),
+		limits.ProviderTemperatureDisabled,
+		limits.Tokenizer,
+	)
+	require.NoError(t, err)
+	require.Greater(t, rawTokens, placeholderTokens)
+
+	limits.MaxInputTokens = placeholderTokens
+	provider := NewOpenAIAssessorWithAssessmentLimits(newTestVerifierConfig("", "key", "assessor-model"), nil, limits)
+	bounded, err := provider.boundRepairHistory(messages)
+	require.NoError(t, err)
+	require.Equal(t, semanticAssessmentRepairHistoryPlaceholder, bounded[2].Content)
+}

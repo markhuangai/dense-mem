@@ -105,7 +105,7 @@ func withDefaultGuidance(err *APIError, status int, correlationID string) *APIEr
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		reason, action, remediation = "authorization_required", "obtain_authorization", "Obtain the required authorization or scope, then retry the request."
-	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
 		reason, action, remediation = "invalid_request", "correct_and_resubmit", "Correct the identified request fields and submit the request again."
 	case http.StatusNotFound:
 		reason, action, remediation = "reference_not_found", "refresh_state", "Refresh authorized state and retry with a current reference."
@@ -131,7 +131,7 @@ func echoHTTPErrorToAPIError(he *echo.HTTPError) *APIError {
 	}
 
 	switch he.Code {
-	case http.StatusBadRequest:
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge:
 		return New(VALIDATION_ERROR, message)
 	case http.StatusUnauthorized:
 		return New(AUTH_INVALID, message)

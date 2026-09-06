@@ -49,7 +49,7 @@ func NormalizeSemanticAssessmentLimits(limits SemanticAssessmentLimits) Semantic
 }
 
 // ValidateSemanticAssessmentLimits rejects an assessor budget that cannot fit
-// the provider framing after reserving room for bounded response repairs.
+// the minimum request after reserving room for bounded response repairs.
 func ValidateSemanticAssessmentLimits(limits SemanticAssessmentLimits) error {
 	return validateSemanticAssessmentLimits(limits)
 }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -337,7 +338,17 @@ func (c *Config) ValidateServerStartup() error {
 		MaxInputTokens:     budget.MaxInputTokens,
 		MaxOutputTokens:    budget.MaxOutputTokens,
 	}); err != nil {
-		return &ValidationError{Field: "AI_VERIFIER_MAX_INPUT_TOKENS", Message: err.Error()}
+		field := "AI_VERIFIER_MAX_INPUT_TOKENS"
+		var limitErr *assessor.SemanticAssessmentLimitValidationError
+		if errors.As(err, &limitErr) && limitErr != nil {
+			switch limitErr.Field {
+			case "output_tokens":
+				field = "AI_VERIFIER_MAX_OUTPUT_TOKENS"
+			case "tokenizer":
+				field = "AI_VERIFIER_TOKENIZER"
+			}
+		}
+		return &ValidationError{Field: field, Message: err.Error()}
 	}
 	return nil
 }

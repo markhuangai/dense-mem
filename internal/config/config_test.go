@@ -779,6 +779,25 @@ func TestValidateServerStartupRejectsAssessorBudgetWithoutRepairRoom(t *testing.
 	}
 	err = cfg.ValidateServerStartup()
 	validationErr, ok := err.(*ValidationError)
+	if !ok || validationErr.Field != "AI_VERIFIER_MAX_OUTPUT_TOKENS" {
+		t.Fatalf("ValidateServerStartup() error = %v, want assessor output budget validation error", err)
+	}
+}
+
+func TestValidateServerStartupReportsInputBudgetWhenFramingCannotFit(t *testing.T) {
+	clearEnv()
+	setRequiredEnv()
+	setRequiredEmbeddingEnv()
+	setRequiredModelEnv()
+	t.Setenv("AI_VERIFIER_MAX_INPUT_TOKENS", "1")
+	t.Setenv("AI_VERIFIER_MAX_CANDIDATE_CONTEXT_TOKENS", "1")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+	err = cfg.ValidateServerStartup()
+	validationErr, ok := err.(*ValidationError)
 	if !ok || validationErr.Field != "AI_VERIFIER_MAX_INPUT_TOKENS" {
 		t.Fatalf("ValidateServerStartup() error = %v, want assessor input budget validation error", err)
 	}

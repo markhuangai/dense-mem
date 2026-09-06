@@ -214,6 +214,31 @@ func TestValidateSemanticAssessmentLimitsRequiresUsableInputBudget(t *testing.T)
 	require.ErrorContains(t, ValidateSemanticAssessmentLimits(limits), "cannot be measured")
 }
 
+func TestCountSemanticAssessmentProviderFramingTokensUsesTheRequestEnvelope(t *testing.T) {
+	limits := DefaultSemanticAssessmentLimits()
+	requestTokens, _, err := CountSemanticAssessmentRequestTokens(SemanticAssessmentRequest{}, limits)
+	require.NoError(t, err)
+	framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits)
+	require.NoError(t, err)
+	require.Equal(t, requestTokens, framingTokens)
+
+	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
+	limits.MaxInputTokens = framingTokens + repairHeadroom
+	var validationErr *SemanticAssessmentLimitValidationError
+	require.ErrorAs(t, ValidateSemanticAssessmentLimits(limits), &validationErr)
+	require.Equal(t, "output_tokens", validationErr.Field)
+}
+
+func TestValidateSemanticAssessmentLimitsIdentifiesInputLimit(t *testing.T) {
+	limits := DefaultSemanticAssessmentLimits()
+	framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits)
+	require.NoError(t, err)
+	limits.MaxInputTokens = framingTokens
+	var validationErr *SemanticAssessmentLimitValidationError
+	require.ErrorAs(t, ValidateSemanticAssessmentLimits(limits), &validationErr)
+	require.Equal(t, "input_tokens", validationErr.Field)
+}
+
 func stageForInputOverflow(t *testing.T, req SemanticAssessmentRequest, limits SemanticAssessmentLimits) string {
 	t.Helper()
 	countLimits := limits

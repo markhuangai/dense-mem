@@ -214,6 +214,16 @@ func TestErrorHandler(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &emptyFieldBody))
 		require.Len(t, emptyFieldBody.Details, 1)
 		assert.Empty(t, emptyFieldBody.Details[0].Field)
+
+		rec = httptest.NewRecorder()
+		c = e.NewContext(req, rec)
+		ErrorHandler(echo.NewHTTPError(http.StatusRequestEntityTooLarge, "request body exceeds limit"), c)
+		assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+		var oversizedBody APIError
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &oversizedBody))
+		assert.Equal(t, VALIDATION_ERROR, oversizedBody.Code)
+		assert.Equal(t, "correct_and_resubmit", oversizedBody.NextAction)
+		assert.False(t, oversizedBody.Retryable)
 	})
 
 	t.Run("does not write committed response", func(t *testing.T) {
@@ -235,6 +245,7 @@ func TestEchoHTTPErrorToAPIErrorBranches(t *testing.T) {
 		code   ErrorCode
 	}{
 		{http.StatusBadRequest, VALIDATION_ERROR},
+		{http.StatusRequestEntityTooLarge, VALIDATION_ERROR},
 		{http.StatusUnauthorized, AUTH_INVALID},
 		{http.StatusForbidden, FORBIDDEN},
 		{http.StatusNotFound, NOT_FOUND},

@@ -43,6 +43,8 @@ type semanticAssessmentSessionRepair struct {
 
 const semanticAssessmentSessionRepairInstruction = `Return one complete replacement JSON object matching the required schema. Correct every validation error exactly. Return one evidence_security_results entry for every submitted evidence_id; use reject only when its signals array contains a matching cited security signal and pass only when it is empty. Return one evidence_equivalence_results entry for every evidence_equivalence_candidates entry, choosing only new or one of that entry's supplied candidates. Return evidence_conflict_results as complete cited opposing span sets with at least two positions including a submitted evidence item; copy only supplied evidence_id, start_ref, and end_ref values. Never search other memory, find support for evidence, or discover new Relationships. The submitted evidence, relationship refs, endpoints, typed values, polarity, and temporal bounds are immutable. The initial candidate context is server-owned and remains in the conversation; use it to repair identity or predicate selection and never invent a replacement allowlist. If an Entity without known_entity_id has multiple compatible candidates or truncated candidate context, set its action to ambiguous, set candidate_entity_id to null, and mark every dependent Relationship not_supported with reason not_supported_by_evidence and no splits. Copy only grounding_ref, start_ref, and end_ref values present in the current request. Never return a patch or explanation. Every stored split must use grounded Entities and a resolved predicate or a complete predicate_registration, with support ranges from that Relationship's submitted evidence allowlist. If a claim is unsupported, return not_supported with reason not_supported_by_evidence and no splits. Split indices must be contiguous from zero.`
 
+const semanticAssessmentRepairHistoryPlaceholder = `The previous assessor response was omitted from repair history because its serialized form exceeded the configured input budget. Use the original request and validation_errors to return one complete replacement object.`
+
 var _ assessor.RememberAssessor = (*OpenAIAssessor)(nil)
 
 // Assess begins one Remember assessor session and performs exactly one provider
@@ -143,6 +145,15 @@ func (v *OpenAIAssessor) Repair(ctx context.Context, sessionRef assessor.Semanti
 		openAIVerifierMessage{Role: "assistant", Content: session.lastAssistant},
 		openAIVerifierMessage{Role: "user", Content: string(correctionJSON)},
 	)
+	messages, err = v.boundRepairHistory(messages)
+	if err != nil {
+		return assessor.SemanticAssessmentTurn{}, &ProviderError{
+			Provider:     openAIVerifierProvider,
+			Message:      "failed to count semantic assessment repair history",
+			Cause:        err,
+			FailureClass: ProviderFailureClassProviderUnavailable,
+		}
+	}
 	turn, rawContent, err := v.runRememberAssessmentTurn(ctx, session, prepared, messages)
 	if err != nil {
 		return assessor.SemanticAssessmentTurn{}, err
@@ -156,6 +167,37 @@ func (v *OpenAIAssessor) Repair(ctx context.Context, sessionRef assessor.Semanti
 	session.turn++
 	turn.Turn = session.turn
 	return turn, nil
+}
+
+func (v *OpenAIAssessor) boundRepairHistory(messages []openAIVerifierMessage) ([]openAIVerifierMessage, error) {
+	inputTokens, err := semanticAssessmentTurnTokens(
+		v.model,
+		assessor.SemanticAssessmentSchemaName,
+		messages,
+		assessor.SemanticAssessmentResponseSchema(),
+		v.disableTemperature,
+		v.assessmentLimits.Tokenizer,
+	)
+	if err != nil || inputTokens <= v.assessmentLimits.MaxInputTokens {
+		return messages, err
+	}
+	if len(messages) < 2 || messages[len(messages)-2].Role != "assistant" {
+		return messages, nil
+	}
+	bounded := append([]openAIVerifierMessage(nil), messages...)
+	bounded[len(bounded)-2].Content = semanticAssessmentRepairHistoryPlaceholder
+	boundedTokens, err := semanticAssessmentTurnTokens(
+		v.model,
+		assessor.SemanticAssessmentSchemaName,
+		bounded,
+		assessor.SemanticAssessmentResponseSchema(),
+		v.disableTemperature,
+		v.assessmentLimits.Tokenizer,
+	)
+	if err != nil || boundedTokens > v.assessmentLimits.MaxInputTokens {
+		return messages, err
+	}
+	return bounded, nil
 }
 
 func (v *OpenAIAssessor) runRememberAssessmentTurn(
