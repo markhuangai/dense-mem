@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "capability": "user-portal",
+  "completed_issues": [],
+  "go": {
+    "units": []
+  },
+  "browser": {
+    "units": [
+      {
+        "id": "web/src/user/App.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/user/DreamsPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/user/GraphPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/user/SearchPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/user/TeamManagementPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/user/api.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/user/main.tsx",
+        "role": "transport",
+        "visibility": "public"
+      }
+    ]
+  },
+  "exceptions": [],
+  "workers": []
+}

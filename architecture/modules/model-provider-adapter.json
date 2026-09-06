@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "capability": "model-provider-adapter",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/verifier",
+        "role": "adapter",
+        "visibility": "private"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [],
+  "workers": []
+}

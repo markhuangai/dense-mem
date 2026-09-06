@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "capability": "http-transport",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/http",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/http/dto",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/http/handler",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/http/middleware",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/http/response",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/http/validation",
+        "role": "transport",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/http",
+      "target": "github.com/markhuangai/dense-mem/internal/config",
+      "removal_issue": 379,
+      "reason": "HTTP transport still consumes the shared configuration implementation until transport consolidation."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/http",
+      "target": "github.com/markhuangai/dense-mem/internal/crypto",
+      "removal_issue": 379,
+      "reason": "HTTP transport still consumes the shared credential crypto implementation until transport consolidation."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/http",
+      "target": "github.com/markhuangai/dense-mem/internal/observability",
+      "removal_issue": 379,
+      "reason": "HTTP transport still consumes the shared observability implementation until transport consolidation."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/http",
+      "target": "github.com/markhuangai/dense-mem/internal/repository",
+      "removal_issue": 379,
+      "reason": "HTTP transport still reaches the legacy repository adapter until transport consolidation."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/http/handler",
+      "target": "github.com/markhuangai/dense-mem/internal/observability",
+      "removal_issue": 379,
+      "reason": "HTTP handlers still consume the shared observability implementation until transport consolidation."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/http/middleware",
+      "target": "github.com/markhuangai/dense-mem/internal/config",
+      "removal_issue": 379,
+      "reason": "HTTP middleware still consumes the shared configuration implementation until transport consolidation."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/http/middleware",
+      "target": "github.com/markhuangai/dense-mem/internal/crypto",
+      "removal_issue": 379,
+      "reason": "HTTP middleware still consumes the shared credential crypto implementation until transport consolidation."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/http/middleware",
+      "target": "github.com/markhuangai/dense-mem/internal/observability",
+      "removal_issue": 379,
+      "reason": "HTTP middleware still consumes the shared observability implementation until transport consolidation."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/http/middleware",
+      "target": "github.com/markhuangai/dense-mem/internal/repository",
+      "removal_issue": 379,
+      "reason": "HTTP middleware still reaches the legacy repository adapter until transport consolidation."
+    }
+  ],
+  "workers": [
+    {
+      "path": "internal/http/dependency_checks.go",
+      "function": "runDependencyChecks",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/http/dependency_checks.go",
+      "function": "runDependencyCheck",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/http/handler/mcp_handler.go",
+      "function": "handleSDKPost",
+      "kind": "start",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/http/handler/mcp_handler.go",
+      "function": "HandleGet",
+      "kind": "start",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/http/server.go",
+      "function": "Start",
+      "kind": "start",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/http/server.go",
+      "function": "RunServer",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/http/server.go",
+      "function": "RunServer",
+      "kind": "start",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "capability": "oauth-compatibility",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/cmd/oauth-compat-harness",
+        "role": "composition",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [],
+  "workers": [
+    {
+      "path": "cmd/oauth-compat-harness/main.go",
+      "function": "run",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "capability": "conflict-review-application",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/service/conflictreview",
+        "role": "application_api",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/service/conflictreview",
+      "target": "github.com/markhuangai/dense-mem/internal/repository",
+      "removal_issue": 377,
+      "reason": "Conflict review application code still consumes the legacy repository until conflict ownership is isolated."
+    }
+  ],
+  "workers": []
+}

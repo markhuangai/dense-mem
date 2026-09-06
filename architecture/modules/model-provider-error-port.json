@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "capability": "model-provider-error-port",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/modelprovider",
+        "role": "port",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [],
+  "workers": []
+}

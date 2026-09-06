@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "capability": "process-coordination-adapter",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/storage/inmem",
+        "role": "adapter",
+        "visibility": "private"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/storage/inmem",
+      "target": "github.com/markhuangai/dense-mem/internal/sse",
+      "removal_issue": 379,
+      "reason": "The in-process coordination adapter still carries SSE lifecycle coupling until transport consolidation."
+    }
+  ],
+  "workers": []
+}

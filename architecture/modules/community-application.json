@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "capability": "community-application",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/service/communityservice",
+        "role": "application_api",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/service/communityservice",
+      "target": "github.com/markhuangai/dense-mem/internal/repository",
+      "removal_issue": 367,
+      "reason": "Community application code still consumes the legacy repository until community storage ownership is isolated."
+    }
+  ],
+  "workers": [
+    {
+      "path": "internal/service/communityservice/scheduler.go",
+      "function": "runDue",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/service/communityservice/service.go",
+      "function": "RunScheduled",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    }
+  ]
+}

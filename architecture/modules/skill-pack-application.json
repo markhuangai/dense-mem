@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "capability": "skill-pack-application",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/service/skillpackservice",
+        "role": "application_api",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/service/skillpackservice",
+      "target": "github.com/markhuangai/dense-mem/internal/repository",
+      "removal_issue": 375,
+      "reason": "Skill-pack application code still consumes the legacy repository until memory-pack ownership is isolated."
+    }
+  ],
+  "workers": []
+}

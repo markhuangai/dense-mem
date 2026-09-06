@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "capability": "embedding-provider",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/embedding",
+        "role": "adapter",
+        "visibility": "private"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [],
+  "workers": []
+}

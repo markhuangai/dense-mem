@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "capability": "tool-registry-application-api",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/tools/registry",
+        "role": "application_api",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/tools/registry",
+      "target": "github.com/markhuangai/dense-mem/internal/repository",
+      "removal_issue": 380,
+      "reason": "The tool registry still consumes the legacy repository until transport-owned production and evaluation registries are separated."
+    }
+  ],
+  "workers": []
+}

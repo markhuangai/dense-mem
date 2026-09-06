@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "capability": "application-services",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/service",
+        "role": "application_api",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/service",
+      "target": "github.com/markhuangai/dense-mem/internal/repository",
+      "removal_issue": 382,
+      "reason": "The broad application service still consumes the legacy repository adapter until final architecture certification."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/service",
+      "target": "github.com/markhuangai/dense-mem/internal/storage/postgres",
+      "removal_issue": 368,
+      "reason": "The operations audit service still uses PostgreSQL directly until operations ownership is isolated."
+    }
+  ],
+  "workers": [
+    {
+      "path": "internal/service/operation_log_service.go",
+      "function": "Start",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/service/private_memory_service.go",
+      "function": "Start",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/service/private_memory_service.go",
+      "function": "Start",
+      "kind": "goroutine",
+      "ordinal": 2,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/service/recall_feedback_event_service.go",
+      "function": "Start",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/service/telemetry_catalog.go",
+      "function": "runTelemetryInstantQueries",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/service/telemetry_catalog.go",
+      "function": "runTelemetryRangeQueries",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/service/usage_metrics_service.go",
+      "function": "Start",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    }
+  ]
+}

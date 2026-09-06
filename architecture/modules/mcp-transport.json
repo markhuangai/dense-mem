@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "capability": "mcp-transport",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/mcp",
+        "role": "transport",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/mcp",
+      "target": "github.com/markhuangai/dense-mem/internal/observability",
+      "removal_issue": 380,
+      "reason": "MCP transport still consumes the shared observability implementation until transport consolidation."
+    }
+  ],
+  "workers": []
+}

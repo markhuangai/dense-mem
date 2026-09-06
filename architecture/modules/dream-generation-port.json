@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "capability": "dream-generation-port",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/dreamgeneration",
+        "role": "port",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [],
+  "workers": []
+}

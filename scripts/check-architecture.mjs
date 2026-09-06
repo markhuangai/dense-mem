@@ -5,51 +5,29 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-const roles = new Set([
-  "domain",
-  "port",
-  "application_api",
-  "adapter",
-  "transport",
-  "worker",
-  "composition",
-  "offline_evaluation",
-]);
+import {
+  allowedTargets,
+  checkGoEdges,
+  evaluateGoEdge,
+  evaluateModuleEdge,
+  loadManifest,
+  validateManifest,
+} from "../architecture/manifest.mjs";
+
+export {
+  allowedTargets,
+  checkGoEdges,
+  evaluateGoEdge,
+  evaluateModuleEdge,
+  loadManifest,
+  validateManifest,
+};
 
 const supportedGoProfiles = Object.freeze({
   production: Object.freeze({ name: "production", tags: "", production: true }),
   evaluation: Object.freeze({ name: "evaluation", tags: "evaluation", production: false }),
 });
 const supportedGoProfileNames = Object.freeze(Object.keys(supportedGoProfiles));
-
-export const allowedTargets = Object.freeze({
-  domain: ["domain"],
-  port: ["domain", "port"],
-  application_api: ["application_api", "domain", "port"],
-  adapter: ["domain", "port"],
-  transport: ["application_api", "domain", "transport"],
-  worker: ["application_api", "domain", "port"],
-  composition: [
-    "domain",
-    "port",
-    "application_api",
-    "adapter",
-    "transport",
-    "worker",
-    "composition",
-    "offline_evaluation",
-  ],
-  offline_evaluation: [
-    "domain",
-    "port",
-    "application_api",
-    "adapter",
-    "transport",
-    "worker",
-    "composition",
-    "offline_evaluation",
-  ],
-});
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const browserCodeExtensions = new Set([".ts", ".tsx", ".mts", ".cts"]);
@@ -119,214 +97,6 @@ function isBrowserTestOnlyPath(value) {
   return value.split("/").includes("test")
     || value.split("/").includes("tests")
     || /\.(?:test|spec)(?:-helpers)?\.[cm]?[jt]sx?$/u.test(value);
-}
-
-export function validateManifest(manifest, actualModulePath = null) {
-  const diagnostics = [];
-  if (!manifest || typeof manifest !== "object") {
-    return [diagnostic("invalid-manifest", "manifest must be an object")];
-  }
-  if (manifest.schema_version !== 1) {
-    diagnostics.push(diagnostic("invalid-manifest", "schema_version must be 1"));
-  }
-  if (Object.prototype.hasOwnProperty.call(manifest, "enforced_through_issue")) {
-    diagnostics.push(diagnostic("invalid-manifest", "enforced_through_issue is obsolete; use completed_issues"));
-  }
-  const completedIssues = new Set();
-  if (!Array.isArray(manifest.completed_issues)) {
-    diagnostics.push(diagnostic("invalid-manifest", "completed_issues must be an array"));
-  } else {
-    for (const issue of manifest.completed_issues) {
-      if (!isIssueNumber(issue)) {
-        diagnostics.push(diagnostic("invalid-manifest", "completed_issues contains an invalid issue number"));
-        continue;
-      }
-      if (completedIssues.has(issue)) {
-        diagnostics.push(diagnostic("duplicate", `completed_issues contains issue ${issue} more than once`));
-      }
-      completedIssues.add(issue);
-    }
-  }
-  if (!manifest.module || typeof manifest.module !== "string" || hasWildcard(manifest.module)) {
-    diagnostics.push(diagnostic("invalid-manifest", "module must be a concrete module path"));
-  } else if (actualModulePath !== null && manifest.module !== actualModulePath) {
-    diagnostics.push(diagnostic("invalid-manifest", `module must match go.mod module declaration ${actualModulePath}`));
-  }
-  if (!manifest.allowed_targets || typeof manifest.allowed_targets !== "object") {
-    diagnostics.push(diagnostic("invalid-manifest", "allowed_targets is required"));
-  } else {
-    for (const role of roles) {
-      const expected = allowedTargets[role];
-      const actual = manifest.allowed_targets[role];
-      if (!Array.isArray(actual) || JSON.stringify(actual) !== JSON.stringify(expected)) {
-        diagnostics.push(diagnostic("invalid-manifest", `allowed_targets.${role} must match the architecture role matrix`));
-      }
-    }
-  }
-
-  for (const kind of ["go", "browser"]) {
-    const units = manifest?.[kind]?.units;
-    if (!Array.isArray(units)) {
-      diagnostics.push(diagnostic("invalid-manifest", `${kind}.units must be an array`));
-      continue;
-    }
-    const seen = new Set();
-    for (const unit of units) {
-      if (!unit || typeof unit !== "object" || typeof unit.id !== "string") {
-        diagnostics.push(diagnostic("invalid-manifest", `${kind}.units contains an invalid entry`));
-        continue;
-      }
-      if (seen.has(unit.id)) {
-        diagnostics.push(diagnostic("duplicate", `${kind} unit ${unit.id} is classified more than once`));
-      }
-      seen.add(unit.id);
-      if (hasWildcard(unit.id)) {
-        diagnostics.push(diagnostic("wildcard", `${kind} unit ${unit.id} must be exact`));
-      }
-      if (!roles.has(unit.role)) {
-        diagnostics.push(diagnostic("unknown-role", `${kind} unit ${unit.id} uses ${unit.role ?? "no role"}`));
-      }
-      if (typeof unit.capability !== "string" || unit.capability.length === 0) {
-        diagnostics.push(diagnostic("invalid-manifest", `${kind} unit ${unit.id} needs a capability`));
-      }
-    }
-  }
-
-  const goUnits = unitMap(manifest, "go");
-  const profiles = manifest?.go?.profiles;
-  if (!Array.isArray(profiles) || JSON.stringify(profiles) !== JSON.stringify(supportedGoProfileNames)) {
-    diagnostics.push(diagnostic("invalid-manifest", `go.profiles must exactly match [${supportedGoProfileNames.join(", ")}]`));
-  }
-  const exceptions = manifest.exceptions;
-  const exceptionKeys = new Set();
-  if (!Array.isArray(exceptions)) {
-    diagnostics.push(diagnostic("invalid-manifest", "exceptions must be an array"));
-  } else {
-    for (const exception of exceptions) {
-      if (!exception || typeof exception !== "object") {
-        diagnostics.push(diagnostic("invalid-manifest", "exceptions contains an invalid entry"));
-        continue;
-      }
-      const source = exception.source;
-      const target = exception.target;
-      const key = `${source}\u0000${target}`;
-      if (typeof source !== "string" || typeof target !== "string" || hasWildcard(source) || hasWildcard(target)) {
-        diagnostics.push(diagnostic("wildcard", `exception ${source ?? "?"} -> ${target ?? "?"} must use exact packages`));
-      }
-      if (exceptionKeys.has(key)) {
-        diagnostics.push(diagnostic("duplicate", `exception ${source} -> ${target} is repeated`));
-      }
-      exceptionKeys.add(key);
-      if (!goUnits.has(source) || !goUnits.has(target)) {
-        diagnostics.push(diagnostic("unknown", `exception ${source} -> ${target} names an unclassified package`));
-      }
-      if (!isIssueNumber(exception.removal_issue)) {
-        diagnostics.push(diagnostic("invalid-manifest", `exception ${source} -> ${target} needs a positive removal issue`));
-      } else if (completedIssues.has(exception.removal_issue)) {
-        diagnostics.push(diagnostic("expired", `exception ${source} -> ${target} is owned by completed issue ${exception.removal_issue}`));
-      }
-      if (typeof exception.reason !== "string" || exception.reason.length === 0) {
-        diagnostics.push(diagnostic("invalid-manifest", `exception ${source} -> ${target} needs a reason`));
-      }
-    }
-  }
-
-  const entries = manifest?.browser?.entries;
-  if (!Array.isArray(entries) || entries.length === 0) {
-    diagnostics.push(diagnostic("invalid-manifest", "browser.entries must contain at least one entry"));
-  } else {
-    for (const entry of entries) {
-      if (typeof entry !== "string" || hasWildcard(entry)) {
-        diagnostics.push(diagnostic("invalid-manifest", `browser entry ${entry ?? "?"} must be exact`));
-      }
-    }
-  }
-  const exclusions = manifest?.browser?.exclusions;
-  if (!Array.isArray(exclusions)) {
-    diagnostics.push(diagnostic("invalid-manifest", "browser.exclusions must be an array"));
-  } else {
-    for (const exclusion of exclusions) {
-      if (typeof exclusion !== "string" || hasWildcard(exclusion)) {
-        diagnostics.push(diagnostic("wildcard", `browser exclusion ${exclusion ?? "?"} must be exact`));
-      } else if (!exclusion.startsWith("web/") || !isBrowserTestOnlyPath(exclusion)) {
-        diagnostics.push(diagnostic("invalid-manifest", `browser exclusion ${exclusion} must target a test-only module`));
-      }
-    }
-  }
-
-  const workers = manifest.workers;
-  const workerKeys = new Set();
-  if (!Array.isArray(workers)) {
-    diagnostics.push(diagnostic("invalid-manifest", "workers must be an array"));
-  } else {
-    for (const worker of workers) {
-      const key = `${worker?.path}\u0000${worker?.function}\u0000${worker?.kind}\u0000${worker?.ordinal}`;
-      if (!worker || typeof worker.path !== "string" || typeof worker.function !== "string" || worker.function.length === 0 || typeof worker.kind !== "string" || !Number.isInteger(worker.ordinal) || worker.ordinal < 1) {
-        diagnostics.push(diagnostic("invalid-manifest", "workers contains an invalid anchor"));
-        continue;
-      }
-      if (hasWildcard(worker.path) || hasWildcard(worker.function) || hasWildcard(worker.kind)) {
-        diagnostics.push(diagnostic("wildcard", `worker ${worker.path} must use exact identity fields`));
-      }
-      if (!new Set(["goroutine", "run", "start"]).has(worker.kind)) {
-        diagnostics.push(diagnostic("unknown-kind", `worker ${worker.path} uses ${worker.kind}`));
-      }
-      if (workerKeys.has(key)) {
-        diagnostics.push(diagnostic("duplicate", `worker ${worker.path} identity is repeated`));
-      }
-      workerKeys.add(key);
-      if (worker.role !== "worker") {
-        diagnostics.push(diagnostic("unknown-role", `worker ${worker.path} must use role worker`));
-      }
-      if (Object.prototype.hasOwnProperty.call(worker, "owner_issue")) {
-        diagnostics.push(diagnostic("invalid-manifest", `worker ${worker.path} uses obsolete owner_issue; use lifecycle_issue`));
-      }
-      if (worker.lifecycle_issue !== undefined && !isIssueNumber(worker.lifecycle_issue)) {
-        diagnostics.push(diagnostic("invalid-manifest", `worker ${worker.path} lifecycle_issue must be a positive issue number`));
-      } else if (completedIssues.has(worker.lifecycle_issue)) {
-        diagnostics.push(diagnostic("expired", `worker ${worker.path} is owned by completed issue ${worker.lifecycle_issue}`));
-      }
-    }
-  }
-  return diagnostics;
-}
-
-export function evaluateGoEdge(manifest, source, target) {
-  const goUnits = unitMap(manifest, "go");
-  const sourceUnit = goUnits.get(source);
-  const targetUnit = goUnits.get(target);
-  if (!sourceUnit) {
-    return { ok: false, diagnostic: diagnostic("unclassified", `Go package ${source} is not in the manifest`) };
-  }
-  if (!targetUnit) {
-    return { ok: false, diagnostic: diagnostic("unclassified", `Go import target ${target} is not in the manifest`) };
-  }
-  if (source === target || allowedTargets[sourceUnit.role]?.includes(targetUnit.role)) {
-    return { ok: true };
-  }
-  const exception = (manifest.exceptions ?? []).find((candidate) => candidate.source === source && candidate.target === target);
-  if (exception) {
-    return { ok: true, exception };
-  }
-  return {
-    ok: false,
-    diagnostic: diagnostic("forbidden", `${source} (${sourceUnit.role}) imports ${target} (${targetUnit.role})`),
-  };
-}
-
-export function checkGoEdges(manifest, edges) {
-  const diagnostics = [];
-  const usedExceptions = new Set();
-  for (const edge of edges) {
-    const result = evaluateGoEdge(manifest, edge.source, edge.target);
-    if (!result.ok) {
-      diagnostics.push(result.diagnostic);
-    }
-    if (result.exception) {
-      usedExceptions.add(`${result.exception.source}\u0000${result.exception.target}`);
-    }
-  }
-  return { diagnostics, usedExceptions };
 }
 
 function run(command, args, cwd) {
@@ -902,9 +672,8 @@ function checkBrowserEdges(manifest, discovery) {
     const source = units.get(edge.source);
     const target = units.get(edge.target);
     if (!source || !target) continue;
-    if (!allowedTargets[source.role]?.includes(target.role)) {
-      diagnostics.push(diagnostic("forbidden", `${edge.source} (${source.role}) imports ${edge.target} (${target.role})`));
-    }
+    const result = evaluateModuleEdge(source, target);
+    if (!result.ok) diagnostics.push(result.diagnostic);
   }
   return diagnostics;
 }
@@ -931,7 +700,10 @@ function checkWorkers(manifest, discovered) {
 
 export async function runCheck(root, manifest) {
   const modulePath = readModulePath(root);
-  const diagnostics = [...validateManifest(manifest, modulePath)];
+  const diagnostics = [
+    ...(manifest.load_diagnostics ?? []),
+    ...validateManifest(manifest, modulePath),
+  ];
   if (diagnostics.length > 0) return { diagnostics: sorted(diagnostics), counts: null };
   const go = discoverGo(root, modulePath, manifest.go.profiles);
   const browser = await discoverBrowser(root, manifest);
@@ -975,7 +747,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   const root = normaliseRoot(options.root);
   const manifestPath = options.manifest ? path.resolve(options.manifest) : path.join(root, "architecture", "ownership.v1.json");
-  const manifest = readJson(manifestPath);
+  const manifest = loadManifest(root, manifestPath);
   const result = await runCheck(root, manifest);
   const { diagnostics } = result;
   if (diagnostics.length > 0) {
