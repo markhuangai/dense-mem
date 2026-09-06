@@ -48,6 +48,15 @@ export function assertTerminalCorrectionResult(result) {
 export function assertActionableInvalidInput(raw, component, label, expect) {
   const structured = raw?.result?.structuredContent;
   expect(!raw?.error && raw?.result?.isError === true && structured && typeof structured === "object" && !Array.isArray(structured), `${label} must return a structured MCP error`);
+  const text = raw?.result?.content?.[0]?.text;
+  let parsed;
+  try {
+    parsed = typeof text === "string" ? JSON.parse(text) : null;
+  } catch {
+    parsed = null;
+  }
+  expect(parsed && typeof parsed === "object" && !Array.isArray(parsed), `${label} must include valid JSON text content`);
+  expect(stableJSON(parsed) === stableJSON(structured), `${label} text and structuredContent must be equivalent`);
   expect(structured.code === "invalid_input" && structured.reason_code === "invalid_request" &&
     structured.next_action === "correct_and_resubmit" && structured.retryable === false,
   `${label} must expose correct-and-resubmit guidance: ${JSON.stringify(structured)}`);
@@ -58,4 +67,22 @@ export function assertActionableInvalidInput(raw, component, label, expect) {
   expect(typeof structured.message === "string" && structured.message.includes(field),
     `${label} message must identify ${field}: ${JSON.stringify(structured)}`);
   return structured;
+}
+
+export function assertContractInvalidInput(raw, component, label, expect) {
+  const data = raw?.error?.data;
+  expect(!raw?.result && raw?.error?.code === -32602 && data && typeof data === "object" && !Array.isArray(data), `${label} must return a contract validation error`);
+  expect(data.code === "invalid_input" && data.reason_code === "validation_failed" &&
+    data.next_action === "correct_and_resubmit" && data.retryable === false,
+  `${label} must expose validation guidance: ${JSON.stringify(data)}`);
+  const field = component.split(".").at(-1);
+  const issue = Array.isArray(data.issues) && data.issues.find((candidate) => typeof candidate?.message === "string" && candidate.message.includes(field));
+  expect(issue, `${label} must identify ${field}: ${JSON.stringify(data)}`);
+  return data;
+}
+
+function stableJSON(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJSON).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJSON(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
 }

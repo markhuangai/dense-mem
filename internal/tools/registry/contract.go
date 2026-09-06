@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
@@ -483,6 +485,30 @@ func validateRecall(args map[string]any) error {
 	} {
 		if err := validateUniqueStringArray(args, field); err != nil {
 			return err
+		}
+		if err := validateUUIDStringArray(args, field); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateUUIDStringArray(args map[string]any, field string) error {
+	raw, ok := args[field]
+	if !ok {
+		return nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	for index, item := range items {
+		value, ok := item.(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		if _, err := uuid.Parse(strings.TrimSpace(value)); err != nil {
+			return fmt.Errorf("%s[%d] must be a valid UUID", field, index)
 		}
 	}
 	return nil

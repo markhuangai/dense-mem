@@ -96,6 +96,22 @@ func TestValidateContractInputIssuesDispatchesToolSpecificValidation(t *testing.
 	}
 }
 
+func TestValidateContractInputIssuesRejectsMalformedRecallUUIDFilters(t *testing.T) {
+	recall, err := requireTool(toolMap(t), ToolRecallMemory)
+	require.NoError(t, err)
+
+	for _, field := range []string{"known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"} {
+		t.Run(field, func(t *testing.T) {
+			result := ValidateContractInputIssues(recall, map[string]any{
+				"query": "durable memory",
+				field:   []any{"not-a-uuid"},
+			}, []string{"read"})
+			require.Len(t, result.Issues, 1)
+			require.Equal(t, field+"[0] must be a valid UUID", result.Issues[0].Message)
+		})
+	}
+}
+
 func TestValidateContractInputIssuesRejectsUnsupportedIdempotencyKey(t *testing.T) {
 	tool, err := requireTool(toolMap(t), ToolResolveDreamFeedback)
 	require.NoError(t, err)

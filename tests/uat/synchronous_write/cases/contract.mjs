@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   TERMINAL_TOOLS,
   assertActionableInvalidInput,
+  assertContractInvalidInput,
   assertTerminalCorrectionResult,
   assertTerminalRememberResult,
 } from "../surface.mjs";
@@ -48,6 +49,13 @@ export async function run({ rpc, expect }) {
     },
   });
   assertActionableInvalidInput(malformedRetraction, "retract_evidence.evidence_ids", "malformed retract evidence ID", expect);
+  for (const field of ["known_evidence_ids", "known_relationship_ids", "expand_from_entity_ids"]) {
+    const malformedRecall = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", {
+      name: "recall_memory",
+      arguments: { query: "durable memory", [field]: ["not-a-uuid"] },
+    });
+    assertContractInvalidInput(malformedRecall, `recall.${field}`, `malformed recall ${field}`, expect);
+  }
   const sourceRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "remember", arguments: rememberArguments(runID, "none") });
   const source = successfulToolResult(sourceRaw, expect);
   assertTerminalRememberResult(source);

@@ -127,9 +127,9 @@
       "limit": 50,
       "valid_at": null,
       "known_at": null,
-      "known_evidence_ids": ["ev-1"],
-      "known_relationship_ids": ["rel-1"],
-      "expand_from_entity_ids": ["entity-1"]
+      "known_evidence_ids": ["00000000-0000-4000-8000-000000000001"],
+      "known_relationship_ids": ["00000000-0000-4000-8000-000000000002"],
+      "expand_from_entity_ids": ["00000000-0000-4000-8000-000000000003"]
     },
     "output": {
       "recall_id": "rec-1",
@@ -373,7 +373,7 @@
     "scopes": ["read"],
     "valid": false,
     "want_error": "duplicate value",
-    "input": {"query": "postgres", "known_evidence_ids": ["ev-1", "ev-1"]}
+    "input": {"query": "postgres", "known_evidence_ids": ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000001"]}
   },
   {
     "name": "cross profile override rejected",
