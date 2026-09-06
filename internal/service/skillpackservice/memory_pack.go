@@ -71,7 +71,7 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (*Exp
 			return nil, err
 		}
 		if trace.Relationship == nil {
-			return nil, fmt.Errorf("memory pack export: relationship %s not found", relationshipID)
+			return nil, fmt.Errorf("%w: %s", repository.ErrTraceRelationshipNotFound, relationshipID)
 		}
 		if trace.Relationship.Status != string(domain.RelationshipStatusActive) {
 			return nil, fmt.Errorf("%w: %s", ErrMemoryPackRelationshipNotActive, relationshipID)

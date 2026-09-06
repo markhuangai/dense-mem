@@ -45,6 +45,7 @@ func TestAllocateSemanticAssessmentOptionalContextPreservesRequiredAndOmitsOptio
 
 	baseInput, _, err := CountSemanticAssessmentRequestTokens(base, limits)
 	require.NoError(t, err)
+	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
 	optional := base
 	optional.PredicateOptions = []SemanticAssessmentPredicateOption{{
 		PredicateKey:        strings.Repeat("optional_predicate_", 80),
@@ -55,7 +56,7 @@ func TestAllocateSemanticAssessmentOptionalContextPreservesRequiredAndOmitsOptio
 		CurrentCardinality:  "many",
 	}}
 	optionalLimits := limits
-	optionalLimits.MaxInputTokens = baseInput
+	optionalLimits.MaxInputTokens = baseInput + repairHeadroom
 	errs, err := allocateSemanticAssessmentOptionalContext(&optional, optionalLimits)
 	require.NoError(t, err)
 	require.Empty(t, errs)
@@ -290,10 +291,11 @@ func TestAllocateSemanticAssessmentOptionalContextReservesRepairHeadroom(t *test
 	require.NoError(t, err)
 	baseInput, _, err := CountSemanticAssessmentRequestTokens(base, countLimits)
 	require.NoError(t, err)
+	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (countLimits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
 	require.Greater(t, fullInput, baseInput+semanticAssessmentRepairSafetyTokens+countLimits.MaxOutputTokens)
 
 	limits := countLimits
-	limits.MaxInputTokens = fullInput
+	limits.MaxInputTokens = fullInput + repairHeadroom - 1
 	prepared := withOptional
 	errs, err := allocateSemanticAssessmentOptionalContext(&prepared, limits)
 	require.NoError(t, err)
@@ -301,6 +303,28 @@ func TestAllocateSemanticAssessmentOptionalContextReservesRepairHeadroom(t *test
 	require.Empty(t, prepared.PredicateOptions)
 	require.Equal(t, 1, prepared.CandidateContextOmittedPredicateOptions)
 	require.True(t, prepared.CandidateContextTruncated)
+}
+
+func TestAllocateSemanticAssessmentOptionalContextReservesRepairHeadroomForRequiredContext(t *testing.T) {
+	req := SemanticAssessmentRequest{
+		RequestID: "request",
+		Evidence:  []SemanticReviewEvidence{{EvidenceID: "evidence:0", Content: "required evidence"}},
+	}
+	countLimits := DefaultSemanticAssessmentLimits()
+	countLimits.MaxInputTokens = 1_000_000
+	countLimits.MaxCandidateContextTokens = 1_000_000
+	baseInput, _, err := CountSemanticAssessmentRequestTokens(req, countLimits)
+	require.NoError(t, err)
+	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (countLimits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
+
+	limits := countLimits
+	limits.MaxInputTokens = baseInput + repairHeadroom - 1
+	prepared := req
+	errs, err := allocateSemanticAssessmentOptionalContext(&prepared, limits)
+	require.NoError(t, err)
+	require.Len(t, errs, 1)
+	require.Equal(t, "input_tokens", errs[0].Field)
+	require.Equal(t, baseInput, prepared.InputTokens)
 }
 
 func TestSemanticAssessmentBudgetFailureStageKeepsOversizedClientInputClientControlled(t *testing.T) {

@@ -47,20 +47,20 @@ console.log(JSON.stringify({
 function assertZeroSemanticWrites(submissionID, label) {
   const zeroSemanticWrites = postgresQuery(`
   SELECT count(*) FROM knowledge_ingests
-  WHERE team_id = '${sqlLiteral(teamID)}'::uuid
-    AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND ingest_id = ${sqlLiteral(submissionID)}::uuid
   UNION ALL
   SELECT count(*) FROM evidence_fragments
-  WHERE team_id = '${sqlLiteral(teamID)}'::uuid
-    AND ingest_id = '${sqlLiteral(submissionID)}'::uuid
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND ingest_id = ${sqlLiteral(submissionID)}::uuid
   UNION ALL
   SELECT count(*) FROM semantic_assessments
-  WHERE team_id = '${sqlLiteral(teamID)}'::uuid
-    AND attempt_id = '${sqlLiteral(submissionID)}'::uuid
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND attempt_id = ${sqlLiteral(submissionID)}::uuid
   UNION ALL
   SELECT count(*) FROM relationship_observations
-  WHERE team_id = '${sqlLiteral(teamID)}'::uuid
-    AND ingest_id = '${sqlLiteral(submissionID)}'::uuid;
+  WHERE team_id = ${sqlLiteral(teamID)}::uuid
+    AND ingest_id = ${sqlLiteral(submissionID)}::uuid;
 `).split(/\r?\n/).filter(Boolean).map(Number);
 if (zeroSemanticWrites.length !== 4 || zeroSemanticWrites.some((count) => count !== 0)) {
     throw new Error(`${label} created partial semantic state: ${zeroSemanticWrites.join(",")}`);

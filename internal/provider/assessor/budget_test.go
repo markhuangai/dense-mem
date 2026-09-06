@@ -13,7 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 )
 
-func TestSemanticAssessmentAcceptsExactSerializedInputBoundary(t *testing.T) {
+func TestSemanticAssessmentAcceptsSerializedInputWithRepairHeadroom(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
@@ -47,25 +47,18 @@ func TestSemanticAssessmentAcceptsExactSerializedInputBoundary(t *testing.T) {
 		}, limits.Tokenizer,
 	)
 	require.NoError(t, err)
-	limits.MaxInputTokens = exact
+	limits.MaxInputTokens = DefaultSemanticAssessmentLimits().MaxInputTokens
 	provider := NewOpenAIAssessorWithAssessmentLimits(newTestVerifierConfig(server.URL, "key", "assessor-model"), server.Client(), limits)
 	_, turn, err := provider.Assess(context.Background(), request)
 	require.NoError(t, err)
 	require.Empty(t, turn.ValidationErrors)
+	require.Equal(t, exact, turn.InputTokens)
 	require.Equal(t, 1, calls)
 }
 
-func TestSemanticAssessmentRepairEnforcesGrowthOfSerializedConversation(t *testing.T) {
-	var calls int
+func TestSemanticAssessmentRejectsRequiredInputWithoutRepairHeadroom(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
-		response := semanticAssessmentTestResponse()
-		response.RequestID = "wrong-request"
-		content, err := json.Marshal(response)
-		require.NoError(t, err)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{"message": map[string]any{"content": string(content)}}},
-		})
+		t.Fatal("provider should not be called when preflight rejects missing repair headroom")
 	}))
 	defer server.Close()
 
@@ -87,14 +80,11 @@ func TestSemanticAssessmentRepairEnforcesGrowthOfSerializedConversation(t *testi
 	require.NoError(t, err)
 	limits.MaxInputTokens = exact
 	provider := NewOpenAIAssessorWithAssessmentLimits(newTestVerifierConfig(server.URL, "key", "assessor-model"), server.Client(), limits)
-	session, first, err := provider.Assess(context.Background(), request)
-	require.NoError(t, err)
-	require.NotEmpty(t, first.ValidationErrors)
-	_, err = provider.Repair(context.Background(), session, assessor.SemanticAssessmentRepairRequest{Request: request, ValidationErrors: first.ValidationErrors})
-	var malformed *MalformedResponseError
-	require.ErrorAs(t, err, &malformed)
-	require.Equal(t, "input_budget", malformed.FailureClass)
-	require.Equal(t, 1, calls)
+	_, _, err = provider.Assess(context.Background(), request)
+	var providerErr *ProviderError
+	require.ErrorAs(t, err, &providerErr)
+	require.Equal(t, ProviderFailureClassRequestInvalid, providerErr.FailureClass)
+	require.Contains(t, err.Error(), "repair headroom")
 }
 
 func TestSemanticAssessmentRepairDoesNotDoubleCountFrozenCandidateContext(t *testing.T) {

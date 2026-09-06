@@ -122,6 +122,9 @@ func TestMemoryPackExportRejectsMissingInputsAndUnavailableRelationships(t *test
 			if tc.name == "relationship inactive" && !errors.Is(err, ErrMemoryPackRelationshipNotActive) {
 				t.Fatalf("Export error = %v, want ErrMemoryPackRelationshipNotActive", err)
 			}
+			if tc.name == "relationship missing" && !errors.Is(err, repository.ErrTraceRelationshipNotFound) {
+				t.Fatalf("Export error = %v, want repository.ErrTraceRelationshipNotFound", err)
+			}
 		})
 	}
 }

@@ -165,10 +165,11 @@ func allocateSemanticAssessmentOptionalContext(
 	if contextTokens > limits.MaxCandidateContextTokens {
 		return []SemanticValidationError{semanticErr("candidate_context_tokens", fmt.Sprintf("required assessor context exceeds the configured budget (observed %d, limit %d)", contextTokens, limits.MaxCandidateContextTokens))}, nil
 	}
-	if inputTokens > limits.MaxInputTokens {
-		return []SemanticValidationError{semanticErr("input_tokens", fmt.Sprintf("required assessor input exceeds the configured budget (observed %d, limit %d)", inputTokens, limits.MaxInputTokens))}, nil
+	conversationInputLimit := semanticAssessmentConversationInputLimit(limits)
+	if inputTokens > conversationInputLimit {
+		return []SemanticValidationError{semanticErr("input_tokens", fmt.Sprintf("required assessor input leaves insufficient repair headroom (observed %d, limit %d)", inputTokens, conversationInputLimit))}, nil
 	}
-	optionalInputLimit := semanticAssessmentOptionalContextInputLimit(limits, len(optionalPredicates) > 0 || len(allCandidates) > 0)
+	optionalInputLimit := conversationInputLimit
 
 	maxRounds := len(optionalPredicates)
 	for _, candidates := range allCandidates {
@@ -216,11 +217,9 @@ func allocateSemanticAssessmentOptionalContext(
 	return nil, nil
 }
 
-func semanticAssessmentOptionalContextInputLimit(limits SemanticAssessmentLimits, hasOptionalContext bool) int {
-	if !hasOptionalContext {
-		return limits.MaxInputTokens
-	}
-	headroom := limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens
+func semanticAssessmentConversationInputLimit(limits SemanticAssessmentLimits) int {
+	repairTurns := SemanticAssessmentMaxProviderTurns - 1
+	headroom := repairTurns * (limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
 	if headroom >= limits.MaxInputTokens {
 		return 0
 	}
