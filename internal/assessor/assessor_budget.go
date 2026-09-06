@@ -274,7 +274,7 @@ func validateSemanticAssessmentLimits(limits SemanticAssessmentLimits) error {
 		)
 	}
 	conversationLimit := semanticAssessmentConversationInputLimit(limits)
-	if conversationLimit <= framingTokens {
+	if conversationLimit < framingTokens {
 		field := "output_tokens"
 		if limits.MaxInputTokens <= framingTokens {
 			field = "input_tokens"

@@ -254,6 +254,8 @@ func TestCountSemanticAssessmentProviderFramingTokensUsesTheRequestEnvelope(t *t
 	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
 	limits.MaxInputTokens = framingTokens + repairHeadroom
 	var validationErr *SemanticAssessmentLimitValidationError
+	require.NoError(t, ValidateSemanticAssessmentLimits(limits))
+	limits.MaxInputTokens--
 	require.ErrorAs(t, ValidateSemanticAssessmentLimits(limits), &validationErr)
 	require.Equal(t, "output_tokens", validationErr.Field)
 }
