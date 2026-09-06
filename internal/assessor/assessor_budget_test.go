@@ -258,6 +258,17 @@ func TestSemanticAssessmentBudgetFailureStageUsesRepairAwareInputLimit(t *testin
 	require.Equal(t, "assessment_input", SemanticAssessmentBudgetFailureStage(request, "input_tokens", limits))
 }
 
+func TestSemanticAssessmentConversationInputLimitNormalizesDefaults(t *testing.T) {
+	defaults := DefaultSemanticAssessmentLimits()
+	expected := semanticAssessmentConversationInputLimit(defaults)
+
+	require.Equal(t, expected, SemanticAssessmentConversationInputLimit(SemanticAssessmentLimits{}))
+
+	partial := defaults
+	partial.MaxOutputTokens = 0
+	require.Equal(t, expected, SemanticAssessmentConversationInputLimit(partial))
+}
+
 func TestValidateSemanticAssessmentLimitsRequiresUsableInputBudget(t *testing.T) {
 	require.NoError(t, ValidateSemanticAssessmentLimits(DefaultSemanticAssessmentLimits()))
 	limits := DefaultSemanticAssessmentLimits()
