@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { assertActionableInvalidInput } from "../surface.mjs";
+
 export const name = "dream";
 
 export async function run({ rpc, rawRPC, expect }) {
@@ -10,6 +12,17 @@ export async function run({ rpc, rawRPC, expect }) {
   const names = new Set((listed.tools || []).map((tool) => tool.name));
   expect(names.has("resolve_dream_feedback"), "dream surface must expose resolve_dream_feedback");
   expect(!names.has("get_submission_status"), "dream surface must remove the legacy status tool");
+
+  const malformedDream = await rawRPC("tools/call", {
+    name: "get_dream",
+    arguments: { hypothesis_id: "not-a-uuid" },
+  });
+  assertActionableInvalidInput(malformedDream, "dream.hypothesis_id", "malformed get_dream hypothesis_id", expect);
+  const malformedFeedback = await rawRPC("tools/call", {
+    name: "resolve_dream_feedback",
+    arguments: { hypothesis_id: "not-a-uuid", decision: "reject", reason: "malformed hypothesis ID coverage" },
+  });
+  assertActionableInvalidInput(malformedFeedback, "dream.hypothesis_id", "malformed resolve_dream_feedback hypothesis_id", expect);
 
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
   const apiKey = requiredEnv("DENSE_MEM_E2E_API_KEY");

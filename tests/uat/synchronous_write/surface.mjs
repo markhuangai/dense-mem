@@ -44,3 +44,18 @@ export function assertTerminalCorrectionResult(result) {
   }
   return result;
 }
+
+export function assertActionableInvalidInput(raw, component, label, expect) {
+  const structured = raw?.result?.structuredContent;
+  expect(!raw?.error && raw?.result?.isError === true && structured && typeof structured === "object" && !Array.isArray(structured), `${label} must return a structured MCP error`);
+  expect(structured.code === "invalid_input" && structured.reason_code === "invalid_request" &&
+    structured.next_action === "correct_and_resubmit" && structured.retryable === false,
+  `${label} must expose correct-and-resubmit guidance: ${JSON.stringify(structured)}`);
+  const details = structured.details;
+  expect(details && details.component === component && details.client_controlled === true,
+    `${label} must identify the client-controlled component: ${JSON.stringify(structured)}`);
+  const field = component.split(".").at(-1);
+  expect(typeof structured.message === "string" && structured.message.includes(field),
+    `${label} message must identify ${field}: ${JSON.stringify(structured)}`);
+  return structured;
+}

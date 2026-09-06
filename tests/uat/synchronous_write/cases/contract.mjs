@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   TERMINAL_TOOLS,
+  assertActionableInvalidInput,
   assertTerminalCorrectionResult,
   assertTerminalRememberResult,
 } from "../surface.mjs";
@@ -33,6 +34,20 @@ export async function run({ rpc, expect }) {
   const runID = `synchronous-write-contract-${randomUUID()}`;
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
   const sourceCredential = await createControlCredential(teamID, `${runID}-shared-source`, "shared_only");
+  const malformedTrace = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", {
+    name: "trace_memory",
+    arguments: { relationship_id: "not-a-uuid" },
+  });
+  assertActionableInvalidInput(malformedTrace, "trace.relationship_id", "malformed trace relationship_id", expect);
+  const malformedRetraction = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", {
+    name: "retract_evidence",
+    arguments: {
+      evidence_ids: ["not-a-uuid"],
+      reason: "malformed evidence ID coverage",
+      idempotency_key: `${runID}-malformed-retraction`,
+    },
+  });
+  assertActionableInvalidInput(malformedRetraction, "retract_evidence.evidence_ids", "malformed retract evidence ID", expect);
   const sourceRaw = await rawRPCWithKey(sourceCredential.apiKey, "tools/call", { name: "remember", arguments: rememberArguments(runID, "none") });
   const source = successfulToolResult(sourceRaw, expect);
   assertTerminalRememberResult(source);

@@ -946,6 +946,11 @@ function assertControlError(result, status, code, label, expect) {
   expect(result.response.status === status, `${label} returned HTTP ${result.response.status}; expected ${status}`);
   expect(result.payload.code === code, `${label} returned code ${String(result.payload.code)}; expected ${code}`);
   expect(typeof result.payload.message === "string" && result.payload.message.length > 0 && result.payload.message.length < 256, `${label} returned an unbounded error message`);
+  if (status === 409) {
+    expect(result.payload.reason_code === "state_conflict" && result.payload.next_action === "refresh_state" && result.payload.retryable === false &&
+      typeof result.payload.remediation === "string" && result.payload.remediation.includes("Refresh"),
+    `${label} must expose stale-state refresh guidance: ${JSON.stringify(result.payload)}`);
+  }
 }
 
 function groundingSurfaceCount(teamID, submissionID, surface) {
