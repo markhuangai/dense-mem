@@ -12,6 +12,14 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestHypothesisConfirmationLockClassifiesInvalidHypothesisID(t *testing.T) {
+	repo := &SemanticRepositoryImpl{db: &gorm.DB{}}
+	err := repo.WithHypothesisConfirmationLock(context.Background(), uuid.NewString(), "not-a-uuid", func(DreamRepository) error {
+		return nil
+	})
+	require.ErrorIs(t, err, ErrDreamHypothesisIDInvalid)
+}
+
 func TestHypothesisConfirmationLockAdmitsOneCallback(t *testing.T) {
 	_, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
 	defer cleanup()

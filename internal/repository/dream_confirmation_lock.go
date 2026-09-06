@@ -39,7 +39,7 @@ func (r *SemanticRepositoryImpl) WithHypothesisConfirmationLock(
 		return fmt.Errorf("dream confirmation lock: team_id is required: %w", err)
 	}
 	if _, err := uuid.Parse(hypothesisID); err != nil {
-		return fmt.Errorf("dream confirmation lock: hypothesis_id is required: %w", err)
+		return fmt.Errorf("dream confirmation lock: hypothesis_id is required: %w: %w", ErrDreamHypothesisIDInvalid, err)
 	}
 	if fn == nil {
 		return errors.New("dream confirmation lock: callback is required")
