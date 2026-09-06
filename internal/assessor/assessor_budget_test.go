@@ -183,6 +183,25 @@ func TestSemanticAssessmentBudgetFailureStageIdentifiesProviderFramingOverflow(t
 	require.Equal(t, "provider_framing", SemanticAssessmentBudgetFailureStage(SemanticAssessmentRequest{}, "input_tokens", limits))
 }
 
+func TestSemanticAssessmentBudgetFailureStageUsesRepairAwareInputLimit(t *testing.T) {
+	limits := DefaultSemanticAssessmentLimits()
+	request := SemanticAssessmentRequest{
+		Evidence: []SemanticReviewEvidence{
+			PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "submitted", Content: strings.Repeat("x", SemanticAssessmentMaxEvidenceConflictQuoteRunes+1)}),
+		},
+		KnownEvidence: []SemanticReviewEvidence{
+			PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{EvidenceID: "known", Content: "known"}),
+		},
+	}
+	countLimits := limits
+	countLimits.MaxInputTokens = 1_000_000
+	inputTokens, _, err := CountSemanticAssessmentRequestTokens(request, countLimits)
+	require.NoError(t, err)
+	require.Greater(t, inputTokens, semanticAssessmentConversationInputLimit(limits))
+	require.Less(t, inputTokens, limits.MaxInputTokens)
+	require.Equal(t, "assessment_input", SemanticAssessmentBudgetFailureStage(request, "input_tokens", limits))
+}
+
 func stageForInputOverflow(t *testing.T, req SemanticAssessmentRequest, limits SemanticAssessmentLimits) string {
 	t.Helper()
 	countLimits := limits
@@ -197,7 +216,8 @@ func stageForInputOverflow(t *testing.T, req SemanticAssessmentRequest, limits S
 	baseInput, _, err := CountSemanticAssessmentRequestTokens(withoutRequired, countLimits)
 	require.NoError(t, err)
 	require.Greater(t, input, baseInput)
-	limits.MaxInputTokens = baseInput
+	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
+	limits.MaxInputTokens = baseInput + repairHeadroom
 	limits.MaxCandidateContextTokens = 1_000_000
 	return SemanticAssessmentBudgetFailureStage(req, "input_tokens", limits)
 }
@@ -375,6 +395,7 @@ func TestSemanticAssessmentBudgetFailureStageAttributesCombinedRequiredContext(t
 	// The exact predicate is mandatory, so the allocator cannot remove either
 	// required component; the resulting failure must be server-owned.
 	require.Equal(t, "entity_catalog", SemanticAssessmentBudgetFailureStage(req, "candidate_context_tokens", limits))
-	limits.MaxInputTokens = inputTokens - 1
+	repairHeadroom := (SemanticAssessmentMaxProviderTurns - 1) * (limits.MaxOutputTokens + semanticAssessmentRepairSafetyTokens)
+	limits.MaxInputTokens = inputTokens - 1 + repairHeadroom
 	require.Equal(t, "entity_catalog", SemanticAssessmentBudgetFailureStage(req, "input_tokens", limits))
 }

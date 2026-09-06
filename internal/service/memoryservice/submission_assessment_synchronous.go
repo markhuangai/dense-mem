@@ -309,7 +309,7 @@ func normalizeSynchronousAssessmentPreflightError(err error) error {
 	}
 	stage, _ := semanticAssessmentPreflightFailure(err)
 	switch stage {
-	case "entity_catalog", "known_evidence_context", "catalog_context", "predicate_context", "assessment_input", "predicate_options_overflow":
+	case "entity_catalog", "known_evidence_context", "catalog_context", "predicate_context", "assessment_input", "predicate_options_overflow", "provider_framing":
 		return fmt.Errorf("%w: %w", rememberapp.ErrRememberInputBudgetExceeded, err)
 	default:
 		return err

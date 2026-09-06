@@ -358,7 +358,8 @@ func TestSubmissionAssessmentCombinedRequiredContextUsesOperatorGuidance(t *test
 		limit = withoutPredicateInput
 	}
 	require.Greater(t, request.InputTokens, limit)
-	fixture.deps.Limits.MaxInputTokens = limit
+	repairHeadroom := (assessor.SemanticAssessmentMaxProviderTurns - 1) * (fixture.deps.Limits.MaxOutputTokens + 4096)
+	fixture.deps.Limits.MaxInputTokens = limit + repairHeadroom
 	engine = newAssessmentEngine(fixture.deps, fixture.input.Scope.TeamID, fixture.input.Scope.OwnerProfileID)
 	_, err = engine.buildRequest(t.Context(), fixture.input.Scope, plan, fixture.input.Snapshot.Proposal)
 	require.Error(t, err)
@@ -367,7 +368,7 @@ func TestSubmissionAssessmentCombinedRequiredContextUsesOperatorGuidance(t *test
 	require.Equal(t, "assessor.required_entity_catalog", details["component"])
 	require.Equal(t, true, details["server_owned"])
 	require.Equal(t, request.InputTokens, details["observed"])
-	require.Equal(t, limit, details["limit"])
+	require.Equal(t, limit+repairHeadroom, details["limit"])
 
 	serverOwned := rememberapp.TerminalStatusErrorWithDetails(rememberapp.TerminalErrorInputBudgetExceeded, reasonCode, details)
 	require.Equal(t, string(rememberapp.TerminalNextActionContactOperator), serverOwned.NextAction)

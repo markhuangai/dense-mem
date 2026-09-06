@@ -646,6 +646,8 @@ func TestSynchronousAssessmentErrorClassificationAndHelpers(t *testing.T) {
 	require.NoError(t, normalizeSynchronousAssessmentPreflightError(nil))
 	budgetErr := deterministicSemanticAssessmentPreflightError("assessment_input", "too many tokens")
 	require.ErrorIs(t, normalizeSynchronousAssessmentPreflightError(budgetErr), rememberapp.ErrRememberInputBudgetExceeded)
+	framingErr := deterministicSemanticAssessmentPreflightError("provider_framing", "provider framing exceeds the configured budget")
+	require.ErrorIs(t, normalizeSynchronousAssessmentPreflightError(framingErr), rememberapp.ErrRememberInputBudgetExceeded)
 	otherErr := errors.New("other preflight")
 	require.ErrorIs(t, normalizeSynchronousAssessmentPreflightError(otherErr), otherErr)
 	require.True(t, submissionAssessmentOneOf("a", "a", "b"))

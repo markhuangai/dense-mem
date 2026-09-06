@@ -256,6 +256,7 @@ func SemanticAssessmentBudgetFailureStage(req SemanticAssessmentRequest, field s
 	if field != "input_tokens" {
 		return "assessment_input"
 	}
+	inputLimit := semanticAssessmentConversationInputLimit(limits)
 	if framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits); err == nil && framingTokens > limits.MaxInputTokens {
 		return "provider_framing"
 	}
@@ -264,21 +265,21 @@ func SemanticAssessmentBudgetFailureStage(req SemanticAssessmentRequest, field s
 	if len(req.KnownEvidence) > 0 {
 		withoutKnown := req
 		withoutKnown.KnownEvidence = nil
-		if input, _, err := CountSemanticAssessmentRequestTokens(withoutKnown, limits); err == nil && input <= limits.MaxInputTokens {
+		if input, _, err := CountSemanticAssessmentRequestTokens(withoutKnown, limits); err == nil && input <= inputLimit {
 			return "known_evidence_context"
 		}
 	}
 	if len(req.EntityCandidateGroups) > 0 {
 		withoutCatalog := req
 		withoutCatalog.EntityCandidateGroups = nil
-		if input, _, err := CountSemanticAssessmentRequestTokens(withoutCatalog, limits); err == nil && input <= limits.MaxInputTokens {
+		if input, _, err := CountSemanticAssessmentRequestTokens(withoutCatalog, limits); err == nil && input <= inputLimit {
 			return "entity_catalog"
 		}
 	}
 	if len(req.PredicateOptions) > 0 {
 		withoutPredicates := req
 		withoutPredicates.PredicateOptions = nil
-		if input, _, err := CountSemanticAssessmentRequestTokens(withoutPredicates, limits); err == nil && input <= limits.MaxInputTokens {
+		if input, _, err := CountSemanticAssessmentRequestTokens(withoutPredicates, limits); err == nil && input <= inputLimit {
 			return "predicate_context"
 		}
 	}
@@ -289,7 +290,7 @@ func SemanticAssessmentBudgetFailureStage(req SemanticAssessmentRequest, field s
 	withoutRequired.EntityCandidateGroups = nil
 	withoutRequired.KnownEvidence = nil
 	withoutRequired.PredicateOptions = nil
-	if input, _, err := CountSemanticAssessmentRequestTokens(withoutRequired, limits); err == nil && input <= limits.MaxInputTokens {
+	if input, _, err := CountSemanticAssessmentRequestTokens(withoutRequired, limits); err == nil && input <= inputLimit {
 		if len(req.EntityCandidateGroups) > 0 {
 			return "entity_catalog"
 		}
