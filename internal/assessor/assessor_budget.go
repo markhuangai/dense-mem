@@ -73,9 +73,11 @@ func CountSemanticAssessmentProviderFramingTokens(limits SemanticAssessmentLimit
 	return inputTokens, err
 }
 
+// minimumSemanticAssessmentRequest mirrors the smallest production Remember
+// envelope, including its generated ingest ID and always-present proposal map.
 func minimumSemanticAssessmentRequest() SemanticAssessmentRequest {
 	return SemanticAssessmentRequest{
-		RequestID: "synchronous-remember:request",
+		RequestID: "synchronous-remember:00000000-0000-0000-0000-000000000000",
 		TeamID:    "t",
 		Evidence: []SemanticReviewEvidence{
 			PrepareSemanticAssessmentEvidence(SemanticReviewEvidence{
@@ -83,6 +85,7 @@ func minimumSemanticAssessmentRequest() SemanticAssessmentRequest {
 				Content:    "x",
 			}),
 		},
+		ClientProposal:                map[string]any{"entity_hints": nil, "relationship_hints": nil},
 		EntityCandidateGroups:         []SemanticAssessmentEntityCandidateGroup{},
 		PredicateOptions:              []SemanticAssessmentPredicateOption{},
 		EvidenceEquivalenceCandidates: []SemanticAssessmentEvidenceEquivalenceCandidateGroup{},

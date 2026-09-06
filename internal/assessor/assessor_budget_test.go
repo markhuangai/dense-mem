@@ -216,6 +216,8 @@ func TestValidateSemanticAssessmentLimitsRequiresUsableInputBudget(t *testing.T)
 
 func TestValidateSemanticAssessmentLimitsRequiresMinimumValidRequestBudget(t *testing.T) {
 	limits := DefaultSemanticAssessmentLimits()
+	_, requestErrors := PrepareSemanticAssessmentRequest(minimumSemanticAssessmentRequest(), limits)
+	require.Empty(t, requestErrors)
 	emptyTokens, _, err := CountSemanticAssessmentRequestTokens(SemanticAssessmentRequest{}, limits)
 	require.NoError(t, err)
 	minimumTokens, _, err := CountSemanticAssessmentRequestTokens(minimumSemanticAssessmentRequest(), limits)
