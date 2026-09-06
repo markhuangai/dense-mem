@@ -221,6 +221,35 @@ test("rejects obsolete completion markers inside capability fragments", () => {
   }
 });
 
+test("rejects central manifest fields inside capability fragments", () => {
+  const fixtureCopy = copyManifestFixture();
+  try {
+    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/control-portal.json");
+    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
+    fragment.module = "ignored-module";
+    fragment.allowed_targets = {};
+    fragment.fragments = [];
+    fragment.go.profiles = ["production"];
+    fragment.browser.entries = ["web/src/main.tsx"];
+    fragment.browser.exclusions = [];
+    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
+
+    const loaded = loadManifest(fixtureCopy.fixtureRoot);
+    for (const field of [
+      "module",
+      "allowed_targets",
+      "fragments",
+      "go.profiles",
+      "browser.entries",
+      "browser.exclusions",
+    ]) {
+      assert.ok(loaded.load_diagnostics.some((item) => item.includes(`central field ${field}`)));
+    }
+  } finally {
+    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test("rejects a fragment whose capability does not match its filename", () => {
   const fixtureCopy = copyManifestFixture();
   try {

@@ -16,6 +16,11 @@ const roles = new Set([
 
 const supportedGoProfileNames = Object.freeze(["production", "evaluation"]);
 const workerKinds = new Set(["goroutine", "run", "start"]);
+const fragmentCentralFields = Object.freeze(["module", "allowed_targets", "fragments"]);
+const fragmentCentralNestedFields = Object.freeze({
+  go: ["profiles"],
+  browser: ["entries", "exclusions"],
+});
 
 export const allowedTargets = Object.freeze({
   domain: ["domain"],
@@ -340,6 +345,19 @@ function validateFragmentShape(fragment, relativePath, diagnostics) {
   if (!fragment || typeof fragment !== "object") {
     diagnostics.push(diagnostic("invalid-fragment", `${relativePath} must contain an object`));
     return;
+  }
+  for (const key of fragmentCentralFields) {
+    if (Object.prototype.hasOwnProperty.call(fragment, key)) {
+      diagnostics.push(diagnostic("invalid-fragment", `${relativePath} must not define central field ${key}; move it to the root manifest`));
+    }
+  }
+  for (const [kind, keys] of Object.entries(fragmentCentralNestedFields)) {
+    if (!fragment[kind] || typeof fragment[kind] !== "object") continue;
+    for (const key of keys) {
+      if (Object.prototype.hasOwnProperty.call(fragment[kind], key)) {
+        diagnostics.push(diagnostic("invalid-fragment", `${relativePath} must not define central field ${kind}.${key}; move it to the root manifest`));
+      }
+    }
   }
   if (fragment.schema_version !== 1) {
     diagnostics.push(diagnostic("invalid-fragment", `${relativePath} schema_version must be 1`));
