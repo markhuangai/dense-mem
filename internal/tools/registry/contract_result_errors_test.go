@@ -39,6 +39,7 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 		{name: "unavailable", tool: ToolRecallMemory, err: ErrToolUnavailable, code: string(domain.ErrorDegraded), reasonCode: "tool_unavailable", nextAction: actionContactOperator},
 		{name: "authorization", tool: ToolRemember, err: rememberapp.ErrRememberAuthContext, code: string(domain.ErrorUnauthorizedScope), reasonCode: "authenticated_context_required", nextAction: actionAuthorization},
 		{name: "reference", tool: ToolTraceMemory, err: repository.ErrTraceRelationshipNotFound, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
+		{name: "invalid trace id", tool: ToolTraceMemory, err: repository.ErrTraceRelationshipIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "dream feedback input", tool: ToolResolveDreamFeedback, err: dreamservice.ErrDreamFeedbackInvalidInput, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "read repository", tool: ToolRecallMemory, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "read_unavailable", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "retract repository", tool: ToolRetractEvidence, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "write_unavailable", nextAction: actionRetrySameRequest, retryable: true},
@@ -137,6 +138,9 @@ func TestActionableErrorDataMapsHTTPStatusesAndBudgetMeasurements(t *testing.T) 
 	require.Equal(t, 12, details["observed"])
 	require.Equal(t, 10, details["limit"])
 	require.Equal(t, true, details["server_owned"])
+	invalidTrace := ActionableErrorData(ctx, ToolTraceMemory, repository.ErrTraceRelationshipIDInvalid)
+	require.Equal(t, "trace.relationship_id", invalidTrace["details"].(map[string]any)["component"])
+	require.Equal(t, true, invalidTrace["details"].(map[string]any)["client_controlled"])
 }
 
 func TestActionableErrorHelpersExposeBoundedRecoveryActions(t *testing.T) {

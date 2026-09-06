@@ -23,7 +23,10 @@ const (
 	maxTraceFragmentRunes     = 8000
 )
 
-var ErrTraceRelationshipNotFound = errors.New("trace relationship not found")
+var (
+	ErrTraceRelationshipNotFound  = errors.New("trace relationship not found")
+	ErrTraceRelationshipIDInvalid = errors.New("trace relationship ID invalid")
+)
 
 func (r *SemanticRepositoryImpl) TraceRelationship(
 	ctx context.Context,
@@ -165,7 +168,7 @@ func validateTraceRelationshipInput(input TraceRelationshipInput) error {
 		return fmt.Errorf("team_id is required: %w", err)
 	}
 	if _, err := uuid.Parse(input.RelationshipID); err != nil {
-		return fmt.Errorf("relationship_id is required: %w", err)
+		return fmt.Errorf("%w: relationship_id is required: %w", ErrTraceRelationshipIDInvalid, err)
 	}
 	return nil
 }

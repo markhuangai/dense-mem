@@ -56,6 +56,10 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		code, reasonCode, message, nextAction, remediation = domain.ErrorUnauthorizedScope, "authenticated_context_required", "Dense-Mem could not authorize the "+tool+" operation.", actionAuthorization, "Authenticate with a credential that has access to this tool and retry."
 	case errors.Is(err, repository.ErrTraceRelationshipNotFound), errors.Is(err, contextservice.ErrTraceRelationshipNotFound), errors.Is(err, dreamservice.ErrDreamNotFound), errors.Is(err, repository.ErrDreamHypothesisNotFound):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "reference_not_found", "The reference supplied to "+tool+" was not found or is no longer available.", actionRefreshState, "Refresh authorized state, then retry with a current reference."
+	case errors.Is(err, repository.ErrTraceRelationshipIDInvalid):
+		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The relationship_id supplied to "+tool+" must be a valid UUID.", actionCorrectInput, "Use a relationship_id returned by recall_memory and submit the corrected request again."
+		failureDetails["component"] = "trace.relationship_id"
+		failureDetails["client_controlled"] = true
 	case errors.Is(err, skillpackservice.ErrMemoryPackRelationshipNotActive):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "relationship_not_active", "The selected relationship for "+tool+" is no longer active.", actionRefreshState, "Refresh authorized relationships, remove inactive references, and submit the export again."
 		failureDetails["component"] = "memory_pack.relationship"

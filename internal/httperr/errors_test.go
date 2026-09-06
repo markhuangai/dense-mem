@@ -224,6 +224,18 @@ func TestErrorHandler(t *testing.T) {
 		assert.Equal(t, VALIDATION_ERROR, oversizedBody.Code)
 		assert.Equal(t, "correct_and_resubmit", oversizedBody.NextAction)
 		assert.False(t, oversizedBody.Retryable)
+
+		for _, status := range []int{http.StatusMethodNotAllowed, http.StatusUnsupportedMediaType} {
+			rec = httptest.NewRecorder()
+			c = e.NewContext(req, rec)
+			ErrorHandler(echo.NewHTTPError(status, http.StatusText(status)), c)
+			var clientError APIError
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &clientError))
+			assert.Equal(t, status, rec.Code)
+			assert.Equal(t, VALIDATION_ERROR, clientError.Code)
+			assert.Equal(t, "correct_and_resubmit", clientError.NextAction)
+			assert.False(t, clientError.Retryable)
+		}
 	})
 
 	t.Run("does not write committed response", func(t *testing.T) {
@@ -246,6 +258,8 @@ func TestEchoHTTPErrorToAPIErrorBranches(t *testing.T) {
 	}{
 		{http.StatusBadRequest, VALIDATION_ERROR},
 		{http.StatusRequestEntityTooLarge, VALIDATION_ERROR},
+		{http.StatusMethodNotAllowed, VALIDATION_ERROR},
+		{http.StatusUnsupportedMediaType, VALIDATION_ERROR},
 		{http.StatusUnauthorized, AUTH_INVALID},
 		{http.StatusForbidden, FORBIDDEN},
 		{http.StatusNotFound, NOT_FOUND},
