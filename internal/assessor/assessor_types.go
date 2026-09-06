@@ -198,5 +198,5 @@ type SemanticAssessmentPredicateRegistration struct {
 type semanticAssessmentCandidateContext struct {
 	EntityCandidateGroups         []SemanticAssessmentEntityCandidateGroup              `json:"entity_candidate_groups"`
 	PredicateOptions              []SemanticAssessmentPredicateOption                   `json:"predicate_options"`
-	EvidenceEquivalenceCandidates []SemanticAssessmentEvidenceEquivalenceCandidateGroup `json:"evidence_equivalence_candidates"`
+	EvidenceEquivalenceCandidates []SemanticAssessmentEvidenceEquivalenceCandidateGroup `json:"evidence_equivalence_candidates,omitempty"`
 }

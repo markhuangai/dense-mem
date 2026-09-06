@@ -260,6 +260,41 @@ func TestCountSemanticAssessmentProviderFramingTokensUsesTheRequestEnvelope(t *t
 	require.Equal(t, "output_tokens", validationErr.Field)
 }
 
+func TestCountSemanticAssessmentRequestTokensMatchesOmittedCandidateFields(t *testing.T) {
+	limits := DefaultSemanticAssessmentLimits()
+	populated := minimumSemanticAssessmentRequest()
+	populated.EvidenceEquivalenceCandidates = []SemanticAssessmentEvidenceEquivalenceCandidateGroup{{
+		EvidenceID: "evidence:0",
+		Candidates: []SemanticAssessmentEvidenceEquivalenceCandidate{{EvidenceID: "known", Content: "known evidence"}},
+	}}
+	for _, req := range []SemanticAssessmentRequest{minimumSemanticAssessmentRequest(), populated} {
+		_, candidateContextTokens, err := CountSemanticAssessmentRequestTokens(req, limits)
+		require.NoError(t, err)
+
+		payload, err := json.Marshal(req)
+		require.NoError(t, err)
+		var fields map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(payload, &fields))
+		candidateFields := map[string]json.RawMessage{}
+		for _, key := range []string{"entity_candidate_groups", "predicate_options", "evidence_equivalence_candidates"} {
+			if value, ok := fields[key]; ok {
+				candidateFields[key] = value
+			}
+		}
+		expectedPayload, err := json.Marshal(candidateFields)
+		require.NoError(t, err)
+		expectedTokens, err := CountTokens(string(expectedPayload), limits.Tokenizer)
+		require.NoError(t, err)
+		require.Equal(t, expectedTokens, candidateContextTokens)
+	}
+	minimumPayload, err := json.Marshal(minimumSemanticAssessmentRequest())
+	require.NoError(t, err)
+	var minimumFields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(minimumPayload, &minimumFields))
+	_, hasOmittedEquivalence := minimumFields["evidence_equivalence_candidates"]
+	require.False(t, hasOmittedEquivalence)
+}
+
 func TestValidateSemanticAssessmentLimitsIdentifiesInputLimit(t *testing.T) {
 	limits := DefaultSemanticAssessmentLimits()
 	framingTokens, err := CountSemanticAssessmentProviderFramingTokens(limits)
