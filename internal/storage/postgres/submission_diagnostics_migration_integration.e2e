@@ -1,0 +1,96 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+)
+
+func TestSubmissionDiagnosticsIndexesAreValid(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026081701))
+	teamID, profileID, identityID := uuid.New(), uuid.New(), uuid.New()
+	ingestID, placementRunID, operationLogID := uuid.New(), uuid.New(), uuid.New()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO teams (id, name, description, metadata, config)
+			VALUES ($1, $2, '', '{}'::jsonb, '{}'::jsonb)
+		`, teamID, "submission-diagnostics-migration-"+teamID.String()); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO actor_identities (id, kind, team_id, display_name)
+			VALUES ($1, 'human', $2, 'submission diagnostics migration owner')
+		`, identityID, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id)
+			VALUES ($1, $2, $3)
+		`, teamID, profileID, identityID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (team_id, ingest_id, owner_profile_id, status)
+			VALUES ($1, $2, $3, 'queued')
+		`, teamID, ingestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_runs (team_id, placement_run_id, ingest_id, owner_profile_id, status)
+			VALUES ($1, $2, $3, $4, 'queued')
+		`, teamID, placementRunID, ingestID, profileID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO operation_logs (
+				id, severity, severity_rank, message, source, team_id, profile_id, correlation_id, attrs
+			) VALUES (
+				$1, 'INFO', 20, 'submission_queued', 'migration-test', $2, $3, 'migration-correlation',
+				jsonb_build_object('reference_type', 'submission', 'reference_id', $4::text)
+			)
+		`, operationLogID, teamID, profileID, ingestID)
+		return err
+	}))
+
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026081801))
+
+	for _, indexName := range []string{
+		"placement_runs_control_created_idx",
+		"placement_runs_control_team_created_idx",
+		"operation_logs_event_timestamp_idx",
+		"operation_logs_reference_timestamp_idx",
+	} {
+		var valid bool
+		err := sqlDB.QueryRowContext(ctx, `
+			SELECT state.indisvalid
+			FROM pg_index AS state
+			JOIN pg_class AS index_class ON index_class.oid = state.indexrelid
+			JOIN pg_namespace AS namespace ON namespace.oid = index_class.relnamespace
+			WHERE namespace.nspname = 'public' AND index_class.relname = $1
+		`, indexName).Scan(&valid)
+		require.NoError(t, err, indexName)
+		require.True(t, valid, indexName)
+	}
+
+	var placementRunCount, operationLogCount int
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT count(*) FROM placement_runs
+			WHERE team_id = $1 AND placement_run_id = $2
+		`, teamID, placementRunID).Scan(&placementRunCount); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `
+			SELECT count(*) FROM operation_logs WHERE id = $1
+		`, operationLogID).Scan(&operationLogCount)
+	}))
+	require.Equal(t, 1, placementRunCount)
+	require.Equal(t, 1, operationLogCount)
+}

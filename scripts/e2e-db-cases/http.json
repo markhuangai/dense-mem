@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "capability": "http",
+  "cases": [
+    {
+      "id": "http/TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration",
+      "package": "./internal/http",
+      "run": "^TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration$",
+      "phase": "precheck",
+      "source": "internal/http/sso_oidc_integration.e2e"
+    }
+  ]
+}

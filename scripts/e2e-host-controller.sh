@@ -29,7 +29,7 @@ usage() {
     '  e2e-host-controller.sh run RUN_ID ATTEMPT PHASE STACK_SCENARIO SCENARIO IMAGE_REF SOURCE_DIR' \
     '  e2e-host-controller.sh stop PROJECT' \
     '  e2e-host-controller.sh stale-cleanup [MAX_AGE_SECONDS] [RUN_ID ATTEMPT PHASE]' \
-    '  e2e-host-controller.sh precheck RUN_ID ATTEMPT IMAGE_REF SOURCE_DIR' >&2
+    '  e2e-host-controller.sh precheck RUN_ID ATTEMPT IMAGE_REF SOURCE_DIR [CAPABILITIES]' >&2
   exit 2
 }
 
@@ -343,19 +343,25 @@ source "${CONTROLLER_DIR}/e2e-host-controller-stack.sh"
 source "${CONTROLLER_DIR}/e2e-host-controller-postgres.sh"
 
 precheck() {
-  local run_id="$1" attempt="$2" image_ref="$3" source_dir="$4"
+  local run_id="$1" attempt="$2" image_ref="$3" source_dir="$4" capabilities="${5:-}"
   validate_decimal "$run_id"
   validate_decimal "$attempt"
   validate_image_ref "$image_ref"
   local image_digest="${image_ref##*@}"
   validate_digest "$image_digest"
   [[ -d "$source_dir" && "$source_dir" == /* ]] || fail "precheck source directory must be absolute"
+  if [[ -n "$capabilities" ]]; then
+    [[ "$capabilities" =~ ^[a-z0-9_]+(,[a-z0-9_]+)*$ ]] || fail "invalid precheck capability selection"
+  fi
   validate_bundle
   doctor >/dev/null
 
   local docker_socket
   docker_socket="$(docker_socket_path)"
   local project="densemem-ci-${run_id}-${attempt}-precheck"
+  if [[ -n "$capabilities" ]]; then
+    project+="-${capabilities//,/-}"
+  fi
   validate_project "$project"
   local precheck_network="$project"
   docker network rm "$precheck_network" >/dev/null 2>&1 || true
@@ -384,12 +390,17 @@ precheck() {
   local test_image
   test_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
   [[ "$test_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid precheck Go test image"
-  local repository_status=0
-  run_go_source_container \
+  local test_status=0
+  local -a runner_command=(go -C cmd/e2e run . --root /workspace --phase precheck --timeout 20m --total-timeout 25m)
+  if [[ -n "$capabilities" ]]; then
+    runner_command+=(--capability "$capabilities")
+  fi
+  if run_go_source_container \
     "$source_dir" "$test_image" "$project" "$run_id" "$attempt" precheck precheck "$image_digest" \
     "$precheck_network" "$docker_socket" "$ENV_FILE" -- \
     "TESTCONTAINERS_RYUK_DISABLED=true" \
     "DENSE_MEM_REPOSITORY_TESTCONTAINERS=1" \
+    "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" \
     "DENSE_MEM_CI_PRECHECK_CONTRACT=${CONTRACT_VERSION}" \
     "DENSE_MEM_CI_PRECHECK_REPOSITORY=${REPOSITORY}" \
     "DENSE_MEM_CI_PRECHECK_RUN_ID=${run_id}" \
@@ -397,26 +408,10 @@ precheck() {
     "DENSE_MEM_CI_PRECHECK_PROJECT=${project}" \
     "DENSE_MEM_CI_PRECHECK_NETWORK=${precheck_network}" \
     "DENSE_MEM_CI_PRECHECK_IMAGE_DIGEST=${image_digest}" -- \
-    go test ./internal/repository \
-      -run '^(TestConflictSnapshotScopeLocksCorrectionBeforeReviewRowLock|TestRelationshipCorrectionLocksCrossScopePairCanonically|TestConflictSnapshotScopeSerializesPlacementReviewAndWrite|TestSSORuntimeEntitlementsExcludeArchivedTeams|TestDreamControlRepositoryIsTeamScopedAndAuditsAtomicRefresh|TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment|TestScheduledDreamRecoveryFencesExpiredLease|TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited)$' \
-      -count=1 || repository_status=$?
-  local test_status=$repository_status
-  if ((test_status == 0)); then
-    run_go_source_container \
-      "$source_dir" "$test_image" "$project" "$run_id" "$attempt" precheck precheck "$image_digest" \
-      "$precheck_network" "$docker_socket" "$ENV_FILE" -- \
-      "TESTCONTAINERS_RYUK_DISABLED=true" \
-      "DENSE_MEM_REPOSITORY_TESTCONTAINERS=1" \
-      "DENSE_MEM_CI_PRECHECK_CONTRACT=${CONTRACT_VERSION}" \
-      "DENSE_MEM_CI_PRECHECK_REPOSITORY=${REPOSITORY}" \
-      "DENSE_MEM_CI_PRECHECK_RUN_ID=${run_id}" \
-      "DENSE_MEM_CI_PRECHECK_RUN_ATTEMPT=${attempt}" \
-      "DENSE_MEM_CI_PRECHECK_PROJECT=${project}" \
-      "DENSE_MEM_CI_PRECHECK_NETWORK=${precheck_network}" \
-      "DENSE_MEM_CI_PRECHECK_IMAGE_DIGEST=${image_digest}" -- \
-      go test ./internal/http \
-        -run '^TestSSOOIDCCallbackSkipsArchivedTeamMappingIntegration$' \
-        -count=1 || test_status=$?
+    "${runner_command[@]}"; then
+    test_status=0
+  else
+    test_status=$?
   fi
   trap - EXIT INT TERM
   docker network rm "$precheck_network" >/dev/null 2>&1 || true
@@ -577,8 +572,8 @@ case "${1:-}" in
     stale_cleanup "${2:-86400}" "${3:-}" "${4:-}" "${5:-}"
     ;;
   precheck)
-    [[ "$#" -eq 5 ]] || usage
-    precheck "$2" "$3" "$4" "$5"
+    [[ "$#" -eq 5 || "$#" -eq 6 ]] || usage
+    precheck "$2" "$3" "$4" "$5" "${6:-}"
     ;;
   *)
     usage

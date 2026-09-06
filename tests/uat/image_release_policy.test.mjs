@@ -246,7 +246,7 @@ test("shared CI partitions slow gates into independent hosted jobs", async () =>
     assert.equal((quality.match(new RegExp(`^      - name: ${step.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "gm")) || []).length, 1, `${step} must run exactly once`);
   }
   assert.match(migrations, /Validate PostgreSQL migration history/);
-  assert.match(migrations, /go test -tags=integration \.\/internal\/storage\/postgres -count=1/);
+  assert.doesNotMatch(migrations, /go test -tags=integration \.\/internal\/storage\/postgres/);
   assert.doesNotMatch(migrations, /Run Go tests|Run unit coverage gate/);
   assert.match(quality, /Run Go tests/);
   assert.match(quality, /Run unit coverage gate/);

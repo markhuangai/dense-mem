@@ -75,6 +75,16 @@ function normaliseRelative(root, value) {
   return path.relative(root, path.resolve(root, value)).split(path.sep).join("/");
 }
 
+function isNestedModulePath(root, value) {
+  const rootPath = path.resolve(root);
+  let current = path.dirname(path.resolve(value));
+  while (current !== rootPath) {
+    if (fs.existsSync(path.join(current, "go.mod"))) return true;
+    current = path.dirname(current);
+  }
+  return false;
+}
+
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
@@ -614,6 +624,7 @@ export function discoverWorkers(root) {
   const sourceFiles = walk(path.join(root, "cmd")).concat(walk(path.join(root, "internal")))
     .filter((filePath) => filePath.endsWith(".go") && !filePath.endsWith("_test.go"))
     .map((filePath) => ({ filePath, relative: normaliseRelative(root, filePath) }))
+    .filter(({ filePath }) => !isNestedModulePath(root, filePath))
     .filter(({ relative }) => relative.startsWith("cmd/") || relative.startsWith("internal/"))
     .sort((left, right) => left.relative.localeCompare(right.relative));
   for (const { filePath, relative } of sourceFiles) {

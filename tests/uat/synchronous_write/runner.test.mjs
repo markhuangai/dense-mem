@@ -140,17 +140,14 @@ test("synchronous-write provider remains a project-scoped Compose helper", async
   const compose = await readFile(new URL("../../../scripts/e2e-stack.yml", import.meta.url), "utf8");
   const controller = await readFile(new URL("../../../scripts/e2e-host-controller.sh", import.meta.url), "utf8");
   const stack = await readFile(new URL("../../../scripts/e2e-host-controller-stack.sh", import.meta.url), "utf8");
-  const processor = await readFile(new URL("../../../cmd/internal/serverapp/remember_processor_integration_test.go", import.meta.url), "utf8");
+  const processor = await readFile(new URL("../../../cmd/internal/serverapp/remember_processor_integration.e2e", import.meta.url), "utf8");
   assert.match(compose, /synchronous-write-provider-files/);
   assert.match(compose, /profiles: \[synchronous_write, verifier\]/);
   assert.match(stack, /provider-fixture\.mjs/);
   assert.match(stack, /DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS/);
-  assert.match(controller, /TestConflictSnapshotScopeSerializesPlacementReviewAndWrite/);
-  assert.match(controller, /TestConflictSnapshotScopeLocksCorrectionBeforeReviewRowLock/);
-  assert.match(controller, /TestRelationshipCorrectionLocksCrossScopePairCanonically/);
-  assert.doesNotMatch(controller, /TestConflictSnapshotScopeSerializesCorrectionBeforeReviewRowLock/);
-  assert.doesNotMatch(stack, /TestConflictSnapshotScopeSerializesPlacementReviewAndWrite/);
-  assert.match(stack, /TestRememberServiceRejectsHistoricalOutcomesThroughPostgres/);
+  assert.match(controller, /go -C cmd\/e2e run \. --root \/workspace/);
+  assert.match(stack, /--scenario synchronous_write_primitives/);
+  assert.match(stack, /--capability repository,service,server/);
   assert.match(processor, /func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres/);
 });
 

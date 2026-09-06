@@ -432,6 +432,8 @@ test("production workflows use capability-matched runners and one OCI handoff", 
   assert.match(productionWorkflow, /max-parallel: 4/);
   assert.match(productionWorkflow, /shared_project: \$\{\{ steps\.start\.outputs\.shared_project \}\}/);
   assert.match(productionWorkflow, /scripts\/e2e-scenario-registry\.mjs --validate-compatible/);
+  assert.match(productionWorkflow, /for selection in repository postgres migration,http,service/);
+  assert.match(controller, /--total-timeout 25m/);
   assert.doesNotMatch(productionWorkflow, /const isolations = new Set\(\["exclusive", "shared_team"\]\)/);
   assert.doesNotMatch(productionWorkflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch|actions\/download-artifact|actions\/upload-artifact/);
   assert.match(scenarioWorkflow, /runs-on: rootless-docker/);

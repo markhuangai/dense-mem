@@ -1,0 +1,89 @@
+package repository
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+)
+
+func setupTeamRepositoryTest(t *testing.T, ctx context.Context) (*TeamRepositoryImpl, func()) {
+	t.Helper()
+	_, db, rls, cleanup := setupLedgerRepositoryDB(t)
+	return NewTeamRepository(db, rls), cleanup
+}
+
+func TestTeamRepositoryJSONBMapsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo, cleanup := setupTeamRepositoryTest(t, ctx)
+	defer cleanup()
+
+	profile := &domain.Team{
+		Name:        "Test Profile Repository JSONB Round Trip",
+		Description: "profile repository jsonb scan test",
+		Metadata: map[string]any{
+			"source": "test",
+			"nested": map[string]any{
+				"enabled": true,
+			},
+		},
+		Config: map[string]any{
+			"mode": "strict",
+			"features": map[string]any{
+				"audit": true,
+			},
+		},
+	}
+
+	require.NoError(t, repo.Create(ctx, profile), "Create should succeed")
+
+	got, err := repo.GetByID(ctx, profile.ID)
+	require.NoError(t, err, "GetByID should succeed")
+	require.NotNil(t, got, "GetByID should find profile")
+	assert.Equal(t, profile.Metadata, got.Metadata)
+	assert.Equal(t, profile.Config, got.Config)
+
+	profile.Metadata = map[string]any{"updated": true}
+	profile.Config = map[string]any{"mode": "updated"}
+	require.NoError(t, repo.Update(ctx, profile), "Update should succeed")
+
+	got, err = repo.GetByID(ctx, profile.ID)
+	require.NoError(t, err, "GetByID after update should succeed")
+	require.NotNil(t, got, "GetByID after update should find profile")
+	assert.Equal(t, profile.Metadata, got.Metadata)
+	assert.Equal(t, profile.Config, got.Config)
+
+	list, err := repo.List(ctx, 100, 0)
+	require.NoError(t, err, "List should succeed")
+	var listed *domain.Team
+	for _, candidate := range list {
+		if candidate.ID == profile.ID {
+			listed = candidate
+			break
+		}
+	}
+	require.NotNil(t, listed, "List should include created profile")
+	assert.Equal(t, profile.Metadata, listed.Metadata)
+	assert.Equal(t, profile.Config, listed.Config)
+}
+
+func TestTeamRepositoryNilJSONBMapsReadAsEmptyObjects(t *testing.T) {
+	ctx := context.Background()
+	repo, cleanup := setupTeamRepositoryTest(t, ctx)
+	defer cleanup()
+
+	profile := &domain.Team{
+		Name:        "Test Profile Repository Empty JSONB",
+		Description: "profile repository empty jsonb scan test",
+	}
+	require.NoError(t, repo.Create(ctx, profile), "Create should succeed")
+
+	got, err := repo.GetByID(ctx, profile.ID)
+	require.NoError(t, err, "GetByID should succeed")
+	require.NotNil(t, got, "GetByID should find profile")
+	assert.Equal(t, map[string]any{}, got.Metadata)
+	assert.Equal(t, map[string]any{}, got.Config)
+}

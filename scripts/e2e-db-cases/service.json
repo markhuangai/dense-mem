@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "capability": "service",
+  "cases": [
+    {
+      "id": "service/TestAuditLogAppendOnlyTriggerBlocksDelete",
+      "package": "./internal/service",
+      "run": "^TestAuditLogAppendOnlyTriggerBlocksDelete$",
+      "phase": "precheck",
+      "source": "internal/service/audit_service.e2e"
+    },
+    {
+      "id": "service/TestAuditLogAppendOnlyTriggerBlocksUpdate",
+      "package": "./internal/service",
+      "run": "^TestAuditLogAppendOnlyTriggerBlocksUpdate$",
+      "phase": "precheck",
+      "source": "internal/service/audit_service.e2e"
+    },
+    {
+      "id": "service/TestAuditServiceAppend",
+      "package": "./internal/service",
+      "run": "^TestAuditServiceAppend$",
+      "phase": "precheck",
+      "source": "internal/service/audit_service.e2e"
+    },
+    {
+      "id": "service/TestAuditServiceAppendStoresNullClientIPWhenMissing",
+      "package": "./internal/service",
+      "run": "^TestAuditServiceAppendStoresNullClientIPWhenMissing$",
+      "phase": "precheck",
+      "source": "internal/service/audit_service.e2e"
+    },
+    {
+      "id": "service/TestAuditServiceAppendUsesContextClientIPWhenEntryBlank",
+      "package": "./internal/service",
+      "run": "^TestAuditServiceAppendUsesContextClientIPWhenEntryBlank$",
+      "phase": "precheck",
+      "source": "internal/service/audit_service.e2e"
+    },
+    {
+      "id": "service/TestAuditServiceHelperMethods",
+      "package": "./internal/service",
+      "run": "^TestAuditServiceHelperMethods$",
+      "phase": "precheck",
+      "source": "internal/service/audit_service.e2e"
+    },
+    {
+      "id": "service/TestAuditServiceListHidesSealedPrivateSpaceRows",
+      "package": "./internal/service",
+      "run": "^TestAuditServiceListHidesSealedPrivateSpaceRows$",
+      "phase": "precheck",
+      "source": "internal/service/audit_service.e2e"
+    },
+    {
+      "id": "service/TestAuditServiceRedactsSecrets",
+      "package": "./internal/service",
+      "run": "^TestAuditServiceRedactsSecrets$",
+      "phase": "precheck",
+      "source": "internal/service/audit_service.e2e"
+    },
+    {
+      "id": "service/TestComposeSynchronousEvidenceOnlyAssessorBatch",
+      "package": "./internal/service/memoryservice",
+      "run": "^TestComposeSynchronousEvidenceOnlyAssessorBatch$",
+      "phase": "scenario",
+      "scenario": "synchronous_write_primitives",
+      "source": "internal/service/memoryservice/synchronous_assessment_compose_e2e.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceCreate",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceCreate$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceCreateDuplicateName",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceCreateDuplicateName$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceDelete",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceDelete$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceDeleteRevokesActiveKeys",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceDeleteRevokesActiveKeys$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceGet",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceGet$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceList",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceList$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    },
+    {
+      "id": "service/TestTeamServiceUpdate",
+      "package": "./internal/service",
+      "run": "^TestTeamServiceUpdate$",
+      "phase": "precheck",
+      "source": "internal/service/team_service.e2e"
+    }
+  ]
+}

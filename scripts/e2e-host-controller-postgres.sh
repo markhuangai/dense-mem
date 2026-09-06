@@ -164,8 +164,9 @@ seed_identity_cleanup_database() {
     "DENSE_MEM_E2E_POSTGRES_DB=${DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE}" \
     "DENSE_MEM_E2E_POSTGRES_HOST=postgres" \
     "DENSE_MEM_E2E_POSTGRES_PORT=5432" -- \
-    go test -tags=integration ./internal/storage/postgres \
-      -run '^TestIdentityCleanupComposeSeed$' -count=1 >&2
+    go -C cmd/e2e run . --root /workspace \
+      --phase scenario --scenario identity_cleanup --capability postgres \
+      --case postgres/TestIdentityCleanupComposeSeed --timeout 20m --total-timeout 25m >&2
 
   local identity_file="${DENSE_MEM_CI_HELPER_DIR}/identity.env"
   printf 'DENSE_MEM_E2E_UPGRADE_TEAM_ID=%s\nDENSE_MEM_E2E_UPGRADE_PROFILE_ID=%s\nDENSE_MEM_E2E_UPGRADE_API_KEY=%s\n' \
