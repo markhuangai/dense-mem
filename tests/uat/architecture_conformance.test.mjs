@@ -9,7 +9,9 @@ import {
   discoverBrowser,
   discoverGo,
   discoverWorkers,
+  evaluateModuleEdge,
   isModuleImport,
+  loadManifest,
   parseArgs,
   resolveBrowserImport,
   scanGoTokens,
@@ -17,7 +19,7 @@ import {
 } from "../../scripts/check-architecture.mjs";
 
 const root = path.resolve(import.meta.dirname, "../..");
-const productionManifest = JSON.parse(fs.readFileSync(path.join(root, "architecture/ownership.v1.json"), "utf8"));
+const productionManifest = loadManifest(root);
 
 function fixture(name) {
   return JSON.parse(fs.readFileSync(path.join(root, "architecture/fixtures", name), "utf8"));
@@ -32,9 +34,9 @@ function fixtureManifest() {
     go: {
       profiles: ["production"],
       units: [
-        {id: "fixture/composition", capability: "fixture", role: "composition"},
-        {id: "fixture/transport", capability: "fixture", role: "transport"},
-        {id: "fixture/postgres", capability: "fixture", role: "adapter"},
+        {id: "fixture/composition", capability: "fixture", role: "composition", visibility: "public"},
+        {id: "fixture/transport", capability: "fixture", role: "transport", visibility: "public"},
+        {id: "fixture/postgres", capability: "fixture", role: "adapter", visibility: "public"},
       ],
     },
     browser: {
@@ -55,6 +57,192 @@ function assertEdgeExpectation(edge, result) {
   assert.equal(result.diagnostics.length, 1);
   assert.match(result.diagnostics[0], new RegExp(`^${edge.expected}:`));
 }
+
+function copyManifestFixture() {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dense-mem-architecture-"));
+  fs.mkdirSync(path.join(fixtureRoot, "architecture/modules"), { recursive: true });
+  const rootManifest = JSON.parse(fs.readFileSync(path.join(root, "architecture/ownership.v1.json"), "utf8"));
+  fs.writeFileSync(path.join(fixtureRoot, "architecture/ownership.v1.json"), JSON.stringify(rootManifest, null, 2));
+  for (const reference of rootManifest.fragments) {
+    fs.copyFileSync(path.join(root, reference), path.join(fixtureRoot, reference));
+  }
+  return { fixtureRoot, rootManifest };
+}
+
+test("loads the complete independently owned architecture inventory", () => {
+  assert.equal(productionManifest.load_diagnostics.length, 0);
+  assert.equal(productionManifest.fragments.length, 51);
+  assert.equal(productionManifest.go.units.length, 57);
+  assert.equal(productionManifest.browser.units.length, 40);
+  assert.equal(productionManifest.exceptions.length, 25);
+  assert.equal(productionManifest.workers.length, 52);
+  assert.deepEqual(productionManifest.completed_issues, [260, 347, 261, 262, 263, 348]);
+  assert.deepEqual(validateManifest(productionManifest), []);
+});
+
+test("rejects missing, unlisted, and duplicate capability fragments", () => {
+  const absent = copyManifestFixture();
+  try {
+    delete absent.rootManifest.fragments;
+    fs.writeFileSync(
+      path.join(absent.fixtureRoot, "architecture/ownership.v1.json"),
+      JSON.stringify(absent.rootManifest, null, 2),
+    );
+    const loaded = loadManifest(absent.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("invalid-fragment:")));
+  } finally {
+    fs.rmSync(absent.fixtureRoot, { recursive: true, force: true });
+  }
+
+  const empty = copyManifestFixture();
+  try {
+    empty.rootManifest.fragments = [];
+    fs.writeFileSync(
+      path.join(empty.fixtureRoot, "architecture/ownership.v1.json"),
+      JSON.stringify(empty.rootManifest, null, 2),
+    );
+    const loaded = loadManifest(empty.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("invalid-fragment:")));
+  } finally {
+    fs.rmSync(empty.fixtureRoot, { recursive: true, force: true });
+  }
+
+  const missing = copyManifestFixture();
+  try {
+    missing.rootManifest.fragments.push("architecture/modules/missing.json");
+    fs.writeFileSync(
+      path.join(missing.fixtureRoot, "architecture/ownership.v1.json"),
+      JSON.stringify(missing.rootManifest, null, 2),
+    );
+    const loaded = loadManifest(missing.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("missing-fragment:")));
+  } finally {
+    fs.rmSync(missing.fixtureRoot, { recursive: true, force: true });
+  }
+
+  const unlisted = copyManifestFixture();
+  try {
+    fs.copyFileSync(
+      path.join(unlisted.fixtureRoot, "architecture/modules/architecture.json"),
+      path.join(unlisted.fixtureRoot, "architecture/modules/unlisted.json"),
+    );
+    const loaded = loadManifest(unlisted.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("unlisted-fragment:")));
+  } finally {
+    fs.rmSync(unlisted.fixtureRoot, { recursive: true, force: true });
+  }
+
+  const duplicate = copyManifestFixture();
+  try {
+    duplicate.rootManifest.fragments = [
+      duplicate.rootManifest.fragments[0],
+      duplicate.rootManifest.fragments[0],
+      ...duplicate.rootManifest.fragments.slice(1),
+    ];
+    fs.writeFileSync(
+      path.join(duplicate.fixtureRoot, "architecture/ownership.v1.json"),
+      JSON.stringify(duplicate.rootManifest, null, 2),
+    );
+    const loaded = loadManifest(duplicate.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("duplicate-fragment:")));
+  } finally {
+    fs.rmSync(duplicate.fixtureRoot, { recursive: true, force: true });
+  }
+
+  const duplicateCapability = copyManifestFixture();
+  try {
+    fs.copyFileSync(
+      path.join(duplicateCapability.fixtureRoot, "architecture/modules/architecture.json"),
+      path.join(duplicateCapability.fixtureRoot, "architecture/modules/architecture-copy.json"),
+    );
+    const duplicateFragment = JSON.parse(fs.readFileSync(
+      path.join(duplicateCapability.fixtureRoot, "architecture/modules/architecture-copy.json"),
+      "utf8",
+    ));
+    duplicateFragment.capability = "architecture";
+    fs.writeFileSync(
+      path.join(duplicateCapability.fixtureRoot, "architecture/modules/architecture-copy.json"),
+      JSON.stringify(duplicateFragment, null, 2),
+    );
+    duplicateCapability.rootManifest.fragments.push("architecture/modules/architecture-copy.json");
+    fs.writeFileSync(
+      path.join(duplicateCapability.fixtureRoot, "architecture/ownership.v1.json"),
+      JSON.stringify(duplicateCapability.rootManifest, null, 2),
+    );
+    const loaded = loadManifest(duplicateCapability.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("duplicate-fragment:") && item.includes("capability architecture")));
+  } finally {
+    fs.rmSync(duplicateCapability.fixtureRoot, { recursive: true, force: true });
+  }
+
+  const misplaced = copyManifestFixture();
+  try {
+    const sourceFragmentPath = path.join(misplaced.fixtureRoot, "architecture/modules/http-transport.json");
+    const sourceFragment = JSON.parse(fs.readFileSync(sourceFragmentPath, "utf8"));
+    const architecturePath = path.join(misplaced.fixtureRoot, "architecture/modules/architecture.json");
+    const architectureFragment = JSON.parse(fs.readFileSync(architecturePath, "utf8"));
+    architectureFragment.exceptions.push(sourceFragment.exceptions[0]);
+    architectureFragment.workers.push(sourceFragment.workers[0]);
+    fs.writeFileSync(architecturePath, JSON.stringify(architectureFragment, null, 2));
+    const loaded = loadManifest(misplaced.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("exception") && item.includes("must be owned by")));
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("worker") && item.includes("must be owned by")));
+  } finally {
+    fs.rmSync(misplaced.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("units inherit capability ownership from their fragment", () => {
+  const unit = productionManifest.go.units.find((entry) => entry.id.endsWith("/internal/repository"));
+  assert.equal(unit.capability, "postgres-storage-adapter");
+  assert.equal(unit.role, "postgres_adapter");
+  assert.equal(unit.visibility, "private");
+});
+
+test("enforces private visibility and narrow PostgreSQL infrastructure reuse", () => {
+  const unit = (id, role, capability, visibility) => ({ id, role, capability, visibility });
+  const privateCrossCapability = evaluateModuleEdge(
+    unit("source", "application_api", "source-capability", "public"),
+    unit("target", "application_api", "target-capability", "private"),
+  );
+  assert.equal(privateCrossCapability.ok, false);
+  assert.match(privateCrossCapability.diagnostic, /^private:/);
+
+  const publicCrossCapability = evaluateModuleEdge(
+    unit("source", "transport", "source-capability", "private"),
+    unit("target", "transport", "target-capability", "public"),
+  );
+  assert.equal(publicCrossCapability.ok, true);
+
+  const compositionPrivate = evaluateModuleEdge(
+    unit("composition", "composition", "composition-capability", "public"),
+    unit("adapter", "adapter", "adapter-capability", "private"),
+  );
+  assert.equal(compositionPrivate.ok, true);
+
+  const postgresInfrastructure = evaluateModuleEdge(
+    unit("postgres-adapter", "postgres_adapter", "storage-adapter", "private"),
+    unit("postgres-infrastructure", "postgres_infrastructure", "storage-infrastructure", "private"),
+  );
+  assert.equal(postgresInfrastructure.ok, true);
+
+  for (const role of ["application_api", "transport", "adapter"]) {
+    const forbidden = evaluateModuleEdge(
+      unit(`${role}-source`, role, `${role}-capability`, "public"),
+      unit("postgres-infrastructure", "postgres_infrastructure", "storage-infrastructure", "private"),
+    );
+    assert.equal(forbidden.ok, false);
+    assert.match(forbidden.diagnostic, /^forbidden:/);
+  }
+});
+
+test("retains precise replacement owners and lifecycle obligations", () => {
+  const exceptionOwners = [...new Set(productionManifest.exceptions.map((entry) => entry.removal_issue))].sort((a, b) => a - b);
+  assert.deepEqual(exceptionOwners, [363, 365, 366, 367, 368, 370, 375, 376, 377, 379, 380, 382]);
+  assert.equal(productionManifest.exceptions.some((entry) => entry.removal_issue === 276), false);
+  assert.equal(productionManifest.exceptions.some((entry) => entry.removal_issue === 280), false);
+  assert.ok(productionManifest.workers.every((entry) => entry.lifecycle_issue === 381));
+});
 
 test("allows composition-to-adapter edges", () => {
   const edge = fixture("allowed-edge.json");
@@ -148,11 +336,11 @@ test("rejects obsolete completion and worker lifecycle fields", () => {
 
 test("completed worker lifecycle obligations fail while permanent anchors remain valid", () => {
   const expiring = structuredClone(productionManifest);
-  expiring.completed_issues = [260, 261, 262, 263, 277];
-  assert.ok(validateManifest(expiring).some((item) => item.includes("worker") && item.includes("completed issue 277")));
+  expiring.completed_issues = [260, 261, 262, 263, 381];
+  assert.ok(validateManifest(expiring).some((item) => item.includes("worker") && item.includes("completed issue 381")));
 
   const permanent = structuredClone(productionManifest);
-  permanent.completed_issues = [260, 261, 262, 263, 277];
+  permanent.completed_issues = [260, 261, 262, 263, 381];
   permanent.workers = [permanent.workers[0]];
   delete permanent.workers[0].lifecycle_issue;
   assert.equal(validateManifest(permanent).some((item) => item.includes("worker") && item.startsWith("expired:")), false);

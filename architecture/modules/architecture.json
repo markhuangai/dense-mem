@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "capability": "architecture",
+  "completed_issues": [
+    260,
+    347,
+    261,
+    262,
+    263,
+    348
+  ],
+  "go": {
+    "units": []
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [],
+  "workers": []
+}

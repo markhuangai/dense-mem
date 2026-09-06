@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "capability": "control-portal",
+  "completed_issues": [],
+  "go": {
+    "units": []
+  },
+  "browser": {
+    "units": [
+      {
+        "id": "web/src/App.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/api.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/community-api-types.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/conflict-queue-api-types.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control-auth-api.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control-observability-api.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/evidence-conflict-api-types.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/evidence-conflict-api.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/ConfigPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/ConflictQueuePanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/DirectoryAutomationPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/DreamsPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/LogsPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/MetricsPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/RecallFeedbackPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/SSOPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/SearchConvergencePanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/SecurityPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/RememberAttemptsPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/TeamCredentialsPanel.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/TeamWorkspace.tsx",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/control/utils.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/credentialPermissions.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/http.ts",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/main.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/oauth-protected-resource-types.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/search-convergence-types.ts",
+        "role": "transport",
+        "visibility": "private"
+      },
+      {
+        "id": "web/src/teamDreamingConfig.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/telemetry/TelemetryDashboard.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/telemetry/types.ts",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/telemetry/useVisiblePolling.ts",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/components.tsx",
+        "role": "transport",
+        "visibility": "public"
+      },
+      {
+        "id": "web/src/ui/dreams.tsx",
+        "role": "transport",
+        "visibility": "public"
+      }
+    ]
+  },
+  "exceptions": [],
+  "workers": []
+}

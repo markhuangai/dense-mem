@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "capability": "prompt-policy",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/promptcatalog",
+        "role": "domain",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [],
+  "workers": []
+}

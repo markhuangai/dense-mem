@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "capability": "memory-application",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/service/memoryservice",
+        "role": "application_api",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/service/memoryservice",
+      "target": "github.com/markhuangai/dense-mem/internal/embedding",
+      "removal_issue": 376,
+      "reason": "Recall application code still calls the embedding adapter until recall ownership is isolated."
+    },
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/service/memoryservice",
+      "target": "github.com/markhuangai/dense-mem/internal/repository",
+      "removal_issue": 382,
+      "reason": "The legacy memoryservice retains recall, lifecycle, and placement consumers until final capability convergence; Remember intake now uses its own application boundary."
+    }
+  ],
+  "workers": []
+}

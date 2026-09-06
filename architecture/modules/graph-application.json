@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "capability": "graph-application",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/service/graphview",
+        "role": "application_api",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/service/graphview",
+      "target": "github.com/markhuangai/dense-mem/internal/repository",
+      "removal_issue": 366,
+      "reason": "Graph application code still consumes the legacy repository until graph view ownership is isolated."
+    }
+  ],
+  "workers": []
+}

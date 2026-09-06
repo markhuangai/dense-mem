@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "capability": "postgres-adapter",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/storage/postgres",
+        "role": "postgres_infrastructure",
+        "visibility": "private"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [],
+  "workers": []
+}

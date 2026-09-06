@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "capability": "shared-domain",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/domain",
+        "role": "domain",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [],
+  "workers": []
+}

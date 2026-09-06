@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "capability": "dream-application",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/service/dreamservice",
+        "role": "application_api",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/service/dreamservice",
+      "target": "github.com/markhuangai/dense-mem/internal/repository",
+      "removal_issue": 365,
+      "reason": "Dream application code still consumes the legacy repository until Dreaming ownership is isolated."
+    }
+  ],
+  "workers": []
+}

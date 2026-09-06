@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "capability": "sse-transport",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/sse",
+        "role": "transport",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [],
+  "workers": [
+    {
+      "path": "internal/sse/lifecycle.go",
+      "function": "Start",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/sse/lifecycle.go",
+      "function": "Start",
+      "kind": "goroutine",
+      "ordinal": 2,
+      "role": "worker",
+      "lifecycle_issue": 381
+    },
+    {
+      "path": "internal/sse/lifecycle.go",
+      "function": "Start",
+      "kind": "run",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    }
+  ]
+}

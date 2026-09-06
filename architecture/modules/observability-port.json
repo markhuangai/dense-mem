@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "capability": "observability-port",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/observability",
+        "role": "port",
+        "visibility": "public"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [],
+  "workers": [
+    {
+      "path": "internal/observability/conflict_queue_metrics.go",
+      "function": "Collect",
+      "kind": "goroutine",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    }
+  ]
+}
