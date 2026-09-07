@@ -131,29 +131,8 @@ jobs:
           IMAGE: ${{ needs.authorize.outputs.image }}@${{ needs.authorize.outputs.digest }}
         run: |
           set -euo pipefail
-          log_dir="${RUNNER_TEMP}/dense-mem-precheck"
-          mkdir -p "${log_dir}"
-          declare -a pids=()
-          declare -a labels=()
-          for selection in repository postgres migration,http,service; do
-            label="${selection//,/-}"
-            labels+=("${label}")
-            scripts/e2e-host-controller.sh precheck \
-              "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}" "${selection}" \
-              >"${log_dir}/${label}.log" 2>&1 &
-            pids+=("$!")
-          done
-
-          status=0
-          for index in "${!pids[@]}"; do
-            if ! wait "${pids[index]}"; then
-              status=1
-            fi
-          done
-          for label in "${labels[@]}"; do
-            cat "${log_dir}/${label}.log"
-          done
-          exit "${status}"
+          scripts/e2e-host-controller.sh precheck \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${IMAGE}" "${GITHUB_WORKSPACE}"
 
   stale-cleanup:
     name: Reclaim stale CI resources

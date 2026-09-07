@@ -362,7 +362,7 @@ precheck_capability() {
   validate_digest "$image_digest"
   [[ -d "$source_dir" && "$source_dir" == /* ]] || fail "precheck source directory must be absolute"
   if [[ -n "$capabilities" ]]; then
-    [[ "$capabilities" =~ ^[a-z0-9_]+(,[a-z0-9_]+)*$ ]] || fail "invalid precheck capability selection"
+    [[ "$capabilities" =~ ^[a-z0-9_-]+(,[a-z0-9_-]+)*$ ]] || fail "invalid precheck capability selection"
   fi
   validate_bundle
   doctor >/dev/null
@@ -436,6 +436,49 @@ precheck_capability() {
   printf '%s\n' "precheck passed"
 }
 
+database_case_capabilities() {
+  local source_dir="$1" phase="$2" scenario="${3:-}"
+  node - "$source_dir/scripts/e2e-db-cases" "$phase" "$scenario" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const [directory, phase, scenario] = process.argv.slice(2);
+const capabilities = [];
+for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".json")).sort()) {
+  const capability = path.basename(entry, ".json");
+  const fragment = JSON.parse(fs.readFileSync(path.join(directory, entry), "utf8"));
+  if (fragment.version !== 1 || fragment.capability !== capability) {
+    throw new Error(`invalid database case registry ${entry}`);
+  }
+  if (fragment.cases.some((item) => item.phase === phase && (!scenario || item.scenario === scenario))) {
+    capabilities.push(capability);
+  }
+}
+process.stdout.write(capabilities.join("\n"));
+if (capabilities.length > 0) process.stdout.write("\n");
+NODE
+}
+
+partition_precheck_capabilities() {
+  local source_dir="$1"
+  local -a capabilities=()
+  mapfile -t capabilities < <(database_case_capabilities "$source_dir" precheck)
+  ((${#capabilities[@]} > 0)) || fail "no populated precheck database capability fragments"
+  local -a groups=("" "" "")
+  local index capability group
+  for index in "${!capabilities[@]}"; do
+    capability="${capabilities[index]}"
+    group=$((index % 3))
+    if [[ -n "${groups[group]}" ]]; then
+      groups[group]+=",${capability}"
+    else
+      groups[group]="${capability}"
+    fi
+  done
+  for group in "${groups[@]}"; do
+    [[ -n "$group" ]] && printf '%s\n' "$group"
+  done
+}
+
 precheck() {
   local run_id="$1" attempt="$2" image_ref="$3" source_dir="$4" capabilities="${5:-}"
   if [[ -n "$capabilities" ]]; then
@@ -446,7 +489,14 @@ precheck() {
   local log_dir
   log_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/dense-mem-precheck.XXXXXX")" ||
     fail "unable to create the precheck log directory"
-  local -a selections=(repository postgres migration,http,service)
+  local capability_output
+  if ! capability_output="$(partition_precheck_capabilities "$source_dir")"; then
+    fail "unable to discover precheck database capabilities"
+  fi
+  local -a selections=()
+  if [[ -n "$capability_output" ]]; then
+    mapfile -t selections <<<"$capability_output"
+  fi
   local -a pids=()
   local -a logs=()
   cleanup_partitioned_precheck() {

@@ -1,6 +1,16 @@
 {
   "schema_version": 1,
   "capability": "remember-application",
+  "source_ownership": [
+    {"path": "cmd/internal/serverapp/remember_composition.go", "issue": 372},
+    {"path": "internal/tools/registry/remember_bindings.go", "issue": 372},
+    {"path": "cmd/internal/serverapp/remember_processor.go", "issue": 372},
+    {"path": "cmd/internal/serverapp/remember_replay.go", "issue": 372},
+    {"path": "cmd/internal/serverapp/remember_failure_logging.go", "issue": 372},
+    {"path": "cmd/internal/serverapp/remember_failure_artifact.go", "issue": 372},
+    {"path": "cmd/internal/serverapp/remember_embedding_helpers.go", "issue": 372},
+    {"path": "cmd/internal/serverapp/security_rejection_audit.go", "issue": 372}
+  ],
   "completed_issues": [],
   "go": {
     "units": [

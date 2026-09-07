@@ -1,6 +1,53 @@
 {
   "schema_version": 1,
   "capability": "http-transport",
+  "source_ownership": [
+    {"path": "internal/http/mcp_bindings.go", "issue": 379},
+    {"path": "internal/http/user_portal_bindings.go", "issue": 379},
+    {"path": "internal/http/control_portal_bindings.go", "issue": 379},
+    {"path": "internal/http/server.go", "issue": 379},
+    {"path": "internal/http/router_protected.go", "issue": 379},
+    {"path": "internal/http/user_portal.go", "issue": 379},
+    {"path": "internal/http/control_portal.go", "issue": 379}
+  ],
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/http/mcp_bindings.go",
+      "fields": ["MCPBindings.CredentialRepo", "MCPBindings.TeamSvc", "MCPBindings.RateLimitService", "MCPBindings.UsageMetrics", "MCPBindings.AuditService", "MCPBindings.SecurityService", "MCPBindings.SSOAuthenticator", "MCPBindings.OAuthAuthenticator", "MCPBindings.OAuthMetadata", "MCPBindings.Config", "MCPBindings.Logger", "MCPBindings.CredentialVerifier", "MCPBindings.LastUsedRecorder", "MCPBindings.PostAuthMiddleware"],
+      "consumers": [
+        {"path": "internal/http/mcp_bindings.go", "symbol": "ProtectedDeps.withMCPBindings"},
+        {"path": "internal/http/router_protected.go", "symbol": "RegisterProtectedRoutesWithHandlers"}
+      ],
+      "removal_issue": 382
+    },
+    {
+      "source_path": "internal/http/router_protected.go",
+      "fields": ["ProtectedDeps.CredentialRepo", "ProtectedDeps.TeamSvc", "ProtectedDeps.RateLimitService", "ProtectedDeps.UsageMetrics", "ProtectedDeps.AuditService", "ProtectedDeps.SecurityService", "ProtectedDeps.SSOAuthenticator", "ProtectedDeps.OAuthAuthenticator", "ProtectedDeps.OAuthMetadata", "ProtectedDeps.Config", "ProtectedDeps.Logger", "ProtectedDeps.CredentialVerifier", "ProtectedDeps.LastUsedRecorder", "ProtectedDeps.PostAuthMiddleware"],
+      "consumers": [
+        {"path": "internal/http/mcp_bindings.go", "symbol": "ProtectedDeps.withMCPBindings"},
+        {"path": "internal/http/router_protected.go", "symbol": "RegisterProtectedRoutesWithHandlers"}
+      ],
+      "removal_issue": 382
+    },
+    {
+      "source_path": "internal/http/user_portal.go",
+      "fields": ["UserPortalDeps.GraphView", "UserPortalDeps.RecallSvc", "UserPortalDeps.DreamSvc", "UserPortalDeps.PrivateMemory"],
+      "consumers": [
+        {"path": "internal/http/user_portal_bindings.go", "symbol": "UserPortalDeps.withMemoryBindings"},
+        {"path": "internal/http/user_portal_routes.go", "symbol": "RegisterUserPortal"}
+      ],
+      "removal_issue": 382
+    },
+    {
+      "source_path": "internal/http/control_portal.go",
+      "fields": ["NewControlPortalServerWithMetricsAndTelemetry"],
+      "consumers": [
+        {"path": "internal/http/control_portal_bindings.go", "symbol": "NewControlPortalServerWithCapabilityBindings"},
+        {"path": "internal/http/control_portal.go", "symbol": "NewControlPortalServer"}
+      ],
+      "removal_issue": 382
+    }
+  ],
   "completed_issues": [],
   "go": {
     "units": [
@@ -42,6 +89,7 @@
   "exceptions": [
     {
       "source": "github.com/markhuangai/dense-mem/internal/http",
+      "source_path": "internal/http/server.go",
       "target": "github.com/markhuangai/dense-mem/internal/config",
       "removal_issue": 379,
       "reason": "HTTP transport still consumes the shared configuration implementation until transport consolidation."

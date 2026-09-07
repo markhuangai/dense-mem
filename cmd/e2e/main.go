@@ -18,12 +18,13 @@ import (
 )
 
 type databaseCase struct {
-	ID       string `json:"id"`
-	Package  string `json:"package"`
-	Run      string `json:"run"`
-	Phase    string `json:"phase"`
-	Scenario string `json:"scenario,omitempty"`
-	Source   string `json:"source"`
+	ID         string `json:"id"`
+	Package    string `json:"package"`
+	Run        string `json:"run"`
+	Phase      string `json:"phase"`
+	Scenario   string `json:"scenario,omitempty"`
+	Source     string `json:"source"`
+	Capability string `json:"-"`
 }
 
 type caseFragment struct {
@@ -50,6 +51,7 @@ func main() {
 	scenarioFlag := flag.String("scenario", "", "scenario name for scenario-owned cases")
 	caseFlag := flag.String("case", "", "comma-separated case IDs")
 	listFlag := flag.Bool("list", false, "list selected case IDs and exit")
+	listCapabilitiesFlag := flag.Bool("list-capabilities", false, "list populated capability fragments for the selected phase and scenario")
 	timeoutFlag := flag.Duration("timeout", 20*time.Minute, "maximum duration for each package batch")
 	totalTimeoutFlag := flag.Duration("total-timeout", 0, "maximum duration for the selected database phase; zero disables the phase-wide limit")
 	flag.Parse()
@@ -72,8 +74,23 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	if len(cases) == 0 {
+	if len(cases) == 0 && !*listCapabilitiesFlag {
 		fatal(errors.New("no database cases selected"))
+	}
+	if *listCapabilitiesFlag {
+		capabilities := make(map[string]bool)
+		for _, item := range cases {
+			capabilities[item.Capability] = true
+		}
+		values := make([]string, 0, len(capabilities))
+		for capability := range capabilities {
+			values = append(values, capability)
+		}
+		sort.Strings(values)
+		for _, capability := range values {
+			fmt.Println(capability)
+		}
+		return
 	}
 	if *listFlag {
 		for _, item := range cases {
@@ -153,6 +170,7 @@ func loadCases(root, phase, capabilityValue, scenarioValue, caseValue string) ([
 			return nil, fmt.Errorf("database case registry %s has invalid version or capability", entry.Name())
 		}
 		for _, item := range fragment.Cases {
+			item.Capability = capability
 			if item.ID == "" || item.Package == "" || item.Run == "" || item.Source == "" {
 				return nil, fmt.Errorf("database case %s has incomplete identity", item.ID)
 			}

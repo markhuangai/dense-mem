@@ -77,13 +77,16 @@ test("the default precheck partitions capabilities and propagates failures", asy
   const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-partition-"));
   try {
     const wrapper = controller.slice(controller.lastIndexOf("\nprecheck() {") + 1, controller.indexOf("\ndoctor() {"));
-    assert.ok(wrapper.includes("precheck_capability"));
+    assert.ok(wrapper.includes("partition_precheck_capabilities"));
     const script = `#!/usr/bin/env bash
 set -euo pipefail
 ${wrapper}
+partition_precheck_capabilities() {
+  printf 'capability_a,semantic-write\\ncapability_c,capability_d\\n'
+}
 precheck_capability() {
   printf 'capability=%s\\n' "$5"
-  [[ "$5" != postgres ]]
+  [[ "$5" != *capability_c* ]]
 }
 precheck 123 1 ghcr.io/markhuangai/dense-mem:test@sha256:${"1".repeat(64)} /workspace
 `;
@@ -93,12 +96,89 @@ precheck 123 1 ghcr.io/markhuangai/dense-mem:test@sha256:${"1".repeat(64)} /work
       run("bash", [scriptPath], { env: { TMPDIR: fixture } }),
       (error) => {
         const output = `${error.stdout || ""}${error.stderr || ""}`;
-        assert.match(output, /capability=repository/);
-        assert.match(output, /capability=postgres/);
-        assert.match(output, /capability=migration,http,service/);
+        assert.match(output, /capability=capability_a,semantic-write/);
+        assert.match(output, /capability=capability_c,capability_d/);
+        assert.doesNotMatch(output, /capability=repository|capability=postgres/);
         return true;
       },
     );
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("the default precheck propagates capability discovery failures", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-discovery-failure-"));
+  try {
+    const wrapper = controller.slice(controller.lastIndexOf("\nprecheck() {") + 1, controller.indexOf("\ndoctor() {"));
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+${wrapper}
+fail() { printf 'dense-mem CI controller: %s\\n' "$*" >&2; exit 1; }
+partition_precheck_capabilities() {
+  printf 'database case registry is malformed\\n' >&2
+  return 1
+}
+precheck_capability() {
+  printf 'unexpected capability execution\\n' >&2
+  return 0
+}
+precheck 123 1 ghcr.io/markhuangai/dense-mem:test@sha256:${"1".repeat(64)} /workspace
+`;
+    const scriptPath = join(fixture, "discovery-failure-test.sh");
+    await executable(scriptPath, script);
+    await assert.rejects(
+      run("bash", [scriptPath], { env: { TMPDIR: fixture } }),
+      (error) => {
+        const output = `${error.stdout || ""}${error.stderr || ""}`;
+        assert.match(output, /database case registry is malformed/);
+        assert.match(output, /unable to discover precheck database capabilities/);
+        assert.doesNotMatch(output, /unexpected capability execution/);
+        return true;
+      },
+    );
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("database case fragments drive complete three-way capability selection", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-registry-"));
+  try {
+    const sourceRoot = join(fixture, "repo");
+    const casesDir = join(sourceRoot, "scripts/e2e-db-cases");
+    await mkdir(casesDir, { recursive: true });
+    const fragments = [
+      ["alpha", "TestAlpha"],
+      ["beta", "TestBeta"],
+      ["delta", "TestDelta"],
+      ["epsilon", "TestEpsilon"],
+      ["semantic-write", "TestSemanticWrite"],
+    ];
+    for (const [capability, run] of fragments) {
+      await writeFile(join(casesDir, `${capability}.json`), JSON.stringify({
+        version: 1,
+        capability,
+        cases: [{ id: `${capability}/${run}`, package: "./fixture", run, phase: "precheck" }],
+      }));
+    }
+    const start = controller.indexOf("\ndatabase_case_capabilities()") + 1;
+    const end = controller.indexOf("\nprecheck() {", start);
+    const helper = controller.slice(start, end);
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+${helper}
+fail() { printf '%s\\n' "$*" >&2; return 1; }
+partition_precheck_capabilities "${sourceRoot}"
+`;
+    const scriptPath = join(fixture, "registry-test.sh");
+    await executable(scriptPath, script);
+    const { stdout } = await run("bash", [scriptPath]);
+    assert.deepEqual(stdout.trim().split(/\r?\n/), [
+      "alpha,epsilon",
+      "beta,semantic-write",
+      "delta",
+    ]);
   } finally {
     await rm(fixture, { recursive: true, force: true });
   }
@@ -417,7 +497,8 @@ test("shared PostgreSQL provisioning keeps runtime identity least-privileged", (
   assert.match(postgres, /role\.rolbypassrls/);
   assert.match(postgres, /run_identity_cleanup_startup_matrix/);
   assert.match(postgres, /DATABASE_URL=\$\{database_url\}/);
-  assert.match(postgres, /--scenario identity_cleanup --capability postgres \\\s+--timeout 20m --total-timeout 25m/);
+  assert.match(postgres, /--scenario identity_cleanup \\\s+--timeout 20m --total-timeout 25m/);
+  assert.doesNotMatch(postgres, /--scenario identity_cleanup --capability postgres/);
   assert.doesNotMatch(postgres, /--case postgres\/TestIdentityCleanupComposeSeed/);
   assert.match(controller, /provision_postgres_runtime_role/);
   assert.match(controller, /verify_postgres_runtime_migration_state/);
@@ -468,7 +549,8 @@ test("production workflows use capability-matched runners and one OCI handoff", 
   assert.match(productionWorkflow, /max-parallel: 4/);
   assert.match(productionWorkflow, /shared_project: \$\{\{ steps\.start\.outputs\.shared_project \}\}/);
   assert.match(productionWorkflow, /scripts\/e2e-scenario-registry\.mjs --validate-compatible/);
-  assert.match(productionWorkflow, /for selection in repository postgres migration,http,service/);
+  assert.match(productionWorkflow, /scripts\/e2e-host-controller\.sh precheck/);
+  assert.doesNotMatch(productionWorkflow, /for selection in repository postgres migration,http,service/);
   assert.match(controller, /--total-timeout 25m/);
   assert.doesNotMatch(productionWorkflow, /const isolations = new Set\(\["exclusive", "shared_team"\]\)/);
   assert.doesNotMatch(productionWorkflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch|actions\/download-artifact|actions\/upload-artifact/);

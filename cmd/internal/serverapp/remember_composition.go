@@ -5,6 +5,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
+	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
@@ -36,4 +37,8 @@ func buildRememberApplication(deps rememberApplicationDependencies) rememberapp.
 		Metrics:     deps.Metrics,
 		Logger:      deps.Logger,
 	})
+}
+
+func buildRememberAttemptDiagnostics(repo repository.RememberAttemptDiagnosticsRepository) *service.RememberAttemptDiagnosticsService {
+	return service.NewRememberAttemptDiagnosticsService(repo)
 }

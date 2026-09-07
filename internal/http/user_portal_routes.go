@@ -14,6 +14,7 @@ import (
 
 // RegisterUserPortal registers the API-key user portal under /ui on the main API server.
 func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
+	deps = deps.withMemoryBindings()
 	portal := &userPortalHandler{
 		teams:         deps.TeamSvc,
 		credentials:   deps.CredentialSvc,

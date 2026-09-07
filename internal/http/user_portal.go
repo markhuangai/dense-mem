@@ -30,6 +30,7 @@ import (
 
 // UserPortalDeps holds the dependencies for the user portal.
 type UserPortalDeps struct {
+	Memory             MemoryPortalBindings
 	CredentialRepo     repository.CredentialRepository
 	TeamSvc            handler.TeamServiceInterface
 	CredentialSvc      handler.CredentialServiceInterface

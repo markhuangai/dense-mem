@@ -1,6 +1,13 @@
 {
   "schema_version": 1,
   "capability": "memory-application",
+  "source_ownership": [
+    {"path": "cmd/internal/serverapp/recall_composition.go", "issue": 376},
+    {"path": "cmd/internal/serverapp/lifecycle_composition.go", "issue": 374},
+    {"path": "cmd/internal/serverapp/recall_feedback_composition.go", "issue": 376},
+    {"path": "internal/tools/registry/recall_bindings.go", "issue": 376},
+    {"path": "internal/tools/registry/lifecycle_bindings.go", "issue": 374}
+  ],
   "completed_issues": [],
   "go": {
     "units": [

@@ -1,6 +1,10 @@
 {
   "schema_version": 1,
   "capability": "access-application",
+  "source_ownership": [
+    {"path": "cmd/internal/serverapp/access_composition.go", "issue": 370},
+    {"path": "cmd/internal/serverapp/access_adapters.go", "issue": 370}
+  ],
   "completed_issues": [],
   "go": {
     "units": [

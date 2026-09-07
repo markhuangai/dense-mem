@@ -1,6 +1,25 @@
 {
   "schema_version": 1,
   "capability": "tool-registry-application-api",
+  "source_ownership": [
+    {"path": "internal/tools/registry/capability_bindings.go", "issue": 380},
+    {"path": "internal/tools/registry/tool_bindings.go", "issue": 380},
+    {"path": "internal/tools/registry/toolset.go", "issue": 380},
+    {"path": "internal/tools/registry/contract.go", "issue": 380}
+  ],
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/tools/registry/toolset.go",
+      "fields": ["Dependencies.Metrics", "Dependencies.RecallFeedbackConfig", "Dependencies.RecallFeedbackEvents", "Dependencies.EvaluationAudit", "Dependencies.Context", "Dependencies.Remember", "Dependencies.Recall", "Dependencies.Lifecycle", "Dependencies.RecallDreaming", "Dependencies.Evaluation", "Dependencies.Communities", "Dependencies.MemoryPack", "Dependencies.Dreams"],
+      "consumers": [
+        {"path": "internal/tools/registry/capability_bindings.go", "symbol": "Dependencies.withCapabilityBindings"},
+        {"path": "internal/tools/registry/evaluation_bindings.go", "symbol": "Dependencies.withEvaluationBindings"},
+        {"path": "internal/tools/registry/contract.go", "symbol": "contractTools"},
+        {"path": "internal/tools/registry/recall_bindings.go", "symbol": "bindRecallTool"}
+      ],
+      "removal_issue": 382
+    }
+  ],
   "completed_issues": [],
   "go": {
     "units": [
