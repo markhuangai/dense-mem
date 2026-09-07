@@ -102,7 +102,7 @@ func setupLedgerRepositoryDSN(t *testing.T) (string, func()) {
 	}
 	containerOptions = append(containerOptions, precheckContainerLabels()...)
 	containerOptions = append(containerOptions, precheckNetworkOptions()...)
-	container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", containerOptions...)
+	container, err := runLedgerPostgresContainer(ctx, containerOptions...)
 	if err != nil {
 		t.Fatalf("start Postgres test container: %v", err)
 	}
@@ -112,6 +112,23 @@ func setupLedgerRepositoryDSN(t *testing.T) (string, func()) {
 		t.Fatalf("get Postgres test container DSN: %v", err)
 	}
 	return dsn, func() { _ = container.Terminate(ctx) }
+}
+
+func runLedgerPostgresContainer(ctx context.Context, options ...testcontainers.ContainerCustomizer) (*tcpostgres.PostgresContainer, error) {
+	const maxAttempts = 4
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		container, err := tcpostgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", options...)
+		if err == nil {
+			return container, nil
+		}
+		lastErr = err
+		if !strings.Contains(strings.ToLower(err.Error()), "address already in use") || attempt == maxAttempts {
+			break
+		}
+		time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+	}
+	return nil, lastErr
 }
 
 func postgresContainerDSN(ctx context.Context, container *tcpostgres.PostgresContainer) (string, error) {

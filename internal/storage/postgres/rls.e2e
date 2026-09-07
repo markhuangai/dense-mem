@@ -8,9 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -273,21 +271,11 @@ func setupRLSTestDB(t *testing.T) (*gorm.DB, func()) {
 		if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
 			t.Skip("set DENSE_MEM_REPOSITORY_TESTCONTAINERS=1 to run disposable RLS integration tests")
 		}
-		container, err := tcpostgres.Run(context.Background(),
-			"pgvector/pgvector:0.8.2-pg18-trixie",
-			tcpostgres.WithDatabase("testdb"),
-			tcpostgres.WithUsername("testuser"),
-			tcpostgres.WithPassword("testpass"),
-			testcontainers.WithWaitStrategy(
-				wait.ForLog("database system is ready to accept connections").
-					WithOccurrence(2).
-					WithStartupTimeout(30*time.Second),
-			),
-		)
+		container, err := tcpostgres.Run(context.Background(), "pgvector/pgvector:0.8.2-pg18-trixie", postgresTestContainerOptions()...)
 		if err != nil {
 			t.Skipf("Postgres not available: %v", err)
 		}
-		dsn, err = container.ConnectionString(context.Background(), "sslmode=disable")
+		dsn, err = postgresTestContainerDSN(context.Background(), container)
 		if err != nil {
 			_ = container.Terminate(context.Background())
 			t.Skipf("Postgres connection string unavailable: %v", err)

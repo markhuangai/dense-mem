@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
@@ -38,23 +40,13 @@ func getTestDSN(ctx context.Context) (string, func(), error) {
 	}
 
 	// Try to start a test container
-	container, err := postgres.Run(ctx,
-		"pgvector/pgvector:0.8.2-pg18-trixie",
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("testuser"),
-		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second),
-		),
-	)
+	container, err := postgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", postgresTestContainerOptions()...)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to start postgres container: %w", err)
 	}
 
 	// Get the connection string
-	connStr, err := container.ConnectionString(ctx, "sslmode=disable")
+	connStr, err := postgresTestContainerDSN(ctx, container)
 	if err != nil {
 		_ = container.Terminate(ctx)
 		return "", nil, err
@@ -65,6 +57,39 @@ func getTestDSN(ctx context.Context) (string, func(), error) {
 	}
 
 	return connStr, cleanup, nil
+}
+
+func postgresTestContainerOptions() []testcontainers.ContainerCustomizer {
+	options := []testcontainers.ContainerCustomizer{
+		postgres.WithDatabase("testdb"),
+		postgres.WithUsername("testuser"),
+		postgres.WithPassword("testpass"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30 * time.Second),
+		),
+	}
+	if networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")); networkName != "" {
+		options = append(options, tcnetwork.WithNetworkName([]string{"postgres"}, networkName))
+	}
+	return options
+}
+
+func postgresTestContainerDSN(ctx context.Context, container *postgres.PostgresContainer) (string, error) {
+	if strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")) == "" {
+		return container.ConnectionString(ctx, "sslmode=disable")
+	}
+	connectionURL := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword("testuser", "testpass"),
+		Host:   "postgres:5432",
+		Path:   "/testdb",
+	}
+	query := connectionURL.Query()
+	query.Set("sslmode", "disable")
+	connectionURL.RawQuery = query.Encode()
+	return connectionURL.String(), nil
 }
 
 // skipIfNoPostgres skips the test if postgres is not available.
