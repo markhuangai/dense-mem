@@ -34,7 +34,7 @@
       "fields": ["UserPortalDeps.GraphView", "UserPortalDeps.RecallSvc", "UserPortalDeps.DreamSvc", "UserPortalDeps.PrivateMemory"],
       "consumers": [
         {"path": "internal/http/user_portal_bindings.go", "symbol": "UserPortalDeps.withMemoryBindings"},
-        {"path": "internal/http/user_portal.go", "symbol": "RegisterUserPortal"}
+        {"path": "internal/http/user_portal_routes.go", "symbol": "RegisterUserPortal"}
       ],
       "removal_issue": 382
     },

@@ -489,8 +489,14 @@ precheck() {
   local log_dir
   log_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/dense-mem-precheck.XXXXXX")" ||
     fail "unable to create the precheck log directory"
+  local capability_output
+  if ! capability_output="$(partition_precheck_capabilities "$source_dir")"; then
+    fail "unable to discover precheck database capabilities"
+  fi
   local -a selections=()
-  mapfile -t selections < <(partition_precheck_capabilities "$source_dir")
+  if [[ -n "$capability_output" ]]; then
+    mapfile -t selections <<<"$capability_output"
+  fi
   local -a pids=()
   local -a logs=()
   cleanup_partitioned_precheck() {

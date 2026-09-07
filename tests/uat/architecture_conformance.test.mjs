@@ -74,6 +74,14 @@ function copyManifestFixture() {
       fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
       fs.copyFileSync(sourcePath, destinationPath);
     }
+    for (const bridge of fragment.compatibility_bridges ?? []) {
+      for (const consumer of bridge.consumers ?? []) {
+        const sourcePath = path.join(root, consumer.path);
+        const destinationPath = path.join(fixtureRoot, consumer.path);
+        fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+        fs.copyFileSync(sourcePath, destinationPath);
+      }
+    }
   }
   return { fixtureRoot, rootManifest };
 }
@@ -313,6 +321,20 @@ test("requires bridge consumers to name a symbol", () => {
     fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
     const loaded = loadManifest(fixtureCopy.fixtureRoot);
     assert.ok(loaded.load_diagnostics.some((item) => item.includes("needs exact consumer package/symbol records")));
+  } finally {
+    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects bridge consumers whose symbols are absent from the declared file", () => {
+  const fixtureCopy = copyManifestFixture();
+  try {
+    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/tool-registry-application-api.json");
+    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
+    fragment.compatibility_bridges[0].consumers[0].symbol = "Dependencies.missing";
+    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
+    const loaded = loadManifest(fixtureCopy.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("consumer internal/tools/registry/capability_bindings.go does not define Dependencies.missing")));
   } finally {
     fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
   }

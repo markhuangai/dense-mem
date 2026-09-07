@@ -64,6 +64,29 @@ function hasWildcard(value) {
   return typeof value === "string" && /[*?]/u.test(value);
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function sourceDefinesGoSymbol(root, consumer) {
+  let source;
+  try {
+    source = fs.readFileSync(path.resolve(root, consumer.path), "utf8");
+  } catch {
+    return false;
+  }
+  const parts = consumer.symbol.split(".");
+  if (parts.length === 1) {
+    return new RegExp(`\\bfunc\\s+${escapeRegExp(parts[0])}\\s*\\(`, "u").test(source);
+  }
+  if (parts.length !== 2) return false;
+  const [receiver, method] = parts;
+  return new RegExp(
+    `\\bfunc\\s*\\(\\s*[A-Za-z_]\\w*\\s+\\*?${escapeRegExp(receiver)}\\s*\\)\\s*${escapeRegExp(method)}\\s*\\(`,
+    "u",
+  ).test(source);
+}
+
 const requiredSourceOwnership = Object.freeze([
   ["cmd/internal/serverapp/application_composition.go", "server-composition", 381],
   ["cmd/internal/serverapp/server.go", "server-composition", 381],
@@ -469,6 +492,12 @@ function validateFragmentShape(fragment, relativePath, root, diagnostics) {
       }
       if (!Array.isArray(bridge.consumers) || bridge.consumers.length === 0 || bridge.consumers.some((consumer) => !consumer || typeof consumer !== "object" || !isSafeSourcePath(root, consumer.path) || typeof consumer.symbol !== "string" || consumer.symbol.length === 0 || hasWildcard(consumer.symbol))) {
         diagnostics.push(diagnostic("invalid-fragment", `${relativePath} compatibility bridge ${bridge.source_path} needs exact consumer package/symbol records`));
+      } else {
+        for (const consumer of bridge.consumers) {
+          if (!sourceDefinesGoSymbol(root, consumer)) {
+            diagnostics.push(diagnostic("invalid-fragment", `${relativePath} compatibility bridge ${bridge.source_path} consumer ${consumer.path} does not define ${consumer.symbol}`));
+          }
+        }
       }
       if (!isIssueNumber(bridge.removal_issue)) {
         diagnostics.push(diagnostic("invalid-fragment", `${relativePath} compatibility bridge ${bridge.source_path} needs a positive removal issue`));

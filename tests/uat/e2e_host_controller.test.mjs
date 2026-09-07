@@ -107,6 +107,41 @@ precheck 123 1 ghcr.io/markhuangai/dense-mem:test@sha256:${"1".repeat(64)} /work
   }
 });
 
+test("the default precheck propagates capability discovery failures", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-discovery-failure-"));
+  try {
+    const wrapper = controller.slice(controller.lastIndexOf("\nprecheck() {") + 1, controller.indexOf("\ndoctor() {"));
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+${wrapper}
+fail() { printf 'dense-mem CI controller: %s\\n' "$*" >&2; exit 1; }
+partition_precheck_capabilities() {
+  printf 'database case registry is malformed\\n' >&2
+  return 1
+}
+precheck_capability() {
+  printf 'unexpected capability execution\\n' >&2
+  return 0
+}
+precheck 123 1 ghcr.io/markhuangai/dense-mem:test@sha256:${"1".repeat(64)} /workspace
+`;
+    const scriptPath = join(fixture, "discovery-failure-test.sh");
+    await executable(scriptPath, script);
+    await assert.rejects(
+      run("bash", [scriptPath], { env: { TMPDIR: fixture } }),
+      (error) => {
+        const output = `${error.stdout || ""}${error.stderr || ""}`;
+        assert.match(output, /database case registry is malformed/);
+        assert.match(output, /unable to discover precheck database capabilities/);
+        assert.doesNotMatch(output, /unexpected capability execution/);
+        return true;
+      },
+    );
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("database case fragments drive complete three-way capability selection", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-registry-"));
   try {
