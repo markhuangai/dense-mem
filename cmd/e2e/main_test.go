@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -146,5 +149,67 @@ func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
 	}
 	if _, err := loadCases(root, "precheck", "repository", "", ""); err == nil || !strings.Contains(err.Error(), "has no declaration") {
 		t.Fatalf("loadCases() error = %v, want missing declaration failure", err)
+	}
+}
+
+func TestWave5DatabaseCaseFragmentsPreserveBaselineInventory(t *testing.T) {
+	root, err := repositoryRoot("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "scripts", "e2e-db-cases"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := make([]databaseCase, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		contents, err := os.ReadFile(filepath.Join(root, "scripts", "e2e-db-cases", entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fragment caseFragment
+		if err := json.Unmarshal(contents, &fragment); err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range fragment.Cases {
+			item.Capability = fragment.Capability
+			all = append(all, item)
+		}
+	}
+	seen := make(map[string]bool, len(all))
+	capabilities := make(map[string]int)
+	baseline := make([]string, 0, len(all)-1)
+	for _, item := range all {
+		if seen[item.ID] {
+			t.Fatalf("duplicate database case %s", item.ID)
+		}
+		seen[item.ID] = true
+		capabilities[item.Capability]++
+		if item.ID == "repository/TestRememberFailureArtifactHoldTransactionRollback" && item.Capability != "privacy" {
+			t.Fatalf("rollback case belongs to capability %s, want privacy", item.Capability)
+		}
+		if item.ID != "repository/TestRememberFailureArtifactHoldTransactionRollback" {
+			baseline = append(baseline, strings.Join([]string{item.ID, item.Package, item.Run, item.Phase, item.Scenario, item.Source, item.Capability}, "\t"))
+		}
+	}
+	if len(all) != 379 {
+		t.Fatalf("database case inventory contains %d cases, want 379", len(all))
+	}
+	sort.Strings(baseline)
+	baselineHash := sha256.Sum256([]byte(strings.Join(baseline, "\n") + "\n"))
+	if got := fmt.Sprintf("%x", baselineHash); got != "3b9df32a4596522d6a2bfacfc4028c4acc76527c0d32a3669280e300e78a31c0" {
+		t.Fatalf("baseline database case inventory changed: %s", got)
+	}
+	for capability, want := range map[string]int{
+		"audit": 8, "community": 1, "dream": 33, "graph": 2, "http": 1,
+		"knowledge": 51, "migration": 2, "postgres": 110, "privacy": 20,
+		"repository": 138, "server": 2, "service": 8, "settings": 0, "trace": 3,
+	} {
+		if capabilities[capability] != want {
+			t.Fatalf("capability %s contains %d cases, want %d", capability, capabilities[capability], want)
+		}
 	}
 }

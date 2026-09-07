@@ -129,20 +129,6 @@
       "source": "internal/storage/postgres/hourly_evidence_dreams_migration_integration.e2e"
     },
     {
-      "id": "postgres/TestHypothesisTeamPredicateMigrationRollsBackBeforeTeamOnlyHypothesesExist",
-      "package": "./internal/storage/postgres",
-      "run": "^TestHypothesisTeamPredicateMigrationRollsBackBeforeTeamOnlyHypothesesExist$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/hypothesis_team_predicate_migration_integration.e2e"
-    },
-    {
-      "id": "postgres/TestHypothesisTeamPredicateMigrationScopesForeignKeyByTeam",
-      "package": "./internal/storage/postgres",
-      "run": "^TestHypothesisTeamPredicateMigrationScopesForeignKeyByTeam$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/hypothesis_team_predicate_migration_integration.e2e"
-    },
-    {
       "id": "postgres/TestIdentityBridgeBackfillsStableIDsAndLegacyGovernance",
       "package": "./internal/storage/postgres",
       "run": "^TestIdentityBridgeBackfillsStableIDsAndLegacyGovernance$",
@@ -401,13 +387,6 @@
       "source": "internal/storage/postgres/organization_directory_identity_migration.e2e"
     },
     {
-      "id": "postgres/TestOverdueConflictResolutionMigrationAvoidsLegacySystemProfileNameCollision",
-      "package": "./internal/storage/postgres",
-      "run": "^TestOverdueConflictResolutionMigrationAvoidsLegacySystemProfileNameCollision$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/overdue_conflict_resolution_migration_integration.e2e"
-    },
-    {
       "id": "postgres/TestPostCutoverCleanupMigrationBlocksLegacyAPIKeyWithoutCanonicalTeamProfile",
       "package": "./internal/storage/postgres",
       "run": "^TestPostCutoverCleanupMigrationBlocksLegacyAPIKeyWithoutCanonicalTeamProfile$",
@@ -450,13 +429,6 @@
       "source": "internal/storage/postgres/client.e2e"
     },
     {
-      "id": "postgres/TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows",
-      "package": "./internal/storage/postgres",
-      "run": "^TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/private_memory_audit_migration.e2e"
-    },
-    {
       "id": "postgres/TestReadOnlyRepeatableReadTransactionOptions",
       "package": "./internal/storage/postgres",
       "run": "^TestReadOnlyRepeatableReadTransactionOptions$",
@@ -483,13 +455,6 @@
       "run": "^TestRelationshipTelemetryMigrationRecoversInvalidIndexesAndRollsBack$",
       "phase": "precheck",
       "source": "internal/storage/postgres/relationship_telemetry_migration.e2e"
-    },
-    {
-      "id": "postgres/TestRememberNormalizerMigrationFailsLegacyWorkAndPreservesIndependentWorkflows",
-      "package": "./internal/storage/postgres",
-      "run": "^TestRememberNormalizerMigrationFailsLegacyWorkAndPreservesIndependentWorkflows$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/submission_assessment_migration_integration.e2e"
     },
     {
       "id": "postgres/TestRememberReliabilityMigrationDownRejectsQueuedV26RememberIngest",
@@ -679,34 +644,6 @@
       "run": "^TestSearchStorageMigrationAllowsIndexGenerationLifecycleOnly$",
       "phase": "precheck",
       "source": "internal/storage/postgres/client.e2e"
-    },
-    {
-      "id": "postgres/TestSemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority",
-      "package": "./internal/storage/postgres",
-      "run": "^TestSemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
-    },
-    {
-      "id": "postgres/TestSemanticLedgerMigrationRejectsLegacyDerivedAuthority",
-      "package": "./internal/storage/postgres",
-      "run": "^TestSemanticLedgerMigrationRejectsLegacyDerivedAuthority$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
-    },
-    {
-      "id": "postgres/TestSemanticLedgerMigrationUpgradesPopulated1703",
-      "package": "./internal/storage/postgres",
-      "run": "^TestSemanticLedgerMigrationUpgradesPopulated1703$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/client.e2e"
-    },
-    {
-      "id": "postgres/TestSubmissionAssessmentMigrationReconcilesLegacyRuns",
-      "package": "./internal/storage/postgres",
-      "run": "^TestSubmissionAssessmentMigrationReconcilesLegacyRuns$",
-      "phase": "precheck",
-      "source": "internal/storage/postgres/submission_assessment_migration_integration.e2e"
     },
     {
       "id": "postgres/TestSubmissionDiagnosticsIndexesAreValid",

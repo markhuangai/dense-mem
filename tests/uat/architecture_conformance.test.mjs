@@ -81,6 +81,12 @@ function copyManifestFixture() {
         fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
         fs.copyFileSync(sourcePath, destinationPath);
       }
+      if (bridge.implementation_owner) {
+        const sourcePath = path.join(root, bridge.implementation_owner.path);
+        const destinationPath = path.join(fixtureRoot, bridge.implementation_owner.path);
+        fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+        fs.copyFileSync(sourcePath, destinationPath);
+      }
     }
   }
   return { fixtureRoot, rootManifest };
@@ -88,7 +94,7 @@ function copyManifestFixture() {
 
 test("loads the complete independently owned architecture inventory", () => {
   assert.equal(productionManifest.load_diagnostics.length, 0);
-  assert.equal(productionManifest.fragments.length, 58);
+  assert.equal(productionManifest.fragments.length, 61);
   assert.equal(productionManifest.go.units.length, 64);
   assert.equal(productionManifest.browser.units.length, 40);
   assert.equal(productionManifest.exceptions.length, 25);
@@ -335,6 +341,22 @@ test("rejects bridge consumers whose symbols are absent from the declared file",
     fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
     const loaded = loadManifest(fixtureCopy.fixtureRoot);
     assert.ok(loaded.load_diagnostics.some((item) => item.includes("consumer internal/tools/registry/capability_bindings.go does not define Dependencies.missing")));
+  } finally {
+    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("validates compatibility bridge implementation ownership and removal conditions", () => {
+  const fixtureCopy = copyManifestFixture();
+  try {
+    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/postgres-storage-adapter.json");
+    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
+    fragment.compatibility_bridges[0].implementation_owner.path = "internal/storage/postgres/missing.go";
+    fragment.compatibility_bridges[0].removal_condition = "";
+    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
+    const loaded = loadManifest(fixtureCopy.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("invalid implementation owner")));
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("needs a removal condition")));
   } finally {
     fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
   }

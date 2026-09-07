@@ -2,7 +2,11 @@
   "schema_version": 1,
   "capability": "graph-application",
   "source_ownership": [
-    {"path": "cmd/internal/serverapp/graph_composition.go", "issue": 366}
+    {"path": "cmd/internal/serverapp/graph_composition.go", "issue": 366},
+    {"path": "internal/repository/semantic_graph_repository.go", "issue": 366},
+    {"path": "internal/repository/semantic_graph_repository_test.go", "issue": 366},
+    {"path": "internal/service/graphview/graphview.go", "issue": 366},
+    {"path": "internal/service/graphview/graphview_test.go", "issue": 366}
   ],
   "completed_issues": [],
   "go": {

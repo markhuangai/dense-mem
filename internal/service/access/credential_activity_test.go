@@ -98,6 +98,31 @@ func TestCredentialActivityWriterUsesExplicitBatchPort(t *testing.T) {
 	require.True(t, batch.updates[0].At.Equal(at))
 }
 
+func TestCredentialActivityWriterFlushesThroughSinglePort(t *testing.T) {
+	repo := &activitySingleRepo{}
+	writer := NewCredentialActivityWriter(repo)
+
+	writer.RecordLastUsed(uuid.New(), time.Now().UTC())
+	require.NoError(t, writer.flush(context.Background()))
+	require.Equal(t, 1, repo.updates)
+}
+
+func TestCredentialActivityWriterRunsCanceledContextDeterministically(t *testing.T) {
+	repo := &activityBatchRepo{}
+	writer := NewCredentialActivityWriter(repo)
+	id := uuid.New()
+	writer.RecordLastUsed(id, time.Now().UTC())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	writer.run(ctx)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Len(t, repo.updates, 1)
+	require.Equal(t, id, repo.updates[0].ID)
+}
+
 func TestCredentialActivityWriterFlushesOnContextCancellation(t *testing.T) {
 	repo := &activityBatchRepo{}
 	writer := NewCredentialActivityWriter(repo)

@@ -9,7 +9,21 @@
     {"path": "cmd/internal/serverapp/remember_failure_logging.go", "issue": 372},
     {"path": "cmd/internal/serverapp/remember_failure_artifact.go", "issue": 372},
     {"path": "cmd/internal/serverapp/remember_embedding_helpers.go", "issue": 372},
-    {"path": "cmd/internal/serverapp/security_rejection_audit.go", "issue": 372}
+    {"path": "internal/service/remember/deadlines.go", "issue": 372},
+    {"path": "internal/service/remember/evidence_conversion.go", "issue": 372},
+    {"path": "internal/service/remember/ports.go", "issue": 372},
+    {"path": "internal/service/remember/request_hash.go", "issue": 372},
+    {"path": "internal/service/remember/security_audit.go", "issue": 372},
+    {"path": "internal/service/remember/security_scan.go", "issue": 372},
+    {"path": "internal/service/remember/security_scan_helpers.go", "issue": 372},
+    {"path": "internal/service/remember/security_scan_test.go", "issue": 372},
+    {"path": "internal/service/remember/service.go", "issue": 372},
+    {"path": "internal/service/remember/service_helpers_test.go", "issue": 372},
+    {"path": "internal/service/remember/service_synchronous_test.go", "issue": 372},
+    {"path": "internal/service/remember/status_errors.go", "issue": 372},
+    {"path": "internal/service/remember/status_errors_test.go", "issue": 372},
+    {"path": "internal/service/remember/synchronous_contract.go", "issue": 372},
+    {"path": "internal/service/remember/synchronous_contract_test.go", "issue": 372}
   ],
   "completed_issues": [],
   "go": {

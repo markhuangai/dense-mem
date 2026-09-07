@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "capability": "settings-application",
+  "source_ownership": [
+    {"path": "cmd/internal/serverapp/configuration_composition.go", "issue": 369},
+    {"path": "cmd/internal/serverapp/security_composition.go", "issue": 369},
+    {"path": "internal/repository/app_config_repository.go", "issue": 369},
+    {"path": "internal/repository/security_repository.go", "issue": 369},
+    {"path": "internal/repository/security_repository_test.go", "issue": 369},
+    {"path": "internal/service/app_config_mcp.go", "issue": 369},
+    {"path": "internal/service/app_config_payload.go", "issue": 369},
+    {"path": "internal/service/app_config_recall_feedback.go", "issue": 369},
+    {"path": "internal/service/app_config_retention.go", "issue": 369},
+    {"path": "internal/service/app_config_service.go", "issue": 369},
+    {"path": "internal/service/app_config_service_audit_test.go", "issue": 369},
+    {"path": "internal/service/app_config_service_test.go", "issue": 369},
+    {"path": "internal/service/app_config_telemetry_pricing.go", "issue": 369},
+    {"path": "internal/service/security_service.go", "issue": 369},
+    {"path": "internal/service/security_service_test.go", "issue": 369}
+  ],
+  "completed_issues": [],
+  "go": {"units": []},
+  "browser": {"units": []},
+  "exceptions": [],
+  "workers": []
+}

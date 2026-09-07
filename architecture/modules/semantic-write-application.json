@@ -2,8 +2,210 @@
   "schema_version": 1,
   "capability": "semantic-write-application",
   "source_ownership": [
-    {"path": "cmd/internal/serverapp/semanticwrite_composition.go", "issue": 362},
-    {"path": "cmd/internal/serverapp/semanticwrite_embedding_adapter.go", "issue": 362}
+    {
+      "path": "cmd/internal/serverapp/semanticwrite_composition.go",
+      "issue": 362
+    },
+    {
+      "path": "cmd/internal/serverapp/semanticwrite_embedding_adapter.go",
+      "issue": 362
+    },
+    {
+      "path": "cmd/internal/serverapp/semanticwrite_embedding_adapter_test.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/conflict_derived_evidence_task_repository.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/conflict_overdue_resolution_repository.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/conflict_placement_helpers.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/conflict_resolution_repository.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/evidence_lifecycle_repository.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/evidence_lifecycle_repository_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/evidence_lifecycle_validation_test.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/placement_commit_helpers.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/placement_commit_repository.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/placement_commit_search.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/placement_commit_types.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/relationship_correction_embedding_plan.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/relationship_correction_helpers.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/relationship_correction_inline_embedding.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/relationship_correction_repository.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/relationship_correction_canonical_projection_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/relationship_correction_fence_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/relationship_correction_lock_order_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/relationship_correction_occurrence_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/relationship_identity_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/remember_commit.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/remember_commit_helpers.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/remember_commit_helpers_test.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/remember_embedding_plan.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/remember_result.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/remember_result_test.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/remember_transaction.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/semantic_helpers.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/semantic_lifecycle_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/semantic_observation_helpers.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/semantic_repository.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/semantic_repository_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/semantic_review_catalog_repository_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/semantic_review_regression.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/semantic_space_generation_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/semantic_space_helpers.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/semantic_support_helpers.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/semantic_support_helpers_test.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/submission_assessment_commit_repository.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/submission_assessment_inline_embedding.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/submission_assessment_known_evidence_fence.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/submission_assessment_known_evidence_repository.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/submission_assessment_catalog_repository_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/submission_assessment_known_evidence_repository_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/submission_assessment_types.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/submission_relationship_result_repository.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/service/semanticwrite/executor.go",
+      "issue": 362
+    },
+    {
+      "path": "internal/service/semanticwrite/executor_test.go",
+      "issue": 362
+    }
   ],
   "completed_issues": [],
   "go": {

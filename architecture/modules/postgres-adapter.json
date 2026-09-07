@@ -1,6 +1,10 @@
 {
   "schema_version": 1,
   "capability": "postgres-adapter",
+  "source_ownership": [
+    {"path": "internal/storage/postgres/remember_artifact_hold.go", "issue": 389},
+    {"path": "internal/storage/postgres/remember_artifact_hold_test.go", "issue": 389}
+  ],
   "completed_issues": [],
   "go": {
     "units": [

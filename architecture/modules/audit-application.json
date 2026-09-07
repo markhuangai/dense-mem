@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "capability": "audit-application",
+  "source_ownership": [
+    {"path": "cmd/internal/serverapp/audit_composition.go", "issue": 368},
+    {"path": "cmd/internal/serverapp/security_rejection_audit.go", "issue": 368},
+    {"path": "cmd/internal/serverapp/security_rejection_audit_test.go", "issue": 368},
+    {"path": "internal/service/audit_service.e2e", "issue": 368},
+    {"path": "internal/service/audit_service.go", "issue": 368},
+    {"path": "internal/service/audit_service_unit_test.go", "issue": 368}
+  ],
+  "completed_issues": [],
+  "go": {"units": []},
+  "browser": {"units": []},
+  "exceptions": [
+    {
+      "source_path": "internal/service/audit_service.go",
+      "source": "github.com/markhuangai/dense-mem/internal/service",
+      "target": "github.com/markhuangai/dense-mem/internal/storage/postgres",
+      "removal_issue": 368,
+      "reason": "The operations audit service still uses PostgreSQL directly until operations ownership is isolated."
+    }
+  ],
+  "workers": []
+}

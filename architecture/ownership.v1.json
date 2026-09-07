@@ -76,6 +76,7 @@
   },
   "fragments": [
     "architecture/modules/access-application.json",
+    "architecture/modules/audit-application.json",
     "architecture/modules/application-services.json",
     "architecture/modules/architecture.json",
     "architecture/modules/classification-policy.json",
@@ -112,6 +113,7 @@
     "architecture/modules/postgres-graph-read.json",
     "architecture/modules/postgres-lock-admission.json",
     "architecture/modules/postgres-storage-adapter.json",
+    "architecture/modules/privacy-application.json",
     "architecture/modules/process-coordination-adapter.json",
     "architecture/modules/prompt-policy.json",
     "architecture/modules/recall-quality-policy.json",
@@ -125,6 +127,7 @@
     "architecture/modules/semantic-write-application.json",
     "architecture/modules/semanticwrite-contract.json",
     "architecture/modules/server-composition.json",
+    "architecture/modules/settings-application.json",
     "architecture/modules/shared-domain.json",
     "architecture/modules/skill-pack-application.json",
     "architecture/modules/sse-transport.json",

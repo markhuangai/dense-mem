@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "capability": "graph",
+  "cases": [
+    {
+      "id": "repository/TestSemanticGraphLocalDepthDefaultsToTwoAndCapsAtFive",
+      "package": "./internal/repository",
+      "run": "^TestSemanticGraphLocalDepthDefaultsToTwoAndCapsAtFive$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_trace_graph_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticGraphReadsEntityValueEdgesAndNodeDetail",
+      "package": "./internal/repository",
+      "run": "^TestSemanticGraphReadsEntityValueEdgesAndNodeDetail$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_trace_graph_integration.e2e"
+    }
+  ]
+}

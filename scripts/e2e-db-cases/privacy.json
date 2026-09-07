@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "capability": "privacy",
+  "cases": [
+    {
+      "id": "repository/TestRememberFailureArtifactHoldTransactionRollback",
+      "package": "./internal/repository",
+      "run": "^TestRememberFailureArtifactHoldTransactionRollback$",
+      "phase": "precheck",
+      "source": "internal/repository/remember_artifact_hold_rollback_integration.e2e"
+    },
+    {
+      "id": "postgres/TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows",
+      "package": "./internal/storage/postgres",
+      "run": "^TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/private_memory_audit_migration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryCorrectionStatusHidesSealedGeneration",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryCorrectionStatusHidesSealedGeneration$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryCredentialErasureIsHeldIdempotentAndExact$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryCredentialRetirementUpgradesActiveErasure",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryCredentialRetirementUpgradesActiveErasure$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_credential_retirement_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryErasureCleansPrivateSemanticDecisionLineage$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_semantic_lineage_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_remember_assessment_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryErasureRemovesInboundCrossSpaceReferences$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryExpiredLeaseIsReclaimedWithNewFence",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryExpiredLeaseIsReclaimedWithNewFence$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryFailureRetriesAreBackedOffAndBounded",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryFailureRetriesAreBackedOffAndBounded$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryGenerationTriggerAllowsAuthenticatedSharedWrites",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryGenerationTriggerAllowsAuthenticatedSharedWrites$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryIdempotencyConcurrentReplay",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryIdempotencyConcurrentReplay$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryManifestMatchesCatalog",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryManifestMatchesCatalog$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryManifestMismatchBlocksPrepare",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryManifestMismatchBlocksPrepare$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryMissingRetiredCredentialLosesClaim",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryMissingRetiredCredentialLosesClaim$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemoryRetentionSelectsExpiredSpacesAndExcludesLegalHolds",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemoryRetentionSelectsExpiredSpacesAndExcludesLegalHolds$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemorySSOCredentialDeletePreservesSharedActorMembership$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemorySSOCredentialDeleteRetiresOnlyCredentialPrivateSpace$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_audit_integration.e2e"
+    },
+    {
+      "id": "repository/TestPrivateMemorySSOCredentialRevocationAuditStoresProfileAndCredentialActors",
+      "package": "./internal/repository",
+      "run": "^TestPrivateMemorySSOCredentialRevocationAuditStoresProfileAndCredentialActors$",
+      "phase": "precheck",
+      "source": "internal/repository/private_memory_audit_integration.e2e"
+    }
+  ]
+}

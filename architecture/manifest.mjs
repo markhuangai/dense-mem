@@ -94,10 +94,10 @@ const requiredSourceOwnership = Object.freeze([
   ["cmd/demo-server/main.go", "demo-composition", 381],
   ["cmd/internal/serverapp/access_composition.go", "access-application", 370],
   ["cmd/internal/serverapp/access_adapters.go", "access-application", 370],
-  ["cmd/internal/serverapp/private_memory.go", "application-services", 364],
-  ["cmd/internal/serverapp/audit_composition.go", "application-services", 368],
-  ["cmd/internal/serverapp/configuration_composition.go", "application-services", 369],
-  ["cmd/internal/serverapp/security_composition.go", "application-services", 369],
+  ["cmd/internal/serverapp/private_memory.go", "privacy-application", 364],
+  ["cmd/internal/serverapp/audit_composition.go", "audit-application", 368],
+  ["cmd/internal/serverapp/configuration_composition.go", "settings-application", 369],
+  ["cmd/internal/serverapp/security_composition.go", "settings-application", 369],
   ["cmd/internal/serverapp/operation_log_composition.go", "application-services", 371],
   ["cmd/internal/serverapp/usage_metrics_composition.go", "application-services", 371],
   ["cmd/internal/serverapp/telemetry_composition.go", "application-services", 371],
@@ -114,7 +114,7 @@ const requiredSourceOwnership = Object.freeze([
   ["cmd/internal/serverapp/remember_failure_logging.go", "remember-application", 372],
   ["cmd/internal/serverapp/remember_failure_artifact.go", "remember-application", 372],
   ["cmd/internal/serverapp/remember_embedding_helpers.go", "remember-application", 372],
-  ["cmd/internal/serverapp/security_rejection_audit.go", "remember-application", 372],
+  ["cmd/internal/serverapp/security_rejection_audit.go", "audit-application", 368],
   ["cmd/internal/serverapp/remember_composition.go", "remember-application", 372],
   ["internal/tools/registry/remember_bindings.go", "remember-application", 372],
   ["cmd/internal/serverapp/dream_composition.go", "dream-application", 365],
@@ -501,6 +501,20 @@ function validateFragmentShape(fragment, relativePath, root, diagnostics) {
       }
       if (!isIssueNumber(bridge.removal_issue)) {
         diagnostics.push(diagnostic("invalid-fragment", `${relativePath} compatibility bridge ${bridge.source_path} needs a positive removal issue`));
+      }
+      if (bridge.implementation_owner !== undefined) {
+        if (!bridge.implementation_owner || typeof bridge.implementation_owner !== "object"
+          || !isSafeSourcePath(root, bridge.implementation_owner.path)
+          || typeof bridge.implementation_owner.symbol !== "string"
+          || bridge.implementation_owner.symbol.length === 0
+          || hasWildcard(bridge.implementation_owner.symbol)
+          || !sourceDefinesGoSymbol(root, bridge.implementation_owner)) {
+          diagnostics.push(diagnostic("invalid-fragment", `${relativePath} compatibility bridge ${bridge.source_path} has an invalid implementation owner`));
+        }
+      }
+      if (bridge.removal_condition !== undefined
+        && (typeof bridge.removal_condition !== "string" || bridge.removal_condition.trim().length === 0)) {
+        diagnostics.push(diagnostic("invalid-fragment", `${relativePath} compatibility bridge ${bridge.source_path} needs a removal condition`));
       }
     }
   }

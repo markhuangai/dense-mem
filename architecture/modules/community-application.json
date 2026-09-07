@@ -2,7 +2,23 @@
   "schema_version": 1,
   "capability": "community-application",
   "source_ownership": [
-    {"path": "cmd/internal/serverapp/community_composition.go", "issue": 367}
+    {"path": "cmd/internal/serverapp/community_composition.go", "issue": 367},
+    {"path": "internal/community/detector.go", "issue": 367},
+    {"path": "internal/community/detector_test.go", "issue": 367},
+    {"path": "internal/repository/community_discovery_repository.go", "issue": 367},
+    {"path": "internal/repository/community_recall_coverage_repository.go", "issue": 367},
+    {"path": "internal/repository/community_recall_repository.go", "issue": 367},
+    {"path": "internal/repository/community_repository.go", "issue": 367},
+    {"path": "internal/repository/community_repository_helpers.go", "issue": 367},
+    {"path": "internal/repository/community_repository_integration.e2e", "issue": 367},
+    {"path": "internal/repository/community_repository_read_helpers.go", "issue": 367},
+    {"path": "internal/repository/community_repository_write_helpers.go", "issue": 367},
+    {"path": "internal/repository/community_summary_repository.go", "issue": 367},
+    {"path": "internal/service/communityservice/scheduler.go", "issue": 367},
+    {"path": "internal/service/communityservice/scheduler_test.go", "issue": 367},
+    {"path": "internal/service/communityservice/service.go", "issue": 367},
+    {"path": "internal/service/communityservice/service_test.go", "issue": 367},
+    {"path": "internal/service/communityservice/types.go", "issue": 367}
   ],
   "completed_issues": [],
   "go": {

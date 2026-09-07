@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "capability": "trace",
+  "cases": [
+    {
+      "id": "repository/TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams",
+      "package": "./internal/repository",
+      "run": "^TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_trace_graph_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph",
+      "package": "./internal/repository",
+      "run": "^TestSemanticTraceRelationshipHydratesLineageAndBoundedGraph$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_trace_graph_integration.e2e"
+    },
+    {
+      "id": "repository/TestTraceRelationshipMarksLifecycleEventLimitAsTruncated",
+      "package": "./internal/repository",
+      "run": "^TestTraceRelationshipMarksLifecycleEventLimitAsTruncated$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_lifecycle_repository_integration.e2e"
+    }
+  ]
+}
