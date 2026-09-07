@@ -450,8 +450,7 @@ NODE
     "DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1" \
     "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
     go -C cmd/e2e run . --root /workspace \
-      --phase scenario --scenario synchronous_write_primitives \
-      --capability repository,service,server --timeout 20m --total-timeout 25m
+      --phase scenario --scenario synchronous_write_primitives --timeout 20m --total-timeout 25m
 }
 
 run_mcp_sdk_parity_driver() {

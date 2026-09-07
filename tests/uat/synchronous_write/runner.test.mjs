@@ -147,7 +147,8 @@ test("synchronous-write provider remains a project-scoped Compose helper", async
   assert.match(stack, /DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS/);
   assert.match(controller, /go -C cmd\/e2e run \. --root \/workspace/);
   assert.match(stack, /--scenario synchronous_write_primitives/);
-  assert.match(stack, /--capability repository,service,server/);
+  assert.doesNotMatch(stack, /--capability repository,service,server/);
+  assert.match(stack, /--scenario synchronous_write_primitives --timeout 20m --total-timeout 25m/);
   assert.match(processor, /func TestRememberServiceRejectsHistoricalOutcomesThroughPostgres/);
 });
 

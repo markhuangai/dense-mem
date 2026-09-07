@@ -126,6 +126,13 @@ func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
 	if len(cases) != 1 || cases[0].ID != "repository/TestRegistered" {
 		t.Fatalf("loadCases() = %+v", cases)
 	}
+	allCases, err := loadCases(root, "precheck", "", "", "")
+	if err != nil {
+		t.Fatalf("loadCases() without capability filter error = %v", err)
+	}
+	if len(allCases) != 2 || allCases[0].Capability != "postgres" || allCases[1].Capability != "repository" {
+		t.Fatalf("unfiltered loadCases() = %+v, want deterministic capability ownership", allCases)
+	}
 
 	if err := os.WriteFile(source, []byte("package sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestUnregistered(t *testing.T) {}\n"), 0o600); err != nil {
 		t.Fatal(err)

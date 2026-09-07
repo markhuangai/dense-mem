@@ -178,7 +178,7 @@ NODE
     "DATABASE_URL=${database_url}" \
     "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
     go -C cmd/e2e run . --root /workspace \
-      --phase scenario --scenario identity_cleanup --capability postgres \
+      --phase scenario --scenario identity_cleanup \
       --timeout 20m --total-timeout 25m >&2
 
   local identity_file="${DENSE_MEM_CI_HELPER_DIR}/identity.env"

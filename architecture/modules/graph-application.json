@@ -1,6 +1,9 @@
 {
   "schema_version": 1,
   "capability": "graph-application",
+  "source_ownership": [
+    {"path": "cmd/internal/serverapp/graph_composition.go", "issue": 366}
+  ],
   "completed_issues": [],
   "go": {
     "units": [

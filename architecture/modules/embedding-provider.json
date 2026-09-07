@@ -1,6 +1,10 @@
 {
   "schema_version": 1,
   "capability": "embedding-provider",
+  "source_ownership": [
+    {"path": "cmd/internal/serverapp/search_composition.go", "issue": 373},
+    {"path": "cmd/internal/serverapp/search_background.go", "issue": 373}
+  ],
   "completed_issues": [],
   "go": {
     "units": [
@@ -15,5 +19,14 @@
     "units": []
   },
   "exceptions": [],
-  "workers": []
+  "workers": [
+    {
+      "path": "cmd/internal/serverapp/search_background.go",
+      "function": "startSearchReconciliation",
+      "kind": "run",
+      "ordinal": 1,
+      "role": "worker",
+      "lifecycle_issue": 381
+    }
+  ]
 }

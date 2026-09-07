@@ -64,6 +64,76 @@ function hasWildcard(value) {
   return typeof value === "string" && /[*?]/u.test(value);
 }
 
+const requiredSourceOwnership = Object.freeze([
+  ["cmd/internal/serverapp/application_composition.go", "server-composition", 381],
+  ["cmd/internal/serverapp/server.go", "server-composition", 381],
+  ["cmd/server/main.go", "server-composition", 381],
+  ["cmd/demo-server/main.go", "demo-composition", 381],
+  ["cmd/internal/serverapp/access_composition.go", "access-application", 370],
+  ["cmd/internal/serverapp/access_adapters.go", "access-application", 370],
+  ["cmd/internal/serverapp/private_memory.go", "application-services", 364],
+  ["cmd/internal/serverapp/audit_composition.go", "application-services", 368],
+  ["cmd/internal/serverapp/configuration_composition.go", "application-services", 369],
+  ["cmd/internal/serverapp/security_composition.go", "application-services", 369],
+  ["cmd/internal/serverapp/operation_log_composition.go", "application-services", 371],
+  ["cmd/internal/serverapp/usage_metrics_composition.go", "application-services", 371],
+  ["cmd/internal/serverapp/telemetry_composition.go", "application-services", 371],
+  ["cmd/internal/serverapp/semanticwrite_composition.go", "semantic-write-application", 362],
+  ["cmd/internal/serverapp/semanticwrite_embedding_adapter.go", "semantic-write-application", 362],
+  ["cmd/internal/serverapp/telemetry_features.go", "application-services", 371],
+  ["cmd/internal/serverapp/search_composition.go", "embedding-provider", 373],
+  ["cmd/internal/serverapp/search_background.go", "embedding-provider", 373],
+  ["cmd/internal/serverapp/conflict_queue_composition.go", "conflict-application", 377],
+  ["cmd/internal/serverapp/evidence_conflict_composition.go", "evidence-conflict-application", 377],
+  ["cmd/internal/serverapp/conflict_review_composition.go", "conflict-review-application", 377],
+  ["cmd/internal/serverapp/remember_processor.go", "remember-application", 372],
+  ["cmd/internal/serverapp/remember_replay.go", "remember-application", 372],
+  ["cmd/internal/serverapp/remember_failure_logging.go", "remember-application", 372],
+  ["cmd/internal/serverapp/remember_failure_artifact.go", "remember-application", 372],
+  ["cmd/internal/serverapp/remember_embedding_helpers.go", "remember-application", 372],
+  ["cmd/internal/serverapp/security_rejection_audit.go", "remember-application", 372],
+  ["cmd/internal/serverapp/remember_composition.go", "remember-application", 372],
+  ["internal/tools/registry/remember_bindings.go", "remember-application", 372],
+  ["cmd/internal/serverapp/dream_composition.go", "dream-application", 365],
+  ["internal/tools/registry/dream_bindings.go", "dream-application", 365],
+  ["cmd/internal/serverapp/trace_composition.go", "context-application", 363],
+  ["internal/tools/registry/trace_bindings.go", "context-application", 363],
+  ["cmd/internal/serverapp/graph_composition.go", "graph-application", 366],
+  ["cmd/internal/serverapp/community_composition.go", "community-application", 367],
+  ["cmd/internal/serverapp/recall_composition.go", "memory-application", 376],
+  ["cmd/internal/serverapp/lifecycle_composition.go", "memory-application", 374],
+  ["cmd/internal/serverapp/recall_feedback_composition.go", "memory-application", 376],
+  ["internal/tools/registry/recall_bindings.go", "memory-application", 376],
+  ["internal/tools/registry/lifecycle_bindings.go", "memory-application", 374],
+  ["cmd/internal/serverapp/memorypack_composition.go", "skill-pack-application", 375],
+  ["internal/tools/registry/memory_pack_bindings.go", "skill-pack-application", 375],
+  ["internal/tools/registry/capability_bindings.go", "tool-registry-application-api", 380],
+  ["internal/tools/registry/tool_bindings.go", "tool-registry-application-api", 380],
+  ["internal/tools/registry/toolset.go", "tool-registry-application-api", 380],
+  ["internal/tools/registry/contract.go", "tool-registry-application-api", 380],
+  ["internal/tools/registry/evaluation_bindings.go", "offline-evaluation", 378],
+  ["internal/http/mcp_bindings.go", "http-transport", 379],
+  ["internal/http/user_portal_bindings.go", "http-transport", 379],
+  ["internal/http/control_portal_bindings.go", "http-transport", 379],
+  ["internal/http/router_protected.go", "http-transport", 379],
+  ["internal/http/user_portal.go", "http-transport", 379],
+  ["internal/http/control_portal.go", "http-transport", 379],
+  ["internal/http/server.go", "http-transport", 379],
+]);
+
+function isSafeSourcePath(root, value) {
+  if (typeof value !== "string" || value.length === 0 || value.startsWith("/") || hasWildcard(value)) {
+    return false;
+  }
+  const segments = value.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    return false;
+  }
+  const absolute = path.resolve(root, value);
+  const relative = path.relative(root, absolute);
+  return relative === value && fs.existsSync(absolute) && fs.statSync(absolute).isFile();
+}
+
 function isIssueNumber(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
@@ -341,7 +411,7 @@ function fragmentPathIsSafe(root, value) {
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative) && !relative.includes(path.sep);
 }
 
-function validateFragmentShape(fragment, relativePath, diagnostics) {
+function validateFragmentShape(fragment, relativePath, root, diagnostics) {
   if (!fragment || typeof fragment !== "object") {
     diagnostics.push(diagnostic("invalid-fragment", `${relativePath} must contain an object`));
     return;
@@ -371,6 +441,43 @@ function validateFragmentShape(fragment, relativePath, diagnostics) {
   for (const kind of ["go", "browser"]) {
     if (!fragment[kind] || typeof fragment[kind] !== "object" || !Array.isArray(fragment[kind].units)) {
       diagnostics.push(diagnostic("invalid-fragment", `${relativePath}.${kind}.units must be an array`));
+    }
+  }
+  if (fragment.source_ownership !== undefined && !Array.isArray(fragment.source_ownership)) {
+    diagnostics.push(diagnostic("invalid-fragment", `${relativePath}.source_ownership must be an array`));
+  } else {
+    for (const ownership of fragment.source_ownership ?? []) {
+      if (!ownership || typeof ownership !== "object" || !isSafeSourcePath(root, ownership.path)) {
+        diagnostics.push(diagnostic("invalid-fragment", `${relativePath} source ownership must name an exact existing source file`));
+        continue;
+      }
+      if (!isIssueNumber(ownership.issue)) {
+        diagnostics.push(diagnostic("invalid-fragment", `${relativePath} source ownership ${ownership.path} needs a positive issue`));
+      }
+    }
+  }
+  if (fragment.compatibility_bridges !== undefined && !Array.isArray(fragment.compatibility_bridges)) {
+    diagnostics.push(diagnostic("invalid-fragment", `${relativePath}.compatibility_bridges must be an array`));
+  } else {
+    for (const bridge of fragment.compatibility_bridges ?? []) {
+      if (!bridge || typeof bridge !== "object" || !isSafeSourcePath(root, bridge.source_path)) {
+        diagnostics.push(diagnostic("invalid-fragment", `${relativePath} compatibility bridge must name an exact source file`));
+        continue;
+      }
+      if (!Array.isArray(bridge.fields) || bridge.fields.length === 0 || bridge.fields.some((field) => typeof field !== "string" || field.length === 0 || hasWildcard(field))) {
+        diagnostics.push(diagnostic("invalid-fragment", `${relativePath} compatibility bridge ${bridge.source_path} needs exact fields`));
+      }
+      if (!Array.isArray(bridge.consumers) || bridge.consumers.length === 0 || bridge.consumers.some((consumer) => !consumer || typeof consumer !== "object" || !isSafeSourcePath(root, consumer.path) || typeof consumer.symbol !== "string" || consumer.symbol.length === 0 || hasWildcard(consumer.symbol))) {
+        diagnostics.push(diagnostic("invalid-fragment", `${relativePath} compatibility bridge ${bridge.source_path} needs exact consumer package/symbol records`));
+      }
+      if (!isIssueNumber(bridge.removal_issue)) {
+        diagnostics.push(diagnostic("invalid-fragment", `${relativePath} compatibility bridge ${bridge.source_path} needs a positive removal issue`));
+      }
+    }
+  }
+  for (const exception of Array.isArray(fragment.exceptions) ? fragment.exceptions : []) {
+    if (exception?.source_path !== undefined && !isSafeSourcePath(root, exception.source_path)) {
+      diagnostics.push(diagnostic("invalid-fragment", `${relativePath} exception source_path must name an exact existing source file`));
     }
   }
 }
@@ -467,6 +574,8 @@ export function loadManifest(root, manifestPath = path.join(root, "architecture"
   const browserUnits = [];
   const exceptions = [];
   const workers = [];
+  const sourceOwnership = [];
+  const compatibilityBridges = [];
   const fragmentRecords = [];
   const fragmentCapabilities = new Map();
   for (const ref of normalizedRefs) {
@@ -478,7 +587,7 @@ export function loadManifest(root, manifestPath = path.join(root, "architecture"
       diagnostics.push(diagnostic("invalid-fragment", `cannot read ${ref}: ${error.message}`));
       continue;
     }
-    validateFragmentShape(fragment, ref, diagnostics);
+    validateFragmentShape(fragment, ref, root, diagnostics);
     if (!fragment || typeof fragment !== "object") continue;
     if (Object.prototype.hasOwnProperty.call(fragment, "enforced_through_issue")) {
       diagnostics.push(diagnostic("invalid-fragment", `${ref} uses obsolete enforced_through_issue; move completion records to completed_issues`));
@@ -503,6 +612,8 @@ export function loadManifest(root, manifestPath = path.join(root, "architecture"
       browserUnits: Array.isArray(fragment.browser?.units) ? fragment.browser.units : [],
       exceptions: Array.isArray(fragment.exceptions) ? fragment.exceptions : [],
       workers: Array.isArray(fragment.workers) ? fragment.workers : [],
+      sourceOwnership: Array.isArray(fragment.source_ownership) ? fragment.source_ownership : [],
+      compatibilityBridges: Array.isArray(fragment.compatibility_bridges) ? fragment.compatibility_bridges : [],
     });
     for (const issue of Array.isArray(fragment.completed_issues) ? fragment.completed_issues : []) completedIssues.push(issue);
     for (const unit of Array.isArray(fragment.go?.units) ? fragment.go.units : []) {
@@ -519,6 +630,12 @@ export function loadManifest(root, manifestPath = path.join(root, "architecture"
     }
     for (const exception of Array.isArray(fragment.exceptions) ? fragment.exceptions : []) exceptions.push(exception);
     for (const worker of Array.isArray(fragment.workers) ? fragment.workers : []) workers.push(worker);
+    for (const ownership of Array.isArray(fragment.source_ownership) ? fragment.source_ownership : []) {
+      sourceOwnership.push({ ...ownership, capability, fragment: ref });
+    }
+    for (const bridge of Array.isArray(fragment.compatibility_bridges) ? fragment.compatibility_bridges : []) {
+      compatibilityBridges.push({ ...bridge, capability, fragment: ref });
+    }
   }
 
   const goOwners = new Map();
@@ -545,14 +662,67 @@ export function loadManifest(root, manifestPath = path.join(root, "architecture"
       }
     }
   }
+  const sourceOwners = new Map();
+  for (const ownership of sourceOwnership) {
+    const previous = sourceOwners.get(ownership.path);
+    if (previous) {
+      diagnostics.push(diagnostic("duplicate-fragment", `source ${ownership.path} is owned by both ${previous.fragment} and ${ownership.fragment}`));
+    } else {
+      sourceOwners.set(ownership.path, ownership);
+    }
+  }
+  const bridgeSources = new Set();
+  for (const bridge of compatibilityBridges) {
+    if (bridgeSources.has(bridge.source_path)) {
+      diagnostics.push(diagnostic("duplicate-fragment", `compatibility bridge ${bridge.source_path} is repeated`));
+    }
+    bridgeSources.add(bridge.source_path);
+    const owner = sourceOwners.get(bridge.source_path);
+    if (!owner) {
+      diagnostics.push(diagnostic("invalid-fragment", `${bridge.fragment} compatibility bridge ${bridge.source_path} has no source ownership record`));
+    } else if (owner.fragment !== bridge.fragment) {
+      diagnostics.push(diagnostic("invalid-fragment", `${bridge.fragment} compatibility bridge ${bridge.source_path} must be owned by ${owner.fragment}`));
+    }
+    if (completedIssues.includes(bridge.removal_issue)) {
+      diagnostics.push(diagnostic("expired", `compatibility bridge ${bridge.source_path} is owned by completed issue ${bridge.removal_issue}`));
+    }
+  }
+  for (const [sourcePath, capability, issue] of requiredSourceOwnership) {
+    const ownership = sourceOwners.get(sourcePath);
+    if (!ownership) {
+      diagnostics.push(diagnostic("missing-source-ownership", `source ${sourcePath} must have an ownership record`));
+      continue;
+    }
+    if (ownership.capability !== capability || ownership.issue !== issue) {
+      diagnostics.push(diagnostic("invalid-source-ownership", `source ${sourcePath} must be owned by ${capability} issue ${issue}`));
+    }
+  }
   const workerPackage = (worker) => {
     if (typeof rootManifest.module !== "string" || typeof worker?.path !== "string") return null;
     const directory = path.posix.dirname(worker.path);
     if (directory === "." || directory.split("/").some((segment) => segment === "." || segment === ".." || segment.length === 0)) return null;
     return `${rootManifest.module}/${directory}`;
   };
+  const sourcePackage = (sourcePath) => {
+    if (typeof rootManifest.module !== "string" || typeof sourcePath !== "string") return null;
+    const directory = path.posix.dirname(sourcePath);
+    if (directory === "." || directory.split("/").some((segment) => segment === "." || segment === ".." || segment.length === 0)) return null;
+    return `${rootManifest.module}/${directory}`;
+  };
   for (const record of fragmentRecords) {
     for (const exception of record.exceptions) {
+      if (exception?.source_path !== undefined) {
+        const ownedSource = sourceOwners.get(exception.source_path);
+        if (!ownedSource) {
+          diagnostics.push(diagnostic("invalid-fragment", `${record.ref} exception ${exception.source_path} has no source ownership record`));
+        } else if (ownedSource.fragment !== record.ref) {
+          diagnostics.push(diagnostic("invalid-fragment", `${record.ref} exception ${exception.source_path} must be owned by ${ownedSource.fragment}`));
+        }
+        if (sourcePackage(exception.source_path) !== exception?.source) {
+          diagnostics.push(diagnostic("invalid-fragment", `${record.ref} exception ${exception.source_path} does not belong to ${exception?.source}`));
+        }
+        continue;
+      }
       const owner = goOwners.get(exception?.source);
       if (owner && owner !== record) {
         diagnostics.push(diagnostic("invalid-fragment", `${record.ref} exception ${exception.source} must be owned by ${owner.ref}`));
@@ -561,6 +731,13 @@ export function loadManifest(root, manifestPath = path.join(root, "architecture"
     for (const worker of record.workers) {
       const packagePath = workerPackage(worker);
       if (!packagePath || typeof worker?.function !== "string" || worker.function.length === 0) continue;
+      const ownedSource = sourceOwners.get(worker.path);
+      if (ownedSource) {
+        if (ownedSource.fragment !== record.ref) {
+          diagnostics.push(diagnostic("invalid-fragment", `${record.ref} worker ${worker.path} must be owned by ${ownedSource.fragment}`));
+        }
+        continue;
+      }
       const owner = goOwners.get(packagePath);
       if (!owner) {
         diagnostics.push(diagnostic("invalid-fragment", `${record.ref} worker ${worker.path} has no owned Go package`));
@@ -586,6 +763,8 @@ export function loadManifest(root, manifestPath = path.join(root, "architecture"
     },
     exceptions,
     workers,
+    source_ownership: sourceOwnership,
+    compatibility_bridges: compatibilityBridges,
     fragments: normalizedRefs,
     load_diagnostics: diagnostics,
   };

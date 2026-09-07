@@ -16,6 +16,7 @@ import (
 // This struct collects all the middleware and service dependencies required
 // for the protected MCP routes.
 type ProtectedDeps struct {
+	MCP MCPBindings
 	// CredentialRepo is the API key repository for authentication.
 	CredentialRepo repository.CredentialRepository
 	// TeamSvc resolves the authenticated team.
@@ -106,6 +107,7 @@ func (d *ProtectedDeps) GetPostAuthMiddleware() []echo.MiddlewareFunc {
 // middleware chain required for authentication, team authorization, rate
 // limiting, route-specific validation, and handler execution.
 func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handlers ProtectedHandlers) {
+	deps = deps.withMCPBindings()
 	// Create team authorization service from audit service.
 	teamAuthzSvc := middleware.NewTeamAuthorizationService(deps.AuditService)
 	credentialAuthMW := middleware.AuthMiddlewareWithOptions(deps.CredentialRepo, deps.AuditService, deps.SecurityService, middleware.AuthOptions{

@@ -18,20 +18,30 @@ import (
 
 // Dependencies is the wiring bundle used to construct the active tool catalog.
 type Dependencies struct {
+	Core               CoreDependencies
+	RememberBindings   RememberBindings
+	RecallBindings     RecallBindings
+	LifecycleBindings  LifecycleBindings
+	TraceBindings      TraceBindings
+	DreamBindings      DreamBindings
+	MemoryPackBindings MemoryPackBindings
+	EvaluationBindings EvaluationBindings
+
 	Metrics observability.DiscoverabilityMetrics
 
 	RecallFeedbackConfig RecallFeedbackConfigProvider
 	RecallFeedbackEvents RecallFeedbackEventRecorder
 	EvaluationAudit      EvaluationAuditAppender
 
-	Context     contextservice.Service
-	Remember    memoryservice.RememberService
-	Recall      memoryservice.RecallService
-	Lifecycle   memoryservice.LifecycleService
-	Evaluation  repository.EvaluationRepository
-	Communities repository.CommunityRepository
-	MemoryPack  skillpackservice.MemoryPackService
-	Dreams      dreamservice.Service
+	Context        contextservice.Service
+	Remember       memoryservice.RememberService
+	Recall         memoryservice.RecallService
+	Lifecycle      memoryservice.LifecycleService
+	RecallDreaming DreamingConfigProvider
+	Evaluation     repository.EvaluationRepository
+	Communities    repository.CommunityRepository
+	MemoryPack     skillpackservice.MemoryPackService
+	Dreams         dreamservice.Service
 }
 type RecallFeedbackEventRecorder interface {
 	RecordRecallSnapshot(ctx context.Context, event domain.RecallFeedbackEvent) error
@@ -49,6 +59,7 @@ var ErrToolUnavailable = errors.New("tool not available (dependency missing or n
 
 // BuildActive wires the PostgreSQL-authoritative production registry.
 func BuildActive(deps Dependencies) (Registry, error) {
+	deps = deps.withCapabilityBindings()
 	r := New()
 	tools := append(contractTools(deps), evaluationTools(deps)...)
 	for _, t := range tools {

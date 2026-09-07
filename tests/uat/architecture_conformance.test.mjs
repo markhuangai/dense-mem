@@ -64,7 +64,16 @@ function copyManifestFixture() {
   const rootManifest = JSON.parse(fs.readFileSync(path.join(root, "architecture/ownership.v1.json"), "utf8"));
   fs.writeFileSync(path.join(fixtureRoot, "architecture/ownership.v1.json"), JSON.stringify(rootManifest, null, 2));
   for (const reference of rootManifest.fragments) {
-    fs.copyFileSync(path.join(root, reference), path.join(fixtureRoot, reference));
+    const source = path.join(root, reference);
+    const destination = path.join(fixtureRoot, reference);
+    fs.copyFileSync(source, destination);
+    const fragment = JSON.parse(fs.readFileSync(source, "utf8"));
+    for (const ownership of fragment.source_ownership ?? []) {
+      const sourcePath = path.join(root, ownership.path);
+      const destinationPath = path.join(fixtureRoot, ownership.path);
+      fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+      fs.copyFileSync(sourcePath, destinationPath);
+    }
   }
   return { fixtureRoot, rootManifest };
 }
@@ -245,6 +254,65 @@ test("rejects central manifest fields inside capability fragments", () => {
     ]) {
       assert.ok(loaded.load_diagnostics.some((item) => item.includes(`central field ${field}`)));
     }
+  } finally {
+    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("validates exact capability source ownership", () => {
+  const fixtureCopy = copyManifestFixture();
+  try {
+    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/server-composition.json");
+    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
+    fragment.source_ownership.push({ path: "cmd/internal/serverapp/server.go", issue: 361 });
+    fragment.source_ownership.push({ path: "cmd/internal/serverapp/missing.go", issue: 361 });
+    fragment.source_ownership.push({ path: "cmd/internal/serverapp/*.go", issue: 361 });
+    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
+    const loaded = loadManifest(fixtureCopy.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("source cmd/internal/serverapp/server.go is owned by both")));
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("source ownership must name an exact existing source file")));
+  } finally {
+    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("requires every partitioned composition and binding source to be owned", () => {
+  const fixtureCopy = copyManifestFixture();
+  try {
+    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/remember-application.json");
+    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
+    fragment.source_ownership = fragment.source_ownership.filter((entry) => !entry.path.endsWith("remember_bindings.go"));
+    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
+    const loaded = loadManifest(fixtureCopy.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("missing-source-ownership:") && item.includes("remember_bindings.go")));
+  } finally {
+    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects expired compatibility bridges", () => {
+  const fixtureCopy = copyManifestFixture();
+  try {
+    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/tool-registry-application-api.json");
+    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
+    fragment.compatibility_bridges[0].removal_issue = 260;
+    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
+    const loaded = loadManifest(fixtureCopy.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.startsWith("expired:") && item.includes("toolset.go")));
+  } finally {
+    fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("requires bridge consumers to name a symbol", () => {
+  const fixtureCopy = copyManifestFixture();
+  try {
+    const fragmentPath = path.join(fixtureCopy.fixtureRoot, "architecture/modules/tool-registry-application-api.json");
+    const fragment = JSON.parse(fs.readFileSync(fragmentPath, "utf8"));
+    fragment.compatibility_bridges[0].consumers = [{path: "internal/tools/registry/capability_bindings.go"}];
+    fs.writeFileSync(fragmentPath, JSON.stringify(fragment, null, 2));
+    const loaded = loadManifest(fixtureCopy.fixtureRoot);
+    assert.ok(loaded.load_diagnostics.some((item) => item.includes("needs exact consumer package/symbol records")));
   } finally {
     fs.rmSync(fixtureCopy.fixtureRoot, { recursive: true, force: true });
   }

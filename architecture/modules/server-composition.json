@@ -1,6 +1,11 @@
 {
   "schema_version": 1,
   "capability": "server-composition",
+  "source_ownership": [
+    {"path": "cmd/internal/serverapp/application_composition.go", "issue": 381},
+    {"path": "cmd/internal/serverapp/server.go", "issue": 381},
+    {"path": "cmd/server/main.go", "issue": 381}
+  ],
   "completed_issues": [],
   "go": {
     "units": [
@@ -153,14 +158,6 @@
       "path": "cmd/internal/serverapp/server.go",
       "function": "startConflictReviewWorkers",
       "kind": "goroutine",
-      "ordinal": 1,
-      "role": "worker",
-      "lifecycle_issue": 381
-    },
-    {
-      "path": "cmd/internal/serverapp/search_background.go",
-      "function": "startSearchReconciliation",
-      "kind": "run",
       "ordinal": 1,
       "role": "worker",
       "lifecycle_issue": 381

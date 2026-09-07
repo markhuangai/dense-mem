@@ -19,9 +19,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/conflictassessment"
-	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/http"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -30,14 +28,8 @@ import (
 	assessorprovider "github.com/markhuangai/dense-mem/internal/provider/assessor"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
-	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
-	"github.com/markhuangai/dense-mem/internal/service/conflictqueue"
-	"github.com/markhuangai/dense-mem/internal/service/conflictreview"
 	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
-	"github.com/markhuangai/dense-mem/internal/service/evidenceconflict"
-	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
-	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
@@ -72,12 +64,14 @@ func RunActiveServer(
 	rlsHelper := postgres.NewRLS()
 	teamRepo := repository.NewTeamRepository(pgDB.GetDB(), rlsHelper)
 	credentialRepo := repository.NewCredentialRepository(pgDB.GetDB(), rlsHelper)
-	credentialVerifier := crypto.NewArgon2Verifier(cfg.AuthVerifyMaxConcurrency)
-	activityWriter := accessservice.NewCredentialActivityWriterWithBatch(
+	accessAuthentication := buildAccessAuthenticationApplication(
 		credentialRepo,
-		newCredentialActivityBatchAdapter(credentialRepo),
+		credentialRepo,
+		cfg.AuthVerifyMaxConcurrency,
 		logger,
 	)
+	credentialVerifier := accessAuthentication.CredentialVerifier
+	activityWriter := accessAuthentication.ActivityWriter
 	activityWriter.Start(context.Background())
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -103,17 +97,12 @@ func RunActiveServer(
 			Timezone:      cfg.GetAppTimezone(),
 		},
 	)
-	conflictQueueService := conflictqueue.New(ledgerRepo)
-	evidenceConflictService := evidenceconflict.New(ledgerRepo)
-	searchRepo := repository.NewSearchRepository(pgDB.GetDB(), rlsHelper)
+	conflictQueueService := buildConflictQueueApplication(ledgerRepo)
+	evidenceConflictService := buildEvidenceConflictApplication(ledgerRepo)
 	if err := checkActiveAuthority(authority); err != nil {
 		log.Fatalf("active boot blocked: %v", err)
 	}
-	searchContract, err := searchRepo.EnsureActiveSearchContract(startupCtx, repository.EnsureActiveSearchContractInput{
-		Provider:   "openai",
-		Model:      cfg.GetAIEmbeddingModel(),
-		Dimensions: cfg.GetAIEmbeddingDimensions(),
-	})
+	searchRepo, searchContract, err := buildSearchRepositoryApplication(startupCtx, cfg, pgDB, rlsHelper)
 	if err != nil {
 		log.Fatalf("active search bootstrap blocked: %v", err)
 	}
@@ -128,25 +117,40 @@ func RunActiveServer(
 		observability.String("search_index_generation_id", searchContract.Contract.SearchIndexGenerationID),
 		observability.String("index_strategy", searchContract.Contract.IndexStrategy),
 	)
-	auditService := service.NewAuditService(pgDB.GetDB())
-	appConfigService := service.NewAppConfigService(appConfigRepo, auditService)
-	operationLogService := service.NewOperationLogService(operationLogRepo, appConfigService)
-	activeLogger := observability.NewWithSinks(level, operationLogService)
+	auditService := buildAuditApplication(pgDB.GetDB())
+	appConfigService := buildConfigurationApplication(appConfigRepo, auditService)
+	operationLogService := buildOperationLogApplication(operationLogRepo, appConfigService)
+	activeLogger := buildActiveApplicationLogger(level, operationLogService)
 	logger = activeLogger
 	slog.SetDefault(activeLogger.Slog())
 	operationLogService.Start(context.Background())
-	securityService := service.NewSecurityService(securityRepo, auditService)
-	usageMetricsService := service.NewUsageMetricsService(usageMetricsRepo, logger)
+	securityService := buildSecurityApplication(securityRepo, auditService)
+	usageMetricsService := buildUsageMetricsApplication(usageMetricsRepo, logger)
 	usageMetricsService.Start(context.Background())
-	teamService := accessservice.NewTeamService(teamRepo, auditService, backend.cleanupRepo)
-	credentialService := accessservice.NewCredentialService(credentialRepo, teamService, auditService, backend.cleanupRepo)
-	ssoService := accessservice.NewSSOService(ssoRepo, accessservice.SSOConfig{
-		RuntimeConfig: appConfigService,
-		Logger:        logger,
+	accessApplication := buildAccessApplication(accessApplicationDependencies{
+		TeamRepo:              teamRepo,
+		CredentialRepo:        credentialRepo,
+		ActiveCredentialRepo:  credentialRepo,
+		CredentialActivity:    credentialRepo,
+		CredentialBatch:       credentialRepo,
+		SSORepo:               ssoRepo,
+		PortalSessionRepo:     portalSessionRepo,
+		DirectoryIdentityRepo: directoryIdentityRepo,
+		ControlIdentityRepo:   controlIdentityRepo,
+		CredentialVerifier:    credentialVerifier,
+		ActivityWriter:        activityWriter,
+		Audit:                 auditService,
+		RuntimeConfig:         appConfigService,
+		Logger:                logger,
+		StatePurger:           backend.cleanupRepo,
+		SessionInvalidator:    backend.cleanupRepo,
 	})
-	portalSessionService := accessservice.NewUserPortalSessionService(portalSessionRepo, credentialRepo, nil)
-	directoryIdentityService := accessservice.NewDirectoryIdentityService(directoryIdentityRepo, accessservice.DirectoryIdentityConfig{CredentialVerifier: credentialVerifier})
-	controlIdentityService := accessservice.NewControlIdentityService(controlIdentityRepo, ssoRepo, accessservice.ControlIdentityConfig{RuntimeConfig: appConfigService})
+	teamService := accessApplication.TeamService
+	credentialService := accessApplication.CredentialService
+	ssoService := accessApplication.SSOService
+	portalSessionService := accessApplication.PortalSessionService
+	directoryIdentityService := accessApplication.DirectoryIdentity
+	controlIdentityService := accessApplication.ControlIdentity
 	privateMemoryService, err := preparePrivateMemoryService(
 		startupCtx, privateMemoryRepo, appConfigService, backend.cleanupRepo, auditService, logger,
 	)
@@ -163,51 +167,22 @@ func RunActiveServer(
 		RLS:               rlsHelper,
 		Logger:            logger,
 	}
-	discoverabilityMetrics := observability.NoopDiscoverabilityMetrics()
-	var (
-		telemetryReader            service.TelemetryReader
-		telemetryPrometheusService *service.PrometheusTelemetryService
-		telemetryHTTPMetrics       observability.HTTPMetrics
-		telemetryScrapeHandler     nethttp.Handler
-		pricingRefreshCancel       context.CancelFunc
-	)
-	if cfg.GetTelemetryEnabled() {
-		if err := refreshTelemetryPricingCache(startupCtx, appConfigService); err != nil {
-			logger.Warn("telemetry pricing snapshot unavailable at startup", observability.String("reason", "configuration_refresh_failed"))
-		}
-		pricingRefreshCtx, cancel := context.WithCancel(context.Background())
-		pricingRefreshCancel = cancel
-		go refreshTelemetryPricingCacheUntilCanceled(pricingRefreshCtx, appConfigService, logger)
-		prometheusMetrics := observability.NewPrometheusMetrics(observability.AIPricingResolverFunc(func(ctx context.Context) (observability.AIPricing, error) {
-			pricing, ok := appConfigService.CachedTelemetryPricingRuntimeConfig()
-			if !ok {
-				return observability.AIPricing{}, errors.New("telemetry pricing snapshot unavailable")
-			}
-			return observability.AIPricing{
-				VerifierInputUSDPerMillionTokens:  pricing.VerifierInputUSDPerMillionTokens,
-				VerifierOutputUSDPerMillionTokens: pricing.VerifierOutputUSDPerMillionTokens,
-				EmbeddingInputUSDPerMillionTokens: pricing.EmbeddingInputUSDPerMillionTokens,
-			}, nil
-		}))
-		if err := prometheusMetrics.RegisterConflictQueueCollector(observability.NewConflictQueueCollector(ledgerRepo.CollectConflictQueueMetrics)); err != nil {
-			log.Fatalf("failed to register conflict queue metrics: %v", err)
-		}
-		discoverabilityMetrics = prometheusMetrics
-		telemetryHTTPMetrics = prometheusMetrics
-		telemetryScrapeHandler = prometheusMetrics.Handler()
-		telemetryPrometheusService = service.NewPrometheusTelemetryServiceWithJobAndLogger(
-			cfg.GetTelemetryPrometheusURL(),
-			time.Duration(cfg.GetTelemetryQueryTimeoutSeconds())*time.Second,
-			cfg.GetTelemetryPrometheusJob(),
-			logger,
-		)
-		telemetryPrometheusService.SetLifecycleReader(ledgerRepo)
-		telemetryReader = telemetryPrometheusService
+	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, ledgerRepo, ledgerRepo, logger)
+	if err != nil {
+		log.Fatalf("failed to build telemetry application: %v", err)
 	}
-	openaiProvider := embedding.NewOpenAIEmbeddingProvider(&cfg, nil)
-	openaiProvider.SetMetrics(discoverabilityMetrics)
-	retryEmbedder := embedding.NewRetryEmbeddingProviderWithKey(openaiProvider, logger, cfg.GetAIAPIKey())
-	retryEmbedder.SetMetrics(discoverabilityMetrics)
+	if telemetry.PricingRefreshContext != nil {
+		go refreshTelemetryPricingCacheUntilCanceled(telemetry.PricingRefreshContext, appConfigService, logger)
+	}
+	discoverabilityMetrics := telemetry.Metrics
+	telemetryReader := telemetry.Reader
+	telemetryPrometheusService := telemetry.Prometheus
+	telemetryHTTPMetrics := telemetry.HTTPMetrics
+	telemetryScrapeHandler := telemetry.ScrapeHandler
+	pricingRefreshCancel := telemetry.PricingRefreshCancel
+	searchApplication := buildSearchProviders(cfg, searchRepo, searchContract, discoverabilityMetrics, logger)
+	openaiProvider := searchApplication.EmbeddingProvider
+	retryEmbedder := searchApplication.RetryEmbedding
 	assessmentLimits := assessorprovider.SemanticAssessmentLimitsForConfig(&cfg)
 	aiHTTPClient := &nethttp.Client{Timeout: time.Duration(cfg.GetAIVerifierTimeoutSeconds()) * time.Second}
 	aiConcurrencyGate := modelprovider.NewConcurrencyGate(config.AIVerifierMaxConcurrency(&cfg))
@@ -215,76 +190,70 @@ func RunActiveServer(
 	verifierProvider.SetMetrics(discoverabilityMetrics)
 	assessorProvider := assessorprovider.NewOpenAIAssessorWithAssessmentLimitsAndConcurrencyGate(&cfg, aiHTTPClient, assessmentLimits, aiConcurrencyGate)
 	assessorProvider.SetMetrics(discoverabilityMetrics)
-	conflictReviewRunner, err := conflictreview.NewRunner(
-		ledgerRepo,
-		verifierProvider,
-		retryEmbedder,
-		time.Duration(cfg.GetAIEmbeddingTimeoutSeconds())*time.Second,
-		cfg.GetAppTimezone(),
-		conflictassessment.SemanticAssessmentLimits(assessmentLimits),
-		discoverabilityMetrics,
-	)
+	conflictReviewRunner, err := buildConflictReviewApplication(conflictReviewApplicationDependencies{
+		Ledger:           ledgerRepo,
+		Provider:         verifierProvider,
+		Embeddings:       retryEmbedder,
+		EmbeddingTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
+		Timezone:         cfg.GetAppTimezone(),
+		Limits:           conflictassessment.SemanticAssessmentLimits(assessmentLimits),
+		Metrics:          discoverabilityMetrics,
+	})
 	if err != nil {
 		log.Fatalf("failed to build conflict review runner: %v", err)
 	}
-	rememberSvc := buildRememberApplication(rememberApplicationDependencies{
-		Ledger: ledgerRepo, Catalog: semanticRepo, Assessor: assessorProvider,
-		Embedder: openaiProvider, Limits: assessmentLimits,
-		Metrics: discoverabilityMetrics, Logger: logger, Audit: auditService,
+	applications := buildApplicationBundle(applicationCompositionDependencies{
+		Ledger:                 ledgerRepo,
+		Semantic:               semanticRepo,
+		Search:                 searchRepo,
+		RecallFeedbackEvents:   recallFeedbackEventRepo,
+		Assessor:               assessorProvider,
+		GeneratorTransport:     assessorProvider,
+		EmbeddingProvider:      openaiProvider,
+		RetryEmbeddingProvider: retryEmbedder,
+		AssessmentLimits:       assessmentLimits,
+		Metrics:                discoverabilityMetrics,
+		Logger:                 logger,
+		Audit:                  auditService,
+		AppConfig:              appConfigService,
+		Teams:                  teamService,
+		CommunitySummary:       verifierProvider,
+		DreamEvidenceStore:     semanticRepo,
+		DreamModel:             cfg.GetAIVerifierModel(),
+		ProviderCycleLease:     dreamProviderCycleLease(cfg),
+		CorrectionTimeout:      time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
+		CorrectionExecutor:     buildSemanticWriteCorrectionExecutor(openaiProvider),
+		TelemetryPrometheus:    telemetryPrometheusService,
 	})
-	recallSvc := memoryservice.NewRecallService(memoryservice.RecallDependencies{
-		Search:          searchRepo,
-		Provider:        retryEmbedder,
-		Hypotheses:      semanticRepo,
-		Communities:     semanticRepo,
-		CommunityConfig: appConfigService,
-		Metrics:         discoverabilityMetrics,
-	})
-	communitySvc := communityservice.New(communityservice.Dependencies{
-		Store:     semanticRepo,
-		AppConfig: appConfigService,
-		Summary:   verifierProvider,
-		Metrics:   discoverabilityMetrics,
-	})
-	lifecycleSvc := memoryservice.NewLifecycleService(memoryservice.LifecycleDependencies{
-		Semantic:                   semanticRepo,
-		Evidence:                   ledgerRepo,
-		CorrectionExecutor:         newSemanticwriteEmbeddingExecutor(openaiProvider),
-		CorrectionEmbeddingTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
-	})
-	contextSvc := buildContextApplication(semanticRepo)
-	dreamSvc := buildDreamApplication(dreamApplicationDependencies{
-		Remember: rememberSvc, Store: semanticRepo, ScheduledStore: semanticRepo,
-		AppConfig: appConfigService, Teams: teamService,
-		GeneratorTransport: assessorProvider, EvidenceStore: semanticRepo,
-		Model: cfg.GetAIVerifierModel(), Limits: assessmentLimits,
-		Metrics:            discoverabilityMetrics,
-		ProviderCycleLease: dreamProviderCycleLease(cfg),
-	})
-	configureTelemetryFeatures(telemetryPrometheusService, appConfigService, dreamSvc)
-	controlDreamSvc := buildControlDreamApplication(controlDreamApplicationDependencies{
-		Store: semanticRepo, AppConfig: appConfigService, Teams: teamService,
-	})
-	graphViewSvc := buildGraphApplication(semanticRepo)
-	memoryPackSvc := skillpackservice.NewMemoryPackService(skillpackservice.MemoryPackDependencies{
-		Semantic: semanticRepo,
-	})
-	recallFeedbackEventService := service.NewRecallFeedbackEventService(recallFeedbackEventRepo, appConfigService, nil)
+	rememberSvc := applications.Remember
+	recallSvc := applications.Recall
+	communitySvc := applications.Community
+	lifecycleSvc := applications.Lifecycle
+	contextSvc := applications.Context
+	dreamSvc := applications.Dream
+	controlDreamSvc := applications.ControlDream
+	graphViewSvc := applications.Graph
+	memoryPackSvc := applications.MemoryPack
+	recallFeedbackEventService := applications.RecallFeedback
 	recallFeedbackEventService.Start(context.Background())
 
 	toolRegistry, err := registry.BuildActive(registry.Dependencies{
-		Metrics:              discoverabilityMetrics,
-		RecallFeedbackConfig: appConfigService,
-		RecallFeedbackEvents: recallFeedbackEventService,
-		EvaluationAudit:      auditService,
-		Context:              contextSvc,
-		Remember:             rememberSvc,
-		Recall:               recallSvc,
-		Lifecycle:            lifecycleSvc,
-		Evaluation:           semanticRepo,
-		Communities:          semanticRepo,
-		MemoryPack:           memoryPackSvc,
-		Dreams:               dreamSvc,
+		Core: registry.CoreDependencies{
+			Metrics:              discoverabilityMetrics,
+			RecallFeedbackConfig: appConfigService,
+			RecallFeedbackEvents: recallFeedbackEventService,
+			EvaluationAudit:      auditService,
+		},
+		RememberBindings:   registry.RememberBindings{Service: rememberSvc},
+		RecallBindings:     registry.RecallBindings{Service: recallSvc, Dreams: dreamSvc},
+		LifecycleBindings:  registry.LifecycleBindings{Service: lifecycleSvc},
+		TraceBindings:      registry.TraceBindings{Service: contextSvc},
+		DreamBindings:      registry.DreamBindings{Service: dreamSvc},
+		MemoryPackBindings: registry.MemoryPackBindings{Service: memoryPackSvc},
+		EvaluationBindings: registry.EvaluationBindings{
+			Repository:  semanticRepo,
+			Communities: semanticRepo,
+		},
 	})
 	if err != nil {
 		log.Fatalf("failed to build active tool registry: %v", err)
@@ -347,19 +316,21 @@ func RunActiveServer(
 		}
 	}
 	protectedDeps := http.ProtectedDeps{
-		CredentialRepo:     credentialRepo,
-		TeamSvc:            teamService,
-		RateLimitService:   rateLimitService,
-		UsageMetrics:       usageMetricsService,
-		AuditService:       auditService,
-		SecurityService:    securityService,
-		SSOAuthenticator:   ssoService,
-		OAuthAuthenticator: ssoService,
-		OAuthMetadata:      ssoService,
-		Config:             &cfg,
-		Logger:             logger,
-		CredentialVerifier: credentialVerifier,
-		LastUsedRecorder:   activityWriter,
+		MCP: http.MCPBindings{
+			CredentialRepo:     credentialRepo,
+			TeamSvc:            teamService,
+			RateLimitService:   rateLimitService,
+			UsageMetrics:       usageMetricsService,
+			AuditService:       auditService,
+			SecurityService:    securityService,
+			SSOAuthenticator:   ssoService,
+			OAuthAuthenticator: ssoService,
+			OAuthMetadata:      ssoService,
+			Config:             &cfg,
+			Logger:             logger,
+			CredentialVerifier: credentialVerifier,
+			LastUsedRecorder:   activityWriter,
+		},
 	}
 	protectedDeps.PostAuthMiddleware = append(protectedDeps.PostAuthMiddleware, options.PostAuthMiddleware...)
 	if telemetryHTTPMetrics != nil {
@@ -370,21 +341,23 @@ func RunActiveServer(
 		MCPGet:  mcpHandler.HandleGet,
 	})
 	userPortalDeps := http.UserPortalDeps{
-		CredentialRepo:     credentialRepo,
-		TeamSvc:            teamService,
-		CredentialSvc:      credentialService,
-		RateLimitSvc:       rateLimitService,
-		UsageMetrics:       usageMetricsService,
-		Telemetry:          telemetryReader,
-		GraphView:          graphViewSvc,
-		RecallSvc:          recallSvc,
-		DreamSvc:           dreamSvc,
+		CredentialRepo: credentialRepo,
+		TeamSvc:        teamService,
+		CredentialSvc:  credentialService,
+		RateLimitSvc:   rateLimitService,
+		UsageMetrics:   usageMetricsService,
+		Telemetry:      telemetryReader,
+		Memory: http.MemoryPortalBindings{
+			GraphView:     graphViewSvc,
+			RecallSvc:     recallSvc,
+			DreamSvc:      dreamSvc,
+			PrivateMemory: privateMemoryService,
+		},
 		AuditSvc:           auditService,
 		SecuritySvc:        securityService,
 		SSOService:         ssoService,
 		PortalSession:      portalSessionService,
 		AppConfig:          appConfigService,
-		PrivateMemory:      privateMemoryService,
 		Config:             &cfg,
 		CredentialVerifier: credentialVerifier,
 		LastUsedRecorder:   activityWriter,
@@ -397,12 +370,12 @@ func RunActiveServer(
 	var controlServer *echo.Echo
 	var telemetryServer *echo.Echo
 	if !options.DisableControlPortal {
-		controlServer, err = http.NewControlPortalServerWithMetricsAndTelemetry(
+		controlServer, err = http.NewControlPortalServerWithCapabilityBindings(
 			&cfg,
 			teamService,
 			credentialService,
 			usageMetricsService,
-			http.ControlPortalTelemetry{
+			http.ControlPortalBindings{Telemetry: http.ControlPortalTelemetry{
 				Reader:            telemetryReader,
 				HTTPMetrics:       telemetryHTTPMetrics,
 				ScrapeHandler:     telemetryScrapeHandler,
@@ -417,10 +390,10 @@ func RunActiveServer(
 				Communities:       communitySvc,
 				ConflictQueue:     conflictQueueService,
 				EvidenceConflicts: evidenceConflictService,
-				Convergence:       service.NewSearchConvergenceService(searchRepo),
-				RememberAttempts:  service.NewRememberAttemptDiagnosticsService(ledgerRepo),
+				Convergence:       searchApplication.Convergence,
+				RememberAttempts:  buildRememberAttemptDiagnostics(ledgerRepo),
 				PrivateMemory:     privateMemoryService,
-			},
+			}},
 			healthConfig,
 			logger,
 			securityService,
@@ -462,9 +435,7 @@ func RunActiveServer(
 	defer workerCancel()
 	privateMemoryService.Start(workerCtx)
 	searchReconciliationCtx, cancelSearchReconciliation := context.WithCancel(workerCtx)
-	go startSearchReconciliation(searchReconciliationCtx, service.NewSearchReconciliationService(service.SearchReconciliationDependencies{
-		Repository: searchRepo, Provider: openaiProvider, ProviderTimeout: time.Duration(cfg.GetAIEmbeddingTimeoutSeconds()) * time.Second,
-	}), logger)
+	go startSearchReconciliation(searchReconciliationCtx, searchApplication.Reconciliation, logger)
 	defer cancelSearchReconciliation()
 	ledgerRepo.StartRememberFailureArtifactPurger(workerCtx, time.Hour, slog.Default())
 	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
@@ -534,33 +505,6 @@ func RunActiveServer(
 	defer recallFeedbackShutdownCancel()
 	if err := recallFeedbackEventService.Shutdown(recallFeedbackShutdownCtx); err != nil {
 		log.Printf("recall feedback event shutdown error: %v", err)
-	}
-}
-
-const telemetryPricingRefreshTimeout = 5 * time.Second
-
-func refreshTelemetryPricingCache(ctx context.Context, appConfigService *service.AppConfigServiceImpl) error {
-	if appConfigService == nil {
-		return errors.New("telemetry pricing configuration is unavailable")
-	}
-	refreshCtx, cancel := context.WithTimeout(ctx, telemetryPricingRefreshTimeout)
-	defer cancel()
-	_, err := appConfigService.TelemetryPricingRuntimeConfig(refreshCtx)
-	return err
-}
-
-func refreshTelemetryPricingCacheUntilCanceled(ctx context.Context, appConfigService *service.AppConfigServiceImpl, logger observability.LogProvider) {
-	ticker := time.NewTicker(service.DefaultAppConfigCacheCheckInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := refreshTelemetryPricingCache(ctx, appConfigService); err != nil {
-				logger.Warn("telemetry pricing snapshot refresh failed", observability.String("reason", "configuration_refresh_failed"))
-			}
-		}
 	}
 }
 
