@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 )
 
 const (
@@ -151,38 +152,7 @@ type CommitRelationshipConflictResolutionInput struct {
 	Embeddings []RelationshipConflictResolutionEmbedding
 }
 
-type RelationshipConflictCaseRecord struct {
-	TeamID              string
-	ConflictID          string
-	SpaceID             string `json:"-"`
-	SemanticScopeKey    string
-	Kind                string
-	Status              string
-	SubjectEntityID     string
-	PredicateKey        string
-	PredicateVersion    int
-	RelationshipKind    string
-	CurrentCardinality  string
-	Polarity            string
-	ScopeKey            string
-	Question            string
-	PolicyVersion       string
-	ReviewDueAt         time.Time
-	NextReviewAt        time.Time
-	ReviewTTLDays       int
-	Timezone            string
-	PreferredPositionID string
-	ResolvedAt          *time.Time
-	EffectiveAt         *time.Time
-	EffectiveTimeBasis  string
-	ResolutionReason    string
-	Version             int
-	Attempts            int
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
-	Positions           []RelationshipConflictPositionRecord
-	DismissedAt         *time.Time
-}
+type RelationshipConflictCaseRecord = tracecontract.RelationshipConflictCaseRecord
 
 type ValidateRelationshipConflictContextInput struct {
 	TeamID          string

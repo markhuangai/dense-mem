@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/storage/postgres/graphread"
 )
 
 const (
@@ -30,10 +32,11 @@ func (r *SemanticRepositoryImpl) SemanticGraph(
 	var rows []semanticGraphEdgeRow
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
 		var err error
+		execution := semanticGraphExecutionQuery{SemanticGraphQuery: input}
 		if input.Scope == "local" {
-			rows, err = loadSemanticLocalGraphRows(ctx, tx, input)
+			rows, err = loadSemanticLocalGraphRows(ctx, tx, execution)
 		} else {
-			rows, err = loadSemanticOverviewGraphRows(ctx, tx, input)
+			rows, err = loadSemanticOverviewGraphRows(ctx, tx, execution)
 		}
 		return err
 	})
@@ -70,15 +73,17 @@ func (r *SemanticRepositoryImpl) SemanticGraphNodeDetail(
 	return node, nil
 }
 
-type semanticGraphEdgeRow struct {
-	source SemanticGraphNode
-	target SemanticGraphNode
-	edge   SemanticGraphEdge
+type semanticGraphEdgeRow = graphread.Row
+
+// semanticGraphExecutionQuery carries adapter-derived scope separately from
+// the caller-owned graph contract.
+type semanticGraphExecutionQuery struct {
+	SemanticGraphQuery
+	spaceID string
 }
 
 func normalizeSemanticGraphQuery(input SemanticGraphQuery) SemanticGraphQuery {
 	input.TeamID = strings.TrimSpace(input.TeamID)
-	input.spaceID = strings.TrimSpace(input.spaceID)
 	input.Scope = strings.ToLower(strings.TrimSpace(input.Scope))
 	if input.Scope == "" || input.Scope != "local" {
 		input.Scope = "overview"
@@ -131,7 +136,7 @@ func validateSemanticGraphNodeDetailInput(input SemanticGraphNodeDetailInput) er
 func loadSemanticOverviewGraphRows(
 	ctx context.Context,
 	tx *gorm.DB,
-	input SemanticGraphQuery,
+	input semanticGraphExecutionQuery,
 ) ([]semanticGraphEdgeRow, error) {
 	extraWhere := ""
 	var extraArgs []any
@@ -153,17 +158,13 @@ func loadSemanticOverviewGraphRows(
 func loadSemanticLocalGraphRows(
 	ctx context.Context,
 	tx *gorm.DB,
-	input SemanticGraphQuery,
+	input semanticGraphExecutionQuery,
 ) ([]semanticGraphEdgeRow, error) {
 	anchor := semanticGraphNodeKey(input.AnchorType, input.AnchorID)
 	if anchor == "" {
 		return nil, sql.ErrNoRows
 	}
-	frontier := []string{anchor}
-	seenNodes := map[string]struct{}{anchor: {}}
-	seenEdges := map[string]struct{}{}
-	out := []semanticGraphEdgeRow{}
-	for depth := 0; depth < input.Depth && len(frontier) > 0 && len(out) < input.Limit; depth++ {
+	return graphread.Traverse(ctx, anchor, input.Depth, input.Limit, func(ctx context.Context, frontier []string, limit int) ([]graphread.Row, error) {
 		extraWhere := `
 		  AND (
 		    ('entity:' || e.subject_entity_id::text) = ANY(?::text[])
@@ -180,7 +181,7 @@ func loadSemanticLocalGraphRows(
 		}
 		rows, err := tx.WithContext(ctx).Raw(
 			semanticGraphEdgesSQL(extraWhere),
-			semanticGraphQueryArgs(input, input.Limit-len(out), extraArgs...)...,
+			semanticGraphQueryArgs(input, limit, extraArgs...)...,
 		).Rows()
 		if err != nil {
 			return nil, err
@@ -192,27 +193,8 @@ func loadSemanticLocalGraphRows(
 		if err != nil {
 			return nil, err
 		}
-		next := []string{}
-		for _, row := range batch {
-			if _, seen := seenEdges[row.edge.ID]; seen {
-				continue
-			}
-			seenEdges[row.edge.ID] = struct{}{}
-			out = append(out, row)
-			for _, key := range []string{row.source.Key, row.target.Key} {
-				if _, seen := seenNodes[key]; seen {
-					continue
-				}
-				seenNodes[key] = struct{}{}
-				next = append(next, key)
-			}
-			if len(out) == input.Limit {
-				break
-			}
-		}
-		frontier = next
-	}
-	return out, nil
+		return batch, nil
+	})
 }
 
 func semanticGraphEdgesSQL(extraWhere string) string {
@@ -327,7 +309,7 @@ func semanticGraphSearchTextSQL() string {
 		             COALESCE(object_name.display_name, value.display, value.canonical_value, ''))`
 }
 
-func semanticGraphQueryArgs(input SemanticGraphQuery, limit int, extraArgs ...any) []any {
+func semanticGraphQueryArgs(input semanticGraphExecutionQuery, limit int, extraArgs ...any) []any {
 	args := []any{
 		input.TeamID,
 		input.Query,
@@ -344,68 +326,7 @@ func semanticGraphQueryArgs(input SemanticGraphQuery, limit int, extraArgs ...an
 }
 
 func scanSemanticGraphRows(rows *sql.Rows, types []string) ([]semanticGraphEdgeRow, error) {
-	typeSet := semanticGraphTypeSet(types)
-	if !typeSet["entity"] {
-		return nil, nil
-	}
-	out := []semanticGraphEdgeRow{}
-	for rows.Next() {
-		var (
-			edgeID, ownerID, predicate                                              string
-			supportCount, sourceGroupCount                                          int
-			sourceKey, sourceID, sourceTitle, sourceBody, sourceStatus, sourceOwner string
-			targetKey, targetID, targetType, targetTitle, targetBody, targetStatus  string
-			targetOwner                                                             string
-			sourceRecordedAt, targetRecordedAt                                      time.Time
-		)
-		if err := rows.Scan(
-			&edgeID, &ownerID, &predicate, &supportCount, &sourceGroupCount,
-			&sourceKey, &sourceID, &sourceTitle, &sourceBody, &sourceStatus,
-			&sourceOwner, &sourceRecordedAt, &targetKey, &targetID, &targetType,
-			&targetTitle, &targetBody, &targetStatus, &targetOwner, &targetRecordedAt,
-		); err != nil {
-			return nil, err
-		}
-		if !typeSet[targetType] {
-			continue
-		}
-		sourceTime := sourceRecordedAt.UTC()
-		targetTime := targetRecordedAt.UTC()
-		out = append(out, semanticGraphEdgeRow{
-			source: SemanticGraphNode{
-				Key:            sourceKey,
-				ID:             sourceID,
-				Type:           "entity",
-				Title:          sourceTitle,
-				Body:           sourceBody,
-				Status:         sourceStatus,
-				OwnerProfileID: sourceOwner,
-				RecordedAt:     &sourceTime,
-			},
-			target: SemanticGraphNode{
-				Key:            targetKey,
-				ID:             targetID,
-				Type:           targetType,
-				Title:          targetTitle,
-				Body:           targetBody,
-				Status:         targetStatus,
-				OwnerProfileID: targetOwner,
-				RecordedAt:     &targetTime,
-			},
-			edge: SemanticGraphEdge{
-				ID:               edgeID,
-				RelationshipID:   edgeID,
-				Source:           sourceKey,
-				Target:           targetKey,
-				Relationship:     predicate,
-				Directed:         true,
-				OwnerProfileID:   ownerID,
-				SupportCount:     supportCount,
-				SourceGroupCount: sourceGroupCount,
-			},
-		})
-	}
-	return out, rows.Err()
+	return graphread.ScanRows(rows, types)
 }
 
 func loadSemanticEntityGraphNode(ctx context.Context, tx *gorm.DB, teamID, entityID string) (*SemanticGraphNode, error) {
@@ -488,83 +409,19 @@ func loadSemanticValueGraphNode(ctx context.Context, tx *gorm.DB, teamID, valueI
 }
 
 func semanticGraphSnapshot(input SemanticGraphQuery, rows []semanticGraphEdgeRow) *SemanticGraphSnapshot {
-	nodes := []SemanticGraphNode{}
-	edges := []SemanticGraphEdge{}
-	seenNodes := map[string]struct{}{}
-	seenEdges := map[string]struct{}{}
-	for _, row := range rows {
-		for _, node := range []SemanticGraphNode{row.source, row.target} {
-			if node.Key == "" {
-				continue
-			}
-			if _, seen := seenNodes[node.Key]; seen {
-				continue
-			}
-			seenNodes[node.Key] = struct{}{}
-			nodes = append(nodes, node)
-		}
-		if row.edge.ID == "" {
-			continue
-		}
-		if _, seen := seenEdges[row.edge.ID]; seen {
-			continue
-		}
-		seenEdges[row.edge.ID] = struct{}{}
-		edges = append(edges, row.edge)
-	}
-	snapshot := &SemanticGraphSnapshot{
-		Scope:     input.Scope,
-		Query:     input.Query,
-		Depth:     input.Depth,
-		Limit:     input.Limit,
-		Truncated: len(edges) >= input.Limit,
-		Nodes:     nodes,
-		Edges:     edges,
-	}
-	if input.Scope == "local" {
-		snapshot.Anchor = &SemanticGraphAnchor{
-			Type: input.AnchorType,
-			ID:   input.AnchorID,
-			Key:  semanticGraphNodeKey(input.AnchorType, input.AnchorID),
-		}
-	}
-	return snapshot
+	return graphread.Snapshot(input, rows)
 }
 
 func normalizeSemanticGraphTypes(values []string) []string {
-	set := semanticGraphTypeSet(values)
-	out := make([]string, 0, len(set))
-	for _, value := range []string{"entity", "value"} {
-		if set[value] {
-			out = append(out, value)
-		}
-	}
-	return out
+	return graphread.NormalizeTypes(values)
 }
 
 func semanticGraphTypeSet(values []string) map[string]bool {
-	out := map[string]bool{}
-	for _, raw := range values {
-		if normalized := normalizeSemanticGraphNodeType(raw); normalized != "" {
-			out[normalized] = true
-		}
-	}
-	if len(out) == 0 {
-		out["entity"] = true
-		out["value"] = true
-	}
-	return out
+	return graphread.TypeSet(values)
 }
 
 func normalizeSemanticGraphNodeType(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "entity", "entities":
-		return "entity"
-	case "value", "values":
-		return "value"
-	default:
-		return ""
-	}
+	return graphread.NormalizeNodeType(raw)
 }
 
 func semanticGraphNodeKey(nodeType, id string) string {

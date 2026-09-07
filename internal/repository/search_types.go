@@ -3,14 +3,12 @@ package repository
 import (
 	"context"
 	"time"
+
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
 
-type SearchRepository interface {
-	GetActiveSearchContract(ctx context.Context) (*ActiveSearchContract, error)
-	CheckSearchReadiness(ctx context.Context) (*SearchReadiness, error)
-	SearchFullText(ctx context.Context, input FullTextSearchInput) ([]SearchHit, error)
-	SearchExactVector(ctx context.Context, input ExactVectorSearchInput) ([]SearchHit, error)
-}
+type SearchRepository = searchcontract.SearchRepository
 
 // SearchReconciliationRepository owns the document-centric drift repair
 // boundary. It deliberately exposes no queue, lease, worker, or job concepts.
@@ -32,42 +30,11 @@ type InlineEmbeddingRepository interface {
 	CompleteSearchDocumentsWithEmbeddings(ctx context.Context, input CompleteSearchDocumentsWithEmbeddingsInput) error
 }
 
-type RecallRepository interface {
-	RecallEvidence(ctx context.Context, input RecallEvidenceInput) (*RecallEvidenceResult, error)
-	RecallRelationships(ctx context.Context, input RecallRelationshipsInput) (*RecallRelationshipsResult, error)
-}
+type RecallRepository = recallcontract.Repository
 
-type ActiveSearchContract struct {
-	EmbeddingContractID     string
-	SearchIndexGenerationID string
-	EmbeddingDimensions     int
-	EmbeddingProvider       string
-	EmbeddingModel          string
-	DistanceMetric          string
-	VectorNormalization     string
-	DocumentFormatVersion   int
-	QueryFormatVersion      int
-	IndexGeneration         int
-	IndexStrategy           string
-	OperatorClass           string
-	IndexedExpression       string
-	PhysicalIndexName       string
-	QueryEFSearch           int
-	ExactMaxRows            int
-	CandidateLimit          int
-	AllowExactFallback      bool
-}
-
-type SearchReadiness struct {
-	Ready    bool
-	Reasons  []SearchReadinessReason
-	Contract *ActiveSearchContract
-}
-
-type SearchReadinessReason struct {
-	Code    string
-	Message string
-}
+type ActiveSearchContract = searchcontract.ActiveSearchContract
+type SearchReadiness = searchcontract.SearchReadiness
+type SearchReadinessReason = searchcontract.SearchReadinessReason
 
 type EnsureActiveSearchContractInput struct {
 	Provider              string
@@ -293,114 +260,13 @@ type SearchReconciliationApplyResult struct {
 	RemainingDriftedCount int64
 }
 
-type FullTextSearchInput struct {
-	TeamID     string
-	Query      string
-	SourceKind string
-	Limit      int
-}
+type FullTextSearchInput = searchcontract.FullTextSearchInput
+type ExactVectorSearchInput = searchcontract.ExactVectorSearchInput
+type SearchHit = searchcontract.SearchHit
 
-type ExactVectorSearchInput struct {
-	TeamID              string
-	EmbeddingContractID string
-	SourceKind          string
-	QueryEmbedding      []float32
-	Limit               int
-}
-
-type SearchHit struct {
-	TeamID              string
-	SearchDocumentID    string
-	SourceKind          string
-	SourceID            string
-	SourceVersion       int64
-	DocumentVersion     int64
-	EmbeddingContractID string
-	SearchState         string
-	Distance            float64
-	TextRank            float64
-}
-
-type RecallEvidenceInput struct {
-	TeamID               string
-	Query                string
-	QueryEmbedding       []float32
-	Limit                int
-	ValidAt              *time.Time
-	KnownAt              *time.Time
-	KnownEvidenceIDs     []string
-	KnownRelationshipIDs []string
-	ExpandFromEntityIDs  []string
-	SpaceID              string
-	SpaceKind            string
-}
-
-type RecallRelationshipsInput struct {
-	TeamID               string
-	Query                string
-	QueryEmbedding       []float32
-	Limit                int
-	ValidAt              *time.Time
-	KnownAt              *time.Time
-	KnownEvidenceIDs     []string
-	KnownRelationshipIDs []string
-	ExpandFromEntityIDs  []string
-	ExcludedGroupKeys    []string
-	SpaceID              string
-	SpaceKind            string
-}
-
-type RecallEvidenceResult struct {
-	TeamID            string
-	SearchState       string
-	Results           []RecallEvidenceHit
-	Conflicts         []RelationshipConflictCaseRecord
-	EvidenceConflicts []EvidenceConflictCaseRecord
-}
-
-type RecallRelationshipsResult struct {
-	TeamID        string
-	SearchState   string
-	VectorOmitted bool
-	Results       []RecallRelationshipHit
-}
-
-type RecallEvidenceHit struct {
-	TeamID          string
-	EvidenceID      string
-	RelationshipIDs []string
-	Context         string
-	Source          string
-	SourceType      string
-	CreatedAt       time.Time
-	Rank            int
-	Score           float64
-	SearchState     string
-	SpaceKind       string
-}
-
-type RecallRelationshipHit struct {
-	TeamID                    string
-	RelationshipID            string
-	SemanticGroupKey          string
-	SubjectEntityID           string
-	SubjectName               string
-	PredicateKey              string
-	ObjectEntityID            string
-	ObjectValueID             string
-	ObjectName                string
-	ObjectValueType           string
-	ObjectValue               string
-	Polarity                  string
-	ScopeKey                  string
-	ValidFrom                 *time.Time
-	Score                     float64
-	Rank                      int
-	SearchState               string
-	SupportCount              int
-	SourceGroupCount          int
-	EvidenceIDs               []string
-	EquivalentRelationshipIDs []string
-	CreatedAt                 time.Time
-	SpaceKind                 string
-}
+type RecallEvidenceInput = recallcontract.RecallEvidenceInput
+type RecallRelationshipsInput = recallcontract.RecallRelationshipsInput
+type RecallEvidenceResult = recallcontract.RecallEvidenceResult
+type RecallRelationshipsResult = recallcontract.RecallRelationshipsResult
+type RecallEvidenceHit = recallcontract.RecallEvidenceHit
+type RecallRelationshipHit = recallcontract.RecallRelationshipHit

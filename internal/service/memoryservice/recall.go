@@ -2,7 +2,6 @@ package memoryservice
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -16,6 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
@@ -32,9 +32,7 @@ const (
 
 var ErrRecallAuthContext = errors.New("recall: authenticated actor context is required")
 
-type RecallService interface {
-	Recall(ctx context.Context, req RecallRequest) (*RecallResult, error)
-}
+type RecallService = recallcontract.Service
 
 type RecallDependencies struct {
 	Search          RecallSearchRepository
@@ -45,10 +43,7 @@ type RecallDependencies struct {
 	Metrics         observability.DiscoverabilityMetrics
 }
 
-type RecallSearchRepository interface {
-	repository.RecallRepository
-	GetActiveSearchContract(ctx context.Context) (*repository.ActiveSearchContract, error)
-}
+type RecallSearchRepository = recallcontract.SearchRepository
 
 type RecallHypothesisRepository interface {
 	RecallHypotheses(ctx context.Context, input repository.RecallHypothesesInput) ([]repository.HypothesisRecord, error)
@@ -99,190 +94,35 @@ func NewRecallService(deps RecallDependencies) RecallService {
 	}
 }
 
-type RecallRequest struct {
-	Query                      string     `json:"query"`
-	Limit                      int        `json:"limit,omitempty"`
-	IncludeHypotheses          bool       `json:"-"`
-	RelationshipLimit          *int       `json:"relationship_limit,omitempty"`
-	CommunityLimit             *int       `json:"community_limit,omitempty"`
-	CommunityRelationshipLimit *int       `json:"community_relationship_limit,omitempty"`
-	ValidAt                    *time.Time `json:"valid_at,omitempty"`
-	KnownAt                    *time.Time `json:"known_at,omitempty"`
-	KnownEvidenceIDs           []string   `json:"known_evidence_ids,omitempty"`
-	KnownRelationshipIDs       []string   `json:"known_relationship_ids,omitempty"`
-	ExpandFromEntityIDs        []string   `json:"expand_from_entity_ids,omitempty"`
+type RecallRequest = recallcontract.Request
+
+type recallExecutionRequest struct {
+	RecallRequest
 	recallContract             *repository.ActiveSearchContract
 	recallEmbedding            []float32
 	recallEmbeddingDegradation *RecallDegradationResult
 	recallEmbeddingReady       bool
 }
 
-type RecallResult struct {
-	RecallID             string                       `json:"recall_id"`
-	Results              []RecallResultItem           `json:"results"`
-	Conflicts            []RecallConflictSummary      `json:"conflicts"`
-	RelatedRelationships []RelatedRelationshipSummary `json:"related_relationships"`
-	RelatedCommunities   []RecallDiscoveryPath        `json:"related_communities"`
-	RelatedHypotheses    []RelatedHypothesisSummary   `json:"related_hypotheses"`
-	SearchStates         RecallSearchStates           `json:"search_states"`
-	Degradations         []RecallDegradationResult    `json:"degradations"`
-	SuggestedActions     []RecallSuggestedAction      `json:"suggested_actions"`
+type RecallResult = recallcontract.RecallResult
+type RecallSuggestedAction = recallcontract.RecallSuggestedAction
+type RecallResultItem = recallcontract.RecallResultItem
+type RecallDiscoveryPath = recallcontract.RecallDiscoveryPath
+type RecallCommunity = recallcontract.RecallCommunity
+type RecallConflictSummary = recallcontract.RecallConflictSummary
+type RecallRelationshipHandle = recallcontract.RecallRelationshipHandle
+type RelatedRelationshipSummary = recallcontract.RelatedRelationshipSummary
+type EntityHandle = recallcontract.EntityHandle
+type SemanticObject = recallcontract.SemanticObject
+type RelatedHypothesisSummary = recallcontract.RelatedHypothesisSummary
+type RecallDegradationResult = recallcontract.RecallDegradationResult
+type RecallSearchStates = recallcontract.RecallSearchStates
 
-	DiscoveryPaths    []RecallDiscoveryPath    `json:"-"`
-	DiscoveryGuidance string                   `json:"-"`
-	Degradation       *RecallDegradationResult `json:"-"`
-	SearchState       string                   `json:"-"`
+func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallResult, error) {
+	return s.recallWithExecution(ctx, recallExecutionRequest{RecallRequest: req})
 }
 
-type RecallSuggestedAction struct {
-	Tool          string   `json:"tool"`
-	Guidance      string   `json:"guidance"`
-	RecallEventID string   `json:"recall_event_id,omitempty"`
-	HypothesisIDs []string `json:"hypothesis_ids,omitempty"`
-}
-
-type RecallResultItem struct {
-	EvidenceID      string     `json:"evidence_id"`
-	RelationshipIDs []string   `json:"relationship_ids,omitempty"`
-	Rank            int        `json:"rank"`
-	Context         string     `json:"context,omitempty"`
-	Source          string     `json:"source,omitempty"`
-	SourceType      string     `json:"source_type,omitempty"`
-	CreatedAt       *time.Time `json:"created_at,omitempty"`
-	SpaceKind       string     `json:"space_kind,omitempty"`
-}
-
-type RecallDiscoveryPath struct {
-	Relationships          []RecallRelationshipHandle   `json:"relationships"`
-	EvidenceIDs            []string                     `json:"evidence_ids"`
-	CommunityID            string                       `json:"community_id,omitempty"`
-	LogicalCommunityID     string                       `json:"logical_community_id,omitempty"`
-	Rank                   int                          `json:"rank,omitempty"`
-	Summary                string                       `json:"summary,omitempty"`
-	TopEntities            []EntityHandle               `json:"top_entities,omitempty"`
-	TopPredicates          []string                     `json:"top_predicates,omitempty"`
-	EntityCount            int                          `json:"entity_count,omitempty"`
-	RelationshipCount      int                          `json:"relationship_count,omitempty"`
-	CommunityRelationships []RelatedRelationshipSummary `json:"-"`
-	RelationshipsTruncated bool                         `json:"relationships_truncated,omitempty"`
-}
-
-// MarshalJSON keeps the transitional in-process path adapter private while
-// emitting the exact first-class community contract for snapshot records.
-func (p RecallDiscoveryPath) MarshalJSON() ([]byte, error) {
-	if p.CommunityID != "" {
-		return json.Marshal(struct {
-			CommunityID            string                       `json:"community_id"`
-			LogicalCommunityID     string                       `json:"logical_community_id"`
-			Rank                   int                          `json:"rank"`
-			Summary                string                       `json:"summary"`
-			TopEntities            []EntityHandle               `json:"top_entities"`
-			TopPredicates          []string                     `json:"top_predicates"`
-			EntityCount            int                          `json:"entity_count"`
-			RelationshipCount      int                          `json:"relationship_count"`
-			Relationships          []RelatedRelationshipSummary `json:"relationships"`
-			RelationshipsTruncated bool                         `json:"relationships_truncated"`
-		}{p.CommunityID, p.LogicalCommunityID, p.Rank, p.Summary, p.TopEntities, p.TopPredicates, p.EntityCount, p.RelationshipCount, p.CommunityRelationships, p.RelationshipsTruncated})
-	}
-	return json.Marshal(struct {
-		Relationships []RecallRelationshipHandle `json:"relationships"`
-		EvidenceIDs   []string                   `json:"evidence_ids"`
-	}{p.Relationships, p.EvidenceIDs})
-}
-
-type RecallCommunity struct {
-	CommunityID            string                       `json:"community_id"`
-	LogicalCommunityID     string                       `json:"logical_community_id"`
-	Rank                   int                          `json:"rank"`
-	Summary                string                       `json:"summary"`
-	TopEntities            []EntityHandle               `json:"top_entities"`
-	TopPredicates          []string                     `json:"top_predicates"`
-	EntityCount            int                          `json:"entity_count"`
-	RelationshipCount      int                          `json:"relationship_count"`
-	Relationships          []RelatedRelationshipSummary `json:"relationships"`
-	RelationshipsTruncated bool                         `json:"relationships_truncated"`
-}
-
-type RecallConflictSummary struct {
-	ConflictID          string                   `json:"conflict_id"`
-	Version             int                      `json:"version"`
-	Kind                string                   `json:"kind"`
-	Status              string                   `json:"status"`
-	Question            string                   `json:"question"`
-	ReviewDueAt         *time.Time               `json:"review_due_at"`
-	EffectiveAt         *time.Time               `json:"effective_at"`
-	EffectiveTimeBasis  string                   `json:"effective_time_basis,omitempty"`
-	PreferredPositionID string                   `json:"preferred_position_id,omitempty"`
-	Positions           []RecallConflictPosition `json:"positions"`
-	PositionsTruncated  bool                     `json:"positions_truncated"`
-}
-
-type RecallRelationshipHandle struct {
-	RelationshipID string         `json:"relationship_id"`
-	Subject        EntityHandle   `json:"subject"`
-	Predicate      string         `json:"predicate"`
-	Object         SemanticObject `json:"object"`
-	Polarity       string         `json:"polarity"`
-}
-
-type RelatedRelationshipSummary struct {
-	RelationshipID            string         `json:"relationship_id"`
-	EquivalentRelationshipIDs []string       `json:"equivalent_relationship_ids"`
-	SemanticGroupKey          string         `json:"-"`
-	Subject                   EntityHandle   `json:"subject"`
-	Predicate                 string         `json:"predicate"`
-	Object                    SemanticObject `json:"object"`
-	Polarity                  string         `json:"polarity"`
-	EvidenceIDs               []string       `json:"evidence_ids"`
-	SearchState               string         `json:"search_state,omitempty"`
-	SpaceKind                 string         `json:"space_kind,omitempty"`
-}
-
-type EntityHandle struct {
-	EntityID string `json:"entity_id"`
-	Name     string `json:"name"`
-}
-
-type SemanticObject struct {
-	EntityID string `json:"entity_id,omitempty"`
-	ValueID  string `json:"value_id,omitempty"`
-	Name     string `json:"name,omitempty"`
-	Type     string `json:"type,omitempty"`
-	Value    any    `json:"value,omitempty"`
-	Display  string `json:"display,omitempty"`
-	Unit     string `json:"unit,omitempty"`
-}
-
-type RelatedHypothesisSummary struct {
-	HypothesisID          string    `json:"hypothesis_id"`
-	SubjectEntityID       string    `json:"subject_entity_id"`
-	PredicateKey          string    `json:"predicate_key"`
-	ObjectEntityID        string    `json:"object_entity_id,omitempty"`
-	ObjectValueID         string    `json:"object_value_id,omitempty"`
-	Statement             string    `json:"statement"`
-	Status                string    `json:"status"`
-	SourceRelationshipIDs []string  `json:"source_relationship_ids"`
-	SourceEvidenceIDs     []string  `json:"source_evidence_ids"`
-	Lane                  string    `json:"lane"`
-	GeneratorKind         string    `json:"generator_kind"`
-	GeneratorVersion      string    `json:"generator_version"`
-	CreatedAt             time.Time `json:"created_at"`
-}
-
-type RecallDegradationResult struct {
-	Frontier        string `json:"frontier,omitempty"`
-	RequiredFailure bool   `json:"required_failure,omitempty"`
-	Optional        bool   `json:"optional,omitempty"`
-	Code            string `json:"code"`
-	Message         string `json:"message"`
-}
-
-type RecallSearchStates struct {
-	Evidence      string `json:"evidence"`
-	Relationships string `json:"relationships"`
-}
-
-func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *RecallResult, err error) {
+func (s *recallService) recallWithExecution(ctx context.Context, req recallExecutionRequest) (result *RecallResult, err error) {
 	if s.search == nil {
 		return nil, errors.New("recall: search repository is required")
 	}
@@ -311,7 +151,7 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 			observability.RecordRecall(ctx, s.metrics, float64(time.Since(started).Microseconds())/1000, resultCount, outcome)
 		}()
 	}
-	req = normalizeRecallRequest(req)
+	req.RecallRequest = normalizeRecallRequest(req.RecallRequest)
 	contract := req.recallContract
 	if contract == nil {
 		contract, err = s.search.GetActiveSearchContract(ctx)
@@ -364,7 +204,7 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 	if coverageDegradation != nil {
 		result.Degradations = append(result.Degradations, *coverageDegradation)
 	}
-	relationships, relationshipState, relationshipDegradation, directGroups := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req, queryEmbedding, coveredGroups)
+	relationships, relationshipState, relationshipDegradation, directGroups := s.recallRelatedRelationships(ctx, actor.TeamID.String(), req.RecallRequest, queryEmbedding, coveredGroups)
 	result.RelatedRelationships = relationships
 	result.SearchStates.Relationships = relationshipState
 	if relationshipDegradation != nil {
@@ -380,7 +220,7 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (result *
 				communityGroups[group] = struct{}{}
 			}
 			seedRelationshipIDs := relationshipSummaryIDs(relationships)
-			communities, paths, communityDegradation = s.recallCommunities(ctx, actor.TeamID.String(), req, communityGroups, evidenceIDs, seedRelationshipIDs, coverageAvailable)
+			communities, paths, communityDegradation = s.recallCommunities(ctx, actor.TeamID.String(), req.RecallRequest, communityGroups, evidenceIDs, seedRelationshipIDs, coverageAvailable)
 		}
 	}
 	result.RelatedCommunities = communities

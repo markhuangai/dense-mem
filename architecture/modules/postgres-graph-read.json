@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "capability": "postgres-graph-read",
+  "completed_issues": [],
+  "go": {
+    "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/storage/postgres/graphread",
+        "role": "postgres_infrastructure",
+        "visibility": "private"
+      }
+    ]
+  },
+  "browser": {
+    "units": []
+  },
+  "exceptions": [],
+  "workers": []
+}
