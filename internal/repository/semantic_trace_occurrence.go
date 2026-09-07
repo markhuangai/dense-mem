@@ -11,7 +11,7 @@ import (
 func loadTraceEvidenceForSupports(
 	ctx context.Context,
 	tx *gorm.DB,
-	input TraceRelationshipInput,
+	input traceExecutionInput,
 	supports []RelationshipEvidenceSupportRecord,
 ) ([]TraceEvidenceFragment, error) {
 	occurrenceIDs := traceSupportOccurrenceIDs(supports)
@@ -24,7 +24,7 @@ func loadTraceEvidenceForSupports(
 func loadTraceEvidenceOccurrences(
 	ctx context.Context,
 	tx *gorm.DB,
-	input TraceRelationshipInput,
+	input traceExecutionInput,
 	occurrenceIDs []string,
 ) ([]TraceEvidenceFragment, error) {
 	includeContent := boolDefault(input.IncludeEvidenceContent, true)

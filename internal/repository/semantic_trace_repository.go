@@ -28,6 +28,11 @@ var (
 	ErrTraceRelationshipIDInvalid = errors.New("trace relationship ID invalid")
 )
 
+type traceExecutionInput struct {
+	TraceRelationshipInput
+	spaceID string
+}
+
 func (r *SemanticRepositoryImpl) TraceRelationship(
 	ctx context.Context,
 	input TraceRelationshipInput,
@@ -46,16 +51,16 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 			return err
 		}
 		result.Relationship = relationship
-		input.spaceID = relationship.SpaceID
+		execution := traceExecutionInput{TraceRelationshipInput: input, spaceID: relationship.SpaceID}
 
-		observations, err := loadTraceObservations(ctx, tx, input)
+		observations, err := loadTraceObservations(ctx, tx, execution)
 		if err != nil {
 			return err
 		}
 		result.Observations = observations
 		observationIDs := traceObservationIDs(observations)
 
-		supports, err := loadTraceSupports(ctx, tx, input)
+		supports, err := loadTraceSupports(ctx, tx, execution)
 		if err != nil {
 			return err
 		}
@@ -63,49 +68,49 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 		fragmentIDs := traceSupportFragmentIDs(supports)
 		lifecycleFragmentIDs := traceSupportLifecycleFragmentIDs(supports)
 
-		decisions, err := loadTraceSupportDecisions(ctx, tx, input)
+		decisions, err := loadTraceSupportDecisions(ctx, tx, execution)
 		if err != nil {
 			return err
 		}
 		result.SupportDecisionEvents = decisions
 
-		evidence, err := loadTraceEvidenceForSupports(ctx, tx, input, supports)
+		evidence, err := loadTraceEvidenceForSupports(ctx, tx, execution, supports)
 		if err != nil {
 			return err
 		}
 		result.EvidenceFragments = evidence
-		lifecycleEvents, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, input.spaceID, lifecycleFragmentIDs, input.MaxEvents)
+		lifecycleEvents, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, execution.spaceID, lifecycleFragmentIDs, input.MaxEvents)
 		if err != nil {
 			return err
 		}
 		result.EvidenceLifecycleEvents = lifecycleEvents
 
 		if boolDefault(input.IncludeVerification, true) {
-			verification, err := loadTraceVerificationEvents(ctx, tx, input)
+			verification, err := loadTraceVerificationEvents(ctx, tx, execution)
 			if err != nil {
 				return err
 			}
 			result.VerificationEvents = verification
 		}
 		if boolDefault(input.IncludeTransitions, true) {
-			transitions, err := loadTraceTransitions(ctx, tx, input)
+			transitions, err := loadTraceTransitions(ctx, tx, execution)
 			if err != nil {
 				return err
 			}
 			result.Transitions = transitions
 		}
-		conflicts, err := loadRelationshipConflictRecordsInSpace(ctx, tx, input.TeamID, []string{relationship.RelationshipID}, nil, input.spaceID)
+		conflicts, err := loadRelationshipConflictRecordsInSpace(ctx, tx, input.TeamID, []string{relationship.RelationshipID}, nil, execution.spaceID)
 		if err != nil {
 			return err
 		}
 		result.Conflicts = conflicts
-		crossRefs, err := loadTraceCrossReferences(ctx, tx, input)
+		crossRefs, err := loadTraceCrossReferences(ctx, tx, execution)
 		if err != nil {
 			return err
 		}
 		result.CrossProfileReferences = crossRefs
 
-		corrections, err := loadTraceIdentityCorrections(ctx, tx, input.TeamID, input.spaceID, observationIDs, input.MaxEvents)
+		corrections, err := loadTraceIdentityCorrections(ctx, tx, input.TeamID, execution.spaceID, observationIDs, input.MaxEvents)
 		if err != nil {
 			return err
 		}
@@ -117,7 +122,7 @@ func (r *SemanticRepositoryImpl) TraceRelationship(
 		}
 		result.SupersessionLineage = lineage
 
-		searchDocs, err := loadTraceSearchDocuments(ctx, tx, input.TeamID, input.spaceID, input.RelationshipID, fragmentIDs, input.MaxEvents)
+		searchDocs, err := loadTraceSearchDocuments(ctx, tx, input.TeamID, execution.spaceID, input.RelationshipID, fragmentIDs, input.MaxEvents)
 		if err != nil {
 			return err
 		}
@@ -182,17 +187,19 @@ func loadTraceGraphContext(
 	if relationship == nil || input.MaxEdges <= 0 || input.MaxDepth <= 0 {
 		return nil, nil, nil
 	}
-	rows, err := loadSemanticLocalGraphRows(ctx, tx, SemanticGraphQuery{
-		TeamID:       input.TeamID,
-		Scope:        "local",
-		Query:        strings.ToLower(input.Topic),
-		Types:        []string{"entity", "value"},
-		AnchorType:   "entity",
-		AnchorID:     relationship.SubjectEntityID,
-		Depth:        input.MaxDepth,
-		Limit:        input.MaxEdges,
-		MinRelevance: optionalRelevanceValue(input.MinRelevance),
-		spaceID:      relationship.SpaceID,
+	rows, err := loadSemanticLocalGraphRows(ctx, tx, semanticGraphExecutionQuery{
+		SemanticGraphQuery: SemanticGraphQuery{
+			TeamID:       input.TeamID,
+			Scope:        "local",
+			Query:        strings.ToLower(input.Topic),
+			Types:        []string{"entity", "value"},
+			AnchorType:   "entity",
+			AnchorID:     relationship.SubjectEntityID,
+			Depth:        input.MaxDepth,
+			Limit:        input.MaxEdges,
+			MinRelevance: optionalRelevanceValue(input.MinRelevance),
+		},
+		spaceID: relationship.SpaceID,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -314,7 +321,7 @@ func loadTraceRelationship(
 func loadTraceObservations(
 	ctx context.Context,
 	tx *gorm.DB,
-	input TraceRelationshipInput,
+	input traceExecutionInput,
 ) ([]RelationshipObservationRecord, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT observation_id::text, relationship_id::text, ingest_id::text,
@@ -363,7 +370,7 @@ func loadTraceObservations(
 func loadTraceSupports(
 	ctx context.Context,
 	tx *gorm.DB,
-	input TraceRelationshipInput,
+	input traceExecutionInput,
 ) ([]RelationshipEvidenceSupportRecord, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT support.support_id::text, support.relationship_id::text, support.observation_id::text,
@@ -419,7 +426,7 @@ func loadTraceSupports(
 func loadTraceSupportDecisions(
 	ctx context.Context,
 	tx *gorm.DB,
-	input TraceRelationshipInput,
+	input traceExecutionInput,
 ) ([]RelationshipSupportDecisionEvent, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT support_decision_id::text, support_id::text, relationship_id::text,
@@ -455,7 +462,7 @@ func loadTraceSupportDecisions(
 func loadTraceEvidenceFragments(
 	ctx context.Context,
 	tx *gorm.DB,
-	input TraceRelationshipInput,
+	input traceExecutionInput,
 	fragmentIDs []string,
 ) ([]TraceEvidenceFragment, error) {
 	if len(fragmentIDs) == 0 {
@@ -524,7 +531,7 @@ func loadTraceEvidenceFragments(
 func loadTraceVerificationEvents(
 	ctx context.Context,
 	tx *gorm.DB,
-	input TraceRelationshipInput,
+	input traceExecutionInput,
 ) ([]RelationshipVerificationEvent, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT v.verification_event_id::text, v.observation_id::text,
@@ -570,7 +577,7 @@ func loadTraceVerificationEvents(
 func loadTraceTransitions(
 	ctx context.Context,
 	tx *gorm.DB,
-	input TraceRelationshipInput,
+	input traceExecutionInput,
 ) ([]RelationshipTransitionEvent, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT transition_id::text, relationship_id::text, owner_profile_id::text,
@@ -609,7 +616,7 @@ func loadTraceTransitions(
 func loadTraceCrossReferences(
 	ctx context.Context,
 	tx *gorm.DB,
-	input TraceRelationshipInput,
+	input traceExecutionInput,
 ) ([]RelationshipCrossReferenceRecord, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT cross_reference.cross_reference_id::text, cross_reference.author_profile_id::text,

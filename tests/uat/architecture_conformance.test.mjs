@@ -71,8 +71,8 @@ function copyManifestFixture() {
 
 test("loads the complete independently owned architecture inventory", () => {
   assert.equal(productionManifest.load_diagnostics.length, 0);
-  assert.equal(productionManifest.fragments.length, 51);
-  assert.equal(productionManifest.go.units.length, 57);
+  assert.equal(productionManifest.fragments.length, 58);
+  assert.equal(productionManifest.go.units.length, 64);
   assert.equal(productionManifest.browser.units.length, 40);
   assert.equal(productionManifest.exceptions.length, 25);
   assert.equal(productionManifest.workers.length, 52);

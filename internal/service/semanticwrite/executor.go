@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	semanticcontract "github.com/markhuangai/dense-mem/internal/semanticwrite/contract"
 )
 
 const MaxDocuments = domain.MaxEmbeddingBatchDocuments
@@ -22,57 +22,13 @@ var (
 
 // Document is one rendered search document. Hash is the canonical document
 // identity used to associate the provider result with its planned source.
-type Document struct {
-	Hash string
-	Text string
-}
-
-// Fence identifies the active search contract that the caller must revalidate
-// before committing the derived vectors.
-type Fence struct {
-	Model                   string
-	Dimensions              int
-	EmbeddingContractID     string
-	SearchGenerationID      string
-	SearchGenerationVersion int64
-}
-
-// Plan is ordered and must contain one entry per unique document hash.
-type Plan struct {
-	Documents []Document
-	Fence     Fence
-	Timeout   time.Duration
-}
-
-// Embedding is associated with the exact document hash from the plan rather
-// than exposing an unlabelled positional vector to committers.
-type Embedding struct {
-	DocumentHash string
-	Vector       []float32
-}
-
-// IndexedEmbedding is the provider response for one input. Providers must
-// return the input index explicitly so the executor can fence order and
-// association before a caller is allowed to commit derived state.
-type IndexedEmbedding struct {
-	Index  int
-	Vector []float32
-}
-
-type Result struct {
-	Fence      Fence
-	Model      string
-	Embeddings []Embedding
-}
-
-// BatchProvider is intentionally narrower than concrete provider packages so
-// the executor remains a reusable application port.
-type BatchProvider interface {
-	EmbedBatch(context.Context, []string) ([]IndexedEmbedding, string, error)
-	ModelName() string
-	Dimensions() int
-	IsAvailable() bool
-}
+type Document = semanticcontract.Document
+type Fence = semanticcontract.Fence
+type Plan = semanticcontract.Plan
+type Embedding = semanticcontract.Embedding
+type IndexedEmbedding = semanticcontract.IndexedEmbedding
+type Result = semanticcontract.Result
+type BatchProvider = semanticcontract.BatchProvider
 
 type Executor struct {
 	provider BatchProvider

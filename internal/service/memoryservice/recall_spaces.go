@@ -48,7 +48,7 @@ func branchKind(branch domain.MemorySpaceAccess) string {
 	return string(domain.MemorySpaceTeamShared)
 }
 
-func (s *recallService) recallAcrossSpaces(ctx context.Context, req RecallRequest, actor requestctx.Actor) (fused *RecallResult, err error) {
+func (s *recallService) recallAcrossSpaces(ctx context.Context, req recallExecutionRequest, actor requestctx.Actor) (fused *RecallResult, err error) {
 	started := time.Now()
 	defer func() {
 		outcome := "ok"
@@ -62,7 +62,7 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req RecallReques
 		}
 		observability.RecordRecall(ctx, s.metrics, float64(time.Since(started).Microseconds())/1000, resultCount, outcome)
 	}()
-	req = normalizeRecallRequest(req)
+	req.RecallRequest = normalizeRecallRequest(req.RecallRequest)
 	contract, err := s.search.GetActiveSearchContract(ctx)
 	if err != nil {
 		return nil, err
@@ -89,7 +89,7 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req RecallReques
 	results := make([]*RecallResult, 0, len(branches))
 	var teamErr error
 	for _, branch := range branches {
-		branchResult, err := s.Recall(withRecallBranch(ctx, branch), req)
+		branchResult, err := s.recallWithExecution(withRecallBranch(ctx, branch), req)
 		if err != nil {
 			if branch.Kind == domain.MemorySpaceTeamShared || branch.Kind == "" {
 				teamErr = err

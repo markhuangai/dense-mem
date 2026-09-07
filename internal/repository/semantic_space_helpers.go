@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"gorm.io/gorm"
 )
 
@@ -16,7 +17,7 @@ type semanticSpaceFence struct {
 
 // activeSemanticSpaceGenerationSQL keeps reads on the active generation after a private space is sealed.
 func activeSemanticSpaceGenerationSQL(alias string) string {
-	return fmt.Sprintf(`%s.space_generation = dense_mem_active_space_generation(%s.team_id, %s.space_id)`, alias, alias, alias)
+	return storagepostgres.ActiveSemanticSpaceGenerationSQL(alias)
 }
 
 func loadTeamSharedSpaceFence(ctx context.Context, tx *gorm.DB, teamID string) (semanticSpaceFence, error) {
