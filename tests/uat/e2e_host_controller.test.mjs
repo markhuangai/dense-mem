@@ -421,6 +421,8 @@ test("shared PostgreSQL provisioning keeps runtime identity least-privileged", (
   assert.doesNotMatch(postgres, /--case postgres\/TestIdentityCleanupComposeSeed/);
   assert.match(controller, /provision_postgres_runtime_role/);
   assert.match(controller, /verify_postgres_runtime_migration_state/);
+  assert.match(controller, /docker network inspect --format '[^']*\.Containers/);
+  assert.match(controller, /docker rm -f "\$container_id"/);
 });
 
 test("Compose stack has no host bindings and carries only project-scoped inputs", () => {

@@ -322,6 +322,17 @@ has_helper() {
   [[ "$helpers" == *,"$2",* ]]
 }
 
+remove_network_containers() {
+  local network="$1" container_id
+  while IFS= read -r container_id; do
+    [[ -n "$container_id" ]] || continue
+    docker rm -f "$container_id" >/dev/null 2>&1 || true
+  done < <(
+    docker network inspect --format '{{range $id, $container := .Containers}}{{$id}}{{"\n"}}{{end}}' \
+      "$network" 2>/dev/null || true
+  )
+}
+
 helper_env_value() {
   local path="$1"
   local field="$2"
@@ -364,7 +375,11 @@ precheck_capability() {
   fi
   validate_project "$project"
   local precheck_network="$project"
-  docker network rm "$precheck_network" >/dev/null 2>&1 || true
+  cleanup_precheck_resources() {
+    remove_network_containers "$precheck_network"
+    docker network rm "$precheck_network" >/dev/null 2>&1 || true
+  }
+  cleanup_precheck_resources
   docker network create \
     --driver bridge \
     --attachable \
@@ -382,7 +397,7 @@ precheck_capability() {
   cleanup_precheck() {
     local status=$?
     trap - EXIT INT TERM
-    docker network rm "$precheck_network" >/dev/null 2>&1 || true
+    cleanup_precheck_resources
     exit "$status"
   }
   trap cleanup_precheck EXIT INT TERM
@@ -414,7 +429,7 @@ precheck_capability() {
     test_status=$?
   fi
   trap - EXIT INT TERM
-  docker network rm "$precheck_network" >/dev/null 2>&1 || true
+  cleanup_precheck_resources
   if ((test_status != 0)); then
     return "$test_status"
   fi
