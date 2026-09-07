@@ -63,7 +63,9 @@ managed_project_name() {
   if [[ -n "$scenario" ]]; then
     local scenario_suffix="${scenario//_/-}"
     scenario_suffix="${scenario_suffix//,/-}"
-    project+="-${scenario_suffix}"
+    local scenario_digest
+    scenario_digest="$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(process.argv[1]).digest("hex").slice(0,8))' "$scenario")"
+    project+="-${scenario_suffix}-${scenario_digest}"
   fi
   if (( ${#project} > 63 )); then
     local suffix

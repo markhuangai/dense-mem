@@ -15,7 +15,10 @@ import (
 func TestSetRememberFailureArtifactHoldStateTxUsesCallerTransaction(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer sqlDB.Close()
+	t.Cleanup(func() {
+		mock.ExpectClose()
+		require.NoError(t, sqlDB.Close())
+	})
 	db, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: sqlDB}), &gorm.Config{})
 	require.NoError(t, err)
 
@@ -36,7 +39,10 @@ func TestSetRememberFailureArtifactHoldStateTxUsesCallerTransaction(t *testing.T
 func TestSetRememberFailureArtifactHoldStateTxSkipsNilSpace(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer sqlDB.Close()
+	t.Cleanup(func() {
+		mock.ExpectClose()
+		require.NoError(t, sqlDB.Close())
+	})
 	db, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: sqlDB}), &gorm.Config{})
 	require.NoError(t, err)
 

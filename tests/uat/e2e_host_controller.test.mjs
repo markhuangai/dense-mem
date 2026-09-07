@@ -197,9 +197,14 @@ ${controller.slice(validateStart, validateEnd)}
 ${controller.slice(managedStart, managedEnd)}
 first="$(managed_project_name 1234567890 1 precheck audit,graph,migration,repository,trace)"
 second="$(managed_project_name 1234567890 1 precheck community,http,postgres,server)"
+collision_first="$(managed_project_name 1234567890 1 precheck a,b)"
+collision_second="$(managed_project_name 1234567890 1 precheck a-b)"
 [[ "\${first}" != "\${second}" ]]
+[[ "\${collision_first}" != "\${collision_second}" ]]
 (( \${#first} <= 63 ))
 (( \${#second} <= 63 ))
+(( \${#collision_first} <= 63 ))
+(( \${#collision_second} <= 63 ))
 `;
     const scriptPath = join(fixture, "project-name-test.sh");
     await executable(scriptPath, script);
