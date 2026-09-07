@@ -342,7 +342,7 @@ NODE
 source "${CONTROLLER_DIR}/e2e-host-controller-stack.sh"
 source "${CONTROLLER_DIR}/e2e-host-controller-postgres.sh"
 
-precheck() {
+precheck_capability() {
   local run_id="$1" attempt="$2" image_ref="$3" source_dir="$4" capabilities="${5:-}"
   validate_decimal "$run_id"
   validate_decimal "$attempt"
@@ -419,6 +419,63 @@ precheck() {
     return "$test_status"
   fi
   printf '%s\n' "precheck passed"
+}
+
+precheck() {
+  local run_id="$1" attempt="$2" image_ref="$3" source_dir="$4" capabilities="${5:-}"
+  if [[ -n "$capabilities" ]]; then
+    precheck_capability "$run_id" "$attempt" "$image_ref" "$source_dir" "$capabilities"
+    return
+  fi
+
+  local log_dir
+  log_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/dense-mem-precheck.XXXXXX")" ||
+    fail "unable to create the precheck log directory"
+  local -a selections=(repository postgres migration,http,service)
+  local -a pids=()
+  local -a logs=()
+  cleanup_partitioned_precheck() {
+    local status=$?
+    trap - EXIT INT TERM
+    for pid in "${pids[@]}"; do
+      kill "$pid" >/dev/null 2>&1 || true
+    done
+    for pid in "${pids[@]}"; do
+      wait "$pid" >/dev/null 2>&1 || true
+    done
+    for log in "${logs[@]}"; do
+      rm -f -- "$log"
+    done
+    rmdir "$log_dir" >/dev/null 2>&1 || true
+    exit "$status"
+  }
+  trap cleanup_partitioned_precheck EXIT INT TERM
+
+  for selection in "${selections[@]}"; do
+    label="${selection//,/-}"
+    log="${log_dir}/${label}.log"
+    logs+=("$log")
+    precheck_capability "$run_id" "$attempt" "$image_ref" "$source_dir" "$selection" >"$log" 2>&1 &
+    pids+=("$!")
+  done
+
+  local status=0
+  for pid in "${pids[@]}"; do
+    if ! wait "$pid"; then
+      status=1
+    fi
+  done
+  for log in "${logs[@]}"; do
+    if ! cat "$log"; then
+      status=1
+    fi
+  done
+  trap - EXIT INT TERM
+  for log in "${logs[@]}"; do
+    rm -f -- "$log"
+  done
+  rmdir "$log_dir" >/dev/null 2>&1 || true
+  return "$status"
 }
 
 doctor() {

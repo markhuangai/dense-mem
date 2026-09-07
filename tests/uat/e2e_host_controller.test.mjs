@@ -73,6 +73,37 @@ test("the shared controller owns CI and local lifecycle without legacy state", (
   assert.match(stack, /copy_git_source "\$container" "\$source_dir"/);
 });
 
+test("the default precheck partitions capabilities and propagates failures", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-partition-"));
+  try {
+    const wrapper = controller.slice(controller.lastIndexOf("\nprecheck() {") + 1, controller.indexOf("\ndoctor() {"));
+    assert.ok(wrapper.includes("precheck_capability"));
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+${wrapper}
+precheck_capability() {
+  printf 'capability=%s\\n' "$5"
+  [[ "$5" != postgres ]]
+}
+precheck 123 1 ghcr.io/markhuangai/dense-mem:test@sha256:${"1".repeat(64)} /workspace
+`;
+    const scriptPath = join(fixture, "partition-test.sh");
+    await executable(scriptPath, script);
+    await assert.rejects(
+      run("bash", [scriptPath], { env: { TMPDIR: fixture } }),
+      (error) => {
+        const output = `${error.stdout || ""}${error.stderr || ""}`;
+        assert.match(output, /capability=repository/);
+        assert.match(output, /capability=postgres/);
+        assert.match(output, /capability=migration,http,service/);
+        return true;
+      },
+    );
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("local adapter builds the working tree and delegates to the shared controller", () => {
   assert.match(local, /docker build --target production/);
   assert.match(local, /DENSE_MEM_CI_LOCAL=1/);
