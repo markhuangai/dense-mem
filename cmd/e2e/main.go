@@ -41,6 +41,8 @@ type overlay struct {
 	Replace map[string]string `json:"Replace"`
 }
 
+var testDeclarationPattern = regexp.MustCompile(`(?m)^\s*func\s+(Test[A-Za-z0-9_]*)\s*\(`)
+
 func main() {
 	rootFlag := flag.String("root", "", "repository root; defaults to the parent of this module")
 	phaseFlag := flag.String("phase", "precheck", "case phase: precheck or scenario")
@@ -131,15 +133,14 @@ func loadCases(root, phase, capabilityValue, scenarioValue, caseValue string) ([
 		caseIDs[value] = true
 	}
 	seen := make(map[string]bool)
+	allCases := make([]databaseCase, 0)
 	selected := make([]databaseCase, 0)
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
 		capability := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		if len(capabilities) > 0 && !contains(capabilities, capability) {
-			continue
-		}
+		capabilitySelected := len(capabilities) == 0 || contains(capabilities, capability)
 		contents, err := os.ReadFile(filepath.Join(registryDirectory, entry.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("read database case registry %s: %w", entry.Name(), err)
@@ -168,7 +169,8 @@ func loadCases(root, phase, capabilityValue, scenarioValue, caseValue string) ([
 				return nil, fmt.Errorf("duplicate database case %s", item.ID)
 			}
 			seen[item.ID] = true
-			if item.Phase != phase || (scenarioValue != "" && item.Scenario != scenarioValue) || (len(caseIDs) > 0 && !caseIDs[item.ID]) {
+			allCases = append(allCases, item)
+			if !capabilitySelected || item.Phase != phase || (scenarioValue != "" && item.Scenario != scenarioValue) || (len(caseIDs) > 0 && !caseIDs[item.ID]) {
 				continue
 			}
 			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(item.Source))); err != nil {
@@ -177,6 +179,9 @@ func loadCases(root, phase, capabilityValue, scenarioValue, caseValue string) ([
 			selected = append(selected, item)
 		}
 	}
+	if err := reconcileCaseRegistry(root, allCases); err != nil {
+		return nil, err
+	}
 	sort.Slice(selected, func(i, j int) bool {
 		if selected[i].Package == selected[j].Package {
 			return selected[i].ID < selected[j].ID
@@ -184,6 +189,73 @@ func loadCases(root, phase, capabilityValue, scenarioValue, caseValue string) ([
 		return selected[i].Package < selected[j].Package
 	})
 	return selected, nil
+}
+
+func reconcileCaseRegistry(root string, cases []databaseCase) error {
+	registered := make(map[string]databaseCase, len(cases))
+	for _, item := range cases {
+		name := testName(item.Run)
+		if name == "" || !strings.HasPrefix(name, "Test") {
+			return fmt.Errorf("database case %s has no concrete test name", item.ID)
+		}
+		key := item.Source + "\x00" + name
+		if _, exists := registered[key]; exists {
+			return fmt.Errorf("database case registry maps %s to multiple cases", key)
+		}
+		registered[key] = item
+	}
+
+	declared := make(map[string]bool, len(registered))
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", "node_modules", ".cache":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(entry.Name()) != ".e2e" {
+			return nil
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		source := filepath.ToSlash(relative)
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read E2E test source %s: %w", source, err)
+		}
+		packageName := "./" + filepath.ToSlash(filepath.Dir(relative))
+		for _, match := range testDeclarationPattern.FindAllStringSubmatch(string(contents), -1) {
+			name := match[1]
+			key := source + "\x00" + name
+			item, ok := registered[key]
+			if !ok {
+				return fmt.Errorf("database case registry has no entry for %s in %s", name, source)
+			}
+			if item.Package != packageName {
+				return fmt.Errorf("database case %s uses package %s, want %s for %s", item.ID, item.Package, packageName, source)
+			}
+			if declared[key] {
+				return fmt.Errorf("duplicate test declaration %s in %s", name, source)
+			}
+			declared[key] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for key, item := range registered {
+		if !declared[key] {
+			return fmt.Errorf("database case %s has no declaration in %s", item.ID, item.Source)
+		}
+	}
+	return nil
 }
 
 func splitFilter(value string) []string {

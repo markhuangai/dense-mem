@@ -74,3 +74,70 @@ func TestRunBatchRequiresEveryCaseToPass(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadCasesReconcilesRegistryDeclarations(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "internal", "sample", "fixture.e2e")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	registry := filepath.Join(root, "scripts", "e2e-db-cases", "repository.json")
+	if err := os.MkdirAll(filepath.Dir(registry), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("package sample\n\nfunc TestRegistered(t *testing.T) {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registry, []byte(`{
+  "version": 1,
+  "capability": "repository",
+  "cases": [{
+    "id": "repository/TestRegistered",
+    "package": "./internal/sample",
+    "run": "^TestRegistered$",
+    "phase": "precheck",
+    "source": "internal/sample/fixture.e2e"
+  }]
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	otherRegistry := filepath.Join(root, "scripts", "e2e-db-cases", "postgres.json")
+	if err := os.WriteFile(otherRegistry, []byte(`{
+  "version": 1,
+  "capability": "postgres",
+  "cases": [{
+    "id": "postgres/TestOtherRegistered",
+    "package": "./internal/sample",
+    "run": "^TestOtherRegistered$",
+    "phase": "precheck",
+    "source": "internal/sample/fixture.e2e"
+  }]
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("package sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestOtherRegistered(t *testing.T) {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cases, err := loadCases(root, "precheck", "repository", "", "")
+	if err != nil {
+		t.Fatalf("loadCases() error = %v", err)
+	}
+	if len(cases) != 1 || cases[0].ID != "repository/TestRegistered" {
+		t.Fatalf("loadCases() = %+v", cases)
+	}
+
+	if err := os.WriteFile(source, []byte("package sample\n\nfunc TestRegistered(t *testing.T) {}\nfunc TestUnregistered(t *testing.T) {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadCases(root, "precheck", "repository", "", ""); err == nil || !strings.Contains(err.Error(), "TestUnregistered") {
+		t.Fatalf("loadCases() error = %v, want unregistered declaration failure", err)
+	}
+
+	if err := os.WriteFile(source, []byte("package sample\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadCases(root, "precheck", "repository", "", ""); err == nil || !strings.Contains(err.Error(), "has no declaration") {
+		t.Fatalf("loadCases() error = %v, want missing declaration failure", err)
+	}
+}

@@ -151,6 +151,17 @@ seed_identity_cleanup_database() {
   local go_image
   go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.6-bookworm)"
   [[ "$go_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || fail "invalid identity cleanup Go test image"
+  local database_url
+  database_url="$(node - "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD" "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" <<'NODE'
+const [user, password, database] = process.argv.slice(2);
+const url = new URL("postgresql://postgres:5432");
+url.username = user;
+url.password = password;
+url.pathname = `/${database}`;
+url.searchParams.set("sslmode", "disable");
+process.stdout.write(url.toString());
+NODE
+)"
   run_go_source_container \
     "$source_dir" "$go_image" "$project" "$DENSE_MEM_CI_RUN_ID" "$DENSE_MEM_CI_RUN_ATTEMPT" \
     "$DENSE_MEM_CI_PHASE" "$DENSE_MEM_CI_SCENARIO" "$DENSE_MEM_CI_IMAGE_DIGEST" "${project}_ci" "" "$ENV_FILE" \
@@ -163,10 +174,12 @@ seed_identity_cleanup_database() {
     "DENSE_MEM_E2E_POSTGRES_PASSWORD=${DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD}" \
     "DENSE_MEM_E2E_POSTGRES_DB=${DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE}" \
     "DENSE_MEM_E2E_POSTGRES_HOST=postgres" \
-    "DENSE_MEM_E2E_POSTGRES_PORT=5432" -- \
+    "DENSE_MEM_E2E_POSTGRES_PORT=5432" \
+    "DATABASE_URL=${database_url}" \
+    "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
     go -C cmd/e2e run . --root /workspace \
       --phase scenario --scenario identity_cleanup --capability postgres \
-      --case postgres/TestIdentityCleanupComposeSeed --timeout 20m --total-timeout 25m >&2
+      --timeout 20m --total-timeout 25m >&2
 
   local identity_file="${DENSE_MEM_CI_HELPER_DIR}/identity.env"
   printf 'DENSE_MEM_E2E_UPGRADE_TEAM_ID=%s\nDENSE_MEM_E2E_UPGRADE_PROFILE_ID=%s\nDENSE_MEM_E2E_UPGRADE_API_KEY=%s\n' \

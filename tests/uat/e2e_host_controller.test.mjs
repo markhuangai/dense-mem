@@ -416,6 +416,9 @@ test("shared PostgreSQL provisioning keeps runtime identity least-privileged", (
   assert.match(postgres, /ALTER DATABASE :"runtime_database" OWNER TO densemem_e2e_database_owner/);
   assert.match(postgres, /role\.rolbypassrls/);
   assert.match(postgres, /run_identity_cleanup_startup_matrix/);
+  assert.match(postgres, /DATABASE_URL=\$\{database_url\}/);
+  assert.match(postgres, /--scenario identity_cleanup --capability postgres \\\s+--timeout 20m --total-timeout 25m/);
+  assert.doesNotMatch(postgres, /--case postgres\/TestIdentityCleanupComposeSeed/);
   assert.match(controller, /provision_postgres_runtime_role/);
   assert.match(controller, /verify_postgres_runtime_migration_state/);
 });
