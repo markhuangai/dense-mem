@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "capability": "dream",
+  "cases": [
+    {
+      "id": "postgres/TestHypothesisTeamPredicateMigrationRollsBackBeforeTeamOnlyHypothesesExist",
+      "package": "./internal/storage/postgres",
+      "run": "^TestHypothesisTeamPredicateMigrationRollsBackBeforeTeamOnlyHypothesesExist$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/hypothesis_team_predicate_migration_integration.e2e"
+    },
+    {
+      "id": "postgres/TestHypothesisTeamPredicateMigrationScopesForeignKeyByTeam",
+      "package": "./internal/storage/postgres",
+      "run": "^TestHypothesisTeamPredicateMigrationScopesForeignKeyByTeam$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/hypothesis_team_predicate_migration_integration.e2e"
+    },
+    {
+      "id": "repository/TestAdvisoryLockAdmissionsSharePoolBudgetAcrossEvidenceAndConfirmation",
+      "package": "./internal/repository",
+      "run": "^TestAdvisoryLockAdmissionsSharePoolBudgetAcrossEvidenceAndConfirmation$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_lock_admission_integration.e2e"
+    },
+    {
+      "id": "repository/TestDreamListSortValidation",
+      "package": "./internal/repository",
+      "run": "^TestDreamListSortValidation$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment",
+      "package": "./internal/repository",
+      "run": "^TestDreamRepositoryPersistsEvidenceGroundedHypothesisAndPathAssessment$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestDreamRepositoryPersistsTeamScopedPredicateHypothesis",
+      "package": "./internal/repository",
+      "run": "^TestDreamRepositoryPersistsTeamScopedPredicateHypothesis$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryContextsPrioritizeSameSourceAndExcludePrivateSpaces",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryContextsPrioritizeSameSourceAndExcludePrivateSpaces$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryEvaluationPersistsDerivationsAndReadsThemBack",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryEvaluationPersistsDerivationsAndReadsThemBack$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryEvaluationRejectsMixedDuplicateResponseAtomically",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryEvaluationRejectsMixedDuplicateResponseAtomically$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_duplicate_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryMarkerFailureDoesNotReclaimStartedDispatch",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryMarkerFailureDoesNotReclaimStartedDispatch$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryNodesRankEvidenceMentionsBeforeTheGlobalBound",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryNodesRankEvidenceMentionsBeforeTheGlobalBound$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryPredicatesRankTargetRelevantDefinitionsBeforeTheGlobalBound",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryPredicatesRankTargetRelevantDefinitionsBeforeTheGlobalBound$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryRecoveryClaimsOnlyItsLane",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryRecoveryClaimsOnlyItsLane$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryRecoveryExhaustionReportsPersistedTotals",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryRecoveryExhaustionReportsPersistedTotals$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_cycle_recovery_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryRecoveryReportsDistinctTargetCount",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryRecoveryReportsDistinctTargetCount$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryTargetEligibilityFiltersAliasesQuarantineLifecycleStaleAndDeletionOnly",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryTargetEligibilityFiltersAliasesQuarantineLifecycleStaleAndDeletionOnly$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryTargetLockCapsConcurrentProviderPasses",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryTargetLockCapsConcurrentProviderPasses$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryTargetOrderingUsesAttemptFallback",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryTargetOrderingUsesAttemptFallback$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryTargetPassCapStopsAfterTwoRecordedEvaluations",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryTargetPassCapStopsAfterTwoRecordedEvaluations$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryTargetsAreBoundAndTeamScoped",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryTargetsAreBoundAndTeamScoped$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestEvidenceDiscoveryValidatedAttemptConsumesPassAfterPersistenceFailure",
+      "package": "./internal/repository",
+      "run": "^TestEvidenceDiscoveryValidatedAttemptConsumesPassAfterPersistenceFailure$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_evidence_target_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockAdmitsOneCallback",
+      "package": "./internal/repository",
+      "run": "^TestHypothesisConfirmationLockAdmitsOneCallback$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_confirmation_lock_integration.e2e"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockAllowsNestedRepositoryUseWithinPoolBudget",
+      "package": "./internal/repository",
+      "run": "^TestHypothesisConfirmationLockAllowsNestedRepositoryUseWithinPoolBudget$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_confirmation_lock_integration.e2e"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockBoundsDifferentHypothesesWithinPoolBudget",
+      "package": "./internal/repository",
+      "run": "^TestHypothesisConfirmationLockBoundsDifferentHypothesesWithinPoolBudget$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_confirmation_lock_integration.e2e"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockClassifiesInvalidHypothesisID",
+      "package": "./internal/repository",
+      "run": "^TestHypothesisConfirmationLockClassifiesInvalidHypothesisID$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_confirmation_lock_integration.e2e"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockDiscardsFailedCleanupConnection",
+      "package": "./internal/repository",
+      "run": "^TestHypothesisConfirmationLockDiscardsFailedCleanupConnection$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_confirmation_lock_integration.e2e"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockRejectsPoolWithoutApplicationCapacity",
+      "package": "./internal/repository",
+      "run": "^TestHypothesisConfirmationLockRejectsPoolWithoutApplicationCapacity$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_confirmation_lock_integration.e2e"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockReleasesAfterContextCancellation",
+      "package": "./internal/repository",
+      "run": "^TestHypothesisConfirmationLockReleasesAfterContextCancellation$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_confirmation_lock_integration.e2e"
+    },
+    {
+      "id": "repository/TestHypothesisConfirmationLockUsesCanonicalAlias",
+      "package": "./internal/repository",
+      "run": "^TestHypothesisConfirmationLockUsesCanonicalAlias$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_confirmation_lock_integration.e2e"
+    },
+    {
+      "id": "repository/TestScheduledDreamRecoveryFencesExpiredLease",
+      "package": "./internal/repository",
+      "run": "^TestScheduledDreamRecoveryFencesExpiredLease$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited",
+      "package": "./internal/repository",
+      "run": "^TestScheduledDreamsAreTeamOwnedAndFeedbackIsActorAudited$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestStaleDreamSourceErrorMapsMissingRelationship",
+      "package": "./internal/repository",
+      "run": "^TestStaleDreamSourceErrorMapsMissingRelationship$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestUpdateHypothesisStatusValidationBindsDecisionToStatus",
+      "package": "./internal/repository",
+      "run": "^TestUpdateHypothesisStatusValidationBindsDecisionToStatus$",
+      "phase": "precheck",
+      "source": "internal/repository/dream_repository_integration.e2e"
+    }
+  ]
+}

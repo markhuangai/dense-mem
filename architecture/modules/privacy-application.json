@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "capability": "privacy-application",
+  "source_ownership": [
+    {"path": "cmd/internal/serverapp/private_memory.go", "issue": 364},
+    {"path": "internal/repository/credential_deletion_audit.go", "issue": 364},
+    {"path": "internal/repository/credential_private_memory_delete.go", "issue": 364},
+    {"path": "internal/repository/private_memory_audit_integration.e2e", "issue": 364},
+    {"path": "internal/repository/private_memory_conflict_fixture_test.go", "issue": 364},
+    {"path": "internal/repository/private_memory_credential_retirement_integration.e2e", "issue": 364},
+    {"path": "internal/repository/private_memory_idempotency.go", "issue": 364},
+    {"path": "internal/repository/private_memory_remember_assessment_integration.e2e", "issue": 364},
+    {"path": "internal/repository/private_memory_repository.go", "issue": 364},
+    {"path": "internal/repository/private_memory_repository_errors_test.go", "issue": 364},
+    {"path": "internal/repository/private_memory_repository_integration.e2e", "issue": 364},
+    {"path": "internal/repository/private_memory_repository_operations.go", "issue": 364},
+    {"path": "internal/repository/private_memory_semantic_lineage_integration.e2e", "issue": 364},
+    {"path": "internal/service/private_memory_service.go", "issue": 364},
+    {"path": "internal/service/private_memory_service_test.go", "issue": 364}
+  ],
+  "completed_issues": [],
+  "go": {"units": []},
+  "browser": {"units": []},
+  "exceptions": [],
+  "workers": [
+    {"path": "internal/service/private_memory_service.go", "function": "Start", "kind": "goroutine", "ordinal": 1, "role": "worker", "lifecycle_issue": 381},
+    {"path": "internal/service/private_memory_service.go", "function": "Start", "kind": "goroutine", "ordinal": 2, "role": "worker", "lifecycle_issue": 381}
+  ]
+}

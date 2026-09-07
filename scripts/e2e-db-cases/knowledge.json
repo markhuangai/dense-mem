@@ -1,0 +1,363 @@
+{
+  "version": 1,
+  "capability": "knowledge",
+  "cases": [
+    {
+      "id": "postgres/TestOverdueConflictResolutionMigrationAvoidsLegacySystemProfileNameCollision",
+      "package": "./internal/storage/postgres",
+      "run": "^TestOverdueConflictResolutionMigrationAvoidsLegacySystemProfileNameCollision$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/overdue_conflict_resolution_migration_integration.e2e"
+    },
+    {
+      "id": "postgres/TestRememberNormalizerMigrationFailsLegacyWorkAndPreservesIndependentWorkflows",
+      "package": "./internal/storage/postgres",
+      "run": "^TestRememberNormalizerMigrationFailsLegacyWorkAndPreservesIndependentWorkflows$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/submission_assessment_migration_integration.e2e"
+    },
+    {
+      "id": "postgres/TestSemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority",
+      "package": "./internal/storage/postgres",
+      "run": "^TestSemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/client.e2e"
+    },
+    {
+      "id": "postgres/TestSemanticLedgerMigrationRejectsLegacyDerivedAuthority",
+      "package": "./internal/storage/postgres",
+      "run": "^TestSemanticLedgerMigrationRejectsLegacyDerivedAuthority$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/client.e2e"
+    },
+    {
+      "id": "postgres/TestSemanticLedgerMigrationUpgradesPopulated1703",
+      "package": "./internal/storage/postgres",
+      "run": "^TestSemanticLedgerMigrationUpgradesPopulated1703$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/client.e2e"
+    },
+    {
+      "id": "postgres/TestSubmissionAssessmentMigrationReconcilesLegacyRuns",
+      "package": "./internal/storage/postgres",
+      "run": "^TestSubmissionAssessmentMigrationReconcilesLegacyRuns$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/submission_assessment_migration_integration.e2e"
+    },
+    {
+      "id": "repository/TestActiveSpaceGenerationHelperHonorsLifecycleAndExecutionPrivilege",
+      "package": "./internal/repository",
+      "run": "^TestActiveSpaceGenerationHelperHonorsLifecycleAndExecutionPrivilege$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_space_generation_integration.e2e"
+    },
+    {
+      "id": "repository/TestCorrectRelationshipValidationRejectsInvalidConfirmation",
+      "package": "./internal/repository",
+      "run": "^TestCorrectRelationshipValidationRejectsInvalidConfirmation$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestInsertRelationshipTransitionReturnsExistingIDForIdempotentReplay",
+      "package": "./internal/repository",
+      "run": "^TestInsertRelationshipTransitionReturnsExistingIDForIdempotentReplay$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestLedgerDirectEvidenceSupersessionRejectsCrossSpaceReplacement",
+      "package": "./internal/repository",
+      "run": "^TestLedgerDirectEvidenceSupersessionRejectsCrossSpaceReplacement$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_lifecycle_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestLedgerDirectEvidenceSupersessionRejectsSameTeamCrossOwnerReplacement",
+      "package": "./internal/repository",
+      "run": "^TestLedgerDirectEvidenceSupersessionRejectsSameTeamCrossOwnerReplacement$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_lifecycle_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestLedgerDirectEvidenceSupersessionRetiresTargetWhenReplacementIsQuarantined",
+      "package": "./internal/repository",
+      "run": "^TestLedgerDirectEvidenceSupersessionRetiresTargetWhenReplacementIsQuarantined$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_lifecycle_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestLedgerEvidenceLifecyclePersistsTargetSpaceAndRejectsMixedSpaces",
+      "package": "./internal/repository",
+      "run": "^TestLedgerEvidenceLifecyclePersistsTargetSpaceAndRejectsMixedSpaces$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_lifecycle_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically",
+      "package": "./internal/repository",
+      "run": "^TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically$",
+      "phase": "precheck",
+      "source": "internal/repository/evidence_lifecycle_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestNormalizeCorrectRelationshipInputCanonicalizesWithoutMutatingCaller",
+      "package": "./internal/repository",
+      "run": "^TestNormalizeCorrectRelationshipInputCanonicalizesWithoutMutatingCaller$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation",
+      "package": "./internal/repository",
+      "run": "^TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionEqualHashUsesOneEmbeddingForBothDocumentStates",
+      "package": "./internal/repository",
+      "run": "^TestRelationshipCorrectionEqualHashUsesOneEmbeddingForBothDocumentStates$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionLocksCrossScopePairCanonically",
+      "package": "./internal/repository",
+      "run": "^TestRelationshipCorrectionLocksCrossScopePairCanonically$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_lock_order_integration.e2e"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionPlannerKeepsStoredResolvedSelection",
+      "package": "./internal/repository",
+      "run": "^TestRelationshipCorrectionPlannerKeepsStoredResolvedSelection$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionPlannerUsesCanonicalNameForUniqueSubmitMatch",
+      "package": "./internal/repository",
+      "run": "^TestRelationshipCorrectionPlannerUsesCanonicalNameForUniqueSubmitMatch$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_canonical_projection_integration.e2e"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionPreservesOccurrenceSupport",
+      "package": "./internal/repository",
+      "run": "^TestRelationshipCorrectionPreservesOccurrenceSupport$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_occurrence_integration.e2e"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionRejectsInvalidEmbeddingAtomically",
+      "package": "./internal/repository",
+      "run": "^TestRelationshipCorrectionRejectsInvalidEmbeddingAtomically$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionRejectsSearchContractRotationAfterPlan",
+      "package": "./internal/repository",
+      "run": "^TestRelationshipCorrectionRejectsSearchContractRotationAfterPlan$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionRejectsStaleVersionAfterPlan",
+      "package": "./internal/repository",
+      "run": "^TestRelationshipCorrectionRejectsStaleVersionAfterPlan$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_fence_integration.e2e"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionRejectsSupportRevisionChangeAfterPlan",
+      "package": "./internal/repository",
+      "run": "^TestRelationshipCorrectionRejectsSupportRevisionChangeAfterPlan$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_fence_integration.e2e"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport",
+      "package": "./internal/repository",
+      "run": "^TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestRelationshipCorrectionReusesActiveCollisionAndRejectsNoOp",
+      "package": "./internal/repository",
+      "run": "^TestRelationshipCorrectionReusesActiveCollisionAndRejectsNoOp$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_correction_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticAppendOnlyHistoryAndRetraction",
+      "package": "./internal/repository",
+      "run": "^TestSemanticAppendOnlyHistoryAndRetraction$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticApplyRelationshipDecisionValidationAllowsStructuralRememberAcceptance",
+      "package": "./internal/repository",
+      "run": "^TestSemanticApplyRelationshipDecisionValidationAllowsStructuralRememberAcceptance$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticApplyRelationshipDecisionValidationRejectsLegacySupportAuthority",
+      "package": "./internal/repository",
+      "run": "^TestSemanticApplyRelationshipDecisionValidationRejectsLegacySupportAuthority$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticApplyRelationshipDecisionValidationRejectsMalformedSupportForAnyVerdict",
+      "package": "./internal/repository",
+      "run": "^TestSemanticApplyRelationshipDecisionValidationRejectsMalformedSupportForAnyVerdict$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticApplyRelationshipDecisionValidationRequiresEntailedSupport",
+      "package": "./internal/repository",
+      "run": "^TestSemanticApplyRelationshipDecisionValidationRequiresEntailedSupport$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticAssessmentEntityMatchesUseOnlyCanonicalAndAliasNames",
+      "package": "./internal/repository",
+      "run": "^TestSemanticAssessmentEntityMatchesUseOnlyCanonicalAndAliasNames$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_review_catalog_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticCatalogsOmitSealedGenerationEntities",
+      "package": "./internal/repository",
+      "run": "^TestSemanticCatalogsOmitSealedGenerationEntities$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_review_catalog_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticCreateHypothesisBootstrapsRefsAndDefaultsProposed",
+      "package": "./internal/repository",
+      "run": "^TestSemanticCreateHypothesisBootstrapsRefsAndDefaultsProposed$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticDelayedOlderOneVersionDoesNotSupersedeNewerManyRows",
+      "package": "./internal/repository",
+      "run": "^TestSemanticDelayedOlderOneVersionDoesNotSupersedeNewerManyRows$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_review_regression.e2e"
+    },
+    {
+      "id": "repository/TestSemanticEntitiesAllowHomonymsAndTypedValuesDeduplicate",
+      "package": "./internal/repository",
+      "run": "^TestSemanticEntitiesAllowHomonymsAndTypedValuesDeduplicate$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticGroupKeyExcludesMutableValidTo",
+      "package": "./internal/repository",
+      "run": "^TestSemanticGroupKeyExcludesMutableValidTo$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_identity_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticOneCardinalitySupersedesPriorActiveRelationship",
+      "package": "./internal/repository",
+      "run": "^TestSemanticOneCardinalitySupersedesPriorActiveRelationship$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticOneCardinalityUpgradeSupersedesLegacyManyRows",
+      "package": "./internal/repository",
+      "run": "^TestSemanticOneCardinalityUpgradeSupersedesLegacyManyRows$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_review_regression.e2e"
+    },
+    {
+      "id": "repository/TestSemanticRelationshipLifecycleAndRLS",
+      "package": "./internal/repository",
+      "run": "^TestSemanticRelationshipLifecycleAndRLS$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticRepositoryFailsClosedWithoutDependencies",
+      "package": "./internal/repository",
+      "run": "^TestSemanticRepositoryFailsClosedWithoutDependencies$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases",
+      "package": "./internal/repository",
+      "run": "^TestSemanticReviewCatalogListsTeamCandidatesAndPredicateAliases$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_review_catalog_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticSupportDecisionsRecomputeEffectiveState",
+      "package": "./internal/repository",
+      "run": "^TestSemanticSupportDecisionsRecomputeEffectiveState$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_lifecycle_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticSupportMustMatchSuppliedIngest",
+      "package": "./internal/repository",
+      "run": "^TestSemanticSupportMustMatchSuppliedIngest$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_review_regression.e2e"
+    },
+    {
+      "id": "repository/TestSemanticSupportSourceRevisionMustMatchSource",
+      "package": "./internal/repository",
+      "run": "^TestSemanticSupportSourceRevisionMustMatchSource$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticValidToDisagreementFailsAtomicallyWithoutMutatingCanonicalRelationship",
+      "package": "./internal/repository",
+      "run": "^TestSemanticValidToDisagreementFailsAtomicallyWithoutMutatingCanonicalRelationship$",
+      "phase": "precheck",
+      "source": "internal/repository/relationship_identity_integration.e2e"
+    },
+    {
+      "id": "repository/TestSemanticValueUpsertConcurrentDuplicateReturnsCanonical",
+      "package": "./internal/repository",
+      "run": "^TestSemanticValueUpsertConcurrentDuplicateReturnsCanonical$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships",
+      "package": "./internal/repository",
+      "run": "^TestSourceRevisionAdvanceRevokesAdoptedSupportAndRecomputesRelationships$",
+      "phase": "precheck",
+      "source": "internal/repository/semantic_lifecycle_integration.e2e"
+    },
+    {
+      "id": "repository/TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolution",
+      "package": "./internal/repository",
+      "run": "^TestSubmissionAssessmentCatalogIsTeamScopedAndUsesBoundedPredicateResolution$",
+      "phase": "precheck",
+      "source": "internal/repository/submission_assessment_catalog_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestSubmissionAssessmentKnownEvidenceCatalogEnforcesVisibilityAndEligibility",
+      "package": "./internal/repository",
+      "run": "^TestSubmissionAssessmentKnownEvidenceCatalogEnforcesVisibilityAndEligibility$",
+      "phase": "precheck",
+      "source": "internal/repository/submission_assessment_known_evidence_repository_integration.e2e"
+    }
+  ]
+}

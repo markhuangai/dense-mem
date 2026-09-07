@@ -57,3 +57,34 @@ Recall execution keeps prepared search contracts, embeddings, degradation
 state, and derived memory-space scope in private service/adapter wrappers.
 The public request and storage ports cannot carry derived scope or provider
 state.
+
+## Wave 5 shared-readiness ownership
+
+Issue #389 freezes the writable partition for the eight Wave 5 adopters. The
+capability fragments are the authoritative source-to-owner map; the central
+manifest, shared contracts, role rules, assemblers, and mixed fixtures remain
+read-only infrastructure for adopters.
+
+The following files intentionally remain shared-read-only because they contain
+cross-capability contracts or mixed acceptance setup:
+
+- `internal/repository/semantic_types.go` and `internal/repository/semantic_read_helpers.go`
+- `internal/repository/semantic_trace_graph_integration.e2e`
+- `internal/repository/remember_primitives_integration.e2e`
+- `cmd/internal/serverapp/application_composition.go` and `cmd/internal/serverapp/server.go`
+- `cmd/e2e/main.go` and `scripts/e2e-host-controller.sh`, except for the bounded
+  precheck project-name helper owned by #389
+
+Database-case registrations use the same partition: `knowledge` (#362),
+`trace` (#363), `privacy` (#364), `dream` (#365), `graph` (#366),
+`community` (#367), `audit` (#368), and `settings` (#369). The empty settings
+fragment is intentional; its owner is reserved before that capability adds
+database-backed cases. Existing `http`, `migration`, `postgres`,
+`repository`, `server`, and `service` fragments retain cases outside this
+Wave 5 partition.
+
+The retained `internal/repository/remember_artifact_hold.go` symbol is a
+single-hop compatibility forwarder. Its authoritative writer is
+`internal/storage/postgres/remember_artifact_hold.go:SetRememberFailureArtifactHoldStateTx`.
+The three current consumers and the zero-supported-consumer removal condition
+are recorded in the `postgres-storage-adapter` fragment for cleanup by #382.

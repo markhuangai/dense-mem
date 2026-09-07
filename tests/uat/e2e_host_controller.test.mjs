@@ -184,6 +184,31 @@ partition_precheck_capabilities "${sourceRoot}"
   }
 });
 
+test("capability-specific precheck project names stay bounded and distinct", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-project-name-"));
+  try {
+    const validateStart = controller.indexOf("\nvalidate_project()") + 1;
+    const validateEnd = controller.indexOf("\nvalidate_phase()", validateStart);
+    const managedStart = controller.indexOf("\nmanaged_project_name()") + 1;
+    const managedEnd = controller.indexOf("\nvalidate_phase()", managedStart);
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+${controller.slice(validateStart, validateEnd)}
+${controller.slice(managedStart, managedEnd)}
+first="$(managed_project_name 1234567890 1 precheck audit,graph,migration,repository,trace)"
+second="$(managed_project_name 1234567890 1 precheck community,http,postgres,server)"
+[[ "\${first}" != "\${second}" ]]
+(( \${#first} <= 63 ))
+(( \${#second} <= 63 ))
+`;
+    const scriptPath = join(fixture, "project-name-test.sh");
+    await executable(scriptPath, script);
+    await assert.doesNotReject(run("bash", [scriptPath]));
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("local adapter builds the working tree and delegates to the shared controller", () => {
   assert.match(local, /docker build --target production/);
   assert.match(local, /DENSE_MEM_CI_LOCAL=1/);

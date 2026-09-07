@@ -59,7 +59,12 @@ validate_project() {
 
 managed_project_name() {
   local run_id="$1" attempt="$2" phase="$3" scenario="$4"
-  local project="densemem-ci-${run_id}-${attempt}-${phase}-${scenario//_/-}"
+  local project="densemem-ci-${run_id}-${attempt}-${phase}"
+  if [[ -n "$scenario" ]]; then
+    local scenario_suffix="${scenario//_/-}"
+    scenario_suffix="${scenario_suffix//,/-}"
+    project+="-${scenario_suffix}"
+  fi
   if (( ${#project} > 63 )); then
     local suffix
     suffix="$(node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(process.argv[1]).digest("hex").slice(0,8))' "$project")"
@@ -369,11 +374,8 @@ precheck_capability() {
 
   local docker_socket
   docker_socket="$(docker_socket_path)"
-  local project="densemem-ci-${run_id}-${attempt}-precheck"
-  if [[ -n "$capabilities" ]]; then
-    project+="-${capabilities//,/-}"
-  fi
-  validate_project "$project"
+  local project
+  project="$(managed_project_name "$run_id" "$attempt" precheck "$capabilities")"
   local precheck_network="$project"
   cleanup_precheck_resources() {
     remove_network_containers "$precheck_network"

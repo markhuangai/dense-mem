@@ -1,6 +1,24 @@
 {
   "schema_version": 1,
   "capability": "postgres-storage-adapter",
+  "source_ownership": [
+    {"path": "internal/repository/remember_artifact_hold.go", "issue": 389},
+    {"path": "internal/repository/remember_artifact_hold_rollback_integration.e2e", "issue": 389}
+  ],
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/repository/remember_artifact_hold.go",
+      "fields": ["setRememberFailureArtifactHoldStateTx"],
+      "consumers": [
+        {"path": "internal/repository/remember_artifact_hold.go", "symbol": "LedgerRepositoryImpl.synchronizeRememberFailureArtifactHold"},
+        {"path": "internal/repository/private_memory_repository_operations.go", "symbol": "PrivateMemoryRepositoryImpl.PlaceLegalHold"},
+        {"path": "internal/repository/private_memory_repository_operations.go", "symbol": "PrivateMemoryRepositoryImpl.ReleaseLegalHold"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/storage/postgres/remember_artifact_hold.go", "symbol": "SetRememberFailureArtifactHoldStateTx"},
+      "removal_condition": "Remove the forwarder when every supported production, evaluation, demo, transport, and test caller uses the PostgreSQL owner or its migrated capability."
+    }
+  ],
   "completed_issues": [],
   "go": {
     "units": [

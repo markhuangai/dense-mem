@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "capability": "community",
+  "cases": [
+    {
+      "id": "repository/TestCommunityRepositorySnapshotLifecycleAndRecallExpansion",
+      "package": "./internal/repository",
+      "run": "^TestCommunityRepositorySnapshotLifecycleAndRecallExpansion$",
+      "phase": "precheck",
+      "source": "internal/repository/community_repository_integration.e2e"
+    }
+  ]
+}

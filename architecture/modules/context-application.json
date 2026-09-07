@@ -3,7 +3,16 @@
   "capability": "context-application",
   "source_ownership": [
     {"path": "cmd/internal/serverapp/trace_composition.go", "issue": 363},
-    {"path": "internal/tools/registry/trace_bindings.go", "issue": 363}
+    {"path": "internal/tools/registry/trace_bindings.go", "issue": 363},
+    {"path": "internal/repository/evidence_duplicate_trace_integration.e2e", "issue": 363},
+    {"path": "internal/repository/evidence_lifecycle_trace_repository.go", "issue": 363},
+    {"path": "internal/repository/semantic_read_search_repository.go", "issue": 363},
+    {"path": "internal/repository/semantic_read_repository_test.go", "issue": 363},
+    {"path": "internal/repository/semantic_trace_occurrence.go", "issue": 363},
+    {"path": "internal/repository/semantic_trace_repository.go", "issue": 363},
+    {"path": "internal/service/contextservice/context.go", "issue": 363},
+    {"path": "internal/service/contextservice/semantic_trace.go", "issue": 363},
+    {"path": "internal/service/contextservice/semantic_trace_test.go", "issue": 363}
   ],
   "completed_issues": [],
   "go": {
