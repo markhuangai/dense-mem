@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "capability": "server",
+  "cases": [
+    {
+      "id": "server/TestRememberServiceRejectsHistoricalOutcomesThroughPostgres",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestRememberServiceRejectsHistoricalOutcomesThroughPostgres$",
+      "phase": "scenario",
+      "scenario": "synchronous_write_primitives",
+      "source": "cmd/internal/serverapp/remember_processor_integration.e2e"
+    },
+    {
+      "id": "server/TestRememberServiceRejectsMigratedAttemptThroughPostgres",
+      "package": "./cmd/internal/serverapp",
+      "run": "^TestRememberServiceRejectsMigratedAttemptThroughPostgres$",
+      "phase": "scenario",
+      "scenario": "synchronous_write_primitives",
+      "source": "cmd/internal/serverapp/remember_processor_integration.e2e"
+    }
+  ]
+}

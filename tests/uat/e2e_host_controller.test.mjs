@@ -73,6 +73,37 @@ test("the shared controller owns CI and local lifecycle without legacy state", (
   assert.match(stack, /copy_git_source "\$container" "\$source_dir"/);
 });
 
+test("the default precheck partitions capabilities and propagates failures", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-partition-"));
+  try {
+    const wrapper = controller.slice(controller.lastIndexOf("\nprecheck() {") + 1, controller.indexOf("\ndoctor() {"));
+    assert.ok(wrapper.includes("precheck_capability"));
+    const script = `#!/usr/bin/env bash
+set -euo pipefail
+${wrapper}
+precheck_capability() {
+  printf 'capability=%s\\n' "$5"
+  [[ "$5" != postgres ]]
+}
+precheck 123 1 ghcr.io/markhuangai/dense-mem:test@sha256:${"1".repeat(64)} /workspace
+`;
+    const scriptPath = join(fixture, "partition-test.sh");
+    await executable(scriptPath, script);
+    await assert.rejects(
+      run("bash", [scriptPath], { env: { TMPDIR: fixture } }),
+      (error) => {
+        const output = `${error.stdout || ""}${error.stderr || ""}`;
+        assert.match(output, /capability=repository/);
+        assert.match(output, /capability=postgres/);
+        assert.match(output, /capability=migration,http,service/);
+        return true;
+      },
+    );
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("local adapter builds the working tree and delegates to the shared controller", () => {
   assert.match(local, /docker build --target production/);
   assert.match(local, /DENSE_MEM_CI_LOCAL=1/);
@@ -385,8 +416,13 @@ test("shared PostgreSQL provisioning keeps runtime identity least-privileged", (
   assert.match(postgres, /ALTER DATABASE :"runtime_database" OWNER TO densemem_e2e_database_owner/);
   assert.match(postgres, /role\.rolbypassrls/);
   assert.match(postgres, /run_identity_cleanup_startup_matrix/);
+  assert.match(postgres, /DATABASE_URL=\$\{database_url\}/);
+  assert.match(postgres, /--scenario identity_cleanup --capability postgres \\\s+--timeout 20m --total-timeout 25m/);
+  assert.doesNotMatch(postgres, /--case postgres\/TestIdentityCleanupComposeSeed/);
   assert.match(controller, /provision_postgres_runtime_role/);
   assert.match(controller, /verify_postgres_runtime_migration_state/);
+  assert.match(controller, /docker network inspect --format '[^']*\.Containers/);
+  assert.match(controller, /docker rm -f "\$container_id"/);
 });
 
 test("Compose stack has no host bindings and carries only project-scoped inputs", () => {
@@ -432,6 +468,8 @@ test("production workflows use capability-matched runners and one OCI handoff", 
   assert.match(productionWorkflow, /max-parallel: 4/);
   assert.match(productionWorkflow, /shared_project: \$\{\{ steps\.start\.outputs\.shared_project \}\}/);
   assert.match(productionWorkflow, /scripts\/e2e-scenario-registry\.mjs --validate-compatible/);
+  assert.match(productionWorkflow, /for selection in repository postgres migration,http,service/);
+  assert.match(controller, /--total-timeout 25m/);
   assert.doesNotMatch(productionWorkflow, /const isolations = new Set\(\["exclusive", "shared_team"\]\)/);
   assert.doesNotMatch(productionWorkflow, /rootless-docker-shared|runs-on:\s*pc|workflow_dispatch|actions\/download-artifact|actions\/upload-artifact/);
   assert.match(scenarioWorkflow, /runs-on: rootless-docker/);

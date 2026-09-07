@@ -1,0 +1,996 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+// testConfig implements ConfigProvider for testing
+type testConfig struct {
+	dsn string
+}
+
+func (c *testConfig) GetPostgresDSN() string {
+	return c.dsn
+}
+
+// getTestDSN returns the DSN to use for testing.
+// It checks DATABASE_URL environment variable first, then tries to start a test container.
+func getTestDSN(ctx context.Context) (string, func(), error) {
+	// First, try DATABASE_URL environment variable
+	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
+		return dsn, func() {}, nil
+	}
+
+	// Try to start a test container
+	container, err := postgres.Run(ctx, "pgvector/pgvector:0.8.2-pg18-trixie", postgresTestContainerOptions()...)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to start postgres container: %w", err)
+	}
+
+	// Get the connection string
+	connStr, err := postgresTestContainerDSN(ctx, container)
+	if err != nil {
+		_ = container.Terminate(ctx)
+		return "", nil, err
+	}
+
+	cleanup := func() {
+		_ = container.Terminate(ctx)
+	}
+
+	return connStr, cleanup, nil
+}
+
+func postgresTestContainerOptions() []testcontainers.ContainerCustomizer {
+	options := []testcontainers.ContainerCustomizer{
+		postgres.WithDatabase("testdb"),
+		postgres.WithUsername("testuser"),
+		postgres.WithPassword("testpass"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30 * time.Second),
+		),
+	}
+	if networkName := strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")); networkName != "" {
+		options = append(options, tcnetwork.WithNetworkName([]string{"postgres"}, networkName))
+	}
+	return options
+}
+
+func postgresTestContainerDSN(ctx context.Context, container *postgres.PostgresContainer) (string, error) {
+	if strings.TrimSpace(os.Getenv("DENSE_MEM_CI_PRECHECK_NETWORK")) == "" {
+		return container.ConnectionString(ctx, "sslmode=disable")
+	}
+	connectionURL := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword("testuser", "testpass"),
+		Host:   "postgres:5432",
+		Path:   "/testdb",
+	}
+	query := connectionURL.Query()
+	query.Set("sslmode", "disable")
+	connectionURL.RawQuery = query.Encode()
+	return connectionURL.String(), nil
+}
+
+// skipIfNoPostgres skips the test if postgres is not available.
+func skipIfNoPostgres(t *testing.T, ctx context.Context) (string, func()) {
+	dsn, cleanup, err := getTestDSN(ctx)
+	if err != nil {
+		if os.Getenv("DENSE_MEM_REQUIRE_POSTGRES_TESTS") == "1" {
+			t.Fatalf("Postgres is required for this test run: %v", err)
+		}
+		t.Skipf("Postgres not available: %v", err)
+	}
+	return dsn, cleanup
+}
+
+// TestOpenSuccess verifies successful connection and ping.
+func TestOpenSuccess(t *testing.T) {
+	ctx := context.Background()
+
+	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	defer cleanup()
+
+	cfg := &testConfig{dsn: dsn}
+
+	db, err := Open(ctx, cfg)
+	require.NoError(t, err, "Open should succeed with valid postgres")
+	require.NotNil(t, db, "Open should return a non-nil db")
+
+	// Verify we can get the underlying sql.DB and check pool settings
+	sqlDB, err := db.DB()
+	require.NoError(t, err, "should be able to get underlying sql.DB")
+
+	// Verify pool configuration
+	stats := sqlDB.Stats()
+	assert.LessOrEqual(t, stats.MaxOpenConnections, 25, "max open connections should be 25")
+
+	// Clean up
+	err = sqlDB.Close()
+	assert.NoError(t, err, "Close should not error")
+}
+
+// TestOpenFailsOnUnreachable verifies error returned (not panic) when Postgres is unreachable.
+func TestOpenFailsOnUnreachable(t *testing.T) {
+	ctx := context.Background()
+
+	// Use an invalid connection string with a non-routable IP to avoid DNS resolution issues
+	cfg := &testConfig{dsn: "host=192.0.2.1 port=5432 user=test password=test dbname=test sslmode=disable connect_timeout=1"}
+
+	db, err := Open(ctx, cfg)
+	assert.Error(t, err, "Open should return an error for unreachable postgres")
+	assert.Nil(t, db, "Open should return nil db on error")
+	// Error could be from connection failure or ping failure
+	assert.Contains(t, err.Error(), "failed to", "error should indicate failure")
+}
+
+// TestOpenFailsOnEmptyDSN verifies error when DSN is empty.
+func TestOpenFailsOnEmptyDSN(t *testing.T) {
+	ctx := context.Background()
+	cfg := &testConfig{dsn: ""}
+
+	db, err := Open(ctx, cfg)
+	assert.Error(t, err, "Open should return an error for empty DSN")
+	assert.Nil(t, db, "Open should return nil db on error")
+	assert.Contains(t, err.Error(), "DSN is empty", "error should indicate empty DSN")
+}
+
+// TestMigratorRunUp verifies migrations apply and schema changes are present.
+func TestMigratorRunUp(t *testing.T) {
+	ctx := context.Background()
+
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	m := NewMigratorWithDB(sqlDB)
+
+	err := m.RunUp(ctx)
+	assert.NoError(t, err, "RunUp should succeed")
+	err = m.RunUp(ctx)
+	assert.NoError(t, err, "repeat RunUp should be idempotent")
+	for _, indexName := range []string{"community_records_current_logical_unique", "community_sources_group_idx", "community_sources_community_idx"} {
+		assert.True(t, indexExists(t, ctx, sqlDB, indexName), "migration index %s should exist", indexName)
+	}
+	assert.False(t, indexExists(t, ctx, sqlDB, "idx_credentials_owner_team_active_unique"), "SSO credential ownership must not remain singleton")
+	var logicalCommunityIDNotNull int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'community_records' AND column_name = 'logical_community_id' AND is_nullable = 'NO'`).Scan(&logicalCommunityIDNotNull))
+	assert.Equal(t, 1, logicalCommunityIDNotNull, "logical community IDs should be enforced after the committed backfill")
+}
+
+func TestMigratorRunUpAppliesPostCutoverCleanupAfterEmbeddingRetry(t *testing.T) {
+	ctx := context.Background()
+
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072401)
+	require.True(t, tableExists(t, ctx, sqlDB, "community_detection_runs"))
+
+	m := NewMigratorWithDB(sqlDB)
+	require.NoError(t, m.RunUp(ctx))
+	require.False(t, tableExists(t, ctx, sqlDB, "community_detection_runs"))
+	require.NoError(t, m.RunUp(ctx), "repeat RunUp should remain idempotent")
+}
+
+// TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrganizationIdentity
+// verifies the reversible telemetry migrations do not weaken the upstream
+// irreversible migration boundary.
+func TestMigratorRunDownRevertsTelemetryPricingIndexAndRatesBeforeRejectingOrganizationIdentity(t *testing.T) {
+	ctx := context.Background()
+
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	m := NewMigratorWithDB(sqlDB)
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026073106), "telemetry migration setup should succeed")
+
+	var pricingCount int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM app_config
+		WHERE key IN (
+			'TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS',
+			'TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS',
+			'TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS'
+		)
+	`).Scan(&pricingCount))
+	assert.Equal(t, 3, pricingCount)
+
+	// Rewind post-telemetry migrations first; the test's assertions start at
+	// the known reversible telemetry boundary rather than the repository head.
+	require.NoError(t, migrationDownTo(ctx, sqlDB, 2026073105), "telemetry marker index migration should be reversible")
+	assert.False(t, indexExists(t, ctx, sqlDB, "placement_outcomes_telemetry_first_disposition_unique"))
+	assert.False(t, indexExists(t, ctx, sqlDB, "knowledge_ingests_telemetry_remember_backfill_idx"))
+	assert.False(t, tableExists(t, ctx, sqlDB, "telemetry_first_disposition_backfill_state"))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM app_config
+		WHERE key IN (
+			'TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS',
+			'TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS',
+			'TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS'
+		)
+	`).Scan(&pricingCount))
+	assert.Equal(t, 3, pricingCount)
+
+	require.NoError(t, m.RunDown(ctx), "telemetry pricing migration should be reversible")
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM app_config
+		WHERE key IN (
+			'TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS',
+			'TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS',
+			'TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS'
+		)
+	`).Scan(&pricingCount))
+	assert.Zero(t, pricingCount)
+
+	require.NoError(t, m.RunDown(ctx), "legacy telemetry version repair down should be a no-op")
+
+	err := m.RunDown(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2026073103_organization_directory_identity is irreversible")
+}
+
+func TestSearchStorageMigrationAllowsIndexGenerationLifecycleOnly(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	m := NewMigratorWithDB(sqlDB)
+	require.NoError(t, m.RunUp(ctx))
+
+	contractID := uuid.NewString()
+	generationID := uuid.NewString()
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', 'migration', true)`)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO embedding_contracts (
+		    embedding_contract_id, contract_key, version, provider, model,
+		    dimensions, distance_metric, vector_normalization,
+		    document_format_version, query_format_version, lifecycle_state
+		) VALUES ($1::uuid, 'test-search-lifecycle', 1, 'test', 'test-model', 3, 'cosine', 'provider', 1, 1, 'active')
+	`, contractID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO search_index_generations (
+		    search_index_generation_id, generation, embedding_contract_id,
+		    embedding_dimensions, ann_strategy, activation_state
+		) VALUES ($1::uuid, 1, $2::uuid, 3, 'exact', 'building')
+	`, generationID, contractID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		UPDATE search_index_generations
+		SET activation_state = 'active',
+		    activated_at = now()
+		WHERE search_index_generation_id = $1::uuid
+	`, generationID)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	tx, err = sqlDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', 'migration', true)`)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		UPDATE search_index_generations
+		SET metadata = '{"changed": true}'::jsonb
+		WHERE search_index_generation_id = $1::uuid
+	`, generationID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "immutable fields cannot be changed")
+	require.NoError(t, tx.Rollback())
+}
+
+func TestSemanticLedgerMigrationUpgradesPopulated1703(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026071703)
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	insertMigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "primary")
+	// Main's post-cutover guard requires a compatible marker for populated databases.
+	runGooseUpTo(t, ctx, sqlDB, 2026071909)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO v2_compatibility_markers (marker_kind, version, status, corpus_hash, gate_report_hash, metadata) VALUES ('v2_cutover', 'dense-mem.v2.1.cutover.v1', 'compatible', 'sha256:corpus', 'sha256:gates', '{}'::jsonb)`)
+		return err
+	}))
+
+	m := NewMigratorWithDB(sqlDB)
+	require.NoError(t, m.RunUp(ctx))
+
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
+			VALUES ($1::uuid, $2::uuid, 'doc://post-1704-inferred', 'document', 'inferred')
+		`, teamID, profileID)
+		return err
+	}))
+}
+
+func TestEmbeddingRetryRecoveryMigrationRequeuesOnlyTransientExhaustion(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072302)
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	contractID := uuid.NewString()
+	generationID := uuid.NewString()
+	transientDocumentID := uuid.NewString()
+	permanentDocumentID := uuid.NewString()
+	queuedDocumentID := uuid.NewString()
+	transientJobID := uuid.NewString()
+	permanentJobID := uuid.NewString()
+	queuedJobID := uuid.NewString()
+
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', 'migration', true)`)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO semantic_team_refs (team_id)
+		VALUES ($1::uuid)
+	`, teamID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO semantic_profile_refs (team_id, profile_id)
+		VALUES ($1::uuid, $2::uuid)
+	`, teamID, profileID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO embedding_contracts (
+		    embedding_contract_id, contract_key, version, provider, model,
+		    dimensions, distance_metric, vector_normalization,
+		    document_format_version, query_format_version, lifecycle_state
+		) VALUES (
+		    $1::uuid, $2, 1, 'openai', 'test-model', 3, 'cosine', 'provider', 1, 1, 'active'
+		)
+	`, contractID, "embedding-retry-"+contractID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO search_index_generations (
+		    search_index_generation_id, generation, embedding_contract_id,
+		    embedding_dimensions, ann_strategy, activation_state, activated_at
+		) VALUES ($1::uuid, 1, $2::uuid, 3, 'exact', 'active', now());
+	`, generationID, contractID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO search_documents (
+		    team_id, search_document_id, owner_profile_id, source_kind, source_id,
+		    source_version, document_version, embedding_contract_id, embedding_dimensions,
+		    search_state, document_text, document_hash, embedding_error
+		) VALUES
+		    ($1::uuid, $3::uuid, $2::uuid, 'relationship', $3::uuid, 1, 1, $6::uuid, 3,
+		     'failed', 'transient timeout', 'sha256:transient', 'context deadline exceeded'),
+		    ($1::uuid, $4::uuid, $2::uuid, 'relationship', $4::uuid, 1, 1, $6::uuid, 3,
+		     'failed', 'permanent failure', 'sha256:permanent', 'invalid vector dimensions'),
+		    ($1::uuid, $5::uuid, $2::uuid, 'relationship', $5::uuid, 1, 1, $6::uuid, 3,
+		     'pending', 'queued work', 'sha256:queued', '')
+	`, teamID, profileID, transientDocumentID, permanentDocumentID, queuedDocumentID, contractID)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO embedding_jobs (
+		    team_id, embedding_job_id, search_document_id, owner_profile_id,
+		    source_kind, source_id, source_version, document_version,
+		    embedding_contract_id, embedding_dimensions, status, attempts,
+		    max_attempts, error, completed_at
+		) VALUES
+		    ($1::uuid, $6::uuid, $3::uuid, $2::uuid, 'relationship', $3::uuid, 1, 1,
+		     $9::uuid, 3, 'failed', 5, 5,
+		     'embedding provider error: context deadline exceeded (Client.Timeout exceeded while awaiting headers)', now()),
+		    ($1::uuid, $7::uuid, $4::uuid, $2::uuid, 'relationship', $4::uuid, 1, 1,
+		     $9::uuid, 3, 'failed', 5, 5, 'invalid vector dimensions', now()),
+		    ($1::uuid, $8::uuid, $5::uuid, $2::uuid, 'relationship', $5::uuid, 1, 1,
+		     $9::uuid, 3, 'queued', 0, 5, '', NULL)
+	`, teamID, profileID, transientDocumentID, permanentDocumentID, queuedDocumentID,
+		transientJobID, permanentJobID, queuedJobID, contractID)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072401)
+
+	tx, err = sqlDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', 'migration', true)`)
+	require.NoError(t, err)
+	var transientStatus, permanentStatus, queuedStatus string
+	var transientAttempts, transientMaxAttempts, permanentMaxAttempts, queuedMaxAttempts int
+	var transientCompleted bool
+	require.NoError(t, tx.QueryRowContext(ctx, `
+		SELECT status, attempts, max_attempts, completed_at IS NOT NULL
+		FROM embedding_jobs
+		WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+	`, teamID, transientJobID).Scan(
+		&transientStatus,
+		&transientAttempts,
+		&transientMaxAttempts,
+		&transientCompleted,
+	))
+	require.NoError(t, tx.QueryRowContext(ctx, `
+		SELECT status, max_attempts
+		FROM embedding_jobs
+		WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+	`, teamID, permanentJobID).Scan(&permanentStatus, &permanentMaxAttempts))
+	require.NoError(t, tx.QueryRowContext(ctx, `
+		SELECT status, max_attempts
+		FROM embedding_jobs
+		WHERE team_id = $1::uuid AND embedding_job_id = $2::uuid
+	`, teamID, queuedJobID).Scan(&queuedStatus, &queuedMaxAttempts))
+	var transientDocumentState, transientDocumentError, permanentDocumentState string
+	require.NoError(t, tx.QueryRowContext(ctx, `
+		SELECT search_state, embedding_error
+		FROM search_documents
+		WHERE team_id = $1::uuid AND search_document_id = $2::uuid
+	`, teamID, transientDocumentID).Scan(&transientDocumentState, &transientDocumentError))
+	require.NoError(t, tx.QueryRowContext(ctx, `
+		SELECT search_state
+		FROM search_documents
+		WHERE team_id = $1::uuid AND search_document_id = $2::uuid
+	`, teamID, permanentDocumentID).Scan(&permanentDocumentState))
+	var defaultExpression string
+	require.NoError(t, tx.QueryRowContext(ctx, `
+		SELECT column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+		  AND table_name = 'embedding_jobs'
+		  AND column_name = 'max_attempts'
+	`).Scan(&defaultExpression))
+	require.NoError(t, tx.Rollback())
+
+	assert.Equal(t, "queued", transientStatus)
+	assert.Equal(t, 5, transientAttempts)
+	assert.Equal(t, 20, transientMaxAttempts)
+	assert.False(t, transientCompleted)
+	assert.Equal(t, "pending", transientDocumentState)
+	assert.Empty(t, transientDocumentError)
+	assert.Equal(t, "failed", permanentStatus)
+	assert.Equal(t, 5, permanentMaxAttempts)
+	assert.Equal(t, "failed", permanentDocumentState)
+	assert.Equal(t, "queued", queuedStatus)
+	assert.Equal(t, 20, queuedMaxAttempts)
+	assert.Equal(t, "20", defaultExpression)
+}
+
+func TestSemanticLedgerMigrationRejectsLegacyDerivedAuthority(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026071703)
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	insertMigrationAuthorityFixture(t, ctx, sqlDB, teamID, profileID, "derived")
+
+	m := NewMigratorWithDB(sqlDB)
+	err := m.RunUp(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "canonical evidence authority required")
+	assert.Contains(t, err.Error(), "derived=1")
+}
+
+func TestSemanticLedgerMigrationGuardedRollbackRejectsCanonicalAuthority(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026071704)
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_team_refs (team_id)
+			VALUES ($1::uuid)
+			ON CONFLICT (team_id) DO NOTHING
+		`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_profile_refs (team_id, profile_id)
+			VALUES ($1::uuid, $2::uuid)
+			ON CONFLICT (team_id, profile_id) DO NOTHING
+		`, teamID, profileID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_sources (team_id, owner_profile_id, source_key, source_kind, authority)
+			VALUES ($1::uuid, $2::uuid, 'doc://rollback-inferred', 'document', 'inferred')
+		`, teamID, profileID)
+		return err
+	}))
+
+	m := NewMigratorWithDB(sqlDB)
+	err := m.RunDown(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot roll back 2026071704")
+	assert.Contains(t, err.Error(), "inferred=1")
+}
+
+func TestPostCutoverCleanupMigrationFreshUpgradeSucceeds(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	m := NewMigratorWithDB(sqlDB)
+	require.NoError(t, m.RunUp(ctx))
+
+	for _, tableName := range []string{
+		"profiles",
+		"api_keys",
+		"memory_dispute_sessions",
+		"memory_placement_items",
+		"memory_placement_runs",
+		"community_detection_runs",
+	} {
+		assert.False(t, tableExists(t, ctx, sqlDB, tableName), "%s should be dropped", tableName)
+	}
+	assert.False(t, columnExists(t, ctx, sqlDB, "placement_runs", "migration_claim_epoch"))
+
+	var markerCount int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*)::int FROM v2_compatibility_markers`).Scan(&markerCount))
+	assert.Equal(t, 1, markerCount, "the cutover migration records the compatible authority marker")
+	var markerVersion, markerStatus string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT version, status FROM v2_compatibility_markers WHERE marker_kind = 'v2_cutover'`).Scan(&markerVersion, &markerStatus))
+	assert.Equal(t, "dense-mem.v2.6.1.cutover.v1", markerVersion)
+	assert.Equal(t, "compatible", markerStatus)
+}
+
+func TestPostCutoverCleanupMigrationWithCompatibleMarkerDropsLegacyTables(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072302)
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE profiles (id uuid PRIMARY KEY)`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO profiles (id) VALUES ($1::uuid)`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE api_keys (id uuid PRIMARY KEY, team_id uuid NOT NULL)`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO api_keys (id, team_id) VALUES ($1::uuid, $2::uuid)`, profileID, teamID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO v2_compatibility_markers (
+				marker_kind, version, status, corpus_hash, gate_report_hash, metadata
+			) VALUES (
+				'v2_cutover', 'dense-mem.v2.1.cutover.v1', 'compatible', 'sha256:corpus', 'sha256:gates', '{}'::jsonb
+			)
+		`)
+		return err
+	}))
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072402)
+
+	assert.False(t, tableExists(t, ctx, sqlDB, "profiles"))
+	assert.False(t, tableExists(t, ctx, sqlDB, "api_keys"))
+	assert.True(t, tableExists(t, ctx, sqlDB, "v2_migration_runs"))
+	assert.True(t, tableExists(t, ctx, sqlDB, "v2_compatibility_markers"))
+}
+
+func TestPostCutoverCleanupMigrationBlocksNonemptyDatabaseWithoutMarker(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072302)
+	insertMigrationTeamProfile(t, ctx, sqlDB)
+
+	err := migrationUpTo(ctx, sqlDB, 2026072402)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "compatible cutover marker missing")
+	assert.Contains(t, err.Error(), "teams")
+	assert.True(t, tableExists(t, ctx, sqlDB, "community_detection_runs"), "cleanup DDL must not run after guard failure")
+}
+
+func TestPostCutoverCleanupMigrationBlocksLegacyProfileWithoutCanonicalTeam(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072302)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE profiles (id uuid PRIMARY KEY)`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO profiles (id) VALUES ($1::uuid)`, uuid.NewString()); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO v2_compatibility_markers (
+				marker_kind, version, status, corpus_hash, gate_report_hash, metadata
+			) VALUES (
+				'v2_cutover', 'dense-mem.v2.1.cutover.v1', 'compatible', 'sha256:corpus', 'sha256:gates', '{}'::jsonb
+			)
+		`)
+		return err
+	}))
+
+	err := migrationUpTo(ctx, sqlDB, 2026072402)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "legacy profiles missing canonical teams")
+	assert.True(t, tableExists(t, ctx, sqlDB, "profiles"), "cleanup DDL must not run after guard failure")
+}
+
+func TestPostCutoverCleanupMigrationBlocksLegacyAPIKeyWithoutCanonicalTeamProfile(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026072302)
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE api_keys (id uuid PRIMARY KEY, team_id uuid NOT NULL)`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO api_keys (id, team_id) VALUES ($1::uuid, $2::uuid)`, uuid.NewString(), uuid.NewString()); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO v2_compatibility_markers (
+				marker_kind, version, status, corpus_hash, gate_report_hash, metadata
+			) VALUES (
+				'v2_cutover', 'dense-mem.v2.1.cutover.v1', 'compatible', 'sha256:corpus', 'sha256:gates', '{}'::jsonb
+			)
+		`)
+		return err
+	}))
+
+	err := migrationUpTo(ctx, sqlDB, 2026072402)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "legacy api_keys missing canonical team_profiles")
+	assert.True(t, tableExists(t, ctx, sqlDB, "api_keys"), "cleanup DDL must not run after guard failure")
+}
+
+// TestMigratorStatus verifies status command works.
+func TestMigratorStatus(t *testing.T) {
+	ctx := context.Background()
+
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	m := NewMigratorWithDB(sqlDB)
+
+	// Run status
+	err := m.Status(ctx)
+	// Status may write to stdout, but should not error
+	assert.NoError(t, err, "Status should not error")
+}
+
+// TestOpenWithClient verifies the DB wrapper implements PostgresClient interface.
+func TestOpenWithClient(t *testing.T) {
+	ctx := context.Background()
+
+	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	defer cleanup()
+
+	cfg := &testConfig{dsn: dsn}
+
+	client, err := OpenWithClient(ctx, cfg)
+	require.NoError(t, err, "OpenWithClient should succeed")
+	require.NotNil(t, client, "OpenWithClient should return a non-nil client")
+
+	// Verify interface implementation
+	var _ PostgresClient = client
+
+	// Verify Ping works
+	err = client.Ping(ctx)
+	assert.NoError(t, err, "Ping should succeed")
+
+	// Verify GetDB works
+	db := client.GetDB()
+	assert.NotNil(t, db, "GetDB should return non-nil db")
+
+	// Verify Close works
+	err = client.Close()
+	assert.NoError(t, err, "Close should not error")
+}
+
+// TestDBPingTimeout verifies ping respects timeout.
+func TestDBPingTimeout(t *testing.T) {
+	ctx := context.Background()
+
+	// Use an invalid host that will cause connection timeout
+	cfg := &testConfig{dsn: "host=192.0.2.1 port=5432 user=test password=test dbname=test sslmode=disable connect_timeout=1"}
+
+	// This tests that Open returns an error rather than hanging indefinitely
+	start := time.Now()
+	db, err := Open(ctx, cfg)
+	elapsed := time.Since(start)
+
+	assert.Error(t, err, "Open should return an error for unreachable postgres")
+	assert.Nil(t, db, "Open should return nil db on error")
+	// Should fail quickly (within 10 seconds due to connect_timeout)
+	assert.Less(t, elapsed, 10*time.Second, "should fail quickly with connect timeout")
+}
+
+func openMigrationSQLDB(t *testing.T, ctx context.Context) (*sql.DB, func()) {
+	t.Helper()
+	dsn, cleanup := skipIfNoPostgres(t, ctx)
+	if os.Getenv("DATABASE_URL") != "" {
+		isolatedDSN, isolatedCleanup := createMigrationTestDatabase(t, ctx, dsn)
+		dsn = isolatedDSN
+		baseCleanup := cleanup
+		cleanup = func() {
+			isolatedCleanup()
+			baseCleanup()
+		}
+	}
+	cfg := &testConfig{dsn: dsn}
+	db, err := Open(ctx, cfg)
+	require.NoError(t, err, "Open should succeed")
+	sqlDB, err := db.DB()
+	require.NoError(t, err, "underlying sql.DB should be available")
+	return sqlDB, func() {
+		_ = sqlDB.Close()
+		cleanup()
+	}
+}
+
+func createMigrationTestDatabase(t *testing.T, ctx context.Context, dsn string) (string, func()) {
+	t.Helper()
+	adminDB, err := Open(ctx, &testConfig{dsn: dsn})
+	require.NoError(t, err, "Open should succeed")
+	adminSQLDB, err := adminDB.DB()
+	require.NoError(t, err, "underlying sql.DB should be available")
+
+	dbName := "dense_mem_migration_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	quotedName := quoteMigrationIdentifier(dbName)
+	if _, err := adminSQLDB.ExecContext(ctx, "CREATE DATABASE "+quotedName+" TEMPLATE template0"); err != nil {
+		closeErr := adminSQLDB.Close()
+		if isPostgresInsufficientPrivilege(err) {
+			if closeErr != nil {
+				t.Errorf("close migration admin database after CREATE DATABASE privilege error: %v", closeErr)
+			}
+			t.Skipf("Postgres migration tests require CREATE DATABASE privilege for DATABASE_URL isolation: %v", err)
+		}
+		if closeErr != nil {
+			t.Errorf("close migration admin database after CREATE DATABASE failure: %v", closeErr)
+		}
+		t.Fatalf("create migration test database %q: %v", dbName, err)
+	}
+
+	cleanup := func() {
+		if _, err := adminSQLDB.ExecContext(ctx, `
+			SELECT pg_terminate_backend(pid)
+			FROM pg_stat_activity
+			WHERE datname = $1
+			  AND pid <> pg_backend_pid()
+		`, dbName); err != nil {
+			t.Errorf("terminate connections to migration test database %q: %v", dbName, err)
+		}
+		if _, err := adminSQLDB.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quotedName); err != nil {
+			t.Errorf("drop migration test database %q: %v", dbName, err)
+		}
+		_ = adminSQLDB.Close()
+	}
+	return migrationDatabaseDSN(t, dsn, dbName), cleanup
+}
+
+func migrationDatabaseDSN(t *testing.T, dsn string, dbName string) string {
+	t.Helper()
+	config, err := pgconn.ParseConfig(dsn)
+	require.NoError(t, err, "DATABASE_URL should be parseable")
+	config.Database = dbName
+	return migrationConnInfo(config)
+}
+
+func isPostgresInsufficientPrivilege(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42501"
+}
+
+func migrationConnInfo(config *pgconn.Config) string {
+	fields := make([]string, 0, 8+len(config.RuntimeParams))
+	if config.Host != "" {
+		fields = append(fields, "host="+quoteConnInfoValue(config.Host))
+	}
+	if config.Port != 0 {
+		fields = append(fields, fmt.Sprintf("port=%d", config.Port))
+	}
+	fields = append(fields, "dbname="+quoteConnInfoValue(config.Database))
+	if config.User != "" {
+		fields = append(fields, "user="+quoteConnInfoValue(config.User))
+	}
+	if config.Password != "" {
+		fields = append(fields, "password="+quoteConnInfoValue(config.Password))
+	}
+	if config.ConnectTimeout > 0 {
+		fields = append(fields, fmt.Sprintf("connect_timeout=%d", int(config.ConnectTimeout.Seconds())))
+	}
+	if config.TLSConfig == nil {
+		fields = append(fields, "sslmode=disable")
+	}
+	keys := make([]string, 0, len(config.RuntimeParams))
+	for key := range config.RuntimeParams {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fields = append(fields, key+"="+quoteConnInfoValue(config.RuntimeParams[key]))
+	}
+	return strings.Join(fields, " ")
+}
+
+func quoteConnInfoValue(value string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(value) + "'"
+}
+
+func quoteMigrationIdentifier(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+}
+
+func TestMigrationDatabaseDSNUpdatesURL(t *testing.T) {
+	dsn := "postgres://test%20user:pa%20ss@localhost:5433/old%20db?sslmode=disable&application_name=dense+mem"
+	got := migrationDatabaseDSN(t, dsn, "new db")
+
+	config, err := pgconn.ParseConfig(got)
+	require.NoError(t, err)
+	assert.Equal(t, "new db", config.Database)
+	assert.Equal(t, "test user", config.User)
+	assert.Equal(t, "pa ss", config.Password)
+	assert.Equal(t, "localhost", config.Host)
+	assert.Equal(t, uint16(5433), config.Port)
+	assert.Equal(t, "dense mem", config.RuntimeParams["application_name"])
+	assert.Nil(t, config.TLSConfig)
+}
+
+func TestMigrationDatabaseDSNPreservesQuotedConninfoValues(t *testing.T) {
+	dsn := `host='localhost' user='test user' password='pa ss\'word' dbname='old db' sslmode=disable application_name='dense mem tests'`
+	got := migrationDatabaseDSN(t, dsn, "new db")
+
+	config, err := pgconn.ParseConfig(got)
+	require.NoError(t, err)
+	assert.Equal(t, "new db", config.Database)
+	assert.Equal(t, "test user", config.User)
+	assert.Equal(t, "pa ss'word", config.Password)
+	assert.Equal(t, "localhost", config.Host)
+	assert.Equal(t, "dense mem tests", config.RuntimeParams["application_name"])
+	assert.Nil(t, config.TLSConfig)
+}
+
+func TestPostgresInsufficientPrivilegeDetection(t *testing.T) {
+	assert.True(t, isPostgresInsufficientPrivilege(&pgconn.PgError{Code: "42501"}))
+	assert.False(t, isPostgresInsufficientPrivilege(&pgconn.PgError{Code: "42P04"}))
+	assert.False(t, isPostgresInsufficientPrivilege(errors.New("network failure")))
+}
+
+func runGooseUpTo(t *testing.T, ctx context.Context, db *sql.DB, version int64) {
+	t.Helper()
+	require.NoError(t, migrationUpTo(ctx, db, version))
+}
+
+func execPostgresTxMode(ctx context.Context, db *sql.DB, txMode string, fn func(tx *sql.Tx) error) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', $1, true)`, txMode); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_team_id', '', true)`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_profile_id', '', true)`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func tableExists(t *testing.T, ctx context.Context, db *sql.DB, tableName string) bool {
+	t.Helper()
+	var exists bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.tables
+			WHERE table_schema = 'public'
+			  AND table_name = $1
+		)
+	`, tableName).Scan(&exists)
+	require.NoError(t, err)
+	return exists
+}
+
+func columnExists(t *testing.T, ctx context.Context, db *sql.DB, tableName, columnName string) bool {
+	t.Helper()
+	var exists bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND table_name = $1
+			  AND column_name = $2
+		)
+	`, tableName, columnName).Scan(&exists)
+	require.NoError(t, err)
+	return exists
+}
+
+func insertMigrationAuthorityFixture(t *testing.T, ctx context.Context, db *sql.DB, teamID, profileID, authority string) {
+	t.Helper()
+	sourceID := uuid.NewString()
+	sourceRevisionID := uuid.NewString()
+	ingestID := uuid.NewString()
+	fragmentID := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_team_refs (team_id)
+			VALUES ($1::uuid)
+			ON CONFLICT (team_id) DO NOTHING
+		`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_profile_refs (team_id, profile_id)
+			VALUES ($1::uuid, $2::uuid)
+			ON CONFLICT (team_id, profile_id) DO NOTHING
+		`, teamID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (team_id, ingest_id, owner_profile_id, idempotency_key, request_hash, status, metadata)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, 'migration-authority-' || $2::text, 'migration-authority-request-' || $2::text, 'queued', '{"_dense_mem_telemetry_origin":"remember"}'::jsonb)
+		`, teamID, ingestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_sources (team_id, source_id, owner_profile_id, source_key, source_kind, authority)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'document', $5)
+		`, teamID, sourceID, profileID, "doc://migration-"+authority+"-"+sourceID, authority); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_source_revisions (
+				team_id, source_revision_id, source_id, owner_profile_id, revision_token, content_hash
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid, 'rev-1', $5
+			)
+		`, teamID, sourceRevisionID, sourceID, profileID, "sha256:"+sourceRevisionID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_fragments (
+				team_id, fragment_id, ingest_id, owner_profile_id, source_id, source_revision_id,
+				evidence_index, content, content_hash, source_type, authority
+			) VALUES (
+				$1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid,
+				0, 'migration authority fixture', $7, 'document', $8
+			)
+		`, teamID, fragmentID, ingestID, profileID, sourceID, sourceRevisionID, "sha256:"+fragmentID, authority)
+		return err
+	}))
+}

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "capability": "migration",
+  "cases": [
+    {
+      "id": "migration/TestRunDownTimeoutRollsBackBlockedMigration",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestRunDownTimeoutRollsBackBlockedMigration$",
+      "phase": "precheck",
+      "source": "cmd/internal/migrationapp/migration_integration.e2e"
+    },
+    {
+      "id": "migration/TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock",
+      "package": "./cmd/internal/migrationapp",
+      "run": "^TestRunUpTimeoutRollsBackBlockedMigrationAndReleasesLock$",
+      "phase": "precheck",
+      "source": "cmd/internal/migrationapp/migration_integration.e2e"
+    }
+  ]
+}

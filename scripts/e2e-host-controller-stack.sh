@@ -449,27 +449,9 @@ NODE
     "DENSE_MEM_E2E_PRIMITIVES_PROVIDER_URL=http://synchronous-write-provider:8787/v1" \
     "DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1" \
     "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
-    go test -tags=compose_e2e ./internal/service/memoryservice \
-      -run '^TestComposeSynchronousEvidenceOnlyAssessorBatch$' -count=1 || return $?
-
-  run_go_source_container \
-    "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "" "$ENV_FILE" \
-    "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD" "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" "$postgres_db" -- \
-    "DATABASE_URL=${database_url}" \
-    "DENSE_MEM_E2E_PRIMITIVES_PROVIDER_URL=http://synchronous-write-provider:8787/v1" \
-    "DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1" \
-    "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
-    go test -tags=compose_e2e ./internal/repository \
-      -run '^TestComposeRememberPrimitives$' -count=1 || return $?
-
-  run_go_source_container \
-    "$source_dir" "$go_image" "$project" "$run_id" "$attempt" "$phase" "$scenario" "$digest" "${project}_ci" "" "$ENV_FILE" \
-    "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD" "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" "$postgres_db" -- \
-    "DATABASE_URL=${database_url}" \
-    "DENSE_MEM_ALLOW_DESTRUCTIVE_POSTGRES_TESTS=1" \
-    "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
-    go test ./cmd/internal/serverapp \
-      -run '^TestRememberServiceRejectsHistoricalOutcomesThroughPostgres$' -count=1
+    go -C cmd/e2e run . --root /workspace \
+      --phase scenario --scenario synchronous_write_primitives \
+      --capability repository,service,server --timeout 20m --total-timeout 25m
 }
 
 run_mcp_sdk_parity_driver() {

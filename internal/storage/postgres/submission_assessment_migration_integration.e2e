@@ -1,0 +1,727 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestSubmissionAssessmentMigrationReconcilesLegacyRuns(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026080501)
+	teamID, profileID := insertMigrationTeamProfile(t, ctx, sqlDB)
+	now := time.Now().UTC()
+
+	clean := submissionAssessmentMigrationRun{
+		ingestID:   uuid.NewString(),
+		runID:      uuid.NewString(),
+		status:     "processing",
+		attempts:   3,
+		workerID:   "legacy-worker",
+		leaseUntil: timePointer(now.Add(time.Hour)),
+		items: []submissionAssessmentMigrationItem{{
+			itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`,
+		}},
+	}
+	held := submissionAssessmentMigrationRun{
+		ingestID:    uuid.NewString(),
+		runID:       uuid.NewString(),
+		status:      "awaiting_review",
+		completedAt: timePointer(now.Add(-time.Hour)),
+		items: []submissionAssessmentMigrationItem{
+			{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{"kept":"value"}`},
+			{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "completed", category: "validated_claim", result: `{"accepted":true}`},
+		},
+	}
+	partial := submissionAssessmentMigrationRun{
+		ingestID: uuid.NewString(),
+		runID:    uuid.NewString(),
+		status:   "guarded",
+		attempts: 2,
+		items: []submissionAssessmentMigrationItem{
+			{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "completed", category: "validated_claim", result: `{"accepted":true}`},
+			{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`},
+		},
+	}
+	reviewTaskID := uuid.NewString()
+	acknowledgedTaskID := uuid.NewString()
+	unrelatedTaskID := uuid.NewString()
+	assessmentID := uuid.NewString()
+	entityID := uuid.NewString()
+
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_team_refs (team_id) VALUES ($1::uuid)
+		`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO semantic_profile_refs (team_id, profile_id) VALUES ($1::uuid, $2::uuid)
+		`, teamID, profileID); err != nil {
+			return err
+		}
+		for _, fixture := range []submissionAssessmentMigrationRun{clean, held, partial} {
+			if err := insertSubmissionAssessmentMigrationRun(ctx, tx, teamID, profileID, fixture); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_security_events (
+			    team_id, fragment_id, ingest_id, owner_profile_id,
+			    event_kind, decision, scan_policy_hash, reason
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          'deterministic_scan', 'guarded', 'legacy-policy', 'legacy guard')
+		`, teamID, clean.items[0].fragmentID, clean.ingestID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_assessments (
+			    team_id, assessment_id, placement_item_id, claim_key, owner_profile_id,
+			    request_id, assessor_contract_version, model, tokenizer,
+			    input_tokens, output_tokens, candidate_context_tokens,
+			    candidate_context_truncated, normalized_response, response_hash, validated_at
+			)
+			SELECT $1::uuid, $2::uuid, item.placement_item_id, item.claim_key, $3::uuid,
+			       'legacy-request', 'dense-mem.v2.4', 'legacy-model', 'legacy-tokenizer',
+			       10, 5, 3, false, '{"request_id":"legacy-request"}'::jsonb,
+			       'sha256:legacy-response', now()
+			FROM placement_items AS item
+			WHERE item.team_id = $1::uuid AND item.placement_item_id = $4::uuid
+		`, teamID, assessmentID, profileID, clean.items[0].itemID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO entity_records (team_id, entity_id, entity_kind)
+			VALUES ($1::uuid, $2::uuid, 'project')
+		`, teamID, entityID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO entity_resolution_events (
+			    team_id, ingest_id, placement_item_id, owner_profile_id,
+			    mention_ref, action, entity_id, fragment_id, verifier_result
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          'legacy-project', 'create', $5::uuid, $6::uuid, '{"accepted":true}'::jsonb)
+		`, teamID, held.ingestID, held.items[1].itemID, profileID, entityID, held.items[1].fragmentID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO relationship_observations (
+			    team_id, ingest_id, placement_item_id, owner_profile_id,
+			    subject_ref, original_predicate, object_ref
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          'legacy-project', 'uses', 'postgres')
+		`, teamID, held.ingestID, held.items[1].itemID, profileID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO review_tasks (
+			    team_id, review_task_id, owner_profile_id, ingest_id,
+			    placement_item_id, task_type, status, reason, payload, dedupe_key
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          $5::uuid, 'identity_needs_review', 'open', 'identity_needs_review',
+			          '{"semantic_kind":"identity"}'::jsonb, $6)
+		`, teamID, reviewTaskID, profileID, held.ingestID, held.items[0].itemID, "legacy-review:"+reviewTaskID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO review_tasks (
+			    team_id, review_task_id, owner_profile_id, ingest_id,
+			    placement_item_id, task_type, status, reason, payload, dedupe_key
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          $5::uuid, 'predicate_needs_review', 'acknowledged', 'predicate_needs_review',
+			          '{"semantic_kind":"predicate"}'::jsonb, $6)
+		`, teamID, acknowledgedTaskID, profileID, held.ingestID, held.items[0].itemID, "legacy-review:"+acknowledgedTaskID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO review_tasks (
+			    team_id, review_task_id, owner_profile_id,
+			    task_type, status, reason, payload, dedupe_key
+			) VALUES ($1::uuid, $2::uuid, $3::uuid,
+			          'policy_needs_review', 'open', 'unrelated_policy', '{}'::jsonb, $4)
+		`, teamID, unrelatedTaskID, profileID, "unrelated-review:"+unrelatedTaskID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_outcomes (
+			    team_id, placement_run_id, owner_profile_id,
+			    outcome_kind, status, idempotency_key, payload
+			) VALUES ($1::uuid, $2::uuid, $3::uuid,
+			          'telemetry_first_disposition', 'awaiting_review', $4, '{"telemetry":"first_disposition"}'::jsonb)
+		`, teamID, held.runID, profileID, "telemetry:first_disposition:"+held.runID)
+		return err
+	}))
+
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026080502))
+
+	var runStatus, workerID, runError string
+	var attempts int
+	var leaseCleared bool
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status, attempts, worker_id, lease_until IS NULL, error
+		FROM placement_runs
+		WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+	`, teamID, clean.runID).Scan(&runStatus, &attempts, &workerID, &leaseCleared, &runError))
+	assert.Equal(t, "guarded", runStatus)
+	assert.Zero(t, attempts)
+	assert.Empty(t, workerID)
+	assert.True(t, leaseCleared)
+	assert.Empty(t, runError)
+	assertPlacementItemState(t, ctx, sqlDB, teamID, clean.items[0].itemID, "queued", "pending")
+
+	var assessmentScope string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT assessment_scope FROM placement_assessments
+		WHERE team_id = $1::uuid AND assessment_id = $2::uuid
+	`, teamID, assessmentID).Scan(&assessmentScope))
+	assert.Equal(t, "item", assessmentScope)
+
+	assertPlacementRunFailed(t, ctx, sqlDB, teamID, held.runID)
+	assertPlacementItemState(t, ctx, sqlDB, teamID, held.items[0].itemID, "failed", "failed")
+	assertPlacementItemState(t, ctx, sqlDB, teamID, held.items[1].itemID, "completed", "validated_claim")
+	assertPlacementRunFailed(t, ctx, sqlDB, teamID, partial.runID)
+	assertPlacementItemState(t, ctx, sqlDB, teamID, partial.items[0].itemID, "completed", "validated_claim")
+	assertPlacementItemState(t, ctx, sqlDB, teamID, partial.items[1].itemID, "failed", "failed")
+
+	var taskStatus, taskReason string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status, resolution->>'reason'
+		FROM review_tasks
+		WHERE team_id = $1::uuid AND review_task_id = $2::uuid
+	`, teamID, reviewTaskID).Scan(&taskStatus, &taskReason))
+	assert.Equal(t, "canceled", taskStatus)
+	assert.Equal(t, "legacy_submission_cutover", taskReason)
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status, resolution->>'reason'
+		FROM review_tasks
+		WHERE team_id = $1::uuid AND review_task_id = $2::uuid
+	`, teamID, acknowledgedTaskID).Scan(&taskStatus, &taskReason))
+	assert.Equal(t, "canceled", taskStatus)
+	assert.Equal(t, "legacy_submission_cutover", taskReason)
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status FROM review_tasks
+		WHERE team_id = $1::uuid AND review_task_id = $2::uuid
+	`, teamID, unrelatedTaskID).Scan(&taskStatus))
+	assert.Equal(t, "open", taskStatus)
+
+	var entityEvents, observations, submissionAssessments, cutoverOutcomes, successfulCutoverOutcomes, semanticCommitClaims int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM entity_resolution_events WHERE team_id = $1::uuid AND ingest_id = $2::uuid`, teamID, held.ingestID).Scan(&entityEvents))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM relationship_observations WHERE team_id = $1::uuid AND ingest_id = $2::uuid`, teamID, held.ingestID).Scan(&observations))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM placement_assessments WHERE assessment_scope = 'submission'`).Scan(&submissionAssessments))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*),
+		       count(*) FILTER (WHERE status IN ('accepted', 'completed')),
+		       count(*) FILTER (WHERE payload->>'semantic_commit_performed' IS DISTINCT FROM 'false')
+		FROM placement_outcomes
+		WHERE outcome_kind IN ('submission_cutover_requeued', 'submission_cutover_closed')
+	`).Scan(&cutoverOutcomes, &successfulCutoverOutcomes, &semanticCommitClaims))
+	assert.Equal(t, 1, entityEvents)
+	assert.Equal(t, 1, observations)
+	assert.Zero(t, submissionAssessments)
+	assert.Equal(t, 5, cutoverOutcomes)
+	assert.Zero(t, successfulCutoverOutcomes)
+	assert.Zero(t, semanticCommitClaims)
+	var acceptedResult bool
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT result->>'accepted' = 'true'
+		FROM placement_items
+		WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
+	`, teamID, held.items[1].itemID).Scan(&acceptedResult))
+	assert.True(t, acceptedResult)
+
+	var firstDispositionCount int
+	var firstDispositionStatus string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*), min(status)
+		FROM placement_outcomes
+		WHERE team_id = $1::uuid
+		  AND placement_run_id = $2::uuid
+		  AND outcome_kind = 'telemetry_first_disposition'
+	`, teamID, held.runID).Scan(&firstDispositionCount, &firstDispositionStatus))
+	assert.Equal(t, 1, firstDispositionCount)
+	assert.Equal(t, "awaiting_review", firstDispositionStatus)
+
+	require.NoError(t, migrationUpTo(ctx, sqlDB, 2026080601))
+	var holdCount int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM submission_holds`).Scan(&holdCount))
+	assert.Zero(t, holdCount)
+
+	err := migrationDownTo(ctx, sqlDB, 2026080501)
+	require.ErrorContains(t, err, "legacy reconciliation outcomes")
+}
+
+func TestRememberNormalizerMigrationFailsLegacyWorkAndPreservesIndependentWorkflows(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026081901)
+	teamID, profileID, identityID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO teams (id, name, description, metadata, config)
+			VALUES ($1::uuid, $2, '', '{}'::jsonb, '{}'::jsonb)
+		`, teamID, "remember-normalizer-migration-"+teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO actor_identities (id, kind, team_id, display_name)
+			VALUES ($1::uuid, 'human', $2::uuid, 'remember normalizer migration owner')
+		`, identityID, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id)
+			VALUES ($1::uuid, $2::uuid, $3::uuid)
+		`, teamID, profileID, identityID); err != nil {
+			return err
+		}
+		return nil
+	}))
+
+	now := time.Now().UTC()
+	fixtures := []submissionAssessmentMigrationRun{
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "queued",
+			remember: true,
+			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`}},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "guarded",
+			legacyRemember: true,
+			items:          []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "processing", attempts: 2,
+			remember: true,
+			workerID: "legacy-worker", leaseUntil: timePointer(now.Add(time.Hour)),
+			items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "processing", category: "pending", result: `{}`}},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "awaiting_review", completedAt: timePointer(now.Add(-time.Hour)),
+			legacyRemember: true,
+			items:          []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "processing",
+			workerID: "partial-worker", leaseUntil: timePointer(now.Add(time.Hour)),
+			items: []submissionAssessmentMigrationItem{
+				{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "completed", category: "validated_claim", result: `{"accepted":true}`},
+				{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "queued", category: "pending", result: `{}`},
+			},
+		},
+		{
+			ingestID: uuid.NewString(), runID: uuid.NewString(), status: "completed", completedAt: timePointer(now.Add(-2 * time.Hour)),
+			remember: true,
+			items:    []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "awaiting_review", category: "candidate", result: `{}`}},
+		},
+	}
+	stable := submissionAssessmentMigrationRun{
+		ingestID: uuid.NewString(), runID: uuid.NewString(), status: "completed", completedAt: timePointer(now.Add(-3 * time.Hour)),
+		items: []submissionAssessmentMigrationItem{{itemID: uuid.NewString(), fragmentID: uuid.NewString(), status: "completed", category: "validated_claim", result: `{"accepted":true}`}},
+	}
+
+	openReviewID, acknowledgedReviewID, resolvedReviewID, stableReviewID, correctionReviewID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	relationshipID, subjectID, objectID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	correctionID := uuid.NewString()
+	openConflictID, overdueConflictID := uuid.NewString(), uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		for _, fixture := range append(fixtures, stable) {
+			if err := insertSubmissionAssessmentMigrationRun(ctx, tx, teamID, profileID, fixture); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE placement_runs
+			SET assessor_attempt_id = gen_random_uuid(), assessor_attempted_at = now()
+			WHERE team_id = $1::uuid AND placement_run_id IN ($2::uuid, $3::uuid)
+		`, teamID, fixtures[2].runID, fixtures[4].runID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE placement_items
+			SET assessor_attempt_id = gen_random_uuid(), assessor_attempted_at = now()
+			WHERE team_id = $1::uuid AND placement_item_id IN ($2::uuid, $3::uuid)
+		`, teamID, fixtures[2].items[0].itemID, fixtures[4].items[0].itemID); err != nil {
+			return err
+		}
+		for _, review := range []struct {
+			id              string
+			status          string
+			ingestID        string
+			placementItemID string
+		}{
+			{openReviewID, "open", fixtures[0].ingestID, fixtures[0].items[0].itemID},
+			{acknowledgedReviewID, "acknowledged", fixtures[1].ingestID, fixtures[1].items[0].itemID},
+			{resolvedReviewID, "resolved", fixtures[2].ingestID, fixtures[2].items[0].itemID},
+			{stableReviewID, "open", stable.ingestID, stable.items[0].itemID},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO review_tasks (
+				    team_id, review_task_id, owner_profile_id, ingest_id, placement_item_id,
+				    task_type, status, reason, payload, dedupe_key,
+				    resolution, resolved_at
+				) VALUES (
+				    $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+				    'policy_needs_review', $6, 'legacy placement review', '{}'::jsonb, $7,
+				    CASE WHEN $6 = 'resolved' THEN '{"reason":"already_resolved"}'::jsonb ELSE '{}'::jsonb END,
+				    CASE WHEN $6 = 'resolved' THEN now() ELSE NULL END
+				)
+			`, teamID, review.id, profileID, review.ingestID, review.placementItemID, review.status, "legacy-review:"+review.id); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO team_predicate_definitions (
+			    team_id, predicate_key, version, relationship_kind, current_cardinality
+			) VALUES ($1::uuid, 'migration_predicate', 1, 'state', 'one')
+		`, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO entity_records (team_id, entity_id, entity_kind)
+			VALUES ($1::uuid, $2::uuid, 'project'), ($1::uuid, $3::uuid, 'product')
+		`, teamID, subjectID, objectID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO relationship_records (
+			    team_id, relationship_id, owner_profile_id, semantic_group_key,
+			    subject_entity_id, predicate_key, predicate_version, object_entity_id,
+			    relationship_kind, current_cardinality, status
+			) VALUES (
+			    $1::uuid, $2::uuid, $3::uuid, 'migration-correction-target',
+			    $4::uuid, 'migration_predicate', 1, $5::uuid,
+			    'state', 'one', 'active'
+			)
+		`, teamID, relationshipID, profileID, subjectID, objectID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO review_tasks (
+			    team_id, review_task_id, owner_profile_id, relationship_id,
+			    task_type, status, reason, payload, dedupe_key
+			) VALUES (
+			    $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			    'correction_needs_review', 'open', 'correction_pending', '{}'::jsonb, $5
+			)
+		`, teamID, correctionReviewID, profileID, relationshipID, "correction-review:"+correctionReviewID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO relationship_correction_submissions (
+			    team_id, submission_id, owner_profile_id, relationship_id,
+			    expected_version, request_hash, reason, idempotency_key,
+			    processing_state, confirmation_token, confirmation_expires_at,
+			    candidates
+			) VALUES (
+			    $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			    1, 'migration-correction-hash', 'migration correction',
+			    'migration-correction-idempotency', 'awaiting_confirmation',
+			    'migration-confirmation-token', now() + interval '1 hour',
+			    '[{"candidate":"a"},{"candidate":"b"}]'::jsonb
+			)
+		`, teamID, correctionID, profileID, relationshipID); err != nil {
+			return err
+		}
+		for _, conflict := range []struct {
+			id     string
+			status string
+			scope  string
+		}{
+			{openConflictID, "open", "migration-open-conflict"},
+			{overdueConflictID, "overdue", "migration-overdue-conflict"},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO relationship_conflict_cases (
+				    team_id, conflict_id, semantic_scope_key, status,
+				    subject_entity_id, predicate_key, predicate_version,
+				    relationship_kind, current_cardinality, review_due_at,
+				    next_review_at, review_ttl_days
+				) VALUES (
+				    $1::uuid, $2::uuid, $3, $4,
+				    $5::uuid, 'migration_predicate', 1,
+				    'state', 'one', now(), now(), 7
+				)
+			`, teamID, conflict.id, conflict.scope, conflict.status, subjectID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	runGooseUpTo(t, ctx, sqlDB, 20260821160001)
+
+	require.False(t, tableExists(t, ctx, sqlDB, "submission_holds"))
+	require.False(t, tableExists(t, ctx, sqlDB, "remember_normalizer_cutover"))
+	require.True(t, tableExists(t, ctx, sqlDB, "review_tasks"))
+	for _, column := range []string{"semantic_hold_state", "semantic_hold_version", "semantic_hold_updated_at", "replaces_placement_run_id", "superseded_by_placement_run_id"} {
+		var exists bool
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_schema = 'public' AND table_name = 'placement_runs' AND column_name = $1
+			)
+		`, column).Scan(&exists))
+		assert.False(t, exists, column)
+	}
+
+	for index, fixture := range fixtures {
+		if index == 4 {
+			var runStatus, runError, workerID string
+			var leaseUntil, completedAt sql.NullTime
+			require.NoError(t, sqlDB.QueryRowContext(ctx, `
+				SELECT status, error, worker_id, lease_until, completed_at
+				FROM placement_runs
+				WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+			`, teamID, fixture.runID).Scan(&runStatus, &runError, &workerID, &leaseUntil, &completedAt))
+			assert.Equal(t, "processing", runStatus)
+			assert.Empty(t, runError)
+			assert.Equal(t, "partial-worker", workerID)
+			assert.True(t, leaseUntil.Valid)
+			assert.False(t, completedAt.Valid)
+			assertPlacementItemState(t, ctx, sqlDB, teamID, fixture.items[0].itemID, "completed", "validated_claim")
+			assertPlacementItemState(t, ctx, sqlDB, teamID, fixture.items[1].itemID, "queued", "pending")
+			continue
+		}
+		var runStatus, runError, workerID string
+		var leaseUntil, completedAt sql.NullTime
+		var assessorAttempt sql.NullString
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT status, error, worker_id, lease_until, completed_at, assessor_attempt_id::text
+			FROM placement_runs
+			WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+		`, teamID, fixture.runID).Scan(&runStatus, &runError, &workerID, &leaseUntil, &completedAt, &assessorAttempt))
+		assert.Equal(t, "failed", runStatus)
+		assert.Equal(t, "legacy remember processing removed; resubmit the complete submission", runError)
+		assert.Empty(t, workerID)
+		assert.False(t, leaseUntil.Valid)
+		assert.True(t, completedAt.Valid)
+		assert.False(t, assessorAttempt.Valid)
+		for _, item := range fixture.items {
+			var itemStatus, itemCategory, result string
+			var itemAssessorAttempt sql.NullString
+			require.NoError(t, sqlDB.QueryRowContext(ctx, `
+				SELECT status, category, result::text, assessor_attempt_id::text
+				FROM placement_items
+				WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
+			`, teamID, item.itemID).Scan(&itemStatus, &itemCategory, &result, &itemAssessorAttempt))
+			assert.False(t, itemAssessorAttempt.Valid)
+			if item.status == "completed" {
+				assert.Equal(t, "completed", itemStatus)
+				assert.Equal(t, "validated_claim", itemCategory)
+				assert.JSONEq(t, item.result, result)
+				continue
+			}
+			assert.Equal(t, "failed", itemStatus)
+			assert.Equal(t, "failed", itemCategory)
+			var failureCode, nextAction string
+			require.NoError(t, sqlDB.QueryRowContext(ctx, `
+				SELECT result->>'failure_code', result->>'next_action'
+				FROM placement_items
+				WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
+			`, teamID, item.itemID).Scan(&failureCode, &nextAction))
+			assert.Equal(t, "submission_requires_resubmission", failureCode)
+			assert.Equal(t, "resubmit_submission", nextAction)
+		}
+	}
+	assertPlacementItemState(t, ctx, sqlDB, teamID, stable.items[0].itemID, "completed", "validated_claim")
+	var stableRunStatus string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status FROM placement_runs
+		WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+	`, teamID, stable.runID).Scan(&stableRunStatus))
+	assert.Equal(t, "completed", stableRunStatus)
+
+	for _, review := range []struct {
+		id         string
+		wantStatus string
+		wantReason string
+	}{
+		{openReviewID, "canceled", "legacy_placement_review_removed"},
+		{acknowledgedReviewID, "canceled", "legacy_placement_review_removed"},
+		{resolvedReviewID, "resolved", "already_resolved"},
+		{stableReviewID, "open", ""},
+	} {
+		var status, reason string
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT status, COALESCE(resolution->>'reason', '')
+			FROM review_tasks
+			WHERE team_id = $1::uuid AND review_task_id = $2::uuid
+		`, teamID, review.id).Scan(&status, &reason))
+		assert.Equal(t, review.wantStatus, status)
+		assert.Equal(t, review.wantReason, reason)
+	}
+	var correctionReviewStatus string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT status
+		FROM review_tasks
+		WHERE team_id = $1::uuid AND review_task_id = $2::uuid
+	`, teamID, correctionReviewID).Scan(&correctionReviewStatus))
+	assert.Equal(t, "open", correctionReviewStatus)
+	var correctionState string
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT processing_state
+		FROM relationship_correction_submissions
+		WHERE team_id = $1::uuid AND submission_id = $2::uuid
+	`, teamID, correctionID).Scan(&correctionState))
+	assert.Equal(t, "awaiting_confirmation", correctionState)
+	rows, err := sqlDB.QueryContext(ctx, `
+		SELECT conflict_id::text, status
+		FROM relationship_conflict_cases
+		WHERE team_id = $1::uuid AND conflict_id IN ($2::uuid, $3::uuid)
+		ORDER BY conflict_id
+	`, teamID, openConflictID, overdueConflictID)
+	require.NoError(t, err)
+	defer rows.Close()
+	conflictStates := map[string]string{}
+	for rows.Next() {
+		var id, status string
+		require.NoError(t, rows.Scan(&id, &status))
+		conflictStates[id] = status
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, "open", conflictStates[openConflictID])
+	assert.Equal(t, "overdue", conflictStates[overdueConflictID])
+
+	var statusConstraint, completionConstraint, itemConstraint string
+	for name, target := range map[string]*string{
+		"placement_runs_status_check":     &statusConstraint,
+		"placement_runs_completion_check": &completionConstraint,
+		"placement_items_status_check":    &itemConstraint,
+	} {
+		require.NoError(t, sqlDB.QueryRowContext(ctx, `
+			SELECT pg_get_constraintdef(oid)
+			FROM pg_constraint
+			WHERE conname = $1
+		`, name).Scan(target))
+		assert.NotContains(t, *target, "awaiting_review")
+	}
+	var awaitingRuns, awaitingItems int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*) FROM placement_runs WHERE status = 'awaiting_review'
+	`).Scan(&awaitingRuns))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*) FROM placement_items WHERE status = 'awaiting_review'
+	`).Scan(&awaitingItems))
+	assert.Zero(t, awaitingRuns)
+	assert.Zero(t, awaitingItems)
+}
+
+type submissionAssessmentMigrationRun struct {
+	ingestID       string
+	runID          string
+	status         string
+	remember       bool
+	legacyRemember bool
+	attempts       int
+	workerID       string
+	leaseUntil     *time.Time
+	completedAt    *time.Time
+	items          []submissionAssessmentMigrationItem
+}
+
+type submissionAssessmentMigrationItem struct {
+	itemID     string
+	fragmentID string
+	status     string
+	category   string
+	result     string
+}
+
+func insertSubmissionAssessmentMigrationRun(
+	ctx context.Context,
+	tx *sql.Tx,
+	teamID string,
+	profileID string,
+	fixture submissionAssessmentMigrationRun,
+) error {
+	metadata := `{}`
+	if fixture.remember {
+		metadata = `{"_dense_mem_telemetry_origin":"remember"}`
+	} else if fixture.legacyRemember {
+		metadata = fmt.Sprintf(`{"contract_version":"dense-mem.v2.4","actor":{"team_id":"%s","profile_id":"%s"}}`, teamID, profileID)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO knowledge_ingests (
+		    team_id, ingest_id, owner_profile_id, status, proposal, metadata
+		) VALUES ($1::uuid, $2::uuid, $3::uuid, 'queued',
+		          '{"relationship_hints":[{"ref":"legacy","subject_ref":"subject","object_ref":"object","original_predicate":"uses","evidence":[{"evidence_index":0,"start":0,"end":6}]}]}'::jsonb,
+		          $4::jsonb)
+	`, teamID, fixture.ingestID, profileID, metadata); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO placement_runs (
+		    team_id, placement_run_id, ingest_id, owner_profile_id,
+		    status, attempts, worker_id, lease_until, completed_at
+		) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+		          $5, $6, $7, $8, $9)
+	`, teamID, fixture.runID, fixture.ingestID, profileID, fixture.status,
+		fixture.attempts, fixture.workerID, fixture.leaseUntil, fixture.completedAt); err != nil {
+		return err
+	}
+	for index, item := range fixture.items {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO evidence_fragments (
+			    team_id, fragment_id, ingest_id, owner_profile_id,
+			    evidence_index, content, content_hash
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          $5, $6, $7)
+		`, teamID, item.fragmentID, fixture.ingestID, profileID, index,
+			"Legacy evidence "+item.fragmentID, "sha256:"+item.fragmentID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO placement_items (
+			    team_id, placement_item_id, placement_run_id, ingest_id,
+			    owner_profile_id, fragment_id, evidence_index, status, category, result
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			          $5::uuid, $6::uuid, $7, $8, $9, $10::jsonb)
+		`, teamID, item.itemID, fixture.runID, fixture.ingestID, profileID,
+			item.fragmentID, index, item.status, item.category, item.result); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func assertPlacementRunFailed(t *testing.T, ctx context.Context, db *sql.DB, teamID, runID string) {
+	t.Helper()
+	var status, message string
+	var cleared bool
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT status, error, worker_id = '' AND lease_until IS NULL
+		FROM placement_runs
+		WHERE team_id = $1::uuid AND placement_run_id = $2::uuid
+	`, teamID, runID).Scan(&status, &message, &cleared))
+	assert.Equal(t, "failed", status)
+	assert.Equal(t, "legacy per-item placement closed by submission-wide cutover", message)
+	assert.True(t, cleared)
+}
+
+func assertPlacementItemState(t *testing.T, ctx context.Context, db *sql.DB, teamID, itemID, wantStatus, wantCategory string) {
+	t.Helper()
+	var status, category string
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT status, category
+		FROM placement_items
+		WHERE team_id = $1::uuid AND placement_item_id = $2::uuid
+	`, teamID, itemID).Scan(&status, &category))
+	assert.Equal(t, wantStatus, status)
+	assert.Equal(t, wantCategory, category)
+}
+
+func timePointer(value time.Time) *time.Time {
+	return &value
+}

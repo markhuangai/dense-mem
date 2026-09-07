@@ -366,6 +366,7 @@ remove_project_resources() {
   )
   while IFS= read -r resource; do
     [[ -n "$resource" ]] || continue
+    remove_network_containers "$resource"
     if ! docker network rm "$resource" >/dev/null 2>&1 && docker network inspect "$resource" >/dev/null 2>&1; then
       cleanup_failed=1
     fi

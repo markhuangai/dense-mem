@@ -69,6 +69,19 @@ is_excluded() {
 	return 1
 }
 
+is_nested_module() {
+	local dir="$1"
+	local absolute_dir
+	absolute_dir="$(cd "${dir}" 2>/dev/null && pwd)" || return 1
+	while [[ "${absolute_dir}" != "${ROOT_DIR}" ]]; do
+		if [[ -f "${absolute_dir}/go.mod" ]]; then
+			return 0
+		fi
+		absolute_dir="$(dirname "${absolute_dir}")"
+	done
+	return 1
+}
+
 mapfile -t tracked_files < <(
 	if git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		git -C "${ROOT_DIR}" ls-files '*.go'
@@ -88,6 +101,9 @@ mapfile -t tracked_dirs < <(
 				continue
 			fi
 		elif ! find "${dir}" -maxdepth 1 -type f -name '*.go' -print -quit 2>/dev/null | grep -q .; then
+			continue
+		fi
+		if is_nested_module "${dir}"; then
 			continue
 		fi
 		if [[ "${PRODUCTION_ONLY}" == true ]] && is_excluded "${dir}"; then

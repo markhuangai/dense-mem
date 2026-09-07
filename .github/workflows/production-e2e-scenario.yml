@@ -25,7 +25,7 @@ jobs:
   scenario:
     name: Run ${{ inputs.scenario == 'full' && 'dreaming_telemetry_portal' || inputs.scenario }}
     runs-on: rootless-docker
-    timeout-minutes: ${{ inputs.timeout_minutes }}
+    timeout-minutes: ${{ inputs.timeout_minutes > 30 && 30 || inputs.timeout_minutes }}
     env:
       DENSE_MEM_CI_REPOSITORY: ${{ github.repository }}
       PHASE: ${{ inputs.shared_project != '' && 'shared' || 'exclusive' }}

@@ -1,0 +1,148 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+)
+
+func TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows(t *testing.T) {
+	ctx := context.Background()
+	sqlDB, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+
+	runGooseUpTo(t, ctx, sqlDB, 2026081801)
+	teamID := uuid.New()
+	otherTeamID := uuid.New()
+	credentialID := uuid.New()
+	identityID := uuid.New()
+	profileID := uuid.New()
+	spaceID := uuid.New()
+	ingestID := uuid.New()
+	matchingAuditID := uuid.New()
+	mismatchedAuditID := uuid.New()
+	invalidAuditID := uuid.New()
+
+	require.NoError(t, execPostgresTxMode(ctx, sqlDB, "system", func(tx *sql.Tx) error {
+		for _, team := range []struct {
+			id   uuid.UUID
+			name string
+		}{
+			{teamID, "audit-backfill-team"},
+			{otherTeamID, "audit-backfill-other-team"},
+		} {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO teams (id, name, description, metadata, config)
+				VALUES ($1, $2, '', '{}'::jsonb, '{}'::jsonb)
+			`, team.id, team.name); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO actor_identities (id, kind, team_id, display_name)
+			VALUES ($1, 'api_client', $2, 'audit backfill credential')
+		`, identityID, teamID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO ownership_aliases (team_id, legacy_owner_id, canonical_identity_id)
+			VALUES ($1, $2, $3)
+		`, teamID, profileID, identityID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO memory_spaces (id, team_id, kind, owner_credential_id)
+			VALUES ($1, $2, 'credential_private', $3)
+		`, spaceID, teamID, credentialID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO credentials (
+				id, actor_identity_id, team_id, kind, key_hash, key_prefix, name,
+				scopes, memory_binding, memory_space_id
+			) VALUES ($1, $2, $3, 'api_key', 'audit-backfill-hash', 'audit-backfill-prefix',
+				'audit backfill credential', ARRAY['read']::text[], 'credential_private', $4)
+			`, credentialID, identityID, teamID, spaceID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO knowledge_ingests (team_id, ingest_id, owner_profile_id, status, space_id)
+			VALUES ($1, $2, $3, 'queued', $4)
+		`, teamID, ingestID, profileID, spaceID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO audit_log (id, team_id, operation, entity_type, entity_id)
+			VALUES
+				($1, $3, 'DELETE', 'api_key', $5),
+				($2, $4, 'DELETE', 'api_key', $5),
+				($6, $3, 'DELETE', 'api_key', 'not-a-uuid')
+		`, matchingAuditID, mismatchedAuditID, teamID, otherTeamID, credentialID.String(), invalidAuditID)
+		return err
+	}))
+
+	runGooseUpTo(t, ctx, sqlDB, 20260820130004)
+
+	var associatedSpaceID, mismatchedSpaceID, invalidSpaceID sql.NullString
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT memory_space_id::text FROM audit_log WHERE id = $1`, matchingAuditID).Scan(&associatedSpaceID))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT memory_space_id::text FROM audit_log WHERE id = $1`, mismatchedAuditID).Scan(&mismatchedSpaceID))
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `SELECT memory_space_id::text FROM audit_log WHERE id = $1`, invalidAuditID).Scan(&invalidSpaceID))
+	require.True(t, associatedSpaceID.Valid)
+	require.Equal(t, spaceID.String(), associatedSpaceID.String)
+	require.False(t, mismatchedSpaceID.Valid)
+	require.False(t, invalidSpaceID.Valid)
+
+	var generation sql.NullInt64
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT space_generation
+		FROM knowledge_ingests
+		WHERE team_id = $1 AND ingest_id = $2
+	`, teamID, ingestID).Scan(&generation))
+	require.True(t, generation.Valid)
+	require.Equal(t, int64(1), generation.Int64)
+
+	var temporaryPolicyCount int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM pg_policies
+		WHERE schemaname = 'public'
+		  AND tablename = 'audit_log'
+		  AND policyname IN ('audit_log_memory_space_backfill_select', 'audit_log_memory_space_backfill_update')
+	`).Scan(&temporaryPolicyCount))
+	require.Zero(t, temporaryPolicyCount)
+	var generationPolicyCount int
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM pg_policies
+		WHERE schemaname = 'public'
+		  AND policyname IN (
+			'dense_mem_20260820130004_generation_select',
+			'dense_mem_20260820130004_generation_update'
+		  )
+	`).Scan(&generationPolicyCount))
+	require.Zero(t, generationPolicyCount)
+
+	var procedureExists bool
+	require.NoError(t, sqlDB.QueryRowContext(ctx, `
+		SELECT to_regprocedure('dense_mem_backfill_private_memory_audit_20260820130004()') IS NOT NULL
+	`).Scan(&procedureExists))
+	require.False(t, procedureExists)
+
+	_, err := sqlDB.ExecContext(ctx, `
+		DELETE FROM goose_db_version
+		WHERE version_id = 20260820130004 AND is_applied
+	`)
+	require.NoError(t, err)
+	runGooseUpTo(t, ctx, sqlDB, 20260820130004)
+	require.False(t, procedureExistsInDatabase(t, ctx, sqlDB, "dense_mem_backfill_private_memory_audit_20260820130004()"))
+}
+
+func procedureExistsInDatabase(t *testing.T, ctx context.Context, db *sql.DB, signature string) bool {
+	t.Helper()
+	var exists bool
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT to_regprocedure($1) IS NOT NULL`, signature).Scan(&exists))
+	return exists
+}
