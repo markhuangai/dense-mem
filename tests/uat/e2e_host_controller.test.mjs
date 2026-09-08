@@ -552,12 +552,24 @@ test("verifier scenarios use the deterministic provider without replacing embedd
   assert.match(compose, /profiles: \[synchronous_write, verifier\]/);
   assert.match(realController, /"  synchronous-write-provider:"[\s\S]*"    profiles: \[synchronous_write, verifier\]"/);
   const verifierStart = stack.indexOf('if (has("verifier"))');
-  const verifierEnd = stack.indexOf('if (has("conflict_provider"))', verifierStart);
+  const verifierEnd = stack.indexOf('if (scenario === "community")', verifierStart);
   assert.ok(verifierStart >= 0 && verifierEnd > verifierStart);
   const verifierBlock = stack.slice(verifierStart, verifierEnd);
   assert.match(verifierBlock, /AI_VERIFIER_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
   assert.doesNotMatch(verifierBlock, /\bAI_API_URL:/);
   assert.match(stack, /has_helper "\$helpers" verifier \|\| has_helper "\$helpers" synchronous_write/);
+});
+
+test("community scenarios use the verifier fixture for embeddings without changing the embedding contract", () => {
+  const communityStart = stack.indexOf('if (scenario === "community")');
+  const communityEnd = stack.indexOf('if (has("conflict_provider"))', communityStart);
+  assert.ok(communityStart >= 0 && communityEnd > communityStart);
+  const communityBlock = stack.slice(communityStart, communityEnd);
+  assert.match(communityBlock, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
+  assert.match(communityBlock, /AI_API_KEY: "dense-mem-community-e2e-key"/);
+  assert.doesNotMatch(communityBlock, /AI_API_EMBEDDING_(MODEL|DIMENSIONS):/);
+  assert.match(stack, /const deterministicEmbeddingProvider = scenario === "community" \|\| has\("synchronous_write"\);/);
+  assert.match(stack, /DENSE_MEM_E2E_PROVIDER_DIMENSIONS: \$\{JSON\.stringify\(providerDimensions \|\| "1536"\)\}/);
 });
 
 test("scenario runner executes Entra and diagnostics through the shared path", () => {

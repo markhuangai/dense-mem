@@ -232,11 +232,12 @@ NODE
 
   if [[ -n "$helpers" ]]; then
     DENSE_MEM_CI_COMPOSE_OVERLAY_FILE="${DENSE_MEM_CI_HELPER_DIR}/compose.yml"
-    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_dimensions" "$CONFLICT_PROVIDER_EMBEDDING_MODEL" <<'NODE'
+    node - "$DENSE_MEM_CI_COMPOSE_OVERLAY_FILE" "$helpers" "$oauth_token" "$harness_image" "$provider_dimensions" "$CONFLICT_PROVIDER_EMBEDDING_MODEL" "$scenario" <<'NODE'
 const fs = require("node:fs");
-const [destination, helpers, oauthToken, harnessImage, providerDimensions, conflictProviderEmbeddingModel] = process.argv.slice(2);
+const [destination, helpers, oauthToken, harnessImage, providerDimensions, conflictProviderEmbeddingModel, scenario] = process.argv.slice(2);
 const has = (name) => new Set(helpers.split(",").filter(Boolean)).has(name);
 const conflictProviderDimensions = has("synchronous_write") ? (providerDimensions || "1536") : "1536";
+const deterministicEmbeddingProvider = scenario === "community" || has("synchronous_write");
 const lines = ["# dense-mem-ci-e2e.v1 generated helper overlay", "services:"];
 const serverEnvironment = new Map();
 const serverVolumes = [];
@@ -247,6 +248,12 @@ if (has("verifier")) {
     AI_VERIFIER_API_KEY: "dense-mem-e2e-verifier-key",
     AI_VERIFIER_MODEL: "dense-mem-e2e-verifier",
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
+  })) serverEnvironment.set(key, value);
+}
+if (scenario === "community") {
+  for (const [key, value] of Object.entries({
+    AI_API_URL: "http://synchronous-write-provider:8787/v1",
+    AI_API_KEY: "dense-mem-community-e2e-key",
   })) serverEnvironment.set(key, value);
 }
 if (has("conflict_provider")) {
@@ -273,12 +280,15 @@ if (has("synchronous_write")) {
     AI_VERIFIER_TIMEOUT_SECONDS: "2",
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
   })) serverEnvironment.set(key, value);
-  helperServices.push(["synchronous-write-provider", [
+}
+if (deterministicEmbeddingProvider) {
+  const providerService = [
     "    command: [\"sh\", \"-c\", \"sleep infinity\"]",
     "    environment:",
     `      DENSE_MEM_E2E_PROVIDER_DIMENSIONS: ${JSON.stringify(providerDimensions || "1536")}`,
-    "      DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: \"5000\"",
-  ]]);
+  ];
+  if (has("synchronous_write")) providerService.push("      DENSE_MEM_E2E_PROVIDER_TIMEOUT_DELAY_MS: \"5000\"");
+  helperServices.push(["synchronous-write-provider", providerService]);
 }
 if (has("oauth") || has("oauth_compatibility")) {
   serverEnvironment.set("SSL_CERT_FILE", "/e2e/oauth-files/ca.pem");
