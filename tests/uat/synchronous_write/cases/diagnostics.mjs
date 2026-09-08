@@ -51,7 +51,12 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
     disconnectError = error;
   }
   expect(disconnectError?.name === "AbortError", `disconnect fixture must abort the client request: ${disconnectError}`);
-  const disconnectRetry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: disconnectRequest.payload }));
+  let disconnectRetry;
+  for (let retryAttempt = 0; retryAttempt < 3; retryAttempt += 1) {
+    disconnectRetry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: disconnectRequest.payload }));
+    if (disconnectRetry?.processing_state === "completed") break;
+    expect(disconnectRetry?.errors?.[0]?.retryable === true, `disconnect retry returned a non-retryable failure: ${JSON.stringify(disconnectRetry)}`);
+  }
   expect(disconnectRetry?.processing_state === "completed", `disconnect retry must complete: ${JSON.stringify(disconnectRetry)}`);
   attempts.disconnect = disconnectRetry;
   idempotencyKeys.disconnect = disconnectRequest.idempotencyKey;
@@ -148,7 +153,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
       team_id, diagnostic_id, attempt_id, owner_profile_id, sequence_no, kind, component,
       request_bytes, request_content_type, outcome, capture_state, captured_at, expires_at
     ) SELECT team_id, '${expiredDiagnosticID}'::uuid, attempt_id, owner_profile_id, 99, 'provider_exchange', 'fixture',
-      convert_to('{"expired":true}', 'UTF8'), 'application/json', 'captured', 'captured', clock_timestamp() - interval '8 days', clock_timestamp() - interval '1 second'
+      convert_to('{"expired":true}', 'UTF8'), 'application/json', 'captured', 'captured', clock_timestamp() - interval '8 days', clock_timestamp() - interval '2 days'
     FROM remember_attempts
     WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(item.attempt_id)}'::uuid;
   `);

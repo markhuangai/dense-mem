@@ -432,6 +432,7 @@ function faultForRoute(value, route) {
   if (route === "embedding" && (
     normalized === "unavailable" || normalized === "malformed" || normalized === "timeout" || normalized.startsWith("assessment-") ||
     normalized === "repair" || normalized === "repair-exhausted" || normalized === "security" || normalized === "no-supported" ||
+    normalized === "status-429" || normalized === "status-500" ||
     normalized === "mixed"
   )) return "";
   if (route === "assessment" && (normalized.startsWith("embedding-") || normalized === "embedding-only-timeout")) return "";

@@ -78,6 +78,75 @@ CREATE POLICY remember_attempt_diagnostics_delete ON remember_attempt_diagnostic
         )
     );
 
+-- Diagnostic bodies and timestamps are append-only. The only application update
+-- is the legal-hold retention flag, and it is authorized by the space lock and
+-- the active hold state established by the caller.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION prevent_remember_attempt_diagnostics_mutation()
+RETURNS TRIGGER AS $$
+DECLARE
+    retention_space UUID := NULLIF(current_setting('app.remember_attempt_diagnostic_retention_space_id', true), '')::uuid;
+    erasure_space UUID := NULLIF(current_setting('app.private_erasure_space_id', true), '')::uuid;
+BEGIN
+    IF TG_OP = 'UPDATE'
+       AND current_setting('app.tx_mode', true) = 'system'
+       AND retention_space IS NOT NULL
+       AND NEW.retained_by_legal_hold IS DISTINCT FROM OLD.retained_by_legal_hold
+       AND (to_jsonb(NEW) - ARRAY['retained_by_legal_hold']) = (to_jsonb(OLD) - ARRAY['retained_by_legal_hold'])
+       AND EXISTS (
+           SELECT 1
+           FROM remember_attempts AS attempt
+           WHERE attempt.team_id = NEW.team_id
+             AND attempt.attempt_id = NEW.attempt_id
+             AND attempt.owner_profile_id = NEW.owner_profile_id
+             AND attempt.space_id = retention_space
+       )
+       AND (
+           (NEW.retained_by_legal_hold AND EXISTS (
+               SELECT 1 FROM private_memory_legal_holds AS hold
+               WHERE hold.space_id = retention_space AND hold.released_at IS NULL
+           ))
+           OR
+           (NOT NEW.retained_by_legal_hold AND NOT EXISTS (
+               SELECT 1 FROM private_memory_legal_holds AS hold
+               WHERE hold.space_id = retention_space AND hold.released_at IS NULL
+           ))
+       ) THEN
+        RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'DELETE'
+       AND current_setting('app.tx_mode', true) = 'system'
+       AND (
+           (
+               current_setting('app.remember_attempt_diagnostic_purge', true) = 'true'
+               AND OLD.expires_at <= clock_timestamp()
+           )
+           OR (
+               erasure_space IS NOT NULL
+               AND EXISTS (
+                   SELECT 1
+                   FROM remember_attempts AS attempt
+                   WHERE attempt.team_id = OLD.team_id
+                     AND attempt.attempt_id = OLD.attempt_id
+                     AND attempt.owner_profile_id = OLD.owner_profile_id
+                     AND attempt.space_id = erasure_space
+               )
+           )
+       ) THEN
+        RETURN OLD;
+    END IF;
+
+    RAISE EXCEPTION '% is append-only: % operations are not allowed', TG_TABLE_NAME, TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- +goose StatementEnd
+
+DROP TRIGGER IF EXISTS remember_attempt_diagnostics_append_only ON remember_attempt_diagnostics;
+CREATE TRIGGER remember_attempt_diagnostics_append_only
+    BEFORE UPDATE OR DELETE ON remember_attempt_diagnostics
+    FOR EACH ROW EXECUTE FUNCTION prevent_remember_attempt_diagnostics_mutation();
+
 -- Preserve still-retained legacy bytes while the old artifact table is being
 -- retired. Hash-only request summaries remain unavailable by design.
 -- +goose StatementBegin
@@ -136,3 +205,4 @@ DROP TABLE IF EXISTS remember_failure_artifacts;
 
 -- +goose Down
 DROP TABLE IF EXISTS remember_attempt_diagnostics;
+DROP FUNCTION IF EXISTS prevent_remember_attempt_diagnostics_mutation();

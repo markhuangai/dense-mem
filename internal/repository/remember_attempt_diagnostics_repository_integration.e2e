@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -22,11 +25,14 @@ func TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes(t 
 	teamA := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-a")
 	teamB := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-b")
 	ownerA := createLedgerProfile(t, adminDB, rls, teamA, "remember-attempt-diagnostics-owner-a")
+	privateSpace, err := NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamA), uuid.MustParse(ownerA))
+	require.NoError(t, err)
 	repo := NewLedgerRepository(appDB, rls)
 	attemptID := "00000000-0000-4000-8000-000000000301"
 	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
 		Attempt: RememberAttemptRecordInput{
 			TeamID: teamA, OwnerProfileID: ownerA, AttemptID: attemptID,
+			SpaceID: privateSpace.ID.String(), SpaceGeneration: privateSpace.Generation,
 			IdempotencyKey: "diagnostics-scope", RequestHash: "diagnostics-scope-hash",
 			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed",
 			FailedPhase: "assessment", ErrorCode: "provider_unavailable", CorrelationID: "diagnostics-correlation",
@@ -54,6 +60,27 @@ func TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes(t 
 	require.Equal(t, []byte(`{"isError":true}`), detail.Diagnostics[2].ResponseBody)
 	_, err = repo.GetRememberAttemptDiagnostic(ctx, teamB, attemptID)
 	require.ErrorIs(t, err, ErrRememberAttemptDiagnosticNotFound)
+
+	for _, statement := range []string{
+		`UPDATE remember_attempt_diagnostics
+		 SET response_bytes = ?
+		 WHERE team_id = ?::uuid AND diagnostic_id = ?::uuid`,
+		`UPDATE remember_attempt_diagnostics
+		 SET expires_at = ?
+		 WHERE team_id = ?::uuid AND diagnostic_id = ?::uuid`,
+	} {
+		err := rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+			if err := tx.WithContext(ctx).Exec("SELECT set_config('app.remember_attempt_diagnostic_retention_space_id', ?, true)", privateSpace.ID.String()).Error; err != nil {
+				return err
+			}
+			var value any = []byte(`{"tampered":true}`)
+			if strings.Contains(statement, "expires_at") {
+				value = time.Now().UTC().Add(24 * time.Hour)
+			}
+			return tx.WithContext(ctx).Exec(statement, value, teamA, "00000000-0000-4000-8000-000000000302").Error
+		})
+		require.Error(t, err, "diagnostic history mutation must be rejected")
+	}
 
 	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
 	expiredAttemptID := "00000000-0000-4000-8000-000000000303"
@@ -174,6 +201,53 @@ func TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.Equal(t, 4, total)
+}
+
+func TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces(t *testing.T) {
+	adminDB, appDB, rls, cleanup := setupLedgerRepositoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	teamID := createLedgerTeam(t, adminDB, rls, "remember-attempt-diagnostics-drain-rotation")
+	ownerA := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostics-drain-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamID, "remember-attempt-diagnostics-drain-owner-b")
+	spaceA, err := NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerA))
+	require.NoError(t, err)
+	spaceB, err := NewMemorySpaceRepository(appDB, rls).EnsureProfilePrivate(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerB))
+	require.NoError(t, err)
+	spaces := []*domain.MemorySpace{spaceA, spaceB}
+	spaceOwners := map[string]string{spaceA.ID.String(): ownerA, spaceB.ID.String(): ownerB}
+	sort.Slice(spaces, func(left, right int) bool { return spaces[left].ID.String() < spaces[right].ID.String() })
+	repo := NewLedgerRepository(appDB, rls)
+	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
+	for index := 0; index < 101; index++ {
+		attemptID := uuidForDiagnostics(1000 + index)
+		require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
+			Attempt: RememberAttemptRecordInput{
+				TeamID: teamID, OwnerProfileID: spaceOwners[spaces[0].ID.String()], AttemptID: attemptID,
+				SpaceID: spaces[0].ID.String(), SpaceGeneration: spaces[0].Generation,
+				IdempotencyKey: fmt.Sprintf("diagnostics-drain-a-%d", index), RequestHash: fmt.Sprintf("diagnostics-drain-a-hash-%d", index),
+				ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed", FailedPhase: "assessment", ErrorCode: "provider_unavailable", PublicResult: map[string]any{},
+			},
+			Diagnostics: []RememberAttemptDiagnosticInput{{DiagnosticID: uuidForDiagnostics(2000 + index), SequenceNo: 1, Kind: "provider_exchange", Component: "assessor", ResponseBody: []byte(`{"expired":true}`), Outcome: "captured", CaptureState: "captured", CapturedAt: old, ExpiresAt: old.Add(7 * 24 * time.Hour)}},
+		}))
+	}
+	secondAttemptID := uuidForDiagnostics(1200)
+	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
+		Attempt: RememberAttemptRecordInput{
+			TeamID: teamID, OwnerProfileID: spaceOwners[spaces[1].ID.String()], AttemptID: secondAttemptID,
+			SpaceID: spaces[1].ID.String(), SpaceGeneration: spaces[1].Generation,
+			IdempotencyKey: "diagnostics-drain-b", RequestHash: "diagnostics-drain-b-hash",
+			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed", FailedPhase: "assessment", ErrorCode: "provider_unavailable", PublicResult: map[string]any{},
+		},
+		Diagnostics: []RememberAttemptDiagnosticInput{{DiagnosticID: uuidForDiagnostics(2200), SequenceNo: 1, Kind: "provider_exchange", Component: "assessor", ResponseBody: []byte(`{"expired":true}`), Outcome: "captured", CaptureState: "captured", CapturedAt: old, ExpiresAt: old.Add(7 * 24 * time.Hour)}},
+	}))
+
+	deleted, err := drainExpiredRememberAttemptDiagnostics(ctx, repo.knowledgeOwner)
+	require.NoError(t, err)
+	require.Equal(t, 102, deleted)
+	detail, err := repo.GetRememberAttemptDiagnostic(ctx, teamID, secondAttemptID)
+	require.NoError(t, err)
+	require.Empty(t, detail.Diagnostics)
 }
 
 func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {

@@ -753,6 +753,13 @@
       "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
     },
     {
+      "id": "repository/TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces",
+      "package": "./internal/repository",
+      "run": "^TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces$",
+      "phase": "precheck",
+      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
+    },
+    {
       "id": "repository/TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes",
       "package": "./internal/repository",
       "run": "^TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes$",

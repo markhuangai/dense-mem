@@ -9,7 +9,7 @@ import {
   Team,
   type RememberAttemptOutcome,
 } from "../api";
-import { LoadingState, SectionHeading } from "../ui/components";
+import { LoadingState, SectionHeading, writeClipboardText } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
 
 const OUTCOMES = ["", "completed", "rejected", "quarantined", "failed", "replayed"] as const;
@@ -260,15 +260,11 @@ function DiagnosticExchange({ exchange, requestOnly = false, responseOnly = fals
 
 function DiagnosticBody({ label, content }: { label: string; content: string }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const copyFallbackRef = useRef<HTMLInputElement>(null);
   async function copyBody() {
-    try {
-      await navigator.clipboard.writeText(content);
-      setCopyState("copied");
-    } catch {
-      setCopyState("failed");
-    }
+    setCopyState(await writeClipboardText(content, copyFallbackRef.current) ? "copied" : "failed");
   }
-  return <div className="remember-diagnostic-body"><div className="remember-diagnostic-body-heading"><strong>{label}</strong><button className="ghost-button" type="button" onClick={() => void copyBody()} disabled={!content}>{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy"}</button></div><pre>{content || "(empty body)"}</pre></div>;
+  return <div className="remember-diagnostic-body"><div className="remember-diagnostic-body-heading"><strong>{label}</strong><button className="ghost-button" type="button" onClick={() => void copyBody()} disabled={!content}>{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy"}</button></div><input ref={copyFallbackRef} className="sr-only" value={content} readOnly tabIndex={-1} aria-hidden="true" /><pre>{content || "(empty body)"}</pre></div>;
 }
 
 function DiagnosticUnavailable({ message }: { message: string }) {

@@ -184,11 +184,11 @@ func TestWave5DatabaseCaseFragmentsPreserveBaselineInventory(t *testing.T) {
 	baseline := make([]string, 0, len(all)-6)
 	excluded := map[string]bool{
 		"repository/TestRememberAttemptDiagnosticHoldTransactionRollback": true,
-		"knowledge/TestKnowledgeOwnerTerminalReplay":                    true,
-		"knowledge/TestKnowledgeOwnerLateFailureRollsBack":              true,
-		"knowledge/TestKnowledgeOwnerConcurrentRetryUsesOneCommit":      true,
-		"knowledge/TestKnowledgeOwnerRejectsStaleEmbeddingFence":        true,
-		"knowledge/TestKnowledgeOwnerTeamProfileIsolation":              true,
+		"knowledge/TestKnowledgeOwnerTerminalReplay":                      true,
+		"knowledge/TestKnowledgeOwnerLateFailureRollsBack":                true,
+		"knowledge/TestKnowledgeOwnerConcurrentRetryUsesOneCommit":        true,
+		"knowledge/TestKnowledgeOwnerRejectsStaleEmbeddingFence":          true,
+		"knowledge/TestKnowledgeOwnerTeamProfileIsolation":                true,
 	}
 	for _, item := range all {
 		if seen[item.ID] {
@@ -206,18 +206,18 @@ func TestWave5DatabaseCaseFragmentsPreserveBaselineInventory(t *testing.T) {
 			baseline = append(baseline, strings.Join([]string{item.ID, item.Package, item.Run, item.Phase, item.Scenario, item.Source, item.Capability}, "\t"))
 		}
 	}
-	if len(all) != 389 {
-		t.Fatalf("database case inventory contains %d cases, want 389", len(all))
+	if len(all) != 391 {
+		t.Fatalf("database case inventory contains %d cases, want 391", len(all))
 	}
 	sort.Strings(baseline)
 	baselineHash := sha256.Sum256([]byte(strings.Join(baseline, "\n") + "\n"))
-	if got := fmt.Sprintf("%x", baselineHash); got != "4fbdae9b1c17e7afe29521e85c9de4ab532a62eb8c32ec8073014ee9edde01d5" {
+	if got := fmt.Sprintf("%x", baselineHash); got != "344288dd3efa02504293ca19d8f81b65d060b5538509911c9f7796bc54e756f0" {
 		t.Fatalf("baseline database case inventory changed: %s", got)
 	}
 	for capability, want := range map[string]int{
 		"audit": 9, "community": 1, "dream": 33, "graph": 2, "http": 1,
-		"knowledge": 56, "migration": 2, "postgres": 111, "privacy": 20,
-		"repository": 138, "server": 2, "service": 8, "settings": 3, "trace": 3,
+		"knowledge": 56, "migration": 2, "postgres": 112, "privacy": 20,
+		"repository": 139, "server": 2, "service": 8, "settings": 3, "trace": 3,
 	} {
 		if capabilities[capability] != want {
 			t.Fatalf("capability %s contains %d cases, want %d", capability, capabilities[capability], want)

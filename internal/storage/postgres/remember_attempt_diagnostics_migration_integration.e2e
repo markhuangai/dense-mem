@@ -102,3 +102,54 @@ func TestRememberAttemptDiagnosticsMigrationCopiesRetainedLegacyBytesAndHidesHas
 	require.Equal(t, "legacy_hash_summary", heldOutcome)
 	require.True(t, held)
 }
+
+func TestRememberAttemptDiagnosticsMigrationRejectsCorruptLegacyRows(t *testing.T) {
+	ctx := context.Background()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	const beforeDiagnosticsMigration int64 = 20260904030001
+	const diagnosticsMigration int64 = 20260908010001
+	runGooseUpTo(t, ctx, db, beforeDiagnosticsMigration)
+	teamID, profileID := insertRememberReliabilityIdentityFixture(t, ctx, db)
+	attemptID, artifactID := uuid.NewString(), uuid.NewString()
+	capturedAt := time.Now().UTC()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_attempts (
+				team_id, attempt_id, owner_profile_id, idempotency_key, request_hash,
+				contract_version, submission_kind, outcome, public_result, completed_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, 'corrupt-legacy', 'corrupt-legacy-hash',
+			          'dense-mem.v2.6', 'remember', 'failed', '{}'::jsonb, now())
+		`, teamID, attemptID, profileID); err != nil {
+			return err
+		}
+		// The deployed legacy constraints normally prevent corruption. Dropping
+		// them here creates the adverse state the migration must reject.
+		if _, err := tx.ExecContext(ctx, `
+			ALTER TABLE remember_failure_artifacts
+			  DROP CONSTRAINT remember_failure_artifacts_size_check,
+			  DROP CONSTRAINT remember_failure_artifacts_hash_check
+		`); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO remember_failure_artifacts (
+				team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind, content_type,
+				content_bytes, byte_count, content_sha256, captured_at, expires_at
+			) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'failure', 'application/json',
+			          convert_to('{"corrupt":true}', 'UTF8'), 999, 'sha256:corrupt', $5, $6)
+		`, teamID, artifactID, attemptID, profileID, capturedAt, capturedAt.Add(24*time.Hour))
+		return err
+	}))
+
+	err := migrationUpTo(ctx, db, diagnosticsMigration)
+	require.ErrorContains(t, err, "invalid byte count or SHA-256")
+	require.True(t, tableExists(t, ctx, db, "remember_failure_artifacts"))
+	require.False(t, tableExists(t, ctx, db, "remember_attempt_diagnostics"))
+	var retained int
+	require.NoError(t, db.QueryRowContext(ctx, `
+		SELECT count(*) FROM remember_failure_artifacts
+		WHERE team_id = $1::uuid AND artifact_id = $2::uuid
+	`, teamID, artifactID).Scan(&retained))
+	require.Equal(t, 1, retained)
+}

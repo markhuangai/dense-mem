@@ -660,6 +660,13 @@
       "source": "internal/storage/postgres/remember_attempt_diagnostics_migration_integration.e2e"
     },
     {
+      "id": "postgres/TestRememberAttemptDiagnosticsMigrationRejectsCorruptLegacyRows",
+      "package": "./internal/storage/postgres",
+      "run": "^TestRememberAttemptDiagnosticsMigrationRejectsCorruptLegacyRows$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/remember_attempt_diagnostics_migration_integration.e2e"
+    },
+    {
       "id": "postgres/TestSupporterConflictPolicyMigrationRewritesActiveWorkflow",
       "package": "./internal/storage/postgres",
       "run": "^TestSupporterConflictPolicyMigrationRewritesActiveWorkflow$",

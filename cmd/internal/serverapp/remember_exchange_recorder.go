@@ -2,6 +2,7 @@ package serverapp
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"sync"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
+	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
 const (
@@ -23,7 +25,13 @@ var (
 	rememberDiagnosticProviderSecretPattern   = regexp.MustCompile(`(?i)\b(?:sk|rk|pk|api[_-]?key|token)[_-][A-Za-z0-9][A-Za-z0-9_-]{8,}\b`)
 	rememberDiagnosticAssignmentSecretPattern = regexp.MustCompile(`(?i)(\b(?:api[_-]?key|client[_-]?secret|password|token|access[_-]?token|refresh[_-]?token|secret)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'[^'\r\n]*'|[^\s,;}\]]+)`)
 	rememberDiagnosticStackPattern            = regexp.MustCompile(`(?im)(\b(?:stack(?:[_ -]?trace)?|traceback|backtrace|panic|goroutine)\b\s*[:=]?\s*)[^\r\n]+`)
+	rememberDiagnosticMultilineStackPattern   = regexp.MustCompile(`(?im)(^|\n)[ \t]*(?:stack(?:[_ -]?trace)?|traceback|backtrace|panic|goroutine)\b[^\r\n]*(?:\r?\n[^\r\n]*){0,8}`)
+	rememberDiagnosticStackFramePattern       = regexp.MustCompile(`(?im)(^|\n)[ \t]*(?:[A-Za-z_][A-Za-z0-9_./]*\.[A-Za-z0-9_]+\([^\r\n]*\)|(?:/|[A-Za-z]:\\)[^\r\n]*:\d+(?:\s+\+0x[0-9a-f]+)?)\s*$`)
 	rememberDiagnosticDatabasePattern         = regexp.MustCompile(`(?im)(\b(?:database|db|sql)\s*(?:error|exception|failure)\b\s*[:=]?\s*)[^\r\n]+`)
+	rememberDiagnosticDriverErrorPattern      = regexp.MustCompile(`(?im)(\b(?:pq|pgx|postgres(?:ql)?|lib/pq)(?:\s+(?:driver\s+)?error)?\s*:\s*)[^\r\n]+`)
+	rememberDiagnosticSQLStatePattern         = regexp.MustCompile(`(?im)(\b(?:sqlstate|database/sql|driver\s+error)\s*[:=]\s*)[^\r\n]+`)
+	rememberDiagnosticSQLStateLinePattern     = regexp.MustCompile(`(?im)(^|\n)[^\r\n]*\bSQLSTATE\s+[0-9A-Z]{5}\b[^\r\n]*`)
+	rememberDiagnosticPostgresErrorPattern    = regexp.MustCompile(`(?im)(\b(?:fatal|error)\s*:\s*)(?:password authentication failed|no pg_hba\.conf entry|database [^\r\n]*|role [^\r\n]*|connection [^\r\n]*)[^\r\n]*`)
 )
 
 func redactRememberDiagnosticContent(body []byte) []byte {
@@ -32,8 +40,14 @@ func redactRememberDiagnosticContent(body []byte) []byte {
 	body = rememberDiagnosticBearerPattern.ReplaceAll(body, []byte(`[REDACTED]`))
 	body = rememberDiagnosticProviderSecretPattern.ReplaceAll(body, []byte(`[REDACTED]`))
 	body = rememberDiagnosticAssignmentSecretPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
+	body = rememberDiagnosticMultilineStackPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
 	body = rememberDiagnosticStackPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
+	body = rememberDiagnosticStackFramePattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
 	body = rememberDiagnosticDatabasePattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
+	body = rememberDiagnosticDriverErrorPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
+	body = rememberDiagnosticSQLStatePattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
+	body = rememberDiagnosticSQLStateLinePattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
+	body = rememberDiagnosticPostgresErrorPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
 	return body
 }
 
@@ -86,6 +100,11 @@ func rememberFailureDiagnostics(
 	_ string,
 	_ string,
 ) []repository.RememberAttemptDiagnosticInput {
+	if len(callerResponse) == 0 && publicResult != nil {
+		if encoded, err := json.Marshal(registry.ToolCallerResponse(publicResult, true)); err == nil {
+			callerResponse = encoded
+		}
+	}
 	items := make([]repository.RememberAttemptDiagnosticInput, 0, len(exchanges)+2)
 	if len(input.OriginalRequest) > 0 {
 		items = append(items, repository.RememberAttemptDiagnosticInput{

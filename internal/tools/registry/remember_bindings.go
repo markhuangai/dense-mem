@@ -29,7 +29,7 @@ func bindRememberTool(tool Tool, deps Dependencies) Tool {
 		requestBody, _ := json.Marshal(map[string]any{"name": ToolRemember, "arguments": input})
 		capture := rememberapp.NewDiagnosticCapture(requestBody)
 		capture.SetResponseProjector(func(result map[string]any, isError bool) ([]byte, error) {
-			return json.Marshal(toolCallerResponse(result, isError))
+			return json.Marshal(ToolCallerResponse(result, isError))
 		})
 		ctx = rememberapp.WithDiagnosticCapture(ctx, capture)
 		res, err := deps.Remember.Remember(ctx, req)
@@ -53,7 +53,9 @@ func bindRememberTool(tool Tool, deps Dependencies) Tool {
 	return tool
 }
 
-func toolCallerResponse(result map[string]any, isError bool) map[string]any {
+// ToolCallerResponse is the canonical MCP response envelope retained in
+// diagnostics when a Remember failure occurs.
+func ToolCallerResponse(result map[string]any, isError bool) map[string]any {
 	payload, err := json.Marshal(result)
 	if err != nil {
 		return map[string]any{"content": []any{}, "structuredContent": result, "isError": isError}

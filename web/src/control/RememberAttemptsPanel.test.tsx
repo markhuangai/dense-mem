@@ -41,7 +41,7 @@ describe("RememberAttemptsPanel", () => {
     const detailRegion = await screen.findByRole("region", { name: "Remember attempt details" });
     expect(within(detailRegion).getByText("provider_unavailable")).toBeInTheDocument();
     expect(screen.getByText("Migrated history")).toBeInTheDocument();
-    expect(screen.getByText(/Expires/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Expires/)).toHaveLength(3);
     expect(screen.getByText("<script>alert(1)</script>")).toBeInTheDocument();
     expect(document.querySelector("script")).toBeNull();
     expect(detailRegion.querySelector(".remember-event-metadata")?.textContent).toContain('"markup": "<script>bad()</script>"');
