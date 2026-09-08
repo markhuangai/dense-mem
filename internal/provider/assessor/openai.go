@@ -302,6 +302,7 @@ func (v *OpenAIAssessor) openAIStructuredChatJSON(
 
 	httpResp, err := v.httpClient.Do(httpReq)
 	if err != nil {
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, nil, "", 0, "no_response", started)
 		if ctx.Err() != nil {
 			latencyOutcome = "timeout"
 			return "", &TimeoutError{
@@ -317,7 +318,17 @@ func (v *OpenAIAssessor) openAIStructuredChatJSON(
 	}
 	defer func() { _ = httpResp.Body.Close() }()
 
-	apiResp, err := decodeOpenAIVerifierAPIResponse(httpResp.Body)
+	rawResponse, readErr := io.ReadAll(io.LimitReader(httpResp.Body, openAIVerifierMaxResponseBytes+1))
+	if readErr != nil {
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_read_failed", started)
+		return "", &ProviderError{Provider: openAIVerifierProvider, Message: "failed to read provider response", FailureClass: ProviderFailureClassProtocol}
+	}
+	if len(rawResponse) > openAIVerifierMaxResponseBytes {
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_too_large", started)
+		return "", &ProviderError{Provider: openAIVerifierProvider, Message: "provider response exceeds transport limit", FailureClass: ProviderFailureClassProtocol}
+	}
+	recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "captured", started)
+	apiResp, err := decodeOpenAIVerifierAPIResponse(bytes.NewReader(rawResponse))
 	if err != nil {
 		if httpResp.StatusCode == http.StatusOK {
 			v.recordVerifierMissingUsage(ctx, model)
@@ -453,6 +464,7 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 
 	httpResp, err := v.httpClient.Do(httpReq)
 	if err != nil {
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, nil, "", 0, "no_response", started)
 		if openAIRequestTimedOutOrCanceled(ctx, err) {
 			latencyOutcome = "timeout"
 			return openAIStructuredChatResult{}, &TimeoutError{
@@ -467,6 +479,16 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 		}
 	}
 	defer func() { _ = httpResp.Body.Close() }()
+	rawResponse, readErr := io.ReadAll(io.LimitReader(httpResp.Body, openAIVerifierMaxResponseBytes+1))
+	if readErr != nil {
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_read_failed", started)
+		return openAIStructuredChatResult{}, &ProviderError{Provider: openAIVerifierProvider, Message: "failed to read provider response", FailureClass: ProviderFailureClassProtocol}
+	}
+	if len(rawResponse) > openAIVerifierMaxResponseBytes {
+		recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "response_too_large", started)
+		return openAIStructuredChatResult{}, &ProviderError{Provider: openAIVerifierProvider, Message: fmt.Sprintf("provider response exceeds %d byte transport limit", openAIVerifierMaxResponseBytes), FailureClass: ProviderFailureClassProtocol}
+	}
+	recordOpenAIExchange(ctx, "assessor", model, bodyBytes, rawResponse, httpResp.Header.Get("Content-Type"), httpResp.StatusCode, "captured", started)
 
 	if httpResp.StatusCode == http.StatusTooManyRequests {
 		latencyOutcome = "rate_limited"
@@ -486,7 +508,7 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 		}
 	}
 
-	apiResp, err := decodeOpenAIVerifierAPIResponse(httpResp.Body)
+	apiResp, err := decodeOpenAIVerifierAPIResponse(bytes.NewReader(rawResponse))
 	if err != nil {
 		if httpResp.StatusCode == http.StatusOK {
 			v.recordVerifierMissingUsage(ctx, model)
@@ -536,6 +558,25 @@ func (v *OpenAIAssessor) openAIStructuredChatMessagesJSONWithUsage(
 		Usage:         usage,
 		ReportedUsage: reportedUsage,
 	}, nil
+}
+
+func recordOpenAIExchange(ctx context.Context, component, model string, requestBody, responseBody []byte, responseContentType string, statusCode int, outcome string, started time.Time) {
+	recorder := modelprovider.ExchangeRecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	recorder.RecordProviderExchange(ctx, modelprovider.ProviderExchange{
+		Component:           component,
+		Model:               model,
+		RequestBody:         append([]byte(nil), requestBody...),
+		ResponseBody:        append([]byte(nil), responseBody...),
+		RequestContentType:  "application/json",
+		ResponseContentType: responseContentType,
+		StatusCode:          statusCode,
+		Outcome:             outcome,
+		StartedAt:           started,
+		CompletedAt:         time.Now(),
+	})
 }
 
 func openAIVerifierTemperature(disabled bool) *float64 {

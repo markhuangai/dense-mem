@@ -1,11 +1,11 @@
-import { CSSProperties, MutableRefObject, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, Clock3, Download, RefreshCw } from "lucide-react";
+import { CSSProperties, useEffect, useRef, useState } from "react";
+import { AlertTriangle, ArrowRight, Clock3, RefreshCw } from "lucide-react";
 import {
   ControlApi,
   RememberAttemptDiagnosticDetail,
   RememberAttemptDiagnosticEvent,
   RememberAttemptDiagnosticSummary,
-  RememberFailureArtifactDescriptor,
+  RememberDiagnosticExchange,
   Team,
   type RememberAttemptOutcome,
 } from "../api";
@@ -27,7 +27,6 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
   const [error, setError] = useState("");
   const listRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
-  const artifactRequestRef = useRef(0);
   const selectedIDRef = useRef("");
 
   function selectAttempt(attemptID: string) {
@@ -38,7 +37,6 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
   async function loadAttempts(nextOutcome = outcome, nextOffset = offset) {
     const requestID = ++listRequestRef.current;
     detailRequestRef.current += 1;
-    artifactRequestRef.current += 1;
     setDetail(null);
     setDetailLoading(false);
     setLoading(true);
@@ -73,7 +71,6 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
 
   async function loadDetail(attemptID: string) {
     const requestID = ++detailRequestRef.current;
-    artifactRequestRef.current += 1;
     selectedIDRef.current = attemptID;
     setDetailLoading(true);
     setError("");
@@ -102,7 +99,6 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
     return () => {
       listRequestRef.current += 1;
       detailRequestRef.current += 1;
-      artifactRequestRef.current += 1;
     };
   }, [api, team.id]);
 
@@ -175,50 +171,12 @@ export function RememberAttemptsPanel({ api, team }: { api: ControlApi; team: Te
         </div>
       </section>
 
-      {detailLoading && !detail ? <LoadingState label="Loading Remember attempt details" /> : detail && <RememberAttemptDetailView api={api} team={team} detail={detail} requestRef={artifactRequestRef} />}
+      {detailLoading && !detail ? <LoadingState label="Loading Remember attempt details" /> : detail && <RememberAttemptDetailView detail={detail} />}
     </div>
   );
 }
 
-function RememberAttemptDetailView({
-  api,
-  team,
-  detail,
-  requestRef,
-}: {
-  api: ControlApi;
-  team: Team;
-  detail: RememberAttemptDiagnosticDetail;
-  requestRef: MutableRefObject<number>;
-}) {
-  const [artifactID, setArtifactID] = useState("");
-  const [artifactText, setArtifactText] = useState("");
-  const [artifactLoading, setArtifactLoading] = useState(false);
-  const [artifactError, setArtifactError] = useState("");
-
-  useEffect(() => {
-    setArtifactID("");
-    setArtifactText("");
-    setArtifactError("");
-    setArtifactLoading(false);
-  }, [detail.attempt_id]);
-
-  async function loadArtifact(artifact: RememberFailureArtifactDescriptor) {
-    const requestID = ++requestRef.current;
-    setArtifactID(artifact.artifact_id);
-    setArtifactText("");
-    setArtifactError("");
-    setArtifactLoading(true);
-    try {
-      const bytes = await api.getRememberFailureArtifact(team.id, detail.attempt_id, artifact.artifact_id);
-      if (requestID !== requestRef.current) return;
-      setArtifactText(new TextDecoder().decode(bytes));
-    } catch (caught) {
-      if (requestID === requestRef.current) setArtifactError(readError(caught));
-    } finally {
-      if (requestID === requestRef.current) setArtifactLoading(false);
-    }
-  }
+function RememberAttemptDetailView({ detail }: { detail: RememberAttemptDiagnosticDetail }) {
 
   const result = detail.public_result;
   return (
@@ -256,19 +214,64 @@ function RememberAttemptDetailView({
         {detail.events.length === 0 ? <div className="table-placeholder compact">No retained events.</div> : <ol className="submission-timeline">{detail.events.map((event) => <RememberEvent key={`${event.sequence_no}:${event.event_kind}`} event={event} />)}</ol>}
       </section>
 
-      <section className="remember-artifacts" aria-label="Failure artifacts">
-        <h3>Failure artifacts</h3>
-        {detail.artifacts.length === 0 ? <div className="table-placeholder compact">No unexpired failure artifacts.</div> : detail.artifacts.map((artifact) => (
-          <article className="remember-artifact" key={artifact.artifact_id}>
-            <div><strong>{artifact.artifact_kind}</strong><small>{artifact.content_type} · {artifact.byte_count} bytes · {artifact.content_sha256}</small><small>{artifact.retained_by_legal_hold ? "Retained by active legal hold" : `Expires ${formatDate(artifact.expires_at)}`}</small></div>
-            <button className="ghost-button" type="button" onClick={() => void loadArtifact(artifact)} disabled={artifactLoading && artifactID === artifact.artifact_id}><Download size={14} aria-hidden="true" />{artifactLoading && artifactID === artifact.artifact_id ? "Loading" : "View"}</button>
-            {artifactID === artifact.artifact_id && artifactError && <p className="field-error" role="alert">{artifactError}</p>}
-            {artifactID === artifact.artifact_id && artifactText && <pre className="remember-artifact-content">{artifactText}</pre>}
-          </article>
-        ))}
-      </section>
+      <RememberDiagnosticSection detail={detail} />
     </section>
   );
+}
+
+function RememberDiagnosticSection({ detail }: { detail: RememberAttemptDiagnosticDetail }) {
+  const diagnostics = detail.diagnostics ?? { original_request: null, provider_exchanges: [], caller_response: null };
+  return (
+    <section className="remember-diagnostics" aria-label="Remember diagnostic exchanges">
+      <h3>Original request</h3>
+      {diagnostics.original_request ? <DiagnosticExchange exchange={diagnostics.original_request} requestOnly /> : <DiagnosticUnavailable message="The original request was not captured for this attempt." />}
+      <h3>AI provider exchanges</h3>
+      {diagnostics.provider_exchanges.length === 0 ? <DiagnosticUnavailable message="No provider exchange was captured; the provider was not called or capture ended before dispatch." /> : diagnostics.provider_exchanges.map((exchange) => <DiagnosticExchange exchange={exchange} key={exchange.diagnostic_id} />)}
+      <h3>Response returned to caller</h3>
+      {diagnostics.caller_response ? <DiagnosticExchange exchange={diagnostics.caller_response} responseOnly /> : <DiagnosticUnavailable message="The caller response was not captured for this attempt." />}
+    </section>
+  );
+}
+
+function DiagnosticExchange({ exchange, requestOnly = false, responseOnly = false }: { exchange: RememberDiagnosticExchange; requestOnly?: boolean; responseOnly?: boolean }) {
+  const state = exchange.capture_state || exchange.outcome;
+  return (
+    <article className="remember-diagnostic-exchange">
+      <div className="remember-diagnostic-meta">
+        <strong>{exchange.component || exchange.kind}</strong>
+        {exchange.model && <span>{exchange.model}</span>}
+        {exchange.status_code ? <span>HTTP {exchange.status_code}</span> : null}
+        <span>{outcomeLabel(state)}</span>
+        <span>{exchange.retained_by_legal_hold ? "Legal hold" : `Expires ${formatDate(exchange.expires_at)}`}</span>
+      </div>
+      {state === "expired" ? <DiagnosticUnavailable message="This capture expired after seven days and its body is no longer available." /> : (
+        <>
+          {!responseOnly && exchange.request_body !== undefined && <DiagnosticBody label={requestOnly ? "Request body" : "Provider request"} content={exchange.request_body} />}
+          {!requestOnly && exchange.response_body !== undefined && <DiagnosticBody label={responseOnly ? "Caller response" : "Provider response"} content={exchange.response_body} />}
+          {(state === "not_captured" || state === "provider_not_called") && <DiagnosticUnavailable message={state === "provider_not_called" ? "The provider was not called for this failed attempt." : "This body was not captured before the attempt ended."} />}
+          {state === "no_response" && <DiagnosticUnavailable message="The provider call did not produce an HTTP response." />}
+          {state === "truncated" && <DiagnosticUnavailable message="The capture exceeded the diagnostic size limit; the displayed body is truncated." />}
+        </>
+      )}
+    </article>
+  );
+}
+
+function DiagnosticBody({ label, content }: { label: string; content: string }) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  async function copyBody() {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  }
+  return <div className="remember-diagnostic-body"><div className="remember-diagnostic-body-heading"><strong>{label}</strong><button className="ghost-button" type="button" onClick={() => void copyBody()} disabled={!content}>{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy"}</button></div><pre>{content || "(empty body)"}</pre></div>;
+}
+
+function DiagnosticUnavailable({ message }: { message: string }) {
+  return <div className="table-placeholder compact">{message}</div>;
 }
 
 function RememberEvent({ event }: { event: RememberAttemptDiagnosticEvent }) {

@@ -145,7 +145,6 @@ func NewControlPortalServerWithMetricsAndTelemetry(
 	if telemetry.RememberAttempts != nil {
 		api.GET("/remember-attempts", control.listRememberAttemptDiagnostics)
 		api.GET("/teams/:teamId/remember-attempts/:attemptId", control.getRememberAttemptDiagnostic)
-		api.GET("/teams/:teamId/remember-attempts/:attemptId/artifacts/:artifactId", control.getRememberFailureArtifact)
 	}
 	if telemetry.RecallFeedback != nil {
 		api.GET("/recall-feedback-events", control.listRecallFeedbackEvents)

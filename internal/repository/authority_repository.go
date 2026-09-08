@@ -81,7 +81,7 @@ var freshAuthorityApplicationTables = []string{
 	"search_documents",
 	"remember_attempts",
 	"remember_attempt_events",
-	"remember_failure_artifacts",
+	"remember_attempt_diagnostics",
 	"semantic_assessments",
 	"community_snapshot_runs",
 	"community_records",

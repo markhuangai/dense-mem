@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -241,11 +242,21 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		actorMetadata["credential_id"] = actor.CredentialID.String()
 	}
 	metadata := map[string]any{"contract_version": domain.ContractVersion, "actor": actorMetadata}
+	originalRequest, marshalErr := json.Marshal(req)
+	if marshalErr != nil {
+		return nil, fmt.Errorf("remember: encode diagnostic request: %w", marshalErr)
+	}
+	if capture := DiagnosticCaptureFromContext(ctx); capture != nil {
+		if captured := capture.RequestBody(); len(captured) > 0 {
+			originalRequest = captured
+		}
+	}
 	processInput := RememberProcessRequest{
 		TeamID: actor.TeamID.String(), OwnerProfileID: actor.OwnerID.String(), SpaceID: rememberSpaceID(space),
 		SpaceGeneration: space.Generation, IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), RequestHash: requestHash,
 		SourceSummary: sourceSummary(req.Evidence), Proposal: proposal, Metadata: metadata,
-		Evidence: repositoryEvidenceInputs(req.Evidence),
+		Evidence:        repositoryEvidenceInputs(req.Evidence),
+		OriginalRequest: originalRequest,
 	}
 	if scanErr != nil {
 		processInput.SecuritySignals = append([]SubmissionSecurityBatchSignal(nil), scan.Signals...)

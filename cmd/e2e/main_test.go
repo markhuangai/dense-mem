@@ -183,7 +183,7 @@ func TestWave5DatabaseCaseFragmentsPreserveBaselineInventory(t *testing.T) {
 	capabilities := make(map[string]int)
 	baseline := make([]string, 0, len(all)-6)
 	excluded := map[string]bool{
-		"repository/TestRememberFailureArtifactHoldTransactionRollback": true,
+		"repository/TestRememberAttemptDiagnosticHoldTransactionRollback": true,
 		"knowledge/TestKnowledgeOwnerTerminalReplay":                    true,
 		"knowledge/TestKnowledgeOwnerLateFailureRollsBack":              true,
 		"knowledge/TestKnowledgeOwnerConcurrentRetryUsesOneCommit":      true,
@@ -198,7 +198,7 @@ func TestWave5DatabaseCaseFragmentsPreserveBaselineInventory(t *testing.T) {
 		if strings.TrimSpace(item.Capability) == "" {
 			t.Fatalf("database case %s has no capability", item.ID)
 		}
-		if item.ID == "repository/TestRememberFailureArtifactHoldTransactionRollback" && item.Capability != "privacy" {
+		if item.ID == "repository/TestRememberAttemptDiagnosticHoldTransactionRollback" && item.Capability != "privacy" {
 			t.Fatalf("rollback case belongs to capability %s, want privacy", item.Capability)
 		}
 		capabilities[item.Capability]++

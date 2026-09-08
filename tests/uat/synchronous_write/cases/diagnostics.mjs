@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 
@@ -53,23 +53,23 @@ export async function run({ rpc, expect }) {
     const list = await controlJSON(controlURL, token, `/control/api/remember-attempts?team_id=${encodeURIComponent(teamID)}&outcome=${result?.processing_state}&limit=100`);
     const item = (list.data || []).find((candidate) => candidate.attempt_id === diagnosticAttemptIDs[label]);
     expect(item, `control list must expose the ${label} Remember attempt`);
-    expect(!Object.hasOwn(item, "public_result") && !Object.hasOwn(item, "artifacts"), `${label} list must not expose result or artifact bytes`);
+    expect(!Object.hasOwn(item, "public_result") && !Object.hasOwn(item, "diagnostics"), `${label} list must not expose result or artifact bytes`);
     expect(item.outcome === result?.processing_state, `${label} list must preserve the terminal outcome`);
   }
 
   for (const label of ["completed", "policy"]) {
     const terminalDetail = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs[label]}`);
-    if (label === "completed") {
-      expect(Array.isArray(terminalDetail.data?.artifacts) && terminalDetail.data.artifacts.length === 0, `${label} attempt detail must not expose failure artifacts`);
-    } else {
-      expect(Array.isArray(terminalDetail.data?.artifacts) && terminalDetail.data.artifacts.length >= 1, `${label} attempt detail must expose policy artifacts`);
-    }
+    const diagnostics = terminalDetail.data?.diagnostics || {};
+    expect(Array.isArray(diagnostics.provider_exchanges), `${label} detail must expose provider exchange state`);
     if (label === "completed") {
       const publicResult = terminalDetail.data?.public_result || {};
       const allowedKeys = new Set(["contract_version", "submission_id", "submission_kind", "processing_state", "search_state", "correlation_id", "evidence", "relationship_results", "errors", "warnings"]);
       expect(Object.keys(publicResult).every((key) => allowedKeys.has(key)), "completed detail public result must use the terminal allowlist");
       expect(!Object.hasOwn(publicResult, "secret"), "completed detail public result must not expose secret fields");
       expect(Array.isArray(terminalDetail.data?.events) && terminalDetail.data.events.length >= 1, "completed attempt detail must expose its event transcript");
+    } else {
+      expect(diagnostics.original_request?.request_body?.includes('"name":"remember"'), `${label} detail must expose the logical original request`);
+      expect(diagnostics.caller_response?.response_body?.includes('"isError":true'), `${label} detail must expose the caller response envelope`);
     }
   }
 
@@ -77,7 +77,7 @@ export async function run({ rpc, expect }) {
   const failedList = await controlJSON(controlURL, token, `/control/api/remember-attempts?team_id=${encodeURIComponent(teamID)}&outcome=failed&limit=100`);
   const item = (failedList.data || []).find((candidate) => candidate.attempt_id === diagnosticAttemptIDs.failed);
   expect(item, "control list must expose the failed Remember attempt by fixture ID");
-  expect(!Object.hasOwn(item, "public_result") && !Object.hasOwn(item, "artifacts"), "attempt list must not expose result or artifact bytes");
+  expect(!Object.hasOwn(item, "public_result") && !Object.hasOwn(item, "diagnostics"), "attempt list must not expose diagnostic bytes");
 
   const eventID = randomUUID();
   postgresQuery(`
@@ -88,41 +88,39 @@ export async function run({ rpc, expect }) {
     WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(item.attempt_id)}'::uuid;
   `);
 
+  const expiredDiagnosticID = randomUUID();
+  postgresQuery(`
+    INSERT INTO remember_attempt_diagnostics (
+      team_id, diagnostic_id, attempt_id, owner_profile_id, sequence_no, kind, component,
+      request_bytes, request_content_type, outcome, captured_at, expires_at
+    ) SELECT team_id, '${expiredDiagnosticID}'::uuid, attempt_id, owner_profile_id, 99, 'provider_exchange', 'fixture',
+      convert_to('{"expired":true}', 'UTF8'), 'application/json', 'captured', clock_timestamp() - interval '8 days', clock_timestamp() - interval '1 second'
+    FROM remember_attempts
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(item.attempt_id)}'::uuid;
+  `);
+
   const detail = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${item.attempt_id}`);
   expect(detail.data?.events?.length >= 2, "attempt detail must expose the event transcript");
   expect(detail.data.events[0].sequence_no === 1 && detail.data.events[1].sequence_no === 2, "attempt events must remain ordered");
   expect(detail.data.events[1].metadata?.markup === "<script>bad()</script>", "detail must retain persisted metadata for safe rendering");
-  expect(detail.data?.artifacts?.length >= 1, "failed attempt detail must expose an artifact descriptor");
-  const descriptor = detail.data.artifacts.find((candidate) => candidate.artifact_kind === "failure");
-  expect(descriptor, "failed attempt detail must expose a failure artifact descriptor");
-  const artifactResponse = await fetch(`${controlURL}/control/api/teams/${teamID}/remember-attempts/${item.attempt_id}/artifacts/${descriptor.artifact_id}`, { headers: { Authorization: `Bearer ${token}` } });
-  expect(artifactResponse.status === 200, "unexpired failure artifact must be readable");
-  const artifactText = await artifactResponse.text();
-  expect(artifactText === `{"phase":"assessment","code":"provider_unavailable"}`, `artifact bytes must be scrubbed and deterministic: ${artifactText}`);
-  expect(artifactResponse.headers.get("cache-control") === "no-store", "artifact reads must disable caching");
-
-  const expiredArtifactID = randomUUID();
-  const expiredBytes = Buffer.from(`{"expired":true}`);
-  postgresQuery(`
-    INSERT INTO remember_failure_artifacts (team_id, artifact_id, attempt_id, owner_profile_id, artifact_kind, content_type, content_bytes, byte_count, content_sha256, captured_at, expires_at)
-    SELECT team_id, '${expiredArtifactID}'::uuid, attempt_id, owner_profile_id, 'failure', 'application/json', decode('${expiredBytes.toString("hex")}', 'hex'), ${expiredBytes.length}, 'sha256:${createHash("sha256").update(expiredBytes).digest("hex")}', clock_timestamp() - interval '2 days', clock_timestamp() - interval '1 second'
-    FROM remember_attempts
-    WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(item.attempt_id)}'::uuid;
-  `);
-  const expiredResponse = await fetch(`${controlURL}/control/api/teams/${teamID}/remember-attempts/${item.attempt_id}/artifacts/${expiredArtifactID}`, { headers: { Authorization: `Bearer ${token}` } });
-  expect(expiredResponse.status === 404, "expired failure artifact must return a bounded 404");
+  const failedDiagnostics = detail.data?.diagnostics || {};
+  expect(failedDiagnostics.original_request?.request_body?.includes('"name":"remember"'), "failed detail must expose the original request body");
+  expect(failedDiagnostics.provider_exchanges?.length >= 1, "failed detail must expose provider exchanges");
+  expect(failedDiagnostics.caller_response?.response_body?.includes('"isError":true'), "failed detail must expose the response returned to the caller");
+  const expired = (detail.data?.diagnostics?.provider_exchanges || []).find((candidate) => candidate.diagnostic_id === expiredDiagnosticID);
+  expect(expired?.capture_state === "expired" && !Object.hasOwn(expired, "request_body"), "expired diagnostic must retain state without its body");
 
   const logs = await controlJSON(controlURL, token, "/control/api/logs?limit=100");
   const serializedLogs = JSON.stringify(logs);
-  expect(serializedLogs.includes(`/artifacts/${descriptor.artifact_id}`), "artifact access must be present in the control operation audit");
+  expect(serializedLogs.includes("control_remember_attempt_diagnostic_access"), "diagnostic access must be present in the control operation audit");
   expect(!serializedLogs.includes("Diagnostics provider failure") && !serializedLogs.includes("diagnostics-persisted-secret") && !serializedLogs.includes("dense-mem-e2e-verifier-key"), "diagnostics content and credentials must not reach logs");
   const serverLogs = composeServerLogs();
   expect(!serverLogs.includes("Diagnostics provider failure") && !serverLogs.includes("diagnostics-persisted-secret") && !serverLogs.includes("dense-mem-e2e-verifier-key"), "diagnostics content and credentials must not reach server logs");
   const fixtureFile = process.env.DENSE_MEM_E2E_DIAGNOSTICS_FIXTURE_FILE;
   if (fixtureFile) {
-    await writeFile(fixtureFile, JSON.stringify({ failed_attempt_id: item.attempt_id, artifact_id: descriptor.artifact_id }), "utf8");
+    await writeFile(fixtureFile, JSON.stringify({ failed_attempt_id: item.attempt_id, diagnostic_id: failedDiagnostics.original_request?.diagnostic_id || "" }), "utf8");
   }
-  return { mode: name, outcomes: Object.fromEntries(Object.entries(attempts).map(([label, result]) => [label, result?.processing_state])), attempt_id: item.attempt_id, artifact_id: descriptor.artifact_id };
+  return { mode: name, outcomes: Object.fromEntries(Object.entries(attempts).map(([label, result]) => [label, result?.processing_state])), attempt_id: item.attempt_id, diagnostic_id: failedDiagnostics.original_request?.diagnostic_id || "" };
 }
 
 function rememberArguments(label, marker) {

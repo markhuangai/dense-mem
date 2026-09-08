@@ -1,6 +1,7 @@
 package remember
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -97,6 +98,20 @@ func TestRememberProcessErrorDoesNotExposeOperationalCause(t *testing.T) {
 	failure := &RememberProcessError{Err: cause}
 	require.Equal(t, "remember: processor failed", failure.Error())
 	require.ErrorIs(t, failure, cause)
+}
+
+func TestDiagnosticCaptureProjectsAndCopiesCallerResponse(t *testing.T) {
+	capture := NewDiagnosticCapture([]byte(`{"name":"remember","arguments":{}}`))
+	capture.SetResponseProjector(func(result map[string]any, isError bool) ([]byte, error) {
+		return json.Marshal(map[string]any{"structuredContent": result, "isError": isError})
+	})
+	projected, err := capture.ProjectResponse(map[string]any{"code": "provider_unavailable"}, true)
+	require.NoError(t, err)
+	require.Contains(t, string(projected), `"isError":true`)
+	body := []byte(`{"isError":true}`)
+	capture.SetResponse(body)
+	body[0] = 'x'
+	require.Equal(t, `{"isError":true}`, string(capture.ResponseBody()))
 }
 
 func TestTerminalNextActionsAreClosedAndCopied(t *testing.T) {

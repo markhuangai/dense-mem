@@ -103,8 +103,12 @@ database-backed cases. Existing `http`, `migration`, `postgres`,
 `repository`, `server`, and `service` fragments retain cases outside this
 Wave 5 partition.
 
-The retained `internal/repository/remember_artifact_hold.go` symbol is a
-single-hop compatibility forwarder. Its authoritative writer is
-`internal/storage/postgres/remember_artifact_hold.go:SetRememberFailureArtifactHoldStateTx`.
-The three current consumers and the zero-supported-consumer removal condition
-are recorded in the `postgres-storage-adapter` fragment for cleanup by #382.
+Remember-attempt diagnostics are retained in PostgreSQL as ordered,
+operator-only request/provider/caller exchanges. The diagnostic hold writer is
+`internal/storage/postgres/remember_diagnostic_hold.go:SetRememberAttemptDiagnosticHoldStateTx`;
+legacy failure-artifact storage and its hash-bearing API were removed after the
+verified migration to `remember_attempt_diagnostics`. Bodies are bounded to 16
+MiB per exchange and 64 MiB per failed attempt, expire after seven days, and
+are sanitized before storage; transport headers, credentials, stack traces, and
+database errors are never captured. Control detail reads are audited and
+`no-store`, and expired rows retain only capture state until purge.

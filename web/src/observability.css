@@ -188,7 +188,7 @@
 
 .remember-detail-grid h3,
 .remember-events h3,
-.remember-artifacts h3,
+.remember-diagnostics h3,
 .remember-errors h3 {
   margin: 0 0 9px;
   font-size: 13px;
@@ -209,12 +209,12 @@
 }
 
 .remember-events,
-.remember-artifacts {
+.remember-diagnostics {
   margin-top: 16px;
 }
 
 .remember-event-metadata,
-.remember-artifact-content {
+.remember-diagnostic-body pre {
   max-height: 260px;
   margin: 6px 0 0;
   padding: 9px;
@@ -230,32 +230,44 @@
   overflow-wrap: anywhere;
 }
 
-.remember-artifact {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: start;
-  margin-top: 8px;
-  padding: 11px 12px;
+.remember-diagnostic-exchange {
+  margin-top: 10px;
+  padding: 12px;
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--panel-strong);
 }
 
-.remember-artifact > div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.remember-artifact small {
+.remember-diagnostic-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
   color: var(--subtle);
-  overflow-wrap: anywhere;
+  font-size: 11px;
 }
 
-.remember-artifact .field-error,
-.remember-artifact-content {
-  grid-column: 1 / -1;
+.remember-diagnostic-meta strong {
+  color: var(--text);
+}
+
+.remember-diagnostic-body {
+  margin-top: 10px;
+}
+
+.remember-diagnostic-body-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.remember-diagnostic-body-heading > strong {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
 }
 
 @media (max-width: 900px) {

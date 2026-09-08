@@ -196,7 +196,7 @@ func (r *PrivateMemoryRepositoryImpl) PlaceLegalHold(ctx context.Context, spaceI
 		`, hold.ID, hold.TeamID, hold.SpaceID, hold.ReasonCode, hold.PlacedAt).Error; err != nil {
 			return err
 		}
-		if err := storagepostgres.SetRememberFailureArtifactHoldStateTx(ctx, tx, space.ID, true); err != nil {
+		if err := storagepostgres.SetRememberAttemptDiagnosticHoldStateTx(ctx, tx, space.ID, true); err != nil {
 			return err
 		}
 		created = true
@@ -230,7 +230,7 @@ func (r *PrivateMemoryRepositoryImpl) ReleaseLegalHold(ctx context.Context, spac
 			return result.Error
 		}
 		if result.RowsAffected == 1 {
-			if err := storagepostgres.SetRememberFailureArtifactHoldStateTx(ctx, tx, spaceID, false); err != nil {
+			if err := storagepostgres.SetRememberAttemptDiagnosticHoldStateTx(ctx, tx, spaceID, false); err != nil {
 				return err
 			}
 			hold.ReleasedAt = &now
@@ -719,7 +719,7 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 func privateMemoryManifestDeleteQuery(table string) (string, error) {
 	quoted := pq.QuoteIdentifier(table)
 	switch table {
-	case "remember_attempt_events", "remember_failure_artifacts":
+	case "remember_attempt_events", "remember_attempt_diagnostics":
 		return fmt.Sprintf(`
 			DELETE FROM %s AS row
 			USING remember_attempts AS attempt
@@ -743,7 +743,7 @@ func privateMemoryManifestDeleteQuery(table string) (string, error) {
 func privateMemoryManifestCountQuery(table string) (string, error) {
 	quoted := pq.QuoteIdentifier(table)
 	switch table {
-	case "remember_attempt_events", "remember_failure_artifacts":
+	case "remember_attempt_events", "remember_attempt_diagnostics":
 		return fmt.Sprintf(`
 			SELECT COUNT(*)
 			FROM %s AS row

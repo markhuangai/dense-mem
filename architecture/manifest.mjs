@@ -112,7 +112,6 @@ const requiredSourceOwnership = Object.freeze([
   ["cmd/internal/serverapp/remember_processor.go", "remember-application", 372],
   ["cmd/internal/serverapp/remember_replay.go", "remember-application", 372],
   ["cmd/internal/serverapp/remember_failure_logging.go", "remember-application", 372],
-  ["cmd/internal/serverapp/remember_failure_artifact.go", "remember-application", 372],
   ["cmd/internal/serverapp/remember_embedding_helpers.go", "remember-application", 372],
   ["cmd/internal/serverapp/security_rejection_audit.go", "audit-application", 368],
   ["cmd/internal/serverapp/remember_composition.go", "remember-application", 372],

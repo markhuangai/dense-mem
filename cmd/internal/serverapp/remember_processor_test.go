@@ -1,9 +1,7 @@
 package serverapp
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,6 +13,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
@@ -63,47 +62,30 @@ func TestMergeInlineEmbeddingResultsDeduplicatesDocumentHashes(t *testing.T) {
 	require.Equal(t, "other", results[1].DocumentHash)
 }
 
-func TestRememberFailureRequestArtifactIsCanonicalAndRedacted(t *testing.T) {
-	input := rememberapp.RememberProcessRequest{
-		RequestHash:    "sha256:" + strings.Repeat("a", 64),
-		IdempotencyKey: "client-key-that-must-not-be-retained",
-		Proposal: map[string]any{
-			"entity_hints": []map[string]any{{"name": "private entity name", "entity_kind": "project"}},
-			"relationship_hints": []map[string]any{{
-				"ref":              "relationship-ref",
-				"evidence_indices": []any{1, 0, 1, 99},
-				"subject":          map[string]any{"name": "private subject", "entity_kind": "project"},
-				"predicate":        map[string]any{"proposed_key": "uses"},
-				"object":           map[string]any{"value": map[string]any{"type": "string", "value": "private object", "display": "private display", "unit": "private unit"}},
-				"polarity":         "+",
-				"client_comment":   "provider prompt and secret should not be retained",
-				"metadata":         map[string]any{"authorization": "Bearer secret-token"},
-			}},
-			"provider_response": "raw provider response must not be retained",
-		},
-	}
-	evidence := []repository.EvidenceFragment{{EvidenceIndex: 0, Content: "evidence content with secret-token"}}
+func TestRememberFailureDiagnosticsCapturesBodiesAndRedactsSecrets(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(`{"evidence":[{"content":"safe"}],"authorization":"Bearer secret-token"}`)}
+	publicResult := map[string]any{"processing_state": "failed", "errors": []any{map[string]any{"code": "provider_unavailable"}}}
+	items := rememberFailureDiagnostics(input, publicResult, []modelprovider.ProviderExchange{{
+		Component: "assessor", Model: "test-model", RequestBody: []byte(`{"messages":[{"content":"safe"}],"api_key":"secret-token"}`), ResponseBody: []byte(`{"error":{"message":"provider failed"}}`), StatusCode: 500, Outcome: "captured",
+	}}, nil, "attempt", "assessment")
+	require.Len(t, items, 3)
+	require.Equal(t, "original_request", items[0].Kind)
+	require.Equal(t, "provider_exchange", items[1].Kind)
+	require.Equal(t, "caller_response", items[2].Kind)
+	require.NotContains(t, string(items[0].RequestBody), "secret-token")
+	require.NotContains(t, string(items[1].RequestBody), "secret-token")
+	require.Contains(t, string(items[2].ResponseBody), `"isError":true`)
+}
 
-	first, ok := rememberFailureRequestArtifact(input, "11111111-1111-4111-8111-111111111111", evidence)
-	require.True(t, ok)
-	second, ok := rememberFailureRequestArtifact(input, "11111111-1111-4111-8111-111111111111", evidence)
-	require.True(t, ok)
-	require.True(t, bytes.Equal(first.Content, second.Content), "artifact JSON must be deterministic")
-	require.LessOrEqual(t, len(first.Content), rememberFailureArtifactMaxBytes)
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(first.Content, &payload))
-	require.NotContains(t, string(first.Content), evidence[0].Content)
-	for _, secret := range []string{"client-key-that-must-not-be-retained", "provider prompt", "secret-token", "private entity name", "private subject", "private object", "private display", "private unit", "authorization", "provider_response", "client_comment", "metadata"} {
-		require.NotContains(t, string(first.Content), secret)
-	}
-	require.Equal(t, input.RequestHash, payload["request_hash"])
-	require.NotEmpty(t, payload["idempotency_key_hash"])
-	require.Len(t, payload["evidence"], 1)
-	require.Len(t, payload["relationships"], 1)
-	relationship := payload["relationships"].([]any)[0].(map[string]any)
-	require.Equal(t, []any{float64(0), float64(1)}, relationship["evidence_indices"])
-	require.NotEmpty(t, relationship["ref_hash"])
+func TestRememberExchangeRecorderBoundsBodiesAndAggregate(t *testing.T) {
+	recorder := &rememberExchangeRecorder{}
+	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
+		Component: "assessor", RequestBody: []byte("request"), ResponseBody: []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes+1)), Outcome: "captured",
+	})
+	exchanges := recorder.Snapshot()
+	require.Len(t, exchanges, 1)
+	require.Equal(t, "truncated", exchanges[0].Outcome)
+	require.LessOrEqual(t, len(exchanges[0].ResponseBody), rememberDiagnosticMaxBodyBytes)
 }
 
 func TestRememberFailureCodeMapsAssessmentDatabaseFailure(t *testing.T) {

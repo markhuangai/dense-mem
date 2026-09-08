@@ -17,13 +17,11 @@ import (
 var (
 	ErrRememberAttemptDiagnosticNotFound     = errors.New("remember attempt diagnostic not found")
 	ErrRememberAttemptDiagnosticsUnavailable = errors.New("remember attempt diagnostics unavailable")
-	ErrRememberFailureArtifactNotFound       = errors.New("remember failure artifact not found")
 )
 
 type RememberAttemptDiagnosticsReader interface {
 	ListRememberAttemptDiagnostics(context.Context, RememberAttemptDiagnosticFilter) (*RememberAttemptDiagnosticPage, error)
 	GetRememberAttemptDiagnostic(context.Context, string, string) (*RememberAttemptDiagnosticDetail, error)
-	GetRememberFailureArtifact(context.Context, string, string, string) (*RememberFailureArtifact, error)
 }
 
 type RememberAttemptDiagnosticFilter struct {
@@ -64,9 +62,33 @@ type RememberAttemptDiagnosticSummary struct {
 
 type RememberAttemptDiagnosticDetail struct {
 	RememberAttemptDiagnosticSummary
-	PublicResult *RememberAttemptPublicResult        `json:"public_result"`
-	Events       []RememberAttemptDiagnosticEvent    `json:"events"`
-	Artifacts    []RememberFailureArtifactDescriptor `json:"artifacts"`
+	PublicResult *RememberAttemptPublicResult     `json:"public_result"`
+	Events       []RememberAttemptDiagnosticEvent `json:"events"`
+	Diagnostics  RememberAttemptDiagnostics       `json:"diagnostics"`
+}
+
+type RememberAttemptDiagnostics struct {
+	OriginalRequest   *RememberDiagnosticExchange  `json:"original_request"`
+	ProviderExchanges []RememberDiagnosticExchange `json:"provider_exchanges"`
+	CallerResponse    *RememberDiagnosticExchange  `json:"caller_response"`
+}
+
+type RememberDiagnosticExchange struct {
+	DiagnosticID        string    `json:"diagnostic_id"`
+	SequenceNo          int       `json:"sequence_no"`
+	Kind                string    `json:"kind"`
+	Component           string    `json:"component"`
+	Model               string    `json:"model,omitempty"`
+	RequestBody         string    `json:"request_body,omitempty"`
+	ResponseBody        string    `json:"response_body,omitempty"`
+	RequestContentType  string    `json:"request_content_type,omitempty"`
+	ResponseContentType string    `json:"response_content_type,omitempty"`
+	StatusCode          int       `json:"status_code,omitempty"`
+	Outcome             string    `json:"outcome"`
+	CaptureState        string    `json:"capture_state"`
+	CapturedAt          time.Time `json:"captured_at"`
+	ExpiresAt           time.Time `json:"expires_at"`
+	RetainedByLegalHold bool      `json:"retained_by_legal_hold"`
 }
 
 // RememberAttemptPublicResult is the existing terminal result schema. The
@@ -81,29 +103,6 @@ type RememberAttemptDiagnosticEvent struct {
 	Outcome    string         `json:"outcome"`
 	Metadata   map[string]any `json:"metadata"`
 	CreatedAt  time.Time      `json:"created_at"`
-}
-
-type RememberFailureArtifactDescriptor struct {
-	ArtifactID          string    `json:"artifact_id"`
-	ArtifactKind        string    `json:"artifact_kind"`
-	ContentType         string    `json:"content_type"`
-	ByteCount           int64     `json:"byte_count"`
-	ContentSHA256       string    `json:"content_sha256"`
-	CapturedAt          time.Time `json:"captured_at"`
-	ExpiresAt           time.Time `json:"expires_at"`
-	RetainedByLegalHold bool      `json:"retained_by_legal_hold"`
-}
-
-type RememberFailureArtifact struct {
-	ArtifactID          string
-	ArtifactKind        string
-	ContentType         string
-	Content             []byte
-	ByteCount           int64
-	ContentSHA256       string
-	CapturedAt          time.Time
-	ExpiresAt           time.Time
-	RetainedByLegalHold bool
 }
 
 type RememberAttemptDiagnosticsService struct {
@@ -187,59 +186,41 @@ func (s *RememberAttemptDiagnosticsService) GetRememberAttemptDiagnostic(
 			CreatedAt:  event.CreatedAt.UTC(),
 		})
 	}
-	artifacts := make([]RememberFailureArtifactDescriptor, 0, len(record.Artifacts))
-	for _, artifact := range record.Artifacts {
-		artifacts = append(artifacts, RememberFailureArtifactDescriptor{
-			ArtifactID:          artifact.ArtifactID,
-			ArtifactKind:        artifact.ArtifactKind,
-			ContentType:         artifact.ContentType,
-			ByteCount:           artifact.ByteCount,
-			ContentSHA256:       artifact.ContentSHA256,
-			CapturedAt:          artifact.CapturedAt.UTC(),
-			ExpiresAt:           artifact.ExpiresAt.UTC(),
-			RetainedByLegalHold: artifact.RetainedByLegalHold,
-		})
-	}
 	return &RememberAttemptDiagnosticDetail{
 		RememberAttemptDiagnosticSummary: rememberAttemptDiagnosticSummary(*record),
 		PublicResult:                     result,
 		Events:                           events,
-		Artifacts:                        artifacts,
+		Diagnostics:                      projectRememberAttemptDiagnostics(record.Diagnostics),
 	}, nil
 }
 
-func (s *RememberAttemptDiagnosticsService) GetRememberFailureArtifact(
-	ctx context.Context,
-	teamID string,
-	attemptID string,
-	artifactID string,
-) (*RememberFailureArtifact, error) {
-	if s == nil || s.repo == nil {
-		return nil, ErrRememberAttemptDiagnosticsUnavailable
-	}
-	for label, value := range map[string]string{"team_id": teamID, "attempt_id": attemptID, "artifact_id": artifactID} {
-		if _, err := uuid.Parse(strings.TrimSpace(value)); err != nil {
-			return nil, fmt.Errorf("%s must be a UUID: %w", label, err)
+func projectRememberAttemptDiagnostics(items []repository.RememberAttemptDiagnosticRecordItem) RememberAttemptDiagnostics {
+	result := RememberAttemptDiagnostics{ProviderExchanges: []RememberDiagnosticExchange{}}
+	for _, item := range items {
+		exchange := RememberDiagnosticExchange{
+			DiagnosticID: item.DiagnosticID, SequenceNo: item.SequenceNo, Kind: item.Kind,
+			Component: item.Component, Model: item.Model,
+			RequestBody: string(item.RequestBody), ResponseBody: string(item.ResponseBody),
+			RequestContentType: item.RequestContentType, ResponseContentType: item.ResponseContentType,
+			StatusCode: item.StatusCode, Outcome: item.Outcome,
+			CaptureState: item.CaptureState,
+			CapturedAt:   item.CapturedAt.UTC(), ExpiresAt: item.ExpiresAt.UTC(),
+			RetainedByLegalHold: item.RetainedByLegalHold,
+		}
+		switch item.Kind {
+		case "original_request":
+			if result.OriginalRequest == nil {
+				result.OriginalRequest = &exchange
+			}
+		case "caller_response":
+			if result.CallerResponse == nil {
+				result.CallerResponse = &exchange
+			}
+		case "provider_exchange":
+			result.ProviderExchanges = append(result.ProviderExchanges, exchange)
 		}
 	}
-	artifact, err := s.repo.GetRememberFailureArtifact(ctx, strings.TrimSpace(teamID), strings.TrimSpace(attemptID), strings.TrimSpace(artifactID))
-	if errors.Is(err, repository.ErrRememberFailureArtifactNotFound) {
-		return nil, ErrRememberFailureArtifactNotFound
-	}
-	if err != nil || artifact == nil {
-		return nil, ErrRememberAttemptDiagnosticsUnavailable
-	}
-	return &RememberFailureArtifact{
-		ArtifactID:          artifact.ArtifactID,
-		ArtifactKind:        artifact.ArtifactKind,
-		ContentType:         artifact.ContentType,
-		Content:             append([]byte(nil), artifact.Content...),
-		ByteCount:           artifact.ByteCount,
-		ContentSHA256:       artifact.ContentSHA256,
-		CapturedAt:          artifact.CapturedAt.UTC(),
-		ExpiresAt:           artifact.ExpiresAt.UTC(),
-		RetainedByLegalHold: artifact.RetainedByLegalHold,
-	}, nil
+	return result
 }
 
 func rememberAttemptDiagnosticSummary(record repository.RememberAttemptDiagnosticRecord) RememberAttemptDiagnosticSummary {

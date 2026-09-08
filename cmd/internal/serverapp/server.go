@@ -437,7 +437,7 @@ func RunActiveServer(
 	searchReconciliationCtx, cancelSearchReconciliation := context.WithCancel(workerCtx)
 	go startSearchReconciliation(searchReconciliationCtx, searchApplication.Reconciliation, logger)
 	defer cancelSearchReconciliation()
-	ledgerRepo.StartRememberFailureArtifactPurger(workerCtx, time.Hour, slog.Default())
+	ledgerRepo.StartRememberAttemptDiagnosticPurger(workerCtx, time.Hour, slog.Default())
 	dreamSchedulerCtx, dreamSchedulerCancel := context.WithCancel(context.Background())
 	defer dreamSchedulerCancel()
 	go dreamservice.NewScheduler(dreamSvc, teamService, slog.Default()).Start(dreamSchedulerCtx)

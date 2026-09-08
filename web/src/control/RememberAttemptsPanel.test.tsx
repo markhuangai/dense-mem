@@ -5,7 +5,7 @@ import { ControlApi, RememberAttemptDiagnosticDetail, RememberAttemptDiagnosticS
 import { RememberAttemptsPanel } from "./RememberAttemptsPanel";
 
 describe("RememberAttemptsPanel", () => {
-  it("renders safe result/event data and loads artifact bytes lazily", async () => {
+  it("renders safe result/event data and inline diagnostics with copy controls", async () => {
     const listRememberAttemptDiagnostics = vi.fn().mockResolvedValue({
       data: [{
         team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: "attempt-1",
@@ -27,31 +27,29 @@ describe("RememberAttemptsPanel", () => {
         evidence: [{ disposition: "not_stored", evidence_index: 0, superseded_evidence_ids: [], search_state: "not_required", reason: "<script>alert(1)</script>" }],
         relationship_results: [{ ref: "r1", disposition: "not_stored", splits: [], reason: "provider unavailable" }], errors: [],
       },
-      events: [
-        { sequence_no: 1, phase: "assessment", event_kind: "assessment_failed", outcome: "failed", metadata: { markup: "<script>bad()</script>" }, created_at: "2026-08-18T01:00:01Z" },
-        { sequence_no: 2, phase: "commit", event_kind: "commit_completed", outcome: "completed", metadata: {}, created_at: "2026-08-18T01:00:02Z" },
-      ],
-      artifacts: [{ artifact_id: "artifact-1", artifact_kind: "failure", content_type: "application/json", byte_count: 64, content_sha256: "sha256:test", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z", retained_by_legal_hold: false }],
+      events: [{ sequence_no: 1, phase: "assessment", event_kind: "assessment_failed", outcome: "failed", metadata: { markup: "<script>bad()</script>" }, created_at: "2026-08-18T01:00:01Z" }],
+      diagnostics: {
+        original_request: { diagnostic_id: "request-1", sequence_no: 1, kind: "original_request", component: "remember", request_body: `{"name":"remember","arguments":{"evidence":[]}}`, outcome: "captured", capture_state: "captured", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z", retained_by_legal_hold: false },
+        provider_exchanges: [{ diagnostic_id: "provider-1", sequence_no: 2, kind: "provider_exchange", component: "assessor", request_body: `{"model":"test"}`, response_body: `{"error":"unavailable"}`, outcome: "captured", capture_state: "captured", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z", retained_by_legal_hold: false }],
+        caller_response: { diagnostic_id: "response-1", sequence_no: 3, kind: "caller_response", component: "mcp", response_body: `{"isError":true}`, outcome: "captured", capture_state: "captured", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z", retained_by_legal_hold: false },
+      },
     });
-    const getRememberFailureArtifact = vi.fn().mockResolvedValue(new TextEncoder().encode(`{"phase":"assessment","error_code":"provider_unavailable"}`));
-    const api = { listRememberAttemptDiagnostics, getRememberAttemptDiagnostic, getRememberFailureArtifact } as unknown as ControlApi;
+    const api = { listRememberAttemptDiagnostics, getRememberAttemptDiagnostic } as unknown as ControlApi;
 
     render(<RememberAttemptsPanel api={api} team={team()} />);
 
     const detailRegion = await screen.findByRole("region", { name: "Remember attempt details" });
     expect(within(detailRegion).getByText("provider_unavailable")).toBeInTheDocument();
     expect(screen.getByText("Migrated history")).toBeInTheDocument();
-    expect(within(detailRegion).getByText(/sha256:test/)).toBeInTheDocument();
     expect(screen.getByText(/Expires/)).toBeInTheDocument();
     expect(screen.getByText("<script>alert(1)</script>")).toBeInTheDocument();
     expect(document.querySelector("script")).toBeNull();
     expect(detailRegion.querySelector(".remember-event-metadata")?.textContent).toContain('"markup": "<script>bad()</script>"');
-    expect(Array.from(document.querySelectorAll(".submission-timeline li strong")).map((node) => node.textContent)).toEqual(["Assessment Failed", "Commit Completed"]);
-    expect(getRememberFailureArtifact).not.toHaveBeenCalled();
-
-    await userEvent.click(screen.getByRole("button", { name: "View" }));
-    await waitFor(() => expect(getRememberFailureArtifact).toHaveBeenCalledWith("team-1", "attempt-1", "artifact-1"));
-    expect(within(screen.getByRole("region", { name: "Failure artifacts" })).getByText(/provider_unavailable/)).toBeInTheDocument();
+    expect(within(detailRegion).getByText('{"name":"remember","arguments":{"evidence":[]}}')).toBeInTheDocument();
+    expect(within(detailRegion).getByText('{"error":"unavailable"}')).toBeInTheDocument();
+    expect(within(detailRegion).getByText('{"isError":true}')).toBeInTheDocument();
+    await userEvent.click(within(detailRegion).getAllByRole("button", { name: "Copy" })[0]);
+    expect(await within(detailRegion).findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 
   it("clears the previous team while the next list request is pending", async () => {
@@ -64,7 +62,6 @@ describe("RememberAttemptsPanel", () => {
     const api = {
       listRememberAttemptDiagnostics,
       getRememberAttemptDiagnostic: vi.fn().mockResolvedValue({ ...baseDetail("attempt-1"), team_id: "team-1" }),
-      getRememberFailureArtifact: vi.fn(),
     } as unknown as ControlApi;
     const { rerender } = render(<RememberAttemptsPanel api={api} team={team()} />);
     expect(await screen.findByRole("button", { name: "Inspect Remember attempt attempt-1" })).toBeInTheDocument();
@@ -85,7 +82,6 @@ describe("RememberAttemptsPanel", () => {
     const api = {
       listRememberAttemptDiagnostics,
       getRememberAttemptDiagnostic: vi.fn().mockImplementation((teamID: string, attemptID: string) => Promise.resolve(detailFor(attemptID))),
-      getRememberFailureArtifact: vi.fn(),
     } as unknown as ControlApi;
 
     render(<RememberAttemptsPanel api={api} team={team()} />);
@@ -118,7 +114,7 @@ describe("RememberAttemptsPanel", () => {
         : pageTwo;
     });
     const getRememberAttemptDiagnostic = vi.fn().mockImplementation((_teamID: string, attemptID: string) => attemptID === "attempt-a" ? detailA : Promise.resolve(detailFor(attemptID)));
-    const api = { listRememberAttemptDiagnostics, getRememberAttemptDiagnostic, getRememberFailureArtifact: vi.fn() } as unknown as ControlApi;
+    const api = { listRememberAttemptDiagnostics, getRememberAttemptDiagnostic } as unknown as ControlApi;
 
     render(<RememberAttemptsPanel api={api} team={team()} />);
     expect(await screen.findByRole("button", { name: "Inspect Remember attempt attempt-a" })).toBeInTheDocument();
@@ -152,7 +148,6 @@ describe("RememberAttemptsPanel", () => {
     const api = {
       listRememberAttemptDiagnostics,
       getRememberAttemptDiagnostic: vi.fn().mockImplementation((_teamID: string, attemptID: string) => Promise.resolve(detailFor(attemptID))),
-      getRememberFailureArtifact: vi.fn(),
     } as unknown as ControlApi;
 
     render(<RememberAttemptsPanel api={api} team={team()} />);
@@ -165,22 +160,7 @@ describe("RememberAttemptsPanel", () => {
     expect(screen.getByText("attempt-b")).toBeInTheDocument();
   });
 
-  it("ignores an artifact response after the selected attempt changes", async () => {
-    let resolveArtifact!: (value: Uint8Array) => void;
-    const artifact = new Promise<Uint8Array>((resolve) => { resolveArtifact = resolve; });
-    const listRememberAttemptDiagnostics = vi.fn().mockResolvedValue({ data: [summary("attempt-a"), summary("attempt-b")], pagination: { limit: 50, offset: 0, total: 2 } });
-    const getRememberAttemptDiagnostic = vi.fn().mockImplementation((_teamID: string, attemptID: string) => Promise.resolve(detailFor(attemptID, "completed", `artifact-${attemptID}`)));
-    const getRememberFailureArtifact = vi.fn().mockReturnValue(artifact);
-    const api = { listRememberAttemptDiagnostics, getRememberAttemptDiagnostic, getRememberFailureArtifact } as unknown as ControlApi;
 
-    render(<RememberAttemptsPanel api={api} team={team()} />);
-    expect(await screen.findByRole("button", { name: "Inspect Remember attempt attempt-a" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "View" }));
-    await userEvent.click(screen.getByRole("button", { name: "Inspect Remember attempt attempt-b" }));
-    resolveArtifact(new TextEncoder().encode("artifact-a-secret"));
-    await act(async () => await Promise.resolve());
-    expect(screen.queryByText("artifact-a-secret")).not.toBeInTheDocument();
-  });
 });
 
 function team(): Team {
@@ -196,12 +176,12 @@ function summary(attemptID: string, outcome: RememberAttemptDiagnosticSummary["o
   };
 }
 
-function detailFor(attemptID: string, outcome: RememberAttemptDiagnosticSummary["outcome"] = "completed", artifactID = ""): RememberAttemptDiagnosticDetail {
+function detailFor(attemptID: string, outcome: RememberAttemptDiagnosticSummary["outcome"] = "completed"): RememberAttemptDiagnosticDetail {
   return {
     ...baseDetail(attemptID),
     outcome,
     error_code: attemptID === "attempt-a" && outcome === "failed" ? "detail-a-error" : undefined,
-    artifacts: artifactID ? [{ artifact_id: artifactID, artifact_kind: "failure", content_type: "application/json", byte_count: 20, content_sha256: "sha256:test", captured_at: "2026-08-18T01:00:01Z", expires_at: "2026-08-25T01:00:01Z", retained_by_legal_hold: false }] : [],
+    diagnostics: { original_request: null, provider_exchanges: [], caller_response: null },
   };
 }
 
@@ -210,6 +190,6 @@ function baseDetail(attemptID: string): RememberAttemptDiagnosticDetail {
     team_id: "team-1", team_name: "Staging", owner_profile_id: "owner-1", attempt_id: attemptID,
     contract_version: "remember_request_hash_v1", submission_kind: "remember", outcome: "completed",
     retryable: false, evidence_count: 0, relationship_count: 0, document_count: 0, assessor_turns: 0, duration_ms: 1,
-    created_at: "2026-08-18T01:00:00Z", public_result: { contract_version: "dense-mem.v2.6", submission_id: attemptID, submission_kind: "remember", processing_state: "completed", search_state: "current", correlation_id: "corr", evidence: [], relationship_results: [], errors: [] }, events: [], artifacts: [],
+    created_at: "2026-08-18T01:00:00Z", public_result: { contract_version: "dense-mem.v2.6", submission_id: attemptID, submission_kind: "remember", processing_state: "completed", search_state: "current", correlation_id: "corr", evidence: [], relationship_results: [], errors: [] }, events: [], diagnostics: { original_request: null, provider_exchanges: [], caller_response: null },
   };
 }

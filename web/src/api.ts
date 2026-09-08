@@ -4,9 +4,9 @@ import type { OAuthProtectedResourceConfig } from "./oauth-protected-resource-ty
 import type { SearchConvergence } from "./search-convergence-types";
 import type { EvidenceConflictDetail, EvidenceConflictListPage, EvidenceConflictListQuery, EvidenceConflict } from "./evidence-conflict-api-types";
 import { getEvidenceConflict as getEvidenceConflictRequest, listEvidenceConflicts as listEvidenceConflictsRequest, resolveEvidenceConflict as resolveEvidenceConflictRequest } from "./evidence-conflict-api";
-import { requestBytes, requestJson } from "./http";
+import { requestJson } from "./http";
 import {
-  buildRememberAttemptDiagnosticPath, buildRememberAttemptDiagnosticsPath, buildRememberFailureArtifactPath,
+  buildRememberAttemptDiagnosticPath, buildRememberAttemptDiagnosticsPath,
   buildOperationLogsPath,
   type RememberAttemptDiagnosticDetail, type RememberAttemptDiagnosticQuery, type RememberAttemptDiagnosticSummary,
   type OperationLog, type OperationLogQuery,
@@ -17,7 +17,7 @@ export type {
   OperationLog, OperationLogQuery,
   RememberError,
   RememberAttemptDiagnosticDetail, RememberAttemptDiagnosticEvent, RememberAttemptDiagnosticQuery,
-  RememberAttemptDiagnosticSummary, RememberAttemptOutcome, RememberAttemptPublicResult, RememberFailureArtifactDescriptor,
+  RememberAttemptDiagnosticSummary, RememberAttemptOutcome, RememberAttemptPublicResult, RememberDiagnosticExchange,
 } from "./control-observability-api";
 export type {
   ConflictQueueItem,
@@ -892,14 +892,6 @@ export class ControlApi {
 
   getRememberAttemptDiagnostic(teamId: string, attemptId: string): Promise<RememberAttemptDiagnosticDetail> {
     return this.requestEnvelope<RememberAttemptDiagnosticDetail>(buildRememberAttemptDiagnosticPath(teamId, attemptId));
-  }
-
-  getRememberFailureArtifact(teamId: string, attemptId: string, artifactId: string): Promise<Uint8Array> {
-    return requestBytes(`${this.baseUrl}${buildRememberFailureArtifactPath(teamId, attemptId, artifactId)}`, {
-      token: this.token || undefined,
-      credentials: this.token ? undefined : "include",
-      cache: "no-store",
-    });
   }
 
   listRecallFeedbackEvents(query: RecallFeedbackEventQuery = {}): Promise<Page<RecallFeedbackEvent>> {

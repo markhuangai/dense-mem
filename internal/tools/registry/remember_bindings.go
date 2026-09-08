@@ -2,8 +2,11 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+
+	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 func bindRememberTool(tool Tool, deps Dependencies) Tool {
@@ -21,22 +24,54 @@ func bindRememberTool(tool Tool, deps Dependencies) Tool {
 		if err != nil {
 			return nil, fmt.Errorf("remember: invalid input: %w", err)
 		}
+		// The registry does not receive the JSON-RPC envelope, so retain the
+		// exact logical tools/call params that reached the Remember binding.
+		requestBody, _ := json.Marshal(map[string]any{"name": ToolRemember, "arguments": input})
+		capture := rememberapp.NewDiagnosticCapture(requestBody)
+		capture.SetResponseProjector(func(result map[string]any, isError bool) ([]byte, error) {
+			return json.Marshal(toolCallerResponse(result, isError))
+		})
+		ctx = rememberapp.WithDiagnosticCapture(ctx, capture)
 		res, err := deps.Remember.Remember(ctx, req)
 		if err != nil {
 			validation := wrapRememberValidationError(err)
 			if _, ok := ContractValidationResultFromError(validation); ok {
 				return nil, validation
 			}
-			return nil, rememberToolResultError(ctx, err)
+			mapped := rememberToolResultError(ctx, err)
+			if structured, ok := ToolResultFromError(mapped); ok {
+				if body, marshalErr := json.Marshal(toolCallerResponse(structured.Result, true)); marshalErr == nil {
+					capture.SetResponse(body)
+				}
+			}
+			return nil, mapped
 		}
 		result, err := structToMap(res)
 		if err != nil {
 			return nil, err
 		}
 		if state := strings.TrimSpace(fmt.Sprint(result["processing_state"])); state == "failed" {
+			if body, marshalErr := json.Marshal(toolCallerResponse(result, true)); marshalErr == nil {
+				capture.SetResponse(body)
+			}
 			return nil, NewToolResultError(result)
+		}
+		if body, marshalErr := json.Marshal(toolCallerResponse(result, false)); marshalErr == nil {
+			capture.SetResponse(body)
 		}
 		return result, nil
 	}
 	return tool
+}
+
+func toolCallerResponse(result map[string]any, isError bool) map[string]any {
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return map[string]any{"content": []any{}, "structuredContent": result, "isError": isError}
+	}
+	return map[string]any{
+		"content":           []any{map[string]any{"type": "text", "text": string(payload)}},
+		"structuredContent": result,
+		"isError":           isError,
+	}
 }

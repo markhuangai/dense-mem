@@ -15,10 +15,6 @@ func TestRememberAttemptPhasePreservesExplicitPreflightPhase(t *testing.T) {
 	require.Equal(t, "commit_completed", rememberAttemptEventKind(RememberAttemptRecordInput{Outcome: "completed"}))
 }
 
-func TestRememberFailureArtifactPurgeBatchIsBounded(t *testing.T) {
-	require.Equal(t, rememberFailureArtifactPurgeBatchSize, 100)
-}
-
 func TestRememberAttemptRetryabilityDefaultsAndValidation(t *testing.T) {
 	legacyFailure := normalizeRememberAttemptRecord(RememberAttemptRecordInput{Outcome: "failed"})
 	require.True(t, legacyFailure.Retryable)

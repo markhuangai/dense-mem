@@ -14,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/embedding"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
@@ -124,6 +125,8 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		return nil, errors.New("remember processor: ledger is required")
 	}
 	started := time.Now()
+	exchangeRecorder := &rememberExchangeRecorder{}
+	ctx = modelprovider.WithExchangeRecorder(ctx, exchangeRecorder)
 	ingestID := uuid.NewString()
 	snapshot, scope := rememberAssessmentSnapshot(input, ingestID)
 	assessorTurns := 0
@@ -334,15 +337,15 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		"processing_state": processingState, "search_state": "not_required", "correlation_id": correlationID,
 		"evidence": publicEvidence, "relationship_results": publicRelationships, "errors": []any{publicErrorPayload},
 	}
-	artifacts := []repository.RememberFailureArtifactInput{
-		{ArtifactKind: "failure", ContentType: "application/json", Content: []byte(fmt.Sprintf(`{"phase":%q,"code":%q}`, phase, publicError.Code))},
+	var exchanges []modelprovider.ProviderExchange
+	if recorder, ok := modelprovider.ExchangeRecorderFromContext(ctx).(*rememberExchangeRecorder); ok {
+		exchanges = recorder.Snapshot()
 	}
-	if artifact, ok := rememberFailureRequestArtifact(input, attemptID, snapshot.Evidence); ok {
-		if code == rememberapp.SubmissionErrorPolicyRejected {
-			artifact.ArtifactKind = "policy_rejected_request"
-		}
-		artifacts = append(artifacts, artifact)
+	var callerResponse []byte
+	if capture := rememberapp.DiagnosticCaptureFromContext(ctx); capture != nil {
+		callerResponse, _ = capture.ProjectResponse(publicResult, true)
 	}
+	diagnostics := rememberFailureDiagnostics(input, publicResult, exchanges, callerResponse, attemptID, phase)
 	recoveryCtx, cancel := rememberFailureRecoveryContext(ctx)
 	defer cancel()
 	recordErr := p.ledger.RecordRememberFailure(recoveryCtx, repository.RememberFailureRecordInput{
@@ -354,7 +357,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 			FailedPhase: phase, ErrorCode: publicError.Code, Retryable: publicError.Retryable, RetryabilitySet: true, CorrelationID: correlationID, PublicResult: publicResult,
 			EvidenceCount: len(input.Evidence), AssessorTurns: assessorTurns, Duration: time.Since(started),
 		},
-		Artifacts: artifacts,
+		Diagnostics: diagnostics,
 	})
 	if recordErr != nil {
 		if errors.Is(recordErr, repository.ErrRememberFailureRetentionDegraded) {
@@ -631,10 +634,6 @@ func rememberCommitFailureMetadata(err error) (string, string) {
 	}
 }
 
-// rememberFailureRequestArtifact deliberately serializes a separate,
-// allowlisted representation instead of copying the request proposal. The
-// artifact is control-only, but its bytes still need to be safe if exported or
-// inspected outside the request process.
 func rememberFailureCode(phase string, err error) rememberapp.SubmissionErrorCode {
 	if errors.Is(err, rememberapp.ErrRememberPolicyRejected) || errors.Is(err, rememberapp.ErrEvidenceSecurityRejected) || errors.Is(err, rememberapp.ErrEncodedEvidenceNotAllowed) {
 		return rememberapp.SubmissionErrorPolicyRejected

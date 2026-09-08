@@ -61,7 +61,7 @@ var privateMemoryErasureManifest = []string{
 	"relationship_cross_references", "relationship_correction_submissions",
 	"relationship_correction_events", "verification_events", "review_tasks",
 	"hypotheses", "hypothesis_derivation_sources", "hypothesis_feedback_events",
-	"remember_attempts", "remember_attempt_events", "remember_failure_artifacts", "semantic_assessments", "relationship_conflict_cases",
+	"remember_attempts", "remember_attempt_events", "remember_attempt_diagnostics", "semantic_assessments", "relationship_conflict_cases",
 	"relationship_conflict_positions", "relationship_conflict_position_members",
 	"relationship_conflict_events", "relationship_conflict_review_runs",
 	"relationship_conflict_derived_evidence_tasks", "relationship_conflict_evidence_derivations",

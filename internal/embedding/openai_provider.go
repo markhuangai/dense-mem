@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
@@ -26,6 +27,8 @@ type OpenAIEmbeddingProvider struct {
 	sem        chan struct{}
 	metrics    observability.DiscoverabilityMetrics
 }
+
+const openAIEmbeddingMaxResponseBytes = 16 << 20
 
 // Compile-time assertion that OpenAIEmbeddingProvider implements EmbeddingProviderInterface.
 var _ EmbeddingProviderInterface = (*OpenAIEmbeddingProvider)(nil)
@@ -148,6 +151,7 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, nil, "", 0, "no_response")
 		return nil, "", &ProviderError{
 			Provider: "openai",
 			Message:  "request failed",
@@ -156,8 +160,9 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	}
 	defer resp.Body.Close()
 
-	rawBody, err := io.ReadAll(resp.Body)
+	rawBody, err := io.ReadAll(io.LimitReader(resp.Body, openAIEmbeddingMaxResponseBytes+1))
 	if err != nil {
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_read_failed")
 		return nil, "", &ProviderError{
 			Provider:     "openai",
 			Message:      "failed to read response",
@@ -166,6 +171,11 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 			FailureClass: "transient",
 		}
 	}
+	if len(rawBody) > openAIEmbeddingMaxResponseBytes {
+		recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "response_too_large")
+		return nil, "", &ProviderError{Provider: "openai", Message: "provider response exceeds transport limit", FailureCode: "provider_response_invalid", FailureClass: "provider_action_required"}
+	}
+	recordEmbeddingExchange(ctx, p.model, bodyBytes, rawBody, resp.Header.Get("Content-Type"), resp.StatusCode, "captured")
 
 	var respBody openAIEmbeddingResponse
 	if err := json.Unmarshal(rawBody, &respBody); err != nil {
@@ -225,6 +235,20 @@ func (p *OpenAIEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 	}
 
 	return result, p.model, nil
+}
+
+func recordEmbeddingExchange(ctx context.Context, model string, requestBody, responseBody []byte, responseContentType string, statusCode int, outcome string) {
+	recorder := modelprovider.ExchangeRecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	now := time.Now()
+	recorder.RecordProviderExchange(ctx, modelprovider.ProviderExchange{
+		Component: "embedding", Model: model,
+		RequestBody: append([]byte(nil), requestBody...), ResponseBody: append([]byte(nil), responseBody...),
+		RequestContentType: "application/json", ResponseContentType: responseContentType,
+		StatusCode: statusCode, Outcome: outcome, StartedAt: now, CompletedAt: now,
+	})
 }
 
 func (p *OpenAIEmbeddingProvider) recordEmbeddingUsage(ctx context.Context, usage *openAIEmbeddingUsage, itemCount int) {
