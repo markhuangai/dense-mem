@@ -5,7 +5,7 @@ import { writeFile } from "node:fs/promises";
 
 export const name = "diagnostics";
 
-export async function run({ rpc, expect }) {
+export async function run({ rpc, rawRPC = rpc, expect }) {
   const attempts = {};
   const idempotencyKeys = {};
   for (const [label, marker, expectedState, expectedCode] of [
@@ -20,6 +20,41 @@ export async function run({ rpc, expect }) {
     attempts[label] = result;
     idempotencyKeys[label] = request.idempotencyKey;
   }
+
+  const diagnosticFaults = [
+    ["repair", "[fixture-fault:repair]", "completed", ""],
+    ["repair-exhausted", "[fixture-fault:repair-exhausted]", "failed", "provider_response_invalid"],
+    ["provider-status", "[fixture-fault:unavailable]", "failed", "provider_unavailable"],
+    ["provider-429", "[fixture-fault:status-429]", "failed", "provider_unavailable"],
+    ["provider-500", "[fixture-fault:status-500]", "failed", "provider_unavailable"],
+    ["malformed", "[fixture-fault:malformed]", "failed", "provider_response_invalid"],
+    ["embedding", "[fixture-fault:embedding-count]", "failed", "embedding_response_invalid"],
+    ["timeout", "[fixture-fault:timeout]", "failed", "provider_unavailable"],
+  ];
+  for (const [label, marker, expectedState, expectedCode] of diagnosticFaults) {
+    const request = rememberArguments(label, marker);
+    const result = terminalPayload(await rpc("tools/call", { name: "remember", arguments: request.payload }));
+    expect(result?.processing_state === expectedState, `${label} fixture must produce ${expectedState}: ${JSON.stringify(result)}`);
+    expect(!expectedCode || result?.errors?.[0]?.code === expectedCode, `${label} fixture must preserve ${expectedCode}: ${JSON.stringify(result)}`);
+    attempts[label] = result;
+    idempotencyKeys[label] = request.idempotencyKey;
+  }
+
+  const disconnectRequest = rememberArguments("disconnect", "[fixture-fault:embedding-cancel]");
+  const controller = new AbortController();
+  const disconnected = rawRPC("tools/call", { name: "remember", arguments: disconnectRequest.payload }, controller.signal);
+  setTimeout(() => controller.abort(), 100);
+  let disconnectError;
+  try {
+    await disconnected;
+  } catch (error) {
+    disconnectError = error;
+  }
+  expect(disconnectError?.name === "AbortError", `disconnect fixture must abort the client request: ${disconnectError}`);
+  const disconnectRetry = terminalPayload(await rpc("tools/call", { name: "remember", arguments: disconnectRequest.payload }));
+  expect(disconnectRetry?.processing_state === "completed", `disconnect retry must complete: ${JSON.stringify(disconnectRetry)}`);
+  attempts.disconnect = disconnectRetry;
+  idempotencyKeys.disconnect = disconnectRequest.idempotencyKey;
 
   const teamID = requiredEnv("DENSE_MEM_E2E_TEAM_ID");
   const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -39,17 +74,19 @@ export async function run({ rpc, expect }) {
   const diagnosticAttemptIDs = {};
   for (const [label, idempotencyKey] of Object.entries(idempotencyKeys)) {
     const rows = postgresQuery(`
-      SELECT attempt_id::text
+      SELECT attempt_id::text || '|' || outcome
       FROM remember_attempts
       WHERE team_id = '${sqlLiteral(teamID)}'::uuid
         AND idempotency_key = '${sqlLiteral(idempotencyKey)}'
       ORDER BY created_at DESC, attempt_id DESC;
     `).split(/\r?\n/).filter(Boolean);
-    expect(rows.length === 1, `${label} fixture must create exactly one diagnostic attempt: ${rows.join(",")}`);
-    diagnosticAttemptIDs[label] = rows[0];
+    expect(rows.length >= 1, `${label} fixture must create a diagnostic attempt: ${rows.join(",")}`);
+    const failed = rows.find((row) => row.endsWith("|failed"));
+    diagnosticAttemptIDs[label] = (failed || rows[0]).split("|", 1)[0];
   }
 
   for (const [label, result] of Object.entries(attempts)) {
+    if (label === "disconnect") continue;
     const list = await controlJSON(controlURL, token, `/control/api/remember-attempts?team_id=${encodeURIComponent(teamID)}&outcome=${result?.processing_state}&limit=100`);
     const item = (list.data || []).find((candidate) => candidate.attempt_id === diagnosticAttemptIDs[label]);
     expect(item, `control list must expose the ${label} Remember attempt`);
@@ -73,6 +110,23 @@ export async function run({ rpc, expect }) {
     }
   }
 
+  for (const label of diagnosticFaults.filter(([, , state]) => state === "failed").map(([name]) => name)) {
+    const detail = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs[label]}`);
+    const diagnostics = detail.data?.diagnostics || {};
+    expect(diagnostics.original_request?.request_body?.includes('"name":"remember"'), `${label} detail must expose the logical original request`);
+    expect(diagnostics.provider_exchanges?.length >= 1, `${label} detail must expose provider exchanges`);
+    expect(diagnostics.caller_response?.response_body?.includes('"isError":true'), `${label} detail must expose the caller response envelope`);
+  }
+
+  const repairRows = postgresQuery(`
+    SELECT assessor_turns
+    FROM remember_attempts
+    WHERE team_id = '${sqlLiteral(teamID)}'::uuid
+      AND idempotency_key = '${sqlLiteral(idempotencyKeys.repair)}'
+    ORDER BY created_at DESC, attempt_id DESC LIMIT 1;
+  `);
+  expect(repairRows === "2", `successful repair must retain two assessor turns: ${repairRows}`);
+
   const failed = attempts.failed;
   const failedList = await controlJSON(controlURL, token, `/control/api/remember-attempts?team_id=${encodeURIComponent(teamID)}&outcome=failed&limit=100`);
   const item = (failedList.data || []).find((candidate) => candidate.attempt_id === diagnosticAttemptIDs.failed);
@@ -92,9 +146,9 @@ export async function run({ rpc, expect }) {
   postgresQuery(`
     INSERT INTO remember_attempt_diagnostics (
       team_id, diagnostic_id, attempt_id, owner_profile_id, sequence_no, kind, component,
-      request_bytes, request_content_type, outcome, captured_at, expires_at
+      request_bytes, request_content_type, outcome, capture_state, captured_at, expires_at
     ) SELECT team_id, '${expiredDiagnosticID}'::uuid, attempt_id, owner_profile_id, 99, 'provider_exchange', 'fixture',
-      convert_to('{"expired":true}', 'UTF8'), 'application/json', 'captured', clock_timestamp() - interval '8 days', clock_timestamp() - interval '1 second'
+      convert_to('{"expired":true}', 'UTF8'), 'application/json', 'captured', 'captured', clock_timestamp() - interval '8 days', clock_timestamp() - interval '1 second'
     FROM remember_attempts
     WHERE team_id = '${sqlLiteral(teamID)}'::uuid AND attempt_id = '${sqlLiteral(item.attempt_id)}'::uuid;
   `);
@@ -109,6 +163,11 @@ export async function run({ rpc, expect }) {
   expect(failedDiagnostics.caller_response?.response_body?.includes('"isError":true'), "failed detail must expose the response returned to the caller");
   const expired = (detail.data?.diagnostics?.provider_exchanges || []).find((candidate) => candidate.diagnostic_id === expiredDiagnosticID);
   expect(expired?.capture_state === "expired" && !Object.hasOwn(expired, "request_body"), "expired diagnostic must retain state without its body");
+
+  const disconnectDetail = await controlJSON(controlURL, token, `/control/api/teams/${teamID}/remember-attempts/${diagnosticAttemptIDs.disconnect}`);
+  const disconnectDiagnostics = disconnectDetail.data?.diagnostics || {};
+  expect(disconnectDiagnostics.original_request?.request_body?.includes('"name":"remember"'), "disconnect detail must expose the original request body");
+  expect(disconnectDiagnostics.provider_exchanges?.some((exchange) => ["no_response", "interrupted", "truncated"].includes(exchange.capture_state)), "disconnect detail must expose a bounded interrupted provider state");
 
   const logs = await controlJSON(controlURL, token, "/control/api/logs?limit=100");
   const serializedLogs = JSON.stringify(logs);

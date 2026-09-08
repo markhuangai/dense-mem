@@ -18,10 +18,9 @@ import (
 // DiagnosticCapture carries the logical MCP request and finalized result
 // across the transport/application boundary without exposing transport headers.
 type DiagnosticCapture struct {
-	mu         sync.Mutex
-	request    []byte
-	response   []byte
-	projectFn  func(map[string]any, bool) ([]byte, error)
+	mu        sync.Mutex
+	request   []byte
+	projectFn func(map[string]any, bool) ([]byte, error)
 }
 
 func NewDiagnosticCapture(request []byte) *DiagnosticCapture {
@@ -35,16 +34,6 @@ func (c *DiagnosticCapture) RequestBody() []byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]byte(nil), c.request...)
-}
-
-func (c *DiagnosticCapture) SetResponse(response []byte) {
-	if c == nil {
-		return
-	}
-	copyResponse := append([]byte(nil), response...)
-	c.mu.Lock()
-	c.response = copyResponse
-	c.mu.Unlock()
 }
 
 func (c *DiagnosticCapture) SetResponseProjector(project func(map[string]any, bool) ([]byte, error)) {
@@ -67,15 +56,6 @@ func (c *DiagnosticCapture) ProjectResponse(result map[string]any, isError bool)
 		return nil, nil
 	}
 	return project(result, isError)
-}
-
-func (c *DiagnosticCapture) ResponseBody() []byte {
-	if c == nil {
-		return nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]byte(nil), c.response...)
 }
 
 type diagnosticCaptureContextKey struct{}

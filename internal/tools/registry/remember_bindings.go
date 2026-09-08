@@ -39,11 +39,6 @@ func bindRememberTool(tool Tool, deps Dependencies) Tool {
 				return nil, validation
 			}
 			mapped := rememberToolResultError(ctx, err)
-			if structured, ok := ToolResultFromError(mapped); ok {
-				if body, marshalErr := json.Marshal(toolCallerResponse(structured.Result, true)); marshalErr == nil {
-					capture.SetResponse(body)
-				}
-			}
 			return nil, mapped
 		}
 		result, err := structToMap(res)
@@ -51,13 +46,7 @@ func bindRememberTool(tool Tool, deps Dependencies) Tool {
 			return nil, err
 		}
 		if state := strings.TrimSpace(fmt.Sprint(result["processing_state"])); state == "failed" {
-			if body, marshalErr := json.Marshal(toolCallerResponse(result, true)); marshalErr == nil {
-				capture.SetResponse(body)
-			}
 			return nil, NewToolResultError(result)
-		}
-		if body, marshalErr := json.Marshal(toolCallerResponse(result, false)); marshalErr == nil {
-			capture.SetResponse(body)
 		}
 		return result, nil
 	}

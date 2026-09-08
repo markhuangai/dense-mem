@@ -16,24 +16,66 @@ const (
 	rememberDiagnosticMaxAttemptBytes = 64 << 20
 )
 
-var rememberDiagnosticSecretPattern = regexp.MustCompile(`(?i)("(?:authorization|api[_-]?key|password|token|secret|stack|database_error)"\s*:\s*)"[^"]*"`)
+var (
+	rememberDiagnosticJSONSecretPattern       = regexp.MustCompile(`(?is)("(?:authorization|proxy-authorization|api[_-]?key|client[_-]?secret|password|token|access[_-]?token|refresh[_-]?token|secret|stack(?:[_-]?trace)?|traceback|backtrace|database[_ -]?error|db[_ -]?error|sqlstate)"\s*:\s*)(?:"(?:\\.|[^"\\])*"|null|true|false|-?[0-9]+(?:\.[0-9]+)?)`)
+	rememberDiagnosticAuthorizationPattern    = regexp.MustCompile(`(?i)(\b(?:authorization|proxy-authorization)\s*:\s*(?:bearer|basic)\s+)[^\s,}\]]+`)
+	rememberDiagnosticBearerPattern           = regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/-]{8,}`)
+	rememberDiagnosticProviderSecretPattern   = regexp.MustCompile(`(?i)\b(?:sk|rk|pk|api[_-]?key|token)[_-][A-Za-z0-9][A-Za-z0-9_-]{8,}\b`)
+	rememberDiagnosticAssignmentSecretPattern = regexp.MustCompile(`(?i)(\b(?:api[_-]?key|client[_-]?secret|password|token|access[_-]?token|refresh[_-]?token|secret)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'[^'\r\n]*'|[^\s,;}\]]+)`)
+	rememberDiagnosticStackPattern            = regexp.MustCompile(`(?im)(\b(?:stack(?:[_ -]?trace)?|traceback|backtrace|panic|goroutine)\b\s*[:=]?\s*)[^\r\n]+`)
+	rememberDiagnosticDatabasePattern         = regexp.MustCompile(`(?im)(\b(?:database|db|sql)\s*(?:error|exception|failure)\b\s*[:=]?\s*)[^\r\n]+`)
+)
+
+func redactRememberDiagnosticContent(body []byte) []byte {
+	body = rememberDiagnosticJSONSecretPattern.ReplaceAll(body, []byte(`${1}"[REDACTED]"`))
+	body = rememberDiagnosticAuthorizationPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
+	body = rememberDiagnosticBearerPattern.ReplaceAll(body, []byte(`[REDACTED]`))
+	body = rememberDiagnosticProviderSecretPattern.ReplaceAll(body, []byte(`[REDACTED]`))
+	body = rememberDiagnosticAssignmentSecretPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
+	body = rememberDiagnosticStackPattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
+	body = rememberDiagnosticDatabasePattern.ReplaceAll(body, []byte(`${1}[REDACTED]`))
+	return body
+}
 
 func boundedRememberDiagnosticBody(body []byte) ([]byte, bool) {
 	if len(body) == 0 {
 		return nil, false
 	}
+	sanitized := redactRememberDiagnosticContent(body)
 	truncated := false
-	if len(body) > rememberDiagnosticMaxBodyBytes {
-		body = body[:rememberDiagnosticMaxBodyBytes]
+	if len(sanitized) > rememberDiagnosticMaxBodyBytes {
+		sanitized = sanitized[:rememberDiagnosticMaxBodyBytes]
 		truncated = true
 	}
-	sanitized := rememberDiagnosticSecretPattern.ReplaceAll(body, []byte(`${1}"[REDACTED]"`))
 	return append([]byte(nil), sanitized...), truncated
 }
 
 func sanitizeRememberDiagnosticContent(body []byte) []byte {
 	sanitized, _ := boundedRememberDiagnosticBody(body)
 	return sanitized
+}
+
+func rememberDiagnosticCaptureStateForExchange(exchange modelprovider.ProviderExchange) string {
+	if exchange.CaptureState != "" {
+		return exchange.CaptureState
+	}
+	switch exchange.Outcome {
+	case "provider_not_called":
+		return "provider_not_called"
+	case "no_response":
+		return "no_response"
+	case "response_read_failed":
+		return "interrupted"
+	case "response_too_large":
+		return "truncated"
+	case "not_captured":
+		return "not_captured"
+	default:
+		if len(exchange.RequestBody) == 0 && len(exchange.ResponseBody) == 0 {
+			return "not_captured"
+		}
+		return "captured"
+	}
 }
 
 func rememberFailureDiagnostics(
@@ -49,11 +91,11 @@ func rememberFailureDiagnostics(
 		items = append(items, repository.RememberAttemptDiagnosticInput{
 			SequenceNo: 1, Kind: "original_request", Component: "remember",
 			RequestBody:        sanitizeRememberDiagnosticContent(input.OriginalRequest),
-			RequestContentType: "application/json", Outcome: "captured",
+			RequestContentType: "application/json", Outcome: "captured", CaptureState: "captured",
 		})
 	} else {
 		items = append(items, repository.RememberAttemptDiagnosticInput{
-			SequenceNo: 1, Kind: "original_request", Component: "remember", Outcome: "not_captured",
+			SequenceNo: 1, Kind: "original_request", Component: "remember", Outcome: "not_captured", CaptureState: "not_captured",
 		})
 	}
 	sequence := len(items) + 1
@@ -71,24 +113,24 @@ func rememberFailureDiagnostics(
 			Model: exchange.Model, RequestBody: sanitizeRememberDiagnosticContent(exchange.RequestBody),
 			ResponseBody:       sanitizeRememberDiagnosticContent(exchange.ResponseBody),
 			RequestContentType: exchange.RequestContentType, ResponseContentType: exchange.ResponseContentType,
-			StatusCode: exchange.StatusCode, Outcome: outcome,
+			StatusCode: exchange.StatusCode, Outcome: outcome, CaptureState: rememberDiagnosticCaptureStateForExchange(exchange),
 			CapturedAt: capturedAt, ExpiresAt: capturedAt.Add(7 * 24 * time.Hour),
 		})
 		sequence++
 	}
 	if len(exchanges) == 0 {
 		items = append(items, repository.RememberAttemptDiagnosticInput{
-			SequenceNo: sequence, Kind: "provider_exchange", Component: "provider", Outcome: "provider_not_called",
+			SequenceNo: sequence, Kind: "provider_exchange", Component: "provider", Outcome: "provider_not_called", CaptureState: "provider_not_called",
 		})
 		sequence++
 	}
 	if len(callerResponse) > 0 {
 		items = append(items, repository.RememberAttemptDiagnosticInput{
-			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", ResponseBody: sanitizeRememberDiagnosticContent(callerResponse), ResponseContentType: "application/json", Outcome: "captured",
+			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", ResponseBody: sanitizeRememberDiagnosticContent(callerResponse), ResponseContentType: "application/json", Outcome: "captured", CaptureState: "captured",
 		})
 	} else {
 		items = append(items, repository.RememberAttemptDiagnosticInput{
-			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", Outcome: "not_captured",
+			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", Outcome: "not_captured", CaptureState: "not_captured",
 		})
 	}
 	boundRememberDiagnosticItems(items)
@@ -101,9 +143,14 @@ func boundRememberDiagnosticItems(items []repository.RememberAttemptDiagnosticIn
 		item := &items[index]
 		request, requestTruncated := boundedRememberDiagnosticBody(item.RequestBody)
 		response, responseTruncated := boundedRememberDiagnosticBody(item.ResponseBody)
-		if len(request) > remaining {
+		if remaining <= 0 {
+			request, response = nil, nil
+			requestTruncated = len(item.RequestBody) > 0
+			responseTruncated = len(item.ResponseBody) > 0
+		} else if len(request) > remaining {
 			request = request[:remaining]
 			response = nil
+			requestTruncated = true
 			responseTruncated = len(item.ResponseBody) > 0
 		} else if len(request)+len(response) > remaining {
 			limit := remaining - len(request)
@@ -112,14 +159,14 @@ func boundRememberDiagnosticItems(items []repository.RememberAttemptDiagnosticIn
 		}
 		item.RequestBody, item.ResponseBody = request, response
 		if requestTruncated || responseTruncated {
-			item.Outcome = "truncated"
+			item.CaptureState = "truncated"
 		}
 		remaining -= len(request) + len(response)
 		if remaining <= 0 {
 			for next := index + 1; next < len(items); next++ {
 				items[next].RequestBody = nil
 				items[next].ResponseBody = nil
-				items[next].Outcome = "truncated"
+				items[next].CaptureState = "truncated"
 			}
 			return
 		}
@@ -138,8 +185,11 @@ func (r *rememberExchangeRecorder) RecordProviderExchange(_ context.Context, exc
 	var requestTruncated, responseTruncated bool
 	exchange.RequestBody, requestTruncated = boundedRememberDiagnosticBody(exchange.RequestBody)
 	exchange.ResponseBody, responseTruncated = boundedRememberDiagnosticBody(exchange.ResponseBody)
+	if exchange.CaptureState == "" {
+		exchange.CaptureState = rememberDiagnosticCaptureStateForExchange(exchange)
+	}
 	if requestTruncated || responseTruncated {
-		exchange.Outcome = "truncated"
+		exchange.CaptureState = "truncated"
 	}
 	r.mu.Lock()
 	r.exchanges = append(r.exchanges, exchange)
@@ -155,29 +205,39 @@ func (r *rememberExchangeRecorder) Snapshot() []modelprovider.ProviderExchange {
 	result := make([]modelprovider.ProviderExchange, len(r.exchanges))
 	remaining := rememberDiagnosticMaxAttemptBytes
 	for index, exchange := range r.exchanges {
-		result[index] = exchange
+		bounded := exchange
 		request, requestTruncated := boundedRememberDiagnosticBody(exchange.RequestBody)
 		response, responseTruncated := boundedRememberDiagnosticBody(exchange.ResponseBody)
-		if len(request)+len(response) > remaining {
-			if remaining < len(request) {
-				request = request[:remaining]
-				response = nil
-			} else {
-				responseLimit := remaining - len(request)
-				if responseLimit < len(response) {
-					response = response[:responseLimit]
-				}
-			}
-			result[index].Outcome = "truncated"
+		if remaining <= 0 {
+			request, response = nil, nil
+			requestTruncated = len(exchange.RequestBody) > 0
+			responseTruncated = len(exchange.ResponseBody) > 0
+		} else if len(request) > remaining {
+			request = request[:remaining]
+			response = nil
+			requestTruncated = true
+			responseTruncated = len(exchange.ResponseBody) > 0
+		} else if len(request)+len(response) > remaining {
+			response = response[:remaining-len(request)]
+			responseTruncated = true
+		}
+		bounded.RequestBody, bounded.ResponseBody = request, response
+		if bounded.CaptureState == "" {
+			bounded.CaptureState = rememberDiagnosticCaptureStateForExchange(bounded)
 		}
 		if requestTruncated || responseTruncated {
-			result[index].Outcome = "truncated"
+			bounded.CaptureState = "truncated"
 		}
-		result[index].RequestBody = request
-		result[index].ResponseBody = response
+		result[index] = bounded
 		remaining -= len(request) + len(response)
 		if remaining <= 0 {
-			return result[:index+1]
+			for next := index + 1; next < len(result); next++ {
+				result[next] = r.exchanges[next]
+				result[next].RequestBody = nil
+				result[next].ResponseBody = nil
+				result[next].CaptureState = "truncated"
+			}
+			return result
 		}
 	}
 	return result

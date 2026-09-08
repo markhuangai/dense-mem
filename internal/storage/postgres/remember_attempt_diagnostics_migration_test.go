@@ -44,6 +44,9 @@ func TestRememberAttemptDiagnosticsMigrationContract(t *testing.T) {
 	for _, required := range []string{
 		"CREATE TABLE IF NOT EXISTS remember_attempt_diagnostics",
 		"remember_attempt_diagnostics_kind_check",
+		"capture_state TEXT NOT NULL DEFAULT 'captured'",
+		"remember_attempt_diagnostics_capture_state_check",
+		"legacy_hash_summary",
 		"remember_attempt_diagnostics_body_size_check",
 		"remember_attempt_diagnostics_expiry_check",
 		"CREATE POLICY remember_attempt_diagnostics_select",

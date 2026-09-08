@@ -108,10 +108,7 @@ func TestDiagnosticCaptureProjectsAndCopiesCallerResponse(t *testing.T) {
 	projected, err := capture.ProjectResponse(map[string]any{"code": "provider_unavailable"}, true)
 	require.NoError(t, err)
 	require.Contains(t, string(projected), `"isError":true`)
-	body := []byte(`{"isError":true}`)
-	capture.SetResponse(body)
-	body[0] = 'x'
-	require.Equal(t, `{"isError":true}`, string(capture.ResponseBody()))
+	require.Equal(t, `{"structuredContent":{"code":"provider_unavailable"},"isError":true}`, string(projected))
 }
 
 func TestTerminalNextActionsAreClosedAndCopied(t *testing.T) {

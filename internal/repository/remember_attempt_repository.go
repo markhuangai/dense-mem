@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"time"
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
@@ -80,6 +82,14 @@ func (r *LedgerRepositoryImpl) PurgeExpiredRememberAttemptDiagnostics(ctx contex
 		return 0, errors.New("ledger: knowledge write owner is required")
 	}
 	return owner.PurgeExpiredRememberAttemptDiagnostics(ctx, batchSize)
+}
+
+func (r *LedgerRepositoryImpl) StartRememberAttemptDiagnosticPurger(ctx context.Context, interval time.Duration, logger *slog.Logger) {
+	owner := r.knowledgeWriteOwner()
+	if owner == nil {
+		return
+	}
+	owner.StartRememberAttemptDiagnosticPurger(ctx, interval, logger)
 }
 
 func normalizeRememberAttemptRecord(input RememberAttemptRecordInput) RememberAttemptRecordInput {

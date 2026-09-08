@@ -66,7 +66,7 @@ func TestRememberFailureDiagnosticsCapturesBodiesAndRedactsSecrets(t *testing.T)
 	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(`{"evidence":[{"content":"safe"}],"authorization":"Bearer secret-token"}`)}
 	publicResult := map[string]any{"processing_state": "failed", "errors": []any{map[string]any{"code": "provider_unavailable"}}}
 	items := rememberFailureDiagnostics(input, publicResult, []modelprovider.ProviderExchange{{
-		Component: "assessor", Model: "test-model", RequestBody: []byte(`{"messages":[{"content":"safe"}],"api_key":"secret-token"}`), ResponseBody: []byte(`{"error":{"message":"provider failed"}}`), StatusCode: 500, Outcome: "captured",
+		Component: "assessor", Model: "test-model", RequestBody: []byte(`{"messages":[{"content":"safe"}],"api_key":"secret-token"}`), ResponseBody: []byte(`{"error":{"message":"Authorization: Bearer sk-live-secret","stack_trace":"goroutine 1 [running]","database_error":"sql password=secret"}}`), StatusCode: 500, Outcome: "captured",
 	}}, nil, "attempt", "assessment")
 	require.Len(t, items, 3)
 	require.Equal(t, "original_request", items[0].Kind)
@@ -74,7 +74,17 @@ func TestRememberFailureDiagnosticsCapturesBodiesAndRedactsSecrets(t *testing.T)
 	require.Equal(t, "caller_response", items[2].Kind)
 	require.NotContains(t, string(items[0].RequestBody), "secret-token")
 	require.NotContains(t, string(items[1].RequestBody), "secret-token")
+	require.NotContains(t, string(items[1].ResponseBody), "sk-live-secret")
+	require.NotContains(t, string(items[1].ResponseBody), "goroutine 1")
+	require.NotContains(t, string(items[1].ResponseBody), "sql password=secret")
 	require.Contains(t, string(items[2].ResponseBody), `"isError":true`)
+	require.Equal(t, "captured", items[1].Outcome)
+	require.Equal(t, "captured", items[1].CaptureState)
+	plain, _ := boundedRememberDiagnosticBody([]byte("api_key=plain-secret pq: password=database-secret"))
+	require.NotContains(t, string(plain), "plain-secret")
+	require.NotContains(t, string(plain), "database-secret")
+	boundary, _ := boundedRememberDiagnosticBody(append([]byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes-20)), []byte(" api_key=boundary-secret")...))
+	require.NotContains(t, string(boundary), "boundary-secret")
 }
 
 func TestRememberExchangeRecorderBoundsBodiesAndAggregate(t *testing.T) {
@@ -84,8 +94,28 @@ func TestRememberExchangeRecorderBoundsBodiesAndAggregate(t *testing.T) {
 	})
 	exchanges := recorder.Snapshot()
 	require.Len(t, exchanges, 1)
-	require.Equal(t, "truncated", exchanges[0].Outcome)
+	require.Equal(t, "captured", exchanges[0].Outcome)
+	require.Equal(t, "truncated", exchanges[0].CaptureState)
 	require.LessOrEqual(t, len(exchanges[0].ResponseBody), rememberDiagnosticMaxBodyBytes)
+}
+
+func TestRememberExchangeRecorderRetainsLaterMetadataAfterAggregateLimit(t *testing.T) {
+	recorder := &rememberExchangeRecorder{}
+	body := []byte(strings.Repeat("x", rememberDiagnosticMaxAttemptBytes/2))
+	for index := 0; index < 3; index++ {
+		recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
+			Component: fmt.Sprintf("provider-%d", index), Model: "test-model", RequestBody: body,
+			ResponseBody: body, StatusCode: 500 + index, Outcome: "captured",
+		})
+	}
+	exchanges := recorder.Snapshot()
+	require.Len(t, exchanges, 3)
+	require.Equal(t, "provider-2", exchanges[2].Component)
+	require.Equal(t, 502, exchanges[2].StatusCode)
+	require.Equal(t, "captured", exchanges[2].Outcome)
+	require.Equal(t, "truncated", exchanges[2].CaptureState)
+	require.Empty(t, exchanges[2].RequestBody)
+	require.Empty(t, exchanges[2].ResponseBody)
 }
 
 func TestRememberFailureCodeMapsAssessmentDatabaseFailure(t *testing.T) {

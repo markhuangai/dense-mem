@@ -3,11 +3,11 @@
   "capability": "privacy",
   "cases": [
     {
-      "id": "repository/TestRememberFailureArtifactHoldTransactionRollback",
+      "id": "repository/TestRememberAttemptDiagnosticHoldTransactionRollback",
       "package": "./internal/repository",
-      "run": "^TestRememberFailureArtifactHoldTransactionRollback$",
+      "run": "^TestRememberAttemptDiagnosticHoldTransactionRollback$",
       "phase": "precheck",
-      "source": "internal/repository/remember_artifact_hold_rollback_integration.e2e"
+      "source": "internal/repository/remember_diagnostic_hold_rollback_integration.e2e"
     },
     {
       "id": "postgres/TestPrivateMemoryAuditBackfillAssociatesMatchingCredentialRows",

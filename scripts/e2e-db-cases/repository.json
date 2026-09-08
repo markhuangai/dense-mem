@@ -550,9 +550,9 @@
       "source": "internal/repository/ledger_repository_integration.e2e"
     },
     {
-      "id": "repository/TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndArtifacts",
+      "id": "repository/TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges",
       "package": "./internal/repository",
-      "run": "^TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndArtifacts$",
+      "run": "^TestRememberAttemptDiagnosticsIncludesReplayedHistoryAndExchanges$",
       "phase": "precheck",
       "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
     },
@@ -560,13 +560,6 @@
       "id": "repository/TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC",
       "package": "./internal/repository",
       "run": "^TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC$",
-      "phase": "precheck",
-      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
-    },
-    {
-      "id": "repository/TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes",
-      "package": "./internal/repository",
-      "run": "^TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes$",
       "phase": "precheck",
       "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
     },
@@ -739,30 +732,37 @@
       "source": "internal/repository/remember_primitives_integration.e2e"
     },
     {
-      "id": "repository/TestRememberFailureArtifactHoldAndPurgeSerializeOnPrivateSpace",
+      "id": "repository/TestRememberAttemptDiagnosticHoldAndPurgeSerializeOnPrivateSpace",
       "package": "./internal/repository",
-      "run": "^TestRememberFailureArtifactHoldAndPurgeSerializeOnPrivateSpace$",
+      "run": "^TestRememberAttemptDiagnosticHoldAndPurgeSerializeOnPrivateSpace$",
       "phase": "precheck",
       "source": "internal/repository/remember_primitives_integration.e2e"
     },
     {
-      "id": "repository/TestRememberFailureArtifactHoldSkipsNoopUpdates",
+      "id": "repository/TestRememberAttemptDiagnosticHoldSkipsNoopUpdates",
       "package": "./internal/repository",
-      "run": "^TestRememberFailureArtifactHoldSkipsNoopUpdates$",
+      "run": "^TestRememberAttemptDiagnosticHoldSkipsNoopUpdates$",
       "phase": "precheck",
       "source": "internal/repository/remember_primitives_integration.e2e"
     },
     {
-      "id": "repository/TestRememberFailureArtifactPurgeClaimsConcurrentBatches",
+      "id": "repository/TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches",
       "package": "./internal/repository",
-      "run": "^TestRememberFailureArtifactPurgeClaimsConcurrentBatches$",
+      "run": "^TestRememberAttemptDiagnosticsPurgeClaimsConcurrentBatches$",
       "phase": "precheck",
       "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
     },
     {
-      "id": "repository/TestRememberPolicyArtifactLegalHoldReleaseAndErasure",
+      "id": "repository/TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes",
       "package": "./internal/repository",
-      "run": "^TestRememberPolicyArtifactLegalHoldReleaseAndErasure$",
+      "run": "^TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes$",
+      "phase": "precheck",
+      "source": "internal/repository/remember_attempt_diagnostics_repository_integration.e2e"
+    },
+    {
+      "id": "repository/TestRememberPolicyDiagnosticLegalHoldReleaseAndErasure",
+      "package": "./internal/repository",
+      "run": "^TestRememberPolicyDiagnosticLegalHoldReleaseAndErasure$",
       "phase": "precheck",
       "source": "internal/repository/remember_primitives_integration.e2e"
     },

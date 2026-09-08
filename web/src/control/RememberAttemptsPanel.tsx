@@ -250,6 +250,7 @@ function DiagnosticExchange({ exchange, requestOnly = false, responseOnly = fals
           {!requestOnly && exchange.response_body !== undefined && <DiagnosticBody label={responseOnly ? "Caller response" : "Provider response"} content={exchange.response_body} />}
           {(state === "not_captured" || state === "provider_not_called") && <DiagnosticUnavailable message={state === "provider_not_called" ? "The provider was not called for this failed attempt." : "This body was not captured before the attempt ended."} />}
           {state === "no_response" && <DiagnosticUnavailable message="The provider call did not produce an HTTP response." />}
+          {state === "interrupted" && <DiagnosticUnavailable message="Capture was interrupted before the provider response was fully read." />}
           {state === "truncated" && <DiagnosticUnavailable message="The capture exceeded the diagnostic size limit; the displayed body is truncated." />}
         </>
       )}

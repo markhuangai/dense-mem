@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,6 +54,35 @@ const (
 	rememberDiagnosticPurgeBatchSize  = 100
 	rememberDiagnosticRetention       = 7 * 24 * time.Hour
 )
+
+func validRememberDiagnosticCaptureState(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "captured", "truncated", "not_captured", "provider_not_called", "no_response", "interrupted":
+		return true
+	default:
+		return false
+	}
+}
+
+func rememberDiagnosticCaptureState(outcome string, requestBody, responseBody []byte) string {
+	switch strings.TrimSpace(outcome) {
+	case "provider_not_called":
+		return "provider_not_called"
+	case "no_response":
+		return "no_response"
+	case "response_read_failed":
+		return "interrupted"
+	case "response_too_large":
+		return "truncated"
+	case "not_captured":
+		return "not_captured"
+	default:
+		if len(requestBody) == 0 && len(responseBody) == 0 {
+			return "not_captured"
+		}
+		return "captured"
+	}
+}
 
 func lockRememberIdempotencyKeyInTx(ctx context.Context, tx *gorm.DB, teamID, ownerProfileID, key string) error {
 	digest := sha256.Sum256([]byte(teamID + "\x00" + ownerProfileID + "\x00" + key))
@@ -203,7 +233,18 @@ func (r *Store) RecordRememberFailure(ctx context.Context, input RememberFailure
 			diagnostic.Outcome = "captured"
 		}
 		if diagnostic.CaptureState == "" {
-			diagnostic.CaptureState = diagnostic.Outcome
+			diagnostic.CaptureState = rememberDiagnosticCaptureState(diagnostic.Outcome, diagnostic.RequestBody, diagnostic.ResponseBody)
+		}
+		if !validRememberDiagnosticCaptureState(diagnostic.CaptureState) {
+			return fmt.Errorf("remember failure: diagnostic[%d] capture state %q is unsupported", index, diagnostic.CaptureState)
+		}
+		if len(diagnostic.RequestBody) > maxRememberDiagnosticBodyBytes {
+			diagnostic.RequestBody = diagnostic.RequestBody[:maxRememberDiagnosticBodyBytes]
+			diagnostic.CaptureState = "truncated"
+		}
+		if len(diagnostic.ResponseBody) > maxRememberDiagnosticBodyBytes {
+			diagnostic.ResponseBody = diagnostic.ResponseBody[:maxRememberDiagnosticBodyBytes]
+			diagnostic.CaptureState = "truncated"
 		}
 	}
 	remainingDiagnosticBytes := maxRememberDiagnosticAttemptBytes
@@ -557,7 +598,7 @@ func loadRememberAttemptDiagnostics(ctx context.Context, tx *gorm.DB, teamID, at
 				  AND held_attempt.attempt_id = remember_attempt_diagnostics.attempt_id
 				  AND held_attempt.owner_profile_id = remember_attempt_diagnostics.owner_profile_id
 				  AND active_hold.released_at IS NULL
-			)) THEN outcome ELSE 'expired' END,
+				)) THEN capture_state ELSE 'expired' END,
 		       captured_at, expires_at,
 		       (retained_by_legal_hold AND EXISTS (
 				SELECT 1 FROM private_memory_legal_holds AS hold
@@ -687,32 +728,76 @@ func (r *Store) PurgeExpiredRememberAttemptDiagnostics(ctx context.Context, batc
 	}
 	var deleted int64
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		candidateRows, err := tx.WithContext(ctx).Raw(`
+			SELECT diagnostic.team_id::text, diagnostic.diagnostic_id::text, COALESCE(attempt.space_id::text, '')
+			FROM remember_attempt_diagnostics AS diagnostic
+			JOIN remember_attempts AS attempt
+			  ON attempt.team_id = diagnostic.team_id
+			 AND attempt.attempt_id = diagnostic.attempt_id
+			 AND attempt.owner_profile_id = diagnostic.owner_profile_id
+			WHERE diagnostic.expires_at <= clock_timestamp()
+			ORDER BY diagnostic.expires_at ASC, diagnostic.team_id ASC, diagnostic.diagnostic_id ASC
+			LIMIT ?
+		`, batchSize).Rows()
+		if err != nil {
+			return err
+		}
+		type purgeCandidate struct {
+			teamID, diagnosticID, spaceID string
+		}
+		candidates := make([]purgeCandidate, 0, batchSize)
+		spaceSet := make(map[string]struct{})
+		for candidateRows.Next() {
+			var candidate purgeCandidate
+			if err := candidateRows.Scan(&candidate.teamID, &candidate.diagnosticID, &candidate.spaceID); err != nil {
+				_ = candidateRows.Close()
+				return err
+			}
+			candidates = append(candidates, candidate)
+			if candidate.spaceID != "" {
+				spaceSet[candidate.spaceID] = struct{}{}
+			}
+		}
+		if err := candidateRows.Err(); err != nil {
+			_ = candidateRows.Close()
+			return err
+		}
+		if err := candidateRows.Close(); err != nil {
+			return err
+		}
+		spaceIDs := make([]string, 0, len(spaceSet))
+		for spaceID := range spaceSet {
+			spaceIDs = append(spaceIDs, spaceID)
+		}
+		sort.Strings(spaceIDs)
+		for _, spaceID := range spaceIDs {
+			if err := tx.WithContext(ctx).Raw(`SELECT id FROM memory_spaces WHERE id = ?::uuid FOR UPDATE`, spaceID).Row().Scan(&spaceID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
 		if err := tx.Exec("SELECT set_config('app.remember_attempt_diagnostic_purge', 'true', true)").Error; err != nil {
 			return err
 		}
-		result := tx.WithContext(ctx).Exec(`
-			WITH expired AS (
-				SELECT diagnostic.team_id, diagnostic.diagnostic_id
-				FROM remember_attempt_diagnostics AS diagnostic
-				JOIN remember_attempts AS attempt
-				  ON attempt.team_id = diagnostic.team_id
-				 AND attempt.attempt_id = diagnostic.attempt_id
-				 AND attempt.owner_profile_id = diagnostic.owner_profile_id
-				LEFT JOIN private_memory_legal_holds AS hold
-				  ON hold.space_id = attempt.space_id AND hold.released_at IS NULL
-				WHERE diagnostic.expires_at <= clock_timestamp() AND hold.id IS NULL
-				ORDER BY diagnostic.expires_at ASC, diagnostic.team_id ASC, diagnostic.diagnostic_id ASC
-				LIMIT ?
-				FOR UPDATE OF diagnostic SKIP LOCKED
-			)
-			DELETE FROM remember_attempt_diagnostics AS diagnostic
-			USING expired
-			WHERE diagnostic.team_id = expired.team_id AND diagnostic.diagnostic_id = expired.diagnostic_id
-		`, batchSize)
-		if result.Error != nil {
-			return result.Error
+		for _, candidate := range candidates {
+			result := tx.WithContext(ctx).Exec(`
+				DELETE FROM remember_attempt_diagnostics AS diagnostic
+				WHERE diagnostic.team_id = ?::uuid AND diagnostic.diagnostic_id = ?::uuid
+				  AND diagnostic.expires_at <= clock_timestamp()
+				  AND NOT EXISTS (
+					SELECT 1
+					FROM remember_attempts AS attempt
+					JOIN private_memory_legal_holds AS hold
+					  ON hold.space_id = attempt.space_id AND hold.released_at IS NULL
+					WHERE attempt.team_id = diagnostic.team_id
+					  AND attempt.attempt_id = diagnostic.attempt_id
+					  AND attempt.owner_profile_id = diagnostic.owner_profile_id
+				  )
+			`, candidate.teamID, candidate.diagnosticID)
+			if result.Error != nil {
+				return result.Error
+			}
+			deleted += result.RowsAffected
 		}
-		deleted = result.RowsAffected
 		return nil
 	})
 	if err != nil {

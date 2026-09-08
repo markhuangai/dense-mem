@@ -17,12 +17,16 @@ CREATE TABLE IF NOT EXISTS remember_attempt_diagnostics (
     response_content_type TEXT NOT NULL DEFAULT '',
     status_code INTEGER NOT NULL DEFAULT 0,
     outcome TEXT NOT NULL DEFAULT 'captured',
+    capture_state TEXT NOT NULL DEFAULT 'captured',
     captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL,
     retained_by_legal_hold BOOLEAN NOT NULL DEFAULT false,
     PRIMARY KEY (team_id, diagnostic_id),
     UNIQUE (team_id, attempt_id, sequence_no),
     CONSTRAINT remember_attempt_diagnostics_kind_check CHECK (kind IN ('original_request', 'provider_exchange', 'caller_response')),
+    CONSTRAINT remember_attempt_diagnostics_capture_state_check CHECK (
+        capture_state IN ('captured', 'truncated', 'not_captured', 'provider_not_called', 'no_response', 'interrupted')
+    ),
     CONSTRAINT remember_attempt_diagnostics_body_size_check CHECK (
         octet_length(request_bytes) <= 16777216 AND octet_length(response_bytes) <= 16777216
     ),
@@ -101,7 +105,7 @@ END $$;
 INSERT INTO remember_attempt_diagnostics (
     team_id, attempt_id, owner_profile_id, sequence_no, kind, component,
     request_bytes, response_bytes, request_content_type, response_content_type,
-    outcome, captured_at, expires_at, retained_by_legal_hold
+    outcome, capture_state, captured_at, expires_at, retained_by_legal_hold
 )
 SELECT artifact.team_id,
        artifact.attempt_id,
@@ -109,11 +113,13 @@ SELECT artifact.team_id,
        row_number() OVER (PARTITION BY artifact.team_id, artifact.attempt_id ORDER BY artifact.captured_at, artifact.artifact_id),
        CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN 'original_request' ELSE 'provider_exchange' END,
        'legacy_failure_artifact',
-       CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN artifact.content_bytes ELSE ''::bytea END,
+       ''::bytea,
        CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN ''::bytea ELSE artifact.content_bytes END,
-       CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN artifact.content_type ELSE '' END,
+       '' AS request_content_type,
        CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN '' ELSE artifact.content_type END,
-       'legacy_migrated', artifact.captured_at, artifact.expires_at, artifact.retained_by_legal_hold
+       CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN 'legacy_hash_summary' ELSE 'legacy_migrated' END,
+       CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN 'not_captured' ELSE 'captured' END,
+       artifact.captured_at, artifact.expires_at, artifact.retained_by_legal_hold
 FROM remember_failure_artifacts AS artifact
 LEFT JOIN remember_attempts AS attempt
   ON attempt.team_id = artifact.team_id

@@ -206,17 +206,17 @@ func TestWave5DatabaseCaseFragmentsPreserveBaselineInventory(t *testing.T) {
 			baseline = append(baseline, strings.Join([]string{item.ID, item.Package, item.Run, item.Phase, item.Scenario, item.Source, item.Capability}, "\t"))
 		}
 	}
-	if len(all) != 388 {
-		t.Fatalf("database case inventory contains %d cases, want 388", len(all))
+	if len(all) != 389 {
+		t.Fatalf("database case inventory contains %d cases, want 389", len(all))
 	}
 	sort.Strings(baseline)
 	baselineHash := sha256.Sum256([]byte(strings.Join(baseline, "\n") + "\n"))
-	if got := fmt.Sprintf("%x", baselineHash); got != "2276218235cc8bc4199bb0ed29f73ccf3c22f1f3678e14401e7f87076e4b9240" {
+	if got := fmt.Sprintf("%x", baselineHash); got != "4fbdae9b1c17e7afe29521e85c9de4ab532a62eb8c32ec8073014ee9edde01d5" {
 		t.Fatalf("baseline database case inventory changed: %s", got)
 	}
 	for capability, want := range map[string]int{
 		"audit": 9, "community": 1, "dream": 33, "graph": 2, "http": 1,
-		"knowledge": 56, "migration": 2, "postgres": 110, "privacy": 20,
+		"knowledge": 56, "migration": 2, "postgres": 111, "privacy": 20,
 		"repository": 138, "server": 2, "service": 8, "settings": 3, "trace": 3,
 	} {
 		if capabilities[capability] != want {

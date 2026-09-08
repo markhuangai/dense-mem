@@ -306,37 +306,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		Evidence: evidence, RelationshipResults: relationshipResults,
 		Errors: []rememberapp.SubmissionStatusError{publicError},
 	}
-	publicEvidence := make([]any, 0, len(evidence))
-	for _, item := range evidence {
-		publicEvidence = append(publicEvidence, map[string]any{
-			"disposition": item.Disposition, "evidence_index": item.EvidenceIndex,
-			"content_hash":            item.ContentHash,
-			"superseded_evidence_ids": item.SupersededEvidenceIDs, "search_state": item.SearchState,
-			"reason": item.Reason,
-		})
-	}
-	publicRelationships := make([]any, 0, len(relationshipResults))
-	for _, item := range relationshipResults {
-		publicRelationships = append(publicRelationships, map[string]any{
-			"ref": item.RelationshipRef, "disposition": item.Disposition,
-			"reason": item.Reason, "splits": item.Splits,
-		})
-	}
-	publicErrorPayload := map[string]any{
-		"code": publicError.Code, "message": publicError.Message, "retryable": publicError.Retryable,
-		"next_action": publicError.NextAction, "remediation": publicError.Remediation,
-	}
-	if publicError.ReasonCode != "" {
-		publicErrorPayload["reason_code"] = publicError.ReasonCode
-	}
-	if len(publicError.Details) > 0 {
-		publicErrorPayload["details"] = publicError.Details
-	}
-	publicResult := map[string]any{
-		"contract_version": domain.ContractVersion, "submission_id": attemptID, "submission_kind": "remember",
-		"processing_state": processingState, "search_state": "not_required", "correlation_id": correlationID,
-		"evidence": publicEvidence, "relationship_results": publicRelationships, "errors": []any{publicErrorPayload},
-	}
+	publicResult, terminalResult := terminalRememberFailureResult(status)
 	var exchanges []modelprovider.ProviderExchange
 	if recorder, ok := modelprovider.ExchangeRecorderFromContext(ctx).(*rememberExchangeRecorder); ok {
 		exchanges = recorder.Snapshot()
@@ -363,7 +333,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		if errors.Is(recordErr, repository.ErrRememberFailureRetentionDegraded) {
 			p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
 			p.logRememberFailureRetentionDegraded(input, attemptID, phase)
-			return nil, &rememberapp.RememberProcessError{Status: status, Err: failure}
+			return nil, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
 		}
 		if errors.Is(recordErr, repository.ErrRememberReplay) {
 			winner, loadErr := p.ledger.LoadRememberAttempt(recoveryCtx, repository.RememberAttemptLookupInput{
@@ -382,7 +352,24 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 		return nil, rememberFailurePersistenceProcessError(input, attemptID, failure)
 	}
 	p.logRememberFailure(input, attemptID, started, phase, publicError.Code, correlationID, failure)
-	return nil, &rememberapp.RememberProcessError{Status: status, Err: failure}
+	return nil, &rememberapp.RememberProcessError{Status: status, Result: terminalResult, Err: failure}
+}
+
+func terminalRememberFailureResult(status *rememberapp.SubmissionStatusResult) (map[string]any, *rememberapp.TerminalRememberResult) {
+	if status == nil {
+		return map[string]any{}, nil
+	}
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		return map[string]any{}, nil
+	}
+	var publicResult map[string]any
+	var terminal rememberapp.TerminalRememberResult
+	if json.Unmarshal(encoded, &publicResult) != nil || json.Unmarshal(encoded, &terminal) != nil {
+		return map[string]any{}, nil
+	}
+	terminal.Kind = rememberapp.ResultKindTerminal
+	return publicResult, &terminal
 }
 
 func rememberConflictProcessError(

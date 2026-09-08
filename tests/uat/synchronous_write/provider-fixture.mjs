@@ -65,6 +65,14 @@ const server = createServer(async (request, response) => {
     response.destroy();
     return;
   }
+  if (routeFault === "status-429") {
+    sendJSON(response, 429, { error: { message: "fixture rate limited", code: "rate_limit" } });
+    return;
+  }
+  if (routeFault === "status-500") {
+    sendJSON(response, 500, { error: { message: "fixture provider failure", code: "provider_failure" } });
+    return;
+  }
 
   if (request.url?.endsWith("/embeddings")) {
     const inputs = Array.isArray(payload.input) ? payload.input : [payload.input || ""];
