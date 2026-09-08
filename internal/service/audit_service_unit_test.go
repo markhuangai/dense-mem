@@ -17,6 +17,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
+	auditapp "github.com/markhuangai/dense-mem/internal/audit"
+	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -91,6 +93,7 @@ func newMockAuditService(t *testing.T) (*AuditServiceImpl, sqlmock.Sqlmock, func
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := NewAuditServiceWithLogger(gormDB, logger)
 	svc.rls = nil
+	svc.inner = auditapp.New(auditpostgres.NewStore(gormDB, nil))
 	return svc, mock, func() {
 		_ = sqlDB.Close()
 	}
