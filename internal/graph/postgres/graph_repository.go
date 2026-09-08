@@ -382,7 +382,7 @@ func scanSemanticGraphRows(rows *sql.Rows, types []string) ([]graphEdgeRow, erro
 	return graphread.ScanRows(rows, types)
 }
 
-func loadSemanticEntityGraphNode(ctx context.Context, tx *gorm.DB, teamID, entityID string) (*graphcontract.Node, error) {
+func loadSemanticEntityGraphNode(ctx context.Context, tx *gorm.DB, teamID, entityID string) (node *graphcontract.Node, err error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT ('entity:' || e.entity_id::text), e.entity_id::text,
 		       COALESCE(name.display_name, e.entity_id::text), e.entity_kind,
@@ -413,22 +413,27 @@ func loadSemanticEntityGraphNode(ctx context.Context, tx *gorm.DB, teamID, entit
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			node = nil
+			err = closeErr
+		}
+	}()
 	if !rows.Next() {
 		return nil, sql.ErrNoRows
 	}
-	var node graphcontract.Node
+	var loaded graphcontract.Node
 	var recordedAt time.Time
-	if err := rows.Scan(&node.Key, &node.ID, &node.Title, &node.Body, &node.Status, &node.OwnerProfileID, &recordedAt); err != nil {
+	if err := rows.Scan(&loaded.Key, &loaded.ID, &loaded.Title, &loaded.Body, &loaded.Status, &loaded.OwnerProfileID, &recordedAt); err != nil {
 		return nil, err
 	}
-	node.Type = "entity"
+	loaded.Type = "entity"
 	t := recordedAt.UTC()
-	node.RecordedAt = &t
-	return &node, rows.Err()
+	loaded.RecordedAt = &t
+	return &loaded, rows.Err()
 }
 
-func loadSemanticValueGraphNode(ctx context.Context, tx *gorm.DB, teamID, valueID string) (*graphcontract.Node, error) {
+func loadSemanticValueGraphNode(ctx context.Context, tx *gorm.DB, teamID, valueID string) (node *graphcontract.Node, err error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT ('value:' || value_id::text), value_id::text,
 		       COALESCE(NULLIF(display, ''), canonical_value), value_type,
@@ -446,19 +451,24 @@ func loadSemanticValueGraphNode(ctx context.Context, tx *gorm.DB, teamID, valueI
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			node = nil
+			err = closeErr
+		}
+	}()
 	if !rows.Next() {
 		return nil, sql.ErrNoRows
 	}
-	var node graphcontract.Node
+	var loaded graphcontract.Node
 	var recordedAt time.Time
-	if err := rows.Scan(&node.Key, &node.ID, &node.Title, &node.Body, &node.Status, &node.OwnerProfileID, &recordedAt); err != nil {
+	if err := rows.Scan(&loaded.Key, &loaded.ID, &loaded.Title, &loaded.Body, &loaded.Status, &loaded.OwnerProfileID, &recordedAt); err != nil {
 		return nil, err
 	}
-	node.Type = "value"
+	loaded.Type = "value"
 	t := recordedAt.UTC()
-	node.RecordedAt = &t
-	return &node, rows.Err()
+	loaded.RecordedAt = &t
+	return &loaded, rows.Err()
 }
 
 func graphSnapshot(input graphcontract.Query, rows []graphEdgeRow) *graphcontract.Snapshot {

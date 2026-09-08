@@ -78,6 +78,34 @@ func TestScanSemanticGraphRowsPropagatesRowError(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestLoadSemanticGraphNodePropagatesRowsCloseError(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		load  func(context.Context, *gorm.DB, string, string) (*graphcontract.Node, error)
+	}{
+		{name: "entity", query: "SELECT ('entity:'", load: loadSemanticEntityGraphNode},
+		{name: "value", query: "SELECT ('value:'", load: loadSemanticValueGraphNode},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, mock, gormDB := newGraphSQLMockDB(t)
+			defer db.Close()
+			closeErr := errors.New("graph node rows close failed")
+			mock.ExpectQuery(regexp.QuoteMeta(tt.query)).WillReturnRows(
+				sqlmock.NewRows([]string{"key", "id", "title", "body", "status", "owner", "recorded_at"}).
+					AddRow(tt.name+":node", "node", "Node", "entity", "active", "owner", time.Now()).
+					CloseError(closeErr),
+			)
+
+			node, err := tt.load(context.Background(), gormDB, uuid.NewString(), uuid.NewString())
+			assert.Nil(t, node)
+			assert.ErrorIs(t, err, closeErr)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestLoadSemanticLocalGraphRowsPropagatesQueryError(t *testing.T) {
 	db, mock, gormDB := newGraphSQLMockDB(t)
 	defer db.Close()
