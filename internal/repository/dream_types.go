@@ -1,445 +1,54 @@
 package repository
 
-import (
-	"context"
-	"time"
+import dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 
-	"github.com/markhuangai/dense-mem/internal/domain"
+type DreamRepository = dreamcontract.DreamRepository
+type ScheduledDreamRepository = dreamcontract.ScheduledDreamRepository
+type DreamCycleClaimInput = dreamcontract.DreamCycleClaimInput
+type DreamCycleRecoveryClaimInput = dreamcontract.DreamCycleRecoveryClaimInput
+type DreamCycleCompleteInput = dreamcontract.DreamCycleCompleteInput
+type DreamCycleRun = dreamcontract.DreamCycleRun
+type DreamInputListInput = dreamcontract.DreamInputListInput
+type DreamInput = dreamcontract.DreamInput
+type DreamEvidence = dreamcontract.DreamEvidence
+type DreamTargetPredicate = dreamcontract.DreamTargetPredicate
+type DreamTargetCandidate = dreamcontract.DreamTargetCandidate
+type DreamPathEvaluationInput = dreamcontract.DreamPathEvaluationInput
+type DreamPathEvaluationRecordInput = dreamcontract.DreamPathEvaluationRecordInput
+type DreamGenerationPersistInput = dreamcontract.DreamGenerationPersistInput
+type DreamGenerationPersistResult = dreamcontract.DreamGenerationPersistResult
+type UpsertHypothesisInput = dreamcontract.UpsertHypothesisInput
+type EvidenceDerivationSource = dreamcontract.EvidenceDerivationSource
+type DreamDerivationSource = dreamcontract.DreamDerivationSource
+type HypothesisRecord = dreamcontract.HypothesisRecord
+type ListHypothesesInput = dreamcontract.ListHypothesesInput
+type EvidenceTarget = dreamcontract.EvidenceTarget
+type EvidenceContext = dreamcontract.EvidenceContext
+type EvidenceDiscoverySelectionInput = dreamcontract.EvidenceDiscoverySelectionInput
+type EvidenceDiscoveryAttempt = dreamcontract.EvidenceDiscoveryAttempt
+type EvidenceDiscoveryAttemptValidationInput = dreamcontract.EvidenceDiscoveryAttemptValidationInput
+type EvidenceDiscoveryTargetInput = dreamcontract.EvidenceDiscoveryTargetInput
+type EvidenceNode = dreamcontract.EvidenceNode
+type EvidenceDiscoveryEvaluationInput = dreamcontract.EvidenceDiscoveryEvaluationInput
+type EvidenceDiscoveryRunTotals = dreamcontract.EvidenceDiscoveryRunTotals
+type GetHypothesisInput = dreamcontract.GetHypothesisInput
+type RecallHypothesesInput = dreamcontract.RecallHypothesesInput
+type UpdateHypothesisStatusInput = dreamcontract.UpdateHypothesisStatusInput
+type SubmitHypothesisInput = dreamcontract.SubmitHypothesisInput
+type DreamControlRepository = dreamcontract.DreamControlRepository
+type EvidenceDiscoveryRepository = dreamcontract.EvidenceDiscoveryRepository
+type EvidenceDiscoveryInputValidator = dreamcontract.EvidenceDiscoveryInputValidator
+type EvidenceDiscoveryDuplicateError = dreamcontract.EvidenceDiscoveryDuplicateError
+
+var (
+	ErrDreamCycleAlreadyClaimed            = dreamcontract.ErrDreamCycleAlreadyClaimed
+	ErrDreamHypothesisNotFound             = dreamcontract.ErrDreamHypothesisNotFound
+	ErrDreamHypothesisIDInvalid            = dreamcontract.ErrDreamHypothesisIDInvalid
+	ErrDreamSourceStale                    = dreamcontract.ErrDreamSourceStale
+	ErrDreamExactRelationshipExists        = dreamcontract.ErrDreamExactRelationshipExists
+	ErrDreamExactHypothesisExists          = dreamcontract.ErrDreamExactHypothesisExists
+	ErrDreamCycleLeaseLost                 = dreamcontract.ErrDreamCycleLeaseLost
+	ErrDreamConfirmationBusy               = dreamcontract.ErrDreamConfirmationBusy
+	ErrEvidenceDiscoveryBusy               = dreamcontract.ErrEvidenceDiscoveryBusy
+	ErrEvidenceDiscoveryAttemptNotReserved = dreamcontract.ErrEvidenceDiscoveryAttemptNotReserved
 )
-
-type DreamRepository interface {
-	ClaimDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error)
-	CompleteDreamCycle(ctx context.Context, input DreamCycleCompleteInput) error
-	ListDreamInputs(ctx context.Context, input DreamInputListInput) ([]DreamInput, error)
-	ListDreamTargetPredicates(ctx context.Context, teamID string) ([]DreamTargetPredicate, error)
-	ListAvailableDreamTargets(ctx context.Context, teamID string, targets []DreamTargetCandidate) ([]DreamTargetCandidate, error)
-	ListUnassessedDreamPaths(ctx context.Context, teamID string, paths []DreamPathEvaluationInput) ([]DreamPathEvaluationInput, error)
-	RecordDreamPathEvaluations(ctx context.Context, input DreamPathEvaluationRecordInput) error
-	PersistDreamGeneration(ctx context.Context, input DreamGenerationPersistInput) (DreamGenerationPersistResult, error)
-	UpsertHypothesis(ctx context.Context, input UpsertHypothesisInput) (*HypothesisRecord, bool, error)
-	ListHypotheses(ctx context.Context, input ListHypothesesInput) ([]HypothesisRecord, string, error)
-	GetHypothesis(ctx context.Context, input GetHypothesisInput) (*HypothesisRecord, error)
-	WithHypothesisConfirmationLock(ctx context.Context, teamID, hypothesisID string, fn func(DreamRepository) error) error
-	RecallHypotheses(ctx context.Context, input RecallHypothesesInput) ([]HypothesisRecord, error)
-	UpdateHypothesisStatus(ctx context.Context, input UpdateHypothesisStatusInput) (*HypothesisRecord, error)
-	SubmitHypothesis(ctx context.Context, input SubmitHypothesisInput) (*HypothesisRecord, error)
-	CountHypotheses(ctx context.Context, teamID, status string) (int, error)
-	ListDreamCyclesForTeam(ctx context.Context, teamID string, limit int) ([]DreamCycleRun, error)
-}
-
-// ScheduledDreamRepository is deliberately separate from DreamRepository's
-// authenticated actor methods. Only the scheduler receives this system-mode
-// port, so a request cannot select system mutation mode.
-type ScheduledDreamRepository interface {
-	ClaimScheduledDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error)
-	ClaimRecoverableScheduledDreamCycle(ctx context.Context, input DreamCycleRecoveryClaimInput) (*DreamCycleRun, error)
-	CompleteScheduledDreamCycle(ctx context.Context, input DreamCycleCompleteInput) error
-	UpsertScheduledHypothesis(ctx context.Context, input UpsertHypothesisInput) (*HypothesisRecord, bool, error)
-	RecordScheduledDreamPathEvaluations(ctx context.Context, input DreamPathEvaluationRecordInput) error
-	PersistScheduledDreamGeneration(ctx context.Context, input DreamGenerationPersistInput) (DreamGenerationPersistResult, error)
-	RecordMissedScheduledDreamCycle(ctx context.Context, input DreamCycleClaimInput) (*DreamCycleRun, error)
-}
-
-type DreamCycleClaimInput struct {
-	TeamID               string
-	InitiatedByProfileID string
-	RunDate              string
-	WindowKey            string
-	ScheduledFor         *time.Time
-	LeaseToken           string
-	LeaseUntil           time.Time
-	SourceSnapshot       []map[string]any
-	Lane                 domain.DreamLane
-}
-
-type DreamCycleRecoveryClaimInput struct {
-	TeamID      string
-	LeaseToken  string
-	LeaseUntil  time.Time
-	MaxAttempts int
-	Lane        domain.DreamLane
-}
-
-type DreamCycleCompleteInput struct {
-	TeamID                   string
-	InitiatedByProfileID     string
-	RunID                    string
-	LeaseToken               string
-	Status                   string
-	InputCount               int
-	CreatedHypotheses        int
-	RejectedHypotheses       int
-	SourceSnapshot           []map[string]any
-	ProviderModel            string
-	ProviderTurns            int
-	ProviderInputTokens      int
-	ProviderOutputTokens     int
-	AttemptedPaths           int
-	ProviderProposals        int
-	OutcomeSummary           map[string]int
-	Error                    string
-	Lane                     domain.DreamLane
-	EvidenceTargets          int
-	EvaluatedEvidenceTargets int
-}
-
-type DreamCycleRun struct {
-	TeamID                   string
-	RunID                    string
-	InitiatedByProfileID     string
-	RunDate                  string
-	WindowKey                string
-	Status                   string
-	ScheduledFor             *time.Time
-	LeaseToken               string
-	LeaseUntil               *time.Time
-	AttemptCount             int
-	InputCount               int
-	CreatedHypotheses        int
-	RejectedHypotheses       int
-	ProviderModel            string
-	ProviderTurns            int
-	ProviderInputTokens      int
-	ProviderOutputTokens     int
-	AttemptedPaths           int
-	ProviderProposals        int
-	OutcomeSummary           map[string]int
-	Error                    string
-	StartedAt                time.Time
-	CompletedAt              *time.Time
-	Claimed                  bool
-	Lane                     domain.DreamLane
-	EvidenceTargets          int
-	EvaluatedEvidenceTargets int
-}
-
-type DreamInputListInput struct {
-	TeamID string
-	Limit  int
-}
-
-type DreamInput struct {
-	RelationshipID     string
-	OwnerProfileID     string
-	Version            int
-	Status             string
-	SubjectEntityID    string
-	SubjectName        string
-	PredicateKey       string
-	PredicateVersion   int
-	ObjectEntityID     string
-	ObjectValueID      string
-	ObjectName         string
-	RelationshipKind   string
-	CurrentCardinality string
-	SubjectKind        string
-	ObjectKind         string
-	Evidence           []DreamEvidence
-}
-
-// DreamEvidence identifies an exact server-selected source excerpt. Its
-// content is sent to the provider as untrusted data only after eligibility is
-// established inside PostgreSQL.
-type DreamEvidence struct {
-	EvidenceRef      string
-	SupportID        string
-	ObservationID    string
-	FragmentID       string
-	SourceID         string
-	SourceRevisionID string
-	SourceGroupKey   string
-	Authority        string
-	SpanStart        int
-	SpanEnd          int
-	Content          string
-}
-
-type DreamTargetPredicate struct {
-	PredicateRef        string
-	PredicateKey        string
-	Version             int
-	AllowedSubjectKinds []string
-	AllowedObjectKinds  []string
-	RelationshipKind    string
-	CurrentCardinality  string
-}
-
-type DreamTargetCandidate struct {
-	PathRef         string
-	PredicateRef    string
-	SubjectEntityID string
-	PredicateKey    string
-	ObjectEntityID  string
-	ObjectValueID   string
-}
-
-type DreamPathEvaluationInput struct {
-	FirstRelationshipID         string
-	FirstRelationshipVersion    int
-	SecondRelationshipID        string
-	SecondRelationshipVersion   int
-	AllowedPredicateFingerprint string
-}
-
-type DreamPathEvaluationRecordInput struct {
-	TeamID             string
-	CreatedByProfileID string
-	ProviderModel      string
-	Paths              []DreamPathEvaluationInput
-}
-
-// DreamGenerationPersistInput is the durable result of one already validated
-// provider response. Proposals and path assessments commit together.
-type DreamGenerationPersistInput struct {
-	TeamID             string
-	CreatedByProfileID string
-	RunID              string
-	LeaseToken         string
-	ProviderModel      string
-	Proposals          []UpsertHypothesisInput
-	EvaluatedPaths     []DreamPathEvaluationInput
-}
-
-type DreamGenerationPersistResult struct {
-	Created  int
-	Rejected int
-}
-
-type UpsertHypothesisInput struct {
-	TeamID                string
-	CreatedByProfileID    string
-	RunID                 string
-	Statement             string
-	Rationale             string
-	Likelihood            *float64
-	Confidence            *float64
-	SubjectEntityID       string
-	PredicateKey          string
-	PredicateVersion      int
-	ObjectEntityID        string
-	ObjectValueID         string
-	SourceRefs            []map[string]any
-	SourceVersions        map[string]int
-	SourceOwnerProfileIDs []string
-	ContentHash           string
-	TargetIdentity        string
-	Derivations           []DreamDerivationSource
-	GeneratorKind         string
-	GeneratorVersion      string
-	Payload               map[string]any
-	Lane                  domain.DreamLane
-	SourceEvidenceIDs     []string
-	EvidenceDerivations   []EvidenceDerivationSource
-}
-
-type EvidenceDerivationSource struct {
-	EvidenceID       string
-	FragmentID       string
-	SourceID         string
-	SourceRevisionID string
-	SourceGroupKey   string
-	SpanStart        int
-	SpanEnd          int
-	Quote            string
-	Authority        string
-}
-
-type DreamDerivationSource struct {
-	PremisePosition     int
-	RelationshipID      string
-	RelationshipVersion int
-	SupportID           string
-	ObservationID       string
-	FragmentID          string
-	SourceID            string
-	SourceRevisionID    string
-	SourceGroupKey      string
-	SpanStart           int
-	SpanEnd             int
-	Quote               string
-	Authority           string
-}
-
-type HypothesisRecord struct {
-	TeamID                        string
-	HypothesisID                  string
-	CreatedByProfileID            string
-	Status                        string
-	Statement                     string
-	Rationale                     string
-	Likelihood                    *float64
-	Confidence                    *float64
-	SubjectEntityID               string
-	PredicateKey                  string
-	PredicateVersion              int
-	ObjectEntityID                string
-	ObjectValueID                 string
-	SourceRefs                    []map[string]any
-	SourceVersions                map[string]int
-	SourceOwnerProfileIDs         []string
-	ContentHash                   string
-	TargetIdentity                string
-	Derivations                   []DreamDerivationSource
-	CycleRunID                    string
-	GeneratorKind                 string
-	GeneratorVersion              string
-	InvalidatedReason             string
-	SubmittedIngestID             string
-	SubmittedIngestIdempotencyKey string
-	SubmittedIngestRequestHash    string
-	SubmittedDecision             string
-	SubmittedAt                   *time.Time
-	Payload                       map[string]any
-	CreatedAt                     time.Time
-	UpdatedAt                     time.Time
-	Lane                          domain.DreamLane
-	SourceEvidenceIDs             []string
-	EvidenceDerivations           []EvidenceDerivationSource
-}
-
-type ListHypothesesInput struct {
-	TeamID    string
-	Status    string
-	Limit     int
-	Cursor    string
-	Sort      string
-	Direction string
-}
-
-type EvidenceTarget struct {
-	EvidenceID       string
-	FragmentID       string
-	OwnerProfileID   string
-	SpaceID          string
-	SpaceGeneration  int64
-	ContentHash      string
-	SourceID         string
-	SourceRevisionID string
-	SourceGroupKey   string
-	Authority        string
-	Content          string
-	SpanStart        int
-	SpanEnd          int
-	CreatedAt        time.Time
-	LastEvaluatedAt  *time.Time
-	PassCount        int
-}
-
-type EvidenceContext struct {
-	EvidenceID       string
-	FragmentID       string
-	SourceID         string
-	SourceRevisionID string
-	SourceGroupKey   string
-	Authority        string
-	Content          string
-	StartRefs        map[string]int
-	EndRefs          map[string]int
-	Similarity       float64
-}
-
-type EvidenceDiscoverySelectionInput struct {
-	TeamID      string
-	RunID       string
-	LeaseToken  string
-	Limit       int
-	MaxContexts int
-	MaxRelated  int
-}
-
-// EvidenceDiscoveryAttempt identifies one target/content-version provider
-// reservation. Reservations are durable before dispatch; validated responses
-// are terminal and cannot be reclaimed by a later worker.
-type EvidenceDiscoveryAttempt struct {
-	AttemptID        string
-	ReservationToken string
-	PassNumber       int
-}
-
-type EvidenceDiscoveryAttemptValidationInput struct {
-	TeamID            string
-	AttemptID         string
-	ReservationToken  string
-	AcceptedProposals int
-}
-
-type EvidenceDiscoveryTargetInput struct {
-	Target               EvidenceTarget
-	Contexts             []EvidenceContext
-	RelatedRelationships []DreamInput
-	RelatedHypotheses    []HypothesisRecord
-	Nodes                []EvidenceNode
-	AllowedPredicates    []DreamTargetPredicate
-}
-
-// EvidenceNode is a team-shared semantic endpoint made available to the
-// evidence-discovery provider. IDs remain inside the service boundary and are
-// replaced by request-local opaque references before transport.
-type EvidenceNode struct {
-	ID      string
-	Display string
-	Kind    string
-}
-
-type EvidenceDiscoveryEvaluationInput struct {
-	TeamID               string
-	RunID                string
-	LeaseToken           string
-	AttemptID            string
-	ReservationToken     string
-	Target               EvidenceTarget
-	PassNumber           int
-	ProviderModel        string
-	ProviderTurns        int
-	ProviderInputTokens  int
-	ProviderOutputTokens int
-	ProviderProposals    int
-	AcceptedProposals    int
-	RejectedProposals    int
-	CreatedHypotheses    int
-	Proposals            []UpsertHypothesisInput
-}
-
-type EvidenceDiscoveryRunTotals struct {
-	TargetCount          int
-	TargetKeys           []string
-	Evaluated            int
-	Created              int
-	Rejected             int
-	ProviderProposals    int
-	ProviderTurns        int
-	ProviderInputTokens  int
-	ProviderOutputTokens int
-}
-
-type GetHypothesisInput struct {
-	TeamID       string
-	HypothesisID string
-}
-
-type RecallHypothesesInput struct {
-	TeamID string
-	Query  string
-	Limit  int
-}
-
-type UpdateHypothesisStatusInput struct {
-	TeamID            string
-	ActorProfileID    string
-	HypothesisID      string
-	Status            string
-	Decision          string
-	InvalidatedReason string
-}
-
-type SubmitHypothesisInput struct {
-	TeamID            string
-	ActorProfileID    string
-	HypothesisID      string
-	Decision          string
-	SubmittedIngestID string
-	InvalidatedReason string
-}
-
-var _ DreamRepository = (*SemanticRepositoryImpl)(nil)
-var _ ScheduledDreamRepository = (*SemanticRepositoryImpl)(nil)

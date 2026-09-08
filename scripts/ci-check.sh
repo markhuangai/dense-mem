@@ -26,7 +26,7 @@ go test ${packages}
 packages="$(
 	go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./internal/... |
 		sed '/^$/d' |
-		grep -Ev '/(evalharness|repository|knowledge/postgres)$|/storage/(neo4j|postgres|redis)$'
+		grep -Ev '/(evalharness|repository|knowledge/postgres|dream/postgres)$|/storage/(neo4j|postgres|redis)$'
 )"
 
 printf '%s\n' "${packages}"

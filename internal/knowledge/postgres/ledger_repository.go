@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	"github.com/markhuangai/dense-mem/internal/storage/postgres"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 // LedgerRepository contains only durable, non-workflow operations. Semantic
@@ -31,7 +31,7 @@ type SecuritySignalInput = knowledgecontract.SecuritySignalInput
 type EvidenceIngestResult = knowledgecontract.EvidenceIngestResult
 type EvidenceFragment = knowledgecontract.EvidenceFragment
 
-type rLSHelper = postgres.RLSHelper
+type rLSHelper = storagepostgres.RLSHelper
 
 type Store struct {
 	db                     *gorm.DB
@@ -114,22 +114,7 @@ func (r *Store) withSystemTx(ctx context.Context, fn func(*gorm.DB) error) error
 }
 
 func ensureActiveTeamForMutation(ctx context.Context, tx *gorm.DB, teamID string) error {
-	row := tx.WithContext(ctx).Raw(`
-		SELECT id::text
-		FROM teams
-		WHERE id = ?::uuid
-		  AND status = 'active'
-		  AND deleted_at IS NULL
-		FOR SHARE
-	`, teamID).Row()
-	var id string
-	if err := row.Scan(&id); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrTeamInactive
-		}
-		return err
-	}
-	return nil
+	return storagepostgres.EnsureActiveTeamForMutation(ctx, tx, teamID)
 }
 
 func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestInput) (string, bool, error) {

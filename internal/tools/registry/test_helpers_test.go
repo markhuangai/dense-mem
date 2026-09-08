@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	appservice "github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
 type evaluationAuditStub struct {
@@ -65,29 +65,29 @@ func (s *stubRecallFeedbackRecorder) RecordRecallFeedback(_ context.Context, fee
 }
 
 type stubDreamService struct {
-	lastRunReq     dreamservice.RunCycleRequest
-	lastListOpts   dreamservice.ListOptions
-	lastResolveReq dreamservice.ResolveFeedbackRequest
+	lastRunReq     dream.RunCycleRequest
+	lastListOpts   dream.ListOptions
+	lastResolveReq dream.ResolveFeedbackRequest
 	recallQuery    string
 	recallErr      error
-	resolveResult  *dreamservice.ResolveFeedbackResult
+	resolveResult  *dream.ResolveFeedbackResult
 	resolveErr     error
 }
 
-func (s *stubDreamService) RunCycle(_ context.Context, profileID string, req dreamservice.RunCycleRequest) (*dreamservice.RunCycleResult, error) {
+func (s *stubDreamService) RunCycle(_ context.Context, profileID string, req dream.RunCycleRequest) (*dream.RunCycleResult, error) {
 	s.lastRunReq = req
-	return &dreamservice.RunCycleResult{RunID: "run-1", TeamID: profileID, RunDate: "2026-06-11", Status: "completed"}, nil
+	return &dream.RunCycleResult{RunID: "run-1", TeamID: profileID, RunDate: "2026-06-11", Status: "completed"}, nil
 }
 
-func (s *stubDreamService) RunScheduledCycle(context.Context, string, time.Time) (*dreamservice.RunCycleResult, error) {
-	return &dreamservice.RunCycleResult{RunID: "run-1", Status: "completed"}, nil
+func (s *stubDreamService) RunScheduledCycle(context.Context, string, time.Time) (*dream.RunCycleResult, error) {
+	return &dream.RunCycleResult{RunID: "run-1", Status: "completed"}, nil
 }
 
-func (s *stubDreamService) RecordMissedScheduledCycle(context.Context, string, string) (*dreamservice.RunCycleResult, error) {
-	return &dreamservice.RunCycleResult{RunID: "run-1", Status: "missed"}, nil
+func (s *stubDreamService) RecordMissedScheduledCycle(context.Context, string, string) (*dream.RunCycleResult, error) {
+	return &dream.RunCycleResult{RunID: "run-1", Status: "missed"}, nil
 }
 
-func (s *stubDreamService) List(_ context.Context, profileID string, opts dreamservice.ListOptions) ([]*domain.Dream, string, error) {
+func (s *stubDreamService) List(_ context.Context, profileID string, opts dream.ListOptions) ([]*domain.Dream, string, error) {
 	s.lastListOpts = opts
 	return []*domain.Dream{stubDream(profileID)}, "next-dream", nil
 }
@@ -98,8 +98,8 @@ func (s *stubDreamService) Get(_ context.Context, profileID, dreamID string) (*d
 	return dream, nil
 }
 
-func (s *stubDreamService) ListRuns(context.Context, string, int) ([]*dreamservice.RunCycleResult, error) {
-	return []*dreamservice.RunCycleResult{{RunID: "run-1", Status: "completed"}}, nil
+func (s *stubDreamService) ListRuns(context.Context, string, int) ([]*dream.RunCycleResult, error) {
+	return []*dream.RunCycleResult{{RunID: "run-1", Status: "completed"}}, nil
 }
 
 func (s *stubDreamService) Recall(_ context.Context, profileID, query string, _ int) ([]*domain.Dream, error) {
@@ -110,7 +110,7 @@ func (s *stubDreamService) Recall(_ context.Context, profileID, query string, _ 
 	return []*domain.Dream{stubDream(profileID)}, nil
 }
 
-func (s *stubDreamService) ResolveFeedback(_ context.Context, profileID string, req dreamservice.ResolveFeedbackRequest) (*dreamservice.ResolveFeedbackResult, error) {
+func (s *stubDreamService) ResolveFeedback(_ context.Context, profileID string, req dream.ResolveFeedbackRequest) (*dream.ResolveFeedbackResult, error) {
 	s.lastResolveReq = req
 	if s.resolveErr != nil {
 		return nil, s.resolveErr
@@ -118,19 +118,19 @@ func (s *stubDreamService) ResolveFeedback(_ context.Context, profileID string, 
 	if s.resolveResult != nil {
 		return s.resolveResult, nil
 	}
-	return &dreamservice.ResolveFeedbackResult{Dream: stubDream(profileID)}, nil
+	return &dream.ResolveFeedbackResult{Dream: stubDream(profileID)}, nil
 }
 
-func (s *stubDreamService) Status(context.Context, string) (*dreamservice.StatusResult, error) {
-	return &dreamservice.StatusResult{
-		EffectiveConfig: dreamservice.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5}},
-		LatestRun:       &dreamservice.RunCycleResult{RunID: "run-1", Status: "completed"},
+func (s *stubDreamService) Status(context.Context, string) (*dream.StatusResult, error) {
+	return &dream.StatusResult{
+		EffectiveConfig: dream.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5}},
+		LatestRun:       &dream.RunCycleResult{RunID: "run-1", Status: "completed"},
 		PendingCount:    1,
 	}, nil
 }
 
-func (s *stubDreamService) EffectiveConfig(context.Context, string) (dreamservice.EffectiveConfig, error) {
-	return dreamservice.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5}}, nil
+func (s *stubDreamService) EffectiveConfig(context.Context, string) (dream.EffectiveConfig, error) {
+	return dream.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: true, StartTimeLocal: "03:00", Timezone: "UTC", MaxOutputs: 5}}, nil
 }
 
 func stubDream(profileID string) *domain.Dream {

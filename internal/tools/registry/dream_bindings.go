@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	"github.com/markhuangai/dense-mem/internal/dream"
 )
 
 func bindDreamTool(tool Tool, deps Dependencies) Tool {
@@ -17,7 +17,7 @@ func bindDreamTool(tool Tool, deps Dependencies) Tool {
 			if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
 				return nil, fmt.Errorf("list_dreams: invalid input: %w", err)
 			}
-			opts := dreamservice.ListOptions{Status: stringInput(input["status"]), Cursor: stringInput(input["cursor"])}
+			opts := dream.ListOptions{Status: stringInput(input["status"]), Cursor: stringInput(input["cursor"])}
 			if limit, ok := intInput(input["limit"]); ok {
 				opts.Limit = limit
 			}

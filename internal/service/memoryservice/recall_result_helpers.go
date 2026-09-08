@@ -1,6 +1,7 @@
 package memoryservice
 
 import (
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/repository"
@@ -150,7 +151,7 @@ func limitStrings(values []string, limit int) []string {
 	return append([]string(nil), values...)
 }
 
-func relatedHypothesisSummaries(records []repository.HypothesisRecord) []RelatedHypothesisSummary {
+func relatedHypothesisSummaries(records []dreamcontract.HypothesisRecord) []RelatedHypothesisSummary {
 	out := make([]RelatedHypothesisSummary, 0, len(records))
 	for _, record := range records {
 		lane := string(record.Lane)

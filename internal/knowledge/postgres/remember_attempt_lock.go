@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 const (
@@ -193,19 +193,7 @@ func acquireRememberSessionAdvisoryLock(ctx context.Context, conn *sql.Conn, key
 }
 
 func discardAdvisoryLockConnection(lockConn *sql.Conn) error {
-	if lockConn == nil {
-		return nil
-	}
-	err := lockConn.Raw(func(any) error {
-		return driver.ErrBadConn
-	})
-	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, sql.ErrConnDone) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("advisory lock discard: %w", err)
-	}
-	return errors.New("advisory lock discard: connection was not discarded")
+	return storagepostgres.DiscardAdvisoryLockConnection(lockConn)
 }
 
 // WithRememberAttemptLock is the attempt-aware lock entry point. The callback

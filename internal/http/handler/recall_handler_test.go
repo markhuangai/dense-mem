@@ -13,9 +13,9 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
@@ -41,8 +41,8 @@ type recallDreamingConfigStub struct {
 	err     error
 }
 
-func (s recallDreamingConfigStub) EffectiveConfig(context.Context, string) (dreamservice.EffectiveConfig, error) {
-	return dreamservice.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: s.enabled}}, s.err
+func (s recallDreamingConfigStub) EffectiveConfig(context.Context, string) (dream.EffectiveConfig, error) {
+	return dream.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: s.enabled}}, s.err
 }
 
 func TestRecallHandlerRoutesHTTPToRecall(t *testing.T) {

@@ -1,9 +1,12 @@
 package registry
 
-import "github.com/markhuangai/dense-mem/internal/repository"
+import (
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	"github.com/markhuangai/dense-mem/internal/repository"
+)
 
 type EvaluationBindings struct {
-	Repository  repository.EvaluationRepository
+	Repository  dreamcontract.EvaluationRepository
 	Communities repository.CommunityRepository
 }
 

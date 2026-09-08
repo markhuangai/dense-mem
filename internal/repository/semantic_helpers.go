@@ -11,22 +11,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-type predicateDefinition struct {
-	Key                 string
-	Version             int
-	AllowedSubjectKinds []string
-	AllowedObjectKinds  []string
-	RelationshipKind    string
-	CurrentCardinality  string
-}
+type predicateDefinition = storagepostgres.PredicateDefinition
 
 type transitionInput struct {
 	TeamID              string
@@ -436,30 +429,7 @@ func validateCreateHypothesisInput(input CreateHypothesisInput) error {
 // loadPredicateDefinition and loadRelationshipRecord are read helpers retained
 // by Dream and search-reconciliation adapters; canonical writes use Store.
 func loadPredicateDefinition(ctx context.Context, tx *gorm.DB, teamID, predicateKey string, version int) (*predicateDefinition, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
-		       relationship_kind, current_cardinality
-		FROM team_predicate_definitions
-		WHERE team_id = ?::uuid AND predicate_key = ? AND version = ? AND lifecycle_state = 'active'
-	`, teamID, predicateKey, version).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-		return nil, gorm.ErrRecordNotFound
-	}
-	var loaded predicateDefinition
-	var subjectKinds, objectKinds pq.StringArray
-	if err := rows.Scan(&loaded.Key, &loaded.Version, &subjectKinds, &objectKinds, &loaded.RelationshipKind, &loaded.CurrentCardinality); err != nil {
-		return nil, err
-	}
-	loaded.AllowedSubjectKinds = []string(subjectKinds)
-	loaded.AllowedObjectKinds = []string(objectKinds)
-	return &loaded, rows.Err()
+	return storagepostgres.LoadPredicateDefinition(ctx, tx, teamID, predicateKey, version)
 }
 
 func loadRelationshipRecord(ctx context.Context, tx *gorm.DB, teamID, relationshipID string) (*RelationshipRecord, error) {

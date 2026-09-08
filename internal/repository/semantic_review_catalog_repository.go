@@ -14,6 +14,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 const (
@@ -570,7 +571,7 @@ func normalizeReviewCandidateLimit(limit int) int {
 }
 
 func seedTeamPredicateDefinitions(ctx context.Context, tx *gorm.DB, teamID string) error {
-	return knowledgepostgres.SeedTeamPredicateDefinitions(ctx, knowledgepostgres.LegacyTransaction(tx), teamID)
+	return storagepostgres.SeedTeamPredicateDefinitions(ctx, tx, teamID)
 }
 
 func ensureSemanticPredicateCandidateTx(

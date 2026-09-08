@@ -1,7 +1,7 @@
 package http
 
 import (
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
@@ -11,7 +11,7 @@ import (
 type MemoryPortalBindings struct {
 	GraphView     graphview.Service
 	RecallSvc     memoryservice.RecallService
-	DreamSvc      dreamservice.Service
+	DreamSvc      dream.Service
 	PrivateMemory PrivateMemoryServiceInterface
 }
 

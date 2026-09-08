@@ -13,6 +13,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/community"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/embedding"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
@@ -46,7 +47,7 @@ type RecallDependencies struct {
 type RecallSearchRepository = recallcontract.SearchRepository
 
 type RecallHypothesisRepository interface {
-	RecallHypotheses(ctx context.Context, input repository.RecallHypothesesInput) ([]repository.HypothesisRecord, error)
+	RecallHypotheses(ctx context.Context, input dreamcontract.RecallHypothesesInput) ([]dreamcontract.HypothesisRecord, error)
 }
 
 type RecallCommunityRepository interface {
@@ -470,7 +471,7 @@ func (s *recallService) recallRelatedHypotheses(
 	if s.hypotheses == nil || strings.TrimSpace(query) == "" {
 		return []RelatedHypothesisSummary{}, nil
 	}
-	records, err := s.hypotheses.RecallHypotheses(ctx, repository.RecallHypothesesInput{
+	records, err := s.hypotheses.RecallHypotheses(ctx, dreamcontract.RecallHypothesesInput{
 		TeamID: teamID,
 		Query:  query,
 		Limit:  defaultRelatedHypothesisLimit,

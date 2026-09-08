@@ -3,12 +3,12 @@ package http
 import (
 	nethttp "net/http"
 
+	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/communityservice"
 	"github.com/markhuangai/dense-mem/internal/service/conflictqueue"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/evidenceconflict"
 )
 
@@ -23,7 +23,7 @@ type ControlPortalTelemetry struct {
 	Config            service.AppConfigService
 	Logs              service.OperationLogReader
 	RecallFeedback    service.RecallFeedbackEventReader
-	Dreams            dreamservice.ControlService
+	Dreams            dream.ControlService
 	Communities       communityservice.Service
 	ConflictQueue     conflictqueue.Reader
 	EvidenceConflicts evidenceconflict.Reader
@@ -40,7 +40,7 @@ type controlPortalHandler struct {
 	telemetry         service.TelemetryReader
 	operationLogs     service.OperationLogReader
 	recallFeedback    service.RecallFeedbackEventReader
-	dreams            dreamservice.ControlService
+	dreams            dream.ControlService
 	communities       communityservice.Service
 	conflictQueue     conflictqueue.Reader
 	evidenceConflicts evidenceconflict.Reader

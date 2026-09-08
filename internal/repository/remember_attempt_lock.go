@@ -3,11 +3,10 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
-	"fmt"
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 var ErrRememberIdempotencyBusy = knowledgecontract.ErrRememberIdempotencyBusy
@@ -41,17 +40,5 @@ func (r *LedgerRepositoryImpl) WithRememberAttemptLock(
 // discardAdvisoryLockConnection is retained for the legacy Dream evidence
 // lock, which shares the connection-discard safety primitive.
 func discardAdvisoryLockConnection(lockConn *sql.Conn) error {
-	if lockConn == nil {
-		return nil
-	}
-	err := lockConn.Raw(func(any) error {
-		return driver.ErrBadConn
-	})
-	if errors.Is(err, driver.ErrBadConn) || errors.Is(err, sql.ErrConnDone) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("advisory lock discard: %w", err)
-	}
-	return errors.New("advisory lock discard: connection was not discarded")
+	return postgres.DiscardAdvisoryLockConnection(lockConn)
 }

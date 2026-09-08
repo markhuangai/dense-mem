@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -22,6 +23,7 @@ type SemanticRepositoryImpl struct {
 	db             *gorm.DB
 	rls            rLSHelper
 	knowledgeOwner *knowledgepostgres.Store
+	dreamAdapter   *dreampostgres.Store
 }
 
 var _ SemanticRepository = (*SemanticRepositoryImpl)(nil)
@@ -30,7 +32,35 @@ func NewSemanticRepository(db *gorm.DB, rls *postgres.RLS) *SemanticRepositoryIm
 	return &SemanticRepositoryImpl{
 		db: db, rls: rls,
 		knowledgeOwner: knowledgepostgres.NewStore(db, rls, knowledgecontract.ConflictRuntimeConfig{}),
+		dreamAdapter:   dreampostgres.NewStore(db, rls),
 	}
+}
+
+// DreamDatabase and DreamRLS expose the narrow construction seam used by the
+// Dream-owned composition boundary. They do not expose a repository handle or
+// permit callers to choose transaction mode.
+func (r *SemanticRepositoryImpl) DreamDatabase() *gorm.DB {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
+func (r *SemanticRepositoryImpl) DreamRLS() postgres.RLSHelper {
+	if r == nil {
+		return nil
+	}
+	return r.rls
+}
+
+func (r *SemanticRepositoryImpl) dreamOwner() *dreampostgres.Store {
+	if r == nil {
+		return nil
+	}
+	if r.dreamAdapter == nil {
+		r.dreamAdapter = dreampostgres.NewStore(r.db, r.rls)
+	}
+	return r.dreamAdapter
 }
 
 func (r *SemanticRepositoryImpl) CreateEntity(ctx context.Context, input CreateEntityInput) (*EntityRecord, error) {

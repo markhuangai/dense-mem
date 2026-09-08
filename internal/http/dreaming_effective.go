@@ -5,11 +5,11 @@ import (
 	"fmt"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
-func effectiveDreamingConfig(ctx context.Context, appConfig service.AppConfigService, teamConfig map[string]any) (*dreamservice.EffectiveConfig, error) {
+func effectiveDreamingConfig(ctx context.Context, appConfig service.AppConfigService, teamConfig map[string]any) (*dream.EffectiveConfig, error) {
 	var global domain.DreamingRuntimeConfig
 	if appConfig != nil {
 		runtime, err := appConfig.DreamingRuntimeConfig(ctx)
@@ -18,7 +18,7 @@ func effectiveDreamingConfig(ctx context.Context, appConfig service.AppConfigSer
 		}
 		global = runtime
 	}
-	effective, err := dreamservice.EffectiveDreamingConfig(global, teamConfig)
+	effective, err := dream.EffectiveDreamingConfig(global, teamConfig)
 	if err != nil {
 		return nil, fmt.Errorf("compute effective dreaming config: %w", err)
 	}

@@ -12,9 +12,9 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
 type controlDreamListResponse struct {
@@ -131,7 +131,7 @@ func (h *controlPortalHandler) listTeamDreamingRuns(c echo.Context) error {
 		return err
 	}
 	if runs == nil {
-		runs = []*dreamservice.RunCycleResult{}
+		runs = []*dream.RunCycleResult{}
 	}
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": runs})
 }
@@ -150,7 +150,7 @@ func (h *controlPortalHandler) listTeamDreams(c echo.Context) error {
 	}
 	dreams, nextCursor, err := h.dreams.List(c.Request().Context(), profileID.String(), opts)
 	if err != nil {
-		if errors.Is(err, dreamservice.ErrInvalidDreamCursor) {
+		if errors.Is(err, dream.ErrInvalidDreamCursor) {
 			return httperr.New(httperr.VALIDATION_ERROR, "invalid cursor")
 		}
 		return err
@@ -170,14 +170,14 @@ func (h *controlPortalHandler) getTeamDream(c echo.Context) error {
 	if dreamID == "" {
 		return httperr.New(httperr.VALIDATION_ERROR, "dream ID is required")
 	}
-	dream, err := h.dreams.Get(c.Request().Context(), profileID.String(), dreamID)
+	record, err := h.dreams.Get(c.Request().Context(), profileID.String(), dreamID)
 	if err != nil {
-		if errors.Is(err, dreamservice.ErrDreamNotFound) {
+		if errors.Is(err, dream.ErrDreamNotFound) {
 			return httperr.New(httperr.NOT_FOUND, "dream not found")
 		}
 		return err
 	}
-	return c.JSON(nethttp.StatusOK, map[string]any{"data": dream})
+	return c.JSON(nethttp.StatusOK, map[string]any{"data": record})
 }
 
 func controlOperationLogsFilter(c echo.Context) (domain.OperationLogFilter, error) {
@@ -317,28 +317,28 @@ func controlRecallFeedbackEventsFilter(c echo.Context) (domain.RecallFeedbackEve
 	return filter, nil
 }
 
-func controlDreamListOptions(c echo.Context) (dreamservice.ListOptions, error) {
+func controlDreamListOptions(c echo.Context) (dream.ListOptions, error) {
 	limit, err := controlDreamLimit(c.QueryParam("limit"))
 	if err != nil {
-		return dreamservice.ListOptions{}, err
+		return dream.ListOptions{}, err
 	}
 	status := strings.TrimSpace(c.QueryParam("status"))
 	if status != "" && !domain.DreamStatus(status).IsValid() {
-		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "status must be one of proposed, reinforced, stale, rejected, submitted")
+		return dream.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "status must be one of proposed, reinforced, stale, rejected, submitted")
 	}
 	sort := strings.TrimSpace(c.QueryParam("sort"))
 	switch sort {
-	case "", dreamservice.DreamSortUpdatedAt, dreamservice.DreamSortCreatedAt:
+	case "", dream.DreamSortUpdatedAt, dream.DreamSortCreatedAt:
 	default:
-		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "sort must be updated_at or created_at")
+		return dream.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "sort must be updated_at or created_at")
 	}
 	direction := strings.TrimSpace(c.QueryParam("direction"))
 	switch direction {
-	case "", dreamservice.DreamDirectionAsc, dreamservice.DreamDirectionDesc:
+	case "", dream.DreamDirectionAsc, dream.DreamDirectionDesc:
 	default:
-		return dreamservice.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "direction must be asc or desc")
+		return dream.ListOptions{}, httperr.New(httperr.VALIDATION_ERROR, "direction must be asc or desc")
 	}
-	return dreamservice.ListOptions{
+	return dream.ListOptions{
 		Limit:     limit,
 		Status:    status,
 		Cursor:    strings.TrimSpace(c.QueryParam("cursor")),

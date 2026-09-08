@@ -9,12 +9,12 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/http/validation"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
 
@@ -30,7 +30,7 @@ type RecallHandler struct {
 }
 
 type recallDreamingConfigProvider interface {
-	EffectiveConfig(ctx context.Context, fallbackTeamID string) (dreamservice.EffectiveConfig, error)
+	EffectiveConfig(ctx context.Context, fallbackTeamID string) (dream.EffectiveConfig, error)
 }
 
 var _ RecallHandlerInterface = (*RecallHandler)(nil)

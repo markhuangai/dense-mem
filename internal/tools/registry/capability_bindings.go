@@ -1,9 +1,9 @@
 package registry
 
 import (
+	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 )
@@ -36,7 +36,7 @@ type TraceBindings struct {
 }
 
 type DreamBindings struct {
-	Service dreamservice.Service
+	Service dream.Service
 }
 
 type MemoryPackBindings struct {

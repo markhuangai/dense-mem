@@ -14,8 +14,8 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
 type controlOperationLogReaderStub struct {
@@ -56,31 +56,31 @@ func (s *controlRecallFeedbackReaderStub) GetRecallFeedbackEvent(_ context.Conte
 }
 
 type controlDreamServiceStub struct {
-	status     *dreamservice.StatusResult
-	runs       []*dreamservice.RunCycleResult
+	status     *dream.StatusResult
+	runs       []*dream.RunCycleResult
 	dreams     []*domain.Dream
 	dream      *domain.Dream
 	nextCursor string
-	listOpts   dreamservice.ListOptions
+	listOpts   dream.ListOptions
 	runsLimit  int
 	profileID  string
 	getErr     error
 	listErr    error
 }
 
-func (s *controlDreamServiceStub) RunCycle(context.Context, string, dreamservice.RunCycleRequest) (*dreamservice.RunCycleResult, error) {
+func (s *controlDreamServiceStub) RunCycle(context.Context, string, dream.RunCycleRequest) (*dream.RunCycleResult, error) {
 	return nil, nil
 }
 
-func (s *controlDreamServiceStub) RunScheduledCycle(context.Context, string, time.Time) (*dreamservice.RunCycleResult, error) {
+func (s *controlDreamServiceStub) RunScheduledCycle(context.Context, string, time.Time) (*dream.RunCycleResult, error) {
 	return nil, nil
 }
 
-func (s *controlDreamServiceStub) RecordMissedScheduledCycle(context.Context, string, string) (*dreamservice.RunCycleResult, error) {
+func (s *controlDreamServiceStub) RecordMissedScheduledCycle(context.Context, string, string) (*dream.RunCycleResult, error) {
 	return nil, nil
 }
 
-func (s *controlDreamServiceStub) List(_ context.Context, profileID string, opts dreamservice.ListOptions) ([]*domain.Dream, string, error) {
+func (s *controlDreamServiceStub) List(_ context.Context, profileID string, opts dream.ListOptions) ([]*domain.Dream, string, error) {
 	s.profileID = profileID
 	s.listOpts = opts
 	if s.listErr != nil {
@@ -101,7 +101,7 @@ func (s *controlDreamServiceStub) Get(_ context.Context, profileID, dreamID stri
 	return &domain.Dream{DreamID: dreamID, TeamID: profileID, Status: domain.DreamStatusProposed}, nil
 }
 
-func (s *controlDreamServiceStub) ListRuns(_ context.Context, profileID string, limit int) ([]*dreamservice.RunCycleResult, error) {
+func (s *controlDreamServiceStub) ListRuns(_ context.Context, profileID string, limit int) ([]*dream.RunCycleResult, error) {
 	s.profileID = profileID
 	s.runsLimit = limit
 	return s.runs, nil
@@ -111,17 +111,17 @@ func (s *controlDreamServiceStub) Recall(context.Context, string, string, int) (
 	return nil, nil
 }
 
-func (s *controlDreamServiceStub) ResolveFeedback(context.Context, string, dreamservice.ResolveFeedbackRequest) (*dreamservice.ResolveFeedbackResult, error) {
-	return &dreamservice.ResolveFeedbackResult{}, nil
+func (s *controlDreamServiceStub) ResolveFeedback(context.Context, string, dream.ResolveFeedbackRequest) (*dream.ResolveFeedbackResult, error) {
+	return &dream.ResolveFeedbackResult{}, nil
 }
 
-func (s *controlDreamServiceStub) Status(_ context.Context, profileID string) (*dreamservice.StatusResult, error) {
+func (s *controlDreamServiceStub) Status(_ context.Context, profileID string) (*dream.StatusResult, error) {
 	s.profileID = profileID
 	return s.status, nil
 }
 
-func (s *controlDreamServiceStub) EffectiveConfig(context.Context, string) (dreamservice.EffectiveConfig, error) {
-	return dreamservice.EffectiveConfig{}, nil
+func (s *controlDreamServiceStub) EffectiveConfig(context.Context, string) (dream.EffectiveConfig, error) {
+	return dream.EffectiveConfig{}, nil
 }
 
 func TestControlPortalObservabilityRoutes(t *testing.T) {
@@ -154,8 +154,8 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 		SnapshotState: domain.RecallFeedbackSnapshotCaptured,
 	}}
 	dreams := &controlDreamServiceStub{
-		status: &dreamservice.StatusResult{PendingCount: 1},
-		runs: []*dreamservice.RunCycleResult{{
+		status: &dream.StatusResult{PendingCount: 1},
+		runs: []*dream.RunCycleResult{{
 			RunID:   "run-1",
 			TeamID:  teamID.String(),
 			RunDate: "2026-06-14",
@@ -255,7 +255,7 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "A control dream appears")
 	assert.Contains(t, rec.Body.String(), `"next_cursor":"after-control-dream-1"`)
 	assert.Equal(t, teamID.String(), dreams.profileID)
-	assert.Equal(t, dreamservice.ListOptions{Limit: 4, Status: "proposed", Cursor: "next", Sort: "created_at", Direction: "asc"}, dreams.listOpts)
+	assert.Equal(t, dream.ListOptions{Limit: 4, Status: "proposed", Cursor: "next", Sort: "created_at", Direction: "asc"}, dreams.listOpts)
 
 	rec = do("/control/api/teams/" + teamID.String() + "/dreams/dream-1")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -359,7 +359,7 @@ func TestControlPortalObservabilityValidation(t *testing.T) {
 	require.ErrorContains(t, err, "direction must be asc or desc")
 }
 
-var _ dreamservice.ControlService = (*controlDreamServiceStub)(nil)
+var _ dream.ControlService = (*controlDreamServiceStub)(nil)
 
 func TestControlPortalObservabilityUnavailableAndNotFound(t *testing.T) {
 	e := echo.New()
@@ -377,7 +377,7 @@ func TestControlPortalObservabilityUnavailableAndNotFound(t *testing.T) {
 	require.ErrorContains(t, h.getTeamDream(c), "dream service unavailable")
 
 	teamID := uuid.New()
-	h.dreams = &controlDreamServiceStub{getErr: dreamservice.ErrDreamNotFound}
+	h.dreams = &controlDreamServiceStub{getErr: dream.ErrDreamNotFound}
 	req = httptest.NewRequest(http.MethodGet, "/control/api/teams/"+teamID.String()+"/dreams/dream-missing", nil)
 	rec = httptest.NewRecorder()
 	c = e.NewContext(req, rec)
@@ -386,7 +386,7 @@ func TestControlPortalObservabilityUnavailableAndNotFound(t *testing.T) {
 	err := h.getTeamDream(c)
 	require.ErrorContains(t, err, "dream not found")
 
-	h.dreams = &controlDreamServiceStub{listErr: dreamservice.ErrInvalidDreamCursor}
+	h.dreams = &controlDreamServiceStub{listErr: dream.ErrInvalidDreamCursor}
 	req = httptest.NewRequest(http.MethodGet, "/control/api/teams/"+teamID.String()+"/dreams?cursor=bad", nil)
 	rec = httptest.NewRecorder()
 	c = e.NewContext(req, rec)
@@ -428,4 +428,4 @@ func TestControlDependencySnapshotErrorAndDegraded(t *testing.T) {
 }
 
 var _ service.OperationLogReader = (*controlOperationLogReaderStub)(nil)
-var _ dreamservice.Service = (*controlDreamServiceStub)(nil)
+var _ dream.Service = (*controlDreamServiceStub)(nil)

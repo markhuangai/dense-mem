@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	"github.com/markhuangai/dense-mem/internal/dream"
 )
 
 var evaluationToolNames = map[string]struct{}{
@@ -50,7 +50,7 @@ type RecallFeedbackConfigProvider interface {
 // policy. The argument is a fallback team ID for non-request callers;
 // authenticated request context takes precedence.
 type DreamingConfigProvider interface {
-	EffectiveConfig(ctx context.Context, fallbackTeamID string) (dreamservice.EffectiveConfig, error)
+	EffectiveConfig(ctx context.Context, fallbackTeamID string) (dream.EffectiveConfig, error)
 }
 
 // RuntimeToolPolicy contains request-time feature dependencies shared by MCP

@@ -1,0 +1,82 @@
+package postgres
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+const (
+	maxControlDreamRunLimit = 100
+)
+
+var _ DreamControlRepository = (*Store)(nil)
+
+func (r *Store) CountHypotheses(ctx context.Context, teamID, status string) (int, error) {
+	teamID = strings.TrimSpace(teamID)
+	status = strings.TrimSpace(status)
+	if _, err := uuid.Parse(teamID); err != nil {
+		return 0, fmt.Errorf("team_id is required: %w", err)
+	}
+	count := 0
+	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
+		return tx.WithContext(ctx).Raw(`
+			SELECT count(*)
+			FROM hypotheses
+			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
+			  AND canonical_hypothesis_id IS NULL
+			  AND (? = '' OR status = ?)
+		`, teamID, status, status).Scan(&count).Error
+	})
+	if err != nil {
+		return 0, fmt.Errorf("dream: count hypotheses: %w", err)
+	}
+	return count, nil
+}
+
+func (r *Store) ListDreamCyclesForTeam(ctx context.Context, teamID string, limit int) ([]DreamCycleRun, error) {
+	teamID = strings.TrimSpace(teamID)
+	if _, err := uuid.Parse(teamID); err != nil {
+		return nil, fmt.Errorf("team_id is required: %w", err)
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > maxControlDreamRunLimit {
+		limit = maxControlDreamRunLimit
+	}
+	runs := []DreamCycleRun{}
+	err := r.withTeamTx(ctx, teamID, func(tx *gorm.DB) error {
+		rows, err := tx.WithContext(ctx).Raw(`
+			SELECT `+dreamCycleRunSelectColumns+`
+			FROM dream_cycle_runs
+			WHERE team_id = ?::uuid
+			  AND space_id = dense_mem_team_shared_space(team_id)
+			  AND space_generation = dense_mem_team_shared_generation(team_id)
+			  AND canonical_run_id IS NULL
+			ORDER BY started_at DESC, run_id
+			LIMIT ?
+		`, teamID, limit).Rows()
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			run, err := scanDreamCycleRun(rows)
+			if err != nil {
+				return err
+			}
+			runs = append(runs, *run)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dream: list team cycles: %w", err)
+	}
+	return runs, nil
+}
