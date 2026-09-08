@@ -18,6 +18,7 @@ func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 	ctx := context.Background()
 	teamA := createLedgerTeam(t, adminDB, rls, "community-team-a")
 	ownerA := createLedgerProfile(t, adminDB, rls, teamA, "community-owner-a")
+	ownerB := createLedgerProfile(t, adminDB, rls, teamA, "community-owner-b")
 	teamC := createLedgerTeam(t, adminDB, rls, "community-team-c")
 	ownerC := createLedgerProfile(t, adminDB, rls, teamC, "community-owner-c")
 	ledgerRepo := NewLedgerRepository(appDB, rls)
@@ -67,6 +68,25 @@ func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 		},
 	})
 
+	ownerBIngest := createSemanticIngest(t, ctx, ledgerRepo, teamA, ownerB,
+		"community-owner-b-source", "Profile B works on Dense-Mem.")
+	ownerBRelationship := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamA,
+		OwnerProfileID:  ownerB,
+		IngestID:        ownerBIngest.IngestID,
+		SubjectEntityID: mark.EntityID,
+		PredicateKey:    "works_on",
+		ObjectEntityID:  denseMem.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     ownerBIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:community-owner-b",
+			SpanStart:      0,
+			SpanEnd:        len("Profile B works on Dense-Mem."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, ownerBRelationship.Relationship)
+
 	candidateIngest := createSemanticIngest(t, ctx, ledgerRepo, teamA, ownerA,
 		"community-candidate-source", "Mark may use PostgreSQL.")
 	candidate := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
@@ -79,6 +99,35 @@ func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 		EvidenceVerdict: "insufficient",
 	})
 	require.NotNil(t, candidate.Relationship)
+	inactiveIngest := createSemanticIngest(t, ctx, ledgerRepo, teamA, ownerA,
+		"community-inactive-source", "Mark uses PostgreSQL.")
+	inactive := applySemanticDecision(t, ctx, semanticRepo, ApplyRelationshipDecisionInput{
+		TeamID:          teamA,
+		OwnerProfileID:  ownerA,
+		IngestID:        inactiveIngest.IngestID,
+		SubjectEntityID: mark.EntityID,
+		PredicateKey:    "uses",
+		ObjectEntityID:  postgres.EntityID,
+		Support: &EvidenceSupportInput{
+			FragmentID:     inactiveIngest.Evidence[0].FragmentID,
+			SourceGroupKey: "conversation:community-inactive",
+			SpanStart:      0,
+			SpanEnd:        len("Mark uses PostgreSQL."),
+			Authority:      "primary",
+		},
+	})
+	require.NotNil(t, inactive.Relationship)
+	_, err = semanticRepo.RetractRelationship(ctx, RetractRelationshipInput{
+		TeamID: teamA, OwnerProfileID: ownerA, RelationshipID: inactive.Relationship.RelationshipID,
+		Reason: "community inactive fixture",
+	})
+	require.NoError(t, err)
+	hypothesisID, err := semanticRepo.CreateHypothesis(ctx, CreateHypothesisInput{
+		TeamID: teamA, OwnerProfileID: ownerA,
+		Payload: map[string]any{"text": "Mark may use PostgreSQL."},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, hypothesisID)
 
 	otherTeamIngest := createSemanticIngest(t, ctx, ledgerRepo, teamC, ownerC,
 		"community-other-team-source", "Other Project uses PostgreSQL.")
@@ -104,10 +153,12 @@ func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 		Limit:  10,
 	})
 	require.NoError(t, err)
-	require.Len(t, inputs, 2)
+	require.Len(t, inputs, 3)
 	require.NotNil(t, findCommunityInput(inputs, work.Relationship.RelationshipID))
 	require.NotNil(t, findCommunityInput(inputs, uses.Relationship.RelationshipID))
+	require.NotNil(t, findCommunityInput(inputs, ownerBRelationship.Relationship.RelationshipID))
 	require.Nil(t, findCommunityInput(inputs, candidate.Relationship.RelationshipID))
+	require.Nil(t, findCommunityInput(inputs, inactive.Relationship.RelationshipID))
 	require.Nil(t, findCommunityInput(inputs, otherTeamRelationship.Relationship.RelationshipID))
 
 	run, err := semanticRepo.ClaimCommunityRun(ctx, CommunityRunClaimInput{
@@ -140,6 +191,7 @@ func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	communityID := uuid.NewString()
 	publishInput := CommunitySnapshotPublishInput{
 		TeamID:            teamA,
 		RunID:             run.RunID,
@@ -151,7 +203,7 @@ func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 		NodeCount: 3,
 		EdgeCount: 2,
 		Communities: []CommunityPublishRecord{{
-			CommunityID:       uuid.NewString(),
+			CommunityID:       communityID,
 			Ordinal:           0,
 			Summary:           "Community groups Dense-Mem and PostgreSQL operational facts.",
 			SummaryVersion:    "community-deterministic-v1",
@@ -219,6 +271,39 @@ func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 	require.Len(t, discovery, 1)
 	assert.Contains(t, []string{work.Relationship.RelationshipID, uses.Relationship.RelationshipID}, discovery[0].Relationship.RelationshipID)
 	assert.NotEmpty(t, discovery[0].EvidenceIDs)
+
+	rollbackRun, err := semanticRepo.ClaimCommunityRun(ctx, CommunityRunClaimInput{
+		TeamID:     teamA,
+		WindowKey:  "community-window-rollback",
+		LeaseUntil: time.Now().UTC().Add(time.Minute),
+		MaxNodes:   10,
+		MaxEdges:   10,
+	})
+	require.NoError(t, err)
+	require.True(t, rollbackRun.Claimed)
+	failedPublish := publishInput
+	failedPublish.RunID = rollbackRun.RunID
+	failedPublish.SourceFingerprint = "sha256:community-window-rollback"
+	err = semanticRepo.PublishCommunitySnapshot(ctx, failedPublish)
+	require.Error(t, err)
+
+	currentAfterRollback, err := semanticRepo.ListCommunities(ctx, CommunityListInput{
+		TeamID: teamA, Status: "current", Limit: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, currentAfterRollback, 1)
+	assert.Equal(t, communityID, currentAfterRollback[0].CommunityID)
+	assert.Equal(t, "current", currentAfterRollback[0].Status)
+	supersededAfterRollback, err := semanticRepo.ListCommunities(ctx, CommunityListInput{
+		TeamID: teamA, Status: "superseded", Limit: 10,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, supersededAfterRollback)
+	latestRollbackRun, err := semanticRepo.LatestCommunityRun(ctx, teamA)
+	require.NoError(t, err)
+	require.NotNil(t, latestRollbackRun)
+	assert.Equal(t, rollbackRun.RunID, latestRollbackRun.RunID)
+	assert.Equal(t, "running", latestRollbackRun.Status)
 
 	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
 		return tx.Exec(`
