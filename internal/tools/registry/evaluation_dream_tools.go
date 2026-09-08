@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	"github.com/markhuangai/dense-mem/internal/dream"
 )
 
 const evalDreamCycleMaxOutputs = 10000
@@ -60,11 +60,11 @@ func evalRunDreamCycleTool(deps Dependencies) Tool {
 			if deps.Dreams == nil {
 				return nil, ErrToolUnavailable
 			}
-			maxOutputs := intInputOrDefault(input["max_outputs"], dreamservice.DefaultMaxOutputs)
+			maxOutputs := intInputOrDefault(input["max_outputs"], dream.DefaultMaxOutputs)
 			if err := auditEvaluationTool(ctx, deps, "eval_run_dream_cycle", maxOutputs, false, nil); err != nil {
 				return nil, err
 			}
-			req := dreamservice.RunCycleRequest{
+			req := dream.RunCycleRequest{
 				Manual:     true,
 				MaxOutputs: maxOutputs,
 				SeedDreams: seedDreamsInput(input["seed_dreams"]),
@@ -86,7 +86,7 @@ func evalListDreams(ctx context.Context, deps Dependencies, teamID string, input
 	if deps.Dreams == nil {
 		return nil, ErrToolUnavailable
 	}
-	opts := dreamservice.ListOptions{Limit: limit}
+	opts := dream.ListOptions{Limit: limit}
 	if cursor, ok := input["cursor"].(string); ok {
 		opts.Cursor = cursor
 	}
@@ -127,18 +127,18 @@ func dreamRefs(dreams []*domain.Dream) []map[string]any {
 	return refs
 }
 
-func seedDreamsInput(value any) []dreamservice.SeedDream {
+func seedDreamsInput(value any) []dream.SeedDream {
 	raw, ok := value.([]any)
 	if !ok || len(raw) == 0 {
 		return nil
 	}
-	out := make([]dreamservice.SeedDream, 0, len(raw))
+	out := make([]dream.SeedDream, 0, len(raw))
 	for _, item := range raw {
 		fields, ok := objectFields(item)
 		if !ok {
 			continue
 		}
-		seed := dreamservice.SeedDream{
+		seed := dream.SeedDream{
 			Hypothesis:      strings.TrimSpace(stringInput(fields["hypothesis"])),
 			WhatIf:          strings.TrimSpace(stringInput(fields["what_if"])),
 			PossibleOutcome: strings.TrimSpace(stringInput(fields["possible_outcome"])),

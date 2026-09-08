@@ -13,10 +13,11 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
@@ -40,10 +41,10 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 		{name: "authorization", tool: ToolRemember, err: rememberapp.ErrRememberAuthContext, code: string(domain.ErrorUnauthorizedScope), reasonCode: "authenticated_context_required", nextAction: actionAuthorization},
 		{name: "reference", tool: ToolTraceMemory, err: repository.ErrTraceRelationshipNotFound, code: string(domain.ErrorInvalidInput), reasonCode: "reference_not_found", nextAction: actionRefreshState},
 		{name: "invalid trace id", tool: ToolTraceMemory, err: repository.ErrTraceRelationshipIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
-		{name: "invalid dream id", tool: ToolGetDream, err: repository.ErrDreamHypothesisIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
-		{name: "invalid dream feedback id", tool: ToolResolveDreamFeedback, err: repository.ErrDreamHypothesisIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
+		{name: "invalid dream id", tool: ToolGetDream, err: dreamcontract.ErrDreamHypothesisIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
+		{name: "invalid dream feedback id", tool: ToolResolveDreamFeedback, err: dreamcontract.ErrDreamHypothesisIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "invalid retract evidence id", tool: ToolRetractEvidence, err: repository.ErrEvidenceLifecycleIDInvalid, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
-		{name: "dream feedback input", tool: ToolResolveDreamFeedback, err: dreamservice.ErrDreamFeedbackInvalidInput, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
+		{name: "dream feedback input", tool: ToolResolveDreamFeedback, err: dream.ErrDreamFeedbackInvalidInput, code: string(domain.ErrorInvalidInput), reasonCode: "invalid_request", nextAction: actionCorrectInput},
 		{name: "read repository", tool: ToolRecallMemory, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "read_unavailable", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "retract repository", tool: ToolRetractEvidence, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "write_unavailable", nextAction: actionRetrySameRequest, retryable: true},
 		{name: "dream feedback repository", tool: ToolResolveDreamFeedback, err: errors.New("database unavailable"), code: string(domain.ErrorProviderUnavailable), reasonCode: "write_unavailable", nextAction: actionRetrySameRequest, retryable: true},
@@ -86,7 +87,7 @@ func TestActionableErrorDataMapsSupportedFailuresToRecoveryGuidance(t *testing.T
 	require.NotEqual(t, longCorrelation, bounded["correlation_id"])
 	serverMessage := ActionableErrorData(ctx, ToolRecallMemory, httperr.New(httperr.SERVICE_UNAVAILABLE, "internal database password"))
 	require.Equal(t, "service unavailable", serverMessage["message"])
-	dreamInput := ActionableErrorData(ctx, ToolResolveDreamFeedback, fmt.Errorf("%w: hypothesis text cannot be submitted as its own evidence", dreamservice.ErrDreamFeedbackInvalidInput))
+	dreamInput := ActionableErrorData(ctx, ToolResolveDreamFeedback, fmt.Errorf("%w: hypothesis text cannot be submitted as its own evidence", dream.ErrDreamFeedbackInvalidInput))
 	require.Contains(t, dreamInput["message"], "evidence field")
 	dreamDetails := dreamInput["details"].(map[string]any)
 	require.Equal(t, "dream_feedback.evidence", dreamDetails["component"])

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	"github.com/markhuangai/dense-mem/internal/dream"
 )
 
 func TestRegistry_RegisterAndList(t *testing.T) {
@@ -201,6 +201,6 @@ type dreamingConfigStub struct {
 	err     error
 }
 
-func (s dreamingConfigStub) EffectiveConfig(context.Context, string) (dreamservice.EffectiveConfig, error) {
-	return dreamservice.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: s.enabled}}, s.err
+func (s dreamingConfigStub) EffectiveConfig(context.Context, string) (dream.EffectiveConfig, error) {
+	return dream.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: s.enabled}}, s.err
 }

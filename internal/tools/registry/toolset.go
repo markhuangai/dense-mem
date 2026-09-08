@@ -7,11 +7,11 @@ import (
 	"fmt"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
 )
@@ -41,7 +41,7 @@ type Dependencies struct {
 	Evaluation     repository.EvaluationRepository
 	Communities    repository.CommunityRepository
 	MemoryPack     skillpackservice.MemoryPackService
-	Dreams         dreamservice.Service
+	Dreams         dream.Service
 }
 type RecallFeedbackEventRecorder interface {
 	RecordRecallSnapshot(ctx context.Context, event domain.RecallFeedbackEvent) error

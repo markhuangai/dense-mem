@@ -12,6 +12,8 @@ import (
 
 	"github.com/lib/pq"
 	"gorm.io/gorm"
+
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
 // seedTeamPredicateDefinitions copies the immutable built-in catalog into the
@@ -19,20 +21,7 @@ import (
 // in the write owner prevents each semantic writer from maintaining a second
 // catalog bootstrap implementation.
 func seedTeamPredicateDefinitions(ctx context.Context, tx *gorm.DB, teamID string) error {
-	return tx.WithContext(ctx).Exec(`
-		INSERT INTO team_predicate_definitions (
-		    team_id, predicate_key, version, aliases, allowed_subject_kinds,
-		    allowed_object_kinds, relationship_kind, current_cardinality,
-		    lifecycle_state, origin, metadata, created_at
-		)
-		SELECT ?::uuid, predicate_key, version, aliases, allowed_subject_kinds,
-		       allowed_object_kinds, relationship_kind, current_cardinality,
-		       lifecycle_state, 'built_in',
-		       metadata || jsonb_build_object('source', 'predicate_definitions'),
-		       created_at
-		FROM predicate_definitions
-		ON CONFLICT (team_id, predicate_key, version) DO NOTHING
-	`, teamID).Error
+	return storagepostgres.SeedTeamPredicateDefinitions(ctx, tx, teamID)
 }
 
 func ensureSemanticPredicateCandidateTx(

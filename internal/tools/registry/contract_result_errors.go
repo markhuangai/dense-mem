@@ -9,11 +9,12 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
@@ -52,15 +53,15 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		code, reasonCode, message, retryable, nextAction, remediation = domain.ErrorProviderUnavailable, "request_timeout", "The "+tool+" operation exceeded its bounded deadline.", true, actionRetrySameRequest, actionableTimeoutRemediation(tool)
 	case errors.Is(err, ErrToolUnavailable):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorDegraded, "tool_unavailable", "The "+tool+" operation is not available on this server.", actionContactOperator, "Contact an operator to enable the required server capability, then retry."
-	case errors.Is(err, rememberapp.ErrRememberAuthContext), errors.Is(err, memoryservice.ErrLifecycleAuthContext), errors.Is(err, contextservice.ErrTraceAuthContext), errors.Is(err, dreamservice.ErrDreamAuthContext), errors.Is(err, skillpackservice.ErrMemoryPackAuthContext):
+	case errors.Is(err, rememberapp.ErrRememberAuthContext), errors.Is(err, memoryservice.ErrLifecycleAuthContext), errors.Is(err, contextservice.ErrTraceAuthContext), errors.Is(err, dream.ErrDreamAuthContext), errors.Is(err, skillpackservice.ErrMemoryPackAuthContext):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorUnauthorizedScope, "authenticated_context_required", "Dense-Mem could not authorize the "+tool+" operation.", actionAuthorization, "Authenticate with a credential that has access to this tool and retry."
-	case errors.Is(err, repository.ErrTraceRelationshipNotFound), errors.Is(err, contextservice.ErrTraceRelationshipNotFound), errors.Is(err, dreamservice.ErrDreamNotFound), errors.Is(err, repository.ErrDreamHypothesisNotFound):
+	case errors.Is(err, repository.ErrTraceRelationshipNotFound), errors.Is(err, contextservice.ErrTraceRelationshipNotFound), errors.Is(err, dream.ErrDreamNotFound), errors.Is(err, dreamcontract.ErrDreamHypothesisNotFound):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "reference_not_found", "The reference supplied to "+tool+" was not found or is no longer available.", actionRefreshState, "Refresh authorized state, then retry with a current reference."
 	case errors.Is(err, repository.ErrTraceRelationshipIDInvalid):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The relationship_id supplied to "+tool+" must be a valid UUID.", actionCorrectInput, "Use a relationship_id returned by recall_memory and submit the corrected request again."
 		failureDetails["component"] = "trace.relationship_id"
 		failureDetails["client_controlled"] = true
-	case errors.Is(err, repository.ErrDreamHypothesisIDInvalid):
+	case errors.Is(err, dreamcontract.ErrDreamHypothesisIDInvalid):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The hypothesis_id supplied to "+tool+" must be a valid UUID.", actionCorrectInput, "Use a hypothesis_id returned by list_dreams or recall_memory and submit the corrected request again."
 		failureDetails["component"] = "dream.hypothesis_id"
 		failureDetails["client_controlled"] = true
@@ -72,7 +73,7 @@ func ActionableErrorData(ctx context.Context, tool string, err error) map[string
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "relationship_not_active", "The selected relationship for "+tool+" is no longer active.", actionRefreshState, "Refresh authorized relationships, remove inactive references, and submit the export again."
 		failureDetails["component"] = "memory_pack.relationship"
 		failureDetails["client_controlled"] = true
-	case errors.Is(err, dreamservice.ErrDreamFeedbackInvalidInput):
+	case errors.Is(err, dream.ErrDreamFeedbackInvalidInput):
 		code, reasonCode, message, nextAction, remediation = domain.ErrorInvalidInput, "invalid_request", "The evidence field for "+tool+" must contain independent evidence rather than the hypothesis text.", actionCorrectInput, "Provide independent evidence in the evidence field, then submit the corrected Dream feedback request."
 		failureDetails["component"] = "dream_feedback.evidence"
 		failureDetails["client_controlled"] = true

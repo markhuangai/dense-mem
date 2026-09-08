@@ -13,36 +13,36 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 )
 
 type dreamHandlerServiceStub struct {
-	status     *dreamservice.StatusResult
-	runs       []*dreamservice.RunCycleResult
+	status     *dream.StatusResult
+	runs       []*dream.RunCycleResult
 	dreams     []*domain.Dream
 	dream      *domain.Dream
 	nextCursor string
-	listOpts   dreamservice.ListOptions
+	listOpts   dream.ListOptions
 	runsLimit  int
 	profileIDs []string
 	getErr     error
 	listErr    error
 }
 
-func (s *dreamHandlerServiceStub) RunCycle(context.Context, string, dreamservice.RunCycleRequest) (*dreamservice.RunCycleResult, error) {
+func (s *dreamHandlerServiceStub) RunCycle(context.Context, string, dream.RunCycleRequest) (*dream.RunCycleResult, error) {
 	return nil, nil
 }
 
-func (s *dreamHandlerServiceStub) RunScheduledCycle(context.Context, string, time.Time) (*dreamservice.RunCycleResult, error) {
+func (s *dreamHandlerServiceStub) RunScheduledCycle(context.Context, string, time.Time) (*dream.RunCycleResult, error) {
 	return nil, nil
 }
 
-func (s *dreamHandlerServiceStub) RecordMissedScheduledCycle(context.Context, string, string) (*dreamservice.RunCycleResult, error) {
+func (s *dreamHandlerServiceStub) RecordMissedScheduledCycle(context.Context, string, string) (*dream.RunCycleResult, error) {
 	return nil, nil
 }
 
-func (s *dreamHandlerServiceStub) List(_ context.Context, profileID string, opts dreamservice.ListOptions) ([]*domain.Dream, string, error) {
+func (s *dreamHandlerServiceStub) List(_ context.Context, profileID string, opts dream.ListOptions) ([]*domain.Dream, string, error) {
 	s.profileIDs = append(s.profileIDs, profileID)
 	s.listOpts = opts
 	if s.listErr != nil {
@@ -63,7 +63,7 @@ func (s *dreamHandlerServiceStub) Get(_ context.Context, profileID, dreamID stri
 	return &domain.Dream{DreamID: dreamID, TeamID: profileID, Status: domain.DreamStatusProposed}, nil
 }
 
-func (s *dreamHandlerServiceStub) ListRuns(_ context.Context, profileID string, limit int) ([]*dreamservice.RunCycleResult, error) {
+func (s *dreamHandlerServiceStub) ListRuns(_ context.Context, profileID string, limit int) ([]*dream.RunCycleResult, error) {
 	s.profileIDs = append(s.profileIDs, profileID)
 	s.runsLimit = limit
 	return s.runs, nil
@@ -73,17 +73,17 @@ func (s *dreamHandlerServiceStub) Recall(context.Context, string, string, int) (
 	return nil, nil
 }
 
-func (s *dreamHandlerServiceStub) ResolveFeedback(context.Context, string, dreamservice.ResolveFeedbackRequest) (*dreamservice.ResolveFeedbackResult, error) {
-	return &dreamservice.ResolveFeedbackResult{}, nil
+func (s *dreamHandlerServiceStub) ResolveFeedback(context.Context, string, dream.ResolveFeedbackRequest) (*dream.ResolveFeedbackResult, error) {
+	return &dream.ResolveFeedbackResult{}, nil
 }
 
-func (s *dreamHandlerServiceStub) Status(_ context.Context, profileID string) (*dreamservice.StatusResult, error) {
+func (s *dreamHandlerServiceStub) Status(_ context.Context, profileID string) (*dream.StatusResult, error) {
 	s.profileIDs = append(s.profileIDs, profileID)
 	return s.status, nil
 }
 
-func (s *dreamHandlerServiceStub) EffectiveConfig(context.Context, string) (dreamservice.EffectiveConfig, error) {
-	return dreamservice.EffectiveConfig{}, nil
+func (s *dreamHandlerServiceStub) EffectiveConfig(context.Context, string) (dream.EffectiveConfig, error) {
+	return dream.EffectiveConfig{}, nil
 }
 
 func TestDreamHandlerRoutes(t *testing.T) {
@@ -92,8 +92,8 @@ func TestDreamHandlerRoutes(t *testing.T) {
 	profileID := uuid.New()
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	svc := &dreamHandlerServiceStub{
-		status: &dreamservice.StatusResult{PendingCount: 2},
-		runs: []*dreamservice.RunCycleResult{{
+		status: &dream.StatusResult{PendingCount: 2},
+		runs: []*dream.RunCycleResult{{
 			RunID:       "run-1",
 			TeamID:      profileID.String(),
 			RunDate:     "2026-06-14",
@@ -142,7 +142,7 @@ func TestDreamHandlerRoutes(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), tt.want)
 	}
 	assert.Equal(t, 3, svc.runsLimit)
-	assert.Equal(t, dreamservice.ListOptions{Limit: 4, Status: "proposed", Cursor: "next", Sort: "created_at", Direction: "asc"}, svc.listOpts)
+	assert.Equal(t, dream.ListOptions{Limit: 4, Status: "proposed", Cursor: "next", Sort: "created_at", Direction: "asc"}, svc.listOpts)
 	assert.Contains(t, svc.profileIDs, profileID.String())
 }
 
@@ -165,7 +165,7 @@ func TestDreamHandlerValidationAndNotFound(t *testing.T) {
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	profileID := uuid.New()
-	svc := &dreamHandlerServiceStub{getErr: dreamservice.ErrDreamNotFound}
+	svc := &dreamHandlerServiceStub{getErr: dream.ErrDreamNotFound}
 	h := NewDreamHandler(svc)
 
 	e.GET("/ui/api/dreaming/status", h.Status)
@@ -205,7 +205,7 @@ func TestDreamHandlerValidationAndNotFound(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Contains(t, rec.Body.String(), "direction must be asc or desc")
 
-	svc.listErr = dreamservice.ErrInvalidDreamCursor
+	svc.listErr = dream.ErrInvalidDreamCursor
 	req = httptest.NewRequest(http.MethodGet, "/ui/api/dreams?cursor=bad", nil)
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, req)

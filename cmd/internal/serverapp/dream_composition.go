@@ -5,22 +5,23 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/dream"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
 	"github.com/markhuangai/dense-mem/internal/dreamgeneration"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/repository"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 )
 
 type dreamApplicationDependencies struct {
 	Remember           rememberapp.Service
-	Store              repository.DreamRepository
-	ScheduledStore     repository.ScheduledDreamRepository
-	AppConfig          dreamservice.AppConfig
-	Teams              dreamservice.TeamService
+	Store              dreamcontract.DreamRepository
+	ScheduledStore     dreamcontract.ScheduledDreamRepository
+	AppConfig          dream.AppConfig
+	Teams              dream.TeamService
 	GeneratorTransport modelprovider.StructuredTransport
-	EvidenceStore      repository.EvidenceDiscoveryRepository
+	EvidenceStore      dreamcontract.EvidenceDiscoveryRepository
 	Model              string
 	Limits             assessor.SemanticAssessmentLimits
 	Metrics            observability.DiscoverabilityMetrics
@@ -32,30 +33,43 @@ func dreamProviderCycleLease(cfg config.Config) time.Duration {
 		time.Duration(dreamgeneration.DreamGenerationMaxProviderTurns) + time.Minute
 }
 
-func buildDreamApplication(deps dreamApplicationDependencies) dreamservice.Service {
-	return dreamservice.New(dreamservice.Dependencies{
+func buildDreamApplication(deps dreamApplicationDependencies) dream.Service {
+	store := deps.Store
+	scheduledStore := deps.ScheduledStore
+	evidenceStore := deps.EvidenceStore
+	if source, ok := deps.Store.(dreampostgres.Source); ok {
+		native := dreampostgres.NewStoreFromSource(source)
+		store = native
+		scheduledStore = native
+		evidenceStore = native
+	}
+	return dream.New(dream.Dependencies{
 		Remember:           deps.Remember,
-		Store:              deps.Store,
-		ScheduledStore:     deps.ScheduledStore,
+		Store:              store,
+		ScheduledStore:     scheduledStore,
 		AppConfig:          deps.AppConfig,
 		Teams:              deps.Teams,
-		Generator:          dreamservice.NewProviderGenerator(dreamgeneration.NewProvider(deps.GeneratorTransport, deps.Model, deps.Limits)),
-		EvidenceStore:      deps.EvidenceStore,
-		EvidenceGenerator:  dreamservice.NewEvidenceProviderGenerator(deps.GeneratorTransport, deps.Model, deps.Limits),
+		Generator:          dream.NewProviderGenerator(dreamgeneration.NewProvider(deps.GeneratorTransport, deps.Model, deps.Limits)),
+		EvidenceStore:      evidenceStore,
+		EvidenceGenerator:  dream.NewEvidenceProviderGenerator(deps.GeneratorTransport, deps.Model, deps.Limits),
 		Metrics:            deps.Metrics,
 		ProviderCycleLease: deps.ProviderCycleLease,
 	})
 }
 
 type controlDreamApplicationDependencies struct {
-	Store     repository.DreamControlRepository
-	AppConfig dreamservice.AppConfig
-	Teams     dreamservice.TeamConfigService
+	Store     dreamcontract.DreamControlRepository
+	AppConfig dream.AppConfig
+	Teams     dream.TeamConfigService
 }
 
-func buildControlDreamApplication(deps controlDreamApplicationDependencies) dreamservice.ControlService {
-	return dreamservice.NewControl(dreamservice.ControlDependencies{
-		Store:     deps.Store,
+func buildControlDreamApplication(deps controlDreamApplicationDependencies) dream.ControlService {
+	store := deps.Store
+	if source, ok := deps.Store.(dreampostgres.Source); ok {
+		store = dreampostgres.NewStoreFromSource(source)
+	}
+	return dream.NewControl(dream.ControlDependencies{
+		Store:     store,
 		AppConfig: deps.AppConfig,
 		Teams:     deps.Teams,
 	})

@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/promptcatalog"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 )
 
@@ -38,11 +38,11 @@ type dreamingConfigStub struct {
 	calls   *int
 }
 
-func (s dreamingConfigStub) EffectiveConfig(context.Context, string) (dreamservice.EffectiveConfig, error) {
+func (s dreamingConfigStub) EffectiveConfig(context.Context, string) (dream.EffectiveConfig, error) {
 	if s.calls != nil {
 		(*s.calls)++
 	}
-	return dreamservice.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: s.enabled}}, s.err
+	return dream.EffectiveConfig{DreamingRuntimeConfig: domain.DreamingRuntimeConfig{Enabled: s.enabled}}, s.err
 }
 
 // testLogger returns a LogProvider that writes to a bytes.Buffer.

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/repository"
 )
 
@@ -226,7 +227,7 @@ func TestRecallReturnsRelatedHypothesesOutsidePrimaryResults(t *testing.T) {
 		},
 	}
 	hypotheses := &recallHypothesisStub{
-		records: []repository.HypothesisRecord{{
+		records: []dreamcontract.HypothesisRecord{{
 			HypothesisID:    hypothesisID,
 			SubjectEntityID: uuid.NewString(),
 			PredicateKey:    "benefits_from",
@@ -848,12 +849,12 @@ func (s *recallSearchStub) RecallRelationships(_ context.Context, input reposito
 }
 
 type recallHypothesisStub struct {
-	recallInput repository.RecallHypothesesInput
-	records     []repository.HypothesisRecord
+	recallInput dreamcontract.RecallHypothesesInput
+	records     []dreamcontract.HypothesisRecord
 	err         error
 }
 
-func (s *recallHypothesisStub) RecallHypotheses(_ context.Context, input repository.RecallHypothesesInput) ([]repository.HypothesisRecord, error) {
+func (s *recallHypothesisStub) RecallHypotheses(_ context.Context, input dreamcontract.RecallHypothesesInput) ([]dreamcontract.HypothesisRecord, error) {
 	s.recallInput = input
 	if s.err != nil {
 		return nil, s.err

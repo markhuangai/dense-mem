@@ -6,13 +6,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResolveDreamFeedbackReturnsStructuredTerminalFailure(t *testing.T) {
-	dreams := &stubDreamService{resolveResult: &dreamservice.ResolveFeedbackResult{
+	dreams := &stubDreamService{resolveResult: &dream.ResolveFeedbackResult{
 		Dream: stubDream("profile-dream"),
 		Memory: &rememberapp.RememberResult{Terminal: &rememberapp.TerminalRememberResult{
 			ContractVersion: domain.ContractVersion, SubmissionID: uuid.NewString(), SubmissionKind: "remember",
@@ -67,7 +67,7 @@ func TestResolveDreamFeedbackOutputSchemaCoversTerminalBranch(t *testing.T) {
 
 func TestResolveDreamFeedbackReturnsStructuredBusyRetry(t *testing.T) {
 	reg, err := BuildActive(Dependencies{Dreams: &stubDreamService{
-		resolveErr: &dreamservice.ConfirmationBusyError{},
+		resolveErr: &dream.ConfirmationBusyError{},
 	}})
 	require.NoError(t, err)
 	tool, ok := reg.Get(ToolResolveDreamFeedback)
@@ -93,7 +93,7 @@ func TestResolveDreamFeedbackReturnsStructuredBusyRetry(t *testing.T) {
 
 func TestResolveDreamFeedbackReturnsLifecycleCompatibleBusyRetry(t *testing.T) {
 	reg, err := BuildActive(Dependencies{Dreams: &stubDreamService{
-		resolveErr: &dreamservice.ConfirmationBusyError{Decision: "reject"},
+		resolveErr: &dream.ConfirmationBusyError{Decision: "reject"},
 	}})
 	require.NoError(t, err)
 	tool, ok := reg.Get(ToolResolveDreamFeedback)

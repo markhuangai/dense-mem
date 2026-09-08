@@ -10,33 +10,15 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
+	dreampostgres "github.com/markhuangai/dense-mem/internal/dream/postgres"
 	"gorm.io/gorm"
 )
 
-type EvaluationRepository interface {
-	ListEvaluationRefs(ctx context.Context, input EvaluationListInput) (*EvaluationPage, error)
-	GetEvaluationItem(ctx context.Context, input EvaluationGetInput) (map[string]any, error)
-}
-
-type EvaluationListInput struct {
-	TeamID string
-	Type   string
-	Limit  int
-	Cursor string
-	Status string
-}
-
-type EvaluationGetInput struct {
-	TeamID string
-	Type   string
-	ID     string
-}
-
-type EvaluationPage struct {
-	Items      []map[string]any `json:"items"`
-	NextCursor string           `json:"next_cursor"`
-	HasMore    bool             `json:"has_more"`
-}
+type EvaluationRepository = dreamcontract.EvaluationRepository
+type EvaluationListInput = dreamcontract.EvaluationListInput
+type EvaluationGetInput = dreamcontract.EvaluationGetInput
+type EvaluationPage = dreamcontract.EvaluationPage
 
 var _ EvaluationRepository = (*SemanticRepositoryImpl)(nil)
 
@@ -352,27 +334,7 @@ func evaluationQuery(input EvaluationListInput, limit int, offset int, ids ...st
 			ORDER BY created_at DESC, id
 			LIMIT ? OFFSET ?`, args.values, nil
 	case "hypothesis":
-		return `
-			WITH rows AS (
-				SELECT hypothesis_id AS id, COALESCE(created_by_profile_id::text, '') AS created_by_profile_id,
-				       status, payload, created_at, updated_at
-				FROM hypotheses
-				WHERE team_id = ?::uuid
-				  AND canonical_hypothesis_id IS NULL
-			)
-			SELECT jsonb_build_object(
-				'type', 'hypothesis',
-				'id', id::text,
-				'created_by_profile_id', created_by_profile_id,
-				'status', status,
-				'payload', payload,
-				'created_at', created_at,
-				'updated_at', updated_at
-			)
-			FROM rows
-			WHERE true` + idFilter + statusFilter + `
-			ORDER BY updated_at DESC, id
-			LIMIT ? OFFSET ?`, args.values, nil
+		return dreampostgres.HypothesisEvaluationQuery(input, limit, offset, ids...)
 	default:
 		return "", nil, fmt.Errorf("unsupported type %q", input.Type)
 	}

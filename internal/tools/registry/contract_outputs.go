@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service/contextservice"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 	rememberapp "github.com/markhuangai/dense-mem/internal/service/remember"
 	"github.com/markhuangai/dense-mem/internal/service/skillpackservice"
@@ -23,8 +23,8 @@ func rememberRequestFromContractInput(input map[string]any) (memoryservice.Remem
 	return req, nil
 }
 
-func resolveDreamFeedbackRequestFromContractInput(input map[string]any) (dreamservice.ResolveFeedbackRequest, error) {
-	var req dreamservice.ResolveFeedbackRequest
+func resolveDreamFeedbackRequestFromContractInput(input map[string]any) (dream.ResolveFeedbackRequest, error) {
+	var req dream.ResolveFeedbackRequest
 	if err := remapInput(input, &req); err != nil {
 		return req, err
 	}
@@ -496,7 +496,7 @@ func listDreamsContractOutput(dreams []*domain.Dream, next string) map[string]an
 	return out
 }
 
-func resolveDreamFeedbackContractOutput(res *dreamservice.ResolveFeedbackResult) map[string]any {
+func resolveDreamFeedbackContractOutput(res *dream.ResolveFeedbackResult) map[string]any {
 	out := map[string]any{
 		"hypothesis_id": "",
 		"status":        string(domain.HypothesisProposed),
@@ -516,7 +516,7 @@ func resolveDreamFeedbackContractOutput(res *dreamservice.ResolveFeedbackResult)
 }
 
 func resolveDreamConfirmationBusyOutcome(err error) (map[string]any, bool) {
-	var busy *dreamservice.ConfirmationBusyError
+	var busy *dream.ConfirmationBusyError
 	if !errors.As(err, &busy) || busy == nil {
 		return nil, false
 	}
@@ -535,7 +535,7 @@ func resolveDreamConfirmationBusyOutcome(err error) (map[string]any, bool) {
 	}, true
 }
 
-func resolveDreamTerminalOutcome(res *dreamservice.ResolveFeedbackResult) (map[string]any, bool, error) {
+func resolveDreamTerminalOutcome(res *dream.ResolveFeedbackResult) (map[string]any, bool, error) {
 	if res == nil || res.Memory == nil || res.Memory.Terminal == nil ||
 		res.Memory.Terminal.ProcessingState == string(rememberapp.TerminalProcessingCompleted) {
 		return nil, false, nil

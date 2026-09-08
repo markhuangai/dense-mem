@@ -45,6 +45,26 @@ Compatibility aliases and their current consumers are:
 - `internal/service/semanticwrite/executor.go`: semantic-write names are
   aliases consumed by `internal/service/memoryservice/lifecycle.go`,
   `internal/service/semanticwrite`, and their tests.
+- `internal/service/dreamservice/compat.go`: Dream service names are bounded
+  aliases consumed by `cmd/internal/serverapp/application_composition.go`,
+  `cmd/internal/serverapp/server.go` (`NewScheduler`), and
+  `cmd/internal/serverapp/telemetry_features.go`; canonical application policy
+  and ports live in `internal/dream` and `internal/dream/contract`.
+- `internal/repository/dream_compat.go` and
+  `internal/repository/dream_types.go`: Dream repository methods, contracts,
+  and errors are single-hop compatibility aliases consumed by the server
+  composition's `SemanticRepositoryImpl` dependency and the retained Dream
+  database fixtures under `internal/repository/`; SQL ownership is
+  `internal/dream/postgres.Store`.
+
+`internal/dream/postgres` owns Dream's PostgreSQL SQL, transaction boundaries,
+Hypothesis evaluation reads, daily graph-dreaming persistence, and hourly
+evidence-discovery persistence. `internal/repository/dream_*.go` is no longer a
+live implementation: `SemanticRepositoryImpl` keeps only single-hop forwarding
+methods for transitional callers. Daily graph dreaming and hourly evidence
+discovery remain separate lanes, and Hypothesis records never enter default
+recall or active graph reads. The compatibility facades are removed with the
+other legacy facades by #382 after all named consumers migrate.
 
 The compatibility removal owner is #382. It removes these aliases and the
 legacy repository/service facades after the graph, trace, recall, search, and

@@ -11,21 +11,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-type predicateDefinition struct {
-	Key                 string
-	Version             int
-	AllowedSubjectKinds []string
-	AllowedObjectKinds  []string
-	RelationshipKind    string
-	CurrentCardinality  string
-}
+type predicateDefinition = storagepostgres.PredicateDefinition
 
 type relationshipRecordState struct {
 	Record          *RelationshipRecord
@@ -459,35 +452,7 @@ func insertEntityName(ctx context.Context, tx *gorm.DB, input AddEntityNameInput
 }
 
 func loadPredicateDefinition(ctx context.Context, tx *gorm.DB, teamID string, predicateKey string, version int) (*predicateDefinition, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
-		       relationship_kind, current_cardinality
-		FROM team_predicate_definitions
-		WHERE team_id = ?::uuid
-		  AND predicate_key = ?
-		  AND version = ?
-		  AND lifecycle_state = 'active'
-	`, teamID, predicateKey, version).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-		return nil, gorm.ErrRecordNotFound
-	}
-	var loaded predicateDefinition
-	var subjectKinds pq.StringArray
-	var objectKinds pq.StringArray
-	if err := rows.Scan(&loaded.Key, &loaded.Version, &subjectKinds, &objectKinds,
-		&loaded.RelationshipKind, &loaded.CurrentCardinality); err != nil {
-		return nil, err
-	}
-	loaded.AllowedSubjectKinds = []string(subjectKinds)
-	loaded.AllowedObjectKinds = []string(objectKinds)
-	return &loaded, rows.Err()
+	return storagepostgres.LoadPredicateDefinition(ctx, tx, teamID, predicateKey, version)
 }
 
 func validateRelationshipEndpointKinds(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput, predicate *predicateDefinition) error {

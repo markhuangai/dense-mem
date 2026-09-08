@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/markhuangai/dense-mem/internal/repository"
+	dreamcontract "github.com/markhuangai/dense-mem/internal/dream/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
@@ -22,7 +22,7 @@ func evalListKnowledgeRefs(ctx context.Context, deps Dependencies, fallbackTeamI
 		return nil, err
 	}
 	kind := strings.ToLower(stringInput(input["type"]))
-	page, err := deps.Evaluation.ListEvaluationRefs(ctx, repository.EvaluationListInput{
+	page, err := deps.Evaluation.ListEvaluationRefs(ctx, dreamcontract.EvaluationListInput{
 		TeamID: teamID,
 		Type:   kind,
 		Limit:  limit,

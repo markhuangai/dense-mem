@@ -18,12 +18,12 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/repository"
 	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/service/graphview"
 	"github.com/markhuangai/dense-mem/internal/service/memoryservice"
 )
@@ -39,7 +39,7 @@ type UserPortalDeps struct {
 	Telemetry          service.TelemetryReader
 	GraphView          graphview.Service
 	RecallSvc          memoryservice.RecallService
-	DreamSvc           dreamservice.Service
+	DreamSvc           dream.Service
 	AuditSvc           service.AuditService
 	SecuritySvc        httpmw.SecurityBanService
 	SSOService         *service.SSOService
@@ -88,13 +88,13 @@ type userPortalTeamOptionResponse struct {
 }
 
 type userPortalTeamResponse struct {
-	ID                uuid.UUID                     `json:"id"`
-	Name              string                        `json:"name"`
-	Description       string                        `json:"description"`
-	Config            map[string]any                `json:"config"`
-	DreamingEffective *dreamservice.EffectiveConfig `json:"dreaming_effective,omitempty"`
-	CreatedAt         string                        `json:"created_at"`
-	UpdatedAt         string                        `json:"updated_at"`
+	ID                uuid.UUID              `json:"id"`
+	Name              string                 `json:"name"`
+	Description       string                 `json:"description"`
+	Config            map[string]any         `json:"config"`
+	DreamingEffective *dream.EffectiveConfig `json:"dreaming_effective,omitempty"`
+	CreatedAt         string                 `json:"created_at"`
+	UpdatedAt         string                 `json:"updated_at"`
 }
 
 type userPortalMembershipResponse struct {

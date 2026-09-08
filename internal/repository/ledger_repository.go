@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 
 	"gorm.io/gorm"
@@ -99,22 +98,7 @@ func (r *LedgerRepositoryImpl) withSystemTx(ctx context.Context, fn func(*gorm.D
 }
 
 func ensureActiveTeamForMutation(ctx context.Context, tx *gorm.DB, teamID string) error {
-	row := tx.WithContext(ctx).Raw(`
-		SELECT id::text
-		FROM teams
-		WHERE id = ?::uuid
-		  AND status = 'active'
-		  AND deleted_at IS NULL
-		FOR SHARE
-	`, teamID).Row()
-	var id string
-	if err := row.Scan(&id); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrTeamInactive
-		}
-		return err
-	}
-	return nil
+	return postgres.EnsureActiveTeamForMutation(ctx, tx, teamID)
 }
 
 func insertKnowledgeIngest(ctx context.Context, tx *gorm.DB, input CreateIngestInput) (string, bool, error) {

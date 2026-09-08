@@ -18,6 +18,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/dream"
 	dto "github.com/markhuangai/dense-mem/internal/http/dto"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
@@ -25,7 +26,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/service"
-	"github.com/markhuangai/dense-mem/internal/service/dreamservice"
 	"github.com/markhuangai/dense-mem/internal/tools"
 )
 
@@ -916,14 +916,14 @@ func toControlSecurityBan(ban domain.SecurityIPBan) controlSecurityBanResponse {
 }
 
 type controlTeamResponse struct {
-	ID                uuid.UUID                     `json:"id"`
-	Name              string                        `json:"name"`
-	Description       string                        `json:"description"`
-	Metadata          map[string]any                `json:"metadata"`
-	Config            map[string]any                `json:"config"`
-	DreamingEffective *dreamservice.EffectiveConfig `json:"dreaming_effective,omitempty"`
-	CreatedAt         string                        `json:"created_at"`
-	UpdatedAt         string                        `json:"updated_at"`
+	ID                uuid.UUID              `json:"id"`
+	Name              string                 `json:"name"`
+	Description       string                 `json:"description"`
+	Metadata          map[string]any         `json:"metadata"`
+	Config            map[string]any         `json:"config"`
+	DreamingEffective *dream.EffectiveConfig `json:"dreaming_effective,omitempty"`
+	CreatedAt         string                 `json:"created_at"`
+	UpdatedAt         string                 `json:"updated_at"`
 }
 
 func (h *controlPortalHandler) toControlTeam(ctx context.Context, team *domain.Team) (controlTeamResponse, error) {
