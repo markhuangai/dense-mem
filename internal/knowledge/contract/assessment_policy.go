@@ -1,4 +1,4 @@
-package postgres
+package contract
 
 import (
 	"errors"
@@ -8,7 +8,9 @@ import (
 	"github.com/google/uuid"
 )
 
-func validateAssessmentDecisionAudit(
+// ValidateAssessmentDecisionAudit validates the confidence-gate provenance
+// carried by a semantic decision before it can be persisted.
+func ValidateAssessmentDecisionAudit(
 	assessmentID, policyVersion string,
 	threshold *float64,
 	gateResult string,

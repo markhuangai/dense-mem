@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"errors"
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
@@ -16,18 +15,18 @@ var (
 )
 
 func (r *SemanticRepositoryImpl) CorrectRelationship(ctx context.Context, input CorrectRelationshipInput) (*CorrectRelationshipResult, error) {
-	owner := r.knowledgeWriteOwner()
-	if owner == nil {
-		return nil, errors.New("semantic: knowledge write owner is required")
+	owner, err := r.semanticWriteOwner()
+	if err != nil {
+		return nil, err
 	}
 	result, err := owner.CorrectRelationship(ctx, toKnowledgeCorrectRelationshipInput(input))
 	return fromKnowledgeCorrectRelationshipResult(result), err
 }
 
 func (r *SemanticRepositoryImpl) CorrectRelationshipWithEmbeddings(ctx context.Context, input CorrectRelationshipInput, embeddings []RelationshipCorrectionEmbedding) (*CorrectRelationshipResult, error) {
-	owner := r.knowledgeWriteOwner()
-	if owner == nil {
-		return nil, errors.New("semantic: knowledge write owner is required")
+	owner, err := r.semanticWriteOwner()
+	if err != nil {
+		return nil, err
 	}
 	result, err := owner.CorrectRelationshipWithEmbeddings(
 		ctx,
@@ -38,9 +37,9 @@ func (r *SemanticRepositoryImpl) CorrectRelationshipWithEmbeddings(ctx context.C
 }
 
 func (r *SemanticRepositoryImpl) GetRelationshipCorrection(ctx context.Context, input GetRelationshipCorrectionInput) (*RelationshipCorrectionStatus, error) {
-	owner := r.knowledgeWriteOwner()
-	if owner == nil {
-		return nil, errors.New("semantic: knowledge write owner is required")
+	owner, err := r.semanticWriteOwner()
+	if err != nil {
+		return nil, err
 	}
 	result, err := owner.GetRelationshipCorrection(ctx, toKnowledgeGetRelationshipCorrectionInput(input))
 	return fromKnowledgeCorrectRelationshipResult(result), err

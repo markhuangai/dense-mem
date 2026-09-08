@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
 
 var (
@@ -121,7 +122,7 @@ func validateSemanticRelationshipDecisionInput(input SemanticRelationshipDecisio
 			return errRelationshipDecisionNonPromotable
 		}
 	} else {
-		if err := validateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
+		if err := knowledgecontract.ValidateAssessmentDecisionAudit(input.AssessmentID, input.AssessmentPolicyVersion, input.ThresholdUsed, input.GateResult, input.SuppressSupport); err != nil {
 			return err
 		}
 	}

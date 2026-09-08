@@ -10,8 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-
-	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 )
 
 const AssessmentPolicyVersion = "v2.4.confidence-gate.1"
@@ -104,15 +102,6 @@ func confidenceThresholdFromJSON(raw []byte) (float64, error) {
 		return 0, errors.New("must be between 0 and 1")
 	}
 	return threshold, nil
-}
-
-func validateAssessmentDecisionAudit(
-	assessmentID, policyVersion string,
-	threshold *float64,
-	gateResult string,
-	suppressSupport bool,
-) error {
-	return knowledgepostgres.ValidateAssessmentDecisionAudit(assessmentID, policyVersion, threshold, gateResult, suppressSupport)
 }
 
 func jsonObject(raw []byte) bool {

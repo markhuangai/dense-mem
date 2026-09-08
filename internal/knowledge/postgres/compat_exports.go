@@ -129,15 +129,6 @@ func CanonicalGeneratedPredicateKey(value string) string {
 	return canonicalGeneratedPredicateKey(value)
 }
 
-func ValidateAssessmentDecisionAudit(
-	assessmentID, policyVersion string,
-	threshold *float64,
-	gateResult string,
-	suppressSupport bool,
-) error {
-	return validateAssessmentDecisionAudit(assessmentID, policyVersion, threshold, gateResult, suppressSupport)
-}
-
 func RelationshipConflictScopeKey(record *RelationshipRecord, spaceID, spaceKind string) string {
 	return relationshipConflictScopeKey(record, spaceID, spaceKind)
 }

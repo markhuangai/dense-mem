@@ -2,9 +2,12 @@
   "schema_version": 1,
   "capability": "postgres-storage-adapter",
   "source_ownership": [
+    {"path": "internal/knowledge/contract/assessment_policy.go", "issue": 362},
+    {"path": "internal/knowledge/contract/assessment_policy_test.go", "issue": 362},
     {"path": "internal/knowledge/contract/conflict.go", "issue": 362},
     {"path": "internal/knowledge/contract/duplicate.go", "issue": 362},
     {"path": "internal/knowledge/contract/evidence_conflict.go", "issue": 362},
+    {"path": "internal/knowledge/contract/evidence_conflict_test.go", "issue": 362},
     {"path": "internal/knowledge/contract/ledger.go", "issue": 362},
     {"path": "internal/knowledge/contract/lifecycle.go", "issue": 362},
     {"path": "internal/knowledge/contract/placement.go", "issue": 362},
@@ -16,7 +19,6 @@
     {"path": "internal/knowledge/contract/submission.go", "issue": 362},
     {"path": "internal/knowledge/contract/write.go", "issue": 362},
     {"path": "internal/knowledge/postgres/advisory_lock_admission.go", "issue": 362},
-    {"path": "internal/knowledge/postgres/assessment_policy_helpers.go", "issue": 362},
     {"path": "internal/knowledge/postgres/compat_exports.go", "issue": 362},
     {"path": "internal/knowledge/postgres/compat_helpers.go", "issue": 362},
     {"path": "internal/knowledge/postgres/conflict_context_repository.go", "issue": 362},
@@ -124,16 +126,6 @@
     {"path": "internal/repository/remember_artifact_hold_rollback_integration.e2e", "issue": 389}
   ],
   "compatibility_bridges": [
-    {
-      "source_path": "internal/repository/auto_write_confidence_policy_repository.go",
-      "fields": ["validateAssessmentDecisionAudit"],
-      "consumers": [
-        {"path": "internal/repository/semantic_helpers.go", "symbol": "validateApplyRelationshipDecisionInput"}
-      ],
-      "removal_issue": 382,
-      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "ValidateAssessmentDecisionAudit"},
-      "removal_condition": "Remove the helper when all semantic decision validation callers use the knowledge owner package directly."
-    },
     {
       "source_path": "internal/repository/conflict_context_repository.go",
       "fields": ["LedgerRepositoryImpl.ValidateRelationshipConflictContext"],

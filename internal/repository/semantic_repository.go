@@ -34,64 +34,75 @@ func NewSemanticRepository(db *gorm.DB, rls *postgres.RLS) *SemanticRepositoryIm
 }
 
 func (r *SemanticRepositoryImpl) CreateEntity(ctx context.Context, input CreateEntityInput) (*EntityRecord, error) {
-	owner := r.knowledgeWriteOwner()
-	if owner == nil {
-		return nil, errors.New("semantic: knowledge write owner is required")
+	owner, err := r.semanticWriteOwner()
+	if err != nil {
+		return nil, err
 	}
 	result, err := owner.CreateEntity(ctx, toKnowledgeCreateEntityInput(input))
 	return fromKnowledgeEntityRecord(result), err
 }
 
 func (r *SemanticRepositoryImpl) AddEntityName(ctx context.Context, input AddEntityNameInput) (string, error) {
-	owner := r.knowledgeWriteOwner()
-	if owner == nil {
-		return "", errors.New("semantic: knowledge write owner is required")
+	owner, err := r.semanticWriteOwner()
+	if err != nil {
+		return "", err
 	}
 	return owner.AddEntityName(ctx, toKnowledgeAddEntityNameInput(input))
 }
 
 func (r *SemanticRepositoryImpl) UpsertValue(ctx context.Context, input UpsertValueInput) (*ValueRecord, error) {
-	owner := r.knowledgeWriteOwner()
-	if owner == nil {
-		return nil, errors.New("semantic: knowledge write owner is required")
+	owner, err := r.semanticWriteOwner()
+	if err != nil {
+		return nil, err
 	}
 	result, err := owner.UpsertValue(ctx, toKnowledgeUpsertValueInput(input))
 	return fromKnowledgeValueRecord(result), err
 }
 
 func (r *SemanticRepositoryImpl) ApplyRelationshipDecision(ctx context.Context, input ApplyRelationshipDecisionInput) (*RelationshipDecisionResult, error) {
-	owner := r.knowledgeWriteOwner()
-	if owner == nil {
-		return nil, errors.New("semantic: knowledge write owner is required")
+	owner, err := r.semanticWriteOwner()
+	if err != nil {
+		return nil, err
 	}
 	result, err := owner.ApplyRelationshipDecision(ctx, toKnowledgeApplyRelationshipDecisionInput(input))
 	return fromKnowledgeRelationshipDecisionResult(result), err
 }
 
 func (r *SemanticRepositoryImpl) RetractRelationship(ctx context.Context, input RetractRelationshipInput) (*RelationshipTransitionResult, error) {
-	owner := r.knowledgeWriteOwner()
-	if owner == nil {
-		return nil, errors.New("semantic: knowledge write owner is required")
+	owner, err := r.semanticWriteOwner()
+	if err != nil {
+		return nil, err
 	}
 	result, err := owner.RetractRelationship(ctx, toKnowledgeRetractRelationshipInput(input))
 	return fromKnowledgeRelationshipTransitionResult(result), err
 }
 
 func (r *SemanticRepositoryImpl) ApplyRelationshipSupportDecision(ctx context.Context, input ApplyRelationshipSupportDecisionInput) (*RelationshipSupportDecisionResult, error) {
-	owner := r.knowledgeWriteOwner()
-	if owner == nil {
-		return nil, errors.New("semantic: knowledge write owner is required")
+	owner, err := r.semanticWriteOwner()
+	if err != nil {
+		return nil, err
 	}
 	result, err := owner.ApplyRelationshipSupportDecision(ctx, toKnowledgeApplyRelationshipSupportDecisionInput(input))
 	return fromKnowledgeRelationshipSupportDecisionResult(result), err
 }
 
 func (r *SemanticRepositoryImpl) AppendCrossReference(ctx context.Context, input AppendCrossReferenceInput) (string, error) {
-	owner := r.knowledgeWriteOwner()
-	if owner == nil {
-		return "", errors.New("semantic: knowledge write owner is required")
+	owner, err := r.semanticWriteOwner()
+	if err != nil {
+		return "", err
 	}
 	return owner.AppendCrossReference(ctx, toKnowledgeAppendCrossReferenceInput(input))
+}
+
+func (r *SemanticRepositoryImpl) semanticWriteOwner() (*knowledgepostgres.Store, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("semantic: database is required")
+	}
+	owner := r.knowledgeWriteOwner()
+	if owner == nil {
+		return nil, errors.New("semantic: knowledge write owner is required")
+	}
+	return owner, nil
 }
 
 // CreateHypothesis remains owned by the Dream capability until its cutover.
