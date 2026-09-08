@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS remember_attempt_diagnostics (
     UNIQUE (team_id, attempt_id, sequence_no),
     CONSTRAINT remember_attempt_diagnostics_kind_check CHECK (kind IN ('original_request', 'provider_exchange', 'caller_response')),
     CONSTRAINT remember_attempt_diagnostics_capture_state_check CHECK (
-        capture_state IN ('captured', 'truncated', 'not_captured', 'provider_not_called', 'no_response', 'interrupted', 'not_delivered')
+        capture_state IN ('captured', 'truncated', 'not_captured', 'hash_only', 'provider_not_called', 'no_response', 'interrupted', 'not_delivered')
     ),
     CONSTRAINT remember_attempt_diagnostics_body_size_check CHECK (
         octet_length(request_bytes) <= 16777216 AND octet_length(response_bytes) <= 16777216
@@ -68,7 +68,10 @@ CREATE POLICY remember_attempt_diagnostics_insert ON remember_attempt_diagnostic
 CREATE POLICY remember_attempt_diagnostics_update ON remember_attempt_diagnostics
     FOR UPDATE USING (
         current_setting('app.tx_mode', true) = 'system'
-        AND NULLIF(current_setting('app.remember_attempt_diagnostic_retention_space_id', true), '')::uuid IS NOT NULL
+        AND (
+            NULLIF(current_setting('app.remember_attempt_diagnostic_retention_space_id', true), '')::uuid IS NOT NULL
+            OR current_setting('app.remember_attempt_diagnostic_purge', true) = 'true'
+        )
     );
 CREATE POLICY remember_attempt_diagnostics_delete ON remember_attempt_diagnostics
     FOR DELETE USING (
@@ -188,7 +191,12 @@ INSERT INTO remember_attempt_diagnostics (
 SELECT artifact.team_id,
        artifact.attempt_id,
        artifact.owner_profile_id,
-       row_number() OVER (PARTITION BY artifact.team_id, artifact.attempt_id ORDER BY artifact.captured_at, artifact.artifact_id),
+       row_number() OVER (
+           PARTITION BY artifact.team_id, artifact.attempt_id
+           ORDER BY artifact.captured_at,
+                    CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN 0 ELSE 1 END,
+                    artifact.artifact_id
+       ),
        CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN 'original_request' ELSE 'provider_exchange' END,
        'legacy_failure_artifact',
        ''::bytea,
@@ -197,7 +205,7 @@ SELECT artifact.team_id,
        CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN '' ELSE artifact.content_type END,
        CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN 'legacy_hash_summary' ELSE 'legacy_migrated' END,
        CASE WHEN artifact.artifact_kind IN ('request', 'policy_rejected_request') THEN 'not_captured' ELSE 'captured' END,
-       artifact.captured_at, artifact.expires_at, artifact.retained_by_legal_hold
+       artifact.captured_at, artifact.expires_at, (artifact.retained_by_legal_hold OR hold.id IS NOT NULL)
 FROM remember_failure_artifacts AS artifact
 LEFT JOIN remember_attempts AS attempt
   ON attempt.team_id = artifact.team_id

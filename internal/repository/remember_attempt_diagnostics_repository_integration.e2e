@@ -32,7 +32,7 @@ func TestRememberAttemptDiagnosticsRepositoryScopesReadsAndPurgesExpiredBytes(t 
 	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
 		Attempt: RememberAttemptRecordInput{
 			TeamID: teamA, OwnerProfileID: ownerA, AttemptID: attemptID,
-			SpaceID: privateSpace.ID.String(), SpaceGeneration: privateSpace.Generation,
+			SpaceID: privateSpace.ID.String(), SpaceGeneration: 1,
 			IdempotencyKey: "diagnostics-scope", RequestHash: "diagnostics-scope-hash",
 			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed",
 			FailedPhase: "assessment", ErrorCode: "provider_unavailable", CorrelationID: "diagnostics-correlation",
@@ -224,7 +224,7 @@ func TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces(t *testing.T) {
 		require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
 			Attempt: RememberAttemptRecordInput{
 				TeamID: teamID, OwnerProfileID: spaceOwners[spaces[0].ID.String()], AttemptID: attemptID,
-				SpaceID: spaces[0].ID.String(), SpaceGeneration: spaces[0].Generation,
+				SpaceID: spaces[0].ID.String(), SpaceGeneration: 1,
 				IdempotencyKey: fmt.Sprintf("diagnostics-drain-a-%d", index), RequestHash: fmt.Sprintf("diagnostics-drain-a-hash-%d", index),
 				ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed", FailedPhase: "assessment", ErrorCode: "provider_unavailable", PublicResult: map[string]any{},
 			},
@@ -235,7 +235,7 @@ func TestRememberAttemptDiagnosticsDrainRotatesPrivateSpaces(t *testing.T) {
 	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
 		Attempt: RememberAttemptRecordInput{
 			TeamID: teamID, OwnerProfileID: spaceOwners[spaces[1].ID.String()], AttemptID: secondAttemptID,
-			SpaceID: spaces[1].ID.String(), SpaceGeneration: spaces[1].Generation,
+			SpaceID: spaces[1].ID.String(), SpaceGeneration: 1,
 			IdempotencyKey: "diagnostics-drain-b", RequestHash: "diagnostics-drain-b-hash",
 			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed", FailedPhase: "assessment", ErrorCode: "provider_unavailable", PublicResult: map[string]any{},
 		},

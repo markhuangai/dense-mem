@@ -56,7 +56,7 @@ const (
 
 func validRememberDiagnosticCaptureState(value string) bool {
 	switch strings.TrimSpace(value) {
-	case "captured", "truncated", "not_captured", "provider_not_called", "no_response", "interrupted", "not_delivered":
+	case "captured", "truncated", "not_captured", "hash_only", "provider_not_called", "no_response", "interrupted", "not_delivered":
 		return true
 	default:
 		return false
@@ -744,6 +744,9 @@ func (r *Store) purgeExpiredRememberAttemptDiagnostics(ctx context.Context, batc
 			teamID, diagnosticID, spaceID string
 		}
 		candidates := make([]purgeCandidate, 0, batchSize)
+		if err := tx.Exec("SELECT set_config('app.remember_attempt_diagnostic_purge', 'true', true)").Error; err != nil {
+			return err
+		}
 		privateRows, err := tx.WithContext(ctx).Raw(`
 			SELECT diagnostic.team_id::text, diagnostic.diagnostic_id::text, attempt.space_id::text
 			FROM remember_attempt_diagnostics AS diagnostic
@@ -813,9 +816,6 @@ func (r *Store) purgeExpiredRememberAttemptDiagnostics(ctx context.Context, batc
 			if err := globalRows.Close(); err != nil {
 				return err
 			}
-		}
-		if err := tx.Exec("SELECT set_config('app.remember_attempt_diagnostic_purge', 'true', true)").Error; err != nil {
-			return err
 		}
 		for _, candidate := range candidates {
 			result := tx.WithContext(ctx).Exec(`

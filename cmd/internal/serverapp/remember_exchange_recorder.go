@@ -2,6 +2,8 @@ package serverapp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -109,15 +111,33 @@ func rememberFailureDiagnostics(
 	}
 	items := make([]repository.RememberAttemptDiagnosticInput, 0, len(exchanges)+2)
 	if len(input.OriginalRequest) > 0 {
-		requestBody, truncated := rememberDiagnosticBodyState(input.OriginalRequest)
-		captureState := "captured"
-		if truncated {
-			captureState = "truncated"
+		if input.SecurityRejected {
+			requestHash := input.RequestHash
+			if requestHash == "" {
+				digest := sha256.Sum256(input.OriginalRequest)
+				requestHash = "sha256:" + hex.EncodeToString(digest[:])
+			}
+			requestBody, _ := json.Marshal(map[string]any{
+				"capture":        "hash_only",
+				"evidence_count": len(input.Evidence),
+				"original_bytes": len(input.OriginalRequest),
+				"request_sha256": requestHash,
+			})
+			items = append(items, repository.RememberAttemptDiagnosticInput{
+				SequenceNo: 1, Kind: "original_request", Component: "remember",
+				RequestBody: requestBody, RequestContentType: "application/json", Outcome: "hash_only", CaptureState: "hash_only",
+			})
+		} else {
+			requestBody, truncated := rememberDiagnosticBodyState(input.OriginalRequest)
+			captureState := "captured"
+			if truncated {
+				captureState = "truncated"
+			}
+			items = append(items, repository.RememberAttemptDiagnosticInput{
+				SequenceNo: 1, Kind: "original_request", Component: "remember",
+				RequestBody: requestBody, RequestContentType: "application/json", Outcome: "captured", CaptureState: captureState,
+			})
 		}
-		items = append(items, repository.RememberAttemptDiagnosticInput{
-			SequenceNo: 1, Kind: "original_request", Component: "remember",
-			RequestBody: requestBody, RequestContentType: "application/json", Outcome: "captured", CaptureState: captureState,
-		})
 	} else {
 		items = append(items, repository.RememberAttemptDiagnosticInput{
 			SequenceNo: 1, Kind: "original_request", Component: "remember", Outcome: "not_captured", CaptureState: "not_captured",
@@ -133,9 +153,8 @@ func rememberFailureDiagnostics(
 		if capturedAt.IsZero() {
 			capturedAt = time.Now().UTC()
 		}
-		requestBody, responseBody := modelprovider.ProjectProviderExchangeBodies(exchange.Component, exchange.RequestBody, exchange.ResponseBody)
-		requestBody, requestTruncated := rememberDiagnosticBodyState(requestBody)
-		responseBody, responseTruncated := rememberDiagnosticBodyState(responseBody)
+		requestBody, requestTruncated := rememberDiagnosticBodyState(exchange.RequestBody)
+		responseBody, responseTruncated := rememberDiagnosticBodyState(exchange.ResponseBody)
 		captureState := rememberDiagnosticCaptureStateForExchange(exchange)
 		if requestTruncated || responseTruncated {
 			captureState = "truncated"

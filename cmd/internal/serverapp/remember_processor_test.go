@@ -103,6 +103,20 @@ func TestRememberFailureDiagnosticsMarksUndeliveredCallerResponseOnCancellation(
 	require.Empty(t, items[2].ResponseBody)
 }
 
+func TestRememberFailureDiagnosticsUsesHashOnlyRequestForSecurityRejection(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{
+		OriginalRequest:  []byte(`{"evidence":[{"content":"my production password is hunter2"}]}`),
+		RequestHash:      "sha256:request-hash",
+		SecurityRejected: true,
+		Evidence:         []rememberapp.EvidenceInput{{Content: "my production password is hunter2"}},
+	}
+	items := rememberFailureDiagnostics(input, nil, nil, nil, true, "assessment")
+	require.Equal(t, "hash_only", items[0].Outcome)
+	require.Equal(t, "hash_only", items[0].CaptureState)
+	require.Contains(t, string(items[0].RequestBody), "sha256:request-hash")
+	require.NotContains(t, string(items[0].RequestBody), "hunter2")
+}
+
 func TestRememberCallerResponseDeliveryUsesRequestContext(t *testing.T) {
 	require.True(t, rememberCallerResponseDelivered(context.Background(), rememberapp.ErrRememberRequestTimeout))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -127,6 +141,20 @@ func TestRememberExchangeRecorderBoundsBodiesAndAggregate(t *testing.T) {
 	require.Equal(t, "captured", exchanges[0].Outcome)
 	require.Equal(t, "truncated", exchanges[0].CaptureState)
 	require.LessOrEqual(t, len(exchanges[0].ResponseBody), rememberDiagnosticMaxBodyBytes)
+}
+
+func TestRememberExchangeRecorderProjectsProviderExchangeOnce(t *testing.T) {
+	recorder := &rememberExchangeRecorder{}
+	recorder.RecordProviderExchange(context.Background(), modelprovider.ProviderExchange{
+		Component:    "embedding",
+		RequestBody:  []byte(`{"model":"embedding-model","input":["private evidence"],"dimensions":2}`),
+		ResponseBody: []byte(`{"model":"embedding-model","data":[{"index":0,"embedding":[0.1,0.2]}]}`),
+		Outcome:      "captured",
+	})
+	exchanges := recorder.Snapshot()
+	require.Len(t, exchanges, 1)
+	require.Contains(t, string(exchanges[0].RequestBody), `"input_count":1`)
+	require.Contains(t, string(exchanges[0].ResponseBody), `"embedding_dimensions":2`)
 }
 
 func TestRememberExchangeRecorderRetainsLaterMetadataAfterAggregateLimit(t *testing.T) {

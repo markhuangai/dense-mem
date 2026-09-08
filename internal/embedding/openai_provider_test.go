@@ -48,8 +48,22 @@ func TestOpenAIProviderRecordsBoundedExchange(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recorder.exchanges, 1)
 	require.Equal(t, "embedding", recorder.exchanges[0].Component)
-	require.Equal(t, `{"data":[{"embedding_dimensions":2,"object":""}]}`, string(recorder.exchanges[0].ResponseBody))
+	require.Equal(t, response, string(recorder.exchanges[0].ResponseBody))
 	require.Contains(t, string(recorder.exchanges[0].RequestBody), "embedding-model")
+}
+
+func TestOpenAIProviderAcceptsEmbeddingResponseAboveDiagnosticRetentionCap(t *testing.T) {
+	padding := strings.Repeat("x", 17<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"data":[{"embedding":[0.1,0.2]}],"padding":"`+padding+`"}`)
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIEmbeddingProvider(&config.Config{
+		AIAPIURL: srv.URL, AIAPIKey: "key", AIEmbeddingModel: "embedding-model", AIEmbeddingDimensions: 2,
+	}, srv.Client())
+	_, _, err := p.Embed(context.Background(), "capture me")
+	require.NoError(t, err)
 }
 
 func (r *truncatedResponseReader) Read(p []byte) (int, error) {

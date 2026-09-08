@@ -67,3 +67,36 @@ func TestProjectProviderExchangeBodiesMarksMalformedPayloadWithoutRetainingIt(t 
 	require.Equal(t, `{"byte_count":14,"format":"non_json"}`, string(request))
 	require.Equal(t, `{"byte_count":25,"format":"non_json"}`, string(response))
 }
+
+func TestProjectProviderExchangeBodiesRetainsOnlySafeResponseMetadata(t *testing.T) {
+	request, response := ProjectProviderExchangeBodies("other", []byte(`{"model":"model","unexpected":true}`), []byte(`{"id":"id","object":"response","model":"model","system_fingerprint":"fingerprint","usage":{"input_tokens":2,"output_tokens":3},"error":{"type":"bad_request","code":"invalid","param":"model","message":"private"}}`))
+	require.Equal(t, `{"model":"model"}`, string(request))
+	require.Contains(t, string(response), `"system_fingerprint":"fingerprint"`)
+	require.Contains(t, string(response), `"input_tokens":2`)
+	require.Contains(t, string(response), `"output_tokens":3`)
+	require.NotContains(t, string(response), "private")
+	require.Nil(t, mustProjectionBodies(t, "other", nil, nil))
+}
+
+func TestProjectProviderExchangeBodiesHandlesSparseAndNonStringFields(t *testing.T) {
+	request, response := ProjectProviderExchangeBodies("assessor", []byte(`{"temperature":0.5,"messages":[{"role":"user","content":null},{"role":"assistant","content":{"parts":[1]}}],"response_format":{"type":"json_schema","json_schema":{"strict":false}}}`), []byte(`{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":null}}]}`))
+	require.Contains(t, string(request), `"temperature":0.5`)
+	require.Contains(t, string(request), `"message_content_bytes":[0,13]`)
+	require.Contains(t, string(request), `"response_schema_strict":false`)
+	require.Contains(t, string(response), `"message_content_bytes":0`)
+	require.Contains(t, string(response), `"finish_reason":"length"`)
+
+	emptyRequest, emptyResponse := ProjectProviderExchangeBodies("other", []byte(`{}`), []byte(`{"error":{"message":"private"}}`))
+	require.Equal(t, `{"field_count":0}`, string(emptyRequest))
+	require.Equal(t, `{"field_count":1}`, string(emptyResponse))
+	request, response = ProjectProviderExchangeBodies("other", nil, nil)
+	require.Nil(t, request)
+	require.Nil(t, response)
+}
+
+func mustProjectionBodies(t *testing.T, component string, request, response []byte) []byte {
+	t.Helper()
+	projectedRequest, projectedResponse := ProjectProviderExchangeBodies(component, request, response)
+	require.Nil(t, projectedRequest)
+	return projectedResponse
+}

@@ -217,6 +217,7 @@ func (p *rememberSynchronousProcessor) processRememberUnlocked(
 		return fail(buildErr, "assessment")
 	}
 	if input.SecurityRejected || rememberAssessmentSecurityRejected(prepared) {
+		input.SecurityRejected = true
 		return fail(rememberapp.ErrRememberPolicyRejected, "assessment")
 	}
 	embeddingCtx, embeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)

@@ -249,6 +249,7 @@ function DiagnosticExchange({ exchange, requestOnly = false, responseOnly = fals
           {!responseOnly && exchange.request_body !== undefined && <DiagnosticBody label={requestOnly ? "Request body" : "Provider request"} content={exchange.request_body} />}
           {!requestOnly && exchange.response_body !== undefined && <DiagnosticBody label={responseOnly ? "Caller response" : "Provider response"} content={exchange.response_body} />}
           {(state === "not_captured" || state === "provider_not_called") && <DiagnosticUnavailable message={state === "provider_not_called" ? "The provider was not called for this failed attempt." : "This body was not captured before the attempt ended."} />}
+          {state === "hash_only" && <DiagnosticUnavailable message="Only a request hash and bounded metadata were retained because security scanning rejected this request." />}
           {state === "no_response" && <DiagnosticUnavailable message="The provider call did not produce an HTTP response." />}
           {state === "interrupted" && <DiagnosticUnavailable message="Capture was interrupted before the provider response was fully read." />}
           {state === "not_delivered" && <DiagnosticUnavailable message="No response was delivered to the caller because the request ended before the server could return it." />}

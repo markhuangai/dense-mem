@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/config"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 )
@@ -28,7 +29,13 @@ type OpenAIEmbeddingProvider struct {
 	metrics    observability.DiscoverabilityMetrics
 }
 
-const openAIEmbeddingMaxResponseBytes = 16 << 20
+const (
+	// A float32 JSON value is bounded well below 32 bytes. The transport cap
+	// covers the largest supported batch and vector dimension; diagnostics are
+	// projected and remain subject to the smaller operator-retention bounds.
+	openAIEmbeddingMaxValueBytes    = 32
+	openAIEmbeddingMaxResponseBytes = domain.MaxEmbeddingBatchDocuments*domain.MaxEmbeddingDimensions*openAIEmbeddingMaxValueBytes + (4 << 20)
+)
 
 // Compile-time assertion that OpenAIEmbeddingProvider implements EmbeddingProviderInterface.
 var _ EmbeddingProviderInterface = (*OpenAIEmbeddingProvider)(nil)
@@ -246,7 +253,6 @@ func recordEmbeddingExchange(ctx context.Context, model string, requestBody, res
 	if len(requestBody) > modelprovider.MaxProviderDiagnosticBodyBytes || len(responseBody) > modelprovider.MaxProviderDiagnosticBodyBytes {
 		captureState = "truncated"
 	}
-	requestBody, responseBody = modelprovider.ProjectProviderExchangeBodies("embedding", requestBody, responseBody)
 	now := time.Now()
 	recorder.RecordProviderExchange(ctx, modelprovider.ProviderExchange{
 		Component: "embedding", Model: model,
