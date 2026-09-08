@@ -189,7 +189,7 @@ func loadSemanticOverviewGraphRows(
 	ctx context.Context,
 	tx *gorm.DB,
 	input graphExecutionQuery,
-) ([]graphEdgeRow, error) {
+) (batch []graphEdgeRow, err error) {
 	extraWhere := ""
 	var extraArgs []any
 	if input.spaceID != "" {
@@ -203,7 +203,12 @@ func loadSemanticOverviewGraphRows(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			batch = nil
+			err = closeErr
+		}
+	}()
 	return scanSemanticGraphRows(rows, input.Types)
 }
 
@@ -477,10 +482,6 @@ func graphSnapshot(input graphcontract.Query, rows []graphEdgeRow) *graphcontrac
 
 func normalizeSemanticGraphTypes(values []string) []string {
 	return graphread.NormalizeTypes(values)
-}
-
-func semanticGraphTypeSet(values []string) map[string]bool {
-	return graphread.TypeSet(values)
 }
 
 func normalizeSemanticGraphNodeType(raw string) string {

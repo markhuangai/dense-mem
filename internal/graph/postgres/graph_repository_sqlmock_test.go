@@ -60,6 +60,33 @@ func TestLoadSemanticOverviewGraphRowsScansAndClosesAdapterRows(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestLoadSemanticOverviewGraphRowsPropagatesRowsCloseError(t *testing.T) {
+	db, mock, gormDB := newGraphSQLMockDB(t)
+	defer db.Close()
+	closeErr := errors.New("overview rows close failed")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT e.relationship_id")).WillReturnRows(
+		sqlmock.NewRows(graphSQLColumns()).
+			AddRow(
+				"edge-1", "owner-1", "uses", 1, 2,
+				"entity:source", "source", "Source", "project", "active", "owner-1", time.Now(),
+				"value:target", "target", "value", "Target", "date", "active", "", time.Now(),
+			).
+			CloseError(closeErr),
+	)
+
+	rows, err := loadSemanticOverviewGraphRows(context.Background(), gormDB, graphExecutionQuery{
+		Query: graphcontract.Query{
+			TeamID: uuid.NewString(),
+			Scope:  "overview",
+			Types:  []string{"value"},
+			Limit:  1,
+		},
+	})
+	assert.Nil(t, rows)
+	assert.ErrorIs(t, err, closeErr)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestScanSemanticGraphRowsPropagatesRowError(t *testing.T) {
 	db, mock, gormDB := newGraphSQLMockDB(t)
 	defer db.Close()
