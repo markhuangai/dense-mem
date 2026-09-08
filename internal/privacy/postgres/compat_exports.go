@@ -49,5 +49,7 @@ func (r *Store) SetNow(now func() time.Time) {
 	if r == nil || now == nil {
 		return
 	}
+	r.clockMu.Lock()
+	defer r.clockMu.Unlock()
 	r.now = now
 }

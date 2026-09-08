@@ -98,6 +98,7 @@ type PrivateMemoryRepositoryImpl struct {
 	rls storagepostgres.RLSHelper
 	now func() time.Time
 
+	clockMu    sync.RWMutex
 	manifestMu sync.RWMutex
 	ordered    []string
 }
@@ -110,6 +111,19 @@ func NewPrivateMemoryRepository(db *gorm.DB, rls storagepostgres.RLSHelper) *Pri
 		rls: rls,
 		now: func() time.Time { return time.Now().UTC() },
 	}
+}
+
+func (r *PrivateMemoryRepositoryImpl) currentTime() time.Time {
+	if r == nil {
+		return time.Now().UTC()
+	}
+	r.clockMu.RLock()
+	now := r.now
+	r.clockMu.RUnlock()
+	if now == nil {
+		return time.Now().UTC()
+	}
+	return now().UTC()
 }
 
 func PrivateMemoryErasureManifest() []string {
@@ -442,7 +456,7 @@ func (r *PrivateMemoryRepositoryImpl) DisableSSOCredential(ctx context.Context, 
 	}
 	var operation *domain.PrivateMemoryErasureOperation
 	created := false
-	now := r.now().UTC()
+	now := r.currentTime()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		if err := lockPrivateMemoryIdempotencyScopeTx(ctx, tx, input.IdempotencyScopeHash); err != nil {
 			return err

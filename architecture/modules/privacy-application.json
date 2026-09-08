@@ -19,6 +19,7 @@
     {"path": "internal/repository/private_memory_compat.go", "issue": 364},
     {"path": "internal/repository/private_memory_conflict_fixture_test.go", "issue": 364},
     {"path": "internal/repository/private_memory_credential_retirement_integration.e2e", "issue": 364},
+    {"path": "internal/repository/private_memory_compat_test.go", "issue": 364},
     {"path": "internal/repository/private_memory_remember_assessment_integration.e2e", "issue": 364},
     {"path": "internal/repository/private_memory_repository_integration.e2e", "issue": 364},
     {"path": "internal/repository/private_memory_semantic_lineage_integration.e2e", "issue": 364},
@@ -48,7 +49,7 @@
     },
     {
       "source_path": "internal/repository/private_memory_compat.go",
-      "fields": ["NewPrivateMemoryRepository", "PrivateMemoryRepositoryImpl", "PrivateMemoryRepository", "PrivateMemoryErasureRequest", "PrivateMemoryCredentialRevocationAudit", "PrivateMemoryRetentionRequest", "PrivateMemoryErasureManifest", "privateMemoryHash", "privateMemoryRetryDelay", "wrapPrivateMemoryError", "ErrPrivateMemoryNotFound", "ErrPrivateMemoryLegalHold", "ErrPrivateMemoryIdempotency", "ErrPrivateMemoryOperationConflict", "ErrPrivateMemoryManifest", "ErrPrivateMemoryClaimLost", "ErrPrivateMemoryRetentionDisabled", "ErrPrivateMemoryHoldConflict", "ErrPrivateMemoryInternal", "privateMemoryMaximumAttempts", "privateMemoryAuditMetadataJSON"],
+      "fields": ["NewPrivateMemoryRepository", "PrivateMemoryRepositoryImpl", "PrivateMemoryRepository", "PrivateMemoryErasureRequest", "PrivateMemoryCredentialRevocationAudit", "PrivateMemoryRetentionRequest", "PrivateMemoryErasureManifest", "privateMemoryHash", "privateMemoryRetryDelay", "wrapPrivateMemoryError", "ErrPrivateMemoryNotFound", "ErrPrivateMemoryLegalHold", "ErrPrivateMemoryIdempotency", "ErrPrivateMemoryOperationConflict", "ErrPrivateMemoryManifest", "ErrPrivateMemoryClaimLost", "ErrPrivateMemoryRetentionDisabled", "ErrPrivateMemoryHoldConflict", "ErrPrivateMemoryInternal", "privateMemoryMaximumAttempts", "privateMemoryAuditMetadataJSON", "syncClock"],
       "consumers": [
         {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
         {"path": "internal/repository/canonical_credentials_integration.e2e", "symbol": "TestDeleteForTeamRetiresPromotedSSOCredentialPrivateSpace"},
@@ -57,6 +58,7 @@
         {"path": "internal/repository/private_memory_audit_integration.e2e", "symbol": "TestPrivateMemorySSOCredentialRevocationAuditFailureRollsBackDisable"},
         {"path": "internal/repository/private_memory_audit_integration.e2e", "symbol": "TestPrivateMemorySSOCredentialRevocationAuditStoresProfileAndCredentialActors"},
         {"path": "internal/repository/private_memory_credential_retirement_integration.e2e", "symbol": "TestPrivateMemoryCredentialRetirementUpgradesActiveErasure"},
+        {"path": "internal/repository/private_memory_compat_test.go", "symbol": "TestPrivateMemoryCompatibilityClockSyncIsSafeConcurrently"},
         {"path": "internal/repository/private_memory_remember_assessment_integration.e2e", "symbol": "TestPrivateMemoryErasureCleansSynchronousAssessmentAfterAttemptOrder"},
         {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryManifestMatchesCatalog"},
         {"path": "internal/repository/private_memory_repository_integration.e2e", "symbol": "TestPrivateMemoryManifestMismatchBlocksPrepare"},
