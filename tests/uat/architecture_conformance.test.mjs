@@ -95,9 +95,9 @@ function copyManifestFixture() {
 test("loads the complete independently owned architecture inventory", () => {
   assert.equal(productionManifest.load_diagnostics.length, 0);
   assert.equal(productionManifest.fragments.length, 61);
-  assert.equal(productionManifest.go.units.length, 64);
+  assert.equal(productionManifest.go.units.length, 66);
   assert.equal(productionManifest.browser.units.length, 40);
-  assert.equal(productionManifest.exceptions.length, 25);
+  assert.equal(productionManifest.exceptions.length, 26);
   assert.equal(productionManifest.workers.length, 52);
   assert.deepEqual(productionManifest.completed_issues, [260, 347, 261, 262, 263, 348]);
   assert.deepEqual(validateManifest(productionManifest), []);

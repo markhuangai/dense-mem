@@ -181,7 +181,7 @@ func TestConflictSnapshotScopeSerializesPlacementReviewAndWrite(t *testing.T) {
 	placementDone := make(chan error, 1)
 	go func() {
 		placementDone <- rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
-			placement, err := loadRelationshipConflictPlacement(ctx, tx, teamID, first.RelationshipResults[0].Relationship)
+			placement, err := loadRelationshipConflictPlacement(ctx, tx, teamID, fromKnowledgeRelationshipRecord(first.RelationshipResults[0].Relationship))
 			if err != nil {
 				return err
 			}

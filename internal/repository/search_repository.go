@@ -10,6 +10,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -39,17 +41,18 @@ func inlineEmbeddingResults(ctx context.Context) []InlineEmbeddingResult {
 }
 
 var (
-	ErrSearchStaleVersion                 = errors.New("search stale source or document version")
-	ErrSearchContractMismatch             = errors.New("search contract mismatch")
-	ErrSearchEmbeddingRequired            = errors.New("synchronous semantic write requires inline embeddings")
+	ErrSearchStaleVersion                 = knowledgecontract.ErrSearchStaleVersion
+	ErrSearchContractMismatch             = knowledgecontract.ErrSearchContractMismatch
+	ErrSearchEmbeddingRequired            = knowledgecontract.ErrSearchEmbeddingRequired
 	ErrSearchConvergenceAttentionRequired = errors.New("search convergence is attention_required")
-	ErrInlineEmbeddingPlanMismatch        = errors.New("inline embedding plan does not match rendered search documents")
-	ErrInlineEmbeddingPlanTooLarge        = errors.New("inline embedding plan exceeds the document bound")
+	ErrInlineEmbeddingPlanMismatch        = knowledgecontract.ErrInlineEmbeddingPlanMismatch
+	ErrInlineEmbeddingPlanTooLarge        = knowledgecontract.ErrInlineEmbeddingPlanTooLarge
 )
 
 type SearchRepositoryImpl struct {
-	db  *gorm.DB
-	rls rLSHelper
+	db             *gorm.DB
+	rls            rLSHelper
+	knowledgeOwner *knowledgepostgres.Store
 }
 
 var _ SearchRepository = (*SearchRepositoryImpl)(nil)
@@ -89,8 +92,9 @@ func loadSearchPhysicalIndexState(
 
 func NewSearchRepository(db *gorm.DB, rls *postgres.RLS) *SearchRepositoryImpl {
 	return &SearchRepositoryImpl{
-		db:  db,
-		rls: rls,
+		db:             db,
+		rls:            rls,
+		knowledgeOwner: knowledgepostgres.NewStore(db, rls, knowledgecontract.ConflictRuntimeConfig{}),
 	}
 }
 
@@ -299,165 +303,11 @@ func (r *SearchRepositoryImpl) UpsertSearchDocument(
 	ctx context.Context,
 	input UpsertSearchDocumentInput,
 ) (*SearchDocumentResult, error) {
-	input = normalizeUpsertSearchDocumentInput(input)
-	if err := validateUpsertSearchDocumentInput(input); err != nil {
-		return nil, err
+	owner := r.knowledgeWriteOwner()
+	if owner == nil {
+		return nil, errors.New("search: knowledge write owner is required")
 	}
-	contract, err := r.contractForDocument(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	var result *SearchDocumentResult
-	err = r.withActiveTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
-		if err := seedTeamPredicateDefinitions(ctx, tx, input.TeamID); err != nil {
-			return err
-		}
-		metadata, err := marshalSearchJSON(input.Metadata)
-		if err != nil {
-			return err
-		}
-		rows, err := tx.WithContext(ctx).Raw(`
-			WITH upserted AS (
-				INSERT INTO search_documents (
-				    team_id, owner_profile_id, space_id, space_generation, source_kind, source_id, source_version,
-				    projection_format_version, projection_generation_id,
-				    document_version, embedding_contract_id, embedding_dimensions,
-				    search_state, document_text, document_hash, metadata
-				) VALUES (
-				    ?::uuid, ?::uuid, COALESCE(NULLIF(?, '')::uuid, dense_mem_team_shared_space(?::uuid)), NULLIF(?, 0)::bigint, ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, 1, ?::uuid, ?,
-				    CASE WHEN ? = 'evidence' AND EXISTS (
-				        SELECT 1 FROM evidence_exact_aliases AS alias
-				        WHERE alias.team_id = ?::uuid AND alias.alias_fragment_id = ?::uuid
-				    ) THEN 'not_required' ELSE 'pending' END,
-				    ?, ?, ?::jsonb
-				)
-				ON CONFLICT (team_id, source_kind, source_id, embedding_contract_id)
-				DO UPDATE SET
-				    owner_profile_id = EXCLUDED.owner_profile_id,
-				    source_version = EXCLUDED.source_version,
-				    projection_format_version = EXCLUDED.projection_format_version,
-				    projection_generation_id = EXCLUDED.projection_generation_id,
-				    document_version = CASE
-				        WHEN search_documents.document_hash = EXCLUDED.document_hash
-				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
-				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
-				        THEN search_documents.document_version
-				        ELSE search_documents.document_version + 1
-				    END,
-				    search_state = CASE
-				        WHEN search_documents.source_kind = 'evidence' AND EXISTS (
-				            SELECT 1 FROM evidence_exact_aliases AS alias
-				            WHERE alias.team_id = search_documents.team_id
-				              AND alias.alias_fragment_id = search_documents.source_id
-				        ) THEN 'not_required'
-				        WHEN search_documents.document_hash = EXCLUDED.document_hash
-				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
-				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
-				         AND search_documents.search_state IN ('current', 'failed')
-				        THEN search_documents.search_state
-				        ELSE 'pending'
-				    END,
-				    document_text = EXCLUDED.document_text,
-				    document_hash = EXCLUDED.document_hash,
-				    embedding = CASE
-				        WHEN search_documents.source_kind = 'evidence' AND EXISTS (
-				            SELECT 1 FROM evidence_exact_aliases AS alias
-				            WHERE alias.team_id = search_documents.team_id
-				              AND alias.alias_fragment_id = search_documents.source_id
-				        ) THEN NULL
-				        WHEN search_documents.document_hash = EXCLUDED.document_hash
-				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
-				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
-				        THEN search_documents.embedding
-				        ELSE NULL
-				    END,
-				    embedding_updated_at = CASE
-				        WHEN search_documents.source_kind = 'evidence' AND EXISTS (
-				            SELECT 1 FROM evidence_exact_aliases AS alias
-				            WHERE alias.team_id = search_documents.team_id
-				              AND alias.alias_fragment_id = search_documents.source_id
-				        ) THEN NULL
-				        WHEN search_documents.document_hash = EXCLUDED.document_hash
-				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
-				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
-				        THEN search_documents.embedding_updated_at
-				        ELSE NULL
-				    END,
-				    embedding_error = CASE
-				        WHEN search_documents.source_kind = 'evidence' AND EXISTS (
-				            SELECT 1 FROM evidence_exact_aliases AS alias
-				            WHERE alias.team_id = search_documents.team_id
-				              AND alias.alias_fragment_id = search_documents.source_id
-				        ) THEN ''
-				        WHEN search_documents.document_hash = EXCLUDED.document_hash
-				         AND search_documents.projection_format_version = EXCLUDED.projection_format_version
-				         AND search_documents.projection_generation_id IS NOT DISTINCT FROM EXCLUDED.projection_generation_id
-				        THEN search_documents.embedding_error
-				        ELSE ''
-				    END,
-				    metadata = EXCLUDED.metadata,
-				    updated_at = now()
-				WHERE EXCLUDED.source_version >= search_documents.source_version
-				  AND search_documents.space_id = EXCLUDED.space_id
-				  AND search_documents.space_generation = EXCLUDED.space_generation
-				RETURNING team_id::text, search_document_id::text, owner_profile_id::text,
-				          space_id::text, space_generation,
-				          source_kind, source_id::text, source_version,
-				          projection_format_version, COALESCE(projection_generation_id::text, ''),
-				          document_version,
-				          embedding_contract_id::text, embedding_dimensions, search_state
-			)
-			SELECT * FROM upserted
-			`, input.TeamID, input.OwnerProfileID, input.SpaceID, input.TeamID, input.SpaceGeneration, input.SourceKind, input.SourceID, input.SourceVersion,
-			input.ProjectionFormat, input.ProjectionGenerationID,
-			contract.EmbeddingContractID, contract.EmbeddingDimensions, input.SourceKind, input.TeamID, input.SourceID,
-			input.DocumentText,
-			input.DocumentHash, string(metadata)).Rows()
-		if err != nil {
-			return err
-		}
-		if !rows.Next() {
-			err := rows.Err()
-			_ = rows.Close()
-			if err != nil {
-				return err
-			}
-			return ErrSearchStaleVersion
-		}
-		loaded := SearchDocumentResult{}
-		if err := rows.Scan(
-			&loaded.TeamID,
-			&loaded.SearchDocumentID,
-			&loaded.OwnerProfileID,
-			&loaded.SpaceID,
-			&loaded.SpaceGeneration,
-			&loaded.SourceKind,
-			&loaded.SourceID,
-			&loaded.SourceVersion,
-			&loaded.ProjectionFormat,
-			&loaded.ProjectionGenerationID,
-			&loaded.DocumentVersion,
-			&loaded.EmbeddingContractID,
-			&loaded.EmbeddingDimensions,
-			&loaded.SearchState,
-		); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-		result = &loaded
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("search: upsert document: %w", err)
-	}
-	return result, nil
+	return owner.UpsertSearchDocument(ctx, knowledgepostgres.UpsertSearchDocumentInput(input))
 }
 
 func (r *SearchRepositoryImpl) SearchFullText(ctx context.Context, input FullTextSearchInput) ([]SearchHit, error) {

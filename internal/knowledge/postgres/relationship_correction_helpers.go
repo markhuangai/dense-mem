@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 import (
 	"context"
@@ -650,7 +650,7 @@ func lockRelationshipCorrectionConflictSnapshotScopes(
 	return locked, nil
 }
 
-func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
+func (r *Store) applyRelationshipCorrection(
 	ctx context.Context,
 	tx *gorm.DB,
 	row *relationshipCorrectionSubmissionRow,
@@ -921,7 +921,7 @@ func (r *SemanticRepositoryImpl) applyRelationshipCorrection(
 	return relationshipCorrectionResultFromRow(updated), nil
 }
 
-func (r *SemanticRepositoryImpl) rejectAppliedRelationshipCorrection(
+func (r *Store) rejectAppliedRelationshipCorrection(
 	ctx context.Context,
 	tx *gorm.DB,
 	row *relationshipCorrectionSubmissionRow,

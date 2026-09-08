@@ -1,0 +1,660 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+
+	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+)
+
+const (
+	ConflictAssessmentMaxFailedDays = 5
+	conflictResolutionMaxFragments  = 200
+)
+
+type ReserveOverdueConflictAssessmentInput = knowledgecontract.ReserveOverdueConflictAssessmentInput
+
+type OverdueConflictAssessmentReservation = knowledgecontract.OverdueConflictAssessmentReservation
+
+type OverdueConflictAssessmentDossier = knowledgecontract.OverdueConflictAssessmentDossier
+
+type OverdueConflictAssessmentPosition = knowledgecontract.OverdueConflictAssessmentPosition
+
+type OverdueConflictAssessmentEvidence = knowledgecontract.OverdueConflictAssessmentEvidence
+
+type CompleteOverdueConflictAssessmentInput = knowledgecontract.CompleteOverdueConflictAssessmentInput
+
+type CompleteOverdueConflictAssessmentResult = knowledgecontract.CompleteOverdueConflictAssessmentResult
+
+type ApplyOverdueConflictResolutionInput = knowledgecontract.ApplyOverdueConflictResolutionInput
+
+type ApplyOverdueConflictResolutionResult = knowledgecontract.ApplyOverdueConflictResolutionResult
+
+type ResumePendingOverdueConflictResolutionInput = knowledgecontract.ResumePendingOverdueConflictResolutionInput
+
+type ConflictDerivedEvidenceTarget = knowledgecontract.ConflictDerivedEvidenceTarget
+
+type ClaimConflictDerivedEvidenceTasksInput = knowledgecontract.ClaimConflictDerivedEvidenceTasksInput
+
+type StageConflictDerivedEvidenceResult = knowledgecontract.StageConflictDerivedEvidenceResult
+
+func (r *Store) ReserveOverdueConflictAssessment(
+	ctx context.Context,
+	input ReserveOverdueConflictAssessmentInput,
+) (*OverdueConflictAssessmentReservation, *OverdueConflictAssessmentDossier, bool, error) {
+	input = normalizeReserveOverdueConflictAssessmentInput(input)
+	if err := validateReserveOverdueConflictAssessmentInput(input); err != nil {
+		return nil, nil, false, err
+	}
+	var reservation *OverdueConflictAssessmentReservation
+	var dossier *OverdueConflictAssessmentDossier
+	reserved := false
+	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		if err := setConflictSystemTeamContext(ctx, tx, input.TeamID); err != nil {
+			return err
+		}
+		if err := ensureActiveTeamForMutation(ctx, tx, input.TeamID); err != nil {
+			return err
+		}
+		var status string
+		var version int
+		if err := tx.WithContext(ctx).Raw(`
+			SELECT status, version
+			FROM relationship_conflict_cases
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+			FOR UPDATE
+		`, input.TeamID, input.ConflictID).Row().Scan(&status, &version); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		if status != string(domain.RelationshipConflictOverdue) {
+			return nil
+		}
+		var pending int
+		if err := tx.WithContext(ctx).Raw(`
+			SELECT count(*)::int
+			FROM relationship_conflict_resolution_plans
+			WHERE team_id = ?::uuid
+			  AND conflict_id = ?::uuid
+			  AND expected_case_version = ?
+			  AND status = 'resolution_pending'
+		`, input.TeamID, input.ConflictID, version).Row().Scan(&pending); err != nil {
+			return err
+		}
+		if pending > 0 {
+			return nil
+		}
+		if err := expirePriorOverdueConflictAssessmentReservations(ctx, tx, input, version); err != nil {
+			return err
+		}
+		failureCount, err := countFailedOverdueConflictAssessments(ctx, tx, input.TeamID, input.ConflictID, version, input.Model, input.PolicyVersion)
+		if err != nil {
+			return err
+		}
+		if failureCount >= ConflictAssessmentMaxFailedDays {
+			assessmentAttemptID, err := latestFailedOverdueConflictAssessmentID(ctx, tx, input.TeamID, input.ConflictID, version, input.Model, input.PolicyVersion)
+			if err != nil {
+				return err
+			}
+			loaded, err := loadOverdueConflictAssessmentDossier(ctx, tx, input.TeamID, input.ConflictID, version)
+			if err != nil {
+				return err
+			}
+			reservation = &OverdueConflictAssessmentReservation{
+				AssessmentAttemptID: assessmentAttemptID,
+				CaseVersion:         version,
+				Model:               input.Model,
+				PolicyVersion:       input.PolicyVersion,
+				LastWriteWins:       true,
+			}
+			dossier = loaded
+			reserved = true
+			return nil
+		}
+
+		var assessmentAttemptID string
+		err = tx.WithContext(ctx).Raw(`
+			INSERT INTO relationship_conflict_ai_assessment_attempts (
+			    team_id, space_id, space_generation, conflict_id, case_version,
+			    local_assessment_date, model, policy_version
+			)
+			SELECT ?::uuid, conflict.space_id, conflict.space_generation, ?::uuid, ?, ?, ?, ?
+			FROM relationship_conflict_cases AS conflict
+			WHERE conflict.team_id = ?::uuid AND conflict.conflict_id = ?::uuid
+			ON CONFLICT (team_id, conflict_id, case_version, local_assessment_date, model, policy_version)
+			DO NOTHING
+			RETURNING assessment_attempt_id::text
+		`, input.TeamID, input.ConflictID, version, input.LocalAssessmentDate, input.Model, input.PolicyVersion,
+			input.TeamID, input.ConflictID).Row().Scan(&assessmentAttemptID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if assessmentAttemptID == "" {
+			return nil
+		}
+		if err := appendConflictAssessmentEvent(ctx, tx, input.TeamID, assessmentAttemptID, "reserved", "", map[string]any{
+			"case_version": version,
+			"model":        input.Model,
+		}); err != nil {
+			return err
+		}
+		if err := appendRelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, "", "", "", string(domain.RelationshipConflictEventAIAssessmentReserved), "reserved", "case:"+input.ConflictID+":assessment:"+assessmentAttemptID+":reserved", map[string]any{
+			"assessment_attempt_id": assessmentAttemptID,
+			"case_version":          version,
+			"model":                 input.Model,
+		}); err != nil {
+			return err
+		}
+		loaded, err := loadOverdueConflictAssessmentDossier(ctx, tx, input.TeamID, input.ConflictID, version)
+		if err != nil {
+			return err
+		}
+		reservation = &OverdueConflictAssessmentReservation{
+			AssessmentAttemptID: assessmentAttemptID,
+			CaseVersion:         version,
+			Model:               input.Model,
+			PolicyVersion:       input.PolicyVersion,
+		}
+		dossier = loaded
+		reserved = true
+		return nil
+	})
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("conflict review: reserve overdue assessment: %w", err)
+	}
+	return reservation, dossier, reserved, nil
+}
+
+func (r *Store) CompleteOverdueConflictAssessment(
+	ctx context.Context,
+	input CompleteOverdueConflictAssessmentInput,
+) (*CompleteOverdueConflictAssessmentResult, error) {
+	input = normalizeCompleteOverdueConflictAssessmentInput(input)
+	if err := validateCompleteOverdueConflictAssessmentInput(input); err != nil {
+		return nil, err
+	}
+	result := &CompleteOverdueConflictAssessmentResult{}
+	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
+		if err := setConflictSystemTeamContext(ctx, tx, input.TeamID); err != nil {
+			return err
+		}
+		if err := ensureActiveTeamForMutation(ctx, tx, input.TeamID); err != nil {
+			return err
+		}
+		if input.Decision == "selected" {
+			if err := validateConflictResolutionPosition(ctx, tx, input.TeamID, input.ConflictID, input.SelectedPositionID); err != nil {
+				return err
+			}
+		}
+		status, outcome, err := conflictAssessmentStoredStatus(input)
+		if err != nil {
+			return err
+		}
+		update := tx.WithContext(ctx).Exec(`
+			UPDATE relationship_conflict_ai_assessment_attempts
+			SET status = ?,
+			    selected_position_id = NULLIF(?, '')::uuid,
+			    confidence = ?,
+			    provider_turns = ?,
+			    response_hash = ?,
+			    failure_class = ?,
+			    completed_at = now()
+			WHERE team_id = ?::uuid
+			  AND assessment_attempt_id = ?::uuid
+			  AND conflict_id = ?::uuid
+			  AND case_version = ?
+			  AND status = 'reserved'
+		`, status, input.SelectedPositionID, input.Confidence, input.ProviderTurns, input.ResponseHash, input.FailureClass,
+			input.TeamID, input.AssessmentAttemptID, input.ConflictID, input.CaseVersion)
+		if update.Error != nil {
+			return update.Error
+		}
+		if update.RowsAffected != 1 {
+			return ErrConflictAssessmentReserved
+		}
+		metadata := map[string]any{
+			"case_version":   input.CaseVersion,
+			"provider_turns": input.ProviderTurns,
+		}
+		if input.SelectedPositionID != "" {
+			metadata["selected_position_id"] = input.SelectedPositionID
+		}
+		if input.Confidence != nil {
+			metadata["confidence"] = *input.Confidence
+		}
+		if input.FailureClass != "" {
+			metadata["failure_class"] = input.FailureClass
+		}
+		if err := appendConflictAssessmentEvent(ctx, tx, input.TeamID, input.AssessmentAttemptID, status, outcome, metadata); err != nil {
+			return err
+		}
+		if err := appendRelationshipConflictEvent(ctx, tx, input.TeamID, input.ConflictID, input.SelectedPositionID, "", "", string(domain.RelationshipConflictEventAIAssessed), outcome, "case:"+input.ConflictID+":assessment:"+input.AssessmentAttemptID+":"+status, metadata); err != nil {
+			return err
+		}
+		if status == "failed" {
+			var model string
+			var policyVersion string
+			if err := tx.WithContext(ctx).Raw(`
+				SELECT model, policy_version
+				FROM relationship_conflict_ai_assessment_attempts
+				WHERE team_id = ?::uuid
+				  AND assessment_attempt_id = ?::uuid
+			`, input.TeamID, input.AssessmentAttemptID).Row().Scan(&model, &policyVersion); err != nil {
+				return err
+			}
+			failureCount, err := countFailedOverdueConflictAssessments(ctx, tx, input.TeamID, input.ConflictID, input.CaseVersion, model, policyVersion)
+			if err != nil {
+				return err
+			}
+			result.FailureCount = failureCount
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("conflict review: complete overdue assessment: %w", err)
+	}
+	return result, nil
+}
+
+func normalizeReserveOverdueConflictAssessmentInput(input ReserveOverdueConflictAssessmentInput) ReserveOverdueConflictAssessmentInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.ConflictID = strings.TrimSpace(input.ConflictID)
+	input.ReviewRunID = strings.TrimSpace(input.ReviewRunID)
+	input.WorkerID = strings.TrimSpace(input.WorkerID)
+	input.Model = strings.TrimSpace(input.Model)
+	input.PolicyVersion = strings.TrimSpace(input.PolicyVersion)
+	if input.PolicyVersion == "" {
+		input.PolicyVersion = domain.ConflictOverduePolicyVersion
+	}
+	if input.LocalAssessmentDate.IsZero() {
+		input.LocalAssessmentDate = time.Now().UTC()
+	}
+	year, month, day := input.LocalAssessmentDate.Date()
+	input.LocalAssessmentDate = time.Date(
+		year, month, day,
+		0, 0, 0, 0, time.UTC,
+	)
+	return input
+}
+
+func validateReserveOverdueConflictAssessmentInput(input ReserveOverdueConflictAssessmentInput) error {
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return fmt.Errorf("team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.ConflictID); err != nil {
+		return fmt.Errorf("conflict_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.ReviewRunID); err != nil {
+		return fmt.Errorf("review_run_id is required: %w", err)
+	}
+	if input.WorkerID == "" {
+		return errors.New("worker_id is required")
+	}
+	if input.Model == "" {
+		return errors.New("model is required")
+	}
+	return nil
+}
+
+func normalizeCompleteOverdueConflictAssessmentInput(input CompleteOverdueConflictAssessmentInput) CompleteOverdueConflictAssessmentInput {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.ConflictID = strings.TrimSpace(input.ConflictID)
+	input.AssessmentAttemptID = strings.TrimSpace(input.AssessmentAttemptID)
+	input.ReviewRunID = strings.TrimSpace(input.ReviewRunID)
+	input.Decision = strings.TrimSpace(input.Decision)
+	input.SelectedPositionID = strings.TrimSpace(input.SelectedPositionID)
+	input.ResponseHash = strings.TrimSpace(input.ResponseHash)
+	input.FailureClass = strings.TrimSpace(input.FailureClass)
+	if input.ProviderTurns < 0 {
+		input.ProviderTurns = 0
+	}
+	return input
+}
+
+func validateCompleteOverdueConflictAssessmentInput(input CompleteOverdueConflictAssessmentInput) error {
+	for _, value := range []struct {
+		name string
+		id   string
+	}{
+		{name: "team_id", id: input.TeamID},
+		{name: "conflict_id", id: input.ConflictID},
+		{name: "assessment_attempt_id", id: input.AssessmentAttemptID},
+	} {
+		if _, err := uuid.Parse(value.id); err != nil {
+			return fmt.Errorf("%s is required: %w", value.name, err)
+		}
+	}
+	if input.CaseVersion < 1 {
+		return errors.New("case_version is required")
+	}
+	if len(input.ResponseHash) > 128 {
+		return errors.New("response_hash exceeds maximum 128")
+	}
+	if len(input.FailureClass) > 128 {
+		return errors.New("failure_class exceeds maximum 128")
+	}
+	switch input.Decision {
+	case "selected":
+		if _, err := uuid.Parse(input.SelectedPositionID); err != nil {
+			return fmt.Errorf("selected_position_id is required: %w", err)
+		}
+		if input.Confidence == nil || *input.Confidence < 0 || *input.Confidence > 1 {
+			return errors.New("selected assessment confidence must be between 0 and 1")
+		}
+	case "abstained":
+		if input.SelectedPositionID != "" || input.Confidence == nil || *input.Confidence != 0 {
+			return errors.New("abstained assessment must not select a position and must use zero confidence")
+		}
+	case "failed":
+		if input.SelectedPositionID != "" || input.Confidence != nil || input.FailureClass == "" {
+			return errors.New("failed assessment requires a failure class and no selected position")
+		}
+	default:
+		return errors.New("assessment decision is unsupported")
+	}
+	return nil
+}
+
+func conflictAssessmentStoredStatus(input CompleteOverdueConflictAssessmentInput) (string, string, error) {
+	switch input.Decision {
+	case "selected":
+		return "selected", "selected", nil
+	case "abstained":
+		return "abstained", "abstained", nil
+	case "failed":
+		return "failed", input.FailureClass, nil
+	default:
+		return "", "", errors.New("assessment decision is unsupported")
+	}
+}
+
+func appendConflictAssessmentEvent(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	assessmentAttemptID string,
+	action string,
+	outcome string,
+	metadata map[string]any,
+) error {
+	encoded, err := marshalJSON(metadata)
+	if err != nil {
+		return err
+	}
+	return tx.WithContext(ctx).Exec(`
+		INSERT INTO relationship_conflict_ai_assessment_events (
+		    team_id, space_id, space_generation, assessment_attempt_id, action, outcome, metadata
+		)
+		SELECT ?::uuid, attempt.space_id, attempt.space_generation, ?::uuid, ?, ?, ?::jsonb
+		FROM relationship_conflict_ai_assessment_attempts AS attempt
+		WHERE attempt.team_id = ?::uuid AND attempt.assessment_attempt_id = ?::uuid
+	`, teamID, assessmentAttemptID, action, outcome, string(encoded), teamID, assessmentAttemptID).Error
+}
+
+func supersedeReservedOverdueConflictAssessments(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	conflictID string,
+) error {
+	rows, err := tx.WithContext(ctx).Raw(`
+		UPDATE relationship_conflict_ai_assessment_attempts
+		SET status = 'superseded',
+		    failure_class = 'case_version_changed',
+		    completed_at = now()
+		WHERE team_id = ?::uuid
+		  AND conflict_id = ?::uuid
+		  AND status = 'reserved'
+		RETURNING assessment_attempt_id::text, case_version
+	`, teamID, conflictID).Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type supersededAssessment struct {
+		assessmentAttemptID string
+		caseVersion         int
+	}
+	superseded := []supersededAssessment{}
+	for rows.Next() {
+		item := supersededAssessment{}
+		if err := rows.Scan(&item.assessmentAttemptID, &item.caseVersion); err != nil {
+			return err
+		}
+		superseded = append(superseded, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range superseded {
+		metadata := map[string]any{
+			"case_version":  item.caseVersion,
+			"failure_class": "case_version_changed",
+		}
+		if err := appendConflictAssessmentEvent(ctx, tx, teamID, item.assessmentAttemptID, "superseded", "case_version_changed", metadata); err != nil {
+			return err
+		}
+		if err := appendRelationshipConflictEvent(ctx, tx, teamID, conflictID, "", "", "", string(domain.RelationshipConflictEventAIAssessed), "superseded", "case:"+conflictID+":assessment:"+item.assessmentAttemptID+":superseded", metadata); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func supersedePendingOverdueConflictResolutions(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	conflictID string,
+) error {
+	return tx.WithContext(ctx).Exec(`
+		UPDATE relationship_conflict_resolution_plans
+		SET status = 'superseded',
+		    failure_reason = 'case_version_changed'
+		WHERE team_id = ?::uuid
+		  AND conflict_id = ?::uuid
+		  AND status = 'resolution_pending'
+	`, teamID, conflictID).Error
+}
+
+func loadOverdueConflictAssessmentDossier(
+	ctx context.Context,
+	tx *gorm.DB,
+	teamID string,
+	conflictID string,
+	caseVersion int,
+) (*OverdueConflictAssessmentDossier, error) {
+	dossier := &OverdueConflictAssessmentDossier{TeamID: teamID, ConflictID: conflictID, CaseVersion: caseVersion}
+	if err := tx.WithContext(ctx).Raw(`
+		SELECT question
+		FROM relationship_conflict_cases
+		WHERE team_id = ?::uuid
+		  AND conflict_id = ?::uuid
+		  AND version = ?
+		  AND status = 'overdue'
+	`, teamID, conflictID, caseVersion).Row().Scan(&dossier.Question); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrConflictAssessmentStale
+		}
+		return nil, err
+	}
+	positionIndexByID := make(map[string]int)
+	positionRows, err := tx.WithContext(ctx).Raw(`
+		SELECT position.position_id::text,
+		       position.position_key
+		FROM relationship_conflict_positions AS position
+		WHERE position.team_id = ?::uuid
+		  AND position.conflict_id = ?::uuid
+		  AND position.active
+		ORDER BY position.position_id
+	`, teamID, conflictID).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer positionRows.Close()
+	for positionRows.Next() {
+		position := OverdueConflictAssessmentPosition{}
+		if err := positionRows.Scan(&position.PositionID, &position.PositionKey); err != nil {
+			return nil, err
+		}
+		dossier.Positions = append(dossier.Positions, position)
+		positionIndexByID[position.PositionID] = len(dossier.Positions) - 1
+	}
+	if err := positionRows.Err(); err != nil {
+		return nil, err
+	}
+	if len(dossier.Positions) < 2 {
+		return nil, ErrConflictAssessmentUnavailable
+	}
+	projection := make([]RelationshipConflictPositionRecord, 0, len(dossier.Positions))
+	for _, position := range dossier.Positions {
+		projection = append(projection, RelationshipConflictPositionRecord{
+			ConflictID: conflictID,
+			PositionID: position.PositionID,
+		})
+	}
+	if err := loadRelationshipConflictSupporters(ctx, tx, teamID, []string{conflictID}, nil, projection, relationshipConflictSupporterLimit); err != nil {
+		return nil, err
+	}
+	supporterCounts := make(map[string]int, len(projection))
+	for _, position := range projection {
+		supporterCounts[position.PositionID] = position.SupporterCount
+	}
+	for index := range dossier.Positions {
+		dossier.Positions[index].SupporterCount = supporterCounts[dossier.Positions[index].PositionID]
+	}
+
+	evidenceRows, err := tx.WithContext(ctx).Raw(`
+		WITH member_relationships AS (
+			SELECT DISTINCT member.position_id, member.relationship_id, member.owner_profile_id
+			FROM relationship_conflict_position_members AS member
+			JOIN relationship_conflict_positions AS position
+			  ON position.team_id = member.team_id
+			 AND position.position_id = member.position_id
+			WHERE member.team_id = ?::uuid
+			  AND member.conflict_id = ?::uuid
+			  AND member.active
+			  AND position.active
+		),
+		latest_support_decision AS (
+			SELECT DISTINCT ON (support.support_id)
+			       support.support_id,
+			       decision.decision
+			FROM relationship_evidence_supports AS support
+			JOIN member_relationships AS member
+			  ON member.relationship_id = support.relationship_id
+			 AND member.owner_profile_id = support.owner_profile_id
+			JOIN relationship_support_decision_events AS decision
+			  ON decision.team_id = support.team_id
+			 AND decision.support_id = support.support_id
+			WHERE support.team_id = ?::uuid
+			ORDER BY support.support_id, decision.created_at DESC, decision.support_decision_id DESC
+		)
+		SELECT member.position_id::text,
+		       fragment.fragment_id::text,
+		       fragment.owner_profile_id::text,
+		       support.support_id::text,
+		       support.authority,
+		       support.created_at,
+		       relationship.valid_from,
+		       fragment.evidence_index,
+		       fragment.content
+		FROM member_relationships AS member
+		JOIN relationship_records AS relationship
+		  ON relationship.team_id = ?::uuid
+		 AND relationship.relationship_id = member.relationship_id
+		 AND relationship.owner_profile_id = member.owner_profile_id
+		JOIN relationship_evidence_supports AS support
+		  ON support.team_id = relationship.team_id
+		 AND support.relationship_id = relationship.relationship_id
+		 AND support.owner_profile_id = relationship.owner_profile_id
+		JOIN latest_support_decision AS latest
+		  ON latest.support_id = support.support_id
+		 AND latest.decision IN ('grant', 'reinstate')
+		JOIN evidence_fragments AS fragment
+		  ON fragment.team_id = support.team_id
+		 AND fragment.fragment_id = support.fragment_id
+		LEFT JOIN evidence_quarantines AS quarantine
+		  ON quarantine.team_id = support.team_id
+		 AND quarantine.fragment_id = support.fragment_id
+		 AND quarantine.status = 'active'
+		LEFT JOIN evidence_sources AS source
+		  ON source.team_id = support.team_id
+		 AND source.source_id = support.source_id
+		LEFT JOIN evidence_lifecycle_events AS lifecycle
+		  ON lifecycle.team_id = support.team_id
+		 AND lifecycle.target_fragment_id = support.fragment_id
+		WHERE quarantine.quarantine_id IS NULL
+		  AND lifecycle.lifecycle_event_id IS NULL
+		  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'
+		  AND (support.source_id IS NULL OR source.current_revision_id = support.source_revision_id)
+		ORDER BY member.position_id, support.created_at, support.support_id
+	`, teamID, conflictID, teamID, teamID).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer evidenceRows.Close()
+	for evidenceRows.Next() {
+		item := OverdueConflictAssessmentEvidence{}
+		if err := evidenceRows.Scan(
+			&item.PositionID,
+			&item.FragmentID,
+			&item.OwnerProfileID,
+			&item.SupportID,
+			&item.Authority,
+			&item.AcceptedAt,
+			&item.EffectiveAt,
+			&item.EvidenceIndex,
+			&item.Content,
+		); err != nil {
+			return nil, err
+		}
+		positionIndex, exists := positionIndexByID[item.PositionID]
+		if !exists {
+			return nil, ErrConflictAssessmentStale
+		}
+		item.AcceptedAt = item.AcceptedAt.UTC()
+		if item.EffectiveAt != nil {
+			value := item.EffectiveAt.UTC()
+			item.EffectiveAt = &value
+		}
+		dossier.Positions[positionIndex].Supports = append(dossier.Positions[positionIndex].Supports, domain.ConflictResolutionSupport{Authority: item.Authority, AcceptedAt: item.AcceptedAt})
+		dossier.Evidence = append(dossier.Evidence, item)
+	}
+	if err := evidenceRows.Err(); err != nil {
+		return nil, err
+	}
+	if len(dossier.Evidence) == 0 {
+		return nil, ErrConflictAssessmentUnavailable
+	}
+	profileIDs := make([]string, 0, len(dossier.Evidence))
+	seenProfiles := make(map[string]struct{}, len(dossier.Evidence))
+	for _, item := range dossier.Evidence {
+		if _, seen := seenProfiles[item.OwnerProfileID]; seen {
+			continue
+		}
+		seenProfiles[item.OwnerProfileID] = struct{}{}
+		profileIDs = append(profileIDs, item.OwnerProfileID)
+	}
+	sort.Strings(profileIDs)
+	profileRefs := make(map[string]string, len(profileIDs))
+	for index, profileID := range profileIDs {
+		profileRefs[profileID] = fmt.Sprintf("supporter_%d", index+1)
+	}
+	for index := range dossier.Evidence {
+		dossier.Evidence[index].SupporterRef = profileRefs[dossier.Evidence[index].OwnerProfileID]
+	}
+	return dossier, nil
+}

@@ -181,22 +181,33 @@ func TestWave5DatabaseCaseFragmentsPreserveBaselineInventory(t *testing.T) {
 	}
 	seen := make(map[string]bool, len(all))
 	capabilities := make(map[string]int)
-	baseline := make([]string, 0, len(all)-1)
+	baseline := make([]string, 0, len(all)-6)
+	excluded := map[string]bool{
+		"repository/TestRememberFailureArtifactHoldTransactionRollback": true,
+		"knowledge/TestKnowledgeOwnerTerminalReplay":                    true,
+		"knowledge/TestKnowledgeOwnerLateFailureRollsBack":              true,
+		"knowledge/TestKnowledgeOwnerConcurrentRetryUsesOneCommit":      true,
+		"knowledge/TestKnowledgeOwnerRejectsStaleEmbeddingFence":        true,
+		"knowledge/TestKnowledgeOwnerTeamProfileIsolation":              true,
+	}
 	for _, item := range all {
 		if seen[item.ID] {
 			t.Fatalf("duplicate database case %s", item.ID)
 		}
 		seen[item.ID] = true
-		capabilities[item.Capability]++
+		if strings.TrimSpace(item.Capability) == "" {
+			t.Fatalf("database case %s has no capability", item.ID)
+		}
 		if item.ID == "repository/TestRememberFailureArtifactHoldTransactionRollback" && item.Capability != "privacy" {
 			t.Fatalf("rollback case belongs to capability %s, want privacy", item.Capability)
 		}
-		if item.ID != "repository/TestRememberFailureArtifactHoldTransactionRollback" {
+		capabilities[item.Capability]++
+		if !excluded[item.ID] {
 			baseline = append(baseline, strings.Join([]string{item.ID, item.Package, item.Run, item.Phase, item.Scenario, item.Source, item.Capability}, "\t"))
 		}
 	}
-	if len(all) != 379 {
-		t.Fatalf("database case inventory contains %d cases, want 379", len(all))
+	if len(all) != 384 {
+		t.Fatalf("database case inventory contains %d cases, want 384", len(all))
 	}
 	sort.Strings(baseline)
 	baselineHash := sha256.Sum256([]byte(strings.Join(baseline, "\n") + "\n"))
@@ -205,7 +216,7 @@ func TestWave5DatabaseCaseFragmentsPreserveBaselineInventory(t *testing.T) {
 	}
 	for capability, want := range map[string]int{
 		"audit": 8, "community": 1, "dream": 33, "graph": 2, "http": 1,
-		"knowledge": 51, "migration": 2, "postgres": 110, "privacy": 20,
+		"knowledge": 56, "migration": 2, "postgres": 110, "privacy": 20,
 		"repository": 138, "server": 2, "service": 8, "settings": 0, "trace": 3,
 	} {
 		if capabilities[capability] != want {

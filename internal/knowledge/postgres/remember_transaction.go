@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 import (
 	"context"
@@ -15,7 +15,7 @@ type teamProfileTransaction struct {
 	tx        *gorm.DB
 }
 
-func (r *LedgerRepositoryImpl) withAtomicRememberTx(ctx context.Context, teamID, profileID string, fn func(context.Context) error) error {
+func (r *Store) withAtomicRememberTx(ctx context.Context, teamID, profileID string, fn func(context.Context) error) error {
 	if r == nil || r.db == nil {
 		return errors.New("ledger: database is required")
 	}

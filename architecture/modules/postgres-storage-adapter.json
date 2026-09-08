@@ -2,10 +2,587 @@
   "schema_version": 1,
   "capability": "postgres-storage-adapter",
   "source_ownership": [
+    {"path": "internal/knowledge/contract/assessment_policy.go", "issue": 362},
+    {"path": "internal/knowledge/contract/assessment_policy_test.go", "issue": 362},
+    {"path": "internal/knowledge/contract/conflict.go", "issue": 362},
+    {"path": "internal/knowledge/contract/duplicate.go", "issue": 362},
+    {"path": "internal/knowledge/contract/evidence_conflict.go", "issue": 362},
+    {"path": "internal/knowledge/contract/evidence_conflict_test.go", "issue": 362},
+    {"path": "internal/knowledge/contract/ledger.go", "issue": 362},
+    {"path": "internal/knowledge/contract/lifecycle.go", "issue": 362},
+    {"path": "internal/knowledge/contract/placement.go", "issue": 362},
+    {"path": "internal/knowledge/contract/remember_attempt.go", "issue": 362},
+    {"path": "internal/knowledge/contract/remember_result.go", "issue": 362},
+    {"path": "internal/knowledge/contract/search_write.go", "issue": 362},
+    {"path": "internal/knowledge/contract/semantic.go", "issue": 362},
+    {"path": "internal/knowledge/contract/source.go", "issue": 362},
+    {"path": "internal/knowledge/contract/submission.go", "issue": 362},
+    {"path": "internal/knowledge/contract/write.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/advisory_lock_admission.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/compat_exports.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/compat_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_context_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_derived_evidence_task_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_overdue_assessment_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_overdue_resolution_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_placement_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_policy.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_projection_generation.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_resolution_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_review_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_snapshot_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_supporter_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/conflict_system_profile_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/embedding_context.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/errors.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/evidence_conflict_queries.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/evidence_conflict_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/evidence_duplicate.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/evidence_lifecycle_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/ledger_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/ledger_ingest_input.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/ledger_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/ledger_source_revision_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/placement_commit_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/placement_commit_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/placement_commit_search.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/predicate_catalog_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/relationship_correction_embedding_plan.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/relationship_correction_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/relationship_correction_inline_embedding.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/relationship_correction_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/remember_attempt_lock.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/remember_attempt_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/remember_artifact_hold.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/remember_commit.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/remember_commit_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/remember_embedding_plan.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/remember_result.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/remember_result_test.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/remember_policy_exports.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/remember_submission_intent_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/remember_transaction.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/search_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/search_inline_embedding.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/search_document_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/search_projection_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/semantic_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/semantic_observation_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/semantic_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/semantic_space_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/semantic_support_helpers.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/source_revision_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/store.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/store_test.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/submission_assessment_commit_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/submission_assessment_inline_embedding.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/submission_assessment_known_evidence_fence.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/submission_relationship_result_repository.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/transactions.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/types.go", "issue": 362},
+    {"path": "internal/knowledge/postgres/owner_write_integration.e2e", "issue": 362},
+    {"path": "internal/repository/auto_write_confidence_policy_repository.go", "issue": 362},
+    {"path": "internal/repository/conflict_context_repository.go", "issue": 362},
+    {"path": "internal/repository/conflict_derived_evidence_task_repository.go", "issue": 362},
+    {"path": "internal/repository/conflict_overdue_assessment_repository.go", "issue": 362},
+    {"path": "internal/repository/conflict_overdue_resolution_repository.go", "issue": 362},
+    {"path": "internal/repository/conflict_placement_helpers.go", "issue": 362},
+    {"path": "internal/repository/conflict_repository.go", "issue": 362},
+    {"path": "internal/repository/conflict_resolution_repository.go", "issue": 362},
+    {"path": "internal/repository/conflict_review_repository.go", "issue": 362},
+    {"path": "internal/repository/conflict_system_profile_repository.go", "issue": 362},
+    {"path": "internal/repository/evidence_conflict_queries.go", "issue": 362},
+    {"path": "internal/repository/evidence_conflict_repository.go", "issue": 362},
+    {"path": "internal/repository/evidence_duplicate.go", "issue": 362},
+    {"path": "internal/repository/evidence_lifecycle_repository.go", "issue": 362},
+    {"path": "internal/repository/evidence_lifecycle_compat.go", "issue": 362},
+    {"path": "internal/repository/evidence_lifecycle_supersession_compat.go", "issue": 362},
+    {"path": "internal/repository/ledger_helpers.go", "issue": 362},
+    {"path": "internal/repository/ledger_repository.go", "issue": 362},
+    {"path": "internal/repository/ledger_repository_constructors.go", "issue": 362},
+    {"path": "internal/repository/knowledge_owner_compat.go", "issue": 362},
+    {"path": "internal/repository/knowledge_owner_e2e_compat_test.go", "issue": 362},
+    {"path": "internal/repository/knowledge_write_owner.go", "issue": 362},
+    {"path": "internal/repository/search_inline_embedding.go", "issue": 362},
+    {"path": "internal/repository/search_repository.go", "issue": 362},
+    {"path": "internal/repository/placement_commit_repository.go", "issue": 362},
+    {"path": "internal/repository/placement_commit_search.go", "issue": 362},
+    {"path": "internal/repository/relationship_correction_embedding_plan.go", "issue": 362},
+    {"path": "internal/repository/relationship_correction_repository.go", "issue": 362},
+    {"path": "internal/repository/remember_attempt_lock.go", "issue": 362},
+    {"path": "internal/repository/remember_attempt_repository.go", "issue": 362},
+    {"path": "internal/repository/remember_commit.go", "issue": 362},
+    {"path": "internal/repository/remember_commit_stage_test.go", "issue": 362},
+    {"path": "internal/repository/remember_embedding_plan.go", "issue": 362},
+    {"path": "internal/repository/remember_submission_intent_repository.go", "issue": 362},
+    {"path": "internal/repository/semantic_helpers.go", "issue": 362},
+    {"path": "internal/repository/semantic_review_catalog_repository.go", "issue": 362},
+    {"path": "internal/repository/semantic_support_helpers.go", "issue": 362},
+    {"path": "internal/repository/source_revision_repository.go", "issue": 362},
+    {"path": "internal/repository/submission_assessment_commit_repository.go", "issue": 362},
+    {"path": "internal/repository/submission_assessment_known_evidence_fence.go", "issue": 362},
     {"path": "internal/repository/remember_artifact_hold.go", "issue": 389},
     {"path": "internal/repository/remember_artifact_hold_rollback_integration.e2e", "issue": 389}
   ],
   "compatibility_bridges": [
+    {
+      "source_path": "internal/repository/conflict_context_repository.go",
+      "fields": ["LedgerRepositoryImpl.ValidateRelationshipConflictContext"],
+      "consumers": [
+        {"path": "internal/repository/conflict_context_repository.go", "symbol": "LedgerRepositoryImpl.ValidateRelationshipConflictContext"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/conflict_context_repository.go", "symbol": "Store.ValidateRelationshipConflictContext"},
+      "removal_condition": "Remove the repository method after conflict-context callers migrate to the knowledge owner port."
+    },
+    {
+      "source_path": "internal/repository/conflict_derived_evidence_task_repository.go",
+      "fields": ["LedgerRepositoryImpl.StageConflictDerivedEvidence", "LedgerRepositoryImpl.RecordConflictDerivedEvidenceFailure", "LedgerRepositoryImpl.ClaimConflictDerivedEvidenceTasks"],
+      "consumers": [
+        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.ProcessPendingConflictDerivedEvidence"},
+        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.stageConflictDerivedEvidence"},
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "processTeamConflictReview"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/conflict_derived_evidence_task_repository.go", "symbol": "Store.StageConflictDerivedEvidence"},
+      "removal_condition": "Remove the repository forwarders after the conflict-review application consumes the knowledge owner port directly."
+    },
+    {
+      "source_path": "internal/repository/conflict_overdue_assessment_repository.go",
+      "fields": ["LedgerRepositoryImpl.ReserveOverdueConflictAssessment", "LedgerRepositoryImpl.CompleteOverdueConflictAssessment"],
+      "consumers": [
+        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.ReviewRelationshipConflictCase"},
+        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.completeAssessment"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/conflict_overdue_assessment_repository.go", "symbol": "Store.ReserveOverdueConflictAssessment"},
+      "removal_condition": "Remove the repository forwarders after overdue assessment uses the knowledge conflict port directly."
+    },
+    {
+      "source_path": "internal/repository/conflict_overdue_resolution_repository.go",
+      "fields": ["LedgerRepositoryImpl.ResumePendingOverdueConflictResolution"],
+      "consumers": [
+        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.ReviewRelationshipConflictCase"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/conflict_overdue_resolution_repository.go", "symbol": "Store.ResumePendingOverdueConflictResolution"},
+      "removal_condition": "Remove the repository forwarder after pending conflict resolution uses the knowledge conflict port directly."
+    },
+    {
+      "source_path": "internal/repository/conflict_placement_helpers.go",
+      "fields": ["lockRelationshipConflictSnapshotScope", "relationshipConflictScopeKey"],
+      "consumers": [
+        {"path": "internal/repository/relationship_correction_lock_order_integration.e2e", "symbol": "TestRelationshipCorrectionLocksCrossScopePairCanonically"},
+        {"path": "internal/repository/conflict_repository_test.go", "symbol": "TestRelationshipConflictScopeKeySeparatesPrivateSpaces"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "LockRelationshipConflictSnapshotScopeTx"},
+      "removal_condition": "Remove the fixture helpers after repository conflict and correction tests use owner-owned lock and scope helpers."
+    },
+    {
+      "source_path": "internal/repository/conflict_repository.go",
+      "fields": ["normalizeConflictRuntimeConfig"],
+      "consumers": [
+        {"path": "internal/repository/ledger_repository_constructors.go", "symbol": "NewLedgerRepositoryWithRuntimeConfig"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "NormalizeConflictRuntimeConfig"},
+      "removal_condition": "Remove the repository conflict helper aliases after constructors and legacy fixtures consume owner policy directly."
+    },
+    {
+      "source_path": "internal/repository/conflict_resolution_repository.go",
+      "fields": ["LedgerRepositoryImpl.PlanRelationshipConflictResolution", "LedgerRepositoryImpl.CommitRelationshipConflictResolution"],
+      "consumers": [
+        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.executeResolution"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/conflict_resolution_repository.go", "symbol": "Store.PlanRelationshipConflictResolution"},
+      "removal_condition": "Remove the repository resolution forwarders after the conflict-review service consumes the owner port directly."
+    },
+    {
+      "source_path": "internal/repository/conflict_review_repository.go",
+      "fields": ["LedgerRepositoryImpl.ReserveRelationshipConflictReviewRun", "LedgerRepositoryImpl.ClaimRelationshipConflictCases", "LedgerRepositoryImpl.ReleaseRelationshipConflictCaseClaim", "LedgerRepositoryImpl.ReviewRelationshipConflictCase", "LedgerRepositoryImpl.CompleteRelationshipConflictReviewRun"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "processTeamConflictReview"},
+        {"path": "internal/service/conflictreview/runner.go", "symbol": "Runner.ReserveRelationshipConflictReviewRun"},
+        {"path": "internal/service/conflictreview/runner.go", "symbol": "Runner.ClaimRelationshipConflictCases"},
+        {"path": "internal/service/conflictreview/runner.go", "symbol": "Runner.CompleteRelationshipConflictReviewRun"},
+        {"path": "internal/service/conflictreview/service.go", "symbol": "Service.ReviewRelationshipConflictCase"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/conflict_review_repository.go", "symbol": "Store.ReserveRelationshipConflictReviewRun"},
+      "removal_condition": "Remove the repository review forwarders after worker composition and review orchestration consume the knowledge owner directly."
+    },
+    {
+      "source_path": "internal/repository/conflict_system_profile_repository.go",
+      "fields": ["ensureConflictSystemProfile"],
+      "consumers": [
+        {"path": "internal/repository/conflict_review_private_space_integration.e2e", "symbol": "TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "EnsureConflictSystemProfile"},
+      "removal_condition": "Remove the fixture helper after conflict tests use the owner-owned system-profile helper."
+    },
+    {
+      "source_path": "internal/repository/evidence_conflict_queries.go",
+      "fields": ["LedgerRepositoryImpl.ResolveEvidenceConflict"],
+      "consumers": [
+        {"path": "internal/service/evidenceconflict/service.go", "symbol": "Service.Resolve"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/evidence_conflict_queries.go", "symbol": "Store.ResolveEvidenceConflict"},
+      "removal_condition": "Remove the repository evidence-conflict resolution forwarder after the evidence-conflict service consumes the knowledge owner directly."
+    },
+    {
+      "source_path": "internal/repository/evidence_conflict_repository.go",
+      "fields": ["EvidenceConflictDefaultLimit", "EvidenceConflictMaxLimit", "EvidenceConflictDefaultEventLimit", "EvidenceConflictMaxEventLimit", "EvidenceConflictMaxResults", "EvidenceConflictMaxPositions", "EvidenceConflictMaxQuoteRunes", "ErrEvidenceConflictNotFound", "ErrEvidenceConflictVersionStale", "ErrEvidenceConflictNotOpen", "ErrEvidenceConflictInvalidCommand", "ErrEvidenceConflictStaleInput", "EncodeEvidenceConflictCursor", "DecodeEvidenceConflictCursor", "EncodeEvidenceConflictEventCursor", "DecodeEvidenceConflictEventCursor"],
+      "consumers": [
+        {"path": "internal/service/evidenceconflict/service.go", "symbol": "Service.List"},
+        {"path": "internal/service/evidenceconflict/service.go", "symbol": "Service.Get"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/evidence_conflict_repository.go", "symbol": "EncodeEvidenceConflictCursor"},
+      "removal_condition": "Remove the repository evidence-conflict aliases after the evidence-conflict service and tests use owner contracts directly."
+    },
+    {
+      "source_path": "internal/repository/evidence_duplicate.go",
+      "fields": ["RememberDuplicateCandidateLimit", "RememberDuplicateMaxEvidence", "ErrRememberDuplicateCandidateStale", "LedgerRepositoryImpl.PlanRememberDuplicateEmbeddings", "LedgerRepositoryImpl.ResolveRememberDuplicateCandidates", "validateRememberDuplicateCandidateInput", "rememberDuplicateBatchCanonicalKey"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/remember_processor.go", "symbol": "rememberSynchronousProcessor.processRememberUnlocked"},
+        {"path": "internal/repository/evidence_duplicate_test.go", "symbol": "TestValidateRememberDuplicateCandidateInputUsesByteExactContentHash"},
+        {"path": "internal/repository/evidence_duplicate_test.go", "symbol": "TestRememberDuplicateBatchCanonicalKeyExcludesForcedAndLifecycleEvidence"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/evidence_duplicate.go", "symbol": "Store.PlanRememberDuplicateEmbeddings"},
+      "removal_condition": "Remove the duplicate candidate forwarders and test aliases after the Remember processor consumes the owner port directly."
+    },
+    {
+      "source_path": "internal/repository/evidence_lifecycle_repository.go",
+      "fields": ["LedgerRepositoryImpl.RetractEvidence"],
+      "consumers": [
+        {"path": "internal/service/memoryservice/lifecycle.go", "symbol": "lifecycleService.RetractEvidence"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/evidence_lifecycle_repository.go", "symbol": "Store.RetractEvidence"},
+      "removal_condition": "Remove the lifecycle repository forwarder after lifecycle application consumes the owner lifecycle port directly."
+    },
+    {
+      "source_path": "internal/repository/evidence_lifecycle_compat.go",
+      "fields": ["validateRetractEvidenceInput"],
+      "consumers": [
+        {"path": "internal/repository/evidence_lifecycle_validation_test.go", "symbol": "TestValidateRetractEvidenceClassifiesInvalidEvidenceID"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "ValidateRetractEvidenceInput"},
+      "removal_condition": "Remove the validation alias after lifecycle tests use the owner contract directly."
+    },
+    {
+      "source_path": "internal/repository/evidence_lifecycle_supersession_compat.go",
+      "fields": ["applyEvidenceSupersessions"],
+      "consumers": [
+        {"path": "internal/repository/legacy_test_helpers_test.go", "symbol": "LedgerRepositoryImpl.CreateIngest"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "ApplyEvidenceSupersessionsTx"},
+      "removal_condition": "Remove the test-fixture supersession alias after legacy ingest fixtures use the owner lifecycle contract."
+    },
+    {
+      "source_path": "internal/repository/knowledge_owner_compat.go",
+      "fields": ["conflictNextReviewAt", "normalizeConflictReviewRunInput", "validateClaimConflictDerivedEvidenceTasksInput"],
+      "consumers": [
+        {"path": "internal/repository/conflict_repository_test.go", "symbol": "TestConflictNextReviewAtDoesNotReturnPastDue"},
+        {"path": "internal/repository/conflict_repository_test.go", "symbol": "TestNormalizeConflictReviewRunInputRejectsInvalidTimezone"},
+        {"path": "internal/repository/conflict_repository_test.go", "symbol": "TestValidateClaimConflictDerivedEvidenceTasksRejectsSubsecondLease"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "ConflictNextReviewAt"},
+      "removal_condition": "Remove the package-local owner helper aliases when the remaining repository fixtures migrate to knowledge contracts."
+    },
+    {
+      "source_path": "internal/repository/knowledge_owner_e2e_compat_test.go",
+      "fields": [
+        "enqueueConflictDerivedEvidenceTasks",
+        "loadRelationshipConflictPlacement",
+        "upsertRelationshipConflictCase",
+        "resolveRememberExactEvidenceInTx",
+        "lockEvidenceLifecycleTarget",
+        "evidenceLifecycleCompleted",
+        "validateSelectedCorrectionEntities",
+        "errRelationshipCorrectionSelectionUnavailable"
+      ],
+      "consumers": [
+        {"path": "internal/repository/conflict_review_private_space_integration.e2e", "symbol": "TestClaimedPrivateConflictDerivedEvidenceCannotStageAfterErasureReopensSpace"},
+        {"path": "internal/repository/conflict_review_synchronous_integration.e2e", "symbol": "TestConflictSnapshotScopeSerializesPlacementReviewAndWrite"},
+        {"path": "internal/repository/evidence_duplicate_integration.e2e", "symbol": "TestRememberDuplicateExactMatchRequiresByteEqualityOnHashCollision"},
+        {"path": "internal/repository/evidence_lifecycle_repository_integration.e2e", "symbol": "TestLedgerRetractEvidenceRevokesOnlyItsSupportAndReplaysAtomically"},
+        {"path": "internal/repository/relationship_correction_repository_integration.e2e", "symbol": "TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "EnqueueConflictDerivedEvidenceTasks"},
+      "removal_condition": "Remove the test-only repository forwarders after the legacy database fixtures migrate to owner-package sources or owner lifecycle ports."
+    },
+    {
+      "source_path": "internal/repository/knowledge_write_owner.go",
+      "fields": ["LedgerRepositoryImpl.knowledgeWriteOwner", "SemanticRepositoryImpl.knowledgeWriteOwner"],
+      "consumers": [
+        {"path": "internal/repository/conflict_context_repository.go", "symbol": "LedgerRepositoryImpl.ValidateRelationshipConflictContext"},
+        {"path": "internal/repository/conflict_derived_evidence_task_repository.go", "symbol": "LedgerRepositoryImpl.StageConflictDerivedEvidence"},
+        {"path": "internal/repository/conflict_derived_evidence_task_repository.go", "symbol": "LedgerRepositoryImpl.RecordConflictDerivedEvidenceFailure"},
+        {"path": "internal/repository/conflict_derived_evidence_task_repository.go", "symbol": "LedgerRepositoryImpl.ClaimConflictDerivedEvidenceTasks"},
+        {"path": "internal/repository/conflict_overdue_assessment_repository.go", "symbol": "LedgerRepositoryImpl.ReserveOverdueConflictAssessment"},
+        {"path": "internal/repository/conflict_overdue_assessment_repository.go", "symbol": "LedgerRepositoryImpl.CompleteOverdueConflictAssessment"},
+        {"path": "internal/repository/conflict_overdue_resolution_repository.go", "symbol": "LedgerRepositoryImpl.ResumePendingOverdueConflictResolution"},
+        {"path": "internal/repository/conflict_resolution_repository.go", "symbol": "LedgerRepositoryImpl.PlanRelationshipConflictResolution"},
+        {"path": "internal/repository/conflict_resolution_repository.go", "symbol": "LedgerRepositoryImpl.CommitRelationshipConflictResolution"},
+        {"path": "internal/repository/conflict_review_repository.go", "symbol": "LedgerRepositoryImpl.ReserveRelationshipConflictReviewRun"},
+        {"path": "internal/repository/conflict_review_repository.go", "symbol": "LedgerRepositoryImpl.ClaimRelationshipConflictCases"},
+        {"path": "internal/repository/conflict_review_repository.go", "symbol": "LedgerRepositoryImpl.ReleaseRelationshipConflictCaseClaim"},
+        {"path": "internal/repository/conflict_review_repository.go", "symbol": "LedgerRepositoryImpl.ReviewRelationshipConflictCase"},
+        {"path": "internal/repository/conflict_review_repository.go", "symbol": "LedgerRepositoryImpl.CompleteRelationshipConflictReviewRun"},
+        {"path": "internal/repository/evidence_conflict_queries.go", "symbol": "LedgerRepositoryImpl.ListEvidenceConflicts"},
+        {"path": "internal/repository/evidence_conflict_queries.go", "symbol": "LedgerRepositoryImpl.GetEvidenceConflict"},
+        {"path": "internal/repository/evidence_conflict_queries.go", "symbol": "LedgerRepositoryImpl.ResolveEvidenceConflict"},
+        {"path": "internal/repository/evidence_duplicate.go", "symbol": "LedgerRepositoryImpl.PlanRememberDuplicateEmbeddings"},
+        {"path": "internal/repository/evidence_duplicate.go", "symbol": "LedgerRepositoryImpl.ResolveRememberDuplicateCandidates"},
+        {"path": "internal/repository/evidence_lifecycle_repository.go", "symbol": "LedgerRepositoryImpl.RetractEvidence"},
+        {"path": "internal/repository/ledger_repository.go", "symbol": "LedgerRepositoryImpl.AppendSecurityEvent"},
+        {"path": "internal/repository/remember_attempt_lock.go", "symbol": "LedgerRepositoryImpl.WithRememberAttemptLock"},
+        {"path": "internal/repository/remember_attempt_repository.go", "symbol": "LedgerRepositoryImpl.LoadRememberAttempt"},
+        {"path": "internal/repository/remember_attempt_repository.go", "symbol": "LedgerRepositoryImpl.RecordRememberAttempt"},
+        {"path": "internal/repository/remember_attempt_repository.go", "symbol": "LedgerRepositoryImpl.RecordRememberFailure"},
+        {"path": "internal/repository/remember_attempt_repository.go", "symbol": "LedgerRepositoryImpl.ListRememberAttemptDiagnostics"},
+        {"path": "internal/repository/remember_attempt_repository.go", "symbol": "LedgerRepositoryImpl.GetRememberAttemptDiagnostic"},
+        {"path": "internal/repository/remember_attempt_repository.go", "symbol": "LedgerRepositoryImpl.GetRememberFailureArtifact"},
+        {"path": "internal/repository/remember_attempt_repository.go", "symbol": "LedgerRepositoryImpl.PurgeExpiredRememberFailureArtifacts"},
+        {"path": "internal/repository/remember_attempt_repository.go", "symbol": "LedgerRepositoryImpl.StartRememberFailureArtifactPurger"},
+        {"path": "internal/repository/remember_commit.go", "symbol": "LedgerRepositoryImpl.CommitRememberWithEmbeddings"},
+        {"path": "internal/repository/remember_embedding_plan.go", "symbol": "LedgerRepositoryImpl.PlanRememberEmbeddings"},
+        {"path": "internal/repository/relationship_correction_embedding_plan.go", "symbol": "SemanticRepositoryImpl.PlanRelationshipCorrectionEmbeddings"},
+        {"path": "internal/repository/relationship_correction_repository.go", "symbol": "SemanticRepositoryImpl.CorrectRelationship"},
+        {"path": "internal/repository/relationship_correction_repository.go", "symbol": "SemanticRepositoryImpl.CorrectRelationshipWithEmbeddings"},
+        {"path": "internal/repository/relationship_correction_repository.go", "symbol": "SemanticRepositoryImpl.GetRelationshipCorrection"},
+        {"path": "internal/repository/semantic_repository.go", "symbol": "SemanticRepositoryImpl.CreateEntity"},
+        {"path": "internal/repository/semantic_repository.go", "symbol": "SemanticRepositoryImpl.AddEntityName"},
+        {"path": "internal/repository/semantic_repository.go", "symbol": "SemanticRepositoryImpl.UpsertValue"},
+        {"path": "internal/repository/semantic_repository.go", "symbol": "SemanticRepositoryImpl.ApplyRelationshipDecision"},
+        {"path": "internal/repository/semantic_repository.go", "symbol": "SemanticRepositoryImpl.RetractRelationship"},
+        {"path": "internal/repository/semantic_repository.go", "symbol": "SemanticRepositoryImpl.ApplyRelationshipSupportDecision"},
+        {"path": "internal/repository/semantic_repository.go", "symbol": "SemanticRepositoryImpl.AppendCrossReference"},
+        {"path": "internal/repository/source_revision_repository.go", "symbol": "LedgerRepositoryImpl.AdvanceSourceRevision"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/store.go", "symbol": "NewStore"},
+      "removal_condition": "Remove the repository owner constructors after every supported caller uses the knowledge PostgreSQL Store or a native capability port."
+    },
+    {
+      "source_path": "internal/repository/ledger_helpers.go",
+      "fields": ["insertEvidenceQuarantine", "insertSecurityEvent", "validateSecurityEventDraft"],
+      "consumers": [
+        {"path": "internal/repository/legacy_test_helpers_test.go", "symbol": "LedgerRepositoryImpl.CreateIngest"},
+        {"path": "internal/repository/known_evidence_support_integration.e2e", "symbol": "TestKnownEvidenceFenceSerializesConcurrentQuarantine"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "InsertSecurityEventTx"},
+      "removal_condition": "Remove the evidence helper forwarders after legacy fixtures use owner-owned evidence and security contracts."
+    },
+    {
+      "source_path": "internal/repository/ledger_repository.go",
+      "fields": ["insertKnowledgeIngest", "insertEvidenceFragment", "LedgerRepositoryImpl.AppendSecurityEvent"],
+      "consumers": [
+        {"path": "internal/repository/legacy_test_helpers_test.go", "symbol": "LedgerRepositoryImpl.CreateIngest"},
+        {"path": "internal/repository/evidence_duplicate_integration.e2e", "symbol": "TestRememberDuplicateExactMatchRequiresByteEqualityOnHashCollision"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/ledger_repository.go", "symbol": "InsertKnowledgeIngestTx"},
+      "removal_condition": "Remove the low-level repository forwarders after evidence fixtures and application callers use the owner ledger port directly."
+    },
+    {
+      "source_path": "internal/repository/ledger_repository_constructors.go",
+      "fields": ["NewLedgerRepository", "NewLedgerRepositoryWithRuntimeConfig"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"},
+        {"path": "internal/repository/ledger_repository_integration.e2e", "symbol": "TestLedgerSourceRevisionCompareAndSet"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/store.go", "symbol": "NewStore"},
+      "removal_condition": "Remove the legacy repository constructors after composition and fixtures construct the knowledge Store directly."
+    },
+    {
+      "source_path": "internal/repository/placement_commit_search.go",
+      "fields": ["upsertSearchDocumentInTx", "semanticRelationshipSearchText", "relationshipSearchEligible", "relationshipForegroundRecallGenerationID"],
+      "consumers": [
+        {"path": "internal/repository/search_reconciliation_documents.go", "symbol": "canonicalSearchDocument"},
+        {"path": "internal/repository/search_reconciliation_integration.e2e", "symbol": "TestSearchReconciliationSelectionAndHashFence"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "UpsertSearchDocumentInTx"},
+      "removal_condition": "Remove search projection helper forwarders after reconciliation uses the owner search-write port directly."
+    },
+    {
+      "source_path": "internal/repository/search_inline_embedding.go",
+      "fields": ["SearchRepositoryImpl.LoadSearchDocumentsForEmbedding", "SearchRepositoryImpl.LoadSearchDocumentsForSources", "SearchRepositoryImpl.CompleteSearchDocumentsWithEmbeddings"],
+      "consumers": [
+        {"path": "internal/repository/search_inline_embedding.go", "symbol": "SearchRepositoryImpl.LoadSearchDocumentsForEmbedding"},
+        {"path": "internal/repository/search_inline_embedding.go", "symbol": "SearchRepositoryImpl.LoadSearchDocumentsForSources"},
+        {"path": "internal/repository/search_inline_embedding.go", "symbol": "SearchRepositoryImpl.CompleteSearchDocumentsWithEmbeddings"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/search_inline_embedding.go", "symbol": "Store.LoadSearchDocumentsForEmbedding"},
+      "removal_condition": "Remove the repository inline embedding facades after search composition consumes the knowledge owner search-write port directly."
+    },
+    {
+      "source_path": "internal/repository/search_repository.go",
+      "fields": ["SearchRepositoryImpl.UpsertSearchDocument"],
+      "consumers": [
+        {"path": "internal/repository/search_repository.go", "symbol": "SearchRepositoryImpl.UpsertSearchDocument"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/search_document_repository.go", "symbol": "Store.UpsertSearchDocument"},
+      "removal_condition": "Remove the repository search projection facade after search composition consumes the knowledge owner search-write port directly."
+    },
+    {
+      "source_path": "internal/repository/relationship_correction_embedding_plan.go",
+      "fields": ["SemanticRepositoryImpl.PlanRelationshipCorrectionEmbeddings"],
+      "consumers": [
+        {"path": "internal/service/memoryservice/lifecycle.go", "symbol": "lifecycleService.CorrectRelationship"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/relationship_correction_embedding_plan.go", "symbol": "Store.PlanRelationshipCorrectionEmbeddings"},
+      "removal_condition": "Remove the correction planner forwarder after lifecycle composition consumes the owner lifecycle port directly."
+    },
+    {
+      "source_path": "internal/repository/relationship_correction_repository.go",
+      "fields": ["SemanticRepositoryImpl.CorrectRelationship", "SemanticRepositoryImpl.CorrectRelationshipWithEmbeddings", "SemanticRepositoryImpl.GetRelationshipCorrection", "normalizeCorrectRelationshipInput", "validateCorrectRelationshipInput", "ErrRelationshipCorrectionNotFound", "ErrRelationshipCorrectionConfirmation", "ErrRelationshipCorrectionConfirmationExpired", "ErrRelationshipCorrectionStateConflict"],
+      "consumers": [
+        {"path": "internal/service/memoryservice/lifecycle.go", "symbol": "lifecycleService.CorrectRelationship"},
+        {"path": "internal/repository/relationship_correction_repository_integration.e2e", "symbol": "TestRelationshipCorrectionAmbiguityRequiresOneOwnerConfirmation"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/relationship_correction_repository.go", "symbol": "Store.CorrectRelationship"},
+      "removal_condition": "Remove correction repository methods and aliases after lifecycle and correction fixtures use the owner lifecycle port."
+    },
+    {
+      "source_path": "internal/repository/remember_attempt_lock.go",
+      "fields": ["LedgerRepositoryImpl.withRememberIdempotencyLock", "LedgerRepositoryImpl.WithRememberAttemptLock", "ErrRememberIdempotencyBusy"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/remember_processor.go", "symbol": "rememberSynchronousProcessor.ProcessRemember"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/remember_attempt_lock.go", "symbol": "Store.WithRememberAttemptLock"},
+      "removal_condition": "Remove the repository attempt-lock facade after Remember composition consumes the owner lock port directly."
+    },
+    {
+      "source_path": "internal/repository/remember_attempt_repository.go",
+      "fields": ["LedgerRepositoryImpl.LoadRememberAttempt", "LedgerRepositoryImpl.RecordRememberAttempt", "LedgerRepositoryImpl.RecordRememberFailure", "LedgerRepositoryImpl.ListRememberAttemptDiagnostics", "LedgerRepositoryImpl.GetRememberAttemptDiagnostic", "LedgerRepositoryImpl.GetRememberFailureArtifact", "LedgerRepositoryImpl.PurgeExpiredRememberFailureArtifacts", "LedgerRepositoryImpl.StartRememberFailureArtifactPurger", "normalizeRememberAttemptRecord", "validateRememberAttemptRecord", "rememberAttemptPhase", "rememberAttemptEventKind", "ErrRememberAttemptDiagnosticNotFound", "ErrRememberFailureArtifactNotFound"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/remember_processor.go", "symbol": "rememberSynchronousProcessor.processRememberUnlocked"},
+        {"path": "internal/service/remember_attempt_diagnostics_service.go", "symbol": "RememberAttemptDiagnosticsService.ListRememberAttemptDiagnostics"},
+        {"path": "internal/service/remember_attempt_diagnostics_service.go", "symbol": "RememberAttemptDiagnosticsService.GetRememberAttemptDiagnostic"},
+        {"path": "internal/service/remember_attempt_diagnostics_service.go", "symbol": "RememberAttemptDiagnosticsService.GetRememberFailureArtifact"},
+        {"path": "cmd/internal/serverapp/server.go", "symbol": "RunActiveServer"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/remember_attempt_repository.go", "symbol": "Store.LoadRememberAttempt"},
+      "removal_condition": "Remove the repository attempt and diagnostic forwarders after Remember, control diagnostics, and retention composition consume the owner directly."
+    },
+    {
+      "source_path": "internal/repository/remember_commit.go",
+      "fields": ["LedgerRepositoryImpl.CommitRememberWithEmbeddings"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/remember_processor.go", "symbol": "rememberSynchronousProcessor.processRememberUnlocked"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/remember_commit.go", "symbol": "Store.CommitRememberWithEmbeddings"},
+      "removal_condition": "Remove the repository terminal commit facade after Remember composition consumes the owner port directly."
+    },
+    {
+      "source_path": "internal/repository/remember_embedding_plan.go",
+      "fields": ["LedgerRepositoryImpl.PlanRememberEmbeddings"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/remember_processor.go", "symbol": "rememberSynchronousProcessor.processRememberUnlocked"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/remember_embedding_plan.go", "symbol": "Store.PlanRememberEmbeddings"},
+      "removal_condition": "Remove the repository embedding-plan facade after Remember composition consumes the owner plan port directly."
+    },
+    {
+      "source_path": "internal/repository/remember_submission_intent_repository.go",
+      "fields": ["validateRememberSubmissionSupersessionTargets"],
+      "consumers": [
+        {"path": "internal/repository/legacy_test_helpers_test.go", "symbol": "LedgerRepositoryImpl.CreateIngest"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "ValidateRememberSubmissionSupersessionTargetsTx"},
+      "removal_condition": "Remove the supersession helper after legacy ingest fixtures migrate to the owner lifecycle contract."
+    },
+    {
+      "source_path": "internal/repository/semantic_helpers.go",
+      "fields": ["insertRelationshipTransition"],
+      "consumers": [
+        {"path": "internal/repository/semantic_repository_integration.e2e", "symbol": "TestInsertRelationshipTransitionReturnsExistingIDForIdempotentReplay"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "InsertRelationshipTransitionTx"},
+      "removal_condition": "Remove the transition helper after semantic fixtures use owner-owned transition mechanics."
+    },
+    {
+      "source_path": "internal/repository/semantic_review_catalog_repository.go",
+      "fields": ["seedTeamPredicateDefinitions", "ensureSemanticPredicateCandidateTx", "canonicalGeneratedPredicateKey"],
+      "consumers": [
+        {"path": "internal/repository/semantic_assessment_catalog_repository.go", "symbol": "SemanticRepositoryImpl.ListSemanticAssessmentPredicateOptions"},
+        {"path": "internal/repository/semantic_review_catalog_repository.go", "symbol": "SemanticRepositoryImpl.ResolveSemanticReviewPredicateCandidates"},
+        {"path": "internal/repository/search_repository.go", "symbol": "SearchRepositoryImpl.UpsertSearchDocument"},
+        {"path": "internal/repository/dream_repository.go", "symbol": "SemanticRepositoryImpl.UpdateHypothesisStatus"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "SeedTeamPredicateDefinitions"},
+      "removal_condition": "Remove predicate catalog helper aliases after semantic, search, and Dream adopters consume the owner catalog port."
+    },
+    {
+      "source_path": "internal/repository/semantic_support_helpers.go",
+      "fields": ["errRelationshipVersionMismatch", "requireRelationshipVersion"],
+      "consumers": [
+        {"path": "internal/repository/semantic_support_helpers_test.go", "symbol": "TestRequireRelationshipVersionDistinguishesMismatchFromDatabaseFailure"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "ValidateRelationshipVersion"},
+      "removal_condition": "Remove relationship-version helper aliases after lifecycle and semantic fixtures use owner validation directly."
+    },
+    {
+      "source_path": "internal/repository/source_revision_repository.go",
+      "fields": ["LedgerRepositoryImpl.AdvanceSourceRevision", "normalizeAdvanceSourceRevisionInput", "validateAdvanceSourceRevisionInput", "advanceSourceRevisionInTx"],
+      "consumers": [
+        {"path": "internal/repository/semantic_repository_integration.e2e", "symbol": "TestSemanticSupportSourceRevisionMustMatchSource"},
+        {"path": "internal/repository/known_evidence_support_integration.e2e", "symbol": "TestKnownEvidenceFenceRejectsSnapshotAfterSameTransactionSourceAdvance"},
+        {"path": "internal/repository/ledger_repository_test.go", "symbol": "TestLedgerCreateIngestValidationRejectsHashMismatch"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/source_revision_repository.go", "symbol": "Store.AdvanceSourceRevision"},
+      "removal_condition": "Remove source-revision repository forwarders after lifecycle and evidence callers use the owner ledger port directly."
+    },
+    {
+      "source_path": "internal/repository/submission_assessment_commit_repository.go",
+      "fields": ["normalizeRememberCommitScope", "normalizeCommitSubmissionAssessmentInput", "validateCommitSubmissionAssessmentInput"],
+      "consumers": [
+        {"path": "internal/repository/remember_commit_helpers.go", "symbol": "normalizeSynchronousRememberCommitInput"},
+        {"path": "internal/repository/remember_commit_helpers.go", "symbol": "validateSynchronousRememberCommitInputWithSecurity"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "ValidateCommitSubmissionAssessmentInput"},
+      "removal_condition": "Remove submission-assessment validation aliases after Remember callers use the owner commit contract directly."
+    },
+    {
+      "source_path": "internal/repository/submission_assessment_known_evidence_fence.go",
+      "fields": ["reauthorizeSubmissionKnownEvidence"],
+      "consumers": [
+        {"path": "internal/repository/known_evidence_support_integration.e2e", "symbol": "TestKnownEvidenceFenceSerializesConcurrentQuarantine"},
+        {"path": "internal/repository/known_evidence_support_integration.e2e", "symbol": "TestKnownEvidenceFenceRejectsSnapshotAfterSameTransactionSourceAdvance"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "ReauthorizeSubmissionKnownEvidence"},
+      "removal_condition": "Remove the known-evidence fence shim after evidence fixtures use the owner fence directly."
+    },
     {
       "source_path": "internal/repository/remember_artifact_hold.go",
       "fields": ["setRememberFailureArtifactHoldStateTx"],
@@ -26,16 +603,33 @@
         "id": "github.com/markhuangai/dense-mem/internal/repository",
         "role": "postgres_adapter",
         "visibility": "private"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/knowledge/contract",
+        "role": "port",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/knowledge/postgres",
+        "role": "postgres_adapter",
+        "visibility": "private"
       }
     ]
   },
   "browser": {
     "units": []
   },
-  "exceptions": [],
+  "exceptions": [
+    {
+      "source": "github.com/markhuangai/dense-mem/internal/repository",
+      "target": "github.com/markhuangai/dense-mem/internal/knowledge/postgres",
+      "removal_issue": 382,
+      "reason": "Legacy repository entry points are bounded single-hop compatibility facades recorded above by source and symbol; #382 removes the exception after every named consumer migrates to the PostgreSQL owner."
+    }
+  ],
   "workers": [
     {
-      "path": "internal/repository/remember_attempt_repository.go",
+      "path": "internal/knowledge/postgres/remember_attempt_repository.go",
       "function": "StartRememberFailureArtifactPurger",
       "kind": "goroutine",
       "ordinal": 1,
