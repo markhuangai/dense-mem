@@ -730,94 +730,56 @@ func loadRememberAttemptDiagnosticEvents(ctx context.Context, tx *gorm.DB, teamI
 }
 
 func (r *Store) PurgeExpiredRememberAttemptDiagnostics(ctx context.Context, batchSize int) (int, error) {
-	deleted, _, err := r.purgeExpiredRememberAttemptDiagnostics(ctx, batchSize, "")
+	deleted, err := r.purgeExpiredRememberAttemptDiagnostics(ctx, batchSize)
 	return deleted, err
 }
 
-func (r *Store) purgeExpiredRememberAttemptDiagnostics(ctx context.Context, batchSize int, startSpaceID string) (int, string, error) {
+func (r *Store) purgeExpiredRememberAttemptDiagnostics(ctx context.Context, batchSize int) (int, error) {
 	if batchSize <= 0 || batchSize > rememberDiagnosticPurgeBatchSize {
 		batchSize = rememberDiagnosticPurgeBatchSize
 	}
 	var deleted int64
-	lastSpaceID := strings.TrimSpace(startSpaceID)
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		type purgeCandidate struct {
 			teamID, diagnosticID, spaceID string
 		}
 		candidates := make([]purgeCandidate, 0, batchSize)
-		for len(candidates) < batchSize {
-			spaceQuery := `
-				SELECT space.id::text
-				FROM memory_spaces AS space
-				WHERE EXISTS (
-					SELECT 1
-					FROM remember_attempt_diagnostics AS diagnostic
-					JOIN remember_attempts AS attempt
-					  ON attempt.team_id = diagnostic.team_id
-					 AND attempt.attempt_id = diagnostic.attempt_id
-					 AND attempt.owner_profile_id = diagnostic.owner_profile_id
-					WHERE attempt.team_id = space.team_id
-					  AND attempt.space_id = space.id
-					  AND diagnostic.expires_at <= clock_timestamp()
-				)
-				AND NOT EXISTS (
-					SELECT 1 FROM private_memory_legal_holds AS hold
-					WHERE hold.space_id = space.id AND hold.released_at IS NULL
-				)
-				ORDER BY space.id
-				LIMIT 1
-				FOR UPDATE SKIP LOCKED
-			`
-			spaceArgs := []any{}
-			if lastSpaceID != "" {
-				spaceQuery = strings.Replace(spaceQuery, "ORDER BY space.id", "AND space.id > ?::uuid\n\t\t\t\tORDER BY space.id", 1)
-				spaceArgs = append(spaceArgs, lastSpaceID)
-			}
-			var spaceID string
-			err := tx.WithContext(ctx).Raw(spaceQuery, spaceArgs...).Row().Scan(&spaceID)
-			if errors.Is(err, sql.ErrNoRows) {
-				break
-			}
-			if err != nil {
-				return err
-			}
-			lastSpaceID = spaceID
-			remaining := batchSize - len(candidates)
-			privateRows, err := tx.WithContext(ctx).Raw(`
-				SELECT diagnostic.team_id::text, diagnostic.diagnostic_id::text, attempt.space_id::text
-				FROM remember_attempt_diagnostics AS diagnostic
-				JOIN remember_attempts AS attempt
-				  ON attempt.team_id = diagnostic.team_id
-				 AND attempt.attempt_id = diagnostic.attempt_id
-				 AND attempt.owner_profile_id = diagnostic.owner_profile_id
-				WHERE attempt.space_id = ?::uuid
-				  AND diagnostic.expires_at <= clock_timestamp()
-				  AND NOT EXISTS (
-					SELECT 1 FROM private_memory_legal_holds AS hold
-					WHERE hold.space_id = attempt.space_id AND hold.released_at IS NULL
-				  )
-				ORDER BY diagnostic.expires_at ASC, diagnostic.team_id ASC, diagnostic.diagnostic_id ASC
-				LIMIT ?
-				FOR UPDATE OF diagnostic SKIP LOCKED
-			`, spaceID, remaining).Rows()
-			if err != nil {
-				return err
-			}
-			for privateRows.Next() {
-				var candidate purgeCandidate
-				if err := privateRows.Scan(&candidate.teamID, &candidate.diagnosticID, &candidate.spaceID); err != nil {
-					_ = privateRows.Close()
-					return err
-				}
-				candidates = append(candidates, candidate)
-			}
-			if err := privateRows.Err(); err != nil {
+		privateRows, err := tx.WithContext(ctx).Raw(`
+			SELECT diagnostic.team_id::text, diagnostic.diagnostic_id::text, attempt.space_id::text
+			FROM remember_attempt_diagnostics AS diagnostic
+			JOIN remember_attempts AS attempt
+			  ON attempt.team_id = diagnostic.team_id
+			 AND attempt.attempt_id = diagnostic.attempt_id
+			 AND attempt.owner_profile_id = diagnostic.owner_profile_id
+			JOIN memory_spaces AS space
+			  ON space.team_id = attempt.team_id AND space.id = attempt.space_id
+			WHERE diagnostic.expires_at <= clock_timestamp()
+			  AND NOT EXISTS (
+				SELECT 1 FROM private_memory_legal_holds AS hold
+				WHERE hold.space_id = attempt.space_id AND hold.released_at IS NULL
+			  )
+			ORDER BY diagnostic.expires_at ASC, diagnostic.team_id ASC, diagnostic.diagnostic_id ASC
+			LIMIT ?
+			FOR UPDATE OF diagnostic SKIP LOCKED
+			FOR KEY SHARE OF space SKIP LOCKED
+		`, batchSize).Rows()
+		if err != nil {
+			return err
+		}
+		for privateRows.Next() {
+			var candidate purgeCandidate
+			if err := privateRows.Scan(&candidate.teamID, &candidate.diagnosticID, &candidate.spaceID); err != nil {
 				_ = privateRows.Close()
 				return err
 			}
-			if err := privateRows.Close(); err != nil {
-				return err
-			}
+			candidates = append(candidates, candidate)
+		}
+		if err := privateRows.Err(); err != nil {
+			_ = privateRows.Close()
+			return err
+		}
+		if err := privateRows.Close(); err != nil {
+			return err
 		}
 		if remaining := batchSize - len(candidates); remaining > 0 {
 			globalRows, err := tx.WithContext(ctx).Raw(`
@@ -878,28 +840,22 @@ func (r *Store) purgeExpiredRememberAttemptDiagnostics(ctx context.Context, batc
 		return nil
 	})
 	if err != nil {
-		return 0, lastSpaceID, fmt.Errorf("remember attempt diagnostic purge: %w", err)
+		return 0, fmt.Errorf("remember attempt diagnostic purge: %w", err)
 	}
-	return int(deleted), lastSpaceID, nil
+	return int(deleted), nil
 }
 
 func drainExpiredRememberAttemptDiagnostics(ctx context.Context, repo *Store) (int, error) {
 	deletedTotal := 0
-	cursor := ""
 	for {
-		deleted, nextCursor, err := repo.purgeExpiredRememberAttemptDiagnostics(ctx, rememberDiagnosticPurgeBatchSize, cursor)
+		deleted, err := repo.purgeExpiredRememberAttemptDiagnostics(ctx, rememberDiagnosticPurgeBatchSize)
 		deletedTotal += deleted
 		if err != nil {
 			return deletedTotal, err
 		}
 		if deleted < rememberDiagnosticPurgeBatchSize {
-			if cursor != "" {
-				cursor = ""
-				continue
-			}
 			return deletedTotal, nil
 		}
-		cursor = nextCursor
 		if err := ctx.Err(); err != nil {
 			return deletedTotal, err
 		}

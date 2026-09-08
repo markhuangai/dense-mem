@@ -579,7 +579,7 @@
       "removal_issue": 382,
       "implementation_owner": {"path": "internal/knowledge/postgres/compat_exports.go", "symbol": "ReauthorizeSubmissionKnownEvidence"},
       "removal_condition": "Remove the known-evidence fence shim after evidence fixtures use the owner fence directly."
-    },
+    }
   ],
   "completed_issues": [],
   "go": {

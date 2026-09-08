@@ -202,7 +202,7 @@ func truncateLedgerFixtures(tx *gorm.DB) error {
 				'v2_migration_exclusions', 'v2_migration_errors', 'v2_migration_checkpoints',
 				'v2_migration_source_maps', 'v2_migration_corpus_items', 'v2_migration_runs',
 				'recall_feedback_events', 'dream_evidence_target_attempts', 'dream_evidence_target_evaluations', 'hypothesis_evidence_derivation_sources',
-				'remember_failure_artifacts', 'remember_attempt_events',
+				'remember_attempt_diagnostics', 'remember_attempt_events',
 				'remember_attempts', 'semantic_assessments', 'search_documents',
 				'search_index_generations', 'embedding_contracts', 'community_sources',
 				'community_memberships', 'community_records', 'community_snapshot_runs',
