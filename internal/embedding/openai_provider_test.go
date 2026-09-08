@@ -48,7 +48,7 @@ func TestOpenAIProviderRecordsBoundedExchange(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, recorder.exchanges, 1)
 	require.Equal(t, "embedding", recorder.exchanges[0].Component)
-	require.Equal(t, response, string(recorder.exchanges[0].ResponseBody))
+	require.Equal(t, `{"data":[{"embedding_dimensions":2,"object":""}]}`, string(recorder.exchanges[0].ResponseBody))
 	require.Contains(t, string(recorder.exchanges[0].RequestBody), "embedding-model")
 }
 

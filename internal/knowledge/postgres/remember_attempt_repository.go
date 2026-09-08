@@ -56,7 +56,7 @@ const (
 
 func validRememberDiagnosticCaptureState(value string) bool {
 	switch strings.TrimSpace(value) {
-	case "captured", "truncated", "not_captured", "provider_not_called", "no_response", "interrupted":
+	case "captured", "truncated", "not_captured", "provider_not_called", "no_response", "interrupted", "not_delivered":
 		return true
 	default:
 		return false

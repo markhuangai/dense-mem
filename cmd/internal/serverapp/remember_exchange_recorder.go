@@ -3,6 +3,7 @@ package serverapp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"sync"
 	"time"
@@ -14,7 +15,7 @@ import (
 )
 
 const (
-	rememberDiagnosticMaxBodyBytes    = 16 << 20
+	rememberDiagnosticMaxBodyBytes    = modelprovider.MaxProviderDiagnosticBodyBytes
 	rememberDiagnosticMaxAttemptBytes = 64 << 20
 )
 
@@ -64,9 +65,8 @@ func boundedRememberDiagnosticBody(body []byte) ([]byte, bool) {
 	return append([]byte(nil), sanitized...), truncated
 }
 
-func sanitizeRememberDiagnosticContent(body []byte) []byte {
-	sanitized, _ := boundedRememberDiagnosticBody(body)
-	return sanitized
+func rememberDiagnosticBodyState(body []byte) ([]byte, bool) {
+	return boundedRememberDiagnosticBody(body)
 }
 
 func rememberDiagnosticCaptureStateForExchange(exchange modelprovider.ProviderExchange) string {
@@ -97,20 +97,26 @@ func rememberFailureDiagnostics(
 	publicResult map[string]any,
 	exchanges []modelprovider.ProviderExchange,
 	callerResponse []byte,
-	_ string,
+	callerResponseDelivered bool,
 	_ string,
 ) []repository.RememberAttemptDiagnosticInput {
-	if len(callerResponse) == 0 && publicResult != nil {
+	if !callerResponseDelivered {
+		callerResponse = nil
+	} else if len(callerResponse) == 0 && publicResult != nil {
 		if encoded, err := json.Marshal(registry.ToolCallerResponse(publicResult, true)); err == nil {
 			callerResponse = encoded
 		}
 	}
 	items := make([]repository.RememberAttemptDiagnosticInput, 0, len(exchanges)+2)
 	if len(input.OriginalRequest) > 0 {
+		requestBody, truncated := rememberDiagnosticBodyState(input.OriginalRequest)
+		captureState := "captured"
+		if truncated {
+			captureState = "truncated"
+		}
 		items = append(items, repository.RememberAttemptDiagnosticInput{
 			SequenceNo: 1, Kind: "original_request", Component: "remember",
-			RequestBody:        sanitizeRememberDiagnosticContent(input.OriginalRequest),
-			RequestContentType: "application/json", Outcome: "captured", CaptureState: "captured",
+			RequestBody: requestBody, RequestContentType: "application/json", Outcome: "captured", CaptureState: captureState,
 		})
 	} else {
 		items = append(items, repository.RememberAttemptDiagnosticInput{
@@ -127,12 +133,19 @@ func rememberFailureDiagnostics(
 		if capturedAt.IsZero() {
 			capturedAt = time.Now().UTC()
 		}
+		requestBody, responseBody := modelprovider.ProjectProviderExchangeBodies(exchange.Component, exchange.RequestBody, exchange.ResponseBody)
+		requestBody, requestTruncated := rememberDiagnosticBodyState(requestBody)
+		responseBody, responseTruncated := rememberDiagnosticBodyState(responseBody)
+		captureState := rememberDiagnosticCaptureStateForExchange(exchange)
+		if requestTruncated || responseTruncated {
+			captureState = "truncated"
+		}
 		items = append(items, repository.RememberAttemptDiagnosticInput{
 			SequenceNo: sequence, Kind: "provider_exchange", Component: exchange.Component,
-			Model: exchange.Model, RequestBody: sanitizeRememberDiagnosticContent(exchange.RequestBody),
-			ResponseBody:       sanitizeRememberDiagnosticContent(exchange.ResponseBody),
+			Model: exchange.Model, RequestBody: requestBody,
+			ResponseBody:       responseBody,
 			RequestContentType: exchange.RequestContentType, ResponseContentType: exchange.ResponseContentType,
-			StatusCode: exchange.StatusCode, Outcome: outcome, CaptureState: rememberDiagnosticCaptureStateForExchange(exchange),
+			StatusCode: exchange.StatusCode, Outcome: outcome, CaptureState: captureState,
 			CapturedAt: capturedAt, ExpiresAt: capturedAt.Add(7 * 24 * time.Hour),
 		})
 		sequence++
@@ -143,9 +156,18 @@ func rememberFailureDiagnostics(
 		})
 		sequence++
 	}
-	if len(callerResponse) > 0 {
+	if !callerResponseDelivered {
 		items = append(items, repository.RememberAttemptDiagnosticInput{
-			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", ResponseBody: sanitizeRememberDiagnosticContent(callerResponse), ResponseContentType: "application/json", Outcome: "captured", CaptureState: "captured",
+			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", Outcome: "not_delivered", CaptureState: "not_delivered",
+		})
+	} else if len(callerResponse) > 0 {
+		responseBody, truncated := rememberDiagnosticBodyState(callerResponse)
+		captureState := "captured"
+		if truncated {
+			captureState = "truncated"
+		}
+		items = append(items, repository.RememberAttemptDiagnosticInput{
+			SequenceNo: sequence, Kind: "caller_response", Component: "mcp", ResponseBody: responseBody, ResponseContentType: "application/json", Outcome: "captured", CaptureState: captureState,
 		})
 	} else {
 		items = append(items, repository.RememberAttemptDiagnosticInput{
@@ -154,6 +176,14 @@ func rememberFailureDiagnostics(
 	}
 	boundRememberDiagnosticItems(items)
 	return items
+}
+
+func rememberCallerResponseDelivered(ctx context.Context, failure error) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	return !errors.Is(failure, context.Canceled) &&
+		!errors.Is(failure, context.DeadlineExceeded)
 }
 
 func boundRememberDiagnosticItems(items []repository.RememberAttemptDiagnosticInput) {
@@ -201,13 +231,15 @@ func (r *rememberExchangeRecorder) RecordProviderExchange(_ context.Context, exc
 	if r == nil {
 		return
 	}
+	originalRequestBytes, originalResponseBytes := len(exchange.RequestBody), len(exchange.ResponseBody)
+	exchange.RequestBody, exchange.ResponseBody = modelprovider.ProjectProviderExchangeBodies(exchange.Component, exchange.RequestBody, exchange.ResponseBody)
 	var requestTruncated, responseTruncated bool
 	exchange.RequestBody, requestTruncated = boundedRememberDiagnosticBody(exchange.RequestBody)
 	exchange.ResponseBody, responseTruncated = boundedRememberDiagnosticBody(exchange.ResponseBody)
 	if exchange.CaptureState == "" {
 		exchange.CaptureState = rememberDiagnosticCaptureStateForExchange(exchange)
 	}
-	if requestTruncated || responseTruncated {
+	if requestTruncated || responseTruncated || originalRequestBytes > rememberDiagnosticMaxBodyBytes || originalResponseBytes > rememberDiagnosticMaxBodyBytes {
 		exchange.CaptureState = "truncated"
 	}
 	r.mu.Lock()

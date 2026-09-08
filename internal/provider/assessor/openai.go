@@ -565,6 +565,11 @@ func recordOpenAIExchange(ctx context.Context, component, model string, requestB
 	if recorder == nil {
 		return
 	}
+	captureState := ""
+	if len(requestBody) > modelprovider.MaxProviderDiagnosticBodyBytes || len(responseBody) > modelprovider.MaxProviderDiagnosticBodyBytes {
+		captureState = "truncated"
+	}
+	requestBody, responseBody = modelprovider.ProjectProviderExchangeBodies(component, requestBody, responseBody)
 	recorder.RecordProviderExchange(ctx, modelprovider.ProviderExchange{
 		Component:           component,
 		Model:               model,
@@ -574,6 +579,7 @@ func recordOpenAIExchange(ctx context.Context, component, model string, requestB
 		ResponseContentType: responseContentType,
 		StatusCode:          statusCode,
 		Outcome:             outcome,
+		CaptureState:        captureState,
 		StartedAt:           started,
 		CompletedAt:         time.Now(),
 	})

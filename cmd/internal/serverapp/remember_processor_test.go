@@ -67,7 +67,7 @@ func TestRememberFailureDiagnosticsCapturesBodiesAndRedactsSecrets(t *testing.T)
 	publicResult := map[string]any{"processing_state": "failed", "errors": []any{map[string]any{"code": "provider_unavailable"}}}
 	items := rememberFailureDiagnostics(input, publicResult, []modelprovider.ProviderExchange{{
 		Component: "assessor", Model: "test-model", RequestBody: []byte(`{"messages":[{"content":"safe"}],"api_key":"secret-token"}`), ResponseBody: []byte(`{"error":{"message":"Authorization: Bearer sk-live-secret","stack_trace":"goroutine 1 [running]","database_error":"sql password=secret"}}`), StatusCode: 500, Outcome: "captured",
-	}}, nil, "attempt", "assessment")
+	}}, nil, true, "assessment")
 	require.Len(t, items, 3)
 	require.Equal(t, "original_request", items[0].Kind)
 	require.Equal(t, "provider_exchange", items[1].Kind)
@@ -92,6 +92,29 @@ func TestRememberFailureDiagnosticsCapturesBodiesAndRedactsSecrets(t *testing.T)
 	require.NotContains(t, string(sqlState), "duplicate key value violates unique constraint")
 	boundary, _ := boundedRememberDiagnosticBody(append([]byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes-20)), []byte(" api_key=boundary-secret")...))
 	require.NotContains(t, string(boundary), "boundary-secret")
+}
+
+func TestRememberFailureDiagnosticsMarksUndeliveredCallerResponseOnCancellation(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(`{"evidence":[]}`)}
+	items := rememberFailureDiagnostics(input, map[string]any{"processing_state": "failed"}, nil, []byte(`{"isError":true}`), false, "embedding")
+	require.Len(t, items, 3)
+	require.Equal(t, "not_delivered", items[2].Outcome)
+	require.Equal(t, "not_delivered", items[2].CaptureState)
+	require.Empty(t, items[2].ResponseBody)
+}
+
+func TestRememberCallerResponseDeliveryUsesRequestContext(t *testing.T) {
+	require.True(t, rememberCallerResponseDelivered(context.Background(), rememberapp.ErrRememberRequestTimeout))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.False(t, rememberCallerResponseDelivered(ctx, rememberapp.ErrRememberRequestCancelled))
+}
+
+func TestRememberFailureDiagnosticsPreservesTruncationState(t *testing.T) {
+	input := rememberapp.RememberProcessRequest{OriginalRequest: []byte(strings.Repeat("x", rememberDiagnosticMaxBodyBytes+1))}
+	items := rememberFailureDiagnostics(input, nil, nil, nil, true, "assessment")
+	require.Equal(t, "truncated", items[0].CaptureState)
+	require.Len(t, items[0].RequestBody, rememberDiagnosticMaxBodyBytes)
 }
 
 func TestRememberExchangeRecorderBoundsBodiesAndAggregate(t *testing.T) {
@@ -121,8 +144,8 @@ func TestRememberExchangeRecorderRetainsLaterMetadataAfterAggregateLimit(t *test
 	require.Equal(t, 502, exchanges[2].StatusCode)
 	require.Equal(t, "captured", exchanges[2].Outcome)
 	require.Equal(t, "truncated", exchanges[2].CaptureState)
-	require.Empty(t, exchanges[2].RequestBody)
-	require.Empty(t, exchanges[2].ResponseBody)
+	require.Contains(t, string(exchanges[2].RequestBody), `"format":"non_json"`)
+	require.Contains(t, string(exchanges[2].ResponseBody), `"format":"non_json"`)
 }
 
 func TestRememberFailureCodeMapsAssessmentDatabaseFailure(t *testing.T) {

@@ -68,7 +68,7 @@ describe("RememberAttemptsPanel", () => {
           { diagnostic_id: "no-response", sequence_no: 3, kind: "provider_exchange", component: "embedding", outcome: "no_response", capture_state: "no_response", captured_at: "2026-08-01T00:00:00Z", expires_at: "2026-08-08T00:00:00Z", retained_by_legal_hold: false },
           { diagnostic_id: "interrupted", sequence_no: 4, kind: "provider_exchange", component: "assessor", outcome: "response_read_failed", capture_state: "interrupted", captured_at: "2026-08-01T00:00:00Z", expires_at: "2026-08-08T00:00:00Z", retained_by_legal_hold: false },
         ],
-        caller_response: { diagnostic_id: "caller", sequence_no: 5, kind: "caller_response", component: "mcp", outcome: "not_captured", capture_state: "not_captured", captured_at: "2026-08-01T00:00:00Z", expires_at: "2026-08-08T00:00:00Z", retained_by_legal_hold: false },
+        caller_response: { diagnostic_id: "caller", sequence_no: 5, kind: "caller_response", component: "mcp", outcome: "not_delivered", capture_state: "not_delivered", captured_at: "2026-08-01T00:00:00Z", expires_at: "2026-08-08T00:00:00Z", retained_by_legal_hold: false },
       },
     });
     const api = { listRememberAttemptDiagnostics, getRememberAttemptDiagnostic } as unknown as ControlApi;
@@ -80,7 +80,7 @@ describe("RememberAttemptsPanel", () => {
     expect(within(detailRegion).getByText("The provider was not called for this failed attempt.")).toBeInTheDocument();
     expect(within(detailRegion).getByText("The provider call did not produce an HTTP response.")).toBeInTheDocument();
     expect(within(detailRegion).getByText("Capture was interrupted before the provider response was fully read.")).toBeInTheDocument();
-    expect(within(detailRegion).getByText("This body was not captured before the attempt ended.")).toBeInTheDocument();
+    expect(within(detailRegion).getByText("No response was delivered to the caller because the request ended before the server could return it.")).toBeInTheDocument();
   });
 
   it("clears the previous team while the next list request is pending", async () => {

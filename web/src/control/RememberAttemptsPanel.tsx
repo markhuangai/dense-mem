@@ -251,6 +251,7 @@ function DiagnosticExchange({ exchange, requestOnly = false, responseOnly = fals
           {(state === "not_captured" || state === "provider_not_called") && <DiagnosticUnavailable message={state === "provider_not_called" ? "The provider was not called for this failed attempt." : "This body was not captured before the attempt ended."} />}
           {state === "no_response" && <DiagnosticUnavailable message="The provider call did not produce an HTTP response." />}
           {state === "interrupted" && <DiagnosticUnavailable message="Capture was interrupted before the provider response was fully read." />}
+          {state === "not_delivered" && <DiagnosticUnavailable message="No response was delivered to the caller because the request ended before the server could return it." />}
           {state === "truncated" && <DiagnosticUnavailable message="The capture exceeded the diagnostic size limit; the displayed body is truncated." />}
         </>
       )}

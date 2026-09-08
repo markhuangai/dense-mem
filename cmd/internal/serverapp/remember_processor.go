@@ -315,7 +315,7 @@ func (p *rememberSynchronousProcessor) recordRememberFailure(
 	if capture := rememberapp.DiagnosticCaptureFromContext(ctx); capture != nil {
 		callerResponse, _ = capture.ProjectResponse(publicResult, true)
 	}
-	diagnostics := rememberFailureDiagnostics(input, publicResult, exchanges, callerResponse, attemptID, phase)
+	diagnostics := rememberFailureDiagnostics(input, publicResult, exchanges, callerResponse, rememberCallerResponseDelivered(ctx, failure), phase)
 	recoveryCtx, cancel := rememberFailureRecoveryContext(ctx)
 	defer cancel()
 	recordErr := p.ledger.RecordRememberFailure(recoveryCtx, repository.RememberFailureRecordInput{

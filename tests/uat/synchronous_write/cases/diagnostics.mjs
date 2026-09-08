@@ -173,6 +173,7 @@ export async function run({ rpc, rawRPC = rpc, expect }) {
   const disconnectDiagnostics = disconnectDetail.data?.diagnostics || {};
   expect(disconnectDiagnostics.original_request?.request_body?.includes('"name":"remember"'), "disconnect detail must expose the original request body");
   expect(disconnectDiagnostics.provider_exchanges?.some((exchange) => ["no_response", "interrupted", "truncated"].includes(exchange.capture_state)), "disconnect detail must expose a bounded interrupted provider state");
+  expect(disconnectDiagnostics.caller_response?.capture_state === "not_delivered", "disconnect detail must mark the caller response as not delivered");
 
   const logs = await controlJSON(controlURL, token, "/control/api/logs?limit=100");
   const serializedLogs = JSON.stringify(logs);

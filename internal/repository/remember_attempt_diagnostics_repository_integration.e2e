@@ -381,6 +381,27 @@ func TestRememberAttemptDiagnosticsPaginatesOrdersAndIsolatesABC(t *testing.T) {
 	require.Zero(t, crossTeamVisible)
 }
 
+type rememberAttemptDiagnosticPurger interface {
+	PurgeExpiredRememberAttemptDiagnostics(context.Context, int) (int, error)
+}
+
+func drainExpiredRememberAttemptDiagnostics(ctx context.Context, repo rememberAttemptDiagnosticPurger) (int, error) {
+	deletedTotal := 0
+	for {
+		deleted, err := repo.PurgeExpiredRememberAttemptDiagnostics(ctx, 100)
+		deletedTotal += deleted
+		if err != nil {
+			return deletedTotal, err
+		}
+		if deleted < 100 {
+			return deletedTotal, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return deletedTotal, err
+		}
+	}
+}
+
 func insertRememberDiagnosticEvents(ctx context.Context, db *gorm.DB, rls *storagepostgres.RLS, teamID, ownerID, attemptID string, events []map[string]any) error {
 	return rls.WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		for _, event := range events {

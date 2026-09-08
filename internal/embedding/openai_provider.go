@@ -242,12 +242,17 @@ func recordEmbeddingExchange(ctx context.Context, model string, requestBody, res
 	if recorder == nil {
 		return
 	}
+	captureState := ""
+	if len(requestBody) > modelprovider.MaxProviderDiagnosticBodyBytes || len(responseBody) > modelprovider.MaxProviderDiagnosticBodyBytes {
+		captureState = "truncated"
+	}
+	requestBody, responseBody = modelprovider.ProjectProviderExchangeBodies("embedding", requestBody, responseBody)
 	now := time.Now()
 	recorder.RecordProviderExchange(ctx, modelprovider.ProviderExchange{
 		Component: "embedding", Model: model,
 		RequestBody: append([]byte(nil), requestBody...), ResponseBody: append([]byte(nil), responseBody...),
 		RequestContentType: "application/json", ResponseContentType: responseContentType,
-		StatusCode: statusCode, Outcome: outcome, StartedAt: now, CompletedAt: now,
+		StatusCode: statusCode, Outcome: outcome, CaptureState: captureState, StartedAt: now, CompletedAt: now,
 	})
 }
 

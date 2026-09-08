@@ -1,5 +1,14 @@
 -- +goose Up
 
+-- Lock/rewrite impact: creates one append-only diagnostics table and indexes;
+-- the legacy artifact table is read during migration and then removed.
+-- RLS impact: enables FORCE RLS with system, migration, and owner-scoped policies.
+-- Backfill: copies still-retained legacy artifact rows once; expired bytes are omitted.
+-- Backward compatibility: the new table preserves the control read model while
+-- retiring hash-only failure artifacts; no runtime dual-write remains afterward.
+-- Rollback: irreversible after the legacy table is removed; restore from backup
+-- or roll forward instead of reporting a successful Down migration.
+
 -- Failure diagnostics are stored as ordered exchanges so the control portal can
 -- show the original request, provider traffic, and caller response together.
 CREATE TABLE IF NOT EXISTS remember_attempt_diagnostics (
@@ -25,7 +34,7 @@ CREATE TABLE IF NOT EXISTS remember_attempt_diagnostics (
     UNIQUE (team_id, attempt_id, sequence_no),
     CONSTRAINT remember_attempt_diagnostics_kind_check CHECK (kind IN ('original_request', 'provider_exchange', 'caller_response')),
     CONSTRAINT remember_attempt_diagnostics_capture_state_check CHECK (
-        capture_state IN ('captured', 'truncated', 'not_captured', 'provider_not_called', 'no_response', 'interrupted')
+        capture_state IN ('captured', 'truncated', 'not_captured', 'provider_not_called', 'no_response', 'interrupted', 'not_delivered')
     ),
     CONSTRAINT remember_attempt_diagnostics_body_size_check CHECK (
         octet_length(request_bytes) <= 16777216 AND octet_length(response_bytes) <= 16777216
@@ -204,5 +213,11 @@ ON CONFLICT (team_id, attempt_id, sequence_no) DO NOTHING;
 DROP TABLE IF EXISTS remember_failure_artifacts;
 
 -- +goose Down
-DROP TABLE IF EXISTS remember_attempt_diagnostics;
-DROP FUNCTION IF EXISTS prevent_remember_attempt_diagnostics_mutation();
+-- The Up migration drops the legacy artifact authority after copying retained
+-- rows. A Down migration cannot restore the dropped table and its data safely.
+-- +goose StatementBegin
+DO $$
+BEGIN
+    RAISE EXCEPTION 'remember attempt diagnostics migration is irreversible; restore from backup or roll forward';
+END $$;
+-- +goose StatementEnd

@@ -46,6 +46,7 @@ func TestRememberAttemptDiagnosticsMigrationContract(t *testing.T) {
 		"remember_attempt_diagnostics_kind_check",
 		"capture_state TEXT NOT NULL DEFAULT 'captured'",
 		"remember_attempt_diagnostics_capture_state_check",
+		"'not_delivered'",
 		"legacy_hash_summary",
 		"remember_attempt_diagnostics_body_size_check",
 		"remember_attempt_diagnostics_expiry_check",
@@ -60,6 +61,7 @@ func TestRememberAttemptDiagnosticsMigrationContract(t *testing.T) {
 		"private_memory_legal_holds",
 		"digest(artifact.content_bytes, 'sha256')",
 		"DROP TABLE IF EXISTS remember_failure_artifacts",
+		"RAISE EXCEPTION 'remember attempt diagnostics migration is irreversible",
 	} {
 		require.Contains(t, migration, required)
 	}
