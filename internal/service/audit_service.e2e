@@ -752,9 +752,15 @@ func TestAuditServiceListIsolatesTeamsForNonSuperuser(t *testing.T) {
 	roleCreated := false
 	defer func() {
 		if roleCreated {
-			_ = rlss.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
-				return tx.Exec(fmt.Sprintf("DROP ROLE IF EXISTS %s", roleName)).Error
+			err := rlss.WithSystemTx(context.Background(), adminDB, func(tx *gorm.DB) error {
+				return tx.Exec(fmt.Sprintf(`
+					REVOKE ALL ON ALL TABLES IN SCHEMA public FROM %s;
+					REVOKE ALL ON SCHEMA public FROM %s;
+					DROP OWNED BY %s;
+					DROP ROLE IF EXISTS %s;
+				`, roleName, roleName, roleName, roleName)).Error
 			})
+			require.NoError(t, err, "clean up audit RLS test role")
 		}
 	}()
 	require.NoError(t, rlss.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
@@ -797,4 +803,10 @@ func TestAuditServiceListIsolatesTeamsForNonSuperuser(t *testing.T) {
 	require.Equal(t, 1, total)
 	require.Len(t, entries, 1)
 	require.Equal(t, "test-audit-rls-a", entries[0].EntityID)
+
+	var visibleEntityIDs []string
+	require.NoError(t, rlss.WithTeamTx(ctx, appDB, teamAString, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT entity_id FROM audit_log ORDER BY entity_id`).Scan(&visibleEntityIDs).Error
+	}))
+	require.Equal(t, []string{"test-audit-rls-a"}, visibleEntityIDs)
 }

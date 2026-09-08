@@ -81,7 +81,7 @@ func TestStoreListAndCountUseTheActiveSpacePredicate(t *testing.T) {
 	store, mock, cleanup := newMockStore(t)
 	defer cleanup()
 	when := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
-	mock.ExpectQuery("SELECT id, team_id, timestamp, operation, entity_type, entity_id").
+	mock.ExpectQuery("SELECT id, team_id, timestamp, operation, entity_type, entity_id[\\s\\S]+ORDER BY audit\\.timestamp DESC, audit\\.id DESC[\\s\\S]+LIMIT").
 		WithArgs("team-1", 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "team_id", "timestamp", "operation", "entity_type", "entity_id",

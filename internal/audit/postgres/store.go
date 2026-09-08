@@ -100,7 +100,7 @@ func (s *Store) List(ctx context.Context, teamID string, limit, offset int) ([]c
 					    AND space.lifecycle_state = 'active'
 				  )
 			  )
-			ORDER BY timestamp DESC
+			ORDER BY audit.timestamp DESC, audit.id DESC
 			LIMIT $2 OFFSET $3
 		`, teamID, limit, offset).Rows()
 		if err != nil {
