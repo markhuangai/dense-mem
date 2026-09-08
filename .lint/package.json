@@ -10,5 +10,8 @@
     "typescript": "7.0.2",
     "textlint": "^15.8.0",
     "textlint-rule-max-number-of-lines": "^1.0.3"
+  },
+  "overrides": {
+    "js-yaml": "4.3.2"
   }
 }
