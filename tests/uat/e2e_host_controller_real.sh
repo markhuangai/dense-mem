@@ -370,7 +370,7 @@ docker run -d --name "$network_blocker" --network "$stale_network" \
   alpine:3.24 sh -c 'while :; do sleep 3600; done' >/dev/null
 (
   sleep 3
-  docker rm -f "$network_blocker" >/dev/null
+  docker rm -f "$network_blocker" >/dev/null 2>&1 || true
 ) &
 network_release_pid=$!
 docker volume create \
