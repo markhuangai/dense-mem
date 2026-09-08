@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 )
@@ -71,22 +72,7 @@ type UpsertSearchDocumentInput struct {
 	SpaceKind              string
 }
 
-type SearchDocumentResult struct {
-	TeamID                 string
-	SearchDocumentID       string
-	OwnerProfileID         string
-	SourceKind             string
-	SourceID               string
-	SourceVersion          int64
-	ProjectionFormat       int
-	ProjectionGenerationID string
-	DocumentVersion        int64
-	EmbeddingContractID    string
-	EmbeddingDimensions    int
-	SearchState            string
-	SpaceID                string
-	SpaceGeneration        int64
-}
+type SearchDocumentResult = knowledgecontract.SearchDocumentResult
 
 // LoadSearchDocumentsForEmbeddingInput identifies one owner-scoped batch of
 // documents whose text and version fences are needed before an inline write
@@ -104,41 +90,18 @@ type LoadSearchDocumentsForSourcesInput struct {
 	SourceIDs      []string
 }
 
-type SearchDocumentForEmbedding struct {
-	SearchDocumentResult
-	DocumentText       string
-	DocumentHash       string
-	StoredDocumentHash string
-	// Retired marks a stored projection whose canonical source no longer
-	// exists. It is finalized without a provider call after successful repair.
-	Retired bool
-}
+type SearchDocumentForEmbedding = knowledgecontract.SearchDocumentForEmbedding
 
 // InlineEmbeddingPlan is the provider-independent render result for one
 // synchronous semantic write. Search document IDs are provisional plan keys;
 // the commit phase maps returned vectors to the final version-fenced rows by
 // document hash.
-type InlineEmbeddingPlan struct {
-	Documents               []SearchDocumentForEmbedding
-	EmbeddingContractID     string
-	EmbeddingDimensions     int
-	EmbeddingModel          string
-	SearchIndexGenerationID string
-	IndexGeneration         int
-}
+type InlineEmbeddingPlan = knowledgecontract.InlineEmbeddingPlan
 
 // InlineEmbeddingResult carries one validated provider vector back to the
 // fenced semantic commit. DocumentHash is the stable render identity; the
 // final search_document_id is assigned or loaded by PostgreSQL.
-type InlineEmbeddingResult struct {
-	DocumentHash            string
-	Embedding               []float32
-	EmbeddingContractID     string
-	EmbeddingDimensions     int
-	EmbeddingModel          string
-	SearchIndexGenerationID string
-	IndexGeneration         int
-}
+type InlineEmbeddingResult = knowledgecontract.InlineEmbeddingResult
 
 // CompleteSearchDocumentsWithEmbeddingsInput carries the provider output back
 // across the fenced storage boundary. Every document is checked against the

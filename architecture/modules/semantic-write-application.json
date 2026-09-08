@@ -15,26 +15,6 @@
       "issue": 362
     },
     {
-      "path": "internal/repository/conflict_derived_evidence_task_repository.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/conflict_overdue_resolution_repository.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/conflict_placement_helpers.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/conflict_resolution_repository.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/evidence_lifecycle_repository.go",
-      "issue": 362
-    },
-    {
       "path": "internal/repository/evidence_lifecycle_repository_integration.e2e",
       "issue": 362
     },
@@ -43,35 +23,7 @@
       "issue": 362
     },
     {
-      "path": "internal/repository/placement_commit_helpers.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/placement_commit_repository.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/placement_commit_search.go",
-      "issue": 362
-    },
-    {
       "path": "internal/repository/placement_commit_types.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/relationship_correction_embedding_plan.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/relationship_correction_helpers.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/relationship_correction_inline_embedding.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/relationship_correction_repository.go",
       "issue": 362
     },
     {
@@ -95,10 +47,6 @@
       "issue": 362
     },
     {
-      "path": "internal/repository/remember_commit.go",
-      "issue": 362
-    },
-    {
       "path": "internal/repository/remember_commit_helpers.go",
       "issue": 362
     },
@@ -107,31 +55,7 @@
       "issue": 362
     },
     {
-      "path": "internal/repository/remember_embedding_plan.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/remember_result.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/remember_result_test.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/remember_transaction.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/semantic_helpers.go",
-      "issue": 362
-    },
-    {
       "path": "internal/repository/semantic_lifecycle_integration.e2e",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/semantic_observation_helpers.go",
       "issue": 362
     },
     {
@@ -159,23 +83,7 @@
       "issue": 362
     },
     {
-      "path": "internal/repository/semantic_support_helpers.go",
-      "issue": 362
-    },
-    {
       "path": "internal/repository/semantic_support_helpers_test.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/submission_assessment_commit_repository.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/submission_assessment_inline_embedding.go",
-      "issue": 362
-    },
-    {
-      "path": "internal/repository/submission_assessment_known_evidence_fence.go",
       "issue": 362
     },
     {
@@ -184,6 +92,10 @@
     },
     {
       "path": "internal/repository/submission_assessment_catalog_repository_integration.e2e",
+      "issue": 362
+    },
+    {
+      "path": "internal/repository/submission_assessment_inline_embedding.go",
       "issue": 362
     },
     {
@@ -220,6 +132,19 @@
   "browser": {
     "units": []
   },
+  "compatibility_bridges": [
+    {
+      "source_path": "internal/repository/semantic_repository.go",
+      "fields": ["SemanticRepositoryImpl.CreateEntity", "SemanticRepositoryImpl.AddEntityName", "SemanticRepositoryImpl.UpsertValue", "SemanticRepositoryImpl.ApplyRelationshipDecision", "SemanticRepositoryImpl.RetractRelationship", "SemanticRepositoryImpl.ApplyRelationshipSupportDecision", "SemanticRepositoryImpl.AppendCrossReference"],
+      "consumers": [
+        {"path": "internal/repository/semantic_repository_integration_helpers_test.go", "symbol": "createSemanticEntity"},
+        {"path": "internal/repository/semantic_repository_integration_helpers_test.go", "symbol": "applySemanticDecision"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/knowledge/postgres/semantic_repository.go", "symbol": "Store.CreateEntity"},
+      "removal_condition": "Remove the mixed-file semantic repository forwarders after Dream/Graph ownership is split and semantic adopters consume the knowledge owner directly."
+    }
+  ],
   "exceptions": [],
   "workers": []
 }

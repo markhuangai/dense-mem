@@ -3,7 +3,11 @@ package repository
 import (
 	"encoding/json"
 	"time"
+
+	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
+
+var ErrSubmissionAssessmentKnownEvidenceStale = knowledgecontract.ErrSubmissionAssessmentKnownEvidenceStale
 
 // RememberCommitScope identifies the authenticated request being committed.
 // It intentionally contains no placement run, worker, lease, or retry fields.

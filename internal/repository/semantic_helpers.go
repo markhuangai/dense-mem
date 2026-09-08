@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 )
 
 type predicateDefinition struct {
@@ -24,14 +25,6 @@ type predicateDefinition struct {
 	AllowedObjectKinds  []string
 	RelationshipKind    string
 	CurrentCardinality  string
-}
-
-type relationshipRecordState struct {
-	Record          *RelationshipRecord
-	Created         bool
-	Changed         bool
-	ValidToConflict bool
-	FromStatus      string
 }
 
 type transitionInput struct {
@@ -226,6 +219,8 @@ func normalizeEvidenceSupports(primary *EvidenceSupportInput, additional []Evide
 func normalizeEvidenceSupport(input EvidenceSupportInput) EvidenceSupportInput {
 	input.FragmentID = strings.TrimSpace(input.FragmentID)
 	input.EvidenceOwnerProfileID = strings.TrimSpace(input.EvidenceOwnerProfileID)
+	input.OccurrenceOwnerProfileID = strings.TrimSpace(input.OccurrenceOwnerProfileID)
+	input.OccurrenceID = strings.TrimSpace(input.OccurrenceID)
 	input.SourceGroupKey = strings.TrimSpace(input.SourceGroupKey)
 	input.SourceID = strings.TrimSpace(input.SourceID)
 	input.SourceRevisionID = strings.TrimSpace(input.SourceRevisionID)
@@ -242,8 +237,7 @@ func relationshipEvidenceSupports(primary *EvidenceSupportInput, additional []Ev
 	if primary != nil {
 		result = append(result, *primary)
 	}
-	result = append(result, additional...)
-	return result
+	return append(result, additional...)
 }
 
 func validateRelationshipEvidenceSupports(primary *EvidenceSupportInput, additional []EvidenceSupportInput) error {
@@ -263,10 +257,8 @@ func validateRelationshipEvidenceSupports(primary *EvidenceSupportInput, additio
 
 func validateApplyRelationshipDecisionInput(input ApplyRelationshipDecisionInput) error {
 	for label, value := range map[string]string{
-		"team_id":           input.TeamID,
-		"owner_profile_id":  input.OwnerProfileID,
-		"ingest_id":         input.IngestID,
-		"subject_entity_id": input.SubjectEntityID,
+		"team_id": input.TeamID, "owner_profile_id": input.OwnerProfileID,
+		"ingest_id": input.IngestID, "subject_entity_id": input.SubjectEntityID,
 	} {
 		if _, err := uuid.Parse(value); err != nil {
 			return fmt.Errorf("%s is required: %w", label, err)
@@ -378,14 +370,10 @@ func normalizeRetractRelationshipInput(input RetractRelationshipInput) RetractRe
 }
 
 func validateRetractRelationshipInput(input RetractRelationshipInput) error {
-	if _, err := uuid.Parse(input.TeamID); err != nil {
-		return fmt.Errorf("team_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
-		return fmt.Errorf("owner_profile_id is required: %w", err)
-	}
-	if _, err := uuid.Parse(input.RelationshipID); err != nil {
-		return fmt.Errorf("relationship_id is required: %w", err)
+	for label, value := range map[string]string{"team_id": input.TeamID, "owner_profile_id": input.OwnerProfileID, "relationship_id": input.RelationshipID} {
+		if _, err := uuid.Parse(value); err != nil {
+			return fmt.Errorf("%s is required: %w", label, err)
+		}
 	}
 	return nil
 }
@@ -402,8 +390,7 @@ func normalizeAppendCrossReferenceInput(input AppendCrossReferenceInput) AppendC
 
 func validateAppendCrossReferenceInput(input AppendCrossReferenceInput) error {
 	for label, value := range map[string]string{
-		"team_id":                input.TeamID,
-		"author_profile_id":      input.AuthorProfileID,
+		"team_id": input.TeamID, "author_profile_id": input.AuthorProfileID,
 		"source_relationship_id": input.SourceRelationshipID,
 		"target_relationship_id": input.TargetRelationshipID,
 		"verification_event_id":  input.VerificationEventID,
@@ -421,6 +408,7 @@ func validateAppendCrossReferenceInput(input AppendCrossReferenceInput) error {
 	return nil
 }
 
+// Dream retains ownership of hypothesis creation until its capability cutover.
 func normalizeCreateHypothesisInput(input CreateHypothesisInput) CreateHypothesisInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
@@ -444,49 +432,14 @@ func validateCreateHypothesisInput(input CreateHypothesisInput) error {
 	return nil
 }
 
-func insertEntityName(ctx context.Context, tx *gorm.DB, input AddEntityNameInput) (string, error) {
-	metadata, err := marshalJSON(input.Metadata)
-	if err != nil {
-		return "", err
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		INSERT INTO entity_names (
-		    team_id, entity_id, owner_profile_id, display_name, normalized_name,
-		    name_kind, locale, metadata, space_id, space_generation
-		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?::jsonb,
-		    (SELECT entity.space_id FROM entity_records AS entity
-		     WHERE entity.team_id = ?::uuid AND entity.entity_id = ?::uuid),
-		    (SELECT entity.space_generation FROM entity_records AS entity
-		     WHERE entity.team_id = ?::uuid AND entity.entity_id = ?::uuid)
-		)
-		RETURNING entity_name_id::text
-	`, input.TeamID, input.EntityID, input.OwnerProfileID, input.DisplayName,
-		normalizeName(input.DisplayName), input.NameKind, input.Locale,
-		string(metadata), input.TeamID, input.EntityID, input.TeamID, input.EntityID).Rows()
-	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return "", rows.Err()
-	}
-	var nameID string
-	if err := rows.Scan(&nameID); err != nil {
-		return "", err
-	}
-	return nameID, rows.Err()
-}
-
-func loadPredicateDefinition(ctx context.Context, tx *gorm.DB, teamID string, predicateKey string, version int) (*predicateDefinition, error) {
+// loadPredicateDefinition and loadRelationshipRecord are read helpers retained
+// by Dream and search-reconciliation adapters; canonical writes use Store.
+func loadPredicateDefinition(ctx context.Context, tx *gorm.DB, teamID, predicateKey string, version int) (*predicateDefinition, error) {
 	rows, err := tx.WithContext(ctx).Raw(`
 		SELECT predicate_key, version, allowed_subject_kinds, allowed_object_kinds,
 		       relationship_kind, current_cardinality
 		FROM team_predicate_definitions
-		WHERE team_id = ?::uuid
-		  AND predicate_key = ?
-		  AND version = ?
-		  AND lifecycle_state = 'active'
+		WHERE team_id = ?::uuid AND predicate_key = ? AND version = ? AND lifecycle_state = 'active'
 	`, teamID, predicateKey, version).Rows()
 	if err != nil {
 		return nil, err
@@ -499,10 +452,8 @@ func loadPredicateDefinition(ctx context.Context, tx *gorm.DB, teamID string, pr
 		return nil, gorm.ErrRecordNotFound
 	}
 	var loaded predicateDefinition
-	var subjectKinds pq.StringArray
-	var objectKinds pq.StringArray
-	if err := rows.Scan(&loaded.Key, &loaded.Version, &subjectKinds, &objectKinds,
-		&loaded.RelationshipKind, &loaded.CurrentCardinality); err != nil {
+	var subjectKinds, objectKinds pq.StringArray
+	if err := rows.Scan(&loaded.Key, &loaded.Version, &subjectKinds, &objectKinds, &loaded.RelationshipKind, &loaded.CurrentCardinality); err != nil {
 		return nil, err
 	}
 	loaded.AllowedSubjectKinds = []string(subjectKinds)
@@ -510,367 +461,45 @@ func loadPredicateDefinition(ctx context.Context, tx *gorm.DB, teamID string, pr
 	return &loaded, rows.Err()
 }
 
-func validateRelationshipEndpointKinds(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput, predicate *predicateDefinition) error {
-	subjectKind, err := loadEntityKind(ctx, tx, input.TeamID, input.SubjectEntityID)
-	if err != nil {
-		return err
-	}
-	if len(predicate.AllowedSubjectKinds) > 0 && !contains(predicate.AllowedSubjectKinds, subjectKind) {
-		return fmt.Errorf("predicate %q does not allow subject kind %q", predicate.Key, subjectKind)
-	}
-	var objectKind string
-	if input.ObjectEntityID != "" {
-		objectKind, err = loadEntityKind(ctx, tx, input.TeamID, input.ObjectEntityID)
-	} else {
-		objectKind, err = loadValueType(ctx, tx, input.TeamID, input.ObjectValueID)
-	}
-	if err != nil {
-		return err
-	}
-	if len(predicate.AllowedObjectKinds) > 0 && !contains(predicate.AllowedObjectKinds, objectKind) {
-		return fmt.Errorf("predicate %q does not allow object kind %q", predicate.Key, objectKind)
-	}
-	return nil
-}
-
-func loadEntityKind(ctx context.Context, tx *gorm.DB, teamID, entityID string) (string, error) {
-	var kind string
-	row := tx.WithContext(ctx).Raw(`
-		SELECT entity_kind
-		FROM entity_records
-		WHERE team_id = ?::uuid
-		  AND entity_id = ?::uuid
-	`, teamID, entityID).Row()
-	if err := row.Scan(&kind); err != nil {
-		return "", err
-	}
-	return kind, nil
-}
-
-func loadValueType(ctx context.Context, tx *gorm.DB, teamID, valueID string) (string, error) {
-	var valueType string
-	row := tx.WithContext(ctx).Raw(`
-		SELECT value_type
-		FROM value_records
-		WHERE team_id = ?::uuid
-		  AND value_id = ?::uuid
-	`, teamID, valueID).Row()
-	if err := row.Scan(&valueType); err != nil {
-		return "", err
-	}
-	return valueType, nil
-}
-
-func upsertRelationshipRecord(
-	ctx context.Context,
-	tx *gorm.DB,
-	input ApplyRelationshipDecisionInput,
-	predicate *predicateDefinition,
-	status string,
-	semanticGroupKey string,
-) (*relationshipRecordState, error) {
-	spaceID, err := loadSemanticInputSpaceID(ctx, tx, input)
-	if err != nil {
-		return nil, err
-	}
-	metadata, err := marshalJSON(input.RelationshipMetadata)
-	if err != nil {
-		return nil, err
-	}
-	existing, err := selectRelationshipByIdentity(ctx, tx, input)
-	if err == nil {
-		if err := requireSemanticSpaceMatch(spaceID, existing.SpaceID); err != nil {
-			return nil, err
-		}
-	}
-	if err == nil && !nullableTimesEqual(existing.ValidTo, input.ValidTo) {
-		return &relationshipRecordState{
-			Record:          existing,
-			ValidToConflict: true,
-		}, nil
-	}
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-	if input.SuppressSupport && status == string(domain.RelationshipStatusPendingEvidence) &&
-		existing != nil && existing.Status == string(domain.RelationshipStatusActive) && existing.SupportCount > 0 {
-		status = string(domain.RelationshipStatusActive)
-	}
-	if predicate.CurrentCardinality == string(domain.CurrentCardinalityOne) &&
-		status == string(domain.RelationshipStatusActive) {
-		keepRelationshipID := ""
-		if existing != nil {
-			keepRelationshipID = existing.RelationshipID
-		}
-		if err := supersedeOneCardinalityRelationships(ctx, tx, input, keepRelationshipID); err != nil {
-			return nil, err
-		}
-	}
-	rows, err := tx.WithContext(ctx).Raw(`
-		INSERT INTO relationship_records (
-		    team_id, owner_profile_id, semantic_group_key, subject_entity_id,
-		    predicate_key, predicate_version, object_entity_id, object_value_id,
-		    relationship_kind, current_cardinality, status, polarity,
-		    scope_key, valid_from, valid_to, metadata, space_id
-		) VALUES (
-		    ?::uuid, ?::uuid, ?, ?::uuid, ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid,
-		    ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?::jsonb, ?::uuid
-		)
-		ON CONFLICT (
-		    team_id, owner_profile_id, subject_entity_id, predicate_key,
-		    object_entity_id, object_value_id, polarity, valid_from, scope_key
-		)
-		WHERE identity_alias_of_relationship_id IS NULL
-		DO NOTHING
-		RETURNING team_id::text, relationship_id::text, owner_profile_id::text,
-		          space_id::text,
-		          space_generation,
-		          semantic_group_key, subject_entity_id::text, predicate_key,
-		       predicate_version, COALESCE(object_entity_id::text, ''),
-		       COALESCE(object_value_id::text, ''), relationship_kind,
-		       current_cardinality, status, polarity, COALESCE(scope_key, ''),
-		       valid_from, valid_to,
-		       COALESCE(identity_alias_of_relationship_id::text, ''),
-		       support_count, source_group_count, version
-	`, input.TeamID, input.OwnerProfileID, semanticGroupKey, input.SubjectEntityID,
-		input.PredicateKey, input.PredicateVersion, input.ObjectEntityID, input.ObjectValueID,
-		predicate.RelationshipKind, predicate.CurrentCardinality, status, input.Polarity,
-		input.ScopeKey, timeArg(input.ValidFrom), timeArg(input.ValidTo), string(metadata), spaceID).Rows()
-	if err != nil {
-		return nil, err
-	}
-	inserted, scanErr := scanRelationshipRows(rows)
-	closeErr := rows.Close()
-	if scanErr != nil {
-		return nil, scanErr
-	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-	if inserted != nil {
-		return &relationshipRecordState{Record: inserted, Created: true, Changed: true}, nil
-	}
-	existing, err = selectRelationshipByIdentity(ctx, tx, input)
-	if err != nil {
-		return nil, err
-	}
-	if err := requireSemanticSpaceMatch(spaceID, existing.SpaceID); err != nil {
-		return nil, err
-	}
-	if !nullableTimesEqual(existing.ValidTo, input.ValidTo) {
-		return &relationshipRecordState{
-			Record:          existing,
-			ValidToConflict: true,
-		}, nil
-	}
-	state := &relationshipRecordState{Record: existing}
-	if existing.PredicateVersion != input.PredicateVersion ||
-		existing.Status != status ||
-		existing.RelationshipKind != predicate.RelationshipKind ||
-		existing.CurrentCardinality != predicate.CurrentCardinality ||
-		existing.SemanticGroupKey != semanticGroupKey {
-		state.Changed = true
-		state.FromStatus = existing.Status
-		result := tx.WithContext(ctx).Exec(`
-			UPDATE relationship_records
-			SET predicate_version = ?,
-			    status = ?,
-			    recorded_to = CASE WHEN ? = 'active' THEN NULL ELSE recorded_to END,
-			    relationship_kind = ?,
-			    current_cardinality = ?,
-			    semantic_group_key = ?,
-			    version = version + 1,
-			    updated_at = now()
-			WHERE team_id = ?::uuid
-			AND relationship_id = ?::uuid
-			AND owner_profile_id = ?::uuid
-		`, input.PredicateVersion, status, status, predicate.RelationshipKind, predicate.CurrentCardinality,
-			semanticGroupKey, input.TeamID, existing.RelationshipID, input.OwnerProfileID)
-		if result.Error != nil {
-			return nil, result.Error
-		}
-		if result.RowsAffected == 0 {
-			return nil, ErrSemanticOwnerMismatch
-		}
-		updated, err := loadRelationshipRecord(ctx, tx, input.TeamID, existing.RelationshipID)
-		if err != nil {
-			return nil, err
-		}
-		state.Record = updated
-	}
-	return state, nil
-}
-
-func selectRelationshipByIdentity(ctx context.Context, tx *gorm.DB, input ApplyRelationshipDecisionInput) (*RelationshipRecord, error) {
-	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT team_id::text, relationship_id::text, owner_profile_id::text,
-		       space_id::text,
-		       space_generation,
-		       semantic_group_key, subject_entity_id::text, predicate_key,
-		       predicate_version, COALESCE(object_entity_id::text, ''),
-		       COALESCE(object_value_id::text, ''), relationship_kind,
-		       current_cardinality, status, polarity, COALESCE(scope_key, ''),
-		       valid_from, valid_to,
-		       COALESCE(identity_alias_of_relationship_id::text, ''),
-		       support_count, source_group_count, version
-		FROM relationship_records
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND subject_entity_id = ?::uuid
-		  AND predicate_key = ?
-		  AND object_entity_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
-		  AND object_value_id IS NOT DISTINCT FROM NULLIF(?, '')::uuid
-		  AND polarity = ?
-		  AND valid_from IS NOT DISTINCT FROM ?
-		  AND scope_key IS NOT DISTINCT FROM NULLIF(?, '')
-		  AND identity_alias_of_relationship_id IS NULL
-		FOR UPDATE
-	`, input.TeamID, input.OwnerProfileID, input.SubjectEntityID, input.PredicateKey,
-		input.ObjectEntityID, input.ObjectValueID, input.Polarity, timeArg(input.ValidFrom),
-		input.ScopeKey).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	record, err := scanRelationshipRows(rows)
-	if err != nil {
-		return nil, err
-	}
-	if record == nil {
-		return nil, gorm.ErrRecordNotFound
-	}
-	return record, rows.Err()
-}
-
 func loadRelationshipRecord(ctx context.Context, tx *gorm.DB, teamID, relationshipID string) (*RelationshipRecord, error) {
-	return loadRelationshipRecordWithLock(ctx, tx, teamID, relationshipID, false)
-}
-
-func loadRelationshipRecordForUpdate(ctx context.Context, tx *gorm.DB, teamID, relationshipID string) (*RelationshipRecord, error) {
-	return loadRelationshipRecordWithLock(ctx, tx, teamID, relationshipID, true)
-}
-
-func loadRelationshipRecordWithLock(ctx context.Context, tx *gorm.DB, teamID, relationshipID string, lock bool) (*RelationshipRecord, error) {
-	lockClause := ""
-	if lock {
-		lockClause = "FOR UPDATE"
-	}
 	rows, err := tx.WithContext(ctx).Raw(`
-		SELECT team_id::text, relationship_id::text, owner_profile_id::text,
-		       space_id::text,
-		       space_generation,
-		       semantic_group_key, subject_entity_id::text, predicate_key,
-		       predicate_version, COALESCE(object_entity_id::text, ''),
-		       COALESCE(object_value_id::text, ''), relationship_kind,
-		       current_cardinality, status, polarity, COALESCE(scope_key, ''),
-		       valid_from, valid_to,
-		       COALESCE(identity_alias_of_relationship_id::text, ''),
+		SELECT team_id::text, relationship_id::text, owner_profile_id::text, space_id::text,
+		       space_generation, semantic_group_key, subject_entity_id::text, predicate_key,
+		       predicate_version, COALESCE(object_entity_id::text, ''), COALESCE(object_value_id::text, ''),
+		       relationship_kind, current_cardinality, status, polarity, COALESCE(scope_key, ''),
+		       valid_from, valid_to, COALESCE(identity_alias_of_relationship_id::text, ''),
 		       support_count, source_group_count, version
-		FROM relationship_records
-		WHERE team_id = ?::uuid
-		  AND relationship_id = ?::uuid
-		`+lockClause+`
+		FROM relationship_records WHERE team_id = ?::uuid AND relationship_id = ?::uuid
 	`, teamID, relationshipID).Rows()
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	record, err := scanRelationshipRows(rows)
-	if err != nil {
-		return nil, err
-	}
-	if record == nil {
-		return nil, gorm.ErrRecordNotFound
-	}
-	return record, rows.Err()
-}
-
-func scanRelationshipRows(rows *sql.Rows) (*RelationshipRecord, error) {
 	if !rows.Next() {
-		return nil, rows.Err()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, gorm.ErrRecordNotFound
 	}
 	loaded := RelationshipRecord{}
 	if err := rows.Scan(&loaded.TeamID, &loaded.RelationshipID, &loaded.OwnerProfileID, &loaded.SpaceID, &loaded.SpaceGeneration,
-		&loaded.SemanticGroupKey, &loaded.SubjectEntityID, &loaded.PredicateKey,
-		&loaded.PredicateVersion, &loaded.ObjectEntityID, &loaded.ObjectValueID,
-		&loaded.RelationshipKind, &loaded.CurrentCardinality, &loaded.Status,
-		&loaded.Polarity, &loaded.ScopeKey, &loaded.ValidFrom,
-		&loaded.ValidTo, &loaded.IdentityAliasOfID, &loaded.SupportCount,
-		&loaded.SourceGroupCount, &loaded.Version); err != nil {
+		&loaded.SemanticGroupKey, &loaded.SubjectEntityID, &loaded.PredicateKey, &loaded.PredicateVersion,
+		&loaded.ObjectEntityID, &loaded.ObjectValueID, &loaded.RelationshipKind, &loaded.CurrentCardinality,
+		&loaded.Status, &loaded.Polarity, &loaded.ScopeKey, &loaded.ValidFrom, &loaded.ValidTo,
+		&loaded.IdentityAliasOfID, &loaded.SupportCount, &loaded.SourceGroupCount, &loaded.Version); err != nil {
 		return nil, err
 	}
-	return &loaded, nil
+	return &loaded, rows.Err()
 }
 
 func insertRelationshipTransition(ctx context.Context, tx *gorm.DB, input transitionInput) (string, error) {
-	var transitionID string
-	rows, err := tx.WithContext(ctx).Raw(`
-		INSERT INTO relationship_transition_events (
-		    team_id, relationship_id, owner_profile_id, space_id, from_status,
-		    to_status, reason, verification_event_id, support_decision_id,
-		    idempotency_key
-		) VALUES (
-		    ?::uuid, ?::uuid, ?::uuid,
-		    COALESCE(
-		        NULLIF(?, '')::uuid,
-		        (SELECT relationship.space_id
-		         FROM relationship_records AS relationship
-		         WHERE relationship.team_id = ?::uuid
-		           AND relationship.relationship_id = ?::uuid),
-		        dense_mem_team_shared_space(?::uuid)
-		    ),
-		    NULLIF(?, ''),
-		    ?, ?, NULLIF(?, '')::uuid, NULLIF(?, '')::uuid, ?
-		)
-		ON CONFLICT (team_id, owner_profile_id, idempotency_key)
-		WHERE idempotency_key <> ''
-		DO NOTHING
-		RETURNING transition_id::text
-	`, input.TeamID, input.RelationshipID, input.OwnerProfileID, input.SpaceID,
-		input.TeamID, input.RelationshipID, input.TeamID,
-		input.FromStatus, input.ToStatus, input.Reason,
-		input.VerificationEventID, input.SupportDecisionID, input.IdempotencyKey).Rows()
-	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
-	if rows.Next() {
-		if err := rows.Scan(&transitionID); err != nil {
-			return "", err
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return "", err
-	}
-	if transitionID == "" {
-		transitionID, err = loadRelationshipTransitionIDByIdempotency(ctx, tx, input)
-		if err != nil {
-			return "", err
-		}
-	}
-	if transitionID == "" {
-		return "", gorm.ErrRecordNotFound
-	}
-	return transitionID, nil
+	return knowledgepostgres.InsertRelationshipTransitionTx(ctx, knowledgepostgres.LegacyTransaction(tx),
+		input.TeamID, input.OwnerProfileID, input.RelationshipID, input.SpaceID,
+		input.FromStatus, input.ToStatus, input.Reason, input.VerificationEventID,
+		input.SupportDecisionID, input.IdempotencyKey)
 }
 
-func loadRelationshipTransitionIDByIdempotency(ctx context.Context, tx *gorm.DB, input transitionInput) (string, error) {
-	if strings.TrimSpace(input.IdempotencyKey) == "" {
-		return "", nil
-	}
-	var transitionID string
-	err := tx.WithContext(ctx).Raw(`
-		SELECT transition_id::text
-		FROM relationship_transition_events
-		WHERE team_id = ?::uuid
-		  AND owner_profile_id = ?::uuid
-		  AND idempotency_key = ?
-		LIMIT 1
-	`, input.TeamID, input.OwnerProfileID, input.IdempotencyKey).Scan(&transitionID).Error
-	return transitionID, err
-}
-
-func relationshipTransitionIdempotencyKey(verificationEventID string, supportDecisionID string) string {
+func relationshipTransitionIdempotencyKey(verificationEventID, supportDecisionID string) string {
 	if id := strings.TrimSpace(verificationEventID); id != "" {
 		return "verification:" + id + ":relationship_transition"
 	}
@@ -887,19 +516,11 @@ func semanticGroupKey(input ApplyRelationshipDecisionInput) string {
 	} else {
 		objectID = "entity:" + objectID
 	}
-	parts := []string{
-		input.SubjectEntityID,
-		input.PredicateKey,
-		objectID,
-		input.Polarity,
-		input.ScopeKey,
-		timeKey(input.ValidFrom),
-		"",
-	}
+	parts := []string{input.SubjectEntityID, input.PredicateKey, objectID, input.Polarity, input.ScopeKey, timeKey(input.ValidFrom), ""}
 	return "sg:" + strings.TrimPrefix(sha256Hex(strings.Join(parts, "\x00")), "sha256:")
 }
 
-func nullableTimesEqual(left *time.Time, right *time.Time) bool {
+func nullableTimesEqual(left, right *time.Time) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}

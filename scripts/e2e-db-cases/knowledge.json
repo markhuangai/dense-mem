@@ -3,6 +3,41 @@
   "capability": "knowledge",
   "cases": [
     {
+      "id": "knowledge/TestKnowledgeOwnerTerminalReplay",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestKnowledgeOwnerTerminalReplay$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/owner_write_integration.e2e"
+    },
+    {
+      "id": "knowledge/TestKnowledgeOwnerLateFailureRollsBack",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestKnowledgeOwnerLateFailureRollsBack$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/owner_write_integration.e2e"
+    },
+    {
+      "id": "knowledge/TestKnowledgeOwnerConcurrentRetryUsesOneCommit",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestKnowledgeOwnerConcurrentRetryUsesOneCommit$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/owner_write_integration.e2e"
+    },
+    {
+      "id": "knowledge/TestKnowledgeOwnerRejectsStaleEmbeddingFence",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestKnowledgeOwnerRejectsStaleEmbeddingFence$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/owner_write_integration.e2e"
+    },
+    {
+      "id": "knowledge/TestKnowledgeOwnerTeamProfileIsolation",
+      "package": "./internal/knowledge/postgres",
+      "run": "^TestKnowledgeOwnerTeamProfileIsolation$",
+      "phase": "precheck",
+      "source": "internal/knowledge/postgres/owner_write_integration.e2e"
+    },
+    {
       "id": "postgres/TestOverdueConflictResolutionMigrationAvoidsLegacySystemProfileNameCollision",
       "package": "./internal/storage/postgres",
       "run": "^TestOverdueConflictResolutionMigrationAvoidsLegacySystemProfileNameCollision$",

@@ -3,6 +3,7 @@ package repository
 import (
 	"gorm.io/gorm"
 
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
@@ -21,5 +22,6 @@ func NewLedgerRepositoryWithRuntimeConfig(
 		rls:                    rls,
 		conflictReviewTTLDays:  conflictConfig.ReviewTTLDays,
 		conflictReviewTimezone: conflictConfig.Timezone,
+		knowledgeOwner:         knowledgepostgres.NewStore(db, rls, conflictConfig),
 	}
 }

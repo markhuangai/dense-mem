@@ -34,8 +34,8 @@ func TestRelationshipCorrectionLocksCrossScopePairCanonically(t *testing.T) {
 	objectB := createSemanticEntity(t, ctx, semantic, teamID, ownerID, "product", "Correction object B")
 	first := commitConflictRememberFixture(t, ctx, ledger, teamID, ownerID, subjectA.EntityID, objectA.EntityID, "Correction scope A uses object A.", "correction-scope-pair-a")
 	second := commitConflictRememberFixture(t, ctx, ledger, teamID, ownerID, subjectB.EntityID, objectB.EntityID, "Correction scope B uses object B.", "correction-scope-pair-b")
-	firstRelationship := first.RelationshipResults[0].Relationship
-	secondRelationship := second.RelationshipResults[0].Relationship
+	firstRelationship := fromKnowledgeRelationshipRecord(first.RelationshipResults[0].Relationship)
+	secondRelationship := fromKnowledgeRelationshipRecord(second.RelationshipResults[0].Relationship)
 	require.NotNil(t, firstRelationship)
 	require.NotNil(t, secondRelationship)
 
