@@ -34,6 +34,8 @@ func (r *Store) RecordCommunitySummaryAttempt(ctx context.Context, input Communi
 	if input.AdmittedSupportQuotes == nil {
 		input.AdmittedSupportQuotes = []domain.CommunitySummarySupportQuote{}
 	}
+	input.AdmittedRelationshipIDs = normalizeCommunitySummaryUUIDs(input.AdmittedRelationshipIDs)
+	input.AdmittedEvidenceIDs = normalizeCommunitySummaryUUIDs(input.AdmittedEvidenceIDs)
 	quotes, err := json.Marshal(input.AdmittedSupportQuotes)
 	if err != nil {
 		return fmt.Errorf("community: marshal summary support quotes: %w", err)

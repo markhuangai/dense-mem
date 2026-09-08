@@ -72,6 +72,18 @@ func normalizeCommunityLogicalID(record CommunityPublishRecord) string {
 	return logicalID
 }
 
+func normalizeCommunitySummaryUUIDs(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if _, err := uuid.Parse(value); err != nil {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
 func normalizeCommunityRunClaimInput(input CommunityRunClaimInput) CommunityRunClaimInput {
 	input.TeamID = strings.TrimSpace(input.TeamID)
 	input.WindowKey = strings.TrimSpace(input.WindowKey)
@@ -370,8 +382,9 @@ func communityStatusValid(status string) bool {
 
 func truncateCommunityError(value string) string {
 	value = strings.TrimSpace(value)
-	if len(value) <= 512 {
-		return value
+	runes := []rune(value)
+	if len(runes) > 512 {
+		runes = runes[:512]
 	}
-	return strings.TrimSpace(value[:512])
+	return strings.TrimSpace(string(runes))
 }

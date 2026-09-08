@@ -89,6 +89,9 @@ func (r *Store) ClaimCommunityRun(ctx context.Context, input CommunityRunClaimIn
 		}
 		defer rows.Close()
 		if !rows.Next() {
+			if err := rows.Err(); err != nil {
+				return err
+			}
 			return ErrCommunityRunAlreadyClaimed
 		}
 		scanned, err := scanCommunityRun(rows)

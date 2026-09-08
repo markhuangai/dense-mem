@@ -80,8 +80,10 @@ func (r *Store) RecallCommunities(ctx context.Context, input CommunityRecallInpu
 						       FROM community_sources source
 						       CROSS JOIN params
 						       WHERE source.team_id = record.team_id
-						         AND source.community_id = record.community_id
-						         AND source.relationship_id = ANY(params.seed_relationship_ids)
+				         AND source.space_id = dense_mem_team_shared_space(source.team_id)
+				         AND source.space_generation = dense_mem_team_shared_generation(source.team_id)
+					         AND source.community_id = record.community_id
+					         AND source.relationship_id = ANY(params.seed_relationship_ids)
 					       ) OR EXISTS (
 						       SELECT 1
 						       FROM community_memberships membership

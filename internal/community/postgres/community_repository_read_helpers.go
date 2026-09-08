@@ -145,7 +145,7 @@ func (r *Store) LatestCommunityRun(ctx context.Context, teamID string) (*Communi
 		}
 		defer rows.Close()
 		if !rows.Next() {
-			return nil
+			return rows.Err()
 		}
 		scanned, err := scanCommunityRun(rows)
 		if err != nil {

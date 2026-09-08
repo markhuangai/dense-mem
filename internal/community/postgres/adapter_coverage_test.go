@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/lib/pq"
@@ -52,6 +53,10 @@ func TestCommunityAdapterPurePolicies(t *testing.T) {
 	assert.Equal(t, "logical", normalizeCommunityLogicalID(CommunityPublishRecord{LogicalCommunityID: " logical ", CommunityID: communityID}))
 	assert.Equal(t, "", truncateCommunityError("   "))
 	assert.Len(t, truncateCommunityError(long), 512)
+	unicodeValue := strings.Repeat("é", 513)
+	truncatedUnicode := truncateCommunityError(unicodeValue)
+	assert.Equal(t, 512, utf8.RuneCountInString(truncatedUnicode))
+	assert.True(t, utf8.ValidString(truncatedUnicode))
 	assert.Equal(t, "value", truncateCommunityError(" value "))
 	encoded, err := marshalCommunitySnapshot(nil)
 	require.NoError(t, err)
@@ -147,6 +152,7 @@ func TestCommunityAdapterPurePolicies(t *testing.T) {
 	assert.Equal(t, []string{relationshipID}, normalizeCommunityIDs([]string{" ", relationshipID, "bad", relationshipID}))
 	assert.Equal(t, []string{"a", "b"}, normalizeCommunityStrings([]string{" a ", "a", "b", ""}))
 	assert.Equal(t, []string{"a", "b"}, appendUniqueCommunityStrings([]string{"b"}, "a", "b", ""))
+	assert.Equal(t, []string{relationshipID}, normalizeCommunitySummaryUUIDs([]string{" " + relationshipID + " ", "not-a-uuid"}))
 
 	assert.Equal(t, []CommunitySourceInput{{RelationshipID: relationshipID, RelationshipVersion: 1}}, flattenCommunitySources([]CommunityPublishRecord{{Sources: []CommunitySourceInput{{RelationshipID: relationshipID, RelationshipVersion: 1}, {RelationshipID: relationshipID, RelationshipVersion: 1}}}}))
 }

@@ -117,7 +117,7 @@ func TestCommunityRepositorySnapshotLifecycleAndRecallExpansion(t *testing.T) {
 		},
 	})
 	require.NotNil(t, inactive.Relationship)
-	_, err = semanticRepo.RetractRelationship(ctx, RetractRelationshipInput{
+	_, err := semanticRepo.RetractRelationship(ctx, RetractRelationshipInput{
 		TeamID: teamA, OwnerProfileID: ownerA, RelationshipID: inactive.Relationship.RelationshipID,
 		Reason: "community inactive fixture",
 	})
