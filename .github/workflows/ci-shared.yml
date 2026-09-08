@@ -169,7 +169,7 @@ jobs:
           packages="$(
             go list -f '{{if .TestGoFiles}}{{.ImportPath}}{{end}}' ./internal/... |
               sed '/^$/d' |
-              grep -Ev '/(evalharness|repository|knowledge/postgres|dream/postgres|trace/postgres)$|/storage/(postgres|redis)$'
+              grep -Ev '/(evalharness|repository|knowledge/postgres|dream/postgres|trace/postgres|graph/postgres)$|/storage/(postgres|redis)$'
           )"
 
           printf '%s\n' "${packages}"

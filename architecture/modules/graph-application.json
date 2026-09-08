@@ -3,14 +3,30 @@
   "capability": "graph-application",
   "source_ownership": [
     {"path": "cmd/internal/serverapp/graph_composition.go", "issue": 366},
+    {"path": "internal/graph/graph.go", "issue": 366},
+    {"path": "internal/graph/graph_test.go", "issue": 366},
+    {"path": "internal/graph/postgres/graph_repository.go", "issue": 366},
+    {"path": "internal/graph/postgres/graph_repository_test.go", "issue": 366},
+    {"path": "internal/graph/postgres/graph_repository_sqlmock_test.go", "issue": 366},
     {"path": "internal/repository/semantic_graph_repository.go", "issue": 366},
     {"path": "internal/repository/semantic_graph_repository_test.go", "issue": 366},
     {"path": "internal/service/graphview/graphview.go", "issue": 366},
-    {"path": "internal/service/graphview/graphview_test.go", "issue": 366}
+    {"path": "web/tests-compose/compose-portal.spec.ts", "issue": 366},
+    {"path": "web/tests-compose/graph-views.ts", "issue": 366}
   ],
   "completed_issues": [],
   "go": {
     "units": [
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/graph",
+        "role": "application_api",
+        "visibility": "public"
+      },
+      {
+        "id": "github.com/markhuangai/dense-mem/internal/graph/postgres",
+        "role": "postgres_adapter",
+        "visibility": "private"
+      },
       {
         "id": "github.com/markhuangai/dense-mem/internal/service/graphview",
         "role": "application_api",
@@ -21,13 +37,37 @@
   "browser": {
     "units": []
   },
-  "exceptions": [
+  "compatibility_bridges": [
     {
-      "source": "github.com/markhuangai/dense-mem/internal/service/graphview",
-      "target": "github.com/markhuangai/dense-mem/internal/repository",
-      "removal_issue": 366,
-      "reason": "Graph application code still consumes the legacy repository until graph view ownership is isolated."
+      "source_path": "internal/repository/semantic_graph_repository.go",
+      "fields": ["SemanticRepositoryImpl.SemanticGraph", "SemanticRepositoryImpl.SemanticGraphNodeDetail", "SemanticRepositoryImpl.GraphStore", "loadSemanticLocalGraphRows", "semanticGraphSnapshot"],
+      "consumers": [
+        {"path": "cmd/internal/serverapp/graph_composition.go", "symbol": "buildGraphApplication"},
+        {"path": "internal/repository/semantic_trace_graph_integration.e2e", "symbol": "TestSemanticTraceAndGraphIsolatePrivateSpacesWithinAndAcrossTeams"},
+        {"path": "internal/repository/semantic_trace_graph_integration.e2e", "symbol": "TestSemanticGraphReadsEntityValueEdgesAndNodeDetail"},
+        {"path": "internal/repository/semantic_trace_graph_integration.e2e", "symbol": "TestSemanticGraphLocalDepthDefaultsToTwoAndCapsAtFive"},
+        {"path": "internal/repository/semantic_trace_repository.go", "symbol": "loadTraceGraphSnapshot"},
+        {"path": "internal/repository/relationship_correction_repository_integration.e2e", "symbol": "TestRelationshipCorrectionReplacesOwnedRelationshipAndPreservesSupport"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/graph/postgres/graph_repository.go", "symbol": "Store.SemanticGraph"},
+      "removal_condition": "Remove repository graph forwarding methods after all named production, evaluation, demo, transport and fixture consumers use internal/graph contracts or the graph PostgreSQL adapter directly."
+    },
+    {
+      "source_path": "internal/service/graphview/graphview.go",
+      "fields": ["Service", "Query", "Snapshot", "Node", "Edge", "NewSemantic"],
+      "consumers": [
+        {"path": "internal/http/user_portal.go", "symbol": "userPortalHandler.graphSnapshot"},
+        {"path": "internal/http/user_portal.go", "symbol": "userPortalHandler.graphNodeDetail"},
+        {"path": "internal/http/user_portal_test.go", "symbol": "userPortalGraphSvc.Graph"},
+        {"path": "internal/http/user_portal_test.go", "symbol": "userPortalGraphSvc.NodeDetail"},
+        {"path": "cmd/internal/serverapp/application_composition.go", "symbol": "buildApplicationBundle"}
+      ],
+      "removal_issue": 382,
+      "implementation_owner": {"path": "internal/graph/graph.go", "symbol": "New"},
+      "removal_condition": "Remove the graphview aliases after all named transport, composition and retained fixture consumers import internal/graph directly."
     }
   ],
+  "exceptions": [],
   "workers": []
 }
