@@ -1,10 +1,11 @@
 package serverapp
 
 import (
-	"github.com/markhuangai/dense-mem/internal/service"
+	auditapp "github.com/markhuangai/dense-mem/internal/audit"
+	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	"gorm.io/gorm"
 )
 
-func buildAuditApplication(db *gorm.DB) *service.AuditServiceImpl {
-	return service.NewAuditService(db)
+func buildAuditApplication(db *gorm.DB) *auditapp.Service {
+	return auditapp.New(auditpostgres.NewStore(db))
 }
